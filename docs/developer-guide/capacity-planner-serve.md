@@ -9,7 +9,7 @@ for the fewest replicas a rate needs. Every figure is one the
 
 This is phases 0 and 1 of [the capacity planner](../proposals/capacity-planner.md),
 the API and the page at `/` that draws it, and phase 2's inverse mode
-(`POST /v1/size`). Operators start from
+(`POST /v1/size`) and the page's saved scenarios and compare. Operators start from
 [Plan a P/D fleet with the capacity planner](../guides/capacity-planner/); this
 page is the API's. Like the rest of `capacity-planner`, it is a contributor and
 operator tool and is not in the manager image.
@@ -263,6 +263,36 @@ rewrites it after each plan. Seconds are seconds, as the API takes them. In
 size mode it carries `mode=size`, `max` when it is not 32 and `low=1` when
 sizing for the worst corner, and no replica counts: they are the answer.
 
+Saved scenarios and compare (phase 2) are the page's alone; the API has no
+endpoint for them and the server keeps nothing. A saved scenario is the
+fragment's text (`linkParams()` in `planner.js`) under a name, in the
+browser's `localStorage` key `capacity-planner.scenarios`, at most 50. An
+exported one is a JSON file:
+
+```json
+{"kind": "capacity-planner-scenario", "version": 1, "name": "two prefill",
+ "link": "recording=run.jsonl.gz&prefill=2&decode=1&rate=6&ttft=0.8", "saved": "2026-11-14T21:08:00.000Z"}
+```
+
+A file (at most 64 KiB) and every store entry read back are checked by
+`checkScenario` before use: the kind and version, a name of 1 to 80
+characters, and a link of at most 4096 characters whose every key is one
+`linkParams` writes, each once, numbers finite and not negative, statistics
+`mean` or `pNN`, and a recording or namespace named. A file that fails is
+refused with the reason; a store entry that fails is left out. Names are put
+into HTML only through `esc`. Opening a scenario replaces the link the page
+read at start and loads its source as the page does when it opens; a
+recording or namespace the server does not list is refused before any
+request.
+
+"Pin as A" copies the plan response on screen (in size mode, the answer's
+plan) into `state.pin`. It is not priced again: the graphs draw its TTFT and
+TPOT curves dashed (class `pin`), with its point B and its target where that
+differs, and the compare box tables its fleet, limits, headroom, binding and
+targets beside the plan on screen, with the change. The x axis runs far enough
+to show both. A size no fleet serves has no plan, so nothing to pin, and the
+table says so while A stays pinned.
+
 To look at the page against the goldens' recordings:
 
 ```
@@ -434,4 +464,5 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeConcurrentSearchOnce`, `TestSizeBusyAndDecodeOnly` | Identical sizes at once search once; with every slot taken a size is a 503 before any search; a source with no prefill variant is a 400. |
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
+| `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired; the store and the file hold the link's text; every key the link writes is one an import admits; a name read back reaches HTML only through `esc`; a pinned plan is a copy drawn dashed. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |

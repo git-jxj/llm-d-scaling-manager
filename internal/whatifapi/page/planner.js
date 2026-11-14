@@ -80,9 +80,10 @@ const TPOT_STATS = ["mean", "p50", "p90", "p95", "p99"];
 
 // state is the page's: the sources, the inputs loaded, the knobs, the last
 // plan drawn, the question asked (mode: "plan", what a fleet serves, or
-// "size", what fleet a rate needs) and the last size answered.
+// "size", what fleet a rate needs), the last size answered, and the plan
+// pinned as A to compare against (pin).
 const state = {sources: null, inputs: null, plan: null, k: null, inFlight: false, dirty: false, seq: 0, dragging: false,
-  mode: "plan", modeSeq: 0, size: null, abort: null};
+  mode: "plan", modeSeq: 0, size: null, abort: null, pin: null};
 
 // SIZE_BOUND is the replicas a role a size searches up to unless you set
 // another: the API's default.
@@ -234,16 +235,8 @@ async function start() {
   // The page opens on a Prometheus window, the last hour ending now; a
   // server with recordings alone opens on its first.
   let kind = s.prometheus ? "prometheus" : s.recordings.length ? "recording" : "";
-  if (linked.get("recording") && s.recordings.includes(linked.get("recording"))) {
-    kind = "recording";
-    el("rec").value = linked.get("recording");
-    el("cycle").value = +linked.get("cycle") || 0;
-  } else if (linked.get("namespace") && s.namespaces.includes(linked.get("namespace"))) {
-    el("ns").value = linked.get("namespace");
-  }
-  if (linked.get("model")) el("model").value = linked.get("model");
-  if (linked.get("prefillVariant")) el("pvariant").value = linked.get("prefillVariant");
-  if (linked.get("decodeVariant")) el("dvariant").value = linked.get("decodeVariant");
+  kind = linkSource() || kind;
+  showScenarios();
   if (!kind) {
     setStatus("This server reads no source: start it with --prometheus or --recordings.", true);
     el("source").open = true;
@@ -360,6 +353,7 @@ function setInputs(inputs) {
   showSource(inputs);
   showInputs(inputs);
   syncControls();
+  showScenarios(el("scenlist").value);
 }
 
 // ASSUMABLE are the terms a scenario may type: the box, the API's key, the
@@ -465,7 +459,28 @@ function showTyped() {
 // The URL's fragment carries the source and the knobs, so a link reopens the
 // same scenario: #recording=run.jsonl.gz&prefill=2&rate=6&ttft=0.8 and so on.
 // Seconds are seconds, as the API takes them.
-const linked = new URLSearchParams(location.hash.slice(1));
+// A saved or imported scenario is opened by replacing it.
+let linked = new URLSearchParams(location.hash.slice(1));
+
+// linkSource puts the source the link names into the source form: the
+// recording and its cycle, or the namespace, and the model and variants. It is
+// the source's kind, or "" where the link names none this server reads.
+function linkSource() {
+  const s = state.sources;
+  let kind = "";
+  if (linked.get("recording") && s.recordings.includes(linked.get("recording"))) {
+    kind = "recording";
+    el("rec").value = linked.get("recording");
+    el("cycle").value = +linked.get("cycle") || 0;
+  } else if (linked.get("namespace") && s.prometheus && s.namespaces.includes(linked.get("namespace"))) {
+    kind = "prometheus";
+    el("ns").value = linked.get("namespace");
+  }
+  el("model").value = linked.get("model") || "";
+  el("pvariant").value = linked.get("prefillVariant") || "";
+  el("dvariant").value = linked.get("decodeVariant") || "";
+  return kind;
+}
 
 // applyLink sets the knobs the link names, once, on the first inputs loaded.
 function applyLink() {
@@ -481,11 +496,18 @@ function applyLink() {
   if (num("tpot") != null || g("tpotStat")) k.tpotDefault = false;
   // A bucket the inputs do not name prices the current mix.
   k.priceAs = state.inputs.observed.buckets.some(b => b.name === g("priceAs")) ? g("priceAs") : "mix";
-  k.perBucket = g("perBucket") === "1";
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   k.sizeLow = g("low") === "1";
-  if (g("mode") === "size" && state.inputs.fleet.prefill) enterSize();
+  // A scenario opened in the other mode switches the question; the link's
+  // per-bucket view is the plan's, kept aside while sizing.
+  if (g("mode") === "size" && state.inputs.fleet.prefill) {
+    k.perBucket = g("perBucket") === "1";
+    enterSize();
+  } else {
+    enterPlan();
+    k.perBucket = g("perBucket") === "1";
+  }
   fillStats("ttftstat", TTFT_STATS, k.ttftStat);
   fillStats("tpotstat", TPOT_STATS, k.tpotStat);
   slider("ttft", k.ttftTarget * 1000, 1);
@@ -502,6 +524,12 @@ function applyLink() {
 
 // writeLink puts the source and the knobs in the URL's fragment.
 function writeLink() {
+  history.replaceState(null, "", "#" + linkParams().toString());
+}
+
+// linkParams is the scenario as the link carries it: the source and the
+// knobs. A saved and an exported scenario are this same text.
+function linkParams() {
   const k = state.k, s = state.inputs.source, p = new URLSearchParams();
   if (s.kind === "recording") {
     p.set("recording", s.name);
@@ -538,7 +566,7 @@ function writeLink() {
   if (k.outputTokens != null) p.set("out", Math.round(k.outputTokens));
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) p.set(a.key, k.assume[a.key]);
   if (k.perBucket) p.set("perBucket", "1");
-  history.replaceState(null, "", "#" + p.toString());
+  return p;
 }
 
 // ---- The plan ----
@@ -662,6 +690,7 @@ async function plan() {
         fitRateSlider(null);
         renderSize();
         renderFlags();
+        renderCompare();
       }
       writeLink();
       clearInterval(ticker);
@@ -755,6 +784,7 @@ function render() {
   renderTPOT();
   renderTables();
   renderFlags();
+  renderCompare();
 }
 
 // rolesText is roles as a sentence's subject: "prefill binds", "prefill and
@@ -1074,7 +1104,17 @@ function renderTTFT() {
     const b = val(l.atTarget.rate);
     if (b != null) dots.push({x: b, y: l.atTarget.seconds, cls: "c-" + i, filled: true, small: true});
   }
-  const targets = [t.line.target].concat(buckets.map(l => l.target));
+  // A, the pinned plan, is drawn dashed: its mix line, and its filled point
+  // at its own target.
+  const a = state.pin && state.pin.plan.ttft.line;
+  let pinTarget = null;
+  if (a) {
+    series.push({cls: "c-pin", pin: true, name: `A: TTFT ${state.pin.plan.ttft.statistic}, ${state.pin.what}`, pts: pts(a.curve)});
+    const ab = val(a.atTarget.rate);
+    if (ab != null) dots.push({x: ab, y: a.target, cls: "c-pin", filled: true, small: true});
+    if (a.target !== t.line.target) pinTarget = a.target;
+  }
+  const targets = [t.line.target].concat(buckets.map(l => l.target), pinTarget != null ? [pinTarget] : []);
   const floor = val(t.line.floor);
   const ymax = Math.max(3 * Math.max(...targets), floor != null ? floor * 1.3 : 0);
   const B = val(t.line.atTarget.rate), A = val(t.line.atRate.figure);
@@ -1091,11 +1131,11 @@ function renderTTFT() {
   if (m.onsets && m.onsets.prefill != null) onset = m.onsets.prefill;
   if (m.onsets && m.onsets.decode != null) markers.push({x: m.onsets.decode, label: "decode onset"});
   const rate = p.limits.chosen.rate;
-  const xmax = Math.max(knee != null ? knee * 1.2 : 10, rate * 1.1);
+  const xmax = Math.max(knee != null ? knee * 1.2 : 10, rate * 1.1, pinXmax());
   el("ttfttitle").textContent = `TTFT ${t.statistic} against the request rate`;
   el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : "One line for the mix; its point B is the prefill limit.";
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee, onset, clip: "clip-ttft"});
+    rate, dots, markers, knee, onset, pinTarget, clip: "clip-ttft"});
   el("ttftlegend").innerHTML = legend(series, onset != null);
   el("ttftpoints").innerHTML =
     `<div>Open circle, the TTFT at your rate: <b>${figText(t.line.atRate.figure, fmtSec)}</b> ${flagChips(t.line.atRate.figure)}</div>` +
@@ -1115,11 +1155,19 @@ function renderTPOT() {
   }
   const knee = val(t.markers.decodeKnee), rate = p.limits.chosen.rate;
   const lk = lowerKnee(p.ttft.markers);
-  const xmax = Math.max(lk != null ? lk * 1.2 : 10, rate * 1.1);
+  const xmax = Math.max(lk != null ? lk * 1.2 : 10, rate * 1.1, pinXmax());
   const floor = val(t.floor);
-  const ymax = Math.max(3 * t.target, floor != null ? floor * 1.3 : 0);
   const series = [{cls: "c-mix", name: `TPOT ${t.statistic}`, pts: pts(t.curve), band: true}];
   const dots = [];
+  const a = state.pin && state.pin.plan.tpot;
+  let pinTarget = null;
+  if (a) {
+    series.push({cls: "c-pin", pin: true, name: `A: TPOT ${a.statistic}, ${state.pin.what}`, pts: pts(a.curve)});
+    const ab = val(a.atTarget.rate);
+    if (ab != null) dots.push({x: ab, y: a.target, cls: "c-pin", filled: true, small: true});
+    if (a.target !== t.target) pinTarget = a.target;
+  }
+  const ymax = Math.max(3 * Math.max(t.target, pinTarget || 0), floor != null ? floor * 1.3 : 0);
   const A = val(t.atRate.figure), B = val(t.atTarget.rate);
   const aSide = "right";
   if (A != null) dots.push({x: rate, y: A, cls: "c-mix", label: `${fmtSec(A)} at ${fmtRate(rate)}`, below: true, side: aSide});
@@ -1131,7 +1179,7 @@ function renderTPOT() {
   if (cap != null) markers.push({x: cap, label: "cap"});
   el("tpottitle").textContent = `TPOT ${t.statistic} against the request rate`;
   chart(el("tpotchart"), {W: 460, H: 340, xmax, ymax, series, target: t.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee: lk, clip: "clip-tpot"});
+    rate, dots, markers, knee: lk, pinTarget, clip: "clip-tpot"});
   el("tpotlegend").innerHTML = legend(series, false);
   const u = t.atTarget.rate.uncapped;
   el("tpotpoints").innerHTML =
@@ -1145,9 +1193,9 @@ function renderTPOT() {
 // legend names every series and the guides, so that no line is told by its
 // colour alone.
 function legend(series, onsets) {
-  const sw = (cls, dash, thin) => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="${dash ? "guide" : "line " + cls + (thin ? " thin" : "")}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
+  const sw = (cls, dash, thin, pin) => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="${dash ? "guide" : "line " + cls + (thin ? " thin" : "") + (pin ? " pin" : "")}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
   const box = cls => `<svg viewBox="0 0 18 10" aria-hidden="true"><rect class="${cls}" x="1" y="1" width="16" height="8"/></svg>`;
-  return series.map(s => `<span>${sw(s.cls, false, s.thin)}${esc(s.name)}</span>`).join("") +
+  return series.map(s => `<span>${sw(s.cls, false, s.thin, s.pin)}${esc(s.name)}</span>`).join("") +
     `<span>${sw("", true)}target / rate you set</span><span>${box("band")}span over V_P and f, or band</span>` +
     `<span>${box("sat")}saturated</span>` + (onsets ? `<span>${box("onset")}past the prefill flow-control onset</span>` : "");
 }
@@ -1209,12 +1257,18 @@ function chart(svg, o) {
       d += (pen ? "L" : "M") + X(q.x).toFixed(1) + "," + Y(Math.min(q.y, o.ymax * 2)).toFixed(1);
       pen = true;
     }
-    if (d) g += `<path class="line ${sr.cls}${sr.thin ? " thin" : ""}" d="${d}"/>`;
+    if (d) g += `<path class="line ${sr.cls}${sr.thin ? " thin" : ""}${sr.pin ? " pin" : ""}" d="${d}"/>`;
   }
   s += `<g clip-path="url(#${o.clip})">${g}</g>`;
   if (o.floor != null && o.floor <= o.ymax) {
     s += `<line class="floorl" x1="${L}" x2="${L + pw}" y1="${Y(o.floor)}" y2="${Y(o.floor)}"/>` +
       `<text class="lbl" x="${L + pw - 4}" y="${Y(o.floor) - 5}" text-anchor="end">floor ${fmtSec(o.floor)}</text>`;
+  }
+  // A's target, where it differs from the current one: fainter, labelled at
+  // the right so that it never sits on the current target's label.
+  if (o.pinTarget != null && o.pinTarget <= o.ymax) {
+    s += `<line class="guide pin" x1="${L}" x2="${L + pw}" y1="${Y(o.pinTarget)}" y2="${Y(o.pinTarget)}"/>` +
+      `<text class="lbl" x="${L + pw - 4}" y="${Y(o.pinTarget) - 6}" text-anchor="end">A's target ${fmtSec(o.pinTarget)}</text>`;
   }
   s += `<line class="guide${o.belowFloor ? " miss" : ""}" x1="${L}" x2="${L + pw}" y1="${Y(o.target)}" y2="${Y(o.target)}"/>` +
     `<text class="lbl" x="${L + 4}" y="${Y(o.target) - 6}">target ${fmtSec(o.target)}${o.belowFloor ? ", under the floor" : ""}</text>`;
@@ -1305,6 +1359,335 @@ function renderFlags() {
       (w ? ` <span class="hint">Clears with: ${esc(w[1])}.</span>` : "") +
       `<br><span class="hint">On: ${esc(places.slice(0, 8).join(", "))}${places.length > 8 ? ", ..." : ""}</span></li>`;
   }).join("");
+}
+
+// ---- Saved scenarios ----
+
+// A scenario is the page's link, the text after the # (linkParams): the
+// source and the knobs. A saved scenario is that text under a name in this
+// browser's localStorage; an exported one is a small JSON file holding the
+// same text. The server keeps nothing. A file or a store read back is
+// untrusted: checkScenario admits only a link this page writes, and every
+// name is shown through esc.
+const SCENARIO_KIND = "capacity-planner-scenario";
+const SCENARIO_VERSION = 1;
+const SCENARIO_STORE = "capacity-planner.scenarios";
+const MAX_SCENARIOS = 50, MAX_NAME = 80, MAX_LINK = 4096, MAX_FILE = 65536;
+
+// LINK_NUMBERS, LINK_NAMES and LINK_WORDS are every key linkParams writes:
+// the numbers, the free names (a recording, a namespace, a model, a variant,
+// a bucket), and the keys with a fixed set of values.
+const LINK_NUMBERS = new Set(["cycle", "prefill", "decode", "rate", "ttft", "tpot", "ratio", "headroom", "out", "max"]
+  .concat(ASSUMABLE.map(a => a.key)));
+const LINK_NAMES = new Set(["recording", "namespace", "model", "prefillVariant", "decodeVariant", "priceAs"]);
+const STAT_WORD = /^(mean|p[0-9]{1,2}(\.[0-9]{1,3})?)$/;
+const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD};
+
+// linkProblem is what is wrong with a link read from a file or the store, or
+// "" when it is one linkParams could have written.
+function linkProblem(link) {
+  if (typeof link !== "string") return "the link is not text";
+  if (link.length > MAX_LINK) return `the link is longer than ${MAX_LINK} characters`;
+  const p = new URLSearchParams(link), seen = new Set();
+  for (const [key, v] of p) {
+    if (seen.has(key)) return `the link names ${key} twice`;
+    seen.add(key);
+    if (LINK_NUMBERS.has(key)) {
+      if (v === "" || !isFinite(+v) || +v < 0) return `${key} is not a number: ${v}`;
+    } else if (LINK_NAMES.has(key)) {
+      if (!v || v.length > 253 || /[\u0000-\u001f\u007f]/.test(v)) return `${key} is not a name`;
+    } else if (LINK_WORDS[key]) {
+      if (!LINK_WORDS[key].test(v)) return `${key} cannot be ${v}`;
+    } else {
+      return `the page sets no ${key}`;
+    }
+  }
+  if (!p.get("recording") && !p.get("namespace")) return "the link names no source";
+  return "";
+}
+
+// checkScenario is a scenario read back, {name, link}, or an error saying why
+// it is not one.
+function checkScenario(x) {
+  if (!x || typeof x !== "object" || Array.isArray(x)) throw new Error("not a scenario");
+  if (typeof x.name !== "string" || !x.name.trim() || x.name.length > MAX_NAME) throw new Error(`a scenario's name is text of 1 to ${MAX_NAME} characters`);
+  const problem = linkProblem(x.link);
+  if (problem) throw new Error(problem);
+  return {name: x.name.trim(), link: x.link, saved: typeof x.saved === "string" ? x.saved.slice(0, 40) : ""};
+}
+
+// readFile is an exported scenario's JSON, checked.
+function readFile(text) {
+  let doc;
+  try { doc = JSON.parse(text); } catch (e) { throw new Error("the file is not JSON"); }
+  if (!doc || doc.kind !== SCENARIO_KIND) throw new Error(`the file is not a ${SCENARIO_KIND}`);
+  if (doc.version !== SCENARIO_VERSION) throw new Error(`the file is version ${String(doc.version).slice(0, 20)}; this page reads version ${SCENARIO_VERSION}`);
+  return checkScenario(doc);
+}
+
+// stored is the scenarios saved in this browser; one that does not check is
+// left out, never shown.
+function stored() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(SCENARIO_STORE) || "[]"); } catch (e) { list = []; }
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const x of list.slice(0, MAX_SCENARIOS)) {
+    try { out.push(checkScenario(x)); } catch (e) { /* not one: left out */ }
+  }
+  return out;
+}
+
+// store writes the saved scenarios, or says why the browser refused.
+function store(list) {
+  try {
+    localStorage.setItem(SCENARIO_STORE, JSON.stringify(list));
+    return true;
+  } catch (e) {
+    setStatus("This browser keeps no saved scenarios here: " + e.message, true);
+    return false;
+  }
+}
+
+// showScenarios lists the saved scenarios, the one named selected.
+function showScenarios(selected) {
+  const list = stored();
+  el("scenlist").innerHTML = list.length ? list.map(x => `<option value="${esc(x.name)}"` + (x.name === selected ? " selected>" : ">") +
+    `${esc(x.name)}${x.saved ? " (" + esc(x.saved) + ")" : ""}</option>`).join("") : '<option value="">none saved</option>';
+  el("scenlist").disabled = el("scenopen").disabled = el("scendelete").disabled = !list.length;
+  el("scencount").textContent = list.length ? `${list.length} saved in this browser` : "";
+  const ready = !!(state.inputs && state.k);
+  el("scensave").disabled = el("scenexport").disabled = !ready;
+}
+
+// scenarioName is the name typed, or one made of the scenario: the model,
+// the fleet or the question, and the rate.
+function scenarioName() {
+  const typed = el("scenname").value.trim();
+  if (typed) return typed.slice(0, MAX_NAME);
+  const k = state.k, what = state.mode === "size" ? "sized" : fleetPlain(k);
+  return `${state.inputs.model}, ${what}, ${fmtRate(k.rate || 0)}`.slice(0, MAX_NAME);
+}
+
+// saveScenario saves the scenario on screen under its name, replacing one
+// saved under the same name.
+function saveScenario() {
+  if (!state.inputs || !state.k) return;
+  const name = scenarioName(), link = linkParams().toString();
+  const list = stored().filter(x => x.name !== name);
+  const replaced = list.length < stored().length;
+  if (list.length >= MAX_SCENARIOS) {
+    setStatus(`This page keeps at most ${MAX_SCENARIOS} scenarios: delete one first.`, true);
+    return;
+  }
+  list.push({name, link, saved: localInput(new Date()).replace("T", " ")});
+  if (!store(list)) return;
+  showScenarios(name);
+  setStatus(`${replaced ? "Replaced" : "Saved"} "${name}" in this browser.`);
+}
+
+// selectedScenario is the saved scenario the list selects, or null.
+function selectedScenario() {
+  const name = el("scenlist").value;
+  return stored().find(x => x.name === name) || null;
+}
+
+// openScenario loads a scenario's source and sets its knobs, as a link does
+// when the page opens. A pinned plan stays pinned, to compare against it.
+function openScenario(sc) {
+  const p = new URLSearchParams(sc.link), s = state.sources;
+  if (!s) return;
+  if (p.get("recording") && !s.recordings.includes(p.get("recording"))) {
+    setStatus(`"${sc.name}" reads the recording ${p.get("recording")}, which this server does not list.`, true);
+    return;
+  }
+  if (!p.get("recording") && (!s.prometheus || !s.namespaces.includes(p.get("namespace")))) {
+    setStatus(`"${sc.name}" reads namespace ${p.get("namespace")} from Prometheus, which this server does not read.`, true);
+    return;
+  }
+  linked = p;
+  const kind = linkSource();
+  (kind === "prometheus" ? el("kprom") : el("krec")).checked = true;
+  // A link keeps no Prometheus window: it opens on the last hour.
+  el("lasthour").checked = true;
+  showKind();
+  state.linkApplied = false;
+  history.replaceState(null, "", "#" + sc.link);
+  el("scenname").value = sc.name;
+  loadInputs();
+}
+
+// exportScenario downloads the scenario on screen as a JSON file.
+function exportScenario() {
+  if (!state.inputs || !state.k) return;
+  const name = scenarioName();
+  const doc = {kind: SCENARIO_KIND, version: SCENARIO_VERSION, name, link: linkParams().toString(), saved: new Date().toISOString()};
+  const blob = new Blob([JSON.stringify(doc, null, 2) + "\n"], {type: "application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "scenario") + ".json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  setStatus(`Exported "${name}" as ${a.download}.`);
+}
+
+// importScenario reads an exported file, saves it in this browser (under a
+// new name where the name is taken by another scenario) and opens it.
+async function importScenario(file) {
+  if (!file) return;
+  try {
+    if (file.size > MAX_FILE) throw new Error(`the file is larger than ${MAX_FILE / 1024} KiB`);
+    const sc = readFile(await file.text());
+    const list = stored();
+    const same = list.find(x => x.name === sc.name);
+    if (same && same.link !== sc.link) {
+      let n = 2;
+      while (list.some(x => x.name === `${sc.name} (${n})`)) n++;
+      sc.name = `${sc.name.slice(0, MAX_NAME - 6)} (${n})`;
+    }
+    if (!same || same.link !== sc.link) {
+      if (list.length >= MAX_SCENARIOS) throw new Error(`this page keeps at most ${MAX_SCENARIOS} scenarios: delete one first`);
+      list.push({name: sc.name, link: sc.link, saved: localInput(new Date()).replace("T", " ")});
+      if (!store(list)) return;
+    }
+    showScenarios(sc.name);
+    openScenario(sc);
+  } catch (e) {
+    setStatus("Could not import the scenario: " + e.message, true);
+  } finally {
+    el("scenimport").value = "";
+  }
+}
+
+// deleteScenario deletes the saved scenario the list selects.
+function deleteScenario() {
+  const sc = selectedScenario();
+  if (!sc) return;
+  if (!store(stored().filter(x => x.name !== sc.name))) return;
+  showScenarios();
+  setStatus(`Deleted "${sc.name}" from this browser.`);
+}
+
+// ---- Compare ----
+
+// A pinned scenario, A, is the plan response on screen when it was pinned,
+// kept as it is: it is not priced again as the knobs move. While it is
+// pinned the graphs draw its curves dashed and a table sets its limits beside
+// the current ones.
+
+// shownPlan is the plan on screen: in size mode the answer's, and none while
+// a size runs or when no fleet within the bound serves the rate.
+function shownPlan() {
+  if (!state.plan) return null;
+  if (state.mode === "size" && !(state.size && state.size.answer)) return null;
+  return state.plan;
+}
+
+// pinWhat is a plan in a few words: the fleet and the rate, and for a size
+// the rate it was sized for.
+function pinWhat(p) {
+  const f = p.scenario.fleet;
+  return `${fleetPlain(f)} at ${fmtRate(p.limits.chosen.rate)}` + (state.mode === "size" ? " (sized)" : "");
+}
+
+function pinA() {
+  const p = shownPlan();
+  if (!p) return;
+  state.pin = {plan: JSON.parse(JSON.stringify(p)), what: pinWhat(p), source: el("srcsum").textContent,
+    at: localInput(new Date()).slice(11)};
+  render();
+}
+
+function unpin() {
+  state.pin = null;
+  if (shownPlan()) render();
+  else renderCompare();
+}
+
+// pinXmax is how far right the graphs run to show all of A: past its lower
+// knee and its rate, as the current plan's run.
+function pinXmax() {
+  if (!state.pin) return 0;
+  const p = state.pin.plan, knee = lowerKnee(p.ttft.markers);
+  return Math.max(knee != null ? knee * 1.2 : 0, p.limits.chosen.rate * 1.1);
+}
+
+// delta is b less a as text: signed, in fmt's units, or "same" where the two
+// print the same; empty where either is refused.
+function delta(a, b, fmt) {
+  if (a == null || b == null) return {text: "", cls: ""};
+  if (fmt(a) === fmt(b)) return {text: "same", cls: ""};
+  const d = b - a;
+  return {text: (d > 0 ? "+" : "-") + fmt(Math.abs(d)), cls: d > 0 ? "up" : "down"};
+}
+
+// fleetDelta is the change in replicas from a to b, a role at a time.
+function fleetDelta(a, b) {
+  const parts = [];
+  for (const role of ["prefill", "decode"]) {
+    const d = (b[role] || 0) - (a[role] || 0);
+    if (d) parts.push(`${d > 0 ? "+" : ""}${d} ${role}`);
+  }
+  return parts.length ? parts.join(", ") : "same";
+}
+
+// sloText is a target in words: its statistic and its value.
+function sloText(stat, target) {
+  return `${stat} ${fmtSec(target)}`;
+}
+
+// bindText is what binds a plan's fleet limit: the role and the bound.
+function bindText(p) {
+  const f = p.limits.fleet, by = boundText(f);
+  return (f.binding && f.binding.length ? rolesText(f.binding, "bind") : "no role binds") + (by ? ", " + by : "");
+}
+
+// renderCompare is the compare box: A beside the plan on screen, each limit
+// with its change, and the controls' state.
+function renderCompare() {
+  const pin = state.pin, cur = shownPlan();
+  el("pina").disabled = !cur;
+  el("pina").title = cur ? "" : state.mode === "size" ? "Nothing to pin until a fleet within the bound serves the rate" : "Nothing priced yet";
+  el("unpin").disabled = !pin;
+  el("pinnote").textContent = pin ? `A: ${pin.what}, pinned at ${pin.at}. It is not priced again; change the knobs to compare.` :
+    "Pin the scenario on screen as A, then change the knobs: A stays drawn dashed.";
+  el("comparebox").hidden = !pin;
+  if (!pin) return;
+  const a = pin.plan, rows = [];
+  const row = (name, at, ct, d) => rows.push(`<tr><th scope="row">${esc(name)}</th><td>${esc(at)}</td><td>${esc(ct)}</td>` +
+    `<td class="${d && d.cls ? "d-" + d.cls : ""}">${esc(d ? d.text : "")}</td></tr>`);
+  if (!cur) {
+    const z = state.size;
+    el("comparewhat").textContent = z && z.unmet ? `No fleet within the bound serves ${fmtRate(z.rate)}: nothing to compare A with.` :
+      "The current scenario is being priced.";
+    el("comparetable").innerHTML = "";
+    return;
+  }
+  el("comparewhat").textContent = pin.source !== el("srcsum").textContent ? `A was priced from another source: ${pin.source}.` : "";
+  const fig = (p, k) => k === "fleet" ? p.limits.fleet : k === "prefill" ? p.limits.prefill : p.limits.decode;
+  row("Fleet", fleetPlain(a.scenario.fleet), fleetPlain(cur.scenario.fleet), {text: fleetDelta(a.scenario.fleet, cur.scenario.fleet), cls: ""});
+  // A higher rate set is neither better nor worse: its change is not coloured.
+  row("Rate set", fmtRate(a.limits.chosen.rate), fmtRate(cur.limits.chosen.rate),
+    Object.assign(delta(a.limits.chosen.rate, cur.limits.chosen.rate, fmtRate), {cls: ""}));
+  for (const [k, name] of [["fleet", "Fleet limit"], ["prefill", "Prefill limit (TTFT)"], ["decode", "Decode limit (TPOT)"]]) {
+    const fa = fig(a, k), fc = fig(cur, k);
+    if (!fa && !fc) continue;
+    row(name, fa ? figPlain(fa, fmtRate) : "none", fc ? figPlain(fc, fmtRate) : "none", delta(val(fa), val(fc), fmtRate));
+  }
+  const ha = val(a.limits.chosen.headroom), hc = val(cur.limits.chosen.headroom);
+  row("Headroom at the rate", figPlain(a.limits.chosen.headroom, fmtRate), figPlain(cur.limits.chosen.headroom, fmtRate), delta(ha, hc, fmtRate));
+  const ab = bindText(a), cb = bindText(cur);
+  row("Binds", ab, cb, {text: ab === cb ? "same" : "changed", cls: ""});
+  const ta = sloText(a.ttft.statistic, a.ttft.line.target), tc = sloText(cur.ttft.statistic, cur.ttft.line.target);
+  row("TTFT target", ta, tc, {text: ta === tc ? "same" : "changed", cls: ""});
+  if (a.tpot || cur.tpot) {
+    const pa = a.tpot ? sloText(a.tpot.statistic, a.tpot.target) : "none", pc = cur.tpot ? sloText(cur.tpot.statistic, cur.tpot.target) : "none";
+    row("TPOT target", pa, pc, {text: pa === pc ? "same" : "changed", cls: ""});
+  }
+  row("Priced at", shapeOf(a), shapeOf(cur), {text: shapeOf(a) === shapeOf(cur) ? "same" : "changed", cls: ""});
+  el("comparetable").innerHTML = `<table><tr><th></th><th>A (pinned, dashed)</th><th>Current</th><th>Change</th></tr>${rows.join("")}</table>`;
 }
 
 // ---- The controls ----
@@ -1417,6 +1800,14 @@ function wire() {
     };
   }
   el("perbucket").onchange =() => { if (ready()) { k().perBucket = el("perbucket").checked; schedule(0); } };
+  // Saved scenarios and compare.
+  el("scensave").onclick = saveScenario;
+  el("scenopen").onclick = () => { const sc = selectedScenario(); if (sc) openScenario(sc); };
+  el("scendelete").onclick = deleteScenario;
+  el("scenexport").onclick = exportScenario;
+  el("scenimport").onchange = () => importScenario(el("scenimport").files[0]);
+  el("pina").onclick = pinA;
+  el("unpin").onclick = unpin;
   el("kprom").onchange = el("krec").onchange = el("lasthour").onchange = showKind;
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
 }

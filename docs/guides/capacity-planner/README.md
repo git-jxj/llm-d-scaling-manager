@@ -210,6 +210,34 @@ the address to reopen the same scenario later, against a server that reads the
 same source. In the second mode the address keeps the question (the rate and
 the targets), not the answer, so it is found again when the page opens.
 
+## Save and compare scenarios
+
+The **Scenario** row under the two questions keeps scenarios and compares
+them.
+
+- **Save** keeps the scenario on screen in this browser, under the name you
+  type (or one made from the model, fleet and rate). Saving under a name
+  already used replaces it. **Open** loads a saved one, **Delete** removes it.
+  The page keeps at most 50.
+- **Export JSON** downloads the scenario as a small file; **Import JSON**
+  reads one, saves it and opens it. The file holds the same text as the
+  address after the `#`, so it opens only against a server that reads the
+  same recording or namespace. A file the page did not write is refused with
+  the reason.
+- **Pin as A** keeps the plan on screen. Change any knob: the TTFT and TPOT
+  graphs draw A as a grey dashed line beside the current one, and a table
+  sets A's fleet, limits, binding role and targets beside the current ones,
+  with the change. A is not priced again as you move the knobs. **Unpin A**
+  clears it. A stays pinned when you open a saved scenario, so you can pin
+  one and open another to compare them.
+
+Both questions work with compare: in the second mode, pin the fleet the page
+found, then switch back and step the replicas, or change the rate and size
+again. A size that no fleet within the bound serves has nothing to pin.
+
+Saved scenarios live in this browser only, not on the server. A Prometheus
+scenario reopens on the last hour ending now, as a shared address does.
+
 ## Run it for others
 
 To use a planner running on another host, tunnel to it. The browser then

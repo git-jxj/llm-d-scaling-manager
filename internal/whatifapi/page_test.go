@@ -164,6 +164,70 @@ func TestPageAsksSize(t *testing.T) {
 	}
 }
 
+// The page saves, exports, imports and compares scenarios: every control is
+// on the page and wired to its handler, the store and the file carry the
+// link, every key the link writes is one an imported link may carry, a
+// name read back reaches the page only through esc, and a pinned plan is a
+// copy, not priced again.
+func TestPageSavesAndCompares(t *testing.T) {
+	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
+	for id, wire := range map[string]string{
+		"scensave":   `el("scensave").onclick = saveScenario;`,
+		"scenopen":   `el("scenopen").onclick =`,
+		"scendelete": `el("scendelete").onclick = deleteScenario;`,
+		"scenexport": `el("scenexport").onclick = exportScenario;`,
+		"scenimport": `el("scenimport").onchange = () => importScenario(el("scenimport").files[0]);`,
+		"pina":       `el("pina").onclick = pinA;`,
+		"unpin":      `el("unpin").onclick = unpin;`,
+	} {
+		assert.Contains(t, html, `id="`+id+`"`)
+		assert.Contains(t, js, wire, "#%s is not wired", id)
+	}
+	for _, id := range []string{"scenname", "scenlist", "scencount", "pinnote", "comparebox", "comparewhat", "comparetable"} {
+		assert.Contains(t, html, `id="`+id+`"`)
+	}
+	assert.Contains(t, html, `<input type="file" id="scenimport"`)
+
+	// One format: the store and the file hold linkParams' text, and writeLink
+	// puts the same text in the address.
+	for _, want := range []string{`"#" + linkParams().toString()`, `link: linkParams().toString()`, `const SCENARIO_KIND = "capacity-planner-scenario";`,
+		`localStorage.setItem(SCENARIO_STORE`, "readFile(await file.text())", "file.size > MAX_FILE"} {
+		assert.Contains(t, js, want)
+	}
+
+	// Every key linkParams writes is one linkProblem admits, so an exported
+	// scenario imports.
+	start, end := strings.Index(js, "function linkParams()"), strings.Index(js, "// ---- The plan ----")
+	require.True(t, start >= 0 && end > start, "linkParams not found")
+	keys := regexp.MustCompile(`p\.set\("([A-Za-z]+)"`).FindAllStringSubmatch(js[start:end], -1)
+	require.Greater(t, len(keys), 15, "found too few link keys")
+	lstart, lend := strings.Index(js, "const LINK_NUMBERS"), strings.Index(js, "function linkProblem")
+	require.True(t, lstart >= 0 && lend > lstart, "the link's keys not found")
+	admitted := js[lstart:lend]
+	for _, k := range keys {
+		assert.True(t, strings.Contains(admitted, `"`+k[1]+`"`) || strings.Contains(admitted, k[1]+": "), "an imported link may not carry %s", k[1])
+	}
+	assert.Contains(t, admitted, ".concat(ASSUMABLE.map(a => a.key))", "the assumed terms' keys")
+	assert.Contains(t, js[start:end], "p.set(a.key, k.assume[a.key])")
+
+	// A name read back is untrusted: into HTML only through esc. (The status
+	// line and the notes take it as textContent.)
+	assert.Contains(t, js, `${esc(x.name)}`)
+	raw := regexp.MustCompile(`\$\{(x|sc|pin|state\.pin)\.(name|what|source)`)
+	for i, line := range strings.Split(js, "\n") {
+		if strings.Contains(line, "innerHTML") || strings.Contains(line, "<option") {
+			assert.NotRegexp(t, raw, line, "planner.js line %d puts a name into HTML unescaped", i+1)
+		}
+	}
+
+	// A pinned plan is a copy of the plan on screen; the graphs draw it dashed.
+	for _, want := range []string{"plan: JSON.parse(JSON.stringify(p))", `cls: "c-pin", pin: true`, `${sr.pin ? " pin" : ""}`} {
+		assert.Contains(t, js, want)
+	}
+	css := pageText(t, "planner.css")
+	assert.Contains(t, css, "svg .line.pin { stroke-dasharray:")
+}
+
 // isFlagType reports whether e is the type whatif.Flag, as its own package or
 // another names it.
 func isFlagType(e ast.Expr) bool {
