@@ -131,6 +131,10 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if req.BucketEdges != nil {
+		return nil, InputErrorf("bucketEdges: a size prices the mix line alone, and the edges shape only a plan's " +
+			"\"if all traffic were bucket b\" view; ask them of POST /v1/plan")
+	}
 	sc, err := scenarioOf(&e.doc, req.planAt(FleetCounts{Prefill: 1, Decode: 1}))
 	if err != nil {
 		return nil, err

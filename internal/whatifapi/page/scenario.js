@@ -23,12 +23,48 @@ const MAX_SCENARIOS = 50, MAX_NAME = 80, MAX_LINK = 4096, MAX_FILE = 65536;
 // LINK_NUMBERS, LINK_NAMES and LINK_WORDS are every key linkParams writes:
 // the numbers (the assumed terms' keys among them, ASSUMABLE in planner.js),
 // the free names (a recording, a namespace, a model, a variant, a bucket),
-// and the keys with a fixed set of values.
+// and the keys with a fixed set of values or a form of their own (edges).
 const LINK_NUMBERS = new Set(["cycle", "prefill", "decode", "rate", "ttft", "tpot", "ratio", "headroom", "out", "max",
   "vp", "a", "promptCV", "routerHop"]);
 const LINK_NAMES = new Set(["recording", "namespace", "model", "prefillVariant", "decodeVariant", "priceAs"]);
 const STAT_WORD = /^(mean|p[0-9]{1,2}(\.[0-9]{1,3})?)$/;
-const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD};
+const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD,
+  edges: {test: edgesInLink}};
+
+// MAX_EDGES and MAX_EDGE are the server's limits on bucketEdges
+// (internal/whatifapi/scenario.go): at most 12 edges, each at most 1024k
+// tokens.
+const MAX_EDGES = 12, MAX_EDGE = 1 << 20;
+
+// parseEdges reads bucket edges as the page's box takes them: token counts
+// or Nk (N x 1024 tokens), split by commas or spaces, ascending, by the
+// server's rules. It returns {edges, text}, text the canonical form the link
+// carries ("2k,16k,64k"); blank is no edges, the default. Anything else
+// throws, saying which edge and why.
+function parseEdges(s) {
+  const words = String(s).split(/[\s,]+/).filter(w => w !== "").map(w => w.toLowerCase());
+  if (words.length > MAX_EDGES) throw new Error(`${words.length} edges; give at most ${MAX_EDGES}`);
+  const edges = [];
+  for (const w of words) {
+    if (!/^[0-9]{1,8}k?$/.test(w)) throw new Error(`${w} is not a token count such as 2048 or 16k`);
+    const e = parseInt(w, 10) * (w.endsWith("k") ? 1024 : 1);
+    if (e < 1 || e > MAX_EDGE) throw new Error(`${w} is outside 1 to ${MAX_EDGE / 1024}k tokens`);
+    if (edges.length && e <= edges[edges.length - 1]) throw new Error(`${w} is not above the edge before it: give the edges smallest first, each once`);
+    edges.push(e);
+  }
+  return {edges, text: words.join(",")};
+}
+
+// edgesInLink reports whether v is edges as linkParams writes them: one or
+// more, in the canonical form parseEdges gives.
+function edgesInLink(v) {
+  try {
+    const r = parseEdges(v);
+    return r.edges.length > 0 && r.text === v;
+  } catch (e) {
+    return false;
+  }
+}
 
 // CONTROL is a control character: in a name, the HTML parser would change
 // it, and the name could never be opened or deleted again.

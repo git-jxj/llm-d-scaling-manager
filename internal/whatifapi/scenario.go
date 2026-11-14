@@ -19,25 +19,52 @@ const (
 	// defaultTTFTStatistic is the TTFT statistic with none in the request or
 	// the policy (config.DefaultTTFTPercentile).
 	defaultTTFTStatistic = "p90"
+	// maxBucketEdges is the most bucket edges a scenario sets.
+	maxBucketEdges = 12
+	// maxBucketEdge is the largest bucket edge a scenario sets, in tokens:
+	// 1024k, past any context window served today.
+	maxBucketEdge = 1 << 20
+	// tokensPerK is the tokens in a "k" of a bucket's name.
+	tokensPerK = 1024
 )
 
-// buckets are the fixed prompt buckets of v1, on the staircase's pattern
-// (docs/proposals/capacity-planner.md, "Buckets"), each named by its upper
-// edge.
-var buckets = []Bucket{{"1k", 1024}, {"4k", 4096}, {"8k", 8192}, {"32k", 32768}, {"128k", 131072}}
+// defaultBuckets are the default prompt buckets, the fixed set of v1, on the
+// staircase's pattern (docs/proposals/capacity-planner.md, "Buckets"), each
+// named by its upper edge (bucketName).
+var defaultBuckets = []Bucket{{"1k", 1024}, {"4k", 4096}, {"8k", 8192}, {"32k", 32768}, {"128k", 131072}}
 
-// Buckets is the fixed prompt buckets, smallest first.
-func Buckets() []Bucket { return slices.Clone(buckets) }
+// Buckets is the default prompt buckets, smallest first: a scenario's own
+// edges (PlanRequest.BucketEdges) replace them on its plan alone.
+func Buckets() []Bucket { return slices.Clone(defaultBuckets) }
 
-// BucketOf is the bucket a prompt falls in: the nearest at or above it, and
-// the last for anything past it.
+// BucketOf is the default bucket a prompt falls in: the nearest at or above
+// it, and the last for anything past it.
 func BucketOf(tokens float64) string {
-	for _, b := range buckets {
+	for _, b := range defaultBuckets {
 		if tokens <= float64(b.UpperTokens) {
 			return b.Name
 		}
 	}
-	return buckets[len(buckets)-1].Name
+	return defaultBuckets[len(defaultBuckets)-1].Name
+}
+
+// bucketName is the name of the bucket whose upper edge is tokens: the edge
+// in k (1024 tokens) where it is a whole number of them, else in tokens. So
+// 8192 is "8k" and 8000 is "8000", and no two edges share a name.
+func bucketName(tokens int) string {
+	if tokens%tokensPerK == 0 {
+		return strconv.Itoa(tokens/tokensPerK) + "k"
+	}
+	return strconv.Itoa(tokens)
+}
+
+// defaultEdges is the default buckets' upper edges.
+func defaultEdges() []int {
+	edges := make([]int, len(defaultBuckets))
+	for i, b := range defaultBuckets {
+		edges[i] = b.UpperTokens
+	}
+	return edges
 }
 
 // usable reports whether x is finite and above 0.
@@ -79,7 +106,54 @@ func scenarioOf(in *InputsResponse, req PlanRequest) (Scenario, error) {
 	if req.Views != nil {
 		sc.Views = *req.Views
 	}
+	if err := sc.bucketEdges(req.BucketEdges); err != nil {
+		return sc, err
+	}
 	return sc, sc.bucketTargets(slo.TTFT)
+}
+
+// bucketEdges sets the scenario's bucket edges: the request's, checked, else
+// the default. Edges equal to the default are left out of the scenario, so
+// that they price, name and cache as no edges do. The learned inputs hold
+// nothing per bucket (the observed mix is refused, NoPerRequestLengths): the
+// edges move only where the "if all traffic were bucket b" lines are priced,
+// each at its upper edge, so no learned figure is re-bucketed or matched to
+// them.
+func (sc *Scenario) bucketEdges(edges []int) error {
+	if edges == nil {
+		return nil
+	}
+	if len(edges) == 0 || len(edges) > maxBucketEdges {
+		return InputErrorf("bucketEdges: %d edges, want 1 to %d upper edges in tokens, ascending", len(edges), maxBucketEdges)
+	}
+	for i, e := range edges {
+		if e < 1 || e > maxBucketEdge {
+			return InputErrorf("bucketEdges[%d] %d, want an upper edge from 1 to %d tokens", i, e, maxBucketEdge)
+		}
+		if i > 0 && e <= edges[i-1] {
+			return InputErrorf("bucketEdges[%d] %d is not above bucketEdges[%d] %d: want the edges ascending, each once", i, e, i-1, edges[i-1])
+		}
+	}
+	if !sc.Views.AllTrafficPerBucket {
+		return InputErrorf("bucketEdges need views.allTrafficPerBucket: the edges shape only that view, and no limit is read per bucket")
+	}
+	if !slices.Equal(edges, defaultEdges()) {
+		sc.BucketEdges = slices.Clone(edges)
+	}
+	return nil
+}
+
+// buckets is the scenario's prompt buckets, smallest first: its edges', else
+// the default.
+func (sc *Scenario) buckets() []Bucket {
+	if sc.BucketEdges == nil {
+		return defaultBuckets
+	}
+	out := make([]Bucket, len(sc.BucketEdges))
+	for i, e := range sc.BucketEdges {
+		out[i] = Bucket{Name: bucketName(e), UpperTokens: e}
+	}
+	return out
 }
 
 // fleet sets the replica counts: the request's, else the recorded ones.
@@ -248,10 +322,11 @@ func (sc *Scenario) bucketTargets(o *Objective) error {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	buckets := sc.buckets()
 	for _, name := range names {
 		t := asked[name]
 		if !slices.ContainsFunc(buckets, func(b Bucket) bool { return b.Name == name }) {
-			return InputErrorf("slo.ttft.bucketTargets.%s: no such bucket; the buckets are %s", name, bucketNames())
+			return InputErrorf("slo.ttft.bucketTargets.%s: no such bucket; the buckets are %s", name, bucketNames(buckets))
 		}
 		if !usable(t) {
 			return InputErrorf("slo.ttft.bucketTargets.%s %g, want a target above 0 in seconds", name, t)
@@ -274,7 +349,7 @@ func (sc *Scenario) bucketTargets(o *Objective) error {
 }
 
 // bucketNames is every bucket's name, in order.
-func bucketNames() string {
+func bucketNames(buckets []Bucket) string {
 	names := make([]string, len(buckets))
 	for i, b := range buckets {
 		names[i] = b.Name

@@ -203,7 +203,8 @@ func (p *planner) limits(ctx context.Context, k Knobs, fl Fleet) (*limitEntry, e
 		TPOT     *ResolvedObjective
 		Headroom float64
 		Views    ViewRequest
-	}{curveKey(p.e.id, k, sc.TPOT != nil), sc.TTFT, sc.TPOT, sc.Headroom, sc.Views})
+		Edges    []int `json:",omitempty"`
+	}{curveKey(p.e.id, k, sc.TPOT != nil), sc.TTFT, sc.TPOT, sc.Headroom, sc.Views, sc.BucketEdges})
 	if le, ok := p.s.limits.get(key); ok {
 		return le, nil
 	}
@@ -243,7 +244,7 @@ func (p *planner) priceLimits(ctx context.Context, k Knobs, fl Fleet) (*limitEnt
 	}
 	if sc.Views.AllTrafficPerBucket {
 		le.buckets = map[string]whatif.Result{}
-		for _, b := range buckets {
+		for _, b := range sc.buckets() {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -466,7 +467,7 @@ func (p *planner) marginal(le *limitEntry, fleet whatif.Result) Marginal {
 // and points. No limit reads it.
 func (p *planner) perBucket(ctx context.Context, k Knobs, le *limitEntry, rate float64) ([]Line, error) {
 	var lines []Line
-	for _, b := range buckets {
+	for _, b := range p.sc.buckets() {
 		kb := bucketKnobs(k, b)
 		fl, err := p.e.pricer.Fleet(kb)
 		if err != nil {

@@ -350,7 +350,7 @@ function setInputs(inputs) {
     tpotStat: tpot.statistic, tpotTarget: tpot.seconds, tpotDefault: !p.tpot,
     ratio: null, headroom: p.headroom || 0.85,
     priceAs: "mix", outputTokens: val(inputs.observed.outputTokens),
-    perBucket: false,
+    perBucket: false, edges: "",
     assume: {},
     maxRep: SIZE_BOUND, sizeLow: false,
   };
@@ -367,6 +367,7 @@ function setInputs(inputs) {
   el("outtok").value = k.outputTokens != null ? Math.round(k.outputTokens) : "";
   el("headroom").value = k.headroom;
   el("perbucket").checked = false;
+  el("bucketedges").value = "";
   el("pnow").textContent = inputs.fleet.prefill ? "now " + inputs.fleet.prefill.replicas : "no prefill variant";
   el("dnow").textContent = "now " + inputs.fleet.decode.replicas;
   el("ratio").value = "";
@@ -516,6 +517,8 @@ function applyLink() {
   if (num("tpot") != null || g("tpotStat")) k.tpotDefault = false;
   // A bucket the inputs do not name prices the current mix.
   k.priceAs = state.inputs.observed.buckets.some(b => b.name === g("priceAs")) ? g("priceAs") : "mix";
+  // Edges the link does not carry in the form linkParams writes are none.
+  k.edges = edgesInLink(g("edges") || "") ? g("edges") : "";
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   k.sizeLow = g("low") === "1";
@@ -538,6 +541,7 @@ function applyLink() {
   if (k.outputTokens != null) el("outtok").value = Math.round(k.outputTokens);
   el("headroom").value = k.headroom;
   el("perbucket").checked = k.perBucket;
+  el("bucketedges").value = k.edges;
   el("ratio").value = k.ratio != null ? k.ratio : "";
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) el("a-" + a.box).value = Number((k.assume[a.key] * a.scale).toPrecision(6));
   showTyped();
@@ -588,6 +592,7 @@ function linkParams() {
   if (k.outputTokens != null) p.set("out", Math.round(k.outputTokens));
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) p.set(a.key, k.assume[a.key]);
   if (k.perBucket) p.set("perBucket", "1");
+  if (k.edges) p.set("edges", k.edges);
   return p;
 }
 
@@ -616,6 +621,10 @@ function planRequest() {
   if (k.tpotStat !== "mean" && k.ratio != null) assume.tpotRatio = k.ratio;
   if (Object.keys(assume).length) req.assume = assume;
   if (k.perBucket) req.views = {allTrafficPerBucket: true};
+  // The edges shape only the per-bucket view. k.edges is always parseEdges'
+  // text (scenario.js), so it reads back.
+  const edges = parseEdges(k.edges).edges;
+  if (k.perBucket && edges.length) req.bucketEdges = edges;
   return req;
 }
 
@@ -786,6 +795,7 @@ function syncControls() {
   // A size prices the mix line alone: the per-bucket view is the plan's.
   el("perbucket").disabled = sizing;
   el("perbucket").checked = k.perBucket;
+  el("bucketedges").disabled = sizing || !k.perBucket;
   el("sizelow").checked = k.sizeLow;
   if (k.rate != null) {
     el("rate").value = k.rate;
@@ -1150,9 +1160,9 @@ function renderTTFT() {
   const series = [{cls: "c-mix", name: `${shapeOf(p)} (the limits are read here)`, pts: pts(t.line.curve), band: true}];
   const dots = [];
   const buckets = t.perBucket || [];
-  const names = state.inputs.observed.buckets.map(b => b.name);
-  for (const l of buckets) {
-    const i = names.indexOf(l.bucket);
+  // The lines follow the plan's edges, up to 12: the five colours repeat.
+  for (const [n, l] of buckets.entries()) {
+    const i = n % 5;
     series.push({cls: "c-" + i, thin: true, name: `if all traffic were ${l.bucket}`, pts: pts(l.curve)});
     const b = val(l.atTarget.rate);
     if (b != null) dots.push({x: b, y: l.atTarget.seconds, cls: "c-" + i, filled: true, small: true});
@@ -1793,7 +1803,17 @@ function wire() {
       schedule(0);
     };
   }
-  el("perbucket").onchange =() => { if (ready()) { k().perBucket = el("perbucket").checked; schedule(0); } };
+  el("perbucket").onchange =() => { if (ready()) { k().perBucket = el("perbucket").checked; syncControls(); schedule(0); } };
+  el("bucketedges").onchange = () => {
+    if (!ready()) return;
+    let r;
+    try { r = parseEdges(el("bucketedges").value); } catch (e) {
+      setStatus(`Bucket edges: ${e.message}.`, true);
+      return;
+    }
+    k().edges = el("bucketedges").value = r.text;
+    schedule(0);
+  };
   // Saved scenarios and compare.
   el("scensave").onclick = saveScenario;
   el("scenopen").onclick = () => { const sc = selectedScenario(); if (sc) openScenario(sc); };

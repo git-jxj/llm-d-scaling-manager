@@ -147,6 +147,26 @@ kill %1
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
 
+## Set your own prompt buckets
+
+The "if all traffic were bucket b" view draws five buckets by default: 1k,
+4k, 8k, 32k and 128k tokens. To draw others, tick the view, then type your
+edges in **Bucket edges**, for example `2k, 16k, 64k`:
+
+- Each edge is a bucket's largest prompt, in tokens. `16k` is 16384 tokens.
+- Give 1 to 12 edges, smallest first, each at most 1024k.
+- Leave the box blank for the default five.
+
+Each line is then priced with every prompt at its edge, and named by it. A
+line named `2000` is an edge of 2000 tokens; `2k` is 2048.
+
+The edges change only this view. The limits, and every figure above the
+graphs, stay the same. The page learns nothing per bucket from your traffic,
+so there is nothing to re-sort into your buckets. The address keeps your
+edges, so a shared link draws the same lines. If an edge is wrong, the status
+line says which one and why, and the graphs keep the last plan until you fix
+it.
+
 ## Find the fleet a rate needs
 
 Above the controls, pick **What fleet does this traffic need?** Then set the

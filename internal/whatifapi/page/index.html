@@ -219,6 +219,8 @@
         <div class="legend" id="ttftlegend"></div>
         <div class="points" id="ttftpoints"></div>
         <label class="toggle"><input type="checkbox" id="perbucket"> Show "if all traffic were bucket b" (each bucket priced as its own fleet; no limit is read from it)</label>
+        <label class="toggle" for="bucketedges">Bucket edges, tokens <span class="hint">(blank for 1k, 4k, 8k, 32k, 128k; up to 12, ascending)</span></label>
+        <input type="text" id="bucketedges" placeholder="2k, 16k, 64k" spellcheck="false" autocomplete="off">
         <div id="buckettable"></div>
       </div>
       <div class="chart">

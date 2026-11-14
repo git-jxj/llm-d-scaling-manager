@@ -165,6 +165,8 @@ plan.scenario.assume.promptCV number
 plan.scenario.assume.routerHop number
 plan.scenario.assume.tpotRatio number
 plan.scenario.assume.vp number
+plan.scenario.bucketEdges array
+plan.scenario.bucketEdges[] number
 plan.scenario.fleet object
 plan.scenario.fleet.decode number
 plan.scenario.fleet.prefill number
@@ -223,6 +225,8 @@ planRequest.assume.promptCV number
 planRequest.assume.routerHop number
 planRequest.assume.tpotRatio number
 planRequest.assume.vp number
+planRequest.bucketEdges array
+planRequest.bucketEdges[] number
 planRequest.fleet object
 planRequest.fleet.decode number
 planRequest.fleet.prefill number
@@ -308,6 +312,8 @@ sizeRequest.assume.promptCV number
 sizeRequest.assume.routerHop number
 sizeRequest.assume.tpotRatio number
 sizeRequest.assume.vp number
+sizeRequest.bucketEdges array
+sizeRequest.bucketEdges[] number
 sizeRequest.headroom number
 sizeRequest.inputsId string
 sizeRequest.maxReplicas object
