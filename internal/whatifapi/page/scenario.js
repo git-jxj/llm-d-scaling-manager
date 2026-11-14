@@ -136,13 +136,138 @@ function cleanName(s) {
   return String(s).replace(new RegExp(CONTROL.source, "g"), " ").trim().slice(0, MAX_NAME).trim();
 }
 
+// scenarioTitle is a name made of clauses, most telling first, joined by
+// commas: whole clauses are dropped from the end until it fits MAX_NAME,
+// never cut mid-word unless the first alone is too long.
+function scenarioTitle(clauses) {
+  const parts = clauses.map(cleanName).filter(Boolean);
+  while (parts.length > 1 && parts.join(", ").length > MAX_NAME) parts.pop();
+  return cleanName(parts.join(", "));
+}
+
+// sourceProblem is why a link's source cannot be opened against a server
+// that lists sources (GET /v1/sources), or "" where it can. No source is
+// substituted for one the server does not read.
+function sourceProblem(link, sources) {
+  if (!sources) return "the page has not listed the server's sources yet: try again in a moment";
+  const p = new URLSearchParams(link), rec = p.get("recording"), ns = p.get("namespace");
+  if (rec) return sources.recordings.includes(rec) ? "" : `it reads the recording ${rec}, which this server does not list`;
+  if (ns) {
+    if (!sources.prometheus) return `it reads namespace ${ns} from Prometheus, which this server does not read`;
+    return sources.namespaces.includes(ns) ? "" : `it reads namespace ${ns}, which this server may not read`;
+  }
+  return "it names no source";
+}
+
+// The link's knobs are applied by one load: link is {seq, restore}, or null
+// once applied or given up. A load that starts takes the link over, so a
+// Load pressed before the link's load returns still applies it.
+// linkAtLoadStart is the link as a load numbered seq starts.
+function linkAtLoadStart(link, seq) {
+  return link ? {seq, restore: link.restore} : null;
+}
+
+// linkAtLoadEnd is what a load numbered seq does with the link when it ends,
+// ok or not, with currentSeq the newest load: apply the knobs, put back what
+// was before (restore, for a scenario opened), or wait for the next load
+// (the page's own link). A load a newer one overtook does nothing.
+function linkAtLoadEnd(link, seq, currentSeq, ok) {
+  if (!link || link.seq !== seq || seq !== currentSeq) return {link, apply: false, restore: null};
+  if (ok) return {link: null, apply: true, restore: null};
+  if (link.restore) return {link: null, apply: false, restore: link.restore};
+  return {link: {seq: null, restore: null}, apply: false, restore: null};
+}
+
+// beginOpen is opening sc over the page as it stands (before: the link's
+// text, the address, the source form and the name box): what to put on the
+// page, and the link to hand to the load, which puts before back if it fails.
+function beginOpen(before, sc) {
+  return {next: {linked: sc.link, hash: "#" + sc.link, name: sc.name}, link: {seq: null, restore: before}};
+}
+
+// importPlan is what importing sc does to the store raw: a scenario saved
+// under the same name with the same link is opened as it is (save false);
+// another under that name makes this one "name (2)" and so on. raw itself is
+// never changed: the page writes the answer once, or nothing.
+function importPlan(raw, sc) {
+  const list = visibleScenarios(raw);
+  const same = list.find(x => x.name === sc.name);
+  if (same && same.link === sc.link) return {raw, name: same.name, save: false};
+  const name = freeName(sc.name, list.map(x => x.name));
+  return {raw: putScenario(raw, {name, link: sc.link, saved: sc.saved}).raw, name, save: true};
+}
+
+// sameCurve reports whether two curves (points {x, y}, y null where refused)
+// are the same line: then A's is drawn under the current one, unseen.
+function sameCurve(a, b) {
+  if (!a || !b || a.length !== b.length || !a.length) return false;
+  const near = (u, v) => u === v || (u != null && v != null && Math.abs(u - v) <= 1e-9 * Math.max(1, Math.abs(u)));
+  return a.every((q, i) => near(q.x, b[i].x) && near(q.y, b[i].y));
+}
+
+// figValue is a figure's value, or null where it is refused or absent.
+function figValue(f) {
+  return f && !f.refused && typeof f.value === "number" ? f.value : null;
+}
+
 // delta is b less a as text: signed, in fmt's units, or "same" where the two
-// print the same; empty where either is refused. cls is "up" or "down".
+// print the same; empty where either is missing. cls is "up" or "down". The
+// change is the change of the figures as printed, so that 10.1 to 10.2 is
+// +0.10, not the +0.16 the unrounded figures differ by.
 function delta(a, b, fmt) {
   if (a == null || b == null) return {text: "", cls: ""};
-  if (fmt(a) === fmt(b)) return {text: "same", cls: ""};
-  const d = b - a;
+  const ta = String(fmt(a)), tb = String(fmt(b));
+  if (ta === tb) return {text: "same", cls: ""};
+  const num = t => parseFloat(t.replace(/,/g, "")), unit = t => t.replace(/^[-+0-9.,]+/, "");
+  const shown = isFinite(num(ta)) && isFinite(num(tb)) && unit(ta) === unit(tb);
+  const d = shown ? num(tb) - num(ta) : b - a;
   return {text: (d > 0 ? "+" : "-") + fmt(Math.abs(d)), cls: d > 0 ? "up" : "down"};
+}
+
+// figDelta is delta of two figures, saying where either is refused: "both
+// refused", "now refused" (A priced it), "now priced" (A refused it).
+function figDelta(fa, fc, fmt) {
+  const va = figValue(fa), vc = figValue(fc);
+  if (!fa || !fc) return {text: "", cls: ""};
+  if (va == null && vc == null) return {text: "both refused", cls: ""};
+  if (va == null) return {text: "now priced", cls: ""};
+  if (vc == null) return {text: "now refused", cls: ""};
+  return delta(va, vc, fmt);
+}
+
+// compareRows is the compare table: A, the current plan and the change, row
+// by row. f formats: rate (r/s), fleet (counts), fig (a figure in r/s, or its
+// refusal), bind (what binds a plan), slo (statistic, target) and shape (what
+// a plan was priced at). Every text is escaped here.
+function compareRows(a, cur, f) {
+  const rows = [];
+  const row = (name, at, ct, d) => rows.push(`<tr><th scope="row">${esc(name)}</th><td>${esc(at)}</td><td>${esc(ct)}</td>` +
+    `<td class="${d.cls ? "d-" + d.cls : ""}">${esc(d.text)}</td></tr>`);
+  const same = (x, y) => ({text: x === y ? "same" : "changed", cls: ""});
+  row("Fleet", f.fleet(a.scenario.fleet), f.fleet(cur.scenario.fleet), {text: fleetDelta(a.scenario.fleet, cur.scenario.fleet), cls: ""});
+  // A higher rate set is neither better nor worse: its change is not coloured.
+  const ra = a.limits.chosen.rate, rc = cur.limits.chosen.rate, rateSame = f.rate(ra) === f.rate(rc);
+  row("Rate you set", f.rate(ra), f.rate(rc), Object.assign(delta(ra, rc, f.rate), {cls: ""}));
+  for (const [key, name] of [["fleet", "Fleet limit"], ["prefill", "Prefill limit (TTFT)"], ["decode", "Decode limit (TPOT)"]]) {
+    const xa = a.limits[key], xc = cur.limits[key];
+    if (!xa && !xc) continue;
+    row(name, xa ? f.fig(xa) : "none", xc ? f.fig(xc) : "none", figDelta(xa, xc, f.rate));
+  }
+  // Headroom at another rate is not better or worse: coloured only where the
+  // rate is the same.
+  const hd = figDelta(a.limits.chosen.headroom, cur.limits.chosen.headroom, f.rate);
+  row("Headroom at the rate", f.fig(a.limits.chosen.headroom), f.fig(cur.limits.chosen.headroom), rateSame ? hd : Object.assign(hd, {cls: ""}));
+  const ba = f.bind(a), bc = f.bind(cur);
+  row("Binds", ba, bc, same(ba, bc));
+  const ta = f.slo(a.ttft.statistic, a.ttft.line.target), tc = f.slo(cur.ttft.statistic, cur.ttft.line.target);
+  row("TTFT target", ta, tc, same(ta, tc));
+  if (a.tpot || cur.tpot) {
+    const pa = a.tpot ? f.slo(a.tpot.statistic, a.tpot.target) : "none", pc = cur.tpot ? f.slo(cur.tpot.statistic, cur.tpot.target) : "none";
+    row("TPOT target", pa, pc, same(pa, pc));
+  }
+  const sa = f.shape(a), sc = f.shape(cur);
+  row("Priced at", sa, sc, same(sa, sc));
+  return `<table><tr><th></th><th>A (dashed)</th><th>Current</th><th>Change</th></tr>${rows.join("")}</table>`;
 }
 
 // fleetDelta is the change in replicas from a to b, a role at a time.

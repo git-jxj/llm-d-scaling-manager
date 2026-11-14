@@ -212,30 +212,40 @@ the targets), not the answer, so it is found again when the page opens.
 
 ## Save and compare scenarios
 
-The **Scenario** row under the two questions keeps scenarios and compares
-them.
+To compare two scenarios:
+
+1. Price the first one: set the knobs and wait for the figures.
+2. Press **Pin as A**. The page keeps that plan as A.
+3. Change the knobs, or open a saved scenario with **Open**.
+4. Read the result. The TTFT and TPOT graphs draw A as a grey dashed line
+   beside the current curve, with A's limit point labelled "A: ... r/s". The
+   table under the tabs sets A's fleet, limits, binding role and targets
+   beside the current ones, with the change: "now refused" or "now priced"
+   where only one side has a figure.
+
+A is not priced again as you move the knobs. **Unpin A** clears it. The pin
+is not saved or exported: it is gone when the page reloads. Both questions
+work: in the second mode, pin the fleet the page found, then switch back and
+step the replicas, or change the rate and size again. A size that no fleet
+within the bound serves has nothing to pin, and while the current scenario
+is being priced, or failed to price, the table says so instead of comparing.
+
+To keep a scenario for later:
 
 - **Save** keeps the scenario on screen in this browser, under the name you
-  type (or one made from the model, fleet and rate). Saving under a name
-  already used replaces it, and the status line says so. **Open** loads a
-  saved one, **Delete** removes it. The page keeps at most 50.
+  type. With no name typed, the page makes one from the model, the fleet, the
+  rate, the targets and the headroom, dropping the last of these to fit 80
+  characters. Saving under a name already used replaces it, and the status
+  line says so. **Open** loads a saved one, **Delete** removes it. The page
+  keeps at most 50.
 - **Export JSON** downloads the scenario as a small file; **Import JSON**
   reads one, saves it and opens it. If another saved scenario already has
-  its name, the import is saved as "name (2)", "name (3)" and so on. The file
-  holds the same text as the address after the `#`, so it opens only against
-  a server that reads the same recording or namespace. A file that fails the
-  page's checks is refused, with the reason. A scenario that fails to load
-  leaves the page as it was.
-- **Pin as A** keeps the plan on screen. Change any knob: the TTFT and TPOT
-  graphs draw A as a grey dashed line beside the current one, and a table
-  sets A's fleet, limits, binding role and targets beside the current ones,
-  with the change. A is not priced again as you move the knobs. **Unpin A**
-  clears it. A stays pinned when you open a saved scenario, so you can pin
-  one and open another to compare them.
-
-Both questions work with compare: in the second mode, pin the fleet the page
-found, then switch back and step the replicas, or change the rate and size
-again. A size that no fleet within the bound serves has nothing to pin.
+  its name, the import is saved as "name (2)", "name (3)" and so on. A file
+  that fails the page's checks is refused, with the reason.
+- A scenario holds the same text as the address after the `#`, so it opens
+  only against a server that reads the same recording or namespace. One this
+  server does not read is refused (an import is saved, and not opened), and
+  a scenario that fails to load leaves the page as it was.
 
 Saved scenarios live in this browser only, not on the server. A Prometheus
 scenario reopens on the last hour ending now, as a shared address does.

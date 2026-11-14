@@ -16,7 +16,8 @@ const ctx = vm.createContext({URLSearchParams});
 vm.runInContext(fs.readFileSync(file, "utf8"), ctx, {filename: file});
 const S = name => vm.runInContext(name, ctx);
 const {esc, linkProblem, checkScenario, readScenarioFile, parseStore, visibleScenarios, putScenario, dropScenario, freeName,
-  cleanName, delta, fleetDelta} = ctx;
+  cleanName, delta, fleetDelta, scenarioTitle, sourceProblem, linkAtLoadStart, linkAtLoadEnd, beginOpen, importPlan, sameCurve, figDelta,
+  compareRows} = ctx;
 const MAX_NAME = S("MAX_NAME"), MAX_SCENARIOS = S("MAX_SCENARIOS"), MAX_LINK = S("MAX_LINK");
 
 let passed = 0;
@@ -178,6 +179,136 @@ for (const [a, b, text, cls] of [[1, 2, "+1.00", "up"], [2, 1, "-1.00", "down"],
 check("fleetDelta of one role", fleetDelta({prefill: 2, decode: 1}, {prefill: 4, decode: 1}) === "+2 prefill");
 check("fleetDelta of both", fleetDelta({prefill: 2, decode: 3}, {prefill: 1, decode: 4}) === "-1 prefill, +1 decode", fleetDelta({prefill: 2, decode: 3}, {prefill: 1, decode: 4}));
 check("fleetDelta of none", fleetDelta({prefill: 1, decode: 1}, {prefill: 1, decode: 1}) === "same");
+// A decode-only fleet has no prefill count: it counts as 0.
+check("fleetDelta adding prefill to a decode-only fleet", fleetDelta({decode: 2}, {prefill: 1, decode: 2}) === "+1 prefill");
+check("fleetDelta of a decode-only change", fleetDelta({decode: 2}, {decode: 3}) === "+1 decode", fleetDelta({decode: 2}, {decode: 3}));
+
+// delta reads the figures as printed: 10.06 and 10.22 print 10.1 and 10.2,
+// and the change is +0.10 r/s, not the +0.16 between the raw values.
+const fr = v => v.toFixed(Math.abs(v) >= 10 ? 1 : 2) + " r/s";
+check("delta of the printed figures", delta(10.06, 10.22, fr).text === "+0.10 r/s", delta(10.06, 10.22, fr).text);
+check("delta of the printed figures, down", delta(10.22, 10.06, fr).text === "-0.10 r/s" && delta(10.22, 10.06, fr).cls === "down");
+check("delta across units falls back to the values", delta(0.9, 1.2, v => v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s").text === "+300 ms");
+
+// figDelta says where a side is refused.
+const fig = v => ({value: v}), refused = {refused: {reason: "Saturated"}};
+check("figDelta both refused", figDelta(refused, refused, fr).text === "both refused");
+check("figDelta now refused", figDelta(fig(2), refused, fr).text === "now refused");
+check("figDelta now priced", figDelta(refused, fig(2), fr).text === "now priced");
+check("figDelta of two values", figDelta(fig(2), fig(3), fr).text === "+1.00 r/s");
+check("figDelta with a side missing", figDelta(undefined, fig(3), fr).text === "");
+
+// compareRows: every text escaped, the refusals said, headroom coloured only
+// at the same rate, the header and row names.
+const hostile = '<img src=x onerror="alert(1)">';
+const plan = (o = {}) => ({
+  scenario: {fleet: {prefill: 2, decode: 1}},
+  limits: {fleet: fig(o.fleet ?? 11.2), prefill: fig(11.6), decode: o.decode === null ? undefined : fig(o.decode ?? 11.2),
+    chosen: {rate: o.rate ?? 10, headroom: o.headroom ?? fig(1.2)}},
+  ttft: {statistic: o.stat ?? "p90", line: {target: 0.5}}, tpot: {statistic: "mean", target: 0.004},
+});
+const fmts = {rate: fr, fleet: n => `${n.prefill} prefill ${hostile}`, fig: f => figValue(f) != null ? fr(figValue(f)) : "refused " + hostile,
+  bind: () => "decode binds " + hostile, slo: (s, t) => `${s} ${t}`, shape: () => "a mix " + hostile};
+const figValue = f => f && !f.refused && typeof f.value === "number" ? f.value : null;
+const html = compareRows(plan({stat: hostile}), plan({fleet: 12.3, headroom: refused}), fmts);
+const tagless = html.replace(/<\/?(table|tr|th|td)( scope="row"| class="[a-z-]*")?>/g, "");
+check("compareRows lets no markup through", !tagless.includes("<") && !tagless.includes(">"), tagless.slice(0, 200));
+check("compareRows escapes the texts", html.includes("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"));
+// The change cell: a rate formatter whose text carries markup.
+const hostileRate = v => fr(v) + " <b>";
+const changes = compareRows(plan(), plan({fleet: 12.3}), {...fmts, rate: hostileRate})
+  .replace(/<\/?(table|tr|th|td)( scope="row"| class="[a-z-]*")?>/g, "");
+check("compareRows escapes the change cell", !changes.includes("<b>") && changes.includes("+1.10 r/s &lt;b&gt;"), changes.slice(0, 160));
+// The row names are the page's own words; the row template escapes them
+// anyway, and every other text it puts in a cell.
+const rowTemplate = (compareRows.toString().match(/const row = [\s\S]*?\);\n/) || [""])[0];
+const holes = rowTemplate.match(/\$\{[^}]*\}/g) || [];
+check("the row template has its holes", holes.length === 5, holes.join(" "));
+check("every hole in the row template is escaped", holes.every(h => h.startsWith("${esc(") || h === '${d.cls ? "d-" + d.cls : ""}'), holes.join(" "));
+check("compareRows headers", html.includes("<th>A (dashed)</th><th>Current</th><th>Change</th>"));
+check("compareRows names the rate row", html.includes(">Rate you set<") && !html.includes(">Rate set<"));
+check("compareRows says now refused", html.includes(">now refused<"));
+check("compareRows colours a limit that rose", /Fleet limit<\/th><td>[^<]*<\/td><td>[^<]*<\/td><td class="d-up">\+1.10 r\/s</.test(html), html.match(/Fleet limit.*?<\/tr>/)?.[0]);
+const sameRate = compareRows(plan(), plan({headroom: fig(2.2)}), fmts);
+const otherRate = compareRows(plan(), plan({headroom: fig(2.2), rate: 9}), fmts);
+const headroomCell = h => (h.match(/Headroom at the rate<\/th><td>[^<]*<\/td><td>[^<]*<\/td><td class="([^"]*)">/) || [])[1];
+check("headroom coloured at the same rate", headroomCell(sameRate) === "d-up", headroomCell(sameRate));
+check("headroom not coloured at another rate", headroomCell(otherRate) === "", headroomCell(otherRate));
+check("rate change is never coloured", /Rate you set<\/th><td>[^<]*<\/td><td>[^<]*<\/td><td class="">-1.00 r\/s</.test(otherRate), otherRate.match(/Rate you set.*?<\/tr>/)?.[0]);
+check("compareRows drops a role neither side has", !compareRows(plan({decode: null}), plan({decode: null}), fmts).includes("Decode limit"));
+
+// scenarioTitle: whole clauses dropped from the end, headroom first.
+const short = scenarioTitle(["m2", "1 decode", "2.00 r/s", "TTFT p90 1 s", "TPOT mean 50 ms", "headroom 0.85"]);
+check("scenarioTitle keeps every clause that fits", short === "m2, 1 decode, 2.00 r/s, TTFT p90 1 s, TPOT mean 50 ms, headroom 0.85", short);
+// 87 characters in all: the headroom goes, whole.
+const title = scenarioTitle(["model-02", "2 prefill, 1 decode", "11.2 r/s", "TTFT p90 500 ms", "TPOT mean 4.0 ms", "headroom 0.85"]);
+check("scenarioTitle drops the headroom first", title === "model-02, 2 prefill, 1 decode, 11.2 r/s, TTFT p90 500 ms, TPOT mean 4.0 ms", title);
+const t2 = scenarioTitle(["m".repeat(40), "2 prefill, 1 decode", "11.2 r/s", "TTFT p90 500 ms", "TPOT mean 4.0 ms", "headroom 0.85"]);
+check("scenarioTitle drops whole clauses until it fits", t2 === "m".repeat(40) + ", 2 prefill, 1 decode, 11.2 r/s", t2);
+check("scenarioTitle cuts only a first clause too long", scenarioTitle(["x".repeat(100), "y"]).length === MAX_NAME);
+
+// sourceProblem: what a server that lists sources can open.
+const recs = {prometheus: false, namespaces: [], recordings: ["a.jsonl.gz"]};
+const prom = {prometheus: true, namespaces: ["llm"], recordings: []};
+check("sourceProblem: a listed recording", sourceProblem("recording=a.jsonl.gz", recs) === "");
+check("sourceProblem: an unlisted recording", sourceProblem("recording=b.jsonl.gz", recs).includes("does not list"));
+check("sourceProblem: a namespace on a recordings-only server", sourceProblem("namespace=llm&rate=1", recs).includes("does not read"));
+check("sourceProblem: an allowed namespace", sourceProblem("namespace=llm", prom) === "");
+check("sourceProblem: a namespace not allowed", sourceProblem("namespace=other", prom).includes("may not read"));
+check("sourceProblem: sources not listed yet", sourceProblem("namespace=llm", null).includes("not listed"));
+check("sourceProblem: no source", sourceProblem("rate=1", prom) === "it names no source");
+
+// The link handshake: the page's link, a scenario opened, loads overtaken.
+let link = {seq: null, restore: null};
+link = linkAtLoadStart(link, 1);
+let end = linkAtLoadEnd(link, 1, 1, true);
+check("the first load applies the page's link", end.apply && end.link === null);
+end = linkAtLoadEnd(linkAtLoadStart({seq: null, restore: null}, 1), 1, 1, false);
+check("a failed first load keeps the link for the next", !end.apply && end.link && end.link.seq === null && !end.restore);
+check("the next load takes it", linkAtLoadStart(end.link, 2).seq === 2);
+// Load pressed before the first load returns: the newer load applies it.
+link = linkAtLoadStart(linkAtLoadStart({seq: null, restore: null}, 1), 2);
+check("an overtaken load does nothing", !linkAtLoadEnd(link, 1, 2, true).apply);
+check("the overtaking load applies the link", linkAtLoadEnd(link, 2, 2, true).apply);
+// A scenario opened, whose load fails: put back, and no later load applies it.
+const before = {linked: "recording=a.jsonl.gz&prefill=2", hash: "#recording=a.jsonl.gz&prefill=2", form: {rec: "a.jsonl.gz", prom: false}, name: "mine"};
+const open = beginOpen(before, {name: "dead", link: "recording=a.jsonl.gz&model=none&prefill=5"});
+check("beginOpen puts the scenario on the page", open.next.linked === "recording=a.jsonl.gz&model=none&prefill=5" &&
+  open.next.hash === "#recording=a.jsonl.gz&model=none&prefill=5" && open.next.name === "dead");
+link = linkAtLoadStart(open.link, 7);
+end = linkAtLoadEnd(link, 7, 7, false);
+check("a failed scenario load restores what was before", end.restore === before && !end.apply && end.link === null);
+check("what is restored is the page before", end.restore.linked === before.linked && end.restore.hash === before.hash &&
+  end.restore.form.rec === "a.jsonl.gz" && end.restore.name === "mine");
+check("no later load applies a failed scenario", linkAtLoadStart(end.link, 8) === null);
+check("a scenario load that succeeds applies it", linkAtLoadEnd(linkAtLoadStart(beginOpen(before, {name: "x", link: "namespace=llm"}).link, 9), 9, 9, true).apply);
+// A Load pressed while the scenario loads takes it over, rollback included.
+link = linkAtLoadStart(linkAtLoadStart(open.link, 3), 4);
+check("an overtaking load carries the rollback", linkAtLoadEnd(link, 4, 4, false).restore === before);
+
+// importPlan: the import branches; raw is never changed.
+const store0 = [{name: "a", link: good, saved: "t0"}, foreign];
+const snapshot = JSON.stringify(store0);
+let imp = importPlan(store0, {name: "a", link: good, saved: "t1"});
+check("same name, same link: opened, not saved", !imp.save && imp.name === "a" && imp.raw === store0);
+imp = importPlan(store0, {name: "a", link: "namespace=llm", saved: "t1"});
+check("same name, another link: suffixed and saved", imp.save && imp.name === "a (2)" &&
+  visibleScenarios(imp.raw).map(x => x.name).join("|") === "a|a (2)", imp.name);
+imp = importPlan(store0, {name: "new", link: good, saved: "t1"});
+check("a new name: saved as it is", imp.save && imp.name === "new" && hasForeign(imp.raw));
+check("importPlan never changes the store it read", JSON.stringify(store0) === snapshot);
+throws("importPlan at the cap refuses, saving nothing", () => importPlan(full, {name: "one more", link: good}), "at most");
+
+// The saved time is kept, and cut at 40 characters.
+check("putScenario keeps .saved", visibleScenarios(putScenario([], {name: "t", link: good, saved: "2026-11-14 21:08"}).raw)[0].saved === "2026-11-14 21:08");
+check("putScenario cuts .saved at 40", visibleScenarios(putScenario([], {name: "t", link: good, saved: "s".repeat(60)}).raw)[0].saved.length === 40);
+
+// sameCurve: A drawn under the current curve.
+const c1 = [{x: 1, y: 0.1}, {x: 2, y: null}, {x: 3, y: 0.3}];
+check("sameCurve of one curve", sameCurve(c1, c1.map(q => ({...q}))));
+check("sameCurve within rounding", sameCurve(c1, [{x: 1, y: 0.1 + 1e-13}, {x: 2, y: null}, {x: 3, y: 0.3}]));
+check("sameCurve of another curve", !sameCurve(c1, [{x: 1, y: 0.1}, {x: 2, y: 0.2}, {x: 3, y: 0.3}]));
+check("sameCurve of other lengths", !sameCurve(c1, c1.slice(1)) && !sameCurve([], []));
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -187,8 +318,11 @@ if (failures.length) {
   for (const f of failures) console.error("  FAIL " + f);
   process.exit(1);
 }
-if (passed < 85) {
-  console.error(`check-planner-scenarios: only ${passed} cases ran; expected at least 85`);
+// EXPECTED_CASES is how many cases this file runs: a case that silently
+// stops running (an early return, a renamed function) fails the check.
+const EXPECTED_CASES = 145;
+if (passed !== EXPECTED_CASES) {
+  console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);
 }
 console.log(`check-planner-scenarios: ${passed} cases passed (${file})`);

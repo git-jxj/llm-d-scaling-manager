@@ -268,6 +268,16 @@ jobs:
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
 
+      # hack/check-planner-scenarios.sh runs the capacity planner page's
+      # scenario logic under node, and is FATAL without it rather than
+      # skipping. Pinned here instead of relying on whatever node the runner
+      # image ships.
+      - name: Set up node
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
       - name: Run make lint-deploy-scripts
         if: needs.check-code-changes.outputs.has_code_changes != 'false'
         run: make lint-deploy-scripts

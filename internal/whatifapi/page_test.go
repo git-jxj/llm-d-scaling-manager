@@ -201,8 +201,10 @@ func TestPageSavesAndCompares(t *testing.T) {
 	sjs := pageText(t, "scenario.js")
 	for _, want := range []string{`"#" + linkParams().toString()`, `link: linkParams().toString()`,
 		`localStorage.setItem(SCENARIO_STORE`, "readScenarioFile(await file.text())", "file.size > MAX_FILE",
-		"putScenario(readStore(),", "dropScenario(readStore(), sc.name)", "freeName(sc.name, list.map(x => x.name))",
-		"visibleScenarios(readStore())", "new Option(", "state.linkSeq === seq"} {
+		"putScenario(readStore(),", "dropScenario(readStore(), sc.name)", "importPlan(readStore(),",
+		"visibleScenarios(readStore())", "new Option(", "state.link = linkAtLoadStart(state.link, seq);",
+		"linkAtLoadEnd(state.link, seq, state.seq, true)", "linkAtLoadEnd(state.link, seq, state.seq, false)", "beginOpen(pageBefore(), sc)",
+		"sourceProblem(sc.link, state.sources)", "compareRows(pin.plan, cur,", "sameCurve(p, pts(current))", "state.priceFailed = true;"} {
 		assert.Contains(t, js, want)
 	}
 	assert.Contains(t, sjs, `const SCENARIO_KIND = "capacity-planner-scenario";`)

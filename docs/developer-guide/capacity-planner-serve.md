@@ -276,9 +276,11 @@ exported one is a JSON file:
 ```
 
 The logic that needs no page is in `internal/whatifapi/page/scenario.js`,
-loaded before `planner.js`: `esc`, the checks, the store's edits, the names
-and the compare table's changes. `hack/check-planner-scenarios.sh` (in
-`make lint-deploy-scripts`) runs those functions under node on fixtures.
+loaded before `planner.js`: `esc`, the checks, the store's edits, the names,
+which sources a scenario can open, the link's handshake with the loads, the
+import's branches and the compare table. `hack/check-planner-scenarios.sh`
+(in `make lint-deploy-scripts`, which sets up node in CI) runs those
+functions under node on fixtures, and fails without node.
 
 A file (at most 64 KiB) and every store entry read back are checked by
 `checkScenario` before use: the kind and version, a name of 1 to 80
@@ -289,23 +291,35 @@ file that fails is refused with the reason. A store entry that fails is not
 listed but is kept, and written back as it was on every save and delete
 (`putScenario`, `dropScenario`): it may be another version's. The list is
 built from `Option` nodes, so a name is never markup; elsewhere names reach
-HTML only through `esc`. An import whose name a saved scenario has is saved
-as "name (2)" and so on (`freeName`), within the 80 characters.
+HTML only through `esc`. An import is planned by `importPlan`: one the same
+as a saved scenario is opened without saving, one whose name another has is
+saved as "name (2)" and so on (`freeName`), within the 80 characters, and the
+store is written once or not at all. A generated name is `scenarioTitle`:
+whole clauses dropped from the end, headroom first, to fit.
 
-Opening a scenario loads its source as the page does when it opens. Its
-knobs are applied by that load alone (`state.linkSeq`): if the load fails,
-the link, the address and the source form are put back, and a later Load
-applies nothing of it. A recording or namespace the server does not list is
-refused before any request.
+Opening a scenario, or the link the page opens on, needs a source this
+server reads (`sourceProblem`): otherwise it is refused before any request,
+and no other source is loaded in its place; an import is then saved and not
+opened. The link's knobs are applied by one load (`state.link`,
+`linkAtLoadStart`, `linkAtLoadEnd`): the newest load takes the link over, so
+a Load pressed before the first load returns still applies it. The page's
+own link waits for the first load that succeeds. A scenario's load that
+fails puts back what `beginOpen` recorded (the link, the address, the source
+form and the name box), and no later Load applies it.
 
 "Pin as A" copies the plan response on screen (in size mode, the answer's
 plan) into `state.pin`. It is not priced again: the graphs draw its TTFT and
-TPOT curves dashed (class `pin`), with its point B and its target where that
-differs, and the compare box tables its fleet, limits, headroom, binding and
-targets beside the plan on screen, with the change. The x axis runs far enough
-to show both. A size no fleet serves has no plan, so nothing to pin, and the
-table says so while A stays pinned; Pin is also disabled while a size is in
-flight.
+TPOT curves dashed (class `pin`, a longer dash and a thicker line than the
+guides), with its point B labelled "A: x r/s" ("(cap)" where its cap holds the
+limit under it) and its target where that differs. A curve that is the
+current one (`sameCurve`) is named "A: same as current" in the legend. The
+compare box is `compareRows`: A's fleet, rate, limits, headroom, binding and
+targets beside the plan on screen, with the change as printed (10.1 to 10.2
+is +0.10), "now refused" or "now priced" where one side is refused, and
+headroom coloured only at the same rate. The x axis runs far enough to show
+both. With no plan on screen it says why instead (`state.priceFailed`: the
+last price or size failed; no fleet within the bound; being priced, set as
+soon as size mode starts), and Pin is disabled meanwhile.
 
 To look at the page against the goldens' recordings:
 
@@ -479,5 +493,5 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
 | `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
-| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node: `esc`, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, and the compare table's signed changes. |
+| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (145 cases; it fails without node): `esc`, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |
