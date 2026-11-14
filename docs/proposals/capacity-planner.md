@@ -3,7 +3,10 @@
 **Status:** proposal, 2026-11-09; the open questions are settled under
 [Decisions](#decisions). Phase 0, the API, and phase 1, the page, are built:
 see [As built (phase 0)](#as-built-phase-0) and
-[As built (phase 1)](#as-built-phase-1). Later phases are not. It builds on
+[As built (phase 1)](#as-built-phase-1). Of phase 2, inverse mode is built
+([As built (phase 2: inverse mode)](#as-built-phase-2-inverse-mode)); saved
+scenarios and compare, user-set bucket edges and the Grafana dashboard are
+not. Later phases are not. It builds on
 `cmd/capacity-planner` and `internal/signals/whatif`, which are
 ([what-if capacity](slo-capacity-planner.md), [end-to-end TTFT](slo-capacity-planner-ttft.md)),
 including the processor-sharing TTFT pricing (PR #16, merged).
@@ -899,6 +902,54 @@ and the provenance chips of every term. The banner is the API's.
 - **Not built:** per-bucket target sliders (the bucket lines take the mix
   target), dragging a point, a variant select read from `GET /v1/models`, the
   Prometheus window's age and refresh.
+
+## As built (phase 2: inverse mode)
+
+C5 is built: `POST /v1/size` in the API, and a toggle on the page between
+"How much does this fleet serve?" and "What fleet does this traffic need?".
+How to use it is in the guide's
+[Find the fleet a rate needs](../guides/capacity-planner/README.md#find-the-fleet-a-rate-needs);
+the keys and the search are in
+[What-if serve](../developer-guide/capacity-planner-serve.md#the-size).
+
+**The search.** It prices fleets with the engine's own limits, as the plan's
++1 steps do, and bisects each count up to a bound (`maxReplicas`, 32 a role
+by default, at most 64). Decode first, on its own limit (TPOT and the
+operating-point cap); then decode once more on the fleet's limit with prefill
+at its bound, since the lower knee and decode admission hold the prefill
+limit down; then prefill at that decode count. This is the order
+[The API](#endpoints) gives, with the recheck made a search: a fleet can need
+more decode replicas than TPOT asks for. The answer's limit, headroom and
+binding are read from a plan of the fleet found, so the answer is what
+`POST /v1/plan` says there, and the plan is in the answer.
+
+**What it returns.** The fleet; its limit and the headroom over the rate; the
+role that binds and the limit's `boundBy`, which names the SLO or the cap; the
+plan with its flags and assumed inputs; and the fleet with one replica fewer
+of each role, with the rate it serves, short of the one asked. No fleet within
+the bound is a refusal with a reason: the engine's, where it refuses the
+figure (a term refused, a target under the floor), else
+`ReplicaBoundReached` with the figure the bound reached, and the role that
+falls short.
+
+**Where it departs from the design above.**
+
+- **The fewest per role is decode first.** The answer is the fewest decode
+  replicas that serve the rate, then the fewest prefill replicas with them.
+  Where decode admission holds the prefill limit down, a fleet with one more
+  decode and one fewer prefill replica may also serve the rate; the search
+  does not look for it. The +1 steps on the plan show the trade.
+- **The search takes each limit to rise with its replica count.** It does on
+  every fleet looked at; a fleet where it did not would give an answer that
+  is not the fewest, and the one-fewer figures would show it.
+- **Cost.** A size prices about a dozen fleets' limits (without the span over
+  V_P and f), then one cold plan. On the worked recording, 0.6 r/s at TTFT
+  p95 200 ms took 20 s (11 fleets, an answer of 14 prefill); a rate no fleet
+  of 32 serves was refused in about 1 s. The page prices a size when the rate
+  slider is let go, not while it moves.
+- **One question per size.** The per-bucket view is the plan's; a size prices
+  the mix line alone. The CLI has no size command: the API's answer comes
+  from the same limits `slo-to-rate` prints.
 
 ## Decisions
 

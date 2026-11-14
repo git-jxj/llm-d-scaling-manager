@@ -10,6 +10,7 @@ model's prefill/decode fleet:
 2. What rate can the fleet carry and still meet the SLO, and which role runs
    out first?
 3. What changes if I add a replica, or tighten a target?
+4. How many prefill and decode replicas does a given rate need?
 
 It reads what your fleet did, from a window of Prometheus or from a
 recording, and prices answers with the same model the `capacity-planner`
@@ -146,6 +147,31 @@ kill %1
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
 
+## Find the fleet a rate needs
+
+Above the controls, pick **What fleet does this traffic need?** Then set the
+rate and the targets as before. The page finds the fewest replicas that serve
+that rate under your targets, and the replica counts become its answer: you
+read them, you do not set them.
+
+- **The answer.** The fewest decode replicas first, then the fewest prefill
+  replicas with them. Beside it: the fleet limit at that fleet, the headroom
+  over your rate, and the role and target that bind.
+- **Why not fewer.** One prefill replica fewer, and one decode replica fewer,
+  each with the rate it would serve and how far short of yours that is.
+- **The rest of the page** is the fleet it found, exactly as the first mode
+  would show it if you set those counts yourself.
+- **Search up to.** The most replicas of a role the page tries, 32 unless you
+  change it (at most 64). When no fleet within it serves the rate, the page
+  says so, with the reason and what the largest fleet would serve. If the
+  reason is a refused term, not the bound, more replicas will not help:
+  assume the term (see below) or change the target.
+- **Slower than the first mode.** Each answer prices a dozen or so fleets and
+  takes seconds, so the rate is priced when you let go of the slider.
+
+Switch back to **How much does this fleet serve?** to step the replicas from
+the fleet it found.
+
 ## When a term is refused
 
 A source that did not see enough load cannot learn every term, and the page
@@ -158,7 +184,8 @@ is shown under each box. A typed value flags every figure that rests on it.
 
 The page keeps the source and every knob in its address, after the `#`. Copy
 the address to reopen the same scenario later, against a server that reads the
-same source.
+same source. In the second mode the address keeps the question (the rate and
+the targets), not the answer, so it is found again when the page opens.
 
 ## Run it for others
 
