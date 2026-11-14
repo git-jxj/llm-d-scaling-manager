@@ -1057,8 +1057,11 @@ limits' cache key. The curve cache is keyed by the fleet's knobs, which hold
 the prompt each line is priced at, so it needs nothing new.
 
 **The page.** A **Bucket edges** box under the per-bucket checkbox, enabled
-with it, reads `2k, 16k, 64k` or token counts, and is kept in the link as
-`edges=`. The bucket lines take the five series colours in turn. The
+with it, reads `2k, 16k, 64k` or token counts by the server's rules
+(`parseEdges` in `scenario.js`), and is kept in the link, a saved scenario
+and an exported file as `edges=2k,16k,64k`; an imported file with edges in
+any other form is refused. A pinned A keeps its own plan: compare reads the
+limits, which the edges do not move. The bucket lines take the five series colours in turn. The
 **Price at** picker still offers the default buckets: it states a prompt
 length for the whole page, and is not a bucket.
 

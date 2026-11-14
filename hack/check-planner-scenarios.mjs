@@ -17,7 +17,7 @@ vm.runInContext(fs.readFileSync(file, "utf8"), ctx, {filename: file});
 const S = name => vm.runInContext(name, ctx);
 const {esc, linkProblem, checkScenario, readScenarioFile, parseStore, visibleScenarios, putScenario, dropScenario, freeName,
   cleanName, delta, fleetDelta, scenarioTitle, sourceProblem, linkAtLoadStart, linkAtLoadEnd, beginOpen, importPlan, sameCurve, figDelta,
-  compareRows} = ctx;
+  compareRows, parseEdges} = ctx;
 const MAX_NAME = S("MAX_NAME"), MAX_SCENARIOS = S("MAX_SCENARIOS"), MAX_LINK = S("MAX_LINK");
 
 let passed = 0;
@@ -221,7 +221,7 @@ const changes = compareRows(plan(), plan({fleet: 12.3}), {...fmts, rate: hostile
 check("compareRows escapes the change cell", !changes.includes("<b>") && changes.includes("+1.10 r/s &lt;b&gt;"), changes.slice(0, 160));
 // The row names are the page's own words; the row template escapes them
 // anyway, and every other text it puts in a cell.
-const rowTemplate = (compareRows.toString().match(/const row = [\s\S]*?\);\n/) || [""])[0];
+const rowTemplate = (compareRows.toString().match(/const row = [\s\S]*?\);\r?\n/) || [""])[0];
 const holes = rowTemplate.match(/\$\{[^}]*\}/g) || [];
 check("the row template has its holes", holes.length === 5, holes.join(" "));
 check("every hole in the row template is escaped", holes.every(h => h.startsWith("${esc(") || h === '${d.cls ? "d-" + d.cls : ""}'), holes.join(" "));
@@ -309,6 +309,69 @@ check("sameCurve of one curve", sameCurve(c1, c1.map(q => ({...q}))));
 check("sameCurve within rounding", sameCurve(c1, [{x: 1, y: 0.1 + 1e-13}, {x: 2, y: null}, {x: 3, y: 0.3}]));
 check("sameCurve of another curve", !sameCurve(c1, [{x: 1, y: 0.1}, {x: 2, y: 0.2}, {x: 3, y: 0.3}]));
 check("sameCurve of other lengths", !sameCurve(c1, c1.slice(1)) && !sameCurve([], []));
+
+// parseEdges: the bucket edges box, by the server's rules
+// (internal/whatifapi/scenario.go): token counts or Nk, at most 12,
+// ascending, each from 1 to 1024k. The text is the link's canonical form.
+const edgesOf = s => { const r = parseEdges(s); return JSON.stringify(r.edges) + " " + r.text; };
+for (const [s, want] of [
+  ["", "[] "],
+  ["2048", "[2048] 2048"],
+  ["2k, 16K,64k", "[2048,16384,65536] 2k,16k,64k"],
+  ["1000 2k\t8k", "[1000,2048,8192] 1000,2k,8k"],
+  ["1,2,3,4,5,6,7,8,9,10,11,12", "[1,2,3,4,5,6,7,8,9,10,11,12] 1,2,3,4,5,6,7,8,9,10,11,12"],
+  ["1024k", "[1048576] 1024k"],
+]) {
+  let got;
+  try { got = edgesOf(s); } catch (e) { got = "threw " + e.message; }
+  check(`parseEdges reads ${JSON.stringify(s)}`, got === want, got);
+}
+for (const [s, want] of [
+  ["1,2,3,4,5,6,7,8,9,10,11,12,13", "13 edges"],
+  ["0", "outside 1 to 1024k"],
+  ["1025k", "outside 1 to 1024k"],
+  ["1048577", "outside 1 to 1024k"],
+  ["4k,1k", "1k is not above the edge before it"],
+  ["2k,2048", "2048 is not above the edge before it"],
+  ["1.5k", "not a token count"],
+  ["-5", "not a token count"],
+  ["16m", "not a token count"],
+  ["2k;16k", "not a token count"],
+  ["1e3", "not a token count"],
+]) {
+  throws(`parseEdges refuses ${JSON.stringify(s)}`, () => parseEdges(s), want);
+}
+
+// The link carries edges only in parseEdges' text: one to twelve, commas, no
+// spaces, lower-case k.
+for (const link of ["recording=r&perBucket=1&edges=2k,16k,64k", "recording=r&edges=1000", "namespace=llm&perBucket=1&edges=1,2,3,4,5,6,7,8,9,10,11,12"]) {
+  check(`admits ${link}`, linkProblem(link) === "", linkProblem(link));
+}
+for (const link of ["recording=r&edges=", "recording=r&edges=4k,1k", "recording=r&edges=2k,%2016k", "recording=r&edges=2K", "recording=r&edges=0",
+  "recording=r&edges=1,2,3,4,5,6,7,8,9,10,11,12,13", "recording=r&edges=2k%3Cb%3E", "recording=r&edges=2k&edges=4k"]) {
+  const got = linkProblem(link);
+  check(`refuses ${link}`, got !== "", JSON.stringify(got));
+}
+
+// An imported scenario: edges in the form the page writes are read back; any
+// other form refuses the file, naming the edges.
+const withEdges = good + "&edges=2k,16k,64k";
+check("reads an exported file with edges", readScenarioFile(JSON.stringify({kind: "capacity-planner-scenario", version: 1, name: "e", link: withEdges})).link === withEdges);
+throws("refuses a file with edges out of order", () => readScenarioFile(JSON.stringify({kind: "capacity-planner-scenario", version: 1, name: "e", link: good + "&edges=64k,2k"})), "edges cannot be");
+throws("refuses a file with too many edges", () => readScenarioFile(JSON.stringify({kind: "capacity-planner-scenario", version: 1, name: "e",
+  link: good + "&edges=" + Array.from({length: 13}, (_, i) => i + 1).join(",")})), "edges cannot be");
+const impEdges = importPlan([], {name: "e", link: withEdges, saved: "t"});
+check("importPlan saves a scenario with edges", impEdges.save && visibleScenarios(impEdges.raw)[0].link === withEdges);
+
+// Compare: A pinned with other edges than the current plan. The edges move
+// only the per-bucket lines, which compare does not read: the table is the
+// limits, and no row says the edges changed.
+const withLines = (p, edges) => Object.assign(p, {scenario: Object.assign({}, p.scenario, edges ? {bucketEdges: edges} : {}),
+  ttft: Object.assign({}, p.ttft, {perBucket: (edges || [1024, 4096]).map(e => ({bucket: String(e), curve: []}))})});
+const aEdges = withLines(plan(), [2048, 16384]), curEdges = withLines(plan(), null);
+const edgeTable = compareRows(aEdges, curEdges, fmts);
+check("compareRows with other edges on each side", edgeTable.startsWith("<table>") && !/bucket/i.test(edgeTable), edgeTable.slice(0, 120));
+check("compareRows with other edges: the limits read the same", (edgeTable.match(/>same</g) || []).length >= 4, edgeTable);
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -320,7 +383,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 145;
+const EXPECTED_CASES = 179;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

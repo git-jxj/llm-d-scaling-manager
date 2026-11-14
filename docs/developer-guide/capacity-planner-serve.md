@@ -412,11 +412,16 @@ count that is not a whole number, and edges without the view. `POST /v1/size`
 refuses `bucketEdges`: a size prices the mix line alone.
 
 The page has a **Bucket edges** box under the per-bucket checkbox, enabled
-with it. It reads token counts split by commas or spaces, `16k` as 16384, and
-sends them as `bucketEdges` with the view only; blank is the default. The link
-keeps the box as `edges=2k,16k,64k`. A box it cannot read is an error in the
-status line and prices nothing; edges the server refuses show its reason
-there.
+with it. `parseEdges` in `scenario.js` reads it by the server's rules: token
+counts split by commas or spaces, `16k` as 16384, at most 12, ascending, each
+from 1 to 1024k. The page sends them as `bucketEdges` with the view only;
+blank is the default. A box it cannot read is an error in the status line,
+naming the edge, and prices nothing. The box is rewritten in its canonical
+form, and the link, a saved scenario and an exported file keep that form as
+`edges=2k,16k,64k`; `linkProblem` refuses any other form, so a scenario file
+with edges out of order or too many is refused on import. Compare is not
+affected: a pin (A) keeps its own plan, and the table reads the limits, which
+the edges do not move.
 
 ### The size
 
@@ -529,5 +534,5 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
 | `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
-| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (145 cases; it fails without node): `esc`, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
+| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (179 cases; it fails without node): `esc`, the bucket edges by the server's rules, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |

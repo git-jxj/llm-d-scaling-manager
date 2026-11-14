@@ -44,7 +44,7 @@ func TestBucketEdgesPriceTheirOwnLines(t *testing.T) {
 	edges := []int{1000, 2048, 16384, 300000}
 	out, _ := plan(t, h, perBucketAt(id, edges))
 	require.Len(t, out.TTFT.PerBucket, len(edges))
-	var names []string
+	names := make([]string, 0, len(out.TTFT.PerBucket))
 	for i, l := range out.TTFT.PerBucket {
 		names = append(names, l.Bucket)
 		assert.Equal(t, SemanticsAllTraffic, l.Semantics)
@@ -71,7 +71,7 @@ func TestDefaultBucketEdgesAreNoEdges(t *testing.T) {
 	assert.Equal(t, none.ScenarioID, asked.ScenarioID)
 	assert.Equal(t, string(noneBody), string(askedBody))
 	assert.NotContains(t, string(noneBody), "bucketEdges")
-	var names []string
+	names := make([]string, 0, len(none.TTFT.PerBucket))
 	for _, l := range none.TTFT.PerBucket {
 		names = append(names, l.Bucket)
 	}
