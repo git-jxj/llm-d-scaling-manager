@@ -137,6 +137,11 @@ func (f *stubFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (dec
 	if u, ok := prefill.(whatif.Unanswerable); ok {
 		return decode, prefill, u
 	}
+	// A percentile with no ratio refuses decode's limit, and the fleet's.
+	if tpotSeconds > 0 && f.k.TPOTPercentile != 0 && f.k.Assume.TPOTRatio == nil {
+		u := whatif.Unanswerable{Reason: whatif.NoTPOTHistogram, Detail: "no TPOT histogram"}
+		return u, prefill, u
+	}
 	p, _ := valueOf(prefill)
 	lowest, by := headroom*knee, whatif.BoundOperatingPoint
 	if p < lowest {
