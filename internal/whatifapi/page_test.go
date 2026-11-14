@@ -146,6 +146,21 @@ func TestPageIDsExist(t *testing.T) {
 	}
 }
 
+// The page asks both questions: a toggle between them, a size posted to
+// v1/size by a relative path with no fleet in it (the fleet is the answer),
+// the steppers read only in size mode, and the mode in the link.
+func TestPageAsksSize(t *testing.T) {
+	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
+	for _, want := range []string{`id="mplan"`, `id="msize"`, "How much does this fleet serve?", "What fleet does this traffic need?",
+		`id="sizebox"`, `id="maxrep"`} {
+		assert.Contains(t, html, want)
+	}
+	for _, want := range []string{`api("POST", "v1/size", sizeRequest())`, "delete req.fleet;", `p.set("mode", "size")`,
+		`el("prefill").disabled = el("pdec").disabled = el("pinc").disabled = !state.inputs.fleet.prefill || sizing;`} {
+		assert.Contains(t, js, want)
+	}
+}
+
 // isFlagType reports whether e is the type whatif.Flag, as its own package or
 // another names it.
 func isFlagType(e ast.Expr) bool {

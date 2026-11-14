@@ -78,9 +78,15 @@ const PAGE_TPOT = {statistic: "mean", seconds: 0.05};
 const TTFT_STATS = ["mean", "p50", "p90", "p95", "p99"];
 const TPOT_STATS = ["mean", "p50", "p90", "p95", "p99"];
 
-// state is the page's: the sources, the inputs loaded, the knobs, and the
-// last plan drawn.
-const state = {sources: null, inputs: null, plan: null, k: null, inFlight: false, dirty: false, seq: 0, dragging: false};
+// state is the page's: the sources, the inputs loaded, the knobs, the last
+// plan drawn, the question asked (mode: "plan", what a fleet serves, or
+// "size", what fleet a rate needs) and the last size answered.
+const state = {sources: null, inputs: null, plan: null, k: null, inFlight: false, dirty: false, seq: 0, dragging: false,
+  mode: "plan", size: null};
+
+// SIZE_BOUND is the replicas a role a size searches up to unless you set
+// another: the API's default.
+const SIZE_BOUND = 32;
 
 const el = id => document.getElementById(id);
 
@@ -317,6 +323,7 @@ async function loadInputs() {
 function setInputs(inputs) {
   state.inputs = inputs;
   state.plan = null;
+  state.size = null;
   const p = inputs.policy || {};
   // With no policy objective the page sets one, and says so beside the
   // limits until you set your own (ttftDefault, tpotDefault).
@@ -331,6 +338,7 @@ function setInputs(inputs) {
     priceAs: "mix", outputTokens: val(inputs.observed.outputTokens),
     perBucket: false,
     assume: {},
+    maxRep: SIZE_BOUND,
   };
   const k = state.k;
   showLearned(inputs);
@@ -474,6 +482,8 @@ function applyLink() {
   k.priceAs = state.inputs.observed.buckets.some(b => b.name === g("priceAs")) ? g("priceAs") : "mix";
   k.perBucket = g("perBucket") === "1";
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
+  if (g("mode") === "size" && state.inputs.fleet.prefill) state.mode = "size";
+  if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   fillStats("ttftstat", TTFT_STATS, k.ttftStat);
   fillStats("tpotstat", TPOT_STATS, k.tpotStat);
   slider("ttft", k.ttftTarget * 1000, 1);
@@ -500,8 +510,15 @@ function writeLink() {
   if (el("model").value.trim()) p.set("model", el("model").value.trim());
   if (el("pvariant").value.trim()) p.set("prefillVariant", el("pvariant").value.trim());
   if (el("dvariant").value.trim()) p.set("decodeVariant", el("dvariant").value.trim());
-  if (state.inputs.fleet.prefill) p.set("prefill", k.prefill);
-  p.set("decode", k.decode);
+  // A size's replica counts are its answer, not a setting: the link carries
+  // the question, and the bound when it is not the default.
+  if (state.mode === "size") {
+    p.set("mode", "size");
+    if (k.maxRep !== SIZE_BOUND) p.set("max", k.maxRep);
+  } else {
+    if (state.inputs.fleet.prefill) p.set("prefill", k.prefill);
+    p.set("decode", k.decode);
+  }
   if (k.rate != null) p.set("rate", Number(k.rate.toFixed(3)));
   // The page's default objectives are left out, so they stay marked as such.
   if (!k.ttftDefault) {
@@ -549,8 +566,19 @@ function planRequest() {
   return req;
 }
 
-// plan prices the knobs. One request is in flight at a time; a knob moved
-// meanwhile is priced when it returns, so the last move always lands.
+// sizeRequest is the size the knobs ask: the plan's scenario but the fleet,
+// which is the answer, and the per-bucket view, with the bound searched.
+function sizeRequest() {
+  const req = planRequest();
+  delete req.fleet;
+  delete req.views;
+  req.maxReplicas = {prefill: state.k.maxRep, decode: state.k.maxRep};
+  return req;
+}
+
+// plan prices the knobs, or in size mode sizes the fleet for them. One
+// request is in flight at a time; a knob moved meanwhile is priced when it
+// returns, so the last move always lands.
 let planTimer = null;
 function schedule(ms) {
   clearTimeout(planTimer);
@@ -568,11 +596,40 @@ async function plan() {
   // A response priced against inputs a later load replaced is dropped.
   const seq = state.seq, inputsId = state.inputs.inputsId;
   const t0 = performance.now();
-  const slow = setTimeout(() => setStatus("Pricing (a new fleet or view can take seconds)..."), 300);
+  const sizing = state.mode === "size";
+  const slow = setTimeout(() => setStatus(sizing ? "Sizing (a search over replica counts, then a plan at the answer: seconds)..." :
+    "Pricing (a new fleet or view can take seconds)..."), 300);
+  const stale = () => seq !== state.seq || !state.inputs || inputsId !== state.inputs.inputsId;
   try {
+    if (sizing) {
+      // A size needs a rate: with none yet, the operating point a plan of
+      // the recorded fleet starts at.
+      if (state.k.rate == null) {
+        const first = await api("POST", "v1/plan", planRequest());
+        if (stale()) return;
+        state.k.rate = first.limits.chosen.rate;
+      }
+      const out = await api("POST", "v1/size", sizeRequest());
+      clearTimeout(slow);
+      if (stale() || state.mode !== "size") return;
+      state.size = out;
+      if (out.answer) {
+        state.plan = out.answer.plan;
+        state.k.prefill = out.answer.fleet.prefill;
+        state.k.decode = out.answer.fleet.decode;
+        render();
+      } else {
+        syncControls();
+        renderSize();
+      }
+      writeLink();
+      setStatus(`Sized in ${Math.round(performance.now() - t0)} ms: ${out.searched} fleet${out.searched === 1 ? "" : "s"} searched` +
+        (out.answer ? ", then the plan at the answer." : "."));
+      return;
+    }
     const out = await api("POST", "v1/plan", planRequest());
     clearTimeout(slow);
-    if (seq !== state.seq || !state.inputs || inputsId !== state.inputs.inputsId) return;
+    if (stale() || state.mode !== "plan") return;
     state.plan = out;
     if (state.k.rate == null) state.k.rate = out.limits.chosen.rate;
     render();
@@ -580,7 +637,7 @@ async function plan() {
     setStatus(`Priced in ${Math.round(performance.now() - t0)} ms.`);
   } catch (e) {
     clearTimeout(slow);
-    setStatus("Could not price the plan: " + e.message, true);
+    setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message, true);
   } finally {
     state.inFlight = false;
     if (state.dirty) plan();
@@ -594,11 +651,24 @@ function lowerKnee(m) {
 }
 
 // syncControls puts the knobs into the controls.
+// In size mode the steppers are the answer: they show it, read only, and
+// show nothing while no fleet within the bound serves the rate.
 function syncControls() {
-  const k = state.k;
-  el("prefill").value = k.prefill;
-  el("prefill").disabled = el("pdec").disabled = el("pinc").disabled = !state.inputs.fleet.prefill;
-  el("decode").value = k.decode;
+  const k = state.k, sizing = state.mode === "size";
+  const unmet = sizing && state.size && !state.size.answer;
+  el("mplan").checked = !sizing;
+  el("msize").checked = sizing;
+  el("msize").disabled = !state.inputs.fleet.prefill;
+  el("modenote").textContent = sizing ? "Set the rate and the targets; the page finds the fewest replicas a role that meet them." :
+    "Set the replicas; the page prices the most they serve.";
+  el("maxrow").hidden = !sizing;
+  el("maxrep").value = k.maxRep;
+  el("prefill").value = unmet ? "" : k.prefill;
+  el("prefill").disabled = el("pdec").disabled = el("pinc").disabled = !state.inputs.fleet.prefill || sizing;
+  el("decode").value = unmet ? "" : k.decode;
+  el("decode").disabled = el("ddec").disabled = el("dinc").disabled = sizing;
+  // A size prices the mix line alone: the per-bucket view is the plan's.
+  el("perbucket").disabled = sizing;
   if (k.rate != null) {
     el("rate").value = k.rate;
     el("ratebox").value = Number(k.rate.toFixed(2));
@@ -618,12 +688,73 @@ function render() {
   el("rate").value = k.rate;
   el("ratenote").textContent = p.limits.chosen.rateSource === "operating point" ? "started at the operating point: the source carries no request rate" : "";
   el("limitsfor").textContent = `(priced at ${shapeOf(p)})`;
+  renderSize();
   renderAtTarget();
   renderLimits();
   renderTTFT();
   renderTPOT();
   renderTables();
   renderFlags();
+}
+
+// rolesText is roles as a sentence's subject: "prefill binds", "prefill and
+// decode bind".
+function rolesText(roles, verb) {
+  const r = roles || [];
+  return r.join(" and ") + " " + verb + (r.length > 1 ? "" : "s");
+}
+
+// fleetText is replica counts in words, escaped.
+function fleetText(n) {
+  return `${esc(n.prefill)} prefill, ${esc(n.decode)} decode`;
+}
+
+// boundText is a figure's bounds, verbatim, or nothing.
+function boundText(f) {
+  return f && f.boundBy ? "bound by " + f.boundBy.join(", then ") : "";
+}
+
+// renderSize is the size's answer above the plan of the fleet it found: the
+// fleet, its limit and headroom over the rate, the role that binds, and why
+// one replica fewer of each role is not enough; or, with no fleet within the
+// bound, the refusal and the figure the bound reached, and no plan.
+function renderSize() {
+  const z = state.mode === "size" ? state.size : null;
+  el("sizebox").hidden = !z;
+  el("planview").hidden = !!(z && !z.answer);
+  el("limitstitle").textContent = z && z.answer ? "What that fleet serves under these SLOs" : "The most the fleet serves under these SLOs";
+  if (!z) return;
+  const rate = fmtRate(z.rate);
+  if (z.answer) {
+    const a = z.answer, f = a.fleet, h = val(a.headroom), by = boundText(a.limit);
+    el("sizetitle").textContent = `The fleet ${rate} needs`;
+    el("sizeanswer").innerHTML = `<div class="v">${fleetText(f)}</div>` +
+      `<div>The fewest replicas whose fleet limit reaches ${rate} (the fewest decode first, then the fewest prefill with them). ` +
+      `Fleet limit <b>${figText(a.limit, fmtRate)}</b>, <span class="ok">headroom +${h != null ? fmtRate(h) : "refused"}</span> over the rate; ` +
+      `${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>`;
+    const step = (role, s) => {
+      if (!s) return `<li>One ${role} replica fewer: none, the answer has one.</li>`;
+      const lim = val(s.limit), short = val(s.headroom), b = boundText(s.limit);
+      const what = lim == null ? `<span class="miss">refused: ${esc(why(s.limit))}</span>` :
+        `<span class="miss"><b>${fmtRate(lim)}</b>, ${fmtRate(-short)} short</span>${b ? ", " + esc(b) : ""}; ${esc(rolesText(s.binding, "bind"))}`;
+      return `<li>One ${role} replica fewer (${fleetText(s.fleet)}): ${what}</li>`;
+    };
+    el("fewer").innerHTML = step("prefill", a.fewerPrefill) + step("decode", a.fewerDecode);
+    return;
+  }
+  const u = z.unmet, s = u.atBound, lim = val(s.limit);
+  // With no plan to draw, the size says what a plan would: the banner, and
+  // nothing under the targets from a fleet no longer on screen.
+  el("banner").textContent = z.banner;
+  el("banner").hidden = !z.banner;
+  el("ttftat").textContent = el("tpotat").textContent = "";
+  el("sizetitle").textContent = `No fleet within the bound serves ${rate}`;
+  el("sizeanswer").innerHTML = `<div class="v miss">${esc(u.refused.reason)}</div><div>${esc(u.refused.detail)}</div>` +
+    `<div class="hint">Searched up to ${fleetText(z.maxReplicas)}; ` +
+    `the role that falls short: ${esc(u.role)}.</div>`;
+  el("fewer").innerHTML = `<li>At the bound (${fleetText(s.fleet)}), the fleet limit: ` +
+    (lim == null ? `refused: ${esc(why(s.limit))}` : `<b>${fmtRate(lim)}</b>, ${fmtRate(-val(s.headroom))} short`) +
+    (boundText(s.limit) ? ", " + esc(boundText(s.limit)) : "") + ` ${flagChips(s.limit)}</li>`;
 }
 
 // renderAtTarget says, under each target, what the rate set gives.
@@ -1041,13 +1172,33 @@ function wire() {
     el(role).onchange = () => { if (ready()) { k()[role] = intIn(el(role).value, 1, 64); el(role).value = k()[role]; schedule(0); } };
   }
   // The rate prices on drag: its curves and limits are cached, so a move
-  // prices the two points alone.
+  // prices the two points alone. A size searches fleets: it waits for the
+  // release.
   el("rate").oninput = () => {
     if (!ready()) return;
     state.dragging = true;
     k().rate = +el("rate").value;
     el("ratebox").value = Number(k().rate.toFixed(2));
-    schedule(100);
+    if (state.mode !== "size") schedule(100);
+  };
+  // The question: what a fleet serves, or what fleet the rate needs. A size
+  // starts from the knobs as they stand, and a plan from the fleet a size
+  // found.
+  const mode = m => () => {
+    if (!ready() || state.mode === m) return;
+    state.mode = m;
+    state.size = null;
+    syncControls();
+    renderSize();
+    schedule(0);
+  };
+  el("mplan").onchange = mode("plan");
+  el("msize").onchange = mode("size");
+  el("maxrep").onchange = () => {
+    if (!ready()) return;
+    k().maxRep = intIn(el("maxrep").value, 1, 64);
+    el("maxrep").value = k().maxRep;
+    schedule(0);
   };
   // The release lets the status line speak again, and prices the rate let go.
   el("rate").onchange = () => {

@@ -61,6 +61,13 @@
     <div class="status" id="status" role="status" aria-live="polite"></div>
   </header>
 
+  <fieldset class="modes" id="modes">
+    <legend class="sr">Question</legend>
+    <label><input type="radio" name="mode" value="plan" id="mplan" checked> How much does this fleet serve?</label>
+    <label><input type="radio" name="mode" value="size" id="msize"> What fleet does this traffic need?</label>
+    <span class="hint" id="modenote">Set the replicas; the page prices the most they serve.</span>
+  </fieldset>
+
   <section class="card controls" aria-label="Scenario">
     <div class="group">
       <h2>Fleet</h2>
@@ -77,6 +84,11 @@
         <input type="number" id="decode" min="1" max="64" step="1" aria-labelledby="dlabel">
         <button type="button" id="dinc" aria-label="One decode replica more">+</button>
         <span class="now" id="dnow"></span>
+      </div>
+      <div class="ctl" id="maxrow" hidden>
+        <label for="maxrep">Search up to, replicas a role</label>
+        <input type="number" id="maxrep" min="1" max="64" step="1" value="32">
+        <span class="hint">In this mode the replica counts are the answer, not a setting.</span>
       </div>
     </div>
     <div class="group">
@@ -149,7 +161,13 @@
       title="Needs traffic split by priority; see the proposal's Traffic classes">Batch (later)</button>
   </div>
   <section class="card panel" id="panel" role="tabpanel" aria-labelledby="tab-critical">
-    <h2>The most the fleet serves under these SLOs <span class="hint" id="limitsfor"></span></h2>
+    <div class="sizebox" id="sizebox" hidden>
+      <h2 id="sizetitle">The fleet this traffic needs</h2>
+      <div class="sizeanswer" id="sizeanswer"></div>
+      <ul class="fewer" id="fewer" aria-label="Why one fewer is not enough"></ul>
+    </div>
+    <div id="planview">
+    <h2><span id="limitstitle">The most the fleet serves under these SLOs</span> <span class="hint" id="limitsfor"></span></h2>
     <p class="hint" id="pagetargets" hidden></p>
     <div class="summary">
       <div class="hero">
@@ -188,6 +206,7 @@
     <p class="note">Dashed horizontal line: the target. Dashed vertical line: the rate you set. Open circle: the figure at
       that rate. Filled circle: the highest rate that meets the target. Shaded band: the span over V_P and f (TTFT) or
       the bootstrap band (TPOT). Shaded past the lower knee: saturated, where the model answers nothing.</p>
+    </div>
   </section>
 
   <details class="card drawer" id="flagsdrawer">

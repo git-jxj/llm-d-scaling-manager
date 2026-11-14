@@ -352,7 +352,7 @@ func (z *sizer) unmet(ctx context.Context, role string, n FleetCounts) (*SizeRes
 	what := map[string]string{roleDecode: "decode's own limit (TPOT and the operating-point cap)",
 		rolePrefill: "the prefill role's limit (TTFT)", roleFleet: "the fleet's limit"}[role]
 	u.Refused = Refusal{Reason: ReasonReplicaBound, Detail: fmt.Sprintf(
-		"at %d prefill and %d decode replicas, the bound searched, %s is %.4g r/s, short of %.4g r/s: raise maxReplicas (up to %d) or lower the rate",
+		"At %d prefill and %d decode replicas, the bound searched, %s is %.4g r/s, short of %.4g r/s: raise maxReplicas (up to %d) or lower the rate",
 		n.Prefill, n.Decode, what, x, z.rate, maxReplicas)}
 	return &SizeResponse{Unmet: u}, nil
 }
