@@ -940,7 +940,10 @@ role that falls short.
 f (`sizeOn: point`), and the low end of the limit's span can fall under the
 rate: the page then says "at one corner of V_P and f this fleet serves only X
 r/s". `sizeOn: low` (the page's "size for the worst corner" box) sizes on the
-low end instead, pricing each fleet with its span, five times the cost.
+low end instead, pricing each fleet with its span, five times the cost, and
+its headroom is then the low end's. Where the worst corner refuses the limit
+outright (a TTFT floor above the target there), the size is that refusal, at
+every replica count, not the bound reached.
 
 **Where it departs from the design above.**
 

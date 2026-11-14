@@ -545,8 +545,9 @@ type SizeResponse struct {
 // plan's at the fleet, and Plan is that plan, as POST /v1/plan returns it.
 type SizeAnswer struct {
 	Fleet FleetCounts `json:"fleet"`
-	// Limit is the fleet's limit (the plan's limits.fleet), and Headroom its
-	// excess over the rate.
+	// Limit is the fleet's limit (the plan's limits.fleet). Headroom is what
+	// the size is on less the rate: the limit, or sized on the low end the
+	// limit's span's low end, the same basis as the steps' Headroom.
 	Limit    Figure   `json:"limit"`
 	Headroom Figure   `json:"headroom"`
 	Binding  []string `json:"binding"`

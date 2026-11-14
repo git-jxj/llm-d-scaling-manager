@@ -215,9 +215,22 @@ func (s *Server) plan(ctx context.Context, req PlanRequest) ([]byte, error) {
 }
 
 // planHolding is plan for a caller that may already hold a plan slot (held):
-// a size prices its answer's plan on the slot its search took, so that a
-// search finished is never lost to a busy server.
+// a size prices its answer's plan on the slot its search took. A held caller
+// that joined a plan already in flight shares that plan's result; when its
+// leader, holding no slot, was turned away busy, the held caller asks once
+// more and, with no plan in flight then, prices it on its own slot. So a
+// finished search is lost to a busy server only when another request for the
+// same plan is turned away busy twice in a row.
 func (s *Server) planHolding(ctx context.Context, req PlanRequest, held bool) ([]byte, error) {
+	body, err := s.planOnce(ctx, req, held)
+	if held && errors.Is(err, errBusy) {
+		body, err = s.planOnce(ctx, req, held)
+	}
+	return body, err
+}
+
+// planOnce is one ask of planHolding.
+func (s *Server) planOnce(ctx context.Context, req PlanRequest, held bool) ([]byte, error) {
 	e, ok := s.inputs.get(req.InputsID)
 	if !ok {
 		return nil, errUnknownInputs

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -321,10 +323,109 @@ func TestSizeOnTheLowEnd(t *testing.T) {
 	assert.InDelta(t, *low.Answer.FewerPrefill.Limit.Sensitivity.Lo-15, *low.Answer.FewerPrefill.Headroom.Value, 1e-12,
 		"sized low, a step's shortfall is its low end's")
 
+	require.NotNil(t, low.Answer.Headroom.Value)
+	assert.InDelta(t, *low.Answer.Limit.Sensitivity.Lo-15, *low.Answer.Headroom.Value, 1e-12,
+		"sized low, the answer's headroom is its low end's, as the steps' are")
+
 	req.SizeOn = "worst"
 	code, body := post(t, h, "/v1/size", req)
 	assert.Equal(t, http.StatusBadRequest, code)
 	assert.Contains(t, string(body), "sizeOn")
+}
+
+// Sized on the low end where the worst corner of V_P and f refuses the limit
+// (a TTFT floor above the target there), the size is that refusal, said of
+// the corner, never ReplicaBoundReached: no count lowers a floor. Sized on
+// the point, the same question answers.
+func TestSizeOnLowRefusedAtTheWorstCorner(t *testing.T) {
+	h := New(Config{Resolver: &stubResolver{loRefused: whatif.TargetBelowFloor}, WhatifSchema: "schema-v3"}).Handler()
+	id := inputsOf(t, h)
+	req := sizeAt(id, 3, 0.05)
+	req.MaxReplicas = &FleetKnob{Prefill: intp(4), Decode: intp(4)}
+	point, _ := sizeOf(t, h, req)
+	require.NotNil(t, point.Answer)
+
+	req.SizeOn = SizeOnLow
+	out, _ := sizeOf(t, h, req)
+	require.Nil(t, out.Answer)
+	require.NotNil(t, out.Unmet)
+	u := out.Unmet
+	assert.Equal(t, string(whatif.TargetBelowFloor), u.Refused.Reason)
+	assert.Contains(t, u.Refused.Detail, "worst corner of V_P and f")
+	assert.Contains(t, u.Refused.Detail, "raise the TTFT target above it")
+	assert.NotContains(t, u.Refused.Detail, "short of")
+	assert.NotContains(t, u.Refused.Detail, "maxReplicas")
+	require.NotNil(t, u.AtBound.Headroom.Refused, "the at-bound shortfall is the corner's refusal")
+	assert.Equal(t, string(whatif.TargetBelowFloor), u.AtBound.Headroom.Refused.Reason)
+}
+
+// Identical sizes asked at once search once: the second waits on the first.
+func TestSizeConcurrentSearchOnce(t *testing.T) {
+	r := &stubResolver{}
+	s := New(Config{Resolver: r, WhatifSchema: "schema-v3"})
+	searches := atomic.Int64{}
+	s.onSearch = func() { searches.Add(1) }
+	h := s.Handler()
+	id := inputsOf(t, h)
+	r.gate = make(chan struct{})
+	type result struct {
+		code int
+		body []byte
+	}
+	done := make(chan result, 2)
+	for range 2 {
+		go func() {
+			code, body := post(t, h, "/v1/size", sizeAt(id, 15, 0.05))
+			done <- result{code, body}
+		}()
+	}
+	require.Eventually(t, func() bool {
+		s.sizeFlight.mu.Lock()
+		defer s.sizeFlight.mu.Unlock()
+		for _, c := range s.sizeFlight.calls {
+			if c.waiting == 1 {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, time.Millisecond, "the second size never joined the first")
+	close(r.gate)
+	a, b := <-done, <-done
+	require.Equal(t, http.StatusOK, a.code, "%s", a.body)
+	require.Equal(t, http.StatusOK, b.code, "%s", b.body)
+	assert.Equal(t, a.body, b.body)
+	assert.Equal(t, int64(1), searches.Load(), "two searches for one size")
+}
+
+// With every plan slot taken when a size starts, it is a 503 with
+// Retry-After, before any search; a source with no prefill variant is a 400.
+func TestSizeBusyAndDecodeOnly(t *testing.T) {
+	s := New(Config{Resolver: &stubResolver{}, WhatifSchema: "schema-v3", MaxPlans: 1})
+	searches := 0
+	s.onSearch = func() { searches++ }
+	h := s.Handler()
+	id := inputsOf(t, h)
+	s.planSlots <- struct{}{}
+	rec := httptest.NewRecorder()
+	b, err := json.Marshal(sizeAt(id, 15, 0.05))
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/v1/size", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+	<-s.planSlots
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	assert.Equal(t, retryAfterSeconds, rec.Header().Get("Retry-After"))
+	assert.Equal(t, 0, searches, "a size searched with no slot")
+	out, _ := sizeOf(t, h, sizeAt(id, 15, 0.05))
+	assert.NotNil(t, out.Answer, "the slot freed, the same size answers")
+
+	code, body := post(t, h, "/v1/inputs", InputsRequest{Model: "decode-only", Source: &SourceRequest{Kind: SourceRecording, Name: "run.jsonl.gz"}})
+	require.Equal(t, http.StatusOK, code, "%s", body)
+	var in InputsResponse
+	require.NoError(t, json.Unmarshal(body, &in))
+	code, body = post(t, h, "/v1/size", sizeAt(in.InputsID, 15, 0.05))
+	assert.Equal(t, http.StatusBadRequest, code, "%s", body)
+	assert.Contains(t, string(body), "no prefill variant")
 }
 
 // A limit reaches the rate within a billionth of it, as the worked

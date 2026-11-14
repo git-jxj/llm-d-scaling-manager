@@ -166,6 +166,24 @@ func BenchmarkSizeAnswerPlan(b *testing.B) {
 	b.ReportMetric(float64(n.Prefill), "prefill")
 }
 
+// Sized on the worst corner, the benchmark's question has a TTFT floor above
+// its 200 ms target at that corner: the size is that refusal, at any count,
+// never the bound reached with a shortfall that points the wrong way.
+func TestServeSizeLowUnderTheFloor(t *testing.T) {
+	h, _ := servedAPI(t)
+	in, _ := apiInputs(t, h, "ols-sweep.jsonl.gz", "model-02")
+	req := sizeBenchRequest(in.InputsID)
+	req.SizeOn = whatifapi.SizeOnLow
+	req.MaxReplicas = &whatifapi.FleetKnob{Prefill: ip(4), Decode: ip(4)}
+	out := apiSize(t, h, req)
+	require.Nil(t, out.Answer)
+	require.NotNil(t, out.Unmet)
+	t.Logf("%s: %s", out.Unmet.Refused.Reason, out.Unmet.Refused.Detail)
+	assert.Equal(t, "TargetBelowFloor", out.Unmet.Refused.Reason)
+	assert.Contains(t, out.Unmet.Refused.Detail, "worst corner of V_P and f")
+	assert.NotContains(t, out.Unmet.Refused.Detail, "short of")
+}
+
 // A recording that learned no V_P sizes nothing: the refusal is the
 // engine's, with the prefill role named.
 func TestServeSizeRefusesATermRefused(t *testing.T) {

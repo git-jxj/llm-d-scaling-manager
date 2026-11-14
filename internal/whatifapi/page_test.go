@@ -155,7 +155,9 @@ func TestPageAsksSize(t *testing.T) {
 		`id="sizebox"`, `id="maxrep"`, `id="sizelow"`, `id="sizeanswer" aria-live="polite"`} {
 		assert.Contains(t, html, want)
 	}
-	for _, want := range []string{`api("POST", "v1/size", sizeRequest())`, "delete req.fleet;", `p.set("mode", "size")`,
+	for _, want := range []string{`api("POST", "v1/size", sizeRequest(), signal)`, "state.abort = new AbortController();", "state.abort.abort();",
+		`'raise "Search up to" (at most 64)'`, "More replicas do not lower a floor", `under "Assume a term the source did not learn"`,
+		"delete req.fleet;", `p.set("mode", "size")`,
 		`req.sizeOn = "low";`, "modeSeq !== state.modeSeq", `el("perbucket").checked = k.perBucket;`,
 		`el("prefill").disabled = el("pdec").disabled = el("pinc").disabled = !state.inputs.fleet.prefill || sizing;`} {
 		assert.Contains(t, js, want)

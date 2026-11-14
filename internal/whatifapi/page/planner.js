@@ -82,7 +82,7 @@ const TPOT_STATS = ["mean", "p50", "p90", "p95", "p99"];
 // plan drawn, the question asked (mode: "plan", what a fleet serves, or
 // "size", what fleet a rate needs) and the last size answered.
 const state = {sources: null, inputs: null, plan: null, k: null, inFlight: false, dirty: false, seq: 0, dragging: false,
-  mode: "plan", modeSeq: 0, size: null};
+  mode: "plan", modeSeq: 0, size: null, abort: null};
 
 // SIZE_BOUND is the replicas a role a size searches up to unless you set
 // another: the API's default.
@@ -190,10 +190,11 @@ function setStatus(text, error) {
 }
 
 // api calls the API on this origin, by a path relative to the page,
-// retrying a busy server's 503.
-async function api(method, path, body) {
+// retrying a busy server's 503. A signal aborts the request, and the server
+// stops pricing it.
+async function api(method, path, body, signal) {
   for (let attempt = 0; ; attempt++) {
-    const opt = {method, headers: {}};
+    const opt = {method, headers: {}, signal};
     if (body !== undefined) {
       opt.headers["Content-Type"] = "application/json";
       opt.body = JSON.stringify(body);
@@ -611,31 +612,44 @@ async function plan() {
   if (!state.inputs) return;
   if (state.inFlight) {
     state.dirty = true;
+    // A size takes seconds: a newer question cancels it, and the server
+    // stops pricing it, rather than waiting it out.
+    if (state.abort) state.abort.abort();
     return;
   }
   state.inFlight = true;
   state.dirty = false;
-  // A response priced against inputs a later load replaced is dropped.
   const seq = state.seq, inputsId = state.inputs.inputsId;
   const t0 = performance.now();
   const sizing = state.mode === "size";
-  const slow = setTimeout(() => setStatus(sizing ? "Sizing (a search over replica counts, then a plan at the answer: seconds)..." :
-    "Pricing (a new fleet or view can take seconds)..."), 300);
+  const slow = setTimeout(() => setStatus("Pricing (a new fleet or view can take seconds)..."), 300);
+  // While a size runs, the last answer is dimmed and the status counts the
+  // seconds.
+  let ticker = null;
+  if (sizing) {
+    clearTimeout(slow);
+    state.abort = new AbortController();
+    el("sizebox").classList.add("stale");
+    const tick = () => setStatus(`Sizing ${fmtRate(state.k.rate || 0)}: ${Math.round((performance.now() - t0) / 1000)} s ` +
+      "(a search over replica counts, then the plan at the answer; a cold one can take 20 s or more)...");
+    tick();
+    ticker = setInterval(tick, 1000);
+  }
   // A response priced against inputs a later load replaced, or for a
   // question since switched, is dropped.
   const modeSeq = state.modeSeq;
   const stale = () => seq !== state.seq || !state.inputs || inputsId !== state.inputs.inputsId || modeSeq !== state.modeSeq;
   try {
     if (sizing) {
+      const signal = state.abort.signal;
       // A size needs a rate: with none yet, the operating point a plan of
       // the recorded fleet starts at.
       if (state.k.rate == null) {
-        const first = await api("POST", "v1/plan", planRequest());
+        const first = await api("POST", "v1/plan", planRequest(), signal);
         if (stale()) return;
         state.k.rate = first.limits.chosen.rate;
       }
-      const out = await api("POST", "v1/size", sizeRequest());
-      clearTimeout(slow);
+      const out = await api("POST", "v1/size", sizeRequest(), signal);
       if (stale()) return;
       state.size = out;
       if (out.answer) {
@@ -647,10 +661,12 @@ async function plan() {
         syncControls();
         fitRateSlider(null);
         renderSize();
+        renderFlags();
       }
       writeLink();
+      clearInterval(ticker);
       const what = out.answer ? `${fleetPlain(out.answer.fleet)}` : `no fleet within the bound (${out.unmet.refused.reason})`;
-      setStatus(`Sized ${fmtRate(out.rate)} in ${Math.round(performance.now() - t0)} ms: ${what}; ` +
+      setStatus(`Sized ${fmtRate(out.rate)} in ${((performance.now() - t0) / 1000).toFixed(1)} s: ${what}; ` +
         `${out.searched} fleet${out.searched === 1 ? "" : "s"} searched` + (out.answer ? ", then the plan at the answer." : "."));
       return;
     }
@@ -664,8 +680,15 @@ async function plan() {
     setStatus(`Priced in ${Math.round(performance.now() - t0)} ms.`);
   } catch (e) {
     clearTimeout(slow);
-    setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message, true);
+    clearInterval(ticker);
+    // A size a newer question cancelled is no error: the newer one follows.
+    if (e.name !== "AbortError") setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message, true);
   } finally {
+    clearInterval(ticker);
+    if (sizing) {
+      el("sizebox").classList.remove("stale");
+      state.abort = null;
+    }
     state.inFlight = false;
     if (state.dirty) plan();
   }
@@ -783,39 +806,101 @@ function renderSize() {
   const rate = fmtRate(z.rate);
   if (z.answer) {
     const a = z.answer, f = a.fleet, h = val(a.headroom), by = boundText(a.limit);
+    const low = z.sizeOn === "low";
     el("sizetitle").textContent = `The fleet ${rate} needs`;
     el("sizeanswer").innerHTML = `<div class="v">${fleetText(f)}</div>` +
-      `<div>The fewest replicas whose fleet limit reaches ${rate} (the fewest decode first, then the fewest prefill with them). ` +
-      `Fleet limit <b>${figText(a.limit, fmtRate)}</b>, <span class="ok">headroom +${h != null ? fmtRate(h) : "refused"}</span> over the rate; ` +
-      `${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>` + lowNote(a.limit, z);
-    const step = (role, s) => {
-      if (!s) return `<li>One ${role} replica fewer: none, the answer has one.</li>`;
-      // Sized on the worst corner, a step falls short at its low end, which
-      // its headroom is read from.
-      const lim = val(s.limit), short = val(s.headroom), b = boundText(s.limit);
-      const lo = z.sizeOn === "low" && s.limit.sensitivity ? s.limit.sensitivity.lo : null;
-      const shortText = short == null ? `refused at the worst corner of V_P and f (${esc(why(s.headroom))})` :
-        (lo != null ? `${fmtRate(lo)} at its worst corner of V_P and f, ` : "") + `${fmtRate(-short)} short`;
-      const what = lim == null ? `<span class="miss">refused: ${esc(why(s.limit))}</span>` :
-        `<span class="miss"><b>${fmtRate(lim)}</b>, ${shortText}</span>${b ? ", " + esc(b) : ""}; ${esc(rolesText(s.binding, "bind"))}`;
-      return `<li>One ${role} replica fewer (${fleetText(s.fleet)}): ${what}</li>`;
-    };
-    el("fewer").innerHTML = step("prefill", a.fewerPrefill) + step("decode", a.fewerDecode);
+      `<div>The fewest replicas whose fleet limit reaches ${rate}` + (low ? " at the worst corner of V_P and f" : "") +
+      ` (the fewest decode first, then the fewest prefill with them). ` +
+      `Fleet limit <b>${figText(a.limit, fmtRate)}</b>, <span class="ok">headroom +${h != null ? fmtRate(h) : "refused"}</span> over the rate` +
+      (low ? " at the worst corner" : "") + `; ${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>` +
+      lowNote(a.limit, z) + heldNote(a);
+    el("fewer").innerHTML = fewerLine("prefill", a.fewerPrefill, low) + fewerLine("decode", a.fewerDecode, low);
     return;
   }
-  const u = z.unmet, s = u.atBound, lim = val(s.limit);
+  const u = z.unmet, s = u.atBound, lim = val(s.limit), short = val(s.headroom);
   // With no plan to draw, the size says what a plan would: the banner, and
   // nothing under the targets from a fleet no longer on screen.
   el("banner").textContent = z.banner;
   el("banner").hidden = !z.banner;
   el("ttftat").textContent = el("tpotat").textContent = "";
   el("sizetitle").textContent = `No fleet within the bound serves ${rate}`;
-  el("sizeanswer").innerHTML = `<div class="v miss">${esc(u.refused.reason)}</div><div>${esc(u.refused.detail)}</div>` +
-    `<div class="hint">Searched up to ${fleetText(z.maxReplicas)}; ` +
-    `the role that falls short: ${esc(u.role)}.</div>`;
+  el("sizeanswer").innerHTML = `<div class="v miss">${esc(u.refused.reason)}</div><div>${esc(unmetAdvice(z))}</div>` +
+    `<div class="hint">Searched up to ${fleetText(z.maxReplicas)}; the role that falls short: ${esc(u.role)}.` +
+    (UNMET_SAID.has(u.refused.reason) ? "" : ` The server says: ${esc(u.refused.detail)}`) + `</div>`;
+  const shortText = short != null ? `, ${fmtRate(-short)} short` + (z.sizeOn === "low" ? " at the worst corner of V_P and f" : "") :
+    (s.headroom && s.headroom.refused ? `, refused at the worst corner of V_P and f (${esc(s.headroom.refused.reason)})` : "");
   el("fewer").innerHTML = `<li>At the bound (${fleetText(s.fleet)}), the fleet limit: ` +
-    (lim == null ? `refused: ${esc(why(s.limit))}` : `<b>${fmtRate(lim)}</b>, ${fmtRate(-val(s.headroom))} short`) +
+    (lim == null ? `refused: ${esc(why(s.limit))}` : `<b>${fmtRate(lim)}</b>${shortText}`) +
     (boundText(s.limit) ? ", " + esc(boundText(s.limit)) : "") + ` ${flagChips(s.limit)}</li>`;
+}
+
+// fewerLine is one replica fewer of a role: the rate it serves, how far short
+// of the rate, and what binds. Sized on the worst corner, the low end is the
+// figure that falls short, so it is the one in bold, with the limit beside it
+// when the two differ.
+function fewerLine(role, s, low) {
+  if (!s) return `<li>One ${role} replica fewer: none, the answer has one.</li>`;
+  const lim = val(s.limit), short = val(s.headroom), b = boundText(s.limit);
+  const binds = `${b ? ", " + esc(b) : ""}; ${esc(rolesText(s.binding, "bind"))}`;
+  let what;
+  if (lim == null) {
+    what = `<span class="miss">refused: ${esc(why(s.limit))}</span>`;
+  } else if (short == null) {
+    what = `<span class="miss"><b>${fmtRate(lim)}</b>, refused at the worst corner of V_P and f (${esc(why(s.headroom))})</span>${binds}`;
+  } else if (low && s.limit.sensitivity && s.limit.sensitivity.lo != null && fmtRate(s.limit.sensitivity.lo) !== fmtRate(lim)) {
+    what = `<span class="miss"><b>${fmtRate(s.limit.sensitivity.lo)}</b> at the worst corner of V_P and f (${fmtRate(lim)} at the learned ones), ` +
+      `${fmtRate(-short)} short</span>${binds}`;
+  } else {
+    what = `<span class="miss"><b>${fmtRate(lim)}</b>, ${fmtRate(-short)} short</span>${binds}`;
+  }
+  return `<li>One ${role} replica fewer (${fleetText(s.fleet)}): ${what}</li>`;
+}
+
+// heldNote says, where decode admission holds the prefill limit down, that
+// the answer is decode first and may not be the fewest replicas in all.
+function heldNote(a) {
+  const held = (f => f && (f.flags || []).includes("HeldByDecodeAdmission"));
+  if (!held(a.limit) && !held(a.plan.limits.prefill)) return "";
+  return `<div class="hint">Decode admission holds the prefill limit down here. The answer is the fewest decode replicas first, ` +
+    `then the fewest prefill: a fleet with more decode and fewer prefill replicas may serve the rate with fewer in all. ` +
+    `Try it in the first mode, though a large fleet at a high rate can take many minutes to price there.</div>`;
+}
+
+// UNMET_SAID are the refusals unmetAdvice says in the page's own words; the
+// server's detail, written for the API and the CLI, is shown for the rest.
+const UNMET_SAID = new Set(["NoPrefillCapacity", "NoTPOTHistogram", "TargetBelowFloor", "ReplicaBoundReached"]);
+
+// unmetAdvice is what to change when no fleet within the bound serves the
+// rate, in the page's words: the box to raise, the term to type, or the
+// target to loosen. A floor no replica count lowers, and a cap the targets
+// do not set, are said so.
+function unmetAdvice(z) {
+  const u = z.unmet, reason = u.refused.reason, low = z.sizeOn === "low";
+  const untick = low ? ', or untick "Size for the worst corner of V_P and f"' : "";
+  switch (reason) {
+  case "NoPrefillCapacity":
+    return 'The source learned no prefill rate V_P: type one under "Assume a term the source did not learn".';
+  case "NoTPOTHistogram":
+    return "The source learned no TPOT percentile ratio R_q: type an assumed ratio under the TPOT target, or pick the mean.";
+  case "TargetBelowFloor": {
+    const which = u.role === "decode" ? "TPOT" : "TTFT";
+    return `The ${which} target is under the floor` + (low ? " at the worst corner of V_P and f" : "") +
+      `, the least ${which} any fleet gives. More replicas do not lower a floor: raise the ${which} target above it${untick}.`;
+  }
+  case "ReplicaBoundReached": {
+    const by = (u.atBound.limit.boundBy || []).join(" ");
+    const loosen = [];
+    if (/TTFT/.test(by)) loosen.push("TTFT");
+    if (/TPOT/.test(by)) loosen.push("TPOT");
+    const atMax = z.maxReplicas.prefill >= 64 && z.maxReplicas.decode >= 64;
+    const parts = [atMax ? "lower the rate (64 replicas a role is the most the page searches)" : 'raise "Search up to" (at most 64)'];
+    if (!atMax) parts.push("lower the rate");
+    if (loosen.length) parts.push(`loosen (raise) the ${loosen.join(" and ")} target${loosen.length > 1 ? "s" : ""}`);
+    if (/operating-point cap/.test(by)) parts.push("raise the headroom (the cap is headroom times the knee; no target moves it)");
+    return "No fleet up to the bound serves the rate. " + parts.join(", or ").replace(/^./, c => c.toUpperCase()) + untick + ".";
+  }
+  }
+  return "No fleet up to the bound serves the rate.";
 }
 
 // renderAtTarget says, under each target, what the rate set gives.
@@ -1196,15 +1281,24 @@ function renderTables() {
 
 // renderFlags is the flags drawer: every flag in the plan once, in words,
 // where it is, and what clears it.
+// With a size no fleet within the bound serves, there is no plan: the
+// drawer lists the flags of the figure at the bound.
 function renderFlags() {
-  const flags = state.plan.flags || [];
+  const z = state.mode === "size" ? state.size : null;
+  let flags = (state.plan && state.plan.flags) || [], banner = state.plan && state.plan.banner;
+  if (z && z.unmet) {
+    const f = z.unmet.atBound.limit;
+    const names = (f.flags || []).concat((f.refused && f.refused.flags) || []);
+    flags = [...new Set(names)].map(n => ({flag: n, on: ["the fleet at the bound"]}));
+    banner = z.banner;
+  }
   el("flagcount").textContent = flags.length;
   el("flags").innerHTML = flags.map(f => {
     let w = FLAG_WORDS[f.flag];
     // UnvalidatedTTFT says what the banner says, in the banner's own words:
     // the API takes them from the constant the controller publishes.
-    if (f.flag === "UnvalidatedTTFT" && state.plan.banner) {
-      w = [state.plan.banner + " These figures come from the validation recordings, not from this fleet.", w[1]];
+    if (f.flag === "UnvalidatedTTFT" && banner) {
+      w = [banner + " These figures come from the validation recordings, not from this fleet.", w[1]];
     }
     const places = [...new Set(f.on.map(o => o.replace(/\.(curve|floor|knees.*)$/, "").replace(/^ttft\.perBucket\./, "bucket ")))];
     return `<li><b>${esc(f.flag)}</b>: ${esc(w ? w[0] : "see the what-if proposal for this flag")}` +

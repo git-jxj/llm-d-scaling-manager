@@ -165,20 +165,32 @@ read them, you do not set them.
   page says so: "at one corner of V_P and f this fleet serves only X r/s".
   Tick **Size for the worst corner of V_P and f** to find the fleet that
   serves your rate there too. It may need more replicas and takes longer.
+  Tick it when V_P is a value you typed rather than one the source learned,
+  or when the fleet must hold the rate even if V_P reads high. If the worst
+  corner puts the TTFT target under the floor, the page says so: no replica
+  count helps, so raise the target or untick the box.
 - **Decode first.** The page finds the fewest decode replicas, then the
-  fewest prefill replicas with them. When decode replicas hold the prefill
-  limit down, one more decode and one fewer prefill replica may also work and
-  may be fewer in all; try it in the first mode.
+  fewest prefill replicas with them. When decode admission holds the prefill
+  limit down, the page notes it: one more decode and one fewer prefill
+  replica may also work and may be fewer in all. You can try such a fleet in
+  the first mode, but a large fleet at a high rate can be very slow to price
+  there: one of 12 prefill and 19 decode replicas at 200 r/s was still
+  pricing after 30 minutes.
 - **The rest of the page** is the fleet it found, exactly as the first mode
   would show it if you set those counts yourself.
 - **Search up to.** The most replicas of a role the page tries, 32 unless you
   change it (at most 64). When no fleet within it serves the rate, the page
-  says so, with the reason and what the largest fleet would serve. If the
-  reason is a refused term, not the bound, more replicas will not help:
-  assume the term (see below) or change the target.
-- **Slower than the first mode.** An answer takes seconds, and on a TTFT
-  fleet can take 20 s, most of it drawing the graphs of the fleet found, so
-  the rate is priced when you let go of the slider.
+  says so, with the reason, what the largest fleet would serve, and what to
+  change: raise **Search up to**, lower the rate, or loosen (raise) the
+  target that binds. When the reason is a refused term or a floor, not the
+  bound, more replicas do not help: type the term (see below) or raise the
+  target.
+- **How long it takes.** Each answer searches several fleets, then draws the
+  graphs of the fleet found, which takes most of the time. Expect about 20 s
+  on a TTFT fleet from cold, about 25 s at 200 r/s, and about 45 s for the
+  worst corner. The page dims the last answer and counts the seconds while it
+  works. It prices the rate when you let go of the slider, and a new rate or
+  target cancels a size still running.
 
 Switch back to **How much does this fleet serve?** to step the replicas from
 the fleet it found.

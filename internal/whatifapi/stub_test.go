@@ -28,6 +28,9 @@ type stubResolver struct {
 	dip func(prefill, decode int) bool
 	// onFleet, when set, is called with the knobs of every fleet priced.
 	onFleet func(k Knobs)
+	// loRefused, when set, refuses the low end of every fleet limit's span,
+	// as a corner of V_P and f under a TTFT floor does.
+	loRefused whatif.Reason
 }
 
 func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved, error) {
@@ -44,6 +47,9 @@ func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved,
 		Policy: PolicyInfo{TTFT: &PolicyObjective{Statistic: "p90", Seconds: 0.2}, TPOT: &PolicyObjective{Statistic: "mean", Seconds: 0.012},
 			Headroom: 0.85, FlowControl: "off, inferred"},
 		Terms: []Term{}, Assumed: []string{"Poisson arrivals"}}
+	if req.Model == "decode-only" {
+		in.Fleet.Prefill = nil
+	}
 	return &Resolved{Inputs: in, Content: fmt.Sprintf("stub %v %s", r.refusePrefill, req.Model), Pricer: r}, nil
 }
 
@@ -132,7 +138,7 @@ func (f *stubFleet) Limits(ttftSeconds, tpotSeconds, headroom float64) LimitSet 
 	_, _, uncapped := f.PlainLimits(ttftSeconds, tpotSeconds, 1)
 	// The fleet's limit spans 10% either way over V_P and f.
 	if a, ok := fl.(whatif.Answer); ok {
-		a.Sensitivity = &whatif.Sensitivity{Lo: 0.9 * a.Value, Hi: 1.1 * a.Value}
+		a.Sensitivity = &whatif.Sensitivity{Lo: 0.9 * a.Value, Hi: 1.1 * a.Value, Refused: f.r.loRefused}
 		fl = a
 	}
 	return LimitSet{Decode: d, Prefill: p, Fleet: fl, WithoutHeadroom: uncapped, Notes: []string{"a stub's note at the target"}}
