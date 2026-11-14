@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="page/planner.css">
+<script src="page/scenario.js" defer></script>
 <script src="page/planner.js" defer></script>
 </head>
 <body>
@@ -67,6 +68,26 @@
     <label><input type="radio" name="mode" value="size" id="msize"> What fleet does this traffic need?</label>
     <span class="hint" id="modenote">Set the replicas; the page prices the most they serve.</span>
   </fieldset>
+
+  <section class="card scenarios" aria-label="Saved scenarios and compare">
+    <div class="scenrow">
+      <label for="scenname">Scenario</label>
+      <input type="text" id="scenname" maxlength="80" placeholder="a name, or one made from the knobs" autocomplete="off">
+      <button type="button" id="scensave" disabled>Save</button>
+      <label for="scenlist">Saved</label>
+      <select id="scenlist" disabled><option value="">none saved</option></select>
+      <button type="button" id="scenopen" disabled>Open</button>
+      <button type="button" id="scendelete" disabled>Delete</button>
+      <button type="button" id="scenexport" disabled>Export JSON</button>
+      <label class="file" for="scenimport">Import JSON<input type="file" id="scenimport" class="sr" accept=".json,application/json"></label>
+      <span class="hint" id="scencount"></span>
+    </div>
+    <div class="scenrow">
+      <button type="button" id="pina" disabled>Pin as A</button>
+      <button type="button" id="unpin" disabled>Unpin A</button>
+      <span class="hint" id="pinnote">Pin the scenario on screen as A, then change the knobs: A stays drawn dashed.</span>
+    </div>
+  </section>
 
   <section class="card controls" aria-label="Scenario">
     <div class="group">
@@ -167,6 +188,11 @@
       <div class="sizeanswer" id="sizeanswer" aria-live="polite"></div>
       <ul class="fewer" id="fewer" aria-label="Why one fewer is not enough"></ul>
     </div>
+    <div class="comparebox" id="comparebox" hidden>
+      <h2>A, pinned, against the current scenario</h2>
+      <p class="hint" id="comparewhat"></p>
+      <div id="comparetable"></div>
+    </div>
     <div id="planview">
     <h2><span id="limitstitle">The most the fleet serves under these SLOs</span> <span class="hint" id="limitsfor"></span></h2>
     <p class="hint" id="pagetargets" hidden></p>
@@ -206,7 +232,8 @@
     <details><summary>Table view: the curves' values</summary><div id="curvetable"></div></details>
     <p class="note">Dashed horizontal line: the target. Dashed vertical line: the rate you set. Open circle: the figure at
       that rate. Filled circle: the highest rate that meets the target. Shaded band: the span over V_P and f (TTFT) or
-      the bootstrap band (TPOT). Shaded past the lower knee: saturated, where the model answers nothing.</p>
+      the bootstrap band (TPOT). Shaded past the lower knee: saturated, where the model answers nothing. With a scenario
+      pinned as A: its curve is the grey dashed line, and its filled circle the highest rate that meets its own target.</p>
     </div>
   </section>
 

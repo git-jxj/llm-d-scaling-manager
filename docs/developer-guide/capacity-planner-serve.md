@@ -9,7 +9,7 @@ for the fewest replicas a rate needs. Every figure is one the
 
 This is phases 0 and 1 of [the capacity planner](../proposals/capacity-planner.md),
 the API and the page at `/` that draws it, and phase 2's inverse mode
-(`POST /v1/size`). Operators start from
+(`POST /v1/size`) and the page's saved scenarios and compare. Operators start from
 [Plan a P/D fleet with the capacity planner](../guides/capacity-planner/); this
 page is the API's. Like the rest of `capacity-planner`, it is a contributor and
 operator tool and is not in the manager image.
@@ -211,13 +211,13 @@ with none, TokenReview checks the token for the API server's own audiences.
 | `POST /v1/plan` | Prices a scenario against an `inputsId`. |
 | `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate, under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
 | `GET /v1/sources` | What the server reads, for the page's source picker: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` that a `recording` source may name (a regular file or a link to one, under a name that is no path and not hidden), sorted. It does not open them: a file that is not a learner recording is listed, and refused when loaded. It lists at most 1000, with `recordingsTruncated` true past that. Any user the API answers sees all of these: every allowed namespace and every recording name. |
-| `GET /` | The page. Its script and style are `GET /page/planner.js` and `GET /page/planner.css`. |
+| `GET /` | The page. Its scripts and style are `GET /page/scenario.js`, `GET /page/planner.js` and `GET /page/planner.css`. |
 
 `GET /v1/models` is a later phase. Any other path is a 404.
 
 ### The page
 
-The page is three files in `internal/whatifapi/page/`, embedded in the binary
+The page is four files in `internal/whatifapi/page/`, embedded in the binary
 with `go:embed`: plain HTML, CSS and JavaScript, no library and no build step.
 It is served on the same handler as the API, so the same check guards it:
 loopback names only with `--auth=none`, and a bearer token allowed `get` on
@@ -262,6 +262,64 @@ The address's fragment carries the source and the knobs
 rewrites it after each plan. Seconds are seconds, as the API takes them. In
 size mode it carries `mode=size`, `max` when it is not 32 and `low=1` when
 sizing for the worst corner, and no replica counts: they are the answer.
+
+Saved scenarios and compare (phase 2) are the page's alone; the API has no
+endpoint for them and the server keeps nothing. A saved scenario is the
+fragment's text (`linkParams()` in `planner.js`) under a name, in the
+browser's `localStorage` key `capacity-planner.scenarios`, at most 50. An
+exported one is a JSON file:
+
+```json
+{"kind": "capacity-planner-scenario", "version": 1, "name": "two prefill",
+ "link": "recording=run.jsonl.gz&prefill=2&decode=1&rate=6&ttftStat=p90&ttft=0.8&tpotStat=mean&tpot=0.05&headroom=0.85",
+ "saved": "2026-11-14T21:08:00.000Z"}
+```
+
+The logic that needs no page is in `internal/whatifapi/page/scenario.js`,
+loaded before `planner.js`: `esc`, the checks, the store's edits, the names,
+which sources a scenario can open, the link's handshake with the loads, the
+import's branches and the compare table. `hack/check-planner-scenarios.sh`
+(in `make lint-deploy-scripts`, which sets up node in CI) runs those
+functions under node on fixtures, and fails without node.
+
+A file (at most 64 KiB) and every store entry read back are checked by
+`checkScenario` before use: the kind and version, a name of 1 to 80
+characters with no control character, and a link of at most 4096 characters
+whose every key is one `linkParams` writes, each once, numbers finite and not
+negative, statistics `mean` or `pNN`, and a recording or namespace named. A
+file that fails is refused with the reason. A store entry that fails is not
+listed but is kept, and written back as it was on every save and delete
+(`putScenario`, `dropScenario`): it may be another version's. The list is
+built from `Option` nodes, so a name is never markup; elsewhere names reach
+HTML only through `esc`. An import is planned by `importPlan`: one the same
+as a saved scenario is opened without saving, one whose name another has is
+saved as "name (2)" and so on (`freeName`), within the 80 characters, and the
+store is written once or not at all. A generated name is `scenarioTitle`:
+whole clauses dropped from the end, headroom first, to fit.
+
+Opening a scenario, or the link the page opens on, needs a source this
+server reads (`sourceProblem`): otherwise it is refused before any request,
+and no other source is loaded in its place; an import is then saved and not
+opened. The link's knobs are applied by one load (`state.link`,
+`linkAtLoadStart`, `linkAtLoadEnd`): the newest load takes the link over, so
+a Load pressed before the first load returns still applies it. The page's
+own link waits for the first load that succeeds. A scenario's load that
+fails puts back what `beginOpen` recorded (the link, the address, the source
+form and the name box), and no later Load applies it.
+
+"Pin as A" copies the plan response on screen (in size mode, the answer's
+plan) into `state.pin`. It is not priced again: the graphs draw its TTFT and
+TPOT curves dashed (class `pin`, a longer dash and a thicker line than the
+guides), with its point B labelled "A: x r/s" ("(cap)" where its cap holds the
+limit under it) and its target where that differs. A curve that is the
+current one (`sameCurve`) is named "A: same as current" in the legend. The
+compare box is `compareRows`: A's fleet, rate, limits, headroom, binding and
+targets beside the plan on screen, with the change as printed (10.1 to 10.2
+is +0.10), "now refused" or "now priced" where one side is refused, and
+headroom coloured only at the same rate. The x axis runs far enough to show
+both. With no plan on screen it says why instead (`state.priceFailed`: the
+last price or size failed; no fleet within the bound; being priced, set as
+soon as size mode starts), and Pin is disabled meanwhile.
 
 To look at the page against the goldens' recordings:
 
@@ -434,4 +492,6 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeConcurrentSearchOnce`, `TestSizeBusyAndDecodeOnly` | Identical sizes at once search once; with every slot taken a size is a 503 before any search; a source with no prefill variant is a 400. |
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
+| `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
+| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (145 cases; it fails without node): `esc`, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |

@@ -46,6 +46,7 @@ func TestPageServed(t *testing.T) {
 	for path, want := range map[string]struct{ ct, contains string }{
 		"/":                 {"text/html; charset=utf-8", `<script src="page/planner.js" defer></script>`},
 		"/page/planner.js":  {"text/javascript; charset=utf-8", "FLAG_WORDS"},
+		"/page/scenario.js": {"text/javascript; charset=utf-8", "function linkProblem"},
 		"/page/planner.css": {"text/css; charset=utf-8", "prefers-color-scheme: dark"},
 	} {
 		rec := get(h, path, "")
@@ -120,12 +121,17 @@ func TestPageLoadsNothingExternal(t *testing.T) {
 		}
 	}
 	html := pageText(t, "index.html")
-	assert.Equal(t, 1, strings.Count(html, "<script"), "one script, by src")
+	// Two scripts by src, the scenario logic first: planner.js calls it.
+	assert.Equal(t, 2, strings.Count(html, "<script"), "two scripts, by src")
+	assert.Less(t, strings.Index(html, `<script src="page/scenario.js" defer></script>`), strings.Index(html, `<script src="page/planner.js" defer></script>`))
+	assert.GreaterOrEqual(t, strings.Index(html, `<script src="page/scenario.js" defer></script>`), 0)
 	// The page reaches its files and the API by paths relative to itself, so
 	// that a proxy may serve it under a prefix.
-	js := pageText(t, "planner.js")
-	for _, abs := range []string{`"/v1/`, "`/v1/", `'/v1/`, `"/page/`} {
-		assert.NotContains(t, js, abs, "an absolute path")
+	for _, name := range []string{"planner.js", "scenario.js"} {
+		js := pageText(t, name)
+		for _, abs := range []string{`"/v1/`, "`/v1/", `'/v1/`, `"/page/`} {
+			assert.NotContains(t, js, abs, "an absolute path in %s", name)
+		}
 	}
 	assert.NotContains(t, html, `="/page/`, "an absolute path")
 	assert.NotContains(t, html, "<style")
@@ -162,6 +168,88 @@ func TestPageAsksSize(t *testing.T) {
 		`el("prefill").disabled = el("pdec").disabled = el("pinc").disabled = !state.inputs.fleet.prefill || sizing;`} {
 		assert.Contains(t, js, want)
 	}
+}
+
+// The page saves, exports, imports and compares scenarios: every control is
+// on the page and wired to its handler, the store and the file carry the
+// link, every key the link writes is one an imported link may carry, a
+// name read back reaches the page only through esc, and a pinned plan is a
+// copy, not priced again.
+func TestPageSavesAndCompares(t *testing.T) {
+	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
+	for id, wire := range map[string]string{
+		"scensave":   `el("scensave").onclick = saveScenario;`,
+		"scenopen":   `el("scenopen").onclick =`,
+		"scendelete": `el("scendelete").onclick = deleteScenario;`,
+		"scenexport": `el("scenexport").onclick = exportScenario;`,
+		"scenimport": `el("scenimport").onchange = () => importScenario(el("scenimport").files[0]);`,
+		"pina":       `el("pina").onclick = pinA;`,
+		"unpin":      `el("unpin").onclick = unpin;`,
+	} {
+		assert.Contains(t, html, `id="`+id+`"`)
+		assert.Contains(t, js, wire, "#%s is not wired", id)
+	}
+	for _, id := range []string{"scenname", "scenlist", "scencount", "pinnote", "comparebox", "comparewhat", "comparetable"} {
+		assert.Contains(t, html, `id="`+id+`"`)
+	}
+	assert.Contains(t, html, `<input type="file" id="scenimport"`)
+
+	// One format: the store and the file hold linkParams' text, and writeLink
+	// puts the same text in the address. The checks, the store's edits and
+	// the names are scenario.js's, run on fixtures by
+	// hack/check-planner-scenarios.sh; here, that the page calls them.
+	sjs := pageText(t, "scenario.js")
+	for _, want := range []string{`"#" + linkParams().toString()`, `link: linkParams().toString()`,
+		`localStorage.setItem(SCENARIO_STORE`, "readScenarioFile(await file.text())", "file.size > MAX_FILE",
+		"putScenario(readStore(),", "dropScenario(readStore(), sc.name)", "importPlan(readStore(),",
+		"visibleScenarios(readStore())", "new Option(", "state.link = linkAtLoadStart(state.link, seq);",
+		"linkAtLoadEnd(state.link, seq, state.seq, true)", "linkAtLoadEnd(state.link, seq, state.seq, false)", "beginOpen(pageBefore(), sc)",
+		"sourceProblem(sc.link, state.sources)", "compareRows(pin.plan, cur,", "sameCurve(p, pts(current))", "state.priceFailed = true;"} {
+		assert.Contains(t, js, want)
+	}
+	assert.Contains(t, sjs, `const SCENARIO_KIND = "capacity-planner-scenario";`)
+	assert.NotContains(t, js, `el("scenlist").innerHTML`, "the saved names are listed as nodes, not markup")
+
+	// Every key linkParams writes is one linkProblem admits, so an exported
+	// scenario imports.
+	start, end := strings.Index(js, "function linkParams()"), strings.Index(js, "// ---- The plan ----")
+	require.True(t, start >= 0 && end > start, "linkParams not found")
+	keys := regexp.MustCompile(`p\.set\("([A-Za-z]+)"`).FindAllStringSubmatch(js[start:end], -1)
+	require.Greater(t, len(keys), 15, "found too few link keys")
+	require.Contains(t, js[start:end], "p.set(a.key, k.assume[a.key])")
+	astart := strings.Index(js, "const ASSUMABLE = [")
+	require.GreaterOrEqual(t, astart, 0, "ASSUMABLE not found")
+	assumed := regexp.MustCompile(`key: "([A-Za-z]+)"`).FindAllStringSubmatch(js[astart:astart+strings.Index(js[astart:], "];")], -1)
+	require.Len(t, assumed, 4, "the assumed terms' keys")
+	lstart, lend := strings.Index(sjs, "const LINK_NUMBERS"), strings.Index(sjs, "// CONTROL is")
+	require.True(t, lstart >= 0 && lend > lstart, "the link's keys not found")
+	admitted := sjs[lstart:lend]
+	for _, k := range append(keys, assumed...) {
+		assert.True(t, strings.Contains(admitted, `"`+k[1]+`"`) || strings.Contains(admitted, k[1]+": "), "an imported link may not carry %s", k[1])
+	}
+
+	// A name read back is untrusted: no line of either script that builds
+	// markup puts one in raw. (The status line and the notes take names as
+	// textContent, and the list builds Option nodes.)
+	raw := regexp.MustCompile(`\$\{(x|sc|pin|state\.pin|same)\.(name|what|source|link|saved)`)
+	markup := regexp.MustCompile("innerHTML|<[a-z/]")
+	scanned := 0
+	for name, text := range map[string]string{"planner.js": js, "scenario.js": sjs} {
+		for i, line := range strings.Split(text, "\n") {
+			if markup.MatchString(line) {
+				scanned++
+				assert.NotRegexp(t, raw, line, "%s line %d puts a name into markup unescaped", name, i+1)
+			}
+		}
+	}
+	require.Greater(t, scanned, 100, "found too few markup lines")
+
+	// A pinned plan is a copy of the plan on screen; the graphs draw it dashed.
+	for _, want := range []string{"plan: JSON.parse(JSON.stringify(p))", `cls: "c-pin", pin: true`, `${sr.pin ? " pin" : ""}`} {
+		assert.Contains(t, js, want)
+	}
+	css := pageText(t, "planner.css")
+	assert.Contains(t, css, "svg .line.pin { stroke-dasharray:")
 }
 
 // isFlagType reports whether e is the type whatif.Flag, as its own package or

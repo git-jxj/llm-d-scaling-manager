@@ -3283,6 +3283,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@echo "Checking the k1/k2 report's Restored column..."
 	@# Fixture events through render_report: a restore is a field, not a source.
 	@bash hack/check-k2-decisions-restored.sh
+	@echo "Checking the capacity planner page's saved scenarios..."
+	@# Runs scenario.js under node on fixtures. The Go tests read the page as
+	@# text: a check that admits every import, or an escape that escapes
+	@# nothing, reads fine there.
+	@bash -n hack/check-planner-scenarios.sh
+	@bash hack/check-planner-scenarios.sh
 	@echo "Checking the post-run analysis asks for the lines its controller verbosity logs..."
 	@# Runs post_run_analyze.sh against a stub kubectl and fixture logs. A run
 	@# at the shipped --v=2 has no k2-decision line, and an empty window, or a

@@ -3,10 +3,12 @@
 **Status:** proposal, 2026-11-09; the open questions are settled under
 [Decisions](#decisions). Phase 0, the API, and phase 1, the page, are built:
 see [As built (phase 0)](#as-built-phase-0) and
-[As built (phase 1)](#as-built-phase-1). Of phase 2, inverse mode is built
-([As built (phase 2: inverse mode)](#as-built-phase-2-inverse-mode)); saved
-scenarios and compare, user-set bucket edges and the Grafana dashboard are
-not. Later phases are not. It builds on
+[As built (phase 1)](#as-built-phase-1). Of phase 2, inverse mode
+([As built (phase 2: inverse mode)](#as-built-phase-2-inverse-mode)) and saved
+scenarios and compare
+([As built (phase 2: save and compare)](#as-built-phase-2-save-and-compare))
+are built; user-set bucket edges and the Grafana dashboard are not. Later
+phases are not. It builds on
 `cmd/capacity-planner` and `internal/signals/whatif`, which are
 ([what-if capacity](slo-capacity-planner.md), [end-to-end TTFT](slo-capacity-planner-ttft.md)),
 including the processor-sharing TTFT pricing (PR #16, merged).
@@ -976,6 +978,42 @@ every replica count, not the bound reached.
 - **One question per size.** The per-bucket view is the plan's; a size prices
   the mix line alone. The CLI has no size command: the API's answer comes
   from the same limits `slo-to-rate` prints.
+
+## As built (phase 2: save and compare)
+
+C10 is built, in the page alone: the API is unchanged and the server keeps
+nothing. How to use it is in the guide's
+[Save and compare scenarios](../guides/capacity-planner/README.md#save-and-compare-scenarios);
+the storage, the file format and the checks are in
+[Capacity planner serve](../developer-guide/capacity-planner-serve.md#the-page).
+
+**One format.** A scenario is the address's fragment, the text phase 1
+already wrote: the source and the knobs. A saved scenario is that text under
+a name in the browser's `localStorage`; an exported one is a JSON file
+holding the same text with a kind, a version and the name. Import checks the
+file as untrusted: only keys the page writes, numbers that are numbers, a
+name of at most 80 characters shown only through `esc`.
+
+**Compare.** "Pin as A" keeps the plan response on screen as it is; it is not
+priced again as the knobs move. While A is pinned the TTFT and TPOT graphs
+draw its curve dashed beside the current one, with its point B and, where it
+differs, its target; a table sets A's fleet, rate, fleet and role limits,
+headroom, binding role and bound, targets and shape beside the current ones,
+with the change. A stays pinned when a saved scenario is opened, so two saved
+scenarios compare by pinning one and opening the other. In size mode the pin
+is the answer's plan; a size no fleet within the bound serves has nothing to
+pin.
+
+**Where it departs from the design above.**
+
+- **A Prometheus window is not saved.** The link names the namespace and not
+  the window, so a saved Prometheus scenario, like a shared link, reopens on
+  the last hour ending now. A recording scenario names its cycle and reopens
+  the same figures.
+- **Two scenarios, not more.** One pin (A) against the current scenario; the
+  per-bucket lines and bands are drawn for the current scenario only.
+- **The pin is not saved.** It lives until the page is reloaded; save both
+  scenarios to come back to a comparison.
 
 ## Decisions
 
