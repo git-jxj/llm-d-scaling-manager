@@ -24,6 +24,7 @@ type pageFile struct {
 var pageFiles = map[string]pageFile{
 	"/":                 {"page/index.html", "text/html; charset=utf-8"},
 	"/page/planner.js":  {"page/planner.js", "text/javascript; charset=utf-8"},
+	"/page/scenario.js": {"page/scenario.js", "text/javascript; charset=utf-8"},
 	"/page/planner.css": {"page/planner.css", "text/css; charset=utf-8"},
 }
 

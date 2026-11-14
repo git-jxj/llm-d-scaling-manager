@@ -211,13 +211,13 @@ with none, TokenReview checks the token for the API server's own audiences.
 | `POST /v1/plan` | Prices a scenario against an `inputsId`. |
 | `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate, under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
 | `GET /v1/sources` | What the server reads, for the page's source picker: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` that a `recording` source may name (a regular file or a link to one, under a name that is no path and not hidden), sorted. It does not open them: a file that is not a learner recording is listed, and refused when loaded. It lists at most 1000, with `recordingsTruncated` true past that. Any user the API answers sees all of these: every allowed namespace and every recording name. |
-| `GET /` | The page. Its script and style are `GET /page/planner.js` and `GET /page/planner.css`. |
+| `GET /` | The page. Its scripts and style are `GET /page/scenario.js`, `GET /page/planner.js` and `GET /page/planner.css`. |
 
 `GET /v1/models` is a later phase. Any other path is a 404.
 
 ### The page
 
-The page is three files in `internal/whatifapi/page/`, embedded in the binary
+The page is four files in `internal/whatifapi/page/`, embedded in the binary
 with `go:embed`: plain HTML, CSS and JavaScript, no library and no build step.
 It is served on the same handler as the API, so the same check guards it:
 loopback names only with `--auth=none`, and a bearer token allowed `get` on
@@ -271,19 +271,32 @@ exported one is a JSON file:
 
 ```json
 {"kind": "capacity-planner-scenario", "version": 1, "name": "two prefill",
- "link": "recording=run.jsonl.gz&prefill=2&decode=1&rate=6&ttft=0.8", "saved": "2026-11-14T21:08:00.000Z"}
+ "link": "recording=run.jsonl.gz&prefill=2&decode=1&rate=6&ttftStat=p90&ttft=0.8&tpotStat=mean&tpot=0.05&headroom=0.85",
+ "saved": "2026-11-14T21:08:00.000Z"}
 ```
+
+The logic that needs no page is in `internal/whatifapi/page/scenario.js`,
+loaded before `planner.js`: `esc`, the checks, the store's edits, the names
+and the compare table's changes. `hack/check-planner-scenarios.sh` (in
+`make lint-deploy-scripts`) runs those functions under node on fixtures.
 
 A file (at most 64 KiB) and every store entry read back are checked by
 `checkScenario` before use: the kind and version, a name of 1 to 80
-characters, and a link of at most 4096 characters whose every key is one
-`linkParams` writes, each once, numbers finite and not negative, statistics
-`mean` or `pNN`, and a recording or namespace named. A file that fails is
-refused with the reason; a store entry that fails is left out. Names are put
-into HTML only through `esc`. Opening a scenario replaces the link the page
-read at start and loads its source as the page does when it opens; a
-recording or namespace the server does not list is refused before any
-request.
+characters with no control character, and a link of at most 4096 characters
+whose every key is one `linkParams` writes, each once, numbers finite and not
+negative, statistics `mean` or `pNN`, and a recording or namespace named. A
+file that fails is refused with the reason. A store entry that fails is not
+listed but is kept, and written back as it was on every save and delete
+(`putScenario`, `dropScenario`): it may be another version's. The list is
+built from `Option` nodes, so a name is never markup; elsewhere names reach
+HTML only through `esc`. An import whose name a saved scenario has is saved
+as "name (2)" and so on (`freeName`), within the 80 characters.
+
+Opening a scenario loads its source as the page does when it opens. Its
+knobs are applied by that load alone (`state.linkSeq`): if the load fails,
+the link, the address and the source form are put back, and a later Load
+applies nothing of it. A recording or namespace the server does not list is
+refused before any request.
 
 "Pin as A" copies the plan response on screen (in size mode, the answer's
 plan) into `state.pin`. It is not priced again: the graphs draw its TTFT and
@@ -291,7 +304,8 @@ TPOT curves dashed (class `pin`), with its point B and its target where that
 differs, and the compare box tables its fleet, limits, headroom, binding and
 targets beside the plan on screen, with the change. The x axis runs far enough
 to show both. A size no fleet serves has no plan, so nothing to pin, and the
-table says so while A stays pinned.
+table says so while A stays pinned; Pin is also disabled while a size is in
+flight.
 
 To look at the page against the goldens' recordings:
 
@@ -464,5 +478,6 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeConcurrentSearchOnce`, `TestSizeBusyAndDecodeOnly` | Identical sizes at once search once; with every slot taken a size is a 503 before any search; a source with no prefill variant is a 400. |
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
-| `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired; the store and the file hold the link's text; every key the link writes is one an import admits; a name read back reaches HTML only through `esc`; a pinned plan is a copy drawn dashed. |
+| `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
+| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node: `esc`, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, and the compare table's signed changes. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |

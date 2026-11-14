@@ -217,13 +217,15 @@ them.
 
 - **Save** keeps the scenario on screen in this browser, under the name you
   type (or one made from the model, fleet and rate). Saving under a name
-  already used replaces it. **Open** loads a saved one, **Delete** removes it.
-  The page keeps at most 50.
+  already used replaces it, and the status line says so. **Open** loads a
+  saved one, **Delete** removes it. The page keeps at most 50.
 - **Export JSON** downloads the scenario as a small file; **Import JSON**
-  reads one, saves it and opens it. The file holds the same text as the
-  address after the `#`, so it opens only against a server that reads the
-  same recording or namespace. A file the page did not write is refused with
-  the reason.
+  reads one, saves it and opens it. If another saved scenario already has
+  its name, the import is saved as "name (2)", "name (3)" and so on. The file
+  holds the same text as the address after the `#`, so it opens only against
+  a server that reads the same recording or namespace. A file that fails the
+  page's checks is refused, with the reason. A scenario that fails to load
+  leaves the page as it was.
 - **Pin as A** keeps the plan on screen. Change any knob: the TTFT and TPOT
   graphs draw A as a grey dashed line beside the current one, and a table
   sets A's fleet, limits, binding role and targets beside the current ones,

@@ -91,10 +91,8 @@ const SIZE_BOUND = 32;
 
 const el = id => document.getElementById(id);
 
-// esc is s safe to put in HTML.
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
-}
+// esc, which every string from the API passes through on its way into the
+// page, is in scenario.js, loaded first.
 
 // val is a figure's value, or null where it is refused or absent.
 function val(f) {
@@ -247,6 +245,7 @@ async function start() {
   el("from").value = localInput(from);
   el("to").value = localInput(to);
   showKind();
+  state.linkSeq = state.seq + 1;
   loadInputs();
 }
 
@@ -284,9 +283,14 @@ function sourceRequest() {
 }
 
 // loadInputs resolves the source the form names. A response that a later
-// load overtook is dropped.
-async function loadInputs() {
+// load overtook is dropped. The link's knobs are applied by the load meant
+// for them alone (state.linkSeq): the first, or one openScenario started.
+// The first link waits for the first load that succeeds; a scenario's load
+// that fails calls onFail, which puts back what was there, and its knobs are
+// applied by no later load.
+async function loadInputs(onFail) {
   const seq = ++state.seq;
+  if (state.linkSeq === "next") state.linkSeq = seq;
   el("load").disabled = true;
   try {
     const req = {source: sourceRequest()};
@@ -297,14 +301,22 @@ async function loadInputs() {
     const inputs = await api("POST", "v1/inputs", req);
     if (seq !== state.seq) return;
     setInputs(inputs);
-    if (!state.linkApplied) {
-      state.linkApplied = true;
+    if (state.linkSeq === seq) {
+      state.linkSeq = null;
       applyLink();
     }
     el("source").open = false;
     plan();
   } catch (e) {
-    setStatus("Could not load the inputs: " + e.message, true);
+    let opened = "";
+    if (seq === state.seq && state.linkSeq === seq) {
+      state.linkSeq = onFail ? null : "next";
+      if (onFail) {
+        onFail();
+        opened = " The scenario was not opened; the page keeps the one before.";
+      }
+    }
+    setStatus("Could not load the inputs: " + e.message + opened, true);
     el("source").open = true;
   } finally {
     el("load").disabled = false;
@@ -499,10 +511,11 @@ function applyLink() {
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   k.sizeLow = g("low") === "1";
-  // A scenario opened in the other mode switches the question; the link's
-  // per-bucket view is the plan's, kept aside while sizing.
+  // A scenario opened in the other mode switches the question. The
+  // per-bucket view is the plan's: a size link carries none, and the view
+  // stays off when you switch to the plan from it.
   if (g("mode") === "size" && state.inputs.fleet.prefill) {
-    k.perBucket = g("perBucket") === "1";
+    k.perBucket = false;
     enterSize();
   } else {
     enterPlan();
@@ -657,6 +670,7 @@ async function plan() {
   if (sizing) {
     clearTimeout(slow);
     state.abort = new AbortController();
+    pinControls();
     el("sizebox").classList.add("stale");
     const tick = () => setStatus(`Sizing ${fmtRate(state.k.rate || 0)}: ${Math.round((performance.now() - t0) / 1000)} s ` +
       "(a search over replica counts, then the plan at the answer; a cold one can take 20 s or more)...");
@@ -679,6 +693,8 @@ async function plan() {
       }
       const out = await api("POST", "v1/size", sizeRequest(), signal);
       if (stale()) return;
+      // Answered: nothing left to cancel, and the answer may be pinned.
+      state.abort = null;
       state.size = out;
       if (out.answer) {
         state.plan = out.answer.plan;
@@ -717,6 +733,7 @@ async function plan() {
     if (sizing) {
       el("sizebox").classList.remove("stale");
       state.abort = null;
+      pinControls();
     }
     state.inFlight = false;
     if (state.dirty) plan();
@@ -1363,85 +1380,18 @@ function renderFlags() {
 
 // ---- Saved scenarios ----
 
-// A scenario is the page's link, the text after the # (linkParams): the
-// source and the knobs. A saved scenario is that text under a name in this
-// browser's localStorage; an exported one is a small JSON file holding the
-// same text. The server keeps nothing. A file or a store read back is
-// untrusted: checkScenario admits only a link this page writes, and every
-// name is shown through esc.
-const SCENARIO_KIND = "capacity-planner-scenario";
-const SCENARIO_VERSION = 1;
-const SCENARIO_STORE = "capacity-planner.scenarios";
-const MAX_SCENARIOS = 50, MAX_NAME = 80, MAX_LINK = 4096, MAX_FILE = 65536;
+// The checks, the store's edits and the names are in scenario.js, which the
+// page loads first; here is what touches the page and the browser.
 
-// LINK_NUMBERS, LINK_NAMES and LINK_WORDS are every key linkParams writes:
-// the numbers, the free names (a recording, a namespace, a model, a variant,
-// a bucket), and the keys with a fixed set of values.
-const LINK_NUMBERS = new Set(["cycle", "prefill", "decode", "rate", "ttft", "tpot", "ratio", "headroom", "out", "max"]
-  .concat(ASSUMABLE.map(a => a.key)));
-const LINK_NAMES = new Set(["recording", "namespace", "model", "prefillVariant", "decodeVariant", "priceAs"]);
-const STAT_WORD = /^(mean|p[0-9]{1,2}(\.[0-9]{1,3})?)$/;
-const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD};
-
-// linkProblem is what is wrong with a link read from a file or the store, or
-// "" when it is one linkParams could have written.
-function linkProblem(link) {
-  if (typeof link !== "string") return "the link is not text";
-  if (link.length > MAX_LINK) return `the link is longer than ${MAX_LINK} characters`;
-  const p = new URLSearchParams(link), seen = new Set();
-  for (const [key, v] of p) {
-    if (seen.has(key)) return `the link names ${key} twice`;
-    seen.add(key);
-    if (LINK_NUMBERS.has(key)) {
-      if (v === "" || !isFinite(+v) || +v < 0) return `${key} is not a number: ${v}`;
-    } else if (LINK_NAMES.has(key)) {
-      if (!v || v.length > 253 || /[\u0000-\u001f\u007f]/.test(v)) return `${key} is not a name`;
-    } else if (LINK_WORDS[key]) {
-      if (!LINK_WORDS[key].test(v)) return `${key} cannot be ${v}`;
-    } else {
-      return `the page sets no ${key}`;
-    }
-  }
-  if (!p.get("recording") && !p.get("namespace")) return "the link names no source";
-  return "";
+// readStore is the store's raw entries, every one kept (parseStore).
+function readStore() {
+  try { return parseStore(localStorage.getItem(SCENARIO_STORE)); } catch (e) { return []; }
 }
 
-// checkScenario is a scenario read back, {name, link}, or an error saying why
-// it is not one.
-function checkScenario(x) {
-  if (!x || typeof x !== "object" || Array.isArray(x)) throw new Error("not a scenario");
-  if (typeof x.name !== "string" || !x.name.trim() || x.name.length > MAX_NAME) throw new Error(`a scenario's name is text of 1 to ${MAX_NAME} characters`);
-  const problem = linkProblem(x.link);
-  if (problem) throw new Error(problem);
-  return {name: x.name.trim(), link: x.link, saved: typeof x.saved === "string" ? x.saved.slice(0, 40) : ""};
-}
-
-// readFile is an exported scenario's JSON, checked.
-function readFile(text) {
-  let doc;
-  try { doc = JSON.parse(text); } catch (e) { throw new Error("the file is not JSON"); }
-  if (!doc || doc.kind !== SCENARIO_KIND) throw new Error(`the file is not a ${SCENARIO_KIND}`);
-  if (doc.version !== SCENARIO_VERSION) throw new Error(`the file is version ${String(doc.version).slice(0, 20)}; this page reads version ${SCENARIO_VERSION}`);
-  return checkScenario(doc);
-}
-
-// stored is the scenarios saved in this browser; one that does not check is
-// left out, never shown.
-function stored() {
-  let list = [];
-  try { list = JSON.parse(localStorage.getItem(SCENARIO_STORE) || "[]"); } catch (e) { list = []; }
-  if (!Array.isArray(list)) return [];
-  const out = [];
-  for (const x of list.slice(0, MAX_SCENARIOS)) {
-    try { out.push(checkScenario(x)); } catch (e) { /* not one: left out */ }
-  }
-  return out;
-}
-
-// store writes the saved scenarios, or says why the browser refused.
-function store(list) {
+// writeStore writes the raw entries, or says why the browser refused.
+function writeStore(raw) {
   try {
-    localStorage.setItem(SCENARIO_STORE, JSON.stringify(list));
+    localStorage.setItem(SCENARIO_STORE, JSON.stringify(raw));
     return true;
   } catch (e) {
     setStatus("This browser keeps no saved scenarios here: " + e.message, true);
@@ -1449,11 +1399,17 @@ function store(list) {
   }
 }
 
-// showScenarios lists the saved scenarios, the one named selected.
+// showScenarios lists the saved scenarios that check, the one named
+// selected. The options are built as nodes, not markup, so a name is text
+// and its value is the name as saved.
 function showScenarios(selected) {
-  const list = stored();
-  el("scenlist").innerHTML = list.length ? list.map(x => `<option value="${esc(x.name)}"` + (x.name === selected ? " selected>" : ">") +
-    `${esc(x.name)}${x.saved ? " (" + esc(x.saved) + ")" : ""}</option>`).join("") : '<option value="">none saved</option>';
+  const list = visibleScenarios(readStore());
+  const opts = list.map(x => {
+    const o = new Option(x.name + (x.saved ? " (" + x.saved + ")" : ""), x.name);
+    o.selected = x.name === selected;
+    return o;
+  });
+  el("scenlist").replaceChildren(...(opts.length ? opts : [new Option("none saved", "")]));
   el("scenlist").disabled = el("scenopen").disabled = el("scendelete").disabled = !list.length;
   el("scencount").textContent = list.length ? `${list.length} saved in this browser` : "";
   const ready = !!(state.inputs && state.k);
@@ -1461,39 +1417,64 @@ function showScenarios(selected) {
 }
 
 // scenarioName is the name typed, or one made of the scenario: the model,
-// the fleet or the question, and the rate.
+// the fleet or the question, the rate, the targets and the headroom.
 function scenarioName() {
-  const typed = el("scenname").value.trim();
-  if (typed) return typed.slice(0, MAX_NAME);
+  const typed = cleanName(el("scenname").value);
+  if (typed) return typed;
   const k = state.k, what = state.mode === "size" ? "sized" : fleetPlain(k);
-  return `${state.inputs.model}, ${what}, ${fmtRate(k.rate || 0)}`.slice(0, MAX_NAME);
+  return cleanName(`${state.inputs.model}, ${what}, ${fmtRate(k.rate || 0)}, TTFT ${k.ttftStat} ${fmtSec(k.ttftTarget)}, ` +
+    `TPOT ${k.tpotStat} ${fmtSec(k.tpotTarget)}, headroom ${k.headroom}`);
+}
+
+// savedNow is the time a scenario is saved, as the list shows it.
+function savedNow() {
+  return localInput(new Date()).replace("T", " ");
 }
 
 // saveScenario saves the scenario on screen under its name, replacing one
-// saved under the same name.
+// saved under the same name, and says which it did.
 function saveScenario() {
   if (!state.inputs || !state.k) return;
-  const name = scenarioName(), link = linkParams().toString();
-  const list = stored().filter(x => x.name !== name);
-  const replaced = list.length < stored().length;
-  if (list.length >= MAX_SCENARIOS) {
-    setStatus(`This page keeps at most ${MAX_SCENARIOS} scenarios: delete one first.`, true);
+  const name = scenarioName();
+  let put;
+  try {
+    put = putScenario(readStore(), {name, link: linkParams().toString(), saved: savedNow()});
+  } catch (e) {
+    setStatus("Could not save the scenario: " + e.message, true);
     return;
   }
-  list.push({name, link, saved: localInput(new Date()).replace("T", " ")});
-  if (!store(list)) return;
+  if (!writeStore(put.raw)) return;
   showScenarios(name);
-  setStatus(`${replaced ? "Replaced" : "Saved"} "${name}" in this browser.`);
+  setStatus(put.replaced ? `Replaced the scenario saved as "${name}" with this one.` : `Saved "${name}" in this browser.`);
 }
 
 // selectedScenario is the saved scenario the list selects, or null.
 function selectedScenario() {
   const name = el("scenlist").value;
-  return stored().find(x => x.name === name) || null;
+  return visibleScenarios(readStore()).find(x => x.name === name) || null;
+}
+
+// sourceForm and restoreSourceForm read and put back the source form, so
+// that a scenario that fails to open leaves the form as it was.
+const SOURCE_BOXES = ["rec", "cycle", "ns", "model", "pvariant", "dvariant", "from", "to"];
+function sourceForm() {
+  const f = {prom: el("kprom").checked, lasthour: el("lasthour").checked};
+  for (const id of SOURCE_BOXES) f[id] = el(id).value;
+  return f;
+}
+
+function restoreSourceForm(f) {
+  for (const id of SOURCE_BOXES) el(id).value = f[id];
+  el("kprom").checked = f.prom;
+  el("krec").checked = !f.prom;
+  el("lasthour").checked = f.lasthour;
+  showKind();
 }
 
 // openScenario loads a scenario's source and sets its knobs, as a link does
-// when the page opens. A pinned plan stays pinned, to compare against it.
+// when the page opens. The knobs belong to that load alone: a load that
+// fails puts back the link, the address and the form, and a later Load does
+// not apply them. A pinned plan stays pinned, to compare against it.
 function openScenario(sc) {
   const p = new URLSearchParams(sc.link), s = state.sources;
   if (!s) return;
@@ -1505,16 +1486,21 @@ function openScenario(sc) {
     setStatus(`"${sc.name}" reads namespace ${p.get("namespace")} from Prometheus, which this server does not read.`, true);
     return;
   }
+  const before = {linked, hash: location.hash, form: sourceForm()};
   linked = p;
   const kind = linkSource();
   (kind === "prometheus" ? el("kprom") : el("krec")).checked = true;
   // A link keeps no Prometheus window: it opens on the last hour.
   el("lasthour").checked = true;
   showKind();
-  state.linkApplied = false;
   history.replaceState(null, "", "#" + sc.link);
   el("scenname").value = sc.name;
-  loadInputs();
+  state.linkSeq = state.seq + 1;
+  loadInputs(() => {
+    linked = before.linked;
+    history.replaceState(null, "", before.hash || location.pathname + location.search);
+    restoreSourceForm(before.form);
+  });
 }
 
 // exportScenario downloads the scenario on screen as a JSON file.
@@ -1533,24 +1519,20 @@ function exportScenario() {
   setStatus(`Exported "${name}" as ${a.download}.`);
 }
 
-// importScenario reads an exported file, saves it in this browser (under a
-// new name where the name is taken by another scenario) and opens it.
+// importScenario reads an exported file, saves it in this browser and opens
+// it. A file the same as a saved scenario is opened; one whose name another
+// scenario has is saved under "name (2)" and so on.
 async function importScenario(file) {
   if (!file) return;
   try {
     if (file.size > MAX_FILE) throw new Error(`the file is larger than ${MAX_FILE / 1024} KiB`);
-    const sc = readFile(await file.text());
-    const list = stored();
+    const sc = readScenarioFile(await file.text());
+    const raw = readStore(), list = visibleScenarios(raw);
     const same = list.find(x => x.name === sc.name);
-    if (same && same.link !== sc.link) {
-      let n = 2;
-      while (list.some(x => x.name === `${sc.name} (${n})`)) n++;
-      sc.name = `${sc.name.slice(0, MAX_NAME - 6)} (${n})`;
-    }
     if (!same || same.link !== sc.link) {
-      if (list.length >= MAX_SCENARIOS) throw new Error(`this page keeps at most ${MAX_SCENARIOS} scenarios: delete one first`);
-      list.push({name: sc.name, link: sc.link, saved: localInput(new Date()).replace("T", " ")});
-      if (!store(list)) return;
+      sc.name = freeName(sc.name, list.map(x => x.name));
+      const put = putScenario(raw, {name: sc.name, link: sc.link, saved: savedNow()});
+      if (!writeStore(put.raw)) return;
     }
     showScenarios(sc.name);
     openScenario(sc);
@@ -1565,7 +1547,7 @@ async function importScenario(file) {
 function deleteScenario() {
   const sc = selectedScenario();
   if (!sc) return;
-  if (!store(stored().filter(x => x.name !== sc.name))) return;
+  if (!writeStore(dropScenario(readStore(), sc.name))) return;
   showScenarios();
   setStatus(`Deleted "${sc.name}" from this browser.`);
 }
@@ -1578,10 +1560,10 @@ function deleteScenario() {
 // the current ones.
 
 // shownPlan is the plan on screen: in size mode the answer's, and none while
-// a size runs or when no fleet within the bound serves the rate.
+// a size is in flight or when no fleet within the bound serves the rate.
 function shownPlan() {
   if (!state.plan) return null;
-  if (state.mode === "size" && !(state.size && state.size.answer)) return null;
+  if (state.mode === "size" && (state.abort || !(state.size && state.size.answer))) return null;
   return state.plan;
 }
 
@@ -1614,23 +1596,14 @@ function pinXmax() {
   return Math.max(knee != null ? knee * 1.2 : 0, p.limits.chosen.rate * 1.1);
 }
 
-// delta is b less a as text: signed, in fmt's units, or "same" where the two
-// print the same; empty where either is refused.
-function delta(a, b, fmt) {
-  if (a == null || b == null) return {text: "", cls: ""};
-  if (fmt(a) === fmt(b)) return {text: "same", cls: ""};
-  const d = b - a;
-  return {text: (d > 0 ? "+" : "-") + fmt(Math.abs(d)), cls: d > 0 ? "up" : "down"};
-}
-
-// fleetDelta is the change in replicas from a to b, a role at a time.
-function fleetDelta(a, b) {
-  const parts = [];
-  for (const role of ["prefill", "decode"]) {
-    const d = (b[role] || 0) - (a[role] || 0);
-    if (d) parts.push(`${d > 0 ? "+" : ""}${d} ${role}`);
-  }
-  return parts.length ? parts.join(", ") : "same";
+// pinControls enables Pin while there is a plan on screen to pin, and Unpin
+// while one is pinned.
+function pinControls() {
+  const cur = shownPlan();
+  el("pina").disabled = !cur;
+  el("pina").title = cur ? "" : state.mode === "size" ?
+    (state.abort ? "Nothing to pin while the fleet is being sized" : "Nothing to pin until a fleet within the bound serves the rate") : "Nothing priced yet";
+  el("unpin").disabled = !state.pin;
 }
 
 // sloText is a target in words: its statistic and its value.
@@ -1648,9 +1621,7 @@ function bindText(p) {
 // with its change, and the controls' state.
 function renderCompare() {
   const pin = state.pin, cur = shownPlan();
-  el("pina").disabled = !cur;
-  el("pina").title = cur ? "" : state.mode === "size" ? "Nothing to pin until a fleet within the bound serves the rate" : "Nothing priced yet";
-  el("unpin").disabled = !pin;
+  pinControls();
   el("pinnote").textContent = pin ? `A: ${pin.what}, pinned at ${pin.at}. It is not priced again; change the knobs to compare.` :
     "Pin the scenario on screen as A, then change the knobs: A stays drawn dashed.";
   el("comparebox").hidden = !pin;
