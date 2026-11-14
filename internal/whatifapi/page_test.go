@@ -146,6 +146,24 @@ func TestPageIDsExist(t *testing.T) {
 	}
 }
 
+// The page asks both questions: a toggle between them, a size posted to
+// v1/size by a relative path with no fleet in it (the fleet is the answer),
+// the steppers read only in size mode, and the mode in the link.
+func TestPageAsksSize(t *testing.T) {
+	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
+	for _, want := range []string{`id="mplan"`, `id="msize"`, "How much does this fleet serve?", "What fleet does this traffic need?",
+		`id="sizebox"`, `id="maxrep"`, `id="sizelow"`, `id="sizeanswer" aria-live="polite"`} {
+		assert.Contains(t, html, want)
+	}
+	for _, want := range []string{`api("POST", "v1/size", sizeRequest(), signal)`, "state.abort = new AbortController();", "state.abort.abort();",
+		`'raise "Search up to" (at most 64)'`, "More replicas do not lower a floor", `under "Assume a term the source did not learn"`,
+		"delete req.fleet;", `p.set("mode", "size")`,
+		`req.sizeOn = "low";`, "modeSeq !== state.modeSeq", `el("perbucket").checked = k.perBucket;`,
+		`el("prefill").disabled = el("pdec").disabled = el("pinc").disabled = !state.inputs.fleet.prefill || sizing;`} {
+		assert.Contains(t, js, want)
+	}
+}
+
 // isFlagType reports whether e is the type whatif.Flag, as its own package or
 // another names it.
 func isFlagType(e ast.Expr) bool {

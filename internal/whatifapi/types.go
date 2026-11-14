@@ -505,6 +505,81 @@ type SourcesResponse struct {
 	RecordingsTruncated bool     `json:"recordingsTruncated,omitempty"`
 }
 
+// SizeRequest is POST /v1/size: the fewest replicas per role whose fleet
+// limit reaches the rate, under the SLO. The rate is required; every other
+// field defaults as a plan's does. MaxReplicas bounds the search per role.
+type SizeRequest struct {
+	InputsID    string      `json:"inputsId"`
+	Traffic     *Traffic    `json:"traffic,omitempty"`
+	SLO         *SLORequest `json:"slo,omitempty"`
+	Assume      *Assume     `json:"assume,omitempty"`
+	Headroom    *float64    `json:"headroom,omitempty"`
+	MaxReplicas *FleetKnob  `json:"maxReplicas,omitempty"`
+	// SizeOn is what a fleet must reach the rate with: "point", its limit
+	// (the default), or "low", the low end of its span over V_P and f.
+	SizeOn string `json:"sizeOn,omitempty"`
+}
+
+// SizeResponse is a size: the answer, or why no fleet within the bound
+// serves the rate (Unmet), never both.
+type SizeResponse struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	WhatifSchema  string `json:"whatifSchema"`
+	SizeID        string `json:"sizeId"`
+	InputsID      string `json:"inputsId"`
+	// Banner is what every TTFT figure says of itself.
+	Banner string `json:"banner"`
+	// Rate is the rate sized for, and MaxReplicas the bound searched.
+	Rate        float64     `json:"rate"`
+	MaxReplicas FleetCounts `json:"maxReplicas"`
+	// SizeOn is "point" or "low", as asked.
+	SizeOn string `json:"sizeOn"`
+	// Searched is how many fleets the search priced, the answer's plan aside.
+	Searched int         `json:"searched"`
+	Answer   *SizeAnswer `json:"answer,omitempty"`
+	Unmet    *SizeUnmet  `json:"unmet,omitempty"`
+}
+
+// SizeAnswer is the fewest replicas per role: decode's fewest first, then
+// prefill's fewest at that decode count. Limit, Headroom and Binding are the
+// plan's at the fleet, and Plan is that plan, as POST /v1/plan returns it.
+type SizeAnswer struct {
+	Fleet FleetCounts `json:"fleet"`
+	// Limit is the fleet's limit (the plan's limits.fleet). Headroom is what
+	// the size is on less the rate: the limit, or sized on the low end the
+	// limit's span's low end, the same basis as the steps' Headroom.
+	Limit    Figure   `json:"limit"`
+	Headroom Figure   `json:"headroom"`
+	Binding  []string `json:"binding"`
+	// FewerPrefill and FewerDecode are the fleet with one replica fewer of
+	// the role, and its limit short of the rate: why one fewer is not
+	// enough. Absent at one replica.
+	FewerPrefill *SizeStep    `json:"fewerPrefill,omitempty"`
+	FewerDecode  *SizeStep    `json:"fewerDecode,omitempty"`
+	Plan         PlanResponse `json:"plan"`
+}
+
+// SizeStep is one fleet the search priced: its limit, as the plan's +1
+// steps price it (no span over V_P and f; sized on the low end, the plan's
+// limit with its span), the headroom over the rate of what the size is on
+// (the limit, or the span's low end; negative short of it), and the role
+// that binds.
+type SizeStep struct {
+	Fleet    FleetCounts `json:"fleet"`
+	Limit    Figure      `json:"limit"`
+	Headroom Figure      `json:"headroom"`
+	Binding  []string    `json:"binding"`
+}
+
+// SizeUnmet is a size refused: the refusal, the role no count within the
+// bound serves ("decode", "prefill", or "fleet" when each role's own limit
+// reaches the rate and the fleet's does not), and the fleet at the bound.
+type SizeUnmet struct {
+	Refused Refusal  `json:"refused"`
+	Role    string   `json:"role"`
+	AtBound SizeStep `json:"atBound"`
+}
+
 // ErrorResponse is a request refused before any pricing.
 type ErrorResponse struct {
 	SchemaVersion int    `json:"schemaVersion"`

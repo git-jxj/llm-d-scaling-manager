@@ -24,6 +24,7 @@ const (
 	defaultInputs = 16
 	defaultPlans  = 512
 	defaultCurves = 256
+	defaultSizes  = 128
 )
 
 // defaultMaxInputs is how many sources are resolved at once by default: each
@@ -47,26 +48,33 @@ type Config struct {
 }
 
 // Server serves the API. Its state is caches only: an inputs entry per
-// inputsId, a response per scenarioId, a curve set per fleet, and the limits
-// per fleet and targets.
+// inputsId, a response per scenarioId and per sizeId, a curve set per fleet,
+// and the limits per fleet and targets.
 type Server struct {
 	resolver     Resolver
 	whatifSchema string
 	inputs       *lru[*inputsEntry]
 	plans        *lru[[]byte]
-	curves       *lru[*curveSet]
-	limits       *lru[*limitEntry]
+	sizes        *lru[[]byte]
+	// searches is each size's search, by sizeId, kept before its answer's
+	// plan is priced: a size whose plan failed is not searched again.
+	searches *lru[*SizeResponse]
+	curves   *lru[*curveSet]
+	limits   *lru[*limitEntry]
 	// planSlots and inputSlots bound the work in flight: a token per request
 	// priced.
 	planSlots, inputSlots chan struct{}
 	// planFlight, curveFlight and limitFlight price each key once at a time:
 	// identical requests in flight share one pricing and one slot.
 	planFlight  flight[[]byte]
+	sizeFlight  flight[[]byte]
 	curveFlight flight[*curveSet]
 	limitFlight flight[*limitEntry]
 	// onCurves and onLimits, when set, are called each time a curve set or a
 	// limit entry is priced: the caching tests count them.
 	onCurves, onLimits func()
+	// onSearch, when set, is called each time a size searches.
+	onSearch func()
 }
 
 // inputsEntry is a source resolved: its id, the inputs a plan reads its
@@ -87,7 +95,8 @@ func New(c Config) *Server {
 		inputs = defaultMaxInputs
 	}
 	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
-		plans: newLRU[[]byte](defaultPlans), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
+		plans: newLRU[[]byte](defaultPlans), sizes: newLRU[[]byte](defaultSizes),
+		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs)}
 }
 
@@ -110,11 +119,12 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/inputs", s.handleInputs)
 	mux.HandleFunc("POST /v1/plan", s.handlePlan)
+	mux.HandleFunc("POST /v1/size", s.handleSize)
 	mux.HandleFunc("GET /v1/sources", s.handleSources)
 	mux.HandleFunc("GET /{$}", servePage)
 	mux.HandleFunc("GET /page/", servePage)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, fmt.Errorf("%s %s: no such endpoint; the server serves POST /v1/inputs, POST /v1/plan, GET /v1/sources and the page at /",
+		writeError(w, http.StatusNotFound, fmt.Errorf("%s %s: no such endpoint; the server serves POST /v1/inputs, POST /v1/plan, POST /v1/size, GET /v1/sources and the page at /",
 			r.Method, r.URL.Path))
 	})
 	return mux
@@ -201,6 +211,26 @@ var errUnknownInputs = errors.New("unknown inputsId: resolve the source with POS
 // of the server's plan slots (errBusy with none free), and stops between
 // figures once ctx ends.
 func (s *Server) plan(ctx context.Context, req PlanRequest) ([]byte, error) {
+	return s.planHolding(ctx, req, false)
+}
+
+// planHolding is plan for a caller that may already hold a plan slot (held):
+// a size prices its answer's plan on the slot its search took. A held caller
+// that joined a plan already in flight shares that plan's result; when its
+// leader, holding no slot, was turned away busy, the held caller asks once
+// more and, with no plan in flight then, prices it on its own slot. So a
+// finished search is lost to a busy server only when another request for the
+// same plan is turned away busy twice in a row.
+func (s *Server) planHolding(ctx context.Context, req PlanRequest, held bool) ([]byte, error) {
+	body, err := s.planOnce(ctx, req, held)
+	if held && errors.Is(err, errBusy) {
+		body, err = s.planOnce(ctx, req, held)
+	}
+	return body, err
+}
+
+// planOnce is one ask of planHolding.
+func (s *Server) planOnce(ctx context.Context, req PlanRequest, held bool) ([]byte, error) {
 	e, ok := s.inputs.get(req.InputsID)
 	if !ok {
 		return nil, errUnknownInputs
@@ -217,10 +247,12 @@ func (s *Server) plan(ctx context.Context, req PlanRequest) ([]byte, error) {
 		if b, ok := s.plans.get(id); ok {
 			return b, nil
 		}
-		if !acquire(s.planSlots) {
-			return nil, errBusy
+		if !held {
+			if !acquire(s.planSlots) {
+				return nil, errBusy
+			}
+			defer func() { <-s.planSlots }()
 		}
-		defer func() { <-s.planSlots }()
 		out, err := (&planner{s: s, e: e, sc: sc}).plan(ctx)
 		if err != nil {
 			return nil, err

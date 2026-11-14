@@ -39,8 +39,8 @@ type serveFlags struct {
 }
 
 // runServe serves the capacity planner's API (internal/whatifapi) until ctx
-// ends: POST /v1/inputs and POST /v1/plan, priced on the CLI's own code
-// paths. A Prometheus window is read from --prometheus with capture's
+// ends: POST /v1/inputs, POST /v1/plan and POST /v1/size, priced on the
+// CLI's own code paths. A Prometheus window is read from --prometheus with capture's
 // flags, the window and namespace coming with each request; a recording is
 // read from --recordings by file name. It binds a loopback address unless
 // --auth=kubernetes, which needs TLS.

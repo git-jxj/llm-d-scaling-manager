@@ -68,7 +68,7 @@ func TestSchemaIsPinned(t *testing.T) {
 	walked := map[string]reflect.Type{
 		"inputsRequest": reflect.TypeFor[InputsRequest](), "inputs": reflect.TypeFor[InputsResponse](),
 		"planRequest": reflect.TypeFor[PlanRequest](), "plan": reflect.TypeFor[PlanResponse](), "error": reflect.TypeFor[ErrorResponse](),
-		"sources": reflect.TypeFor[SourcesResponse](),
+		"sources": reflect.TypeFor[SourcesResponse](), "sizeRequest": reflect.TypeFor[SizeRequest](), "size": reflect.TypeFor[SizeResponse](),
 	}
 	for typ, name := range namedTypes {
 		walked[name] = typ
@@ -91,10 +91,12 @@ func TestSchemaIsPinned(t *testing.T) {
 }
 
 // namedTypes are the types listed once under their own name, and by name
-// wherever they occur: a figure is one shape everywhere.
+// wherever they occur: a figure is one shape everywhere, and a size's plan is
+// a plan.
 var namedTypes = map[reflect.Type]string{
 	reflect.TypeFor[Figure](): "Figure", reflect.TypeFor[Refusal](): "Refusal",
 	reflect.TypeFor[Line](): "Line", reflect.TypeFor[Markers](): "Markers",
+	reflect.TypeFor[PlanResponse](): "plan",
 }
 
 // schemaPaths walks a wire type and appends "path type" for every key. Mix
