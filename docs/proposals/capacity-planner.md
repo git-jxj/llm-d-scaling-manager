@@ -1044,7 +1044,7 @@ per-request lengths (R1) and the mix gains shares per bucket, this question
 becomes real and needs its own rule; the plan should then say which it
 applied.
 
-**The rules.** 1 to 12 edges, each from 1 to 1048576 tokens (1024k), each
+**The rules.** 1 to 8 edges, each from 1 to 1048576 tokens (1024k), each
 above the one before; whole token counts only. The edges need
 `views.allTrafficPerBucket`, as `bucketTargets` do: without the view they
 shape nothing. `POST /v1/size` refuses them: a size prices the mix line alone.
@@ -1056,11 +1056,27 @@ from before is unchanged. Other edges are part of the `scenarioId` and of the
 limits' cache key. The curve cache is keyed by the fleet's knobs, which hold
 the prompt each line is priced at, so it needs nothing new.
 
+**Cost, and the cap of 8.** Each edge not cached prices a fleet's curves at
+five corners of V_P and f while the plan holds its slot: eight fresh edges
+took 13.4 s on the worked recording, against 9.0 s for the default five
+cold; twelve took 16 to 19 s in review. So the cap is 8, near the default
+five. The plan and size caches are now bounded in bytes too (64 MiB each):
+a per-bucket plan with 8 edges is about 550 KB.
+
+**The context window.** The inputs now carry the engines' `--max-model-len`
+as the term `maxModelLen`, where the recorded arguments set one. A bucket
+line whose edge is past it is flagged `EdgeBeyondContext`: still priced, but
+the engines would refuse those prompts. With the window unknown nothing is
+flagged, and the guide says to check. On the goldens' recordings (16384) the
+default 32k and 128k lines are now flagged: a change to the default view, on
+purpose.
+
 **The page.** A **Bucket edges** box under the per-bucket checkbox, enabled
 with it, reads `2k, 16k, 64k` or token counts by the server's rules
 (`parseEdges` in `scenario.js`), and is kept in the link, a saved scenario
-and an exported file as `edges=2k,16k,64k`; an imported file with edges in
-any other form is refused. A pinned A keeps its own plan: compare reads the
+and an exported file as `edges=2k,16k,64k`, each edge by its bucket's name
+(`2048` is `2k`); an imported file with edges in any other form is refused,
+and a page link with such edges prices the default buckets and says so. A pinned A keeps its own plan: compare reads the
 limits, which the edges do not move. The bucket lines take the five series colours in turn. The
 **Price at** picker still offers the default buckets: it states a prompt
 length for the whole page, and is not a bucket.

@@ -19,8 +19,11 @@ const (
 	// defaultTTFTStatistic is the TTFT statistic with none in the request or
 	// the policy (config.DefaultTTFTPercentile).
 	defaultTTFTStatistic = "p90"
-	// maxBucketEdges is the most bucket edges a scenario sets.
-	maxBucketEdges = 12
+	// maxBucketEdges is the most bucket edges a scenario sets. Each edge not
+	// cached prices a fleet's curves at five corners of V_P and f, holding a
+	// plan slot throughout: on the worked recording 12 fresh edges took 16 to
+	// 19 s against 7.7 s for the default five, so the cap stays near them.
+	maxBucketEdges = 8
 	// maxBucketEdge is the largest bucket edge a scenario sets, in tokens:
 	// 1024k, past any context window served today.
 	maxBucketEdge = 1 << 20

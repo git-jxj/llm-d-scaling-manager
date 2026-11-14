@@ -342,7 +342,7 @@ The recording learned no V_P, so the link assumes one.
 | `fleet` | The prefill and the decode variant, with their replica counts at the cycle. |
 | `observed` | The mean prompt and output and the prompt's spread; the default buckets (1k, 4k, 8k, 32k, 128k, each named by its upper edge) and the one the mean prompt falls in. The request rate and the share per bucket are refused: the replayed state carries neither. A plan's own `bucketEdges` change none of this. |
 | `policy` | The policy's TTFT and TPOT objectives, the headroom (`scaleUpThreshold`), and the flow-control state. |
-| `terms` | V_P, a, f, the prompt and its cv, the KV transfer, the router hop, the ITL line, the KV capacity and per-request KV, the batch cap, and R_q at p90: each with its source, or the refusal that stopped the fleet there. |
+| `terms` | V_P, a, f, the prompt and its cv, the KV transfer, the router hop, the ITL line, the KV capacity and per-request KV, the batch cap, the context window (`maxModelLen`, the engines' `--max-model-len`), and R_q at p90: each with its source, or the refusal that stopped the fleet there. |
 | `assumed` | Every input the source did not give, in the CLI's words. |
 
 ### The plan
@@ -384,7 +384,7 @@ The full key list is pinned in
 | `headroom` | the policy's `scaleUpThreshold` | (0, 1]. |
 | `assume` | none | `vp`, `a` (seconds), `promptCV`, `tpotRatio`, `routerHop` (seconds): as the CLI's `--assume-*` flags, each flagged. |
 | `views.allTrafficPerBucket` | off | The per-bucket view. |
-| `bucketEdges` | 1024, 4096, 8192, 32768, 131072 | The per-bucket view's upper edges, in tokens: 1 to 12, ascending, each from 1 to 1048576. Needs `views.allTrafficPerBucket`. |
+| `bucketEdges` | 1024, 4096, 8192, 32768, 131072 | The per-bucket view's upper edges, in tokens: 1 to 8, ascending, each from 1 to 1048576. Needs `views.allTrafficPerBucket`. |
 
 ### Bucket edges
 
@@ -406,20 +406,43 @@ shares' buckets will need a rule; until then there is none to need.
 Edges equal to the default are dropped from the scenario (`Scenario.BucketEdges`
 is absent), so a plan that asks them has the same `scenarioId` and bytes as one
 that does not. Other edges are part of the `scenarioId` and of the limits'
-cache key. Refused with a 400 that names the edge: none (`[]`), more than 12,
+cache key. Refused with a 400 that names the edge: none (`[]`), more than 8,
 an edge under 1 or over 1048576, an edge not above the one before it, a token
 count that is not a whole number, and edges without the view. `POST /v1/size`
 refuses `bucketEdges`: a size prices the mix line alone.
 
+The cap is 8 for cost. Each edge not priced before is a fleet's curve set at
+five corners of V_P and f, priced while the plan holds its slot: on the worked
+recording (model-02, V_P assumed 30000 tokens/s, TTFT p95 200 ms), eight fresh
+edges took 13.4 s and a 548 KB response, against 9.0 s and 371 KB for the
+default five on a cold server; in review, twelve fresh edges took 16 to 19 s.
+An edge priced before is served from the curve cache (keyed by the fleet's
+knobs, the prompt among them), whatever the plan's other edges.
+
+**The context window.** The inputs carry the engines' context window as the
+term `maxModelLen`: the smallest `--max-model-len` (SGLang's
+`--context-length`) the prefill and the decode variant's recorded arguments
+set, or refused `NotRecorded` where none is set (the model's own applies, and
+the source does not carry it). Where it is known, a bucket line whose edge is
+past it is flagged `EdgeBeyondContext` on its `atRate` and `atTarget`, and in
+the plan's flag list: the engines refuse prompts that long. The line is still
+priced, and nothing is refused; with the window unknown nothing is flagged.
+The goldens' recordings run `--max-model-len 16384`, so a default per-bucket
+plan on them flags its 32k and 128k lines.
+
 The page has a **Bucket edges** box under the per-bucket checkbox, enabled
 with it. `parseEdges` in `scenario.js` reads it by the server's rules: token
-counts split by commas or spaces, `16k` as 16384, at most 12, ascending, each
+counts split by commas or spaces, `16k` as 16384, at most 8, ascending, each
 from 1 to 1024k. The page sends them as `bucketEdges` with the view only;
 blank is the default. A box it cannot read is an error in the status line,
 naming the edge, and prices nothing. The box is rewritten in its canonical
-form, and the link, a saved scenario and an exported file keep that form as
-`edges=2k,16k,64k`; `linkProblem` refuses any other form, so a scenario file
-with edges out of order or too many is refused on import. Compare is not
+form, each edge by its bucket's name (`bucketName` there, as the server's:
+`2048` is `2k`), so the box, the link and the lines' labels agree and one
+plan has one link. The link, a saved scenario and an exported file keep that
+form as `edges=2k,16k,64k`; `linkProblem` refuses any other form, so a
+scenario file with edges out of order or too many is refused on import. A
+page link whose `edges=` fails the check prices the default buckets, and the
+status line says so and why (`linkEdgesNote`). Compare is not
 affected: a pin (A) keeps its own plan, and the table reads the limits, which
 the edges do not move.
 
@@ -502,6 +525,12 @@ targets and the headroom, and each size by `sizeId`. So moving the rate prices t
 moving a target prices the limits again, not the curves; a new replica count
 or assumption prices everything.
 
+The plans (512) and the sizes (128) are kept as response bytes, each cache
+also bounded at 64 MiB (`defaultResponseBytes`): a per-bucket plan with 8
+edges is about 550 KB, so 512 of them would hold some 280 MB. The newest
+response is kept whatever it weighs. The curve sets (256) and limit entries
+are bounded by count alone; their size in bytes was not measured.
+
 Measured on the goldens' recordings (`go test ./cmd/capacity-planner -run '^$' -bench
 Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 
@@ -516,6 +545,8 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestCaching` | The same scenario is the same id and bytes; a rate move prices no curve and no limit; a target move prices limits only. |
 | `TestBucketEdgesPriceTheirOwnLines`, `TestBucketTargetsFollowTheEdges`, `TestServeBucketEdges` | A plan's edges give one line per edge, named by it and priced at it, the CLI's fleet at every curve point on the goldens' worked fleet; the limits do not move; bucket targets name the plan's buckets. |
 | `TestDefaultBucketEdgesAreNoEdges`, `TestBucketEdgesKeyTheScenario` | The default edges asked are the plan with none, byte for byte; other edges are another `scenarioId`, priced on their own. |
+| `TestSharedEdgeIsCached`, `TestLRUBoundedInBytes` | An edge two plans share is priced once; the plan and size caches drop the least used responses past their bytes. |
+| `TestEdgeBeyondContext`, `TestServeBucketEdges` | A line past a known context window is flagged `EdgeBeyondContext` on its points and in the flag list, the mix line and limits not; with no window, nothing is. |
 | `TestBucketEdgesRefused`, `TestPageSetsBucketEdges` | Edges asked wrongly, or of a size, are a 400 naming the edge and why; the page keeps the edges in the link and sends them with the view only. |
 | `TestPageServed`, `TestServeServesThePage` | The page and its files are served from the binary with their content types and security headers; anything else under `/page/` is a 404. |
 | `TestPageBehindAuth` | The page sits behind the API's check: 401 with no token, 403 for a user not allowed `/whatif/`, 403 for a foreign Host on loopback. |

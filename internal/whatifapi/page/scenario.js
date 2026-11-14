@@ -32,15 +32,23 @@ const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT
   edges: {test: edgesInLink}};
 
 // MAX_EDGES and MAX_EDGE are the server's limits on bucketEdges
-// (internal/whatifapi/scenario.go): at most 12 edges, each at most 1024k
+// (internal/whatifapi/scenario.go): at most 8 edges, each at most 1024k
 // tokens.
-const MAX_EDGES = 12, MAX_EDGE = 1 << 20;
+const MAX_EDGES = 8, MAX_EDGE = 1 << 20;
+
+// bucketName is a bucket's name as the server gives it (bucketName in
+// internal/whatifapi/scenario.go): its edge in k where it is a whole number
+// of 1024 tokens, else in tokens. So 2048 is "2k" and 2000 is "2000".
+function bucketName(tokens) {
+  return tokens % 1024 === 0 ? `${tokens / 1024}k` : String(tokens);
+}
 
 // parseEdges reads bucket edges as the page's box takes them: token counts
 // or Nk (N x 1024 tokens), split by commas or spaces, ascending, by the
 // server's rules. It returns {edges, text}, text the canonical form the link
-// carries ("2k,16k,64k"); blank is no edges, the default. Anything else
-// throws, saying which edge and why.
+// carries: each edge by its bucket's name, so 2048 is "2k" and the box, the
+// link and the line's label agree ("2k,16k,64k"); blank is no edges, the
+// default. Anything else throws, saying which edge and why.
 function parseEdges(s) {
   const words = String(s).split(/[\s,]+/).filter(w => w !== "").map(w => w.toLowerCase());
   if (words.length > MAX_EDGES) throw new Error(`${words.length} edges; give at most ${MAX_EDGES}`);
@@ -52,7 +60,21 @@ function parseEdges(s) {
     if (edges.length && e <= edges[edges.length - 1]) throw new Error(`${w} is not above the edge before it: give the edges smallest first, each once`);
     edges.push(e);
   }
-  return {edges, text: words.join(",")};
+  return {edges, text: edges.map(bucketName).join(",")};
+}
+
+// linkEdgesNote is what the status line says of a link's edges= that
+// edgesInLink refuses: why, and that the default buckets are priced in their
+// place. The page never prices other edges than the link names in silence.
+function linkEdgesNote(v) {
+  let why;
+  try {
+    const r = parseEdges(v);
+    why = r.edges.length ? `the page writes them as ${r.text}` : "it names none";
+  } catch (e) {
+    why = e.message;
+  }
+  return `The link's bucket edges "${v}" were not used (${why}): the default buckets are priced.`;
 }
 
 // edgesInLink reports whether v is edges as linkParams writes them: one or

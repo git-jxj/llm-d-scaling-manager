@@ -464,10 +464,15 @@ func (p *planner) marginal(le *limitEntry, fleet whatif.Result) Marginal {
 
 // perBucket is the "if all traffic were bucket b" view: each bucket's fleet,
 // every request at the bucket's upper edge, with its own knees, curve, target
-// and points. No limit reads it.
+// and points. No limit reads it. A line whose edge is past the context
+// window, where the inputs know it, is flagged EdgeBeyondContext on its
+// points: it is priced, as the model would, but the engines refuse such
+// prompts.
 func (p *planner) perBucket(ctx context.Context, k Knobs, le *limitEntry, rate float64) ([]Line, error) {
-	var lines []Line
-	for _, b := range p.sc.buckets() {
+	buckets := p.sc.buckets()
+	lines := make([]Line, 0, len(buckets))
+	window, known := p.contextWindow()
+	for _, b := range buckets {
 		kb := bucketKnobs(k, b)
 		fl, err := p.e.pricer.Fleet(kb)
 		if err != nil {
@@ -482,7 +487,35 @@ func (p *planner) perBucket(ctx context.Context, k Knobs, le *limitEntry, rate f
 		l := Line{Bucket: b.Name, Semantics: SemanticsAllTraffic, PromptTokens: ptr(kb.PromptTokens),
 			Target: p.sc.TTFT.BucketTargets[b.Name], Knees: &knees}
 		at, _ := fl.TTFTPoint(rate)
-		lines = append(lines, p.line(path, l, cs, at, le.buckets[b.Name], rate))
+		l = p.line(path, l, cs, at, le.buckets[b.Name], rate)
+		if known && float64(b.UpperTokens) > window {
+			l.AtRate.Figure = p.note(path+".atRate", withFlag(l.AtRate.Figure, FlagEdgeBeyondContext))
+			l.AtTarget.Rate = p.note(path+".atTarget", withFlag(l.AtTarget.Rate, FlagEdgeBeyondContext))
+		}
+		lines = append(lines, l)
 	}
 	return lines, nil
+}
+
+// contextWindow is the engines' context window in tokens, from the inputs'
+// TermMaxModelLen, and whether they know it.
+func (p *planner) contextWindow() (float64, bool) {
+	for _, t := range p.e.doc.Terms {
+		if t.Name == TermMaxModelLen && t.Refused == nil && t.Value != nil && *t.Value > 0 {
+			return *t.Value, true
+		}
+	}
+	return 0, false
+}
+
+// withFlag is f with flag added: on the figure, or on its refusal.
+func withFlag(f Figure, flag string) Figure {
+	if f.Refused != nil {
+		r := *f.Refused
+		r.Flags = append(slices.Clone(r.Flags), flag)
+		f.Refused = &r
+		return f
+	}
+	f.Flags = append(slices.Clone(f.Flags), flag)
+	return f
 }

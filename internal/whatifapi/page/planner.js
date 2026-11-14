@@ -46,6 +46,7 @@ const FLAG_WORDS = {
   LineNearGate: ["The ITL line sits near the tracker's gate; the answer does not care which side (informational).", "nothing"],
   ExtrapolatedFill: ["The fill is above the highest fill the ITL line was read at: extrapolated.", "readings at higher load"],
   AssumedShape: ["Priced at a prompt or output length you set, not the measured one.", "price at the current mix"],
+  EdgeBeyondContext: ["A bucket's edge is past the engines' context window (--max-model-len): they refuse prompts that long, and this \"if all traffic were\" line prices traffic they would not serve.", "an edge within the context window"],
   PullUnseen: ["The prefill load is past the pull table's highest bucket: the pull reads low.", "readings at higher prefill load"],
   OverheadMeasured: ["The fixed overhead comes from the prefill pods' histograms.", "nothing (informational)"],
   AssumedPoissonArrivals: ["Arrivals are taken as Poisson: on bursty traffic the TTFT over-promises.", "a stated arrival burstiness (Ca²)"],
@@ -66,7 +67,7 @@ const BUCKET_NOTE = "If all traffic were bucket b: each line is its own fleet's 
 const TERM_NAMES = {
   vp: "V_P", a: "a", imbalance: "f", promptTokens: "prompt", promptCV: "prompt cv",
   transferSecondsPerToken: "KV transfer", routerHop: "router hop", itlA: "ITL a", itlB: "ITL b",
-  itlLine: "ITL line", capacityTokens: "KV capacity", kvPerRequest: "KV per request", batchCap: "batch cap",
+  itlLine: "ITL line", capacityTokens: "KV capacity", kvPerRequest: "KV per request", batchCap: "batch cap", maxModelLen: "context window",
   tpotRatio: "R_q", prefill: "prefill",
 };
 
@@ -517,8 +518,10 @@ function applyLink() {
   if (num("tpot") != null || g("tpotStat")) k.tpotDefault = false;
   // A bucket the inputs do not name prices the current mix.
   k.priceAs = state.inputs.observed.buckets.some(b => b.name === g("priceAs")) ? g("priceAs") : "mix";
-  // Edges the link does not carry in the form linkParams writes are none.
+  // Edges the link does not carry in the form linkParams writes are none,
+  // and the status line says so: the default buckets are priced instead.
   k.edges = edgesInLink(g("edges") || "") ? g("edges") : "";
+  state.linkNote = g("edges") && !k.edges ? linkEdgesNote(g("edges")) : null;
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   k.sizeLow = g("low") === "1";
@@ -743,6 +746,12 @@ async function plan() {
     render();
     writeLink();
     setStatus(`Priced in ${Math.round(performance.now() - t0)} ms.`);
+    // A link's edges the page could not use are said once, after the plan
+    // that priced the default buckets in their place.
+    if (state.linkNote) {
+      setStatus(state.linkNote, true);
+      state.linkNote = null;
+    }
   } catch (e) {
     clearTimeout(slow);
     clearInterval(ticker);
@@ -1160,7 +1169,8 @@ function renderTTFT() {
   const series = [{cls: "c-mix", name: `${shapeOf(p)} (the limits are read here)`, pts: pts(t.line.curve), band: true}];
   const dots = [];
   const buckets = t.perBucket || [];
-  // The lines follow the plan's edges, up to 12: the five colours repeat.
+  // The lines follow the plan's edges, up to 8: past five the colours
+  // repeat, and the bucket table names each line.
   for (const [n, l] of buckets.entries()) {
     const i = n % 5;
     series.push({cls: "c-" + i, thin: true, name: `if all traffic were ${l.bucket}`, pts: pts(l.curve)});

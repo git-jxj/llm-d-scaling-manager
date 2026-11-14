@@ -17,7 +17,7 @@ vm.runInContext(fs.readFileSync(file, "utf8"), ctx, {filename: file});
 const S = name => vm.runInContext(name, ctx);
 const {esc, linkProblem, checkScenario, readScenarioFile, parseStore, visibleScenarios, putScenario, dropScenario, freeName,
   cleanName, delta, fleetDelta, scenarioTitle, sourceProblem, linkAtLoadStart, linkAtLoadEnd, beginOpen, importPlan, sameCurve, figDelta,
-  compareRows, parseEdges} = ctx;
+  compareRows, parseEdges, linkEdgesNote} = ctx;
 const MAX_NAME = S("MAX_NAME"), MAX_SCENARIOS = S("MAX_SCENARIOS"), MAX_LINK = S("MAX_LINK");
 
 let passed = 0;
@@ -311,23 +311,25 @@ check("sameCurve of another curve", !sameCurve(c1, [{x: 1, y: 0.1}, {x: 2, y: 0.
 check("sameCurve of other lengths", !sameCurve(c1, c1.slice(1)) && !sameCurve([], []));
 
 // parseEdges: the bucket edges box, by the server's rules
-// (internal/whatifapi/scenario.go): token counts or Nk, at most 12,
-// ascending, each from 1 to 1024k. The text is the link's canonical form.
+// (internal/whatifapi/scenario.go): token counts or Nk, at most 8,
+// ascending, each from 1 to 1024k. The text is the link's canonical form:
+// each edge by its bucket's name, as the server names the line.
 const edgesOf = s => { const r = parseEdges(s); return JSON.stringify(r.edges) + " " + r.text; };
 for (const [s, want] of [
   ["", "[] "],
-  ["2048", "[2048] 2048"],
+  ["2048", "[2048] 2k"],
+  ["2000", "[2000] 2000"],
   ["2k, 16K,64k", "[2048,16384,65536] 2k,16k,64k"],
-  ["1000 2k\t8k", "[1000,2048,8192] 1000,2k,8k"],
-  ["1,2,3,4,5,6,7,8,9,10,11,12", "[1,2,3,4,5,6,7,8,9,10,11,12] 1,2,3,4,5,6,7,8,9,10,11,12"],
-  ["1024k", "[1048576] 1024k"],
+  ["1000 2048\t8k", "[1000,2048,8192] 1000,2k,8k"],
+  ["1,2,3,4,5,6,7,8", "[1,2,3,4,5,6,7,8] 1,2,3,4,5,6,7,8"],
+  ["1048576", "[1048576] 1024k"],
 ]) {
   let got;
   try { got = edgesOf(s); } catch (e) { got = "threw " + e.message; }
   check(`parseEdges reads ${JSON.stringify(s)}`, got === want, got);
 }
 for (const [s, want] of [
-  ["1,2,3,4,5,6,7,8,9,10,11,12,13", "13 edges"],
+  ["1,2,3,4,5,6,7,8,9", "9 edges; give at most 8"],
   ["0", "outside 1 to 1024k"],
   ["1025k", "outside 1 to 1024k"],
   ["1048577", "outside 1 to 1024k"],
@@ -342,15 +344,26 @@ for (const [s, want] of [
   throws(`parseEdges refuses ${JSON.stringify(s)}`, () => parseEdges(s), want);
 }
 
-// The link carries edges only in parseEdges' text: one to twelve, commas, no
-// spaces, lower-case k.
-for (const link of ["recording=r&perBucket=1&edges=2k,16k,64k", "recording=r&edges=1000", "namespace=llm&perBucket=1&edges=1,2,3,4,5,6,7,8,9,10,11,12"]) {
+// The link carries edges only in parseEdges' text: one to eight, by bucket
+// name, commas, no spaces, lower-case k.
+for (const link of ["recording=r&perBucket=1&edges=2k,16k,64k", "recording=r&edges=1000", "namespace=llm&perBucket=1&edges=1,2,3,4,5,6,7,8"]) {
   check(`admits ${link}`, linkProblem(link) === "", linkProblem(link));
 }
 for (const link of ["recording=r&edges=", "recording=r&edges=4k,1k", "recording=r&edges=2k,%2016k", "recording=r&edges=2K", "recording=r&edges=0",
-  "recording=r&edges=1,2,3,4,5,6,7,8,9,10,11,12,13", "recording=r&edges=2k%3Cb%3E", "recording=r&edges=2k&edges=4k"]) {
+  "recording=r&edges=1,2,3,4,5,6,7,8,9", "recording=r&edges=2k%3Cb%3E", "recording=r&edges=2k&edges=4k", "recording=r&edges=2048"]) {
   const got = linkProblem(link);
   check(`refuses ${link}`, got !== "", JSON.stringify(got));
+}
+
+// linkEdgesNote: a link's edges the page does not use are said, with why and
+// what is priced in their place.
+for (const [v, want] of [
+  ["2048", `The link's bucket edges "2048" were not used (the page writes them as 2k): the default buckets are priced.`],
+  ["4k,1k", `The link's bucket edges "4k,1k" were not used (1k is not above the edge before it: give the edges smallest first, each once): the default buckets are priced.`],
+  ["1,2,3,4,5,6,7,8,9", `The link's bucket edges "1,2,3,4,5,6,7,8,9" were not used (9 edges; give at most 8): the default buckets are priced.`],
+  [" ", `The link's bucket edges " " were not used (it names none): the default buckets are priced.`],
+]) {
+  check(`linkEdgesNote of ${JSON.stringify(v)}`, linkEdgesNote(v) === want, linkEdgesNote(v));
 }
 
 // An imported scenario: edges in the form the page writes are read back; any
@@ -359,7 +372,7 @@ const withEdges = good + "&edges=2k,16k,64k";
 check("reads an exported file with edges", readScenarioFile(JSON.stringify({kind: "capacity-planner-scenario", version: 1, name: "e", link: withEdges})).link === withEdges);
 throws("refuses a file with edges out of order", () => readScenarioFile(JSON.stringify({kind: "capacity-planner-scenario", version: 1, name: "e", link: good + "&edges=64k,2k"})), "edges cannot be");
 throws("refuses a file with too many edges", () => readScenarioFile(JSON.stringify({kind: "capacity-planner-scenario", version: 1, name: "e",
-  link: good + "&edges=" + Array.from({length: 13}, (_, i) => i + 1).join(",")})), "edges cannot be");
+  link: good + "&edges=" + Array.from({length: 9}, (_, i) => i + 1).join(",")})), "edges cannot be");
 const impEdges = importPlan([], {name: "e", link: withEdges, saved: "t"});
 check("importPlan saves a scenario with edges", impEdges.save && visibleScenarios(impEdges.raw)[0].link === withEdges);
 
@@ -383,7 +396,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 179;
+const EXPECTED_CASES = 185;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

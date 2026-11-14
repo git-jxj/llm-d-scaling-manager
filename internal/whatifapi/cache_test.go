@@ -34,3 +34,22 @@ func TestLRUAddKeepsPutReplaces(t *testing.T) {
 	c.put("c", 3)
 	assert.Equal(t, 2, c.len(), "put grew the cache past its size")
 }
+
+// A weighed cache drops the least used entries past its weight, keeps the
+// newest whatever it weighs, and counts a replaced entry's new weight.
+func TestLRUBoundedInBytes(t *testing.T) {
+	c := newWeighedLRU(100, 10, bodyBytes)
+	c.add("a", []byte("aaaa"))
+	c.add("b", []byte("bbbb"))
+	assert.Equal(t, 8, c.bytes())
+	c.add("c", []byte("cccc"))
+	_, okA := c.get("a")
+	assert.False(t, okA, "12 bytes kept in a 10-byte cache")
+	assert.Equal(t, 8, c.bytes())
+	c.add("big", make([]byte, 20))
+	assert.Equal(t, 1, c.len(), "the newest is kept alone, past the bound")
+	assert.Equal(t, 20, c.bytes())
+	c.put("big", []byte("x"))
+	assert.Equal(t, 1, c.bytes(), "put counts the new value")
+	assert.Equal(t, defaultResponseBytes, New(Config{}).plans.maxWeight, "the plans are bounded in bytes")
+}

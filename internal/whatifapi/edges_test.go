@@ -110,9 +110,9 @@ func TestBucketTargetsFollowTheEdges(t *testing.T) {
 func TestBucketEdgesRefused(t *testing.T) {
 	h := New(Config{Resolver: &stubResolver{}, WhatifSchema: "schema-v3"}).Handler()
 	id := inputsOf(t, h)
-	thirteen := make([]int, 13)
-	for i := range thirteen {
-		thirteen[i] = 1024 * (i + 1)
+	nine := make([]int, 9)
+	for i := range nine {
+		nine[i] = 1024 * (i + 1)
 	}
 	noView := perBucketAt(id, []int{2048})
 	noView.Views = nil
@@ -122,7 +122,7 @@ func TestBucketEdgesRefused(t *testing.T) {
 		req  PlanRequest
 		want string
 	}{
-		"too many":     {perBucketAt(id, thirteen), "bucketEdges: 13 edges, want 1 to 12"},
+		"too many":     {perBucketAt(id, nine), "bucketEdges: 9 edges, want 1 to 8"},
 		"zero":         {perBucketAt(id, []int{0, 1024}), "bucketEdges[0] 0, want an upper edge from 1 to 1048576 tokens"},
 		"negative":     {perBucketAt(id, []int{1024, -5}), "bucketEdges[1] -5, want an upper edge"},
 		"too large":    {perBucketAt(id, []int{1024, 1<<20 + 1}), "bucketEdges[1] 1048577, want an upper edge from 1 to 1048576 tokens"},
@@ -138,7 +138,7 @@ func TestBucketEdgesRefused(t *testing.T) {
 	// An empty list is no edges asked, not the default; an edge that is not a
 	// whole token count is no edge.
 	for raw, want := range map[string]string{
-		`[]`:       "bucketEdges: 0 edges, want 1 to 12",
+		`[]`:       "bucketEdges: 0 edges, want 1 to 8",
 		`[1024.5]`: "bucketEdges",
 	} {
 		code, body := post(t, h, "/v1/plan", json.RawMessage(`{"inputsId":"`+id+`","views":{"allTrafficPerBucket":true},"bucketEdges":`+raw+`}`))
@@ -173,11 +173,64 @@ func TestPageSetsBucketEdges(t *testing.T) {
 	html, js, sc := pageText(t, "index.html"), pageText(t, "planner.js"), pageText(t, "scenario.js")
 	assert.Contains(t, html, `id="bucketedges"`)
 	for _, want := range []string{`if (k.perBucket && edges.length) req.bucketEdges = edges;`, `p.set("edges", k.edges);`,
-		`k.edges = edgesInLink(g("edges") || "") ? g("edges") : "";`, `el("bucketedges").disabled = sizing || !k.perBucket;`, "delete req.views;"} {
+		`k.edges = edgesInLink(g("edges") || "") ? g("edges") : "";`, `el("bucketedges").disabled = sizing || !k.perBucket;`, "delete req.views;",
+		`state.linkNote = g("edges") && !k.edges ? linkEdgesNote(g("edges")) : null;`, "setStatus(state.linkNote, true);",
+		`EdgeBeyondContext: ["`, `maxModelLen: "context window"`} {
 		assert.Contains(t, js, want)
 	}
 	assert.NotContains(t, js, "function parseEdges", "the edges' rules are scenario.js's alone")
-	for _, want := range []string{"function parseEdges(s)", "edges: {test: edgesInLink}", "const MAX_EDGES = 12, MAX_EDGE = 1 << 20;"} {
+	for _, want := range []string{"function parseEdges(s)", "edges: {test: edgesInLink}", "const MAX_EDGES = 8, MAX_EDGE = 1 << 20;", "function linkEdgesNote(v)"} {
 		assert.Contains(t, sc, want)
+	}
+}
+
+// A bucket's curves are the fleet's at its edge, cached by the fleet's
+// knobs: an edge two plans share is priced once, whatever the other edges.
+func TestSharedEdgeIsCached(t *testing.T) {
+	h, curves, _ := counted(t)
+	id := inputsOf(t, h)
+	plan(t, h, perBucketAt(id, []int{2048, 16384}))
+	require.Equal(t, 3, *curves, "the mix line and two bucket lines")
+	plan(t, h, perBucketAt(id, []int{2048, 65536}))
+	assert.Equal(t, 4, *curves, "2048 priced again: only 65536 is new")
+	plan(t, h, perBucketAt(id, []int{16384, 65536}))
+	assert.Equal(t, 4, *curves, "both edges were priced before")
+}
+
+// ctxInputs resolves the stub's source with a 16k context window.
+func ctxInputs(t *testing.T, h http.Handler) string {
+	t.Helper()
+	code, body := post(t, h, "/v1/inputs", InputsRequest{Model: "ctx-16k", Source: &SourceRequest{Kind: SourceRecording, Name: "run.jsonl.gz"}})
+	require.Equal(t, http.StatusOK, code, "%s", body)
+	var in InputsResponse
+	require.NoError(t, json.Unmarshal(body, &in))
+	return in.InputsID
+}
+
+// A line whose edge is past the known context window is flagged on its two
+// points and in the plan's flag list; a line within it, the mix line and the
+// limits are not; with the window unknown nothing is flagged. The line is
+// still priced: the flag says the engines would refuse such prompts.
+func TestEdgeBeyondContext(t *testing.T) {
+	h := New(Config{Resolver: &stubResolver{}, WhatifSchema: "schema-v3"}).Handler()
+	has := func(f Figure) bool {
+		return slices.Contains(f.Flags, FlagEdgeBeyondContext) || (f.Refused != nil && slices.Contains(f.Refused.Flags, FlagEdgeBeyondContext))
+	}
+	out, _ := plan(t, h, perBucketAt(ctxInputs(t, h), []int{8192, 16384, 32768}))
+	require.Len(t, out.TTFT.PerBucket, 3)
+	for _, l := range out.TTFT.PerBucket {
+		beyond := l.Bucket == "32k"
+		assert.Equal(t, beyond, has(l.AtRate.Figure), "bucket %s point A", l.Bucket)
+		assert.Equal(t, beyond, has(l.AtTarget.Rate), "bucket %s point B", l.Bucket)
+		assert.NotEmpty(t, l.Curve, "bucket %s: still priced", l.Bucket)
+	}
+	assert.False(t, has(out.TTFT.Line.AtRate.Figure) || has(out.Limits.Fleet.Figure), "the mix line and the limits are not a bucket's")
+	i := slices.IndexFunc(out.Flags, func(u FlagUse) bool { return u.Flag == FlagEdgeBeyondContext })
+	require.GreaterOrEqual(t, i, 0, "the flag is in the plan's list")
+	assert.Equal(t, []string{"ttft.perBucket.32k.atRate", "ttft.perBucket.32k.atTarget"}, out.Flags[i].On)
+
+	unknown, _ := plan(t, h, perBucketAt(inputsOf(t, h), []int{8192, 16384, 32768}))
+	for _, l := range unknown.TTFT.PerBucket {
+		assert.False(t, has(l.AtRate.Figure) || has(l.AtTarget.Rate), "bucket %s: no window, no flag", l.Bucket)
 	}
 }

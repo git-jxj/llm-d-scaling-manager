@@ -8,13 +8,19 @@ import (
 	"sync"
 )
 
-// lru is a least-recently-used cache of at most size entries. Its entries are
-// immutable once added, so a reader holds one without the lock.
+// lru is a least-recently-used cache of at most size entries and, with
+// weigh, at most maxWeight in all (the newest entry is kept whatever it
+// weighs). Its entries are immutable once added, so a reader holds one
+// without the lock.
 type lru[V any] struct {
 	mu    sync.Mutex
 	size  int
 	order *list.List
 	items map[string]*list.Element
+	// weigh is an entry's weight, nil for a cache bounded by count alone;
+	// weight is the entries' total.
+	weigh             func(V) int
+	weight, maxWeight int
 }
 
 // lruItem is one entry: its key, for eviction, and its value.
@@ -28,27 +34,56 @@ func newLRU[V any](size int) *lru[V] {
 	return &lru[V]{size: max(size, 1), order: list.New(), items: map[string]*list.Element{}}
 }
 
+// newWeighedLRU is an empty cache of at most size entries weighing at most
+// maxWeight in all, each weighed by weigh.
+func newWeighedLRU[V any](size, maxWeight int, weigh func(V) int) *lru[V] {
+	c := newLRU[V](size)
+	c.weigh, c.maxWeight = weigh, maxWeight
+	return c
+}
+
+// weighOf is v's weight, 0 in a cache bounded by count alone.
+func (c *lru[V]) weighOf(v V) int {
+	if c.weigh == nil {
+		return 0
+	}
+	return c.weigh(v)
+}
+
 // put sets key to value, replacing what it held: for an entry that lapses
 // (a review's answer), where add would keep the stale one.
 func (c *lru[V]) put(key string, value V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.items[key]; ok {
+		c.weight += c.weighOf(value) - c.weighOf(e.Value.(lruItem[V]).value)
 		e.Value = lruItem[V]{key: key, value: value}
 		c.order.MoveToFront(e)
+		c.evict()
 		return
 	}
 	c.items[key] = c.order.PushFront(lruItem[V]{key: key, value: value})
+	c.weight += c.weighOf(value)
 	c.evict()
 }
 
-// evict drops the least used entries past size. The caller holds the lock.
+// evict drops the least used entries past size, and past maxWeight but the
+// newest. The caller holds the lock.
 func (c *lru[V]) evict() {
-	for c.order.Len() > c.size {
+	for c.order.Len() > c.size || (c.weigh != nil && c.weight > c.maxWeight && c.order.Len() > 1) {
 		last := c.order.Back()
 		c.order.Remove(last)
-		delete(c.items, last.Value.(lruItem[V]).key)
+		item := last.Value.(lruItem[V])
+		c.weight -= c.weighOf(item.value)
+		delete(c.items, item.key)
 	}
+}
+
+// bytes is how much the cache weighs.
+func (c *lru[V]) bytes() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.weight
 }
 
 // len is how many entries the cache holds.
@@ -81,6 +116,7 @@ func (c *lru[V]) add(key string, value V) V {
 		return e.Value.(lruItem[V]).value
 	}
 	c.items[key] = c.order.PushFront(lruItem[V]{key: key, value: value})
+	c.weight += c.weighOf(value)
 	c.evict()
 	return value
 }

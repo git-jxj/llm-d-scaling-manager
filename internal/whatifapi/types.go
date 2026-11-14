@@ -144,6 +144,17 @@ type PolicyObjective struct {
 	Seconds   float64 `json:"seconds"`
 }
 
+// TermMaxModelLen is the term holding the engines' context window, tokens:
+// the smallest --max-model-len their recorded arguments set, refused where
+// none is set.
+const TermMaxModelLen = "maxModelLen"
+
+// FlagEdgeBeyondContext marks an "if all traffic were bucket b" line whose
+// edge is past the context window (TermMaxModelLen): the engines refuse
+// prompts that long, so the line prices traffic they would not serve. It is
+// raised only where the context window is known.
+const FlagEdgeBeyondContext = "EdgeBeyondContext"
+
 // Term is one input the plans price from: its figure and where it came from.
 type Term struct {
 	Name   string `json:"name"`
@@ -203,7 +214,7 @@ type PlanRequest struct {
 	Headroom *float64     `json:"headroom,omitempty"`
 	Views    *ViewRequest `json:"views,omitempty"`
 	// BucketEdges are the prompt buckets' upper edges, tokens, ascending: 1
-	// to 12 of them, each at most 1048576 (1024k). Each bucket is named by
+	// to 8 of them, each at most 1048576 (1024k). Each bucket is named by
 	// its edge: in k where it is a whole number of 1024 tokens ("8k"), else
 	// in tokens ("8000"). Absent, the default 1k, 4k, 8k, 32k and 128k. They
 	// shape only the "if all traffic were bucket b" view, which they need.

@@ -154,18 +154,36 @@ The "if all traffic were bucket b" view draws five buckets by default: 1k,
 edges in **Bucket edges**, for example `2k, 16k, 64k`:
 
 - Each edge is a bucket's largest prompt, in tokens. `16k` is 16384 tokens.
-- Give 1 to 12 edges, smallest first, each at most 1024k.
+- Give 1 to 8 edges, smallest first, each at most 1024k.
 - Leave the box blank for the default five.
 
 Each line is then priced with every prompt at its edge, and named by it. A
-line named `2000` is an edge of 2000 tokens; `2k` is 2048.
+line named `2000` is an edge of 2000 tokens; `2k` is 2048. The box shows
+your edges by these names, so `2048` becomes `2k`.
 
-The edges change only this view. The limits, and every figure above the
-graphs, stay the same. The page learns nothing per bucket from your traffic,
-so there is nothing to re-sort into your buckets. The address keeps your
-edges, so a shared link draws the same lines. If an edge is wrong, the status
-line says which one and why, and the graphs keep the last plan until you fix
-it.
+There are five line colours. With more than five edges the colours repeat;
+the table under the graph names every line, so read a repeated colour there.
+
+Each new edge prices a fleet of its own, so a plan with many new edges takes
+longer: eight new edges take over ten seconds on a laptop. Edges you used
+before are not priced again.
+
+The edges change only this view: the limits and the +1 steps stay the same.
+The flag count can change, since each line brings its own flags. The page
+learns nothing per bucket from your traffic, so there is nothing to re-sort
+into your buckets.
+
+**Edges past the context window.** When the source knows the engines'
+context window (their `--max-model-len`, shown as "context window" under
+**Inputs**), a line whose edge is past it is flagged `EdgeBeyondContext`: the
+engines refuse prompts that long, so the line prices traffic they would not
+serve. The line is still drawn. When the source does not know the window,
+nothing is flagged, so check your edges against it yourself.
+
+The address keeps your edges, so a shared link draws the same lines. If an
+edge in the box is wrong, the status line says which one and why, and the
+graphs keep the last plan until you fix it. If a link's edges are wrong, the
+status line says so, and the page draws the default five.
 
 ## Find the fleet a rate needs
 
