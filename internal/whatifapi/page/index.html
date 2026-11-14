@@ -88,6 +88,7 @@
       <div class="ctl" id="maxrow" hidden>
         <label for="maxrep">Search up to, replicas a role</label>
         <input type="number" id="maxrep" min="1" max="64" step="1" value="32">
+        <label class="toggle" for="sizelow"><input type="checkbox" id="sizelow"> Size for the worst corner of V_P and f</label>
         <span class="hint">In this mode the replica counts are the answer, not a setting.</span>
       </div>
     </div>
@@ -163,7 +164,7 @@
   <section class="card panel" id="panel" role="tabpanel" aria-labelledby="tab-critical">
     <div class="sizebox" id="sizebox" hidden>
       <h2 id="sizetitle">The fleet this traffic needs</h2>
-      <div class="sizeanswer" id="sizeanswer"></div>
+      <div class="sizeanswer" id="sizeanswer" aria-live="polite"></div>
       <ul class="fewer" id="fewer" aria-label="Why one fewer is not enough"></ul>
     </div>
     <div id="planview">

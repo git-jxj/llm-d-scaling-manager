@@ -413,22 +413,22 @@ func (p *planner) limitsOf(rate float64, rateSource string, ls LimitSet) Limits 
 func binding(prefill, decode whatif.Result) []string {
 	pv, pok := valueOf(prefill)
 	if decode == nil {
-		return []string{"prefill"}
+		return []string{rolePrefill}
 	}
 	dv, dok := valueOf(decode)
 	switch {
 	case !pok && !dok:
-		return []string{"prefill", "decode"}
+		return []string{rolePrefill, roleDecode}
 	case !pok:
-		return []string{"prefill"}
+		return []string{rolePrefill}
 	case !dok:
-		return []string{"decode"}
+		return []string{roleDecode}
 	case pv < dv:
-		return []string{"prefill"}
+		return []string{rolePrefill}
 	case dv < pv:
-		return []string{"decode"}
+		return []string{roleDecode}
 	}
-	return []string{"prefill", "decode"}
+	return []string{rolePrefill, roleDecode}
 }
 
 // marginal is the fleet's limit with one more replica of each role, and its

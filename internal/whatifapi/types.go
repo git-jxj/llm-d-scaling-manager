@@ -515,6 +515,9 @@ type SizeRequest struct {
 	Assume      *Assume     `json:"assume,omitempty"`
 	Headroom    *float64    `json:"headroom,omitempty"`
 	MaxReplicas *FleetKnob  `json:"maxReplicas,omitempty"`
+	// SizeOn is what a fleet must reach the rate with: "point", its limit
+	// (the default), or "low", the low end of its span over V_P and f.
+	SizeOn string `json:"sizeOn,omitempty"`
 }
 
 // SizeResponse is a size: the answer, or why no fleet within the bound
@@ -529,6 +532,8 @@ type SizeResponse struct {
 	// Rate is the rate sized for, and MaxReplicas the bound searched.
 	Rate        float64     `json:"rate"`
 	MaxReplicas FleetCounts `json:"maxReplicas"`
+	// SizeOn is "point" or "low", as asked.
+	SizeOn string `json:"sizeOn"`
 	// Searched is how many fleets the search priced, the answer's plan aside.
 	Searched int         `json:"searched"`
 	Answer   *SizeAnswer `json:"answer,omitempty"`
@@ -554,8 +559,10 @@ type SizeAnswer struct {
 }
 
 // SizeStep is one fleet the search priced: its limit, as the plan's +1
-// steps price it (no span over V_P and f), the limit's headroom over the
-// rate (negative short of it), and the role that binds.
+// steps price it (no span over V_P and f; sized on the low end, the plan's
+// limit with its span), the headroom over the rate of what the size is on
+// (the limit, or the span's low end; negative short of it), and the role
+// that binds.
 type SizeStep struct {
 	Fleet    FleetCounts `json:"fleet"`
 	Limit    Figure      `json:"limit"`

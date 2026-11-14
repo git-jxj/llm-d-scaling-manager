@@ -241,18 +241,23 @@ move), a target on release.
 A toggle above the controls switches between the two questions: "How much does
 this fleet serve?" (plan mode) and "What fleet does this traffic need?" (size
 mode). In size mode the page posts the same scenario less the fleet to
-`POST /v1/size`, with `maxReplicas` from the "Search up to" box; the replica
+`POST /v1/size`, with `maxReplicas` from the "Search up to" box and
+`sizeOn: low` when "Size for the worst corner of V_P and f" is ticked; the replica
 steppers become read-only outputs showing the answer, and the rest of the page
 draws the plan the size returned. A rate prices on release in size mode, not
 on drag, since each size searches several fleets. With no fleet within the
 bound, the page shows the refusal and the figure at the bound, and no plan.
-Switching back to plan mode keeps the fleet the size found.
+Where the answer's limit at its worst corner of V_P and f is under the rate,
+the size box says so. The per-bucket view is unticked while sizing and put
+back on switching to plan mode, which keeps the fleet the size found. A
+response for a question since switched, or for inputs since reloaded, is
+dropped.
 
 The address's fragment carries the source and the knobs
 (`#recording=run.jsonl.gz&prefill=2&rate=6&ttft=0.8&vp=30000`), and the page
 rewrites it after each plan. Seconds are seconds, as the API takes them. In
-size mode it carries `mode=size` and, when it is not 32, `max`, and no replica
-counts: they are the answer.
+size mode it carries `mode=size`, `max` when it is not 32 and `low=1` when
+sizing for the worst corner, and no replica counts: they are the answer.
 
 To look at the page against the goldens' recordings:
 
@@ -320,43 +325,59 @@ The full key list is pinned in
 
 ### The size
 
-`POST /v1/size` takes the plan's keys but `fleet` and `views`, and one more:
+`POST /v1/size` takes the plan's keys but `fleet` and `views`, and two more:
 `maxReplicas` (`{"prefill": N, "decode": N}`, 1 to 64 each, 32 by default),
-the most replicas of a role it tries. The rate,
-`traffic.classes.critical.rate`, is required. The inputs must have a prefill
-variant.
+the most replicas of a role it tries, and `sizeOn`, what the fleet must reach
+the rate with: `point`, its limit (the default), or `low`, the low end of the
+limit's span over V_P and f. The rate, `traffic.classes.critical.rate`, is
+required. The inputs must have a prefill variant.
 
 How it searches. Every fleet it tries is priced as the plan's +1 steps are
-(the limits at the targets and headroom, with no span over V_P and f), and
-each count is found by bisection, so a search prices a dozen or so fleets, not
-every count:
+(the limits at the targets and headroom, with no span over V_P and f), or with
+`sizeOn: low` as the plan's own limits are (with the span, five times the
+cost). Each count is found by galloping up from one replica (1, 2, 4, 8, ...
+up to the bound) and then bisecting back, so the cost grows with the answer,
+not with the bound: a rate one replica of each serves prices one fleet.
 
-1. Decode, with prefill at its bound: the fewest decode replicas whose own
-   limit (TPOT, and the operating-point cap on decode's knee) reaches the rate.
-   With no TPOT asked, one.
-2. Decode again, on the fleet's limit: the fewest, from that count up, whose
-   fleet limit reaches the rate with prefill at its bound. This is the
-   coupling: the lower knee and decode admission hold the prefill limit down,
-   so the fleet may need more decode replicas than TPOT alone asks for.
-3. Prefill: the fewest whose fleet limit reaches the rate at that decode
+1. Decode: the fewest decode replicas whose own limit (TPOT, and the
+   operating-point cap on decode's knee) reaches the rate, priced at one
+   prefill replica, since the prefill count does not move it. With no TPOT
+   asked, one.
+2. Prefill: the fewest whose fleet limit reaches the rate at that decode
    count.
+3. Only when no prefill count within the bound does: decode again, the
+   fewest above that count whose fleet limit reaches the rate with prefill at
+   its bound, then prefill again. This is the coupling: the lower knee and
+   decode admission hold the prefill limit down, so the fleet may need more
+   decode replicas than TPOT alone asks for.
 
-Then it prices `POST /v1/plan` at the fleet found, the same request with the
-fleet set, and reads the answer's limit, headroom and binding from that plan,
-so the answer is what a plan of that fleet says. The bisection takes each limit
-to rise with its replica count.
+A limit reaches the rate when it is no more than a billionth under it: limits
+are bisections' answers, and on the worked recording the fleet limit wanders
+by up to 8e-13 of itself as decode replicas are added on a plateau.
+
+The search holds one plan slot from its start through its answer's plan, which
+it prices as `POST /v1/plan` would (same request, the fleet set) and reads the
+answer's limit, headroom and binding from, so the answer is what a plan of
+that fleet says. The search is kept by `sizeId` before that plan is priced:
+a size whose plan did not finish (its client gone) is not searched again.
+
+The search takes each limit to rise with its replica count. Where one does
+not, galloping and bisecting can step over a smaller count that serves the
+rate; the count just below the answer is always priced and checked, so a fleet
+with one replica fewer of either role that serves the rate is a 500, not an
+answer, and so is a plan at the answer that does not.
 
 | Key | What it is |
 | --- | --- |
-| `sizeId` | A hash of the scenario and the bound. The same size is the same id and the same bytes. |
-| `rate`, `maxReplicas` | The rate sized for and the bound searched. |
+| `sizeId` | A hash of the scenario, the bound and `sizeOn`. The same size is the same id and the same bytes. |
+| `rate`, `maxReplicas`, `sizeOn` | The rate sized for, the bound searched, and what the fleet was sized on. |
 | `searched` | How many fleets the search priced, the answer's plan aside. |
 | `answer.fleet` | The fewest replicas: decode's fewest first, then prefill's fewest with them. |
-| `answer.limit`, `answer.binding` | The plan's `limits.fleet` at that fleet, and the role that binds; `limit.boundBy` says which SLO or cap sets it. |
+| `answer.limit`, `answer.binding` | The plan's `limits.fleet` at that fleet, with its span over V_P and f in `sensitivity`, and the role that binds; `limit.boundBy` says which SLO or cap sets it. Sized on the `point`, the span's low end may be under the rate. |
 | `answer.headroom` | The limit less the rate. |
-| `answer.fewerPrefill`, `answer.fewerDecode` | The fleet with one replica fewer of the role: its limit (no span), how far short of the rate it is (`headroom`, negative), and the role that binds. Absent when the role has one replica. |
+| `answer.fewerPrefill`, `answer.fewerDecode` | The fleet with one replica fewer of the role: its limit (no span, unless sized `low`), how far short of the rate it is (`headroom`, negative; sized `low`, the span's low end's shortfall), and the role that binds. Absent when the role has one replica. |
 | `answer.plan` | The plan at the fleet, as `POST /v1/plan` returns it, flags and assumed inputs included. |
-| `unmet` | Instead of `answer`: `refused` (the engine's reason where it refuses the figure, such as `NoPrefillCapacity` or `TargetBelowFloor`; else `ReplicaBoundReached`, with the figure the bound reached), `role` (`decode`, `prefill`, or `fleet`), and `atBound`, the fleet at the bound as a step. |
+| `unmet` | Instead of `answer`: `refused` (the engine's reason where it refuses the figure, such as `NoPrefillCapacity` or `TargetBelowFloor`; else `ReplicaBoundReached`, with the figure the bound reached), `role` (`decode`, `prefill`, or `fleet` when each role alone reaches the rate and the fleet does not), and `atBound`, the fleet at the bound as a step. |
 
 A size with no fleet within the bound is a 200 with `unmet`, not an error: a
 refusal is a figure, as in a plan.
@@ -397,7 +418,10 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestServeSources`, `TestSourcesWithoutLister` | `GET /v1/sources` lists every recording a `recording` source accepts, links included, and nothing it refuses; it says when it cut the list, and whether a Prometheus is read; an error names no server path. |
 | `TestSizeAnswerIsThePlan`, `TestServeSizeIsThePlan` | A size's answer is `POST /v1/plan` at its fleet, byte for byte on the stub and key for key on the goldens' worked fleet. |
 | `TestSizeOneFewerFails` | One replica fewer of either role misses the rate, in the step and in a plan of that fleet. |
-| `TestSizeRefusals`, `TestServeSizeRefusesATermRefused` | No fleet within the bound is `unmet` with its reason and the figure at the bound: the bound reached by prefill or by decode, a refused term, a TPOT percentile with no ratio. |
-| `TestSizeRequestsRefused`, `TestSizeCachingAndCost` | A size asked wrongly is a 400 naming the field; the same size is the same bytes, searched once, in a handful of fleets. |
+| `TestSizeRefusals`, `TestServeSizeRefusesATermRefused` | No fleet within the bound is `unmet` with its reason and the figure at the bound: the bound reached by prefill, by decode, or by the fleet with neither role alone short; a refused term; a TPOT percentile with no ratio; no advice to raise a bound already at 64. |
+| `TestSizeRequestsRefused`, `TestSizeCachingAndCost` | A size asked wrongly is a 400 naming the field; the same size is the same bytes, searched once, in a handful of fleets, and one fleet for an answer of one of each. |
+| `TestSizeSearchSurvivesItsPlan` | One plan slot sizes; a size whose answer's plan ended with its client is not searched again. |
+| `TestSizeOnTheLowEnd` | `sizeOn: low` sizes on the low end of the span, where `point` leaves it under the rate. |
+| `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |

@@ -82,7 +82,7 @@ const TPOT_STATS = ["mean", "p50", "p90", "p95", "p99"];
 // plan drawn, the question asked (mode: "plan", what a fleet serves, or
 // "size", what fleet a rate needs) and the last size answered.
 const state = {sources: null, inputs: null, plan: null, k: null, inFlight: false, dirty: false, seq: 0, dragging: false,
-  mode: "plan", size: null};
+  mode: "plan", modeSeq: 0, size: null};
 
 // SIZE_BOUND is the replicas a role a size searches up to unless you set
 // another: the API's default.
@@ -338,7 +338,7 @@ function setInputs(inputs) {
     priceAs: "mix", outputTokens: val(inputs.observed.outputTokens),
     perBucket: false,
     assume: {},
-    maxRep: SIZE_BOUND,
+    maxRep: SIZE_BOUND, sizeLow: false,
   };
   const k = state.k;
   showLearned(inputs);
@@ -482,8 +482,9 @@ function applyLink() {
   k.priceAs = state.inputs.observed.buckets.some(b => b.name === g("priceAs")) ? g("priceAs") : "mix";
   k.perBucket = g("perBucket") === "1";
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
-  if (g("mode") === "size" && state.inputs.fleet.prefill) state.mode = "size";
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
+  k.sizeLow = g("low") === "1";
+  if (g("mode") === "size" && state.inputs.fleet.prefill) enterSize();
   fillStats("ttftstat", TTFT_STATS, k.ttftStat);
   fillStats("tpotstat", TPOT_STATS, k.tpotStat);
   slider("ttft", k.ttftTarget * 1000, 1);
@@ -515,6 +516,7 @@ function writeLink() {
   if (state.mode === "size") {
     p.set("mode", "size");
     if (k.maxRep !== SIZE_BOUND) p.set("max", k.maxRep);
+    if (k.sizeLow) p.set("low", "1");
   } else {
     if (state.inputs.fleet.prefill) p.set("prefill", k.prefill);
     p.set("decode", k.decode);
@@ -573,7 +575,27 @@ function sizeRequest() {
   delete req.fleet;
   delete req.views;
   req.maxReplicas = {prefill: state.k.maxRep, decode: state.k.maxRep};
+  if (state.k.sizeLow) req.sizeOn = "low";
   return req;
+}
+
+// enterSize and enterPlan switch the question. A size prices the mix line
+// alone, so the per-bucket view is unticked while sizing and put back after.
+function enterSize() {
+  if (state.mode === "size") return;
+  state.mode = "size";
+  state.modeSeq++;
+  state.size = null;
+  state.k.perBucketBefore = state.k.perBucket;
+  state.k.perBucket = false;
+}
+
+function enterPlan() {
+  if (state.mode === "plan") return;
+  state.mode = "plan";
+  state.modeSeq++;
+  state.size = null;
+  state.k.perBucket = !!state.k.perBucketBefore;
 }
 
 // plan prices the knobs, or in size mode sizes the fleet for them. One
@@ -599,7 +621,10 @@ async function plan() {
   const sizing = state.mode === "size";
   const slow = setTimeout(() => setStatus(sizing ? "Sizing (a search over replica counts, then a plan at the answer: seconds)..." :
     "Pricing (a new fleet or view can take seconds)..."), 300);
-  const stale = () => seq !== state.seq || !state.inputs || inputsId !== state.inputs.inputsId;
+  // A response priced against inputs a later load replaced, or for a
+  // question since switched, is dropped.
+  const modeSeq = state.modeSeq;
+  const stale = () => seq !== state.seq || !state.inputs || inputsId !== state.inputs.inputsId || modeSeq !== state.modeSeq;
   try {
     if (sizing) {
       // A size needs a rate: with none yet, the operating point a plan of
@@ -611,7 +636,7 @@ async function plan() {
       }
       const out = await api("POST", "v1/size", sizeRequest());
       clearTimeout(slow);
-      if (stale() || state.mode !== "size") return;
+      if (stale()) return;
       state.size = out;
       if (out.answer) {
         state.plan = out.answer.plan;
@@ -620,16 +645,18 @@ async function plan() {
         render();
       } else {
         syncControls();
+        fitRateSlider(null);
         renderSize();
       }
       writeLink();
-      setStatus(`Sized in ${Math.round(performance.now() - t0)} ms: ${out.searched} fleet${out.searched === 1 ? "" : "s"} searched` +
-        (out.answer ? ", then the plan at the answer." : "."));
+      const what = out.answer ? `${fleetPlain(out.answer.fleet)}` : `no fleet within the bound (${out.unmet.refused.reason})`;
+      setStatus(`Sized ${fmtRate(out.rate)} in ${Math.round(performance.now() - t0)} ms: ${what}; ` +
+        `${out.searched} fleet${out.searched === 1 ? "" : "s"} searched` + (out.answer ? ", then the plan at the answer." : "."));
       return;
     }
     const out = await api("POST", "v1/plan", planRequest());
     clearTimeout(slow);
-    if (stale() || state.mode !== "plan") return;
+    if (stale()) return;
     state.plan = out;
     if (state.k.rate == null) state.k.rate = out.limits.chosen.rate;
     render();
@@ -669,6 +696,8 @@ function syncControls() {
   el("decode").disabled = el("ddec").disabled = el("dinc").disabled = sizing;
   // A size prices the mix line alone: the per-bucket view is the plan's.
   el("perbucket").disabled = sizing;
+  el("perbucket").checked = k.perBucket;
+  el("sizelow").checked = k.sizeLow;
   if (k.rate != null) {
     el("rate").value = k.rate;
     el("ratebox").value = Number(k.rate.toFixed(2));
@@ -676,16 +705,24 @@ function syncControls() {
   el("ratiorow").hidden = k.tpotStat === "mean";
 }
 
+// fitRateSlider runs the rate slider to 1.2 times the lower knee, or with no
+// knee to hand (a size no fleet within the bound serves) to where it ran,
+// and always past the rate set.
+function fitRateSlider(knee) {
+  const rate = state.k.rate;
+  const rmax = Math.max(knee != null ? knee * 1.2 : (+el("rate").max || 10), rate * 1.1);
+  el("rate").max = rmax.toFixed(2);
+  el("rate").step = (rmax / 400).toFixed(3);
+  el("rate").value = rate;
+  el("ratebox").value = Number(rate.toFixed(2));
+}
+
 function render() {
-  const p = state.plan, k = state.k;
+  const p = state.plan;
   syncControls();
   el("banner").textContent = p.banner;
   el("banner").hidden = !p.banner;
-  const knee = lowerKnee(p.ttft.markers);
-  const rmax = Math.max(knee != null ? knee * 1.2 : 10, k.rate * 1.1);
-  el("rate").max = rmax.toFixed(2);
-  el("rate").step = (rmax / 400).toFixed(3);
-  el("rate").value = k.rate;
+  fitRateSlider(lowerKnee(p.ttft.markers));
   el("ratenote").textContent = p.limits.chosen.rateSource === "operating point" ? "started at the operating point: the source carries no request rate" : "";
   el("limitsfor").textContent = `(priced at ${shapeOf(p)})`;
   renderSize();
@@ -704,14 +741,33 @@ function rolesText(roles, verb) {
   return r.join(" and ") + " " + verb + (r.length > 1 ? "" : "s");
 }
 
-// fleetText is replica counts in words, escaped.
+// fleetPlain is replica counts in words, and fleetText the same escaped.
+function fleetPlain(n) {
+  return `${n.prefill} prefill, ${n.decode} decode`;
+}
+
 function fleetText(n) {
-  return `${esc(n.prefill)} prefill, ${esc(n.decode)} decode`;
+  return esc(fleetPlain(n));
 }
 
 // boundText is a figure's bounds, verbatim, or nothing.
 function boundText(f) {
   return f && f.boundBy ? "bound by " + f.boundBy.join(", then ") : "";
+}
+
+// lowNote says what the answer's limit is at its worst corner of V_P and f,
+// where that falls under the rate sized for: the fleet then meets the rate at
+// the learned V_P and f, not at every corner the span sweeps.
+function lowNote(limit, z) {
+  const s = limit.sensitivity;
+  if (!s) return "";
+  if (s.loRefused) {
+    return `<div class="miss">At one corner of V_P and f this fleet's limit is refused (${esc(s.loRefused)}).` +
+      (z.sizeOn === "low" ? "" : " Tick \"size for the worst corner\" to size on it.") + `</div>`;
+  }
+  if (s.lo == null || s.lo >= z.rate * (1 - 1e-9)) return "";
+  return `<div class="miss">At one corner of V_P and f this fleet serves only ${fmtRate(s.lo)}, under the rate. ` +
+    `Tick "size for the worst corner" to size on it.</div>`;
 }
 
 // renderSize is the size's answer above the plan of the fleet it found: the
@@ -731,12 +787,17 @@ function renderSize() {
     el("sizeanswer").innerHTML = `<div class="v">${fleetText(f)}</div>` +
       `<div>The fewest replicas whose fleet limit reaches ${rate} (the fewest decode first, then the fewest prefill with them). ` +
       `Fleet limit <b>${figText(a.limit, fmtRate)}</b>, <span class="ok">headroom +${h != null ? fmtRate(h) : "refused"}</span> over the rate; ` +
-      `${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>`;
+      `${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>` + lowNote(a.limit, z);
     const step = (role, s) => {
       if (!s) return `<li>One ${role} replica fewer: none, the answer has one.</li>`;
+      // Sized on the worst corner, a step falls short at its low end, which
+      // its headroom is read from.
       const lim = val(s.limit), short = val(s.headroom), b = boundText(s.limit);
+      const lo = z.sizeOn === "low" && s.limit.sensitivity ? s.limit.sensitivity.lo : null;
+      const shortText = short == null ? `refused at the worst corner of V_P and f (${esc(why(s.headroom))})` :
+        (lo != null ? `${fmtRate(lo)} at its worst corner of V_P and f, ` : "") + `${fmtRate(-short)} short`;
       const what = lim == null ? `<span class="miss">refused: ${esc(why(s.limit))}</span>` :
-        `<span class="miss"><b>${fmtRate(lim)}</b>, ${fmtRate(-short)} short</span>${b ? ", " + esc(b) : ""}; ${esc(rolesText(s.binding, "bind"))}`;
+        `<span class="miss"><b>${fmtRate(lim)}</b>, ${shortText}</span>${b ? ", " + esc(b) : ""}; ${esc(rolesText(s.binding, "bind"))}`;
       return `<li>One ${role} replica fewer (${fleetText(s.fleet)}): ${what}</li>`;
     };
     el("fewer").innerHTML = step("prefill", a.fewerPrefill) + step("decode", a.fewerDecode);
@@ -1184,16 +1245,20 @@ function wire() {
   // The question: what a fleet serves, or what fleet the rate needs. A size
   // starts from the knobs as they stand, and a plan from the fleet a size
   // found.
-  const mode = m => () => {
-    if (!ready() || state.mode === m) return;
-    state.mode = m;
-    state.size = null;
+  const mode = enter => () => {
+    if (!ready()) return;
+    enter();
     syncControls();
     renderSize();
     schedule(0);
   };
-  el("mplan").onchange = mode("plan");
-  el("msize").onchange = mode("size");
+  el("mplan").onchange = mode(enterPlan);
+  el("msize").onchange = mode(enterSize);
+  el("sizelow").onchange = () => {
+    if (!ready()) return;
+    k().sizeLow = el("sizelow").checked;
+    schedule(0);
+  };
   el("maxrep").onchange = () => {
     if (!ready()) return;
     k().maxRep = intIn(el("maxrep").value, 1, 64);

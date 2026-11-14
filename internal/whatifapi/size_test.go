@@ -2,6 +2,7 @@ package whatifapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	authzv1 "k8s.io/api/authorization/v1"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi/apitest"
 )
 
@@ -150,6 +152,21 @@ func TestSizeRefusals(t *testing.T) {
 			r.SLO.TPOT.Statistic = "p90"
 			return r
 		}, role: roleDecode, why: "NoTPOTHistogram", detail: "no TPOT histogram", atBound: FleetCounts{Prefill: 32, Decode: 32}},
+		// At the API's own bound there is no bound to raise.
+		"decode at the API's bound": {req: func(id string) SizeRequest {
+			r := sizeAt(id, 8, 0.012)
+			r.MaxReplicas = &FleetKnob{Prefill: intp(maxReplicas), Decode: intp(maxReplicas)}
+			return r
+		}, role: roleDecode, why: ReasonReplicaBound, detail: "the most the API sizes", atBound: FleetCounts{Prefill: 64, Decode: 64}, boundValue: true},
+		// A TTFT target of 10 s leaves the prefill limit at 0.99 of the lower
+		// knee, past the operating-point cap (0.85 of it): at 2 and 2 decode
+		// alone allows 20.4 and prefill alone 19.8, but the fleet only 17.
+		"neither role alone": {req: func(id string) SizeRequest {
+			r := sizeAt(id, 18, 0.05)
+			r.SLO.TTFT = &Objective{Target: f64(10)}
+			r.MaxReplicas = &FleetKnob{Prefill: intp(2), Decode: intp(2)}
+			return r
+		}, role: roleFleet, why: ReasonReplicaBound, detail: "the fleet's limit", atBound: FleetCounts{Prefill: 2, Decode: 2}, boundValue: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := New(Config{Resolver: &stubResolver{refusePrefill: c.refuse}, WhatifSchema: "schema-v3"}).Handler()
@@ -160,6 +177,9 @@ func TestSizeRefusals(t *testing.T) {
 			assert.Equal(t, c.role, u.Role)
 			assert.Equal(t, c.why, u.Refused.Reason)
 			assert.Contains(t, u.Refused.Detail, c.detail)
+			if c.atBound.Prefill >= maxReplicas {
+				assert.NotContains(t, u.Refused.Detail, "raise maxReplicas", "advice to raise a bound already at the API's")
+			}
 			assert.Equal(t, c.atBound, u.AtBound.Fleet)
 			if c.boundValue {
 				require.NotNil(t, u.AtBound.Limit.Value, "the figure the bound reached")
@@ -212,6 +232,123 @@ func TestSizeCachingAndCost(t *testing.T) {
 	assert.LessOrEqual(t, a.Searched, 20, "a search of %d fleets for a bound of %d per role", a.Searched, defaultSizeBound)
 	c, _ := sizeOf(t, h, sizeAt(id, 14, 0.05))
 	assert.NotEqual(t, a.SizeID, c.SizeID, "a rate moved is a new size")
+	// The search gallops up from one replica: a rate one of each serves
+	// prices that one fleet, not the bound.
+	one, _ := sizeOf(t, h, sizeAt(id, 4, 0.05))
+	require.NotNil(t, one.Answer)
+	assert.Equal(t, FleetCounts{Prefill: 1, Decode: 1}, one.Answer.Fleet)
+	assert.Equal(t, 1, one.Searched, "fleets searched for an answer of one of each")
+	t.Logf("fleets searched: %d for 3 and 3 at 15 r/s, %d for 1 and 1 at 4 r/s", a.Searched, one.Searched)
+}
+
+// sizeWith posts a size on a request whose context the caller holds.
+func sizeWith(ctx context.Context, t *testing.T, h http.Handler, req SizeRequest) (int, []byte) {
+	t.Helper()
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/size", bytes.NewReader(b)).WithContext(ctx)
+	r.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, r)
+	return rec.Code, rec.Body.Bytes()
+}
+
+// A search finished is never lost to its answer's plan: the plan runs on the
+// slot the search took, so one slot sizes (MaxPlans 1), and a size whose plan
+// ended with its client is not searched again when asked again.
+func TestSizeSearchSurvivesItsPlan(t *testing.T) {
+	r := &stubResolver{}
+	s := New(Config{Resolver: r, WhatifSchema: "schema-v3", MaxPlans: 1})
+	searches := 0
+	s.onSearch = func() { searches++ }
+	h := s.Handler()
+	id := inputsOf(t, h)
+
+	// The client goes away when the answer's plan prices its fleet (3 and 3,
+	// priced once by the search and again by the plan).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	seen := 0
+	r.onFleet = func(k Knobs) {
+		if k.Prefill == 3 && k.Decode == 3 {
+			if seen++; seen == 2 {
+				cancel()
+			}
+		}
+	}
+	code, body := sizeWith(ctx, t, h, sizeAt(id, 15, 0.05))
+	require.Equal(t, http.StatusServiceUnavailable, code, "%s", body)
+	require.Equal(t, 1, searches)
+	n := r.fleets.Load()
+
+	r.onFleet = nil
+	out, _ := sizeOf(t, h, sizeAt(id, 15, 0.05))
+	require.NotNil(t, out.Answer)
+	assert.Equal(t, FleetCounts{Prefill: 3, Decode: 3}, out.Answer.Fleet)
+	assert.Equal(t, 1, searches, "the size was searched again")
+	assert.Less(t, r.fleets.Load()-n, int64(out.Searched), "the retry priced as many fleets as a search")
+}
+
+// sizeOn "low" sizes on the low end of the fleet's span over V_P and f. On
+// the stub the span is 10% either way: at 15 r/s the point answer, 3 and 3,
+// serves 15 at its limit but 13.5 at its low end; sized low, 4 and 3 serve
+// 18, 16.2 at the low end.
+func TestSizeOnTheLowEnd(t *testing.T) {
+	h := New(Config{Resolver: &stubResolver{}, WhatifSchema: "schema-v3"}).Handler()
+	id := inputsOf(t, h)
+	point, _ := sizeOf(t, h, sizeAt(id, 15, 0.05))
+	require.NotNil(t, point.Answer)
+	assert.Equal(t, SizeOnPoint, point.SizeOn)
+	assert.Equal(t, FleetCounts{Prefill: 3, Decode: 3}, point.Answer.Fleet)
+	require.NotNil(t, point.Answer.Limit.Sensitivity)
+	assert.Less(t, *point.Answer.Limit.Sensitivity.Lo, 15.0, "the point answer's low end, which the page warns of")
+
+	req := sizeAt(id, 15, 0.05)
+	req.SizeOn = SizeOnLow
+	low, _ := sizeOf(t, h, req)
+	require.NotNil(t, low.Answer)
+	assert.Equal(t, SizeOnLow, low.SizeOn)
+	assert.NotEqual(t, point.SizeID, low.SizeID)
+	assert.Equal(t, FleetCounts{Prefill: 4, Decode: 3}, low.Answer.Fleet)
+	require.NotNil(t, low.Answer.Limit.Sensitivity)
+	assert.GreaterOrEqual(t, *low.Answer.Limit.Sensitivity.Lo, 15.0)
+	p, _ := plan(t, h, req.planAt(low.Answer.Fleet))
+	assert.Equal(t, p.Limits.Fleet.Figure, low.Answer.Limit)
+	require.NotNil(t, low.Answer.FewerPrefill)
+	require.NotNil(t, low.Answer.FewerPrefill.Limit.Sensitivity)
+	assert.Less(t, *low.Answer.FewerPrefill.Limit.Sensitivity.Lo, 15.0, "one prefill fewer still serves the rate at its low end")
+	require.NotNil(t, low.Answer.FewerPrefill.Headroom.Value)
+	assert.InDelta(t, *low.Answer.FewerPrefill.Limit.Sensitivity.Lo-15, *low.Answer.FewerPrefill.Headroom.Value, 1e-12,
+		"sized low, a step's shortfall is its low end's")
+
+	req.SizeOn = "worst"
+	code, body := post(t, h, "/v1/size", req)
+	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Contains(t, string(body), "sizeOn")
+}
+
+// A limit reaches the rate within a billionth of it, as the worked
+// recording's plateau wanders by up to 8e-13; a millionth short does not.
+func TestReachesTolerance(t *testing.T) {
+	const rate = 0.71899389578821249
+	assert.True(t, reaches(rate, rate))
+	assert.True(t, reaches(0.71899389578765072, rate), "a plateau's wander is no shortfall")
+	assert.False(t, reaches(rate*(1-1e-6), rate))
+	assert.True(t, figureReaches(Figure{Value: ptr(rate * (1 - 1e-12))}, rate, false))
+	assert.True(t, resultReaches(whatif.Answer{Value: rate * (1 - 1e-12)}, rate, false))
+}
+
+// A fleet with one replica fewer that serves the rate is the search's own
+// failure, a 500, never an answer. On this stub the prefill limit dips at
+// one decode replica, and at two with prefill at its bound: the search
+// lands on 2 prefill and 3 decode, though 2 and 2 serve the rate.
+func TestSizeOneFewerThatServesIsAnError(t *testing.T) {
+	r := &stubResolver{dip: func(p, d int) bool { return d == 1 || (d == 2 && p == defaultSizeBound) }}
+	h := New(Config{Resolver: r, WhatifSchema: "schema-v3"}).Handler()
+	code, body := post(t, h, "/v1/size", sizeAt(inputsOf(t, h), 6, 0.05))
+	assert.Equal(t, http.StatusInternalServerError, code, "%s", body)
+	assert.Contains(t, string(body), "does not hold")
+	assert.Contains(t, string(body), "2 prefill and 2 decode")
 }
 
 // /v1/size sits behind the same authentication as the other endpoints: no

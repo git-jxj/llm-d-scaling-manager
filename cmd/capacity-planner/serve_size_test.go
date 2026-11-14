@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -89,6 +91,79 @@ func TestServeSizeIsThePlan(t *testing.T) {
 		assert.Equal(t, less.Limits.Fleet.BoundBy, s.step.Limit.BoundBy, s.role)
 	}
 	assert.True(t, a.FewerPrefill != nil || a.FewerDecode != nil, "no step at all: the test reads nothing")
+}
+
+// sizeBenchRequest is the size the proposal's cost figures are measured on:
+// the worked recording (model-02), V_P assumed 30000 tokens/s, a stated
+// 1,024-token prompt and 1,000-token output, TTFT p95 200 ms, TPOT mean 4 ms,
+// at 0.6 r/s, bounded at 32 a role.
+func sizeBenchRequest(id string) whatifapi.SizeRequest {
+	return whatifapi.SizeRequest{InputsID: id,
+		Traffic: &whatifapi.Traffic{Classes: &whatifapi.Classes{Critical: &whatifapi.ClassRate{Rate: fp(0.6)}},
+			Mix: &whatifapi.Mix{PromptTokens: 1024, OutputTokens: 1000}},
+		SLO:    &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p95", Target: fp(0.2)}, TPOT: &whatifapi.Objective{Statistic: statMean, Target: fp(0.004)}},
+		Assume: &whatifapi.Assume{VP: fp(30000)}}
+}
+
+// The size's costs, on sizeBenchRequest's question:
+//
+//	go test ./cmd/capacity-planner -run '^$' -bench Size -benchtime 3x
+//
+// SizeFleetLimits is one fleet's limits as the search prices them, at n
+// prefill replicas and one decode; SizeCold a size end to end on a new
+// server, the answer's cold plan included; SizeAnswerPlan that plan alone.
+func BenchmarkSizeFleetLimits(b *testing.B) {
+	_, src := servedAPI(b)
+	res, err := src.Resolve(context.Background(), whatifapi.InputsRequest{Model: "model-02",
+		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: "ols-sweep.jsonl.gz"}})
+	require.NoError(b, err)
+	for _, n := range []int{1, 32, 64} {
+		b.Run(fmt.Sprintf("prefill=%d", n), func(b *testing.B) {
+			for b.Loop() {
+				fl, err := res.Pricer.Fleet(whatifapi.Knobs{Prefill: n, Decode: 1, PromptTokens: 1024, OutputTokens: 1000,
+					TTFTPercentile: 0.95, Assume: whatifapi.Assume{VP: fp(30000)}, Headroom: 0.85})
+				require.NoError(b, err)
+				fl.PlainLimits(0.2, 0.004, 0.85)
+			}
+		})
+	}
+}
+
+func BenchmarkSizeCold(b *testing.B) {
+	for b.Loop() {
+		b.StopTimer()
+		h, _ := servedAPI(b)
+		in, _ := apiInputs(b, h, "ols-sweep.jsonl.gz", "model-02")
+		b.StartTimer()
+		code, body := apiPost(b, h, "/v1/size", sizeBenchRequest(in.InputsID))
+		require.Equal(b, http.StatusOK, code, "%s", body)
+		var out whatifapi.SizeResponse
+		require.NoError(b, json.Unmarshal(body, &out))
+		require.NotNil(b, out.Answer)
+		b.ReportMetric(float64(out.Searched), "fleets")
+		b.ReportMetric(float64(out.Answer.Fleet.Prefill), "prefill")
+		b.ReportMetric(float64(out.Answer.Fleet.Decode), "decode")
+	}
+}
+
+func BenchmarkSizeAnswerPlan(b *testing.B) {
+	h, _ := servedAPI(b)
+	in, _ := apiInputs(b, h, "ols-sweep.jsonl.gz", "model-02")
+	req := sizeBenchRequest(in.InputsID)
+	code, body := apiPost(b, h, "/v1/size", req)
+	require.Equal(b, http.StatusOK, code, "%s", body)
+	var out whatifapi.SizeResponse
+	require.NoError(b, json.Unmarshal(body, &out))
+	require.NotNil(b, out.Answer)
+	n := out.Answer.Fleet
+	for b.Loop() {
+		b.StopTimer()
+		h, _ := servedAPI(b)
+		in, _ := apiInputs(b, h, "ols-sweep.jsonl.gz", "model-02")
+		b.StartTimer()
+		apiPlan(b, h, planOfSize(sizeBenchRequest(in.InputsID), n))
+	}
+	b.ReportMetric(float64(n.Prefill), "prefill")
 }
 
 // A recording that learned no V_P sizes nothing: the refusal is the

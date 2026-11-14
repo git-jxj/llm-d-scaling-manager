@@ -23,6 +23,11 @@ type stubResolver struct {
 	gate          chan struct{}
 	onPlainLimits func(n int64)
 	plainLimits   atomic.Int64
+	// dip, when set, cuts the prefill knee of the fleets it holds for: a
+	// limit that does not rise with the replicas.
+	dip func(prefill, decode int) bool
+	// onFleet, when set, is called with the knobs of every fleet priced.
+	onFleet func(k Knobs)
 }
 
 func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved, error) {
@@ -49,6 +54,9 @@ func (r *stubResolver) Fleet(k Knobs) (Fleet, error) {
 	if r.gate != nil {
 		<-r.gate
 	}
+	if r.onFleet != nil {
+		r.onFleet(k)
+	}
 	r.fleets.Add(1)
 	return &stubFleet{k: k, refusePrefill: r.refusePrefill, r: r}, nil
 }
@@ -62,9 +70,14 @@ type stubFleet struct {
 
 var noVP = whatif.Unanswerable{Reason: whatif.NoPrefillCapacity, Detail: "no P1 estimate"}
 
-// prefillKnee is 10 r/s a replica at prompts up to 1000 tokens, less above.
+// prefillKnee is 10 r/s a replica at prompts up to 1000 tokens, less above,
+// and a hundredth of it where the resolver's dip holds.
 func (f *stubFleet) prefillKnee() float64 {
-	return 10 * float64(f.k.Prefill) * 1000 / max(f.k.PromptTokens, 1000)
+	k := 10 * float64(f.k.Prefill) * 1000 / max(f.k.PromptTokens, 1000)
+	if f.r.dip != nil && f.r.dip(f.k.Prefill, f.k.Decode) {
+		k /= 100
+	}
+	return k
 }
 
 // decodeKnee is 12 r/s a replica.
@@ -117,6 +130,11 @@ func (f *stubFleet) TPOTAt(rate float64) (mean, percentile whatif.Result) {
 func (f *stubFleet) Limits(ttftSeconds, tpotSeconds, headroom float64) LimitSet {
 	d, p, fl := f.PlainLimits(ttftSeconds, tpotSeconds, headroom)
 	_, _, uncapped := f.PlainLimits(ttftSeconds, tpotSeconds, 1)
+	// The fleet's limit spans 10% either way over V_P and f.
+	if a, ok := fl.(whatif.Answer); ok {
+		a.Sensitivity = &whatif.Sensitivity{Lo: 0.9 * a.Value, Hi: 1.1 * a.Value}
+		fl = a
+	}
 	return LimitSet{Decode: d, Prefill: p, Fleet: fl, WithoutHeadroom: uncapped, Notes: []string{"a stub's note at the target"}}
 }
 

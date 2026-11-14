@@ -159,6 +159,16 @@ read them, you do not set them.
   over your rate, and the role and target that bind.
 - **Why not fewer.** One prefill replica fewer, and one decode replica fewer,
   each with the rate it would serve and how far short of yours that is.
+- **The worst corner.** The answer meets your rate at the learned prefill
+  speed (V_P) and imbalance (f). Those are estimates, and the page also prices
+  them 15% either way. When the answer falls short at the worst of those, the
+  page says so: "at one corner of V_P and f this fleet serves only X r/s".
+  Tick **Size for the worst corner of V_P and f** to find the fleet that
+  serves your rate there too. It may need more replicas and takes longer.
+- **Decode first.** The page finds the fewest decode replicas, then the
+  fewest prefill replicas with them. When decode replicas hold the prefill
+  limit down, one more decode and one fewer prefill replica may also work and
+  may be fewer in all; try it in the first mode.
 - **The rest of the page** is the fleet it found, exactly as the first mode
   would show it if you set those counts yourself.
 - **Search up to.** The most replicas of a role the page tries, 32 unless you
@@ -166,8 +176,9 @@ read them, you do not set them.
   says so, with the reason and what the largest fleet would serve. If the
   reason is a refused term, not the bound, more replicas will not help:
   assume the term (see below) or change the target.
-- **Slower than the first mode.** Each answer prices a dozen or so fleets and
-  takes seconds, so the rate is priced when you let go of the slider.
+- **Slower than the first mode.** An answer takes seconds, and on a TTFT
+  fleet can take 20 s, most of it drawing the graphs of the fleet found, so
+  the rate is priced when you let go of the slider.
 
 Switch back to **How much does this fleet serve?** to step the replicas from
 the fleet it found.

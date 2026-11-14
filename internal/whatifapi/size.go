@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -20,6 +21,15 @@ const defaultSizeBound = 32
 // bound, or a smaller rate.
 const ReasonReplicaBound = "ReplicaBoundReached"
 
+// What a size's fleet must reach the rate with (SizeRequest.SizeOn).
+const (
+	// SizeOnPoint is the fleet's limit: the default.
+	SizeOnPoint = "point"
+	// SizeOnLow is the low end of the limit's span over V_P and f: the fleet
+	// serves the rate at every corner the span sweeps.
+	SizeOnLow = "low"
+)
+
 // The roles a size's refusal names: the role no count within the bound
 // serves, or the fleet, when each role serves the rate alone but the two
 // together do not.
@@ -28,6 +38,21 @@ const (
 	rolePrefill = "prefill"
 	roleFleet   = "fleet"
 )
+
+// reachTolerance is the share under the rate a limit may fall and still
+// reach it: a limit is a bisection's answer, and its last bits are no
+// shortfall.
+const reachTolerance = 1e-9
+
+// reaches reports whether a limit of x r/s reaches rate, within
+// reachTolerance.
+func reaches(x, rate float64) bool { return x >= rate*(1-reachTolerance) }
+
+// errNotMonotone is a search whose answer a fleet with one replica fewer
+// also serves, or whose plan does not serve the rate: the limits did not
+// rise with the replicas as the search takes them to. It is the server's
+// error, not the caller's.
+var errNotMonotone = errors.New("the size's search does not hold on this fleet")
 
 // handleSize is POST /v1/size: the fewest replicas per role whose fleet
 // limit reaches a rate, or why none within the bound does.
@@ -73,10 +98,23 @@ func sizeBound(k *FleetKnob) (FleetCounts, error) {
 	return out, nil
 }
 
+// sizeOn is the request's SizeOn, checked: "point" where left out.
+func sizeOn(s string) (string, error) {
+	switch s {
+	case "", SizeOnPoint:
+		return SizeOnPoint, nil
+	case SizeOnLow:
+		return SizeOnLow, nil
+	}
+	return "", InputErrorf("sizeOn %q, want %s (the fleet's limit) or %s (the low end of its span over V_P and f)", s, SizeOnPoint, SizeOnLow)
+}
+
 // size sizes req and returns the response body: from the cache when the
-// same question was sized before. A size not cached is searched once however
-// many ask for it at once; the search takes one plan slot (errBusy with none
-// free), and the answer's plan is a plan like any other, cached as one.
+// same question was sized before. A size not cached is sized once however
+// many ask for it at once, on one plan slot (errBusy with none free) held
+// from its search through its answer's plan, which is a plan like any other,
+// cached as one. The search is kept by sizeId before the plan is priced, so
+// a size whose plan failed (its client gone) is not searched again.
 func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 	e, ok := s.inputs.get(req.InputsID)
 	if !ok {
@@ -86,6 +124,10 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 		return nil, InputErrorf("the inputs have no prefill variant: POST /v1/size sizes a P/D fleet")
 	}
 	bound, err := sizeBound(req.MaxReplicas)
+	if err != nil {
+		return nil, err
+	}
+	on, err := sizeOn(req.SizeOn)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +145,8 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 	id := contentID("size", struct {
 		Scenario Scenario
 		Bound    FleetCounts
-	}{sc, bound})
+		On       string
+	}{sc, bound, on})
 	if b, ok := s.sizes.get(id); ok {
 		return b, nil
 	}
@@ -111,18 +154,31 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 		if b, ok := s.sizes.get(id); ok {
 			return b, nil
 		}
-		z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: bound, seen: map[FleetCounts]sizeEval{}}
-		out, err := z.search(ctx, s)
-		if err != nil {
-			return nil, err
+		if !acquire(s.planSlots) {
+			return nil, errBusy
 		}
-		if out.Answer != nil {
-			if err := s.planAnswer(ctx, req, z.rate, out.Answer); err != nil {
+		defer func() { <-s.planSlots }()
+		found, ok := s.searches.get(id)
+		if !ok {
+			if s.onSearch != nil {
+				s.onSearch()
+			}
+			z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: bound, low: on == SizeOnLow, seen: map[FleetCounts]sizeEval{}}
+			if found, err = z.search(ctx); err != nil {
+				return nil, err
+			}
+			found = s.searches.add(id, found)
+		}
+		out := *found
+		if found.Answer != nil {
+			a := *found.Answer
+			out.Answer = &a
+			if err := s.planAnswer(ctx, req, *sc.Rate, on == SizeOnLow, out.Answer); err != nil {
 				return nil, err
 			}
 		}
 		out.SchemaVersion, out.WhatifSchema, out.SizeID, out.InputsID, out.Banner = SchemaVersion, s.whatifSchema, id, e.id, banner
-		out.Rate, out.MaxReplicas, out.Searched = z.rate, bound, len(z.seen)
+		out.Rate, out.MaxReplicas, out.SizeOn = *sc.Rate, bound, on
 		body, err := marshal(out)
 		if err != nil {
 			return nil, err
@@ -132,11 +188,12 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 }
 
 // planAnswer prices the plan at the answer's fleet, as POST /v1/plan does,
-// and reads the answer's limit, headroom and binding from it, so that the
-// answer is what a plan of that fleet says. A plan that does not reach the
-// rate the search found it reaches is a bug, not a refusal.
-func (s *Server) planAnswer(ctx context.Context, req SizeRequest, rate float64, a *SizeAnswer) error {
-	body, err := s.plan(ctx, req.planAt(a.Fleet))
+// on the slot the size holds, and reads the answer's limit, headroom and
+// binding from it, so that the answer is what a plan of that fleet says. A
+// plan that does not reach the rate the search found it reaches is the
+// server's error, not a refusal.
+func (s *Server) planAnswer(ctx context.Context, req SizeRequest, rate float64, low bool, a *SizeAnswer) error {
+	body, err := s.planHolding(ctx, req.planAt(a.Fleet), true)
 	if err != nil {
 		return err
 	}
@@ -144,13 +201,37 @@ func (s *Server) planAnswer(ctx context.Context, req SizeRequest, rate float64, 
 		return err
 	}
 	l := a.Plan.Limits.Fleet
-	if l.Value == nil || *l.Value < rate {
-		return fmt.Errorf("the plan at %d prefill and %d decode replicas does not reach %g r/s, though the search found it does: %s",
-			a.Fleet.Prefill, a.Fleet.Decode, rate, figurePlain(l.Figure))
+	if !figureReaches(l.Figure, rate, low) {
+		return fmt.Errorf("%w: the plan at %d prefill and %d decode replicas does not reach %g r/s, though the search found it does: %s",
+			errNotMonotone, a.Fleet.Prefill, a.Fleet.Decode, rate, figurePlain(l.Figure))
 	}
 	a.Limit, a.Binding = l.Figure, l.Binding
 	a.Headroom = Figure{Value: ptr(*l.Value - rate), Unit: unitRate}
 	return nil
+}
+
+// figureReaches reports whether a limit on the wire reaches rate: its value,
+// and with low its span's low end too (a refused corner does not).
+func figureReaches(f Figure, rate float64, low bool) bool {
+	if f.Value == nil || !reaches(*f.Value, rate) {
+		return false
+	}
+	if !low || f.Sensitivity == nil {
+		return true
+	}
+	return f.Sensitivity.Lo != nil && reaches(*f.Sensitivity.Lo, rate)
+}
+
+// resultReaches is figureReaches on a priced limit.
+func resultReaches(r whatif.Result, rate float64, low bool) bool {
+	a, ok := r.(whatif.Answer)
+	if !ok || !reaches(a.Value, rate) {
+		return false
+	}
+	if !low || a.Sensitivity == nil {
+		return true
+	}
+	return a.Sensitivity.Refused == "" && reaches(a.Sensitivity.Lo, rate)
 }
 
 // figurePlain is a figure in words, for an error.
@@ -171,36 +252,22 @@ type sizer struct {
 	k     Knobs
 	rate  float64
 	bound FleetCounts
+	// low sizes on the low end of each limit's span over V_P and f.
+	low bool
 	// seen is every fleet priced, by its counts.
 	seen map[FleetCounts]sizeEval
 }
 
-// sizeEval is one fleet's limits at the scenario's targets and headroom, as
-// the plan's +1 steps price them: decode's (nil with no TPOT asked), the
-// prefill role's, and the fleet's.
+// sizeEval is one fleet's limits at the scenario's targets and headroom:
+// decode's (nil with no TPOT asked), the prefill role's, and the fleet's.
 type sizeEval struct {
 	decode, prefill, fleet whatif.Result
 }
 
-// meets reports whether the fleet's limit reaches rate.
-func (v sizeEval) meets(rate float64) bool {
-	x, ok := valueOf(v.fleet)
-	return ok && x >= rate
-}
-
-// decodeMeets reports whether decode's own limit, TPOT and the
-// operating-point cap on decode's knee, reaches rate; with no TPOT asked
-// decode has no limit of its own, and the fleet's says the rest.
-func (v sizeEval) decodeMeets(rate float64) bool {
-	if v.decode == nil {
-		return true
-	}
-	x, ok := valueOf(v.decode)
-	return ok && x >= rate
-}
-
 // at prices the fleet of n, once per search, stopping with ctx's error once
-// ctx ends.
+// ctx ends. Its limits are the plan's +1 steps' (PlainLimits, no span), or
+// with low the plan's own limits (Limits), whose fleet limit carries the
+// span the low end is read from.
 func (z *sizer) at(ctx context.Context, n FleetCounts) (sizeEval, error) {
 	if v, ok := z.seen[n]; ok {
 		return v, nil
@@ -219,20 +286,45 @@ func (z *sizer) at(ctx context.Context, n FleetCounts) (sizeEval, error) {
 		tpot = z.sc.TPOT.Target
 	}
 	var v sizeEval
-	v.decode, v.prefill, v.fleet = fl.PlainLimits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
+	if z.low {
+		ls := fl.Limits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
+		v = sizeEval{decode: ls.Decode, prefill: ls.Prefill, fleet: ls.Fleet}
+	} else {
+		v.decode, v.prefill, v.fleet = fl.PlainLimits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
+	}
 	z.seen[n] = v
 	return v, nil
 }
 
-// step is the fleet of n as a size's step: its limit, the limit's headroom
-// over the rate, and the role that binds.
+// meets reports whether the fleet's limit reaches the rate.
+func (z *sizer) meets(v sizeEval) bool { return resultReaches(v.fleet, z.rate, z.low) }
+
+// decodeMeets reports whether decode's own limit, TPOT and the
+// operating-point cap on decode's knee, reaches the rate; with no TPOT asked
+// decode has no limit of its own, and the fleet's says the rest. Decode's
+// limit has no span over V_P and f, the prefill side's terms.
+func (z *sizer) decodeMeets(v sizeEval) bool {
+	return v.decode == nil || resultReaches(v.decode, z.rate, false)
+}
+
+// step is the fleet of n as a size's step: its limit, the headroom over the
+// rate of what the size is on (the limit, or with low its span's low end),
+// and the role that binds.
 func (z *sizer) step(ctx context.Context, n FleetCounts) (*SizeStep, error) {
 	v, err := z.at(ctx, n)
 	if err != nil {
 		return nil, err
 	}
 	st := &SizeStep{Fleet: n, Limit: figureOf(v.fleet, unitRate, false), Binding: binding(v.prefill, v.decode)}
-	if x, ok := valueOf(v.fleet); ok {
+	x, ok := valueOf(v.fleet)
+	if a, isAnswer := v.fleet.(whatif.Answer); isAnswer && z.low && a.Sensitivity != nil {
+		if a.Sensitivity.Refused != "" {
+			st.Headroom = Figure{Refused: &Refusal{Reason: string(a.Sensitivity.Refused), Detail: "refused at the worst corner of V_P and f"}}
+			return st, nil
+		}
+		x = a.Sensitivity.Lo
+	}
+	if ok {
 		st.Headroom = Figure{Value: ptr(x - z.rate), Unit: unitRate}
 	} else {
 		st.Headroom = refusedFigure(st.Limit.Refused)
@@ -241,23 +333,38 @@ func (z *sizer) step(ctx context.Context, n FleetCounts) (*SizeStep, error) {
 }
 
 // smallest is the smallest n in [lo, hi] for which ok holds, and whether
-// one does. It takes ok to be monotone, as a limit is in replicas (one more
-// never serves less), and asks ok(hi) first.
+// one does. It gallops (lo, lo+1, lo+3, lo+7, ... up to hi) to the first
+// count that holds, then bisects back to the count after the last that
+// failed, so its cost grows with the answer, not with hi. It takes ok to be
+// monotone, as a limit is in replicas: where it is not, a count that holds
+// below the answer can be skipped, but never the one just below it, which is
+// always asked and failed.
 func smallest(lo, hi int, ok func(int) (bool, error)) (int, bool, error) {
 	if lo > hi {
 		return 0, false, nil
 	}
-	top, err := ok(hi)
-	if err != nil || !top {
-		return 0, false, err
-	}
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		m, err := ok(mid)
+	failed, n, stride := lo-1, lo, 1
+	for {
+		held, err := ok(n)
 		if err != nil {
 			return 0, false, err
 		}
-		if m {
+		if held {
+			break
+		}
+		if n == hi {
+			return 0, false, nil
+		}
+		failed, n, stride = n, min(hi, n+stride), 2*stride
+	}
+	lo, hi = failed+1, n
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		held, err := ok(mid)
+		if err != nil {
+			return 0, false, err
+		}
+		if held {
 			hi = mid
 		} else {
 			lo = mid + 1
@@ -266,62 +373,69 @@ func smallest(lo, hi int, ok func(int) (bool, error)) (int, bool, error) {
 	return hi, true, nil
 }
 
-// search is the size: decode first on its own limit (TPOT and the
-// operating-point cap), the prefill role at its bound; then decode once more
-// on the fleet's limit, since decode admission and the lower knee enter the
-// prefill limit; then prefill on the fleet's limit at that decode count.
-// Each limit is the one the plan's +1 steps read (PlainLimits): the answer's
-// figures come from its plan (planAnswer). It holds a plan slot while it
-// searches.
-func (z *sizer) search(ctx context.Context, s *Server) (*SizeResponse, error) {
-	if !acquire(s.planSlots) {
-		return nil, errBusy
-	}
-	defer func() { <-s.planSlots }()
+// search is the size, its plan aside:
+//
+//  1. decode, on its own limit (TPOT and the operating-point cap), which
+//     the prefill count does not move: priced at one prefill replica;
+//  2. prefill, on the fleet's limit at that decode count;
+//  3. when no prefill count within the bound joins it, decode once more on
+//     the fleet's limit with prefill at its bound, since the lower knee and
+//     decode admission hold the prefill limit down, then prefill again.
+//
+// The answer is the fewest decode replicas that serve the rate, then the
+// fewest prefill with them. A fleet with one replica fewer of either role
+// that also serves it is errNotMonotone.
+func (z *sizer) search(ctx context.Context) (*SizeResponse, error) {
 	maxP, maxD := z.bound.Prefill, z.bound.Decode
-	atD := func(test func(sizeEval) bool) func(int) (bool, error) {
-		return func(d int) (bool, error) {
-			v, err := z.at(ctx, FleetCounts{Prefill: maxP, Decode: d})
+	at := func(p func(int) FleetCounts, test func(sizeEval) bool) func(int) (bool, error) {
+		return func(n int) (bool, error) {
+			v, err := z.at(ctx, p(n))
 			return err == nil && test(v), err
 		}
 	}
-	decodeOwn := func(v sizeEval) bool { return v.decodeMeets(z.rate) }
-	fleetMeets := func(v sizeEval) bool { return v.meets(z.rate) }
-
-	d, ok, err := smallest(1, maxD, atD(decodeOwn))
+	d, ok, err := smallest(1, maxD, at(func(d int) FleetCounts { return FleetCounts{Prefill: 1, Decode: d} }, z.decodeMeets))
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return z.unmet(ctx, roleDecode, FleetCounts{Prefill: maxP, Decode: maxD})
 	}
-	if d, ok, err = smallest(d, maxD, atD(fleetMeets)); err != nil {
-		return nil, err
+	prefillAt := func(d int) (int, bool, error) {
+		return smallest(1, maxP, at(func(p int) FleetCounts { return FleetCounts{Prefill: p, Decode: d} }, z.meets))
 	}
-	if !ok {
-		return z.unmet(ctx, roleFleet, FleetCounts{Prefill: maxP, Decode: maxD})
-	}
-	// (maxP, d) meets the rate, as the recheck found, and is priced once:
-	// a count is found.
-	p, _, err := smallest(1, maxP, func(p int) (bool, error) {
-		v, err := z.at(ctx, FleetCounts{Prefill: p, Decode: d})
-		return err == nil && v.meets(z.rate), err
-	})
+	p, ok, err := prefillAt(d)
 	if err != nil {
 		return nil, err
 	}
+	if !ok {
+		if d, ok, err = smallest(d+1, maxD, at(func(d int) FleetCounts { return FleetCounts{Prefill: maxP, Decode: d} }, z.meets)); err != nil {
+			return nil, err
+		}
+		if !ok {
+			return z.unmet(ctx, roleFleet, FleetCounts{Prefill: maxP, Decode: maxD})
+		}
+		// (maxP, d) holds, and is priced once: a count is found.
+		if p, _, err = prefillAt(d); err != nil {
+			return nil, err
+		}
+	}
 	a := &SizeAnswer{Fleet: FleetCounts{Prefill: p, Decode: d}}
-	if p > 1 {
-		if a.FewerPrefill, err = z.step(ctx, FleetCounts{Prefill: p - 1, Decode: d}); err != nil {
+	for _, f := range []struct {
+		into **SizeStep
+		n    FleetCounts
+	}{{&a.FewerPrefill, FleetCounts{Prefill: p - 1, Decode: d}}, {&a.FewerDecode, FleetCounts{Prefill: p, Decode: d - 1}}} {
+		if f.n.Prefill < 1 || f.n.Decode < 1 {
+			continue
+		}
+		if *f.into, err = z.step(ctx, f.n); err != nil {
 			return nil, err
 		}
-	}
-	if d > 1 {
-		if a.FewerDecode, err = z.step(ctx, FleetCounts{Prefill: p, Decode: d - 1}); err != nil {
-			return nil, err
+		if z.meets(z.seen[f.n]) {
+			return nil, fmt.Errorf("%w: %d prefill and %d decode replicas, one fewer than the answer %d and %d, also serve %g r/s",
+				errNotMonotone, f.n.Prefill, f.n.Decode, p, d, z.rate)
 		}
 	}
-	return &SizeResponse{Answer: a}, nil
+	return &SizeResponse{Answer: a, Searched: len(z.seen)}, nil
 }
 
 // unmet is the size refused at the bound fleet n: the refusal of the role's
@@ -335,24 +449,31 @@ func (z *sizer) unmet(ctx context.Context, role string, n FleetCounts) (*SizeRes
 		return nil, err
 	}
 	v := z.seen[n]
-	r := v.fleet
+	r, low := v.fleet, z.low
 	switch {
 	case role == roleDecode:
-		r = v.decode
-	case !sizeEval{fleet: v.prefill}.meets(z.rate):
+		r, low = v.decode, false
+	case !resultReaches(v.prefill, z.rate, z.low):
 		// The prefill role's own limit is short, or refused: name it.
 		role, r = rolePrefill, v.prefill
 	}
 	u := &SizeUnmet{Role: role, AtBound: *st}
 	if fig := figureOf(r, unitRate, false); fig.Refused != nil {
 		u.Refused = *fig.Refused
-		return &SizeResponse{Unmet: u}, nil
+		return &SizeResponse{Unmet: u, Searched: len(z.seen)}, nil
 	}
 	x, _ := valueOf(r)
 	what := map[string]string{roleDecode: "decode's own limit (TPOT and the operating-point cap)",
 		rolePrefill: "the prefill role's limit (TTFT)", roleFleet: "the fleet's limit"}[role]
+	if a, ok := r.(whatif.Answer); ok && low && a.Sensitivity != nil && a.Sensitivity.Refused == "" {
+		x, what = a.Sensitivity.Lo, what+" at its worst corner of V_P and f"
+	}
+	advice := fmt.Sprintf("raise maxReplicas (up to %d) or lower the rate", maxReplicas)
+	if n.Prefill >= maxReplicas && n.Decode >= maxReplicas {
+		advice = fmt.Sprintf("%d replicas a role is the most the API sizes: lower the rate or the targets", maxReplicas)
+	}
 	u.Refused = Refusal{Reason: ReasonReplicaBound, Detail: fmt.Sprintf(
-		"At %d prefill and %d decode replicas, the bound searched, %s is %.4g r/s, short of %.4g r/s: raise maxReplicas (up to %d) or lower the rate",
-		n.Prefill, n.Decode, what, x, z.rate, maxReplicas)}
-	return &SizeResponse{Unmet: u}, nil
+		"At %d prefill and %d decode replicas, the bound searched, %s is %.4g r/s, short of %.4g r/s: %s",
+		n.Prefill, n.Decode, what, x, z.rate, advice)}
+	return &SizeResponse{Unmet: u, Searched: len(z.seen)}, nil
 }

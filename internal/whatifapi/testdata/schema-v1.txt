@@ -288,6 +288,7 @@ size.rate number
 size.schemaVersion number
 size.searched number
 size.sizeId string
+size.sizeOn string
 size.unmet object
 size.unmet.atBound object
 size.unmet.atBound.binding array
@@ -312,6 +313,7 @@ sizeRequest.inputsId string
 sizeRequest.maxReplicas object
 sizeRequest.maxReplicas.decode number
 sizeRequest.maxReplicas.prefill number
+sizeRequest.sizeOn string
 sizeRequest.slo object
 sizeRequest.slo.tpot object
 sizeRequest.slo.tpot.bucketTargets object

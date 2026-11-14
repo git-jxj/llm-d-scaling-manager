@@ -152,10 +152,11 @@ func TestPageIDsExist(t *testing.T) {
 func TestPageAsksSize(t *testing.T) {
 	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
 	for _, want := range []string{`id="mplan"`, `id="msize"`, "How much does this fleet serve?", "What fleet does this traffic need?",
-		`id="sizebox"`, `id="maxrep"`} {
+		`id="sizebox"`, `id="maxrep"`, `id="sizelow"`, `id="sizeanswer" aria-live="polite"`} {
 		assert.Contains(t, html, want)
 	}
 	for _, want := range []string{`api("POST", "v1/size", sizeRequest())`, "delete req.fleet;", `p.set("mode", "size")`,
+		`req.sizeOn = "low";`, "modeSeq !== state.modeSeq", `el("perbucket").checked = k.perBucket;`,
 		`el("prefill").disabled = el("pdec").disabled = el("pinc").disabled = !state.inputs.fleet.prefill || sizing;`} {
 		assert.Contains(t, js, want)
 	}

@@ -56,8 +56,11 @@ type Server struct {
 	inputs       *lru[*inputsEntry]
 	plans        *lru[[]byte]
 	sizes        *lru[[]byte]
-	curves       *lru[*curveSet]
-	limits       *lru[*limitEntry]
+	// searches is each size's search, by sizeId, kept before its answer's
+	// plan is priced: a size whose plan failed is not searched again.
+	searches *lru[*SizeResponse]
+	curves   *lru[*curveSet]
+	limits   *lru[*limitEntry]
 	// planSlots and inputSlots bound the work in flight: a token per request
 	// priced.
 	planSlots, inputSlots chan struct{}
@@ -70,6 +73,8 @@ type Server struct {
 	// onCurves and onLimits, when set, are called each time a curve set or a
 	// limit entry is priced: the caching tests count them.
 	onCurves, onLimits func()
+	// onSearch, when set, is called each time a size searches.
+	onSearch func()
 }
 
 // inputsEntry is a source resolved: its id, the inputs a plan reads its
@@ -90,7 +95,8 @@ func New(c Config) *Server {
 		inputs = defaultMaxInputs
 	}
 	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
-		plans: newLRU[[]byte](defaultPlans), sizes: newLRU[[]byte](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
+		plans: newLRU[[]byte](defaultPlans), sizes: newLRU[[]byte](defaultSizes),
+		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs)}
 }
 
@@ -205,6 +211,13 @@ var errUnknownInputs = errors.New("unknown inputsId: resolve the source with POS
 // of the server's plan slots (errBusy with none free), and stops between
 // figures once ctx ends.
 func (s *Server) plan(ctx context.Context, req PlanRequest) ([]byte, error) {
+	return s.planHolding(ctx, req, false)
+}
+
+// planHolding is plan for a caller that may already hold a plan slot (held):
+// a size prices its answer's plan on the slot its search took, so that a
+// search finished is never lost to a busy server.
+func (s *Server) planHolding(ctx context.Context, req PlanRequest, held bool) ([]byte, error) {
 	e, ok := s.inputs.get(req.InputsID)
 	if !ok {
 		return nil, errUnknownInputs
@@ -221,10 +234,12 @@ func (s *Server) plan(ctx context.Context, req PlanRequest) ([]byte, error) {
 		if b, ok := s.plans.get(id); ok {
 			return b, nil
 		}
-		if !acquire(s.planSlots) {
-			return nil, errBusy
+		if !held {
+			if !acquire(s.planSlots) {
+				return nil, errBusy
+			}
+			defer func() { <-s.planSlots }()
 		}
-		defer func() { <-s.planSlots }()
 		out, err := (&planner{s: s, e: e, sc: sc}).plan(ctx)
 		if err != nil {
 			return nil, err
