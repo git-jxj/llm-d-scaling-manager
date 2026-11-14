@@ -140,8 +140,10 @@ type VariantState struct {
 	// MaxModelLen is the engine's context window in tokens, as its recorded
 	// arguments set it (--max-model-len, SGLang's --context-length); 0 where
 	// they set none (the model's own, which the recording does not hold) or
-	// were not recorded.
-	MaxModelLen int64
+	// were not recorded. MaxModelLenUnresolved says the arguments set one the
+	// parser could not read: the window is then unknown, not unset.
+	MaxModelLen           int64
+	MaxModelLenUnresolved bool
 	// Shape is the traffic the variant served (shapeOf).
 	Shape MeasuredShape
 	// ReadingsFrom and ReadingsTo are the first and the last cycle of the
@@ -531,8 +533,11 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 		}
 		vs.Shape = shapeOf(shapes[vc.VariantName])
 		vs.CapacityTokens = whatif.CapacityTokens(params, vs.Ranks, live)
-		if params != nil && params.MaxModelLen > 0 {
-			vs.MaxModelLen = params.MaxModelLen
+		if params != nil {
+			if params.MaxModelLen > 0 {
+				vs.MaxModelLen = params.MaxModelLen
+			}
+			vs.MaxModelLenUnresolved = slices.Contains(params.Unresolved, "max_model_len") || slices.Contains(params.Unresolved, "context_length")
 		}
 		vs.BatchCap, vs.BatchCapSource = r.sat.PricingBatchCap(in.Namespace, in.ModelID, vc.VariantName, params, learning)
 		st.Variants = append(st.Variants, vs)

@@ -17,7 +17,7 @@ vm.runInContext(fs.readFileSync(file, "utf8"), ctx, {filename: file});
 const S = name => vm.runInContext(name, ctx);
 const {esc, linkProblem, checkScenario, readScenarioFile, parseStore, visibleScenarios, putScenario, dropScenario, freeName,
   cleanName, delta, fleetDelta, scenarioTitle, sourceProblem, linkAtLoadStart, linkAtLoadEnd, beginOpen, importPlan, sameCurve, figDelta,
-  compareRows, parseEdges, linkEdgesNote} = ctx;
+  compareRows, parseEdges, linkedEdges, edgesBoxProblem, beyondContext, contextNote, bucketSeries} = ctx;
 const MAX_NAME = S("MAX_NAME"), MAX_SCENARIOS = S("MAX_SCENARIOS"), MAX_LINK = S("MAX_LINK");
 
 let passed = 0;
@@ -344,27 +344,66 @@ for (const [s, want] of [
   throws(`parseEdges refuses ${JSON.stringify(s)}`, () => parseEdges(s), want);
 }
 
-// The link carries edges only in parseEdges' text: one to eight, by bucket
-// name, commas, no spaces, lower-case k.
-for (const link of ["recording=r&perBucket=1&edges=2k,16k,64k", "recording=r&edges=1000", "namespace=llm&perBucket=1&edges=1,2,3,4,5,6,7,8"]) {
+// A link may carry edges in any form parseEdges reads, so a hand-edited
+// edges=2048 or 2K,16k is used; edges that do not parse are refused.
+for (const link of ["recording=r&perBucket=1&edges=2k,16k,64k", "recording=r&edges=1000", "namespace=llm&perBucket=1&edges=1,2,3,4,5,6,7,8",
+  "recording=r&edges=2048", "recording=r&edges=2K,16k", "recording=r&edges=2k,%2016k"]) {
   check(`admits ${link}`, linkProblem(link) === "", linkProblem(link));
 }
-for (const link of ["recording=r&edges=", "recording=r&edges=4k,1k", "recording=r&edges=2k,%2016k", "recording=r&edges=2K", "recording=r&edges=0",
-  "recording=r&edges=1,2,3,4,5,6,7,8,9", "recording=r&edges=2k%3Cb%3E", "recording=r&edges=2k&edges=4k", "recording=r&edges=2048"]) {
+for (const link of ["recording=r&edges=", "recording=r&edges=4k,1k", "recording=r&edges=0",
+  "recording=r&edges=1,2,3,4,5,6,7,8,9", "recording=r&edges=2k%3Cb%3E", "recording=r&edges=2k&edges=4k", "recording=r&edges=%20"]) {
   const got = linkProblem(link);
   check(`refuses ${link}`, got !== "", JSON.stringify(got));
 }
 
-// linkEdgesNote: a link's edges the page does not use are said, with why and
-// what is priced in their place.
-for (const [v, want] of [
-  ["2048", `The link's bucket edges "2048" were not used (the page writes them as 2k): the default buckets are priced.`],
-  ["4k,1k", `The link's bucket edges "4k,1k" were not used (1k is not above the edge before it: give the edges smallest first, each once): the default buckets are priced.`],
-  ["1,2,3,4,5,6,7,8,9", `The link's bucket edges "1,2,3,4,5,6,7,8,9" were not used (9 edges; give at most 8): the default buckets are priced.`],
-  [" ", `The link's bucket edges " " were not used (it names none): the default buckets are priced.`],
+// linkedEdges: a link's edges are used in canonical form, so the page
+// rewrites the link; edges that do not parse are not used, and said.
+for (const [v, edges, note] of [
+  [null, "", null],
+  ["", "", null],
+  ["2048", "2k", null],
+  ["2K,16k", "2k,16k", null],
+  ["2000 16384", "2000,16k", null],
+  ["4k,1k", "", `The link's bucket edges "4k,1k" were not used (1k is not above the edge before it: give the edges smallest first, each once): the default buckets are priced.`],
+  ["1,2,3,4,5,6,7,8,9", "", `The link's bucket edges "1,2,3,4,5,6,7,8,9" were not used (9 edges; give at most 8): the default buckets are priced.`],
+  ["lots", "", `The link's bucket edges "lots" were not used (lots is not a token count such as 2048 or 16k): the default buckets are priced.`],
 ]) {
-  check(`linkEdgesNote of ${JSON.stringify(v)}`, linkEdgesNote(v) === want, linkEdgesNote(v));
+  const got = linkedEdges(v);
+  check(`linkedEdges of ${JSON.stringify(v)}`, got.edges === edges && got.note === note, JSON.stringify(got));
 }
+
+// edgesBoxProblem: the box is marked while its text is not the edges in use,
+// and clear once it is.
+for (const [raw, inUse, want] of [
+  ["2k, 16k", "2k,16k", ""],
+  ["", "", ""],
+  ["2048,16384", "2k,16k", ""],
+  ["4k,1k", "2k,16k", "Not used: 1k is not above the edge before it: give the edges smallest first, each once; the lines show 2k, 16k."],
+  ["lots", "", "Not used: lots is not a token count such as 2048 or 16k; the lines show the default buckets."],
+  ["2k,64k", "2k,16k", "Not used yet; the lines show 2k, 16k."],
+  ["", "2k,16k", "Not used yet; the lines show 2k, 16k."],
+]) {
+  const got = edgesBoxProblem(raw, inUse);
+  check(`edgesBoxProblem of ${JSON.stringify(raw)} with ${JSON.stringify(inUse)}`, got === want, JSON.stringify(got));
+}
+
+// beyondContext and contextNote: a line flagged on either point, answered
+// or refused, is past the window, and says which.
+const lineWith = (rateFlags, targetRefusedFlags) => ({atRate: {figure: {value: 1, flags: rateFlags}},
+  atTarget: {rate: targetRefusedFlags ? {refused: {reason: "TargetBelowFloor", flags: targetRefusedFlags}} : {value: 2}}});
+check("beyondContext on point A", beyondContext(lineWith(["EdgeBeyondContext"], null)));
+check("beyondContext on a refused point B", beyondContext(lineWith([], ["EdgeBeyondContext"])));
+check("beyondContext of a line within the window", !beyondContext(lineWith(["AssumedVP"], ["AssumedVP"])));
+check("beyondContext of a bare line", !beyondContext({}));
+check("contextNote with the window", contextNote(16384) === "past the 16k-token context window", contextNote(16384));
+check("contextNote without it", contextNote(null) === "past the context window");
+
+// bucketSeries: five colours, dashed from the sixth line on, dimmed past the
+// window.
+check("bucketSeries of the first", JSON.stringify(bucketSeries(0, false)) === '{"cls":"c-0","extra":""}');
+check("bucketSeries of the sixth", JSON.stringify(bucketSeries(5, false)) === '{"cls":"c-0","extra":" rep"}', JSON.stringify(bucketSeries(5, false)));
+check("bucketSeries of the eighth past the window", JSON.stringify(bucketSeries(7, true)) === '{"cls":"c-2","extra":" rep beyond"}');
+check("bucketSeries of the fifth past the window", JSON.stringify(bucketSeries(4, true)) === '{"cls":"c-4","extra":" beyond"}');
 
 // An imported scenario: edges in the form the page writes are read back; any
 // other form refuses the file, naming the edges.
@@ -376,15 +415,18 @@ throws("refuses a file with too many edges", () => readScenarioFile(JSON.stringi
 const impEdges = importPlan([], {name: "e", link: withEdges, saved: "t"});
 check("importPlan saves a scenario with edges", impEdges.save && visibleScenarios(impEdges.raw)[0].link === withEdges);
 
-// Compare: A pinned with other edges than the current plan. The edges move
-// only the per-bucket lines, which compare does not read: the table is the
-// limits, and no row says the edges changed.
+// Compare: A pinned with other edges than the current plan. The limits do
+// not move; a Buckets row says the edges changed, and is absent where they
+// are the same.
 const withLines = (p, edges) => Object.assign(p, {scenario: Object.assign({}, p.scenario, edges ? {bucketEdges: edges} : {}),
   ttft: Object.assign({}, p.ttft, {perBucket: (edges || [1024, 4096]).map(e => ({bucket: String(e), curve: []}))})});
 const aEdges = withLines(plan(), [2048, 16384]), curEdges = withLines(plan(), null);
 const edgeTable = compareRows(aEdges, curEdges, fmts);
-check("compareRows with other edges on each side", edgeTable.startsWith("<table>") && !/bucket/i.test(edgeTable), edgeTable.slice(0, 120));
+check("compareRows with other edges says the buckets changed",
+  edgeTable.includes(`<th scope="row">Buckets</th><td>2k, 16k</td><td>1k, 4k, 8k, 32k, 128k (default)</td><td class="">changed</td>`), edgeTable);
 check("compareRows with other edges: the limits read the same", (edgeTable.match(/>same</g) || []).length >= 4, edgeTable);
+const sameEdges = compareRows(withLines(plan(), [2048]), withLines(plan(), [2048]), fmts);
+check("compareRows with the same edges has no Buckets row", !sameEdges.includes(">Buckets<"), sameEdges);
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -396,7 +438,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 185;
+const EXPECTED_CASES = 208;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

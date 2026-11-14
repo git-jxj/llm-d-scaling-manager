@@ -464,10 +464,10 @@ func (p *planner) marginal(le *limitEntry, fleet whatif.Result) Marginal {
 
 // perBucket is the "if all traffic were bucket b" view: each bucket's fleet,
 // every request at the bucket's upper edge, with its own knees, curve, target
-// and points. No limit reads it. A line whose edge is past the context
-// window, where the inputs know it, is flagged EdgeBeyondContext on its
-// points: it is priced, as the model would, but the engines refuse such
-// prompts.
+// and points. No limit reads it. A line whose edge and the mix's output
+// together pass the context window, where the inputs know it, is flagged
+// EdgeBeyondContext on its points: it is priced, as the model would, but
+// vLLM refuses a request whose prompt and max_tokens pass --max-model-len.
 func (p *planner) perBucket(ctx context.Context, k Knobs, le *limitEntry, rate float64) ([]Line, error) {
 	buckets := p.sc.buckets()
 	lines := make([]Line, 0, len(buckets))
@@ -488,13 +488,25 @@ func (p *planner) perBucket(ctx context.Context, k Knobs, le *limitEntry, rate f
 			Target: p.sc.TTFT.BucketTargets[b.Name], Knees: &knees}
 		at, _ := fl.TTFTPoint(rate)
 		l = p.line(path, l, cs, at, le.buckets[b.Name], rate)
-		if known && float64(b.UpperTokens) > window {
+		if known && float64(b.UpperTokens)+p.outputTokens(k) > window {
 			l.AtRate.Figure = p.note(path+".atRate", withFlag(l.AtRate.Figure, FlagEdgeBeyondContext))
 			l.AtTarget.Rate = p.note(path+".atTarget", withFlag(l.AtTarget.Rate, FlagEdgeBeyondContext))
 		}
 		lines = append(lines, l)
 	}
 	return lines, nil
+}
+
+// outputTokens is the output length a request of the scenario asks: the
+// stated one, else the observed mean, else 0 where neither is known.
+func (p *planner) outputTokens(k Knobs) float64 {
+	if k.OutputTokens > 0 {
+		return k.OutputTokens
+	}
+	if v := p.e.doc.Observed.OutputTokens.Value; v != nil && *v > 0 {
+		return *v
+	}
+	return 0
 }
 
 // contextWindow is the engines' context window in tokens, from the inputs'

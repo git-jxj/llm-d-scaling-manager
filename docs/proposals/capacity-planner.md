@@ -1064,9 +1064,11 @@ five. The plan and size caches are now bounded in bytes too (64 MiB each):
 a per-bucket plan with 8 edges is about 550 KB.
 
 **The context window.** The inputs now carry the engines' `--max-model-len`
-as the term `maxModelLen`, where the recorded arguments set one. A bucket
-line whose edge is past it is flagged `EdgeBeyondContext`: still priced, but
-the engines would refuse those prompts. With the window unknown nothing is
+as the term `maxModelLen`, where the recorded arguments set a readable one
+(read with vLLM's suffixes: `16k` is 16000, `16K` 16384), unknown where
+either role's is unreadable. A bucket line whose edge plus the output length
+passes it is flagged `EdgeBeyondContext`, and dimmed on the page: still
+priced, but vLLM would refuse those requests. With the window unknown nothing is
 flagged, and the guide says to check. On the goldens' recordings (16384) the
 default 32k and 128k lines are now flagged: a change to the default view, on
 purpose.
@@ -1075,9 +1077,13 @@ purpose.
 with it, reads `2k, 16k, 64k` or token counts by the server's rules
 (`parseEdges` in `scenario.js`), and is kept in the link, a saved scenario
 and an exported file as `edges=2k,16k,64k`, each edge by its bucket's name
-(`2048` is `2k`); an imported file with edges in any other form is refused,
-and a page link with such edges prices the default buckets and says so. A pinned A keeps its own plan: compare reads the
-limits, which the edges do not move. The bucket lines take the five series colours in turn. The
+(`2048` is `2k`). A hand-edited link's edges are read in any form the box
+takes and rewritten; edges that do not parse refuse an imported file, and a
+page link with them prices the default buckets and says so. A box that does
+not parse stays marked, with the reason under it, until it does. A pinned A
+keeps its own plan: compare reads the limits, which the edges do not move,
+and adds a Buckets row where A's edges differ. The bucket lines take the
+five series colours in turn, dashed from the sixth. The
 **Price at** picker still offers the default buckets: it states a prompt
 length for the whole page, and is not a bucket.
 

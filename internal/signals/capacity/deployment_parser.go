@@ -1109,7 +1109,7 @@ func applyParam(key, value string, params *EngineParams) applyResult {
 		}
 		params.MaxNumActiveSeqs = v
 	case "max_model_len":
-		v, err := strconv.ParseInt(value, 10, 64)
+		v, err := parseMaxModelLen(value)
 		if err != nil {
 			return applyUnusable
 		}

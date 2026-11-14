@@ -422,29 +422,46 @@ knobs, the prompt among them), whatever the plan's other edges.
 **The context window.** The inputs carry the engines' context window as the
 term `maxModelLen`: the smallest `--max-model-len` (SGLang's
 `--context-length`) the prefill and the decode variant's recorded arguments
-set, or refused `NotRecorded` where none is set (the model's own applies, and
-the source does not carry it). Where it is known, a bucket line whose edge is
-past it is flagged `EdgeBeyondContext` on its `atRate` and `atTarget`, and in
-the plan's flag list: the engines refuse prompts that long. The line is still
-priced, and nothing is refused; with the window unknown nothing is flagged.
-The goldens' recordings run `--max-model-len 16384`, so a default per-bucket
-plan on them flags its 32k and 128k lines.
+set. It is refused `NotRecorded` where no readable one is set (the model's
+own applies, and the source does not carry it), and `UnreadableArgument`
+where either variant sets one the parser cannot read: that variant may refuse
+shorter prompts than the other allows, so no smaller figure stands in. The
+parser reads `--max-model-len` as vLLM's `human_readable_int_or_auto` does
+(`vllm/utils/argparse_utils.py`): a lower-case suffix is decimal (`16k` is
+16000, `1m` is 1000000, `25.6k` is 25600), an upper-case one binary (`16K`
+is 16384, no decimals), and `auto` or `-1` is the model's own
+(`internal/signals/capacity/human_int.go`). SGLang's `--context-length` is
+read as a plain integer.
+
+Where the window is known, a bucket line is flagged `EdgeBeyondContext` on
+its `atRate` and `atTarget`, and in the plan's flag list, when its edge plus
+the scenario's output tokens (stated, else observed, else 0) passes it: vLLM
+refuses a request whose prompt and `max_tokens` pass `--max-model-len`. The
+mean output stands in for `max_tokens`, which the source does not carry. The
+line is still priced, and nothing is refused; with the window unknown
+nothing is flagged. The goldens' recordings run `--max-model-len 16384`, so a
+default per-bucket plan on them flags its 32k and 128k lines.
 
 The page has a **Bucket edges** box under the per-bucket checkbox, enabled
 with it. `parseEdges` in `scenario.js` reads it by the server's rules: token
 counts split by commas or spaces, `16k` as 16384, at most 8, ascending, each
 from 1 to 1024k. The page sends them as `bucketEdges` with the view only;
-blank is the default. A box it cannot read is an error in the status line,
-naming the edge, and prices nothing. The box is rewritten in its canonical
-form, each edge by its bucket's name (`bucketName` there, as the server's:
-`2048` is `2k`), so the box, the link and the lines' labels agree and one
-plan has one link. The link, a saved scenario and an exported file keep that
-form as `edges=2k,16k,64k`; `linkProblem` refuses any other form, so a
-scenario file with edges out of order or too many is refused on import. A
-page link whose `edges=` fails the check prices the default buckets, and the
-status line says so and why (`linkEdgesNote`). Compare is not
-affected: a pin (A) keeps its own plan, and the table reads the limits, which
-the edges do not move.
+blank is the default. A box it cannot read prices nothing, and is marked
+(`aria-invalid`, a red border, the reason under it, `edgesBoxProblem`) for
+as long as its text is not the edges the lines show, whatever the status
+line says since. The box is rewritten in its canonical form, each edge by its
+bucket's name (`bucketName` there, as the server's: `2048` is `2k`), so the
+box, the link and the lines' labels agree and one plan has one link. A link
+may carry edges in any form `parseEdges` reads (a hand-edited `edges=2048` or
+`2K,16k`): the page uses them and rewrites the link in canonical form
+(`linkedEdges`). Edges that do not parse are refused by `linkProblem`, so a
+scenario file with edges out of order or too many is refused on import, and a
+page link with them prices the default buckets with the reason in the status
+line. A line flagged `EdgeBeyondContext` is dimmed and dotted on the chart,
+says so in its legend entry, and its bucket table row reads "past the 16k-token
+context window". From the sixth line on, the colours repeat and the lines are
+dashed. Compare reads the limits, which the edges do not move; where A's and
+the current plan's edges differ, its table has a Buckets row.
 
 ### The size
 
@@ -546,7 +563,9 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestBucketEdgesPriceTheirOwnLines`, `TestBucketTargetsFollowTheEdges`, `TestServeBucketEdges` | A plan's edges give one line per edge, named by it and priced at it, the CLI's fleet at every curve point on the goldens' worked fleet; the limits do not move; bucket targets name the plan's buckets. |
 | `TestDefaultBucketEdgesAreNoEdges`, `TestBucketEdgesKeyTheScenario` | The default edges asked are the plan with none, byte for byte; other edges are another `scenarioId`, priced on their own. |
 | `TestSharedEdgeIsCached`, `TestLRUBoundedInBytes` | An edge two plans share is priced once; the plan and size caches drop the least used responses past their bytes. |
-| `TestEdgeBeyondContext`, `TestServeBucketEdges` | A line past a known context window is flagged `EdgeBeyondContext` on its points and in the flag list, the mix line and limits not; with no window, nothing is. |
+| `TestEdgeBeyondContext`, `TestEdgeBeyondContextOnARefusal`, `TestServeBucketEdges` | A line whose edge plus the output passes a known context window is flagged `EdgeBeyondContext` on its points, on the refusal where they are refused, and in the flag list; the mix line and limits are not; with the window unknown, refused or 0, nothing is. |
+| `TestContextOf`, `TestParseMaxModelLen`, `TestMaxModelLenSuffixesInArgs` | The window is the smallest of the fleet's own variants', unknown where one is unreadable; `--max-model-len` is read with vLLM's suffixes. |
+| `TestBucketPointBFollowsItsEdge`, `TestWithFlagCopies`, `TestLRUBytesEdges`, `TestSizeRefusesEdgesFirst` | Each line's point B is its own edge's limit; adding a flag never writes into a shared slice; the byte bound on growth and at the bound; a size refuses edges before it looks its inputs up. |
 | `TestBucketEdgesRefused`, `TestPageSetsBucketEdges` | Edges asked wrongly, or of a size, are a 400 naming the edge and why; the page keeps the edges in the link and sends them with the view only. |
 | `TestPageServed`, `TestServeServesThePage` | The page and its files are served from the binary with their content types and security headers; anything else under `/page/` is a 404. |
 | `TestPageBehindAuth` | The page sits behind the API's check: 401 with no token, 403 for a user not allowed `/whatif/`, 403 for a foreign Host on loopback. |
@@ -565,5 +584,5 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
 | `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
-| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (179 cases; it fails without node): `esc`, the bucket edges by the server's rules, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
+| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (208 cases; it fails without node): `esc`, the bucket edges by the server's rules, the box's mark, the link's edges and the lines' styles, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |

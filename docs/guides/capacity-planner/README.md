@@ -161,29 +161,27 @@ Each line is then priced with every prompt at its edge, and named by it. A
 line named `2000` is an edge of 2000 tokens; `2k` is 2048. The box shows
 your edges by these names, so `2048` becomes `2k`.
 
-There are five line colours. With more than five edges the colours repeat;
-the table under the graph names every line, so read a repeated colour there.
+There are five line colours. With more than five edges the colours repeat,
+and the sixth line on is dashed; the table under the graph names every line.
 
 Each new edge prices a fleet of its own, so a plan with many new edges takes
-longer: eight new edges take over ten seconds on a laptop. Edges you used
-before are not priced again.
+longer. Edges you already used for this fleet are not priced again.
 
 The edges change only this view: the limits and the +1 steps stay the same.
-The flag count can change, since each line brings its own flags. The page
-learns nothing per bucket from your traffic, so there is nothing to re-sort
-into your buckets.
+The flag count can change, since each line brings its own flags.
 
-**Edges past the context window.** When the source knows the engines'
-context window (their `--max-model-len`, shown as "context window" under
-**Inputs**), a line whose edge is past it is flagged `EdgeBeyondContext`: the
-engines refuse prompts that long, so the line prices traffic they would not
-serve. The line is still drawn. When the source does not know the window,
-nothing is flagged, so check your edges against it yourself.
+**Edges past the context window.** A request needs room for its prompt and
+its output, so a line whose edge plus the output length passes the engines'
+`--max-model-len` is flagged `EdgeBeyondContext`, dimmed and dotted on the
+graph, and marked in the table. This needs the source to know the window
+(shown as "context window" under **Inputs**); when it does not, nothing is
+flagged, so check your edges against it yourself.
 
-The address keeps your edges, so a shared link draws the same lines. If an
-edge in the box is wrong, the status line says which one and why, and the
-graphs keep the last plan until you fix it. If a link's edges are wrong, the
-status line says so, and the page draws the default five.
+The address keeps your edges, so a shared link draws the same lines; a link
+you edit by hand may write them any way the box takes. If an edge in the box
+is wrong, the box is marked and says why under it until you fix it, and the
+graphs keep the edges in use. If a link's edges are wrong, the status line
+says so, and the page draws the default five.
 
 ## Find the fleet a rate needs
 

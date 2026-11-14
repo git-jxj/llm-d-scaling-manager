@@ -63,29 +63,72 @@ function parseEdges(s) {
   return {edges, text: edges.map(bucketName).join(",")};
 }
 
-// linkEdgesNote is what the status line says of a link's edges= that
-// edgesInLink refuses: why, and that the default buckets are priced in their
-// place. The page never prices other edges than the link names in silence.
-function linkEdgesNote(v) {
-  let why;
+// linkedEdges is what a link's edges= gives the page: {edges, note}. Edges
+// that parse are used in their canonical form (the page then rewrites the
+// link), however they were typed; edges that do not parse are not used, and
+// note says so, why, and that the default buckets are priced in their place.
+// The page never prices other edges than the link names in silence.
+function linkedEdges(v) {
+  if (!v) return {edges: "", note: null};
   try {
-    const r = parseEdges(v);
-    why = r.edges.length ? `the page writes them as ${r.text}` : "it names none";
+    return {edges: parseEdges(v).text, note: null};
   } catch (e) {
-    why = e.message;
+    return {edges: "", note: `The link's bucket edges "${v}" were not used (${e.message}): the default buckets are priced.`};
   }
-  return `The link's bucket edges "${v}" were not used (${why}): the default buckets are priced.`;
 }
 
-// edgesInLink reports whether v is edges as linkParams writes them: one or
-// more, in the canonical form parseEdges gives.
+// edgesInLink reports whether v is edges a link may carry: one or more that
+// parseEdges reads, in any form it reads.
 function edgesInLink(v) {
   try {
-    const r = parseEdges(v);
-    return r.edges.length > 0 && r.text === v;
+    return parseEdges(v).edges.length > 0;
   } catch (e) {
     return false;
   }
+}
+
+// edgesBoxProblem is what the bucket edges box says under itself: "" while
+// its text reads as the edges in use (inUse, parseEdges' text, "" for the
+// default), else why the lines on screen are not what it says. It stays
+// until the box and the chart agree, whatever the status line says since.
+function edgesBoxProblem(raw, inUse) {
+  const shown = inUse ? `the lines show ${inUse.replace(/,/g, ", ")}` : "the lines show the default buckets";
+  let r;
+  try {
+    r = parseEdges(raw);
+  } catch (e) {
+    return `Not used: ${e.message}; ${shown}.`;
+  }
+  return r.text === inUse ? "" : `Not used yet; ${shown}.`;
+}
+
+// EDGE_BEYOND is the flag a bucket line past the context window carries.
+const EDGE_BEYOND = "EdgeBeyondContext";
+
+// beyondContext reports whether a bucket line (a plan's ttft.perBucket[i])
+// is flagged past the engines' context window, on either point.
+function beyondContext(l) {
+  const has = f => !!f && ((f.flags || []).includes(EDGE_BEYOND) || (!!f.refused && (f.refused.flags || []).includes(EDGE_BEYOND)));
+  return has(l.atRate && l.atRate.figure) || has(l.atTarget && l.atTarget.rate);
+}
+
+// contextNote is what a bucket line past the window says of itself, with
+// window the inputs' maxModelLen in tokens, or null where not known.
+function contextNote(window) {
+  return window ? `past the ${bucketName(window)}-token context window` : "past the context window";
+}
+
+// bucketSeries is the classes the n-th bucket line (from 0) is drawn with:
+// one of five colours, a dash pattern from the sixth on so a repeated colour
+// stays told apart, and dimmed and dotted past the context window.
+function bucketSeries(n, beyond) {
+  return {cls: "c-" + (n % 5), extra: (n >= 5 ? " rep" : "") + (beyond ? " beyond" : "")};
+}
+
+// edgesText is a plan's buckets as the compare table names them.
+function edgesText(p) {
+  const e = p && p.scenario && p.scenario.bucketEdges;
+  return e && e.length ? e.map(bucketName).join(", ") : "1k, 4k, 8k, 32k, 128k (default)";
 }
 
 // CONTROL is a control character: in a name, the HTML parser would change
@@ -325,6 +368,10 @@ function compareRows(a, cur, f) {
   }
   const sa = f.shape(a), sc = f.shape(cur);
   row("Priced at", sa, sc, same(sa, sc));
+  // The buckets, only where A's and the current plan's edges differ: the
+  // per-bucket lines are drawn for the current plan alone.
+  const ea = edgesText(a), ec = edgesText(cur);
+  if (ea !== ec) row("Buckets", ea, ec, {text: "changed", cls: ""});
   return `<table><tr><th></th><th>A (dashed)</th><th>Current</th><th>Change</th></tr>${rows.join("")}</table>`;
 }
 

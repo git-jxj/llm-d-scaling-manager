@@ -518,10 +518,11 @@ function applyLink() {
   if (num("tpot") != null || g("tpotStat")) k.tpotDefault = false;
   // A bucket the inputs do not name prices the current mix.
   k.priceAs = state.inputs.observed.buckets.some(b => b.name === g("priceAs")) ? g("priceAs") : "mix";
-  // Edges the link does not carry in the form linkParams writes are none,
-  // and the status line says so: the default buckets are priced instead.
-  k.edges = edgesInLink(g("edges") || "") ? g("edges") : "";
-  state.linkNote = g("edges") && !k.edges ? linkEdgesNote(g("edges")) : null;
+  // Edges the link names are used as parseEdges reads them, and the link is
+  // rewritten in their canonical form; edges it cannot read are said.
+  const le = linkedEdges(g("edges"));
+  k.edges = le.edges;
+  state.linkNote = le.note;
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   k.sizeLow = g("low") === "1";
@@ -597,6 +598,22 @@ function linkParams() {
   if (k.perBucket) p.set("perBucket", "1");
   if (k.edges) p.set("edges", k.edges);
   return p;
+}
+
+// showEdgesBox marks the bucket edges box invalid, with why under it, for
+// as long as its text is not the edges the lines show: a later status line
+// or plan does not clear it.
+function showEdgesBox() {
+  const box = el("bucketedges"), why = state.k ? edgesBoxProblem(box.value, state.k.edges) : "";
+  box.setAttribute("aria-invalid", why ? "true" : "false");
+  box.classList.toggle("invalid", !!why);
+  el("bucketedgeserr").textContent = why;
+}
+
+// contextWindow is the inputs' context window in tokens, or null.
+function contextWindow() {
+  const t = state.inputs && (state.inputs.terms || []).find(x => x.name === "maxModelLen");
+  return t ? val(t) : null;
 }
 
 // ---- The plan ----
@@ -805,6 +822,7 @@ function syncControls() {
   el("perbucket").disabled = sizing;
   el("perbucket").checked = k.perBucket;
   el("bucketedges").disabled = sizing || !k.perBucket;
+  showEdgesBox();
   el("sizelow").checked = k.sizeLow;
   if (k.rate != null) {
     el("rate").value = k.rate;
@@ -1171,11 +1189,14 @@ function renderTTFT() {
   const buckets = t.perBucket || [];
   // The lines follow the plan's edges, up to 8: past five the colours
   // repeat, and the bucket table names each line.
+  // Lines from the sixth on are dashed, and a line past the context window
+  // is dimmed and dotted, with the reason in its legend entry.
   for (const [n, l] of buckets.entries()) {
-    const i = n % 5;
-    series.push({cls: "c-" + i, thin: true, name: `if all traffic were ${l.bucket}`, pts: pts(l.curve)});
+    const beyond = beyondContext(l), st = bucketSeries(n, beyond);
+    series.push({cls: st.cls, extra: st.extra, thin: true, pts: pts(l.curve),
+      name: `if all traffic were ${l.bucket}` + (beyond ? ` (${contextNote(contextWindow())})` : "")});
     const b = val(l.atTarget.rate);
-    if (b != null) dots.push({x: b, y: l.atTarget.seconds, cls: "c-" + i, filled: true, small: true});
+    if (b != null) dots.push({x: b, y: l.atTarget.seconds, cls: st.cls, filled: true, small: true});
   }
   // A, the pinned plan, is drawn dashed: its mix line, and its filled point
   // at its own target.
@@ -1266,9 +1287,9 @@ function renderTPOT() {
 // legend names every series and the guides, so that no line is told by its
 // colour alone.
 function legend(series, onsets) {
-  const sw = (cls, dash, thin, pin) => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="${dash ? "guide" : "line " + cls + (thin ? " thin" : "") + (pin ? " pin" : "")}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
+  const sw = (cls, dash, thin, pin, extra) => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="${dash ? "guide" : "line " + cls + (thin ? " thin" : "") + (pin ? " pin" : "") + (extra || "")}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
   const box = cls => `<svg viewBox="0 0 18 10" aria-hidden="true"><rect class="${cls}" x="1" y="1" width="16" height="8"/></svg>`;
-  return series.map(s => `<span>${sw(s.cls, false, s.thin, s.pin)}${esc(s.name)}</span>`).join("") +
+  return series.map(s => `<span>${sw(s.cls, false, s.thin, s.pin, s.extra)}${esc(s.name)}</span>`).join("") +
     `<span>${sw("", true)}target / rate you set</span><span>${box("band")}span over V_P and f, or band</span>` +
     `<span>${box("sat")}saturated</span>` + (onsets ? `<span>${box("onset")}past the prefill flow-control onset</span>` : "");
 }
@@ -1330,7 +1351,7 @@ function chart(svg, o) {
       d += (pen ? "L" : "M") + X(q.x).toFixed(1) + "," + Y(Math.min(q.y, o.ymax * 2)).toFixed(1);
       pen = true;
     }
-    if (d) g += `<path class="line ${sr.cls}${sr.thin ? " thin" : ""}${sr.pin ? " pin" : ""}" d="${d}"/>`;
+    if (d) g += `<path class="line ${sr.cls}${sr.thin ? " thin" : ""}${sr.pin ? " pin" : ""}${sr.extra || ""}" d="${d}"/>`;
   }
   s += `<g clip-path="url(#${o.clip})">${g}</g>`;
   if (o.floor != null && o.floor <= o.ymax) {
@@ -1401,7 +1422,8 @@ function renderTables() {
     `<table><caption class="hint">${esc(BUCKET_NOTE)}</caption><tr><th>bucket</th><th>prompt</th><th>lower knee</th><th>TTFT at ${fmtRate(p.limits.chosen.rate)}</th><th>rate at its target</th></tr>` +
     b.map(l => {
       const kn = l.knees ? lowerKnee(l.knees) : null;
-      return `<tr><td>${esc(l.bucket)}</td><td>${l.promptTokens != null ? fmtNum(l.promptTokens) : ""}</td><td>${kn != null ? fmtRate(kn) : "refused"}</td>` +
+      const past = beyondContext(l) ? `<br><span class="warn">${esc(contextNote(contextWindow()))}</span>` : "";
+      return `<tr><td>${esc(l.bucket)}${past}</td><td>${l.promptTokens != null ? fmtNum(l.promptTokens) : ""}</td><td>${kn != null ? fmtRate(kn) : "refused"}</td>` +
         `<td>${figText(l.atRate.figure, fmtSec)}</td><td>${figText(l.atTarget.rate, fmtRate)} at ${fmtSec(l.target)}</td></tr>`;
     }).join("") + "</table>";
 }
@@ -1816,13 +1838,13 @@ function wire() {
   el("perbucket").onchange =() => { if (ready()) { k().perBucket = el("perbucket").checked; syncControls(); schedule(0); } };
   el("bucketedges").onchange = () => {
     if (!ready()) return;
-    let r;
-    try { r = parseEdges(el("bucketedges").value); } catch (e) {
-      setStatus(`Bucket edges: ${e.message}.`, true);
-      return;
+    let r = null;
+    try { r = parseEdges(el("bucketedges").value); } catch (e) { r = null; }
+    if (r) {
+      k().edges = el("bucketedges").value = r.text;
+      schedule(0);
     }
-    k().edges = el("bucketedges").value = r.text;
-    schedule(0);
+    showEdgesBox();
   };
   // Saved scenarios and compare.
   el("scensave").onclick = saveScenario;

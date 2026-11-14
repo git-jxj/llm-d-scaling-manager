@@ -41,13 +41,22 @@ func TestServeBucketEdges(t *testing.T) {
 		flagOn(none, whatifapi.FlagEdgeBeyondContext))
 
 	req.BucketEdges = []int{2000, 16384}
+	// Targets loose enough that each line's point B is answered, not refused
+	// under its floor: a refused point B would check nothing.
+	slo := *req.SLO
+	ttft := *slo.TTFT
+	ttft.BucketTargets = map[string]float64{"2000": 2, "16k": 10}
+	slo.TTFT = &ttft
+	req.SLO = &slo
 	out, body := apiPlan(t, h, req)
 	assert.Empty(t, apitest.CheckFigures(body))
 	assert.NotEqual(t, none.ScenarioID, out.ScenarioID)
-	assert.Empty(t, flagOn(out, whatifapi.FlagEdgeBeyondContext), "16384 is within the window, at its edge")
+	// The fleet states 1000 output tokens: 16384 + 1000 passes the 16384
+	// window, as vLLM counts a request, and 2000 + 1000 does not.
+	assert.Equal(t, []string{"ttft.perBucket.16k.atRate", "ttft.perBucket.16k.atTarget"}, flagOn(out, whatifapi.FlagEdgeBeyondContext))
 	assert.Equal(t, none.Limits, out.Limits, "the edges moved a limit: no limit is read per bucket")
 	require.Len(t, out.TTFT.PerBucket, 2)
-	compared := 0
+	compared, answeredB := 0, 0
 	for i, name := range []string{"2000", "16k"} {
 		l := out.TTFT.PerBucket[i]
 		assert.Equal(t, name, l.Bucket)
@@ -55,6 +64,17 @@ func TestServeBucketEdges(t *testing.T) {
 		sc := out.Scenario
 		sc.Mix = whatifapi.Mix{PromptTokens: float64(req.BucketEdges[i]), OutputTokens: out.Scenario.Mix.OutputTokens}
 		fl := servedFleetOf(t, src, c.recording, c.model, sc)
+		// Point B is the CLI fleet's prefill rate at the line's target, at
+		// this edge: the limit entry is priced on the plan's edges.
+		_, wantB, _ := fl.PlainLimits(l.Target, 0, out.Scenario.Headroom)
+		if a, ok := wantB.(whatif.Answer); ok {
+			require.NotNil(t, l.AtTarget.Rate.Value, "bucket %s point B: %+v", name, l.AtTarget.Rate.Refused)
+			assert.InDelta(t, a.Value, *l.AtTarget.Rate.Value, 1e-9*a.Value, "bucket %s point B", name)
+			answeredB++
+			compared++
+		} else {
+			assert.NotNil(t, l.AtTarget.Rate.Refused, "bucket %s point B: the CLI refuses, the API answers", name)
+		}
 		// Every curve point is the CLI's fleet at the edge: answered where it
 		// answers, refused where it refuses.
 		for j, p := range l.Curve {
@@ -69,6 +89,7 @@ func TestServeBucketEdges(t *testing.T) {
 		}
 	}
 	assert.Greater(t, compared, 50, "too few bucket points checked against the CLI")
+	assert.Equal(t, 2, answeredB, "a point B the CLI refuses checks nothing of the limit entry")
 }
 
 // flagOn is where a plan raises flag, nil where it does not.

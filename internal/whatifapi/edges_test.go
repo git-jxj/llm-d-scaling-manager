@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // perBucketAt is a plan request at 4 r/s with the per-bucket view and edges.
@@ -173,13 +175,13 @@ func TestPageSetsBucketEdges(t *testing.T) {
 	html, js, sc := pageText(t, "index.html"), pageText(t, "planner.js"), pageText(t, "scenario.js")
 	assert.Contains(t, html, `id="bucketedges"`)
 	for _, want := range []string{`if (k.perBucket && edges.length) req.bucketEdges = edges;`, `p.set("edges", k.edges);`,
-		`k.edges = edgesInLink(g("edges") || "") ? g("edges") : "";`, `el("bucketedges").disabled = sizing || !k.perBucket;`, "delete req.views;",
-		`state.linkNote = g("edges") && !k.edges ? linkEdgesNote(g("edges")) : null;`, "setStatus(state.linkNote, true);",
+		`const le = linkedEdges(g("edges"));`, `el("bucketedges").disabled = sizing || !k.perBucket;`, "delete req.views;",
+		"state.linkNote = le.note;", "setStatus(state.linkNote, true);", `box.setAttribute("aria-invalid", why ? "true" : "false");`, "beyondContext(l)", "bucketSeries(n, beyond)",
 		`EdgeBeyondContext: ["`, `maxModelLen: "context window"`} {
 		assert.Contains(t, js, want)
 	}
 	assert.NotContains(t, js, "function parseEdges", "the edges' rules are scenario.js's alone")
-	for _, want := range []string{"function parseEdges(s)", "edges: {test: edgesInLink}", "const MAX_EDGES = 8, MAX_EDGE = 1 << 20;", "function linkEdgesNote(v)"} {
+	for _, want := range []string{"function parseEdges(s)", "edges: {test: edgesInLink}", "const MAX_EDGES = 8, MAX_EDGE = 1 << 20;", "function linkedEdges(v)", "function edgesBoxProblem(raw, inUse)", `row("Buckets", ea, ec`} {
 		assert.Contains(t, sc, want)
 	}
 }
@@ -197,40 +199,135 @@ func TestSharedEdgeIsCached(t *testing.T) {
 	assert.Equal(t, 4, *curves, "both edges were priced before")
 }
 
-// ctxInputs resolves the stub's source with a 16k context window.
-func ctxInputs(t *testing.T, h http.Handler) string {
+// ctxInputs resolves the stub's source for model: ctx-16k has a 16k context
+// window, ctx-refused and ctx-zero carry the term with none.
+func ctxInputs(t *testing.T, h http.Handler, model string) string {
 	t.Helper()
-	code, body := post(t, h, "/v1/inputs", InputsRequest{Model: "ctx-16k", Source: &SourceRequest{Kind: SourceRecording, Name: "run.jsonl.gz"}})
+	code, body := post(t, h, "/v1/inputs", InputsRequest{Model: model, Source: &SourceRequest{Kind: SourceRecording, Name: "run.jsonl.gz"}})
 	require.Equal(t, http.StatusOK, code, "%s", body)
 	var in InputsResponse
 	require.NoError(t, json.Unmarshal(body, &in))
 	return in.InputsID
 }
 
-// A line whose edge is past the known context window is flagged on its two
-// points and in the plan's flag list; a line within it, the mix line and the
-// limits are not; with the window unknown nothing is flagged. The line is
-// still priced: the flag says the engines would refuse such prompts.
+// hasBeyond reports whether f carries EdgeBeyondContext, on the figure or on
+// its refusal.
+func hasBeyond(f Figure) bool {
+	return slices.Contains(f.Flags, FlagEdgeBeyondContext) || (f.Refused != nil && slices.Contains(f.Refused.Flags, FlagEdgeBeyondContext))
+}
+
+// beyondOn is where a plan raises EdgeBeyondContext.
+func beyondOn(p PlanResponse) []string {
+	for _, u := range p.Flags {
+		if u.Flag == FlagEdgeBeyondContext {
+			return u.On
+		}
+	}
+	return nil
+}
+
+// A line whose edge and output together pass the known context window is
+// flagged on its two points and in the plan's flag list; a line within it,
+// the mix line and the limits are not; with the window unknown, refused or 0
+// nothing is flagged. The line is still priced: the flag says the engines
+// would refuse such requests.
 func TestEdgeBeyondContext(t *testing.T) {
 	h := New(Config{Resolver: &stubResolver{}, WhatifSchema: "schema-v3"}).Handler()
-	has := func(f Figure) bool {
-		return slices.Contains(f.Flags, FlagEdgeBeyondContext) || (f.Refused != nil && slices.Contains(f.Refused.Flags, FlagEdgeBeyondContext))
-	}
-	out, _ := plan(t, h, perBucketAt(ctxInputs(t, h), []int{8192, 16384, 32768}))
+	edges := []int{8192, 16384, 32768}
+	// The stub observes no output length: the edge alone is weighed.
+	out, _ := plan(t, h, perBucketAt(ctxInputs(t, h, "ctx-16k"), edges))
 	require.Len(t, out.TTFT.PerBucket, 3)
 	for _, l := range out.TTFT.PerBucket {
 		beyond := l.Bucket == "32k"
-		assert.Equal(t, beyond, has(l.AtRate.Figure), "bucket %s point A", l.Bucket)
-		assert.Equal(t, beyond, has(l.AtTarget.Rate), "bucket %s point B", l.Bucket)
+		assert.Equal(t, beyond, hasBeyond(l.AtRate.Figure), "bucket %s point A", l.Bucket)
+		assert.Equal(t, beyond, hasBeyond(l.AtTarget.Rate), "bucket %s point B", l.Bucket)
 		assert.NotEmpty(t, l.Curve, "bucket %s: still priced", l.Bucket)
 	}
-	assert.False(t, has(out.TTFT.Line.AtRate.Figure) || has(out.Limits.Fleet.Figure), "the mix line and the limits are not a bucket's")
-	i := slices.IndexFunc(out.Flags, func(u FlagUse) bool { return u.Flag == FlagEdgeBeyondContext })
-	require.GreaterOrEqual(t, i, 0, "the flag is in the plan's list")
-	assert.Equal(t, []string{"ttft.perBucket.32k.atRate", "ttft.perBucket.32k.atTarget"}, out.Flags[i].On)
+	assert.False(t, hasBeyond(out.TTFT.Line.AtRate.Figure) || hasBeyond(out.Limits.Fleet.Figure), "the mix line and the limits are not a bucket's")
+	assert.Equal(t, []string{"ttft.perBucket.32k.atRate", "ttft.perBucket.32k.atTarget"}, beyondOn(out))
 
-	unknown, _ := plan(t, h, perBucketAt(inputsOf(t, h), []int{8192, 16384, 32768}))
-	for _, l := range unknown.TTFT.PerBucket {
-		assert.False(t, has(l.AtRate.Figure) || has(l.AtTarget.Rate), "bucket %s: no window, no flag", l.Bucket)
+	// A stated output of 1000 tokens: 16384 + 1000 passes 16384, so 16k is
+	// flagged too, and 8192 + 1000 is not.
+	req := perBucketAt(ctxInputs(t, h, "ctx-16k"), edges)
+	req.Traffic.Mix = &Mix{OutputTokens: 1000}
+	withOut, _ := plan(t, h, req)
+	assert.Equal(t, []string{"ttft.perBucket.16k.atRate", "ttft.perBucket.16k.atTarget", "ttft.perBucket.32k.atRate", "ttft.perBucket.32k.atTarget"},
+		beyondOn(withOut))
+
+	for _, model := range []string{"", "ctx-refused", "ctx-zero"} {
+		unknown, _ := plan(t, h, perBucketAt(ctxInputs(t, h, model), edges))
+		assert.Nil(t, beyondOn(unknown), "model %q: no window, no flag", model)
+		for _, l := range unknown.TTFT.PerBucket {
+			assert.False(t, hasBeyond(l.AtRate.Figure) || hasBeyond(l.AtTarget.Rate), "model %q bucket %s: no window, no flag", model, l.Bucket)
+		}
 	}
+}
+
+// Where the points are refused, the flag lands on the refusal.
+func TestEdgeBeyondContextOnARefusal(t *testing.T) {
+	h := New(Config{Resolver: &stubResolver{refusePrefill: true}, WhatifSchema: "schema-v3"}).Handler()
+	out, _ := plan(t, h, perBucketAt(ctxInputs(t, h, "ctx-16k"), []int{32768}))
+	require.Len(t, out.TTFT.PerBucket, 1)
+	l := out.TTFT.PerBucket[0]
+	for name, f := range map[string]Figure{"point A": l.AtRate.Figure, "point B": l.AtTarget.Rate} {
+		require.NotNil(t, f.Refused, "%s: the stub refuses V_P", name)
+		assert.Nil(t, f.Value, name)
+		assert.Contains(t, f.Refused.Flags, FlagEdgeBeyondContext, name)
+		assert.NotContains(t, f.Flags, FlagEdgeBeyondContext, "%s: a refused figure's flags are its refusal's", name)
+	}
+	require.NotNil(t, out.Limits.Prefill.Refused)
+	assert.NotContains(t, out.Limits.Prefill.Refused.Flags, FlagEdgeBeyondContext, "the limits' refusal took a bucket's flag")
+}
+
+// withFlag copies: two flags added to one figure, or to one refusal, with
+// room in their backing arrays, never write over each other or the original.
+func TestWithFlagCopies(t *testing.T) {
+	base := make([]string, 1, 4)
+	base[0] = "A"
+	f := Figure{Flags: base}
+	g, h := withFlag(f, "X"), withFlag(f, "Y")
+	assert.Equal(t, []string{"A", "X"}, g.Flags)
+	assert.Equal(t, []string{"A", "Y"}, h.Flags)
+	assert.Equal(t, []string{"A"}, f.Flags)
+	rbase := make([]string, 1, 4)
+	rbase[0] = "R"
+	r := Figure{Refused: &Refusal{Reason: "Saturated", Flags: rbase}}
+	g, h = withFlag(r, "X"), withFlag(r, "Y")
+	assert.Equal(t, []string{"R", "X"}, g.Refused.Flags)
+	assert.Equal(t, []string{"R", "Y"}, h.Refused.Flags)
+	assert.Equal(t, []string{"R"}, r.Refused.Flags, "the original refusal changed")
+	assert.Nil(t, g.Flags)
+}
+
+// Each bucket line's point B is its own edge's limit, not a default bucket's
+// and not another edge's: the limit entry is priced on the plan's edges.
+func TestBucketPointBFollowsItsEdge(t *testing.T) {
+	r := &stubResolver{}
+	h := New(Config{Resolver: r, WhatifSchema: "schema-v3"}).Handler()
+	out, _ := plan(t, h, perBucketAt(inputsOf(t, h), []int{2048, 16384}))
+	require.Len(t, out.TTFT.PerBucket, 2)
+	rates := make([]float64, 0, 2)
+	for _, l := range out.TTFT.PerBucket {
+		require.NotNil(t, l.AtTarget.Rate.Value, "bucket %s: %+v", l.Bucket, l.AtTarget.Rate.Refused)
+		fl, err := r.Fleet(Knobs{Prefill: out.Scenario.Fleet.Prefill, Decode: out.Scenario.Fleet.Decode, PromptTokens: *l.PromptTokens,
+			TTFTPercentile: 0.9, Headroom: out.Scenario.Headroom})
+		require.NoError(t, err)
+		_, want, _ := fl.PlainLimits(l.Target, 0, out.Scenario.Headroom)
+		a, ok := want.(whatif.Answer)
+		require.True(t, ok)
+		assert.InDelta(t, a.Value, *l.AtTarget.Rate.Value, 1e-12, "bucket %s", l.Bucket)
+		rates = append(rates, *l.AtTarget.Rate.Value)
+	}
+	assert.Greater(t, rates[0], rates[1], "a longer prompt serves fewer requests")
+}
+
+// A size refuses bucketEdges before it looks the inputs up: an unknown
+// inputsId with edges is the edges' 400, not the id's 404.
+func TestSizeRefusesEdgesFirst(t *testing.T) {
+	h := New(Config{Resolver: &stubResolver{}, WhatifSchema: "schema-v3"}).Handler()
+	req := sizeAt("sha256:none", 4, 0.05)
+	req.BucketEdges = []int{2048}
+	code, body := post(t, h, "/v1/size", req)
+	assert.Equal(t, http.StatusBadRequest, code, "%s", body)
+	assert.Contains(t, string(body), "bucketEdges: a size prices the mix line alone")
 }

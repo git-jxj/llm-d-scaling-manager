@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -14,6 +15,9 @@ const (
 	reasonNotRecorded = "NotRecorded"
 	// reasonNoPerRequestLengths is a mix with no lengths per request.
 	reasonNoPerRequestLengths = "NoPerRequestLengths"
+	// reasonUnreadableArgument is a figure an engine argument sets in a form
+	// the parser cannot read (capacity.EngineParams.Unresolved).
+	reasonUnreadableArgument = "UnreadableArgument"
 )
 
 // sideLine is a decode side priced by the decode variant's line
@@ -102,20 +106,27 @@ func policyOf(f *answerFlags, st *learnreplay.State, pf *pricedFleet) whatifapi.
 }
 
 // contextOf is the fleet's context window: the smallest --max-model-len the
-// prefill and the decode variant's recorded engine arguments set, or why
-// none is known.
-func contextOf(st *learnreplay.State, pv *pricedVariant, pf *pricedFleet) whatifapi.Figure {
+// named variants' recorded engine arguments set (the prefill and the decode
+// variant; others are not the fleet's), or why none is known. A variant
+// whose argument the parser could not read makes the window unknown: its
+// engine may refuse shorter prompts than the others allow, so no smaller
+// figure is offered in its place.
+func contextOf(variants []learnreplay.VariantState, names ...string) whatifapi.Figure {
 	var n int64
-	for _, v := range st.Variants {
-		if v.Variant != pf.variant && v.Variant != pv.state.Variant {
+	for _, v := range variants {
+		if !slices.Contains(names, v.Variant) {
 			continue
+		}
+		if v.MaxModelLenUnresolved {
+			return refused(reasonUnreadableArgument, fmt.Sprintf("variant %s sets a --max-model-len this planner cannot read: "+
+				"the context window is unknown", v.Variant))
 		}
 		if v.MaxModelLen > 0 && (n == 0 || v.MaxModelLen < n) {
 			n = v.MaxModelLen
 		}
 	}
 	if n == 0 {
-		return refused(reasonNotRecorded, "the engines' recorded arguments set no --max-model-len: the model's own "+
+		return refused(reasonNotRecorded, "the engines' recorded arguments have no readable --max-model-len: the model's own "+
 			"context applies, and the source does not carry it")
 	}
 	return figure(float64(n), "tokens")
@@ -157,7 +168,7 @@ func termsOf(f *answerFlags, st *learnreplay.State, pv *pricedVariant, pf *price
 	add("capacityTokens", "", figure(pv.decode.CapacityTokens, "tokens"))
 	add("kvPerRequest", "", figure(pv.decode.KVPerRequest, "tokens"))
 	add("batchCap", pv.state.BatchCapSource, figure(float64(pv.perRank), "sequences per rank"))
-	add(whatifapi.TermMaxModelLen, "engine arguments", contextOf(st, pv, pf))
+	add(whatifapi.TermMaxModelLen, "engine arguments", contextOf(st.Variants, pf.variant, pv.state.Variant))
 	// R_q at p90, a TPOT percentile's usual ask; a plan reads its own.
 	r := f.ratioFor(st, 0.9)
 	if r.refused != nil {

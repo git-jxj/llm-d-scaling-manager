@@ -153,6 +153,15 @@ svg .barbg { fill: var(--grid); }
 .c-pin { stroke: var(--text-secondary); fill: var(--text-secondary); }
 svg .line.c-pin { fill: none; }
 svg .line.pin { stroke-dasharray: 10 3; stroke-width: 2.5; }
+/* Bucket lines from the sixth on reuse a colour, so they are dashed; a line
+   past the context window is dimmed and dotted. */
+svg .line.rep { stroke-dasharray: 7 2 1 2; }
+svg .line.beyond { stroke-opacity: 0.45; stroke-dasharray: 2 3; }
+#bucketedges { width: 30ch; max-width: 100%; }
+#bucketedges.invalid { border-color: var(--critical); outline-color: var(--critical); }
+.fielderr { color: var(--critical); font-size: 12px; min-height: 1em; }
+.warn { color: var(--critical); font-size: 12px; }
+#buckettable { overflow-x: auto; }
 svg .guide.pin { stroke: var(--muted); stroke-dasharray: 2 4; }
 .c-pre { stroke: var(--series-1); fill: var(--series-1); }
 .c-dec { stroke: var(--series-2); fill: var(--series-2); }
