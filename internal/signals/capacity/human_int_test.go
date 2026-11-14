@@ -11,13 +11,17 @@ import (
 func TestParseMaxModelLen(t *testing.T) {
 	for in, want := range map[string]int64{
 		"16k": 16000, "16K": 16384, "1m": 1000000, "1M": 1 << 20, "2g": 2e9, "1G": 1 << 30,
-		"25.6k": 25600, "0.5m": 500000, "8192": 8192, " 4096 ": 4096,
+		"25.6k": 25600, "0.5m": 500000, "8192": 8192,
 		"auto": maxModelLenAuto, "AUTO": maxModelLenAuto, "-1": maxModelLenAuto,
 	} {
 		got, err := parseMaxModelLen(in)
 		if err != nil || got != want {
 			t.Errorf("parseMaxModelLen(%q) = %d, %v; want %d", in, got, err, want)
 		}
+	}
+	// vLLM strips the value first.
+	if got, err := parseMaxModelLen(" 4096 "); err != nil || got != 4096 {
+		t.Errorf("parseMaxModelLen(%q) = %d, %v; want 4096", " 4096 ", got, err)
 	}
 	for _, in := range []string{"1.5K", "16x", "k", "", "1e3", "16kk", "16 k", "-16k", "$VLLM_MAX_MODEL_LEN", "9999999999T"} {
 		if got, err := parseMaxModelLen(in); err == nil {
