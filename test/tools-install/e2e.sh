@@ -202,23 +202,38 @@ objects_of "$WORK/files/scaling-manager-settings.yaml" "$WORK/files/scaling-mana
 printf 'Secret %s scaling-manager-prometheus-ca\nSecret %s scaling-manager-external-scaler-%s\n' "$NS" "$KEDA_NS" "$NS" >> "$WORK/objects.txt"
 [ "$(grep -c . "$WORK/objects.txt")" -gt 30 ] || fail setup "only $(grep -c . "$WORK/objects.txt") objects listed for the resourceVersion check"
 
+# make_owner <namespace> <name>: the namespace owner of <namespace>, a
+# ServiceAccount bound to the stock admin ClusterRole there and nothing else,
+# as a token kubeconfig $WORK/<name>.kubeconfig (smt_as <name> ...). Fails the
+# run unless that account may not create ClusterRoleBindings and may create
+# Deployments in the namespace.
+make_owner() {
+    local ns="$1" name="$2" token ca can_crb can_dep
+    kubectl create serviceaccount smt-owner -n "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null || fail owner "cannot create ServiceAccount smt-owner in $ns"
+    kubectl create rolebinding smt-owner-admin -n "$ns" --clusterrole=admin --serviceaccount="$ns:smt-owner" --dry-run=client -o yaml \
+        | kubectl apply -f - >/dev/null || fail owner "cannot bind admin to smt-owner in $ns"
+    token="$(kubectl create token smt-owner -n "$ns" --duration=4h)" || fail owner "no token for smt-owner in $ns"
+    ca="$(kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+    printf 'apiVersion: v1\nkind: Config\nclusters:\n- name: kind\n  cluster:\n    server: %s\n    certificate-authority-data: %s\ncontexts:\n- name: owner\n  context:\n    cluster: kind\n    user: smt-owner\n    namespace: %s\ncurrent-context: owner\nusers:\n- name: smt-owner\n  user:\n    token: %s\n' \
+        "$server" "$ca" "$ns" "$token" > "$WORK/$name.kubeconfig"
+    chmod 0600 "$WORK/$name.kubeconfig"
+    can_crb="$(kubectl --kubeconfig "$WORK/$name.kubeconfig" auth can-i create clusterrolebindings 2>/dev/null)"
+    can_dep="$(kubectl --kubeconfig "$WORK/$name.kubeconfig" auth can-i create deployments -n "$ns" 2>/dev/null)"
+    [ "$can_crb" = no ] || fail owner "the owner of $ns may create clusterrolebindings ('$can_crb'): the run would prove nothing about least privilege"
+    [ "$can_dep" = yes ] || fail owner "the owner of $ns may not create deployments there ('$can_dep'): the token does not work"
+}
+
+# drop_cluster_objects <namespace>: the ClusterRoles and bindings a namespaced
+# install made, which carry the namespace in their names.
+drop_cluster_objects() {
+    kubectl get clusterrole,clusterrolebinding -o name 2>/dev/null | grep -E "/scaling-manager-.*-$1\$" \
+        | xargs -r kubectl delete --ignore-not-found >/dev/null 2>&1
+}
+
 # --- namespace scope ---------------------------------------------------------
 
 if [ "$SCOPE" = namespace ]; then
-    # The namespace owner: a ServiceAccount bound to the stock admin ClusterRole
-    # in NS, and nothing else.
-    kubectl create serviceaccount smt-owner -n "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null || fail owner "cannot create ServiceAccount smt-owner"
-    kubectl create rolebinding smt-owner-admin -n "$NS" --clusterrole=admin --serviceaccount="$NS:smt-owner" --dry-run=client -o yaml \
-        | kubectl apply -f - >/dev/null || fail owner "cannot bind admin to smt-owner"
-    token="$(kubectl create token smt-owner -n "$NS" --duration=4h)" || fail owner "no token for smt-owner"
-    ca="$(kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
-    printf 'apiVersion: v1\nkind: Config\nclusters:\n- name: kind\n  cluster:\n    server: %s\n    certificate-authority-data: %s\ncontexts:\n- name: owner\n  context:\n    cluster: kind\n    user: smt-owner\n    namespace: %s\ncurrent-context: owner\nusers:\n- name: smt-owner\n  user:\n    token: %s\n' \
-        "$server" "$ca" "$NS" "$token" > "$WORK/owner.kubeconfig"
-    chmod 0600 "$WORK/owner.kubeconfig"
-    can_crb="$(kubectl --kubeconfig "$WORK/owner.kubeconfig" auth can-i create clusterrolebindings 2>/dev/null)"
-    can_dep="$(kubectl --kubeconfig "$WORK/owner.kubeconfig" auth can-i create deployments -n "$NS" 2>/dev/null)"
-    [ "$can_crb" = no ] || fail owner "the owner may create clusterrolebindings ('$can_crb'): the run would prove nothing about least privilege"
-    [ "$can_dep" = yes ] || fail owner "the owner may not create deployments in $NS ('$can_dep'): the token does not work"
+    make_owner "$NS" owner
     pass "owner: ServiceAccount smt-owner with the admin ClusterRole in $NS; auth can-i create clusterrolebindings: no"
 
     # install before admin-setup: exit 3, nothing created.
@@ -309,14 +324,25 @@ pass "a re-run with another --prometheus-url leaves scaling-manager-settings as 
 
 kubectl create namespace "$NEG_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 smt_as admin neg-admin-setup admin-setup -n "$NEG_NS" --keda-namespace "$KEDA_NS" || fail "negative control" "admin-setup in $NEG_NS: exit $?"
-smt_as admin neg-install install -n "$NEG_NS" --prometheus-url https://prometheus.invalid.svc.cluster.local:9090
+make_owner "$NEG_NS" owner-neg
+smt_as owner-neg neg-install install -n "$NEG_NS" --prometheus-url https://prometheus.invalid.svc.cluster.local:9090
 rc=$?
 [ "$rc" = 1 ] || fail "negative control" "a wrong --prometheus-url: exit $rc, want 1"
 grep -qE '^ +FAIL +prometheus.reachable' "$LOGS/neg-install.log" || fail "negative control" "the output does not name prometheus.reachable"
 kubectl get deployment "$DEPLOY" -n "$NEG_NS" >/dev/null 2>&1 && fail "negative control" "a controller Deployment was created"
-pass "negative control: a wrong --prometheus-url in $NEG_NS exits 1, names prometheus.reachable, and creates no controller"
+kubectl get configmap scaling-manager-settings -n "$NEG_NS" >/dev/null 2>&1 && fail "negative control" "the settings with the wrong URL were left behind"
+pass "negative control: a wrong --prometheus-url in $NEG_NS, as its owner, exits 1, names prometheus.reachable, creates no controller and leaves no settings"
+# The wrong URL does not stick: the same command with the right one installs.
+# Namespace scope only: beside a cluster-wide controller a namespaced one is
+# an overlap, which the preflight FAILs.
+if [ "$SCOPE" = namespace ]; then
+    smt_as owner-neg neg-install-fixed install -n "$NEG_NS" "${INSTALL_FLAGS[@]}" || fail "negative control" "the run with the right --prometheus-url: exit $?"
+    [ "$(kubectl get configmap scaling-manager-settings -n "$NEG_NS" -o jsonpath='{.data.prometheusURL}')" = "$PROMETHEUS_URL" ] \
+        || fail "negative control" "the settings do not hold the right URL"
+    pass "after the failed run, the right --prometheus-url installs (exit 0) and is the one in the settings"
+fi
 kubectl delete namespace "$NEG_NS" --wait=false >/dev/null 2>&1
-kubectl delete clusterrole,clusterrolebinding -l "app.kubernetes.io/instance=$NEG_NS" >/dev/null 2>&1
+drop_cluster_objects "$NEG_NS"
 
 # --- upgrade from a hand install of the previous release ------------------------
 
@@ -350,20 +376,21 @@ if [ "$SCOPE" = namespace ]; then
     rv="$(rv_of "$UPG_NS")"
     pass "upgrade: the $PREVIOUS_RELEASE files installed by hand in $UPG_NS ($prev_image)"
 
-    smt_as admin upgrade-no-stamp install -n "$UPG_NS" "${INSTALL_FLAGS[@]}"
+    make_owner "$UPG_NS" owner-upg
+    smt_as owner-upg upgrade-no-stamp install -n "$UPG_NS" "${INSTALL_FLAGS[@]}"
     rc=$?
     [ "$rc" = 3 ] || fail upgrade "install over a hand install without admin-setup: exit $rc, want 3"
     smt_as admin upgrade-admin-setup admin-setup -n "$UPG_NS" --keda-namespace "$KEDA_NS" || fail upgrade "admin-setup: exit $?"
-    smt_as admin upgrade-install install -n "$UPG_NS" "${INSTALL_FLAGS[@]}" || { tail -30 "$LOGS/upgrade-install.log"; fail upgrade "install: exit $?"; }
+    smt_as owner-upg upgrade-install install -n "$UPG_NS" "${INSTALL_FLAGS[@]}" || { rc=$?; tail -30 "$LOGS/upgrade-install.log"; fail upgrade "install as the owner: exit $rc"; }
     [ "$(rv_of "$UPG_NS")" = "$rv" ] || fail upgrade "the settings changed"
     new_version="$(kubectl get deployment "$DEPLOY" -n "$UPG_NS" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/version}')"
     new_image="$(kubectl get deployment "$DEPLOY" -n "$UPG_NS" -o jsonpath='{.spec.template.spec.containers[0].image}')"
     want_version="$(yq 'select(.kind == "Deployment") | .metadata.labels["app.kubernetes.io/version"]' "$WORK/files/scaling-manager-namespaced.yaml")"
     [ "$new_version" = "$want_version" ] || fail upgrade "the controller is labelled '$new_version', not $want_version"
     [ "$new_image" != "$prev_image" ] || fail upgrade "the controller image did not change"
-    pass "upgrade: install exits 3 until admin-setup, then upgrades $PREVIOUS_RELEASE to $new_version ($new_image); settings unchanged"
+    pass "upgrade, as the owner of $UPG_NS: install exits 3 until admin-setup, then upgrades $PREVIOUS_RELEASE to $new_version ($new_image); settings unchanged"
     kubectl delete namespace "$UPG_NS" --wait=false >/dev/null 2>&1
-    kubectl delete clusterrole,clusterrolebinding -l "app.kubernetes.io/instance=$UPG_NS" >/dev/null 2>&1
+    drop_cluster_objects "$UPG_NS"
 else
     notrun upgrade "namespace scope only: the stamp and admin-setup are namespace-scope steps"
 fi

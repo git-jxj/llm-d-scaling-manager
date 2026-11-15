@@ -19,7 +19,8 @@ the cluster-wide files; read that guide for what each step does.
 
 Tested: the namespaced and the cluster-wide files on Kubernetes, by hand (kind,
 `make test-e2e-release-manifests`) and with the tools image (`make
-test-e2e-tools-install`), in CI and before each release; this guide's steps
+test-e2e-tools-install`), in CI on each pull request that changes what
+the files are made from or installed by; this guide's steps
 with a model in a namespace other than the controller's. The OpenShift files
 are not yet tested end to end; each says so in its header.
 

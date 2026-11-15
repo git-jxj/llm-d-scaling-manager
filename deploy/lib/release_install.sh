@@ -312,8 +312,24 @@ smt_detect_platform() {
 
 # smt_require_namespace: the namespace exists, or exit 4. Never creates it.
 smt_require_namespace() {
-    smt_get namespace "$SMT_NS" && return 0
-    smt_exit 4 "namespace $SMT_NS does not exist. Create it, or name the namespace the model servers run in"
+    local rc=0
+    kc_capture get namespace "$SMT_NS" -o name || rc=$?
+    [ "$rc" = 0 ] && return 0
+    if printf '%s' "$KC_ERR" | grep -qF '(NotFound)'; then
+        smt_exit 4 "namespace $SMT_NS does not exist. Create it, or name the namespace the model servers run in"
+    fi
+    printf '%s' "$KC_ERR" | grep -qF '(Forbidden)' || smt_kubectl_failed "get namespace $SMT_NS"
+    # A namespace owner may not read Namespaces. Every namespace has the
+    # ServiceAccount default, which an owner may read in their own.
+    rc=0
+    kc_capture get serviceaccount default -n "$SMT_NS" -o name || rc=$?
+    [ "$rc" = 0 ] && return 0
+    if printf '%s' "$KC_ERR" | grep -qF '(Forbidden)'; then
+        smt_exit 4 "you may not read namespace $SMT_NS: is it the name of the namespace the model servers run in, and is it yours? ($(kc_err_line "$KC_ERR"))"
+    fi
+    printf '%s' "$KC_ERR" | grep -qF '(NotFound)' \
+        && smt_exit 4 "namespace $SMT_NS does not exist (it has no ServiceAccount default). Name the namespace the model servers run in"
+    smt_kubectl_failed "get serviceaccount default -n $SMT_NS"
 }
 
 # smt_resolve_keda_ns <command>: sets SMT_KEDA_NS. The flag; else the live
@@ -388,7 +404,13 @@ smt_settings_pairs() {
         key="${kv%%=*}"
         [ "$key" != "$kv" ] || smt_usage "--set $kv: give KEY=VALUE"
         printf '%s\n' "$known" | grep -qxF -- "$key" || smt_usage "--set $key: not a key of scaling-manager-settings ($(printf '%s' "$known" | tr '\n' ' '))"
-        [ "$key" != passive ] || smt_usage "--set passive: the install is passive; turn it off afterwards with kubectl patch (docs/reference/configuration.md)"
+        [ "$key" != passive ] || smt_usage "--set passive: the install is passive. After smt admin-finish, turn it off with:  $(smt_patch_cmd passive "${kv#*=}")"
+        case "$key" in
+            prometheusURL) smt_usage "--set prometheusURL: give --prometheus-url" ;;
+            prometheusCACertPath) smt_usage "--set prometheusCACertPath: give --prometheus-ca <file>; it creates the Secret the path reads" ;;
+            quotas) smt_usage "--set quotas: give --quota \"GPU=N\"" ;;
+            limiter) [ -z "$SMT_QUOTA" ] || smt_usage "--set limiter with --quota: --quota sets limiter to quota" ;;
+        esac
         SMT_PAIRS+=("$kv")
     done
 }
@@ -422,13 +444,13 @@ smt_settings() {
             if [ "$cur" != "${kv#*=}" ]; then
                 echo "  ${kv%%=*} is \"$cur\" there, not \"${kv#*=}\" as given. Not changed; to change it:"
                 echo "    $(smt_patch_cmd "${kv%%=*}" "${kv#*=}")"
-                SMT_SETTINGS_DIFFER=true
             fi
         done
         return 0
     fi
     f="$(smt_settings_file)"
     smt_kc create -f "$f"
+    SMT_SETTINGS_CREATED=true
     echo "Settings: created $SMT_SETTINGS ($(printf '%s ' "${SMT_PAIRS[@]%%=*}")from the flags; passive)."
 }
 
@@ -498,6 +520,9 @@ smt_preflight() {
     SMT_PF_FAIL="$(awk '$1 == "FAIL" {print $2}' "$log" | sort -u | tr '\n' ' ')"
     SMT_PF_WARN="$(awk '$1 == "WARN" {print $2}' "$log" | sort -u | tr '\n' ' ')"
     SMT_PF_UNKNOWN="$(awk '$1 == "UNKNOWN" {print $2}' "$log" | sort -u | tr '\n' ' ')"
+    # The checks its own account was refused: the cluster reads admin-finish
+    # removes with ClusterRoleBinding SMT_PREFLIGHT_CRB.
+    SMT_PF_FORBIDDEN="$(awk '$1 == "UNKNOWN" && /forbidden/ {print $2}' "$log" | sort -u | tr '\n' ' ')"
     if [ "$end" = Failed ] && [ -z "$SMT_PF_FAIL" ]; then
         smt_exit 1 "the preflight Job failed without a FAIL line: kubectl logs -n $SMT_NS job/$SMT_PREFLIGHT_JOB"
     fi
@@ -506,11 +531,25 @@ smt_preflight() {
 
 # smt_unknown_other echoes the UNKNOWN checks the controller does not answer.
 smt_unknown_other() {
-    local c out=""
+    local c out="" excused
+    excused="$(smt_unknown_excused)"
     for c in $SMT_PF_UNKNOWN; do
-        case " $SMT_NEEDS_CONTROLLER " in *" $c "*) ;; *) out="$out $c" ;; esac
+        case " $SMT_NEEDS_CONTROLLER " in *" $c "*) continue ;; esac
+        case " $excused " in *" $c "*) continue ;; esac
+        out="$out $c"
     done
     printf '%s\n' "${out# }"
+}
+
+# smt_unknown_excused echoes the UNKNOWN checks refused to the preflight
+# account once admin-finish removed its cluster reads: expected after it, so
+# --strict does not stop on them. Only while that ClusterRoleBinding is not
+# there; a namespace owner may not read it, which counts as not there, since
+# its reads are what the refusals show.
+smt_unknown_excused() {
+    [ -n "${SMT_PF_FORBIDDEN:-}" ] || return 0
+    kc_capture get clusterrolebinding "$SMT_PREFLIGHT_CRB" -o name && return 0
+    printf '%s\n' "$SMT_PF_FORBIDDEN"
 }
 
 # smt_preflight_gate <what stops>: exit 1 on a FAIL, 6 on --strict and an
@@ -524,6 +563,20 @@ smt_preflight_gate() {
     if [ "$SMT_STRICT" = true ] && [ -n "$other" ]; then
         smt_exit 6 "--strict: the preflight could not check $other: $1"
     fi
+}
+
+# smt_preflight_first: the preflight before the scaler TLS Secrets and the
+# controller. When it stops the install and this run created the settings,
+# it removes them, so the next run creates them again from its flags: a wrong
+# --prometheus-url must not stick in settings no controller has read yet.
+smt_preflight_first() {
+    local why="stopped before the scaler TLS Secrets and the controller; nothing more was created"
+    smt_preflight before-install
+    if [ "$SMT_SETTINGS_CREATED" = true ] && { [ -n "$SMT_PF_FAIL" ] || { [ "$SMT_STRICT" = true ] && [ -n "$(smt_unknown_other)" ]; }; }; then
+        smt_kc delete configmap "$SMT_SETTINGS" -n "$SMT_NS" --ignore-not-found
+        why="stopped before the scaler TLS Secrets and the controller, and removed $SMT_SETTINGS, which this run created: the next run creates it from its flags"
+    fi
+    smt_preflight_gate "$why"
 }
 
 # smt_summary_lines: the WARN and UNKNOWN lines of the last preflight, again.
@@ -657,6 +710,21 @@ smt_finish_keda_ns() {
     smt_exit 4 "cannot find the namespace KEDA runs in. Give --keda-namespace <namespace>"
 }
 
+# smt_library_exits: in a subshell that runs a deploy/lib function, make its
+# refusals (log_error, an exit 1 there) exit with the codes of this tool: 7 for
+# a write kubectl could not make, 4 for anything else (a refusal a person
+# must resolve: a foreign or unreadable object, KEDA not ready). Exit 1 here
+# means a preflight FAIL, which a refusal is not.
+smt_library_exits() {
+    log_error() {
+        echo -e "${RED}[ERROR]${NC} $1" >&2
+        case "$1" in
+            "Could not write"*) exit 7 ;;
+            *) exit 4 ;;
+        esac
+    }
+}
+
 # smt_keda_side: the KEDA side of mutual TLS, by llmsm_scaler_keda_auth_apply
 # (deploy/lib/scaler_tls.sh), the function make setup-prereqs runs. It exits
 # on a refusal (log_error), so it runs in a subshell that reports back.
@@ -665,6 +733,7 @@ smt_keda_side() {
     local state="$SMT_TMP/keda-side" rc=0
     : > "$state"
     (
+        smt_library_exits
         export LLMSM_SCALER_TLS_WANTED=true LLMSM_NS="$SMT_NS" ENVIRONMENT="$SMT_PLATFORM"
         export KEDA_NAMESPACE="$SMT_KEDA_NS" KEDA_NAMESPACE_EXPLICIT=true LLMSM_TOOLS_MODE=true LLMSM_SCOPE="$SMT_SCOPE"
         LLMSM_SCALER_KEDA_READY=false
@@ -672,7 +741,11 @@ smt_keda_side() {
         llmsm_scaler_keda_auth_apply
         printf '%s %s %s\n' "$LLMSM_SCALER_KEDA_READY" "$LLMSM_SCALER_KEDA_WROTE" "${LLMSM_SCALER_KEDA_OBJ_NS:-}" > "$state"
     ) || rc=$?
-    [ "$rc" = 0 ] || smt_exit 7 "writing KEDA's side failed (the line above says which call)"
+    case "$rc" in
+        0) ;;
+        4) smt_exit 4 "KEDA's side of mutual TLS was refused; the error above says why and what to do" ;;
+        *) smt_exit 7 "writing KEDA's side failed (the line above says which call)" ;;
+    esac
     read -r SMT_KEDA_READY SMT_KEDA_WROTE SMT_KEDA_OBJ_NS < "$state"
     [ "$SMT_KEDA_READY" = true ] || smt_exit 4 "KEDA's side of mutual TLS was not written (the warning above says why)"
 }
@@ -696,6 +769,7 @@ smt_wait_mtls() {
 # --restart-keda.
 smt_keda_connection() {
     (
+        smt_library_exits
         export LLMSM_NS="$SMT_NS" KEDA_NAMESPACE="$SMT_KEDA_NS" KEDA_NAMESPACE_EXPLICIT=true LLMSM_TOOLS_MODE=true LLMSM_SCOPE="$SMT_SCOPE"
         LLMSM_SCALER_KEDA_RUN_NS=""
         llmsm_scaler_keda_conn_state
@@ -803,7 +877,7 @@ smt_begin() {
     else
         BLUE='' GREEN='' YELLOW='' RED='' NC=''
     fi
-    SMT_SETTINGS_DIFFER=false
+    SMT_SETTINGS_CREATED=false
 }
 
 smt_header() {
@@ -880,13 +954,13 @@ smt_install() {
         return
     fi
     smt_render
+    smt_require_namespace
     smt_check_stamp
     smt_check_adoptable
     smt_settings_preconditions
     smt_settings
     smt_prometheus_ca
-    smt_preflight before-install
-    smt_preflight_gate "stopped before the scaler TLS Secrets and the controller; nothing more was created"
+    smt_preflight_first
     echo "Scaler TLS Secrets:"
     smt_scaler_secrets
     smt_controller
@@ -935,8 +1009,7 @@ smt_install_cluster() {
     done
     smt_settings
     smt_prometheus_ca
-    smt_preflight before-install
-    smt_preflight_gate "stopped before the scaler TLS Secrets and the controller; nothing more was created"
+    smt_preflight_first
     echo "Scaler TLS Secrets:"
     smt_scaler_secrets
     smt_controller

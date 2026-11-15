@@ -263,11 +263,55 @@ echo Failed > "$STUB_DIR/preflight.end"
 smt install -n team-a --prometheus-url https://p:9090
 rc=$?
 if [ "$rc" = 1 ] && grep -q 'prometheus.reachable' "$W/out" && ! has_obj deployment team-a scaling-manager-controller-manager \
-    && ! has_obj secret team-a scaling-manager-external-scaler-ca && has_obj configmap team-a scaling-manager-settings; then
-    ok "a preflight FAIL exits 1 naming the check, before the scaler Secrets and the controller"
+    && ! has_obj secret team-a scaling-manager-external-scaler-ca && ! has_obj configmap team-a scaling-manager-settings \
+    && grep -q '^create -f .*settings.yaml' "$STUB_DIR/calls.log"; then
+    ok "a preflight FAIL exits 1 naming the check, before the scaler Secrets and the controller, and removes the settings it created"
 else
     bad "preflight FAIL: exit $rc: $(tail -2 "$W/out" | tr '\n' ' ')"
 fi
+# The fixed URL now reaches the settings: the failed run left none.
+printf 'PASS    settings  ok\n1 PASS, 0 WARN, 0 FAIL, 0 UNKNOWN\n' > "$STUB_DIR/preflight.log"
+echo Complete > "$STUB_DIR/preflight.end"
+smt install -n team-a --prometheus-url https://right:9090
+rc=$?
+url="$(obj configmap team-a scaling-manager-settings | jq -r '.data.prometheusURL')"
+if [ "$rc" = 0 ] && [ "$url" = https://right:9090 ]; then ok "a re-run with the right --prometheus-url after a FAIL installs with it"; else bad "re-run after a FAIL: exit $rc, prometheusURL '$url'"; fi
+# Settings an earlier run left (or a person made) are never removed on a FAIL.
+printf 'FAIL    prometheus.reachable  refused\n0 PASS, 0 WARN, 1 FAIL, 0 UNKNOWN\n' > "$STUB_DIR/preflight.log"
+echo Failed > "$STUB_DIR/preflight.end"
+smt install -n team-a --prometheus-url https://right:9090
+rc=$?
+if [ "$rc" = 1 ] && has_obj configmap team-a scaling-manager-settings; then ok "a FAIL keeps settings this run did not create"; else bad "FAIL with existing settings: exit $rc"; fi
+restore
+smt install -n team-a --prometheus-url https://p:9090 --set prometheusURL=https://q:9090
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'give --prometheus-url' "$W/out"; then ok "--set of a key a flag owns is refused, naming the flag"; else bad "--set prometheusURL: exit $rc"; fi
+smt install -n team-a --prometheus-url https://p:9090 --set passive=false
+rc=$?
+if [ "$rc" = 2 ] && grep -qF "After smt admin-finish, turn it off with:  kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"passive\":\"false\"}}'" "$W/out"; then
+    ok "--set passive is refused with the exact patch to run after admin-finish"
+else
+    bad "--set passive: exit $rc: $(tail -1 "$W/out")"
+fi
+rm -f "$STUB_DIR/obj/namespace/_/team-a.json"
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'namespace team-a does not exist' "$W/out" && [ "$(writes)" = 0 ]; then ok "install in a missing namespace exits 4 before the stamp check"; else bad "install, missing namespace: exit $rc: $(tail -1 "$W/out")"; fi
+touch "$STUB_DIR/forbid-namespaces"
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'it has no ServiceAccount default' "$W/out"; then ok "an owner who may not read Namespaces: a missing namespace is still exit 4"; else bad "owner, missing namespace: exit $rc: $(tail -1 "$W/out")"; fi
+restore
+touch "$STUB_DIR/forbid-namespaces"
+printf 'PASS    settings  ok\nUNKNOWN keda.crd  cannot read CustomResourceDefinition scaledobjects.keda.sh: forbidden\n1 PASS, 0 WARN, 0 FAIL, 1 UNKNOWN\n' > "$STUB_DIR/preflight.log"
+rm -f "$STUB_DIR/obj/clusterrolebinding/_/scaling-manager-preflight-team-a.json"
+smt install -n team-a --prometheus-url https://p:9090 --strict
+expect_rc "--strict after admin-finish (the preflight binding gone): a refused cluster read is not a stop, and an owner who may not read Namespaces installs" 0 $?
+restore
+printf 'PASS    settings  ok\nUNKNOWN keda.crd  cannot read CustomResourceDefinition scaledobjects.keda.sh: forbidden\n1 PASS, 0 WARN, 0 FAIL, 1 UNKNOWN\n' > "$STUB_DIR/preflight.log"
+smt install -n team-a --prometheus-url https://p:9090 --strict
+rc=$?
+if [ "$rc" = 6 ] && ! has_obj configmap team-a scaling-manager-settings; then ok "--strict with the preflight binding there: the same refused read stops (exit 6), and the settings it created are removed"; else bad "--strict, binding present: exit $rc"; fi
 restore
 printf 'PASS    settings  ok\nUNKNOWN rbac.controller  no controller yet\nUNKNOWN metrics.model  no pods\n1 PASS, 0 WARN, 0 FAIL, 2 UNKNOWN\n' > "$STUB_DIR/preflight.log"
 smt install -n team-a --prometheus-url https://p:9090 --strict
@@ -389,6 +433,30 @@ if [ "$rc" = 1 ] && has_obj clusterrolebinding _ scaling-manager-preflight-team-
 else
     bad "admin-finish with a FAIL: exit $rc"
 fi
+# Refusals inside llmsm_scaler_keda_auth_apply are exit 4 with a fix the tools
+# image can follow, never 1 (a preflight FAIL); a write the API server
+# refuses is exit 7.
+rm -rf "$STUB_DIR"; cp -R "$filled" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+mkdir -p "$STUB_DIR/obj/secret/keda-system"
+printf '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"%s","namespace":"keda-system"},"data":{}}' "$cta" > "$STUB_DIR/obj/secret/keda-system/$cta.json"
+smt admin-finish -n team-a
+rc=$?
+if [ "$rc" = 4 ] && grep -qF "kubectl delete secret $cta -n keda-system  then run smt admin-finish -n team-a again" "$W/out" \
+    && ! grep -q 'LLMSM_SCALER_TLS=false' "$W/out" && ! has_obj clustertriggerauthentication _ "$cta"; then
+    ok "a foreign Secret where the copy goes: exit 4, the exact delete and the re-run, no LLMSM_SCALER_TLS advice, nothing written"
+else
+    bad "foreign copy: exit $rc: $(grep -m1 ERROR "$W/out")"
+fi
+rm -rf "$STUB_DIR"; cp -R "$filled" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+printf '{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"scaling-manager-scaler-keda-auth","namespace":"team-a"},"data":{}}' > "$STUB_DIR/obj/configmap/team-a/scaling-manager-scaler-keda-auth.json"
+smt admin-finish -n team-a
+rc=$?
+if [ "$rc" = 4 ] && grep -qF "kubectl delete configmap scaling-manager-scaler-keda-auth -n team-a" "$W/out"; then ok "a foreign marker ConfigMap: exit 4 with its delete"; else bad "foreign marker: exit $rc: $(grep -m1 ERROR "$W/out")"; fi
+rm -rf "$STUB_DIR"; cp -R "$filled" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+touch "$STUB_DIR/apply-fails"
+smt admin-finish -n team-a
+rc=$?
+if [ "$rc" = 7 ] && grep -q 'Could not write' "$W/out"; then ok "a write of KEDA's side the API server refuses: exit 7"; else bad "refused write: exit $rc: $(grep -m1 ERROR "$W/out")"; fi
 
 # ---------------------------------------------------------------------------
 echo "KEDA's side is the release's scaling-manager-keda-auth.yaml"
@@ -490,7 +558,7 @@ cmpb "$W/b5" "$W/dist"
 rc=$?
 if [ "$rc" = 1 ] && grep -q 'built without --build-context release' "$W/out"; then ok "an image built without the release files is refused"; else bad "empty image: exit $rc"; fi
 
-EXPECT_CASES=53
+EXPECT_CASES=64
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

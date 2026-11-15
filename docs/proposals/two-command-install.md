@@ -516,9 +516,14 @@ from the text above, and why:
   not written (`llmsm_scaler_keda_auth_apply` warned and wrote nothing), a
   `--model-namespace` that does not exist, and a live controller installed with `make`
   (it lacks `scaling-manager.llmd.ai/part`). 5 also covers the preflight Job
-  not finishing. A refusal inside `llmsm_scaler_keda_auth_apply` (its
-  `log_error` exits) is 7: it runs in a subshell, and those refusals are a
-  read or write that failed.
+  not finishing. The deploy/lib functions `admin-finish` runs exit through
+  `log_error`; in the tools image that exits 4 (a refusal a person resolves:
+  an object of the same name this tool did not write, one it cannot read),
+  or 7 for a write kubectl could not make ("Could not write ..."), never 1,
+  which means a preflight FAIL. The refusals name the `kubectl delete` and
+  the command to run again (`llmsm_scaler_foreign_fix`,
+  `llmsm_scaler_unread_fix`), since `LLMSM_SCALER_TLS=false` cannot be set
+  from the image.
 - **KEDA's namespace for the function.** `admin-finish` sets `KEDA_NAMESPACE`
   and `KEDA_NAMESPACE_EXPLICIT=true`, not `LLMSM_SCALER_KEDA_OBJ_NS`:
   `llmsm_scaler_keda_auth_check` recomputes the object namespace itself
@@ -555,6 +560,9 @@ from the text above, and why:
   target `release-e2e-dist`).
 - **Release workflow.** The signing step is a job of its own, `release-sign`
   (`id-token: write`), uploading `dist/` as artifact `release-dist`.
+  It refuses to sign when the release for the tag is already published (a
+  read of the release, `contents: read`): signing again makes new bundles,
+  and the tools image would no longer carry the published ones.
   `release-files` keeps `contents: write` and gains `packages: read` to pull
   the tools image; the comparison is `hack/compare-baked-release-files.sh`.
 - **Dockerfile.** A `release-files` stage between the `release` stage and the
@@ -575,7 +583,19 @@ from the text above, and why:
   `19-admin-setup-stamp.yaml`, `20-settings.yaml`, `25-prometheus-ca.yaml`,
   `30-preflight.yaml`, `40-scaler-tls.yaml`, `50-controller.yaml`. With no
   cluster to read, KEDA's namespace is the flag or the platform default.
-- **`--set passive`** is refused: the install is passive.
+- **`--set passive`** is refused: the install is passive; the refusal prints
+  the patch to run after `admin-finish`. `--set` of a key a flag sets is
+  refused too.
+- **A wrong `--prometheus-url` on a first install** does not stick: when the
+  first preflight stops the install, settings this run created are removed,
+  so the next run creates them from its flags. Settings a run did not create
+  are never touched.
+- **`--strict` after `admin-finish`.** The preflight's cluster reads are gone,
+  so those checks are UNKNOWN (refused). While ClusterRoleBinding
+  `scaling-manager-preflight-NS` is absent (or cannot be read), those
+  refusals do not stop `--strict`.
+- **`install` checks the namespace first** (exit 4). An owner may not read
+  Namespaces, so it reads ServiceAccount `default` there instead.
 - **The CI gate.** The stamp cases and the upgrade run in the namespace leg
   only (the stamp is a namespace-scope step). The cluster leg's negative
   control is a namespaced install in a fresh namespace. The upgrade installs

@@ -19,7 +19,8 @@ owner does the rest, and upgrades the controller.
 
 Tested: the namespaced and the cluster-wide files on Kubernetes, by hand (kind,
 `make test-e2e-release-manifests`) and with the tools image (`make
-test-e2e-tools-install`), in CI and before each release. The OpenShift files
+test-e2e-tools-install`), in CI on each pull request that changes what
+the files are made from or installed by. The OpenShift files
 are not yet tested end to end.
 
 Prefer a checkout and `make`? See [From a checkout instead](#from-a-checkout-instead).

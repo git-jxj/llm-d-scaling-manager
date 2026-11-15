@@ -19,7 +19,8 @@ smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 ```
 
-Run it from a directory that does not contain `~/.smt`. Each person uses
+Run it from a working directory, not your home directory: that directory
+is mounted read-write at `/work`, and `~/.smt` must stay out of it. Each person uses
 their own kubeconfig. The container cannot run kubeconfig `exec` plugins
 (cloud CLIs are not in it): use a token kubeconfig.
 
@@ -58,13 +59,13 @@ only when KEDA's side changed.
 | `--prometheus-url URL` | `install` | sets `prometheusURL` when the settings are created. Required then, except on OpenShift (Thanos Querier) |
 | `--prometheus-ca FILE` | `install` | a CA file under the mounted `/work`: creates or updates Secret `scaling-manager-prometheus-ca`, sets `prometheusCACertPath` on a first install, restarts the controller when it changed |
 | `--quota "GPU=N[,GPU=N]"` | `install` | sets `limiter: quota` and `quotas` |
-| `--set KEY=VALUE` | `install` | any other settings key, on a first install. Not `passive`: the install is passive |
+| `--set KEY=VALUE` | `install` | any other settings key, on a first install. Not a key a flag sets (`prometheusURL`, `prometheusCACertPath`, `quotas`; `limiter` with `--quota`). Not `passive`: the install is passive, and the refusal prints the `kubectl patch` to run after `admin-finish` |
 | `--model-namespace NS` | `install --scope cluster` | a namespace with model servers; repeat it. Add one later by running again with it |
 | `--platform kubernetes\|openshift` | all | overrides the detection (API discovery of `security.openshift.io`) |
 | `--files DIR` | `admin-setup`, `install`, `admin-finish` | install from release files in DIR instead of the image's. They must match their `SHA256SUMS` and be this image's release |
 | `--image-repo REGISTRY/PATH` | `install` | for a mirror: the controller and preflight images from there, same digest |
 | `--dry-run --out DIR` | `admin-setup`, `install` | writes the objects in apply order, one file per step, and contacts no cluster |
-| `--strict` | `install`, `admin-finish` | stop on a preflight `UNKNOWN` the controller does not answer |
+| `--strict` | `install`, `admin-finish` | stop on a preflight `UNKNOWN` the controller does not answer. After `admin-finish` (the preflight binding removed), the checks its cluster reads made are refused and do not stop it |
 | `--restart-keda` | `admin-finish`, `install --scope cluster` | restart KEDA's operator when it still holds a connection from before a reinstall. Without it, the command prints the restart |
 
 If the settings already exist, `install` never writes them. A flag that
@@ -81,7 +82,7 @@ The same for every command.
 | 1 | the preflight has a `FAIL`: `install` stopped before the controller, or `admin-finish` kept the preflight binding | apply the fix printed under each `FAIL`, run again |
 | 2 | usage: an unknown flag, a missing value, a bad namespace name; or release files that fail their `SHA256SUMS` or are another release; or an image without files and no `--files` | fix the command |
 | 3 | needs the cluster admin: no stamp, or a stamp from other admin objects (an upgrade that changes them) | the admin runs the `smt admin-setup` line printed |
-| 4 | the cluster is not ready: the namespace does not exist, KEDA's namespace cannot be found or disagrees with the stamp, KEDA's side could not be written, or the controller was installed with `make` | the line says which |
+| 4 | the cluster is not ready, or needs a person: the namespace does not exist (or you may not read it), KEDA's namespace cannot be found or disagrees with the stamp, KEDA's side was refused (an object of its name this tool did not write, or one it cannot read; the line prints the `kubectl delete` and the command to run again), or the controller was installed with `make` | the line says which |
 | 5 | timed out: the controller rollout, the client certificate, the preflight Job, or `scalerTLS: mutual TLS` | the line names the command that shows why |
 | 6 | `--strict`: an `UNKNOWN` outside the checks that need the controller | make the check possible, or run without `--strict` |
 | 7 | a `kubectl` call failed (refused, or the API server unreachable) | the line names the call |
@@ -90,7 +91,7 @@ The same for every command.
 
 | result | `install` does |
 | --- | --- |
-| `FAIL` | stops before the scaler TLS Secrets and the controller; exit 1 |
+| `FAIL` | stops before the scaler TLS Secrets and the controller; exit 1. Settings this run created are removed, so the next run takes its flags again |
 | `WARN` | goes on; prints each line again at the end |
 | `UNKNOWN` of `rbac.controller`, `keda.mtls`, `scaler.tls` | goes on; the run after the install checks them |
 | any other `UNKNOWN` | goes on and lists it as not checked; `--strict` stops (exit 6) |

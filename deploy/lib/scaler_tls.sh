@@ -883,6 +883,28 @@ llmsm_scaler_keda_api() {
     fi
 }
 
+# llmsm_scaler_foreign_fix <resource> <name> [namespace] echoes how to get past
+# an object of that name this installer did not write. From the tools image
+# (LLMSM_TOOLS_MODE=true) LLMSM_SCALER_TLS cannot be set, so it names the delete
+# and the command to run again.
+llmsm_scaler_foreign_fix() {
+    if [ "${LLMSM_TOOLS_MODE:-false}" = true ]; then
+        printf 'If it is a leftover of an earlier install, delete it:  kubectl delete %s %s%s  then run %s again.' "$1" "$2" "${3:+ -n $3}" "$(llmsm_make_cmd verify-deployment)"
+    else
+        printf 'Remove or rename it, or set LLMSM_SCALER_TLS=false.'
+    fi
+}
+
+# llmsm_scaler_unread_fix <grant> echoes the remedy for an object that cannot be
+# read: the grant, then (tools image) the command to run again, else the opt-out.
+llmsm_scaler_unread_fix() {
+    if [ "${LLMSM_TOOLS_MODE:-false}" = true ]; then
+        printf '%s, then run %s again.' "$1" "$(llmsm_make_cmd verify-deployment)"
+    else
+        printf '%s, or set LLMSM_SCALER_TLS=false.' "$1"
+    fi
+}
+
 # llmsm_scaler_keda_auth_check is everything llmsm_scaler_keda_auth_apply checks
 # before it writes, so the install can run it before it writes anything at all:
 # KEDA's API, where KEDA reads its Secrets, the rights to write there, and that
@@ -913,23 +935,23 @@ llmsm_scaler_keda_auth_check() {
     LLMSM_NS="$LLMSM_SCALER_KEDA_OBJ_NS" llmsm_scaler_object_state secret "$name"
     case "$LLMSM_OBJ_STATE" in
         absent|ours) ;;
-        unreadable) log_error "Cannot read Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS ($LLMSM_OBJ_ERR). Grant get on secrets there, or set LLMSM_SCALER_TLS=false." ;;
-        *) log_error "Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS was not created by this installer (no $LLMSM_SCALER_TLS_LABEL label); refusing to overwrite it. Remove or rename it, or set LLMSM_SCALER_TLS=false." ;;
+        unreadable) log_error "Cannot read Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS ($LLMSM_OBJ_ERR). $(llmsm_scaler_unread_fix "Grant get on secrets there")" ;;
+        *) log_error "Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS was not created by this installer (no $LLMSM_SCALER_TLS_LABEL label); refusing to overwrite it. $(llmsm_scaler_foreign_fix secret "$name" "$LLMSM_SCALER_KEDA_OBJ_NS")" ;;
     esac
     llmsm_scaler_get_json get clustertriggerauthentications.keda.sh "$name" -o json || rc=$?
     if [ "$rc" = 0 ]; then
         printf '%s' "$LLMSM_GET_OUT" | jq -e --arg k "$LLMSM_SCALER_TLS_LABEL" '.metadata.labels[$k] // empty' >/dev/null 2>&1 \
-            || log_error "ClusterTriggerAuthentication $name was not created by this installer (no $LLMSM_SCALER_TLS_LABEL label); refusing to overwrite it. Remove or rename it, or set LLMSM_SCALER_TLS=false."
+            || log_error "ClusterTriggerAuthentication $name was not created by this installer (no $LLMSM_SCALER_TLS_LABEL label); refusing to overwrite it. $(llmsm_scaler_foreign_fix clustertriggerauthentication "$name")"
     elif [ "$rc" != 1 ] || ! llmsm_scaler_not_found "$LLMSM_GET_ERR"; then
-        log_error "Cannot read ClusterTriggerAuthentication $name ($(kc_err_line "$LLMSM_GET_ERR")). Grant get on clustertriggerauthentications.keda.sh, or set LLMSM_SCALER_TLS=false."
+        log_error "Cannot read ClusterTriggerAuthentication $name ($(kc_err_line "$LLMSM_GET_ERR")). $(llmsm_scaler_unread_fix "Grant get on clustertriggerauthentications.keda.sh")"
     fi
     # The marker: the controller phase trusts what it says, so a same-named
     # ConfigMap someone else wrote is never taken over.
     llmsm_scaler_object_state configmap "$LLMSM_SCALER_KEDA_MARKER"
     case "$LLMSM_OBJ_STATE" in
         absent|ours) ;;
-        unreadable) log_error "Cannot read ConfigMap $LLMSM_SCALER_KEDA_MARKER in $LLMSM_NS ($LLMSM_OBJ_ERR). Grant get on configmaps there, or set LLMSM_SCALER_TLS=false." ;;
-        *) log_error "ConfigMap $LLMSM_SCALER_KEDA_MARKER in $LLMSM_NS was not created by this installer (no $LLMSM_SCALER_TLS_LABEL label); refusing to overwrite it. Remove or rename it, or set LLMSM_SCALER_TLS=false." ;;
+        unreadable) log_error "Cannot read ConfigMap $LLMSM_SCALER_KEDA_MARKER in $LLMSM_NS ($LLMSM_OBJ_ERR). $(llmsm_scaler_unread_fix "Grant get on configmaps there")" ;;
+        *) log_error "ConfigMap $LLMSM_SCALER_KEDA_MARKER in $LLMSM_NS was not created by this installer (no $LLMSM_SCALER_TLS_LABEL label); refusing to overwrite it. $(llmsm_scaler_foreign_fix configmap "$LLMSM_SCALER_KEDA_MARKER" "$LLMSM_NS")" ;;
     esac
     return 0
 }
@@ -987,8 +1009,8 @@ llmsm_scaler_keda_auth_apply() {
     fi
     case "$obj_state" in
         absent|ours) ;;
-        unreadable) llmsm_scaler_drop_tmp; log_error "Cannot read Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS ($LLMSM_OBJ_ERR). Grant get on secrets there, or set LLMSM_SCALER_TLS=false." ;;
-        *) llmsm_scaler_drop_tmp; log_error "Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS was not created by this installer (no $LLMSM_SCALER_TLS_LABEL label); refusing to overwrite it. Remove or rename it, or set LLMSM_SCALER_TLS=false." ;;
+        unreadable) llmsm_scaler_drop_tmp; log_error "Cannot read Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS ($LLMSM_OBJ_ERR). $(llmsm_scaler_unread_fix "Grant get on secrets there")" ;;
+        *) llmsm_scaler_drop_tmp; log_error "Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS was not created by this installer (no $LLMSM_SCALER_TLS_LABEL label); refusing to overwrite it. $(llmsm_scaler_foreign_fix secret "$name" "$LLMSM_SCALER_KEDA_OBJ_NS")" ;;
     esac
 
     # Each of the three is written only when it differs from what is there: a

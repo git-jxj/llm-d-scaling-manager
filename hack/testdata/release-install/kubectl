@@ -8,9 +8,12 @@
 # API server), openshift (discovery serves security.openshift.io), apiservice
 # ("<namespace> <service>" behind the external-metrics APIService),
 # preflight.log (the log of the Job), preflight.end (Complete or Failed),
-# rollout-timeout (rollout status times out).
+# rollout-timeout (rollout status times out), forbid-namespaces (reading a
+# Namespace is Forbidden, as for a namespace owner), apply-fails (a
+# server-side apply is refused by the API server).
 D="${STUB_DIR:?}"
 printf '%s\n' "$*" >> "$D/calls.log"
+ALL="$*"
 if [ -f "$D/unreachable" ]; then
     echo "The connection to the server 127.0.0.1:1 was refused - did you specify the right host or port?" >&2
     exit 1
@@ -119,6 +122,16 @@ case "$verb" in
             printf '{"items":%s}\n' "${items:-[]}"
             exit 0
         fi
+        if [ "$r" = namespace ] && [ -f "$D/forbid-namespaces" ]; then
+            echo "Error from server (Forbidden): namespaces \"$n\" is forbidden: User \"owner\" cannot get resource \"namespaces\" at the cluster scope" >&2
+            exit 1
+        fi
+        if [ "$r" = serviceaccount ] && [ "$n" = default ]; then
+            # Every namespace has one.
+            [ -f "$D/obj/namespace/_/$ns.json" ] || not_found serviceaccounts default
+            echo "serviceaccount/default"
+            exit 0
+        fi
         if [ "$r" = apiservice ]; then
             [ -f "$D/apiservice" ] || not_found apiservices.apiregistration.k8s.io "$n"
             cat "$D/apiservice"
@@ -143,6 +156,7 @@ case "$verb" in
         exit 0 ;;
     apply)
         [ -n "$file" ] || { echo "stub kubectl: apply without -f" >&2; exit 1; }
+        case "$ALL" in *--server-side*) [ ! -f "$D/apply-fails" ] || { echo "Error from server (InternalError): the server refused the apply" >&2; exit 1; } ;; esac
         while IFS= read -r o; do
             selected "$o" || continue
             echo "$(store "$o") configured"
