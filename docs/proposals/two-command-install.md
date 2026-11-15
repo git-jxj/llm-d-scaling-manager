@@ -68,12 +68,12 @@ The two-role split stays.
 
 ### `smt admin-setup -n NS --keda-namespace KNS`
 
-1. Refuse a namespace that does not exist. It never creates one.
+1. Refuse a namespace that does not exist (exit 4). It never creates one.
 2. Find KEDA's namespace: the flag; else the live scaler NetworkPolicy's
    source namespace; else the namespace of the Service behind the
    `v1beta1.external.metrics.k8s.io` APIService, when it is KEDA's (the
-   detection `make setup-prereqs` already uses). None found: stop and ask for
-   the flag.
+   detection `make setup-prereqs` already uses). None found: exit 4 and ask
+   for the flag.
 3. Write that namespace into the scaler NetworkPolicy, then apply the
    `part=admin` objects of the namespaced file.
 4. Apply the preflight's `part=admin` objects (its account, Role, ClusterRole
@@ -114,24 +114,53 @@ The two-role split stays.
    Secret.
 2. Find KEDA's namespace: `--keda-namespace`; else the stamp `admin-setup`
    wrote, checked against the live NetworkPolicy's source namespace (they
-   must agree); else the APIService detection. It fills `__KEDA_NAMESPACE__`
-   in `scaling-manager-keda-auth.yaml`.
-3. Copy the client certificate into KEDA's namespace, apply the
-   ClusterTriggerAuthentication and marker from that file, restart the
-   controller. These are the steps `scalerTLSAction` prints (the controller
-   writes that text in `internal/scalertls/bootstrap.go`). The tools image
-   is bash and cannot call that Go code, and parsing the text is fragile,
-   so it runs them through `deploy/lib/scaler_tls.sh`
-   (`llmsm_scaler_keda_auth_apply`, which `make setup-prereqs` uses), with
-   the release's keda-auth file. A check asserts both produce the same
-   objects, including the OpenShift service-CA case.
-4. Wait for `scalerTLS: mutual TLS`. On a reinstall where KEDA keeps a stale
+   must agree); else the APIService detection. None: exit 4.
+3. Write KEDA's side: the client certificate copy in KEDA's namespace, the
+   ClusterTriggerAuthentication, and the marker ConfigMap in `NS`. These are
+   the objects `scalerTLSAction` tells a person to create (the controller
+   writes that text in `internal/scalertls/bootstrap.go`, using
+   `scaling-manager-keda-auth.yaml`). The tools image is bash and cannot
+   call that Go code, and parsing the text is fragile, so it calls
+   `llmsm_scaler_keda_auth_apply` in `deploy/lib/scaler_tls.sh`, which
+   `make setup-prereqs` uses. That function reads no file: it builds the
+   three objects with `jq`. `admin-finish` sets what it reads:
+   `LLMSM_SCALER_TLS_WANTED=true`, `LLMSM_NS=NS`,
+   `LLMSM_SCALER_KEDA_OBJ_NS` (from step 2), and `ENVIRONMENT`
+   (`kubernetes` or `openshift`, for the service-CA case). A check in
+   `make lint-deploy-scripts` renders the function's objects and the
+   release's keda-auth file for the same namespaces and asserts they are the
+   same objects, so the two cannot drift.
+4. Restart the controller, which reads KEDA's side at start, only when the
+   function wrote something new: a first write, or a changed copy (it already
+   tracks `changed`; it gains an output variable for it). A re-run that
+   changes nothing restarts nothing.
+5. Wait (bounded) for `scalerTLS: mutual TLS`; timeout: exit 5. Then run the
+   stale-connection check (`llmsm_scaler_keda_conn_state`, the one `make
+   verify-deployment` runs). On a reinstall where KEDA keeps an old
    connection, print the KEDA operator restart; `--restart-keda` runs it.
-   It never restarts KEDA unasked: other workloads share it.
-5. Run the preflight a last time.
-6. Delete ClusterRoleBinding `scaling-manager-preflight-NS`. If the last run
-   had a `FAIL`, keep it so the owner can run again, and print the delete
-   command instead.
+   It never restarts KEDA unasked: other workloads share it. The library's
+   messages name `make verify-deployment`, which the tools path does not
+   have; `llmsm_make_cmd` gains a tools mode that prints `smt admin-finish
+   -n NS` instead, since a re-run performs that check.
+6. Run the preflight a last time.
+7. Delete ClusterRoleBinding `scaling-manager-preflight-NS`. If the last run
+   had a `FAIL`, keep it so the owner can run again, print the delete
+   command instead, and exit 1.
+
+### Exit codes
+
+The same for every command.
+
+| code | meaning |
+| --- | --- |
+| 0 | done; WARN and UNKNOWN lines, if any, are in the summary |
+| 1 | the preflight has a `FAIL`: `install` stopped before the controller, or `admin-finish` kept the preflight binding |
+| 2 | usage: an unknown flag, a missing value, a bad namespace name |
+| 3 | needs the cluster admin: no stamp, or a stamp with other admin objects |
+| 4 | the cluster is not ready: the namespace does not exist, or KEDA's namespace cannot be found |
+| 5 | timed out: the controller rollout, the client certificate, or `scalerTLS: mutual TLS` |
+| 6 | `--strict`: an `UNKNOWN` outside the checks that need the controller |
+| 7 | a `kubectl` call failed (refused, or the API server unreachable); the line says which |
 
 ## Decisions
 
@@ -319,7 +348,7 @@ in today's guide disappears from this path.
 | `FAIL` | stops before the scaler TLS Secrets and the controller; exit 1; prints each fix |
 | `WARN` | goes on; prints each line again in the final summary |
 | `UNKNOWN`, a check that needs the controller (`rbac.controller`, `keda.mtls`, `scaler.tls`) | goes on; it is checked by the run after the install |
-| any other `UNKNOWN` | goes on and lists it as not checked; `--strict` stops instead |
+| any other `UNKNOWN` | goes on and lists it as not checked; `--strict` stops instead (exit 6) |
 
 `UNKNOWN` is never shown as a pass. `scaler.tls` stays `UNKNOWN` after the
 install too (the NetworkPolicy keeps the Job out), and the summary says why.
@@ -335,7 +364,9 @@ rendered objects in apply order, one file per step (`10-admin.yaml`,
 needs no kubeconfig, so it renders as for a fresh install: settings from the
 flags, TLS Secrets included. It does not run the preflight. This is the GitOps
 path: the output is the release files with the substitutions made, and the
-checks assert exactly that.
+checks assert exactly that. The one exception is the settings file, which
+also carries the values from the flags; and the stamp, which `admin-setup
+--dry-run` writes too.
 
 ### Cluster-wide scope
 
@@ -353,7 +384,8 @@ It creates `scaling-manager-system` if absent, runs the admin steps, the
 install steps, and the `admin-finish` steps in that order. `--model-namespace`
 (repeatable) applies the model-namespace file to each; adding one later is a
 re-run with the extra flag. `admin-setup` and `admin-finish` refuse `--scope
-cluster` and point here.
+cluster` and point here. It writes no stamp: the person who would read it is
+the person who wrote the admin objects, in the same run.
 
 ### OpenShift
 
@@ -391,27 +423,53 @@ scopes, each on a fresh kind cluster:
 1. Render the release files for the image the job built, and build the tools
    image with them (`--build-context release=dist`).
 2. Install the prerequisites with the existing e2e setup.
-3. **Namespace scope**, with two kubeconfigs: cluster admin for `admin-setup`
+3. Run the tools container with `--network host`. kind writes its kubeconfig
+   with the API server at `127.0.0.1:<port>`, which the container reaches
+   only on the host network. (kind's internal kubeconfig names the control
+   plane container instead, but a ServiceAccount kubeconfig built from it
+   would differ from what an operator uses.)
+4. **Namespace scope**, with two kubeconfigs: cluster admin for `admin-setup`
    and `admin-finish`; for `install`, a ServiceAccount token bound to the
-   stock `admin` ClusterRole in the namespace and nothing else. That proves
-   the owner's least privilege, not just that it works as admin.
-4. **Cluster scope**: one `install --scope cluster` as cluster admin.
-5. Each job then asserts:
+   stock `admin` ClusterRole in the namespace and nothing else. Before the
+   install, as that token, `kubectl auth can-i create clusterrolebindings`
+   must answer `no`: otherwise the run proves nothing about least privilege.
+5. **Cluster scope**: one `install --scope cluster` as cluster admin.
+6. Each job then asserts:
    - preflight with no `FAIL`, and `scalerTLS: mutual TLS`;
    - the smoke suite with `ginkgo -v`, and more than zero specs run;
    - a second `install` changes no `resourceVersion` (beyond the preflight);
-   - negative control: a wrong `--prometheus-url` exits 1, names
+   - a second `admin-finish` restarts nothing: the controller's pod is the
+     same;
+   - a re-run of `install` with a different `--prometheus-url` leaves
+     `scaling-manager-settings` unchanged (same `resourceVersion` and value)
+     and prints the `kubectl patch` that would change it;
+   - negative control, in a fresh namespace (existing settings would ignore
+     the flag): a wrong `--prometheus-url` exits 1, names
      `prometheus.reachable`, and leaves no controller Deployment;
    - `install` before `admin-setup` exits 3;
+   - a stamp edited to another hash makes `install` exit 3;
    - an upgrade: the hand install of the previous release's files, then
-     `smt install`; settings unchanged.
+     `smt admin-setup` (a hand install has no stamp), then `smt install`;
+     settings unchanged.
 
 Without a cluster, in `make lint-deploy-scripts` (`hack/check-*.sh`):
 
-- `--dry-run` output equals the release files after `sed` substitution;
+- `--dry-run` output equals the release files after `sed` substitution,
+  except the settings file and the stamp;
 - an image without files refuses `install` unless `--files` is given;
-- `--files` with a mismatched version or a bad sum is refused;
-- `hack/check-tools-image.sh` checks the baked `SHA256SUMS`.
+- `--files` with a mismatched version is refused, and a fixture with a
+  `SHA256SUMS` that does not match its files must be refused (exit non-zero,
+  nothing applied);
+- `llmsm_scaler_keda_auth_apply`'s objects equal the release keda-auth file's
+  ([admin-finish step 3](#smt-admin-finish--n-ns));
+- `hack/check-tools-image.sh` checks the baked `SHA256SUMS`. The PR job that
+  runs it builds the image with `--build-context release=dist` from a fresh
+  `make release-manifests`; built without it, the check would read an empty
+  stage and pass on nothing, so it fails when no files are baked.
+
+The check that the pushed image's files equal the uploaded ones runs only in
+the release workflow, on a tag; the fixture above is what covers that logic
+on every PR.
 
 ## Out of scope
 
