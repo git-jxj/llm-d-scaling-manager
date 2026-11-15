@@ -779,7 +779,7 @@ v1 is phases 0 and 1; v2 is phase 2.
 ## As built (phase 0)
 
 `capacity-planner serve` runs the API on your machine; how to start it, the flags and
-every key are in [What-if serve](../developer-guide/capacity-planner-serve.md). Built:
+every key are in [What-if serve](../guides/capacity-planner/api.md). Built:
 `POST /v1/inputs` (a recording, or a Prometheus window, the last hour by
 default) and `POST /v1/plan` (the mix line, the "if all traffic were bucket b"
 view, TPOT at the mean or a percentile with `AssumedTPOTRatio`, the capped

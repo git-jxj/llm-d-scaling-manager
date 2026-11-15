@@ -3,6 +3,22 @@
 # commands a tool would run are the same strings.
 name: capacity-planner
 
+sample:
+  get:
+    note: |
+      A sample recording, from the source tree of the release you run: one P/D model, one prefill and one decode
+      replica, an hour of a test run. Or put your own run.jsonl.gz from the record guide in recordings/ instead.
+    run: |
+      export V=<release>
+      mkdir -p recordings
+      curl -fsSL -o recordings/ols-sweep.jsonl.gz \
+        https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz
+  open:
+    note: The sample learned no prefill rate, so this address assumes one (vp=30000) and sets targets the sample can meet.
+    run: |
+      xdg-open 'http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004' \
+        || open 'http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004'
+
 get:
   image:
     note: |

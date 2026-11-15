@@ -84,7 +84,7 @@ Any other path is a 404.
 | Flag | What it does |
 | --- | --- |
 | `--recordings DIR` | Recordings a `recording` source names by file name. Serve refuses to start if it is not a directory. |
-| `--prometheus URL` | The Prometheus a `prometheus` source reads. With it, every [capture flag](../../developer-guide/capacity-planner-capture.md) but `--from`, `--to` and `-o` applies: the role map, `--step`, `--policy`, the engine, TLS and the bearer token. The window comes with each request. |
+| `--prometheus URL` | The Prometheus a `prometheus` source reads. With it, every [capture flag](../record-for-capacity-planner/README.md#capture-flags) but `--from`, `--to` and `-o` applies: the role map, `--step`, `--policy`, the engine, TLS and the bearer token. The window comes with each request. |
 | `--namespace NS` | The namespace a `prometheus` source reads when the request names none. |
 | `--allowed-namespaces NS,...` | The namespaces a `prometheus` source may read. Default `--namespace` alone; with `--prometheus` one of the two is required. Another namespace is a 403; one that is not a DNS-1123 label a 400. |
 | `--batch-cap N` | The engine's batch cap a window is captured with, as `capture --batch-cap`. |

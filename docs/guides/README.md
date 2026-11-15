@@ -43,6 +43,8 @@ source docs/guides/env.sh
 
 ## Reference
 
+The capacity planner's reference pages (its API, the metrics it needs, troubleshooting) live with [its guide](capacity-planner/), at the user's request to keep all its pages together.
+
 | page | covers |
 | --- | --- |
 | [Installer options](../reference/install-options.md) | every variable the installer reads |

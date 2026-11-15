@@ -4,9 +4,7 @@ This page is part of the [capacity planner guide](../capacity-planner/).
 
 ## Overview
 
-The [capacity planner](../capacity-planner/) answers two
-questions about a model: how many replicas a latency target needs, and what
-rate a fleet can serve. It learns the answers from a past window of your
+The capacity planner learns its answers from a past window of your
 Prometheus: what the model servers, the router and kube-state-metrics reported
 while the fleet ran.
 
@@ -353,8 +351,50 @@ sample at all, so a broken export is not read as a window with less load.
   inputs are 5-minute rates.
 
 Where your Prometheus allows its admin API, a TSDB snapshot keeps everything,
-staleness marks included:
-[Capture a past window](../../developer-guide/testing.md#capture-a-past-window).
+staleness marks included: [From a Prometheus snapshot](#from-a-prometheus-snapshot).
+
+## From a Prometheus snapshot
+
+`_bucket` series are often kept for days, not weeks. To keep a window worth
+having, snapshot Prometheus while it still holds it, and record from the
+snapshot later. A snapshot keeps everything, and capturing from it puts no
+load on your Prometheus.
+
+1. Snapshot Prometheus. The snapshot API needs Prometheus started with
+   `--web.enable-admin-api`; the snapshot is written under its data
+   directory. `PROM_POD` is the Prometheus Pod:
+
+   ```bash
+   kubectl -n "$PROM_NS" port-forward "svc/$PROM_SVC" 9090:9090 &
+   # The answer is {"status":"success","data":{"name":"20261101T120000Z-..."}}.
+   NAME=$(curl -s -XPOST http://localhost:9090/api/v1/admin/tsdb/snapshot | jq -r .data.name)
+   test -n "$NAME" && test "$NAME" != null || echo "no snapshot: is the admin API on?"
+   kubectl -n "$PROM_NS" cp -c prometheus "$PROM_POD:/prometheus/snapshots/$NAME" ./snapshot
+   ```
+
+   `kubectl cp` runs `tar` inside the container. A distroless Prometheus
+   image has none, and the copy fails with `executable file not found`. Then
+   copy from a helper Pod that has `tar` (an image from a registry you trust)
+   and mounts the Prometheus data volume's claim read-only at `/prometheus`:
+   `kubectl -n "$PROM_NS" cp "$HELPER_POD:/prometheus/snapshots/$NAME" ./snapshot`.
+   A ReadWriteOnce claim mounts only on Prometheus' own node, so schedule the
+   helper there. An ephemeral container works as well where the cluster
+   allows them:
+   `kubectl debug -n "$PROM_NS" "$PROM_POD" --target=prometheus --image=IMAGE-WITH-TAR -c snap -- sleep 3600`,
+   then `kubectl cp -c snap "$PROM_POD:/proc/1/root/prometheus/snapshots/$NAME" ./snapshot`.
+
+   Without the admin API, use [Path 2](#path-2-record-with-curl-and-jq).
+
+2. Serve the snapshot with a local Prometheus. Give it a retention longer
+   than the snapshot's age, or it deletes the old blocks on start:
+
+   ```bash
+   prometheus --storage.tsdb.path=./snapshot --storage.tsdb.retention.time=10y \
+     --web.listen-address=127.0.0.1:9091 --config.file=/dev/null
+   ```
+
+3. Record as in [Path 1](#path-1-record-with-capacity-planner), with
+   `--prometheus http://127.0.0.1:9091`.
 
 ## Prometheus with a token
 
@@ -450,7 +490,7 @@ Prometheus reads far more raw samples than it returns: each `rate(...[1m])`
 reads every scrape in its minute at every step.
 
 - **Capture off-peak**, or better, **from a snapshot** served by a local
-  Prometheus ([Capture a past window](../../developer-guide/testing.md#capture-a-past-window)),
+  Prometheus ([From a Prometheus snapshot](#from-a-prometheus-snapshot)),
   never by loading a production server with a long window.
 - **The usual failure is `query.max-samples`**: a histogram over many steps
   loads more samples than the server allows in one query. It stops the
@@ -498,10 +538,48 @@ capacity-planner slo-to-rate     --recording run.jsonl.gz --tpot 4ms --ttft 200m
   check ran on rows whose KV per request is more than 20% from the one priced.
   `not run`: under 5 rows to compare; it is not a pass.
 
-`capacity-planner joint-ttft --recording run.jsonl.gz [--cycle N|last] [--prefill N] [--decode N] [--rate R]`
-prices the joint prefill and decode model's mean TTFT at a fleet; 0 for a
-count or the rate means the cycle's own. It exits `3` with a refusal such as
-`no-prefill-capacity` or `saturated`. With `-o json` the answer is JSON.
+- **Aggregated fleets and per-bucket answers are refused.** TTFT is priced
+  for P/D fleets only.
+
+### The joint TTFT model
+
+```bash
+capacity-planner joint-ttft --recording run.jsonl.gz [--cycle N|last] [--model M] [--prefill N] [--decode N] [--rate R] [--prompt I] [--hop D] [-o json]
+```
+
+Prices the joint prefill and decode model's mean TTFT at a fleet, from what
+the recording's rows taught it by the cycle asked for. Each of `--prefill`,
+`--decode` and `--rate` defaults to 0, which means the cycle's own: the fleet
+and the rate that ran. `--prompt 0` prices at the prompt the work was read at.
+`--hop 0`, the default, assumes a router hop of 20 ms and flags it
+`RouterHopAssumed`; give `--hop` in seconds to state it.
+
+At the 120th cycle of a staircase run, with a third decode Pod:
+
+```console
+$ capacity-planner joint-ttft --recording ttft-staircase-b-off.jsonl.gz --cycle 120 --decode 3
+joint TTFT, ns-01/model-02 at cycle 120: 2 prefill + 3 decode at 29.80 req/s (ran 2 + 2 at 29.80)
+  mean TTFT 145.0 ms (engines 125.0 ms, hop 20.0 ms)
+    overhead a(rho_p) 23.6 ms, prefill T_P 39.5 ms at rho_p 0.371
+    KV pull T_X 33.0 ms, unshared 24.8 ms at 0.247 of the decode pod
+    decode m_d*ITL(k) + d 28.9 ms, batch k 7.2, ITL 3.6 ms
+    flags: [OverheadMeasured RouterHopAssumed]
+  inputs: S 24.9 ms at 8001 tokens (232 readings); a0 14.8 ms (232); pull table 3 buckets
+          ITL(k) 1.944 ms + 0.2322 ms*k (232); decode own 5.03*ITL + 10.7 ms (232); n_out 200
+  note: UNVALIDATED beyond the staircase's 2+2 phases; ...
+```
+
+It exits `3` with a refusal, which is printed: `no-prefill-capacity` until a
+prefill Pod has read an empty engine queue, `saturated` at a prefill or pull
+knee, `batch-unheld` where the decode batch cannot hold the rate. With `-o json`
+the answer is JSON (`schemaVersion` 1, keys lowerCamel).
+
+It reads the rows as the slo analyzer does: only for a model with one prefill
+and one decode variant; new engine arguments or a new accelerator start the
+inputs over; on SGLang the prompt is the prompt length. One thing differs: the
+analyzer leaves out a replica's first two minutes after it starts or comes back
+from idle, while it settles, and this command reads them, so its inputs can
+lean on a warm-up the analyzer never saw.
 
 Exit codes for all of these: `0` answered, `3` a refusal, `2` a usage error,
 `1` anything else. The full CLI reference is in
@@ -511,6 +589,6 @@ Exit codes for all of these: `0` answered, `3` a refusal, `2` a usage error,
 
 - [The metrics it needs](../capacity-planner/metrics.md) and
   [Troubleshooting](../capacity-planner/troubleshooting.md#recording-a-window)
-- [Capacity planner capture and generate](../../developer-guide/capacity-planner-capture.md): how capture works, its flags, its load
+- [Capacity planner capture and generate](../../developer-guide/capacity-planner-capture.md): how capture is built
 - [The capacity planner's design](../../proposals/capacity-planner.md), and its
   [CLI](../../proposals/slo-capacity-planner.md#cli-reference)

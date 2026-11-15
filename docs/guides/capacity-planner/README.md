@@ -48,6 +48,21 @@ Use the planner of the release your controller runs. The planner replays
 recordings with the controller's learners, so each release ships both under
 one tag, and `capacity-planner version` prints it.
 
+The image serves recordings only, so put one in `./recordings` first: your
+own, from [Record a window](../record-for-capacity-planner/), or the sample.
+With an empty directory the page says "This server reads no source".
+
+<!-- guide:sample.get start -->
+```bash
+# A sample recording, from the source tree of the release you run: one P/D model, one prefill and one decode
+# replica, an hour of a test run. Or put your own run.jsonl.gz from the record guide in recordings/ instead.
+export V=<release>
+mkdir -p recordings
+curl -fsSL -o recordings/ols-sweep.jsonl.gz \
+  https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz
+```
+<!-- guide:sample.get end -->
+
 Run the image:
 
 <!-- guide:get.image start -->
@@ -63,10 +78,8 @@ docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 -v "$PWD/recor
 ```
 <!-- guide:get.image end -->
 
-The server answers only requests addressed to `localhost` or `127.0.0.1`,
-but that check guards a browser against other web pages; it is not access
-control, since any client that reaches the port can send that name. So keep
-the port on `127.0.0.1`.
+Keep the port on `127.0.0.1`: the server has no access control of its own
+([why](api.md#requests)).
 
 To check the image's signature:
 
@@ -161,10 +174,9 @@ in [Get the planner](#get-the-planner). Name a recording by its file name in
 **Source**.
 
 To read Prometheus from the container, use the host's network, so the
-container reaches your port-forward. Never run the image's default command
-with `--network host`: it listens on every interface of your machine. Give
-the command below, which listens on `127.0.0.1`. With the variables set as
-above:
+container reaches your port-forward, and give the command below, which
+listens on `127.0.0.1` ([why not the default command](api.md#in-a-container)).
+With the variables set as above:
 
 <!-- guide:container.prometheus start -->
 ```bash
@@ -189,6 +201,16 @@ docker run --rm --network host ghcr.io/llm-d-incubation/llm-d-scaling-manager/ca
 xdg-open http://127.0.0.1:8080/ || open http://127.0.0.1:8080/
 ```
 <!-- guide:open end -->
+
+With the sample recording, open this address instead:
+
+<!-- guide:sample.open start -->
+```bash
+# The sample learned no prefill rate, so this address assumes one (vp=30000) and sets targets the sample can meet.
+xdg-open 'http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004' \
+  || open 'http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004'
+```
+<!-- guide:sample.open end -->
 
 The page opens on the last hour of Prometheus, ending now; with recordings
 alone, on the first recording. To read another window or recording, open
@@ -403,10 +425,9 @@ ssh -N -L 8080:127.0.0.1:8080 <user>@<host>
 ```
 <!-- guide:tunnel end -->
 
-With no authentication (`--auth=none`, the default) the server answers only
-requests addressed to a loopback name. A proxy in front of it must keep the
-`Host` header the browser sent, `127.0.0.1:8080`, or the server answers 403;
-do not expose such a proxy beyond your machine.
+A proxy in front of a server with no authentication must keep the `Host`
+header the browser sent, `127.0.0.1:8080`, or the server answers 403
+([why](api.md#requests)); do not expose such a proxy beyond your machine.
 
 Bound to any address other than loopback, the server needs Kubernetes
 authentication and TLS (`--auth=kubernetes`). The page is then behind the same

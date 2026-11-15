@@ -7,18 +7,22 @@ Find the message you see; the sections follow the order you meet them.
 
 | You see | Fix |
 | --- | --- |
+| Serve exits: "serve needs --prometheus, --recordings or both" | Give a source: a recordings directory, a Prometheus, or both. |
+| Serve exits: "--from: serve reads the window each request names" (or `--to`) | Drop `--from` and `--to`. The page's **Source**, or the request's `source`, names the window. |
 | Serve exits: `--recordings` is not a directory | Give a directory that holds the recordings (`run.jsonl.gz`), not a file. |
 | Serve exits: an address that is not loopback needs `--auth=kubernetes` | Keep `--listen 127.0.0.1:8080` and [tunnel to it](README.md#run-it-for-others), or set up [Kubernetes authentication](api.md#kubernetes-authentication). In a container whose port is published to `127.0.0.1` only, the image's default command already sets `--listen-all-in-container`. |
 | Serve exits: `--listen-all-in-container` refused | It is refused in a Kubernetes Pod, with `--auth=kubernetes`, and with any address but `0.0.0.0:PORT`, `[::]:PORT` or `:PORT`. In a Pod use `--auth=kubernetes` with TLS. |
 | Serve exits: `--auth=kubernetes` needs TLS | Give `--tls-cert-file` and `--tls-key-file`. |
 | Serve exits: `--plan-budget` out of range | Give 0 (the default, 5m) up to 9m. |
 | Serve exits: `--prometheus` needs a namespace | Give `--namespace` or `--allowed-namespaces`. |
+| Serve exits: "namespace "x": ..." | A namespace in `--namespace` or `--allowed-namespaces` is not a DNS-1123 label (lower case letters, digits and `-`, at most 63). Fix its spelling. |
+| Serve exits: "--namespace x is not among --allowed-namespaces" | Add it to `--allowed-namespaces`, or drop `--namespace`. |
 
 ## The page
 
 | You see | Fix |
 | --- | --- |
-| "This server reads no source" | Start it with `--prometheus`, `--recordings` or both. |
+| "This server reads no source" | The recordings directory is empty, or holds no recording (with the image, the directory you mounted at `/recordings`). Put a `run.jsonl.gz` from [Record a window](../record-for-capacity-planner/), or [the sample](README.md#get-the-planner), in it and reload the page. |
 | "the model has 2 decode variants (a, b)" | The page prices one P/D fleet. Open **Source**, type one name in **Decode variant** (or **Prefill variant**), and press **Load**. |
 | Refused figures everywhere | A term was not learned. See [Refused figures](#refused-figures). |
 | "Pricing..." for several seconds | A new replica count, statistic or view prices whole curves; a rate move is fast. A size takes about 20 to 45 s. |

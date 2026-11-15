@@ -860,7 +860,7 @@ capacity-planner replicas-to-slo|slo-to-rate --prometheus URL --namespace NS
   output, byte for byte in text and in JSON, but for `source`, which names
   where the answer was read from.
 - **The window's flags are capture's**, with the same meaning, defaults and
-  checks: [What-if capture](../developer-guide/capacity-planner-capture.md) lists
+  checks: [What-if capture](../guides/record-for-capacity-planner/README.md#capture-flags) lists
   them, and its safety holds here too (the timeout, the token sent over https
   to Prometheus' own host only, the CA file, the window and sample bounds
   that `--force` lifts, every sample on the step grid). Without
