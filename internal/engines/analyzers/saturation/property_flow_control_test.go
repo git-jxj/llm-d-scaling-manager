@@ -8,6 +8,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/floor"
 )
 
 // Property cases for a fleet under flow control (issue #51): the requests
@@ -28,6 +29,7 @@ func flowControlCases() []propCase {
 	return []propCase{
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-decode", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcDecode, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-decode", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPD, nil)},
+		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPDPrefillBound, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-aggregated", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcAggregated, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-dp8", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcDP8, nil)},
 		{class: classKnownTruth, learner: "k2", name: "above-k1-leaves-capacity", family: familyDirect, tuning: tunedDefault, check: checkK2AboveK1Capacity},
@@ -42,6 +44,10 @@ type fcShape struct {
 	role string
 	// pd adds a prefill variant p, so the router's queue is charged to it.
 	pd bool
+	// prefillBound is a P/D fleet whose prefill is the bottleneck: prefill
+	// serves all it can, decode takes what it passes on and is not full,
+	// and the router holds the rest. Decode is the bottleneck otherwise.
+	prefillBound bool
 	// ranks is the engine ranks a pod runs (data parallel).
 	ranks int
 }
@@ -49,6 +55,8 @@ type fcShape struct {
 var (
 	fcDecode     = fcShape{name: "decode", role: domain.RoleDecode, ranks: 1}
 	fcPD         = fcShape{name: "pd-decode", role: domain.RoleDecode, pd: true, ranks: 1}
+	// fcPDPrefillBound is P/D with prefill the bottleneck.
+	fcPDPrefillBound = fcShape{name: "pd-prefill-bound", role: domain.RoleDecode, pd: true, prefillBound: true, ranks: 1}
 	fcAggregated = fcShape{name: "aggregated", role: "", ranks: 1}
 	fcDP8        = fcShape{name: "dp8", role: domain.RoleDecode, ranks: 8}
 )
@@ -88,18 +96,48 @@ const (
 // are drawn from (the same in both runs of a seed).
 type fcGen struct {
 	kTrue, rho, slope float64
-	seed              uint64
+	// prefillOver is, on P/D, one prefill replica's true mu over what the
+	// decode fleet serves full: 1.5-3 where decode binds, 0.5-0.8 where
+	// prefill does (fcShape.prefillBound).
+	prefillOver float64
+	seed        uint64
 }
 
-// fcGenFor draws seed's generator: kTrue 0.85-0.95, rho 1.1-1.5 and the
-// line's slope 0.03-0.10 s per unit of k.
-func fcGenFor(seed uint64) fcGen {
+// fcGenFor draws seed's generator for shape s: kTrue 0.85-0.95, rho
+// 1.1-1.5, the line's slope 0.03-0.10 s per unit of k, and prefillOver.
+// A prefill-bound fleet's rho is 2.2-3.0 of what its one prefill replica
+// serves, so prefill still binds at the two replicas the analyzer orders
+// for it (one doubling, floor.LowerBoundGrowthCap): below 2 the ordered
+// prefill outruns the arrivals, and decode is owed the backlog it then
+// hands on, as where decode binds.
+func fcGenFor(s fcShape, seed uint64) fcGen {
 	r := propRand(seed)
 	g := fcGen{seed: seed}
 	g.kTrue = 0.85 + 0.1*r.Float64()
 	g.rho = 1.1 + 0.4*r.Float64()
 	g.slope = 0.03 + 0.07*r.Float64()
+	u := r.Float64()
+	g.prefillOver = 1.5 + 1.5*u
+	if s.prefillBound {
+		g.prefillOver = 0.5 + 0.3*u
+		g.rho = 2.2 + 2*(g.rho-1.1)
+	}
 	return g
+}
+
+// kAt is the KV fraction at which one pod of ranks completes rate a second
+// on g's line (fcGen.rate is increasing in k), by bisection over (0, 1).
+func (g fcGen) kAt(rate float64, ranks int) float64 {
+	lo, hi := 0.0, 1.0
+	for range 60 {
+		mid := (lo + hi) / 2
+		if g.rate(mid, ranks) < rate {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return (lo + hi) / 2
 }
 
 // itl is the true ITL at KV fraction k.
@@ -151,8 +189,14 @@ type fcOutcome struct {
 	// measuredMu is the measured mu on record, 0 when none, and k2 the k2
 	// learner's figure (propRig.k2), 0 when none.
 	measuredMu, k2 float64
-	// queue is the router's queue on the last cycle.
-	queue float64
+	// queue is the router's queue on the last cycle, and lambda the
+	// arrival rate.
+	queue, lambda float64
+	// prefillOrdered is, on P/D, the prefill replicas the analyzer orders:
+	// prefill's demand over its per-replica capacity at the target, rounded
+	// up. prefillMu is one prefill replica's true mu, and horizon the
+	// floor's drain horizon (floor.DrainHorizon over both roles' starts).
+	prefillOrdered, prefillMu, horizon float64
 	// mu is the service rate v was priced on (domain.ServiceRateSignal) and
 	// source where it came from.
 	mu     float64
@@ -176,6 +220,11 @@ func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaM
 	ready := rig.clock.Add(-time.Hour)
 	states := fcStates(s)
 	itlNoise := propRand(g.seed + 3<<32)
+	mu := g.rate(g.kTrue, s.ranks)
+	prefillMu := g.prefillOver * fcPods * mu
+	// prefillServes is what the prefill replica completes a second, set
+	// per phase.
+	prefillServes := 0.0
 	fleet := func(k [fcPods]float64, queue int, rate [fcPods]float64) []domain.ReplicaMetrics {
 		rows := make([]domain.ReplicaMetrics, 0, fcPods+1)
 		for p := range fcPods {
@@ -186,8 +235,9 @@ func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaM
 			}
 		}
 		if s.pd {
-			pre := satRow("p0", 20_000, 0, 6)
+			pre := satRow("p0", 20_000, 0, prefillServes)
 			pre.VariantName, pre.ReadySince = "p", ready
+			pre.GenerationTokenRate = prefillServes
 			rows = append(rows, pre)
 		}
 		return rows
@@ -201,19 +251,27 @@ func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaM
 			rate[p] = g.rate(k[p], s.ranks)
 			lambda += rate[p]
 		}
+		prefillServes = lambda
 		if _, err := rig.analyze(fleet(k, 0, rate), states, lambda, propCycle); err != nil {
 			return fcOutcome{}, err
 		}
 	}
-	mu := g.rate(g.kTrue, s.ranks)
 	full := [fcPods]float64{g.kTrue, g.kTrue}
+	each := mu
+	if s.prefillBound {
+		// Decode takes what prefill passes on and is not full.
+		each = prefillMu / fcPods
+		k := g.kAt(each, s.ranks)
+		full = [fcPods]float64{k, k}
+	}
 	served := func(r *rand.Rand) [fcPods]float64 {
 		var rate [fcPods]float64
 		for p := range rate {
-			rate[p] = mu * (1 + fcRateNoise*r.NormFloat64())
+			rate[p] = each * (1 + fcRateNoise*r.NormFloat64())
 		}
 		return rate
 	}
+	prefillServes = fcPods * each
 	if learned {
 		// Flow control off, the fleet at capacity: the queue stands on the
 		// engines, and k2 and mu are learned.
@@ -226,12 +284,12 @@ func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaM
 	}
 	// Flow control on.
 	r := propRand(g.seed + 2<<32)
-	lambda := g.rho * fcPods * mu
+	lambda := g.rho * fcPods * each
 	queue := float64(fcRouterQ)
 	var res *domain.AnalyzerResult
 	for i := range fcSaturated {
 		if i > 0 {
-			queue += (lambda - fcPods*mu) * propCycle.Seconds()
+			queue += (lambda - fcPods*each) * propCycle.Seconds()
 		}
 		q := int64(queue)
 		rig.input = func(in *domain.AnalyzerInput) {
@@ -242,8 +300,15 @@ func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaM
 			return fcOutcome{}, err
 		}
 	}
-	out := fcOutcome{measuredMu: rig.measuredMu(), k2: rig.k2(""), queue: queue, replicas: math.NaN()}
+	out := fcOutcome{measuredMu: rig.measuredMu(), k2: rig.k2(""), queue: queue, lambda: lambda, replicas: math.NaN(),
+		prefillMu: prefillMu, horizon: floor.BacklogDrainSeconds}
+	for _, st := range res.RoleStartSeconds {
+		out.horizon = floor.DrainHorizon(out.horizon, st)
+	}
 	for _, vc := range res.VariantCapacities {
+		if vc.VariantName == "p" && vc.PerReplicaCapacity > 0 {
+			out.prefillOrdered = math.Ceil(res.RoleDemand[domain.RolePrefill] / (floorTarget * vc.PerReplicaCapacity))
+		}
 		if vc.VariantName == "v" {
 			out.perReplica = vc.PerReplicaCapacity
 			if vc.ServiceRate != nil {
@@ -261,23 +326,31 @@ func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaM
 	return out, nil
 }
 
-// fcTruth is what shape s needs on g, in replicas: the arrivals and the
-// router's queue drained over the floor's drain time, with every replica at
-// the fill the autoscaler targets (fcKPrice), where the true line has it
-// complete g.rate(fcKPrice).
+// fcTruth is what shape s needs on g, as run o priced it, in replicas: the
+// arrivals and the router's queue drained over the floor's horizon
+// (o.horizon), with every replica at the fill the autoscaler targets
+// (fcKPrice), where the true line has it complete g.rate(fcKPrice).
 //
-// On P/D too. Every request the router holds reaches decode once prefill has
-// taken it, so decode owes the queue as well; it receives it a prefill time
-// later, but prefill drains it over the same horizon, so decode then takes
-// it at queue / floorDrainT on top of the arrivals. A decode sized for the
-// arrivals alone runs behind for as long as that backlog takes to pass.
-func fcTruth(s fcShape, g fcGen, queue float64) float64 {
-	return (g.rho*fcPods*g.rate(g.kTrue, s.ranks) + queue/floorDrainT) / g.rate(fcKPrice, s.ranks)
+// On P/D decode owes the queue too, at the rate prefill hands it on: every
+// request the router holds reaches decode once prefill has taken it. So
+// decode's backlog rate is the queue over the horizon, but no more than the
+// prefill the analyzer orders (o.prefillOrdered) completes beyond the
+// arrivals. Where decode binds that is the queue over the horizon; where
+// prefill binds it is about none, and decode needs the arrivals alone.
+func fcTruth(s fcShape, o fcOutcome, g fcGen) float64 {
+	backlog := o.queue / o.horizon
+	if s.pd {
+		backlog = min(backlog, max(0, o.prefillOrdered*o.prefillMu-o.lambda))
+	}
+	return (o.lambda + backlog) / g.rate(fcKPrice, s.ranks)
 }
 
 // checkFlowControlFloor: shape s overloaded under flow control (fcGenFor),
 // priced on its last cycle with the mu it learned with flow control off
-// first (learned) and with none (never learned). Never learned:
+// first (learned) and with none (never learned). A prefill-bound fleet's
+// decode is never full and learns no mu either way: it is priced never
+// learned only, and judged on the first bound alone, since there is no
+// learned order to hold its cost to. Never learned:
 //
 //   - orders at least the truth (fcTruth), less propTruthTol: the side a
 //     fallback errs to is more replicas;
@@ -295,26 +368,32 @@ func fcTruth(s fcShape, g fcGen, queue float64) float64 {
 // fallback under test, put back wrong (a mutant).
 func checkFlowControlFloor(s fcShape, wrap func(*domain.ReplicaMetrics)) func(uint64) error {
 	return func(seed uint64) error {
-		g := fcGenFor(seed)
-		lr, err := runFlowControl(s, g, true, nil)
-		if err != nil {
-			return err
-		}
-		if !(lr.measuredMu > 0) || lr.source != domain.ServiceRateSourceMeasured {
-			return violation(kindNotLearned, "%s: the learned run priced on %q mu %.2f (measured %.2f), not its measured mu", s.name, lr.source, lr.mu, lr.measuredMu)
+		g := fcGenFor(s, seed)
+		lr := fcOutcome{replicas: math.Inf(-1)}
+		if !s.prefillBound {
+			var err error
+			if lr, err = runFlowControl(s, g, true, nil); err != nil {
+				return err
+			}
+			if !(lr.measuredMu > 0) || lr.source != domain.ServiceRateSourceMeasured {
+				return violation(kindNotLearned, "%s: the learned run priced on %q mu %.2f (measured %.2f), not its measured mu", s.name, lr.source, lr.mu, lr.measuredMu)
+			}
 		}
 		nl, err := runFlowControl(s, g, false, wrap)
 		if err != nil {
 			return err
 		}
-		truth := fcTruth(s, g, nl.queue)
-		msg := fmt.Sprintf("%s at %.3f of KV, rho %.2f, ITL slope %.3f, router queue %.0f: never learned ordered %.3f replicas (%s mu %.2f), learned %.3f (mu %.2f), truth %.3f (mu %.2f at the target fill)",
-			s.name, g.kTrue, g.rho, g.slope, nl.queue, nl.replicas, nl.source, nl.mu, lr.replicas, lr.mu, truth, g.rate(fcKPrice, s.ranks))
+		truth := fcTruth(s, nl, g)
+		msg := fmt.Sprintf("%s at %.3f of KV, rho %.2f, ITL slope %.3f, router queue %.0f, prefill ordered %.0f at mu %.2f: never learned ordered %.3f replicas (%s mu %.2f), learned %.3f (mu %.2f), truth %.3f (mu %.2f at the target fill)",
+			s.name, g.kTrue, g.rho, g.slope, nl.queue, nl.prefillOrdered, nl.prefillMu, nl.replicas, nl.source, nl.mu, lr.replicas, lr.mu, truth, g.rate(fcKPrice, s.ranks))
 		if math.IsNaN(nl.replicas) || math.IsNaN(lr.replicas) {
 			return violation(kindNotLearned, "%s: no order", msg)
 		}
 		if nl.replicas < truth*(1-propTruthTol) {
 			return violation(kindWrongSide, "%s: under the truth", msg)
+		}
+		if s.prefillBound {
+			return nil
 		}
 		return holds(nl.replicas <= max(lr.replicas, truth)*(1+propTruthTol), kindOverPriced, "%s: over both", msg)
 	}
@@ -326,7 +405,7 @@ func checkFlowControlFloor(s fcShape, wrap func(*domain.ReplicaMetrics)) func(ui
 // other none, and the per-replica capacity is the same, k1, within 1e-9. A
 // k2 above k1 cannot move capacity, so its absence costs none.
 func checkK2AboveK1Capacity(seed uint64) error {
-	g := fcGenFor(seed)
+	g := fcGenFor(fcDecode, seed)
 	g.rho = 1.2
 	for _, s := range []fcShape{fcDecode, fcPD, fcAggregated, fcDP8} {
 		lr, err := runFlowControl(s, g, true, nil)

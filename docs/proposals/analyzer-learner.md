@@ -907,8 +907,9 @@ finding above is in exactly one state:
   known-truth/floor/flow-control-unlearned-mu-decode, and one that reads half
   the ITL (the derived mu doubled) fails flow-control-unlearned-mu-dp8, each
   on 20 of 20 seeds. The aggregated and P/D decode cases are ledger rows: an
-  aggregated derived mu is report-only, so it has no floor, and P/D decode is
-  never charged the router's queue. "k == 0 unsettles"
+  aggregated derived mu is report-only, so it has no floor, and a
+  decode-bound P/D decode is not charged the router's queue (its
+  prefill-bound twin passes). "k == 0 unsettles"
   and the settle holes "fall", "rate escape", "idle return" and "lend" are
   caught since ev-shindin/llm-scaling-manager#495, each on 20 of 20 seeds. A stub mutant turns
   `Admission.IdleOnEvidence` off, and a scrape that read nothing counts as idle.
