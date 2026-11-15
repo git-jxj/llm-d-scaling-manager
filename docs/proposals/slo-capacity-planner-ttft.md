@@ -2106,7 +2106,8 @@ one prefill pod, the gate closes once that pod's count is published, and it
 stays closed while that pod drains; the other pods run short of work. The
 gate adds time. A replay of the run's own arrival times through this
 mechanism (two pods, a 65536-token step budget, `V_P` 17046 tokens/s, the
-50 ms poll; a scratch script, not committed) holds nothing at C 3 and B 6,
+50 ms poll; `hack/benchmark/replay_fc_gate.py <run dir> <phase> <step>`,
+whose header lists its knobs) holds nothing at C 3 and B 6,
 where the router held nothing, and holds at C 4, C 5 and B 7. With the
 bursts spread round-robin instead it holds almost nothing anywhere: the
 routing is half the mechanism. The replay's size is not trustworthy: moving
@@ -2140,10 +2141,21 @@ carries no gate. The switch still takes only on processor sharing, at a
 prompt cv up to 0.25 and a rate up to 0.9 of the prefill knee; past that the
 answer keeps `AboveFlowControlOnset`.
 
-Inputs: Δ, b and m come from the learned `V_P`, prompt and stretch; the queue
-threshold from the router config (already an input); the poll interval is
-the upstream default, not read from the cluster. Nothing is fitted to the
-staircase.
+Inputs: Δ, b and m come from the learned `V_P`, prompt and stretch; the poll
+interval is the upstream default, not read from the cluster. The router's
+queue threshold enters only through the onset, which decides where the stage
+starts; the stage's figures do not read it (the closed period ignores the
+threshold's slack). Nothing is fitted to the staircase.
+
+**The shape is a choice.** A closed period of fixed length m leaves a
+residual uniform on (0, m), and a request's place in its burst is about
+uniform as well, so neither wait could pass m; the exponential's p95 (1.5 m)
+does. It is kept because the measured wait is not capped at m: at C 4 a
+quarter of the requests that waited at the router waited past 10 s, beyond
+the stage's m of 8.7 s. With uniform waits the mean is the same, and the
+held step reads p90 21.4 s and p95 25.0 s (0.87 of the client's p95, under
+the rule) where the exponential reads 23.6 s and 28.1 s; at C 5, 25.2 s and
+29.4 s against 27.8 s and 33.2 s.
 
 ### Validated against the Qwen3-32B staircase
 
@@ -2191,6 +2203,17 @@ step, so the default stays off.
   the mechanism, not on a fit, and one step cannot say how far that holds.
 - B 7 is past 0.9 of the knee and keeps `AboveFlowControlOnset` either way;
   its flagged figure reads 0.65x.
+- The burst is priced at one cycle. If an open gate empties the router
+  queue, the release after a closed period is λ(Δ + m), not λΔ, and the
+  cycle has no fixed point once λE[S] reaches 1: about 1.6 at C 4, where
+  one pod cannot absorb the fleet's arrivals. In practice the next release
+  goes to the other, idle pod and the pods take turns, which the stage does
+  not model. So the match at C 4 may be partly coincidence.
+- The shape of both waits is chosen to cover the measured tail, not
+  derived (above); uniform waits fail the rule at C 4's p95.
+- `MaxRouterWaitKneeShare` (0.9) is carried over from the switch's earlier
+  form, whose simulation did not model the burst; the stage has no basis of
+  its own for it yet.
 
 **In the SLO analyzer.** It shares the default, so nothing changes there
 unless a replay turns `slo-ttft-router-wait` on. On, past the prefill onset

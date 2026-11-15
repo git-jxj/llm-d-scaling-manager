@@ -170,15 +170,18 @@ const MaxPSPromptCV = 0.25
 const DefaultPriceRouterWait = false
 
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
-// at which TTFTFleet.PriceRouterWait takes. Against a paired simulation (the
-// same arrivals with the prefill pods gated and ungated; running caps 1 to
-// 256, the gate read live or every 50 ms and 200 ms, prompt cv 0.058 and
-// 0.25, Poisson and Ca^2 4, six seeds), the gate's own effect up to 0.90 of
-// the knee was at most +1.3 % on the mean, p90 and p95; at 0.97 it reached
-// +16 %. It bounds only the gate's effect: the processor-sharing price's
-// own error against its stage is separate (TestPS_AgainstATandemSimulation;
-// over six seeds up to 9.8 % short at 0.90 of the knee). Past this share the
-// wait keeps AboveFlowControlOnset (TestFlowControlWait_GatedPodsAreNoSlower).
+// at which TTFTFleet.PriceRouterWait takes; past it the wait keeps
+// AboveFlowControlOnset.
+//
+// Carried over from the switch's earlier form, which took the gate as
+// moving the wait rather than adding to it, and was bounded by a paired
+// simulation that does not model the stale score's burst to one pod
+// (TestFlowControlWait_GatedPodsAreNoSlower: the gate's own effect up to
+// 0.90 of the knee at most +1.3 %, at 0.97 +16 %). The gate stage
+// (ttft_gate.go) has no basis of its own for the share yet: the one held
+// staircase step it was checked at sat at 0.80 of the knee, and the next,
+// void, at 0.82. Until a run places held steps near it, the share is the old
+// one, not a measured edge of the stage.
 const MaxRouterWaitKneeShare = 0.9
 
 // DefaultPSOnsets is TTFTFleet.PSOnsets's default, for the CLI

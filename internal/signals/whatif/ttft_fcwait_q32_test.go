@@ -1,6 +1,8 @@
 package whatif
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
@@ -18,7 +20,8 @@ import (
 // flow control off: the freeze's fleet to the bit
 // (TestStaircaseQ32_TheFixtureIsTheFrozenCurve).
 //
-// Where it comes from: the run's frozen.json, whose recordingSha256 names the
+// Where it comes from: the run's frozen.json (not in the repository), whose
+// recordingSha256 names the
 // warm-up recording it was frozen from
 // (4693f3bbbd8322c77af2a1fbcddeaa4cf3ce92f7d6eb66e8437ec2e3900ff291), written
 // by `capacity-planner freeze` from that warm-up recording and the run's
@@ -88,8 +91,8 @@ var q32Steps = map[string][]q32Step{
 // The fixture is the frozen fleet: its TTFT at every step is the frozen
 // curve's, to the bit printed.
 func TestStaircaseQ32_TheFixtureIsTheFrozenCurve(t *testing.T) {
-	for bucket, steps := range q32Steps {
-		for _, s := range steps {
+	for _, bucket := range slices.Sorted(maps.Keys(q32Steps)) {
+		for _, s := range q32Steps[bucket] {
 			for i, q := range []float64{0, 0.9, 0.95} {
 				got := psTTFT(t, q32Fleet(bucket), s.rate, q).Seconds
 				nearRel(t, bucket+" frozen curve", got, s.frozen[i], 1e-9)
@@ -151,21 +154,25 @@ func TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep(t *testing.T) {
 // below the onsets.
 //
 // At C's held step the price reads at least 0.9 of the client at the mean,
-// p90 and p95 (1.77, 1.53 and 0.97), and bucket C's rate for its frozen p90
-// and p95 targets stays at the onset, inside the measured crossings; the
-// switch as it was (the router's wait taken as inside the prefill stage, no
-// figure moved) answered 3.44 r/s, past them.
+// p90 and p95 (1.77, 1.53 and 0.97), and at most twice it (q32Ceiling), and
+// bucket C's rate for its frozen p95 target is the onset itself, inside the
+// measured crossing, as is its p90 target's rate; the switch as it was (the
+// router's wait taken as inside the prefill stage, no figure moved) answered
+// 3.44 r/s, past them.
 //
-// Below each onset the figures are the frozen curve's, to the bit, and at or
-// above the client (1.5 to 2.7 times). B's step past the onset (3.85 r/s) is
-// past MaxRouterWaitKneeShare: it keeps AboveFlowControlOnset and the frozen
-// figure. The step after C's (3.34 r/s) is void (127 evicted): logged, not
-// judged; its client figures are the dispatched requests' only. With the
-// switch off every figure is the frozen curve's.
+// Below each onset the figures are the frozen curve's, to the bit; they read
+// 1.5 to 2.7 times the client, and the test holds them to the same 0.9 floor.
+// B's step past the onset (3.85 r/s) is past MaxRouterWaitKneeShare: it keeps
+// AboveFlowControlOnset and the frozen figure. The step after C's (3.34 r/s)
+// is void (127 evicted): logged, not judged; its client figures are the
+// dispatched requests' only. With the switch off every figure is the frozen
+// curve's.
 func TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient(t *testing.T) {
-	for bucket, steps := range q32Steps {
+	// q32Ceiling bounds how long the priced gate may read at the held step.
+	const q32Ceiling = 2.0
+	for _, bucket := range slices.Sorted(maps.Keys(q32Steps)) {
 		fl := fcFleet(q32Fleet(bucket), true)
-		for _, s := range steps {
+		for _, s := range q32Steps[bucket] {
 			mean := mustTTFT(t, ttftAt(t, fl, s.rate, 0))
 			if s.pastTheOnset != (mean.HasFlag(FlowControlWaitPriced) || mean.HasFlag(AboveFlowControlOnset)) ||
 				s.insideTheTake != mean.HasFlag(FlowControlWaitPriced) {
@@ -192,6 +199,9 @@ func TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient(t *testing.T) {
 					t.Errorf("%s %.3f r/s q %g reads %.2f s, more than %.0f%% under the client's %.2f s",
 						bucket, s.rate, q, got, 100*(1-q32Tolerance), s.client[i])
 				}
+				if s.failed == 0 && s.insideTheTake && got > q32Ceiling*s.client[i] {
+					t.Errorf("%s %.3f r/s q %g reads %.2f s, over %g times the client's %.2f s", bucket, s.rate, q, got, q32Ceiling, s.client[i])
+				}
 			}
 		}
 	}
@@ -211,6 +221,11 @@ func TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient(t *testing.T) {
 			c.target.Percentile, c.target.Seconds, off.Value, on.Value, c.crossingTop)
 		if !(on.Value < c.crossingTop) {
 			t.Errorf("C q %g: the priced rate %.3f r/s is past the measured crossing (under %.3f r/s)", c.target.Percentile, on.Value, c.crossingTop)
+		}
+		if c.target.Percentile == 0.95 {
+			// The gate's jump at the onset already misses the p95 target, so
+			// the answer is the onset itself (priced just under it).
+			nearRel(t, "C p95 rate, the onset", on.Value, mustOnsets(t, fcFleet(q32Fleet("C"), true)).Prefill, 1e-9)
 		}
 	}
 }

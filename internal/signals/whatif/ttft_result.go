@@ -145,8 +145,11 @@ const (
 	// a stage of the figure, its wait at the router and behind the burst it
 	// releases (TTFTParts.RouterWait, TTFTParts.BurstWait; ttft_gate.go).
 	// Validated at one staircase step that held (the Qwen3-32B staircase's
-	// C at 3.24 r/s), where it reads at or above 0.9 of the client; the
-	// stage's parameters are derived, not fitted, and it errs long.
+	// C at 3.24 r/s), where it reads at or above 0.9 of the client. The
+	// stage's parameters are derived, not fitted, and its waits' shape
+	// (exponential, not the uniform a fixed cycle gives) is chosen to cover
+	// the measured tail; the fit there may be partly coincidence
+	// (ttft_gate.go).
 	FlowControlWaitPriced Flag = "FlowControlWaitPriced"
 	// HeldByDecodeAdmission is a TTFT rate the prefill side alone would
 	// set higher: decode admission's wait holds it down.

@@ -29,9 +29,10 @@ package whatif
 // that pod's count is published, and stays closed while one pod drains the
 // burst, with the other pods short of work. It adds time; it does not only
 // move it from the pod to the router. A replay of the Qwen3-32B staircase's
-// arrivals through this mechanism holds nothing at the steps where the router
-// held nothing and holds at the steps where it held, and holds nothing with
-// the bursts spread round-robin instead.
+// arrivals through this mechanism (hack/benchmark/replay_fc_gate.py) holds
+// nothing at the steps where the router held nothing and holds at the steps
+// where it held, and holds nothing with the bursts spread round-robin
+// instead.
 //
 // The stage, at rate lambda past the onset:
 //
@@ -54,6 +55,27 @@ package whatif
 //
 // Both waits are folded into the processor-sharing mixture as one wait in
 // front of every part (stageMix.withWait), independent of it.
+//
+// What the stage leaves out, and why its fit at the one held step may be
+// partly coincidence:
+//
+//   - The burst. If an open gate empties the router queue, the release after
+//     a closed period is lambda (Delta + m), not lambda Delta, and the cycle
+//     m' = lambda (Delta + m) E[S] has no fixed point once lambda E[S] >= 1:
+//     about 1.6 at the held step, where one pod cannot absorb the fleet's
+//     arrivals. The router's next release goes to the other, idle pod, so
+//     the pods take turns; the stage prices one cycle at lambda Delta and
+//     does not model the turns.
+//   - The shape. A closed period of fixed length m leaves a residual uniform
+//     on (0, m), and a request's place in its burst is about uniform too,
+//     so neither wait can pass m; the exponential's p95 (1.5 m) does. It is
+//     kept because the measured wait is not capped at m: at the held step a
+//     quarter of the requests that waited waited past 10 s, past the stage's
+//     m of 8.7 s. Uniform waits read the held step's p90 and p95 at 21.4 s
+//     and 25.0 s (0.87 of the client's p95, under the rule) where the
+//     exponential reads 23.6 s and 28.1 s; the mean is the same either way.
+//
+// Delta, b and m are derived from the plan, not fitted to a run.
 
 // EPPRefreshSeconds is the EPP's metrics poll interval, in seconds: its
 // --refresh-metrics-interval default (llm-d-router v0.11.0,
