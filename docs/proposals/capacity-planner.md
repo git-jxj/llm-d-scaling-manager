@@ -139,7 +139,7 @@ installed.
 To record a window, with `capacity-planner` or with only curl and jq, see
 [Record a window for the capacity planner](../guides/record-for-capacity-planner/).
 The series both read are listed in
-[Metrics the capacity planner needs](../reference/capacity-planner-metrics.md).
+[Metrics the capacity planner needs](../guides/capacity-planner/metrics.md).
 
 The learned-state ConfigMap ([snapshot](learned-state-snapshot.md)) is not a
 source on its own. It holds k2, throughput windows, ITL baselines and start
@@ -914,7 +914,7 @@ C5 is built: `POST /v1/size` in the API, and a toggle on the page between
 How to use it is in the guide's
 [Find the fleet a rate needs](../guides/capacity-planner/README.md#find-the-fleet-a-rate-needs);
 the keys and the search are in
-[What-if serve](../developer-guide/capacity-planner-serve.md#the-size).
+[What-if serve](../developer-guide/capacity-planner-serve.md#the-size-search).
 
 **The search.** It prices fleets with the engine's own limits, as the plan's
 +1 steps do, up to a bound (`maxReplicas`, 32 a role by default, at most 64).

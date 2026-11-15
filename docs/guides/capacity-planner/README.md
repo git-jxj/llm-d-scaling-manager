@@ -1,4 +1,4 @@
-# Plan a P/D fleet with the capacity planner
+# Capacity planner
 
 ## Overview
 
@@ -15,10 +15,18 @@ model's prefill/decode fleet:
 It reads what your fleet did, from a window of Prometheus or from a
 recording, and prices answers with the same model the `capacity-planner`
 command line uses. It is read only: it never changes a replica count, a policy
-or a ConfigMap.
+or a ConfigMap. It runs on your machine, from one binary that serves both the
+page and its API. Nothing is installed in the cluster.
 
-It runs on your machine, from one binary that serves both the page and its
-API. Nothing is installed in the cluster.
+This page gets you to a first plan in about five minutes. The rest of the
+capacity planner's pages:
+
+| Page | For |
+| --- | --- |
+| [Record a window](../record-for-capacity-planner/) | saving a window of Prometheus as a recording: with `capacity-planner`, or with only curl and jq |
+| [The HTTP API](api.md) | calling the API yourself: every endpoint, field, flag and error, the plan budget, and Kubernetes authentication |
+| [The metrics it needs](metrics.md) | every series it reads, and what your Prometheus must keep |
+| [Troubleshooting](troubleshooting.md) | every refusal and error, with its fix |
 
 ## Prerequisites
 
@@ -29,9 +37,8 @@ API. Nothing is installed in the cluster.
 - [ ] One of:
   - `kubectl` access to Prometheus (a port-forward), and a Prometheus that
     holds the last hour of your model servers' metrics and kube-state-metrics
-    ([what it must keep](../../reference/capacity-planner-metrics.md#what-your-prometheus-must-keep));
-  - or recordings saved with
-    [Record a window for the capacity planner](../record-for-capacity-planner/).
+    ([what it must keep](metrics.md#what-your-prometheus-must-keep));
+  - or recordings saved with [Record a window](../record-for-capacity-planner/).
 - [ ] The model is served as P/D: one prefill and one decode variant. TTFT is
   priced for P/D only.
 
@@ -145,7 +152,7 @@ bin/capacity-planner serve --recordings ./recordings
 
 Both sources can be served at once: give both flags. The server prints the
 address it listens on, and refuses to start if `--recordings` is not a
-directory.
+directory. Every flag is in [the API page](api.md#flags).
 
 ### In a container
 
@@ -244,6 +251,63 @@ kill %1
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
 
+A refused figure, or an error, is explained in
+[Troubleshooting](troubleshooting.md).
+
+## When a term is refused
+
+A source that did not see enough load cannot learn every term, and the page
+then shows refusals instead of numbers. Open **Assume a term the source did
+not learn** and type a value: the prefill rate V_P, the fixed latency a, the
+prompt cv or the router hop. The learned value, or the reason it is missing,
+is shown under each box. A typed value flags every figure that rests on it.
+[Each reason and its fix](troubleshooting.md#refused-figures).
+
+## Find the fleet a rate needs
+
+Above the controls, pick **What fleet does this traffic need?** Then set the
+rate and the targets as before. The page finds the fewest replicas that serve
+that rate under your targets, and the replica counts become its answer: you
+read them, you do not set them.
+
+- **The answer.** The fewest decode replicas first, then the fewest prefill
+  replicas with them. Beside it: the fleet limit at that fleet, the headroom
+  over your rate, and the role and target that bind.
+- **Why not fewer.** One prefill replica fewer, and one decode replica fewer,
+  each with the rate it would serve and how far short of yours that is.
+- **The worst corner.** The answer meets your rate at the learned prefill
+  speed (V_P) and imbalance (f). Those are estimates, and the page also prices
+  them 15% either way. When the answer falls short at the worst of those, the
+  page says so: "at one corner of V_P and f this fleet serves only X r/s".
+  Tick **Size for the worst corner of V_P and f** to find the fleet that
+  serves your rate there too. It may need more replicas and takes longer.
+  Tick it when V_P is a value you typed rather than one the source learned,
+  or when the fleet must hold the rate even if V_P reads high. If the worst
+  corner puts the TTFT target under the floor, the page says so: no replica
+  count helps, so raise the target or untick the box.
+- **Decode first.** When decode admission holds the prefill limit down, the
+  page notes it: one more decode and one fewer prefill replica may also work
+  and may be fewer in all. You can try such a fleet in the first mode.
+- **The rest of the page** is the fleet it found, exactly as the first mode
+  would show it if you set those counts yourself.
+- **Search up to.** The most replicas of a role the page tries, 32 unless you
+  change it (at most 64). When no fleet within it serves the rate, the page
+  says so, with the reason, what the largest fleet would serve, and what to
+  change.
+- **How long it takes.** Each answer searches several fleets, then draws the
+  graphs of the fleet found, which takes most of the time. Expect about 20 s
+  on a TTFT fleet from cold, about 25 s at 200 r/s, and about 45 s for the
+  worst corner. The page dims the last answer and counts the seconds while it
+  works. It prices the rate when you let go of the slider, and a new rate or
+  target cancels a size still running.
+
+Switch back to **How much does this fleet serve?** to step the replicas from
+the fleet it found.
+
+Each plan has a time limit, 5 minutes unless the server was started with
+another `--plan-budget`. A plan past it is refused with `PlanBudgetExceeded`
+([the plan budget](api.md#the-plan-budget)).
+
 ## Set your own prompt buckets
 
 The "if all traffic were bucket b" view draws five buckets by default: 1k,
@@ -274,67 +338,10 @@ graph, and marked in the table. This needs the source to know the window
 (shown as "context window" under **Inputs**); when it does not, nothing is
 flagged, so check your edges against it yourself.
 
-The address keeps your edges, so a shared link draws the same lines; a link
-you edit by hand may write them any way the box takes. If an edge in the box
-is wrong, the box is marked and says why under it until you fix it, and the
-graphs keep the edges in use. If a link's edges are wrong, the status line
-says so, and the page draws the default five.
-
-## Find the fleet a rate needs
-
-Above the controls, pick **What fleet does this traffic need?** Then set the
-rate and the targets as before. The page finds the fewest replicas that serve
-that rate under your targets, and the replica counts become its answer: you
-read them, you do not set them.
-
-- **The answer.** The fewest decode replicas first, then the fewest prefill
-  replicas with them. Beside it: the fleet limit at that fleet, the headroom
-  over your rate, and the role and target that bind.
-- **Why not fewer.** One prefill replica fewer, and one decode replica fewer,
-  each with the rate it would serve and how far short of yours that is.
-- **The worst corner.** The answer meets your rate at the learned prefill
-  speed (V_P) and imbalance (f). Those are estimates, and the page also prices
-  them 15% either way. When the answer falls short at the worst of those, the
-  page says so: "at one corner of V_P and f this fleet serves only X r/s".
-  Tick **Size for the worst corner of V_P and f** to find the fleet that
-  serves your rate there too. It may need more replicas and takes longer.
-  Tick it when V_P is a value you typed rather than one the source learned,
-  or when the fleet must hold the rate even if V_P reads high. If the worst
-  corner puts the TTFT target under the floor, the page says so: no replica
-  count helps, so raise the target or untick the box.
-- **Decode first.** The page finds the fewest decode replicas, then the
-  fewest prefill replicas with them. When decode admission holds the prefill
-  limit down, the page notes it: one more decode and one fewer prefill
-  replica may also work and may be fewer in all. You can try such a fleet in
-  the first mode, but a large fleet at a high rate can be very slow to price
-  there: one of 12 prefill and 19 decode replicas at 200 r/s was still
-  pricing after 30 minutes.
-- **The rest of the page** is the fleet it found, exactly as the first mode
-  would show it if you set those counts yourself.
-- **Search up to.** The most replicas of a role the page tries, 32 unless you
-  change it (at most 64). When no fleet within it serves the rate, the page
-  says so, with the reason, what the largest fleet would serve, and what to
-  change: raise **Search up to**, lower the rate, or loosen (raise) the
-  target that binds. When the reason is a refused term or a floor, not the
-  bound, more replicas do not help: type the term (see below) or raise the
-  target.
-- **How long it takes.** Each answer searches several fleets, then draws the
-  graphs of the fleet found, which takes most of the time. Expect about 20 s
-  on a TTFT fleet from cold, about 25 s at 200 r/s, and about 45 s for the
-  worst corner. The page dims the last answer and counts the seconds while it
-  works. It prices the rate when you let go of the slider, and a new rate or
-  target cancels a size still running.
-
-Switch back to **How much does this fleet serve?** to step the replicas from
-the fleet it found.
-
-## When a term is refused
-
-A source that did not see enough load cannot learn every term, and the page
-then shows refusals instead of numbers. Open **Assume a term the source did
-not learn** and type a value: the prefill rate V_P, the fixed latency a, the
-prompt cv or the router hop. The learned value, or the reason it is missing,
-is shown under each box. A typed value flags every figure that rests on it.
+The address keeps your edges, so a shared link draws the same lines. If an
+edge in the box is wrong, the box is marked and says why under it until you
+fix it, and the graphs keep the edges in use. If a link's edges are wrong, the
+status line says so, and the page draws the default five.
 
 ## Share a scenario
 
@@ -405,15 +412,4 @@ Bound to any address other than loopback, the server needs Kubernetes
 authentication and TLS (`--auth=kubernetes`). The page is then behind the same
 check as the API: a browser must send a bearer token, so open it through a
 proxy that adds one. The flags and the RBAC are in
-[Capacity planner serve](../../developer-guide/capacity-planner-serve.md#kubernetes-authentication).
-
-## Troubleshooting
-
-| You see | What it means |
-| --- | --- |
-| "This server reads no source" | Start it with `--prometheus`, `--recordings` or both. |
-| "the model has 2 decode variants (a, b)" | The page prices one P/D fleet. Open **Source**, type one of the names in **Decode variant** (or **Prefill variant**), and press **Load**. |
-| Refused figures everywhere, `NoPrefillCapacity` or `NoFixedLatency` | The window had too little load to learn V_P or a. Pick a busier window, or assume the term. |
-| "Pricing..." for several seconds | A new replica count, statistic or view prices whole curves. A rate move is fast. |
-| `401` | The server checks a bearer token. See [Run it for others](#run-it-for-others). |
-| `403` "this server answers loopback names only" | The browser or a proxy named another host. Open `http://127.0.0.1:8080/`, or keep the `Host` header. |
+[Kubernetes authentication](api.md#kubernetes-authentication).

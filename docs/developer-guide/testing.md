@@ -423,7 +423,7 @@ the slo analyzer listed, streamed load, router TTFT recorded.
    capture with kube-state-metrics registers (12,500 steps, a little over
    two days at 15 s), which bounds the load; and `whatifsource.MaxSamples`,
    20 million samples held in memory, which grows with the Pods as well.
-   [Capacity planner capture](capacity-planner-capture.md#load-on-prometheus) gives the load
+   [Record a window: Load on Prometheus](../guides/record-for-capacity-planner/README.md#load-on-prometheus) gives the load
    a window puts on Prometheus.
 
 4. Generate the recording, and add it as a golden like any recording

@@ -23,7 +23,7 @@ import (
 // those series. A query that starts reading a new series, or stops reading
 // one, fails here until both say so.
 const (
-	metricsDoc   = "../../docs/reference/capacity-planner-metrics.md"
+	metricsDoc   = "../../docs/guides/capacity-planner/metrics.md"
 	recordingYML = "../../docs/guides/record-for-capacity-planner/guide.yaml"
 )
 
