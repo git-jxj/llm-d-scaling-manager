@@ -1109,18 +1109,31 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		// the pooled figure, a router that feeds the first free pod, has none.
 		var gate waitTail
 		if gated {
-			g := newGateStage(pf, rate, parts.prefill)
-			gate = g.wait()
-			out.Parts.RouterWait, out.Parts.BurstWait = g.routerWait().mean(), g.burstWait().mean()
+			g, ok := newGateStage(pf, rate, parts.prefill)
+			if ok {
+				gate = g.wait()
+				_, ok = m.withWait(gate)
+			}
+			if ok {
+				out.Parts.RouterWait, out.Parts.BurstWait = g.routerWait().mean(), g.burstWait().mean()
+			} else {
+				// No finite gate to price, or one the mixture does not take:
+				// the wait is left unpriced and flagged so, a miss.
+				gate = waitTail{}
+				out.Flags = unpriceGate(out.Flags)
+			}
 		}
 		withGate := func(mix stageMix, pooled bool) stageMix {
 			if pooled || len(gate.w) == 0 {
 				return mix
 			}
-			// psStages' parts have no wait of their own, so the gate's
-			// always takes.
-			out, _ := mix.withWait(gate)
-			return out
+			gm, ok := mix.withWait(gate)
+			if !ok {
+				// Checked above on the plan's own mixture, whose parts the
+				// others share in shape: not reached.
+				return mix
+			}
+			return gm
 		}
 		type key struct{ old, pooled bool }
 		mixes := map[key]stageMix{}

@@ -91,12 +91,38 @@ type gateStage struct {
 }
 
 // newGateStage is the gate at rate on the prefill plan pf, whose mean
-// prefill stretch over the requests (psParts.prefill) is stretch.
-func newGateStage(pf prefillPlan, rate, stretch float64) gateStage {
+// prefill stretch over the requests (psParts.prefill) is stretch. ok is
+// false where it has no finite, positive drain to price (a work, stretch or
+// rate that is not finite, or no work): the caller then leaves the wait
+// unpriced (unpriceGate).
+//
+// A burst under one request (lambda Delta < 1, light load on short prompts)
+// is not raised to one: the drain m = lambda Delta E[S] then shrinks to 0
+// with the burst, and so do both waits, which is the limit of a gate that
+// releases requests one at a time with nothing behind them. Raising it to one
+// would charge a request E[S]/2 for burst-mates it does not have.
+func newGateStage(pf prefillPlan, rate, stretch float64) (_ gateStage, ok bool) {
 	delta := max(EPPRefreshSeconds, pf.work+stretch)
 	b := rate * delta
 	m := b * pf.work
-	return gateStage{staleness: delta, burst: b, drain: m, closed: m / (m + delta)}
+	g := gateStage{staleness: delta, burst: b, drain: m, closed: m / (m + delta)}
+	if !Finite(pf.work) || !Finite(stretch) || !Finite(rate) || !Finite(delta) || !Finite(m) || !(m > 0) || !Finite(g.closed) {
+		return gateStage{}, false
+	}
+	return g, true
+}
+
+// unpriceGate is flags with FlowControlWaitPriced traded back for
+// AboveFlowControlOnset: the gate's wait not priced, a miss.
+func unpriceGate(flags []Flag) []Flag {
+	out := make([]Flag, 0, len(flags))
+	for _, f := range flags {
+		if f == FlowControlWaitPriced {
+			f = AboveFlowControlOnset
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // routerWait is W_router: 0 with probability 1 - pi, else exponential at

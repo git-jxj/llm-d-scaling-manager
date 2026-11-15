@@ -24,7 +24,10 @@ func TestGateStage_TheFiguresFollowTheMechanism(t *testing.T) {
 	if uu != nil {
 		t.Fatal(uu)
 	}
-	g := newGateStage(pf, rate, parts.prefill)
+	g, ok := newGateStage(pf, rate, parts.prefill)
+	if !ok {
+		t.Fatal("no gate at the held step")
+	}
 	delta := pf.work + parts.prefill
 	nearRel(t, "staleness", g.staleness, delta, 1e-12)
 	nearRel(t, "burst", g.burst, rate*delta, 1e-12)
@@ -62,9 +65,128 @@ func TestGateStage_StalenessIsAtLeastThePoll(t *testing.T) {
 	}
 	pf := pl.pf
 	pf.work = 0.001
-	g := newGateStage(pf, 10, 0.002)
-	if g.staleness != EPPRefreshSeconds {
-		t.Errorf("staleness %g s, want the poll %g s", g.staleness, EPPRefreshSeconds)
+	g, ok := newGateStage(pf, 10, 0.002)
+	if !ok || g.staleness != EPPRefreshSeconds {
+		t.Errorf("staleness %g s (ok %v), want the poll %g s", g.staleness, ok, EPPRefreshSeconds)
+	}
+}
+
+// A burst under one request is not raised to one: the drain and both waits
+// shrink with it, to under half a request's own work.
+func TestGateStage_ASmallBurstIsNotRaised(t *testing.T) {
+	fl := fcFleet(q32Fleet("C"), true)
+	pl, u := fl.plan()
+	if u != nil {
+		t.Fatal(u)
+	}
+	pf := pl.pf
+	pf.work = 0.01
+	g, ok := newGateStage(pf, 2, 0.01) // Delta 0.05 s (the poll), burst 0.1
+	if !ok {
+		t.Fatal("no gate")
+	}
+	nearRel(t, "burst", g.burst, 0.1, 1e-12)
+	nearRel(t, "drain", g.drain, 0.1*0.01, 1e-12)
+	if r, b := g.routerWait().mean(), g.burstWait().mean(); !(r < pf.work/2 && b < pf.work/2) {
+		t.Errorf("router wait %g s, burst wait %g s: want both under half the work %g s", r, b, pf.work)
+	}
+}
+
+// A gate with no finite, positive drain is not priced: NaN or infinite work,
+// stretch or rate, and no work, give ok false, and unpriceGate trades the
+// priced flag back for AboveFlowControlOnset, the rest kept.
+func TestGateStage_NonFiniteInputsAreNotPriced(t *testing.T) {
+	fl := fcFleet(q32Fleet("C"), true)
+	pl, u := fl.plan()
+	if u != nil {
+		t.Fatal(u)
+	}
+	nan, inf := math.NaN(), math.Inf(1)
+	for _, c := range []struct {
+		name                string
+		work, stretch, rate float64
+	}{
+		{"NaN work", nan, 1, 3}, {"Inf work", inf, 1, 3}, {"NaN stretch", 0.47, nan, 3},
+		{"Inf stretch", 0.47, inf, 3}, {"NaN rate", 0.47, 1, nan}, {"Inf rate", 0.47, 1, inf},
+		{"no work", 0, 1, 3}, {"no rate", 0.47, 1, 0},
+	} {
+		pf := pl.pf
+		pf.work = c.work
+		if g, ok := newGateStage(pf, c.rate, c.stretch); ok {
+			t.Errorf("%s: priced %+v", c.name, g)
+		}
+	}
+	got := unpriceGate([]Flag{UnvalidatedTTFT, FlowControlWaitPriced, AssumedVP})
+	want := []Flag{UnvalidatedTTFT, AboveFlowControlOnset, AssumedVP}
+	if len(got) != len(want) {
+		t.Fatalf("flags %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("flags %v, want %v", got, want)
+		}
+	}
+}
+
+// Past MaxRouterWaitKneeShare of the knee the gate is not priced even with
+// the switch on: just above the share the flag is AboveFlowControlOnset, the
+// gate's parts are 0 and the figure is the switch-off one; just under it the
+// gate is priced.
+func TestGateStage_NotPricedPastTheShare(t *testing.T) {
+	c4 := psFleet(0.0577, 4)
+	c4.Decode.Replicas = 4
+	fl := fcFleet(c4, true)
+	on := mustOnsets(t, fl)
+	share := MaxRouterWaitKneeShare * mustTTFT(t, ttftAt(t, fl, 1, 0)).PrefillKnee
+	if !(on.Prefill < share) {
+		t.Fatalf("precondition: onset %g under the share %g", on.Prefill, share)
+	}
+	under := mustTTFT(t, ttftAt(t, fl, share*(1-1e-6), 0.9))
+	if !under.HasFlag(FlowControlWaitPriced) || !(under.Parts.RouterWait > 0) {
+		t.Errorf("just under the share: flags %v, router wait %g s", under.Flags, under.Parts.RouterWait)
+	}
+	over := mustTTFT(t, ttftAt(t, fl, share*(1+1e-6), 0.9))
+	off := mustTTFT(t, ttftAt(t, fcFleet(c4, false), share*(1+1e-6), 0.9))
+	if !over.HasFlag(AboveFlowControlOnset) || over.HasFlag(FlowControlWaitPriced) || over.Parts.RouterWait != 0 || over.Parts.BurstWait != 0 || over.Seconds != off.Seconds {
+		t.Errorf("just over the share: flags %v, router wait %g s, burst wait %g s, %g s against %g s off",
+			over.Flags, over.Parts.RouterWait, over.Parts.BurstWait, over.Seconds, off.Seconds)
+	}
+}
+
+// withWait refuses a wait it cannot sum onto a part's own (a shifted decode
+// wait onto the gate's three pieces), and two waits of two unshifted pieces
+// each sum: their means add, and their atom is the product of the atoms.
+func TestGateStage_WaitsSumOrRefuse(t *testing.T) {
+	gate := gateStage{drain: 4, closed: 0.5}.wait()
+	mix := stageMix{w: []float64{1}, b: []block{{own: newOwnTime(1, 0)}}}
+	gated, ok := mix.withWait(gate)
+	if !ok {
+		t.Fatal("the gate did not take on an empty part")
+	}
+	if _, ok := gated.withWait(boundWait(0.2, 0.5, 3)); ok {
+		t.Error("a shifted wait summed onto the gate's")
+	}
+	a, _ := expWait(0.3, 2).sum(expWait(0.4, 5))
+	b, _ := expWait(0.2, 1).sum(expWait(0.5, 3))
+	s, ok := a.sum(b)
+	if !ok {
+		t.Fatal("two two-piece unshifted waits did not sum")
+	}
+	relNear(t, "mean", s.mean(), a.mean()+b.mean(), 1e-5)
+	tail := func(w waitTail, u float64) float64 {
+		var p float64
+		for i, x := range w.w {
+			p += x * math.Exp(-w.r[i]*u)
+		}
+		return p
+	}
+	relNear(t, "P(W > 0)", tail(s, 0), 1-(1-tail(a, 0))*(1-tail(b, 0)), 1e-9)
+	// P(A + B > u) >= P(A > u) and P(B > u), and below P(A > u) + P(B > u) +
+	// P(A > 0) P(B > 0), at a few points.
+	for _, u := range []float64{0.1, 1, 3} {
+		if p := tail(s, u); !(p >= max(tail(a, u), tail(b, u))-1e-12 && p <= tail(a, u)+tail(b, u)+tail(a, 0)*tail(b, 0)) {
+			t.Errorf("P(W > %g) = %g, against %g and %g", u, p, tail(a, u), tail(b, u))
+		}
 	}
 }
 

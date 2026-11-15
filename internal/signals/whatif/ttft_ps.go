@@ -223,8 +223,8 @@ func (m stageMix) quantile(alpha float64) float64 {
 func (m stageMix) withWait(wait waitTail) (_ stageMix, ok bool) {
 	out := stageMix{w: m.w, b: make([]block, len(m.b))}
 	for i, b := range m.b {
-		w, ok := b.wait.sum(wait)
-		if !ok {
+		w, summed := b.wait.sum(wait)
+		if !summed {
 			return stageMix{}, false
 		}
 		out.b[i] = block{wait: w, own: b.own}
