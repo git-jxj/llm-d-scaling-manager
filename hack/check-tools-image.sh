@@ -105,7 +105,9 @@ echo "The commands"
 out="$(tools help 2>&1)" && rc=0 || rc=$?
 missing=""
 for c in admin-setup install admin-finish release-files prepull weights engine-cache workload-patch scaledobjects-plan scaledobjects-apply utilization-share version; do
-    printf '%s' "$out" | grep -q "scaling-manager-tools $c" || missing="$missing $c"
+    # A here-string, not a pipe: grep -q stops at its first match, and under
+    # pipefail the printf it cut off fails the line on a long help text.
+    grep -q "scaling-manager-tools $c" <<< "$out" || missing="$missing $c"
 done
 if [ "$rc" = 0 ] && [ -z "$missing" ]; then ok "help exits 0 and names every command"; else fail "help: exit $rc, missing:${missing}"; fi
 
