@@ -345,8 +345,8 @@ for spec in "v1.3.0|v1.2.0 v1.3.0|true" "v1.2.1|v1.2.0 v1.3.0 v1.2.1|false" "v1.
 done
 if [ -z "$bad" ]; then ok "the meta step's latest= output agrees with the tags it resolved"; else fail "latest= disagrees with the tags:$bad"; fi
 
-expect_yq "the tools image is released only after the release job (its tag guard)" \
-    'release' '[.jobs.release-tools.needs] | flatten | join(",")'
+expect_yq "the tools image is released only after the release job (its tag guard) and the signed release files it bakes in" \
+    'release,release-sign' '[.jobs.release-tools.needs] | flatten | join(",")'
 expect_yq "the tools job may sign and push, reads contents, and keeps no credentials" \
     'contents=read,id-token=write,packages=write|false' \
     '(.jobs.release-tools.permissions | to_entries | map(.key + "=" + .value) | sort | join(",")) + "|" + (.jobs.release-tools.steps[] | select(.uses == "actions/checkout*") | .with."persist-credentials" | tostring)'

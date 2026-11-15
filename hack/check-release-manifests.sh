@@ -641,15 +641,31 @@ expect_wf() {
     if [ "$got" = "$2" ]; then pass; else fail "ci-release.yaml: $1: got '$got', want '$2'"; fi
 }
 expect_wf "release-files runs after both images are pushed and signed" 'release,release-tools' '[.jobs."release-files".needs] | flatten | join(",")'
-expect_wf "release-files may upload (contents) and sign (id-token), nothing more" \
-    'contents=write,id-token=write' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
+expect_wf "release-files may upload (contents) and pull the tools image (packages: read), and signs nothing" \
+    'contents=write,packages=read' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
+expect_wf "release-sign may sign (id-token) and read, and write nothing" \
+    'contents=read,id-token=write' '.jobs."release-sign".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
 expect_wf "the image job still cannot write the release" 'read' '.jobs.release.permissions.contents'
-expect_wf "the release-files checkout leaves no credentials behind" 'false' \
-    '.jobs."release-files".steps[] | select(.uses == "actions/checkout*") | .with."persist-credentials"'
+expect_wf "the release-files and release-sign checkouts leave no credentials behind" 'false,false' \
+    '[.jobs."release-files", .jobs."release-sign"] | map(.steps[] | select(.uses == "actions/checkout*") | .with."persist-credentials") | join(",")'
 expect_wf "the files are rendered by the digest the image job pushed" '${{ steps.push.outputs.digest }}|${{ needs.release.outputs.digest }}' \
-    '.jobs.release.outputs.digest + "|" + (.jobs."release-files".steps[] | select(.name == "Render the release files") | .env.DIGEST)'
+    '.jobs.release.outputs.digest + "|" + (.jobs."release-sign".steps[] | select(.name == "Render the release files") | .env.DIGEST)'
 expect_wf "the render goes through make release-manifests by that digest" 'true' \
-    '.jobs."release-files".steps[] | select(.name == "Render the release files") | .run | test("make release-manifests IMG=\"\$IMAGE@\$DIGEST\"") | tostring'
+    '.jobs."release-sign".steps[] | select(.name == "Render the release files") | .run | test("make release-manifests IMG=\"\$IMAGE@\$DIGEST\"") | tostring'
+# docs/proposals/two-command-install.md: one signing run; the tools image and
+# the GitHub Release both take its artifact; no other job renders or signs.
+expect_wf "only release-sign renders and signs the files" 'release-sign' \
+    '[.jobs | to_entries[] | select(.value.steps[]? | (.name == "Render the release files" or .name == "Sign the release files" or ((.run // "") | test("sign-blob")))) | .key] | unique | join(",")'
+expect_wf "release-sign uploads dist as the artifact release-tools and release-files download" 'release-dist|dist/|release-dist,release-dist' \
+    '(.jobs."release-sign".steps[] | select(.uses == "actions/upload-artifact*") | .with.name + "|" + .with.path) + "|" + ([.jobs."release-tools", .jobs."release-files"] | map(.steps[] | select(.uses == "actions/download-artifact*") | .with.name) | join(","))'
+expect_wf "release-tools verifies every file with cosign verify-blob before any build" 'true' \
+    '(.jobs."release-tools".steps | to_entries | map(select((.value.run // "") | test("cosign verify-blob"))) | .[0].key) < (.jobs."release-tools".steps | to_entries | map(select(.value.uses // "" | test("^docker/build-push-action"))) | .[0].key) | tostring'
+expect_wf "every tools build (both scans and the push) bakes in the release files" 'release=dist,release=dist,release=dist' \
+    '[.jobs."release-tools".steps[] | select(.uses == "docker/build-push-action*") | .with."build-contexts" | sub("\n$"; "")] | join(",")'
+expect_wf "every tools build names the SHA256SUMS it must bake (a cached layer cannot stand in)" '3' \
+    '[.jobs."release-tools".steps[] | select(.uses == "docker/build-push-action*") | .with."build-args" | select(test("RELEASE_SHA256SUMS=\$\{\{ env.RELEASE_SHA256SUMS \}\}"))] | length'
+expect_wf "release-files checks the pushed tools image carries the artifact before the upload" 'true' \
+    '(.jobs."release-files".steps | to_entries | map(select((.value.run // "") | test("(^|\n) *bash hack/compare-baked-release-files.sh --image \"\$IMAGE@\$DIGEST\" dist *(\n|$)"))) | .[0].key) < (.jobs."release-files".steps | to_entries | map(select(.value.name == "Attach the files to the GitHub Release")) | .[0].key) | tostring'
 
 # The sign step, executed with a stub cosign over the good render: one bundle
 # per file, SHA256SUMS included, and a refusal when a file is missing.
@@ -661,7 +677,7 @@ echo "$*" >> "$STUB_LOG"
 while [ $# -gt 0 ]; do case "$1" in --bundle) echo '{}' > "$2"; shift 2 ;; *) shift ;; esac; done
 STUB
 chmod +x "$WORK/wf/bin/cosign"
-yq -r '.jobs."release-files".steps[] | select(.name == "Sign the release files") | .run' "$WF" > "$WORK/wf/sign.sh"
+yq -r '.jobs."release-sign".steps[] | select(.name == "Sign the release files") | .run' "$WF" > "$WORK/wf/sign.sh"
 sign_run() {
     (cd "$WORK/wf/run" && STUB_LOG="$WORK/wf/cosign.log" PATH="$WORK/wf/bin:$PATH" bash "$WORK/wf/sign.sh") > "$WORK/wf/sign.out" 2>&1
 }
