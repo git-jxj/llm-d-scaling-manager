@@ -70,7 +70,7 @@ package whatif
 //     on (0, m), and a request's place in its burst is about uniform too,
 //     so neither wait can pass m; the exponential's p95 (1.5 m) does. It is
 //     kept because the measured wait is not capped at m: at the held step a
-//     quarter of the requests that waited waited past 10 s, past the stage's
+//     quarter of the requests held at the router waited past 10 s, past the stage's
 //     m of 8.7 s. Uniform waits read the held step's p90 and p95 at 21.4 s
 //     and 25.0 s (0.87 of the client's p95, under the rule) where the
 //     exponential reads 23.6 s and 28.1 s; the mean is the same either way.
