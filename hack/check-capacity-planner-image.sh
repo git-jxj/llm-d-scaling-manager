@@ -70,8 +70,9 @@ chmod 0644 "$T/recordings/short.jsonl.gz"
 
 # The image's own command, published to loopback only, as the guide does.
 docker run -d --name "$NAME" -p 127.0.0.1::8080 -v "$T/recordings:/recordings:ro" "$IMG" >/dev/null
-port="$(docker port "$NAME" 8080/tcp | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -1)"
-[ -n "$port" ] || { docker logs "$NAME" || true; echo "FAIL: no loopback port published: $(docker port "$NAME" 2>&1)"; exit 1; }
+sleep 1
+port="$( { docker port "$NAME" 8080/tcp 2>/dev/null || true; } | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -1)"
+[ -n "$port" ] || { docker logs "$NAME" 2>&1 || true; echo "FAIL: serve did not start, or published no loopback port: $(docker port "$NAME" 2>&1)"; exit 1; }
 BASE="http://127.0.0.1:$port"
 
 up=false
