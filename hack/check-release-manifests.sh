@@ -664,8 +664,12 @@ expect_wf "every tools build (both scans and the push) bakes in the release file
     '[.jobs."release-tools".steps[] | select(.uses == "docker/build-push-action*") | .with."build-contexts" | sub("\n$"; "")] | join(",")'
 expect_wf "every tools build names the SHA256SUMS it must bake (a cached layer cannot stand in)" '3' \
     '[.jobs."release-tools".steps[] | select(.uses == "docker/build-push-action*") | .with."build-args" | select(test("RELEASE_SHA256SUMS=\$\{\{ env.RELEASE_SHA256SUMS \}\}"))] | length'
+expect_wf "release-files compares the files of both published variants, amd64 and arm64" 'true' \
+    '.jobs."release-files".steps[] | select(.name == "Check the tools image carries these files") | .run | test("for platform in linux/amd64 linux/arm64; do") | tostring'
+expect_wf "a re-run of release-sign replaces its artifact" 'true' \
+    '.jobs."release-sign".steps[] | select(.uses == "actions/upload-artifact*") | .with.overwrite | tostring'
 expect_wf "release-files checks the pushed tools image carries the artifact before the upload" 'true' \
-    '(.jobs."release-files".steps | to_entries | map(select((.value.run // "") | test("(^|\n) *bash hack/compare-baked-release-files.sh --image \"\$IMAGE@\$DIGEST\" dist *(\n|$)"))) | .[0].key) < (.jobs."release-files".steps | to_entries | map(select(.value.name == "Attach the files to the GitHub Release")) | .[0].key) | tostring'
+    '(.jobs."release-files".steps | to_entries | map(select((.value.run // "") | test("(^|\n) *bash hack/compare-baked-release-files.sh --platform \"\$platform\" --image \"\$IMAGE@\$DIGEST\" dist *(\n|$)"))) | .[0].key) < (.jobs."release-files".steps | to_entries | map(select(.value.name == "Attach the files to the GitHub Release")) | .[0].key) | tostring'
 
 # The sign step, executed with a stub cosign over the good render: one bundle
 # per file, SHA256SUMS included, and a refusal when a file is missing.

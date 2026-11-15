@@ -600,6 +600,8 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 30
+          # A re-run of this job replaces the artifact of the earlier attempt.
+          overwrite: true
 
   # Attaches release-sign's artifact to the GitHub Release: the same bytes the
   # tools image carries, never rendered or signed again. Its own job, so the
@@ -636,8 +638,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # The tools image, by digest, must carry exactly these files: its baked
-      # SHA256SUMS and every bundle equal to the artifact's. A re-run of the
-      # signing job without a rebuild of the image fails here.
+      # SHA256SUMS and every bundle equal to the artifact's, in both variants
+      # it publishes. A re-run of the signing job without a rebuild of the
+      # image fails here.
       - name: Check the tools image carries these files
         env:
           IMAGE: ${{ needs.release-tools.outputs.image }}
@@ -645,8 +648,10 @@ jobs:
         run: |
           set -euo pipefail
           [ -n "$IMAGE" ] && [ -n "$DIGEST" ] || { echo "::error::the release-tools job reported no image or digest"; exit 1; }
-          docker pull -q "$IMAGE@$DIGEST" >/dev/null
-          bash hack/compare-baked-release-files.sh --image "$IMAGE@$DIGEST" dist
+          for platform in linux/amd64 linux/arm64; do
+            docker pull -q --platform "$platform" "$IMAGE@$DIGEST" >/dev/null
+            bash hack/compare-baked-release-files.sh --platform "$platform" --image "$IMAGE@$DIGEST" dist
+          done
 
       # A draft is created when the tag has no release, and a draft is
       # replaced freely. A PUBLISHED release is not changed: operators may

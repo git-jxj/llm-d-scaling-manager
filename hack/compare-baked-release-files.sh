@@ -9,6 +9,8 @@
 #
 #   hack/compare-baked-release-files.sh <baked dir> <dist dir>
 #   hack/compare-baked-release-files.sh --image <image> <dist dir>    needs docker
+#   hack/compare-baked-release-files.sh --platform linux/arm64 --image <image> <dist dir>
+#                                                       one variant of a multi-arch image
 #
 # <dist dir> is what make release-manifests wrote and the signing step signed:
 # the manifests, scaling-manager-tools-<version>.tar.gz, SHA256SUMS and a
@@ -18,7 +20,12 @@ set -euo pipefail
 
 usage() { echo "usage: $0 <baked dir> | --image <image>  <dist dir>" >&2; exit 2; }
 
-IMAGE="" BAKED=""
+IMAGE="" BAKED="" PLATFORM=""
+if [ "${1:-}" = --platform ]; then
+    PLATFORM="${2:-}"
+    shift 2 || usage
+    [ "${1:-}" = --image ] || usage
+fi
 if [ "${1:-}" = --image ]; then
     IMAGE="${2:-}"
     shift 2 || usage
@@ -34,11 +41,11 @@ T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 if [ -n "$IMAGE" ]; then
     command -v docker >/dev/null 2>&1 || { echo "--image needs docker" >&2; exit 2; }
-    cid="$(docker create "$IMAGE" help)"
+    cid="$(docker create ${PLATFORM:+--platform "$PLATFORM"} "$IMAGE" help)"
     rc=0
     docker cp "$cid:/opt/scaling-manager-tools/release" "$T/baked" >/dev/null || rc=$?
     docker rm "$cid" >/dev/null || true
-    [ "$rc" = 0 ] || { echo "REFUSED: $IMAGE has no /opt/scaling-manager-tools/release" >&2; exit 1; }
+    [ "$rc" = 0 ] || { echo "REFUSED: $IMAGE${PLATFORM:+ ($PLATFORM)} has no /opt/scaling-manager-tools/release" >&2; exit 1; }
     BAKED="$T/baked"
 fi
 [ -d "$BAKED" ] || { echo "REFUSED: no baked directory $BAKED" >&2; exit 1; }
@@ -81,4 +88,4 @@ manifests="$(find "$DIST" -maxdepth 1 -name 'scaling-manager-*.yaml' | wc -l | t
 [ "$manifests" -gt 0 ] || refuse "no manifest in $DIST"
 [ "$bundles" -gt "$manifests" ] || refuse "only $bundles bundles for $manifests manifests and SHA256SUMS in $DIST: unsigned files"
 [ "$bad" = 0 ] || exit 1
-echo "baked release files match: $n files ($manifests manifests, $bundles bundles, SHA256SUMS)"
+echo "baked release files match${PLATFORM:+ ($PLATFORM)}: $n files ($manifests manifests, $bundles bundles, SHA256SUMS)"
