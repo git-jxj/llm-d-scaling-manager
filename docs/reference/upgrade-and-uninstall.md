@@ -20,19 +20,19 @@ Pin a release tag or a digest, and deploy with the manifests from the **same**
 release. An image older than the manifests crash-loops on flags it does not
 know. Releases are listed on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases);
-the current one is `v0.11.0`.
+the current one is `v0.11.1`.
 A checked-out release deploys its own tag, so `IMG_TAG` below only makes that
 explicit. Each release's notes list its image digest; a digest names one build,
 and a tag could in principle be re-pushed.
 
 ```bash
-git checkout v0.11.0
-make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.11.0
-# or by digest (v0.11.0's, from its release notes)
+git checkout v0.11.1
+make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.11.1
+# or by digest (v0.11.1's, from its release notes)
 make deploy-scaling-manager NAMESPACE=<namespace> \
-  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:ec3af197ba63ff2e5f7bc214c90fbb7cf25bb6f442c832a05cfbf74b9c50cd6e
+  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:a1d236e63c37632280d07789e3ba693a7e686dc84d15525ea8d37c090dbd4183
 # out-of-reach shape (the cluster admin runs it): the controller runs in llmsm-<namespace>
-NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.11.0
+NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.11.1
 ```
 
 `IMG_TAG` sets the tag of the default `IMG`; `IMG` replaces the whole reference.
@@ -160,6 +160,27 @@ The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
   delete the old `whatif-planner` ClusterRole and ClusterRoleBinding, and the
   `whatif-planner-reader` Role and RoleBinding in each namespace. Or keep the
   old objects: the rules are the same.
+
+### Upgrading from v0.11.0 to v0.11.1
+
+Follow [Upgrade](#upgrade) above: back up the policy, check out `v0.11.1`, and
+re-run the `make deploy-scaling-manager` command you installed v0.11.0 with, or
+apply the v0.11.1 release files. Nothing to change first. What to expect:
+
+1. **P/D prefill may run more replicas at the same load.** Prefill now has a
+   floor from the requests each replica completes, and a prefill with no
+   measured throughput counts prompts held in the router as demand. Rolling
+   back to v0.11.0 is safe: it keeps the extra prefill windows v0.11.1 learns,
+   without the part only v0.11.1 reads, until they age out.
+2. **Upgrading from v0.11.0 drops no policy keys.** v0.11.1 records which
+   `default` keys of the scaling policy it renders. From the next upgrade on,
+   `make deploy-scaling-manager` drops a recorded key a release stops
+   rendering, with a warning naming it. Keys you added are kept.
+3. **KEDA HPA repair is opt-in** (`KEDA_HPA_REPAIR=true` on
+   `make deploy-scaling-manager`, off by default), and needs the extra grant
+   in [KEDA](keda.md#the-controller-repair-keda_hpa_repair). The release
+   files have no switch for it; installed from them, turn it on by hand
+   ([KEDA](keda.md#installed-from-the-release-files)).
 
 ### Upgrading from v0.11.0-rc1 to v0.11.0
 
