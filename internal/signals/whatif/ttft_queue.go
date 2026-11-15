@@ -245,7 +245,17 @@ type quantiler interface {
 
 // tailQuantile is the least t with exceeds(t) <= alpha, alpha in (0, 1), by
 // bisection from mean: exceeds is non-increasing in t.
+//
+// A mean of +Inf is a quantile of +Inf at once: within rounding of a pod's
+// knee its utilization reads exactly 1 and the stretch overflows. Searched,
+// the bracket would start at +Inf, where no gamma tail converges, and double
+// 200 times; each read runs every series to maxSeriesTerms for a NaN, which
+// reads as a tail of 1, so the search ends at +Inf all the same, some
+// minutes later per quantile.
 func tailQuantile(exceeds func(float64) float64, mean, alpha float64) float64 {
+	if math.IsInf(mean, 1) {
+		return mean
+	}
 	lo, hi := 0.0, mean
 	if !(hi > 0) {
 		hi = 1
@@ -308,6 +318,14 @@ func split(b1 quantiler, dec waitTail, q float64) (value, beta float64) {
 		if v := f(math.Exp(x)); v < best {
 			best, bestX = v, x
 		}
+	}
+	if math.IsInf(best, 1) {
+		// No point of the grid is finite, and none between them is: block 1's
+		// quantile only grows with beta. The golden section would start from
+		// log(beta) = 0, outside (lo, hi), and ask block 1 for quantiles at
+		// alpha < 0, each a bracket doubled 200 times. The beta is the one
+		// that search returned.
+		return best, hi
 	}
 	// Golden section in log(beta) over the best grid point's neighbours.
 	step := (math.Log(hi) - math.Log(lo)) / grid
@@ -440,8 +458,12 @@ func lnGammaP(k, x float64) float64 {
 }
 
 // lnGammaPSeries is ln P(k, x) by its series; NaN when the series does not
-// converge within maxSeriesTerms, never a partial sum.
+// converge within maxSeriesTerms, never a partial sum. A k or x that is not
+// finite is NaN at once: the series never converges there.
 func lnGammaPSeries(k, x float64) float64 {
+	if !Finite(k) || !Finite(x) {
+		return math.NaN()
+	}
 	term := 1 / k
 	sum := term
 	for n := 1; n < maxSeriesTerms; n++ {
@@ -457,7 +479,12 @@ func lnGammaPSeries(k, x float64) float64 {
 
 // lnGammaQFraction is ln Q(k, x) by its continued fraction (modified Lentz);
 // NaN when it does not converge within maxSeriesTerms, never a partial value.
+// A k or x that is not finite is NaN at once, the value the fraction reaches
+// there after maxSeriesTerms steps: at x = +Inf every step reads NaN.
 func lnGammaQFraction(k, x float64) float64 {
+	if !Finite(k) || !Finite(x) {
+		return math.NaN()
+	}
 	const tiny = 1e-300
 	b := x + 1 - k
 	c := 1 / tiny
