@@ -89,6 +89,7 @@ point (headroom times the lower knee).
 | `--tls-cert-file`, `--tls-key-file` | The server's certificate and key. Required with `--auth=kubernetes`: a token is not sent in the clear. |
 | `--token-audiences A,...` | The audiences a TokenReview checks a token for. Default: the API server's own. |
 | `--shutdown-timeout` | How long requests in flight may run after Ctrl-C. Default 10s. |
+| `--plan-budget` | How long one plan may be priced. Past it the plan stops and is refused with `PlanBudgetExceeded`. Default 5m; 0 is the default too, and a negative value is refused. |
 
 No request can name a host or a file path: the Prometheus URL is a flag, and a
 recording is a file name inside `--recordings`. An error names no server path.
@@ -103,6 +104,9 @@ the same shape:
 ```json
 {"schemaVersion": 1, "error": "slo.ttft.statistic \"p100\", want mean or a percentile from p1 to p99.9 (p90)"}
 ```
+
+An error a client can act on also has a `reason`. The only one today is
+`PlanBudgetExceeded` (see below).
 
 With `--auth=none` the server answers only requests addressed to a loopback
 name (`localhost`, `127.0.0.0/8`, `[::1]`, by the same rule `--listen` is
@@ -529,7 +533,18 @@ refusal is a figure, as in a plan.
 A field asked wrongly is a 400 naming it, and an `inputsId` the server no
 longer holds a 404: resolve the inputs again. The server prices as many plans at
 once as it has CPUs, and two inputs at once; past that a request is 503 with
-`Retry-After: 1`. A plan whose client goes away stops between figures. Reading
+`Retry-After: 1`. A plan whose client goes away stops between figures.
+
+A plan that is still pricing when `--plan-budget` (default 5 minutes) runs out
+stops at its next figure and is a 503 with a reason, and no `Retry-After`:
+
+```json
+{"schemaVersion": 1, "error": "the plan was not priced within the server's plan budget of 5m0s, and was stopped: ask for fewer views, or start the server with a larger --plan-budget", "reason": "PlanBudgetExceeded"}
+```
+
+Nothing of that plan is kept, so asking again prices it again. A cold plan of
+the worked recording takes under 20 s. The budget is checked between
+figures, so a plan can run past it by one figure. Reading
 a request may take 30 s, an idle connection is closed after 2 minutes, and a
 response may take 10 minutes (a cold plan, or a capture).
 
@@ -580,6 +595,8 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeSearchSurvivesItsPlan` | One plan slot sizes; a size whose answer's plan ended with its client is not searched again. |
 | `TestSizeOnTheLowEnd` | `sizeOn: low` sizes on the low end of the span, where `point` leaves it under the rate; the answer's headroom is the low end's. |
 | `TestSizeOnLowRefusedAtTheWorstCorner` | Sized `low` where the worst corner refuses the limit, the size is that refusal, said of the corner, never `ReplicaBoundReached`. |
+| `TestPlanPastItsBudgetIsRefused`, `TestPlanEndedByItsClientIsNotTheBudget` | A plan past its budget is a 503 with reason `PlanBudgetExceeded` within a figure of the budget, caches nothing and frees its slot; a plan whose client ends first is the client's end, with no reason. |
+| `TestServeKneeRoundingPricesAtOnce` | At 12 prefill and 19 decode replicas, the curve point at the prefill knee is refused `Saturated` in milliseconds. Two imbalance corners sit one rounding step under it there, and the point used to take over 30 minutes. |
 | `TestSizeConcurrentSearchOnce`, `TestSizeBusyAndDecodeOnly` | Identical sizes at once search once; with every slot taken a size is a 503 before any search; a source with no prefill variant is a 400. |
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |

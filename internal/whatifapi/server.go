@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // maxBody is the largest request body the API reads: a scenario is a few
@@ -54,6 +55,35 @@ type Config struct {
 	// priced at once; past them a request is 503 with Retry-After. 0 is the
 	// default: GOMAXPROCS plans, defaultMaxInputs inputs.
 	MaxPlans, MaxInputs int
+	// PlanBudget is how long one plan may be priced. Past it the plan stops
+	// at its next figure and is refused with PlanBudgetExceeded. 0 is
+	// DefaultPlanBudget.
+	PlanBudget time.Duration
+}
+
+// DefaultPlanBudget is the plan budget a server has when its Config names
+// none: a cold plan of the worked recording takes under 20 s, and a response
+// may take 10 minutes to write.
+const DefaultPlanBudget = 5 * time.Minute
+
+// ReasonPlanBudgetExceeded is the reason an ErrorResponse gives for a plan
+// stopped at the server's plan budget.
+const ReasonPlanBudgetExceeded = "PlanBudgetExceeded"
+
+// errPlanBudget is the cause a plan's context ends with at its budget.
+var errPlanBudget = errors.New("plan budget reached")
+
+// BudgetError is a plan stopped because it ran past the server's plan
+// budget. Nothing of it is cached, so the same plan asked again runs again.
+type BudgetError struct {
+	// Budget is the server's plan budget.
+	Budget time.Duration
+}
+
+// Error says what ran out and what to do.
+func (e BudgetError) Error() string {
+	return fmt.Sprintf("the plan was not priced within the server's plan budget of %s, and was stopped: "+
+		"ask for fewer views, or start the server with a larger --plan-budget", e.Budget)
 }
 
 // Server serves the API. Its state is caches only: an inputs entry per
@@ -73,6 +103,8 @@ type Server struct {
 	// planSlots and inputSlots bound the work in flight: a token per request
 	// priced.
 	planSlots, inputSlots chan struct{}
+	// planBudget is how long one plan may be priced.
+	planBudget time.Duration
 	// planFlight, curveFlight and limitFlight price each key once at a time:
 	// identical requests in flight share one pricing and one slot.
 	planFlight  flight[[]byte]
@@ -103,7 +135,11 @@ func New(c Config) *Server {
 	if inputs <= 0 {
 		inputs = defaultMaxInputs
 	}
-	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
+	budget := c.PlanBudget
+	if budget <= 0 {
+		budget = DefaultPlanBudget
+	}
+	return &Server{planBudget: budget, resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs)}
@@ -262,7 +298,7 @@ func (s *Server) planOnce(ctx context.Context, req PlanRequest, held bool) ([]by
 			}
 			defer func() { <-s.planSlots }()
 		}
-		out, err := (&planner{s: s, e: e, sc: sc}).plan(ctx)
+		out, err := s.planWithin(ctx, &planner{s: s, e: e, sc: sc})
 		if err != nil {
 			return nil, err
 		}
@@ -273,6 +309,19 @@ func (s *Server) planOnce(ctx context.Context, req PlanRequest, held bool) ([]by
 		}
 		return s.plans.add(id, body), nil
 	})
+}
+
+// planWithin prices p within the server's plan budget: past it, the plan
+// stops at its next figure and is a BudgetError. A request that ended first
+// is its context's error, as before.
+func (s *Server) planWithin(ctx context.Context, p *planner) (*PlanResponse, error) {
+	bctx, cancel := context.WithTimeoutCause(ctx, s.planBudget, errPlanBudget)
+	defer cancel()
+	out, err := p.plan(bctx)
+	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(bctx), errPlanBudget) {
+		return nil, BudgetError{Budget: s.planBudget}
+	}
+	return out, err
 }
 
 // LoopbackOnly answers only requests addressed to a loopback name, by the
@@ -335,8 +384,9 @@ func writeBody(w http.ResponseWriter, body []byte) {
 }
 
 // writeErr writes err with its status: 400 for the caller's input, 404 for
-// an unknown inputsId, 503 for a busy server (with Retry-After) or a request
-// that ended, 500 for anything else.
+// an unknown inputsId, 503 for a busy server (with Retry-After), a plan past
+// the plan budget (reason PlanBudgetExceeded) or a request that ended, 500
+// for anything else.
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case IsInputError(err):
@@ -348,6 +398,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, errBusy):
 		w.Header().Set("Retry-After", retryAfterSeconds)
 		writeError(w, http.StatusServiceUnavailable, err)
+	case errors.As(err, new(BudgetError)):
+		writeErrorReason(w, http.StatusServiceUnavailable, err, ReasonPlanBudgetExceeded)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("the request ended before it was priced: %w", err))
 	default:
@@ -357,7 +409,12 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // writeError writes an ErrorResponse.
 func writeError(w http.ResponseWriter, status int, err error) {
-	body, merr := marshal(ErrorResponse{SchemaVersion: SchemaVersion, Error: err.Error()})
+	writeErrorReason(w, status, err, "")
+}
+
+// writeErrorReason writes an ErrorResponse with its reason, "" for none.
+func writeErrorReason(w http.ResponseWriter, status int, err error, reason string) {
+	body, merr := marshal(ErrorResponse{SchemaVersion: SchemaVersion, Error: err.Error(), Reason: reason})
 	if merr != nil {
 		body = []byte(`{"error": "internal"}` + "\n")
 	}
