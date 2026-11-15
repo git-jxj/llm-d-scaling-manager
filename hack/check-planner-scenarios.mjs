@@ -17,7 +17,7 @@ vm.runInContext(fs.readFileSync(file, "utf8"), ctx, {filename: file});
 const S = name => vm.runInContext(name, ctx);
 const {esc, linkProblem, checkScenario, readScenarioFile, parseStore, visibleScenarios, putScenario, dropScenario, freeName,
   cleanName, delta, fleetDelta, scenarioTitle, sourceProblem, linkAtLoadStart, linkAtLoadEnd, beginOpen, importPlan, sameCurve, figDelta,
-  compareRows, parseEdges, linkedEdges, edgesBoxProblem, beyondContext, contextNote, bucketSeries} = ctx;
+  compareRows, parseEdges, linkedEdges, edgesBoxProblem, beyondContext, contextNote, bucketSeries, retryDelay} = ctx;
 const MAX_NAME = S("MAX_NAME"), MAX_SCENARIOS = S("MAX_SCENARIOS"), MAX_LINK = S("MAX_LINK");
 
 let passed = 0;
@@ -427,6 +427,19 @@ check("compareRows with other edges says the buckets changed",
 check("compareRows with other edges: the limits read the same", (edgeTable.match(/>same</g) || []).length >= 4, edgeTable);
 const sameEdges = compareRows(withLines(plan(), [2048]), withLines(plan(), [2048]), fmts);
 check("compareRows with the same edges has no Buckets row", !sameEdges.includes(">Buckets<"), sameEdges);
+
+// retryDelay: only a busy server's 503, which sets Retry-After, is asked
+// again; a plan stopped at its budget (503, no Retry-After) never is, or the
+// page would price it from the start up to five more times.
+check("retryDelay waits Retry-After on a busy 503", retryDelay(503, "1", 0) === 1000, retryDelay(503, "1", 0));
+check("retryDelay waits 2 s on Retry-After 2", retryDelay(503, "2", 4) === 2000, retryDelay(503, "2", 4));
+check("retryDelay never retries a 503 without Retry-After (PlanBudgetExceeded)", retryDelay(503, null, 0) === -1, retryDelay(503, null, 0));
+check("retryDelay never retries a 503 with an empty Retry-After", retryDelay(503, " ", 0) === -1, retryDelay(503, " ", 0));
+check("retryDelay stops after five retries", retryDelay(503, "1", 5) === -1, retryDelay(503, "1", 5));
+check("retryDelay reads an unreadable Retry-After as 1 s", retryDelay(503, "soon", 0) === 1000, retryDelay(503, "soon", 0));
+check("retryDelay waits at most 30 s", retryDelay(503, "3600", 0) === 30000, retryDelay(503, "3600", 0));
+check("retryDelay never retries a 200", retryDelay(200, "1", 0) === -1, retryDelay(200, "1", 0));
+check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDelay(500, "1", 0));
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -438,7 +451,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 208;
+const EXPECTED_CASES = 217;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

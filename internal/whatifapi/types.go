@@ -607,7 +607,7 @@ type SizeUnmet struct {
 
 // ErrorResponse is a request refused before any pricing, or a plan stopped
 // before it was priced. Reason names a refusal a client may act on
-// ("PlanBudgetExceeded"); it is absent from every other error.
+// (ReasonPlanBudgetExceeded); it is absent from every other error.
 type ErrorResponse struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Error         string `json:"error"`

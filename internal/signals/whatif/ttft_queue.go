@@ -326,7 +326,11 @@ func split(b1 quantiler, dec waitTail, q float64) (value, beta float64) {
 		// quantile only grows with beta. The golden section would start from
 		// log(beta) = 0, outside (lo, hi), and ask block 1 for quantiles at
 		// alpha < 0, each a bracket doubled 200 times. The beta is the one
-		// that search returned.
+		// that search returned (its bestX stayed 0, and exp(0) is capped at
+		// hi), so DecodeShare reads as before. It is no optimum, and no
+		// caller treats it as one: priceOne refuses a +Inf split (Saturated),
+		// and the old sum's +Inf split only reports its beta as the
+		// DecodeShare beside a +Inf figure; nothing is priced at it.
 		return best, hi
 	}
 	// Golden section in log(beta) over the best grid point's neighbours.

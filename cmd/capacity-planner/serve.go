@@ -153,8 +153,9 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if f.auth == whatifapi.AuthKubernetes && (f.tlsCert == "" || f.tlsKey == "") {
 		return nil, usagef("--auth=%s needs --tls-cert-file and --tls-key-file: a bearer token is not sent in the clear", whatifapi.AuthKubernetes)
 	}
-	if f.planBudget < 0 {
-		return nil, usagef("--plan-budget %s: want a positive duration (0 is the default, %s)", f.planBudget, whatifapi.DefaultPlanBudget)
+	if f.planBudget < 0 || f.planBudget > maxPlanBudget {
+		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s: a plan stopped later is refused after the server's %s write timeout has closed the connection",
+			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget, writeTimeout)
 	}
 	if f.recordings == "" && f.window.prometheus == "" {
 		return nil, usagef("serve needs --prometheus, --recordings or both: a source to resolve inputs from")
@@ -205,6 +206,11 @@ const (
 	writeTimeout = 10 * time.Minute
 	idleTimeout  = 2 * time.Minute
 )
+
+// maxPlanBudget is the largest --plan-budget: a minute under writeTimeout, so
+// a plan stopped at its budget, which may run on for one figure, is refused
+// on a connection still open.
+const maxPlanBudget = writeTimeout - time.Minute
 
 // namespaces is the namespaces a prometheus source may read: --allowed-namespaces,
 // else --namespace alone, each a DNS-1123 label. With --prometheus, one is

@@ -56,14 +56,16 @@ type Config struct {
 	// default: GOMAXPROCS plans, defaultMaxInputs inputs.
 	MaxPlans, MaxInputs int
 	// PlanBudget is how long one plan may be priced. Past it the plan stops
-	// at its next figure and is refused with PlanBudgetExceeded. 0 is
-	// DefaultPlanBudget.
+	// at its next figure and is refused with PlanBudgetExceeded. 0 or less is
+	// DefaultPlanBudget. It must end before the HTTP server's write timeout,
+	// or the refusal is written to a connection already closed.
 	PlanBudget time.Duration
 }
 
 // DefaultPlanBudget is the plan budget a server has when its Config names
-// none: a cold plan of the worked recording takes under 20 s, and a response
-// may take 10 minutes to write.
+// none: a cold plan of the worked recording takes under 20 s, and it ends
+// well before capacity-planner serve's 10-minute write timeout (serve refuses
+// a --plan-budget past 9 minutes).
 const DefaultPlanBudget = 5 * time.Minute
 
 // ReasonPlanBudgetExceeded is the reason an ErrorResponse gives for a plan
@@ -75,6 +77,10 @@ var errPlanBudget = errors.New("plan budget reached")
 
 // BudgetError is a plan stopped because it ran past the server's plan
 // budget. Nothing of it is cached, so the same plan asked again runs again.
+//
+// It deliberately has no Unwrap to context.DeadlineExceeded: writeErr would
+// then read it as a request that ended, and flight.doFor would have every
+// caller sharing the plan price it again on its own context.
 type BudgetError struct {
 	// Budget is the server's plan budget.
 	Budget time.Duration
@@ -83,7 +89,8 @@ type BudgetError struct {
 // Error says what ran out and what to do.
 func (e BudgetError) Error() string {
 	return fmt.Sprintf("the plan was not priced within the server's plan budget of %s, and was stopped: "+
-		"ask for fewer views, or start the server with a larger --plan-budget", e.Budget)
+		`ask without the per-bucket view (on the page, untick "Show if all traffic were bucket b") or with fewer bucket edges, `+
+		"or start the server with a larger --plan-budget", e.Budget)
 }
 
 // Server serves the API. Its state is caches only: an inputs entry per
@@ -139,10 +146,10 @@ func New(c Config) *Server {
 	if budget <= 0 {
 		budget = DefaultPlanBudget
 	}
-	return &Server{planBudget: budget, resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
+	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
-		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs)}
+		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget}
 }
 
 // errBusy is a request past the server's bound on work in flight.

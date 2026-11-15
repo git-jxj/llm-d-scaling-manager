@@ -89,7 +89,7 @@ point (headroom times the lower knee).
 | `--tls-cert-file`, `--tls-key-file` | The server's certificate and key. Required with `--auth=kubernetes`: a token is not sent in the clear. |
 | `--token-audiences A,...` | The audiences a TokenReview checks a token for. Default: the API server's own. |
 | `--shutdown-timeout` | How long requests in flight may run after Ctrl-C. Default 10s. |
-| `--plan-budget` | How long one plan may be priced. Past it the plan stops and is refused with `PlanBudgetExceeded`. Default 5m; 0 is the default too, and a negative value is refused. |
+| `--plan-budget` | How long one plan may be priced. Past it the plan stops and is refused with `PlanBudgetExceeded`. Default 5m; 0 is the default too. Serve refuses a negative value and one above 9m, which would end after the 10-minute write timeout has closed the connection. |
 
 No request can name a host or a file path: the Prometheus URL is a flag, and a
 recording is a file name inside `--recordings`. An error names no server path.
@@ -539,12 +539,21 @@ A plan that is still pricing when `--plan-budget` (default 5 minutes) runs out
 stops at its next figure and is a 503 with a reason, and no `Retry-After`:
 
 ```json
-{"schemaVersion": 1, "error": "the plan was not priced within the server's plan budget of 5m0s, and was stopped: ask for fewer views, or start the server with a larger --plan-budget", "reason": "PlanBudgetExceeded"}
+{"schemaVersion": 1, "error": "the plan was not priced within the server's plan budget of 5m0s, and was stopped: ask without the per-bucket view (on the page, untick \"Show if all traffic were bucket b\") or with fewer bucket edges, or start the server with a larger --plan-budget", "reason": "PlanBudgetExceeded"}
 ```
 
-Nothing of that plan is kept, so asking again prices it again. A cold plan of
-the worked recording takes under 20 s. The budget is checked between
-figures, so a plan can run past it by one figure. A size's search (`/v1/size`) is not under the budget, only the plan it answers with. A request that joins a plan already being priced shares that plan's clock. Reading
+The page does not retry this 503: it retries only a 503 with `Retry-After`
+(`retryDelay` in `scenario.js`). Nothing of that plan is kept, so asking again
+prices it again. A cold plan of the worked recording takes under 20 s.
+
+The budget is checked between figures, so a plan can run past it by one
+figure. One figure normally takes milliseconds. A size's search (`/v1/size`)
+is not under the budget, only the plan it answers with. A request that joins a
+plan already being priced shares that plan's clock. `--plan-budget` is at most
+9 minutes, a minute under the 10-minute write timeout, so the refusal is
+written before the connection closes.
+
+Reading
 a request may take 30 s, an idle connection is closed after 2 minutes, and a
 response may take 10 minutes (a cold plan, or a capture).
 
@@ -595,11 +604,11 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeSearchSurvivesItsPlan` | One plan slot sizes; a size whose answer's plan ended with its client is not searched again. |
 | `TestSizeOnTheLowEnd` | `sizeOn: low` sizes on the low end of the span, where `point` leaves it under the rate; the answer's headroom is the low end's. |
 | `TestSizeOnLowRefusedAtTheWorstCorner` | Sized `low` where the worst corner refuses the limit, the size is that refusal, said of the corner, never `ReplicaBoundReached`. |
-| `TestPlanPastItsBudgetIsRefused`, `TestPlanEndedByItsClientIsNotTheBudget`, `TestPlanErrorAsTheBudgetEndsIsItsOwn` | A plan past its budget is a 503 with reason `PlanBudgetExceeded` within a figure of the budget, caches nothing and frees its slot; a plan whose client ends first is the client's end, with no reason; an error the plan returns for its own reason as the budget ends is that error. |
+| `TestPlanPastItsBudgetIsRefused`, `TestPlanEndedByItsClientIsNotTheBudget`, `TestPlanErrorAsTheBudgetEndsIsItsOwn`, `TestPlanWithinNeedsAllThreeConditions`, `TestPlanSharedPastItsBudget`, `TestFlightCallerKeepsItsOwnDeadlineError`, `TestServePlanBudgetBounds`, `TestPageRetriesOnlyABusyServer` | A plan past its budget is a 503 with reason `PlanBudgetExceeded` within a figure of the budget, caches nothing and frees its slot; a plan whose client ends first is the client's end, with no reason; an error the plan returns for its own reason as the budget ends is that error; each of the three conditions alone; a request sharing the plan gets the same refusal and a later one prices afresh; a caller never reruns its own call on a deadline error; `--plan-budget` 0 is the default and above 9m is refused; the page retries only a busy server. |
 | `TestServeKneeRoundingPricesAtOnce` | At 12 prefill and 19 decode replicas, the curve point at the prefill knee is refused `Saturated` in milliseconds. Two imbalance corners sit one rounding step under it there, and the point used to take over 30 minutes. |
 | `TestSizeConcurrentSearchOnce`, `TestSizeBusyAndDecodeOnly` | Identical sizes at once search once; with every slot taken a size is a 503 before any search; a source with no prefill variant is a 400. |
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
 | `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
-| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (208 cases; it fails without node): `esc`, the bucket edges by the server's rules, the box's mark, the link's edges and the lines' styles, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
+| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (217 cases; it fails without node): `esc`, `retryDelay` (only a 503 with `Retry-After` is retried, never `PlanBudgetExceeded`), the bucket edges by the server's rules, the box's mark, the link's edges and the lines' styles, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |

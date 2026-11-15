@@ -375,6 +375,23 @@ function compareRows(a, cur, f) {
   return `<table><tr><th></th><th>A (dashed)</th><th>Current</th><th>Change</th></tr>${rows.join("")}</table>`;
 }
 
+// MAX_RETRIES is how many times the page asks a busy server again.
+const MAX_RETRIES = 5;
+
+// retryDelay is how long, in milliseconds, the page waits before asking again
+// after a response of status with the Retry-After header retryAfter (null when
+// absent), on its attempt-th retry from 0; -1 is not to ask again. Only a busy
+// server's 503 is retried: it alone sets Retry-After. A 503 without it is a
+// plan stopped at the server's plan budget (PlanBudgetExceeded), which would
+// be priced from the start again, or a request that ended. The wait is the
+// header's seconds, at least 1 and at most 30.
+function retryDelay(status, retryAfter, attempt) {
+  if (status !== 503 || attempt >= MAX_RETRIES) return -1;
+  if (retryAfter === null || retryAfter === undefined || String(retryAfter).trim() === "") return -1;
+  const s = Number(retryAfter);
+  return 1000 * (Number.isFinite(s) ? Math.min(Math.max(s, 1), 30) : 1);
+}
+
 // fleetDelta is the change in replicas from a to b, a role at a time.
 function fleetDelta(a, b) {
   const parts = [];
