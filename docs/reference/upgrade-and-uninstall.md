@@ -138,16 +138,17 @@ apply the v0.11.1 release files. Nothing to change first. What to expect:
 1. **P/D prefill may run more replicas at the same load.** Prefill now has a
    floor from the requests each replica completes, and a prefill with no
    measured throughput counts prompts held in the router as demand. Rolling
-   back to v0.11.0 is safe: the extra prefill windows v0.11.1 learns are kept
-   but not read.
+   back to v0.11.0 is safe: it keeps the extra prefill windows v0.11.1 learns,
+   without the part only v0.11.1 reads, until they age out.
 2. **Upgrading from v0.11.0 drops no policy keys.** v0.11.1 records which
    `default` keys of the scaling policy it renders. From the next upgrade on,
    `make deploy-scaling-manager` drops a recorded key a release stops
    rendering, with a warning naming it. Keys you added are kept.
 3. **KEDA HPA repair is opt-in** (`KEDA_HPA_REPAIR=true` on
-   `make deploy-scaling-manager`, off by default; the release files have no
-   switch for it). It needs the extra grant in
-   [KEDA](keda.md#the-controller-repair-keda_hpa_repair).
+   `make deploy-scaling-manager`, off by default), and needs the extra grant
+   in [KEDA](keda.md#the-controller-repair-keda_hpa_repair). The release
+   files have no switch for it; installed from them, turn it on by hand
+   ([KEDA](keda.md#installed-from-the-release-files)).
 
 ### Upgrading from v0.11.0-rc1 to v0.11.0
 
