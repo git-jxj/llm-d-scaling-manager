@@ -3209,6 +3209,7 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n deploy/scaling-manager-tools.sh
 	@bash -n hack/check-tools-image.sh
 	@bash -n hack/check-capacity-planner-image.sh
+	@bash -n hack/check-capacity-planner-dist.sh
 	@bash -n hack/benchmark/engine_cache_claim.sh
 	@bash -n hack/benchmark/scenario_overrides.sh
 	@bash -n hack/check-harness-teardown.sh

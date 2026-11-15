@@ -435,6 +435,25 @@ jobs:
         if: needs.check-code-changes.outputs.has_code_changes != 'false'
         run: PLANNER_IMG=capacity-planner:pr-check PLANNER_VERSION=pr-check bash hack/check-capacity-planner-image.sh
 
+      # The release binaries, built as release-files builds them (the go.mod
+      # Go line at its latest patch, make capacity-planner-dist), so a broken
+      # platform, ldflag or -trimpath fails here rather than on a tag.
+      - name: Read the Go line from go.mod
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: sed -En 's/^go ([0-9]+\.[0-9]+)(\..*)?$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
+
+      - name: Set up Go
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          check-latest: true
+          cache: false
+
+      - name: Run hack/check-capacity-planner-dist.sh
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: bash hack/check-capacity-planner-dist.sh
+
       - name: Scan the capacity planner image for fixable CRITICAL vulnerabilities (blocking)
         if: ${{ !cancelled() && steps.build-planner.outcome == 'success' }}
         uses: ./.github/actions/trivy-scan

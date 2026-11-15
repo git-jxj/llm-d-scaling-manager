@@ -38,6 +38,10 @@ cleanup() {
 trap cleanup EXIT
 FAILED=0
 PASSED=0
+# One ok or FAIL per case: non-root, version, started, warning, inputs, plan,
+# foreign Host, and 0.0.0.0 without the opt-in. A run that stops early, or a
+# case dropped, fails on the count. Change this deliberately with the cases.
+EXPECT_CASES=8
 ok()   { printf '  ok   %s\n' "$1"; PASSED=$((PASSED + 1)); }
 fail() { printf '  FAIL %s\n' "$1"; FAILED=$((FAILED + 1)); }
 
@@ -74,23 +78,25 @@ chmod 0600 "$T/recordings/short.jsonl.gz"
 # The image's own command, published to loopback only, as the guide does.
 docker run -d --name "$NAME" --user "$(id -u):$(id -g)" -p 127.0.0.1::8080 \
     -v "$T/recordings:/recordings:ro" "$IMG" >/dev/null
-sleep 1
-port="$( { docker port "$NAME" 8080/tcp 2>/dev/null || true; } | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -1)"
-[ -n "$port" ] || { docker logs "$NAME" 2>&1 || true; echo "FAIL: serve did not start, or published no loopback port: $(docker port "$NAME" 2>&1)"; exit 1; }
-BASE="http://127.0.0.1:$port"
-
+# Up to 30 s for serve to say it serves and docker to report the published
+# loopback port; a container that exits stops the wait at once.
 up=false
+port=""
 for _ in $(seq 1 60); do
-    if docker logs "$NAME" 2>&1 | grep -q 'serving the capacity planner'; then up=true; break; fi
-    if [ "$(docker inspect --format '{{.State.Running}}' "$NAME")" != true ]; then break; fi
+    if [ -z "$port" ]; then
+        port="$( { docker port "$NAME" 8080/tcp 2>/dev/null || true; } | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -1)"
+    fi
+    if [ -n "$port" ] && docker logs "$NAME" 2>&1 | grep -q 'serving the capacity planner'; then up=true; break; fi
+    if [ "$(docker inspect --format '{{.State.Running}}' "$NAME" 2>/dev/null || true)" != true ]; then break; fi
     sleep 0.5
 done
 logs="$(docker logs "$NAME" 2>&1 || true)"
 if [ "$up" != true ]; then
     printf '%s\n' "$logs"
-    echo "FAIL: serve did not start"
+    echo "FAIL: serve did not start, or published no loopback port (port '$port')"
     exit 1
 fi
+BASE="http://127.0.0.1:$port"
 ok "serve started on $BASE"
 if printf '%s\n' "$logs" | grep -q 'warning: --listen-all-in-container'; then
     ok "it warns that it serves every interface without authentication"
@@ -146,4 +152,8 @@ fi
 
 echo ""
 echo "capacity planner image: $PASSED passed, $FAILED failed"
-[ "$FAILED" -eq 0 ] && [ "$PASSED" -eq 8 ] || { [ "$FAILED" -ne 0 ] || echo "FAIL: $PASSED checks ran, want 8"; exit 1; }
+if [ $((PASSED + FAILED)) -ne "$EXPECT_CASES" ]; then
+    echo "FAIL: $((PASSED + FAILED)) case(s) ran, $EXPECT_CASES expected"
+    exit 1
+fi
+[ "$FAILED" -eq 0 ]
