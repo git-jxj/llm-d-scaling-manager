@@ -96,7 +96,9 @@ func TestTTFT_TheAPIAndTheCLIReadOneFleet(t *testing.T) {
 		fromCLI := cli[0].priced(func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, rate, 0.9) })
 		require.IsType(t, whatif.TTFT{}, fromAPI)
 		got := fromAPI.(whatif.TTFT)
-		assert.Equal(t, fromCLI.(whatif.TTFT), got, "at %g r/s", rate)
+		assert.Equal(t, fromCLI.(whatif.TTFT).Flags, got.Flags, "at %g r/s", rate)
+		assert.Equal(t, fromCLI.(whatif.TTFT).Seconds, got.Seconds, "at %g r/s", rate)
+		assert.Equal(t, fromCLI.(whatif.TTFT).Parts, got.Parts, "at %g r/s", rate)
 		priced := rate >= on.Prefill && rate <= whatif.MaxRouterWaitKneeShare*knee.Value
 		assert.Equal(t, priced, got.HasFlag(whatif.FlowControlWaitPriced), "at %g r/s: %v", rate, got.Flags)
 		met, known := whatif.TTFTMeets(fromAPI, target)
