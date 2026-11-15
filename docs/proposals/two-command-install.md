@@ -1,6 +1,7 @@
 # Install in two commands, from the tools image
 
-**Status:** proposal, 2026-11-15. Nothing here is built.
+**Status:** proposal, 2026-11-15; no open questions
+([decided on review](#decided-on-review-2026-11-15)). Nothing here is built.
 
 **Audience:** contributors. Operators install today from
 [the install guide](../guides/install-in-namespace/).
@@ -44,7 +45,7 @@ smt admin-setup -n team-a --keda-namespace keda
 smt install -n team-a --prometheus-url https://prometheus.example:9090 --quota "H200=16"
 
 # Cluster admin, after the install: KEDA's client certificate, then drop the preflight's cluster reads.
-smt admin-cleanup -n team-a
+smt admin-finish -n team-a
 ```
 
 `install` ends by printing the third line, for the owner to pass on. Each
@@ -91,10 +92,10 @@ The two-role split stays.
    empty Secrets the controller filled.
 8. Apply the `part=controller` objects; wait for the rollout.
 9. Run the preflight again, now that the controller exists, and print it.
-10. Print what is left: the `smt admin-cleanup` line, and the command that
+10. Print what is left: the `smt admin-finish` line, and the command that
     shows `scalerTLS` turning to `mutual TLS`.
 
-### `smt admin-cleanup -n NS`
+### `smt admin-finish -n NS`
 
 1. Wait (bounded) until the controller has filled the client certificate
    Secret.
@@ -193,7 +194,7 @@ TLS Secrets are untouched; only the `part=controller` objects and the
 preflight Job change.
 
 A new release may change the admin objects. The owner cannot read
-ClusterRoles, and after `admin-cleanup` the preflight cannot either, so a
+ClusterRoles, and after `admin-finish` the preflight cannot either, so a
 SubjectAccessReview is not available. The stamp answers it: `install`
 compares the hash of the image's admin objects with the one `admin-setup`
 wrote. Equal: go on. Different: stop, exit 3, and print the `smt
@@ -217,7 +218,7 @@ shared between the two people.
 | --- | --- | --- | --- |
 | `admin-setup` | cluster admin | create ClusterRoles and bindings (they hold every right they grant), apply in `NS`, get the external-metrics APIService | the APIService and the NetworkPolicy |
 | `install` | namespace owner | the stock `admin` ClusterRole bound in `NS`: ConfigMaps, Secrets, Deployments, Services, Jobs, `pods/log` | nothing; OpenShift is detected from API discovery, which any user may read |
-| `admin-cleanup` | cluster admin | get the client certificate Secret in `NS`, write a Secret in KEDA's namespace, apply the ClusterTriggerAuthentication, restart the controller, delete the preflight binding | KEDA's namespace only |
+| `admin-finish` | cluster admin | get the client certificate Secret in `NS`, write a Secret in KEDA's namespace, apply the ClusterTriggerAuthentication, restart the controller, delete the preflight binding | KEDA's namespace only |
 | `--dry-run`, `release-files` | anyone | no kubeconfig | nothing |
 
 The preflight still runs as its own ServiceAccount, never the caller's. The
@@ -258,7 +259,7 @@ in today's guide disappears from this path.
 
 `UNKNOWN` is never shown as a pass. `scaler.tls` stays `UNKNOWN` after the
 install too (the NetworkPolicy keeps the Job out), and the summary says why.
-After `admin-cleanup` the preflight's cluster reads are gone, so an upgrade's
+After `admin-finish` the preflight's cluster reads are gone, so an upgrade's
 preflight reports those checks as `UNKNOWN`; that is expected and does not
 stop it.
 
@@ -285,9 +286,9 @@ smt install --scope cluster --keda-namespace keda \
 ```
 
 It creates `scaling-manager-system` if absent, runs the admin steps, the
-install steps, and the `admin-cleanup` steps in that order. `--model-namespace`
+install steps, and the `admin-finish` steps in that order. `--model-namespace`
 (repeatable) applies the model-namespace file to each; adding one later is a
-re-run with the extra flag. `admin-setup` and `admin-cleanup` refuse `--scope
+re-run with the extra flag. `admin-setup` and `admin-finish` refuse `--scope
 cluster` and point here.
 
 ### OpenShift
@@ -327,7 +328,7 @@ scopes, each on a fresh kind cluster:
    image with them (`--build-context release=dist`).
 2. Install the prerequisites with the existing e2e setup.
 3. **Namespace scope**, with two kubeconfigs: cluster admin for `admin-setup`
-   and `admin-cleanup`; for `install`, a ServiceAccount token bound to the
+   and `admin-finish`; for `install`, a ServiceAccount token bound to the
    stock `admin` ClusterRole in the namespace and nothing else. That proves
    the owner's least privilege, not just that it works as admin.
 4. **Cluster scope**: one `install --scope cluster` as cluster admin.
@@ -363,19 +364,22 @@ Without a cluster, in `make lint-deploy-scripts` (`hack/check-*.sh`):
 
 1. Bake the files into the tools image; `release-files`, `install --files`,
    `--dry-run`; the release workflow reorder.
-2. `admin-setup`, `install`, `admin-cleanup` in namespace scope; the e2e job
+2. `admin-setup`, `install`, `admin-finish` in namespace scope; the e2e job
    in namespace scope.
 3. `--scope cluster`; the e2e job in cluster scope.
 4. README: the three lines and a link to the guide. The guides keep the
    by-hand path and gain the tools path first.
 
+## Decided on review (2026-11-15)
+
+- **Baked, not fetched.** The release files are baked into the tools image.
+  `install` fetches nothing, and the image carries no cosign; signatures are
+  checked by one `cosign verify` of the image, outside it
+  ([why](#where-the-files-come-from)).
+- **`admin-finish`, not `admin-cleanup`.** The command gives KEDA its
+  certificate and removes the preflight's cluster reads; "cleanup" read like
+  uninstall.
+
 ## Open questions
 
-- **Baked, not fetched.** The approved shape had `install` fetch the files
-  and verify their signatures. This proposal bakes them into the image and
-  leaves signature checking to one `cosign verify` of the image, outside it
-  ([why](#where-the-files-come-from)). Confirm the change.
-- **The name `admin-cleanup`.** It does two things: gives KEDA its
-  certificate and removes the preflight's cluster reads. "Cleanup" reads like
-  uninstall. `admin-finish` says what it is; the approved name is kept here
-  until decided.
+None.
