@@ -54,6 +54,8 @@ the scaler answers with the current replica count, so nothing moves.
   engine, in operator terms.
 - **[Other scenarios](docs/well-lit-paths/)**: scale on saturation, scale to
   zero, warm pool, P/D, Kueue quotas and more.
+- **[Capacity planner](docs/guides/capacity-planner/)**: a web page on your
+  machine that prices a P/D fleet from what it did, and the fleet a rate needs.
 - **[Why use it](docs/why.md)**: what it was measured to do, what it costs,
   and how mature each part is.
 

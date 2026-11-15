@@ -20,7 +20,8 @@ import (
 // flow control off: the freeze's fleet to the bit
 // (TestStaircaseQ32_TheFixtureIsTheFrozenCurve).
 //
-// Where it comes from: the run's frozen.json (not in the repository), whose
+// Where it comes from: frozen.json in the run's directory (not in the
+// repository; the staircase writes it beside the run's recordings), whose
 // recordingSha256 names the
 // warm-up recording it was frozen from
 // (4693f3bbbd8322c77af2a1fbcddeaa4cf3ce92f7d6eb66e8437ec2e3900ff291), written
@@ -64,13 +65,15 @@ func q32Fleet(bucket string) TTFTFleet {
 // TTL; a step with any is void for the gate, and its client figures are the
 // dispatched requests' only, so they read low.
 type q32Step struct {
-	rate          float64
-	frozen        [3]float64
-	client        [3]float64
-	routerWait    float64
-	failed        int
-	pastTheOnset  bool
-	insideTheTake bool
+	rate       float64
+	frozen     [3]float64
+	client     [3]float64
+	routerWait float64
+	failed     int
+	// pastTheOnset is at or past the prefill onset; waitPriced is where the
+	// switch takes the wait as priced (FlowControlWaitPriced).
+	pastTheOnset bool
+	waitPriced   bool
 }
 
 // q32Steps are the steps at and next below each prefill onset (B 3.707 r/s,
@@ -175,7 +178,7 @@ func TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient(t *testing.T) {
 		for _, s := range q32Steps[bucket] {
 			mean := mustTTFT(t, ttftAt(t, fl, s.rate, 0))
 			if s.pastTheOnset != (mean.HasFlag(FlowControlWaitPriced) || mean.HasFlag(AboveFlowControlOnset)) ||
-				s.insideTheTake != mean.HasFlag(FlowControlWaitPriced) {
+				s.waitPriced != mean.HasFlag(FlowControlWaitPriced) {
 				t.Errorf("%s %.3f r/s: flags %v", bucket, s.rate, mean.Flags)
 			}
 			if gate := mean.Parts.RouterWait > 0 && mean.Parts.BurstWait > 0; gate != s.insideTheTake {
@@ -188,6 +191,8 @@ func TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient(t *testing.T) {
 				if !s.insideTheTake {
 					nearRel(t, bucket+" price where the gate is not priced", got, s.frozen[i], 1e-9)
 				}
+				// 0 is unmeasured: the void B 7's p90 and p95 lie past the
+				// client's histogram.
 				if s.client[i] == 0 {
 					continue
 				}

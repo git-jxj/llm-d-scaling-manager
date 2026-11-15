@@ -235,3 +235,11 @@ last; it is the unit change that makes the other two land.
   An HTTP API served by `capacity-planner serve`, a small web page on it that opens on a
   Prometheus window, and Grafana for monitoring only; why v1 prices the
   critical class alone and the current mix as one TTFT line.
+- **[Record for the capacity planner from the controller](controller-recording.md)**
+  — proposed. Makes the learner recorder an operator option: a live
+  `plannerRecording` settings key over an always-mounted `emptyDir` (a PVC at
+  install), runs split into parts read in order (a run whose oldest parts
+  rotated out is read cold), a ceiling that keeps the `emptyDir` from
+  evicting the Pod, one run per model namespace, `smt recording fetch` over a loopback
+  endpoint gated on `pods/log` on the controller and in each namespace,
+  the same-tag version rule, what a file holds, and how the cost is measured.

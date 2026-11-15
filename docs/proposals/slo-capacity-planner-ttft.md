@@ -1975,8 +1975,9 @@ so the default is left as it was; the new one is a switch
 prefill and 2 decode pods at TP 2, H200) sent flow-control-on steps past the
 prefill onset where the router held, and at one of them the fleet still held
 the rate. Each step is priced from the frozen fleet the way the gate prices it
-(`TestStaircaseQ32_TheRouterWaitStepsReadShort`). The switch moves no figure,
-so the price is the same with it and without it; only the flag differs. The
+(`TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep` keeps the C 4 row). As
+first built, the switch moved no figure, so the price was the same with it and
+without it; only the flag differed. The
 router wait is for the requests it dispatched, from the EPP's
 `flow_control_request_queue_duration_seconds`; its p90 and p95 are read inside
 wide buckets.

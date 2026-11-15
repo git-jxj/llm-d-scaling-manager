@@ -22,6 +22,8 @@
 //	                                 --from T0 --to T1 [capture's flags] [the question's flags]
 //	capacity-planner serve           [--recordings DIR] [--prometheus URL capture's flags --namespace NS [--allowed-namespaces NS,...]]
 //	                                 [--listen 127.0.0.1:8080] [--auth none|kubernetes --tls-cert-file F --tls-key-file F [--token-audiences A,...]]
+//	                                 [--listen-all-in-container (in a container: --listen 0.0.0.0:PORT, no auth)]
+//	capacity-planner version         (the release and commit; the controller of the recordings is released under the same tag)
 //
 // capture writes the window's cycle inputs (internal/whatifsource);
 // generate plays them through the analyzers in the engine's order
@@ -140,7 +142,7 @@ func exitCode(err error) int {
 	return 1
 }
 
-const usage = "usage: capacity-planner capture|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate [flags]; -h after a command lists its flags"
+const usage = "usage: capacity-planner capture|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
 
 // command is one subcommand: it parses its own flags from args and writes
 // what it reports to out, and its warnings to warn (stderr).
@@ -155,6 +157,7 @@ var commands = map[string]command{
 	"replicas-to-slo": runReplicasToSLO,
 	"serve":           runServe,
 	"slo-to-rate":     runSLOToRate,
+	"version":         runVersion,
 }
 
 // run runs one command. Asking for help is not an error.
