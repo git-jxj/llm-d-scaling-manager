@@ -55,11 +55,12 @@ type fcShape struct {
 var (
 	fcDecode     = fcShape{name: "decode", role: domain.RoleDecode, ranks: 1}
 	fcPD         = fcShape{name: "pd-decode", role: domain.RoleDecode, pd: true, ranks: 1}
-	// fcPDPrefillBound is P/D with prefill the bottleneck.
-	fcPDPrefillBound = fcShape{name: "pd-prefill-bound", role: domain.RoleDecode, pd: true, prefillBound: true, ranks: 1}
 	fcAggregated = fcShape{name: "aggregated", role: "", ranks: 1}
 	fcDP8        = fcShape{name: "dp8", role: domain.RoleDecode, ranks: 8}
 )
+
+// fcPDPrefillBound is P/D with prefill the bottleneck.
+var fcPDPrefillBound = fcShape{name: "pd-prefill-bound", role: domain.RoleDecode, pd: true, prefillBound: true, ranks: 1}
 
 // The generator. Every engine rank follows a true ITL line, ITL(k) = a k + b
 // with a seeded slope (fcGen), and holds requests of 1000 in / 500 out, 1250
