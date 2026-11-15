@@ -46,7 +46,8 @@ capacity planner's pages:
 
 Use the planner of the release your controller runs. The planner replays
 recordings with the controller's learners, so each release ships both under
-one tag, and `capacity-planner version` prints it.
+one tag, and `capacity-planner version` prints it. The image and the
+binaries ship from v0.11.2 on.
 
 The image serves recordings only, so put one in `./recordings` first: your
 own, from [Record a window](../record-for-capacity-planner/), or the sample.
@@ -56,7 +57,7 @@ With an empty directory the page says "This server reads no source".
 ```bash
 # A sample recording, from the source tree of the release you run: one P/D model, one prefill and one decode
 # replica, an hour of a test run. Or put your own run.jsonl.gz from the record guide in recordings/ instead.
-export V=<release>
+export V=<release, v0.11.2 or later>
 mkdir -p recordings
 curl -fsSL -o recordings/ols-sweep.jsonl.gz \
   https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz
@@ -68,10 +69,11 @@ Run the image:
 <!-- guide:get.image start -->
 ```bash
 # The image of the release you run. It serves the recordings in the directory you mount, with no authentication.
-# --user runs it as you: recordings are written readable by their owner only. -p 127.0.0.1:... keeps the port
+# --user runs it as you: the recordings the record guide writes are 0600, so the container must run as you to
+# read them. -p 127.0.0.1:... keeps the port
 # off your network; never publish it beyond 127.0.0.1. Rootless Podman: --userns=keep-id in place of --user,
 # and with SELinux mount with :ro,Z.
-export V=<release>
+export V=<release, v0.11.2 or later>
 mkdir -p recordings
 docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
   ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V}
@@ -104,7 +106,7 @@ use:
 ```bash
 # Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
 # signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
-export V=<release> OS=linux ARCH=amd64
+export V=<release, v0.11.2 or later> OS=linux ARCH=amd64
 B=capacity-planner-${V}-${OS}-${ARCH}
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
 curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
@@ -202,11 +204,18 @@ xdg-open http://127.0.0.1:8080/ || open http://127.0.0.1:8080/
 ```
 <!-- guide:open end -->
 
-With the sample recording, open this address instead:
+With the sample recording, open this address instead. It assumes a prefill
+rate (V_P, prefill tokens per second per prefill replica), because the
+sample has no prefill measurement. With your own recording, leave `vp` out;
+only if the page refuses with `NoPrefillCapacity`, type one under **Assume a
+term the source did not learn**
+([the refusal](troubleshooting.md#refused-figures)).
 
 <!-- guide:sample.open start -->
 ```bash
-# The sample learned no prefill rate, so this address assumes one (vp=30000) and sets targets the sample can meet.
+# vp=30000 assumes a prefill rate V_P of 30000 tokens/s per prefill replica: the sample has no prefill
+# measurement to learn it from. The address also sets targets the sample can meet. If neither command opens
+# a browser, paste the address into one.
 xdg-open 'http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004' \
   || open 'http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004'
 ```
@@ -222,7 +231,7 @@ When you are done:
 
 <!-- guide:stop start -->
 ```bash
-# Ctrl-C stops the server. Then stop the port-forward, if you started one, from the shell that started it (%1 is that shell's first background job).
+# Ctrl-C stops the server. Only if you started a port-forward, stop it too, from the shell that started it (%1 is that shell's first background job).
 kill %1
 ```
 <!-- guide:stop end -->
