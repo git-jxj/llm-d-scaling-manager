@@ -35,7 +35,7 @@ Prefer a checkout and `make`? See [From a checkout instead](#from-a-checkout-ins
 <!-- guide:prerequisites.download start -->
 ```bash
 # The release files. Pick the release you install.
-V=<release, for example v0.11.0>
+V=<release, for example v0.11.1>
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
 for f in cluster settings preflight-cluster scaler-tls model-namespace keda-auth; do
   curl -fsSLO $URL/scaling-manager-$f.yaml
