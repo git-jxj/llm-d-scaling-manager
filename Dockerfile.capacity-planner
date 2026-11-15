@@ -1,10 +1,13 @@
 # The capacity planner (cmd/capacity-planner), for an operator with no
 # checkout. Its API serves recordings from a directory mounted at /recordings:
 #
-#   docker run --rm -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
+#   docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 \
+#     -v "$PWD/recordings:/recordings:ro" \
 #     ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<release>
 #
-# then open http://localhost:8080. Any other command runs in place of serve:
+# --user: recordings are written 0600, readable by their owner only. Never
+# publish the port beyond 127.0.0.1, and never run this command with
+# --network host. Then open http://localhost:8080. Any other command runs in place of serve:
 # `... capacity-planner:<release> replicas-to-slo --recording /recordings/<file> ...`.
 # Built and pushed by .github/workflows/ci-release.yaml beside the controller
 # image, under the same tag, and checked by hack/check-capacity-planner-image.sh.

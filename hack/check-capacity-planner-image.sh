@@ -4,7 +4,8 @@
 #
 #   PLANNER_IMG=<image> [PLANNER_VERSION=<tag>] bash hack/check-capacity-planner-image.sh
 #
-# With its default command and a committed recording mounted at /recordings,
+# With its default command, run as the caller (--user) and a committed
+# recording mounted at /recordings with mode 0600, as recordings are written,
 # published to the host's loopback, POST /v1/inputs resolves the recording and
 # POST /v1/plan prices it: both 200, with the inputs id carried through and a
 # TTFT curve in the plan. Then what must stay refused: a request naming a host
@@ -62,14 +63,17 @@ else
     esac
 fi
 
-# Readable by the image's user whatever the checkout's umask was.
+# Mode 0600, as capacity-planner generate writes a recording: readable by
+# the caller only, so the container must run as the caller (--user), as the
+# guide runs it. The image's own user (65532) cannot read it.
 mkdir -p "$T/recordings"
 cp "$RECORDING" "$T/recordings/short.jsonl.gz"
 chmod 0755 "$T/recordings"
-chmod 0644 "$T/recordings/short.jsonl.gz"
+chmod 0600 "$T/recordings/short.jsonl.gz"
 
 # The image's own command, published to loopback only, as the guide does.
-docker run -d --name "$NAME" -p 127.0.0.1::8080 -v "$T/recordings:/recordings:ro" "$IMG" >/dev/null
+docker run -d --name "$NAME" --user "$(id -u):$(id -g)" -p 127.0.0.1::8080 \
+    -v "$T/recordings:/recordings:ro" "$IMG" >/dev/null
 sleep 1
 port="$( { docker port "$NAME" 8080/tcp 2>/dev/null || true; } | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -1)"
 [ -n "$port" ] || { docker logs "$NAME" 2>&1 || true; echo "FAIL: serve did not start, or published no loopback port: $(docker port "$NAME" 2>&1)"; exit 1; }
