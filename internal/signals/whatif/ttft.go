@@ -157,8 +157,9 @@ const MaxPSPromptCV = 0.25
 
 // DefaultPriceRouterWait is TTFTFleet.PriceRouterWait's default, for the CLI
 // (--price-router-wait), the planner API and the SLO analyzer
-// (slo.SwitchTTFTRouterWait) alike: off. The wait it would price is argued
-// and simulated, not measured.
+// (slo.SwitchTTFTRouterWait) alike: off. Where it was measured it reads
+// short: at a staircase step past the prefill onset that the fleet held, 0.57
+// of the client's p95 (TestStaircaseQ32_TheRouterWaitStepsReadShort).
 const DefaultPriceRouterWait = false
 
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
@@ -269,10 +270,14 @@ type TTFTFleet struct {
 	// pods as they free. A prefill pod runs at most its running cap at once
 	// and queues the rest; at a narrow prompt spread that serves the prompts
 	// no later than sharing the pod between all of them, which is what the
-	// stage prices. It is argued and simulated, not measured: no staircase
-	// step with a real router wait validates it, and the one step where the
-	// router held (the second staircase's C-onset at 56.6 r/s) the model
-	// reads about 20 times short (TestStaircaseR2_TheStepWithARouterWaitReadsShort).
+	// stage prices. It is argued and simulated, and it fails where measured.
+	// At the Qwen3-32B staircase's one held step past the onset (C 4) the
+	// gate added time the price does not carry: its stale score let the pods
+	// queue past the threshold, then released a burst. The price read 0.57
+	// of the client's p95 there
+	// (TestStaircaseQ32_TheRouterWaitStepsReadShort). At the second
+	// staircase's C-onset at 56.6 r/s it reads about 20 times short
+	// (TestStaircaseR2_TheStepWithARouterWaitReadsShort).
 	PriceRouterWait bool
 	// PSOnsets places the prefill gate's onset on the processor-sharing
 	// model the price runs on, with ProcessorSharing and flow control on: a
