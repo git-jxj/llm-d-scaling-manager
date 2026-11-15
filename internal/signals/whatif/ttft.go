@@ -1110,11 +1110,14 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 			gate = g.wait()
 			out.Parts.RouterWait, out.Parts.BurstWait = g.routerWait().mean(), g.burstWait().mean()
 		}
-		withGate := func(m stageMix, pooled bool) stageMix {
+		withGate := func(mix stageMix, pooled bool) stageMix {
 			if pooled || len(gate.w) == 0 {
-				return m
+				return mix
 			}
-			return m.withWait(gate)
+			// psStages' parts have no wait of their own, so the gate's
+			// always takes.
+			out, _ := mix.withWait(gate)
+			return out
 		}
 		type key struct{ old, pooled bool }
 		mixes := map[key]stageMix{}
@@ -1329,12 +1332,18 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		// figure takes the old sum's floor on its own, so each stays under
 		// the headline, which takes it too.
 		if mix, ok := b1.(stageMix); ok && len(dec.w) > 0 {
-			// Each part's own time behind the decode wait, independent.
-			out.Independent = a + mix.withWait(dec).quantile(1-q) + first
+			// Each part's own time behind the decode wait, independent, and
+			// behind the flow-control gate's where it is priced: the two
+			// waits sum (stageMix.withWait), all unshifted pieces.
+			if withDec, ok := mix.withWait(dec); ok {
+				out.Independent = a + withDec.quantile(1-q) + first
+			}
 			if oldCounts {
 				// side(true, false) priced above, when oldCounts.
 				old, _ := side(true, false)
-				out.Independent = max(out.Independent, a+old.(stageMix).withWait(dec).quantile(1-q)+oldFirst)
+				if withDec, ok := old.(stageMix).withWait(dec); ok {
+					out.Independent = max(out.Independent, a+withDec.quantile(1-q)+oldFirst)
+				}
 			}
 		} else if both, ok := wait.sum(dec); ok && len(dec.w) > 0 && !pl.ps {
 			out.Independent = a + block{wait: both, own: own}.quantile(1-q) + first

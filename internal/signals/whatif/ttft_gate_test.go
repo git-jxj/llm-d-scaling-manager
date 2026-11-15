@@ -70,23 +70,65 @@ func TestGateStage_StalenessIsAtLeastThePoll(t *testing.T) {
 
 // Past the onset the priced TTFT rises with the rate, at the mean, p90 and
 // p95, so question 1's bisection finds one edge; and it jumps up at the
-// onset, never down.
+// onset, never down. Bucket C's frozen fleet and its shape on four decode
+// pods (psFleet), whose onsets sit under the share (bucket B's do not: its
+// onset is past 0.9 of the knee on both); each checks at least one priced
+// rate.
 func TestGateStage_TTFTRisesPastTheOnset(t *testing.T) {
-	for _, bucket := range []string{"B", "C"} {
-		fl := fcFleet(q32Fleet(bucket), true)
+	c4 := psFleet(0.0577, 4)
+	c4.Decode.Replicas = 4
+	for _, c := range []struct {
+		name string
+		fl   TTFTFleet
+	}{{"C", q32Fleet("C")}, {"C, four decode pods", c4}} {
+		fl := fcFleet(c.fl, true)
 		on := mustOnsets(t, fl)
 		knee := mustTTFT(t, ttftAt(t, fl, 1, 0)).PrefillKnee
+		checked := 0
 		for _, q := range []float64{0, 0.9, 0.95} {
 			prev := mustTTFT(t, ttftAt(t, fl, on.Prefill*(1-1e-9), q)).Seconds
-			for r := on.Prefill; r <= MaxRouterWaitKneeShare*knee; r += (MaxRouterWaitKneeShare*knee - on.Prefill) / 20 {
+			for i := 0; i <= 20; i++ {
+				r := on.Prefill + float64(i)*(MaxRouterWaitKneeShare*knee-on.Prefill)/20
 				got := mustTTFT(t, ttftAt(t, fl, r, q))
 				if !got.HasFlag(FlowControlWaitPriced) {
 					continue
 				}
+				checked++
 				if !(got.Seconds >= prev) || math.IsInf(got.Seconds, 0) {
-					t.Errorf("%s q %g at %.4f r/s: %g s after %g s", bucket, q, r, got.Seconds, prev)
+					t.Errorf("%s q %g at %.4f r/s: %g s after %g s", c.name, q, r, got.Seconds, prev)
 				}
 				prev = got.Seconds
+			}
+		}
+		if checked == 0 {
+			t.Errorf("%s: no priced rate checked (onset %g, %g of the knee %g)", c.name, on.Prefill, MaxRouterWaitKneeShare, knee)
+		}
+	}
+}
+
+// On P/D the independent figure carries the gate as the union bound does: the
+// gate's wait and the decode admission wait sum in front of every part
+// (stageMix.withWait). Bucket C's held step and its four-decode-pod shape,
+// past the onset, at p90 and p95: Independent never above Seconds, and at
+// most a hair under it where the decode wait is all but never met.
+func TestGateStage_IndependentCarriesTheGate(t *testing.T) {
+	c4 := psFleet(0.0577, 4)
+	c4.Decode.Replicas = 4
+	for _, c := range []struct {
+		name string
+		fl   TTFTFleet
+	}{{"C", q32Fleet("C")}, {"C, four decode pods", c4}} {
+		fl := fcFleet(c.fl, true)
+		on := mustOnsets(t, fl)
+		rate := on.Prefill * 1.02
+		for _, q := range []float64{0.9, 0.95} {
+			got := mustTTFT(t, ttftAt(t, fl, rate, q))
+			if !got.HasFlag(FlowControlWaitPriced) {
+				t.Fatalf("%s: precondition, flags %v at %g r/s", c.name, got.Flags, rate)
+			}
+			t.Logf("%s q %g: Seconds %.4f, Independent %.4f, decode wait probability %.3g", c.name, q, got.Seconds, got.Independent, got.DecodeWaitProbability)
+			if got.Independent > got.Seconds*(1+1e-9) || got.Independent < got.Seconds*(1-1e-3) {
+				t.Errorf("%s q %g: Independent %.6f s against the union bound's %.6f s: want the gate in both", c.name, q, got.Independent, got.Seconds)
 			}
 		}
 	}
