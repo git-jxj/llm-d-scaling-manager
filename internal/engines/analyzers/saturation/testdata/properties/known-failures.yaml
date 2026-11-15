@@ -37,8 +37,15 @@
   class: known-truth
   learner: floor
   expect: over-priced
-  finding: "Under flow control the engines' queues read empty, so no k2 and no mu are learned. Decode, P/D decode and DP=8 then price the floor from the mu their ITL line derives at the target fill, and pass (known-truth/floor/flow-control-unlearned-mu-decode and its siblings). An aggregated variant cannot: its derived mu is report-only until lifted (ev-shindin/llm-scaling-manager#275), so the floor has no mu at all, and the router's queue is charged as KV held at once (estimateSchedulerQueueDemand) with nothing priced to drain it. The order grows with the queue, on the cost side: 1.5-2.0x what the learned mu orders and 1.7-2.2x what the fleet needs. k2 itself is beside the point: the fleet fills past k1 before it queues, so a learned k2 cannot move capacity (known-truth/k2/above-k1-leaves-capacity)."
-  measured: "20/20 seeds; seed 1 (0.877 of KV, arrivals 1.34x served, router queue 1526): never learned 11.52 replicas, learned 6.21, truth 5.55; over seeds 1-100 never/learned 1.54-1.97, never/truth 1.72-2.19"
+  finding: "Issue #51. Under flow control the engines' queues read empty, so no k2 and no mu are learned. Decode and DP=8 then price the floor from the mu their ITL line derives at the target fill, and pass (known-truth/floor/flow-control-unlearned-mu-decode, -dp8). An aggregated variant cannot: its derived mu is report-only until lifted, so the floor has no mu at all, and the router's queue is charged as KV held at once (estimateSchedulerQueueDemand) with nothing priced to drain it. The order grows with the queue, on the cost side. k2 itself is beside the point: the fleet fills past k1 before it queues, so a learned k2 cannot move capacity (known-truth/k2/above-k1-leaves-capacity)."
+  measured: "20/20 seeds; seed 1 (0.877 of KV, arrivals 1.34x served, ITL slope 0.031, router queue 2194): never learned 15.43 replicas, learned 6.18, truth 5.65; over seeds 1-100 never/learned 1.22-2.68, never/truth 1.39-2.89"
+  owner: "ev-shindin/llm-scaling-manager#275"
+- id: known-truth/floor/flow-control-unlearned-mu-pd-decode
+  class: known-truth
+  learner: floor
+  expect: wrong-side
+  finding: "Issue #51. On a P/D fleet the floor charges the router's queue to prefill alone (applyThroughputFloor, queueOwner) and decode the arrivals only, so a decode overloaded under flow control is ordered for lambda and never for the backlog behind it. Every queued request reaches decode once prefill takes it, at the rate prefill drains the queue, so decode owes queue / drainSeconds on top of the arrivals. The learned mu does not help: learned and never-learned orders both sit under the truth, so this is the floor's queue ownership, not the missing mu. The derived mu itself is within 0.89-1.00 of the learned order."
+  measured: "20/20 seeds; seed 1 (0.877 of KV, arrivals 1.34x served, ITL slope 0.031, router queue 2194): never learned 3.02 replicas, learned 3.15, truth 5.65; over seeds 1-100 never/truth 0.45-0.85, learned/truth 0.50-0.85"
   owner: "#51"
 - id: liveness/floor/closed-loop-decode-step-start-463s-jsq
   class: liveness

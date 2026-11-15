@@ -899,13 +899,16 @@ finding above is in exactly one state:
   replica's re-reads within a minute" is caught since issue #55: a stub
   mutant turns `mu-reread-takes-latest` off, and n-dependence/mu/ar-reread
   and n-dependence/prefill-bound/ar-reread each fail (20 of 20 seeds). "No floor
-  under flow control" is caught since issue #51: a fleet overloaded under flow
-  control, its engines' queues empty, learns no mu and prices the floor from
-  its line's derived mu. Rows mutants read no ITL (no line, no floor), twice
-  the ITL (the derived mu halved) or half of it (doubled), and the decode,
-  P/D decode and DP=8 cases of known-truth/floor/flow-control-unlearned-mu
-  each fail (20 of 20 seeds). The aggregated case is a ledger row: its
-  derived mu is report-only, so it has no floor. "k == 0 unsettles"
+  under flow control" is caught since issue #51, at the rows level only (no
+  replay switch turns the derived-mu fallback off): a fleet overloaded under
+  flow control, its engines' queues empty, learns no mu and prices the floor
+  from its line's derived mu. Mutants that rewrite the rows to read no ITL
+  (no line, so no floor) and twice the ITL (the derived mu halved) fail
+  known-truth/floor/flow-control-unlearned-mu-decode, and one that reads half
+  the ITL (the derived mu doubled) fails flow-control-unlearned-mu-dp8, each
+  on 20 of 20 seeds. The aggregated and P/D decode cases are ledger rows: an
+  aggregated derived mu is report-only, so it has no floor, and P/D decode is
+  never charged the router's queue. "k == 0 unsettles"
   and the settle holes "fall", "rate escape", "idle return" and "lend" are
   caught since ev-shindin/llm-scaling-manager#495, each on 20 of 20 seeds. A stub mutant turns
   `Admission.IdleOnEvidence` off, and a scrape that read nothing counts as idle.

@@ -81,6 +81,8 @@ var findings = []finding{
 	{row: "Weighted median flapping between modes", status: statusCaughtToy},
 	{row: "IQM breaks at 25 % contamination", status: statusCaughtToy},
 	{row: "A genuinely slow replica trimmed away (ev-shindin/llm-scaling-manager#273 r3, ev-shindin/llm-scaling-manager#282 r3)", status: statusCaughtToy},
+	// Caught at the rows level only: no replay switch turns the derived-mu
+	// fallback off, so no stub mutant can.
 	{row: "No floor under flow control (ev-shindin/llm-scaling-manager#144)", status: statusCaught},
 	{row: "Router prompts dropped from a prefill with no mu (llm-d-incubation/llm-d-scaling-manager#51)", status: statusCaught},
 	{row: "No floor for a P/D prefill below the knee (llm-d-incubation/llm-d-scaling-manager#97)", status: statusCaught},
@@ -209,9 +211,9 @@ func propertyMutants() []propMutant {
 		{row: "A standing queue charged as resident KV (llm-d-incubation/llm-d-scaling-manager#54)", caseID: "known-truth/floor/standing-queue-priced-at-drain", level: levelStub,
 			how:   "SwitchFloorTrustReadsCompletions off: the trust reads lambda x P / mu against the resident KV and keeps part of the queue charge, and a standing queue gets no drain price",
 			check: checkFloorStandingQueue(func(a *SaturationAnalyzer) { a.floorTrustCompleted = false }, nil)},
-		{row: "No floor under flow control (ev-shindin/llm-scaling-manager#144)", caseID: "known-truth/floor/flow-control-unlearned-mu-pd-decode", level: levelRows,
-			how:   "rows with no ITL reading: no line, so no derived mu, and decode under flow control, its mu never learned, has no floor: its share of the router queue is charged as KV held at once",
-			check: checkFlowControlFloor(fcPD, func(rm *domain.ReplicaMetrics) { rm.AvgITL, rm.AvgITLKnown = 0, false })},
+		{row: "No floor under flow control (ev-shindin/llm-scaling-manager#144)", caseID: "known-truth/floor/flow-control-unlearned-mu-decode", level: levelRows,
+			how:   "rows with no ITL reading: no line, so no derived mu, and decode under flow control, its mu never learned, has no floor: the router queue is charged as KV held at once",
+			check: checkFlowControlFloor(fcDecode, func(rm *domain.ReplicaMetrics) { rm.AvgITL, rm.AvgITLKnown = 0, false })},
 		{row: "No floor under flow control (ev-shindin/llm-scaling-manager#144)", caseID: "known-truth/floor/flow-control-unlearned-mu-decode", level: levelRows,
 			how:   "rows reading twice the ITL: the derived mu the floor falls back to is halved, and it orders twice the replicas",
 			check: checkFlowControlFloor(fcDecode, func(rm *domain.ReplicaMetrics) { rm.AvgITL *= 2 })},

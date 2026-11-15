@@ -21,8 +21,8 @@ import (
 // measured mu, and mu prices the throughput floor. With none, the floor
 // prices from the mu the ITL line derives at pricingK (whatif.DeriveMuAtCap,
 // SaturatedThroughputDerived). The floor cases ask whether that fallback
-// orders what the learned mu orders, within the margin the two prices differ
-// by on purpose, and never fewer replicas than the fleet needs.
+// orders at least what the fleet needs, and no more than the learned mu
+// would have.
 
 func flowControlCases() []propCase {
 	return []propCase{
@@ -53,12 +53,13 @@ var (
 	fcDP8        = fcShape{name: "dp8", role: domain.RoleDecode, ranks: 8}
 )
 
-// The generator. Every engine rank follows the true ITL line (propITL) and
-// holds requests of 1000 in / 500 out, 1250 tokens of KV each; its batch cap
-// (512) never binds. At a KV fraction k a rank runs k x KV / 1250 sequences
-// and completes them at that over ITL(k) x 500 a second (fcRate). The fleet
-// saturates at kTrue, 0.85-0.95 of its KV: above k1 (0.8), so a k2 learned
-// there cannot move capacity.
+// The generator. Every engine rank follows a true ITL line, ITL(k) = a k + b
+// with a seeded slope (fcGen), and holds requests of 1000 in / 500 out, 1250
+// tokens of KV each; its batch cap (512) never binds. At a KV fraction k a
+// rank runs k x KV / 1250 sequences and completes them at that over ITL(k) x
+// 500 a second (fcRate). The ITL a replica reports carries fcITLNoise. The
+// fleet saturates at kTrue, 0.85-0.95 of its KV: above k1 (0.8), so a k2
+// learned there cannot move capacity.
 const (
 	fcPods      = 2
 	fcKVReq     = 1250.0
@@ -74,16 +75,44 @@ const (
 	// fcRateNoise is the relative noise on what a replica completes: a
 	// reading repeated exactly is not a new sample (exactRepeatLocked).
 	fcRateNoise = 0.01
+	// fcITLNoise is the relative noise on the ITL a replica reports, so the
+	// fitted line, and the mu derived from it, is not the truth by
+	// construction.
+	fcITLNoise = 0.02
+	// fcITLB is the true line's intercept, away from the 6 ms default.
+	fcITLB = 0.010
 )
 
-// fcRate is one pod's completions a second at KV fraction k.
-func fcRate(k float64, ranks int) float64 {
-	return float64(ranks) * k * float64(propKv) / fcKVReq / propITL(k) / fcOutput
+// fcGen is one seed's draw: the fill the fleet saturates at, the arrivals
+// over what it serves, the true line's slope, and the seed the noise streams
+// are drawn from (the same in both runs of a seed).
+type fcGen struct {
+	kTrue, rho, slope float64
+	seed              uint64
+}
+
+// fcGenFor draws seed's generator: kTrue 0.85-0.95, rho 1.1-1.5 and the
+// line's slope 0.03-0.10 s per unit of k.
+func fcGenFor(seed uint64) fcGen {
+	r := propRand(seed)
+	g := fcGen{seed: seed}
+	g.kTrue = 0.85 + 0.1*r.Float64()
+	g.rho = 1.1 + 0.4*r.Float64()
+	g.slope = 0.03 + 0.07*r.Float64()
+	return g
+}
+
+// itl is the true ITL at KV fraction k.
+func (g fcGen) itl(k float64) float64 { return g.slope*k + fcITLB }
+
+// rate is one pod's true completions a second at KV fraction k.
+func (g fcGen) rate(k float64, ranks int) float64 {
+	return float64(ranks) * k * float64(propKv) / fcKVReq / g.itl(k) / fcOutput
 }
 
 // fcRow is one pod of shape s at KV fraction k with queue waiting on its
-// engines, completing rate.
-func fcRow(s fcShape, pod string, k float64, queue int, rate float64, ready time.Time) domain.ReplicaMetrics {
+// engines, completing rate and reporting itl.
+func fcRow(s fcShape, pod string, k float64, queue int, rate, itl float64, ready time.Time) domain.ReplicaMetrics {
 	kv := propKv * int64(s.ranks)
 	rm := makeReplicaMetrics(pod, "v", int64(k*float64(kv)), kv, queue, 1000, fcOutput)
 	rm.KvUsageInstant, rm.KvUsageInstantKnown = rm.KvCacheUsage, true
@@ -91,7 +120,7 @@ func fcRow(s fcShape, pod string, k float64, queue int, rate float64, ready time
 	rm.RequestRate, rm.RequestRateKnown = rate, true
 	rm.GenerationTokenRate, rm.GenerationTokenRateKnown = rate*fcOutput, true
 	rm.PrefillComputedTokenRate = rate * 1000
-	rm.AvgITL, rm.AvgITLKnown = propITL(k), true
+	rm.AvgITL, rm.AvgITLKnown = itl, true
 	rm.ReadySince = ready
 	if s.ranks > 1 {
 		rm.EngineRanks = s.ranks
@@ -119,8 +148,9 @@ type fcOutcome struct {
 	// replicas is v's role's demand in replicas at the scale-up target, and
 	// perReplica the per-replica capacity.
 	replicas, perReplica float64
-	// measuredMu is the measured mu on record, 0 when none.
-	measuredMu float64
+	// measuredMu is the measured mu on record, 0 when none, and k2 the k2
+	// learner's figure (propRig.k2), 0 when none.
+	measuredMu, k2 float64
 	// queue is the router's queue on the last cycle.
 	queue float64
 	// mu is the service rate v was priced on (domain.ServiceRateSignal) and
@@ -129,15 +159,14 @@ type fcOutcome struct {
 	source string
 }
 
-// runFlowControl runs shape s at kTrue: a ramp the ITL line is fitted on,
-// then fcSaturated cycles of flow control with arrivals at rho times what
-// the fleet serves: the excess waits at the router, from fcRouterQ up, and
-// the engines' queues read empty. learned runs fcLearnFor cycles first at
-// capacity with the queue on the engines instead (flow control off), so k2
-// and mu are learned there. The served rates' noise is drawn from seed, the
-// same in both runs. wrap, when set, edits each of v's rows before the
-// analyzer reads it (a mutant).
-func runFlowControl(s fcShape, kTrue, rho float64, seed uint64, learned bool, wrap func(*domain.ReplicaMetrics)) (fcOutcome, error) {
+// runFlowControl runs shape s on g: a ramp the ITL line is fitted on, then
+// fcSaturated cycles of flow control with the fleet full at g.kTrue and
+// arrivals at g.rho times what it serves: the excess waits at the router,
+// from fcRouterQ up, and the engines' queues read empty. learned runs
+// fcLearnFor cycles first at capacity with the queue on the engines instead
+// (flow control off), so k2 and mu are learned there. wrap, when set, edits
+// each of v's rows before the analyzer reads it (a mutant).
+func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaMetrics)) (fcOutcome, error) {
 	store := capacity.NewStore()
 	store.Update("test-ns", "test-model", "v", capacity.Record{AcceleratorName: "H200", GpuCount: s.ranks,
 		EngineParams: keyParams(fcMaxSeqs)}, propStart)
@@ -146,10 +175,12 @@ func runFlowControl(s fcShape, kTrue, rho float64, seed uint64, learned bool, wr
 	rig.a.now = func() time.Time { return rig.clock }
 	ready := rig.clock.Add(-time.Hour)
 	states := fcStates(s)
+	itlNoise := propRand(g.seed + 3<<32)
 	fleet := func(k [fcPods]float64, queue int, rate [fcPods]float64) []domain.ReplicaMetrics {
 		rows := make([]domain.ReplicaMetrics, 0, fcPods+1)
 		for p := range fcPods {
-			rows = append(rows, fcRow(s, fmt.Sprintf("r%d", p), k[p], queue, rate[p], ready))
+			itl := g.itl(k[p]) * (1 + fcITLNoise*itlNoise.NormFloat64())
+			rows = append(rows, fcRow(s, fmt.Sprintf("r%d", p), k[p], queue, rate[p], itl, ready))
 			if wrap != nil {
 				wrap(&rows[p])
 			}
@@ -167,15 +198,15 @@ func runFlowControl(s fcShape, kTrue, rho float64, seed uint64, learned bool, wr
 		lambda := 0.0
 		for p := range fcPods {
 			k[p] = 0.20 + 0.025*float64(i) + 0.05*float64(p)
-			rate[p] = fcRate(k[p], s.ranks)
+			rate[p] = g.rate(k[p], s.ranks)
 			lambda += rate[p]
 		}
 		if _, err := rig.analyze(fleet(k, 0, rate), states, lambda, propCycle); err != nil {
 			return fcOutcome{}, err
 		}
 	}
-	mu := fcRate(kTrue, s.ranks)
-	full := [fcPods]float64{kTrue, kTrue}
+	mu := g.rate(g.kTrue, s.ranks)
+	full := [fcPods]float64{g.kTrue, g.kTrue}
 	served := func(r *rand.Rand) [fcPods]float64 {
 		var rate [fcPods]float64
 		for p := range rate {
@@ -186,7 +217,7 @@ func runFlowControl(s fcShape, kTrue, rho float64, seed uint64, learned bool, wr
 	if learned {
 		// Flow control off, the fleet at capacity: the queue stands on the
 		// engines, and k2 and mu are learned.
-		r := propRand(seed + 1<<32)
+		r := propRand(g.seed + 1<<32)
 		for range fcLearnFor {
 			if _, err := rig.analyze(fleet(full, 10*s.ranks, served(r)), states, fcPods*mu, propCycle); err != nil {
 				return fcOutcome{}, err
@@ -194,8 +225,8 @@ func runFlowControl(s fcShape, kTrue, rho float64, seed uint64, learned bool, wr
 		}
 	}
 	// Flow control on.
-	r := propRand(seed + 2<<32)
-	lambda := rho * fcPods * mu
+	r := propRand(g.seed + 2<<32)
+	lambda := g.rho * fcPods * mu
 	queue := float64(fcRouterQ)
 	var res *domain.AnalyzerResult
 	for i := range fcSaturated {
@@ -211,7 +242,7 @@ func runFlowControl(s fcShape, kTrue, rho float64, seed uint64, learned bool, wr
 			return fcOutcome{}, err
 		}
 	}
-	out := fcOutcome{measuredMu: rig.measuredMu(), queue: queue, replicas: math.NaN()}
+	out := fcOutcome{measuredMu: rig.measuredMu(), k2: rig.k2(""), queue: queue, replicas: math.NaN()}
 	for _, vc := range res.VariantCapacities {
 		if vc.VariantName == "v" {
 			out.perReplica = vc.PerReplicaCapacity
@@ -230,73 +261,60 @@ func runFlowControl(s fcShape, kTrue, rho float64, seed uint64, learned bool, wr
 	return out, nil
 }
 
-// fcTruth is what shape s needs at kTrue, in replicas: the arrivals and the
+// fcTruth is what shape s needs on g, in replicas: the arrivals and the
 // router's queue drained over the floor's drain time, with every replica at
 // the fill the autoscaler targets (fcKPrice), where the true line has it
-// complete fcRate(fcKPrice). On P/D the router's queue is prefill's to drain
-// first, and decode is charged the arrivals alone.
-func fcTruth(s fcShape, rho, kTrue, queue float64) float64 {
-	if s.pd {
-		queue = 0
-	}
-	return (rho*fcPods*fcRate(kTrue, s.ranks) + queue/floorDrainT) / fcRate(fcKPrice, s.ranks)
+// complete g.rate(fcKPrice).
+//
+// On P/D too. Every request the router holds reaches decode once prefill has
+// taken it, so decode owes the queue as well; it receives it a prefill time
+// later, but prefill drains it over the same horizon, so decode then takes
+// it at queue / floorDrainT on top of the arrivals. A decode sized for the
+// arrivals alone runs behind for as long as that backlog takes to pass.
+func fcTruth(s fcShape, g fcGen, queue float64) float64 {
+	return (g.rho*fcPods*g.rate(g.kTrue, s.ranks) + queue/floorDrainT) / g.rate(fcKPrice, s.ranks)
 }
 
-// fcLearnedOver is how much more the learned mu orders than the true line's
-// mu at the target fill, by design. The learned mu is read at saturation
-// (kTrue) and the engine divides it by the scale-up threshold; the derived
-// one is priced at the target fill and not divided again (replicaCost). The
-// two meet only where throughput is linear in fill. It is concave, so the
-// learned mu orders mu(fcKPrice) / (target x mu(kTrue)) times as much: 1.10
-// to 1.12 on the generator's line. That is the margin the never-learned order
-// may sit under the learned one by.
-func fcLearnedOver(kTrue float64) float64 {
-	return fcRate(fcKPrice, 1) / (floorTarget * fcRate(kTrue, 1))
-}
-
-// checkFlowControlFloor: shape s overloaded under flow control at kTrue
-// (0.85-0.95 of KV) and rho (1.1-1.5 times what it serves), priced on its
-// last cycle with the mu it learned with flow control off first (learned)
-// and with none (never learned). Never learned:
+// checkFlowControlFloor: shape s overloaded under flow control (fcGenFor),
+// priced on its last cycle with the mu it learned with flow control off
+// first (learned) and with none (never learned). Never learned:
 //
 //   - orders at least the truth (fcTruth), less propTruthTol: the side a
 //     fallback errs to is more replicas;
-//   - orders at least the learned order over fcLearnedOver, less
-//     propTruthTol: under it by no more than the learned mu over-orders by
-//     design;
 //   - orders at most the larger of the learned order and the truth, plus
 //     propTruthTol: more is a cost the learned mu would not have paid.
+//
+// No bound is drawn against the learned order from below. The learned mu is
+// read at saturation (kTrue) and divided by the scale-up threshold, the
+// derived one priced at the target fill and not divided again (replicaCost),
+// so the learned order is the truth times mu(fcKPrice) / (target x
+// mu(kTrue)), 1.04-1.12 on these lines: a floor under it at that ratio is the
+// truth bound again.
 //
 // wrap, when set, edits each of v's rows in the never-learned run: the
 // fallback under test, put back wrong (a mutant).
 func checkFlowControlFloor(s fcShape, wrap func(*domain.ReplicaMetrics)) func(uint64) error {
 	return func(seed uint64) error {
-		r := propRand(seed)
-		kTrue := 0.85 + 0.1*r.Float64()
-		rho := 1.1 + 0.4*r.Float64()
-		lr, err := runFlowControl(s, kTrue, rho, seed, true, nil)
+		g := fcGenFor(seed)
+		lr, err := runFlowControl(s, g, true, nil)
 		if err != nil {
 			return err
 		}
 		if !(lr.measuredMu > 0) || lr.source != domain.ServiceRateSourceMeasured {
 			return violation(kindNotLearned, "%s: the learned run priced on %q mu %.2f (measured %.2f), not its measured mu", s.name, lr.source, lr.mu, lr.measuredMu)
 		}
-		nl, err := runFlowControl(s, kTrue, rho, seed, false, wrap)
+		nl, err := runFlowControl(s, g, false, wrap)
 		if err != nil {
 			return err
 		}
-		truth := fcTruth(s, rho, kTrue, nl.queue)
-		over := fcLearnedOver(kTrue)
-		msg := fmt.Sprintf("%s at %.3f of KV, rho %.2f, router queue %.0f: never learned ordered %.3f replicas (%s mu %.2f), learned %.3f (mu %.2f), truth %.3f (mu %.2f at the target fill)",
-			s.name, kTrue, rho, nl.queue, nl.replicas, nl.source, nl.mu, lr.replicas, lr.mu, truth, fcRate(fcKPrice, s.ranks))
+		truth := fcTruth(s, g, nl.queue)
+		msg := fmt.Sprintf("%s at %.3f of KV, rho %.2f, ITL slope %.3f, router queue %.0f: never learned ordered %.3f replicas (%s mu %.2f), learned %.3f (mu %.2f), truth %.3f (mu %.2f at the target fill)",
+			s.name, g.kTrue, g.rho, g.slope, nl.queue, nl.replicas, nl.source, nl.mu, lr.replicas, lr.mu, truth, g.rate(fcKPrice, s.ranks))
 		if math.IsNaN(nl.replicas) || math.IsNaN(lr.replicas) {
 			return violation(kindNotLearned, "%s: no order", msg)
 		}
 		if nl.replicas < truth*(1-propTruthTol) {
 			return violation(kindWrongSide, "%s: under the truth", msg)
-		}
-		if nl.replicas < lr.replicas/over*(1-propTruthTol) {
-			return violation(kindWrongSide, "%s: under the learned order by more than its %.3fx", msg, over)
 		}
 		return holds(nl.replicas <= max(lr.replicas, truth)*(1+propTruthTol), kindOverPriced, "%s: over both", msg)
 	}
@@ -304,27 +322,34 @@ func checkFlowControlFloor(s fcShape, wrap func(*domain.ReplicaMetrics)) func(ui
 
 // checkK2AboveK1Capacity: each flow-control shape saturated at 0.85-0.95 of
 // its KV, above k1, priced with k2 learned there (flow control off) and with
-// none (flow control on): the per-replica capacity is the same, k1, within
-// 1e-9. A k2 above k1 cannot move capacity, so its absence costs none.
+// none (flow control on). The learned run holds a k2 at or above k1, the
+// other none, and the per-replica capacity is the same, k1, within 1e-9. A
+// k2 above k1 cannot move capacity, so its absence costs none.
 func checkK2AboveK1Capacity(seed uint64) error {
-	r := propRand(seed)
-	kTrue := 0.85 + 0.1*r.Float64()
+	g := fcGenFor(seed)
+	g.rho = 1.2
 	for _, s := range []fcShape{fcDecode, fcPD, fcAggregated, fcDP8} {
-		lr, err := runFlowControl(s, kTrue, 1.2, seed, true, nil)
+		lr, err := runFlowControl(s, g, true, nil)
 		if err != nil {
 			return err
 		}
-		nl, err := runFlowControl(s, kTrue, 1.2, seed, false, nil)
+		nl, err := runFlowControl(s, g, false, nil)
 		if err != nil {
 			return err
 		}
 		k1 := float64(propKv*int64(s.ranks)) * 0.8
+		if !(lr.k2 >= k1) {
+			return violation(kindNotLearned, "%s saturated at %.3f of KV with the queue on its engines: k2 %.0f, not at or above k1 %.0f", s.name, g.kTrue, lr.k2, k1)
+		}
+		if nl.k2 != 0 {
+			return violation(kindMoved, "%s under flow control: k2 %.0f learned with the engines' queues empty", s.name, nl.k2)
+		}
 		if !(lr.perReplica > 0 && nl.perReplica > 0) {
 			return violation(kindNotLearned, "%s: no per-replica capacity (%.0f learned, %.0f not)", s.name, lr.perReplica, nl.perReplica)
 		}
 		if relErr(nl.perReplica, lr.perReplica) > 1e-9 || relErr(lr.perReplica, k1) > 1e-3 {
-			return violation(kindMoved, "%s saturated at %.3f of KV: per-replica capacity %.0f with k2 learned, %.0f without (k1 %.0f)",
-				s.name, kTrue, lr.perReplica, nl.perReplica, k1)
+			return violation(kindMoved, "%s saturated at %.3f of KV: per-replica capacity %.0f with k2 %.0f learned, %.0f without (k1 %.0f)",
+				s.name, g.kTrue, lr.perReplica, lr.k2, nl.perReplica, k1)
 		}
 	}
 	return nil
