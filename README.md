@@ -78,7 +78,7 @@ for f in namespaced settings preflight scaler-tls model-namespace keda-auth acti
   curl -fsSLO $URL/scaling-manager-$f.yaml
   curl -fsSLO $URL/scaling-manager-$f.yaml.sigstore.json
 done
-curl -fsSLO $URL/SHA256SUMS && sha256sum -c SHA256SUMS --ignore-missing
+curl -fsSLO $URL/SHA256SUMS && sha256sum -c SHA256SUMS --ignore-missing   # macOS: shasum -a 256 -c
 sed -i.bak -e "s/__NAMESPACE__/$NAMESPACE/g" -e "s/__MODEL_NAMESPACE__/$NAMESPACE/g" scaling-manager-*.yaml && rm -f scaling-manager-*.yaml.bak
 export KEDA_NS=<the namespace KEDA runs in>
 # The scaler NetworkPolicy admits KEDA from namespace keda; name yours.
