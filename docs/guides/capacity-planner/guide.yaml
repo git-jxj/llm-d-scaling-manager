@@ -3,10 +3,49 @@
 # commands a tool would run are the same strings.
 name: capacity-planner
 
-build:
-  note: From a clone of the release you run. Needs Go 1.26 or later. There is no released capacity-planner binary or image.
-  run: |
-    make capacity-planner
+get:
+  image:
+    note: |
+      The image of the release you run. It serves the recordings in the directory you mount, on your machine only.
+      --listen-all-in-container in its command lets it listen on the container's every interface; -p 127.0.0.1:...
+      keeps the port off your network. Never publish it on 0.0.0.0.
+    run: |
+      export V=<release>
+      mkdir -p recordings
+      docker run --rm -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
+        ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V}
+  binary:
+    note: |
+      Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
+      signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
+    run: |
+      export V=<release> OS=linux ARCH=amd64
+      B=capacity-planner-${V}-${OS}-${ARCH}
+      URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
+      curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
+      grep " ${B}$" SHA256SUMS | sha256sum -c -
+      cosign verify-blob ${B} --bundle ${B}.sigstore.json \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
+      mkdir -p bin && install -m 0755 ${B} bin/capacity-planner
+      bin/capacity-planner version
+  checkout:
+    note: Or from a clone of the release you run, with Go 1.26 or later.
+    run: |
+      make capacity-planner
+
+container:
+  prometheus:
+    note: |
+      The image, reading Prometheus (Linux; on macOS use the binary). --network host lets the container reach your
+      port-forward. On the host network, listen on 127.0.0.1 and drop --listen-all-in-container.
+      For an https Prometheus, mount the token and CA files and pass --bearer-token-file and --ca-file.
+      serve reads no kubeconfig unless --auth=kubernetes, so none is mounted.
+    run: |
+      kubectl -n ${PROM_NS} port-forward svc/${PROM_SVC} 9090:9090 &
+      docker run --rm --network host ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V} \
+        serve --listen 127.0.0.1:8080 --prometheus http://127.0.0.1:9090 --namespace ${NAMESPACE} --kube-state-metrics \
+        --engine vllm --engine-args "${ENGINE_ARGS}"
 
 start:
   prometheus:

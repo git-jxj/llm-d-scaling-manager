@@ -22,7 +22,9 @@ API. Nothing is installed in the cluster.
 
 ## Prerequisites
 
-- [ ] A clone of this repository at the release you run, and Go 1.26 or later.
+- [ ] One of: Docker (or Podman); `curl` and `cosign` 2.4 or later for a
+  binary (linux or darwin, amd64 or arm64); or a clone of this repository and
+  Go 1.26 or later.
 - [ ] One of:
   - `kubectl` access to Prometheus (a port-forward), and a Prometheus that
     holds the last hour of your model servers' metrics and kube-state-metrics
@@ -32,16 +34,64 @@ API. Nothing is installed in the cluster.
 - [ ] The model is served as P/D: one prefill and one decode variant. TTFT is
   priced for P/D only.
 
-<!-- guide:build start -->
+## Get the planner
+
+Use the planner of the release your controller runs. The planner replays
+recordings with the controller's learners, so each release ships both under
+one tag, and `capacity-planner version` prints it.
+
+Run the image:
+
+<!-- guide:get.image start -->
 ```bash
-# From a clone of the release you run. Needs Go 1.26 or later. There is no released capacity-planner binary or image.
+# The image of the release you run. It serves the recordings in the directory you mount, on your machine only.
+# --listen-all-in-container in its command lets it listen on the container's every interface; -p 127.0.0.1:...
+# keeps the port off your network. Never publish it on 0.0.0.0.
+export V=<release>
+mkdir -p recordings
+docker run --rm -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
+  ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V}
+```
+<!-- guide:get.image end -->
+
+Then [open the page](#open-the-page). Any other command runs in place of
+`serve`, for example `capacity-planner:${V} version`. To read Prometheus
+from the container, see [In a container](#in-a-container).
+
+Or download the binary for your platform. The checks are the ones
+[the release files](../../reference/install-methods.md#verify-the-release-files)
+use:
+
+<!-- guide:get.binary start -->
+```bash
+# Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
+# signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
+export V=<release> OS=linux ARCH=amd64
+B=capacity-planner-${V}-${OS}-${ARCH}
+URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
+curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
+grep " ${B}$" SHA256SUMS | sha256sum -c -
+cosign verify-blob ${B} --bundle ${B}.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
+mkdir -p bin && install -m 0755 ${B} bin/capacity-planner
+bin/capacity-planner version
+```
+<!-- guide:get.binary end -->
+
+Or build it from a checkout:
+
+<!-- guide:get.checkout start -->
+```bash
+# Or from a clone of the release you run, with Go 1.26 or later.
 make capacity-planner
 ```
-<!-- guide:build end -->
+<!-- guide:get.checkout end -->
 
 ## Start the planner
 
-Pick one source. The server runs until you stop it.
+With the binary or a checkout, pick one source. The server runs until you
+stop it.
 
 From Prometheus:
 
@@ -78,6 +128,30 @@ bin/capacity-planner serve --recordings ./recordings
 Both sources can be served at once: give both flags. The server prints the
 address it listens on, and refuses to start if `--recordings` is not a
 directory.
+
+### In a container
+
+The image's own command serves the recordings mounted at `/recordings`, as
+in [Get the planner](#get-the-planner). Name a recording by its file name in
+**Source**.
+
+To read Prometheus from the container, use the host's network, so the
+container reaches your port-forward. With the variables set as above:
+
+<!-- guide:container.prometheus start -->
+```bash
+# The image, reading Prometheus (Linux; on macOS use the binary). --network host lets the container reach your
+# port-forward. On the host network, listen on 127.0.0.1 and drop --listen-all-in-container.
+# For an https Prometheus, mount the token and CA files and pass --bearer-token-file and --ca-file.
+# serve reads no kubeconfig unless --auth=kubernetes, so none is mounted.
+kubectl -n ${PROM_NS} port-forward svc/${PROM_SVC} 9090:9090 &
+docker run --rm --network host ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V} \
+  serve --listen 127.0.0.1:8080 --prometheus http://127.0.0.1:9090 --namespace ${NAMESPACE} --kube-state-metrics \
+  --engine vllm --engine-args "${ENGINE_ARGS}"
+```
+<!-- guide:container.prometheus end -->
+
+## Open the page
 
 <!-- guide:open start -->
 ```bash

@@ -12,7 +12,10 @@ the API and the page at `/` that draws it, and phase 2's inverse mode
 (`POST /v1/size`) and the page's saved scenarios and compare. Operators start from
 [Plan a P/D fleet with the capacity planner](../guides/capacity-planner/); this
 page is the API's. Like the rest of `capacity-planner`, it is a contributor and
-operator tool and is not in the manager image.
+operator tool and is not in the manager image. Each release ships it as its
+own image, `ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>`
+(`Dockerfile.capacity-planner`), and as binaries for linux and darwin
+([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
 
 ## Start it
 
@@ -84,7 +87,8 @@ point (headroom times the lower knee).
 | `--namespace NS` | The namespace a `prometheus` source reads when the request names none. |
 | `--allowed-namespaces NS,...` | The namespaces a `prometheus` source may read. Default `--namespace` alone; with `--prometheus` one of the two is required. A request for any other namespace is 403, and a namespace that is not a DNS-1123 label a 400. |
 | `--batch-cap N` | The engine's batch cap a window is captured with, as `capture --batch-cap`. |
-| `--listen ADDR` | Where to serve. Default `127.0.0.1:8080`. Any address that is not loopback needs `--auth=kubernetes`; serve refuses to start without it. |
+| `--listen ADDR` | Where to serve. Default `127.0.0.1:8080`. Any address that is not loopback needs `--auth=kubernetes`, or for the unspecified address `--listen-all-in-container`; serve refuses to start without one. |
+| `--listen-all-in-container` | For a container whose port is published to the host's loopback only (`-p 127.0.0.1:8080:8080`), where the container's own loopback is unreachable from the host. With `--auth=none` it allows `--listen` on the unspecified address (`0.0.0.0:PORT`, `[::]:PORT`, `:PORT`) and nothing else: a named interface, or `--auth=kubernetes`, is refused. Serve prints a warning on stderr. The Host check below still applies. The image's default command sets it. Never set it where the port is reachable from a network. |
 | `--auth none\|kubernetes` | `none` (the default) is loopback only. `kubernetes` checks a bearer token with TokenReview, then asks a SubjectAccessReview for `get` on the non-resource URL `/whatif` plus the path (`/whatif/v1/plan`). A missing or unauthenticated token is 401, a user not allowed is 403. A `prometheus` source's namespace is checked too: the user must be allowed `get` on `pods` in it. Reviews are reused for 30 s; a review that fails is a 500 that names no client error (the error goes to stderr). The client comes from `KUBECONFIG`, `~/.kube/config` or the in-cluster config. |
 | `--tls-cert-file`, `--tls-key-file` | The server's certificate and key. Required with `--auth=kubernetes`: a token is not sent in the clear. |
 | `--token-audiences A,...` | The audiences a TokenReview checks a token for. Default: the API server's own. |
@@ -107,7 +111,28 @@ the same shape:
 With `--auth=none` the server answers only requests addressed to a loopback
 name (`localhost`, `127.0.0.0/8`, `[::1]`, by the same rule `--listen` is
 checked by), so a web page that rebinds its own name to 127.0.0.1 cannot read
-it.
+it. This holds with `--listen-all-in-container` too: a browser on the host
+names `127.0.0.1:8080` or `localhost:8080`, which pass.
+
+## In a container
+
+`Dockerfile.capacity-planner` builds a distroless, nonroot image whose entry
+point is the binary and whose command is
+`serve --listen 0.0.0.0:8080 --listen-all-in-container --recordings /recordings`.
+`/recordings` is empty in the image; mount a directory over it. Publish the
+port to the host's loopback only:
+
+```
+docker run --rm -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
+  ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>
+```
+
+With `--network host` the container shares the host's loopback: give the
+command yourself, with `--listen 127.0.0.1:8080` and without
+`--listen-all-in-container`, or the server listens on every interface of the
+host. Serve reads a kubeconfig only with `--auth=kubernetes`.
+`make capacity-planner-image-check` builds the image and runs
+`hack/check-capacity-planner-image.sh` against it, as the PR check does.
 
 ## Kubernetes authentication
 
@@ -586,3 +611,5 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
 | `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (208 cases; it fails without node): `esc`, the bucket edges by the server's rules, the box's mark, the link's edges and the lines' styles, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |
+| `TestCheckContainerListen`, `TestServeListenAllInContainer` | `--listen-all-in-container` allows the unspecified address with `--auth=none` and nothing else (a named interface, a hostname, `--auth=kubernetes`), each of which `CheckListen` still refuses; started so, serve binds every interface, warns, answers a loopback Host and refuses another with 403. |
+| `hack/check-capacity-planner-image.sh` | The image runs as non-root, prints its version, and with its own command and a committed recording mounted answers `POST /v1/inputs` and `POST /v1/plan` with 200 and a TTFT curve; a foreign Host is 403; `serve` on `0.0.0.0` without the opt-in exits 2. |
