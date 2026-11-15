@@ -26,6 +26,13 @@ type flightCall[V any] struct {
 // do is fn's result for key: fn's own, or that of the call for key already in
 // flight.
 func (f *flight[V]) do(key string, fn func() (V, error)) (V, error) {
+	v, _, err := f.doShared(key, fn)
+	return v, err
+}
+
+// doShared is do, and whether the result is another caller's call (shared)
+// rather than fn run by this one.
+func (f *flight[V]) doShared(key string, fn func() (V, error)) (_ V, shared bool, _ error) {
 	f.mu.Lock()
 	if f.calls == nil {
 		f.calls = map[string]*flightCall[V]{}
@@ -34,7 +41,7 @@ func (f *flight[V]) do(key string, fn func() (V, error)) (V, error) {
 		c.waiting++
 		f.mu.Unlock()
 		<-c.done
-		return c.value, c.err
+		return c.value, true, c.err
 	}
 	c := &flightCall[V]{done: make(chan struct{})}
 	f.calls[key] = c
@@ -46,7 +53,7 @@ func (f *flight[V]) do(key string, fn func() (V, error)) (V, error) {
 		close(c.done)
 	}()
 	c.value, c.err = fn()
-	return c.value, c.err
+	return c.value, false, c.err
 }
 
 // waiters is how many callers wait on the call for key, for the tests.
@@ -61,11 +68,13 @@ func (f *flight[V]) waiters(key string) int {
 
 // doFor is do for a request: fn runs on the context of the call in flight,
 // so a caller whose shared call ended with that call's context (its client
-// gone) while its own is live asks again.
+// gone) while its own is live asks again. A caller that ran fn itself never
+// asks again: a deadline error fn returned while the caller's context is
+// live (a Pricer's own timeout) would otherwise run fn forever.
 func (f *flight[V]) doFor(ctx context.Context, key string, fn func() (V, error)) (V, error) {
 	for {
-		v, err := f.do(key, fn)
-		if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && ctx.Err() == nil {
+		v, shared, err := f.doShared(key, fn)
+		if shared && err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && ctx.Err() == nil {
 			continue
 		}
 		return v, err
