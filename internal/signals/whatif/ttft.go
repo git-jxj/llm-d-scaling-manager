@@ -157,13 +157,17 @@ const MaxPSPromptCV = 0.25
 
 // DefaultPriceRouterWait is TTFTFleet.PriceRouterWait's default, for the CLI
 // (--price-router-wait), the planner API and the SLO analyzer
-// (slo.SwitchTTFTRouterWait) alike: on. With the gate priced as a stage
-// (ttft_gate.go) it reads at least 0.9 of the client at the mean, p90 and p95
-// at the one staircase step past the prefill onset that the fleet held, and
-// moves no figure below the onsets (TestStaircaseQ32_TheGateStageHoldsTheClient).
-// Off (--price-router-wait=false) is the opt-out: a TTFT past the onset is
-// flagged AboveFlowControlOnset, a miss, as before.
-const DefaultPriceRouterWait = true
+// (slo.SwitchTTFTRouterWait) alike: off, so a TTFT past the prefill onset is
+// flagged AboveFlowControlOnset, a miss. On (opt-in) prices the gate as a
+// stage (ttft_gate.go). It reads at least 0.9 of the client at the mean, p90
+// and p95 at the one staircase step past the prefill onset that the fleet
+// held, and moves no figure below the onsets
+// (TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient); off, the price
+// reads short there (TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep).
+// One held step is not enough to make it the default: a cluster staircase
+// with several held steps between the onset and MaxRouterWaitKneeShare of
+// the knee gates that.
+const DefaultPriceRouterWait = false
 
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
 // at which TTFTFleet.PriceRouterWait takes. Against a paired simulation (the
@@ -256,7 +260,7 @@ type TTFTFleet struct {
 	// slo.SwitchTTFTProcessorSharing, and in the CLI.
 	ProcessorSharing bool
 	// PriceRouterWait prices EPP flow control's gate past the prefill onset,
-	// on by default (DefaultPriceRouterWait). On, a TTFT at or above the
+	// opt-in, off by default (DefaultPriceRouterWait). On, a TTFT at or above the
 	// prefill gate's onset carries the gate as a stage in front of the
 	// processor-sharing prefill (ttft_gate.go): the wait at the closed gate
 	// (TTFTParts.RouterWait) and behind the burst it releases to one pod
@@ -274,7 +278,7 @@ type TTFTFleet struct {
 	// stale poll, send them all to one pod while the others run short. At the
 	// Qwen3-32B staircase's step past the onset that the fleet held, the
 	// stage reads 1.8, 1.5 and 0.97 of the client's mean, p90 and p95
-	// (TestStaircaseQ32_TheGateStageHoldsTheClient); with the router's wait
+	// (TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient); with the router's wait
 	// taken as inside the prefill stage, as this switch did before, it read
 	// 0.80, 0.84 and 0.57. At the second staircase's C-onset at 56.6 r/s,
 	// past the share, it reads about 20 times short

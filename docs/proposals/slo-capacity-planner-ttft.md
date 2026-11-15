@@ -337,14 +337,14 @@ checks it.
    and `W_decode` on the decode pods. `W_router` = 0.
 2. **Above the prefill onset**: the router holds the excess. The gate reads
    a score an engine step stale and the router's scorers send each released
-   burst to one pod, so the gate adds delay. By default, up to 0.9 of the
-   prefill knee, the price carries the gate as a stage (its wait at the
-   router and behind the burst), flagged `FlowControlWaitPriced` and judged
-   by its figure ([as built](#as-built-the-router-stage)). Past 0.9 of the
-   knee, or with the switch off, the answer stays the per-pod model, flagged
-   `AboveFlowControlOnset`, and a target read at that rate is missed however
-   low the figure, so question 1 caps there (`BoundPrefillOnset`). The pooled
-   M/G/c is printed as the optimistic bound.
+   burst to one pod, so the gate adds delay. By default the answer stays the
+   per-pod model, flagged `AboveFlowControlOnset`, and a target read at that
+   rate is missed however low the figure, so question 1 caps at the onset
+   (`BoundPrefillOnset`). An opt-in switch prices the gate as a stage up to
+   0.9 of the prefill knee (its wait at the router and behind the burst),
+   flagged `FlowControlWaitPriced` and judged by its figure
+   ([as built](#as-built-the-router-stage)). The pooled M/G/c is printed as
+   the optimistic bound.
 3. **Above the decode onset**: a closed decode gate stops dispatch for every
    request, prefill included, and a released request leaves its decode slot
    idle through prefill and transfer, so the gate is not work conserving. The
@@ -1827,9 +1827,9 @@ at worst in review), but no run has validated it at that spread.
 ## As built: the router's wait above the prefill onset
 
 **Superseded in part.** The switch below no longer takes the wait as inside
-the prefill stage: it prices the gate as a stage of its own, and it is on by
-default ([the router stage](#as-built-the-router-stage)). The measurements
-below are what led there.
+the prefill stage: on, it prices the gate as a stage of its own. It is still
+opt-in and off by default ([the router stage](#as-built-the-router-stage)).
+The measurements below are what led there.
 
 With flow control on, the router starts holding requests once the prefill
 pods' mean waiting count reaches its threshold (the prefill onset). Above that
@@ -2054,13 +2054,15 @@ issue proposed (above).
 
 ## As built: the router stage
 
-`TTFTFleet.PriceRouterWait` now prices EPP flow control's gate past the
-prefill onset as a stage of the TTFT (`internal/signals/whatif/ttft_gate.go`),
-and it is on by default (`whatif.DefaultPriceRouterWait`) in the CLI, the
-planner API and the SLO analyzer. `--price-router-wait=false`, or the replay
-switch `slo-ttft-router-wait` off, is the opt-out: a TTFT past the onset is
-then flagged `AboveFlowControlOnset`, a miss, as before. Below the onsets, and
-with flow control off, no figure moves.
+`TTFTFleet.PriceRouterWait`, on, now prices EPP flow control's gate past the
+prefill onset as a stage of the TTFT (`internal/signals/whatif/ttft_gate.go`).
+It is **opt-in and off by default** (`whatif.DefaultPriceRouterWait`) in the
+CLI (`--price-router-wait`), the planner API (no switch, the default) and the
+SLO analyzer (replay switch `slo-ttft-router-wait`): by default a TTFT past
+the onset is flagged `AboveFlowControlOnset`, a miss, as before. With it on,
+below the onsets and with flow control off no figure moves. It meets its
+rule at the one held step measured so far (below); turning it on by default
+waits for [a cluster staircase](#what-turns-it-on) with several held steps.
 
 ### The gate, from the router's code
 
@@ -2145,7 +2147,10 @@ staircase.
 
 ### Validated against the Qwen3-32B staircase
 
-`TestStaircaseQ32_TheGateStageHoldsTheClient`, from the frozen fleet. At C 4
+`TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient` (switch on) and
+`TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep` (the default: at C 4
+it reads 0.80, 0.84 and 0.57 of the client, flagged and so a miss), from the
+frozen fleet. With the switch on, at C 4
 the stage reads Δ 5.43 s, a burst of 17.6 requests, a drain of 8.68 s and a
 closed share of 0.62. The run's prefill pods were seen with 12 to 23 waiting
 on one pod while the other sat empty.
@@ -2162,35 +2167,48 @@ The priced router wait's p90 and p95 at C 4 are 7.9 s and 10.9 s, against
 4.6 s and 10.7 s read inside the histogram's wide buckets. Flow-control-off
 phases are not touched: the stage needs flow control on.
 
-**Decision.** The rule (from #56): at a step the fleet held past the onset,
-never more than 10 % under the client at the mean, p90 and p95; below the
-onset, no more pessimistic than before. C 4 reads 0.97 to 1.77 of the client;
-below the onsets every figure is the frozen curve's to the bit. So the switch
-is on by default. Question 1 no longer moves past the measurement: bucket C's
-rate for its frozen p95 target (22.7 s) and p90 target (17.7 s) is 3.10 r/s,
-the onset, inside the measured crossings, where the switch as it was answered
-3.44 r/s.
+**Decision: opt-in for now.** The rule (from #56): at a step the fleet held
+past the onset, never more than 10 % under the client at the mean, p90 and
+p95; below the onset, no more pessimistic than before. With the switch on, C 4
+reads 0.97 to 1.77 of the client, and below the onsets every figure is the
+frozen curve's to the bit; bucket C's rate for its frozen p95 (22.7 s) and
+p90 (17.7 s) targets stays at the onset, 3.10 r/s, inside the measured
+crossings, where the switch as it was answered 3.44 r/s. That is one held
+step, so the default stays off.
 
-**What it gets wrong.**
+**Open questions.**
 
-- It is long at the held step: the mean 1.77x, the router wait 1.9x.
-- At the void step after it the tail is short (0.66x). That step evicted 127
-  requests; its client figures are the dispatched ones only.
-- One held step is the whole validation. The stage switches on at the
-  model's own onset, which reads low with its knee. On the second staircase
-  (C-onset at 50.1 r/s, 1.02x its onset) the router held almost nothing, yet
-  the price now carries the gate there: 2.6 to 2.7x the client, where it read
-  1.4 to 1.9x.
-- B 7 is past 0.9 of the knee and keeps `AboveFlowControlOnset`: the stage
-  is not priced there, and the flagged figure reads 0.65x.
+- It reads long at the held step: the mean 1.77x, p90 1.53x, the router
+  wait 1.9x.
+- At the void step after it (C 5, 127 evicted) the tail is short: p90 and
+  p95 0.66x. Its client figures are the dispatched requests' only.
+- The stage switches on at the model's own onset, which reads low with its
+  knee. On the second staircase (C-onset at 50.1 r/s, 1.02x its onset) the
+  router held almost nothing, yet with the switch on the price carries the
+  gate there: 2.6 to 2.7x the client, where it reads 1.4 to 1.9x off.
+- The mechanism is a cliff: replaying the run's arrivals, moving `V_P` 9 %
+  either way flips C 4 from no wait to a collapse. The stage's size rests on
+  the mechanism, not on a fit, and one step cannot say how far that holds.
+- B 7 is past 0.9 of the knee and keeps `AboveFlowControlOnset` either way;
+  its flagged figure reads 0.65x.
 
-**In the SLO analyzer.** The analyzer shares the default. Past the prefill
-onset and up to 0.9 of the knee, its TTFT figure now carries the gate,
+**In the SLO analyzer.** It shares the default, so nothing changes there
+unless a replay turns `slo-ttft-router-wait` on. On, past the prefill onset
+and up to 0.9 of the knee, its TTFT figure carries the gate,
 `FlowControlWaitPriced` replaces `AboveFlowControlOnset` on its flag series,
 the verdict there is read from the figure, and the published rate may stand
-past the onset where the priced figure meets the target. Below the onset
-nothing moves. No committed recording reaches a priced fleet with flow
+past the onset. No committed recording reaches a priced fleet with flow
 control on, so no golden moves.
+
+### What turns it on
+
+A short cluster staircase with flow control on and several steps between the
+model's prefill onset and 0.9 of the prefill knee, Poisson and bursty, long
+enough for each step to hold or fail on its own. The switch becomes the
+default if, at every step the fleet held, the priced mean, p90 and p95 are at
+least 0.9 of the client's, and the router wait's priced mean is within a
+factor of two of the EPP's `flow_control_request_queue_duration_seconds`
+mean, with no step below the onset moved. Until then it stays opt-in.
 
 ## As built: the onsets on processor sharing, and the decode gate's closed share
 

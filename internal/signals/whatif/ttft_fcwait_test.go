@@ -29,8 +29,8 @@ func fcFleet(fl TTFTFleet, priced bool) TTFTFleet {
 // moves no figure. Below the onset it moves nothing. Bucket C's fleet (Ca^2 4)
 // on four decode pods, whose prefill onset sits under the share.
 func TestFlowControlWait_FlagFollowsTheSwitch(t *testing.T) {
-	if !DefaultPriceRouterWait {
-		t.Fatal("the gate's price is on by default")
+	if DefaultPriceRouterWait {
+		t.Fatal("the gate's price is opt-in: off by default")
 	}
 	base := psFleet(0.0577, 4)
 	base.Decode.Replicas = 4

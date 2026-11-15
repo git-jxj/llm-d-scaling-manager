@@ -1998,14 +1998,15 @@ How a reading becomes a crossing:
   less the client's, which r1 put within 4 ms.
 
 **Above the prefill flow-control onset.** Once the router's prefill gate closes,
-requests wait in its queue. Up to 0.9 of the prefill knee the model prices that
-wait as a stage (`FlowControlWaitPriced`), in the CLI and the SLO analyzer alike;
-past it, or with `--price-router-wait=false`, it flags the wait
-(`AboveFlowControlOnset`) and does not price it (see the TTFT page, "As built: the
-router stage"). The second run's onset steps are replayed by
+requests wait in its queue. By default the model flags that wait
+(`AboveFlowControlOnset`) and does not price it, in the CLI and the SLO analyzer
+alike; the opt-in `--price-router-wait` prices it as a stage
+(`FlowControlWaitPriced`) up to 0.9 of the prefill knee (see the TTFT page, "As
+built: the router stage"). The second run's onset steps are replayed by
 `TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset` and
 `TestStaircaseR2_TheStepWithARouterWaitReadsShort`, the Qwen3-32B run's by
-`TestStaircaseQ32_TheGateStageHoldsTheClient`. A bucket's `measureAboveOnset` in the spec adds steps at those
+`TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep` and
+`TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient`. A bucket's `measureAboveOnset` in the spec adds steps at those
 multiples of its frozen prefill onset, after its scored steps and held the same way.
 They are never scored: no crossing, knee or falsifier reads them. The report's "Above
 the prefill onset" table lists every flow-control-on step past the onset, with the

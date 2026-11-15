@@ -144,8 +144,8 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// priced. Its unit tests hold it (heldBy); the CLI, which has no switch,
 	// moves its own goldens.
 	slo.SwitchTTFTProcessorSharing: nil,
-	// The flow-control gate priced as a stage past the prefill onset, on in
-	// production (whatif.DefaultPriceRouterWait). It moves no golden: it moves
+	// The flow-control gate priced as a stage past the prefill onset, opt-in
+	// and off in production (whatif.DefaultPriceRouterWait). It moves no golden: it moves
 	// a figure only above the prefill onset with flow control on, and no
 	// committed recording's cycle reaches a priced fleet. Its unit tests hold
 	// it (heldBy).

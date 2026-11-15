@@ -141,7 +141,7 @@ const (
 	// place.
 	AboveFlowControlOnset Flag = "AboveFlowControlOnset"
 	// FlowControlWaitPriced is a rate at or above the prefill gate's onset
-	// with flow control on, priced with TTFTFleet.PriceRouterWait: the gate is
+	// with flow control on, priced with the opt-in TTFTFleet.PriceRouterWait: the gate is
 	// a stage of the figure, its wait at the router and behind the burst it
 	// releases (TTFTParts.RouterWait, TTFTParts.BurstWait; ttft_gate.go).
 	// Validated at one staircase step that held (the Qwen3-32B staircase's
