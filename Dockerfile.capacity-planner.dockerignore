@@ -1,0 +1,12 @@
+# The build context of Dockerfile.capacity-planner (BuildKit reads
+# <Dockerfile>.dockerignore in place of .dockerignore). Only what it copies:
+# the module, the command and internal/, test files and testdata left out.
+*
+!go.mod
+!go.sum
+!cmd/capacity-planner/
+!internal/
+cmd/capacity-planner/**/*_test.go
+cmd/capacity-planner/testdata/
+internal/**/*_test.go
+internal/**/testdata/

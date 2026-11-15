@@ -22,6 +22,8 @@ WARMPOOL_PROXY_IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager/warmpool-proxy:$(I
 # workload-patch, the ScaledObject plan and utilization share without a
 # checkout. The release publishes it.
 TOOLS_IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager/tools:$(IMG_TAG)
+# The capacity planner image (Dockerfile.capacity-planner), released under the same tag.
+PLANNER_IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager/capacity-planner:$(IMG_TAG)
 KIND_ARGS ?= -t mix -n 3 -g 2   # Default: 3 nodes, 2 GPUs per node, mixed vendors
 # The kind cluster create-kind-cluster and destroy-kind-cluster act on: the
 # variable deploy/kind-emulator/install.sh already reads. Both targets ignored
@@ -494,6 +496,23 @@ capacity-planner: ## Build the capacity planner command line (bin/capacity-plann
 	go build -ldflags "$(LEARNREC_LDFLAGS)" -o bin/capacity-planner ./cmd/capacity-planner
 	@# The old name until v0.12.0: run as whatif, it prints a deprecation note.
 	ln -sf capacity-planner bin/whatif
+
+# The capacity planner binaries a release attaches, one per platform, named
+# capacity-planner-<version>-<os>-<arch>: the ldflags of capacity-planner, the
+# release as `capacity-planner version` prints it, and -trimpath, so a re-run
+# of the release builds the same bytes. ci-release.yaml (release-files) runs
+# it after release-manifests and adds the binaries to SHA256SUMS.
+CAPACITY_PLANNER_PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+.PHONY: capacity-planner-dist
+capacity-planner-dist: ## Build the release's capacity planner binaries: make capacity-planner-dist RELEASE_VERSION=vX.Y.Z [DIST=dist]
+	@test -n "$(RELEASE_VERSION)" || { echo "set RELEASE_VERSION=vX.Y.Z"; exit 1; }
+	@mkdir -p "$(DIST)"
+	@set -e; for p in $(CAPACITY_PLANNER_PLATFORMS); do \
+		os="$${p%/*}"; arch="$${p#*/}"; out="$(DIST)/capacity-planner-$(RELEASE_VERSION)-$$os-$$arch"; \
+		CGO_ENABLED=0 GOOS="$$os" GOARCH="$$arch" go build -trimpath -buildvcs=false \
+			-ldflags "$(LEARNREC_LDFLAGS) -X main.version=$(RELEASE_VERSION)" -o "$$out" ./cmd/capacity-planner; \
+		echo "built $$out"; \
+	done
 
 .PHONY: whatif
 whatif: capacity-planner ## Deprecated alias of capacity-planner; whatif will be removed in v0.12.0
@@ -3189,6 +3208,7 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n deploy/enginecache.sh
 	@bash -n deploy/scaling-manager-tools.sh
 	@bash -n hack/check-tools-image.sh
+	@bash -n hack/check-capacity-planner-image.sh
 	@bash -n hack/benchmark/engine_cache_claim.sh
 	@bash -n hack/benchmark/scenario_overrides.sh
 	@bash -n hack/check-harness-teardown.sh
@@ -3590,6 +3610,16 @@ docker-push-tools: ## Push the operator tools image.
 .PHONY: tools-image-check
 tools-image-check: docker-build-tools ## Build the tools image and check it renders what this checkout renders (hack/check-tools-image.sh).
 	TOOLS_IMG=${TOOLS_IMG} bash hack/check-tools-image.sh
+
+# BuildKit reads Dockerfile.capacity-planner.dockerignore: the command and
+# internal/, no tests.
+.PHONY: docker-build-capacity-planner
+docker-build-capacity-planner: ## Build the capacity planner image. PLANNER_IMG=<ref>
+	DOCKER_BUILDKIT=1 $(CONTAINER_TOOL) build --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg VERSION=$(IMG_TAG) -t ${PLANNER_IMG} -f Dockerfile.capacity-planner .
+
+.PHONY: capacity-planner-image-check
+capacity-planner-image-check: docker-build-capacity-planner ## Build the capacity planner image and check it serves a recording (hack/check-capacity-planner-image.sh).
+	PLANNER_IMG=${PLANNER_IMG} PLANNER_VERSION=$(IMG_TAG) bash hack/check-capacity-planner-image.sh
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.

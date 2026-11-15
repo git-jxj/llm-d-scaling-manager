@@ -41,6 +41,32 @@ func TestCheckListen(t *testing.T) {
 	}
 }
 
+// --listen-all-in-container allows the unspecified address without
+// authentication, and nothing else: no named interface, no hostname, no
+// --auth=kubernetes. CheckListen still refuses every one of them.
+func TestCheckContainerListen(t *testing.T) {
+	for _, c := range []struct {
+		addr, mode string
+		ok         bool
+	}{
+		{"0.0.0.0:8080", AuthNone, true},
+		{"[::]:8080", AuthNone, true},
+		{":8080", AuthNone, true},
+		{"127.0.0.1:8080", AuthNone, false},
+		{"10.1.2.3:8080", AuthNone, false},
+		{"planner.example:8080", AuthNone, false},
+		{"0.0.0.0:8080", AuthKubernetes, false},
+		{"0.0.0.0:8080", "basic", false},
+		{"0.0.0.0", AuthNone, false},
+	} {
+		err := CheckContainerListen(c.addr, c.mode)
+		assert.Equal(t, c.ok, err == nil, "%s %s: %v", c.addr, c.mode, err)
+		if c.ok {
+			assert.Error(t, CheckListen(c.addr, c.mode), "%s: CheckListen must still refuse it", c.addr)
+		}
+	}
+}
+
 // cluster is a fake API server: TokenReview authenticates the token "good" as
 // alice; SubjectAccessReview allows alice get on the non-resource path
 // allowedPath and on pods in allowedNS. It counts the reviews, keeps the last

@@ -36,6 +36,9 @@ type serveFlags struct {
 	// allowedNamespaces is --allowed-namespaces, comma-separated, and
 	// audiences --token-audiences.
 	allowedNamespaces, audiences string
+	// allInContainer is --listen-all-in-container: the one way to bind every
+	// interface without authentication (whatifapi.CheckContainerListen).
+	allInContainer bool
 }
 
 // runServe serves the capacity planner's API (internal/whatifapi) until ctx
@@ -43,7 +46,8 @@ type serveFlags struct {
 // CLI's own code paths. A Prometheus window is read from --prometheus with capture's
 // flags, the window and namespace coming with each request; a recording is
 // read from --recordings by file name. It binds a loopback address unless
-// --auth=kubernetes, which needs TLS.
+// --auth=kubernetes, which needs TLS, or --listen-all-in-container, which
+// binds every interface of a container with no authentication.
 func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs := newFlags("serve", out)
 	var f serveFlags
@@ -61,6 +65,7 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.tlsKey, "tls-key-file", "", "the server's private key, PEM; required with --auth=kubernetes")
 	fs.DurationVar(&f.shutdownDeadline, "shutdown-timeout", 10*time.Second, "how long requests in flight may run once the server is told to stop")
 	fs.StringVar(&f.allowedNamespaces, "allowed-namespaces", "", "the namespaces a prometheus source may read, comma-separated; default --namespace alone")
+	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
 	if ok, err := parse(fs, args); !ok {
 		return err
@@ -143,7 +148,12 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if err != nil {
 		return nil, err
 	}
-	if err := whatifapi.CheckListen(f.listen, f.auth); err != nil {
+	if f.allInContainer {
+		if err := whatifapi.CheckContainerListen(f.listen, f.auth); err != nil {
+			return nil, usageError{err}
+		}
+		fmt.Fprintf(warn, "capacity-planner: warning: --listen-all-in-container: serving %s with no authentication; publish the port to the host's loopback only (-p 127.0.0.1:PORT:PORT)\n", f.listen)
+	} else if err := whatifapi.CheckListen(f.listen, f.auth); err != nil {
 		return nil, usageError{err}
 	}
 	if f.auth == whatifapi.AuthKubernetes && (f.tlsCert == "" || f.tlsKey == "") {

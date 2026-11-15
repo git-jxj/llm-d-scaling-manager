@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -212,6 +213,9 @@ func TestServeRefusesUnsafeBinds(t *testing.T) {
 		{[]string{"serve", "--recordings", dir, "--listen", "0.0.0.0:0"}, "--auth=kubernetes"},
 		{[]string{"serve", "--recordings", dir, "--listen", ":0"}, "not a loopback address"},
 		{[]string{"serve", "--recordings", dir, "--listen", "0.0.0.0:0", "--auth", "kubernetes"}, "--tls-cert-file"},
+		{[]string{"serve", "--recordings", dir, "--listen", "10.1.2.3:0", "--listen-all-in-container"}, "unspecified address only"},
+		{[]string{"serve", "--recordings", dir, "--listen", "127.0.0.1:0", "--listen-all-in-container"}, "unspecified address only"},
+		{[]string{"serve", "--recordings", dir, "--listen", "0.0.0.0:0", "--auth", "kubernetes", "--listen-all-in-container"}, "--auth=none"},
 		{[]string{"serve", "--listen", "127.0.0.1:0"}, "--prometheus, --recordings"},
 		{[]string{"serve", "--recordings", dir, "--from", "2026-11-09T10:00:00Z"}, "each request names"},
 		{[]string{"serve", "--recordings", filepath.Join(dir, "missing"), "--listen", "127.0.0.1:0"}, "not a directory"},
@@ -223,6 +227,48 @@ func TestServeRefusesUnsafeBinds(t *testing.T) {
 		var u usageError
 		assert.True(t, errors.As(err, &u), "%v: %v", c.args, err)
 		assert.True(t, strings.Contains(err.Error(), c.want), "%v: %v", c.args, err)
+	}
+}
+
+// With --listen-all-in-container, serve binds every interface with no
+// authentication, says so on stderr, and still answers loopback names only.
+func TestServeListenAllInContainer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	var warn safeBuffer
+	go func() {
+		done <- run(ctx, []string{"serve", "--recordings", t.TempDir(), "--listen", "0.0.0.0:0", "--listen-all-in-container"}, io.Discard, &warn)
+	}()
+	var addr string
+	require.Eventually(t, func() bool {
+		_, rest, ok := strings.Cut(warn.String(), "API on ")
+		addr, _, _ = strings.Cut(rest, " ")
+		return ok && addr != ""
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.Contains(t, warn.String(), "warning: --listen-all-in-container")
+	host, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	ip := net.ParseIP(host)
+	require.True(t, ip != nil && ip.IsUnspecified(), "bound %s, want every interface", addr)
+	post := func(hostHeader string) int {
+		req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+port+"/v1/plan", strings.NewReader(`{"inputsId": "sha256:none"}`))
+		require.NoError(t, err)
+		req.Host = hostHeader
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	assert.Equal(t, http.StatusNotFound, post("localhost:"+port))
+	// A name other than loopback is still refused: the Host check stays.
+	assert.Equal(t, http.StatusForbidden, post("planner.example:"+port))
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not stop")
 	}
 }
 

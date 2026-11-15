@@ -52,6 +52,28 @@ func CheckListen(addr, mode string) error {
 	return nil
 }
 
+// CheckContainerListen is CheckListen's one exception, for
+// --listen-all-in-container: without authentication, the API binds every
+// interface of a container whose port is published to the host's loopback
+// only. It allows the unspecified address (0.0.0.0, ::, or an empty host)
+// with AuthNone and nothing else: a named interface, or --auth=kubernetes,
+// which already binds any address, is refused.
+func CheckContainerListen(addr, mode string) error {
+	if mode != AuthNone {
+		return fmt.Errorf("--listen-all-in-container is for --auth=%s; --auth=%s binds any address already", AuthNone, mode)
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("--listen %q: %w", addr, err)
+	}
+	if host != "" {
+		if ip := net.ParseIP(host); ip == nil || !ip.IsUnspecified() {
+			return fmt.Errorf("--listen %s: --listen-all-in-container allows the unspecified address only (0.0.0.0, [::] or :PORT)", addr)
+		}
+	}
+	return nil
+}
+
 // isLoopback reports whether host names a loopback address: localhost, or
 // an IP in 127.0.0.0/8 or ::1. An empty host is every interface. It is the
 // one rule for both the address served (CheckListen) and the Host a request
