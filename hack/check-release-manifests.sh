@@ -640,7 +640,7 @@ expect_wf() {
     got="$(yq -r "$3" "$WF" 2>&1)"
     if [ "$got" = "$2" ]; then pass; else fail "ci-release.yaml: $1: got '$got', want '$2'"; fi
 }
-expect_wf "release-files runs after both images are pushed and signed" 'release,release-tools' '[.jobs."release-files".needs] | flatten | join(",")'
+expect_wf "release-files runs after both images are pushed and signed, and the files signed" 'release,release-sign,release-tools' '[.jobs."release-files".needs] | flatten | join(",")'
 expect_wf "release-files may upload (contents) and pull the tools image (packages: read), and signs nothing" \
     'contents=write,packages=read' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
 expect_wf "release-sign may sign (id-token) and read, and write nothing" \
@@ -741,6 +741,23 @@ for c in "absent ok create" "draft ok upload" "published-same ok none" "publishe
         none) [ "$uploads" = 0 ] || got="$got(upload=$uploads)" ;;
     esac
     if [ "$got" = "$want" ]; then pass; else fail "the attach step with the release $state: $got, want $want ($(tail -1 "$WORK/wf/attach.out"))"; fi
+done
+
+# The release-sign refusal, run with the same stub gh: signing goes on for no
+# release or a draft, and stops for a published release or one it cannot
+# read, before the sign step, and with no write to the release.
+expect_wf "release-sign refuses a published release before it signs" 'true' \
+    '(.jobs."release-sign".steps | to_entries | map(select(.value.name == "Refuse a release that is already published")) | .[0].key) < (.jobs."release-sign".steps | to_entries | map(select(.value.name == "Sign the release files")) | .[0].key) | tostring'
+yq -r '.jobs."release-sign".steps[] | select(.name == "Refuse a release that is already published") | .run' "$WF" > "$WORK/wf/published.sh"
+for c in "absent ok" "draft ok" "published-same refused" "forbidden refused"; do
+    read -r state want <<< "$c"
+    : > "$WORK/wf/gh.log"
+    rc=0
+    (cd "$WORK/wf/run" && STUB_STATE="$state" STUB_LOG="$WORK/wf/gh.log" VERSION=v0.11.0 \
+        PATH="$WORK/wf/bin:$PATH" bash -e "$WORK/wf/published.sh") > "$WORK/wf/published.out" 2>&1 || rc=$?
+    got=ok; [ "$rc" -eq 0 ] || got=refused
+    writes="$(grep -cE '^release (create|upload|edit|delete)' "$WORK/wf/gh.log")"
+    if [ "$got" = "$want" ] && [ "$writes" = 0 ] && [ -s "$WORK/wf/published.sh" ]; then pass; else fail "release-sign with the release $state: $got, want $want, $writes writes ($(tail -1 "$WORK/wf/published.out"))"; fi
 done
 
 echo ""

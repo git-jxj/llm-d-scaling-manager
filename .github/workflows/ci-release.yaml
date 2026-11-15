@@ -552,6 +552,34 @@ jobs:
           [ -n "$DIGEST" ] || { echo "::error::the release job reported no digest"; exit 1; }
           make release-manifests IMG="$IMAGE@$DIGEST" RELEASE_VERSION="$VERSION" DIST=dist
 
+      # Signing again makes new bundles, so a re-run for a release already
+      # published would push a tools image whose bundles differ from the ones
+      # attached: refuse before signing. Read-only; any error reading the
+      # release is a refusal, never "no release".
+      - name: Refuse a release that is already published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"
+          rc=0
+          draft="$(gh release view "$VERSION" --json isDraft --jq .isDraft 2>"$T/view.err")" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            if grep -qi 'release not found' "$T/view.err"; then
+              echo "no release $VERSION yet"
+              exit 0
+            fi
+            echo "::error::cannot read release $VERSION: $(head -1 "$T/view.err")"
+            exit 1
+          fi
+          if [ "$draft" != true ]; then
+            echo "::error::release $VERSION is already published; signing again would bake other bundles into the tools image. Release a new version instead."
+            exit 1
+          fi
+          echo "release $VERSION is a draft"
+
       # One bundle per file, SHA256SUMS included: <file>.sigstore.json. Signed
       # by content, so a file changed after signing fails verification.
       - name: Sign the release files
@@ -581,7 +609,7 @@ jobs:
   release-files:
     # After release-tools too: a draft release whose notes and guides point at
     # a tools image that failed to push would install half a release.
-    needs: [release, release-tools]
+    needs: [release, release-sign, release-tools]
     runs-on: ubuntu-latest
     permissions:
       # Upload to the GitHub Release, creating a draft when none exists.
