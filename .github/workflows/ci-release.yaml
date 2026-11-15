@@ -632,14 +632,19 @@ jobs:
           yq --version
 
       # kustomize is installed by `make kustomize` (KUSTOMIZE_VERSION in the
-      # Makefile), which is `go install`: the Go of go.mod, not the runner's.
-      - name: Read the Go version from go.mod
-        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
+      # Makefile), which is `go install`, and the capacity planner binaries
+      # are built here. The Go line of go.mod (1.26 for go 1.26.0), at its
+      # latest patch (check-latest), as the image's golang:1.26 builder is:
+      # go.mod's own 1.26.0 would ship that release's standard library and
+      # every fix since missing from it.
+      - name: Read the Go line from go.mod
+        run: sed -En 's/^go ([0-9]+\.[0-9]+)(\..*)?$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "${{ env.GO_VERSION }}"
+          check-latest: true
           cache: false
 
       - name: Install kustomize
@@ -662,6 +667,16 @@ jobs:
       # this release, -trimpath so a re-run builds the same bytes. Each must
       # exist, the linux/amd64 one must print this release and commit, and all
       # are added to the SHA256SUMS the render wrote, before it is signed.
+      # Blocking: a known vulnerability in code the planner calls, in the
+      # standard library of this Go or in a module, stops the release.
+      # Source mode, so a finding in code never called is listed but does not
+      # block. Pinned by version; the Go checksum database verifies the module.
+      - name: Scan the capacity planner for called vulnerabilities (blocking)
+        run: |
+          set -euo pipefail
+          go version
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/capacity-planner/...
+
       - name: Build the capacity planner binaries
         env:
           VERSION: ${{ needs.release.outputs.version }}

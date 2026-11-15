@@ -643,8 +643,19 @@ expect_wf() {
 expect_wf "release-files runs after every image is pushed and signed" 'release,release-tools,release-capacity-planner' '[.jobs."release-files".needs] | flatten | join(",")'
 expect_wf "release-files attaches a capacity planner binary for linux and darwin, amd64 and arm64" \
     'linux/amd64 linux/arm64 darwin/amd64 darwin/arm64' '.jobs."release-files".env.CAPACITY_PLANNER_PLATFORMS'
-expect_wf "the binaries are built before they are signed" 'Build the capacity planner binaries,Sign the release files' \
-    '[.jobs."release-files".steps[].name | select(. == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
+expect_wf "the planner is scanned by govulncheck, then built, then signed" \
+    'Scan the capacity planner for called vulnerabilities (blocking),Build the capacity planner binaries,Sign the release files' \
+    '[.jobs."release-files".steps[].name | select(. == "Scan the capacity planner for called vulnerabilities (blocking)" or . == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
+expect_wf "govulncheck runs pinned, over the planner" 'true' \
+    '.jobs."release-files".steps[] | select(.name == "Scan the capacity planner for called vulnerabilities (blocking)") | .run | test("go run golang.org/x/vuln/cmd/govulncheck@v[0-9]+[.][0-9]+[.][0-9]+ [.]/cmd/capacity-planner/") | tostring'
+yq -r '.jobs."release-files".steps[] | select(.name == "Read the Go line from go.mod") | .run' "$WF" > "$WORK/wf-goline.sh"
+: > "$WORK/wf-goline.env"
+(cd "$ROOT" && GITHUB_ENV="$WORK/wf-goline.env" bash "$WORK/wf-goline.sh")
+want_line="$(sed -En 's/^go ([0-9]+[.][0-9]+).*$/\1/p' "$ROOT/go.mod")"
+if [ -n "$want_line" ] && [ "$(cat "$WORK/wf-goline.env")" = "GO_VERSION=$want_line" ]; then pass; else
+    fail "the Go line step wrote '$(cat "$WORK/wf-goline.env")', want GO_VERSION=$want_line"; fi
+expect_wf "the binaries are built with the latest patch of the go.mod Go line" 'true|${{ env.GO_VERSION }}' \
+    '(.jobs."release-files".steps[] | select(.uses == "actions/setup-go*") | (.with."check-latest" | tostring) + "|" + .with."go-version")'
 expect_wf "the binaries are built by make capacity-planner-dist for those platforms" 'true' \
     '.jobs."release-files".steps[] | select(.name == "Build the capacity planner binaries") | .run | (test("make capacity-planner-dist RELEASE_VERSION=\"\$VERSION\"") and test("CAPACITY_PLANNER_PLATFORMS=\"\$CAPACITY_PLANNER_PLATFORMS\"")) | tostring'
 expect_wf "release-files may upload (contents) and sign (id-token), nothing more" \
