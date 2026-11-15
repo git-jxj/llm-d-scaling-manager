@@ -65,6 +65,10 @@ runs the lines marked `# admin`. This installs it passive with a GPU quota, so
 it decides and changes nothing. `<gpu product>` is the `GPU.PRODUCT` column of
 `kubectl get nodes -L nvidia.com/gpu.product`.
 
+The release files are pinned to the release's image by digest and signed.
+[Verify them](docs/reference/install-methods.md#verify-the-release-files)
+right after the download, before the `sed` lines change them.
+
 ```bash
 V=<release, for example v0.11.1>
 export NAMESPACE=<the namespace running llm-d>
@@ -72,7 +76,7 @@ URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/
 for f in namespaced settings preflight scaler-tls model-namespace keda-auth activate; do
   curl -fsSLO $URL/scaling-manager-$f.yaml
 done
-# Check the files' signatures now, before sed changes them (see below).
+# Verify the files' signatures here, before sed changes them.
 sed -i.bak -e "s/__NAMESPACE__/$NAMESPACE/g" -e "s/__MODEL_NAMESPACE__/$NAMESPACE/g" scaling-manager-*.yaml && rm -f scaling-manager-*.yaml.bak
 export KEDA_NS=<the namespace KEDA runs in>
 # The scaler NetworkPolicy admits KEDA from namespace keda; name yours.
@@ -83,7 +87,8 @@ kubectl apply -f scaling-manager-model-namespace.yaml                           
 # In scaling-manager-settings.yaml set prometheusURL, limiter: "quota" and
 # quotas: "<gpu product>=<gpus>"; passive is already "true".
 kubectl create -f scaling-manager-settings.yaml
-# Read-only preflight: fix every FAIL it prints, then go on.
+# Read-only preflight: fix every FAIL it prints, then run this step again.
+kubectl delete job scaling-manager-preflight -n $NAMESPACE --ignore-not-found
 kubectl apply -f scaling-manager-preflight.yaml -l scaling-manager.llmd.ai/part=controller
 until kubectl get job scaling-manager-preflight -n $NAMESPACE \
     -o jsonpath='{.status.conditions[?(@.status=="True")].type}' | grep -qE 'Complete|Failed'; do sleep 3; done
@@ -92,12 +97,14 @@ kubectl create -f scaling-manager-scaler-tls.yaml
 kubectl apply -f scaling-manager-namespaced.yaml -l scaling-manager.llmd.ai/part=controller
 # admin: give KEDA its client certificate. This prints the commands to run.
 kubectl get configmap scaling-manager-controller-status -n $NAMESPACE -o jsonpath='{.data.scalerTLSAction}{"\n"}'
+# Run the preflight step again: every check should pass now. Then:
+kubectl delete clusterrolebinding scaling-manager-preflight-$NAMESPACE --ignore-not-found   # admin
 ```
 
-The release files are pinned to the release's image by digest and signed:
-[verify them](docs/reference/install-methods.md#verify-the-release-files)
-right after the download. The preflight prints a fix for every `FAIL`, and
-`UNKNOWN` means a check was not made ([preflight](docs/reference/preflight.md)).
+The preflight prints a fix for every `FAIL`. `UNKNOWN` means a check was not
+made; before the controller is in, some are UNKNOWN
+([preflight](docs/reference/preflight.md)). The last line removes the
+preflight's cluster-wide reads, which it needs only while it runs.
 
 Then register the model servers and turn sharing on in shadow, with the
 release's tools image. The model servers must drain on termination, because
