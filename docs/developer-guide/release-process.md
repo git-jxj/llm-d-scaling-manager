@@ -305,8 +305,9 @@ docker buildx imagetools inspect "$IMAGE:vX.Y.Z" --format '{{ json .Provenance }
 ```
 
 The release files are signed by the same identity. Download a file, its
-bundle and `SHA256SUMS`, then verify with cosign 2.4 or later (earlier
-versions cannot read these bundles):
+bundle and `SHA256SUMS`, then verify with cosign 3.0 or later, as for the
+image (cosign 2.4 to 2.x verify the files but not the image; earlier versions
+cannot read these bundles):
 
 ```bash
 V=vX.Y.Z

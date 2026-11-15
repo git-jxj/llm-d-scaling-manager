@@ -50,6 +50,7 @@ Refusal.flags[] string
 Refusal.reason string
 error object
 error.error string
+error.reason string
 error.schemaVersion number
 inputs object
 inputs.assumed array
