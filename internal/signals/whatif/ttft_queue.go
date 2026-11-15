@@ -248,10 +248,12 @@ type quantiler interface {
 //
 // A mean of +Inf is a quantile of +Inf at once: within rounding of a pod's
 // knee its utilization reads exactly 1 and the stretch overflows. Searched,
-// the bracket would start at +Inf, where no gamma tail converges, and double
-// 200 times; each read runs every series to maxSeriesTerms for a NaN, which
-// reads as a tail of 1, so the search ends at +Inf all the same, some
-// minutes later per quantile.
+// the bracket would start at +Inf, where no gamma tail converges: each part's
+// own.sf(+Inf) ran the continued fraction to maxSeriesTerms for a NaN, which
+// block.exceeds reads as a tail of 1 (never NaN, so the doubling does not
+// stop), and the bracket was doubled 201 times, still at +Inf, before the
+// search gave +Inf all the same. split asked for some 49 such quantiles a
+// figure, plus its out-of-domain probes (see split).
 func tailQuantile(exceeds func(float64) float64, mean, alpha float64) float64 {
 	if math.IsInf(mean, 1) {
 		return mean
@@ -461,8 +463,17 @@ func lnGammaP(k, x float64) float64 {
 // converge within maxSeriesTerms, never a partial sum. A k or x that is not
 // finite is NaN at once: the series never converges there.
 func lnGammaPSeries(k, x float64) float64 {
+	v, _ := lnGammaPSeriesTerms(k, x)
+	return v
+}
+
+// lnGammaPSeriesTerms is lnGammaPSeries and the terms it summed. Near x = k
+// the terms fall only once n passes about sqrt(k), so the count grows as
+// sqrt(k): about 6e4 at k = 1e8, the largest shape the model builds
+// (minPromptCV), well under maxSeriesTerms.
+func lnGammaPSeriesTerms(k, x float64) (float64, int) {
 	if !Finite(k) || !Finite(x) {
-		return math.NaN()
+		return math.NaN(), 0
 	}
 	term := 1 / k
 	sum := term
@@ -471,10 +482,10 @@ func lnGammaPSeries(k, x float64) float64 {
 		sum += term
 		if term < sum*1e-17 {
 			lgk, _ := math.Lgamma(k)
-			return -x + k*math.Log(x) - lgk + math.Log(sum)
+			return -x + k*math.Log(x) - lgk + math.Log(sum), n
 		}
 	}
-	return math.NaN()
+	return math.NaN(), maxSeriesTerms
 }
 
 // lnGammaQFraction is ln Q(k, x) by its continued fraction (modified Lentz);
@@ -482,8 +493,15 @@ func lnGammaPSeries(k, x float64) float64 {
 // A k or x that is not finite is NaN at once, the value the fraction reaches
 // there after maxSeriesTerms steps: at x = +Inf every step reads NaN.
 func lnGammaQFraction(k, x float64) float64 {
+	v, _ := lnGammaQFractionSteps(k, x)
+	return v
+}
+
+// lnGammaQFractionSteps is lnGammaQFraction and the steps it took; like the
+// series, near x = k it takes about sqrt(k) steps.
+func lnGammaQFractionSteps(k, x float64) (float64, int) {
 	if !Finite(k) || !Finite(x) {
-		return math.NaN()
+		return math.NaN(), 0
 	}
 	const tiny = 1e-300
 	b := x + 1 - k
@@ -508,10 +526,10 @@ func lnGammaQFraction(k, x float64) float64 {
 		// float64's spacing above 1 and would be met only by del == 1.
 		if math.Abs(del-1) < 4e-16 {
 			lgk, _ := math.Lgamma(k)
-			return -x + k*math.Log(x) - lgk + math.Log(h)
+			return -x + k*math.Log(x) - lgk + math.Log(h), i
 		}
 	}
-	return math.NaN()
+	return math.NaN(), maxSeriesTerms
 }
 
 // gammaQuantile is the x with P(k, x) = q, by bisection; NaN when no

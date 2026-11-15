@@ -35,6 +35,8 @@ type stubResolver struct {
 	// ttftDelay, when set, is how long every TTFT point takes: a figure as
 	// slow as a plan near a knee.
 	ttftDelay time.Duration
+	// fleetErr, when set, is the error of every fleet it returns one for.
+	fleetErr func(k Knobs) error
 }
 
 func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved, error) {
@@ -76,6 +78,11 @@ func (r *stubResolver) Fleet(k Knobs) (Fleet, error) {
 	}
 	if r.onFleet != nil {
 		r.onFleet(k)
+	}
+	if r.fleetErr != nil {
+		if err := r.fleetErr(k); err != nil {
+			return nil, err
+		}
 	}
 	r.fleets.Add(1)
 	return &stubFleet{k: k, refusePrefill: r.refusePrefill, r: r}, nil

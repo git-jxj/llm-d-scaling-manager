@@ -544,7 +544,7 @@ stops at its next figure and is a 503 with a reason, and no `Retry-After`:
 
 Nothing of that plan is kept, so asking again prices it again. A cold plan of
 the worked recording takes under 20 s. The budget is checked between
-figures, so a plan can run past it by one figure. Reading
+figures, so a plan can run past it by one figure. A size's search (`/v1/size`) is not under the budget, only the plan it answers with. A request that joins a plan already being priced shares that plan's clock. Reading
 a request may take 30 s, an idle connection is closed after 2 minutes, and a
 response may take 10 minutes (a cold plan, or a capture).
 
@@ -595,7 +595,7 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeSearchSurvivesItsPlan` | One plan slot sizes; a size whose answer's plan ended with its client is not searched again. |
 | `TestSizeOnTheLowEnd` | `sizeOn: low` sizes on the low end of the span, where `point` leaves it under the rate; the answer's headroom is the low end's. |
 | `TestSizeOnLowRefusedAtTheWorstCorner` | Sized `low` where the worst corner refuses the limit, the size is that refusal, said of the corner, never `ReplicaBoundReached`. |
-| `TestPlanPastItsBudgetIsRefused`, `TestPlanEndedByItsClientIsNotTheBudget` | A plan past its budget is a 503 with reason `PlanBudgetExceeded` within a figure of the budget, caches nothing and frees its slot; a plan whose client ends first is the client's end, with no reason. |
+| `TestPlanPastItsBudgetIsRefused`, `TestPlanEndedByItsClientIsNotTheBudget`, `TestPlanErrorAsTheBudgetEndsIsItsOwn` | A plan past its budget is a 503 with reason `PlanBudgetExceeded` within a figure of the budget, caches nothing and frees its slot; a plan whose client ends first is the client's end, with no reason; an error the plan returns for its own reason as the budget ends is that error. |
 | `TestServeKneeRoundingPricesAtOnce` | At 12 prefill and 19 decode replicas, the curve point at the prefill knee is refused `Saturated` in milliseconds. Two imbalance corners sit one rounding step under it there, and the point used to take over 30 minutes. |
 | `TestSizeConcurrentSearchOnce`, `TestSizeBusyAndDecodeOnly` | Identical sizes at once search once; with every slot taken a size is a 503 before any search; a source with no prefill variant is a 400. |
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |

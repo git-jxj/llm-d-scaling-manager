@@ -318,7 +318,10 @@ func (s *Server) planWithin(ctx context.Context, p *planner) (*PlanResponse, err
 	bctx, cancel := context.WithTimeoutCause(ctx, s.planBudget, errPlanBudget)
 	defer cancel()
 	out, err := p.plan(bctx)
-	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(bctx), errPlanBudget) {
+	// Only the budget's own end is a BudgetError: an error the plan returned
+	// for another reason as the budget ran out (a knob refused, a fleet that
+	// failed) is that error.
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && errors.Is(context.Cause(bctx), errPlanBudget) {
 		return nil, BudgetError{Budget: s.planBudget}
 	}
 	return out, err

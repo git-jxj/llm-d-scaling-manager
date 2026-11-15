@@ -70,6 +70,33 @@ func TestPlanEndedByItsClientIsNotTheBudget(t *testing.T) {
 	assert.Empty(t, s.planSlots, "a slot was kept")
 }
 
+// An error the plan returns for its own reason while the budget runs out is
+// that error, not the budget's: a knob refused as the budget ends is a 400
+// naming the knob.
+func TestPlanErrorAsTheBudgetEndsIsItsOwn(t *testing.T) {
+	const budget = 50 * time.Millisecond
+	r := &stubResolver{}
+	s := New(Config{Resolver: r, WhatifSchema: "schema-v3", MaxPlans: 1, PlanBudget: budget})
+	h := s.Handler()
+	id := inputsOf(t, h)
+	// The +1 prefill step's fleet is refused once the budget has run out.
+	r.fleetErr = func(k Knobs) error {
+		if k.Prefill != 2 {
+			return nil
+		}
+		time.Sleep(3 * budget)
+		return InputErrorf("stub: the +1 fleet's knob is refused")
+	}
+	code, body := post(t, h, "/v1/plan", PlanRequest{InputsID: id,
+		Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(4)}}}})
+	require.Equal(t, http.StatusBadRequest, code, "%s", body)
+	var e ErrorResponse
+	require.NoError(t, json.Unmarshal(body, &e), "%s", body)
+	assert.Contains(t, e.Error, "the +1 fleet's knob is refused")
+	assert.Empty(t, e.Reason)
+	assert.Empty(t, s.planSlots, "a slot was kept")
+}
+
 // A server with no budget configured has the default one.
 func TestPlanBudgetDefault(t *testing.T) {
 	assert.Equal(t, DefaultPlanBudget, New(Config{}).planBudget)

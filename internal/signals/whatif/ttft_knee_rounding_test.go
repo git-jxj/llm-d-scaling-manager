@@ -20,9 +20,9 @@ func TestTailQuantileOfAnInfiniteMeanReadsNoTail(t *testing.T) {
 	if reads != 0 {
 		t.Fatalf("the tail was read %d times for a mean of +Inf, want 0", reads)
 	}
-	// The stage itself: a gamma part of infinite mean, as gammaPart builds it
-	// at a utilization of exactly 1.
-	m := stageMix{w: []float64{1}, b: []block{{own: gammaPart(math.Inf(1), math.NaN())}}}
+	// The stage itself: a gamma part of infinite mean and shape 0.25, as the
+	// 12/19 plan built it at a utilization of exactly 1.
+	m := stageMix{w: []float64{1}, b: []block{{own: newOwnTime(math.Inf(1), 2)}}}
 	if got := m.quantile(0.1); !math.IsInf(got, 1) {
 		t.Fatalf("stage quantile %g, want +Inf", got)
 	}
@@ -74,5 +74,44 @@ func TestGammaAtNonFiniteArgumentsIsNaN(t *testing.T) {
 		if v := lnGammaPSeries(c.k, c.x); !math.IsNaN(v) {
 			t.Errorf("lnGammaPSeries(%g, %g) = %g, want NaN", c.k, c.x, v)
 		}
+	}
+}
+
+// gammaTermsBound is the most terms or steps one gamma read may take at the
+// smallest spread priced as a gamma: under 1e5 are needed at k = 1e8, and
+// maxSeriesTerms, 1e6, is a read that never converged.
+const gammaTermsBound = 200_000
+
+// The least spread the model prices as a gamma is minPromptCV, shape
+// k = 1/minPromptCV^2 = 1e8; below it every builder prices the time as
+// constant. Near x = k a gamma read takes about sqrt(k) terms, so each read
+// at that shape converges well inside maxSeriesTerms; a smaller floor
+// (cv 1e-7, k 1e14) would need some 1e7 and run every read to the bound.
+func TestGammaReadsAreBoundedAtTheSmallestSpread(t *testing.T) {
+	k := 1 / (minPromptCV * minPromptCV)
+	s := math.Sqrt(k)
+	for _, x := range []float64{k - 3*s, k - 1, k, k + 1, k + 1.5, k + 3*s, k + 10*s} {
+		var v float64
+		var n int
+		if x < k+1 {
+			v, n = lnGammaPSeriesTerms(k, x)
+		} else {
+			v, n = lnGammaQFractionSteps(k, x)
+		}
+		t.Logf("k %.3g, x - k %+.4g: ln %.6g in %d terms", k, x-k, v, n)
+		if !Finite(v) || n > gammaTermsBound {
+			t.Errorf("k %g, x %g: %g in %d terms, want a finite value within %d", k, x, v, n, gammaTermsBound)
+		}
+	}
+	// Every builder of a gamma own time floors the spread at minPromptCV.
+	if o := gammaPart(1, 1e-12); !o.det {
+		t.Errorf("gammaPart at cv 1e-6 is a gamma of shape %g, want constant", o.k)
+	}
+	pl, u := Prefill{VP: 30000, FixedLatency: 0.01, Replicas: 1, PromptTokens: 1024, PromptCV: 1e-6}.check()
+	if u != nil {
+		t.Fatalf("prefill refused: %v", u)
+	}
+	if o := pl.own(); !o.det {
+		t.Errorf("a prefill at cv 1e-6 owns a gamma of shape %g, want constant", o.k)
 	}
 }

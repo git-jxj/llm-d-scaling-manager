@@ -79,6 +79,16 @@ Both sources can be served at once: give both flags. The server prints the
 address it listens on, and refuses to start if `--recordings` is not a
 directory.
 
+Each plan has a time limit, `--plan-budget`, 5 minutes by default. A plan still
+being priced when it runs out is stopped and refused with
+`PlanBudgetExceeded`; asking again prices it again from the start. Raise the
+limit with, for example, `--plan-budget 15m`. Two things to know:
+
+- In **What fleet does this traffic need?**, the search for the
+  fewest replicas has no time limit. Only the plan it ends with does.
+- A request for a plan that is already being priced waits for that one and
+  shares its clock: it can be refused sooner than its own 5 minutes.
+
 <!-- guide:open start -->
 ```bash
 # The server listens on your machine only. Leave it running and open the page.
@@ -318,5 +328,6 @@ proxy that adds one. The flags and the RBAC are in
 | "the model has 2 decode variants (a, b)" | The page prices one P/D fleet. Open **Source**, type one of the names in **Decode variant** (or **Prefill variant**), and press **Load**. |
 | Refused figures everywhere, `NoPrefillCapacity` or `NoFixedLatency` | The window had too little load to learn V_P or a. Pick a busier window, or assume the term. |
 | "Pricing..." for several seconds | A new replica count, statistic or view prices whole curves. A rate move is fast. |
+| `503` with `PlanBudgetExceeded` | The plan took longer than `--plan-budget` (default 5 minutes) and was stopped. Ask for fewer views, or restart the server with a larger `--plan-budget`. |
 | `401` | The server checks a bearer token. See [Run it for others](#run-it-for-others). |
 | `403` "this server answers loopback names only" | The browser or a proxy named another host. Open `http://127.0.0.1:8080/`, or keep the `Host` header. |
