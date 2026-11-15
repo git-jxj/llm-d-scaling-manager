@@ -38,6 +38,9 @@ instead.
    `deploy/prepull.sh`, `deploy/weights.sh`, `deploy/enginecache.sh`,
    `deploy/utilization-share.sh`, the workload-patch report and the
    ScaledObject plan, with kubectl, jq and yq, from `Dockerfile.tools`.
+   It carries the release files (item 4, the same bytes and bundles, without
+   the tools tarball) and installs from them: `smt admin-setup`, `smt
+   install`, `smt admin-finish` ([install commands](../reference/tools-install.md)).
    Operators prepare and register their model servers with it and no checkout
    ([Prepare model servers](../guides/prepare-workloads/)).
 
@@ -168,10 +171,18 @@ be public under that tag. Do not move or delete the tag.
 - The fix needs a change to the code or the workflow: release `vX.Y.(Z+1)`
   instead.
 
-**It failed in the `release-files` job.** The image is published and signed;
-only the files are missing or incomplete. Use **Re-run failed jobs**: the job
-renders, signs and uploads again, replacing whatever an earlier attempt
-attached. Do not publish the release until it has succeeded.
+**It failed in the `release-files` job.** Both images are published and
+signed; only the files are missing or incomplete. Use **Re-run failed jobs**:
+the job uploads the same signed files again (the `release-sign` artifact),
+replacing whatever an earlier attempt attached. Do not publish the release
+until it has succeeded.
+
+**It failed in `release-sign` or `release-tools`.** Use **Re-run failed jobs**
+from the first failed job. A re-run of `release-sign` signs again, and new
+bundles are new bytes, so `release-tools` must rebuild and push the tools
+image in the same run: re-run both, never `release-sign` alone. The
+`release-files` job refuses to upload files the pushed tools image does not
+carry.
 
 ---
 
@@ -354,24 +365,36 @@ re-run from the **Actions** tab.
 6. **Sign.** Keyless `cosign sign` of the pushed digest, with the workflow's
    OIDC identity as the signer. The run summary prints the digest and the
    verify command.
-7. **Release files** (job `release-files`, after the image and tools jobs). Runs
+7. **Sign the release files** (job `release-sign`, after the image job). Runs
    `make release-manifests` with the pushed digest (it also packages
-   `scaling-manager-tools-<tag>.tar.gz`), signs each file and
-   `SHA256SUMS` with keyless `cosign sign-blob --bundle`, and uploads them all
-   with `gh release upload --clobber`, creating a draft release when the tag has
-   none, and refusing to change a published one. It is the only job with
-   `contents: write`, and it builds no image. Its yq is pinned by sha256 and
-   its Go (for `make kustomize`) comes from `go.mod`.
-   `hack/check-release-manifests.sh` checks the job's shape and runs its sign
-   step against a stub cosign.
-8. **Tools image** (job `release-tools`, after the image job). Builds
-   `Dockerfile.tools`, scans it like the controller image, pushes
+   `scaling-manager-tools-<tag>.tar.gz`), signs each file and `SHA256SUMS`
+   with keyless `cosign sign-blob --bundle`, and uploads `dist/` as the
+   workflow artifact `release-dist`. It is the only place bundles are made:
+   the tools image and the GitHub Release both take this artifact. It has
+   `id-token: write` and writes nothing. Its yq is pinned by sha256 and its Go
+   (for `make kustomize`) comes from `go.mod`.
+8. **Tools image** (job `release-tools`, after the image and signing jobs).
+   Downloads `release-dist` and runs `cosign verify-blob` on every file, then
+   builds `Dockerfile.tools` with `--build-context release=dist` (the amd64
+   and arm64 scan builds and the pushed build alike, so the scans cover what
+   ships), scans it like the controller image, pushes
    `linux/amd64,linux/arm64` to `<image>/tools:<version>` (and `:latest` only
-   when the controller's `latest` moved), and signs the digest.
+   when the controller's `latest` moved), and signs the digest. The summary
+   prints the `cosign verify` command with the digest.
    `hack/check-release-latest.sh` checks the job's shape and runs its tag and
-   sign steps. The PR checks' `tools-image` job builds both platforms on every
-   code change and runs `hack/check-tools-image.sh` against the amd64 image.
-   Verify it as the controller image, with `$IMAGE/tools`.
+   sign steps. The PR checks' `tools-image` job renders the files, builds both
+   platforms with them on every code change, and runs
+   `hack/check-tools-image.sh` against the amd64 image.
+9. **Release files** (job `release-files`, after the image and tools jobs).
+   Downloads `release-dist`, pulls the pushed tools image by digest, and
+   refuses the upload unless its baked `SHA256SUMS` and every bundle equal the
+   artifact's (`hack/compare-baked-release-files.sh`). Then uploads them all
+   with `gh release upload --clobber`, creating a draft release when the tag
+   has none, and refusing to change a published one. It is the only job with
+   `contents: write`; it builds and signs nothing. `hack/check-release-manifests.sh`
+   checks the jobs' shape, runs the sign step against a stub cosign and the
+   attach step against a stub gh; `hack/check-release-install.sh` runs the
+   baked-files comparison on fixtures.
 
 ### The release files
 
@@ -396,8 +419,10 @@ Design and rules: [install-from-release.md](../proposals/install-from-release.md
 
 `make test-e2e-release-manifests` installs the namespaced files on kind with
 `kubectl` only and checks them, and `RELEASE_E2E_SCOPE=cluster` does the same
-for the cluster-wide files. CI runs both on PRs that touch what the files are
-made from; run them before a release too
+for the cluster-wide files. `make test-e2e-tools-install` installs them with
+the tools image (`smt admin-setup`, `install`, `admin-finish`), in the same two
+scopes. CI runs all four on PRs that touch what the files are made from; run
+them before a release too
 ([Testing](testing.md#install-from-the-release-files)). The OpenShift files
 are not tested end to end and say so in their header.
 

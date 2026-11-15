@@ -3,8 +3,10 @@
 ## Overview
 
 This guide installs one scaling manager (llm-d-scaling-manager) that sizes the
-llm-d model servers in **every** namespace, from the files attached to a
-release, with `kubectl`. It decides how many replicas each variant needs and
+llm-d model servers in **every** namespace, from a release: with the release's
+tools image in one command ([Install with the tools
+image](#install-with-the-tools-image)), or by hand with `kubectl` and the files
+attached to the release. It decides how many replicas each variant needs and
 hands that number to KEDA, which does the scaling. It installs **passive**:
 nothing scales until you switch it on.
 
@@ -15,9 +17,10 @@ failure domains, policy and upgrades stay separate.
 **This scope is work in progress.** The steps are the namespaced guide's, with
 the cluster-wide files; read that guide for what each step does.
 
-Tested: the namespaced and the cluster-wide files on Kubernetes (kind, `make
-test-e2e-release-manifests`, in CI and before each release; this guide's steps
-with a model in a namespace other than the controller's). The OpenShift files
+Tested: the namespaced and the cluster-wide files on Kubernetes, by hand (kind,
+`make test-e2e-release-manifests`) and with the tools image (`make
+test-e2e-tools-install`), in CI and before each release; this guide's steps
+with a model in a namespace other than the controller's. The OpenShift files
 are not yet tested end to end; each says so in its header.
 
 Prefer a checkout and `make`? See [From a checkout instead](#from-a-checkout-instead).
@@ -31,6 +34,43 @@ Prefer a checkout and `make`? See [From a checkout instead](#from-a-checkout-ins
 - [ ] A Prometheus with the Prometheus Operator.
 - [ ] **For scale-from-zero only: the `flowControl` feature gate on every
   EPP** (`featureGates: [flowControl]` in the `EndpointPickerConfig`).
+
+## Install with the tools image
+
+One command, as the cluster admin. The release's tools image carries the
+release files, signed with it, and runs every step of this page: it creates
+`scaling-manager-system`, applies the admin objects and the PodMonitor in each
+model namespace, creates the settings, runs the preflight, installs the
+controller, gives KEDA its client certificate, and removes the preflight's
+cluster reads. Needs docker.
+
+<!-- guide:tools.setup start -->
+```bash
+# Once per machine. The release's tools image, by the digest the release prints.
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
+mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+smt() { docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+```
+<!-- guide:tools.setup end -->
+
+<!-- guide:tools.install start -->
+```bash
+# Cluster admin. Repeat --model-namespace for each namespace with model servers; add one later by running this again with it.
+smt install --scope cluster --keda-namespace <the namespace KEDA runs in> \
+  --prometheus-url https://<prometheus>:9090 --model-namespace <model namespace>
+```
+<!-- guide:tools.install end -->
+
+It stops on a preflight `FAIL` and prints its fix. Run it again at any time:
+it changes nothing that is already right, and never writes existing
+settings. Every flag and exit code:
+[install commands](../../reference/tools-install.md). Then go on at
+[step 4](#4-register-the-workloads-then-let-it-scale).
+
+## Install by hand from the release files
+
+The same install with `kubectl`: for GitOps, or to see each step.
 
 <!-- guide:prerequisites.download start -->
 ```bash
