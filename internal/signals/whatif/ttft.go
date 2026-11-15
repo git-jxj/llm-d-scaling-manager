@@ -270,8 +270,8 @@ type TTFTFleet struct {
 	// pods as they free. A prefill pod runs at most its running cap at once
 	// and queues the rest; at a narrow prompt spread that serves the prompts
 	// no later than sharing the pod between all of them, which is what the
-	// stage prices. It is argued and simulated, and the measurement refutes
-	// it: at the Qwen3-32B staircase's steps where the router held, the gate
+	// stage prices. It is argued and simulated, and it fails at the one
+	// measured step that held: at the Qwen3-32B staircase's steps where the router held, the gate
 	// added time the price does not carry (a stale score lets the pods queue
 	// past the threshold, then releases a burst), and the price read 0.57 of
 	// the client's p95 at a step the fleet held

@@ -16,6 +16,17 @@ import (
 // Poisson) or C (the same at Ca^2 4), on the processor-sharing model with
 // flow control off: the freeze's fleet to the bit
 // (TestStaircaseQ32_TheFixtureIsTheFrozenCurve).
+//
+// Where it comes from: the run's frozen.json, whose recordingSha256 names the
+// warm-up recording it was frozen from
+// (4693f3bbbd8322c77af2a1fbcddeaa4cf3ce92f7d6eb66e8437ec2e3900ff291), written
+// by `capacity-planner freeze` from that warm-up recording and the run's
+// spec (hack/benchmark/staircase_spec_qwen32b.yaml). To regenerate the
+// constants, build the fleet as freezeFlags.priceBucket does for the bucket
+// (answerFlags.fleetFor on the recording at cycle last, prompt cv set to the
+// spec's 0.0577, ArrivalCV2 to the bucket's Ca^2) and print its Prefill,
+// Decode and DecodeTerm with %+v; the frozen curve's mean, p90 and p95 are
+// the q32Steps' frozen figures.
 func q32Fleet(bucket string) TTFTFleet {
 	ca2 := 0.0
 	if bucket == "C" {
@@ -86,14 +97,19 @@ func TestStaircaseQ32_TheFixtureIsTheFrozenCurve(t *testing.T) {
 	}
 }
 
-// A known failure, asserted so that a fix shows. Below each onset the price
+// q32Tolerance is the rule the switch had to pass: past the onset, at a step
+// the fleet held, the price may read at most 10 % under the client.
+const q32Tolerance = 0.9
+
+// A known failure, asserted so that a fix shows. The switch moves no figure:
+// the price is the frozen curve's with it on and off. Below each onset the price
 // reads well above the client (1.5 to 2.6 times). At C's first step past it
 // (3.24 r/s, 0.80 of the prefill knee, inside MaxRouterWaitKneeShare, so the
 // switch takes it as FlowControlWaitPriced) the router held 19 % of requests
 // for a mean of 1.40 s, and the price reads 0.80 of the client's mean, 0.84
 // of its p90 and 0.57 of its p95. At the next step (3.34 r/s, void: 127
 // evicted) it reads 0.57, 0.35 and 0.39 of what the dispatched requests
-// alone saw. The gate does not only move the wait, as the switch argues: at
+// alone saw (logged, not judged: the step is void). The gate does not only move the wait, as the switch argues: at
 // the same rates with flow control off the client read 3.14 s and 3.60 s,
 // under the price. Taken as priced, it would also lift bucket C's rate for
 // its frozen p95 target from the onset (3.10 r/s, inside the measured
@@ -111,14 +127,22 @@ func TestStaircaseQ32_TheRouterWaitStepsReadShort(t *testing.T) {
 				t.Errorf("%s %.3f r/s: flags %v", bucket, s.rate, mean.Flags)
 			}
 			for i, q := range []float64{0, 0.9, 0.95} {
+				got := mustTTFT(t, ttftAt(t, fl, s.rate, q)).Seconds
+				// The switch moves no figure: on or off, the price is the
+				// frozen curve's.
+				unswitched := mustTTFT(t, ttftAt(t, fcFleet(q32Fleet(bucket), false), s.rate, q)).Seconds
+				nearRel(t, bucket+" price, switch on", got, s.frozen[i], 1e-9)
+				nearRel(t, bucket+" price, switch off", unswitched, s.frozen[i], 1e-9)
 				if s.client[i] == 0 {
 					continue
 				}
-				got := mustTTFT(t, ttftAt(t, fl, s.rate, q)).Seconds
 				t.Logf("%s %.3f r/s q %g: model %.2f s, client %.2f s (%.2fx), router wait %.2f s, %d evicted",
 					bucket, s.rate, q, got, s.client[i], got/s.client[i], s.routerWait, s.failed)
-				if s.pastTheOnset && got >= s.client[i] {
-					t.Errorf("the known failure is gone: %s %.3f r/s q %g reads %.2f s, at or over the client's %.2f s; revisit DefaultPriceRouterWait and the TTFT page", bucket, s.rate, q, got, s.client[i])
+				// Only a step the fleet held is judged: a void step's client
+				// figures are the dispatched requests' only, and read low.
+				if s.pastTheOnset && s.failed == 0 && got >= q32Tolerance*s.client[i] {
+					t.Errorf("the known failure is gone: %s %.3f r/s q %g reads %.2f s, within %.0f%% of the client's %.2f s; revisit DefaultPriceRouterWait and the TTFT page",
+						bucket, s.rate, q, got, 100*(1-q32Tolerance), s.client[i])
 				}
 				if !s.pastTheOnset && got < s.client[i] {
 					t.Errorf("%s %.3f r/s q %g: below the onset the model reads %.2f s, under the client's %.2f s", bucket, s.rate, q, got, s.client[i])

@@ -1996,7 +1996,8 @@ What it says:
   knee, inside the switch's 0.9 limit, and the fleet held. Priced at the rate
   and Ca² the load generator actually sent there (3.35 r/s, Ca² 4.8 against
   the 4 asked), the model reads 1.06, 1.13 and 0.77 of the client: the mean is
-  in reach, the p95 is not.
+  in reach, the p95 is not. (From the #56 analysis, not asserted by the
+  test.)
 - **The gate adds time, it does not only move it.** At the same rates with
   flow control off, the client's mean was 3.14 s (C 4), 3.60 s (C 5) and 3.06
   s (B 7), under the price. With it on: 7.23, 11.74 and 15.75 s. While the
@@ -2017,7 +2018,10 @@ What it says:
 The rule the switch had to pass: past the onset, at a step the fleet held,
 the price may read at most 10% under the client at the mean, p90 and p95, and
 must track the measured wait within 50%. It fails both, so it stays off and
-the wait keeps `AboveFlowControlOnset`.
+the wait keeps `AboveFlowControlOnset`. The test asserts the first half. The
+switch prices no wait of its own, so the second half was judged, in the #56
+analysis and not in a test, against the limited processor-sharing wait the
+issue proposed (above).
 
 **Still open.**
 
