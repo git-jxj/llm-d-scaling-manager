@@ -34,7 +34,9 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   first-come wait on the busiest pod (`prefillPlan.engineWait`).
 - `PriceRouterWait` (`slo-ttft-router-wait`, experimental, off, the CLI's
   `--price-router-wait` default): trades `AboveFlowControlOnset` for
-  `FlowControlWaitPriced` above the prefill onset.
+  `FlowControlWaitPriced` above the prefill onset. It stays off: measured on
+  a staircase, the price reads short of the client where the router held
+  ([the switch reads short](../proposals/slo-capacity-planner-ttft.md#as-built-the-routers-wait-above-the-prefill-onset)).
 - `PSOnsets` (`slo-ttft-ps-onsets`, off, the CLI's `--ps-onsets` default):
   places the prefill onset on the processor-sharing stage
   (`prefillPlan.psMeanScore`, `ttftPlan.placement`) at `Prefill.RunningCap`.

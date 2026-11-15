@@ -1879,8 +1879,10 @@ default, in the CLI, the planner API and the SLO analyzer alike.
   no later than sharing the pod among all of them, which is what the stage
   prices.
 
-This is an argument, checked in simulation. **No measured step with a real
-router wait validates it** (see the staircase below).
+This is an argument, checked in simulation. **The first measured step where
+the router held and the fleet held the rate reads short of it** (see
+[the switch reads short](#as-built-the-routers-wait-above-the-prefill-onset)
+below).
 
 **Checked against a simulation.** `TestFlowControlWait_GatedPodsAreNoSlower`
 simulates two prefill pods with the KV pull on four decode pods, each case
@@ -1966,12 +1968,63 @@ before it was built read 52.4). This run cannot tell the two placements apart,
 so the default is left as it was; the new one is a switch
 ([as built](#as-built-the-onsets-on-processor-sharing-and-the-decode-gates-closed-share)).
 
+**Measured: the switch reads short.** A later staircase on Qwen3-32B (2
+prefill and 2 decode pods at TP 2, H200) sent flow-control-on steps past the
+prefill onset where the router held, and at one of them the fleet still held
+the rate. Each step is priced from the frozen fleet the way the gate prices it
+(`TestStaircaseQ32_TheRouterWaitStepsReadShort`). The switch moves no figure,
+so the price is the same with it and without it; only the flag differs. The
+router wait is for the requests it dispatched, from the EPP's
+`flow_control_request_queue_duration_seconds`; its p90 and p95 are read inside
+wide buckets.
+
+| Step | r/s | Flag, switch off / on | Router wait mean / p90 / p95, s | Model mean / p90 / p95, s | Client mean / p90 / p95, s | Model over client |
+| --- | --- | --- | --- | --- | --- | --- |
+| B 6 | 3.64 | none (onset 3.71) | 0 / 0 / 0 | 5.27 / 11.41 / 14.42 | 2.12 / 4.46 / 5.27 | 2.49-2.74x |
+| B 7, void (709 failed) | 3.85 | `AboveFlowControlOnset` / the same (past 0.9 of the knee) | 4.18 / 19.3 / 25.0 | 10.22 / 22.82 / 29.25 | 15.75 / past the histogram | 0.65x on the mean |
+| C 3 | 3.04 | none (onset 3.10) | 0 / 0 / 0 | 4.52 / 10.10 / 12.84 | 3.01 / 6.13 / 7.40 | 1.50-1.74x |
+| C 4 | 3.24 | `AboveFlowControlOnset` / `FlowControlWaitPriced` | 1.40 / 4.6 / 10.7 | 5.76 / 12.95 / 16.54 | 7.23 / 15.40 / 28.84 | 0.80 / 0.84 / 0.57x |
+| C 5, void (127 evicted) | 3.34 | `AboveFlowControlOnset` / `FlowControlWaitPriced` | 3.17 / 14.6 / 22.5 | 6.64 / 14.99 / 19.19 | 11.74 / 42.30 / 49.55 | 0.57 / 0.35 / 0.39x |
+
+Bucket A never reached its prefill onset (29.7 r/s). Its last step (15.6 r/s)
+is past the decode onset, which the model refuses with or without the switch;
+the 0.1 s the router held there is the decode gate's.
+
+What it says:
+
+- **The tail is short where the switch takes.** C 4 is 0.80 of the prefill
+  knee, inside the switch's 0.9 limit, and the fleet held. Priced at the rate
+  and Ca² the load generator actually sent there (3.35 r/s, Ca² 4.8 against
+  the 4 asked), the model reads 1.06, 1.13 and 0.77 of the client: the mean is
+  in reach, the p95 is not.
+- **The gate adds time, it does not only move it.** At the same rates with
+  flow control off, the client's mean was 3.14 s (C 4), 3.60 s (C 5) and 3.06
+  s (B 7), under the price. With it on: 7.23, 11.74 and 15.75 s. While the
+  gate held, the prefill pods' waiting count reached 46 to 198 (the gate
+  holds at 5) and the EPP's prefill saturation peaked at 4 to 10. The gate
+  reads a stale score, holds, then releases a burst. The argument's first
+  premise, that it holds only while the pods have work waiting, fails here.
+- **Question 1 would move past the measurement.** With the switch, bucket C's
+  rate for its frozen p95 target (22.7 s) rises from 3.10 r/s, the onset,
+  which sits inside the measured crossing (3.04 to 3.24 r/s), to 3.44 r/s,
+  past it. The p90 target moves the same way, past a crossing of 3.24 to 3.34.
+- **The limited processor-sharing wait proposed in the issue does not track
+  it either.** At K = 5 a pod, scaled by (Ca² + Cs²)/2, it puts 1.2 to 1.5 s
+  of wait on the steps below the onsets where none was measured, 2.6 s on C 4
+  against 1.40, and 1.9 s on C 5 against 3.17. The measured wait is a cliff,
+  not a geometric tail.
+
+The rule the switch had to pass: past the onset, at a step the fleet held,
+the price may read at most 10% under the client at the mean, p90 and p95, and
+must track the measured wait within 50%. It fails both, so it stays off and
+the wait keeps `AboveFlowControlOnset`.
+
 **Still open.**
 
-- No measured step with a steady router wait. The one step where the router
-  held collapsed, and the model reads it 11 to 21 times short. A staircase
-  step where the gate closes and the fleet still holds is what would validate
-  the switch.
+- No model of the router wait. The steps where the router held read short by
+  up to 0.57x on the p95 at a step that held, and 0.35x where it shed load. A
+  model of the gate has to carry its stale score: the pods queue past the
+  threshold and then sit behind the burst it releases.
 - By default the decode onset still caps question 1 at the rate where the
   mean score reaches 1. The gate reads the current score, so it closes for
   part of the time below that rate. A switch charges that time
@@ -1982,7 +2035,14 @@ so the default is left as it was; the new one is a switch
   no router scorer.
 - The router hop's per-token part is already learned (`prefill.HopFit`,
   `Base + PerToken*I`; 1.41 µs a token on the second staircase's warm-up, 11.3
-  ms at 8000 tokens).
+  ms at 8000 tokens). On the Qwen3-32B staircase the warm-up learned 25.6 µs a
+  token (54 windows; 4 ms at 1000 tokens, 183 ms at 8000). The phases' 606
+  windows, replayed, fit 6.6 ms + 2.7 µs a token (95% bootstrap: 5.7 to 8.6 ms,
+  0.8 to 3.6 µs), 9 ms at 1000 tokens and 28 ms at 8000. The 1000-token
+  windows are tight (quartiles 8 to 12 ms); the 8000-token ones are not
+  (quartiles -42 to +109 ms), because R is a difference of means of a few
+  seconds read about 36 s apart. So the warm-up's slope read high, which
+  prices more, not less. The fit needs no change.
 
 ## As built: the onsets on processor sharing, and the decode gate's closed share
 
