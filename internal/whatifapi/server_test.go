@@ -294,7 +294,7 @@ func TestCachingTheViewKeysTheLimits(t *testing.T) {
 	base.Views = &ViewRequest{AllTrafficPerBucket: true}
 	out, _ = plan(t, h, base)
 	assert.Equal(t, 2, *limits, "the view priced no limits of its own")
-	require.Len(t, out.TTFT.PerBucket, len(buckets))
+	require.Len(t, out.TTFT.PerBucket, len(defaultBuckets))
 	for _, l := range out.TTFT.PerBucket {
 		assert.True(t, l.AtTarget.Rate.Value != nil || l.AtTarget.Rate.Refused != nil, "bucket %s: no point B", l.Bucket)
 	}

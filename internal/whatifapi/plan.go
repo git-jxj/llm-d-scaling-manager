@@ -203,7 +203,8 @@ func (p *planner) limits(ctx context.Context, k Knobs, fl Fleet) (*limitEntry, e
 		TPOT     *ResolvedObjective
 		Headroom float64
 		Views    ViewRequest
-	}{curveKey(p.e.id, k, sc.TPOT != nil), sc.TTFT, sc.TPOT, sc.Headroom, sc.Views})
+		Edges    []int `json:",omitempty"`
+	}{curveKey(p.e.id, k, sc.TPOT != nil), sc.TTFT, sc.TPOT, sc.Headroom, sc.Views, sc.BucketEdges})
 	if le, ok := p.s.limits.get(key); ok {
 		return le, nil
 	}
@@ -243,7 +244,7 @@ func (p *planner) priceLimits(ctx context.Context, k Knobs, fl Fleet) (*limitEnt
 	}
 	if sc.Views.AllTrafficPerBucket {
 		le.buckets = map[string]whatif.Result{}
-		for _, b := range buckets {
+		for _, b := range sc.buckets() {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -463,9 +464,14 @@ func (p *planner) marginal(le *limitEntry, fleet whatif.Result) Marginal {
 
 // perBucket is the "if all traffic were bucket b" view: each bucket's fleet,
 // every request at the bucket's upper edge, with its own knees, curve, target
-// and points. No limit reads it.
+// and points. No limit reads it. A line whose edge and the mix's output
+// together pass the context window, where the inputs know it, is flagged
+// EdgeBeyondContext on its points: it is priced, as the model would, but
+// vLLM refuses a request whose prompt and max_tokens pass --max-model-len.
 func (p *planner) perBucket(ctx context.Context, k Knobs, le *limitEntry, rate float64) ([]Line, error) {
-	var lines []Line
+	buckets := p.sc.buckets()
+	lines := make([]Line, 0, len(buckets))
+	window, known := p.contextWindow()
 	for _, b := range buckets {
 		kb := bucketKnobs(k, b)
 		fl, err := p.e.pricer.Fleet(kb)
@@ -481,7 +487,47 @@ func (p *planner) perBucket(ctx context.Context, k Knobs, le *limitEntry, rate f
 		l := Line{Bucket: b.Name, Semantics: SemanticsAllTraffic, PromptTokens: ptr(kb.PromptTokens),
 			Target: p.sc.TTFT.BucketTargets[b.Name], Knees: &knees}
 		at, _ := fl.TTFTPoint(rate)
-		lines = append(lines, p.line(path, l, cs, at, le.buckets[b.Name], rate))
+		l = p.line(path, l, cs, at, le.buckets[b.Name], rate)
+		if known && float64(b.UpperTokens)+p.outputTokens(k) > window {
+			l.AtRate.Figure = p.note(path+".atRate", withFlag(l.AtRate.Figure, FlagEdgeBeyondContext))
+			l.AtTarget.Rate = p.note(path+".atTarget", withFlag(l.AtTarget.Rate, FlagEdgeBeyondContext))
+		}
+		lines = append(lines, l)
 	}
 	return lines, nil
+}
+
+// outputTokens is the output length a request of the scenario asks: the
+// stated one, else the observed mean, else 0 where neither is known.
+func (p *planner) outputTokens(k Knobs) float64 {
+	if k.OutputTokens > 0 {
+		return k.OutputTokens
+	}
+	if v := p.e.doc.Observed.OutputTokens.Value; v != nil && *v > 0 {
+		return *v
+	}
+	return 0
+}
+
+// contextWindow is the engines' context window in tokens, from the inputs'
+// TermMaxModelLen, and whether they know it.
+func (p *planner) contextWindow() (float64, bool) {
+	for _, t := range p.e.doc.Terms {
+		if t.Name == TermMaxModelLen && t.Refused == nil && t.Value != nil && *t.Value > 0 {
+			return *t.Value, true
+		}
+	}
+	return 0, false
+}
+
+// withFlag is f with flag added: on the figure, or on its refusal.
+func withFlag(f Figure, flag string) Figure {
+	if f.Refused != nil {
+		r := *f.Refused
+		r.Flags = append(slices.Clone(r.Flags), flag)
+		f.Refused = &r
+		return f
+	}
+	f.Flags = append(slices.Clone(f.Flags), flag)
+	return f
 }

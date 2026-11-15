@@ -340,9 +340,9 @@ The recording learned no V_P, so the link assumes one.
 | `inputsId` | `sha256:` and a hash of the recording's bytes, the cycle, the model and the variants. The same source gives the same id. |
 | `source` | The kind, the recording's name or the window, the cycle read and how many the recording holds. |
 | `fleet` | The prefill and the decode variant, with their replica counts at the cycle. |
-| `observed` | The mean prompt and output and the prompt's spread; the fixed buckets (1k, 4k, 8k, 32k, 128k, each named by its upper edge) and the one the mean prompt falls in. The request rate and the share per bucket are refused: the replayed state carries neither. |
+| `observed` | The mean prompt and output and the prompt's spread; the default buckets (1k, 4k, 8k, 32k, 128k, each named by its upper edge) and the one the mean prompt falls in. The request rate and the share per bucket are refused: the replayed state carries neither. A plan's own `bucketEdges` change none of this. |
 | `policy` | The policy's TTFT and TPOT objectives, the headroom (`scaleUpThreshold`), and the flow-control state. |
-| `terms` | V_P, a, f, the prompt and its cv, the KV transfer, the router hop, the ITL line, the KV capacity and per-request KV, the batch cap, and R_q at p90: each with its source, or the refusal that stopped the fleet there. |
+| `terms` | V_P, a, f, the prompt and its cv, the KV transfer, the router hop, the ITL line, the KV capacity and per-request KV, the batch cap, the context window (`maxModelLen`, the engines' `--max-model-len`), and R_q at p90: each with its source, or the refusal that stopped the fleet there. |
 | `assumed` | Every input the source did not give, in the CLI's words. |
 
 ### The plan
@@ -353,7 +353,7 @@ The recording learned no V_P, so the link assumes one.
 | `banner` | What every TTFT figure says of itself, from `constants.SLOTTFTPredictionCaveat`. |
 | `scenario` | The request with its defaults applied. |
 | `ttft.line` | The mix line: its curve (65 rates, crowded toward the lower knee, the last two at and past it), its floor, point A (`atRate`, the TTFT at the chosen rate) and point B (`atTarget`, the rate at the target). |
-| `ttft.perBucket` | With `views.allTrafficPerBucket`, one line per bucket, "if all traffic were bucket b": each priced with every request at the bucket's upper edge, with its own knees, target (`slo.ttft.bucketTargets`, default the mix target) and points. No limit reads it. |
+| `ttft.perBucket` | With `views.allTrafficPerBucket`, one line per bucket (the default five, or one per `bucketEdges` edge), "if all traffic were bucket b": each priced with every request at the bucket's upper edge, with its own knees, target (`slo.ttft.bucketTargets`, default the mix target) and points. No limit reads it. |
 | `ttft.markers` | The prefill and decode knees, the operating-point cap (headroom times the lower knee), and the flow-control onsets when flow control is on. |
 | `tpot` | The TPOT line at the statistic asked (`mean`, or `pNN` priced as the mean times R_q, with R_q's source in `ratio`), its curve, floor and points. Absent with `"tpot": {"statistic": "none"}`, or when neither the request nor the policy sets a TPOT target. |
 | `limits` | `prefill` (`slo-to-rate`'s prefill rate), `decode` (its decode rate), `fleet` (its fleet rate, the operating-point cap applied, with `withoutHeadroom` at headroom 1, `capApplied`, and `binding`, the role with the lower limit), and `chosen`, the chosen rate and its headroom under the fleet's limit. |
@@ -384,10 +384,88 @@ The full key list is pinned in
 | `headroom` | the policy's `scaleUpThreshold` | (0, 1]. |
 | `assume` | none | `vp`, `a` (seconds), `promptCV`, `tpotRatio`, `routerHop` (seconds): as the CLI's `--assume-*` flags, each flagged. |
 | `views.allTrafficPerBucket` | off | The per-bucket view. |
+| `bucketEdges` | 1024, 4096, 8192, 32768, 131072 | The per-bucket view's upper edges, in tokens: 1 to 8, ascending, each from 1 to 1048576. Needs `views.allTrafficPerBucket`. |
+
+### Bucket edges
+
+`bucketEdges` replaces the default buckets on one plan. Each bucket is named
+by its edge (`bucketName` in `internal/whatifapi/scenario.go`): in k where the
+edge is a whole number of 1024 tokens (`16384` is `16k`), else in tokens
+(`2000` is `2000`). So the default edges keep their names, and no two edges
+share one. `slo.ttft.bucketTargets` keys are these names; a key that names no
+bucket of the plan is a 400 listing the plan's buckets.
+
+The edges move only where the "if all traffic were bucket b" lines are priced:
+each at its upper edge, as before. Nothing in the inputs is per bucket (the
+observed mix is refused, `NoPerRequestLengths`), so there is nothing to
+re-bucket and nothing to match: no learned figure is priced from a bucket.
+The limits read the mix line and do not move. When a recorder carries
+per-request lengths and the mix gains shares, edges that do not match the
+shares' buckets will need a rule; until then there is none to need.
+
+Edges equal to the default are dropped from the scenario (`Scenario.BucketEdges`
+is absent), so a plan that asks them has the same `scenarioId` and bytes as one
+that does not. Other edges are part of the `scenarioId` and of the limits'
+cache key. Refused with a 400 that names the edge: none (`[]`), more than 8,
+an edge under 1 or over 1048576, an edge not above the one before it, a token
+count that is not a whole number, and edges without the view. `POST /v1/size`
+refuses `bucketEdges`: a size prices the mix line alone.
+
+The cap is 8 for cost. Each edge not priced before is a fleet's curve set at
+five corners of V_P and f, priced while the plan holds its slot: on the worked
+recording (model-02, V_P assumed 30000 tokens/s, TTFT p95 200 ms), eight fresh
+edges took 13.4 s and a 548 KB response, against 9.0 s and 371 KB for the
+default five on a cold server; in review, twelve fresh edges took 16 to 19 s.
+An edge priced before is served from the curve cache (keyed by the fleet's
+knobs, the prompt among them), whatever the plan's other edges.
+
+**The context window.** The inputs carry the engines' context window as the
+term `maxModelLen`: the smallest `--max-model-len` (SGLang's
+`--context-length`) the prefill and the decode variant's recorded arguments
+set. It is refused `NotRecorded` where no readable one is set (the model's
+own applies, and the source does not carry it), and `UnreadableArgument`
+where either variant sets one the parser cannot read: that variant may refuse
+shorter prompts than the other allows, so no smaller figure stands in. The
+parser reads `--max-model-len` as vLLM's `human_readable_int_or_auto` does
+(`vllm/utils/argparse_utils.py`): a lower-case suffix is decimal (`16k` is
+16000, `1m` is 1000000, `25.6k` is 25600), an upper-case one binary (`16K`
+is 16384, no decimals), and `auto` or `-1` is the model's own
+(`internal/signals/capacity/human_int.go`). SGLang's `--context-length` is
+read as a plain integer.
+
+Where the window is known, a bucket line is flagged `EdgeBeyondContext` on
+its `atRate` and `atTarget`, and in the plan's flag list, when its edge plus
+the scenario's output tokens (stated, else observed, else 0) passes it: vLLM
+refuses a request whose prompt and `max_tokens` pass `--max-model-len`. The
+mean output stands in for `max_tokens`, which the source does not carry. The
+line is still priced, and nothing is refused; with the window unknown
+nothing is flagged. The goldens' recordings run `--max-model-len 16384`, so a
+default per-bucket plan on them flags its 32k and 128k lines.
+
+The page has a **Bucket edges** box under the per-bucket checkbox, enabled
+with it. `parseEdges` in `scenario.js` reads it by the server's rules: token
+counts split by commas or spaces, `16k` as 16384, at most 8, ascending, each
+from 1 to 1024k. The page sends them as `bucketEdges` with the view only;
+blank is the default. A box it cannot read prices nothing, and is marked
+(`aria-invalid`, a red border, the reason under it, `edgesBoxProblem`) for
+as long as its text is not the edges the lines show, whatever the status
+line says since. The box is rewritten in its canonical form, each edge by its
+bucket's name (`bucketName` there, as the server's: `2048` is `2k`), so the
+box, the link and the lines' labels agree and one plan has one link. A link
+may carry edges in any form `parseEdges` reads (a hand-edited `edges=2048` or
+`2K,16k`): the page uses them and rewrites the link in canonical form
+(`linkedEdges`). Edges that do not parse are refused by `linkProblem`, so a
+scenario file with edges out of order or too many is refused on import, and a
+page link with them prices the default buckets with the reason in the status
+line. A line flagged `EdgeBeyondContext` is dimmed and dotted on the chart,
+says so in its legend entry, and its bucket table row reads "past the 16k-token
+context window". From the sixth line on, the colours repeat and the lines are
+dashed. Compare reads the limits, which the edges do not move; where A's and
+the current plan's edges differ, its table has a Buckets row.
 
 ### The size
 
-`POST /v1/size` takes the plan's keys but `fleet` and `views`, and two more:
+`POST /v1/size` takes the plan's keys but `fleet`, `views` and `bucketEdges`, and two more:
 `maxReplicas` (`{"prefill": N, "decode": N}`, 1 to 64 each, 32 by default),
 the most replicas of a role it tries, and `sizeOn`, what the fleet must reach
 the rate with: `point`, its limit (the default), or `low`, the low end of the
@@ -464,6 +542,12 @@ targets and the headroom, and each size by `sizeId`. So moving the rate prices t
 moving a target prices the limits again, not the curves; a new replica count
 or assumption prices everything.
 
+The plans (512) and the sizes (128) are kept as response bytes, each cache
+also bounded at 64 MiB (`defaultResponseBytes`): a per-bucket plan with 8
+edges is about 550 KB, so 512 of them would hold some 280 MB. The newest
+response is kept whatever it weighs. The curve sets (256) and limit entries
+are bounded by count alone; their size in bytes was not measured.
+
 Measured on the goldens' recordings (`go test ./cmd/capacity-planner -run '^$' -bench
 Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 
@@ -476,6 +560,13 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSchemaIsPinned` (`internal/whatifapi`) | The key list. `-update` rewrites it. |
 | `TestPlanRefusalShape`, `apitest.CheckFigures` | No number beside a refusal, and no refusal written as 0, on every response. |
 | `TestCaching` | The same scenario is the same id and bytes; a rate move prices no curve and no limit; a target move prices limits only. |
+| `TestBucketEdgesPriceTheirOwnLines`, `TestBucketTargetsFollowTheEdges`, `TestServeBucketEdges` | A plan's edges give one line per edge, named by it and priced at it, the CLI's fleet at every curve point on the goldens' worked fleet; the limits do not move; bucket targets name the plan's buckets. |
+| `TestDefaultBucketEdgesAreNoEdges`, `TestBucketEdgesKeyTheScenario` | The default edges asked are the plan with none, byte for byte; other edges are another `scenarioId`, priced on their own. |
+| `TestSharedEdgeIsCached`, `TestLRUBoundedInBytes` | An edge two plans share is priced once; the plan and size caches drop the least used responses past their bytes. |
+| `TestEdgeBeyondContext`, `TestEdgeBeyondContextOnARefusal`, `TestServeBucketEdges` | A line whose edge plus the output passes a known context window is flagged `EdgeBeyondContext` on its points, on the refusal where they are refused, and in the flag list; the mix line and limits are not; with the window unknown, refused or 0, nothing is. |
+| `TestContextOf`, `TestParseMaxModelLen`, `TestMaxModelLenSuffixesInArgs` | The window is the smallest of the fleet's own variants', unknown where one is unreadable; `--max-model-len` is read with vLLM's suffixes. |
+| `TestBucketPointBFollowsItsEdge`, `TestWithFlagCopies`, `TestLRUBytesEdges`, `TestSizeRefusesEdgesFirst` | Each line's point B is its own edge's limit; adding a flag never writes into a shared slice; the byte bound on growth and at the bound; a size refuses edges before it looks its inputs up. |
+| `TestBucketEdgesRefused`, `TestPageSetsBucketEdges` | Edges asked wrongly, or of a size, are a 400 naming the edge and why; the page keeps the edges in the link and sends them with the view only. |
 | `TestPageServed`, `TestServeServesThePage` | The page and its files are served from the binary with their content types and security headers; anything else under `/page/` is a 404. |
 | `TestPageBehindAuth` | The page sits behind the API's check: 401 with no token, 403 for a user not allowed `/whatif/`, 403 for a foreign Host on loopback. |
 | `TestPageLoadsNothingExternal`, `TestPageIDsExist` | The page names no other origin, runs no inline script or style, and uses no absolute path; every element its script reads is on it. |
@@ -493,5 +584,5 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestSizeOneFewerThatServesIsAnError` | On a limit that dips, a fleet one replica fewer that serves the rate is a 500, not an answer. |
 | `TestSizeBehindAuth`, `TestPageAsksSize` | `/v1/size` sits behind the same check as the other endpoints, authorized as `get` on `/whatif/v1/size`; the page has the mode toggle and posts sizes by a relative path. |
 | `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
-| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (145 cases; it fails without node): `esc`, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
+| `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (208 cases; it fails without node): `esc`, the bucket edges by the server's rules, the box's mark, the link's edges and the lines' styles, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |

@@ -27,6 +27,15 @@ const (
 	defaultSizes  = 128
 )
 
+// defaultResponseBytes bounds the plan and the size responses kept, each
+// cache on its own: a plan with the per-bucket view and 8 edges measured
+// 548 KB on the worked recording, so 512 of them would hold some 280 MB
+// with no bound in bytes; 64 MiB keeps about 120 of them.
+const defaultResponseBytes = 64 << 20
+
+// bodyBytes is a response's weight in a cache: its length.
+func bodyBytes(b []byte) int { return len(b) }
+
 // defaultMaxInputs is how many sources are resolved at once by default: each
 // is a replay or a Prometheus capture of seconds to minutes.
 const defaultMaxInputs = 2
@@ -95,7 +104,7 @@ func New(c Config) *Server {
 		inputs = defaultMaxInputs
 	}
 	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
-		plans: newLRU[[]byte](defaultPlans), sizes: newLRU[[]byte](defaultSizes),
+		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs)}
 }

@@ -50,6 +50,16 @@ func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved,
 	if req.Model == "decode-only" {
 		in.Fleet.Prefill = nil
 	}
+	// ctx-16k is a source whose engines' arguments set a 16k context window.
+	// ctx-refused and ctx-zero carry the term with no window: refused, and 0.
+	switch req.Model {
+	case "ctx-16k":
+		in.Terms = []Term{{Name: TermMaxModelLen, Source: "engine arguments", Figure: Figure{Value: ptr(16384.0), Unit: "tokens"}}}
+	case "ctx-refused":
+		in.Terms = []Term{{Name: TermMaxModelLen, Figure: Figure{Refused: &Refusal{Reason: "NotRecorded", Detail: "stub"}}}}
+	case "ctx-zero":
+		in.Terms = []Term{{Name: TermMaxModelLen, Figure: Figure{Value: ptr(0.0), Unit: "tokens"}}}
+	}
 	return &Resolved{Inputs: in, Content: fmt.Sprintf("stub %v %s", r.refusePrefill, req.Model), Pricer: r}, nil
 }
 

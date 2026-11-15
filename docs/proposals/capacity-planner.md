@@ -4,10 +4,12 @@
 [Decisions](#decisions). Phase 0, the API, and phase 1, the page, are built:
 see [As built (phase 0)](#as-built-phase-0) and
 [As built (phase 1)](#as-built-phase-1). Of phase 2, inverse mode
-([As built (phase 2: inverse mode)](#as-built-phase-2-inverse-mode)) and saved
+([As built (phase 2: inverse mode)](#as-built-phase-2-inverse-mode)), saved
 scenarios and compare
 ([As built (phase 2: save and compare)](#as-built-phase-2-save-and-compare))
-are built; user-set bucket edges and the Grafana dashboard are not. Later
+and user-set bucket edges
+([As built (phase 2: bucket edges)](#as-built-phase-2-bucket-edges)) are
+built; the Grafana dashboard is not. Later
 phases are not. It builds on
 `cmd/capacity-planner` and `internal/signals/whatif`, which are
 ([what-if capacity](slo-capacity-planner.md), [end-to-end TTFT](slo-capacity-planner-ttft.md)),
@@ -286,7 +288,7 @@ nearest bucket at or above its prompt (so `8k` holds prompts from 4k to 8k;
 anything past 128k is in `128k`). The repo's own `classifyInputLength` edges
 (100 to 6000 tokens) are not used: they put every long-context prompt in one
 bucket. The view shows only buckets with at least 5% of the observed requests.
-User-set edges come in v2.
+User-set edges come in v2 (built: [As built (phase 2: bucket edges)](#as-built-phase-2-bucket-edges)).
 
 ## The answer: the most the fleet serves
 
@@ -1015,6 +1017,81 @@ pin.
 - **The pin is not saved.** It lives until the page is reloaded; save both
   scenarios to come back to a comparison.
 
+## As built (phase 2: bucket edges)
+
+A plan may set its own prompt buckets: `bucketEdges`, the upper edges in
+tokens, ascending. How to use them is in the guide's
+[Set your own prompt buckets](../guides/capacity-planner/README.md#set-your-own-prompt-buckets);
+the keys and the rules are in
+[What-if serve](../developer-guide/capacity-planner-serve.md#bucket-edges).
+
+**What the edges change.** Only the "if all traffic were bucket b" view: one
+line per edge, each priced with every prompt at its edge, as the default
+buckets were. Each bucket is named by its edge, in k where the edge is a
+whole number of 1024 tokens (`16k`), else in tokens (`2000`), so the default
+five keep their names. `slo.ttft.bucketTargets` keys name the plan's buckets.
+The limits, the marginal steps and the mix line do not move.
+
+**Mismatched edges: nothing to match.** The design asked what happens when
+the user's edges do not match the learned buckets. Nothing learned is per
+bucket: the replayed state carries the mean prompt and its spread, not a
+length per request, so the observed mix is refused (`NoPerRequestLengths`)
+and every bucket line is priced from the same learned fleet at a stated
+prompt. No learned figure is re-bucketed, refused or taken from the nearest
+bucket. The inputs keep the default buckets (`observed.buckets`,
+`observed.promptBucket`), whatever a plan's edges. When a recorder carries
+per-request lengths (R1) and the mix gains shares per bucket, this question
+becomes real and needs its own rule; the plan should then say which it
+applied.
+
+**The rules.** 1 to 8 edges, each from 1 to 1048576 tokens (1024k), each
+above the one before; whole token counts only. The edges need
+`views.allTrafficPerBucket`, as `bucketTargets` do: without the view they
+shape nothing. `POST /v1/size` refuses them: a size prices the mix line alone.
+Each refusal is a 400 that names the edge and the rule it breaks.
+
+**Ids and caches.** Edges equal to the default are dropped from the scenario,
+so asking them is the plan with none, byte for byte, and every `scenarioId`
+from before is unchanged. Other edges are part of the `scenarioId` and of the
+limits' cache key. The curve cache is keyed by the fleet's knobs, which hold
+the prompt each line is priced at, so it needs nothing new.
+
+**Cost, and the cap of 8.** Each edge not cached prices a fleet's curves at
+five corners of V_P and f while the plan holds its slot: eight fresh edges
+took 13.4 s on the worked recording, against 9.0 s for the default five
+cold; twelve took 16 to 19 s in review. So the cap is 8, near the default
+five. The plan and size caches are now bounded in bytes too (64 MiB each):
+a per-bucket plan with 8 edges is about 550 KB.
+
+**The context window.** The inputs now carry the engines' `--max-model-len`
+as the term `maxModelLen`, where the recorded arguments set a readable one
+(read with vLLM's suffixes: `16k` is 16000, `16K` 16384), unknown where
+either role's is unreadable. A bucket line whose edge plus the output length
+passes it is flagged `EdgeBeyondContext`, and dimmed on the page: still
+priced, but vLLM would refuse those requests. With the window unknown nothing is
+flagged, and the guide says to check. On the goldens' recordings (16384) the
+default 32k and 128k lines are now flagged: a change to the default view, on
+purpose.
+
+**The page.** A **Bucket edges** box under the per-bucket checkbox, enabled
+with it, reads `2k, 16k, 64k` or token counts by the server's rules
+(`parseEdges` in `scenario.js`), and is kept in the link, a saved scenario
+and an exported file as `edges=2k,16k,64k`, each edge by its bucket's name
+(`2048` is `2k`). A hand-edited link's edges are read in any form the box
+takes and rewritten; edges that do not parse refuse an imported file, and a
+page link with them prices the default buckets and says so. A box that does
+not parse stays marked, with the reason under it, until it does. A pinned A
+keeps its own plan: compare reads the limits, which the edges do not move,
+and adds a Buckets row where A's edges differ. The bucket lines take the
+five series colours in turn, dashed from the sixth. The
+**Price at** picker still offers the default buckets: it states a prompt
+length for the whole page, and is not a bucket.
+
+**Not built.** No CLI flag: the CLI draws no per-bucket view (`--input-bucket`
+refuses per-bucket answers), and `freeze` specs already name their own
+buckets with their own prompts. The 5% rule above (hide buckets under 5% of
+the requests) still waits on shares per bucket.
+
 ## Decisions
 
 Decided 2026-11-09, on the questions the first draft left open.
@@ -1022,7 +1099,8 @@ Decided 2026-11-09, on the questions the first draft left open.
 1. **Name: "capacity planner".** It plans one model's P/D fleet, not a
    cluster, so "cluster" is dropped from the name and the page.
 2. **Prompt buckets: a fixed set for long context in v1**, on the staircase's
-   pattern: 1k, 4k, 8k, 32k and 128k tokens. User-set edges in v2 (phase 2).
+   pattern: 1k, 4k, 8k, 32k and 128k tokens. User-set edges in v2 (phase 2),
+   now built: they stay the default.
 3. **Traffic classes: the proposed mapping for v1.** Critical is the highest
    band above 0, regular is 0, batch is below 0 (sheddable). Configurable
    names later (phase 5).

@@ -116,6 +116,11 @@ func sizeOn(s string) (string, error) {
 // cached as one. The search is kept by sizeId before the plan is priced, so
 // a size whose plan failed (its client gone) is not searched again.
 func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
+	// Refused before the inputs are looked up: no inputs make them right.
+	if req.BucketEdges != nil {
+		return nil, InputErrorf("bucketEdges: a size prices the mix line alone, and the edges shape only a plan's " +
+			"\"if all traffic were bucket b\" view; ask them of POST /v1/plan")
+	}
 	e, ok := s.inputs.get(req.InputsID)
 	if !ok {
 		return nil, errUnknownInputs

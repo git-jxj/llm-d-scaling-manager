@@ -46,6 +46,7 @@ const FLAG_WORDS = {
   LineNearGate: ["The ITL line sits near the tracker's gate; the answer does not care which side (informational).", "nothing"],
   ExtrapolatedFill: ["The fill is above the highest fill the ITL line was read at: extrapolated.", "readings at higher load"],
   AssumedShape: ["Priced at a prompt or output length you set, not the measured one.", "price at the current mix"],
+  EdgeBeyondContext: ["A bucket's edge is past the engines' context window (--max-model-len): they refuse prompts that long, and this \"if all traffic were\" line prices traffic they would not serve.", "an edge within the context window"],
   PullUnseen: ["The prefill load is past the pull table's highest bucket: the pull reads low.", "readings at higher prefill load"],
   OverheadMeasured: ["The fixed overhead comes from the prefill pods' histograms.", "nothing (informational)"],
   AssumedPoissonArrivals: ["Arrivals are taken as Poisson: on bursty traffic the TTFT over-promises.", "a stated arrival burstiness (Ca²)"],
@@ -66,7 +67,7 @@ const BUCKET_NOTE = "If all traffic were bucket b: each line is its own fleet's 
 const TERM_NAMES = {
   vp: "V_P", a: "a", imbalance: "f", promptTokens: "prompt", promptCV: "prompt cv",
   transferSecondsPerToken: "KV transfer", routerHop: "router hop", itlA: "ITL a", itlB: "ITL b",
-  itlLine: "ITL line", capacityTokens: "KV capacity", kvPerRequest: "KV per request", batchCap: "batch cap",
+  itlLine: "ITL line", capacityTokens: "KV capacity", kvPerRequest: "KV per request", batchCap: "batch cap", maxModelLen: "context window",
   tpotRatio: "R_q", prefill: "prefill",
 };
 
@@ -350,7 +351,7 @@ function setInputs(inputs) {
     tpotStat: tpot.statistic, tpotTarget: tpot.seconds, tpotDefault: !p.tpot,
     ratio: null, headroom: p.headroom || 0.85,
     priceAs: "mix", outputTokens: val(inputs.observed.outputTokens),
-    perBucket: false,
+    perBucket: false, edges: "",
     assume: {},
     maxRep: SIZE_BOUND, sizeLow: false,
   };
@@ -367,6 +368,7 @@ function setInputs(inputs) {
   el("outtok").value = k.outputTokens != null ? Math.round(k.outputTokens) : "";
   el("headroom").value = k.headroom;
   el("perbucket").checked = false;
+  el("bucketedges").value = "";
   el("pnow").textContent = inputs.fleet.prefill ? "now " + inputs.fleet.prefill.replicas : "no prefill variant";
   el("dnow").textContent = "now " + inputs.fleet.decode.replicas;
   el("ratio").value = "";
@@ -516,6 +518,11 @@ function applyLink() {
   if (num("tpot") != null || g("tpotStat")) k.tpotDefault = false;
   // A bucket the inputs do not name prices the current mix.
   k.priceAs = state.inputs.observed.buckets.some(b => b.name === g("priceAs")) ? g("priceAs") : "mix";
+  // Edges the link names are used as parseEdges reads them, and the link is
+  // rewritten in their canonical form; edges it cannot read are said.
+  const le = linkedEdges(g("edges"));
+  k.edges = le.edges;
+  state.linkNote = le.note;
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   k.sizeLow = g("low") === "1";
@@ -538,6 +545,7 @@ function applyLink() {
   if (k.outputTokens != null) el("outtok").value = Math.round(k.outputTokens);
   el("headroom").value = k.headroom;
   el("perbucket").checked = k.perBucket;
+  el("bucketedges").value = k.edges;
   el("ratio").value = k.ratio != null ? k.ratio : "";
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) el("a-" + a.box).value = Number((k.assume[a.key] * a.scale).toPrecision(6));
   showTyped();
@@ -588,7 +596,24 @@ function linkParams() {
   if (k.outputTokens != null) p.set("out", Math.round(k.outputTokens));
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) p.set(a.key, k.assume[a.key]);
   if (k.perBucket) p.set("perBucket", "1");
+  if (k.edges) p.set("edges", k.edges);
   return p;
+}
+
+// showEdgesBox marks the bucket edges box invalid, with why under it, for
+// as long as its text is not the edges the lines show: a later status line
+// or plan does not clear it.
+function showEdgesBox() {
+  const box = el("bucketedges"), why = state.k ? edgesBoxProblem(box.value, state.k.edges) : "";
+  box.setAttribute("aria-invalid", why ? "true" : "false");
+  box.classList.toggle("invalid", !!why);
+  el("bucketedgeserr").textContent = why;
+}
+
+// contextWindow is the inputs' context window in tokens, or null.
+function contextWindow() {
+  const t = state.inputs && (state.inputs.terms || []).find(x => x.name === "maxModelLen");
+  return t ? val(t) : null;
 }
 
 // ---- The plan ----
@@ -616,6 +641,10 @@ function planRequest() {
   if (k.tpotStat !== "mean" && k.ratio != null) assume.tpotRatio = k.ratio;
   if (Object.keys(assume).length) req.assume = assume;
   if (k.perBucket) req.views = {allTrafficPerBucket: true};
+  // The edges shape only the per-bucket view. k.edges is always parseEdges'
+  // text (scenario.js), so it reads back.
+  const edges = parseEdges(k.edges).edges;
+  if (k.perBucket && edges.length) req.bucketEdges = edges;
   return req;
 }
 
@@ -734,6 +763,12 @@ async function plan() {
     render();
     writeLink();
     setStatus(`Priced in ${Math.round(performance.now() - t0)} ms.`);
+    // A link's edges the page could not use are said once, after the plan
+    // that priced the default buckets in their place.
+    if (state.linkNote) {
+      setStatus(state.linkNote, true);
+      state.linkNote = null;
+    }
   } catch (e) {
     clearTimeout(slow);
     clearInterval(ticker);
@@ -786,6 +821,8 @@ function syncControls() {
   // A size prices the mix line alone: the per-bucket view is the plan's.
   el("perbucket").disabled = sizing;
   el("perbucket").checked = k.perBucket;
+  el("bucketedges").disabled = sizing || !k.perBucket;
+  showEdgesBox();
   el("sizelow").checked = k.sizeLow;
   if (k.rate != null) {
     el("rate").value = k.rate;
@@ -1150,12 +1187,16 @@ function renderTTFT() {
   const series = [{cls: "c-mix", name: `${shapeOf(p)} (the limits are read here)`, pts: pts(t.line.curve), band: true}];
   const dots = [];
   const buckets = t.perBucket || [];
-  const names = state.inputs.observed.buckets.map(b => b.name);
-  for (const l of buckets) {
-    const i = names.indexOf(l.bucket);
-    series.push({cls: "c-" + i, thin: true, name: `if all traffic were ${l.bucket}`, pts: pts(l.curve)});
+  // The lines follow the plan's edges, up to 8: past five the colours
+  // repeat, and the bucket table names each line.
+  // Lines from the sixth on are dashed, and a line past the context window
+  // is dimmed and dotted, with the reason in its legend entry.
+  for (const [n, l] of buckets.entries()) {
+    const beyond = beyondContext(l), st = bucketSeries(n, beyond);
+    series.push({cls: st.cls, extra: st.extra, thin: true, pts: pts(l.curve),
+      name: `if all traffic were ${l.bucket}` + (beyond ? ` (${contextNote(contextWindow())})` : "")});
     const b = val(l.atTarget.rate);
-    if (b != null) dots.push({x: b, y: l.atTarget.seconds, cls: "c-" + i, filled: true, small: true});
+    if (b != null) dots.push({x: b, y: l.atTarget.seconds, cls: st.cls, filled: true, small: true});
   }
   // A, the pinned plan, is drawn dashed: its mix line, and its filled point
   // at its own target.
@@ -1246,9 +1287,9 @@ function renderTPOT() {
 // legend names every series and the guides, so that no line is told by its
 // colour alone.
 function legend(series, onsets) {
-  const sw = (cls, dash, thin, pin) => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="${dash ? "guide" : "line " + cls + (thin ? " thin" : "") + (pin ? " pin" : "")}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
+  const sw = (cls, dash, thin, pin, extra) => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="${dash ? "guide" : "line " + cls + (thin ? " thin" : "") + (pin ? " pin" : "") + (extra || "")}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
   const box = cls => `<svg viewBox="0 0 18 10" aria-hidden="true"><rect class="${cls}" x="1" y="1" width="16" height="8"/></svg>`;
-  return series.map(s => `<span>${sw(s.cls, false, s.thin, s.pin)}${esc(s.name)}</span>`).join("") +
+  return series.map(s => `<span>${sw(s.cls, false, s.thin, s.pin, s.extra)}${esc(s.name)}</span>`).join("") +
     `<span>${sw("", true)}target / rate you set</span><span>${box("band")}span over V_P and f, or band</span>` +
     `<span>${box("sat")}saturated</span>` + (onsets ? `<span>${box("onset")}past the prefill flow-control onset</span>` : "");
 }
@@ -1310,7 +1351,7 @@ function chart(svg, o) {
       d += (pen ? "L" : "M") + X(q.x).toFixed(1) + "," + Y(Math.min(q.y, o.ymax * 2)).toFixed(1);
       pen = true;
     }
-    if (d) g += `<path class="line ${sr.cls}${sr.thin ? " thin" : ""}${sr.pin ? " pin" : ""}" d="${d}"/>`;
+    if (d) g += `<path class="line ${sr.cls}${sr.thin ? " thin" : ""}${sr.pin ? " pin" : ""}${sr.extra || ""}" d="${d}"/>`;
   }
   s += `<g clip-path="url(#${o.clip})">${g}</g>`;
   if (o.floor != null && o.floor <= o.ymax) {
@@ -1381,7 +1422,8 @@ function renderTables() {
     `<table><caption class="hint">${esc(BUCKET_NOTE)}</caption><tr><th>bucket</th><th>prompt</th><th>lower knee</th><th>TTFT at ${fmtRate(p.limits.chosen.rate)}</th><th>rate at its target</th></tr>` +
     b.map(l => {
       const kn = l.knees ? lowerKnee(l.knees) : null;
-      return `<tr><td>${esc(l.bucket)}</td><td>${l.promptTokens != null ? fmtNum(l.promptTokens) : ""}</td><td>${kn != null ? fmtRate(kn) : "refused"}</td>` +
+      const past = beyondContext(l) ? `<br><span class="warn">${esc(contextNote(contextWindow()))}</span>` : "";
+      return `<tr><td>${esc(l.bucket)}${past}</td><td>${l.promptTokens != null ? fmtNum(l.promptTokens) : ""}</td><td>${kn != null ? fmtRate(kn) : "refused"}</td>` +
         `<td>${figText(l.atRate.figure, fmtSec)}</td><td>${figText(l.atTarget.rate, fmtRate)} at ${fmtSec(l.target)}</td></tr>`;
     }).join("") + "</table>";
 }
@@ -1793,7 +1835,17 @@ function wire() {
       schedule(0);
     };
   }
-  el("perbucket").onchange =() => { if (ready()) { k().perBucket = el("perbucket").checked; schedule(0); } };
+  el("perbucket").onchange =() => { if (ready()) { k().perBucket = el("perbucket").checked; syncControls(); schedule(0); } };
+  el("bucketedges").onchange = () => {
+    if (!ready()) return;
+    let r = null;
+    try { r = parseEdges(el("bucketedges").value); } catch (e) { r = null; }
+    if (r) {
+      k().edges = el("bucketedges").value = r.text;
+      schedule(0);
+    }
+    showEdgesBox();
+  };
   // Saved scenarios and compare.
   el("scensave").onclick = saveScenario;
   el("scenopen").onclick = () => { const sc = selectedScenario(); if (sc) openScenario(sc); };

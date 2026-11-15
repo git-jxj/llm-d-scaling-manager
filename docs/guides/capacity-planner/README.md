@@ -147,6 +147,42 @@ kill %1
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
 
+## Set your own prompt buckets
+
+The "if all traffic were bucket b" view draws five buckets by default: 1k,
+4k, 8k, 32k and 128k tokens. To draw others, tick the view, then type your
+edges in **Bucket edges**, for example `2k, 16k, 64k`:
+
+- Each edge is a bucket's largest prompt, in tokens. `16k` is 16384 tokens.
+- Give 1 to 8 edges, smallest first, each at most 1024k.
+- Leave the box blank for the default five.
+
+Each line is then priced with every prompt at its edge, and named by it. A
+line named `2000` is an edge of 2000 tokens; `2k` is 2048. The box shows
+your edges by these names, so `2048` becomes `2k`.
+
+There are five line colours. With more than five edges the colours repeat,
+and the sixth line on is dashed; the table under the graph names every line.
+
+Each new edge prices a fleet of its own, so a plan with many new edges takes
+longer. Edges you already used for this fleet are not priced again.
+
+The edges change only this view: the limits and the +1 steps stay the same.
+The flag count can change, since each line brings its own flags.
+
+**Edges past the context window.** A request needs room for its prompt and
+its output, so a line whose edge plus the output length passes the engines'
+`--max-model-len` is flagged `EdgeBeyondContext`, dimmed and dotted on the
+graph, and marked in the table. This needs the source to know the window
+(shown as "context window" under **Inputs**); when it does not, nothing is
+flagged, so check your edges against it yourself.
+
+The address keeps your edges, so a shared link draws the same lines; a link
+you edit by hand may write them any way the box takes. If an edge in the box
+is wrong, the box is marked and says why under it until you fix it, and the
+graphs keep the edges in use. If a link's edges are wrong, the status line
+says so, and the page draws the default five.
+
 ## Find the fleet a rate needs
 
 Above the controls, pick **What fleet does this traffic need?** Then set the

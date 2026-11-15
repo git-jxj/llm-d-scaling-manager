@@ -160,6 +160,7 @@ FlowControlMismatch
 FlowControlUnknown
 FlowControlWaitPriced
 Found
+G
 GLOBAL_OPT_INTERVAL
 GPS
 GPSObs
@@ -196,6 +197,7 @@ InvalidImageName
 InvalidInput
 It
 JSON
+K
 KEDA
 KEDA_HPA_REPAIR
 KUEUE_NAMESPACE
@@ -232,6 +234,7 @@ Limited
 LineNearGate
 LineOnly
 Loaded
+M
 METRICS_BIND_ADDRESS
 METRICS_CERT_KEY
 METRICS_CERT_NAME
@@ -400,6 +403,7 @@ SpreadBeyondProcessorSharing
 StartOptimizeLoop
 StatefulSet
 Successfully
+T
 T1-ols
 T2-above-band
 T2-default
@@ -660,6 +664,7 @@ beta
 better
 between
 biased
+binary
 bind
 blip
 block
@@ -882,6 +887,7 @@ debug
 decay
 decided
 decides
+decimal
 decision
 decisionCount
 decisionPath
@@ -1204,6 +1210,7 @@ frontend
 frozen
 full
 future
+g
 gap
 gaps
 gate
@@ -1479,6 +1486,7 @@ k2Stash
 k2WindowArgs
 k2stash|
 k2|
+kKmMgGtT
 kPrice
 kSpread
 kSpreadOverThreshold
@@ -1657,6 +1665,7 @@ lowerBound
 lowerBounds
 lowered
 lowering
+m
 m-prefill
 made
 main.go
@@ -2763,6 +2772,7 @@ succeeds
 success
 successfully
 such
+suffix
 sum
 summing
 supply
@@ -2776,6 +2786,7 @@ swingReversals
 swingWindow
 switch
 system
+t
 tail
 take
 taken

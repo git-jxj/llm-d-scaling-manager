@@ -101,15 +101,17 @@ type Observed struct {
 	PromptTokens Figure `json:"promptTokens"`
 	OutputTokens Figure `json:"outputTokens"`
 	PromptCV     Figure `json:"promptCV"`
-	// Buckets are the fixed prompt buckets, each named by its upper edge,
-	// and PromptBucket the one the mean prompt falls in.
+	// Buckets are the default prompt buckets, each named by its upper edge,
+	// and PromptBucket the one the mean prompt falls in. A plan's own edges
+	// (PlanRequest.BucketEdges) change neither: nothing learned is per
+	// bucket.
 	Buckets      []Bucket `json:"buckets"`
 	PromptBucket string   `json:"promptBucket,omitempty"`
 	// Mix is the share of requests per bucket, or why the source cannot say.
 	Mix ObservedMix `json:"mix"`
 }
 
-// Bucket is one fixed prompt bucket: prompts above the bucket below, up to
+// Bucket is one prompt bucket: prompts above the bucket below, up to
 // UpperTokens.
 type Bucket struct {
 	Name        string `json:"name"`
@@ -141,6 +143,17 @@ type PolicyObjective struct {
 	Statistic string  `json:"statistic"`
 	Seconds   float64 `json:"seconds"`
 }
+
+// TermMaxModelLen is the term holding the engines' context window, tokens:
+// the smallest --max-model-len their recorded arguments set, refused where
+// none is set.
+const TermMaxModelLen = "maxModelLen"
+
+// FlagEdgeBeyondContext marks an "if all traffic were bucket b" line whose
+// edge is past the context window (TermMaxModelLen): the engines refuse
+// prompts that long, so the line prices traffic they would not serve. It is
+// raised only where the context window is known.
+const FlagEdgeBeyondContext = "EdgeBeyondContext"
 
 // Term is one input the plans price from: its figure and where it came from.
 type Term struct {
@@ -200,6 +213,12 @@ type PlanRequest struct {
 	Assume   *Assume      `json:"assume,omitempty"`
 	Headroom *float64     `json:"headroom,omitempty"`
 	Views    *ViewRequest `json:"views,omitempty"`
+	// BucketEdges are the prompt buckets' upper edges, tokens, ascending: 1
+	// to 8 of them, each at most 1048576 (1024k). Each bucket is named by
+	// its edge: in k where it is a whole number of 1024 tokens ("8k"), else
+	// in tokens ("8000"). Absent, the default 1k, 4k, 8k, 32k and 128k. They
+	// shape only the "if all traffic were bucket b" view, which they need.
+	BucketEdges []int `json:"bucketEdges,omitempty"`
 }
 
 // FleetKnob is the replicas per role.
@@ -334,6 +353,9 @@ type Scenario struct {
 	Headroom   float64            `json:"headroom"`
 	Assume     Assume             `json:"assume"`
 	Views      ViewRequest        `json:"views"`
+	// BucketEdges are the request's edges; absent with the default ones,
+	// asked or not, so that they hash to the same scenarioId.
+	BucketEdges []int `json:"bucketEdges,omitempty"`
 }
 
 // FleetCounts is the replicas per role.
@@ -518,6 +540,9 @@ type SizeRequest struct {
 	// SizeOn is what a fleet must reach the rate with: "point", its limit
 	// (the default), or "low", the low end of its span over V_P and f.
 	SizeOn string `json:"sizeOn,omitempty"`
+	// BucketEdges are refused: a size prices the mix line alone, and the
+	// edges shape only a plan's "if all traffic were bucket b" view.
+	BucketEdges []int `json:"bucketEdges,omitempty"`
 }
 
 // SizeResponse is a size: the answer, or why no fleet within the bound
