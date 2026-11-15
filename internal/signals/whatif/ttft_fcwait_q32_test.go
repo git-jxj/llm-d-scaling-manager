@@ -9,8 +9,9 @@ import (
 // The Qwen3-32B staircase (2 prefill and 2 decode pods at TP 2, an H200
 // cluster) sent flow-control-on steps past the prefill onset where the router
 // really held: the first run to measure the wait TTFTFleet.PriceRouterWait
-// takes as priced. It reads short there, so the switch stays off
-// (DefaultPriceRouterWait).
+// prices. Without a stage of its own the price read short there; with the
+// gate priced (ttft_gate.go) it holds the client, so the switch is on by
+// default (DefaultPriceRouterWait).
 
 // q32Fleet is that run's frozen fleet for bucket B (8000-token prompts,
 // Poisson) or C (the same at Ca^2 4), on the processor-sharing model with
@@ -97,26 +98,32 @@ func TestStaircaseQ32_TheFixtureIsTheFrozenCurve(t *testing.T) {
 	}
 }
 
-// q32Tolerance is the rule the switch had to pass: past the onset, at a step
-// the fleet held, the price may read at most 10 % under the client.
+// q32Tolerance is the rule the gate's price had to pass to be the default:
+// past the onset, at a step the fleet held, the price may read at most 10 %
+// under the client.
 const q32Tolerance = 0.9
 
-// A known failure, asserted so that a fix shows. The switch moves no figure:
-// the price is the frozen curve's with it on and off. Below each onset the price
-// reads well above the client (1.5 to 2.6 times). At C's first step past it
-// (3.24 r/s, 0.80 of the prefill knee, inside MaxRouterWaitKneeShare, so the
-// switch takes it as FlowControlWaitPriced) the router held 19 % of requests
-// for a mean of 1.40 s, and the price reads 0.80 of the client's mean, 0.84
-// of its p90 and 0.57 of its p95. At the next step (3.34 r/s, void: 127
-// evicted) it reads 0.57, 0.35 and 0.39 of what the dispatched requests
-// alone saw (logged, not judged: the step is void). The gate does not only move the wait, as the switch argues: at
-// the same rates with flow control off the client read 3.14 s and 3.60 s,
-// under the price. Taken as priced, it would also lift bucket C's rate for
-// its frozen p95 target from the onset (3.10 r/s, inside the measured
-// crossing, 3.04 to 3.24) to 3.44 r/s, past it.
-func TestStaircaseQ32_TheRouterWaitStepsReadShort(t *testing.T) {
-	if DefaultPriceRouterWait {
-		t.Fatal("PriceRouterWait reads short of the Qwen3-32B staircase's client past the prefill onset: keep it off")
+// The gate priced as a stage (ttft_gate.go) holds the client at the step past
+// the prefill onset the fleet held, and moves nothing below the onsets.
+//
+// Before the stage the switch moved no figure: at C's first step past the
+// onset (3.24 r/s, 0.80 of the prefill knee, inside MaxRouterWaitKneeShare)
+// the router held 19 % of requests for a mean of 1.40 s, and the price, the
+// frozen curve's, read 0.80 of the client's mean, 0.84 of its p90 and 0.57 of
+// its p95, and bucket C's rate for its frozen p95 target rose past the
+// measured crossing. With the stage the price reads at least 0.9 of the
+// client there at the mean, p90 and p95, and the rate answer stays at the
+// onset, inside the crossing.
+//
+// Below each onset the figures are the frozen curve's, to the bit, and at or
+// above the client (1.5 to 2.7 times). B's step past the onset (3.85 r/s) is
+// past MaxRouterWaitKneeShare: it keeps AboveFlowControlOnset and the frozen
+// figure. The step after C's (3.34 r/s) is void (127 evicted): logged, not
+// judged; its client figures are the dispatched requests' only. With the
+// switch off (the opt-out) every figure is the frozen curve's.
+func TestStaircaseQ32_TheGateStageHoldsTheClient(t *testing.T) {
+	if !DefaultPriceRouterWait {
+		t.Fatal("the gate's price meets its rule on the Qwen3-32B staircase: DefaultPriceRouterWait is on")
 	}
 	for bucket, steps := range q32Steps {
 		fl := fcFleet(q32Fleet(bucket), true)
@@ -126,38 +133,46 @@ func TestStaircaseQ32_TheRouterWaitStepsReadShort(t *testing.T) {
 				s.insideTheTake != mean.HasFlag(FlowControlWaitPriced) {
 				t.Errorf("%s %.3f r/s: flags %v", bucket, s.rate, mean.Flags)
 			}
+			if gate := mean.Parts.RouterWait > 0 && mean.Parts.BurstWait > 0; gate != s.insideTheTake {
+				t.Errorf("%s %.3f r/s: router wait %g s, burst wait %g s, want the gate priced only where it takes", bucket, s.rate, mean.Parts.RouterWait, mean.Parts.BurstWait)
+			}
 			for i, q := range []float64{0, 0.9, 0.95} {
 				got := mustTTFT(t, ttftAt(t, fl, s.rate, q)).Seconds
-				// The switch moves no figure: on or off, the price is the
-				// frozen curve's.
 				unswitched := mustTTFT(t, ttftAt(t, fcFleet(q32Fleet(bucket), false), s.rate, q)).Seconds
-				nearRel(t, bucket+" price, switch on", got, s.frozen[i], 1e-9)
 				nearRel(t, bucket+" price, switch off", unswitched, s.frozen[i], 1e-9)
+				if !s.insideTheTake {
+					nearRel(t, bucket+" price where the gate is not priced", got, s.frozen[i], 1e-9)
+				}
 				if s.client[i] == 0 {
 					continue
 				}
-				t.Logf("%s %.3f r/s q %g: model %.2f s, client %.2f s (%.2fx), router wait %.2f s, %d evicted",
-					bucket, s.rate, q, got, s.client[i], got/s.client[i], s.routerWait, s.failed)
+				t.Logf("%s %.3f r/s q %g: model %.2f s (frozen %.2f s), client %.2f s (%.2fx), router wait %.2f s priced, %.2f s measured, %d evicted",
+					bucket, s.rate, q, got, s.frozen[i], s.client[i], got/s.client[i], mean.Parts.RouterWait, s.routerWait, s.failed)
 				// Only a step the fleet held is judged: a void step's client
 				// figures are the dispatched requests' only, and read low.
-				if s.pastTheOnset && s.failed == 0 && got >= q32Tolerance*s.client[i] {
-					t.Errorf("the known failure is gone: %s %.3f r/s q %g reads %.2f s, within %.0f%% of the client's %.2f s; revisit DefaultPriceRouterWait and the TTFT page",
+				if s.failed == 0 && got < q32Tolerance*s.client[i] {
+					t.Errorf("%s %.3f r/s q %g reads %.2f s, more than %.0f%% under the client's %.2f s",
 						bucket, s.rate, q, got, 100*(1-q32Tolerance), s.client[i])
-				}
-				if !s.pastTheOnset && got < s.client[i] {
-					t.Errorf("%s %.3f r/s q %g: below the onset the model reads %.2f s, under the client's %.2f s", bucket, s.rate, q, got, s.client[i])
 				}
 			}
 		}
 	}
-	// C's frozen p95 target: the measured crossing is between the steps at
-	// 3.036 r/s (7.40 s) and 3.238 r/s (28.84 s).
-	target := TTFTTarget{Seconds: 22.71371427515482, Percentile: 0.95}
-	const crossingTop = 3.238087631893702
-	off := RateForTTFT(fcFleet(q32Fleet("C"), false), target).(Answer)
-	on := RateForTTFT(fcFleet(q32Fleet("C"), true), target).(Answer)
-	t.Logf("C p95 %.2f s: %.3f r/s with the wait flagged, %.3f r/s taken as priced, measured crossing under %.3f r/s", target.Seconds, off.Value, on.Value, crossingTop)
-	if !(off.Value < crossingTop && on.Value > crossingTop) {
-		t.Errorf("the known failure is gone: C p95 rate %.3f r/s flagged, %.3f r/s priced, against a crossing under %.3f r/s", off.Value, on.Value, crossingTop)
+	// C's frozen p95 and p90 targets: the measured crossings are between the
+	// steps at 3.036 r/s (p95 7.40 s) and 3.238 r/s (28.84 s), and between
+	// 3.238 r/s (p90 15.40 s) and 3.339 r/s.
+	for _, c := range []struct {
+		target      TTFTTarget
+		crossingTop float64
+	}{
+		{TTFTTarget{Seconds: 22.71371427515482, Percentile: 0.95}, 3.238087631893702},
+		{TTFTTarget{Seconds: 17.700823769319424, Percentile: 0.9}, 3.33927787039038},
+	} {
+		off := mustAnswer(t, rateForTTFT(t, fcFleet(q32Fleet("C"), false), c.target))
+		on := mustAnswer(t, rateForTTFT(t, fcFleet(q32Fleet("C"), true), c.target))
+		t.Logf("C q %g, %.2f s: %.3f r/s with the gate flagged, %.3f r/s priced, measured crossing under %.3f r/s",
+			c.target.Percentile, c.target.Seconds, off.Value, on.Value, c.crossingTop)
+		if !(on.Value < c.crossingTop) {
+			t.Errorf("C q %g: the priced rate %.3f r/s is past the measured crossing (under %.3f r/s)", c.target.Percentile, on.Value, c.crossingTop)
+		}
 	}
 }

@@ -381,8 +381,8 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	}
 	pf.fleet.Prefill = p
 	pf.fleet.ProcessorSharing = processorSharing
-	// Experimental and off by default: the wait it prices is argued, not
-	// measured. whatif gates it on processor sharing itself
+	// On by default, as in the SLO analyzer (whatif.DefaultPriceRouterWait).
+	// whatif gates it on processor sharing itself
 	// (whatif.TTFTFleet.PriceRouterWait).
 	pf.fleet.PriceRouterWait = f.priceRouterWait
 	// Off by default, as in the SLO analyzer (whatif.DefaultPSOnsets,

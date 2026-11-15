@@ -18,17 +18,18 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
-// The router's flow-control wait (SwitchTTFTRouterWait): off by default at the
-// CLI's default, and with it on or off the analyzer's verdict and flags are
-// the shared ones (whatif.TTFTAt, whatif.TTFTMeets) on the same fleet, below
-// the prefill onset, above it inside and past whatif.MaxRouterWaitKneeShare of
-// the knee, and refused past the knee.
+// The router's flow-control wait (SwitchTTFTRouterWait): on by default at the
+// CLI's default, a replay may turn it off, and with it on or off the
+// analyzer's verdict, figure and flags are the shared ones (whatif.TTFTAt,
+// whatif.TTFTMeets) on the same fleet, below the prefill onset, above it
+// inside and past whatif.MaxRouterWaitKneeShare of the knee, and refused past
+// the knee.
 func TestTTFT_TheRouterWaitSwitch(t *testing.T) {
 	a := newTTFTRig(ttftEstimate(), prefillRows("pre", 4000)).a
 	require.Equal(t, whatif.DefaultPriceRouterWait, a.ttftRouterWait, "the analyzer's default is the CLI's")
-	require.False(t, a.ttftRouterWait, "experimental: off by default")
-	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchTTFTRouterWait: true}))
-	require.True(t, a.ttftRouterWait)
+	require.True(t, a.ttftRouterWait, "on by default")
+	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchTTFTRouterWait: false}))
+	require.False(t, a.ttftRouterWait)
 
 	in := ttftInputsAt(2, 1.5)
 	in.flow = whatif.FlowControl{State: whatif.FlowControlOn, QueueThreshold: 0.2, KVThreshold: 0.8}

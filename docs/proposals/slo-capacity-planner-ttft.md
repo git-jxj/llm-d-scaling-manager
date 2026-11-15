@@ -335,18 +335,16 @@ checks it.
 1. **Below both onsets** (where every operating point sits in the worked
    example): flow control changes nothing. The per-pod engine model with `f`,
    and `W_decode` on the decode pods. `W_router` = 0.
-2. **Above the prefill onset**: the router holds the excess, the engines hold
-   about the threshold. By default the answer stays the per-pod model, flagged
+2. **Above the prefill onset**: the router holds the excess. The gate reads
+   a score an engine step stale and the router's scorers send each released
+   burst to one pod, so the gate adds delay. By default, up to 0.9 of the
+   prefill knee, the price carries the gate as a stage (its wait at the
+   router and behind the burst), flagged `FlowControlWaitPriced` and judged
+   by its figure ([as built](#as-built-the-router-stage)). Past 0.9 of the
+   knee, or with the switch off, the answer stays the per-pod model, flagged
    `AboveFlowControlOnset`, and a target read at that rate is missed however
-   low the figure, so question 1 caps at the prefill onset as it does at the
-   decode one (`BoundPrefillOnset`). Late binding can only reduce imbalance while the gate is
-   closed, but one-per-cycle dispatch and stale scores can add delay, so the
-   model is not proven conservative there; the pooled M/G/c is printed as the
-   optimistic bound. An experimental switch, off by default and shared by the
-   CLI and the SLO analyzer, takes the wait as inside the processor-sharing
-   stage, flagged `FlowControlWaitPriced`, up to 0.9 of the prefill knee. It is
-   simulated with a stale gate, but no measured step with a real router wait
-   validates it ([as built](#as-built-the-routers-wait-above-the-prefill-onset)).
+   low the figure, so question 1 caps there (`BoundPrefillOnset`). The pooled
+   M/G/c is printed as the optimistic bound.
 3. **Above the decode onset**: a closed decode gate stops dispatch for every
    request, prefill included, and a released request leaves its decode slot
    idle through prefill and transfer, so the gate is not work conserving. The
@@ -1828,6 +1826,11 @@ at worst in review), but no run has validated it at that spread.
 
 ## As built: the router's wait above the prefill onset
 
+**Superseded in part.** The switch below no longer takes the wait as inside
+the prefill stage: it prices the gate as a stage of its own, and it is on by
+default ([the router stage](#as-built-the-router-stage)). The measurements
+below are what led there.
+
 With flow control on, the router starts holding requests once the prefill
 pods' mean waiting count reaches its threshold (the prefill onset). Above that
 rate the model answers, flags the answer `AboveFlowControlOnset`, and a target
@@ -2028,7 +2031,8 @@ issue proposed (above).
 - No model of the router wait. The steps where the router held read short by
   up to 0.57x on the p95 at a step that held, and 0.35x where it shed load. A
   model of the gate has to carry its stale score: the pods queue past the
-  threshold and then sit behind the burst it releases.
+  threshold and then sit behind the burst it releases. Done since:
+  [the router stage](#as-built-the-router-stage).
 - By default the decode onset still caps question 1 at the rate where the
   mean score reaches 1. The gate reads the current score, so it closes for
   part of the time below that rate. A switch charges that time
@@ -2047,6 +2051,146 @@ issue proposed (above).
   (quartiles -42 to +109 ms), because R is a difference of means of a few
   seconds read about 36 s apart. So the warm-up's slope read high, which
   prices more, not less. The fit needs no change.
+
+## As built: the router stage
+
+`TTFTFleet.PriceRouterWait` now prices EPP flow control's gate past the
+prefill onset as a stage of the TTFT (`internal/signals/whatif/ttft_gate.go`),
+and it is on by default (`whatif.DefaultPriceRouterWait`) in the CLI, the
+planner API and the SLO analyzer. `--price-router-wait=false`, or the replay
+switch `slo-ttft-router-wait` off, is the opt-out: a TTFT past the onset is
+then flagged `AboveFlowControlOnset`, a miss, as before. Below the onsets, and
+with flow control off, no figure moves.
+
+### The gate, from the router's code
+
+The EPP measured is `llm-d-router-endpoint-picker:v0.11.0` (llm-d/llm-d-router
+v0.11.0, flow control in-tree). Paths are in that repository.
+
+- **The score.** `pkg/epp/framework/plugins/flowcontrol/saturationdetector/utilization/detector.go`,
+  `Saturation` (lines 133-183): per pod `max(waiting / queueDepthThreshold,
+  kvUsage / kvCacheUtilThreshold)`, defaults 5 and 0.8 (`config.go` lines
+  31-33), **averaged** over the stage's pods. A pod whose metrics are older
+  than 200 ms scores 1.0 (`MetricsStalenessThreshold`, line 36).
+- **Per stage, then the max.** `pkg/epp/flowcontrol/controller/internal/processor.go`,
+  `dispatchCycle` (lines 450-546): prefill and decode pods are scored apart
+  (`partitionEndpoints`, by the `llm-d.ai/role` label) and the higher stage
+  score is the pool's. The static usage-limit policy's ceiling is 1.0
+  (`usagelimits`, `NewConstPolicy(..., 1.0)`).
+- **The dispatch loop.** `Run` (lines 217-278): a cycle on every enqueue and
+  every 1 ms tick. Each cycle dispatches **one** request unless the score is
+  at least 1 (head-of-line blocking, lines 505-518). So an open gate empties
+  the router queue within milliseconds.
+- **How fresh the score is.** The data layer polls each pod every 50 ms
+  (`pkg/epp/datalayer/runtime.go`, `defaultRefreshInterval`, line 73;
+  `--refresh-metrics-interval`, `pkg/epp/server/options.go` line 48). The
+  waiting count it reads is vLLM's `num_requests_waiting`, which moves once an
+  engine step: the scheduler's stats are published at the end of a step, and
+  a prompt that arrives during a step is counted at the next. On the
+  measured fleet (`--max-num-batched-tokens 65536`, 8000-token prompts) a
+  loaded step holds about eight prompts' prefill, seconds long.
+- **Where a released request goes.** The prefill profile scores pods with
+  `queue-scorer` (weight 2; `scorer/queuedepth/queue.go`, `Score`, from
+  line 85: min-max normalised waiting count, all 1.0 on a tie),
+  `kv-cache-utilization-scorer` (2) and `prefix-cache-scorer` (3, a tie on
+  unshared prompts), read from the same poll. Every request released within
+  one step sees the same scores and goes to the same pod.
+- **Eviction.** A queued request older than its TTL is evicted by a sweep
+  every second (`controller/config.go`, `defaultExpiryCleanupInterval`; the
+  run set `defaultRequestTTL: 30s`).
+
+So past the onset the gate lets a step's arrivals through, they all land on
+one prefill pod, the gate closes once that pod's count is published, and it
+stays closed while that pod drains; the other pods run short of work. The
+gate adds time. A replay of the run's own arrival times through this
+mechanism (two pods, a 65536-token step budget, `V_P` 17046 tokens/s, the
+50 ms poll; a scratch script, not committed) holds nothing at C 3 and B 6,
+where the router held nothing, and holds at C 4, C 5 and B 7. With the
+bursts spread round-robin instead it holds almost nothing anywhere: the
+routing is half the mechanism. The replay's size is not trustworthy: moving
+`V_P` 9 % either way flips C 4 from no wait to a collapse, so the stage below
+is derived from the mechanism, not fitted to the replay.
+
+### The stage
+
+At rate λ past the onset, on the plan's own figures:
+
+- **Staleness** Δ: the prefill pod's mean sojourn at the rate (its own work
+  `E[S] = E[I]/V_P` and its mean stretch), or the 50 ms poll where that is
+  longer (`EPPRefreshSeconds`). Assumed: the engine's step holds a running
+  prompt's whole prefill. A smaller token budget steps faster and publishes
+  fresher, so this errs long.
+- **Burst** `b = λΔ`, to one pod; **drain** `m = b E[S]`, one pod's time on
+  it.
+- **Closed share** `π = m / (m + Δ)`: the gate cycles open for Δ and closed
+  for m.
+- **Router wait** `W_router`: 0 with probability `1 - π`, else exponential at
+  mean `m/2` (`TTFTParts.RouterWait = π m / 2`).
+- **Burst wait** `W_burst`: every request is in a burst and waits behind its
+  burst-mates, exponential at mean `m/2` (`TTFTParts.BurstWait`).
+
+Both are folded into the processor-sharing mixture as one wait in front of
+every part, independent of it. Two choices err long: the closed period
+ignores the threshold's slack (five waiting per pod, and the running cap),
+and the burst wait is added to the processor-sharing stretch rather than put
+in its place. The pooled figure, a router that feeds the first free pod,
+carries no gate. The switch still takes only on processor sharing, at a
+prompt cv up to 0.25 and a rate up to 0.9 of the prefill knee; past that the
+answer keeps `AboveFlowControlOnset`.
+
+Inputs: Δ, b and m come from the learned `V_P`, prompt and stretch; the queue
+threshold from the router config (already an input); the poll interval is
+the upstream default, not read from the cluster. Nothing is fitted to the
+staircase.
+
+### Validated against the Qwen3-32B staircase
+
+`TestStaircaseQ32_TheGateStageHoldsTheClient`, from the frozen fleet. At C 4
+the stage reads Δ 5.43 s, a burst of 17.6 requests, a drain of 8.68 s and a
+closed share of 0.62. The run's prefill pods were seen with 12 to 23 waiting
+on one pod while the other sat empty.
+
+| Step | r/s | Model mean / p90 / p95, s | Client mean / p90 / p95, s | Model over client | Router wait mean, s, priced / measured |
+| --- | --- | --- | --- | --- | --- |
+| B 6 | 3.64 | 5.27 / 11.41 / 14.42 (unchanged) | 2.12 / 4.46 / 5.27 | 2.49-2.74x | 0 / 0 |
+| B 7, void | 3.85 | 10.22 / 22.82 / 29.25 (unchanged: past 0.9 of the knee, `AboveFlowControlOnset`) | 15.75 / past the histogram | 0.65x on the mean | none / 4.18 |
+| C 3 | 3.04 | 4.52 / 10.10 / 12.84 (unchanged) | 3.01 / 6.13 / 7.40 | 1.50-1.74x | 0 / 0 |
+| C 4 | 3.24 | 12.77 / 23.56 / 28.08 | 7.23 / 15.40 / 28.84 | 1.77 / 1.53 / 0.97x | 2.67 / 1.40 |
+| C 5, void | 3.34 | 15.08 / 27.84 / 33.20 | 11.74 / 42.30 / 49.55 | 1.28 / 0.66 / 0.67x | 3.24 / 3.17 |
+
+The priced router wait's p90 and p95 at C 4 are 7.9 s and 10.9 s, against
+4.6 s and 10.7 s read inside the histogram's wide buckets. Flow-control-off
+phases are not touched: the stage needs flow control on.
+
+**Decision.** The rule (from #56): at a step the fleet held past the onset,
+never more than 10 % under the client at the mean, p90 and p95; below the
+onset, no more pessimistic than before. C 4 reads 0.97 to 1.77 of the client;
+below the onsets every figure is the frozen curve's to the bit. So the switch
+is on by default. Question 1 no longer moves past the measurement: bucket C's
+rate for its frozen p95 target (22.7 s) and p90 target (17.7 s) is 3.10 r/s,
+the onset, inside the measured crossings, where the switch as it was answered
+3.44 r/s.
+
+**What it gets wrong.**
+
+- It is long at the held step: the mean 1.77x, the router wait 1.9x.
+- At the void step after it the tail is short (0.66x). That step evicted 127
+  requests; its client figures are the dispatched ones only.
+- One held step is the whole validation. The stage switches on at the
+  model's own onset, which reads low with its knee. On the second staircase
+  (C-onset at 50.1 r/s, 1.02x its onset) the router held almost nothing, yet
+  the price now carries the gate there: 2.6 to 2.7x the client, where it read
+  1.4 to 1.9x.
+- B 7 is past 0.9 of the knee and keeps `AboveFlowControlOnset`: the stage
+  is not priced there, and the flagged figure reads 0.65x.
+
+**In the SLO analyzer.** The analyzer shares the default. Past the prefill
+onset and up to 0.9 of the knee, its TTFT figure now carries the gate,
+`FlowControlWaitPriced` replaces `AboveFlowControlOnset` on its flag series,
+the verdict there is read from the figure, and the published rate may stand
+past the onset where the priced figure meets the target. Below the onset
+nothing moves. No committed recording reaches a priced fleet with flow
+control on, so no golden moves.
 
 ## As built: the onsets on processor sharing, and the decode gate's closed share
 

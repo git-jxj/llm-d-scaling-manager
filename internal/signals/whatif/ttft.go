@@ -157,10 +157,13 @@ const MaxPSPromptCV = 0.25
 
 // DefaultPriceRouterWait is TTFTFleet.PriceRouterWait's default, for the CLI
 // (--price-router-wait), the planner API and the SLO analyzer
-// (slo.SwitchTTFTRouterWait) alike: off. Where it was measured it reads
-// short: at a staircase step past the prefill onset that the fleet held, 0.57
-// of the client's p95 (TestStaircaseQ32_TheRouterWaitStepsReadShort).
-const DefaultPriceRouterWait = false
+// (slo.SwitchTTFTRouterWait) alike: on. With the gate priced as a stage
+// (ttft_gate.go) it reads at least 0.9 of the client at the mean, p90 and p95
+// at the one staircase step past the prefill onset that the fleet held, and
+// moves no figure below the onsets (TestStaircaseQ32_TheGateStageHoldsTheClient).
+// Off (--price-router-wait=false) is the opt-out: a TTFT past the onset is
+// flagged AboveFlowControlOnset, a miss, as before.
+const DefaultPriceRouterWait = true
 
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
 // at which TTFTFleet.PriceRouterWait takes. Against a paired simulation (the
@@ -252,31 +255,29 @@ type TTFTFleet struct {
 	// prefill pod and the pull at its unloaded time. On with
 	// slo.SwitchTTFTProcessorSharing, and in the CLI.
 	ProcessorSharing bool
-	// PriceRouterWait is EXPERIMENTAL and off by default
-	// (DefaultPriceRouterWait). On, a TTFT at or above the prefill gate's
-	// onset takes the router's flow-control wait as part of the
-	// processor-sharing prefill stage, flagged FlowControlWaitPriced in place
-	// of AboveFlowControlOnset, where the argument below has held in
-	// simulation: ProcessorSharing at a prompt spread up to MaxPSPromptCV, at
-	// a rate up to MaxRouterWaitKneeShare of the prefill knee. Elsewhere the
-	// wait keeps AboveFlowControlOnset. No figure moves either way. One
-	// setting for the CLI (--price-router-wait) and the SLO analyzer
-	// (slo.SwitchTTFTRouterWait), with the same default, so the two answer
-	// the same.
+	// PriceRouterWait prices EPP flow control's gate past the prefill onset,
+	// on by default (DefaultPriceRouterWait). On, a TTFT at or above the
+	// prefill gate's onset carries the gate as a stage in front of the
+	// processor-sharing prefill (ttft_gate.go): the wait at the closed gate
+	// (TTFTParts.RouterWait) and behind the burst it releases to one pod
+	// (TTFTParts.BurstWait), flagged FlowControlWaitPriced in place of
+	// AboveFlowControlOnset, where it takes: ProcessorSharing at a prompt
+	// spread up to MaxPSPromptCV, at a rate up to MaxRouterWaitKneeShare of the
+	// prefill knee. Elsewhere, and off, the wait keeps AboveFlowControlOnset
+	// and no figure moves. One setting for the CLI (--price-router-wait) and
+	// the SLO analyzer (slo.SwitchTTFTRouterWait), with the same default, so
+	// the two answer the same.
 	//
-	// The argument: the gate moves the wait, it does not add to it. It holds
-	// requests at the router only while the prefill pods already have work
-	// waiting, so the pods stay busy, and the router's one queue feeds the
-	// pods as they free. A prefill pod runs at most its running cap at once
-	// and queues the rest; at a narrow prompt spread that serves the prompts
-	// no later than sharing the pod between all of them, which is what the
-	// stage prices. It is argued and simulated, and it fails at the one
-	// measured step that held: at the Qwen3-32B staircase's steps where the router held, the gate
-	// added time the price does not carry (a stale score lets the pods queue
-	// past the threshold, then releases a burst), and the price read 0.57 of
-	// the client's p95 at a step the fleet held
-	// (TestStaircaseQ32_TheRouterWaitStepsReadShort). At the second
-	// staircase's C-onset at 56.6 r/s it reads about 20 times short
+	// The gate adds time; it does not only move it from the pods to the
+	// router. It reads a score a pod's engine step stale, so it releases a
+	// step's arrivals at once, and the router's scorers, reading the same
+	// stale poll, send them all to one pod while the others run short. At the
+	// Qwen3-32B staircase's step past the onset that the fleet held, the
+	// stage reads 1.8, 1.5 and 0.97 of the client's mean, p90 and p95
+	// (TestStaircaseQ32_TheGateStageHoldsTheClient); with the router's wait
+	// taken as inside the prefill stage, as this switch did before, it read
+	// 0.80, 0.84 and 0.57. At the second staircase's C-onset at 56.6 r/s,
+	// past the share, it reads about 20 times short
 	// (TestStaircaseR2_TheStepWithARouterWaitReadsShort).
 	PriceRouterWait bool
 	// PSOnsets places the prefill gate's onset on the processor-sharing
@@ -1062,6 +1063,9 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		u := refuse(Saturated, fmt.Sprintf("%g r/s at or above the prefill knee %g r/s", rate, pk))
 		return priced{u: &u}
 	}
+	// gated is the flow-control gate priced as a stage (ttft_gate.go): with
+	// TTFTFleet.PriceRouterWait taking, at or above the prefill onset.
+	var gated bool
 	if pl.fc.State == FlowControlOn {
 		if pl.d != nil && rate >= pl.onsets.Decode {
 			u := refuse(AboveDecodeOnset, fmt.Sprintf("%g r/s at or above the decode gate's onset %g r/s", rate, pl.onsets.Decode))
@@ -1070,7 +1074,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		if rate >= pl.onsets.Prefill {
 			f := AboveFlowControlOnset
 			if pl.routerWait && rate <= MaxRouterWaitKneeShare*pk {
-				f = FlowControlWaitPriced
+				f, gated = FlowControlWaitPriced, true
 			}
 			out.Flags = append(out.Flags, f)
 		}
@@ -1090,6 +1094,24 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	var side func(old, pooled bool) (quantiler, *Unanswerable)
 	var wait waitTail
 	if pl.ps {
+		m, parts, u := pf.psStages(rate, pl.decodePods(), false)
+		if u != nil {
+			return priced{u: u}
+		}
+		// gate is the flow-control gate's wait in front of every part, gated;
+		// the pooled figure, a router that feeds the first free pod, has none.
+		var gate waitTail
+		if gated {
+			g := newGateStage(pf, rate, parts.prefill)
+			gate = g.wait()
+			out.Parts.RouterWait, out.Parts.BurstWait = g.routerWait().mean(), g.burstWait().mean()
+		}
+		withGate := func(m stageMix, pooled bool) stageMix {
+			if pooled || len(gate.w) == 0 {
+				return m
+			}
+			return m.withWait(gate)
+		}
 		type key struct{ old, pooled bool }
 		mixes := map[key]stageMix{}
 		side = func(old, pooled bool) (quantiler, *Unanswerable) {
@@ -1105,14 +1127,11 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 			if u != nil {
 				return nil, u
 			}
+			m = withGate(m, pooled)
 			mixes[k] = m
 			return m, nil
 		}
-		m, parts, u := pf.psStages(rate, pl.decodePods(), false)
-		if u != nil {
-			return priced{u: u}
-		}
-		mixes[key{}] = m
+		mixes[key{}] = withGate(m, false)
 		out.Parts.EngineWait, out.Parts.KVPullWait = parts.prefill, parts.pull
 	} else {
 		theta := pf.waitScale(rho)
@@ -1140,7 +1159,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	}
 	// stretch is the mean of the waits on the prefill side, the KV pull's
 	// stretch with them.
-	stretch := out.Parts.EngineWait + out.Parts.KVPullWait
+	stretch := out.Parts.EngineWait + out.Parts.KVPullWait + out.Parts.RouterWait + out.Parts.BurstWait
 	b1, _ := side(false, false)
 
 	var dec waitTail

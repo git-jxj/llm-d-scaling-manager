@@ -22,14 +22,15 @@ func fcFleet(fl TTFTFleet, priced bool) TTFTFleet {
 }
 
 // Above the prefill onset the switch trades AboveFlowControlOnset for
-// FlowControlWaitPriced and moves no figure. It takes only processor sharing
-// at a prompt spread up to MaxPSPromptCV and a rate up to
-// MaxRouterWaitKneeShare of the knee: past either, and on the first-come
-// queue, the wait keeps its flag. Bucket C's fleet (Ca^2 4) on four decode
-// pods, whose prefill onset sits under the share.
+// FlowControlWaitPriced and prices the gate (ttft_gate.go), which raises the
+// figure. It takes only processor sharing at a prompt spread up to
+// MaxPSPromptCV and a rate up to MaxRouterWaitKneeShare of the knee: past
+// either, and on the first-come queue, the wait keeps its flag and the switch
+// moves no figure. Below the onset it moves nothing. Bucket C's fleet (Ca^2 4)
+// on four decode pods, whose prefill onset sits under the share.
 func TestFlowControlWait_FlagFollowsTheSwitch(t *testing.T) {
-	if DefaultPriceRouterWait {
-		t.Fatal("PriceRouterWait is experimental: off by default")
+	if !DefaultPriceRouterWait {
+		t.Fatal("the gate's price is on by default")
 	}
 	base := psFleet(0.0577, 4)
 	base.Decode.Replicas = 4
@@ -61,11 +62,28 @@ func TestFlowControlWait_FlagFollowsTheSwitch(t *testing.T) {
 			if !got.HasFlag(c.wantFlag) || got.HasFlag(other) {
 				t.Errorf("%s, q %g, above the onset: flags %v, want %s and not %s", c.name, q, got.Flags, c.wantFlag, other)
 			}
-			if flip := mustTTFT(t, ttftAt(t, fcFleet(fl, !c.priced), c.rate, q)); flip.Seconds != got.Seconds {
-				t.Errorf("%s, q %g: the switch moved the figure, %g to %g", c.name, q, got.Seconds, flip.Seconds)
+			// The switch takes on processor sharing inside MaxPSPromptCV and the
+			// share: there the priced figure carries the gate's wait over the
+			// unpriced one; elsewhere the two are one figure.
+			priced := mustTTFT(t, ttftAt(t, fcFleet(fl, true), c.rate, q))
+			unpriced := mustTTFT(t, ttftAt(t, fcFleet(fl, false), c.rate, q))
+			if takes := c.ps && c.cv <= MaxPSPromptCV && c.rate <= MaxRouterWaitKneeShare*knee; takes {
+				if !(priced.Seconds > unpriced.Seconds) || !(priced.Parts.RouterWait > 0 && priced.Parts.BurstWait > 0) {
+					t.Errorf("%s, q %g: priced %g s (router %g s, burst %g s), unpriced %g s: want the gate's wait on the figure",
+						c.name, q, priced.Seconds, priced.Parts.RouterWait, priced.Parts.BurstWait, unpriced.Seconds)
+				}
+			} else if priced.Seconds != unpriced.Seconds || priced.Parts.RouterWait != 0 || priced.Parts.BurstWait != 0 {
+				t.Errorf("%s, q %g: the switch moved the figure where it does not take, %g to %g", c.name, q, unpriced.Seconds, priced.Seconds)
 			}
-			if b := mustTTFT(t, ttftAt(t, fcFleet(fl, c.priced), below, q)); b.HasFlag(AboveFlowControlOnset) || b.HasFlag(FlowControlWaitPriced) {
+			if unpriced.Parts.RouterWait != 0 || unpriced.Parts.BurstWait != 0 {
+				t.Errorf("%s, q %g: the gate priced with the switch off: %+v", c.name, q, unpriced.Parts)
+			}
+			b := mustTTFT(t, ttftAt(t, fcFleet(fl, c.priced), below, q))
+			if b.HasFlag(AboveFlowControlOnset) || b.HasFlag(FlowControlWaitPriced) {
 				t.Errorf("%s, q %g, below the onset: flags %v", c.name, q, b.Flags)
+			}
+			if bf := mustTTFT(t, ttftAt(t, fcFleet(fl, !c.priced), below, q)); bf.Seconds != b.Seconds {
+				t.Errorf("%s, q %g, below the onset: the switch moved the figure, %g to %g", c.name, q, b.Seconds, bf.Seconds)
 			}
 		}
 	}
@@ -378,14 +396,16 @@ func TestStaircaseR2_TheFixtureIsTheFrozenCurve(t *testing.T) {
 }
 
 // The second staircase sent steps just above the prefill onset with flow
-// control on. This checks the processor-sharing price near the onset, not
-// the priced router wait: the router held almost nothing at these steps (at
-// most 2 % of requests past 10 ms, a mean wait under 4 ms), so none of them
-// validates FlowControlWaitPriced. Every step that held reads at or above
-// the slowest of the three repeats' client TTFT, at the mean, p90 and p95,
-// 1.04x to 4.58x, and the steps at or past the onset carry the flag the
-// switch asks for: FlowControlWaitPriced inside MaxRouterWaitKneeShare of
-// the knee, AboveFlowControlOnset past it and with the switch off.
+// control on. This checks the processor-sharing price near the onset: the
+// router held almost nothing at these steps (at most 2 % of requests past 10
+// ms, a mean wait under 4 ms), because the model's onset reads low with its
+// knee, so the gate the price carries at the steps past the onset inside
+// MaxRouterWaitKneeShare is one the run did not see, and reads long there.
+// Every step that held reads at or above the slowest of the three repeats'
+// client TTFT, at the mean, p90 and p95, and the steps at or past the onset
+// carry the flag the switch asks for: FlowControlWaitPriced inside
+// MaxRouterWaitKneeShare of the knee, AboveFlowControlOnset past it and with
+// the switch off.
 func TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset(t *testing.T) {
 	for _, bucket := range []string{"B-onset", "C-onset"} {
 		fl := fcFleet(r2Fleet(bucket), true)

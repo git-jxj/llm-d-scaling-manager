@@ -13,10 +13,10 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
-// --price-router-wait is the experimental whatif.TTFTFleet.PriceRouterWait:
-// off by default, at the SLO analyzer's default, and on with the flag. The
-// fleet carries the flag as asked; whatif applies it only on processor
-// sharing (TestFlowControlWait_FlagFollowsTheSwitch, "first come").
+// --price-router-wait is whatif.TTFTFleet.PriceRouterWait: on by default, at
+// the SLO analyzer's default, and off with --price-router-wait=false, the
+// opt-out. The fleet carries the flag as asked; whatif applies it only on
+// processor sharing (TestFlowControlWait_FlagFollowsTheSwitch, "first come").
 func TestTTFT_PriceRouterWaitFlag(t *testing.T) {
 	for _, c := range []struct {
 		args []string
@@ -29,12 +29,12 @@ func TestTTFT_PriceRouterWaitFlag(t *testing.T) {
 		require.NoError(t, fs.Parse(c.args))
 		assert.Equal(t, c.want, f.priceRouterWait, "%v", c.args)
 	}
-	require.False(t, whatif.DefaultPriceRouterWait, "experimental: off by default")
+	require.True(t, whatif.DefaultPriceRouterWait, "on by default")
 
 	pf := fleetOf(t, learnedState(), answerFlags{})
 	require.Nil(t, pf.refused)
 	assert.True(t, pf.fleet.ProcessorSharing)
-	assert.False(t, pf.fleet.PriceRouterWait, "the default")
+	assert.False(t, pf.fleet.PriceRouterWait, "unset flags")
 	pf = fleetOf(t, learnedState(), answerFlags{priceRouterWait: true})
 	assert.True(t, pf.fleet.PriceRouterWait, "with the flag")
 }
@@ -44,9 +44,11 @@ func TestTTFT_PriceRouterWaitFlag(t *testing.T) {
 // assumed low enough that the prefill onset binds before the decode one, the API's fleet (servedState.Fleet) is the CLI's
 // (answerFlags parsed from the same knobs, ttftFleets), the router's wait at
 // the shared default. So their figures, flags and rate answers are one: at a
-// rate past the prefill onset both carry AboveFlowControlOnset, a miss
-// (whatif.TTFTMeets), and the rate question 1 answers is under the onset,
-// bound by it, its own verdict met.
+// rate past the prefill onset both carry FlowControlWaitPriced inside
+// whatif.MaxRouterWaitKneeShare of the knee, judged by the figure, and
+// AboveFlowControlOnset past it, a miss (whatif.TTFTMeets); and the rate
+// question 1 answers is under the cap the gate's price allows, bound by it,
+// its own verdict met.
 func TestTTFT_TheAPIAndTheCLIReadOneFleet(t *testing.T) {
 	_, src := servedAPI(t)
 	res, err := src.Resolve(context.Background(), whatifapi.InputsRequest{
@@ -93,10 +95,13 @@ func TestTTFT_TheAPIAndTheCLIReadOneFleet(t *testing.T) {
 		fromAPI := api.TTFTAt(rate)
 		fromCLI := cli[0].priced(func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, rate, 0.9) })
 		require.IsType(t, whatif.TTFT{}, fromAPI)
-		assert.Equal(t, fromCLI.(whatif.TTFT).Flags, fromAPI.(whatif.TTFT).Flags, "at %g r/s", rate)
+		got := fromAPI.(whatif.TTFT)
+		assert.Equal(t, fromCLI.(whatif.TTFT), got, "at %g r/s", rate)
+		priced := rate >= on.Prefill && rate <= whatif.MaxRouterWaitKneeShare*knee.Value
+		assert.Equal(t, priced, got.HasFlag(whatif.FlowControlWaitPriced), "at %g r/s: %v", rate, got.Flags)
 		met, known := whatif.TTFTMeets(fromAPI, target)
 		assert.True(t, known)
-		assert.Equal(t, rate < on.Prefill, met, "at %g r/s (onset %g): %v", rate, on.Prefill, fromAPI.(whatif.TTFT).Flags)
+		assert.Equal(t, rate < on.Prefill || priced, met, "at %g r/s (onset %g): %v", rate, on.Prefill, got.Flags)
 	}
 
 	_, prefill, _ := api.PlainLimits(target.Seconds, 0, 1)
@@ -105,7 +110,7 @@ func TestTTFT_TheAPIAndTheCLIReadOneFleet(t *testing.T) {
 	cliRate, ok := whatif.RateForTTFT(cli[0].fleet, target).(whatif.Answer)
 	require.True(t, ok)
 	assert.Equal(t, cliRate.Value, r.Value, "one rate")
-	assert.Less(t, r.Value, on.Prefill)
+	assert.Less(t, r.Value, max(on.Prefill, whatif.MaxRouterWaitKneeShare*knee.Value))
 	assert.Contains(t, r.Basis.BoundBy, whatif.BoundPrefillOnset)
 	met, known := whatif.TTFTMeets(api.TTFTAt(r.Value), target)
 	assert.True(t, met && known, "the rate answered meets its own verdict")

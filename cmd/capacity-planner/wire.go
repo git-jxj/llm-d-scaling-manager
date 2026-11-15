@@ -371,6 +371,10 @@ type wireTTFTParts struct {
 	DecodeWaitProbability float64 `json:"decodeWaitProbability"`
 	PrefillKnee           float64 `json:"prefillKnee"`
 	DecodeKnee            float64 `json:"decodeKnee"`
+	// RouterWait and BurstWait are the flow-control gate's waits, absent
+	// unless it is priced past the prefill onset (FlowControlWaitPriced).
+	RouterWait float64 `json:"routerWait,omitempty"`
+	BurstWait  float64 `json:"burstWait,omitempty"`
 	// Onsets are the flow-control onsets, absent with flow control off.
 	Onsets *wireOnsets `json:"onsets,omitempty"`
 }
@@ -462,6 +466,7 @@ func toWireTTFT(r whatif.Result) *wireTTFTResult {
 			Independent: v.Independent, Pooled: v.Pooled, DecodeShare: v.DecodeShare,
 			EngineWait: v.Parts.EngineWait, KVPullWait: v.Parts.KVPullWait, OwnPrefill: v.Parts.OwnPrefill, DecodeWait: v.Parts.DecodeWait,
 			FirstStep: v.Parts.FirstStep, DecodeEngine: v.Parts.DecodeEngine, RouterHop: v.Parts.RouterHop,
+			RouterWait: v.Parts.RouterWait, BurstWait: v.Parts.BurstWait,
 			PrefillUtilization: v.PrefillUtilization, VPMarginApplied: v.VPMarginApplied,
 			WaitScale: v.WaitScale, WaitOffset: v.WaitOffset, DecodeWaitProbability: v.DecodeWaitProbability,
 			PrefillKnee: v.PrefillKnee, DecodeKnee: v.DecodeKnee,
