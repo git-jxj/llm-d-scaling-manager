@@ -239,5 +239,6 @@ last; it is the unit change that makes the other two land.
   — proposed. Makes the learner recorder an operator option: a live
   `plannerRecording` settings key over an always-mounted `emptyDir` (a PVC at
   install), segments that each start with a checkpoint so the newest days
-  stay, `smt recording fetch` over a loopback endpoint gated on `pods/log`,
+  stay, one file per model namespace, `smt recording fetch` over a loopback
+  endpoint gated on `pods/log` on the controller and in each namespace,
   the same-tag version rule, what a file holds, and how the cost is measured.

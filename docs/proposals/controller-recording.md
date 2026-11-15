@@ -1,7 +1,7 @@
 # Record for the capacity planner from the controller
 
-**Status:** proposal, 2026-11-15. Nothing here is built. The open questions
-are at the end.
+**Status:** proposal, 2026-11-15; no open questions
+([decided on review](#decided-on-review-2026-11-15)). Nothing here is built.
 
 **Audience:** contributors. Operators record today from Prometheus:
 [Record a window for the capacity planner](../guides/record-for-capacity-planner/).
@@ -57,8 +57,10 @@ kubectl patch configmap scaling-manager-settings -n team-a --type merge \
   -p '{"data":{"plannerRecording":"off"}}'
 ```
 
-`capacity-planner` is the binary of the same release tag as the controller
-([Format and version](#format-and-version)).
+`smt` fetches; it does not plan. `capacity-planner` is the planner image or
+binary of the same release tag as the controller
+([Format and version](#format-and-version)); the tools image does not carry
+it.
 
 ## Decisions
 
@@ -158,10 +160,19 @@ replay without the history before it. The change:
   When the next segment would not fit, the oldest closed segments go first,
   as `makeRoom` does today; the open one is never deleted. With segments,
   "oldest" is always the oldest days.
-- **Names.** `learnrec-<run start>-<pod suffix>-s<NNNN>.jsonl` while open,
-  `.jsonl.gz` once closed. Run start is today's fixed-width UTC time, so names
-  still sort oldest first; the pod suffix (the generated part of the Pod name)
-  tells two writers apart after a failover; `NNNN` orders segments of one run.
+- **One file per model namespace.** A cluster-scoped controller writes one
+  segment stream per model namespace, each with its own start line and
+  checkpoint holding only that namespace's models
+  ([why](#access-per-model-namespace)). A namespace-scoped install has one
+  namespace, so one stream.
+- **Names.** `learnrec-<model namespace>-<run start>-<pod suffix>-s<NNNN>.jsonl`
+  while open, `.jsonl.gz` once closed. Run start is today's fixed-width UTC
+  time; the pod suffix (the generated part of the Pod name) tells two writers
+  apart after a failover; `NNNN` orders segments of one run. Rotation orders by
+  the run start and segment parsed from the name, not by the name, so the
+  oldest days go first across all namespaces: one ceiling for the volume, and
+  a busy namespace can push out a quiet one's history (the reference page says
+  so).
 
 **A window across files.** The planner reads one file. Learned state crosses a
 segment boundary through the checkpoint, so answers do. The observed points the
@@ -227,6 +238,30 @@ namespace grants everything fetch needs: list pods, `pods/portforward`,
 by a cluster admin. The tools image already requires a token kubeconfig, so a
 bearer token is always there.
 
+#### Access per model namespace
+
+`get pods/log` on the controller is necessary, not sufficient. The endpoint
+lists and serves a file only when the caller also has `get pods/log` in that
+file's model namespace (one SubjectAccessReview per namespace, cached for a
+minute per token). A namespace-scoped install checks the one namespace; the
+stock `admin` role there grants it. In a cluster-scoped install a namespace
+owner fetches their own namespaces' files and no one else's.
+
+Two ways to make that possible:
+
+| way | how | verdict |
+| --- | --- | --- |
+| filter on serve | one file for all namespaces; the endpoint drops other namespaces' events as it serves | rejected. Every fetch parses and re-encodes up to 256 MiB per segment and renumbers it; the result is not the file the controller wrote, so its digest is computed per caller and cannot be checked against a listing; and every event that spans namespaces (the capacity store, quotas, limiters, utilization share) needs a rule for who may see it, written once per event kind and easy to get wrong |
+| **split on write** | one stream per model namespace; the file is the unit of access | **chosen**. The check is one SAR on a name; files are served byte for byte, with stable digests; a leak needs a writer bug, not a filter bug, and the planted-names test below catches it |
+
+The cost of the split is a few events written more than once: what spans
+namespaces is written into each namespace's file that its analyzers read it
+in. In those copies, another namespace's names are replaced by the export's
+pseudonyms, keyed per controller, so a namespace's file never names another
+namespace, its models or its Pods; the figures (a shared quota's use, a
+borrowed share) stay, since the planner needs them. The test gate checks a
+file of namespace A for every name of namespace B.
+
 The endpoint serves only names it lists, opens files read-only, refuses paths
 with a separator, and serves an open segment only up to its last whole line.
 It is plain HTTP inside the port-forward, which the API server and kubelet
@@ -266,8 +301,11 @@ class.
 | text | error messages, which can name hosts or URLs (the Prometheus URL) | the controller's own errors |
 
 Not in a file: Secrets, tokens, environment values, raw container arguments
-(only the parsed parameters the capacity store keeps), PromQL text in
-start/config lines (redacted by the export only; see the open questions).
+(only the parsed parameters the capacity store keeps).
+
+Kept in a raw file: the PromQL text in start and config lines. It helps
+debugging, and holds no more than the policy it came from; `--pseudonymise`
+redacts it, as the export does today.
 
 The review this proposal asks for before phase 1 ships: one test that runs a
 recording with planted values (an API key in the engine arguments, a token in
@@ -284,6 +322,10 @@ with 8 replicas, saturation only and a 15 s cycle, that is about 260 MB a day
 raw; gzip of JSON lines of figures is expected near 10x, so about a week in
 the 1Gi default. That claim is what the measurement must confirm or correct,
 and the defaults change with it.
+
+Segments start at 24 h. **Gate before the feature ships:** the final segment
+length, cap and directory ceiling are set from the measured disk per model
+per day, and the docs state those numbers.
 
 | cost | how it is measured |
 | --- | --- |
@@ -348,7 +390,10 @@ existing full suite:
    rotates out under a small dir ceiling.
 3. `smt recording fetch` as a ServiceAccount bound to the stock `admin`
    role only; assert it got every closed segment and their digests match.
-   As a ServiceAccount without `pods/log`, assert 403.
+   As a ServiceAccount without `pods/log`, assert 403. In cluster scope,
+   with two model namespaces, as a ServiceAccount with `pods/log` on the
+   controller and in namespace A only: assert it lists and gets A's files
+   alone, and that no file of A contains a name from B.
 4. `capacity-planner serve --recordings` on the fetched directory; ask
    `replicas-to-slo` on the last segment and assert an answer, not a refusal.
 5. Join two segments; assert the replay of the joined file and of the later
@@ -361,6 +406,15 @@ existing full suite:
 Unit tests: the checkpoint equivalence above for each analyzer; rotation
 order; the version check; the planted-secrets test; the endpoint's path
 checks and SubjectAccessReview attributes.
+
+## Risks and gates
+
+| risk | gate |
+| --- | --- |
+| replay cannot start from a checkpoint for some analyzer, so a segment does not replay alone | **before the build starts:** verify that replay accepts a checkpoint for the saturation, slo and throughput analyzers (and the capacity store): a spike that restores each from its learned state mid-run and compares the next cycles with an uninterrupted replay. If one cannot, this proposal is revised before phase 1 |
+| the defaults do not hold a week, or hold far more | before the feature ships: segment length, cap and ceiling set from the measured disk per model per day |
+| a namespace's file names another namespace | the cluster-scope e2e check and a unit test over every event kind that spans namespaces |
+| recording slows the cycle | the budget, enforced by the recorder's own stop |
 
 ## Phases
 
@@ -399,17 +453,20 @@ checks and SubjectAccessReview attributes.
 - Retention by age alone; the ceiling decides, the segment age only closes
   files.
 
+## Decided on review (2026-11-15)
+
+1. **The tools image does not ship `capacity-planner`.** `smt` fetches; the
+   planner runs from the planner image or binaries of the same release tag.
+2. **Segments start at 24 h.** The final value is set from the measured disk
+   per model per day before the feature ships
+   ([Risks and gates](#risks-and-gates)).
+3. **Cluster scope: access per model namespace.** Fetch needs `get pods/log`
+   on the controller, and returns only files of model namespaces where the
+   caller also has `get pods/log`. Files are split per model namespace on
+   write, not filtered on serve
+   ([Access per model namespace](#access-per-model-namespace)).
+4. **PromQL text stays in raw files.** `--pseudonymise` redacts it.
+
 ## Open questions
 
-1. Should the tools image carry the `capacity-planner` binary, so `smt
-   recording fetch` and `serve` come from one image of one tag? Today there is
-   no released planner binary; the same-tag rule then means "build from the
-   release checkout".
-2. Is 24h the right default segment? A smaller one bounds the planner's replay
-   time and what a crash loses, but adds a checkpoint per segment. The planner
-   measurement in phase 3 decides unless you prefer to fix it now.
-3. The `get pods/log` rule lets anyone who reads the controller's logs read
-   every namespace it manages in a cluster-scoped install. Same as the logs
-   today; acceptable, or should cluster scope require a dedicated grant?
-4. PromQL text in start and config lines is kept in a raw file (the export
-   redacts it). Keep it, since it helps debugging, or drop it at the source?
+None.
