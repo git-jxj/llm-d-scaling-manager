@@ -397,6 +397,17 @@ re-run from the **Actions** tab.
    job's shape and runs its tag, platform and sign steps. The PR checks'
    `capacity-planner-image` job runs the same script on every code change.
    Verify it as the controller image, with `$IMAGE/capacity-planner`.
+   Like `release-tools`, it pushes before `release-files` runs: when
+   `release-files` then fails, the images are out under the tag with no
+   files beside them. Fix the cause and **Re-run failed jobs**; the images
+   stay, and the files are attached to the same draft. A cause the tagged
+   commit holds needs a new tag.
+10. **Planner binaries and Go.** `release-files` builds with the latest patch
+   of the `go.mod` Go line (`check-latest`), as the image's `golang:1.26`
+   builder does, after `govulncheck` (pinned) finds no known vulnerability in
+   code the planner calls. A re-run on the same Go patch builds the same
+   bytes; after a new Go patch it does not, and a published release then
+   refuses the new `SHA256SUMS`: release a new version instead.
 
 ### The release files
 

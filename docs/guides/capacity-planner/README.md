@@ -44,15 +44,31 @@ Run the image:
 
 <!-- guide:get.image start -->
 ```bash
-# The image of the release you run. It serves the recordings in the directory you mount, on your machine only.
-# --listen-all-in-container in its command lets it listen on the container's every interface; -p 127.0.0.1:...
-# keeps the port off your network. Never publish it on 0.0.0.0.
+# The image of the release you run. It serves the recordings in the directory you mount, with no authentication.
+# --user runs it as you: recordings are written readable by their owner only. -p 127.0.0.1:... keeps the port
+# off your network; never publish it beyond 127.0.0.1. Podman with SELinux: mount with :ro,Z.
 export V=<release>
 mkdir -p recordings
-docker run --rm -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
+docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
   ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V}
 ```
 <!-- guide:get.image end -->
+
+The server answers only requests addressed to `localhost` or `127.0.0.1`,
+but that check guards a browser against other web pages; it is not access
+control, since any client that reaches the port can send that name. So keep
+the port on `127.0.0.1`.
+
+To check the image's signature:
+
+<!-- guide:get.verify start -->
+```bash
+# Optional. The image is signed by the release workflow, as the release files are. Needs cosign 3.0 or later; cosign 2.x reports no signatures for these images.
+cosign verify ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V} \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
+```
+<!-- guide:get.verify end -->
 
 Then [open the page](#open-the-page). Any other command runs in place of
 `serve`, for example `capacity-planner:${V} version`. To read Prometheus
@@ -136,12 +152,16 @@ in [Get the planner](#get-the-planner). Name a recording by its file name in
 **Source**.
 
 To read Prometheus from the container, use the host's network, so the
-container reaches your port-forward. With the variables set as above:
+container reaches your port-forward. Never run the image's default command
+with `--network host`: it listens on every interface of your machine. Give
+the command below, which listens on `127.0.0.1`. With the variables set as
+above:
 
 <!-- guide:container.prometheus start -->
 ```bash
 # The image, reading Prometheus (Linux; on macOS use the binary). --network host lets the container reach your
-# port-forward. On the host network, listen on 127.0.0.1 and drop --listen-all-in-container.
+# port-forward. Never use the image's default command with --network host: it would listen on every interface
+# of your machine. Give the command below, which listens on 127.0.0.1 without --listen-all-in-container.
 # For an https Prometheus, mount the token and CA files and pass --bearer-token-file and --ca-file.
 # serve reads no kubeconfig unless --auth=kubernetes, so none is mounted.
 kubectl -n ${PROM_NS} port-forward svc/${PROM_SVC} 9090:9090 &

@@ -1125,8 +1125,15 @@ in the command line.
 (`hack/check-capacity-planner-image.sh`), scanned, pushed for both
 platforms and signed by digest as the tools image is. A missing binary, one
 that prints another tag, or a pushed index without both platforms fails the
-release. The binaries are built with `-trimpath` and the Go of `go.mod`, so
-a re-run makes the same `SHA256SUMS`, which a published release requires.
+release. The binaries are built with `-trimpath` and the latest patch of
+the `go.mod` Go line, as the image is, after `govulncheck` finds no known
+vulnerability in code the planner calls. A re-run on the same Go patch makes
+the same `SHA256SUMS`, which a published release requires.
+
+**Not access control.** The Host check guards a browser against other web
+pages; any other client that reaches the port can name `localhost`. So the
+opt-in is refused in a Kubernetes Pod, and the guide runs the image with
+`--user` (recordings are written `0600`) on `127.0.0.1` only.
 
 ## Decisions
 
