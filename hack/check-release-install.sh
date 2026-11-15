@@ -517,9 +517,16 @@ rc=$?
 if [ "$rc" = 4 ] && grep -q 'has not run smt install -n team-a yet' "$W/out"; then ok "admin-finish before smt install: exit 4 at once, naming the step"; else bad "admin-finish before install: exit $rc: $(tail -1 "$W/out")"; fi
 rm -rf "$STUB_DIR"; cp -R "$filled" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
 jq '.data.scalerTLS = "plaintext"' "$STUB_DIR/obj/configmap/team-a/scaling-manager-controller-status.json" > "$W/st.json" && mv "$W/st.json" "$STUB_DIR/obj/configmap/team-a/scaling-manager-controller-status.json"
-SMT_MTLS_TIMEOUT=0 smt admin-finish -n team-a
+# SMT_POLL=2 against a 5 s budget: reads at 0, 2, 4 and 6 s, then the timeout.
+: > "$STUB_DIR/calls.log"
+(cd "$W/work" && PATH="$W/bin:$PATH" SMT_POLL=2 SMT_MTLS_TIMEOUT=5 bash "$IMGDIR/scaling-manager-tools.sh" admin-finish -n team-a) > "$W/out" 2>&1
 rc=$?
-if [ "$rc" = 5 ] && grep -q "scalerTLS is 'plaintext', not mutual TLS" "$W/out"; then ok "scalerTLS never mutual TLS: exit 5"; else bad "mTLS timeout: exit $rc: $(tail -1 "$W/out")"; fi
+reads="$(grep -c '^get configmap scaling-manager-controller-status -n team-a' "$STUB_DIR/calls.log")"
+if [ "$rc" = 5 ] && grep -q "scalerTLS is 'plaintext', not mutual TLS" "$W/out" && [ "$reads" = 4 ]; then
+    ok "scalerTLS never mutual TLS: exit 5, the budget counted in SMT_POLL steps ($reads reads)"
+else
+    bad "mTLS timeout: exit $rc, $reads reads: $(tail -1 "$W/out")"
+fi
 # KEDA still holds a connection from before a reinstall: the controller
 # refused its old certificate, and the refused address is a KEDA pod.
 stale_setup() {
