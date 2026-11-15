@@ -205,6 +205,7 @@ func TestServeInputs(t *testing.T) {
 // serve refuses to start where it would serve without authentication off
 // loopback, or a token in the clear.
 func TestServeRefusesUnsafeBinds(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	dir := t.TempDir()
 	for _, c := range []struct {
 		args []string
@@ -233,6 +234,7 @@ func TestServeRefusesUnsafeBinds(t *testing.T) {
 // With --listen-all-in-container, serve binds every interface with no
 // authentication, says so on stderr, and still answers loopback names only.
 func TestServeListenAllInContainer(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	var warn safeBuffer
@@ -269,6 +271,35 @@ func TestServeListenAllInContainer(t *testing.T) {
 		assert.NoError(t, err)
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve did not stop")
+	}
+}
+
+// In a Kubernetes Pod (KUBERNETES_SERVICE_HOST set) the cluster network
+// reaches the port, so --listen-all-in-container is refused there; and a
+// start refused for any reason prints no warning that it serves.
+func TestServeListenAllInContainerRefused(t *testing.T) {
+	dir := t.TempDir()
+	for _, c := range []struct {
+		name, k8s string
+		args      []string
+		want      string
+	}{
+		{"in a Pod", "10.96.0.1", []string{"serve", "--recordings", dir, "--listen", "0.0.0.0:0", "--listen-all-in-container"}, "--auth=kubernetes with TLS"},
+		{"no recordings directory", "", []string{"serve", "--recordings", filepath.Join(dir, "missing"), "--listen", "0.0.0.0:0", "--listen-all-in-container"}, "not a directory"},
+		{"no source", "", []string{"serve", "--listen", "0.0.0.0:0", "--listen-all-in-container"}, "--prometheus, --recordings"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("KUBERNETES_SERVICE_HOST", c.k8s)
+			var warn bytes.Buffer
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err := run(ctx, c.args, io.Discard, &warn)
+			require.Error(t, err)
+			var u usageError
+			assert.True(t, errors.As(err, &u), "%v", err)
+			assert.Contains(t, err.Error(), c.want)
+			assert.NotContains(t, warn.String(), "warning: --listen-all-in-container")
+		})
 	}
 }
 

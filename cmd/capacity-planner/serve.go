@@ -149,10 +149,14 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, err
 	}
 	if f.allInContainer {
+		// A Pod's port is reachable from the cluster network: there the
+		// server needs a token, not a published port on the host's loopback.
+		if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+			return nil, usagef("--listen-all-in-container: KUBERNETES_SERVICE_HOST is set, so this runs in a Kubernetes Pod, whose port the cluster network reaches; in Kubernetes use --auth=%s with TLS", whatifapi.AuthKubernetes)
+		}
 		if err := whatifapi.CheckContainerListen(f.listen, f.auth); err != nil {
 			return nil, usageError{err}
 		}
-		fmt.Fprintf(warn, "capacity-planner: warning: --listen-all-in-container: serving %s with no authentication; publish the port to the host's loopback only (-p 127.0.0.1:PORT:PORT)\n", f.listen)
 	} else if err := whatifapi.CheckListen(f.listen, f.auth); err != nil {
 		return nil, usageError{err}
 	}
@@ -170,6 +174,12 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	allowed, err := f.namespaces()
 	if err != nil {
 		return nil, err
+	}
+	// Warned once every flag is checked, so a refused start prints no warning.
+	if f.allInContainer {
+		fmt.Fprintf(warn, "capacity-planner: warning: --listen-all-in-container: serving %s with no authentication. "+
+			"The Host check is not access control: any client that reaches the port can send Host: localhost. "+
+			"Publish the port on the host's loopback only (-p 127.0.0.1:PORT:PORT), never beyond it\n", f.listen)
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed}
 	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion)})
