@@ -17,7 +17,7 @@ Each release attaches rendered manifests, pinned to its image by digest:
 
 The files are signed by the release workflow's identity, as the image is.
 Download a file, its `.sigstore.json` bundle and `SHA256SUMS`, then, with
-cosign 2.4 or later:
+cosign 3.0 or later:
 
 ```bash
 V=<release>
@@ -30,6 +30,12 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 Verify before the `sed` that fills in the namespace: the signature covers the
 file as downloaded.
+
+The image the files pin is checked the same way, with
+`cosign verify ghcr.io/llm-d-incubation/llm-d-scaling-manager:$V` and the same
+two `--certificate-*` flags. Use cosign 3.0 or later for it: cosign 2
+verifies the files but reports `no signatures found` for the image, because
+the release signs in the newer bundle format.
 
 ## Deployment methods
 
@@ -97,7 +103,7 @@ Options:
 
 The default image tag is the `newTag` in `config/base/manager/kustomization.yaml`:
 `main` on a checkout of `main`, the release tag on a checkout of a release. So
-`git checkout v0.11.0` installs `:v0.11.0` without `-i`. See
+`git checkout v0.11.1` installs `:v0.11.1` without `-i`. See
 [Pin the version](upgrade-and-uninstall.md#pin-the-version).
 
 `--check` is what `make check-prereqs` runs. Run it before a real install. It
@@ -175,12 +181,12 @@ yourself, or when a GitOps tool owns the manifests. Otherwise use Method 1.
 ```bash
 # Use the manifests of the release you install. A release checkout already
 # names its own image, so the image line below only makes it explicit.
-git checkout v0.11.0
+git checkout v0.11.1
 
 # Set the controller image: the release tag, or its digest from the release notes
 cd config/base/manager
-kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.11.0
-# kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:ec3af197ba63ff2e5f7bc214c90fbb7cf25bb6f442c832a05cfbf74b9c50cd6e
+kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.11.1
+# kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:a1d236e63c37632280d07789e3ba693a7e686dc84d15525ea8d37c090dbd4183
 
 # Apply the overlay for your scope and platform
 kubectl apply -k ../../overlays/cluster-scoped/kubernetes
