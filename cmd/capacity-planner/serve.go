@@ -39,6 +39,9 @@ type serveFlags struct {
 	// allInContainer is --listen-all-in-container: the one way to bind every
 	// interface without authentication (whatifapi.CheckContainerListen).
 	allInContainer bool
+	// inPod is whether serve runs in a Kubernetes Pod (inKubernetesPod),
+	// where --listen-all-in-container is refused.
+	inPod bool
 }
 
 // runServe serves the capacity planner's API (internal/whatifapi) until ctx
@@ -65,11 +68,12 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.tlsKey, "tls-key-file", "", "the server's private key, PEM; required with --auth=kubernetes")
 	fs.DurationVar(&f.shutdownDeadline, "shutdown-timeout", 10*time.Second, "how long requests in flight may run once the server is told to stop")
 	fs.StringVar(&f.allowedNamespaces, "allowed-namespaces", "", "the namespaces a prometheus source may read, comma-separated; default --namespace alone")
-	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network")
+	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network. Refused when KUBERNETES_SERVICE_HOST is set, a best-effort tripwire, not enforcement")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
+	f.inPod = inKubernetesPod()
 	handler, err := f.handler(fs, warn)
 	if err != nil {
 		return err
@@ -96,7 +100,27 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 		ln = tls.NewListener(ln, srv.TLSConfig)
 	}
 	fmt.Fprintf(warn, "capacity-planner: serving the capacity planner's API on %s (auth %s)\n", ln.Addr(), f.auth)
+	// Warned only once the port is taken, so a start refused or a bind that
+	// fails prints no warning.
+	if f.allInContainer {
+		fmt.Fprintf(warn, "capacity-planner: warning: --listen-all-in-container: serving %s with no authentication. "+
+			"The Host check is not access control: any client that reaches the port can send Host: localhost. "+
+			"Publish the port on the host's loopback only (-p 127.0.0.1:PORT:PORT), never beyond it\n", ln.Addr())
+	}
+	if listening != nil {
+		listening(ln.Addr())
+	}
 	return serveUntil(ctx, srv, ln, f.shutdownDeadline)
+}
+
+// listening, when set, is called with the address serve bound, once it
+// serves: tests read the port from it rather than from stderr.
+var listening func(net.Addr)
+
+// inKubernetesPod reports whether this process runs in a Kubernetes Pod, by
+// the KUBERNETES_SERVICE_HOST the kubelet sets in every container.
+func inKubernetesPod() bool {
+	return os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 }
 
 // shutdownGrace is how long requests in flight have to return once their
@@ -149,12 +173,7 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, err
 	}
 	if f.allInContainer {
-		// A Pod's port is reachable from the cluster network: there the
-		// server needs a token, not a published port on the host's loopback.
-		if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
-			return nil, usagef("--listen-all-in-container: KUBERNETES_SERVICE_HOST is set, so this runs in a Kubernetes Pod, whose port the cluster network reaches; in Kubernetes use --auth=%s with TLS", whatifapi.AuthKubernetes)
-		}
-		if err := whatifapi.CheckContainerListen(f.listen, f.auth); err != nil {
+		if err := whatifapi.CheckContainerListen(f.listen, f.auth, f.inPod); err != nil {
 			return nil, usageError{err}
 		}
 	} else if err := whatifapi.CheckListen(f.listen, f.auth); err != nil {
@@ -174,12 +193,6 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	allowed, err := f.namespaces()
 	if err != nil {
 		return nil, err
-	}
-	// Warned once every flag is checked, so a refused start prints no warning.
-	if f.allInContainer {
-		fmt.Fprintf(warn, "capacity-planner: warning: --listen-all-in-container: serving %s with no authentication. "+
-			"The Host check is not access control: any client that reaches the port can send Host: localhost. "+
-			"Publish the port on the host's loopback only (-p 127.0.0.1:PORT:PORT), never beyond it\n", f.listen)
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed}
 	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion)})

@@ -231,29 +231,54 @@ func TestServeRefusesUnsafeBinds(t *testing.T) {
 	}
 }
 
+// startServe runs serve with args until the test ends and returns the
+// address it bound, read from the listening hook; it fails at once with
+// serve's own error if serve returns before it binds.
+func startServe(t *testing.T, args []string, warn io.Writer) net.Addr {
+	t.Helper()
+	bound := make(chan net.Addr, 1)
+	was := listening
+	listening = func(a net.Addr) { bound <- a }
+	t.Cleanup(func() { listening = was })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, args, io.Discard, warn) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			assert.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Error("serve did not stop")
+		}
+	})
+	select {
+	case a := <-bound:
+		return a
+	case err := <-done:
+		done <- err
+		t.Fatalf("serve returned before it bound: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not bind")
+	}
+	return nil
+}
+
 // With --listen-all-in-container, serve binds every interface with no
 // authentication, says so on stderr, and still answers loopback names only.
 func TestServeListenAllInContainer(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
 	var warn safeBuffer
-	go func() {
-		done <- run(ctx, []string{"serve", "--recordings", t.TempDir(), "--listen", "0.0.0.0:0", "--listen-all-in-container"}, io.Discard, &warn)
-	}()
-	var addr string
-	require.Eventually(t, func() bool {
-		_, rest, ok := strings.Cut(warn.String(), "API on ")
-		addr, _, _ = strings.Cut(rest, " ")
-		return ok && addr != ""
-	}, 5*time.Second, 10*time.Millisecond)
+	addr := startServe(t, []string{"serve", "--recordings", t.TempDir(), "--listen", "0.0.0.0:0", "--listen-all-in-container"}, &warn)
 	assert.Contains(t, warn.String(), "warning: --listen-all-in-container")
-	host, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr.String())
 	require.NoError(t, err)
 	ip := net.ParseIP(host)
 	require.True(t, ip != nil && ip.IsUnspecified(), "bound %s, want every interface", addr)
 	post := func(hostHeader string) int {
-		req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+port+"/v1/plan", strings.NewReader(`{"inputsId": "sha256:none"}`))
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:"+port+"/v1/plan", strings.NewReader(`{"inputsId": "sha256:none"}`))
 		require.NoError(t, err)
 		req.Host = hostHeader
 		req.Header.Set("Content-Type", "application/json")
@@ -265,28 +290,29 @@ func TestServeListenAllInContainer(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, post("localhost:"+port))
 	// A name other than loopback is still refused: the Host check stays.
 	assert.Equal(t, http.StatusForbidden, post("planner.example:"+port))
-	cancel()
-	select {
-	case err := <-done:
-		assert.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("serve did not stop")
-	}
 }
 
 // In a Kubernetes Pod (KUBERNETES_SERVICE_HOST set) the cluster network
-// reaches the port, so --listen-all-in-container is refused there; and a
-// start refused for any reason prints no warning that it serves.
+// reaches the port, so --listen-all-in-container is refused there, at an
+// address it would otherwise allow; and a start refused for any reason, or
+// a bind that fails, prints no warning that it serves.
 func TestServeListenAllInContainerRefused(t *testing.T) {
 	dir := t.TempDir()
+	taken, err := net.Listen("tcp", "0.0.0.0:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+	_, takenPort, err := net.SplitHostPort(taken.Addr().String())
+	require.NoError(t, err)
 	for _, c := range []struct {
 		name, k8s string
 		args      []string
+		usage     bool
 		want      string
 	}{
-		{"in a Pod", "10.96.0.1", []string{"serve", "--recordings", dir, "--listen", "0.0.0.0:0", "--listen-all-in-container"}, "--auth=kubernetes with TLS"},
-		{"no recordings directory", "", []string{"serve", "--recordings", filepath.Join(dir, "missing"), "--listen", "0.0.0.0:0", "--listen-all-in-container"}, "not a directory"},
-		{"no source", "", []string{"serve", "--listen", "0.0.0.0:0", "--listen-all-in-container"}, "--prometheus, --recordings"},
+		{"in a Pod", "10.96.0.1", []string{"serve", "--recordings", dir, "--listen", "0.0.0.0:0", "--listen-all-in-container"}, true, "--auth=kubernetes with TLS"},
+		{"no recordings directory", "", []string{"serve", "--recordings", filepath.Join(dir, "missing"), "--listen", "0.0.0.0:0", "--listen-all-in-container"}, true, "not a directory"},
+		{"no source", "", []string{"serve", "--listen", "0.0.0.0:0", "--listen-all-in-container"}, true, "--prometheus, --recordings"},
+		{"port taken", "", []string{"serve", "--recordings", dir, "--listen", "0.0.0.0:" + takenPort, "--listen-all-in-container"}, false, "address already in use"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("KUBERNETES_SERVICE_HOST", c.k8s)
@@ -296,7 +322,7 @@ func TestServeListenAllInContainerRefused(t *testing.T) {
 			err := run(ctx, c.args, io.Discard, &warn)
 			require.Error(t, err)
 			var u usageError
-			assert.True(t, errors.As(err, &u), "%v", err)
+			assert.Equal(t, c.usage, errors.As(err, &u), "%v", err)
 			assert.Contains(t, err.Error(), c.want)
 			assert.NotContains(t, warn.String(), "warning: --listen-all-in-container")
 		})

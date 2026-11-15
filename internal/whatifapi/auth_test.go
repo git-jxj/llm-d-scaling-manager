@@ -59,10 +59,16 @@ func TestCheckContainerListen(t *testing.T) {
 		{"0.0.0.0:8080", "basic", false},
 		{"0.0.0.0", AuthNone, false},
 	} {
-		err := CheckContainerListen(c.addr, c.mode)
+		err := CheckContainerListen(c.addr, c.mode, false)
 		assert.Equal(t, c.ok, err == nil, "%s %s: %v", c.addr, c.mode, err)
 		if c.ok {
 			assert.Error(t, CheckListen(c.addr, c.mode), "%s: CheckListen must still refuse it", c.addr)
+			// In a Pod the same, valid, address is refused: the Pod check
+			// comes first.
+			err := CheckContainerListen(c.addr, c.mode, true)
+			if assert.Error(t, err, "%s in a Pod", c.addr) {
+				assert.Contains(t, err.Error(), "KUBERNETES_SERVICE_HOST")
+			}
 		}
 	}
 }

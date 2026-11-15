@@ -57,8 +57,14 @@ func CheckListen(addr, mode string) error {
 // interface of a container whose port is published to the host's loopback
 // only. It allows the unspecified address (0.0.0.0, ::, or an empty host)
 // with AuthNone and nothing else: a named interface, or --auth=kubernetes,
-// which already binds any address, is refused.
-func CheckContainerListen(addr, mode string) error {
+// which already binds any address, is refused. inPod (KUBERNETES_SERVICE_HOST
+// set, for a caller) refuses first, whatever the address: a Pod's port is
+// reachable from the cluster network. It is a best-effort tripwire, not
+// enforcement: a container elsewhere can still publish the port widely.
+func CheckContainerListen(addr, mode string, inPod bool) error {
+	if inPod {
+		return fmt.Errorf("--listen-all-in-container: KUBERNETES_SERVICE_HOST is set, so this runs in a Kubernetes Pod, whose port the cluster network reaches; in Kubernetes use --auth=%s with TLS", AuthKubernetes)
+	}
 	if mode != AuthNone {
 		return fmt.Errorf("--listen-all-in-container is for --auth=%s; --auth=%s binds any address already", AuthNone, mode)
 	}
