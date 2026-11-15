@@ -107,6 +107,11 @@ Read the review first; the implementation design says what was built.
   deploy-scaling-manager` stays a supported second path on the same render,
   names and settings, so an install can move between the two. Records the
   2026-11-10 decisions, the migration, and what ships in v0.11.0.
+- **[Install in two commands, from the tools image](two-command-install.md)**
+  — proposed. `smt admin-setup` (cluster admin) and `smt install` (namespace
+  owner) replace the README's ~20-command block, with the release files baked
+  into the tools image. Settles scope, upgrade, air-gapped use, privileges,
+  re-runs, preflight results, dry-run and the CI gate.
 
 ## Engine and analyzers
 
