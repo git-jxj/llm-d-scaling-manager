@@ -113,7 +113,7 @@ const q32Tolerance = 0.9
 func q32HeldStep(t *testing.T) q32Step {
 	t.Helper()
 	for _, s := range q32Steps["C"] {
-		if s.pastTheOnset && s.insideTheTake && s.failed == 0 {
+		if s.pastTheOnset && s.waitPriced && s.failed == 0 {
 			return s
 		}
 	}
@@ -181,14 +181,14 @@ func TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient(t *testing.T) {
 				s.waitPriced != mean.HasFlag(FlowControlWaitPriced) {
 				t.Errorf("%s %.3f r/s: flags %v", bucket, s.rate, mean.Flags)
 			}
-			if gate := mean.Parts.RouterWait > 0 && mean.Parts.BurstWait > 0; gate != s.insideTheTake {
+			if gate := mean.Parts.RouterWait > 0 && mean.Parts.BurstWait > 0; gate != s.waitPriced {
 				t.Errorf("%s %.3f r/s: router wait %g s, burst wait %g s, want the gate priced only where it takes", bucket, s.rate, mean.Parts.RouterWait, mean.Parts.BurstWait)
 			}
 			for i, q := range []float64{0, 0.9, 0.95} {
 				got := mustTTFT(t, ttftAt(t, fl, s.rate, q)).Seconds
 				unswitched := mustTTFT(t, ttftAt(t, fcFleet(q32Fleet(bucket), false), s.rate, q)).Seconds
 				nearRel(t, bucket+" price, switch off", unswitched, s.frozen[i], 1e-9)
-				if !s.insideTheTake {
+				if !s.waitPriced {
 					nearRel(t, bucket+" price where the gate is not priced", got, s.frozen[i], 1e-9)
 				}
 				// 0 is unmeasured: the void B 7's p90 and p95 lie past the
@@ -204,7 +204,7 @@ func TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient(t *testing.T) {
 					t.Errorf("%s %.3f r/s q %g reads %.2f s, more than %.0f%% under the client's %.2f s",
 						bucket, s.rate, q, got, 100*(1-q32Tolerance), s.client[i])
 				}
-				if s.failed == 0 && s.insideTheTake && got > q32Ceiling*s.client[i] {
+				if s.failed == 0 && s.waitPriced && got > q32Ceiling*s.client[i] {
 					t.Errorf("%s %.3f r/s q %g reads %.2f s, over %g times the client's %.2f s", bucket, s.rate, q, got, q32Ceiling, s.client[i])
 				}
 			}
