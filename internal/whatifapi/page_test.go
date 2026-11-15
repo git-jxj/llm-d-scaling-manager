@@ -170,6 +170,16 @@ func TestPageAsksSize(t *testing.T) {
 	}
 }
 
+// The page asks again only where retryDelay (scenario.js, checked under node
+// by hack/check-planner-scenarios.sh) says to: a busy server's 503, never a
+// plan stopped at the server's plan budget.
+func TestPageRetriesOnlyABusyServer(t *testing.T) {
+	js := pageText(t, "planner.js")
+	assert.Contains(t, js, `const wait = retryDelay(resp.status, resp.headers.get("Retry-After"), attempt);`)
+	assert.NotContains(t, js, "resp.status === 503", "planner.js decides a retry on its own")
+	assert.Contains(t, pageText(t, "scenario.js"), "function retryDelay(status, retryAfter, attempt)")
+}
+
 // The page saves, exports, imports and compares scenarios: every control is
 // on the page and wired to its handler, the store and the file carry the
 // link, every key the link writes is one an imported link may carry, a

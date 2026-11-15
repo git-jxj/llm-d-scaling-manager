@@ -143,6 +143,22 @@ func TestServeRefusesAForeignHost(t *testing.T) {
 	}
 }
 
+// --plan-budget 0 is the default budget, and the largest budget allowed ends
+// a minute before the write timeout, so a stopped plan's refusal is written
+// on a connection still open.
+func TestServePlanBudgetBounds(t *testing.T) {
+	for _, b := range []time.Duration{0, time.Second, maxPlanBudget} {
+		f := serveFlags{recordings: t.TempDir(), listen: "127.0.0.1:0", auth: whatifapi.AuthNone, planBudget: b}
+		_, err := f.handler(newFlags("serve", io.Discard), io.Discard)
+		require.NoError(t, err, "--plan-budget %s", b)
+	}
+	assert.Less(t, maxPlanBudget, writeTimeout)
+	assert.Less(t, whatifapi.DefaultPlanBudget, maxPlanBudget)
+	f := serveFlags{recordings: t.TempDir(), listen: "127.0.0.1:0", auth: whatifapi.AuthNone, planBudget: writeTimeout}
+	_, err := f.handler(newFlags("serve", io.Discard), io.Discard)
+	require.ErrorAs(t, err, new(usageError))
+}
+
 // The server bounds how long a client may take to send a request and hold an
 // idle connection, and lets a response run longer than the slowest cold plan
 // measured (9.9 s) or a window's capture.

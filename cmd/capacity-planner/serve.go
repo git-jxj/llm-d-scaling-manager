@@ -33,6 +33,9 @@ type serveFlags struct {
 	auth             string
 	tlsCert, tlsKey  string
 	shutdownDeadline time.Duration
+	// planBudget is --plan-budget, how long one plan may be priced; 0 is
+	// whatifapi.DefaultPlanBudget.
+	planBudget time.Duration
 	// allowedNamespaces is --allowed-namespaces, comma-separated, and
 	// audiences --token-audiences.
 	allowedNamespaces, audiences string
@@ -60,6 +63,7 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.tlsCert, "tls-cert-file", "", "the server's certificate, PEM; required with --auth=kubernetes")
 	fs.StringVar(&f.tlsKey, "tls-key-file", "", "the server's private key, PEM; required with --auth=kubernetes")
 	fs.DurationVar(&f.shutdownDeadline, "shutdown-timeout", 10*time.Second, "how long requests in flight may run once the server is told to stop")
+	fs.DurationVar(&f.planBudget, "plan-budget", whatifapi.DefaultPlanBudget, "how long one plan may be priced; past it the plan is refused with PlanBudgetExceeded")
 	fs.StringVar(&f.allowedNamespaces, "allowed-namespaces", "", "the namespaces a prometheus source may read, comma-separated; default --namespace alone")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
 	if ok, err := parse(fs, args); !ok {
@@ -149,6 +153,10 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if f.auth == whatifapi.AuthKubernetes && (f.tlsCert == "" || f.tlsKey == "") {
 		return nil, usagef("--auth=%s needs --tls-cert-file and --tls-key-file: a bearer token is not sent in the clear", whatifapi.AuthKubernetes)
 	}
+	if f.planBudget < 0 || f.planBudget > maxPlanBudget {
+		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s: a plan stopped later is refused after the server's %s write timeout has closed the connection",
+			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget, writeTimeout)
+	}
 	if f.recordings == "" && f.window.prometheus == "" {
 		return nil, usagef("serve needs --prometheus, --recordings or both: a source to resolve inputs from")
 	}
@@ -162,7 +170,7 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, err
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed}
-	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion)})
+	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlanBudget: f.planBudget})
 	h := srv.Handler()
 	if f.auth != whatifapi.AuthKubernetes {
 		return whatifapi.LoopbackOnly(h), nil
@@ -198,6 +206,11 @@ const (
 	writeTimeout = 10 * time.Minute
 	idleTimeout  = 2 * time.Minute
 )
+
+// maxPlanBudget is the largest --plan-budget: a minute under writeTimeout, so
+// a plan stopped at its budget, which may run on for one figure, is refused
+// on a connection still open.
+const maxPlanBudget = writeTimeout - time.Minute
 
 // namespaces is the namespaces a prometheus source may read: --allowed-namespaces,
 // else --namespace alone, each a DNS-1123 label. With --prometheus, one is
