@@ -358,44 +358,12 @@ keeping as a Prometheus snapshot first, and capture it from the snapshot
 later. The `ols-sweep-slo` run is the first such window: flow control off,
 the slo analyzer listed, streamed load, router TTFT recorded.
 
-1. Snapshot Prometheus while it still holds the run. The snapshot API needs
-   Prometheus started with `--web.enable-admin-api`; the snapshot is written
-   under its data directory:
+1. Snapshot Prometheus while it still holds the run, and serve the snapshot
+   with a local Prometheus on `127.0.0.1:9091`, as
+   [Record a window: From a Prometheus snapshot](../guides/record-for-capacity-planner/README.md#from-a-prometheus-snapshot)
+   shows (steps 1 and 2 there).
 
-   ```bash
-   kubectl -n "$PROM_NS" port-forward "svc/$PROM_SVC" 9090:9090 &
-   # The answer is {"status":"success","data":{"name":"20261101T120000Z-..."}}.
-   NAME=$(curl -s -XPOST http://localhost:9090/api/v1/admin/tsdb/snapshot | jq -r .data.name)
-   test -n "$NAME" && test "$NAME" != null || echo "no snapshot: is the admin API on?"
-   kubectl -n "$PROM_NS" cp -c prometheus "$PROM_POD:/prometheus/snapshots/$NAME" ./ols-sweep-slo-snapshot
-   ```
-
-   `kubectl cp` runs `tar` inside the container, so it needs `tar` in the
-   Prometheus image. A distroless image has none, and the copy fails with
-   `executable file not found`. Then copy from a helper Pod that mounts the
-   same volume and has `tar`: a Pod with an image that has `tar` (from a
-   registry you trust), the Prometheus data volume's claim mounted
-   read-only at `/prometheus`, then
-   `kubectl -n "$PROM_NS" cp "$HELPER_POD:/prometheus/snapshots/$NAME" ./ols-sweep-slo-snapshot`.
-   A ReadWriteOnce claim mounts only on Prometheus' own node, so schedule
-   the helper there. An ephemeral container works as well where the
-   cluster allows them:
-   `kubectl debug -n "$PROM_NS" "$PROM_POD" --target=prometheus --image=IMAGE-WITH-TAR -c snap -- sleep 3600`,
-   then `kubectl cp -c snap "$PROM_POD:/proc/1/root/prometheus/snapshots/$NAME" ./ols-sweep-slo-snapshot`.
-
-   Without the admin API, save the raw series through the query API with
-   curl and load them into a local Prometheus:
-   [Record a window for the capacity planner, Path 2](../guides/record-for-capacity-planner/#path-2-record-with-curl-and-jq).
-
-2. Serve the snapshot with a local Prometheus. Give it a retention longer
-   than the snapshot's age, or it deletes the old blocks on start:
-
-   ```bash
-   prometheus --storage.tsdb.path=./ols-sweep-slo-snapshot --storage.tsdb.retention.time=10y \
-     --web.listen-address=:9091 --config.file=/dev/null
-   ```
-
-3. Capture the run's window, with the policy it ran under and the engine
+2. Capture the run's window, with the policy it ran under and the engine
    arguments its Deployments had. With kube-state-metrics in the snapshot,
    `--kube-state-metrics` reads Pods, readiness, GPUs and nodes; without its
    role labels (`--metric-labels-allowlist=pods=[llm-d.ai/role]`), add a
@@ -403,7 +371,7 @@ the slo analyzer listed, streamed load, router TTFT recorded.
 
    ```bash
    make capacity-planner
-   bin/capacity-planner capture --prometheus http://localhost:9091 --namespace "$RUN_NS" \
+   bin/capacity-planner capture --prometheus http://127.0.0.1:9091 --namespace "$RUN_NS" \
      --kube-state-metrics --role-of decode=app=ols-decode --role-of prefill=app=ols-prefill \
      --from 2026-11-01T12:00:00Z --to 2026-11-01T13:00:00Z --step 15s \
      --policy ols-sweep-slo-policy.yaml --engine-args "--max-num-seqs=256" \
@@ -423,10 +391,10 @@ the slo analyzer listed, streamed load, router TTFT recorded.
    capture with kube-state-metrics registers (12,500 steps, a little over
    two days at 15 s), which bounds the load; and `whatifsource.MaxSamples`,
    20 million samples held in memory, which grows with the Pods as well.
-   [Capacity planner capture](capacity-planner-capture.md#load-on-prometheus) gives the load
+   [Record a window: Load on Prometheus](../guides/record-for-capacity-planner/README.md#load-on-prometheus) gives the load
    a window puts on Prometheus.
 
-4. Generate the recording, and add it as a golden like any recording
+3. Generate the recording, and add it as a golden like any recording
    (below):
 
    ```bash

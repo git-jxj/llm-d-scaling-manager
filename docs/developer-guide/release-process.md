@@ -47,7 +47,7 @@ instead.
    linux and darwin, amd64 and arm64, in `SHA256SUMS` and signed like the
    others. The planner replays recordings with the controller's learners, so
    it is never released apart from the controller
-   ([Plan a P/D fleet](../guides/capacity-planner/README.md#get-the-planner)).
+   ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line

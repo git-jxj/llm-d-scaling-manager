@@ -139,7 +139,7 @@ installed.
 To record a window, with `capacity-planner` or with only curl and jq, see
 [Record a window for the capacity planner](../guides/record-for-capacity-planner/).
 The series both read are listed in
-[Metrics the capacity planner needs](../reference/capacity-planner-metrics.md).
+[Metrics the capacity planner needs](../guides/capacity-planner/metrics.md).
 
 The learned-state ConfigMap ([snapshot](learned-state-snapshot.md)) is not a
 source on its own. It holds k2, throughput windows, ITL baselines and start
@@ -779,7 +779,7 @@ v1 is phases 0 and 1; v2 is phase 2.
 ## As built (phase 0)
 
 `capacity-planner serve` runs the API on your machine; how to start it, the flags and
-every key are in [What-if serve](../developer-guide/capacity-planner-serve.md). Built:
+every key are in [What-if serve](../guides/capacity-planner/api.md). Built:
 `POST /v1/inputs` (a recording, or a Prometheus window, the last hour by
 default) and `POST /v1/plan` (the mix line, the "if all traffic were bucket b"
 view, TPOT at the mean or a percentile with `AssumedTPOTRatio`, the capped
@@ -914,7 +914,7 @@ C5 is built: `POST /v1/size` in the API, and a toggle on the page between
 How to use it is in the guide's
 [Find the fleet a rate needs](../guides/capacity-planner/README.md#find-the-fleet-a-rate-needs);
 the keys and the search are in
-[What-if serve](../developer-guide/capacity-planner-serve.md#the-size).
+[What-if serve](../developer-guide/capacity-planner-serve.md#the-size-search).
 
 **The search.** It prices fleets with the engine's own limits, as the plan's
 +1 steps do, up to a bound (`maxReplicas`, 32 a role by default, at most 64).

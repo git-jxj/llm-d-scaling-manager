@@ -1,10 +1,10 @@
-# Record a window for the capacity planner
+# Capacity planner: record a window
+
+This page is part of the [capacity planner guide](../capacity-planner/).
 
 ## Overview
 
-The [capacity planner](../../proposals/capacity-planner.md) answers two
-questions about a model: how many replicas a latency target needs, and what
-rate a fleet can serve. It learns the answers from a past window of your
+The capacity planner learns its answers from a past window of your
 Prometheus: what the model servers, the router and kube-state-metrics reported
 while the fleet ran.
 
@@ -17,14 +17,14 @@ This guide saves such a window. There are two ways:
    Anyone with this repository then loads them into a local Prometheus and
    runs step 1 there. Use it when you cannot run `capacity-planner` where Prometheus is.
 
-[Which series, and what each one feeds](../../reference/capacity-planner-metrics.md)
+[Which series, and what each one feeds](../capacity-planner/metrics.md)
 is the reference for both.
 
 ## Prerequisites
 
 - [ ] Your Prometheus scrapes the model servers every 15 s (30 s at most),
   keeps their histograms, and still holds the window
-  ([what it must keep](../../reference/capacity-planner-metrics.md#what-your-prometheus-must-keep)).
+  ([what it must keep](../capacity-planner/metrics.md#what-your-prometheus-must-keep)).
 - [ ] A window of 30 minutes or more in which load rose. A flat, quiet hour
   teaches the planner little.
 - [ ] `kubectl` access to Prometheus' namespace (a port-forward), or its URL.
@@ -105,19 +105,21 @@ Exit codes: `0` done; `2` your input (a bad flag, no replica with a KV-cache
 series in the namespace and window, a window too large without `--force`);
 `1` anything else, usually a failed Prometheus query, which the message names.
 The answer commands add `3`: a role refused, with the reason printed.
+[What to do about each](../capacity-planner/troubleshooting.md#recording-a-window).
 
-`replicas-to-slo` and `slo-to-rate` also take the capture flags in place of
-`--recording`, and answer from the window without writing a file.
+`replicas-to-slo` and `slo-to-rate` also take the [capture flags](#capture-flags)
+in place of `--recording`, and answer from the window without writing a file.
+How to read their answers: [Read the command-line answers](#read-the-command-line-answers).
 
 To look at the recording in the planner's page, put `run.jsonl.gz` (the
 recording, not `run.capture.jsonl.gz`) in a directory and serve it:
-[Plan a P/D fleet with the capacity planner](../capacity-planner/#start-the-planner).
+[Start the planner](../capacity-planner/README.md#start-the-planner).
 
 **Go easy on Prometheus.** A capture asks one range query per planner query
 over the whole window: about 56 for one vLLM model. An hour is light; a day
 returns millions of samples, and the usual failure is Prometheus'
 `query.max-samples`. Capture off-peak, or from a copy
-([Load on Prometheus](../../developer-guide/capacity-planner-capture.md#load-on-prometheus)).
+([Load on Prometheus](#load-on-prometheus)).
 
 ## Path 2: record with curl and jq
 
@@ -349,8 +351,50 @@ sample at all, so a broken export is not read as a window with less load.
   inputs are 5-minute rates.
 
 Where your Prometheus allows its admin API, a TSDB snapshot keeps everything,
-staleness marks included:
-[Capture a past window](../../developer-guide/testing.md#capture-a-past-window).
+staleness marks included: [From a Prometheus snapshot](#from-a-prometheus-snapshot).
+
+## From a Prometheus snapshot
+
+`_bucket` series are often kept for days, not weeks. To keep a window worth
+having, snapshot Prometheus while it still holds it, and record from the
+snapshot later. A snapshot keeps everything, and capturing from it puts no
+load on your Prometheus.
+
+1. Snapshot Prometheus. The snapshot API needs Prometheus started with
+   `--web.enable-admin-api`; the snapshot is written under its data
+   directory. `PROM_POD` is the Prometheus Pod:
+
+   ```bash
+   kubectl -n "$PROM_NS" port-forward "svc/$PROM_SVC" 9090:9090 &
+   # The answer is {"status":"success","data":{"name":"20261101T120000Z-..."}}.
+   NAME=$(curl -s -XPOST http://localhost:9090/api/v1/admin/tsdb/snapshot | jq -r .data.name)
+   test -n "$NAME" && test "$NAME" != null || echo "no snapshot: is the admin API on?"
+   kubectl -n "$PROM_NS" cp -c prometheus "$PROM_POD:/prometheus/snapshots/$NAME" ./snapshot
+   ```
+
+   `kubectl cp` runs `tar` inside the container. A distroless Prometheus
+   image has none, and the copy fails with `executable file not found`. Then
+   copy from a helper Pod that has `tar` (an image from a registry you trust)
+   and mounts the Prometheus data volume's claim read-only at `/prometheus`:
+   `kubectl -n "$PROM_NS" cp "$HELPER_POD:/prometheus/snapshots/$NAME" ./snapshot`.
+   A ReadWriteOnce claim mounts only on Prometheus' own node, so schedule the
+   helper there. An ephemeral container works as well where the cluster
+   allows them:
+   `kubectl debug -n "$PROM_NS" "$PROM_POD" --target=prometheus --image=IMAGE-WITH-TAR -c snap -- sleep 3600`,
+   then `kubectl cp -c snap "$PROM_POD:/proc/1/root/prometheus/snapshots/$NAME" ./snapshot`.
+
+   Without the admin API, use [Path 2](#path-2-record-with-curl-and-jq).
+
+2. Serve the snapshot with a local Prometheus. Give it a retention longer
+   than the snapshot's age, or it deletes the old blocks on start:
+
+   ```bash
+   prometheus --storage.tsdb.path=./snapshot --storage.tsdb.retention.time=10y \
+     --web.listen-address=127.0.0.1:9091 --config.file=/dev/null
+   ```
+
+3. Record as in [Path 1](#path-1-record-with-capacity-planner), with
+   `--prometheus http://127.0.0.1:9091`.
 
 ## Prometheus with a token
 
@@ -384,9 +428,167 @@ bin/capacity-planner capture ... --role-of decode=app=<decode pod label> --role-
 
 Every Pod then reads as Ready, and the capture says so.
 
+## Capture flags
+
+```
+capacity-planner capture  --prometheus URL --namespace NS (--kube-state-metrics | --role-of ROLE=SELECTOR ...)
+                          --from T0 --to T1 -o run.capture.jsonl.gz
+                          [--step 15s] [--policy FILE]
+                          [--engine vllm|sglang] [--engine-args "ARGS"] [--batch-cap N]
+                          [--gpus-per-replica 1] [--accelerator NAME]
+                          [--bearer-token-file FILE] [--ca-file FILE] [--insecure-skip-verify]
+                          [--timeout 2m30s] [--force]
+capacity-planner generate -in run.capture.jsonl.gz -o run.jsonl.gz
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--prometheus` | The Prometheus base URL, http or https. Required. An error message never quotes its userinfo, path, query or fragment: they read `REDACTED`. |
+| `--namespace` | The namespace whose models to capture. Required. |
+| `--kube-state-metrics` | Read Pods, owners, readiness, GPUs and nodes from kube-state-metrics in the same Prometheus. |
+| `--role-of ROLE=SELECTOR` | The Pods a label selector picks serve ROLE (`prefill`, `decode`, `both`), as one variant. Repeat per variant. Two selectors that pick the same Pod, or whose name prefixes nest, are refused. |
+| `--from`, `--to` | The window, RFC 3339 or Unix seconds, truncated to the millisecond. Required. |
+| `--step` | The interval between cycles, taken as the run's optimize interval. Whole milliseconds. Default 15s. |
+| `--policy` | A scaling-policy entry (YAML), applied as the default entry. Default: the defaults. |
+| `--engine` | The inference engine the variants run, `vllm` or `sglang`. Default `vllm`. |
+| `--engine-args` | The engine's arguments, space-separated, parsed for its parameters (kube-state-metrics has none). |
+| `--batch-cap` | The engine's batch cap (`--max-num-seqs`, or `--max-running-requests`). Warned about when `--engine-args` sets it too. |
+| `--gpus-per-replica`, `--accelerator` | Stand-ins where kube-state-metrics gives no GPU request or node label. |
+| `--bearer-token-file` | A file holding a bearer token. Sent over https only, to Prometheus' own host only, never on a redirect elsewhere. Refused with an http URL, or when the file is empty. |
+| `--ca-file` | A PEM file of the CAs that sign an https Prometheus' certificate, trusted in place of the system's. Refused with an http URL. |
+| `--insecure-skip-verify` | Do not verify the certificate. Warned about on stderr. Refused with an http URL. |
+| `--timeout` | How long one HTTP request may take. Default 2m30s, a little over Prometheus' own 2-minute query timeout. |
+| `--force` | Capture past the load and memory bounds in [Load on Prometheus](#load-on-prometheus). |
+| `-o` | Where to write the capture. Written beside it and renamed over it when whole, so a failed run leaves the file that was there. |
+
+`generate` takes `-in` (the capture, gzipped or not) and `-o` (the recording;
+a name ending in `.gz` is gzipped). Both commands write their file readable by
+its owner only (mode 0600).
+
+What a capture cannot know, and flags: engine parameters (always from flags),
+rollouts (never seen), readiness without kube-state-metrics (every Pod reads as
+Ready), and LeaderWorkerSets (use `--role-of`). The `flag:` lines name each.
+
+## Load on Prometheus
+
+A capture turns every query the controller asks into one range query over the
+whole window, at the step. Each is asked once; every later step reads its
+answer from memory. Every query is required: one that fails stops the capture
+at once and names the query.
+
+One namespace with a single vLLM model asks about 56 queries. For a fleet of
+10 engine Pods that is roughly 1,000 series. Rough figures, to be read as
+orders of magnitude:
+
+| Window at 15 s | Steps | Range requests | Samples returned and held |
+| --- | --- | --- | --- |
+| 1 hour | 241 | about 56 | about 240,000 |
+| 1 day | 5,761 | about 56 | about 5.8 million |
+| 3 days | 17,281 | about 112 (two parts each) | about 17 million; past the step bound, so it needs `--force` |
+
+Prometheus reads far more raw samples than it returns: each `rate(...[1m])`
+reads every scrape in its minute at every step.
+
+- **Capture off-peak**, or better, **from a snapshot** served by a local
+  Prometheus ([From a Prometheus snapshot](#from-a-prometheus-snapshot)),
+  never by loading a production server with a long window.
+- **The usual failure is `query.max-samples`**: a histogram over many steps
+  loads more samples than the server allows in one query. It stops the
+  capture with exit 1 and names the query; shorten the window or lengthen
+  the step.
+- **Bounds.** Steps times queries is bounded at 1,000,000 (a little over two
+  days at 15 s), and the samples held at 20 million (a little over a
+  gigabyte). Past either, the capture stops with exit 2 unless `--force`.
+
+## Read the command-line answers
+
+`replicas-to-slo` and `slo-to-rate` price a P/D fleet's TTFT when a TTFT flag
+is given, from a recording or from the capture flags:
+
+```
+capacity-planner replicas-to-slo --recording run.jsonl.gz --ttft-percentile 90 [--assume-vp TOKENS] [--assume-a D] [--prefill N]
+capacity-planner slo-to-rate     --recording run.jsonl.gz --tpot 4ms --ttft 200ms@p95 [--assume-vp TOKENS] [--assume-a D] [--prefill N]
+```
+
+- **Treat every TTFT figure as unvalidated.** Each prints `UNVALIDATED`, and it
+  is not a bound. At the assumed prompt `cv` 2, which is what the CLI prints
+  for rows with no computed-token histogram, it read 1.1x to 4.1x the router's
+  percentile on the validation recordings; at the spread the load generator
+  sent (`cv` 0.06) up to 33% under it. Do not size from it yet.
+- **Read the `assumed` row first.** It names each input the recording did not
+  give. `V_P ASSUMED` means `--assume-vp` supplied `V_P`, and `a ASSUMED` that
+  `--assume-a` supplied `a`. It says so when an assumed term alone refuses a
+  target, or moves the answer by 25%. `--assume-router-hop 8ms` supplies the
+  hop between the router and the engines.
+- **`--assume-vp` overrides,** as every `--assume-*` flag does. Give it when
+  `NoPrefillCapacity` is refused, or to ask what another `V_P` would do. A
+  learned figure prints beside it: `V_P 130000 ASSUMED, learned 115621`.
+- **A decode row can rest on `V_P` too.** Where the prefill knee is the lower,
+  it sets the operating rate, and the rate and TPOT rows say so.
+- **`NoFixedLatency`** means the fleet ran one prompt length. Give
+  `--assume-a 11ms` for a flagged answer.
+- **Read the band as a sweep.** The knee, each TTFT and each TTFT rate print the
+  figure at `V_P` and `f` 15% either way. It is not a confidence interval. A
+  `Saturated` in it means the rate has no 15% to spare.
+- **`Saturated` means the rate is at or above the knee.** It is a refusal, exit
+  `3`, not a figure.
+- **The `line check` row** compares the token rate the latency line predicts
+  with the rate the decode rows reported. `MISMATCH` (a median error above
+  15%, flagged `LineMismatch`): do not size from it. `at another shape`: the
+  check ran on rows whose KV per request is more than 20% from the one priced.
+  `not run`: under 5 rows to compare; it is not a pass.
+
+- **Aggregated fleets and per-bucket answers are refused.** TTFT is priced
+  for P/D fleets only.
+
+### The joint TTFT model
+
+```bash
+capacity-planner joint-ttft --recording run.jsonl.gz [--cycle N|last] [--model M] [--prefill N] [--decode N] [--rate R] [--prompt I] [--hop D] [-o json]
+```
+
+Prices the joint prefill and decode model's mean TTFT at a fleet, from what
+the recording's rows taught it by the cycle asked for. Each of `--prefill`,
+`--decode` and `--rate` defaults to 0, which means the cycle's own: the fleet
+and the rate that ran. `--prompt 0` prices at the prompt the work was read at.
+`--hop 0`, the default, assumes a router hop of 20 ms and flags it
+`RouterHopAssumed`; give `--hop` in seconds to state it.
+
+At the 120th cycle of a staircase run, with a third decode Pod:
+
+```console
+$ capacity-planner joint-ttft --recording ttft-staircase-b-off.jsonl.gz --cycle 120 --decode 3
+joint TTFT, ns-01/model-02 at cycle 120: 2 prefill + 3 decode at 29.80 req/s (ran 2 + 2 at 29.80)
+  mean TTFT 145.0 ms (engines 125.0 ms, hop 20.0 ms)
+    overhead a(rho_p) 23.6 ms, prefill T_P 39.5 ms at rho_p 0.371
+    KV pull T_X 33.0 ms, unshared 24.8 ms at 0.247 of the decode pod
+    decode m_d*ITL(k) + d 28.9 ms, batch k 7.2, ITL 3.6 ms
+    flags: [OverheadMeasured RouterHopAssumed]
+  inputs: S 24.9 ms at 8001 tokens (232 readings); a0 14.8 ms (232); pull table 3 buckets
+          ITL(k) 1.944 ms + 0.2322 ms*k (232); decode own 5.03*ITL + 10.7 ms (232); n_out 200
+  note: UNVALIDATED beyond the staircase's 2+2 phases; ...
+```
+
+It exits `3` with a refusal, which is printed: `no-prefill-capacity` until a
+prefill Pod has read an empty engine queue, `saturated` at a prefill or pull
+knee, `batch-unheld` where the decode batch cannot hold the rate. With `-o json`
+the answer is JSON (`schemaVersion` 1, keys lowerCamel).
+
+It reads the rows as the slo analyzer does: only for a model with one prefill
+and one decode variant; new engine arguments or a new accelerator start the
+inputs over; on SGLang the prompt is the prompt length. One thing differs: the
+analyzer leaves out a replica's first two minutes after it starts or comes back
+from idle, while it settles, and this command reads them, so its inputs can
+lean on a warm-up the analyzer never saw.
+
+Exit codes for all of these: `0` answered, `3` a refusal, `2` a usage error,
+`1` anything else. The full CLI reference is in
+[the planner's design](../../proposals/slo-capacity-planner.md#cli-reference).
+
 ## See also
 
-- [Metrics the capacity planner needs](../../reference/capacity-planner-metrics.md)
-- [Capacity planner capture and generate](../../developer-guide/capacity-planner-capture.md): how capture works, its flags, its load
-- [The capacity planner](../../proposals/capacity-planner.md), and its
+- [The metrics it needs](../capacity-planner/metrics.md) and
+  [Troubleshooting](../capacity-planner/troubleshooting.md#recording-a-window)
+- [Capacity planner capture and generate](../../developer-guide/capacity-planner-capture.md): how capture is built
+- [The capacity planner's design](../../proposals/capacity-planner.md), and its
   [CLI](../../proposals/slo-capacity-planner.md#cli-reference)

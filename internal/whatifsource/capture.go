@@ -400,7 +400,7 @@ func windowSteps(from, to time.Time, step time.Duration) []time.Time {
 // kube-state-metrics': the ones the engine registers
 // (steadystate.NewEngine) and the one cmd/main registers whatever the
 // analyzers. The metrics they read are listed for operators in
-// docs/reference/capacity-planner-metrics.md, which a test keeps in step.
+// docs/guides/capacity-planner/metrics.md, which a test keeps in step.
 func registerQueries(registry *source.SourceRegistry) {
 	registration.RegisterSaturationQueries(registry)
 	registration.RegisterQueueingModelQueries(registry)

@@ -1,307 +1,87 @@
-# Capacity planner serve: the HTTP API
+# Capacity planner serve: internals
 
-`capacity-planner serve` runs the capacity planner's HTTP API on your machine. You
-resolve a source once (a recording, or a window of Prometheus), then ask for
-plans against it: curves, the two points on each graph, the fleet's limits and
-what one more replica of each role would change; or ask the other way round,
-for the fewest replicas a rate needs. Every figure is one the
-`capacity-planner` CLI also prints, from the same code.
+How `capacity-planner serve` is built: the page's scripts, the bucket edges,
+the size search, shared calls, the plan budget, the caches and the tests.
+
+What an operator runs and reads is in the guide:
+[Capacity planner](../guides/capacity-planner/) for the page, and
+[the HTTP API](../guides/capacity-planner/api.md) for every endpoint, field,
+flag and error. This page does not repeat them.
 
 This is phases 0 and 1 of [the capacity planner](../proposals/capacity-planner.md),
-the API and the page at `/` that draws it, and phase 2's inverse mode
-(`POST /v1/size`) and the page's saved scenarios and compare. Operators start from
-[Plan a P/D fleet with the capacity planner](../guides/capacity-planner/); this
-page is the API's. Like the rest of `capacity-planner`, it is a contributor and
-operator tool and is not in the manager image. Each release ships it as its
-own image, `ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>`
-(`Dockerfile.capacity-planner`), and as binaries for linux and darwin
-([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
+the API and the page at `/`, and phase 2's inverse mode (`POST /v1/size`) and
+the page's saved scenarios and compare. The server is `cmd/capacity-planner`
+(`serve.go`, `serve_inputs.go`, `serve_price.go`) over `internal/whatifapi`.
 
-## Start it
+## Build and image
 
-From a recordings directory:
-
-```
-make capacity-planner
-bin/capacity-planner serve --recordings ./recordings
-```
-
-`make capacity-planner` stamps the commit into the build, as the recordings
-it makes carry it.
-
-It listens on `127.0.0.1:8080` and prints the address on stderr. Stop it with
-Ctrl-C.
-
-From Prometheus (through a port-forward, as `capacity-planner capture` reads it):
-
-```
-bin/capacity-planner serve --prometheus http://localhost:9090 --namespace llm --kube-state-metrics
-```
-
-Both sources can be served at once.
-
-## Ask for a plan
-
-Resolve the inputs. A recording is named by its file name in `--recordings`,
-never by a path:
-
-```
-curl -s localhost:8080/v1/inputs -H 'Content-Type: application/json' -d '{"model": "model-02",
-  "source": {"kind": "recording", "name": "ols-sweep.jsonl.gz"}}'
-```
-
-With no `source`, the inputs are a Prometheus window of the last hour, ending
-now. A window of your own:
-
-```
-curl -s localhost:8080/v1/inputs -H 'Content-Type: application/json' -d '{"model": "qwen3-32b",
-  "source": {"kind": "prometheus", "namespace": "llm",
-             "from": "2026-11-09T10:00:00Z", "to": "2026-11-09T11:00:00Z"}}'
-```
-
-`model` may be left out when the source holds one model. A model with more
-than one variant of a role names the one to price with `prefillVariant` and
-`decodeVariant` (the CLI's `--prefill-variant` and `--variant`), beside
-`model`; the error that asks for one lists the names.
-
-The answer carries an `inputsId`. Price a scenario against it:
-
-```
-curl -s localhost:8080/v1/plan -H 'Content-Type: application/json' -d '{"inputsId": "sha256:...",
-  "fleet": {"prefill": 1, "decode": 1},
-  "traffic": {"classes": {"critical": {"rate": 6}}, "mix": {"promptTokens": 1000, "outputTokens": 1000}},
-  "slo": {"ttft": {"statistic": "p95", "target": 0.2}, "tpot": {"statistic": "mean", "target": 0.004}},
-  "assume": {"vp": 30000}}'
-```
-
-Everything but `inputsId` has a default: the recorded replica counts, the
-observed mix, the policy's SLO and headroom, and as the rate the operating
-point (headroom times the lower knee).
-
-## Flags
-
-| Flag | What it does |
-| --- | --- |
-| `--recordings DIR` | Recordings a `recording` source names by file name. Serve refuses to start if it is not a directory. |
-| `--prometheus URL` | The Prometheus a `prometheus` source reads. With it, every [capture flag](capacity-planner-capture.md) but `--from`, `--to` and `-o` applies: the role map, `--step`, `--policy`, the engine, TLS and the bearer token. The window comes with each request. |
-| `--namespace NS` | The namespace a `prometheus` source reads when the request names none. |
-| `--allowed-namespaces NS,...` | The namespaces a `prometheus` source may read. Default `--namespace` alone; with `--prometheus` one of the two is required. A request for any other namespace is 403, and a namespace that is not a DNS-1123 label a 400. |
-| `--batch-cap N` | The engine's batch cap a window is captured with, as `capture --batch-cap`. |
-| `--listen ADDR` | Where to serve. Default `127.0.0.1:8080`. Any address that is not loopback needs `--auth=kubernetes`, or for the unspecified address `--listen-all-in-container`; serve refuses to start without one. |
-| `--listen-all-in-container` | For a container whose port is published to the host's loopback only (`-p 127.0.0.1:8080:8080`), where the container's own loopback is unreachable from the host. With `--auth=none` it allows `--listen` on the unspecified address (`0.0.0.0:PORT`, `[::]:PORT`, `:PORT`) and nothing else: a named interface, or `--auth=kubernetes`, is refused, and so is any use in a Kubernetes Pod (`KUBERNETES_SERVICE_HOST` set). Serve prints a warning on stderr once every flag is checked. The Host check below still applies, but is not access control. The image's default command sets it. Never set it where the port is reachable from a network. |
-| `--auth none\|kubernetes` | `none` (the default) is loopback only. `kubernetes` checks a bearer token with TokenReview, then asks a SubjectAccessReview for `get` on the non-resource URL `/whatif` plus the path (`/whatif/v1/plan`). A missing or unauthenticated token is 401, a user not allowed is 403. A `prometheus` source's namespace is checked too: the user must be allowed `get` on `pods` in it. Reviews are reused for 30 s; a review that fails is a 500 that names no client error (the error goes to stderr). The client comes from `KUBECONFIG`, `~/.kube/config` or the in-cluster config. |
-| `--tls-cert-file`, `--tls-key-file` | The server's certificate and key. Required with `--auth=kubernetes`: a token is not sent in the clear. |
-| `--token-audiences A,...` | The audiences a TokenReview checks a token for. Default: the API server's own. |
-| `--shutdown-timeout` | How long requests in flight may run after Ctrl-C. Default 10s. |
-| `--plan-budget` | How long one plan may be priced. Past it the plan stops and is refused with `PlanBudgetExceeded`. Default 5m; 0 is the default too. Serve refuses a negative value and one above 9m, which would end after the 10-minute write timeout has closed the connection. |
-
-No request can name a host or a file path: the Prometheus URL is a flag, and a
-recording is a file name inside `--recordings`. An error names no server path.
-
-## Requests
-
-Every request body is one JSON value of at most 1 MiB, sent as
-`Content-Type: application/json`, in every mode: any other media type is 415,
-so no cross-site form reaches the server. Every error, whatever its status, is
-the same shape:
-
-```json
-{"schemaVersion": 1, "error": "slo.ttft.statistic \"p100\", want mean or a percentile from p1 to p99.9 (p90)"}
-```
-
-An error a client can act on also has a `reason`. The only one today is
-`PlanBudgetExceeded` (see below).
-
-With `--auth=none` the server answers only requests addressed to a loopback
-name (`localhost`, `127.0.0.0/8`, `[::1]`, by the same rule `--listen` is
-checked by), so a web page that rebinds its own name to 127.0.0.1 cannot read
-it. This holds with `--listen-all-in-container` too: a browser on the host
-names `127.0.0.1:8080` or `localhost:8080`, which pass. The Host check is not
-access control: a client other than a browser can send `Host: localhost` from
-anywhere it reaches the port. Only where the port is published bounds who
-can ask.
-
-## In a container
-
-`Dockerfile.capacity-planner` builds a distroless, nonroot image whose entry
-point is the binary and whose command is
-`serve --listen 0.0.0.0:8080 --listen-all-in-container --recordings /recordings`.
-`/recordings` is empty in the image; mount a directory over it. Run it as
-yourself (recordings are written `0600`, readable by their owner only), and
-publish the port to the host's loopback only, never beyond it:
-
-```
-docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 \
-  -v "$PWD/recordings:/recordings:ro" \
-  ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>
-```
-
-With rootless Podman, use `--userns=keep-id` in place of `--user`; with
-SELinux, mount with `:ro,Z`.
-
-Never run the default command with `--network host`: the container then
-shares the host's interfaces and the server listens on all of them. Give the
-command yourself, with `--listen 127.0.0.1:8080` and without
-`--listen-all-in-container`. In a Kubernetes Pod (`KUBERNETES_SERVICE_HOST`
-set) serve refuses `--listen-all-in-container`: the cluster network reaches a
-Pod's port, so use `--auth=kubernetes` with TLS. Serve reads a kubeconfig
-only with `--auth=kubernetes`.
+`make capacity-planner` builds `bin/capacity-planner` and stamps the commit into
+the build, as the recordings it makes carry it. `capacity-planner` is not in
+the manager image. Each release ships it as its own image,
+`ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>`
+(`Dockerfile.capacity-planner`: distroless, nonroot, entry point the binary),
+and as binaries for linux and darwin.
 `make capacity-planner-image-check` builds the image and runs
 `hack/check-capacity-planner-image.sh` against it, as the PR check does.
 
-## Kubernetes authentication
-
-The server reads Prometheus with its own credentials, so a namespace is the
-server's to allow (`--allowed-namespaces`), and with `--auth=kubernetes` the
-user's too: `get` on `pods` there. Access to the API itself is `get` on the
-non-resource URL `/whatif/` plus the path, for every method: a `POST
-/v1/plan` is authorized as `get` on `/whatif/v1/plan`, since the API changes
-nothing. The path keeps the command's old name, so RBAC written for an earlier
-release still applies.
-
-The RBAC for a group `planners`, and the ServiceAccount `planner` the token
-example below uses, that read the namespace `llm`:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: capacity-planner
-rules:
-- nonResourceURLs: ["/whatif/*"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: capacity-planner
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: capacity-planner
-subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: planners
-- kind: ServiceAccount
-  name: planner
-  namespace: llm
----
-# One Role and RoleBinding per namespace in --allowed-namespaces.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: capacity-planner-reader
-  namespace: llm
-rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: capacity-planner-reader
-  namespace: llm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: capacity-planner-reader
-subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: planners
-- kind: ServiceAccount
-  name: planner
-  namespace: llm
-```
-
-The server's own identity (its kubeconfig) needs `create` on
-`tokenreviews.authentication.k8s.io` and
-`subjectaccessreviews.authorization.k8s.io`, as `system:auth-delegator`
-grants.
-
-A request with a token, from the ServiceAccount `planner` in `llm` that the
-bindings above name. Start the server; it runs in the foreground:
+To look at the page against the goldens' recordings:
 
 ```
-bin/capacity-planner serve --auth=kubernetes --listen 0.0.0.0:8443 \
-  --tls-cert-file tls.crt --tls-key-file tls.key \
-  --prometheus https://prometheus.example:9090 --kube-state-metrics --namespace llm
+make capacity-planner
+mkdir -p /tmp/recs
+cp internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz /tmp/recs/ols-sweep.jsonl.gz
+bin/capacity-planner serve --recordings /tmp/recs
+# open http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004
 ```
 
-Then, in another terminal:
+The recording learned no V_P, so the link assumes one.
 
-```
-TOKEN=$(kubectl -n llm create token planner)
-curl -s --cacert ca.crt https://planner.example:8443/v1/inputs \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"model": "qwen3-32b", "source": {"kind": "prometheus", "namespace": "llm"}}'
-```
-
-A token minted for another audience (`kubectl create token --audience capacity-planner`)
-is accepted only when the server is started with `--token-audiences capacity-planner`;
-with none, TokenReview checks the token for the API server's own audiences.
-
-## Endpoints
-
-| Method and path | Does |
-| --- | --- |
-| `POST /v1/inputs` | Resolves a source for one model: the replay of a recording to a cycle, or a Prometheus window captured and generated in memory (seconds). Returns `inputsId` and every term with its source. |
-| `POST /v1/plan` | Prices a scenario against an `inputsId`. |
-| `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate, under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
-| `GET /v1/sources` | What the server reads, for the page's source picker: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` that a `recording` source may name (a regular file or a link to one, under a name that is no path and not hidden), sorted. It does not open them: a file that is not a learner recording is listed, and refused when loaded. It lists at most 1000, with `recordingsTruncated` true past that. Any user the API answers sees all of these: every allowed namespace and every recording name. |
-| `GET /` | The page. Its scripts and style are `GET /page/scenario.js`, `GET /page/planner.js` and `GET /page/planner.css`. |
-
-`GET /v1/models` is a later phase. Any other path is a 404.
-
-### The page
+## The page
 
 The page is four files in `internal/whatifapi/page/`, embedded in the binary
 with `go:embed`: plain HTML, CSS and JavaScript, no library and no build step.
 It is served on the same handler as the API, so the same check guards it:
 loopback names only with `--auth=none`, and a bearer token allowed `get` on
 `/whatif/` (the page) and `/whatif/page/*` (its files) with
-`--auth=kubernetes`. The `/whatif/*` rule above covers both. A browser does not
-send a bearer token by itself: with Kubernetes authentication, open the page
-through a proxy that adds one. The page reaches its files and the API by paths
-relative to itself, so a proxy may serve it under a prefix; open it with the
-trailing slash (`/planner/`, not `/planner`).
+`--auth=kubernetes`.
 
 The page holds no model. It calls `GET /v1/sources`, `POST /v1/inputs`,
-`POST /v1/plan` and, in size mode, `POST /v1/size`, and draws what they return: a refused figure is drawn as a gap
-or its reason, never as a number, and every string the API returns is escaped
-before it is drawn. It computes only the axes' ranges and which knee is lower.
-Its Content-Security-Policy allows its own script, style and API only, and no
-inline script or style. One plan is in flight at a time; a knob moved
-meanwhile is priced when it returns, and a response priced against inputs a
-later load replaced is dropped. The rate prices on drag (100 ms after the last
-move), a target on release.
+`POST /v1/plan` and, in size mode, `POST /v1/size`, and draws what they
+return: a refused figure is drawn as a gap or its reason, never as a number,
+and every string the API returns is escaped before it is drawn. It computes
+only the axes' ranges and which knee is lower. Its Content-Security-Policy
+allows its own script, style and API only, and no inline script or style. One
+plan is in flight at a time; a knob moved meanwhile is priced when it returns,
+and a response priced against inputs a later load replaced is dropped. The
+rate prices on drag (100 ms after the last move), a target on release.
 
 A toggle above the controls switches between the two questions: "How much does
 this fleet serve?" (plan mode) and "What fleet does this traffic need?" (size
 mode). In size mode the page posts the same scenario less the fleet to
 `POST /v1/size`, with `maxReplicas` from the "Search up to" box and
-`sizeOn: low` when "Size for the worst corner of V_P and f" is ticked; the replica
-steppers become read-only outputs showing the answer, and the rest of the page
-draws the plan the size returned. A rate prices on release in size mode, not
-on drag, since each size searches several fleets. With no fleet within the
-bound, the page shows the refusal and the figure at the bound, and no plan.
-Where the answer's limit at its worst corner of V_P and f is under the rate,
-the size box says so. The per-bucket view is unticked while sizing and put
-back on switching to plan mode, which keeps the fleet the size found. A
+`sizeOn: low` when "Size for the worst corner of V_P and f" is ticked; the
+replica steppers become read-only outputs showing the answer, and the rest of
+the page draws the plan the size returned. A rate prices on release in size
+mode, not on drag, since each size searches several fleets. With no fleet
+within the bound, the page shows the refusal and the figure at the bound, and
+no plan. Where the answer's limit at its worst corner of V_P and f is under the
+rate, the size box says so. The per-bucket view is unticked while sizing and
+put back on switching to plan mode, which keeps the fleet the size found. A
 response for a question since switched, or for inputs since reloaded, is
 dropped. While a size runs the page dims the last answer and counts the
 seconds; a newer question aborts the request (`AbortController`), and the
 server stops pricing it. A size no fleet serves is explained in the page's
 words (the "Search up to" box, the term to type, the target to raise), with
-the server's detail shown only for refusals the page does not name.
+the server's detail shown only for refusals the page does not name
+(`UNMET_SAID` in `planner.js`).
 
 The address's fragment carries the source and the knobs
 (`#recording=run.jsonl.gz&prefill=2&rate=6&ttft=0.8&vp=30000`), and the page
 rewrites it after each plan. Seconds are seconds, as the API takes them. In
 size mode it carries `mode=size`, `max` when it is not 32 and `low=1` when
 sizing for the worst corner, and no replica counts: they are the answer.
+
+### Saved scenarios and compare
 
 Saved scenarios and compare (phase 2) are the page's alone; the API has no
 endpoint for them and the server keeps nothing. A saved scenario is the
@@ -361,95 +141,23 @@ both. With no plan on screen it says why instead (`state.priceFailed`: the
 last price or size failed; no fleet within the bound; being priced, set as
 soon as size mode starts), and Pin is disabled meanwhile.
 
-To look at the page against the goldens' recordings:
+## Bucket edges
 
-```
-make capacity-planner
-mkdir -p /tmp/recs
-cp internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz /tmp/recs/ols-sweep.jsonl.gz
-bin/capacity-planner serve --recordings /tmp/recs
-# open http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004
-```
+Each bucket is named by its edge by `bucketName` in
+`internal/whatifapi/scenario.go`, so the default edges keep their names and no
+two edges share one.
 
-The recording learned no V_P, so the link assumes one.
-
-### The inputs
-
-| Key | What it is |
-| --- | --- |
-| `inputsId` | `sha256:` and a hash of the recording's bytes, the cycle, the model and the variants. The same source gives the same id. |
-| `source` | The kind, the recording's name or the window, the cycle read and how many the recording holds. |
-| `fleet` | The prefill and the decode variant, with their replica counts at the cycle. |
-| `observed` | The mean prompt and output and the prompt's spread; the default buckets (1k, 4k, 8k, 32k, 128k, each named by its upper edge) and the one the mean prompt falls in. The request rate and the share per bucket are refused: the replayed state carries neither. A plan's own `bucketEdges` change none of this. |
-| `policy` | The policy's TTFT and TPOT objectives, the headroom (`scaleUpThreshold`), and the flow-control state. |
-| `terms` | V_P, a, f, the prompt and its cv, the KV transfer, the router hop, the ITL line, the KV capacity and per-request KV, the batch cap, the context window (`maxModelLen`, the engines' `--max-model-len`), and R_q at p90: each with its source, or the refusal that stopped the fleet there. |
-| `assumed` | Every input the source did not give, in the CLI's words. |
-
-### The plan
-
-| Key | What it is |
-| --- | --- |
-| `scenarioId` | A hash of the scenario with its defaults applied. The same scenario is the same id and the same bytes. |
-| `banner` | What every TTFT figure says of itself, from `constants.SLOTTFTPredictionCaveat`. |
-| `scenario` | The request with its defaults applied. |
-| `ttft.line` | The mix line: its curve (65 rates, crowded toward the lower knee, the last two at and past it), its floor, point A (`atRate`, the TTFT at the chosen rate) and point B (`atTarget`, the rate at the target). |
-| `ttft.perBucket` | With `views.allTrafficPerBucket`, one line per bucket (the default five, or one per `bucketEdges` edge), "if all traffic were bucket b": each priced with every request at the bucket's upper edge, with its own knees, target (`slo.ttft.bucketTargets`, default the mix target) and points. No limit reads it. |
-| `ttft.markers` | The prefill and decode knees, the operating-point cap (headroom times the lower knee), and the flow-control onsets when flow control is on. |
-| `tpot` | The TPOT line at the statistic asked (`mean`, or `pNN` priced as the mean times R_q, with R_q's source in `ratio`), its curve, floor and points. Absent with `"tpot": {"statistic": "none"}`, or when neither the request nor the policy sets a TPOT target. |
-| `limits` | `prefill` (`slo-to-rate`'s prefill rate), `decode` (its decode rate), `fleet` (its fleet rate, the operating-point cap applied, with `withoutHeadroom` at headroom 1, `capApplied`, and `binding`, the role with the lower limit), and `chosen`, the chosen rate and its headroom under the fleet's limit. |
-| `marginal` | The fleet's limit with one more prefill replica, and with one more decode replica: the limit, the change, and which role binds then. These limits carry no span over V_P and f. |
-| `flags` | Every flag in the plan once, with the places it qualifies. |
-| `assumed` | Every assumed input of the scenario's fleet, in the CLI's words. |
-
-Every figure is an object holding `value` or `refused`, never both. A refused
-figure has no number in it, and no refusal is written as 0. A figure's `band`
-is its bootstrap band over the ITL line's readings; its `sensitivity` the span
-over V_P and f, ±15%, with the worse side refused (`hiRefused`, `loRefused`)
-where a corner is.
-
-The full key list is pinned in
-[`internal/whatifapi/testdata/schema-v1.txt`](../../internal/whatifapi/testdata/schema-v1.txt).
-`whatifSchema` names the CLI schema the answer, refusal and flag shapes follow.
-
-### What the scenario takes
-
-| Key | Default | Notes |
-| --- | --- | --- |
-| `fleet.prefill`, `fleet.decode` | the recorded counts | 1 to 64. |
-| `traffic.classes.critical.rate` | the operating point | r/s over the model: in v1 the total rate. `regular` and `batch` must be 0. |
-| `traffic.mix` | `"observed"` | Or `{"promptTokens": N, "outputTokens": N}`: priced as the CLI's `--assume-input-tokens` and `--assume-output-tokens`, flagged `AssumedShape`. |
-| `traffic.arrivalCV2` | Poisson | As `--arrival-cv2`. |
-| `slo.ttft` | the policy's | `statistic` `mean` or `pNN`, `target` in seconds. A TTFT target is required. |
-| `slo.tpot` | the policy's (a mean) | `statistic` `mean`, `pNN` or `none`. |
-| `headroom` | the policy's `scaleUpThreshold` | (0, 1]. |
-| `assume` | none | `vp`, `a` (seconds), `promptCV`, `tpotRatio`, `routerHop` (seconds): as the CLI's `--assume-*` flags, each flagged. |
-| `views.allTrafficPerBucket` | off | The per-bucket view. |
-| `bucketEdges` | 1024, 4096, 8192, 32768, 131072 | The per-bucket view's upper edges, in tokens: 1 to 8, ascending, each from 1 to 1048576. Needs `views.allTrafficPerBucket`. |
-
-### Bucket edges
-
-`bucketEdges` replaces the default buckets on one plan. Each bucket is named
-by its edge (`bucketName` in `internal/whatifapi/scenario.go`): in k where the
-edge is a whole number of 1024 tokens (`16384` is `16k`), else in tokens
-(`2000` is `2000`). So the default edges keep their names, and no two edges
-share one. `slo.ttft.bucketTargets` keys are these names; a key that names no
-bucket of the plan is a 400 listing the plan's buckets.
-
-The edges move only where the "if all traffic were bucket b" lines are priced:
-each at its upper edge, as before. Nothing in the inputs is per bucket (the
-observed mix is refused, `NoPerRequestLengths`), so there is nothing to
-re-bucket and nothing to match: no learned figure is priced from a bucket.
-The limits read the mix line and do not move. When a recorder carries
+Nothing in the inputs is per bucket (the observed mix is refused,
+`NoPerRequestLengths`), so there is nothing to re-bucket and nothing to match:
+no learned figure is priced from a bucket. When a recorder carries
 per-request lengths and the mix gains shares, edges that do not match the
 shares' buckets will need a rule; until then there is none to need.
 
-Edges equal to the default are dropped from the scenario (`Scenario.BucketEdges`
-is absent), so a plan that asks them has the same `scenarioId` and bytes as one
-that does not. Other edges are part of the `scenarioId` and of the limits'
-cache key. Refused with a 400 that names the edge: none (`[]`), more than 8,
-an edge under 1 or over 1048576, an edge not above the one before it, a token
-count that is not a whole number, and edges without the view. `POST /v1/size`
-refuses `bucketEdges`: a size prices the mix line alone.
+Edges equal to the default are dropped from the scenario
+(`Scenario.BucketEdges` is absent), so a plan that asks them has the same
+`scenarioId` and bytes as one that does not. Other edges are part of the
+`scenarioId` and of the limits' cache key. `POST /v1/size` refuses
+`bucketEdges` before it looks its inputs up: a size prices the mix line alone.
 
 The cap is 8 for cost. Each edge not priced before is a fleet's curve set at
 five corners of V_P and f, priced while the plan holds its slot: on the worked
@@ -459,61 +167,34 @@ default five on a cold server; in review, twelve fresh edges took 16 to 19 s.
 An edge priced before is served from the curve cache (keyed by the fleet's
 knobs, the prompt among them), whatever the plan's other edges.
 
-**The context window.** The inputs carry the engines' context window as the
-term `maxModelLen`: the smallest `--max-model-len` (SGLang's
-`--context-length`) the prefill and the decode variant's recorded arguments
-set. It is refused `NotRecorded` where no readable one is set (the model's
-own applies, and the source does not carry it), and `UnreadableArgument`
-where either variant sets one the parser cannot read: that variant may refuse
-shorter prompts than the other allows, so no smaller figure stands in. The
-parser reads `--max-model-len` as vLLM's `human_readable_int_or_auto` does
-(`vllm/utils/argparse_utils.py`): a lower-case suffix is decimal (`16k` is
-16000, `1m` is 1000000, `25.6k` is 25600), an upper-case one binary (`16K`
-is 16384, no decimals), and `auto` or `-1` is the model's own
-(`internal/signals/capacity/human_int.go`). SGLang's `--context-length` is
-read as a plain integer.
-
-Where the window is known, a bucket line is flagged `EdgeBeyondContext` on
-its `atRate` and `atTarget`, and in the plan's flag list, when its edge plus
-the scenario's output tokens (stated, else observed, else 0) passes it: vLLM
-refuses a request whose prompt and `max_tokens` pass `--max-model-len`. The
-mean output stands in for `max_tokens`, which the source does not carry. The
-line is still priced, and nothing is refused; with the window unknown
-nothing is flagged. The goldens' recordings run `--max-model-len 16384`, so a
+**The context window.** `maxModelLen` is parsed in
+`internal/signals/capacity/human_int.go` as vLLM's `human_readable_int_or_auto`
+does (`vllm/utils/argparse_utils.py`); SGLang's `--context-length` is read as a
+plain integer. Where either variant sets a value the parser cannot read, the
+term is refused `UnreadableArgument` rather than taking the other's: that
+variant may refuse shorter prompts than the other allows. The mean output
+stands in for `max_tokens` in the `EdgeBeyondContext` check, since the source
+does not carry it. The goldens' recordings run `--max-model-len 16384`, so a
 default per-bucket plan on them flags its 32k and 128k lines.
 
-The page has a **Bucket edges** box under the per-bucket checkbox, enabled
-with it. `parseEdges` in `scenario.js` reads it by the server's rules: token
-counts split by commas or spaces, `16k` as 16384, at most 8, ascending, each
-from 1 to 1024k. The page sends them as `bucketEdges` with the view only;
-blank is the default. A box it cannot read prices nothing, and is marked
-(`aria-invalid`, a red border, the reason under it, `edgesBoxProblem`) for
-as long as its text is not the edges the lines show, whatever the status
-line says since. The box is rewritten in its canonical form, each edge by its
-bucket's name (`bucketName` there, as the server's: `2048` is `2k`), so the
-box, the link and the lines' labels agree and one plan has one link. A link
-may carry edges in any form `parseEdges` reads (a hand-edited `edges=2048` or
-`2K,16k`): the page uses them and rewrites the link in canonical form
-(`linkedEdges`). Edges that do not parse are refused by `linkProblem`, so a
-scenario file with edges out of order or too many is refused on import, and a
-page link with them prices the default buckets with the reason in the status
-line. A line flagged `EdgeBeyondContext` is dimmed and dotted on the chart,
-says so in its legend entry, and its bucket table row reads "past the 16k-token
-context window". From the sixth line on, the colours repeat and the lines are
-dashed. Compare reads the limits, which the edges do not move; where A's and
-the current plan's edges differ, its table has a Buckets row.
+On the page, `parseEdges` in `scenario.js` reads the **Bucket edges** box by
+the server's rules. The page sends them as `bucketEdges` with the view only. A
+box it cannot read prices nothing, and is marked (`aria-invalid`, a red
+border, the reason under it, `edgesBoxProblem`) for as long as its text is not
+the edges the lines show. The box is rewritten in its canonical form, each
+edge by its bucket's name (`bucketName` there, as the server's), so the box,
+the link and the lines' labels agree and one plan has one link. A link may
+carry edges in any form `parseEdges` reads; the page uses them and rewrites
+the link in canonical form (`linkedEdges`). Edges that do not parse are
+refused by `linkProblem`, so a scenario file with edges out of order or too
+many is refused on import. Compare reads the limits, which the edges do not
+move; where A's and the current plan's edges differ, its table has a Buckets
+row.
 
-### The size
+## The size search
 
-`POST /v1/size` takes the plan's keys but `fleet`, `views` and `bucketEdges`, and two more:
-`maxReplicas` (`{"prefill": N, "decode": N}`, 1 to 64 each, 32 by default),
-the most replicas of a role it tries, and `sizeOn`, what the fleet must reach
-the rate with: `point`, its limit (the default), or `low`, the low end of the
-limit's span over V_P and f. The rate, `traffic.classes.critical.rate`, is
-required. The inputs must have a prefill variant.
-
-How it searches. Every fleet it tries is priced as the plan's +1 steps are
-(the limits at the targets and headroom, with no span over V_P and f), or with
+Every fleet the search tries is priced as the plan's +1 steps are (the limits
+at the targets and headroom, with no span over V_P and f), or with
 `sizeOn: low` as the plan's own limits are (with the span, five times the
 cost). Each count is found by galloping up from one replica (1, 2, 4, 8, ...
 up to the bound) and then bisecting back, so the cost grows with the answer,
@@ -540,10 +221,8 @@ it prices as `POST /v1/plan` would (same request, the fleet set) and reads the
 answer's limit, headroom and binding from, so the answer is what a plan of
 that fleet says. The search is kept by `sizeId` before that plan is priced:
 a size whose plan did not finish (its client gone) is not searched again.
-Where the same plan is already being priced for another request, the size
-waits for it; if that request was turned away busy, the size asks once more,
-on its own slot. Decode's own limit has no span, so its probes are priced
-without one even when sized `low`.
+Decode's own limit has no span, so its probes are priced without one even
+when sized `low`.
 
 The search takes each limit to rise with its replica count. Where one does
 not, galloping and bisecting can step over a smaller count that serves the
@@ -551,56 +230,50 @@ rate; the count just below the answer is always priced and checked, so a fleet
 with one replica fewer of either role that serves the rate is a 500, not an
 answer, and so is a plan at the answer that does not.
 
-| Key | What it is |
-| --- | --- |
-| `sizeId` | A hash of the scenario, the bound and `sizeOn`. The same size is the same id and the same bytes. |
-| `rate`, `maxReplicas`, `sizeOn` | The rate sized for, the bound searched, and what the fleet was sized on. |
-| `searched` | How many fleets the search priced, the answer's plan aside. |
-| `answer.fleet` | The fewest replicas: decode's fewest first, then prefill's fewest with them. |
-| `answer.limit`, `answer.binding` | The plan's `limits.fleet` at that fleet, with its span over V_P and f in `sensitivity`, and the role that binds; `limit.boundBy` says which SLO or cap sets it. Sized on the `point`, the span's low end may be under the rate. |
-| `answer.headroom` | The limit less the rate; sized `low`, the span's low end less the rate, the same basis as the steps'. |
-| `answer.fewerPrefill`, `answer.fewerDecode` | The fleet with one replica fewer of the role: its limit (no span, unless sized `low`), how far short of the rate it is (`headroom`, negative; sized `low`, the span's low end's shortfall), and the role that binds. Absent when the role has one replica. |
-| `answer.plan` | The plan at the fleet, as `POST /v1/plan` returns it, flags and assumed inputs included. |
-| `unmet` | Instead of `answer`: `refused` (the engine's reason where it refuses the figure, such as `NoPrefillCapacity` or `TargetBelowFloor`, and sized `low`, where it refuses the figure at the worst corner of V_P and f, which no replica count changes; else `ReplicaBoundReached`, with the figure the bound reached), `role` (`decode`, `prefill`, or `fleet` when each role alone reaches the rate and the fleet does not), and `atBound`, the fleet at the bound as a step. |
+## Shared calls
 
-A size with no fleet within the bound is a 200 with `unmet`, not an error: a
-refusal is a figure, as in a plan.
+`flight` (`internal/whatifapi/flight.go`) runs one call per key at a time:
+callers that ask for a key while its call runs wait for it and share its
+result, so identical cold requests price once and take one slot. The server
+has one per kind (`planFlight` by `scenarioId`, `sizeFlight` by `sizeId`,
+`curveFlight`, `limitFlight`), and the authenticator one for its reviews. Where a size's answer plan is
+already being priced for another request, the size waits for it; if that
+request was turned away busy, the size asks once more, on its own slot. A
+caller never reruns its own call on a deadline error.
 
-A field asked wrongly is a 400 naming it, and an `inputsId` the server no
-longer holds a 404: resolve the inputs again. The server prices as many plans at
-once as it has CPUs, and two inputs at once; past that a request is 503 with
-`Retry-After: 1`. A plan whose client goes away stops between figures.
+Plan slots are a channel of `MaxPlans` tokens (the CPU count) and input slots
+one of `MaxInputs` (two); a request that finds none free is `errBusy`, a 503
+with `Retry-After: 1`. A plan whose client goes away stops between figures.
+The HTTP server's timeouts are in `serve.go`: read 30 s, idle 2 minutes,
+write 10 minutes (`writeTimeout`).
 
-A plan that is still pricing when `--plan-budget` (default 5 minutes) runs out
-stops at its next figure and is a 503 with a reason, and no `Retry-After`:
+## The plan budget
 
-```json
-{"schemaVersion": 1, "error": "the plan was not priced within the server's plan budget of 5m0s, and was stopped: ask without the per-bucket view (on the page, untick \"Show if all traffic were bucket b\") or with fewer bucket edges, or start the server with a larger --plan-budget", "reason": "PlanBudgetExceeded"}
-```
-
-The page does not retry this 503: it retries only a 503 with `Retry-After`
-(`retryDelay` in `scenario.js`). Nothing of that plan is kept, so asking again
-prices it again. A cold plan of the worked recording takes under 20 s.
+`planWithin` prices a plan under
+`context.WithTimeoutCause(ctx, planBudget, errPlanBudget)`. Only the budget's
+own end is a `BudgetError` (503, reason `PlanBudgetExceeded`, written by
+`writeErrorReason`): a plan whose client ended first is the client's end, with
+no reason, and an error the plan returns for its own reason as the budget ends
+is that error. Nothing of a stopped plan is cached, and its slot is freed.
 
 The budget is checked between figures, so a plan can run past it by one
-figure. One figure normally takes milliseconds. A size's search (`/v1/size`)
-is not under the budget, only the plan it answers with. A request that joins a
-plan already being priced shares that plan's clock. `--plan-budget` is at most
-9 minutes, a minute under the 10-minute write timeout, so the refusal is
-written before the connection closes.
+figure. A size's search is not under the budget, only the plan it answers
+with. A request that joins a plan already in flight shares that plan's clock.
+`maxPlanBudget` in `serve.go` is 9 minutes, a minute under `writeTimeout`, so
+the refusal is written before the connection closes; `--plan-budget` 0 is
+`DefaultPlanBudget` (5 minutes).
 
-Reading
-a request may take 30 s, an idle connection is closed after 2 minutes, and a
-response may take 10 minutes (a cold plan, or a capture).
+The page retries only a 503 with `Retry-After` (`retryDelay` in
+`scenario.js`), so it never retries `PlanBudgetExceeded`.
 
 ## Caching and latency
 
 The server keeps caches only: the inputs by `inputsId`, each plan by
 `scenarioId`, each fleet's curves by its knobs (replicas, mix, statistics,
 assumptions), and each fleet's limits and marginal steps by its knobs, the
-targets and the headroom, and each size by `sizeId`. So moving the rate prices the two points alone;
-moving a target prices the limits again, not the curves; a new replica count
-or assumption prices everything.
+targets and the headroom, and each size by `sizeId`. So moving the rate prices
+the two points alone; moving a target prices the limits again, not the curves;
+a new replica count or assumption prices everything.
 
 The plans (512) and the sizes (128) are kept as response bytes, each cache
 also bounded at 64 MiB (`defaultResponseBytes`): a per-bucket plan with 8
@@ -648,7 +321,3 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
 | `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (217 cases; it fails without node): `esc`, `retryDelay` (only a 503 with `Retry-After` is retried, never `PlanBudgetExceeded`), the bucket edges by the server's rules, the box's mark, the link's edges and the lines' styles, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |
-| `TestServeListenAllInContainerRefused` | `--listen-all-in-container` is refused in a Kubernetes Pod, at an address it otherwise allows; a start refused for any reason, or a bind that fails, prints no warning that it serves. |
-| `hack/check-capacity-planner-dist.sh` | `make capacity-planner-dist` builds all four platforms with `-trimpath`, CGO off and both ldflags, and the host binary prints the version and commit (PR check `capacity-planner-image`). |
-| `TestCheckContainerListen`, `TestServeListenAllInContainer` | `--listen-all-in-container` allows the unspecified address with `--auth=none` and nothing else (a named interface, a hostname, `--auth=kubernetes`), each of which `CheckListen` still refuses; started so, serve binds every interface, warns, answers a loopback Host and refuses another with 403. |
-| `hack/check-capacity-planner-image.sh` | The image runs as non-root, prints its version, and run as the caller with its own command and a committed 0600 recording mounted answers `POST /v1/inputs` and `POST /v1/plan` with 200 and a TTFT curve; a foreign Host is 403; `serve` on `0.0.0.0` without the opt-in exits 2. |
