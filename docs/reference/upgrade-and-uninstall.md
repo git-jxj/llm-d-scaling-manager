@@ -20,19 +20,19 @@ Pin a release tag or a digest, and deploy with the manifests from the **same**
 release. An image older than the manifests crash-loops on flags it does not
 know. Releases are listed on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases);
-the current one is `v0.11.0`.
+the current one is `v0.11.1`.
 A checked-out release deploys its own tag, so `IMG_TAG` below only makes that
 explicit. Each release's notes list its image digest; a digest names one build,
 and a tag could in principle be re-pushed.
 
 ```bash
-git checkout v0.11.0
-make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.11.0
-# or by digest (v0.11.0's, from its release notes)
+git checkout v0.11.1
+make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.11.1
+# or by digest (v0.11.1's, from its release notes)
 make deploy-scaling-manager NAMESPACE=<namespace> \
-  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:ec3af197ba63ff2e5f7bc214c90fbb7cf25bb6f442c832a05cfbf74b9c50cd6e
+  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:<v0.11.1 digest, from its release notes>
 # out-of-reach shape (the cluster admin runs it): the controller runs in llmsm-<namespace>
-NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.11.0
+NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.11.1
 ```
 
 `IMG_TAG` sets the tag of the default `IMG`; `IMG` replaces the whole reference.
@@ -128,6 +128,21 @@ changed, and there is no compatibility path. Reinstall.
    ```
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
+
+### Upgrading from v0.11.0 to v0.11.1
+
+Follow [Upgrade](#upgrade) above: back up the policy, check out `v0.11.1`, and
+re-run the `make deploy-scaling-manager` command you installed v0.11.0 with, or
+apply the v0.11.1 release files. Nothing to change first. What to expect:
+
+1. **P/D prefill may run more replicas at the same load.** Prefill now has a
+   floor from the requests each replica completes, and a prefill with no
+   measured throughput counts prompts held in the router as demand. Rolling
+   back to v0.11.0 is safe: it ignores the new learned-state field.
+2. **A re-install drops `default` keys of the scaling policy that v0.11.1 no
+   longer renders**, and logs a warning naming each. Keys you added are kept.
+3. **KEDA HPA repair is opt-in** (`KEDA_HPA_REPAIR=true`, off by default), and
+   needs the extra grant in [KEDA](keda.md#the-controller-repair-keda_hpa_repair).
 
 ### Upgrading from v0.11.0-rc1 to v0.11.0
 
