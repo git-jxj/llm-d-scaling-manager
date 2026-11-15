@@ -1,6 +1,8 @@
 package whatif
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
@@ -17,7 +19,9 @@ import (
 // flow control off: the freeze's fleet to the bit
 // (TestStaircaseQ32_TheFixtureIsTheFrozenCurve).
 //
-// Where it comes from: the run's frozen.json, whose recordingSha256 names the
+// Where it comes from: frozen.json in the run's directory (not in the
+// repository; the staircase writes it beside the run's recordings), whose
+// recordingSha256 names the
 // warm-up recording it was frozen from
 // (4693f3bbbd8322c77af2a1fbcddeaa4cf3ce92f7d6eb66e8437ec2e3900ff291), written
 // by `capacity-planner freeze` from that warm-up recording and the run's
@@ -60,13 +64,15 @@ func q32Fleet(bucket string) TTFTFleet {
 // TTL; a step with any is void for the gate, and its client figures are the
 // dispatched requests' only, so they read low.
 type q32Step struct {
-	rate          float64
-	frozen        [3]float64
-	client        [3]float64
-	routerWait    float64
-	failed        int
-	pastTheOnset  bool
-	insideTheTake bool
+	rate       float64
+	frozen     [3]float64
+	client     [3]float64
+	routerWait float64
+	failed     int
+	// pastTheOnset is at or past the prefill onset; waitPriced is where the
+	// switch takes the wait as priced (FlowControlWaitPriced).
+	pastTheOnset bool
+	waitPriced   bool
 }
 
 // q32Steps are the steps at and next below each prefill onset (B 3.707 r/s,
@@ -87,8 +93,8 @@ var q32Steps = map[string][]q32Step{
 // The fixture is the frozen fleet: its TTFT at every step is the frozen
 // curve's, to the bit printed.
 func TestStaircaseQ32_TheFixtureIsTheFrozenCurve(t *testing.T) {
-	for bucket, steps := range q32Steps {
-		for _, s := range steps {
+	for _, bucket := range slices.Sorted(maps.Keys(q32Steps)) {
+		for _, s := range q32Steps[bucket] {
 			for i, q := range []float64{0, 0.9, 0.95} {
 				got := psTTFT(t, q32Fleet(bucket), s.rate, q).Seconds
 				nearRel(t, bucket+" frozen curve", got, s.frozen[i], 1e-9)
@@ -102,28 +108,29 @@ func TestStaircaseQ32_TheFixtureIsTheFrozenCurve(t *testing.T) {
 const q32Tolerance = 0.9
 
 // A known failure, asserted so that a fix shows. The switch moves no figure:
-// the price is the frozen curve's with it on and off. Below each onset the price
-// reads well above the client (1.5 to 2.6 times). At C's first step past it
-// (3.24 r/s, 0.80 of the prefill knee, inside MaxRouterWaitKneeShare, so the
-// switch takes it as FlowControlWaitPriced) the router held 19 % of requests
-// for a mean of 1.40 s, and the price reads 0.80 of the client's mean, 0.84
-// of its p90 and 0.57 of its p95. At the next step (3.34 r/s, void: 127
-// evicted) it reads 0.57, 0.35 and 0.39 of what the dispatched requests
-// alone saw (logged, not judged: the step is void). The gate does not only move the wait, as the switch argues: at
-// the same rates with flow control off the client read 3.14 s and 3.60 s,
-// under the price. Taken as priced, it would also lift bucket C's rate for
+// the price is the frozen curve's with it on and off. Below each onset the
+// price reads well above the client (1.5 to 2.7 times). At C's first step
+// past it (3.24 r/s, 0.80 of the prefill knee, inside
+// MaxRouterWaitKneeShare, so the switch takes it as FlowControlWaitPriced)
+// the router held 19 % of requests for a mean of 1.40 s, and the price reads
+// 0.80 of the client's mean, 0.84 of its p90 and 0.57 of its p95. At the
+// next step (3.34 r/s, void: 127 evicted) it reads 0.57, 0.35 and 0.39 of
+// what the dispatched requests alone saw (logged, not judged: the step is
+// void). The gate does not only move the wait, as the switch argues: at the
+// same rates with flow control off the client read 3.14 s and 3.60 s, under
+// the price. Taken as priced, it would also lift bucket C's rate for
 // its frozen p95 target from the onset (3.10 r/s, inside the measured
 // crossing, 3.04 to 3.24) to 3.44 r/s, past it.
 func TestStaircaseQ32_TheRouterWaitStepsReadShort(t *testing.T) {
 	if DefaultPriceRouterWait {
 		t.Fatal("PriceRouterWait reads short of the Qwen3-32B staircase's client past the prefill onset: keep it off")
 	}
-	for bucket, steps := range q32Steps {
+	for _, bucket := range slices.Sorted(maps.Keys(q32Steps)) {
 		fl := fcFleet(q32Fleet(bucket), true)
-		for _, s := range steps {
+		for _, s := range q32Steps[bucket] {
 			mean := mustTTFT(t, ttftAt(t, fl, s.rate, 0))
 			if s.pastTheOnset != (mean.HasFlag(FlowControlWaitPriced) || mean.HasFlag(AboveFlowControlOnset)) ||
-				s.insideTheTake != mean.HasFlag(FlowControlWaitPriced) {
+				s.waitPriced != mean.HasFlag(FlowControlWaitPriced) {
 				t.Errorf("%s %.3f r/s: flags %v", bucket, s.rate, mean.Flags)
 			}
 			for i, q := range []float64{0, 0.9, 0.95} {
@@ -133,13 +140,16 @@ func TestStaircaseQ32_TheRouterWaitStepsReadShort(t *testing.T) {
 				unswitched := mustTTFT(t, ttftAt(t, fcFleet(q32Fleet(bucket), false), s.rate, q)).Seconds
 				nearRel(t, bucket+" price, switch on", got, s.frozen[i], 1e-9)
 				nearRel(t, bucket+" price, switch off", unswitched, s.frozen[i], 1e-9)
+				// 0 is unmeasured: the void B 7's p90 and p95 lie past the
+				// client's histogram.
 				if s.client[i] == 0 {
 					continue
 				}
 				t.Logf("%s %.3f r/s q %g: model %.2f s, client %.2f s (%.2fx), router wait %.2f s, %d evicted",
 					bucket, s.rate, q, got, s.client[i], got/s.client[i], s.routerWait, s.failed)
-				// Only a step the fleet held is judged: a void step's client
-				// figures are the dispatched requests' only, and read low.
+				// Only a step the fleet held is judged, which past the onset
+				// is C 4 alone: a void step's client figures are the
+				// dispatched requests' only, and read low.
 				if s.pastTheOnset && s.failed == 0 && got >= q32Tolerance*s.client[i] {
 					t.Errorf("the known failure is gone: %s %.3f r/s q %g reads %.2f s, within %.0f%% of the client's %.2f s; revisit DefaultPriceRouterWait and the TTFT page",
 						bucket, s.rate, q, got, 100*(1-q32Tolerance), s.client[i])
