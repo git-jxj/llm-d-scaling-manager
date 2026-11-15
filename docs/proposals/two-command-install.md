@@ -13,11 +13,15 @@ bootstrap) and the release's tools image (`Dockerfile.tools`,
 
 ## The problem
 
-The README's install block is about 20 commands: download seven files and
-their bundles, check the sums, two `sed` passes, three admin applies, an edited
-settings file, a preflight loop, the scaler TLS Secrets, the controller, the
-KEDA certificate step, a second preflight run, and a cleanup. Each step is
-simple; together they are easy to get wrong, and the order matters.
+The README's install block on `main` is about 17 lines: download six files,
+two `sed` passes, two admin applies, an edited settings file, the scaler TLS
+Secrets, the controller, and the KEDA certificate step. It has no preflight,
+no checksum check and no cleanup. The v0.11.1 README adds those: a seventh
+file, the signature bundles, a `SHA256SUMS` check, the preflight's RBAC and a
+preflight loop run twice, and the removal of the preflight's cluster reads,
+for about 27 lines. The install guide spells out the same steps with their
+checks. Each step is simple; together they are easy to get wrong, and the
+order matters.
 
 The tools image is already on the operator's machine for `workload-patch`,
 `scaledobjects-plan` and `utilization-share`. It carries `kubectl`, `jq` and
@@ -25,15 +29,20 @@ The tools image is already on the operator's machine for `workload-patch`,
 
 ## What the operator runs
 
-Once per machine, as today for the other tools:
+Once per machine, as for the other tools, but with two changes from today's
+`smt` setup. The image is named by digest, because the cluster admin hands it
+cluster-admin credentials and a tag can move. The kubeconfig is kept outside
+the directory mounted read-write at `/work`:
 
 ```bash
-V=<release>
-kubectl config view --minify --flatten > smt.kubeconfig && chmod 600 smt.kubeconfig
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
+mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
-  -v "$PWD/smt.kubeconfig:/kube/config:ro" -v "$PWD:/work" \
-  ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V "$@"; }
+  -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 ```
+
+Run it from a working directory that does not contain `~/.smt`. The release
+run's summary prints the digest in the `cosign verify` command for it.
 
 Then:
 
@@ -72,13 +81,15 @@ The two-role split stays.
 5. Apply the model-namespace file (PodMonitor, controller Role).
 6. On OpenShift, label the namespace `openshift.io/user-monitoring=true`.
 7. Write the stamp: ConfigMap `scaling-manager-admin-setup` in `NS`, holding
-   the release and a hash of the admin objects as shipped
-   ([Upgrade](#upgrade)).
+   the release, KEDA's namespace, and a hash of the admin objects as shipped,
+   taken before the namespace and KEDA substitutions ([Upgrade](#upgrade)).
 
 ### `smt install -n NS --prometheus-url URL [--quota "GPU=N"]`
 
 1. Take the release files from the image ([Where the files come
-   from](#where-the-files-come-from)) and check them against `SHA256SUMS`.
+   from](#where-the-files-come-from)) and check them against `SHA256SUMS`
+   (with `--ignore-missing`: it also lists the tools tarball, which the image
+   does not carry).
 2. Substitute `__NAMESPACE__` and `__MODEL_NAMESPACE__`.
 3. Check the admin stamp. Missing, or from other admin objects: stop, exit 3,
    and print the `smt admin-setup` line for the admin to run.
@@ -89,7 +100,9 @@ The two-role split stays.
 6. Run the preflight Job (delete, apply, wait, print). Any `FAIL`: stop,
    exit 1, nothing more is created ([Preflight results](#preflight-results)).
 7. Create the scaler TLS Secrets if absent. Never apply them: that would
-   empty Secrets the controller filled.
+   empty Secrets the controller filled. The file labels them `part=admin`,
+   because `Secret` is in `LLMSM_PREREQ_KINDS`; the owner creates them
+   anyway, as the guide does, since the stock `admin` role may.
 8. Apply the `part=controller` objects; wait for the rollout.
 9. Run the preflight again, now that the controller exists, and print it.
 10. Print what is left: the `smt admin-finish` line, and the command that
@@ -99,15 +112,24 @@ The two-role split stays.
 
 1. Wait (bounded) until the controller has filled the client certificate
    Secret.
-2. Copy it into KEDA's namespace, apply the ClusterTriggerAuthentication and
-   marker from `scaling-manager-keda-auth.yaml`, restart the controller. The
-   same steps `scalerTLSAction` prints, run from the code that makes them,
-   not by parsing that text.
-3. Wait for `scalerTLS: mutual TLS`. On a reinstall where KEDA keeps a stale
+2. Find KEDA's namespace: `--keda-namespace`; else the stamp `admin-setup`
+   wrote, checked against the live NetworkPolicy's source namespace (they
+   must agree); else the APIService detection. It fills `__KEDA_NAMESPACE__`
+   in `scaling-manager-keda-auth.yaml`.
+3. Copy the client certificate into KEDA's namespace, apply the
+   ClusterTriggerAuthentication and marker from that file, restart the
+   controller. These are the steps `scalerTLSAction` prints (the controller
+   writes that text in `internal/scalertls/bootstrap.go`). The tools image
+   is bash and cannot call that Go code, and parsing the text is fragile,
+   so it runs them through `deploy/lib/scaler_tls.sh`
+   (`llmsm_scaler_keda_auth_apply`, which `make setup-prereqs` uses), with
+   the release's keda-auth file. A check asserts both produce the same
+   objects, including the OpenShift service-CA case.
+4. Wait for `scalerTLS: mutual TLS`. On a reinstall where KEDA keeps a stale
    connection, print the KEDA operator restart; `--restart-keda` runs it.
    It never restarts KEDA unasked: other workloads share it.
-4. Run the preflight a last time.
-5. Delete ClusterRoleBinding `scaling-manager-preflight-NS`. If the last run
+5. Run the preflight a last time.
+6. Delete ClusterRoleBinding `scaling-manager-preflight-NS`. If the last run
    had a `FAIL`, keep it so the owner can run again, and print the delete
    command instead.
 
@@ -120,7 +142,7 @@ The two-role split stays.
 | | baked in | fetched by the container |
 | --- | --- | --- |
 | files match the image | always, by construction | needs the tag lookup, and a re-tagged release can drift |
-| air-gapped cluster | works: mirror one image | needs a mirror of GitHub release assets too |
+| air-gapped cluster | works: mirror the tools and controller images | needs a mirror of GitHub release assets too |
 | signature check | the image's signature covers the files; one `cosign verify` of the tools image, outside | needs cosign and the Sigstore trust root inside |
 | image size | the YAML files and their bundles: small | none |
 
@@ -136,8 +158,18 @@ Why not cosign in the image:
   fixable CRITICAL. More surface, nothing gained.
 
 So the image carries, at `/opt/scaling-manager-tools/release/`, the release
-files, their `.sigstore.json` bundles and `SHA256SUMS`, byte-identical to the
-GitHub release assets. Two more commands use them:
+manifests, their `.sigstore.json` bundles and `SHA256SUMS`. They are the same
+bytes the GitHub release carries only because one signing run produces both
+(below): `cosign sign-blob` makes a new bundle on every run, so a re-signed
+file no longer matches the image's copy.
+
+It does not carry `scaling-manager-tools-<version>.tar.gz`: that tarball is
+the image's own scripts, for machines without a container runtime, and a copy
+of it inside the image is dead weight. `SHA256SUMS` still lists it, so the
+image checks its files with `--ignore-missing`, and `release-files` says the
+tarball is on the GitHub release.
+
+Two more commands use the files:
 
 - `smt release-files --out DIR` writes them out, to verify with cosign or to
   apply by hand.
@@ -147,17 +179,27 @@ GitHub release assets. Two more commands use them:
   `app.kubernetes.io/version` is not the image's own: the install logic and
   the files ship together.
 
-**Release workflow change.** Today `release-files` renders after the tools
-image is pushed. It moves before it: `release` (controller image, digest) →
-render and sign (`id-token: write`, no `contents: write`) → `release-tools`
-builds with `--build-context release=dist` → upload (`contents: write`
-only). `Dockerfile.tools` copies from a `release` stage that defaults to an
-empty `scratch` stage, so PR and development builds still build and carry no
-files.
+**Release workflow change.** Today `release-files` renders and signs after
+the tools image is pushed. The new order:
 
-The tools tag is mutable. The README says to run `cosign verify` on the tools
-image (the release run's summary already prints the command), or to pin it
-by digest.
+1. `release`: the controller image and its digest, as today.
+2. Render and sign (`id-token: write`, no `contents: write`). `dist/` (the
+   manifests, the tarball, `SHA256SUMS`, every bundle) is uploaded as a
+   workflow artifact. This is the only place bundles are made.
+3. `release-tools` downloads that artifact and runs `cosign verify-blob` on
+   every file before using it. All three of its builds take `--build-context
+   release=dist`: the amd64 and arm64 scan images as well as the pushed
+   multi-arch image, so the scan covers what ships.
+4. Upload (`contents: write` only): the same artifact, never re-rendered or
+   re-signed. A new check pulls the pushed tools image by digest and refuses
+   the upload unless its baked `SHA256SUMS` and bundles equal the artifact's.
+   The existing refusal stays: a published release whose `SHA256SUMS`
+   differs is not overwritten.
+
+A re-run that re-signs must rebuild and re-push the tools image in the same
+run; re-running the upload alone reuses the artifact. `Dockerfile.tools`
+copies from a `release` stage that defaults to an empty `scratch` stage, so
+PR and development builds still build and carry no files.
 
 ### Air-gapped clusters
 
@@ -166,6 +208,18 @@ and the tools image. `--image-repo REGISTRY/PATH` rewrites the repository of
 every pinned controller reference (controller and preflight Job) and keeps the
 digest. The digest is the identity; a mirror that changes it is refused at
 pull. KEDA and Prometheus are prerequisites and out of scope here.
+
+The signature does not travel with `skopeo copy`: it keeps the digest, not
+the signature. Two ways to keep a check:
+
+- Verify on a connected machine, before mirroring: `cosign verify` of both
+  images by digest. The digest then carries the trust into the air gap.
+- Mirror the signatures too (`cosign copy`), and verify inside the air gap
+  with a Sigstore trust root supplied offline: keyless verification
+  otherwise fetches it from the network.
+
+With neither, there is no signature check inside the air gap; the guide says
+so.
 
 ### Settings
 
@@ -197,9 +251,19 @@ A new release may change the admin objects. The owner cannot read
 ClusterRoles, and after `admin-finish` the preflight cannot either, so a
 SubjectAccessReview is not available. The stamp answers it: `install`
 compares the hash of the image's admin objects with the one `admin-setup`
-wrote. Equal: go on. Different: stop, exit 3, and print the `smt
-admin-setup` line with the new tag. A release that does not touch the admin
-objects needs no admin.
+wrote. Both hashes are of the admin objects as shipped, before the namespace
+and KEDA substitutions, so they compare across namespaces and KEDA
+locations. Equal: go on. Different: stop, exit 3, and print the `smt
+admin-setup` line with the new image. A release that does not touch the
+admin objects needs no admin.
+
+The stamp is a convenience, not a control. It lives in `NS`, which the
+owner's stock `admin` role can write, so an owner can forge or edit it. What
+it catches is the honest mistake: an upgrade run before the admin's. If it
+is wrong, the controller runs with the old rights, and after `admin-finish`
+the preflight cannot see that either. The controller's own errors show it;
+running `admin-setup` again restores the preflight's reads, and its
+`rbac.controller` check then names the missing rights.
 
 An install made by hand from the release files is adopted: same names, the
 settings and TLS Secrets exist and are kept. It has no stamp, so the first
@@ -218,7 +282,7 @@ shared between the two people.
 | --- | --- | --- | --- |
 | `admin-setup` | cluster admin | create ClusterRoles and bindings (they hold every right they grant), apply in `NS`, get the external-metrics APIService | the APIService and the NetworkPolicy |
 | `install` | namespace owner | the stock `admin` ClusterRole bound in `NS`: ConfigMaps, Secrets, Deployments, Services, Jobs, `pods/log` | nothing; OpenShift is detected from API discovery, which any user may read |
-| `admin-finish` | cluster admin | get the client certificate Secret in `NS`, write a Secret in KEDA's namespace, apply the ClusterTriggerAuthentication, restart the controller, delete the preflight binding | KEDA's namespace only |
+| `admin-finish` | cluster admin | get the client certificate Secret in `NS`, write a Secret in KEDA's namespace, apply the ClusterTriggerAuthentication, restart the controller, delete the preflight binding; read the NetworkPolicy and the stamp in `NS`, and the external-metrics APIService when neither names KEDA's namespace | the APIService, when needed; writes only in KEDA's namespace |
 | `--dry-run`, `release-files` | anyone | no kubeconfig | nothing |
 
 The preflight still runs as its own ServiceAccount, never the caller's. The
