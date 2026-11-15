@@ -68,13 +68,18 @@ changes nothing. `<gpu product>` is the `GPU.PRODUCT` column of
 
 Once per machine: the release's tools image, by the digest the release
 prints. The image carries the release files, signed with it
-([verify it](docs/reference/tools-install.md#set-up-smt)).
+([verify it](docs/reference/tools-install.md#set-up-smt)). Use a token
+kubeconfig (the container runs no cloud CLI), and for an API server at
+`127.0.0.1` (kind) add `--network host` to the `docker run`. The namespace
+owner needs the stock `admin` ClusterRole bound in the namespace, nothing
+more. Admin and owner each use their own kubeconfig snapshot: set
+`SMT_KUBECONFIG` to the one to use.
 
 ```bash
 TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
-  -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+  -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 ```
 
 Then:

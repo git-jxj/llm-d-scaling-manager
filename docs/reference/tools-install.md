@@ -16,13 +16,24 @@ prints the digest, in the `cosign verify` command for it.
 TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
-  -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+  -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 ```
 
 Run it from a working directory, not your home directory: that directory
 is mounted read-write at `/work`, and `~/.smt` must stay out of it. Each person uses
 their own kubeconfig. The container cannot run kubeconfig `exec` plugins
-(cloud CLIs are not in it): use a token kubeconfig.
+(cloud CLIs are not in it): use a token kubeconfig. An API server at
+`127.0.0.1` (kind, a local tunnel) is reachable from the container only with
+`docker run --network host`.
+
+The kubeconfig is a snapshot of your current context. If you are both the
+cluster admin and a namespace owner, keep one snapshot per identity and
+point `SMT_KUBECONFIG` at the one to use, or the two commands run as the
+same identity without saying so.
+
+**Who needs what.** The cluster admin runs `admin-setup` and `admin-finish`.
+The namespace owner needs the stock `admin` ClusterRole bound in the namespace
+(a RoleBinding) and nothing cluster-wide: that is all `install` uses.
 
 To check the image's signature first:
 
@@ -55,7 +66,7 @@ only when KEDA's side changed.
 | flag | commands | meaning |
 | --- | --- | --- |
 | `-n NS` | all but `release-files` | the namespace the model servers and the controller run in |
-| `--keda-namespace KNS` | `admin-setup`, `install --scope cluster`, `admin-finish` | where KEDA runs. Default: the live scaler NetworkPolicy, else the namespace serving the external-metrics APIService, else (OpenShift) `openshift-keda` |
+| `--keda-namespace KNS` | `admin-setup`, `install --scope cluster`, `admin-finish` | where KEDA runs. `admin-setup` default: the live scaler NetworkPolicy, else the namespace serving the external-metrics APIService, else (OpenShift) `openshift-keda`. `admin-finish` default: the namespace `admin-setup` wrote in its stamp, which must agree with the live NetworkPolicy, else the APIService |
 | `--prometheus-url URL` | `install` | sets `prometheusURL` when the settings are created. Required then, except on OpenShift (Thanos Querier) |
 | `--prometheus-ca FILE` | `install` | a CA file under the mounted `/work`: creates or updates Secret `scaling-manager-prometheus-ca`, sets `prometheusCACertPath` on a first install, restarts the controller when it changed |
 | `--quota "GPU=N[,GPU=N]"` | `install` | sets `limiter: quota` and `quotas` |
@@ -82,7 +93,7 @@ The same for every command.
 | 1 | the preflight has a `FAIL`: `install` stopped before the controller, or `admin-finish` kept the preflight binding | apply the fix printed under each `FAIL`, run again |
 | 2 | usage: an unknown flag, a missing value, a bad namespace name; or release files that fail their `SHA256SUMS` or are another release; or an image without files and no `--files` | fix the command |
 | 3 | needs the cluster admin: no stamp, or a stamp from other admin objects (an upgrade that changes them) | the admin runs the `smt admin-setup` line printed |
-| 4 | the cluster is not ready, or needs a person: the namespace does not exist (or you may not read it), KEDA's namespace cannot be found or disagrees with the stamp, KEDA's side was refused (an object of its name this tool did not write, or one it cannot read; the line prints the `kubectl delete` and the command to run again), or the controller was installed with `make` | the line says which |
+| 4 | the cluster is not ready, or needs a person: the namespace does not exist (or you may not read it), KEDA's namespace cannot be found or disagrees with the stamp, KEDA's side was refused (an object of its name this tool did not write, or one it cannot read; the line prints the `kubectl delete` and the command to run again), the controller was installed with `make`, or `admin-finish` ran before `install` | the line says which |
 | 5 | timed out: the controller rollout, the client certificate, the preflight Job, or `scalerTLS: mutual TLS` | the line names the command that shows why |
 | 6 | `--strict`: an `UNKNOWN` outside the checks that need the controller | make the check possible, or run without `--strict` |
 | 7 | a `kubectl` call failed (refused, or the API server unreachable) | the line names the call |

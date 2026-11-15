@@ -7,7 +7,7 @@ tools:
       TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
       mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
       smt() { docker run --rm --user "$(id -u):$(id -g)" \
-        -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+        -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
   install:
     note: Cluster admin. Repeat --model-namespace for each namespace with model servers; add one later by running this again with it.
     run: |

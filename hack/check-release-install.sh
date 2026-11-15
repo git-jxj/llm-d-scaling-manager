@@ -200,6 +200,31 @@ smt install -n team-a --prometheus-url https://p:9090 --image-repo mirror.exampl
 imgs="$(yq ea '[select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec.containers[].image] | unique | join(" ")' "$W/dryr/50-controller.yaml" "$W/dryr/30-preflight.yaml")"
 if [ "$imgs" = "mirror.example.com/llmsm/controller@${IMG#*@}" ]; then ok "--image-repo moves the controller and the preflight Job to the mirror, keeping the digest"; else bad "--image-repo: images '$imgs'"; fi
 
+rm -rf "$W/dryo"
+smt admin-setup -n team-a --platform openshift --dry-run --out "$W/dryo"; rc1=$?
+smt install -n team-a --platform openshift --dry-run --out "$W/dryo"; rc2=$?
+np="$(yq ea '[select(.kind == "NetworkPolicy") | .spec.ingress[].from[]?.namespaceSelector.matchLabels["kubernetes.io/metadata.name"]] | unique | join(",")' "$W/dryo/10-admin.yaml")"
+want="$(norm "$(sedded scaling-manager-namespaced-openshift.yaml team-a team-a)" | jq -c 'select(.metadata.labels["scaling-manager.llmd.ai/part"] == "controller")')"
+got="$(norm "$W/dryo/50-controller.yaml")"
+if [ "$rc1$rc2" = 00 ] && [ "$np" = openshift-keda ] && [ -n "$want" ] && [ "$want" = "$got" ] \
+    && [ "$(yq '.data.prometheusURL' "$W/dryo/20-settings.yaml")" = https://thanos-querier.openshift-monitoring.svc.cluster.local:9091 ]; then
+    ok "--platform openshift --dry-run: the -openshift files, KEDA in openshift-keda, Thanos Querier as the default URL"
+else
+    bad "openshift dry-run: exits $rc1 $rc2, NetworkPolicy admits '$np'"
+fi
+mkdir -p "$W/failbin"
+REAL_YQ="$(command -v yq)"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = -i ] && exit 1; done\nexec "%s" "$@"\n' "$REAL_YQ" > "$W/failbin/yq"
+chmod 0755 "$W/failbin/yq"
+rm -rf "$W/dryf"
+PATH="$W/failbin:$PATH" smt admin-setup -n team-a --keda-namespace kk --dry-run --out "$W/dryf"
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'cannot write KEDA namespace kk into scaling-manager-namespaced.yaml' "$W/out" && [ ! -s "$W/dryf/10-admin.yaml" ]; then
+    ok "a render that fails exits 2 and writes no step file"
+else
+    bad "failed render: exit $rc: $(tail -1 "$W/out")"
+fi
+
 # ---------------------------------------------------------------------------
 echo "admin-setup"
 reset
@@ -225,6 +250,15 @@ else
 fi
 stamp="$(obj configmap team-a scaling-manager-admin-setup | jq -r '.data.kedaNamespace + "|" + .data.release')"
 if [ "$stamp" = "keda-system|$V" ]; then ok "the stamp names KEDA's namespace and the release"; else bad "stamp: '$stamp'"; fi
+touch "$STUB_DIR/forbid-networkpolicies"
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 7 ] && grep -q 'cannot read NetworkPolicy scaling-manager-external-scaler in team-a: Error from server (Forbidden)' "$W/out"; then
+    ok "a NetworkPolicy read that fails: exit 7, with the error kubectl printed"
+else
+    bad "NetworkPolicy read error: exit $rc: $(tail -1 "$W/out")"
+fi
+rm -f "$STUB_DIR/forbid-networkpolicies"
 echo "keda-elsewhere keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
 smt admin-setup -n team-a
 np="$(obj networkpolicy team-a scaling-manager-external-scaler | jq -r '[.spec.ingress[].from[]?.namespaceSelector.matchLabels["kubernetes.io/metadata.name"]] | join(",")')"
@@ -368,6 +402,26 @@ smt install -n team-a --prometheus-url https://p:9090
 rc=$?
 if [ "$rc" = 7 ] && grep -q 'kubectl api-versions failed: The connection to the server' "$W/out"; then ok "an unreachable API server exits 7, naming the call"; else bad "unreachable: exit $rc: $(tail -1 "$W/out")"; fi
 rm -f "$STUB_DIR/unreachable"
+echo none > "$STUB_DIR/preflight.end"
+SMT_PREFLIGHT_TIMEOUT=0 smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 5 ] && grep -q 'the preflight Job did not finish within 0s' "$W/out"; then ok "a preflight Job that never ends: exit 5"; else bad "preflight timeout: exit $rc: $(tail -1 "$W/out")"; fi
+echo Complete > "$STUB_DIR/preflight.end"
+touch "$STUB_DIR/job-vanishes"
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 7 ] && grep -q 'the preflight Job disappeared while it ran' "$W/out"; then ok "a preflight Job that disappears: exit 7"; else bad "vanished Job: exit $rc: $(tail -1 "$W/out")"; fi
+rm -f "$STUB_DIR/job-vanishes"
+QV="team-x'quoted"
+smt install -n team-a --prometheus-url https://p:9090 --set "kueueNamespace=$QV"
+rc=$?
+cmd="$(grep -m1 'kubectl patch configmap scaling-manager-settings -n team-a --type merge -p .*kueueNamespace' "$W/out" | sed 's/^ *//')"
+arg="$(bash -c "kubectl() { printf '%s' \"\$9\"; }; $cmd" 2>/dev/null)"
+if [ "$rc" = 0 ] && [ -n "$cmd" ] && [ "$(printf '%s' "$arg" | jq -r .data.kueueNamespace 2>/dev/null)" = "$QV" ]; then
+    ok "the printed patch for a value with a single quote runs as printed and sets that value"
+else
+    bad "patch with a quote: exit $rc, printed [$cmd], -p [$arg]"
+fi
 installed="$W/after-install"
 rm -rf "$installed"; cp -R "$STUB_DIR" "$installed"
 
@@ -457,6 +511,45 @@ touch "$STUB_DIR/apply-fails"
 smt admin-finish -n team-a
 rc=$?
 if [ "$rc" = 7 ] && grep -q 'Could not write' "$W/out"; then ok "a write of KEDA's side the API server refuses: exit 7"; else bad "refused write: exit $rc: $(grep -m1 ERROR "$W/out")"; fi
+rm -rf "$STUB_DIR"; cp -R "$save" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+SMT_CERT_TIMEOUT=180 smt admin-finish -n team-a
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'has not run smt install -n team-a yet' "$W/out"; then ok "admin-finish before smt install: exit 4 at once, naming the step"; else bad "admin-finish before install: exit $rc: $(tail -1 "$W/out")"; fi
+rm -rf "$STUB_DIR"; cp -R "$filled" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+jq '.data.scalerTLS = "plaintext"' "$STUB_DIR/obj/configmap/team-a/scaling-manager-controller-status.json" > "$W/st.json" && mv "$W/st.json" "$STUB_DIR/obj/configmap/team-a/scaling-manager-controller-status.json"
+SMT_MTLS_TIMEOUT=0 smt admin-finish -n team-a
+rc=$?
+if [ "$rc" = 5 ] && grep -q "scalerTLS is 'plaintext', not mutual TLS" "$W/out"; then ok "scalerTLS never mutual TLS: exit 5"; else bad "mTLS timeout: exit $rc: $(tail -1 "$W/out")"; fi
+# KEDA still holds a connection from before a reinstall: the controller
+# refused its old certificate, and the refused address is a KEDA pod.
+stale_setup() {
+    rm -rf "$STUB_DIR"; cp -R "$filled" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+    printf '%s\n' '{"level":"info","msg":"refused a TLS handshake","error":"tls: failed to verify certificate: x509: certificate signed by unknown authority","remote":"10.0.0.5:41234"}' > "$STUB_DIR/controller.log"
+    mkdir -p "$STUB_DIR/obj/pod/keda-system"
+    printf '{"apiVersion":"v1","kind":"Pod","metadata":{"name":"keda-operator-1","namespace":"keda-system"},"status":{"podIP":"10.0.0.5"}}' > "$STUB_DIR/obj/pod/keda-system/keda-operator-1.json"
+}
+stale_setup
+smt admin-finish -n team-a
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'still presents an OLD client certificate' "$W/out" && grep -q 'run this again with --restart-keda' "$W/out" \
+    && ! grep -q '^rollout restart deployment/keda-operator' "$STUB_DIR/calls.log"; then
+    ok "a stale KEDA connection is named with the restart, and KEDA is not restarted unasked"
+else
+    bad "stale connection: exit $rc: $(grep -m1 -i 'keda' "$W/out")"
+fi
+stale_setup
+smt admin-finish -n team-a --restart-keda
+rc=$?
+if [ "$rc" = 0 ] && grep -q '^rollout restart deployment/keda-operator -n keda-system' "$STUB_DIR/calls.log"; then ok "--restart-keda restarts the KEDA operator on a stale connection"; else bad "--restart-keda: exit $rc"; fi
+rm -rf "$STUB_DIR"; cp -R "$filled" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+printf 'PASS    settings  ok\nUNKNOWN metrics.model  no pods\n1 PASS, 0 WARN, 0 FAIL, 1 UNKNOWN\n' > "$STUB_DIR/preflight.log"
+smt admin-finish -n team-a --strict
+rc=$?
+if [ "$rc" = 6 ] && has_obj clusterrolebinding _ scaling-manager-preflight-team-a && grep -q 'could not check metrics.model' "$W/out"; then
+    ok "admin-finish --strict: an UNKNOWN in the last preflight exits 6 and keeps the preflight binding"
+else
+    bad "admin-finish --strict: exit $rc: $(tail -1 "$W/out")"
+fi
 
 # ---------------------------------------------------------------------------
 echo "KEDA's side is the release's scaling-manager-keda-auth.yaml"
@@ -558,7 +651,7 @@ cmpb "$W/b5" "$W/dist"
 rc=$?
 if [ "$rc" = 1 ] && grep -q 'built without --build-context release' "$W/out"; then ok "an image built without the release files is refused"; else bad "empty image: exit $rc"; fi
 
-EXPECT_CASES=64
+EXPECT_CASES=75
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

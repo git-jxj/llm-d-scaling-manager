@@ -7,7 +7,9 @@
 # Knobs, files in $STUB_DIR: unreachable (every call fails as an unreachable
 # API server), openshift (discovery serves security.openshift.io), apiservice
 # ("<namespace> <service>" behind the external-metrics APIService),
-# preflight.log (the log of the Job), preflight.end (Complete or Failed),
+# preflight.log (the log of the Job), preflight.end (Complete, Failed, or
+# none: the Job never ends), job-vanishes (the preflight Job is gone when read),
+# controller.log (the controller log the stale-connection check reads),
 # rollout-timeout (rollout status times out), forbid-namespaces (reading a
 # Namespace is Forbidden, as for a namespace owner), apply-fails (a
 # server-side apply is refused by the API server).
@@ -126,6 +128,10 @@ case "$verb" in
             echo "Error from server (Forbidden): namespaces \"$n\" is forbidden: User \"owner\" cannot get resource \"namespaces\" at the cluster scope" >&2
             exit 1
         fi
+        if [ "$r" = networkpolicy ] && [ -f "$D/forbid-networkpolicies" ]; then
+            echo "Error from server (Forbidden): networkpolicies.networking.k8s.io \"$n\" is forbidden: User \"admin\" cannot get resource \"networkpolicies\"" >&2
+            exit 1
+        fi
         if [ "$r" = serviceaccount ] && [ "$n" = default ]; then
             # Every namespace has one.
             [ -f "$D/obj/namespace/_/$ns.json" ] || not_found serviceaccounts default
@@ -143,7 +149,9 @@ case "$verb" in
             name) echo "$r/$n" ;;
             json)
                 if [ "$r" = job ]; then
-                    jq --arg e "$(cat "$D/preflight.end" 2>/dev/null || echo Complete)" '.status.conditions = [{type: $e, status: "True"}]' "$p"
+                    [ ! -f "$D/job-vanishes" ] || not_found jobs.batch "$n"
+                    jq --arg e "$(cat "$D/preflight.end" 2>/dev/null || echo Complete)" \
+                        'if $e == "none" then .status = {} else .status.conditions = [{type: $e, status: "True"}] end' "$p"
                 else
                     cat "$p"
                 fi ;;
@@ -188,6 +196,7 @@ case "$verb" in
             job/*) cat "$D/preflight.log" 2>/dev/null; exit 0 ;;
         esac
         # The controller log the stale-connection check reads.
+        cat "$D/controller.log" 2>/dev/null
         exit 0 ;;
     rollout)
         case "${pos[0]}" in

@@ -38,7 +38,7 @@ the directory mounted read-write at `/work`:
 TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
-  -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+  -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 ```
 
 Run it from a working directory that does not contain `~/.smt`. The release
@@ -594,6 +594,13 @@ from the text above, and why:
   so those checks are UNKNOWN (refused). While ClusterRoleBinding
   `scaling-manager-preflight-NS` is absent (or cannot be read), those
   refusals do not stop `--strict`.
+- **`--strict` in the last preflight.** `admin-finish`, and the end of
+  `install --scope cluster`, apply it as `install` does: exit 6, and the
+  preflight binding is kept.
+- **`admin-finish` before `install`** exits 4 at once (no controller
+  Deployment), instead of waiting for a client certificate that will not come.
+- **Both published variants.** The release-files job compares the baked files
+  of the amd64 and the arm64 image (`--platform`).
 - **`install` checks the namespace first** (exit 4). An owner may not read
   Namespaces, so it reads ServiceAccount `default` there instead.
 - **The CI gate.** The stamp cases and the upgrade run in the namespace leg

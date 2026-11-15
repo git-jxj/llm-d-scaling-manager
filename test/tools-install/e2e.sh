@@ -120,9 +120,11 @@ controller_pods() {
     kubectl get pods -n "$NS" -l "$sel" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}'
 }
 
-# objects_of <file...>: "<kind> <namespace> <name>" for every object.
+# objects_of <file...>: "<kind> <namespace> <name>" for every object but the
+# preflight Job (made again each run) and the Deployment, whose status the
+# controller updates (its .metadata.generation is compared instead).
 objects_of() {
-    yq e 'select(.kind != null) | [.kind, (.metadata.namespace // "-"), .metadata.name] | join(" ")' "$@" | grep -v '^Job '
+    yq e 'select(.kind != null) | [.kind, (.metadata.namespace // "-"), .metadata.name] | join(" ")' "$@" | grep -vE '^(Job|Deployment) '
 }
 # rv_snapshot <out> <objects file>: the resourceVersion of each object, or absent.
 rv_snapshot() {
@@ -287,6 +289,7 @@ fi
 run_smoke
 
 rv_snapshot "$WORK/rv-before.txt" "$WORK/objects.txt"
+gen_before="$(kubectl get deployment "$DEPLOY" -n "$NS" -o jsonpath="{.metadata.generation}")"
 pods_before="$(controller_pods)"
 [ -n "$pods_before" ] || fail rerun "no running controller pod"
 if [ "$SCOPE" = namespace ]; then
@@ -295,10 +298,12 @@ else
     smt_as admin install-again install --scope cluster --keda-namespace "$KEDA_NS" --model-namespace "$MODEL_NS" "${INSTALL_FLAGS[@]}" || fail "second install" "exit $?"
 fi
 rv_snapshot "$WORK/rv-after.txt" "$WORK/objects.txt"
+gen_after="$(kubectl get deployment "$DEPLOY" -n "$NS" -o jsonpath="{.metadata.generation}")"
+[ -n "$gen_before" ] && [ "$gen_before" = "$gen_after" ] || fail "second install" "the controller Deployment generation moved from $gen_before to $gen_after"
 changed="$(diff "$WORK/rv-before.txt" "$WORK/rv-after.txt" | grep '^>' || true)"
 [ -z "$changed" ] || fail "second install" "resourceVersion changed: $(echo $changed)"
 present="$(grep -vc ' absent$' "$WORK/rv-after.txt")"
-pass "a second install changes no resourceVersion ($present objects, the preflight Job aside)"
+pass "a second install changes no resourceVersion ($present objects, the preflight Job aside) and not the controller generation ($gen_after)"
 
 if [ "$SCOPE" = namespace ]; then
     smt_as admin admin-finish-again admin-finish -n "$NS" || fail "second admin-finish" "exit $?"
@@ -351,9 +356,9 @@ if [ "$SCOPE" = namespace ]; then
     mkdir -p "$up"
     url="https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$PREVIOUS_RELEASE"
     for f in namespaced settings preflight scaler-tls model-namespace; do
-        curl -fsSL --retry 5 -o "$up/scaling-manager-$f.yaml" "$url/scaling-manager-$f.yaml" || fail upgrade "cannot download scaling-manager-$f.yaml of $PREVIOUS_RELEASE"
+        curl -fsSL --retry 5 --max-time 120 -o "$up/scaling-manager-$f.yaml" "$url/scaling-manager-$f.yaml" || fail upgrade "cannot download scaling-manager-$f.yaml of $PREVIOUS_RELEASE"
     done
-    curl -fsSL --retry 5 -o "$up/SHA256SUMS" "$url/SHA256SUMS" || fail upgrade "cannot download SHA256SUMS of $PREVIOUS_RELEASE"
+    curl -fsSL --retry 5 --max-time 120 -o "$up/SHA256SUMS" "$url/SHA256SUMS" || fail upgrade "cannot download SHA256SUMS of $PREVIOUS_RELEASE"
     (cd "$up" && sha256sum -c --ignore-missing --quiet SHA256SUMS) || fail upgrade "the $PREVIOUS_RELEASE files do not match their SHA256SUMS"
     kubectl create namespace "$UPG_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
     for f in "$up"/scaling-manager-*.yaml; do

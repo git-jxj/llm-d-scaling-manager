@@ -46,7 +46,11 @@ Prefer a checkout and `make`? See [From a checkout instead](#from-a-checkout-ins
 
 Three commands. The release's tools image carries the release files, signed
 with it, and runs the steps of this page for you, each with its check. Needs
-docker; no download, no `sed`.
+docker; no download, no `sed`. The namespace owner needs the stock `admin`
+ClusterRole bound in the namespace, nothing more; the cluster admin runs
+`admin-setup` and `admin-finish`. Each uses their own token kubeconfig:
+`SMT_KUBECONFIG` names the snapshot to use, so the two are never the same
+identity by accident.
 
 <!-- guide:tools.setup start -->
 ```bash
@@ -54,7 +58,7 @@ docker; no download, no `sed`.
 TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
-  -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+  -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 export NAMESPACE=<your-namespace>
 ```
 <!-- guide:tools.setup end -->

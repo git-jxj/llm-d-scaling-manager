@@ -46,6 +46,25 @@ smt_exit() {
 }
 smt_usage() { smt_exit 2 "$1"; }
 
+# smt_poll_step echoes the seconds one poll counts against a timeout: the
+# sleep, SMT_POLL (default 3), and at least 1, so every wait ends.
+smt_poll_step() {
+    local p="${SMT_POLL:-3}"
+    case "$p" in ""|*[!0-9]*) p=3 ;; esac
+    [ "$p" -gt 0 ] || p=1
+    printf '%s\n' "$p"
+}
+
+# smt_call <function> <args...>: a deploy/lib reader that echoes its answer,
+# run in this shell (not in $( )), so the KC_ERR it leaves names the failure.
+# The answer is in SMT_CALL_OUT; the status is the function's.
+smt_call() {
+    local rc=0
+    "$@" > "$SMT_TMP/call.out" || rc=$?
+    SMT_CALL_OUT="$(cat "$SMT_TMP/call.out")"
+    return "$rc"
+}
+
 # smt_kubectl_failed <what>: a kubectl call failed; exit 7 naming it and why.
 smt_kubectl_failed() {
     smt_exit 7 "kubectl $1 failed: $(kc_err_line "$KC_ERR")"
@@ -263,18 +282,19 @@ smt_render() {
         cp "$SMT_DIR"/scaling-manager-*.yaml "$SMT_SHIPPED/"
     fi
     for f in "$SMT_DIR"/scaling-manager-*.yaml; do
-        sed -e "s/__NAMESPACE__/$SMT_NS/g" -e "s/__MODEL_NAMESPACE__/$model/g" "$SMT_SHIPPED/${f##*/}" > "$f"
+        sed -e "s/__NAMESPACE__/$SMT_NS/g" -e "s/__MODEL_NAMESPACE__/$model/g" "$SMT_SHIPPED/${f##*/}" > "$f" \
+            || smt_exit 2 "cannot render ${f##*/} for namespace $SMT_NS"
     done
     if [ -n "${SMT_KEDA_NS:-}" ]; then
         # The same rewrite deploy/release-manifests.sh makes when it writes the
         # platform default, here with the namespace KEDA runs in.
         KEDA_NS="$SMT_KEDA_NS" yq -i '(select(.kind == "NetworkPolicy" and .metadata.name == "scaling-manager-external-scaler") | .spec.ingress[] | select(has("from")) | .from[] | select(has("namespaceSelector")) | .namespaceSelector.matchLabels | select(has("kubernetes.io/metadata.name")) | .["kubernetes.io/metadata.name"]) = strenv(KEDA_NS)' \
-            "$SMT_DIR/$SMT_MAIN"
+            "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot write KEDA namespace $SMT_KEDA_NS into $SMT_MAIN"
     fi
     if [ -n "$SMT_IMAGE_REPO" ]; then
         for f in "$SMT_MAIN" "$SMT_PREFLIGHT"; do
             REPO="$SMT_IMAGE_REPO" yq -i '(select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec.containers[] | select(.image | test("@sha256:")) | .image) |= (strenv(REPO) + "@" + sub("^[^@]*@", ""))' \
-                "$SMT_DIR/$f"
+                "$SMT_DIR/$f" || smt_exit 2 "cannot move the images of $f to $SMT_IMAGE_REPO"
         done
     fi
 }
@@ -283,7 +303,8 @@ smt_render() {
 # namespace, written to SMT_TMP; echoes its path.
 smt_model_file() {
     local out="$SMT_TMP/model-namespace-$1.yaml"
-    sed -e "s/__NAMESPACE__/$SMT_NS/g" -e "s/__MODEL_NAMESPACE__/$1/g" "$SMT_SHIPPED/scaling-manager-model-namespace.yaml" > "$out"
+    sed -e "s/__NAMESPACE__/$SMT_NS/g" -e "s/__MODEL_NAMESPACE__/$1/g" "$SMT_SHIPPED/scaling-manager-model-namespace.yaml" > "$out" \
+        || smt_exit 2 "cannot render scaling-manager-model-namespace.yaml for $1"
     printf '%s\n' "$out"
 }
 
@@ -346,13 +367,15 @@ smt_resolve_keda_ns() {
         return 0
     fi
     rc=0
-    found="$(llmsm_scaler_np_keda_ns "$SMT_NS")" || rc=$?
+    smt_call llmsm_scaler_np_keda_ns "$SMT_NS" || rc=$?
+    found="$SMT_CALL_OUT"
     case "$rc" in
         0) SMT_KEDA_NS="$found"; SMT_KEDA_FROM="the scaler NetworkPolicy already in $SMT_NS"; return 0 ;;
         2) smt_exit 7 "cannot read NetworkPolicy scaling-manager-external-scaler in $SMT_NS: $(kc_err_line "$KC_ERR")" ;;
     esac
     rc=0
-    found="$(llmsm_keda_apiservice_ns)" || rc=$?
+    smt_call llmsm_keda_apiservice_ns || rc=$?
+    found="$SMT_CALL_OUT"
     case "$rc" in
         0) SMT_KEDA_NS="$found"; SMT_KEDA_FROM="the namespace serving the external-metrics APIService"; return 0 ;;
         2) smt_exit 7 "cannot read APIService v1beta1.external.metrics.k8s.io: $(kc_err_line "$KC_ERR")" ;;
@@ -420,15 +443,19 @@ smt_settings_file() {
     local kv out="$SMT_TMP/settings.yaml"
     cp "$SMT_DIR/scaling-manager-settings.yaml" "$out"
     for kv in "${SMT_PAIRS[@]}"; do
-        K="${kv%%=*}" V="${kv#*=}" yq -i '.data[strenv(K)] = strenv(V)' "$out"
+        K="${kv%%=*}" V="${kv#*=}" yq -i '.data[strenv(K)] = strenv(V)' "$out" \
+            || smt_exit 2 "cannot set ${kv%%=*} in the settings"
     done
     printf '%s\n' "$out"
 }
 
 # smt_patch_cmd <key> <value>: the kubectl patch that sets one settings key.
 smt_patch_cmd() {
-    printf "kubectl patch configmap %s -n %s --type merge -p '%s'\n" "$SMT_SETTINGS" "$SMT_NS" \
-        "$(jq -cn --arg k "$1" --arg v "$2" '{data: {($k): $v}}')"
+    local j
+    j="$(jq -cn --arg k "$1" --arg v "$2" '{data: {($k): $v}}')"
+    # Inside single quotes a quote is written as: quote, backslash, quote, quote.
+    j="$(printf '%s' "$j" | sed "s/'/'\\\\''/g")"
+    printf "kubectl patch configmap %s -n %s --type merge -p '%s'\n" "$SMT_SETTINGS" "$SMT_NS" "$j"
 }
 
 # smt_settings: creates the settings from the flags when there are none, and
@@ -512,7 +539,7 @@ smt_preflight() {
         [ -n "$end" ] && break
         [ "$i" -lt "$t" ] || smt_exit 5 "the preflight Job did not finish within ${t}s: kubectl logs -n $SMT_NS job/$SMT_PREFLIGHT_JOB"
         sleep "${SMT_POLL:-3}"
-        i=$((i + 3))
+        i=$((i + $(smt_poll_step)))
     done
     smt_kc logs -n "$SMT_NS" "job/$SMT_PREFLIGHT_JOB"
     printf '%s\n' "$KC_OUT" > "$log"
@@ -673,6 +700,8 @@ smt_rollout() {
 # smt_wait_client_cert: until the controller filled the KEDA client certificate.
 smt_wait_client_cert() {
     local i=0 t="${SMT_CERT_TIMEOUT:-180}" crt
+    smt_get deployment "$SMT_DEPLOY" -n "$SMT_NS" \
+        || smt_exit 4 "no controller in $SMT_NS (Deployment $SMT_DEPLOY): the namespace owner has not run smt install -n $SMT_NS yet"
     while :; do
         if smt_get secret "$LLMSM_SCALER_CLIENT_SECRET" -n "$SMT_NS"; then
             crt="$(printf '%s' "$KC_OUT" | jq -r '.data["tls.crt"] // ""')"
@@ -680,7 +709,7 @@ smt_wait_client_cert() {
         fi
         [ "$i" -lt "$t" ] || smt_exit 5 "the controller has not filled Secret $LLMSM_SCALER_CLIENT_SECRET in $SMT_NS within ${t}s. Has the namespace owner run smt install? kubectl logs -n $SMT_NS deployment/$SMT_DEPLOY"
         sleep "${SMT_POLL:-3}"
-        i=$((i + 3))
+        i=$((i + $(smt_poll_step)))
     done
 }
 
@@ -692,7 +721,8 @@ smt_finish_keda_ns() {
     [ -n "$SMT_KEDA_NS" ] && { SMT_KEDA_FROM="--keda-namespace"; return 0; }
     if [ "$SMT_SCOPE" = namespace ] && smt_get configmap "$SMT_STAMP" -n "$SMT_NS"; then
         stamp="$(printf '%s' "$KC_OUT" | jq -r '.data.kedaNamespace // ""')"
-        np="$(llmsm_scaler_np_keda_ns "$SMT_NS")" || rc=$?
+        smt_call llmsm_scaler_np_keda_ns "$SMT_NS" || rc=$?
+        np="$SMT_CALL_OUT"
         [ "$rc" != 2 ] || smt_exit 7 "cannot read NetworkPolicy scaling-manager-external-scaler in $SMT_NS: $(kc_err_line "$KC_ERR")"
         if [ -n "$stamp" ] && [ "$rc" = 0 ] && [ "$np" = "$stamp" ]; then
             SMT_KEDA_NS="$stamp"
@@ -702,7 +732,8 @@ smt_finish_keda_ns() {
         smt_exit 4 "ConfigMap $SMT_STAMP says KEDA runs in '${stamp}', and the scaler NetworkPolicy in $SMT_NS admits '${np:-nothing it can name}'. Run smt admin-setup -n $SMT_NS --keda-namespace <namespace> again, or give --keda-namespace"
     fi
     rc=0
-    found="$(llmsm_keda_apiservice_ns)" || rc=$?
+    smt_call llmsm_keda_apiservice_ns || rc=$?
+    found="$SMT_CALL_OUT"
     case "$rc" in
         0) SMT_KEDA_NS="$found"; SMT_KEDA_FROM="the namespace serving the external-metrics APIService"; return 0 ;;
         2) smt_exit 7 "cannot read APIService v1beta1.external.metrics.k8s.io: $(kc_err_line "$KC_ERR")" ;;
@@ -760,7 +791,7 @@ smt_wait_mtls() {
         fi
         [ "$i" -lt "$t" ] || smt_exit 5 "scalerTLS is '${v}', not mutual TLS, after ${t}s: kubectl get configmap $SMT_STATUS_CM -n $SMT_NS -o jsonpath='{.data.scalerTLSAction}'"
         sleep "${SMT_POLL:-3}"
-        i=$((i + 3))
+        i=$((i + $(smt_poll_step)))
     done
 }
 
@@ -810,10 +841,10 @@ smt_finish() {
     smt_kc delete job "$SMT_PREFLIGHT_JOB" -n "$SMT_NS" --ignore-not-found --cascade=foreground --wait=true
     smt_keda_connection
     smt_preflight final
-    if [ -n "$SMT_PF_FAIL" ]; then
+    if [ -n "$SMT_PF_FAIL" ] || { [ "$SMT_STRICT" = true ] && [ -n "$(smt_unknown_other)" ]; }; then
         echo "Kept ClusterRoleBinding $SMT_PREFLIGHT_CRB, so the preflight can run again. After the fix:" >&2
         echo "  kubectl delete clusterrolebinding $SMT_PREFLIGHT_CRB --ignore-not-found" >&2
-        smt_exit 1 "the preflight has a FAIL (${SMT_PF_FAIL% })"
+        smt_preflight_gate "kept ClusterRoleBinding $SMT_PREFLIGHT_CRB"
     fi
     smt_kc delete clusterrolebinding "$SMT_PREFLIGHT_CRB" --ignore-not-found
     echo "Removed ClusterRoleBinding $SMT_PREFLIGHT_CRB: the preflight's cluster reads are needed only while it runs."
