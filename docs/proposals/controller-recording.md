@@ -188,12 +188,25 @@ own, larger than the rest of this proposal.
 - **Parts.** A run is written as parts. A part closes when it reaches its cap
   or its age (`plannerRecordingPart`, 24 h to start with), whichever comes
   first; the next part continues the same stream on the next event. Parts
-  are not split mid-line, so the parts of a run, put end to end, are the run
-  byte for byte. Every part after the first starts with one `part` line (run,
-  part number, first event number), which the reader skips when it follows
-  the part before it.
-- **Gzip off the cycle.** A closed part is fsynced and handed to a background
-  goroutine, which gzips it at low priority, never on the cycle's goroutine.
+  are never split mid-line.
+  - **Part 1** begins with the run's start line (event 1, kind `start`), as
+    a recording does today. The same line, byte for byte, is also written to
+    `...-start.json`, kept until the run's last part is deleted.
+  - **Every part after the first** begins with one part line:
+    `{"Part":{"Run":"<run id>","N":2,"FirstSeq":48113}}`. It is not an event:
+    no `Seq`, no `Kind`, so it takes no event number.
+  - **The run** is its parts put end to end with their part lines removed:
+    exactly the lines the recorder wrote, events numbered from 1 with no gap,
+    which is what `learnrec.Read` requires. The reader strips part lines, and
+    checks each one's `FirstSeq` against the next event's number before it
+    does.
+- **Cold runs are marked.** The start line gains `Cold` (true when recording
+  began after the controller started: the analyzers already held state the
+  run does not have) and `ControllerStart`. A run whose part 1 was rotated out
+  is cold too; the reader sees that from the gap ([Reading a run](#reading-a-run)).
+- **Gzip off the cycle.** A closed part is fsynced and put on a queue. One
+  background goroutine gzips one part at a time, oldest first, at low
+  priority, never on the cycle's goroutine.
   The SHA-256 is computed once, when a file is final (gzipped, or closed raw
   and not yet gzipped), and kept beside it. At shutdown the controller only
   closes and fsyncs the open part: the manager has 25 s to stop
@@ -218,19 +231,50 @@ own, larger than the rest of this proposal.
 
 #### Reading a run
 
-`smt recording fetch` writes **one file per run**: the start line, then the
-run's parts in order. Gzip members put end to end are one valid gzip file,
-and Go's reader reads them all, so this is concatenation, not parsing.
-`capacity-planner serve --recordings` reads that file unchanged.
+`smt recording fetch` writes **one file per run**, always gzip:
+
+- When part 1 is held: the run's parts in order. When it was rotated out:
+  the `...-start.json` line first, then the parts held.
+- **Encoding.** The listing reports each file's encoding (`gzip` for a
+  closed, compressed part; `identity` for an open part or one still queued
+  for gzip). fetch gzips every `identity` file on the caller's machine before
+  it joins anything, so the output is only gzip members, never plain lines
+  next to gzip members. Gzip members put end to end are one valid gzip file,
+  and Go's reader reads them all (`compress/gzip`, multistream by default),
+  so joining is concatenation, not parsing.
+- **Where files go.** Downloaded parts are kept in `<out>/.parts/<pod>/`,
+  under their own names; a part already there with the listed digest is not
+  downloaded again. The output, one file per run, is
+  `<out>/<namespace>-<run start>-<pod suffix>.jsonl.gz`, rebuilt from
+  `.parts` on every fetch. `serve` lists neither directories nor names
+  starting with a dot (`cmd/capacity-planner/serve_price.go`), so the cache
+  is invisible to it.
+- **`--since` never cuts a run.** It selects the runs with any part newer
+  than the time, and fetches each as held. A gap is only ever left by
+  rotation, at the head.
+
+`capacity-planner serve --recordings` reads the output. What it does with a
+run:
 
 | run as fetched | how the planner reads it |
 | --- | --- |
-| whole: every part from the first | exactly as today (Fidelity): every answer from all the run's history |
-| its oldest parts rotated out, or recording turned on after the controller started | **cold mode**: the planner plays the kept inputs through fresh analyzers from the first kept cycle, as `generate` plays a capture, and prints a caveat naming the first kept time. Answers from late in the file are as good as a capture of the same window; answers from its first hours are from a cold start |
+| whole: part 1 held, start line not `Cold` | exactly as today (Fidelity): every answer from all the run's history |
+| cold: start line `Cold` (recording turned on after the controller started), or a gap right after the start line (part 1 rotated out) | **cold mode**: the planner plays the kept inputs through fresh analyzers from the first kept cycle, as `generate` plays a capture |
+| a gap anywhere else: a missing middle part | refused, naming the missing event numbers: a hole in the middle of a run does not replay, and cold mode would hide it |
 
-Cold mode is the one change to replay (`internal/engines/analyzers/learnreplay`):
-accept a start line followed by a `part` line whose first event number is not
-1, and play from recorded inputs instead of comparing recorded outputs.
+**What a cold answer carries.** It is flagged, not refused: a caveat line in
+the text output (`cold: learned from <first kept time>, not from the
+controller's start`), the same in `caveats` with `-o json`, and on the page.
+Not refused, because the Prometheus capture is cold in the same way and is
+served with the same kind of caveat; refusing the first hours of a recording
+would refuse what a capture of the same window gets. Answers from late in a
+cold file are as good as a capture of that window; those from its first hours
+are from a cold start, and the caveat says so.
+
+The reader changes in `internal/engines/analyzers/learnreplay` and
+`learnrec.Read` are: strip part lines, checking their `FirstSeq`; read `Cold`;
+accept one gap, only directly after the start line, and only into cold mode;
+play cold from recorded inputs instead of comparing recorded outputs.
 
 A window across a restart is two runs, two files. They are never joined: the
 learned state restarted too, and one file that hid it would mislead.
@@ -296,8 +340,9 @@ How files leave the Pod:
 | API-server pod proxy (`pods/proxy`) | `pods/proxy` get | any port of the Pod. The API server does not pass the caller's token on, so the controller cannot tell who asks | rejected |
 | **an endpoint on the controller, reached by port-forward** | `pods/portforward` create, and the endpoint's own check | a TCP connection to the Pod's ports, nothing on its filesystem or token | **chosen** |
 
-The controller serves `GET /recordings/` (a list: name, namespace, size,
-SHA-256, open or closed) and `GET /recordings/<name>` on `127.0.0.1:8444`.
+The controller serves `GET /recordings/` (a list: name, namespace, run,
+part, size, SHA-256, open or closed, encoding `gzip` or `identity`) and
+`GET /recordings/<name>` on `127.0.0.1:8444`.
 
 - **Loopback works through a port-forward.** The kubelet's port-forward opens
   the connection from inside the Pod's network namespace, to its loopback
@@ -318,9 +363,20 @@ SHA-256, open or closed) and `GET /recordings/<name>` on `127.0.0.1:8444`.
   keyed by the SHA-256 of the token, never the token; it never logs a token
   or a header. fetch prefers a short-lived token with its own audience: when
   the caller is a ServiceAccount, it asks TokenRequest for a 10-minute token
-  for itself with audience `scaling-manager-recordings`, which the endpoint
-  requires in its TokenReview and the API server will not accept; it falls
-  back to the kubeconfig's own token only when TokenRequest is refused. A
+  for itself with audience `scaling-manager-recordings`, which the API
+  server will not accept for anything else; it falls back to the
+  kubeconfig's own token only when TokenRequest is refused.
+- **Audiences.** The endpoint's TokenReview sets `spec.audiences` to two
+  values: `scaling-manager-recordings`, and the API server's own audience,
+  read from the `aud` claim of the controller's own projected ServiceAccount
+  token (the API server's `--api-audiences` default, which the controller has
+  no other way to read). The first is the preferred token: useless anywhere
+  but this endpoint, so a leaked one leaks nothing else. The second is
+  accepted only so the fallback works: a kubeconfig token (an OIDC or
+  long-lived ServiceAccount token) is minted for the API server. The review's
+  `status.audiences` says which matched; the controller logs which (never the
+  token), and `LLMSM_PLANNER_RECORDING_STRICT_AUDIENCE=true` drops the second,
+  for a cluster that wants no general token sent to a Pod. A
   kubeconfig with a client certificate and no token (kind's default) has no
   bearer token to send: fetch stops and says to use a token kubeconfig, which
   the tools image already requires. The e2e uses ServiceAccount tokens.
@@ -329,9 +385,13 @@ SHA-256, open or closed) and `GET /recordings/<name>` on `127.0.0.1:8444`.
   line. It is plain HTTP inside the port-forward, which the API server and
   kubelet already carry over TLS.
 
-The rights fetch needs, all in the stock `admin` role of a namespace: list
-pods, `pods/portforward` and `pods/log` in the controller's namespace, and
-`pods/log` in each model namespace it fetches. No ClusterRole: a non-resource
+The rights fetch needs, all in the stock `admin` role of a namespace: in the
+controller's namespace, `list` and `get` on `pods` (to find the replicas; a
+port-forward also needs `get pods`), `create` on `pods/portforward`, and
+`get` on `pods/log`; in each model namespace it fetches, `get` on `pods/log`.
+When the caller is a ServiceAccount, `create` on its own
+`serviceaccounts/token` for the short-lived token (optional: without it,
+the fallback). No ClusterRole: a non-resource
 URL would need one, bound by a cluster admin.
 
 #### Access per model namespace
@@ -445,13 +505,14 @@ measurement, then enforced).
    recording took more than the budget for 10 cycles in a row. The state is
    `stopped` with a reason; setting the key `off` and `on` again restarts it.
 3. `LLMSM_PLANNER_RECORDING=disabled` on the Deployment: wins over the key.
+   The state is `disabled`, not `stopped`: nothing went wrong.
 
 ### Metrics and alerts
 
 | metric | type | meaning |
 | --- | --- | --- |
-| `llmsm_planner_recording_state` | gauge, label `state` (`off`, `on`, `stopped`) | 1 for the current state |
-| `llmsm_planner_recording_stop_reason` | gauge, label `reason` (`write_error`, `over_budget`, `disabled`) | 1 for why it stopped |
+| `llmsm_planner_recording_state` | gauge, label `state` | 1 for the current state: `off` (the key), `disabled` (the Deployment variable), `on`, or `stopped` (the recorder stopped itself) |
+| `llmsm_planner_recording_stop_reason` | gauge, label `reason` (`write_error`, `over_budget`) | while `stopped`, 1 for why |
 | `llmsm_planner_recording_bytes_written_total` | counter | raw bytes written |
 | `llmsm_planner_recording_dir_bytes` | gauge | bytes held, all parts, against the ceiling |
 | `llmsm_planner_recording_oldest_timestamp_seconds` | gauge | start of the oldest part held: how many days you can plan from |
@@ -460,8 +521,8 @@ measurement, then enforced).
 | `llmsm_planner_recording_namespaces_skipped` | gauge | model namespaces not recorded for lack of room |
 | `llmsm_planner_recording_cycle_seconds` | histogram | time recording added to a cycle |
 
-The controller status ConfigMap gains `plannerRecording` (`off`, `on`,
-`stopped: <reason>`) and `plannerRecordingOldest`.
+The controller status ConfigMap gains `plannerRecording` (`off`,
+`disabled`, `on`, `stopped: <reason>`) and `plannerRecordingOldest`.
 
 Alerts, in `config/components/prometheus-alerts`:
 
@@ -471,37 +532,65 @@ Alerts, in `config/components/prometheus-alerts`:
 ### Test gate
 
 Phase 2 merges when the kind e2e does this, in CI, under a new label in the
-existing full suite:
+existing full suite. Two installs, one after the other: a namespace-scoped
+install (steps 1 to 8), then a cluster-scoped install
+(`smt install --scope cluster`) with two model namespaces A and B (step 9).
+The model Deployments carry a planted environment value
+(`PLANTED_SECRET=<random>`) and a planted engine argument
+(`--api-key <random>`).
 
 1. Install with `--record`; assert the status says `on` and a part exists.
+   The run is not `Cold`.
 2. Drive the simulator through a load ramp for 20 minutes, with
    `plannerRecordingPart: 10m` and a small size, so at least one part closes
    and one rotates out.
-3. `smt recording fetch` as a ServiceAccount bound to the stock `admin`
-   role only; assert it got every closed part and their digests match.
-   As a ServiceAccount without `pods/log`, assert 403. In cluster scope,
-   with two model namespaces, as a ServiceAccount with `pods/log` on the
-   controller and in namespace A only: assert it lists and gets A's files
-   alone, and that no file of A contains a name from B.
-4. `capacity-planner serve --recordings` on the fetched directory; ask
+3. Throughout, assert no eviction: the controller's `restartCount` stays 0
+   (until step 7), no `Evicted` event names it, and
+   `llmsm_planner_recording_dir_bytes` never exceeds the ceiling.
+4. `smt recording fetch` as a ServiceAccount bound to the stock `admin`
+   role only. Assert: the number of parts fetched equals the number the
+   listing shows, and is more than zero (an empty fetch fails the step);
+   every digest matches; the output has one file per run. Grep every fetched
+   file for the ServiceAccount's token, `PLANTED_SECRET`'s value and the
+   `--api-key` value: none found. As a ServiceAccount without `pods/log`:
+   403. With `config/components/unauthenticated-metrics` applied (no
+   `metrics-auth-role`): fetch is refused and its message names the role.
+5. `capacity-planner serve --recordings` on the fetched directory; ask
    `replicas-to-slo` on the run and assert an answer, not a refusal; on the
-   rotated run, assert the cold-mode caveat.
-5. Patch the key `off`; assert the open parts close by the end of the next
-   cycle and the record-only queries stop.
-6. Restart the controller container; assert the torn part is closed and
-   fetched.
+   rotated run, assert the cold caveat in text and in `-o json`.
+6. Patch the key `off`, then `on`. Assert: the open part closes, and the
+   record-only queries stop, by the end of the next cycle; a new run opens by
+   the end of the next cycle after `on`, and its start line says `Cold`.
+7. Kill the controller container with SIGKILL (not a graceful stop), so the
+   open part has a torn last line. Assert the next start closes it, and
+   fetch gets it, without the torn line.
+8. Fetch again: assert nothing is downloaded twice (`.parts` reused) and the
+   outputs are rebuilt identically.
+9. Cluster scope. As a ServiceAccount with `pods/log` on the controller and
+   in A only: assert it lists and gets A's runs and no run of B. First, as a
+   ServiceAccount with `pods/log` in both, fetch B's run and assert B's
+   namespace, model and Pod names are present in it (the negative control:
+   the grep below can find them). Then assert none of them appears in any
+   file of A.
 
-Unit tests: parts put end to end equal the run byte for byte; a whole fetched
-run replays in Fidelity mode; cold mode on a truncated run; rotation order
-and the cap per N; the version check; the planted-secrets and planted-names
-tests; the endpoint's path checks, token hashing and SubjectAccessReview
+**Negative control for the gate.** Run the e2e once against the parent
+commit, before the change: it must fail (no `plannerRecording` key, no
+endpoint), and the PR says how it failed.
+
+Unit tests: parts put end to end, part lines stripped, equal the recorder's
+stream byte for byte; a part line whose `FirstSeq` does not match is an
+error; a whole fetched run replays in Fidelity mode; cold mode on a run with
+part 1 rotated out, and on a `Cold` start line; a gap after part 1 is
+refused; rotation order and the cap per N; the gzip queue runs one part at a
+time; the version check; the planted-secrets and planted-names tests; the
+endpoint's path checks, token hashing, audiences and SubjectAccessReview
 attributes.
 
 ## Risks and gates
 
 | risk | gate |
 | --- | --- |
-| the recorded inputs are not enough to play a run from cold (cold mode) for some learner | **before the build starts:** a spike that cuts a whole recording at a mid-run cycle and plays the rest from cold for the saturation, slo and throughput analyzers and the capacity store, and shows each answers. If one cannot, this proposal is revised before phase 1 |
+| the recorded inputs are not enough to play a run from cold (cold mode) for some learner | **before the build starts:** a spike that cuts a whole recording at a mid-run cycle and plays the rest from cold for the saturation, slo and throughput analyzers and the capacity store, and shows each answers. The same spike splits a two-namespace recording into one run per namespace, with the other namespace's names in cross-namespace store records pseudonymised, and shows each run replays in Fidelity mode. If either fails, this proposal is revised before phase 1 |
 | a checkpoint route is taken later | before that build starts: verify that replay accepts a checkpoint for the saturation, slo and throughput analyzers (each needs a new full-state checkpoint; see [Files and rotation](#files-and-rotation)) |
 | the defaults do not hold a week, or hold far more | before the feature ships: part length, cap and default size set from the measured disk per model per day |
 | the recorder's files evict the Pod | the ceiling at 80% of the size, counted by the recorder; a unit test that it never writes past it |
@@ -510,8 +599,10 @@ attributes.
 
 ## Phases
 
-1. Parts, the `part` line, background gzip, digests, the ceiling and caps, the
-   version field, cold mode in replay. The test aid uses them too.
+1. Parts, the part line, the `Cold` start field, the gzip queue, digests, the
+   ceiling and caps, the version field, one run per model namespace (split on
+   write, cross-namespace names pseudonymised), the reader changes and cold
+   mode. The test aid uses them too.
 2. The settings keys, the always-mounted `emptyDir`, the loopback endpoint,
    `smt recording fetch`, metrics, alerts, status. Remove the kustomize
    components and the sidecar. The e2e gate. Needs `smt install`
