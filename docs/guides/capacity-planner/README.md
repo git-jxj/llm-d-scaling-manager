@@ -2,7 +2,7 @@
 
 ## Overview
 
-The capacity planner is a web page that answers three questions about one
+The capacity planner is a web page that answers four questions about one
 model's prefill/decode fleet:
 
 1. With this many prefill and decode replicas, what TTFT and TPOT do I get at
@@ -22,9 +22,10 @@ API. Nothing is installed in the cluster.
 
 ## Prerequisites
 
-- [ ] One of: Docker (or Podman); `curl` and `cosign` 2.4 or later for a
-  binary (linux or darwin, amd64 or arm64); or a clone of this repository and
-  Go 1.26 or later.
+- [ ] One of: Docker (or Podman); `curl` and `cosign` for a binary (linux or
+  darwin, amd64 or arm64); or a clone of this repository and Go 1.26 or later.
+  `cosign` 3.0 or later checks the image and the binary; 2.4 is enough for the
+  binary only.
 - [ ] One of:
   - `kubectl` access to Prometheus (a port-forward), and a Prometheus that
     holds the last hour of your model servers' metrics and kube-state-metrics
@@ -46,7 +47,8 @@ Run the image:
 ```bash
 # The image of the release you run. It serves the recordings in the directory you mount, with no authentication.
 # --user runs it as you: recordings are written readable by their owner only. -p 127.0.0.1:... keeps the port
-# off your network; never publish it beyond 127.0.0.1. Podman with SELinux: mount with :ro,Z.
+# off your network; never publish it beyond 127.0.0.1. Rootless Podman: --userns=keep-id in place of --user,
+# and with SELinux mount with :ro,Z.
 export V=<release>
 mkdir -p recordings
 docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
@@ -163,10 +165,11 @@ above:
 # port-forward. Never use the image's default command with --network host: it would listen on every interface
 # of your machine. Give the command below, which listens on 127.0.0.1 without --listen-all-in-container.
 # For an https Prometheus, mount the token and CA files and pass --bearer-token-file and --ca-file.
-# serve reads no kubeconfig unless --auth=kubernetes, so none is mounted.
-kubectl -n ${PROM_NS} port-forward svc/${PROM_SVC} 9090:9090 &
+# serve reads no kubeconfig unless --auth=kubernetes, so none is mounted. The port-forward uses 9091, so it does
+# not clash with one already on 9090.
+kubectl -n ${PROM_NS} port-forward svc/${PROM_SVC} 9091:9090 &
 docker run --rm --network host ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V} \
-  serve --listen 127.0.0.1:8080 --prometheus http://127.0.0.1:9090 --namespace ${NAMESPACE} --kube-state-metrics \
+  serve --listen 127.0.0.1:8080 --prometheus http://127.0.0.1:9091 --namespace ${NAMESPACE} --kube-state-metrics \
   --engine vllm --engine-args "${ENGINE_ARGS}"
 ```
 <!-- guide:container.prometheus end -->
@@ -190,7 +193,7 @@ When you are done:
 
 <!-- guide:stop start -->
 ```bash
-# Ctrl-C stops the server. Then stop the port-forward, if you started one.
+# Ctrl-C stops the server. Then stop the port-forward, if you started one, from the shell that started it (%1 is that shell's first background job).
 kill %1
 ```
 <!-- guide:stop end -->

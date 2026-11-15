@@ -375,8 +375,14 @@ re-run from the **Actions** tab.
    `SHA256SUMS` with keyless `cosign sign-blob --bundle`, and uploads them all
    with `gh release upload --clobber`, creating a draft release when the tag has
    none, and refusing to change a published one. It is the only job with
-   `contents: write`, and it builds no image. Its yq is pinned by sha256 and
-   its Go (for `make kustomize`) comes from `go.mod`.
+   `contents: write`, and it builds no image. Its yq is pinned by sha256.
+   Its Go, for `make kustomize` and the planner binaries, is the latest patch
+   of the `go.mod` Go line (`check-latest`), as the image's `golang:1.26`
+   builder is, and the binaries are built only after `govulncheck` (pinned)
+   finds no known vulnerability in code the planner calls. A re-run on the
+   same Go patch builds the same bytes; after a new Go patch it does not, and
+   a published release then refuses the new `SHA256SUMS`: release a new
+   version instead.
    `hack/check-release-manifests.sh` checks the job's shape and runs its
    binary and sign steps against a stub make and cosign.
 8. **Tools image** (job `release-tools`, after the image job). Builds
@@ -402,12 +408,6 @@ re-run from the **Actions** tab.
    files beside them. Fix the cause and **Re-run failed jobs**; the images
    stay, and the files are attached to the same draft. A cause the tagged
    commit holds needs a new tag.
-10. **Planner binaries and Go.** `release-files` builds with the latest patch
-   of the `go.mod` Go line (`check-latest`), as the image's `golang:1.26`
-   builder does, after `govulncheck` (pinned) finds no known vulnerability in
-   code the planner calls. A re-run on the same Go patch builds the same
-   bytes; after a new Go patch it does not, and a published release then
-   refuses the new `SHA256SUMS`: release a new version instead.
 
 ### The release files
 

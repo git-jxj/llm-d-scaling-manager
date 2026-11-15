@@ -11,7 +11,8 @@ while the fleet ran.
 This guide saves such a window. There are two ways:
 
 1. **With `capacity-planner`.** One command reads the window from Prometheus and writes
-   a recording. Use it when you can build the tool and reach Prometheus.
+   a recording. Use it when you can run the tool (the release binary) and
+   reach Prometheus.
 2. **With only curl and jq.** Save the raw series to files and send them.
    Anyone with this repository then loads them into a local Prometheus and
    runs step 1 there. Use it when you cannot run `capacity-planner` where Prometheus is.
@@ -27,7 +28,10 @@ is the reference for both.
 - [ ] A window of 30 minutes or more in which load rose. A flat, quiet hour
   teaches the planner little.
 - [ ] `kubectl` access to Prometheus' namespace (a port-forward), or its URL.
-- [ ] For Path 1: Go and a checkout of the release you run.
+- [ ] For Path 1: the `capacity-planner` binary of the release you run
+  ([Get the planner](../capacity-planner/README.md#get-the-planner)), or a
+  checkout of that release and Go 1.26 or later (`make capacity-planner`).
+  Record with the binary, not the image: the image is for serving.
 - [ ] For Path 2: bash, `jq`, and `curl` 7.76 or later (for `--fail-with-body`;
   `curl --version` says which), plus `kubectl get` on the model Deployments.
 - [ ] kube-state-metrics in the same Prometheus, for readiness and roles,
@@ -51,8 +55,10 @@ curl -s ${PROM_URL}/api/v1/status/buildinfo | jq -r .data.version
 
 <!-- guide:record start -->
 ```bash
-# From a checkout of the release you run. Needs Go. Or download the release's binary to bin/capacity-planner, as the capacity planner guide's Get the planner does. On v0.11.1 and earlier the target is make whatif and the binary bin/whatif.
-make capacity-planner
+# The binary of the release you run, at bin/capacity-planner, as the capacity planner guide's Get the planner
+# downloads and checks it. Record with the binary: the image is for serving. From a checkout instead, run
+# make capacity-planner (Go 1.26 or later; on v0.11.1 and earlier make whatif, which builds bin/whatif).
+bin/capacity-planner version
 bin/capacity-planner capture -h 2>&1 | head -3
 
 # The namespace your model servers run in, and the window to answer from (UTC).

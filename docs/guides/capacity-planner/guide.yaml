@@ -8,7 +8,8 @@ get:
     note: |
       The image of the release you run. It serves the recordings in the directory you mount, with no authentication.
       --user runs it as you: recordings are written readable by their owner only. -p 127.0.0.1:... keeps the port
-      off your network; never publish it beyond 127.0.0.1. Podman with SELinux: mount with :ro,Z.
+      off your network; never publish it beyond 127.0.0.1. Rootless Podman: --userns=keep-id in place of --user,
+      and with SELinux mount with :ro,Z.
     run: |
       export V=<release>
       mkdir -p recordings
@@ -47,11 +48,12 @@ container:
       port-forward. Never use the image's default command with --network host: it would listen on every interface
       of your machine. Give the command below, which listens on 127.0.0.1 without --listen-all-in-container.
       For an https Prometheus, mount the token and CA files and pass --bearer-token-file and --ca-file.
-      serve reads no kubeconfig unless --auth=kubernetes, so none is mounted.
+      serve reads no kubeconfig unless --auth=kubernetes, so none is mounted. The port-forward uses 9091, so it does
+      not clash with one already on 9090.
     run: |
-      kubectl -n ${PROM_NS} port-forward svc/${PROM_SVC} 9090:9090 &
+      kubectl -n ${PROM_NS} port-forward svc/${PROM_SVC} 9091:9090 &
       docker run --rm --network host ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V} \
-        serve --listen 127.0.0.1:8080 --prometheus http://127.0.0.1:9090 --namespace ${NAMESPACE} --kube-state-metrics \
+        serve --listen 127.0.0.1:8080 --prometheus http://127.0.0.1:9091 --namespace ${NAMESPACE} --kube-state-metrics \
         --engine vllm --engine-args "${ENGINE_ARGS}"
 
 start:
@@ -86,7 +88,7 @@ open:
     xdg-open http://127.0.0.1:8080/ || open http://127.0.0.1:8080/
 
 stop:
-  note: Ctrl-C stops the server. Then stop the port-forward, if you started one.
+  note: Ctrl-C stops the server. Then stop the port-forward, if you started one, from the shell that started it (%1 is that shell's first background job).
   run: |
     kill %1
 

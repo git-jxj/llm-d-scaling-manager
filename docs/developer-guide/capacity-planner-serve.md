@@ -132,7 +132,8 @@ docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 \
   ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>
 ```
 
-With Podman and SELinux, mount with `:ro,Z`.
+With rootless Podman, use `--userns=keep-id` in place of `--user`; with
+SELinux, mount with `:ro,Z`.
 
 Never run the default command with `--network host`: the container then
 shares the host's interfaces and the server listens on all of them. Give the
@@ -621,6 +622,7 @@ Plan`), see [As built](../proposals/capacity-planner.md#as-built-phase-0).
 | `TestPageSavesAndCompares` | The save, open, delete, export, import, pin and unpin controls are on the page and wired to `scenario.js`'s functions; the store and the file hold the link's text; every key the link writes, the assumed terms' included, is one an import admits; no line of either script that builds markup puts a name in raw; a pinned plan is a copy drawn dashed. |
 | `hack/check-planner-scenarios.sh` | Runs `scenario.js` under node (208 cases; it fails without node): `esc`, the bucket edges by the server's rules, the box's mark, the link's edges and the lines' styles, the link and name checks on good and hostile fixtures, the store keeping entries it cannot read, the cap, distinct suffixed names for repeated 80-character imports, the import's branches, which sources open, the link's handshake with loads that fail or are overtaken, generated names, and the compare table: every text escaped, refusals said, changes as printed, headroom coloured only at the same rate. |
 | `TestCheckListen`, `TestAuthenticate`, `TestServeRefusesUnsafeBinds` | Loopback serves with no token; any other bind refuses to start without `--auth=kubernetes`; with it, a token the SubjectAccessReview does not allow is 403. |
-| `TestServeListenAllInContainerRefused` | `--listen-all-in-container` is refused in a Kubernetes Pod; a start refused for any reason prints no warning that it serves. |
+| `TestServeListenAllInContainerRefused` | `--listen-all-in-container` is refused in a Kubernetes Pod, at an address it otherwise allows; a start refused for any reason, or a bind that fails, prints no warning that it serves. |
+| `hack/check-capacity-planner-dist.sh` | `make capacity-planner-dist` builds all four platforms with `-trimpath`, CGO off and both ldflags, and the host binary prints the version and commit (PR check `capacity-planner-image`). |
 | `TestCheckContainerListen`, `TestServeListenAllInContainer` | `--listen-all-in-container` allows the unspecified address with `--auth=none` and nothing else (a named interface, a hostname, `--auth=kubernetes`), each of which `CheckListen` still refuses; started so, serve binds every interface, warns, answers a loopback Host and refuses another with 403. |
 | `hack/check-capacity-planner-image.sh` | The image runs as non-root, prints its version, and run as the caller with its own command and a committed 0600 recording mounted answers `POST /v1/inputs` and `POST /v1/plan` with 200 and a TTFT curve; a foreign Host is 403; `serve` on `0.0.0.0` without the opt-in exits 2. |
