@@ -1575,13 +1575,29 @@ RELEASE_E2E_CONTROLLER_NS = $(if $(filter cluster,$(RELEASE_E2E_SCOPE)),scaling-
 RELEASE_E2E_SMOKE_SKIP ?= $(if $(filter cluster,$(RELEASE_E2E_SCOPE)),,KEDA Smoke Tests - Basic Autoscaling)
 .PHONY: test-e2e-release-manifests
 test-e2e-release-manifests: kustomize ## Install from the rendered release files with kubectl only, and check it (kind, after test-e2e-release-manifests-setup)
+	@set -e; \
+	case "$(RELEASE_E2E_SCOPE)" in namespace|cluster) ;; *) echo "RELEASE_E2E_SCOPE must be namespace or cluster, not '$(RELEASE_E2E_SCOPE)'"; exit 1 ;; esac; \
+	$(MAKE) --no-print-directory release-e2e-dist; \
+	rm -rf "$(RELEASE_E2E_LOGS)"; \
+	smoke=""; \
+	if [ "$(RELEASE_E2E_SMOKE)" = true ]; then \
+		smoke="E2E_EXPECT_SCALER_TLS=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=$(RELEASE_E2E_CONTROLLER_NS) KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=true SKIP='$(RELEASE_E2E_SMOKE_SKIP)'"; \
+	fi; \
+	KUBECONFIG=$(KUBECONFIG) RELEASE_E2E_SCOPE=$(RELEASE_E2E_SCOPE) NS=$(RELEASE_E2E_CONTROLLER_NS) \
+		MODEL_NS=$(E2E_EMULATED_LLMD_NAMESPACE) KEDA_NS=$(E2E_KEDA_NAMESPACE) \
+		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(RELEASE_E2E_LOGS)" SMOKE_CMD="$$smoke" \
+		bash test/release-manifests/e2e.sh "$(RELEASE_E2E_DIST)"
+
+# The release files for the kind e2e, in RELEASE_E2E_DIST, rendered with the
+# digest the kind nodes hold for RELEASE_E2E_IMG, as a release pins it.
+.PHONY: release-e2e-dist
+release-e2e-dist: kustomize
 	@# The release files name the image by digest. The kind nodes hold the
 	@# local build under its tag, and under a digest reference named for the
 	@# import (docker.io/library/import-<date>@sha256:...), not for the
 	@# repository, so a pod naming <repo>@sha256:<digest> would try to pull it.
 	@# Tag that reference on each node, as a registry would serve it.
 	@set -e; \
-	case "$(RELEASE_E2E_SCOPE)" in namespace|cluster) ;; *) echo "RELEASE_E2E_SCOPE must be namespace or cluster, not '$(RELEASE_E2E_SCOPE)'"; exit 1 ;; esac; \
 	nodes="$$($(KIND) get nodes --name $(CLUSTER_NAME))"; \
 	[ -n "$$nodes" ] || { echo "no kind cluster $(CLUSTER_NAME)"; exit 1; }; \
 	repo="$(RELEASE_E2E_IMG)"; repo="$${repo%:*}"; \
@@ -1594,16 +1610,45 @@ test-e2e-release-manifests: kustomize ## Install from the rendered release files
 		docker exec "$$n" crictl inspecti "$$digest" >/dev/null || { echo "kind node $$n cannot resolve $$digest"; exit 1; }; \
 	done; \
 	echo "Rendering the release files with $$digest"; \
-	rm -rf "$(RELEASE_E2E_DIST)" "$(RELEASE_E2E_LOGS)"; \
-	$(MAKE) --no-print-directory release-manifests IMG="$$digest" RELEASE_VERSION=v0.0.0-e2e DIST="$(RELEASE_E2E_DIST)"; \
+	rm -rf "$(RELEASE_E2E_DIST)"; \
+	$(MAKE) --no-print-directory release-manifests IMG="$$digest" RELEASE_VERSION=$(RELEASE_E2E_VERSION) DIST="$(RELEASE_E2E_DIST)"
+RELEASE_E2E_VERSION ?= v0.0.0-e2e
+
+# The install from the tools image (test/tools-install/e2e.sh): smt
+# admin-setup, install and admin-finish, run in the tools image built with the
+# release files baked in (--build-context release=<the rendered files>), on
+# the same kind prerequisites as test-e2e-release-manifests. Namespace scope
+# runs install as a ServiceAccount bound to the stock admin ClusterRole in the
+# namespace and nothing else; cluster scope runs install --scope cluster.
+# docs/proposals/two-command-install.md, "Testing"; CI runs both scopes
+# (e2e-tests-tools-install in ci-pr-checks.yaml).
+TOOLS_E2E_IMG      ?= scaling-manager-tools:e2e
+TOOLS_E2E_LOGS     ?= $(CURDIR)/dist/tools-e2e-logs
+# The release whose files the upgrade case installs by hand first.
+TOOLS_E2E_PREVIOUS ?= v0.11.1
+.PHONY: test-e2e-tools-install
+test-e2e-tools-install: kustomize ## Install with smt admin-setup, install and admin-finish from the tools image, and check it (kind, after test-e2e-release-manifests-setup)
+	@set -e; \
+	case "$(RELEASE_E2E_SCOPE)" in namespace|cluster) ;; *) echo "RELEASE_E2E_SCOPE must be namespace or cluster, not '$(RELEASE_E2E_SCOPE)'"; exit 1 ;; esac; \
+	$(MAKE) --no-print-directory release-e2e-dist; \
+	rm -rf "$(TOOLS_E2E_LOGS)"; \
+	echo "Building $(TOOLS_E2E_IMG) with the release files baked in"; \
+	docker build -q -f Dockerfile.tools --build-context release="$(RELEASE_E2E_DIST)" \
+		--build-arg VERSION=$(RELEASE_E2E_VERSION) \
+		--build-arg RELEASE_SHA256SUMS="$$(sha256sum "$(RELEASE_E2E_DIST)/SHA256SUMS" | cut -d' ' -f1)" \
+		-t $(TOOLS_E2E_IMG) .; \
 	smoke=""; \
 	if [ "$(RELEASE_E2E_SMOKE)" = true ]; then \
-		smoke="E2E_EXPECT_SCALER_TLS=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=$(RELEASE_E2E_CONTROLLER_NS) KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=true SKIP='$(RELEASE_E2E_SMOKE_SKIP)'"; \
+		smoke="E2E_EXPECT_SCALER_TLS=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=$(RELEASE_E2E_CONTROLLER_NS) KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=false SKIP='$(RELEASE_E2E_SMOKE_SKIP)'"; \
 	fi; \
-	KUBECONFIG=$(KUBECONFIG) RELEASE_E2E_SCOPE=$(RELEASE_E2E_SCOPE) NS=$(RELEASE_E2E_CONTROLLER_NS) \
+	KUBECONFIG=$(KUBECONFIG) TOOLS_IMG=$(TOOLS_E2E_IMG) TOOLS_E2E_SCOPE=$(RELEASE_E2E_SCOPE) NS=$(RELEASE_E2E_CONTROLLER_NS) \
 		MODEL_NS=$(E2E_EMULATED_LLMD_NAMESPACE) KEDA_NS=$(E2E_KEDA_NAMESPACE) \
-		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(RELEASE_E2E_LOGS)" SMOKE_CMD="$$smoke" \
-		bash test/release-manifests/e2e.sh "$(RELEASE_E2E_DIST)"
+		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(TOOLS_E2E_LOGS)" SMOKE_CMD="$$smoke" \
+		PREVIOUS_RELEASE=$(TOOLS_E2E_PREVIOUS) \
+		bash test/tools-install/e2e.sh "$(RELEASE_E2E_DIST)"
+
+.PHONY: test-e2e-tools-install-with-setup
+test-e2e-tools-install-with-setup: test-e2e-release-manifests-setup test-e2e-tools-install ## Prerequisites, then the tools-image install e2e (never deletes the cluster)
 
 # The prerequisites only: kind with emulated GPUs, Prometheus, KEDA, the llm-d
 # CRDs and EPP, and the image loaded into the nodes. DEPLOY_SCALING_MANAGER=false
@@ -3218,6 +3263,10 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/check-release-latest.sh
 	@bash -n deploy/release-manifests.sh
 	@bash -n hack/check-release-manifests.sh
+	@bash -n hack/check-release-install.sh
+	@bash -n hack/compare-baked-release-files.sh
+	@bash -n hack/testdata/release-install/kubectl
+	@bash -n test/tools-install/e2e.sh
 	@bash -n hack/check-controller-ready.sh
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
@@ -3505,6 +3554,13 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# time and requires each break to be caught. An image by tag, a Namespace
 	@# in the file, or a hashed ClusterRole name all render and parse cleanly.
 	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-release-manifests.sh
+	@echo "Checking smt admin-setup, install and admin-finish against the release files..."
+	@# docs/proposals/two-command-install.md: the exit codes, --dry-run equal to
+	@# the sed-substituted files, files refused on a bad SHA256SUMS or another
+	@# version before anything is applied, a FAIL stopping the install before
+	@# the controller, existing settings never written, KEDA's side equal to the
+	@# release keda-auth file, and the release workflow's baked-files check.
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-release-install.sh
 	@echo "Checking the tenant Role still covers the generated ClusterRole..."
 	@# The ClusterRole is GENERATED from kubebuilder markers; the namespaced Role
 	@# the tenant overlay installs is maintained by hand, so it does not move when

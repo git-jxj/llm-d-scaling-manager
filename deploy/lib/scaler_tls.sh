@@ -939,7 +939,11 @@ llmsm_scaler_keda_auth_check() {
 # marker ConfigMap. Runs when TLS is wanted (LLMSM_SCALER_TLS_WANTED), after KEDA
 # is installed. A refusal when TLS was asked for explicitly; a warning and no
 # change when it is only the default, so the controller stays plaintext.
+# LLMSM_SCALER_KEDA_WROTE is true when it wrote any of the three (a first write
+# or a change): the controller reads KEDA's side at start, so smt admin-finish
+# restarts it only then.
 llmsm_scaler_keda_auth_apply() {
+    LLMSM_SCALER_KEDA_WROTE=false
     [ "${LLMSM_SCALER_TLS_WANTED:-false}" = true ] || return 0
     local name d obj_state sha not_after ca_src
     name="$(llmsm_scaler_keda_auth_name)"
@@ -1001,6 +1005,7 @@ llmsm_scaler_keda_auth_apply() {
               data: {"tls.crt": ($crt | @base64), "tls.key": ($key | @base64), "ca.crt": ($ca | @base64)}}' \
             | kubectl apply --server-side --force-conflicts --field-manager=llm-d-scaling-manager -f - >/dev/null \
             || { llmsm_scaler_drop_tmp; log_error "Could not write Secret $name in $LLMSM_SCALER_KEDA_OBJ_NS."; }
+        LLMSM_SCALER_KEDA_WROTE=true
     fi
     local want cur rc_cur=0
     want="$(jq -nc --arg n "$name" --arg l "$LLMSM_SCALER_TLS_LABEL" --arg s "$name" \
@@ -1015,6 +1020,7 @@ llmsm_scaler_keda_auth_apply() {
         printf '%s' "$want" \
             | kubectl apply --server-side --force-conflicts --field-manager=llm-d-scaling-manager -f - >/dev/null \
             || { llmsm_scaler_drop_tmp; log_error "Could not write ClusterTriggerAuthentication $name."; }
+        LLMSM_SCALER_KEDA_WROTE=true
     fi
 
     sha="$(llmsm_scaler_sha256 "$d/tls.crt")" || sha=""
@@ -1034,6 +1040,7 @@ llmsm_scaler_keda_auth_apply() {
         printf '%s' "$want" \
             | kubectl apply --server-side --force-conflicts --field-manager=llm-d-scaling-manager -f - >/dev/null \
             || { llmsm_scaler_drop_tmp; log_error "Could not write ConfigMap $LLMSM_SCALER_KEDA_MARKER in $LLMSM_NS."; }
+        LLMSM_SCALER_KEDA_WROTE=true
     fi
     llmsm_scaler_drop_tmp
     LLMSM_SCALER_KEDA_READY=true
