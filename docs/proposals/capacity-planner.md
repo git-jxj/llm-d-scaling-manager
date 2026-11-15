@@ -1092,6 +1092,49 @@ refuses per-bucket answers), and `freeze` specs already name their own
 buckets with their own prompts. The 5% rule above (hide buckets under 5% of
 the requests) still waits on shares per bucket.
 
+## As built: standalone release
+
+**Decision.** Each release ships the planner without a checkout: an image,
+`ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>`,
+and binaries `capacity-planner-<tag>-<os>-<arch>` for linux and darwin,
+amd64 and arm64, beside the other release files. The guide leads with them;
+`make capacity-planner` stays as the alternative.
+
+**Why.** An operator who only installs from the release files had no way
+to run the planner but to clone the repository and install Go. The image
+covers anyone with a container runtime; the binaries cover macOS, where the
+image cannot reach a port-forward without host networking.
+
+**One tag with the controller.** The planner replays recordings with the
+controller's learners, so a planner from another release can price a
+recording differently from the controller that made it. Both are built from
+the tagged commit, by one release run, under one tag, and
+`capacity-planner version` prints it with the commit.
+
+**Container mode.** `serve` binds loopback without authentication, and a
+container's loopback is unreachable from the host. `--listen-all-in-container`
+is the one exception: with `--auth=none` it allows the unspecified address
+only, and warns. The image's command sets it, and the guide publishes the
+port to the host's loopback alone (`-p 127.0.0.1:8080:8080`). Every other
+non-loopback address still needs `--auth=kubernetes` and TLS, and the Host
+check still answers loopback names only. The opt-in is a flag, not a
+detection of being in a container, so the rule stays one an operator reads
+in the command line.
+
+**Release safety.** The image is built, checked serving a plan
+(`hack/check-capacity-planner-image.sh`), scanned, pushed for both
+platforms and signed by digest as the tools image is. A missing binary, one
+that prints another tag, or a pushed index without both platforms fails the
+release. The binaries are built with `-trimpath` and the latest patch of
+the `go.mod` Go line, as the image is, after `govulncheck` finds no known
+vulnerability in code the planner calls. A re-run on the same Go patch makes
+the same `SHA256SUMS`, which a published release requires.
+
+**Not access control.** The Host check guards a browser against other web
+pages; any other client that reaches the port can name `localhost`. So the
+opt-in is refused in a Kubernetes Pod, and the guide runs the image with
+`--user` (recordings are written `0600`) on `127.0.0.1` only.
+
 ## Decisions
 
 Decided 2026-11-09, on the questions the first draft left open.

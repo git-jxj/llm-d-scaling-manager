@@ -377,6 +377,92 @@ jobs:
           ignore-unfixed: 'true'
           exit-code: '1'
 
+  # The capacity planner image the release publishes beside the controller
+  # (Dockerfile.capacity-planner; release-capacity-planner in ci-release.yaml).
+  # Built for both release platforms (a cross-compile, so arm64 is cheap), then
+  # the amd64 build is run by hack/check-capacity-planner-image.sh, which
+  # starts it as the guide does, POSTs /v1/inputs on a committed recording and
+  # /v1/plan on the result, and requires a 200 and a TTFT curve; then the
+  # release's blocking scan. Skipped step by step on a docs-only PR, like
+  # tools-image.
+  capacity-planner-image:
+    runs-on: ubuntu-latest
+    needs: check-code-changes
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Checkout source
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the arm64 capacity planner image
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.capacity-planner
+          platforms: linux/arm64
+          push: false
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=pr-check
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Build the amd64 capacity planner image
+        id: build-planner
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.capacity-planner
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: capacity-planner:pr-check
+          build-args: |
+            VERSION=pr-check
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Run hack/check-capacity-planner-image.sh against the image
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: PLANNER_IMG=capacity-planner:pr-check PLANNER_VERSION=pr-check bash hack/check-capacity-planner-image.sh
+
+      # The release binaries, built as release-files builds them (the go.mod
+      # Go line at its latest patch, make capacity-planner-dist), so a broken
+      # platform, ldflag or -trimpath fails here rather than on a tag.
+      - name: Read the Go line from go.mod
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: sed -En 's/^go ([0-9]+\.[0-9]+)(\..*)?$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
+
+      - name: Set up Go
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          check-latest: true
+          cache: false
+
+      - name: Run hack/check-capacity-planner-dist.sh
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: bash hack/check-capacity-planner-dist.sh
+
+      - name: Scan the capacity planner image for fixable CRITICAL vulnerabilities (blocking)
+        if: ${{ !cancelled() && steps.build-planner.outcome == 'success' }}
+        uses: ./.github/actions/trivy-scan
+        with:
+          image: capacity-planner:pr-check
+          severity: CRITICAL
+          ignore-unfixed: 'true'
+          exit-code: '1'
+
   docs-check:
     runs-on: ubuntu-latest
     steps:

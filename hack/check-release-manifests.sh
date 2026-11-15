@@ -640,7 +640,24 @@ expect_wf() {
     got="$(yq -r "$3" "$WF" 2>&1)"
     if [ "$got" = "$2" ]; then pass; else fail "ci-release.yaml: $1: got '$got', want '$2'"; fi
 }
-expect_wf "release-files runs after both images are pushed and signed" 'release,release-tools' '[.jobs."release-files".needs] | flatten | join(",")'
+expect_wf "release-files runs after every image is pushed and signed" 'release,release-tools,release-capacity-planner' '[.jobs."release-files".needs] | flatten | join(",")'
+expect_wf "release-files attaches a capacity planner binary for linux and darwin, amd64 and arm64" \
+    'linux/amd64 linux/arm64 darwin/amd64 darwin/arm64' '.jobs."release-files".env.CAPACITY_PLANNER_PLATFORMS'
+expect_wf "the planner is scanned by govulncheck, then built, then signed" \
+    'Scan the capacity planner for called vulnerabilities (blocking),Build the capacity planner binaries,Sign the release files' \
+    '[.jobs."release-files".steps[].name | select(. == "Scan the capacity planner for called vulnerabilities (blocking)" or . == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
+expect_wf "govulncheck runs pinned, over the planner" 'true' \
+    '.jobs."release-files".steps[] | select(.name == "Scan the capacity planner for called vulnerabilities (blocking)") | .run | test("go run golang.org/x/vuln/cmd/govulncheck@v[0-9]+[.][0-9]+[.][0-9]+ [.]/cmd/capacity-planner/") | tostring'
+yq -r '.jobs."release-files".steps[] | select(.name == "Read the Go line from go.mod") | .run' "$WF" > "$WORK/wf-goline.sh"
+: > "$WORK/wf-goline.env"
+(cd "$ROOT" && GITHUB_ENV="$WORK/wf-goline.env" bash "$WORK/wf-goline.sh")
+want_line="$(sed -En 's/^go ([0-9]+[.][0-9]+).*$/\1/p' "$ROOT/go.mod")"
+if [ -n "$want_line" ] && [ "$(cat "$WORK/wf-goline.env")" = "GO_VERSION=$want_line" ]; then pass; else
+    fail "the Go line step wrote '$(cat "$WORK/wf-goline.env")', want GO_VERSION=$want_line"; fi
+expect_wf "the binaries are built with the latest patch of the go.mod Go line" 'true|${{ env.GO_VERSION }}' \
+    '(.jobs."release-files".steps[] | select(.uses == "actions/setup-go*") | (.with."check-latest" | tostring) + "|" + .with."go-version")'
+expect_wf "the binaries are built by make capacity-planner-dist for those platforms" 'true' \
+    '.jobs."release-files".steps[] | select(.name == "Build the capacity planner binaries") | .run | (test("make capacity-planner-dist RELEASE_VERSION=\"\$VERSION\"") and test("CAPACITY_PLANNER_PLATFORMS=\"\$CAPACITY_PLANNER_PLATFORMS\"")) | tostring'
 expect_wf "release-files may upload (contents) and sign (id-token), nothing more" \
     'contents=write,id-token=write' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
 expect_wf "the image job still cannot write the release" 'read' '.jobs.release.permissions.contents'
@@ -665,14 +682,22 @@ yq -r '.jobs."release-files".steps[] | select(.name == "Sign the release files")
 sign_run() {
     (cd "$WORK/wf/run" && STUB_LOG="$WORK/wf/cosign.log" PATH="$WORK/wf/bin:$PATH" bash "$WORK/wf/sign.sh") > "$WORK/wf/sign.out" 2>&1
 }
-rm -rf "$WORK/wf/run"; mkdir -p "$WORK/wf/run"; cp -r "$GOOD" "$WORK/wf/run/dist"; : > "$WORK/wf/cosign.log"
+# The render plus the four capacity planner binaries the build step adds
+# (stand-ins: the sign step reads only their names).
+PLANNER_BINS="capacity-planner-$VERSION-linux-amd64 capacity-planner-$VERSION-linux-arm64 capacity-planner-$VERSION-darwin-amd64 capacity-planner-$VERSION-darwin-arm64"
+sign_dist() {
+    rm -rf "$WORK/wf/run"; mkdir -p "$WORK/wf/run"; cp -r "$GOOD" "$WORK/wf/run/dist"; : > "$WORK/wf/cosign.log"
+    for b in $PLANNER_BINS; do echo stub > "$WORK/wf/run/dist/$b"; done
+}
+sign_dist
 if sign_run; then
-    want=$(( $(echo $ALL_FILES | wc -w) + 2 ))
+    want=$(( $(echo $ALL_FILES | wc -w) + 2 + 4 ))
     got="$(grep -c '^sign-blob --yes --bundle ' "$WORK/wf/cosign.log")"
     bundles="$(find "$WORK/wf/run/dist" -name '*.sigstore.json' | wc -l)"
-    if [ "$got" = "$want" ] && [ "$bundles" = "$want" ] && [ -s "$WORK/wf/run/dist/SHA256SUMS.sigstore.json" ]; then
+    if [ "$got" = "$want" ] && [ "$bundles" = "$want" ] && [ -s "$WORK/wf/run/dist/SHA256SUMS.sigstore.json" ] \
+        && [ -s "$WORK/wf/run/dist/capacity-planner-$VERSION-darwin-arm64.sigstore.json" ]; then
         pass
-        echo "  ok: the sign step signs all $want files, SHA256SUMS and the tools tarball included"
+        echo "  ok: the sign step signs all $want files, SHA256SUMS, the tools tarball and the planner binaries included"
     else
         fail "the sign step made $got cosign calls and $bundles bundles, want $want each"
     fi
@@ -681,6 +706,35 @@ else
 fi
 rm -rf "$WORK/wf/run/dist"/*.yaml "$WORK/wf/run/dist"/*.sigstore.json
 if sign_run; then fail "the sign step passed with no manifest rendered"; else pass; fi
+sign_dist
+rm -f "$WORK/wf/run/dist"/capacity-planner-*-arm64
+if sign_run; then fail "the sign step passed with no arm64 capacity planner binary"; else pass; fi
+
+# The build step's checks, executed with a stub make that builds what
+# STUB_BUILD names and a stub binary that prints STUB_VERSION_LINE: every
+# platform built and printing this release and commit, else the job fails;
+# on success SHA256SUMS lists the four binaries beside the render.
+yq -r '.jobs."release-files".steps[] | select(.name == "Build the capacity planner binaries") | .run' "$WF" > "$WORK/wf/build.sh"
+cat > "$WORK/wf/bin/make" <<'STUB'
+#!/usr/bin/env bash
+for b in $STUB_BUILD; do printf '#!/usr/bin/env bash\necho "$STUB_VERSION_LINE"\n' > "dist/$b"; chmod +x "dist/$b"; done
+STUB
+chmod +x "$WORK/wf/bin/make"
+build_run() {
+    rm -rf "$WORK/wf/run"; mkdir -p "$WORK/wf/run"; cp -r "$GOOD" "$WORK/wf/run/dist"
+    (cd "$WORK/wf/run" && STUB_BUILD="$1" STUB_VERSION_LINE="$2" VERSION="$VERSION" GITHUB_SHA=abc123 \
+        CAPACITY_PLANNER_PLATFORMS="$(yq -r '.jobs."release-files".env.CAPACITY_PLANNER_PLATFORMS' "$WF")" \
+        PATH="$WORK/wf/bin:$PATH" bash -e "$WORK/wf/build.sh") > "$WORK/wf/build.out" 2>&1
+}
+if build_run "$PLANNER_BINS" "capacity-planner $VERSION (commit abc123)" \
+    && [ "$(wc -l < "$WORK/wf/run/dist/SHA256SUMS")" -eq "$(( $(wc -l < "$GOOD/SHA256SUMS") + 4 ))" ] \
+    && (cd "$WORK/wf/run/dist" && sha256sum -c --quiet SHA256SUMS >/dev/null 2>&1); then
+    pass
+else
+    fail "the build step on four good binaries: $(tail -2 "$WORK/wf/build.out" | tr '\n' ' ')"
+fi
+if build_run "${PLANNER_BINS% *}" "capacity-planner $VERSION (commit abc123)"; then fail "the build step passed with the darwin/arm64 binary missing"; else pass; fi
+if build_run "$PLANNER_BINS" "capacity-planner unreleased (commit abc123)"; then fail "the build step passed with a binary that prints another version"; else pass; fi
 
 # The attach step, executed with a stub gh: a missing release becomes a draft
 # and gets the files; a draft gets them; a published
