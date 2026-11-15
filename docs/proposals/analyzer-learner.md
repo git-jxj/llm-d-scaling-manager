@@ -898,7 +898,18 @@ finding above is in exactly one state:
   and known-truth/mu/output-spread each fail (19 of 20 seeds). "Max over one
   replica's re-reads within a minute" is caught since issue #55: a stub
   mutant turns `mu-reread-takes-latest` off, and n-dependence/mu/ar-reread
-  and n-dependence/prefill-bound/ar-reread each fail (20 of 20 seeds). "k == 0 unsettles"
+  and n-dependence/prefill-bound/ar-reread each fail (20 of 20 seeds). "No floor
+  under flow control" is caught since issue #51, at the rows level only (no
+  replay switch turns the derived-mu fallback off): a fleet overloaded under
+  flow control, its engines' queues empty, learns no mu and prices the floor
+  from its line's derived mu. Mutants that rewrite the rows to read no ITL
+  (no line, so no floor) and twice the ITL (the derived mu halved) fail
+  known-truth/floor/flow-control-unlearned-mu-decode, and one that reads half
+  the ITL (the derived mu doubled) fails flow-control-unlearned-mu-dp8, each
+  on 20 of 20 seeds. The aggregated and P/D decode cases are ledger rows: an
+  aggregated derived mu is report-only, so it has no floor, and a
+  decode-bound P/D decode is not charged the router's queue (its
+  prefill-bound twin passes). "k == 0 unsettles"
   and the settle holes "fall", "rate escape", "idle return" and "lend" are
   caught since ev-shindin/llm-scaling-manager#495, each on 20 of 20 seeds. A stub mutant turns
   `Admission.IdleOnEvidence` off, and a scrape that read nothing counts as idle.
@@ -920,7 +931,6 @@ finding above is in exactly one state:
 | --- | --- |
 | Router queue without engine metrics | the missing-values case passes, and no row edit reproduces the pre-fix reading |
 | Demand falls when λ lags a step | the trajectory passes; no pre-fix floor is reproduced |
-| No floor under flow control (ev-shindin/llm-scaling-manager#144) | a ledger row for k2; no case drives mu or the floor under flow control |
 | "For good" self-sealing low mu | fixed on ev-shindin/llm-scaling-manager#495, but no property class runs a closed loop, so none catches it. The probe holds it: `TestClosedLoopProbe_ASlowReplicaInsideTheServedBoundStaysUnderTheBound` passes, and with the unread replica's credit off it is over-ordered for good again |
 | Share swing and cancel (ev-shindin/llm-scaling-manager#272 F1/F2 and the d3 reviews) | the share ledger (#14, #15) is not recorded or replayed. Out of scope for PR 0 |
 | Alert debounce and sustain (ev-shindin/llm-scaling-manager#283 M2/M3) | not a learner |

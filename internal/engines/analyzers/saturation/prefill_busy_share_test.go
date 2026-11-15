@@ -68,10 +68,10 @@ func prefillImplied(res *domain.AnalyzerResult) (float64, error) {
 }
 
 // checkFloorPrefillBelowTheKnee: a P/D fleet of 2 to 4 prefill replicas
-// whose engine queues read empty and whose router queue is empty, the case
-// liveness/k2/flow-control-on is the decode-only half of. Each prefill
-// replica serves one prompt in 1/mu seconds and is busy 30 to 70 % of the
-// time. After three minutes prefill is priced at the floor's estimand,
+// whose engine queues read empty and whose router queue is empty: the
+// prefill half of known-truth/floor/flow-control-unlearned-mu-pd-decode.
+// Each prefill replica serves one prompt in 1/mu seconds and is busy 30 to
+// 70 % of the time. After three minutes prefill is priced at the floor's estimand,
 // lambda / (mu x target) replicas, within propTruthTol: not on its resident KV
 // alone, and not over. stub, when set, edits the analyzer first (a mutant).
 func checkFloorPrefillBelowTheKnee(stub func(*SaturationAnalyzer)) func(uint64) error {

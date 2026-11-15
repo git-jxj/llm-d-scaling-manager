@@ -37,7 +37,6 @@ func k2Cases() []propCase {
 		{class: classScale, learner: "k2", name: "block-size-and-cycle", family: familyDirect, tuning: tunedDefault, check: checkK2Scale(nil)},
 		{class: classLiveness, learner: "k2", name: "n2-aggregated", family: familyDirect, tuning: tunedDefault, check: checkK2Liveness("aggregated")},
 		{class: classLiveness, learner: "k2", name: "pd-decode", family: familyDirect, tuning: tunedDefault, check: checkK2Liveness("pd")},
-		{class: classLiveness, learner: "k2", name: "flow-control-on", family: familyDirect, tuning: tunedDefault, check: checkK2Liveness("flow-control")},
 		{class: classEdges, learner: "k2", name: "key-near-output-boundary", family: familyDirect, tuning: tunedDefault, seeds: 50, check: checkK2KeyEdgeOn(nil, nil)},
 		{class: classEdges, learner: "k2", name: "key-follows-output-length", family: familyDirect, tuning: tunedDefault, check: checkK2KeyFollows(nil)},
 		{class: classEdges, learner: "mu", name: "key-near-output-boundary", family: familyDirect, tuning: tunedDefault, seeds: 50, check: checkMuKeyEdgeOn(nil)},
@@ -566,12 +565,6 @@ func checkK2Liveness(topology string) func(uint64) error {
 			rows = append(rows, p)
 			states = []domain.VariantReplicaState{decodeStates(2)[0],
 				{VariantName: "p", AcceleratorName: "H200", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RolePrefill}}
-		case "flow-control":
-			// The queue stands at the scheduler; the engines dispatch what
-			// they take, so their own queues read empty.
-			rows = []domain.ReplicaMetrics{satRow("r0", int64(truth), 0, 6), satRow("r1", int64(truth), 0, 6)}
-			states = decodeStates(2)
-			rig.input = func(in *domain.AnalyzerInput) { in.SchedulerQueue = &domain.SchedulerQueueMetrics{QueueSize: 40} }
 		default:
 			return fmt.Errorf("no topology %q", topology)
 		}
