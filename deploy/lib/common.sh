@@ -158,9 +158,21 @@ llmsm_check_so_name() {
 #   namespace scope, self-managed   NAMESPACE=<ns> make <target>
 #   namespace scope, out of reach   NAMESPACE=<managed> make <target> LLMSM_NS=<ctl> LLMSM_WATCH_NS=<managed>
 #   cluster scope                   make <target> SCOPE=cluster LLMSM_NS=<ctl>
+#
+# From the tools image (LLMSM_TOOLS_MODE=true) there is no make: the command
+# that repeats the check is a re-run of smt admin-finish, which writes KEDA's
+# side and runs the stale-connection check.
 llmsm_make_cmd() {
     local target="$1" pre="" kv
     shift
+    if [ "${LLMSM_TOOLS_MODE:-false}" = true ]; then
+        if [ "$(llmsm_install_scope)" = cluster ]; then
+            printf 'smt install --scope cluster (the same flags again)\n'
+        else
+            printf 'smt admin-finish -n %s\n' "$LLMSM_NS"
+        fi
+        return 0
+    fi
     for kv in "$@"; do pre="$pre$kv "; done
     if [ "$(llmsm_install_scope)" = cluster ]; then
         printf '%smake %s SCOPE=cluster LLMSM_NS=%s\n' "$pre" "$target" "$LLMSM_NS"

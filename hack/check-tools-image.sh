@@ -17,7 +17,10 @@
 # command whose arguments differ from what its make target passes (each of 21
 # targets, compared through a stub bash), a patch file that does not land in
 # the mounted working directory, or an image that runs as root or cannot read
-# a 0600 kubeconfig as the caller.
+# a 0600 kubeconfig as the caller. With TOOLS_IMG, also the release files smt
+# install installs: baked in, checked by their SHA256SUMS, without the tools
+# tarball, and, with TOOLS_RELEASE_DIST=<dir>, equal to that render byte for
+# byte. An image built without them fails here rather than pass on nothing.
 #
 # Offline: workload-patch and scaledobjects-plan run against a stub kubectl that records each call
 # and answers only the namespace-scoped listing, so a scan of anything else
@@ -101,8 +104,10 @@ chmod 0755 "$T/bin/kubectl"
 echo "The commands"
 out="$(tools help 2>&1)" && rc=0 || rc=$?
 missing=""
-for c in prepull weights engine-cache workload-patch scaledobjects-plan scaledobjects-apply utilization-share version; do
-    printf '%s' "$out" | grep -q "scaling-manager-tools $c" || missing="$missing $c"
+for c in admin-setup install admin-finish release-files prepull weights engine-cache workload-patch scaledobjects-plan scaledobjects-apply utilization-share version; do
+    # A here-string, not a pipe: grep -q stops at its first match, and under
+    # pipefail the printf it cut off fails the line on a long help text.
+    grep -q "scaling-manager-tools $c" <<< "$out" || missing="$missing $c"
 done
 if [ "$rc" = 0 ] && [ -z "$missing" ]; then ok "help exits 0 and names every command"; else fail "help: exit $rc, missing:${missing}"; fi
 
@@ -479,6 +484,54 @@ if [ -n "$IMG" ]; then
     chmod 0600 "$T/smt.kubeconfig"
     out="$(docker run --rm --user "$(id -u):$(id -g)" -v "$T/smt.kubeconfig:/kube/config:ro" --entrypoint kubectl "$IMG" config current-context 2>&1)" && rc=0 || rc=$?
     if [ "$rc" = 0 ] && [ "$out" = check-context ]; then ok "reads a 0600 kubeconfig mounted at /kube/config as the caller"; else fail "0600 kubeconfig: exit $rc: $out"; fi
+
+    # What the install libraries call besides kubectl, jq and yq. Without cmp,
+    # llmsm_scaler_keda_auth_apply reads every run as a changed certificate
+    # and admin-finish restarts the controller each time.
+    missing=""
+    for b in cmp openssl base64 sha256sum awk sed; do
+        docker run --rm --entrypoint /bin/sh "$IMG" -c "command -v $b" >/dev/null 2>&1 || missing="$missing $b"
+    done
+    if [ -z "$missing" ]; then ok "carries cmp, openssl, base64, sha256sum, awk and sed"; else fail "the image lacks:$missing"; fi
+
+    echo "The baked release files"
+    # smt install installs what the image carries at /opt/scaling-manager-tools/release
+    # (docs/proposals/two-command-install.md). An image built without
+    # --build-context release=<dist> carries none, and every check below would
+    # read an empty directory: that is a failure here, never a pass.
+    listing="$(docker run --rm --entrypoint /bin/sh "$IMG" -c 'cd /opt/scaling-manager-tools/release && ls -1' 2>&1)" || listing=""
+    nyaml="$(printf '%s\n' "$listing" | grep -c '^scaling-manager-.*\.yaml$' || true)"
+    if [ "$nyaml" -gt 0 ] && printf '%s\n' "$listing" | grep -qx SHA256SUMS; then
+        ok "the image carries $nyaml release manifests and SHA256SUMS"
+    else
+        fail "the image carries no release files (built without --build-context release=<dist>?): $(printf '%s' "$listing" | tr '\n' ' ' | cut -c1-200)"
+    fi
+    out="$(docker run --rm --entrypoint /bin/sh "$IMG" -c 'cd /opt/scaling-manager-tools/release && sha256sum -c --ignore-missing SHA256SUMS' 2>&1)" && rc=0 || rc=$?
+    nok="$(printf '%s\n' "$out" | grep -c ': OK$' || true)"
+    if [ "$rc" = 0 ] && [ "$nok" -gt 0 ] && [ "$nok" = "$nyaml" ]; then ok "the baked SHA256SUMS checks every baked manifest ($nok OK)"; else fail "baked SHA256SUMS: exit $rc, $nok OK of $nyaml: $(printf '%s' "$out" | grep -v ': OK$' | head -3 | tr '\n' ' ')"; fi
+    if grep -qE '^(scaling-manager-tools|capacity-planner)-' <<< "$listing"; then fail "the image carries the tools tarball or a capacity planner binary"; else ok "the image carries neither the tools tarball nor a capacity planner binary"; fi
+    if [ -n "${TOOLS_RELEASE_DIST:-}" ]; then
+        if out="$(bash "$ROOT/hack/compare-baked-release-files.sh" --image "$IMG" "$TOOLS_RELEASE_DIST" 2>&1)"; then
+            ok "the baked files are $TOOLS_RELEASE_DIST, byte for byte ($out)"
+        else
+            fail "the baked files differ from $TOOLS_RELEASE_DIST: $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+        fi
+    fi
+    rm -rf "$T/rf"; mkdir -p "$T/rf"; chmod 0777 "$T/rf"
+    out="$(docker run --rm --user "$(id -u):$(id -g)" -v "$T/rf:/work" "$IMG" release-files --out /work 2>&1)" && rc=0 || rc=$?
+    if [ "$rc" = 0 ] && [ -s "$T/rf/SHA256SUMS" ] && (cd "$T/rf" && sha256sum -c --ignore-missing --quiet SHA256SUMS); then
+        ok "release-files writes the files to the mounted /work, and they check"
+    else
+        fail "release-files --out /work: exit $rc: $(printf '%s' "$out" | tail -1)"
+    fi
+    # The dry-run reads the baked files and no cluster: no kubeconfig mounted.
+    rm -rf "$T/dry"; mkdir -p "$T/dry"; chmod 0777 "$T/dry"
+    out="$(docker run --rm --user "$(id -u):$(id -g)" -v "$T/dry:/work" "$IMG" install -n demo --prometheus-url https://prometheus.example:9090 --dry-run --out /work 2>&1)" && rc=0 || rc=$?
+    if [ "$rc" = 0 ] && [ -s "$T/dry/50-controller.yaml" ] && [ "$(yq ea '[select(.kind == "Deployment")] | length' "$T/dry/50-controller.yaml")" = 1 ]; then
+        ok "install --dry-run renders from the baked files with no kubeconfig"
+    else
+        fail "install --dry-run in the image: exit $rc: $(printf '%s' "$out" | tail -1)"
+    fi
 fi
 
 echo

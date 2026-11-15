@@ -152,6 +152,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **[Replica start time](reference/start-time.md)** — every measured start time, what each preparation step and the warm pool buy, and what each costs
 - **[ScaledObject trigger metadata](reference/scaledobject-trigger.md)** — every key the trigger carries (`modelID`, `variantCost`, `scalingPolicy`, `defaultOutputTokens`, warm-pool keys), its default and validation, and the recommended HPA behavior
 - **[Install methods](reference/install-methods.md)** — installer, kustomize, and per-platform entry points
+- **[Install commands of the tools image](reference/tools-install.md)** — `smt admin-setup`, `smt install`, `smt admin-finish`: every flag and exit code
 - **[Preflight check](reference/preflight.md)** — the release's preflight Job: each check, what FAIL and UNKNOWN mean, and the fix it prints
 - **[KEDA](reference/keda.md)**: supported versions, a KEDA the cluster already has, and what the installer prints about it
 - **[The GPU limiter](reference/gpu-limiter.md)** and **[the quota limiter](reference/quota-limiter.md)** — bounding the scaling manager by real accelerators, and by declared caps

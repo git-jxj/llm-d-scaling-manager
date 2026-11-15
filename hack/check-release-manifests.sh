@@ -640,33 +640,53 @@ expect_wf() {
     got="$(yq -r "$3" "$WF" 2>&1)"
     if [ "$got" = "$2" ]; then pass; else fail "ci-release.yaml: $1: got '$got', want '$2'"; fi
 }
-expect_wf "release-files runs after every image is pushed and signed" 'release,release-tools,release-capacity-planner' '[.jobs."release-files".needs] | flatten | join(",")'
-expect_wf "release-files attaches a capacity planner binary for linux and darwin, amd64 and arm64" \
-    'linux/amd64 linux/arm64 darwin/amd64 darwin/arm64' '.jobs."release-files".env.CAPACITY_PLANNER_PLATFORMS'
+expect_wf "release-files runs after every image is pushed and signed, and the files signed" 'release,release-sign,release-tools,release-capacity-planner' '[.jobs."release-files".needs] | flatten | join(",")'
+expect_wf "release-files may upload (contents) and pull the tools image (packages: read), and signs nothing" \
+    'contents=write,packages=read' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
+expect_wf "release-sign may sign (id-token) and read, and write nothing" \
+    'contents=read,id-token=write' '.jobs."release-sign".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
+expect_wf "release-sign builds and signs a capacity planner binary for linux and darwin, amd64 and arm64" \
+    'linux/amd64 linux/arm64 darwin/amd64 darwin/arm64' '.jobs."release-sign".env.CAPACITY_PLANNER_PLATFORMS'
 expect_wf "the planner is scanned by govulncheck, then built, then signed" \
     'Scan the capacity planner for called vulnerabilities (blocking),Build the capacity planner binaries,Sign the release files' \
-    '[.jobs."release-files".steps[].name | select(. == "Scan the capacity planner for called vulnerabilities (blocking)" or . == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
+    '[.jobs."release-sign".steps[].name | select(. == "Scan the capacity planner for called vulnerabilities (blocking)" or . == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
 expect_wf "govulncheck runs pinned, over the planner" 'true' \
-    '.jobs."release-files".steps[] | select(.name == "Scan the capacity planner for called vulnerabilities (blocking)") | .run | test("go run golang.org/x/vuln/cmd/govulncheck@v[0-9]+[.][0-9]+[.][0-9]+ [.]/cmd/capacity-planner/") | tostring'
-yq -r '.jobs."release-files".steps[] | select(.name == "Read the Go line from go.mod") | .run' "$WF" > "$WORK/wf-goline.sh"
+    '.jobs."release-sign".steps[] | select(.name == "Scan the capacity planner for called vulnerabilities (blocking)") | .run | test("go run golang.org/x/vuln/cmd/govulncheck@v[0-9]+[.][0-9]+[.][0-9]+ [.]/cmd/capacity-planner/") | tostring'
+yq -r '.jobs."release-sign".steps[] | select(.name == "Read the Go line from go.mod") | .run' "$WF" > "$WORK/wf-goline.sh"
 : > "$WORK/wf-goline.env"
 (cd "$ROOT" && GITHUB_ENV="$WORK/wf-goline.env" bash "$WORK/wf-goline.sh")
 want_line="$(sed -En 's/^go ([0-9]+[.][0-9]+).*$/\1/p' "$ROOT/go.mod")"
 if [ -n "$want_line" ] && [ "$(cat "$WORK/wf-goline.env")" = "GO_VERSION=$want_line" ]; then pass; else
     fail "the Go line step wrote '$(cat "$WORK/wf-goline.env")', want GO_VERSION=$want_line"; fi
 expect_wf "the binaries are built with the latest patch of the go.mod Go line" 'true|${{ env.GO_VERSION }}' \
-    '(.jobs."release-files".steps[] | select(.uses == "actions/setup-go*") | (.with."check-latest" | tostring) + "|" + .with."go-version")'
+    '(.jobs."release-sign".steps[] | select(.uses == "actions/setup-go*") | (.with."check-latest" | tostring) + "|" + .with."go-version")'
 expect_wf "the binaries are built by make capacity-planner-dist for those platforms" 'true' \
-    '.jobs."release-files".steps[] | select(.name == "Build the capacity planner binaries") | .run | (test("make capacity-planner-dist RELEASE_VERSION=\"\$VERSION\"") and test("CAPACITY_PLANNER_PLATFORMS=\"\$CAPACITY_PLANNER_PLATFORMS\"")) | tostring'
-expect_wf "release-files may upload (contents) and sign (id-token), nothing more" \
-    'contents=write,id-token=write' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
+    '.jobs."release-sign".steps[] | select(.name == "Build the capacity planner binaries") | .run | (test("make capacity-planner-dist RELEASE_VERSION=\"\$VERSION\"") and test("CAPACITY_PLANNER_PLATFORMS=\"\$CAPACITY_PLANNER_PLATFORMS\"")) | tostring'
 expect_wf "the image job still cannot write the release" 'read' '.jobs.release.permissions.contents'
-expect_wf "the release-files checkout leaves no credentials behind" 'false' \
-    '.jobs."release-files".steps[] | select(.uses == "actions/checkout*") | .with."persist-credentials"'
+expect_wf "the release-files and release-sign checkouts leave no credentials behind" 'false,false' \
+    '[.jobs."release-files", .jobs."release-sign"] | map(.steps[] | select(.uses == "actions/checkout*") | .with."persist-credentials") | join(",")'
 expect_wf "the files are rendered by the digest the image job pushed" '${{ steps.push.outputs.digest }}|${{ needs.release.outputs.digest }}' \
-    '.jobs.release.outputs.digest + "|" + (.jobs."release-files".steps[] | select(.name == "Render the release files") | .env.DIGEST)'
+    '.jobs.release.outputs.digest + "|" + (.jobs."release-sign".steps[] | select(.name == "Render the release files") | .env.DIGEST)'
 expect_wf "the render goes through make release-manifests by that digest" 'true' \
-    '.jobs."release-files".steps[] | select(.name == "Render the release files") | .run | test("make release-manifests IMG=\"\$IMAGE@\$DIGEST\"") | tostring'
+    '.jobs."release-sign".steps[] | select(.name == "Render the release files") | .run | test("make release-manifests IMG=\"\$IMAGE@\$DIGEST\"") | tostring'
+# docs/proposals/two-command-install.md: one signing run; the tools image and
+# the GitHub Release both take its artifact; no other job renders or signs.
+expect_wf "only release-sign renders and signs the files" 'release-sign' \
+    '[.jobs | to_entries[] | select(.value.steps[]? | (.name == "Render the release files" or .name == "Sign the release files" or ((.run // "") | test("sign-blob")))) | .key] | unique | join(",")'
+expect_wf "release-sign uploads dist as the artifact release-tools and release-files download" 'release-dist|dist/|release-dist,release-dist' \
+    '(.jobs."release-sign".steps[] | select(.uses == "actions/upload-artifact*") | .with.name + "|" + .with.path) + "|" + ([.jobs."release-tools", .jobs."release-files"] | map(.steps[] | select(.uses == "actions/download-artifact*") | .with.name) | join(","))'
+expect_wf "release-tools verifies every file with cosign verify-blob before any build" 'true' \
+    '(.jobs."release-tools".steps | to_entries | map(select((.value.run // "") | test("cosign verify-blob"))) | .[0].key) < (.jobs."release-tools".steps | to_entries | map(select(.value.uses // "" | test("^docker/build-push-action"))) | .[0].key) | tostring'
+expect_wf "every tools build (both scans and the push) bakes in the release files" 'release=dist,release=dist,release=dist' \
+    '[.jobs."release-tools".steps[] | select(.uses == "docker/build-push-action*") | .with."build-contexts" | sub("\n$"; "")] | join(",")'
+expect_wf "every tools build names the SHA256SUMS it must bake (a cached layer cannot stand in)" '3' \
+    '[.jobs."release-tools".steps[] | select(.uses == "docker/build-push-action*") | .with."build-args" | select(test("RELEASE_SHA256SUMS=\$\{\{ env.RELEASE_SHA256SUMS \}\}"))] | length'
+expect_wf "release-files compares the files of both published variants, amd64 and arm64" 'true' \
+    '.jobs."release-files".steps[] | select(.name == "Check the tools image carries these files") | .run | test("for platform in linux/amd64 linux/arm64; do") | tostring'
+expect_wf "a re-run of release-sign replaces its artifact" 'true' \
+    '.jobs."release-sign".steps[] | select(.uses == "actions/upload-artifact*") | .with.overwrite | tostring'
+expect_wf "release-files checks the pushed tools image carries the artifact before the upload" 'true' \
+    '(.jobs."release-files".steps | to_entries | map(select((.value.run // "") | test("(^|\n) *bash hack/compare-baked-release-files.sh --platform \"\$platform\" --image \"\$IMAGE@\$DIGEST\" dist *(\n|$)"))) | .[0].key) < (.jobs."release-files".steps | to_entries | map(select(.value.name == "Attach the files to the GitHub Release")) | .[0].key) | tostring'
 
 # The sign step, executed with a stub cosign over the good render: one bundle
 # per file, SHA256SUMS included, and a refusal when a file is missing.
@@ -678,7 +698,7 @@ echo "$*" >> "$STUB_LOG"
 while [ $# -gt 0 ]; do case "$1" in --bundle) echo '{}' > "$2"; shift 2 ;; *) shift ;; esac; done
 STUB
 chmod +x "$WORK/wf/bin/cosign"
-yq -r '.jobs."release-files".steps[] | select(.name == "Sign the release files") | .run' "$WF" > "$WORK/wf/sign.sh"
+yq -r '.jobs."release-sign".steps[] | select(.name == "Sign the release files") | .run' "$WF" > "$WORK/wf/sign.sh"
 sign_run() {
     (cd "$WORK/wf/run" && STUB_LOG="$WORK/wf/cosign.log" PATH="$WORK/wf/bin:$PATH" bash "$WORK/wf/sign.sh") > "$WORK/wf/sign.out" 2>&1
 }
@@ -714,7 +734,7 @@ if sign_run; then fail "the sign step passed with no arm64 capacity planner bina
 # STUB_BUILD names and a stub binary that prints STUB_VERSION_LINE: every
 # platform built and printing this release and commit, else the job fails;
 # on success SHA256SUMS lists the four binaries beside the render.
-yq -r '.jobs."release-files".steps[] | select(.name == "Build the capacity planner binaries") | .run' "$WF" > "$WORK/wf/build.sh"
+yq -r '.jobs."release-sign".steps[] | select(.name == "Build the capacity planner binaries") | .run' "$WF" > "$WORK/wf/build.sh"
 cat > "$WORK/wf/bin/make" <<'STUB'
 #!/usr/bin/env bash
 for b in $STUB_BUILD; do printf '#!/usr/bin/env bash\necho "$STUB_VERSION_LINE"\n' > "dist/$b"; chmod +x "dist/$b"; done
@@ -723,7 +743,7 @@ chmod +x "$WORK/wf/bin/make"
 build_run() {
     rm -rf "$WORK/wf/run"; mkdir -p "$WORK/wf/run"; cp -r "$GOOD" "$WORK/wf/run/dist"
     (cd "$WORK/wf/run" && STUB_BUILD="$1" STUB_VERSION_LINE="$2" VERSION="$VERSION" GITHUB_SHA=abc123 \
-        CAPACITY_PLANNER_PLATFORMS="$(yq -r '.jobs."release-files".env.CAPACITY_PLANNER_PLATFORMS' "$WF")" \
+        CAPACITY_PLANNER_PLATFORMS="$(yq -r '.jobs."release-sign".env.CAPACITY_PLANNER_PLATFORMS' "$WF")" \
         PATH="$WORK/wf/bin:$PATH" bash -e "$WORK/wf/build.sh") > "$WORK/wf/build.out" 2>&1
 }
 if build_run "$PLANNER_BINS" "capacity-planner $VERSION (commit abc123)" \
@@ -779,6 +799,23 @@ for c in "absent ok create" "draft ok upload" "published-same ok none" "publishe
         none) [ "$uploads" = 0 ] || got="$got(upload=$uploads)" ;;
     esac
     if [ "$got" = "$want" ]; then pass; else fail "the attach step with the release $state: $got, want $want ($(tail -1 "$WORK/wf/attach.out"))"; fi
+done
+
+# The release-sign refusal, run with the same stub gh: signing goes on for no
+# release or a draft, and stops for a published release or one it cannot
+# read, before the sign step, and with no write to the release.
+expect_wf "release-sign refuses a published release before it signs" 'true' \
+    '(.jobs."release-sign".steps | to_entries | map(select(.value.name == "Refuse a release that is already published")) | .[0].key) < (.jobs."release-sign".steps | to_entries | map(select(.value.name == "Sign the release files")) | .[0].key) | tostring'
+yq -r '.jobs."release-sign".steps[] | select(.name == "Refuse a release that is already published") | .run' "$WF" > "$WORK/wf/published.sh"
+for c in "absent ok" "draft ok" "published-same refused" "forbidden refused"; do
+    read -r state want <<< "$c"
+    : > "$WORK/wf/gh.log"
+    rc=0
+    (cd "$WORK/wf/run" && STUB_STATE="$state" STUB_LOG="$WORK/wf/gh.log" VERSION=v0.11.0 \
+        PATH="$WORK/wf/bin:$PATH" bash -e "$WORK/wf/published.sh") > "$WORK/wf/published.out" 2>&1 || rc=$?
+    got=ok; [ "$rc" -eq 0 ] || got=refused
+    writes="$(grep -cE '^release (create|upload|edit|delete)' "$WORK/wf/gh.log")"
+    if [ "$got" = "$want" ] && [ "$writes" = 0 ] && [ -s "$WORK/wf/published.sh" ]; then pass; else fail "release-sign with the release $state: $got, want $want, $writes writes ($(tail -1 "$WORK/wf/published.out"))"; fi
 done
 
 echo ""

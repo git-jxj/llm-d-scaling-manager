@@ -38,6 +38,9 @@ instead.
    `deploy/prepull.sh`, `deploy/weights.sh`, `deploy/enginecache.sh`,
    `deploy/utilization-share.sh`, the workload-patch report and the
    ScaledObject plan, with kubectl, jq and yq, from `Dockerfile.tools`.
+   It carries the release files (item 4, the same bytes and bundles, without
+   the tools tarball) and installs from them: `smt admin-setup`, `smt
+   install`, `smt admin-finish` ([install commands](../reference/tools-install.md)).
    Operators prepare and register their model servers with it and no checkout
    ([Prepare model servers](../guides/prepare-workloads/)).
 6. **The capacity planner**, under the same tag: an image at
@@ -178,10 +181,18 @@ be public under that tag. Do not move or delete the tag.
 - The fix needs a change to the code or the workflow: release `vX.Y.(Z+1)`
   instead.
 
-**It failed in the `release-files` job.** The image is published and signed;
-only the files are missing or incomplete. Use **Re-run failed jobs**: the job
-renders, signs and uploads again, replacing whatever an earlier attempt
-attached. Do not publish the release until it has succeeded.
+**It failed in the `release-files` job.** Both images are published and
+signed; only the files are missing or incomplete. Use **Re-run failed jobs**:
+the job uploads the same signed files again (the `release-sign` artifact),
+replacing whatever an earlier attempt attached. Do not publish the release
+until it has succeeded.
+
+**It failed in `release-sign` or `release-tools`.** Use **Re-run failed jobs**
+from the first failed job. A re-run of `release-sign` signs again, and new
+bundles are new bytes, so `release-tools` must rebuild and push the tools
+image in the same run: re-run both, never `release-sign` alone. The
+`release-files` job refuses to upload files the pushed tools image does not
+carry.
 
 ---
 
@@ -367,33 +378,39 @@ re-run from the **Actions** tab.
 6. **Sign.** Keyless `cosign sign` of the pushed digest, with the workflow's
    OIDC identity as the signer. The run summary prints the digest and the
    verify command.
-7. **Release files** (job `release-files`, after the image, tools and
-   capacity planner jobs). Runs
+7. **Sign the release files** (job `release-sign`, after the image job). Runs
    `make release-manifests` with the pushed digest (it also packages
    `scaling-manager-tools-<tag>.tar.gz`), then `make capacity-planner-dist`
    for the planner binaries (it fails on a missing one, or one that does not
-   print the tag and commit, and adds them to `SHA256SUMS`), signs each file and
-   `SHA256SUMS` with keyless `cosign sign-blob --bundle`, and uploads them all
-   with `gh release upload --clobber`, creating a draft release when the tag has
-   none, and refusing to change a published one. It is the only job with
-   `contents: write`, and it builds no image. Its yq is pinned by sha256.
-   Its Go, for `make kustomize` and the planner binaries, is the latest patch
-   of the `go.mod` Go line (`check-latest`), as the image's `golang:1.26`
-   builder is, and the binaries are built only after `govulncheck` (pinned)
-   finds no known vulnerability in code the planner calls. A re-run on the
-   same Go patch builds the same bytes; after a new Go patch it does not, and
-   a published release then refuses the new `SHA256SUMS`: release a new
-   version instead.
-   `hack/check-release-manifests.sh` checks the job's shape and runs its
-   binary and sign steps against a stub make and cosign.
-8. **Tools image** (job `release-tools`, after the image job). Builds
-   `Dockerfile.tools`, scans it like the controller image, pushes
+   print the tag and commit, and adds them to `SHA256SUMS`), signs each file
+   and `SHA256SUMS` with keyless `cosign sign-blob --bundle`, and uploads
+   `dist/` as the workflow artifact `release-dist`. It is the only place
+   bundles are made: the tools image and the GitHub Release both take this
+   artifact. It has `id-token: write` and writes nothing. Its yq is pinned by
+   sha256. Its Go, for `make kustomize` and the planner binaries, is the
+   latest patch of the `go.mod` Go line (`check-latest`), as the image's
+   `golang:1.26` builder is, and the binaries are built only after
+   `govulncheck` (pinned) finds no known vulnerability in code the planner
+   calls. A re-run on the same Go patch builds the same bytes; after a new Go
+   patch it does not, and a published release then refuses to be signed
+   again: release a new version instead. `hack/check-release-manifests.sh`
+   checks the job's shape and runs its binary and sign steps against a stub
+   make and cosign.
+8. **Tools image** (job `release-tools`, after the image and signing jobs).
+   Downloads `release-dist` and runs `cosign verify-blob` on every file, the
+   planner binaries included, then builds `Dockerfile.tools` with
+   `--build-context release=dist` (the amd64 and arm64 scan builds and the
+   pushed build alike, so the scans cover what ships). The image bakes the
+   manifests, their bundles and `SHA256SUMS`; not the tools tarball nor the
+   planner binaries, which `SHA256SUMS` still lists (the image checks with
+   `--ignore-missing`). It scans it like the controller image, pushes
    `linux/amd64,linux/arm64` to `<image>/tools:<version>` (and `:latest` only
-   when the controller's `latest` moved), and signs the digest.
+   when the controller's `latest` moved), and signs the digest. The summary
+   prints the `cosign verify` command with the digest.
    `hack/check-release-latest.sh` checks the job's shape and runs its tag and
-   sign steps. The PR checks' `tools-image` job builds both platforms on every
-   code change and runs `hack/check-tools-image.sh` against the amd64 image.
-   Verify it as the controller image, with `$IMAGE/tools`.
+   sign steps. The PR checks' `tools-image` job renders the files, builds both
+   platforms with them on every code change, and runs
+   `hack/check-tools-image.sh` against the amd64 image.
 9. **Capacity planner image** (job `release-capacity-planner`, after the image
    job). Builds `Dockerfile.capacity-planner` for `linux/amd64`, runs
    `hack/check-capacity-planner-image.sh` against it (it must serve a plan
@@ -404,11 +421,20 @@ re-run from the **Actions** tab.
    job's shape and runs its tag, platform and sign steps. The PR checks'
    `capacity-planner-image` job runs the same script on every code change.
    Verify it as the controller image, with `$IMAGE/capacity-planner`.
-   Like `release-tools`, it pushes before `release-files` runs: when
-   `release-files` then fails, the images are out under the tag with no
-   files beside them. Fix the cause and **Re-run failed jobs**; the images
-   stay, and the files are attached to the same draft. A cause the tagged
-   commit holds needs a new tag.
+10. **Release files** (job `release-files`, after the image, signing, tools
+   and capacity planner jobs). Downloads `release-dist`, pulls the pushed
+   tools image by digest, and refuses the upload unless its baked `SHA256SUMS`
+   and every bundle of what it bakes equal the artifact's, in both platforms
+   (`hack/compare-baked-release-files.sh`). Then uploads them all, the planner
+   binaries included, with `gh release upload --clobber`, creating a draft
+   release when the tag has none, and refusing to change a published one. It
+   is the only job with `contents: write`; it builds and signs nothing.
+   `hack/check-release-manifests.sh` runs its attach step against a stub gh;
+   `hack/check-release-install.sh` runs the baked-files comparison on
+   fixtures. The images are pushed before it runs: when it fails, they are out
+   under the tag with no files beside them. Fix the cause and **Re-run failed
+   jobs**; the images stay, and the files are attached to the same draft. A
+   cause the tagged commit holds needs a new tag.
 
 ### The release files
 
@@ -433,8 +459,10 @@ Design and rules: [install-from-release.md](../proposals/install-from-release.md
 
 `make test-e2e-release-manifests` installs the namespaced files on kind with
 `kubectl` only and checks them, and `RELEASE_E2E_SCOPE=cluster` does the same
-for the cluster-wide files. CI runs both on PRs that touch what the files are
-made from; run them before a release too
+for the cluster-wide files. `make test-e2e-tools-install` installs them with
+the tools image (`smt admin-setup`, `install`, `admin-finish`), in the same two
+scopes. CI runs all four on PRs that touch what the files are made from; run
+them before a release too
 ([Testing](testing.md#install-from-the-release-files)). The OpenShift files
 are not tested end to end and say so in their header.
 

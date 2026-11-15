@@ -1,7 +1,7 @@
 # Install in two commands, from the tools image
 
-**Status:** proposal, 2026-11-15; no open questions
-([decided on review](#decided-on-review-2026-11-15)). Nothing here is built.
+**Status:** built, phases 1 to 4 ([as built](#as-built)); no open questions
+([decided on review](#decided-on-review-2026-11-15)).
 
 **Audience:** contributors. Operators install today from
 [the install guide](../guides/install-in-namespace/).
@@ -38,7 +38,7 @@ the directory mounted read-write at `/work`:
 TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
-  -v "$HOME/.smt/kubeconfig:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+  -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 ```
 
 Run it from a working directory that does not contain `~/.smt`. The release
@@ -501,6 +501,117 @@ on every PR.
 - **`admin-finish`, not `admin-cleanup`.** The command gives KEDA its
   certificate and removes the preflight's cluster reads; "cleanup" read like
   uninstall.
+
+## As built
+
+The commands are in `deploy/lib/release_install.sh`, dispatched by
+`deploy/scaling-manager-tools.sh`; operator reference:
+[install commands](../reference/tools-install.md). Where the code differs
+from the text above, and why:
+
+- **Exit codes, widened.** 2 also covers release files that fail their
+  `SHA256SUMS` or are another release, and an image without files and no
+  `--files`: the input is unusable, nothing was applied. 4 also covers a
+  stamp and a NetworkPolicy that disagree on KEDA's namespace, KEDA's side
+  not written (`llmsm_scaler_keda_auth_apply` warned and wrote nothing), a
+  `--model-namespace` that does not exist, and a live controller installed with `make`
+  (it lacks `scaling-manager.llmd.ai/part`). 5 also covers the preflight Job
+  not finishing. The deploy/lib functions `admin-finish` runs exit through
+  `log_error`; in the tools image that exits 4 (a refusal a person resolves:
+  an object of the same name this tool did not write, one it cannot read),
+  or 7 for a write kubectl could not make ("Could not write ..."), never 1,
+  which means a preflight FAIL. The refusals name the `kubectl delete` and
+  the command to run again (`llmsm_scaler_foreign_fix`,
+  `llmsm_scaler_unread_fix`), since `LLMSM_SCALER_TLS=false` cannot be set
+  from the image.
+- **KEDA's namespace for the function.** `admin-finish` sets `KEDA_NAMESPACE`
+  and `KEDA_NAMESPACE_EXPLICIT=true`, not `LLMSM_SCALER_KEDA_OBJ_NS`:
+  `llmsm_scaler_keda_auth_check` recomputes the object namespace itself
+  (honouring `KEDA_CLUSTER_OBJECT_NAMESPACE`), so a value set beforehand is
+  overwritten.
+- **The output variable** is `LLMSM_SCALER_KEDA_WROTE`, true when any of the
+  three objects was written, not only the copy: the controller reads the
+  marker at start too.
+- **openssl and diffutils in the tools image.** The function hashes the
+  client certificate and reads its names for the marker, and the
+  stale-connection check verifies the chain, with openssl; it compares the
+  copy with `cmp`. `ubi-minimal` has neither. Without `cmp` every
+  `admin-finish` read the copy as changed and restarted the controller (found
+  by the kind e2e; `hack/check-tools-image.sh` now requires both).
+- **The stale-connection check and the preflight Job.** The check reads the
+  controller log by `app.kubernetes.io/name=scaling-manager`, which the
+  preflight Job pods carry too, and `kubectl logs -c manager` then fails.
+  `admin-finish` deletes the preflight Job before the check (it creates it
+  again right after) rather than change the shared selector.
+- **"The same objects."** The check in `hack/check-release-install.sh`
+  compares the ClusterTriggerAuthentication (name, spec, the `scaler-tls`
+  label), the marker (name, namespace, and the two data keys the release file
+  sets; the function adds `clientCertSha256`, `clientCert`, `caSha256` and
+  `clientSan`), and that the Secret copy is the one the ClusterTriggerAuthentication
+  reads, in KEDA's namespace. Labels such as `part-of` differ, so not byte for
+  byte. It also fails on a changed release file (its negative control).
+- **Settings table.** One table and one writer in `release_install.sh`
+  (`smt_settings_pairs`). `make` still writes `scaling-manager-manager-config`,
+  so it shares them only once it renders from the release files (phase 6 of
+  install-from-release).
+- **`test/release-manifests/e2e.sh` does not call the library.** It is the only
+  test of the by-hand path the guides keep; calling the library would leave
+  that path untested. The two e2e targets share the render instead (make
+  target `release-e2e-dist`).
+- **Release workflow.** The signing step is a job of its own, `release-sign`
+  (`id-token: write`), uploading `dist/` as artifact `release-dist`.
+  It refuses to sign when the release for the tag is already published (a
+  read of the release, `contents: read`): signing again makes new bundles,
+  and the tools image would no longer carry the published ones.
+  `release-files` keeps `contents: write` and gains `packages: read` to pull
+  the tools image; the comparison is `hack/compare-baked-release-files.sh`.
+- **Dockerfile.** A `release-files` stage between the `release` stage and the
+  image drops the tools tarball and its bundle, since a `COPY` cannot exclude
+  them from an empty `scratch` stage portably. The empty default is not
+  enough on its own: BuildKit served the files of an earlier build with
+  `--build-context release=...` to a later build without it, from its cache
+  (seen with BuildKit v0.31.2). So every build also passes
+  `--build-arg RELEASE_SHA256SUMS=<sha256 of SHA256SUMS>`: the build fails
+  unless the baked `SHA256SUMS` has that hash, and with the argument empty it
+  removes whatever the cache put there.
+- **The stamp** is ConfigMap `scaling-manager-admin-setup` with `release`,
+  `kedaNamespace`, `adminObjectsSha256` and `platform`. The hash is the SHA-256
+  of the `part=admin` objects of the main, preflight and model-namespace files
+  as compact JSON, with `app.kubernetes.io/version` removed.
+- **`--dry-run`** step files: `05-namespace.yaml` (cluster scope),
+  `10-admin.yaml`, `11-preflight-admin.yaml`, `12-model-namespace[-NS].yaml`,
+  `19-admin-setup-stamp.yaml`, `20-settings.yaml`, `25-prometheus-ca.yaml`,
+  `30-preflight.yaml`, `40-scaler-tls.yaml`, `50-controller.yaml`. With no
+  cluster to read, KEDA's namespace is the flag or the platform default.
+- **`--set passive`** is refused: the install is passive; the refusal prints
+  the patch to run after `admin-finish`. `--set` of a key a flag sets is
+  refused too.
+- **A wrong `--prometheus-url` on a first install** does not stick: when the
+  first preflight stops the install, settings this run created are removed,
+  so the next run creates them from its flags. Settings a run did not create
+  are never touched.
+- **`--strict` after `admin-finish`.** The preflight's cluster reads are gone,
+  so those checks are UNKNOWN (refused). While ClusterRoleBinding
+  `scaling-manager-preflight-NS` is absent (or cannot be read), those
+  refusals do not stop `--strict`.
+- **`--strict` in the last preflight.** `admin-finish`, and the end of
+  `install --scope cluster`, apply it as `install` does: exit 6, and the
+  preflight binding is kept.
+- **`admin-finish` before `install`** exits 4 at once (no controller
+  Deployment), instead of waiting for a client certificate that will not come.
+- **The capacity planner binaries** (the standalone capacity planner) are built
+  and added to `SHA256SUMS` in `release-sign`, before it signs, so every file
+  of the release is signed there once. The tools image does not carry them:
+  its `SHA256SUMS` lists them, install checks it with `--ignore-missing`, and
+  the baked-files comparison skips them as it skips the tools tarball.
+- **Both published variants.** The release-files job compares the baked files
+  of the amd64 and the arm64 image (`--platform`).
+- **`install` checks the namespace first** (exit 4). An owner may not read
+  Namespaces, so it reads ServiceAccount `default` there instead.
+- **The CI gate.** The stamp cases and the upgrade run in the namespace leg
+  only (the stamp is a namespace-scope step). The cluster leg's negative
+  control is a namespaced install in a fresh namespace. The upgrade installs
+  `TOOLS_E2E_PREVIOUS` (default `v0.11.1`) by hand from its GitHub release.
 
 ## Open questions
 

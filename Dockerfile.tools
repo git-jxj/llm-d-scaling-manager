@@ -1,4 +1,5 @@
-# The operator tools: deploy/prepull.sh, deploy/weights.sh,
+# The operator tools: the install from the release files baked in below
+# (admin-setup, install, admin-finish, release-files), deploy/prepull.sh, deploy/weights.sh,
 # deploy/enginecache.sh, deploy/utilization-share.sh, the workload-patch report
 # and the ScaledObject plan, with the kubectl, jq and yq they call, so an
 # operator runs them from a release without a checkout:
@@ -15,6 +16,27 @@
 
 # kubectl, the version of the controller's client-go (go.mod).
 FROM registry.k8s.io/kubectl:v1.36.5@sha256:0667e3f3e6ef435d7cd4c16684244703ebd67314c17511c2a9f87ea44f6cdf6b AS kubectl
+
+# The release files `smt install` installs (docs/proposals/two-command-install.md):
+# the release workflow builds with `--build-context release=dist`, the signed
+# manifests, their bundles and SHA256SUMS, which replaces this empty stage. A
+# PR or development build keeps it empty and carries no files; install then
+# needs --files.
+FROM scratch AS release
+
+# The release files minus the tools tarball, the capacity planner binaries and
+# their bundles: the tarball is this image's own scripts, for machines without a
+# container runtime, and the planner ships as its own image. SHA256SUMS still
+# lists them; install checks it with --ignore-missing.
+FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:baafce2d34783a28b4a472779f304e97e00f9d35c99553bc53b068b14344d9a9 AS release-files
+COPY --from=release / /in/
+RUN set -eu; mkdir -p /out; \
+    for f in /in/*; do \
+        [ -f "$f" ] || continue; \
+        case "${f##*/}" in scaling-manager-tools-*|capacity-planner-*) continue ;; esac; \
+        cp "$f" /out/; \
+    done; \
+    chmod 0644 /out/* 2>/dev/null || true
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:baafce2d34783a28b4a472779f304e97e00f9d35c99553bc53b068b14344d9a9
 
@@ -38,8 +60,10 @@ LABEL org.opencontainers.image.description="llm-d-scaling-manager tools - prepar
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # util-linux for `column`, which the ScaledObject plan's table is printed with.
+# openssl for KEDA's client certificate (admin-finish runs
+# llmsm_scaler_keda_auth_apply and the stale-connection check, which read it), and diffutils for the cmp it compares the copy with.
 RUN set -eu; \
-    microdnf install -y --nodocs util-linux; \
+    microdnf install -y --nodocs util-linux openssl diffutils; \
     microdnf clean all; \
     arch="${TARGETARCH:-amd64}"; \
     case "$arch" in \
@@ -58,6 +82,20 @@ COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 # The scripts keep their checkout layout: each sources lib/ beside it.
 COPY deploy/scaling-manager-tools.sh deploy/prepull.sh deploy/weights.sh deploy/enginecache.sh deploy/utilization-share.sh /opt/scaling-manager-tools/
 COPY deploy/lib/ /opt/scaling-manager-tools/lib/
+COPY --from=release-files /out/ /opt/scaling-manager-tools/release/
+# The sha256 of the SHA256SUMS given with --build-context release=<dist>. A
+# BuildKit cache can serve the files of an earlier build to a build without
+# the context, or to one with other files: the image must carry exactly the
+# files named here, and none when this is empty.
+ARG RELEASE_SHA256SUMS=""
+RUN set -eu; d=/opt/scaling-manager-tools/release; \
+    if [ -z "$RELEASE_SHA256SUMS" ]; then \
+        rm -rf "$d"; mkdir -p "$d"; \
+    else \
+        echo "$RELEASE_SHA256SUMS  $d/SHA256SUMS" | sha256sum -c - \
+            || { echo "the baked SHA256SUMS is not the one RELEASE_SHA256SUMS names (no files given, or a stale build cache)" >&2; exit 1; }; \
+        (cd "$d" && sha256sum -c --ignore-missing --quiet SHA256SUMS); \
+    fi
 RUN printf '%s\n' "$VERSION" > /opt/scaling-manager-tools/VERSION && \
     chmod 0755 /opt/scaling-manager-tools/*.sh && \
     mkdir -p /work && chmod 1777 /work && \

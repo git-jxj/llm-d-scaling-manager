@@ -2444,9 +2444,80 @@ works there. In order, and a step that fails stops the run:
   `release-e2e-logs-<scope>`.
 
 Not covered yet: the OpenShift files, the Kueue and metrics-reader files, the
-passive non-move of a running model, an upgrade from the previous release's
-files, and the path equivalence with `make deploy-scaling-manager`
+passive non-move of a running model, and the path equivalence with `make
+deploy-scaling-manager`
 ([the proposal's Testing section](../proposals/install-from-release.md#testing)).
+The upgrade from the previous release's files is covered by the tools-image
+e2e below.
+
+### Install with the tools image
+
+`make test-e2e-tools-install` installs with `smt admin-setup`, `smt install`
+and `smt admin-finish` ([install commands](../reference/tools-install.md)),
+run in the tools image built with the release files baked in, on the same
+prerequisites as the release-files e2e
+([two-command install](../proposals/two-command-install.md#testing)):
+
+```bash
+CREATE_CLUSTER=true make test-e2e-tools-install-with-setup
+# or, on a cluster you keep (after make test-e2e-release-manifests-setup):
+make test-e2e-tools-install                              # namespace scope
+make test-e2e-tools-install RELEASE_E2E_SCOPE=cluster    # on a fresh cluster
+```
+
+The target renders the files with the digest the kind nodes hold
+(`release-e2e-dist`, shared with the release-files e2e), builds
+`scaling-manager-tools:e2e` (`TOOLS_E2E_IMG`) with `--build-context
+release=<the files>`, and runs `test/tools-install/e2e.sh`. Each `smt` call is
+`docker run --network host`: kind's kubeconfig names the API server at
+`127.0.0.1:<port>`, which a container reaches only on the host network.
+
+Namespace scope (`llm-d-sim`), in order:
+
+1. Makes the owner: ServiceAccount `smt-owner` bound to the stock `admin`
+   ClusterRole in the namespace, and a token kubeconfig for it. `kubectl auth
+   can-i create clusterrolebindings` as the owner must say `no`.
+2. `install` as the owner before `admin-setup`: exit 3, no settings created.
+3. `admin-setup` as the cluster admin, without `--keda-namespace`: it must
+   find `keda-system` and write it into the scaler NetworkPolicy.
+4. The stamp edited to another hash: `install` exits 3; `admin-setup` again.
+5. `install` as the owner, then `admin-finish` as the admin: no `FAIL` in
+   either preflight, `scalerTLS` is `mutual TLS`, and ClusterRoleBinding
+   `scaling-manager-preflight-llm-d-sim` is gone.
+6. The smoke suite (`ginkgo -v`, more than zero specs), with
+   `RELEASE_E2E_SMOKE_SKIP` as in the release-files e2e.
+7. A second `install` changes no `resourceVersion` of any object of the
+   release files, the settings, the scaler Secrets, the CA Secret, KEDA's
+   side or the stamp (the preflight Job aside); a second `admin-finish`
+   restarts nothing (the controller pod is the same).
+8. `install` with another `--prometheus-url`: the settings keep their
+   `resourceVersion` and value, and the output prints the `kubectl patch`.
+9. Negative control in a fresh namespace (`smt-negative`): a wrong
+   `--prometheus-url` exits 1, names `prometheus.reachable`, and creates no
+   controller.
+10. Upgrade (`smt-upgrade`): the `TOOLS_E2E_PREVIOUS` (default `v0.11.1`)
+    files, downloaded from its GitHub release and checked against its
+    `SHA256SUMS`, installed by hand; `install` exits 3; `admin-setup`; `install`
+    upgrades the controller, and the settings keep their `resourceVersion`.
+
+Cluster scope: `admin-setup --scope cluster` is refused (exit 2); one `install
+--scope cluster` as the admin, with the models in `llm-d-sim`; then steps 5 to
+9 above, the re-run being `install --scope cluster` again. No upgrade case: the
+stamp is a namespace-scope step.
+
+- The summary and every `smt` output are in `dist/tools-e2e-logs`
+  (`TOOLS_E2E_LOGS`).
+- In CI: `e2e-tests-tools-install` in `ci-pr-checks.yaml`, one leg per scope,
+  on the same trigger as `e2e-tests-release-manifests` (plus
+  `test/tools-install/` and `Dockerfile.tools`). On failure it uploads the logs
+  as `tools-e2e-logs-<scope>`.
+- Without a cluster, `make lint-deploy-scripts` runs
+  `hack/check-release-install.sh`: the same commands against a stub kubectl
+  (the exit codes, `--dry-run` equal to the `sed`-substituted files, files
+  refused on a bad `SHA256SUMS` or another version, KEDA's side equal to the
+  release keda-auth file, the release workflow's baked-files check). The PR
+  job `tools-image` builds the image with freshly rendered files and runs
+  `hack/check-tools-image.sh`, which fails when the image carries none.
 
 ### Controller state between runs
 

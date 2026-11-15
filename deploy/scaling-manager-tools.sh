@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
-# Prepare and register model servers for scaling, from the release's tools image or a checkout.
+# Install the scaling manager, and prepare and register model servers for scaling, from the release's tools image or a checkout.
 #
 # The entry point of the tools image (Dockerfile.tools). It runs the same
 # scripts the make targets run, so an operator needs no checkout of the
 # repository: only docker or podman, and a kubeconfig.
 #
+#   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS]
+#                                                                cluster admin, once per namespace: the admin objects and the stamp
+#   scaling-manager-tools install -n NS --prometheus-url URL [--quota "GPU=N"] [--prometheus-ca FILE] [--set KEY=VALUE]
+#                                                                namespace owner: settings, preflight, the controller
+#   scaling-manager-tools install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS ...
+#                                                                cluster admin: the cluster-wide install, all steps
+#   scaling-manager-tools admin-finish -n NS [--restart-keda]   cluster admin, after the install: KEDA's client certificate, then drop the preflight's cluster reads
+#   scaling-manager-tools release-files --out DIR               write the release files this image carries
+#                                                                (install and admin-setup: --dry-run --out DIR renders instead; --files DIR installs from other files;
+#                                                                 docs/reference/tools-install.md has every flag and exit code)
 #   scaling-manager-tools prepull      apply|status|delete ...   hold an engine image on every GPU node (deploy/prepull.sh)
 #   scaling-manager-tools weights      apply|status|delete ...   keep a model's weights on every GPU node's disk (deploy/weights.sh)
 #   scaling-manager-tools engine-cache apply|status|delete|publish|keys|verify ...
@@ -218,11 +228,42 @@ cmd_scaledobjects() {
     return "$rc"
 }
 
+# cmd_release_install <command> ...: admin-setup, install, admin-finish and
+# release-files (deploy/lib/release_install.sh), on the release files baked into
+# the image at $HERE/release or given with --files.
+cmd_release_install() {
+    local verb="$1"
+    shift
+    case "${1:-}" in
+        -h|--help)
+            awk -v v="$verb" '/^#   scaling-manager-tools / { p = ($3 == v) } /^#$/ { p = 0 } p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            echo "  every flag and exit code: docs/reference/tools-install.md"
+            return 0 ;;
+    esac
+    # Run as the make recipes run the libraries: they test statuses themselves.
+    set +euo pipefail
+    # shellcheck source=lib/common.sh
+    source "$HERE/lib/common.sh"
+    # shellcheck source=lib/constants.sh
+    source "$HERE/lib/constants.sh"
+    # shellcheck source=lib/scaler_tls.sh
+    source "$HERE/lib/scaler_tls.sh"
+    # shellcheck source=lib/release_install.sh
+    source "$HERE/lib/release_install.sh"
+    case "$verb" in
+        admin-setup) smt_admin_setup "$@" ;;
+        install) smt_install "$@" ;;
+        admin-finish) smt_admin_finish "$@" ;;
+        release-files) smt_release_files "$@" ;;
+    esac
+}
+
 CMD="${1:-}"
 [ $# -eq 0 ] || shift
 case "$CMD" in
     ""|-h|--help|help) usage ;;
     version|--version) cmd_version ;;
+    admin-setup|install|admin-finish|release-files) cmd_release_install "$CMD" "$@" ;;
     prepull) exec bash "$HERE/prepull.sh" "$@" ;;
     weights) exec bash "$HERE/weights.sh" "$@" ;;
     engine-cache) exec bash "$HERE/enginecache.sh" "$@" ;;
