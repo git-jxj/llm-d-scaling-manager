@@ -43,6 +43,14 @@ instead.
    install`, `smt admin-finish` ([install commands](../reference/tools-install.md)).
    Operators prepare and register their model servers with it and no checkout
    ([Prepare model servers](../guides/prepare-workloads/)).
+6. **The capacity planner**, under the same tag: an image at
+   `ghcr.io/<repository owner>/llm-d-scaling-manager/capacity-planner:<tag>`
+   (`Dockerfile.capacity-planner`, entry point the `capacity-planner`
+   binary), and the release files `capacity-planner-<tag>-<os>-<arch>` for
+   linux and darwin, amd64 and arm64, in `SHA256SUMS` and signed like the
+   others. The planner replays recordings with the controller's learners, so
+   it is never released apart from the controller
+   ([Plan a P/D fleet](../guides/capacity-planner/README.md#get-the-planner)).
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line
@@ -128,16 +136,18 @@ draft release for the tag existed before the run, it attached the files to
 that one instead. A release that is already **published** is never changed: a
 run whose files differ from the attached ones fails, and one whose files are
 identical uploads nothing. In **Releases**, open the draft, check that the
-files are there (each `.yaml`, `scaling-manager-tools-<tag>.tar.gz`,
-`SHA256SUMS`, and a `.sigstore.json` for each), paste the release notes, and
-publish.
+files are there (each `.yaml`, `scaling-manager-tools-<tag>.tar.gz`, the four
+`capacity-planner-<tag>-<os>-<arch>` binaries, `SHA256SUMS`, and a
+`.sigstore.json` for each), paste the release notes, and publish.
 
 Before publishing, check the tools image too: the `release-tools` job
 succeeded (the draft exists only if it did), and the package
 `llm-d-scaling-manager/tools` is **Public**. From a machine not logged in to
 GHCR, `docker pull ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<tag>`
 must succeed; a `401` or `denied` means the package is still private
-([first release](#the-first-release-to-a-new-package)). Keep the draft's first line: it names
+([first release](#the-first-release-to-a-new-package)). The same holds for
+the capacity planner image (`release-capacity-planner`, package
+`llm-d-scaling-manager/capacity-planner`). Keep the draft's first line: it names
 the two supported installs, the attached files and `make deploy-scaling-manager`.
 
 ### 5. Point the docs at the release
@@ -278,6 +288,9 @@ first release that carries the `release-tools` job creates. It starts
 **private**: set it to **Public** after that run, and check that this
 repository has **Write** on it, as above. Until then `docker pull` of the
 tools image fails with `401 Unauthorized` (or `denied`) for every operator.
+The capacity planner image is a third, `llm-d-scaling-manager/capacity-planner`,
+created by the first release that carries the `release-capacity-planner` job:
+the same two settings apply.
 
 ---
 
@@ -346,8 +359,8 @@ re-run from the **Actions** tab.
 
 1. **Gate.** Calls [`ci-pr-checks.yaml`](../../.github/workflows/ci-pr-checks.yaml)
    on the tagged commit: `golangci-lint`, `make build`, `make test`,
-   `make lint-deploy-scripts`, the tools image build and check, the docs
-   checks and the kustomize builds.
+   `make lint-deploy-scripts`, the tools and capacity planner image builds
+   and checks, the docs checks and the kustomize builds.
 2. **Validate.** Refuses a tag whose commit is on neither `main` nor the tag's
    `release-MAJOR.MINOR` branch, a tag that is not
    `vMAJOR.MINOR.PATCH[-PRERELEASE]`, and a commit whose `newTag` is not the tag.
@@ -367,17 +380,30 @@ re-run from the **Actions** tab.
    verify command.
 7. **Sign the release files** (job `release-sign`, after the image job). Runs
    `make release-manifests` with the pushed digest (it also packages
-   `scaling-manager-tools-<tag>.tar.gz`), signs each file and `SHA256SUMS`
-   with keyless `cosign sign-blob --bundle`, and uploads `dist/` as the
-   workflow artifact `release-dist`. It is the only place bundles are made:
-   the tools image and the GitHub Release both take this artifact. It has
-   `id-token: write` and writes nothing. Its yq is pinned by sha256 and its Go
-   (for `make kustomize`) comes from `go.mod`.
+   `scaling-manager-tools-<tag>.tar.gz`), then `make capacity-planner-dist`
+   for the planner binaries (it fails on a missing one, or one that does not
+   print the tag and commit, and adds them to `SHA256SUMS`), signs each file
+   and `SHA256SUMS` with keyless `cosign sign-blob --bundle`, and uploads
+   `dist/` as the workflow artifact `release-dist`. It is the only place
+   bundles are made: the tools image and the GitHub Release both take this
+   artifact. It has `id-token: write` and writes nothing. Its yq is pinned by
+   sha256. Its Go, for `make kustomize` and the planner binaries, is the
+   latest patch of the `go.mod` Go line (`check-latest`), as the image's
+   `golang:1.26` builder is, and the binaries are built only after
+   `govulncheck` (pinned) finds no known vulnerability in code the planner
+   calls. A re-run on the same Go patch builds the same bytes; after a new Go
+   patch it does not, and a published release then refuses to be signed
+   again: release a new version instead. `hack/check-release-manifests.sh`
+   checks the job's shape and runs its binary and sign steps against a stub
+   make and cosign.
 8. **Tools image** (job `release-tools`, after the image and signing jobs).
-   Downloads `release-dist` and runs `cosign verify-blob` on every file, then
-   builds `Dockerfile.tools` with `--build-context release=dist` (the amd64
-   and arm64 scan builds and the pushed build alike, so the scans cover what
-   ships), scans it like the controller image, pushes
+   Downloads `release-dist` and runs `cosign verify-blob` on every file, the
+   planner binaries included, then builds `Dockerfile.tools` with
+   `--build-context release=dist` (the amd64 and arm64 scan builds and the
+   pushed build alike, so the scans cover what ships). The image bakes the
+   manifests, their bundles and `SHA256SUMS`; not the tools tarball nor the
+   planner binaries, which `SHA256SUMS` still lists (the image checks with
+   `--ignore-missing`). It scans it like the controller image, pushes
    `linux/amd64,linux/arm64` to `<image>/tools:<version>` (and `:latest` only
    when the controller's `latest` moved), and signs the digest. The summary
    prints the `cosign verify` command with the digest.
@@ -385,16 +411,30 @@ re-run from the **Actions** tab.
    sign steps. The PR checks' `tools-image` job renders the files, builds both
    platforms with them on every code change, and runs
    `hack/check-tools-image.sh` against the amd64 image.
-9. **Release files** (job `release-files`, after the image and tools jobs).
-   Downloads `release-dist`, pulls the pushed tools image by digest, and
-   refuses the upload unless its baked `SHA256SUMS` and every bundle equal the
-   artifact's (`hack/compare-baked-release-files.sh`). Then uploads them all
-   with `gh release upload --clobber`, creating a draft release when the tag
-   has none, and refusing to change a published one. It is the only job with
-   `contents: write`; it builds and signs nothing. `hack/check-release-manifests.sh`
-   checks the jobs' shape, runs the sign step against a stub cosign and the
-   attach step against a stub gh; `hack/check-release-install.sh` runs the
-   baked-files comparison on fixtures.
+9. **Capacity planner image** (job `release-capacity-planner`, after the image
+   job). Builds `Dockerfile.capacity-planner` for `linux/amd64`, runs
+   `hack/check-capacity-planner-image.sh` against it (it must serve a plan
+   from a committed recording and print the tag), scans it, pushes
+   `linux/amd64,linux/arm64` to `<image>/capacity-planner:<version>` (and
+   `:latest` as for the tools image), fails if the pushed index lacks a
+   platform, and signs the digest. `hack/check-release-latest.sh` checks the
+   job's shape and runs its tag, platform and sign steps. The PR checks'
+   `capacity-planner-image` job runs the same script on every code change.
+   Verify it as the controller image, with `$IMAGE/capacity-planner`.
+10. **Release files** (job `release-files`, after the image, signing, tools
+   and capacity planner jobs). Downloads `release-dist`, pulls the pushed
+   tools image by digest, and refuses the upload unless its baked `SHA256SUMS`
+   and every bundle of what it bakes equal the artifact's, in both platforms
+   (`hack/compare-baked-release-files.sh`). Then uploads them all, the planner
+   binaries included, with `gh release upload --clobber`, creating a draft
+   release when the tag has none, and refusing to change a published one. It
+   is the only job with `contents: write`; it builds and signs nothing.
+   `hack/check-release-manifests.sh` runs its attach step against a stub gh;
+   `hack/check-release-install.sh` runs the baked-files comparison on
+   fixtures. The images are pushed before it runs: when it fails, they are out
+   under the tag with no files beside them. Fix the cause and **Re-run failed
+   jobs**; the images stay, and the files are attached to the same draft. A
+   cause the tagged commit holds needs a new tag.
 
 ### The release files
 

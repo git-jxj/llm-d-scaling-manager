@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
@@ -31,6 +32,11 @@ type stubResolver struct {
 	// loRefused, when set, refuses the low end of every fleet limit's span,
 	// as a corner of V_P and f under a TTFT floor does.
 	loRefused whatif.Reason
+	// ttftDelay, when set, is how long every TTFT point takes: a figure as
+	// slow as a plan near a knee.
+	ttftDelay time.Duration
+	// fleetErr, when set, is the error of every fleet it returns one for.
+	fleetErr func(k Knobs) error
 }
 
 func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved, error) {
@@ -73,6 +79,11 @@ func (r *stubResolver) Fleet(k Knobs) (Fleet, error) {
 	if r.onFleet != nil {
 		r.onFleet(k)
 	}
+	if r.fleetErr != nil {
+		if err := r.fleetErr(k); err != nil {
+			return nil, err
+		}
+	}
 	r.fleets.Add(1)
 	return &stubFleet{k: k, refusePrefill: r.refusePrefill, r: r}, nil
 }
@@ -113,6 +124,7 @@ func (f *stubFleet) DecodeKnee() whatif.Result {
 func (f *stubFleet) Onsets() whatif.Result { return nil }
 
 func (f *stubFleet) TTFTAt(rate float64) whatif.Result {
+	time.Sleep(f.r.ttftDelay)
 	if f.refusePrefill {
 		return noVP
 	}

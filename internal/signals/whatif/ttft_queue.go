@@ -245,7 +245,19 @@ type quantiler interface {
 
 // tailQuantile is the least t with exceeds(t) <= alpha, alpha in (0, 1), by
 // bisection from mean: exceeds is non-increasing in t.
+//
+// A mean of +Inf is a quantile of +Inf at once: within rounding of a pod's
+// knee its utilization reads exactly 1 and the stretch overflows. Searched,
+// the bracket would start at +Inf, where no gamma tail converges: each part's
+// own.sf(+Inf) ran the continued fraction to maxSeriesTerms for a NaN, which
+// block.exceeds reads as a tail of 1 (never NaN, so the doubling does not
+// stop), and the bracket was doubled 201 times, still at +Inf, before the
+// search gave +Inf all the same. split asked for some 49 such quantiles a
+// figure, plus its out-of-domain probes (see split).
 func tailQuantile(exceeds func(float64) float64, mean, alpha float64) float64 {
+	if math.IsInf(mean, 1) {
+		return mean
+	}
 	lo, hi := 0.0, mean
 	if !(hi > 0) {
 		hi = 1
@@ -308,6 +320,18 @@ func split(b1 quantiler, dec waitTail, q float64) (value, beta float64) {
 		if v := f(math.Exp(x)); v < best {
 			best, bestX = v, x
 		}
+	}
+	if math.IsInf(best, 1) {
+		// No point of the grid is finite, and none between them is: block 1's
+		// quantile only grows with beta. The golden section would start from
+		// log(beta) = 0, outside (lo, hi), and ask block 1 for quantiles at
+		// alpha < 0, each a bracket doubled 200 times. The beta is the one
+		// that search returned (its bestX stayed 0, and exp(0) is capped at
+		// hi), so DecodeShare reads as before. It is no optimum, and no
+		// caller treats it as one: priceOne refuses a +Inf split (Saturated),
+		// and the old sum's +Inf split only reports its beta as the
+		// DecodeShare beside a +Inf figure; nothing is priced at it.
+		return best, hi
 	}
 	// Golden section in log(beta) over the best grid point's neighbours.
 	step := (math.Log(hi) - math.Log(lo)) / grid
@@ -440,8 +464,21 @@ func lnGammaP(k, x float64) float64 {
 }
 
 // lnGammaPSeries is ln P(k, x) by its series; NaN when the series does not
-// converge within maxSeriesTerms, never a partial sum.
+// converge within maxSeriesTerms, never a partial sum. A k or x that is not
+// finite is NaN at once: the series never converges there.
 func lnGammaPSeries(k, x float64) float64 {
+	v, _ := lnGammaPSeriesTerms(k, x)
+	return v
+}
+
+// lnGammaPSeriesTerms is lnGammaPSeries and the terms it summed. Near x = k
+// the terms fall only once n passes about sqrt(k), so the count grows as
+// sqrt(k): about 6e4 at k = 1e8, the largest shape the model builds
+// (minPromptCV), well under maxSeriesTerms.
+func lnGammaPSeriesTerms(k, x float64) (float64, int) {
+	if !Finite(k) || !Finite(x) {
+		return math.NaN(), 0
+	}
 	term := 1 / k
 	sum := term
 	for n := 1; n < maxSeriesTerms; n++ {
@@ -449,15 +486,27 @@ func lnGammaPSeries(k, x float64) float64 {
 		sum += term
 		if term < sum*1e-17 {
 			lgk, _ := math.Lgamma(k)
-			return -x + k*math.Log(x) - lgk + math.Log(sum)
+			return -x + k*math.Log(x) - lgk + math.Log(sum), n
 		}
 	}
-	return math.NaN()
+	return math.NaN(), maxSeriesTerms
 }
 
 // lnGammaQFraction is ln Q(k, x) by its continued fraction (modified Lentz);
 // NaN when it does not converge within maxSeriesTerms, never a partial value.
+// A k or x that is not finite is NaN at once, the value the fraction reaches
+// there after maxSeriesTerms steps: at x = +Inf every step reads NaN.
 func lnGammaQFraction(k, x float64) float64 {
+	v, _ := lnGammaQFractionSteps(k, x)
+	return v
+}
+
+// lnGammaQFractionSteps is lnGammaQFraction and the steps it took; like the
+// series, near x = k it takes about sqrt(k) steps.
+func lnGammaQFractionSteps(k, x float64) (float64, int) {
+	if !Finite(k) || !Finite(x) {
+		return math.NaN(), 0
+	}
 	const tiny = 1e-300
 	b := x + 1 - k
 	c := 1 / tiny
@@ -481,10 +530,10 @@ func lnGammaQFraction(k, x float64) float64 {
 		// float64's spacing above 1 and would be met only by del == 1.
 		if math.Abs(del-1) < 4e-16 {
 			lgk, _ := math.Lgamma(k)
-			return -x + k*math.Log(x) - lgk + math.Log(h)
+			return -x + k*math.Log(x) - lgk + math.Log(h), i
 		}
 	}
-	return math.NaN()
+	return math.NaN(), maxSeriesTerms
 }
 
 // gammaQuantile is the x with P(k, x) = q, by bisection; NaN when no

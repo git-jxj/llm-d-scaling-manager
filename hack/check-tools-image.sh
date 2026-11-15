@@ -509,7 +509,7 @@ if [ -n "$IMG" ]; then
     out="$(docker run --rm --entrypoint /bin/sh "$IMG" -c 'cd /opt/scaling-manager-tools/release && sha256sum -c --ignore-missing SHA256SUMS' 2>&1)" && rc=0 || rc=$?
     nok="$(printf '%s\n' "$out" | grep -c ': OK$' || true)"
     if [ "$rc" = 0 ] && [ "$nok" -gt 0 ] && [ "$nok" = "$nyaml" ]; then ok "the baked SHA256SUMS checks every baked manifest ($nok OK)"; else fail "baked SHA256SUMS: exit $rc, $nok OK of $nyaml: $(printf '%s' "$out" | grep -v ': OK$' | head -3 | tr '\n' ' ')"; fi
-    if printf '%s\n' "$listing" | grep -q '^scaling-manager-tools-'; then fail "the image carries the tools tarball"; else ok "the image does not carry the tools tarball"; fi
+    if grep -qE '^(scaling-manager-tools|capacity-planner)-' <<< "$listing"; then fail "the image carries the tools tarball or a capacity planner binary"; else ok "the image carries neither the tools tarball nor a capacity planner binary"; fi
     if [ -n "${TOOLS_RELEASE_DIST:-}" ]; then
         if out="$(bash "$ROOT/hack/compare-baked-release-files.sh" --image "$IMG" "$TOOLS_RELEASE_DIST" 2>&1)"; then
             ok "the baked files are $TOOLS_RELEASE_DIST, byte for byte ($out)"

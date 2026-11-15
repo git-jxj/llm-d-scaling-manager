@@ -599,6 +599,11 @@ from the text above, and why:
   preflight binding is kept.
 - **`admin-finish` before `install`** exits 4 at once (no controller
   Deployment), instead of waiting for a client certificate that will not come.
+- **The capacity planner binaries** (the standalone capacity planner) are built
+  and added to `SHA256SUMS` in `release-sign`, before it signs, so every file
+  of the release is signed there once. The tools image does not carry them:
+  its `SHA256SUMS` lists them, install checks it with `--ignore-missing`, and
+  the baked-files comparison skips them as it skips the tools tarball.
 - **Both published variants.** The release-files job compares the baked files
   of the amd64 and the arm64 image (`--platform`).
 - **`install` checks the namespace first** (exit 4). An owner may not read

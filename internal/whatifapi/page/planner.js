@@ -191,8 +191,9 @@ function setStatus(text, error) {
 }
 
 // api calls the API on this origin, by a path relative to the page,
-// retrying a busy server's 503. A signal aborts the request, and the server
-// stops pricing it.
+// retrying a busy server's 503 (retryDelay, in scenario.js), never a plan
+// stopped at the server's plan budget. A signal aborts the request, and the
+// server stops pricing it.
 async function api(method, path, body, signal) {
   for (let attempt = 0; ; attempt++) {
     const opt = {method, headers: {}, signal};
@@ -203,8 +204,9 @@ async function api(method, path, body, signal) {
     const resp = await fetch(path, opt);
     let doc = null;
     try { doc = await resp.json(); } catch (e) { doc = null; }
-    if (resp.status === 503 && attempt < 5) {
-      await new Promise(r => setTimeout(r, 1000 * (+resp.headers.get("Retry-After") || 1)));
+    const wait = retryDelay(resp.status, resp.headers.get("Retry-After"), attempt);
+    if (wait >= 0) {
+      await new Promise(r => setTimeout(r, wait));
       continue;
     }
     if (!resp.ok) {

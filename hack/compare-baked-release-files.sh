@@ -61,13 +61,14 @@ elif ! cmp -s "$BAKED/SHA256SUMS" "$DIST/SHA256SUMS"; then
     diff "$DIST/SHA256SUMS" "$BAKED/SHA256SUMS" >&2 || true
 fi
 
-# Every file of the release but the tools tarball and its bundle is baked, and
+# Every file of the release but the tools tarball, the capacity planner
+# binaries and their bundles is baked, and
 # equal. Counted, so an extraction that found nothing cannot pass.
 n=0 bundles=0
 for f in "$DIST"/*; do
     [ -f "$f" ] || continue
     b="${f##*/}"
-    case "$b" in scaling-manager-tools-*) continue ;; esac
+    case "$b" in scaling-manager-tools-*|capacity-planner-*) continue ;; esac
     n=$((n + 1))
     case "$b" in *.sigstore.json) bundles=$((bundles + 1)) ;; esac
     if [ ! -f "$BAKED/$b" ]; then
@@ -80,7 +81,7 @@ for f in "$BAKED"/*; do
     [ -f "$f" ] || continue
     b="${f##*/}"
     case "$b" in
-        scaling-manager-tools-*) refuse "the image carries $b; it ships beside the image, not in it" ;;
+        scaling-manager-tools-*|capacity-planner-*) refuse "the image carries $b; it ships beside the image, not in it" ;;
         *) [ -f "$DIST/$b" ] || refuse "the image carries $b, which the release does not upload" ;;
     esac
 done

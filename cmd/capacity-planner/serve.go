@@ -33,9 +33,18 @@ type serveFlags struct {
 	auth             string
 	tlsCert, tlsKey  string
 	shutdownDeadline time.Duration
+	// planBudget is --plan-budget, how long one plan may be priced; 0 is
+	// whatifapi.DefaultPlanBudget.
+	planBudget time.Duration
 	// allowedNamespaces is --allowed-namespaces, comma-separated, and
 	// audiences --token-audiences.
 	allowedNamespaces, audiences string
+	// allInContainer is --listen-all-in-container: the one way to bind every
+	// interface without authentication (whatifapi.CheckContainerListen).
+	allInContainer bool
+	// inPod is whether serve runs in a Kubernetes Pod (inKubernetesPod),
+	// where --listen-all-in-container is refused.
+	inPod bool
 }
 
 // runServe serves the capacity planner's API (internal/whatifapi) until ctx
@@ -43,7 +52,8 @@ type serveFlags struct {
 // CLI's own code paths. A Prometheus window is read from --prometheus with capture's
 // flags, the window and namespace coming with each request; a recording is
 // read from --recordings by file name. It binds a loopback address unless
-// --auth=kubernetes, which needs TLS.
+// --auth=kubernetes, which needs TLS, or --listen-all-in-container, which
+// binds every interface of a container with no authentication.
 func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs := newFlags("serve", out)
 	var f serveFlags
@@ -60,11 +70,14 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.tlsCert, "tls-cert-file", "", "the server's certificate, PEM; required with --auth=kubernetes")
 	fs.StringVar(&f.tlsKey, "tls-key-file", "", "the server's private key, PEM; required with --auth=kubernetes")
 	fs.DurationVar(&f.shutdownDeadline, "shutdown-timeout", 10*time.Second, "how long requests in flight may run once the server is told to stop")
+	fs.DurationVar(&f.planBudget, "plan-budget", whatifapi.DefaultPlanBudget, "how long one plan may be priced; past it the plan is refused with PlanBudgetExceeded")
 	fs.StringVar(&f.allowedNamespaces, "allowed-namespaces", "", "the namespaces a prometheus source may read, comma-separated; default --namespace alone")
+	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network. Refused when KUBERNETES_SERVICE_HOST is set, a best-effort tripwire, not enforcement")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
+	f.inPod = inKubernetesPod()
 	handler, err := f.handler(fs, warn)
 	if err != nil {
 		return err
@@ -91,7 +104,27 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 		ln = tls.NewListener(ln, srv.TLSConfig)
 	}
 	fmt.Fprintf(warn, "capacity-planner: serving the capacity planner's API on %s (auth %s)\n", ln.Addr(), f.auth)
+	// Warned only once the port is taken, so a start refused or a bind that
+	// fails prints no warning.
+	if f.allInContainer {
+		fmt.Fprintf(warn, "capacity-planner: warning: --listen-all-in-container: serving %s with no authentication. "+
+			"The Host check is not access control: any client that reaches the port can send Host: localhost. "+
+			"Publish the port on the host's loopback only (-p 127.0.0.1:PORT:PORT), never beyond it\n", ln.Addr())
+	}
+	if listening != nil {
+		listening(ln.Addr())
+	}
 	return serveUntil(ctx, srv, ln, f.shutdownDeadline)
+}
+
+// listening, when set, is called with the address serve bound, once it
+// serves: tests read the port from it rather than from stderr.
+var listening func(net.Addr)
+
+// inKubernetesPod reports whether this process runs in a Kubernetes Pod, by
+// the KUBERNETES_SERVICE_HOST the kubelet sets in every container.
+func inKubernetesPod() bool {
+	return os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 }
 
 // shutdownGrace is how long requests in flight have to return once their
@@ -143,11 +176,19 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if err != nil {
 		return nil, err
 	}
-	if err := whatifapi.CheckListen(f.listen, f.auth); err != nil {
+	if f.allInContainer {
+		if err := whatifapi.CheckContainerListen(f.listen, f.auth, f.inPod); err != nil {
+			return nil, usageError{err}
+		}
+	} else if err := whatifapi.CheckListen(f.listen, f.auth); err != nil {
 		return nil, usageError{err}
 	}
 	if f.auth == whatifapi.AuthKubernetes && (f.tlsCert == "" || f.tlsKey == "") {
 		return nil, usagef("--auth=%s needs --tls-cert-file and --tls-key-file: a bearer token is not sent in the clear", whatifapi.AuthKubernetes)
+	}
+	if f.planBudget < 0 || f.planBudget > maxPlanBudget {
+		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s: a plan stopped later is refused after the server's %s write timeout has closed the connection",
+			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget, writeTimeout)
 	}
 	if f.recordings == "" && f.window.prometheus == "" {
 		return nil, usagef("serve needs --prometheus, --recordings or both: a source to resolve inputs from")
@@ -162,7 +203,7 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, err
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed}
-	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion)})
+	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlanBudget: f.planBudget})
 	h := srv.Handler()
 	if f.auth != whatifapi.AuthKubernetes {
 		return whatifapi.LoopbackOnly(h), nil
@@ -198,6 +239,11 @@ const (
 	writeTimeout = 10 * time.Minute
 	idleTimeout  = 2 * time.Minute
 )
+
+// maxPlanBudget is the largest --plan-budget: a minute under writeTimeout, so
+// a plan stopped at its budget, which may run on for one figure, is refused
+// on a connection still open.
+const maxPlanBudget = writeTimeout - time.Minute
 
 // namespaces is the namespaces a prometheus source may read: --allowed-namespaces,
 // else --namespace alone, each a DNS-1123 label. With --prometheus, one is

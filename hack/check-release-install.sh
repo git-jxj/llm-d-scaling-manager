@@ -657,8 +657,27 @@ rm -rf "$W/b5"; mkdir -p "$W/b5"
 cmpb "$W/b5" "$W/dist"
 rc=$?
 if [ "$rc" = 1 ] && grep -q 'built without --build-context release' "$W/out"; then ok "an image built without the release files is refused"; else bad "empty image: exit $rc"; fi
+# The release also attaches the capacity planner binaries, which SHA256SUMS
+# lists and the tools image does not carry.
+rm -rf "$W/distp" "$W/bakedp"; cp -R "$W/dist" "$W/distp"
+pb="capacity-planner-$V-linux-amd64"
+printf 'planner\n' > "$W/distp/$pb"
+(cd "$W/distp" && sha256sum "$pb" >> SHA256SUMS)
+for f in "$W/distp/$pb" "$W/distp/SHA256SUMS"; do printf '{"bundle":"%s"}\n' "${f##*/}" > "$f.sigstore.json"; done
+mkdir -p "$W/bakedp"
+for f in "$W"/distp/*; do case "${f##*/}" in scaling-manager-tools-*|capacity-planner-*) ;; *) cp "$f" "$W/bakedp/" ;; esac; done
+cmpb "$W/bakedp" "$W/distp"; expect_rc "a release with planner binaries: the image without them, its SHA256SUMS listing them, is accepted" 0 $?
+cp "$W/distp/$pb" "$W/bakedp/"
+cmpb "$W/bakedp" "$W/distp"
+rc=$?
+if [ "$rc" = 1 ] && grep -q "the image carries $pb" "$W/out"; then ok "a planner binary inside the tools image is refused"; else bad "planner binary baked: exit $rc"; fi
+rm -f "$W/bakedp/$pb"
+rm -rf "$W/imagep"; cp -R "$IMGDIR" "$W/imagep"; rm -rf "$W/imagep/release"; cp -R "$W/bakedp" "$W/imagep/release"
+rm -rf "$W/dryp"
+smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
+expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=75
+EXPECT_CASES=78
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

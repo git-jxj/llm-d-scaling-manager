@@ -3,10 +3,58 @@
 # commands a tool would run are the same strings.
 name: capacity-planner
 
-build:
-  note: From a clone of the release you run. Needs Go 1.26 or later. There is no released capacity-planner binary or image.
-  run: |
-    make capacity-planner
+get:
+  image:
+    note: |
+      The image of the release you run. It serves the recordings in the directory you mount, with no authentication.
+      --user runs it as you: recordings are written readable by their owner only. -p 127.0.0.1:... keeps the port
+      off your network; never publish it beyond 127.0.0.1. Rootless Podman: --userns=keep-id in place of --user,
+      and with SELinux mount with :ro,Z.
+    run: |
+      export V=<release>
+      mkdir -p recordings
+      docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
+        ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V}
+  verify:
+    note: Optional. The image is signed by the release workflow, as the release files are. Needs cosign 3.0 or later; cosign 2.x reports no signatures for these images.
+    run: |
+      cosign verify ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V} \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
+  binary:
+    note: |
+      Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
+      signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
+    run: |
+      export V=<release> OS=linux ARCH=amd64
+      B=capacity-planner-${V}-${OS}-${ARCH}
+      URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
+      curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
+      grep " ${B}$" SHA256SUMS | sha256sum -c -
+      cosign verify-blob ${B} --bundle ${B}.sigstore.json \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
+      mkdir -p bin && install -m 0755 ${B} bin/capacity-planner
+      bin/capacity-planner version
+  checkout:
+    note: Or from a clone of the release you run, with Go 1.26 or later.
+    run: |
+      make capacity-planner
+
+container:
+  prometheus:
+    note: |
+      The image, reading Prometheus (Linux; on macOS use the binary). --network host lets the container reach your
+      port-forward. Never use the image's default command with --network host: it would listen on every interface
+      of your machine. Give the command below, which listens on 127.0.0.1 without --listen-all-in-container.
+      For an https Prometheus, mount the token and CA files and pass --bearer-token-file and --ca-file.
+      serve reads no kubeconfig unless --auth=kubernetes, so none is mounted. The port-forward uses 9091, so it does
+      not clash with one already on 9090.
+    run: |
+      kubectl -n ${PROM_NS} port-forward svc/${PROM_SVC} 9091:9090 &
+      docker run --rm --network host ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V} \
+        serve --listen 127.0.0.1:8080 --prometheus http://127.0.0.1:9091 --namespace ${NAMESPACE} --kube-state-metrics \
+        --engine vllm --engine-args "${ENGINE_ARGS}"
 
 start:
   prometheus:
@@ -40,7 +88,7 @@ open:
     xdg-open http://127.0.0.1:8080/ || open http://127.0.0.1:8080/
 
 stop:
-  note: Ctrl-C stops the server. Then stop the port-forward, if you started one.
+  note: Ctrl-C stops the server. Then stop the port-forward, if you started one, from the shell that started it (%1 is that shell's first background job).
   run: |
     kill %1
 

@@ -17,7 +17,7 @@ ROOT="${CHECK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 WORKFLOW="$ROOT/.github/workflows/ci-release.yaml"
 # One ok or FAIL per case. A run that stops early otherwise passes having
 # checked less than it says. Change this deliberately with the cases.
-EXPECT_CASES=40
+EXPECT_CASES=47
 PASS=0
 FAIL=0
 
@@ -392,6 +392,74 @@ if [ "$signed" = "sign --yes ghcr.io/o/r/tools@sha256:abc" ] \
     ok "the tools image is signed by digest, and not at all without one"
 else
     fail "the tools sign step must sign IMAGE@DIGEST and refuse an empty digest (signed '$signed')"
+fi
+
+# --- The capacity planner image (release-capacity-planner): the tools image's
+# guards. One blocking scan (the binary is pure Go, the same on both
+# platforms), and before the login the image must pass
+# hack/check-capacity-planner-image.sh at this release.
+P=release-capacity-planner
+expect_yq "the capacity planner image is released only after the release job (its tag guard)" \
+    'release' "[.jobs.$P.needs] | flatten | join(\",\")"
+expect_yq "the capacity planner job may sign and push, reads contents, and keeps no credentials" \
+    'contents=read,id-token=write,packages=write|false' \
+    "(.jobs.$P.permissions | to_entries | map(.key + \"=\" + .value) | sort | join(\",\")) + \"|\" + (.jobs.$P.steps[] | select(.uses == \"actions/checkout*\") | .with.\"persist-credentials\" | tostring)"
+expect_yq "every capacity planner build (amd64 check and scan, push) uses Dockerfile.capacity-planner for both platforms, and the push publishes the tags resolved" \
+    'Dockerfile.capacity-planner,Dockerfile.capacity-planner|linux/amd64,linux/arm64|${{ steps.planner-meta.outputs.tags }}' \
+    "([.jobs.$P.steps[] | select(.uses == \"docker/build-push-action*\") | .with.file] | join(\",\")) + \"|\" + (.jobs.$P.steps[] | select(.id == \"planner-push\") | .with.platforms + \"|\" + .with.tags)"
+pscan_at="$(yq "[.jobs.$P.steps[] | (.with.\"exit-code\" // \"\")] | to_entries | map(select(.value == \"1\")) | .[-1].key // -1" "$R")"
+pscan_n="$(yq "[.jobs.$P.steps[] | select(.with.\"exit-code\" == \"1\")] | length" "$R")"
+pcheck_at="$(yq "[.jobs.$P.steps[] | (.run // \"\")] | to_entries | map(select(.value | test(\"hack/check-capacity-planner-image.sh\"))) | .[0].key // -1" "$R")"
+pcheck_ver="$(yq -r ".jobs.$P.steps[] | select((.run // \"\") | test(\"hack/check-capacity-planner-image.sh\")) | .env.PLANNER_VERSION" "$R")"
+plogin_at="$(yq "[.jobs.$P.steps[] | (.uses // \"\")] | to_entries | map(select(.value == \"docker/login-action*\")) | .[0].key // -1" "$R")"
+if [ "$pscan_n" = 1 ] && [ "$pscan_at" -ge 0 ] && [ "$pcheck_at" -ge 0 ] && [ "$plogin_at" -ge 0 ] \
+    && [ "$pscan_at" -lt "$plogin_at" ] && [ "$pcheck_at" -lt "$plogin_at" ] \
+    && [ "$pcheck_ver" = '${{ needs.release.outputs.version }}' ]; then
+    ok "the capacity planner image: the serve check at this release and a blocking scan run before the registry login"
+else
+    fail "the capacity planner image needs the serve check (at the release version) and one blocking scan before the login ($pscan_n scans at $pscan_at, check at $pcheck_at version '$pcheck_ver', login at $plogin_at)"
+fi
+
+yq ".jobs.$P.steps[] | select(.id == \"planner-meta\") | .run" "$R" > "$WORK/planner-meta.sh"
+planner_tags() {
+    : > "$WORK/planner.out"
+    env IMAGE=ghcr.io/owner/repo VERSION="$1" LATEST="$2" GITHUB_OUTPUT="$WORK/planner.out" bash "$WORK/planner-meta.sh" >/dev/null 2>&1 || echo "rc=$?"
+    sed -n 's/^tags=//p' "$WORK/planner.out"
+}
+p1="$(planner_tags v1.3.0 true)"
+p2="$(planner_tags v1.2.1 false)"
+if [ "$p1" = "ghcr.io/owner/repo/capacity-planner:v1.3.0,ghcr.io/owner/repo/capacity-planner:latest" ] && [ "$p2" = "ghcr.io/owner/repo/capacity-planner:v1.2.1" ]; then
+    ok "the capacity planner image takes the version, and latest only when the controller moved it"
+else
+    fail "capacity planner tags: latest=true gave [$p1], latest=false gave [$p2]"
+fi
+
+yq ".jobs.$P.steps[] | select(.name == \"Sign the capacity planner image\") | .run" "$R" > "$WORK/psign.sh"
+rm -f "$WORK/cosign.args"
+PATH="$WORK/bin:$PATH" IMAGE=ghcr.io/o/r/capacity-planner DIGEST=sha256:abc bash "$WORK/psign.sh" >/dev/null 2>&1
+signed="$(cat "$WORK/cosign.args" 2>/dev/null)"
+rm -f "$WORK/cosign.args"
+if [ "$signed" = "sign --yes ghcr.io/o/r/capacity-planner@sha256:abc" ] \
+    && ! PATH="$WORK/bin:$PATH" IMAGE=ghcr.io/o/r/capacity-planner DIGEST='' bash "$WORK/psign.sh" >/dev/null 2>&1 \
+    && [ ! -e "$WORK/cosign.args" ]; then
+    ok "the capacity planner image is signed by digest, and not at all without one"
+else
+    fail "the capacity planner sign step must sign IMAGE@DIGEST and refuse an empty digest (signed '$signed')"
+fi
+
+# The platform check, run with a stub docker printing the pushed index: an
+# index without arm64 fails the release.
+yq ".jobs.$P.steps[] | select(.name == \"Verify the pushed image holds linux/amd64 and linux/arm64\") | .run" "$R" > "$WORK/pverify.sh"
+mkdir -p "$WORK/pbin"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s" "$STUB_INDEX"' > "$WORK/pbin/docker"
+chmod +x "$WORK/pbin/docker"
+both='{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}},{"platform":{"os":"unknown","architecture":"unknown"}}]}'
+one='{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"unknown","architecture":"unknown"}}]}'
+pv() { PATH="$WORK/pbin:$PATH" STUB_INDEX="$1" IMAGE=ghcr.io/o/r/capacity-planner DIGEST="$2" bash "$WORK/pverify.sh" >/dev/null 2>&1; }
+if pv "$both" sha256:abc && ! pv "$one" sha256:abc && ! pv "$both" ''; then
+    ok "the pushed capacity planner index must hold linux/amd64 and linux/arm64, by digest"
+else
+    fail "the platform check must pass both platforms and refuse an index without arm64 or with no digest"
 fi
 
 echo ""

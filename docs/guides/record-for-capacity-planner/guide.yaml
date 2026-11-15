@@ -21,9 +21,12 @@ prerequisites:
 
 record:
   build:
-    note: From a checkout of the release you run. Needs Go. There is no released capacity-planner binary or image. On v0.11.1 and earlier the target is make whatif and the binary bin/whatif.
+    note: |
+      The binary of the release you run, at bin/capacity-planner, as the capacity planner guide's Get the planner
+      downloads and checks it. Record with the binary: the image is for serving. From a checkout instead, run
+      make capacity-planner (Go 1.26 or later; on v0.11.1 and earlier make whatif, which builds bin/whatif).
     run: |
-      make capacity-planner
+      bin/capacity-planner version
       bin/capacity-planner capture -h 2>&1 | head -3
   window:
     note: The namespace your model servers run in, and the window to answer from (UTC).

@@ -11,7 +11,10 @@ Each release attaches rendered manifests, pinned to its image by digest:
 `kubectl` installs them with no checkout. The guides lead with them
 ([in a namespace](../guides/install-in-namespace/),
 [cluster-wide](../guides/install-cluster-wide/)). What each file holds:
-[the release process](../developer-guide/release-process.md).
+[the release process](../developer-guide/release-process.md). The capacity
+planner binaries are release files too
+([Get the planner](../guides/capacity-planner/README.md#get-the-planner)), and
+verify the same way.
 
 ### Verify the release files
 
