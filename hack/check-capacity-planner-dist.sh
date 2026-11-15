@@ -32,8 +32,13 @@ for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
     if [ ! -s "$f" ]; then fail "$p: $f was not built"; continue; fi
     info="$(go version -m "$f")"
     miss=""
-    for want in "-trimpath=true" "CGO_ENABLED=0" "GOOS=${p%/*}" "GOARCH=${p#*/}" "learnrec.BuildCommit=$COMMIT" "main.version=$V"; do
+    for want in "-trimpath=true" "CGO_ENABLED=0" "GOOS=${p%/*}" "GOARCH=${p#*/}"; do
         printf '%s\n' "$info" | grep -qF -- "$want" || miss="$miss $want"
+    done
+    # -trimpath drops -ldflags from the build settings, so the two -X values
+    # are looked for in the binary itself: a cross-built one cannot run here.
+    for want in "$COMMIT" "$V"; do
+        grep -qaF -- "$want" "$f" || miss="$miss ldflag-value:$want"
     done
     if [ -z "$miss" ]; then ok "$p: built with -trimpath, CGO off, the commit and the version"; else fail "$p: build settings lack:$miss"; fi
 done
