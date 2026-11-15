@@ -643,8 +643,10 @@ expect_wf() {
 expect_wf "release-files runs after every image is pushed and signed" 'release,release-tools,release-capacity-planner' '[.jobs."release-files".needs] | flatten | join(",")'
 expect_wf "release-files attaches a capacity planner binary for linux and darwin, amd64 and arm64" \
     'linux/amd64 linux/arm64 darwin/amd64 darwin/arm64' '.jobs."release-files".env.CAPACITY_PLANNER_PLATFORMS'
-expect_wf "the binaries are built by make capacity-planner-dist for those platforms, before signing" 'true' \
-    '.jobs."release-files".steps | (map(.name) | (index("Build the capacity planner binaries") < index("Sign the release files"))) and (.[] | select(.name == "Build the capacity planner binaries") | .run | test("make capacity-planner-dist RELEASE_VERSION=\"\$VERSION\"") and test("CAPACITY_PLANNER_PLATFORMS=\"\$CAPACITY_PLANNER_PLATFORMS\""))'
+expect_wf "the binaries are built before they are signed" 'Build the capacity planner binaries,Sign the release files' \
+    '[.jobs."release-files".steps[].name | select(. == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
+expect_wf "the binaries are built by make capacity-planner-dist for those platforms" 'true' \
+    '.jobs."release-files".steps[] | select(.name == "Build the capacity planner binaries") | .run | test("make capacity-planner-dist RELEASE_VERSION=\"\$VERSION\"") and test("CAPACITY_PLANNER_PLATFORMS=\"\$CAPACITY_PLANNER_PLATFORMS\"") | tostring'
 expect_wf "release-files may upload (contents) and sign (id-token), nothing more" \
     'contents=write,id-token=write' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
 expect_wf "the image job still cannot write the release" 'read' '.jobs.release.permissions.contents'
