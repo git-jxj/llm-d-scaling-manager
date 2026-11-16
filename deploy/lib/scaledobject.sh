@@ -1407,6 +1407,42 @@ so_workload_check_claim_ref() {
 # Returns non-zero when anything could not be read or patched. A caller's
 # `|| echo WARNING` depends on that, so every path that ends without knowing the
 # answer has to say so rather than fall through to the reassuring one.
+# so_workload_report_dsets reports, per serving role of each DisaggregatedSet
+# in $1, what so_discover's notes report for any workload: no drain hook,
+# weights fetched on every start, caches that do not outlive the pod. It
+# writes no patch, and never applies one: the fix belongs in the role
+# template where the set is owned, and ANY template change rolls every group
+# of every role of the set, which is a rollout, not a preparation step.
+#
+# Prints "<roles checked> <roles with a gap>" on stdout, the findings as
+# warnings. Returns 1 when the set listing cannot be read; prints nothing and
+# returns 0 when the CRD is absent.
+so_workload_report_dsets() {
+    local ns="$1" listing set idx role mode slices subroles labels objlabels envs args
+    local pod drain weights caches checked=0 gaps=0
+    kubectl get crd "$SO_DSET_CRD" >/dev/null 2>&1 || return 0
+    if ! listing="$(kubectl get disaggregatedsets -n "$ns" -o json 2>/dev/null)"; then
+        log_warning "  Could not list disaggregatedsets in $ns -- they are not being reported as clean."
+        return 1
+    fi
+    while IFS=$'\037' read -r set idx role mode slices subroles labels objlabels envs args; do
+        [ -n "$set" ] && [ -n "$role" ] || continue
+        so_is_serving "$labels" "$objlabels" || continue
+        checked=$((checked + 1))
+        pod="$(so_dset_role_pod_path "$idx")"
+        drain=$(so_drain_note "$ns" disaggregatedsets "$set" "$pod")
+        weights=$(so_weights_note "$ns" disaggregatedsets "$set" "$pod")
+        caches=$(so_enginecache_note "$ns" disaggregatedsets "$set" "$pod")
+        [ -n "$drain$weights$caches" ] || continue
+        gaps=$((gaps + 1))
+        log_warning "  DisaggregatedSet $ns/$set, role $role (spec.roles[$idx]): not patched -- change the role template where the set is owned; any template change rolls every group of every role."
+        [ -z "$drain" ] || log_warning "    drain: $drain"
+        [ -z "$weights" ] || log_warning "    weights: $weights"
+        [ -z "$caches" ] || log_warning "    caches: $caches"
+    done < <(printf '%s' "$listing" | so_dset_role_rows)
+    echo "$checked $gaps"
+}
+
 llmsm_workload_patch() {
     local out="${LLMSM_WORKLOAD_PATCH_FILE:-scaling-manager-workload-patch.yaml}"
     local apply="${LLMSM_WORKLOAD_PATCH_APPLY:-false}"
@@ -1417,6 +1453,9 @@ llmsm_workload_patch() {
     # preStop on every template, which it cannot fix and the all-clear must
     # not claim.
     local refused=0 lws_undrained=0
+    # dset_gaps: DisaggregatedSet roles so_workload_report_dsets found a gap
+    # in. Reported, never patched, and never part of the all-clear.
+    local dset_gaps=0
     local listing names doc_rc index_lines tool doc_ns doc_name doc_kind write_rc
 
     # The tool check this path never had. `make workload-patch` sources the
@@ -1507,6 +1546,16 @@ llmsm_workload_patch() {
                 esac
             done <<< "$names"
         done
+        # DisaggregatedSet roles: reported, never patched (so_workload_report_dsets).
+        local dset_out dset_rc
+        dset_rc=0
+        dset_out="$(so_workload_report_dsets "$ns")" || dset_rc=$?
+        if [ "$dset_rc" -eq 1 ]; then
+            unreadable=1
+        elif [ -n "$dset_out" ]; then
+            scanned=$((scanned + ${dset_out%% *}))
+            dset_gaps=$((dset_gaps + ${dset_out##* }))
+        fi
     done
 
     found=$(grep -c '^apiVersion:' "$tmp" 2>/dev/null) || found=0
@@ -1527,10 +1576,11 @@ llmsm_workload_patch() {
             log_warning "Nothing was written: all $scanned workload(s) were skipped (see above)."
             return 0
         fi
-        if [ "$((scanned - skipped - lws_undrained))" -gt 0 ]; then
-            log_success "$((scanned - skipped - lws_undrained)) model server(s) already drain on scale-down and keep their weights on a volume; no vLLM among them compiles from nothing, and none recompiles its Python bytecode."
+        if [ "$((scanned - skipped - lws_undrained - dset_gaps))" -gt 0 ]; then
+            log_success "$((scanned - skipped - lws_undrained - dset_gaps)) model server(s) already drain on scale-down and keep their weights on a volume; no vLLM among them compiles from nothing, and none recompiles its Python bytecode."
         fi
         [ "$lws_undrained" -gt 0 ] && log_warning "  $lws_undrained LeaderWorkerSet(s) keep their caches but do not drain on scale-down (see above); that is set by hand."
+        [ "$dset_gaps" -gt 0 ] && log_warning "  $dset_gaps DisaggregatedSet role(s) need changes to their role template (see above); that is set by hand, in the set's owner."
         [ "$skipped" -gt 0 ] && log_warning "  $skipped other workload(s) were skipped and were not checked."
         so_workload_patch_clear_stale "$out"
         return 0
@@ -1643,6 +1693,7 @@ llmsm_workload_patch() {
     rm -f "$tmp"
     trap - RETURN
     log_success "Wrote $out ($found workload(s) need something)."
+    [ "$dset_gaps" -eq 0 ] || log_warning "  $dset_gaps DisaggregatedSet role(s) need changes to their role template too (see above); those are not in $out."
     log_info "  Apply it where the pod spec is owned -- your modelservice values, or the chart that made it."
     [ "$apply" != "true" ] && log_info "  To patch the live objects anyway: LLMSM_WORKLOAD_PATCH_APPLY=true make workload-patch"
     [ "$unreadable" -eq 1 ] && rc=1
@@ -1680,11 +1731,13 @@ so_workload_gaps() {
     [ -n "$out" ] || return 1
     # An LWS with no leaderTemplate builds its leader from workerTemplate, so a
     # question about the leader is answered from that one -- the rule the patch
-    # path follows. Without it the plan notes read {} and said nothing.
+    # path follows. Without it the plan notes read {} and said nothing. Any
+    # path ending in leaderTemplate, so a DisaggregatedSet role
+    # (so_dset_role_pod_path) falls back the same way.
     printf '%s' "$out" | jq -r --argjson p "$pod" --arg emount "${LLMSM_ENGINE_CACHE_PATH:-/engine-cache}" '
         ( getpath($p)
-          // (if $p == ["spec", "leaderWorkerTemplate", "leaderTemplate"]
-              then getpath(["spec", "leaderWorkerTemplate", "workerTemplate"]) else null end)
+          // (if ($p | length) > 0 and ($p | last) == "leaderTemplate"
+              then getpath($p[:-1] + ["workerTemplate"]) else null end)
           // {} ) as $t
         | ([ $t.spec.containers[]?
              | ((.command // []) + (.args // []) | join(" ") | ascii_downcase) as $cmd
@@ -2912,7 +2965,29 @@ so_target_namespaces() {
 llmsm_namespaces_with_model_servers() {
     { so_namespaces_of deployments "$SO_POD_PATH_DEPLOYMENT"
       so_namespaces_of leaderworkersets "$SO_POD_PATH_LWS"
+      so_namespaces_of_dsets
     } | sort -u
+}
+
+# so_dset_serving_jq is the jq filter, over one DisaggregatedSet, that keeps
+# it when any role's pod template, or the set itself, carries a serving marker
+# ($markers). Shared by the namespace scan and the model-server count.
+readonly SO_DSET_SERVING_JQ='
+    select([ (.metadata.labels // {}),
+             ((.spec.roles // [])[]
+              | (.spec.leaderWorkerTemplate // {})
+              | ((.leaderTemplate // .workerTemplate // {}).metadata.labels // {})) ]
+           | map(to_entries[])
+           | any((.key + "=" + (.value|tostring)) as $kv
+                 | ($markers | index($kv)) != null))'
+
+# so_namespaces_of_dsets echoes the namespace of every DisaggregatedSet with a
+# serving role. Silent, as so_namespaces_of is, when the list is denied or the
+# CRD is absent.
+so_namespaces_of_dsets() {
+    kubectl get disaggregatedsets -A -o json 2>/dev/null \
+        | jq -r --argjson markers "$(so_serving_markers_json)" \
+            ".items[] | $SO_DSET_SERVING_JQ | .metadata.namespace" 2>/dev/null || true
 }
 
 # so_namespaces_of echoes the namespace of every workload of one kind that carries
@@ -3190,6 +3265,166 @@ so_existing_name() {
 # with the reason in its note, rather than dropped — the file you were shown is
 # then the whole truth about what was found, and turning a "no" into a "yes" is a
 # deliberate act rather than an undiscoverable one.
+# DisaggregatedSet (disaggregatedset.x-k8s.io, LWS v0.10.0 and newer) runs a
+# prefill/decode model as ONE object whose spec.roles each carry their own
+# LeaderWorkerSet template and replica count. Roles scale independently: no
+# ratio is enforced. The scale target of a role is its
+# DisaggregatedSetRoleScaler, <set>-<role>, which the set controller creates
+# only for a role in scaling.mode External, and only with spec.slices 1; a
+# Static role has no /scale anywhere, so KEDA cannot target it. The child
+# LeaderWorkerSets are never targets: their names carry the revision, and the
+# set controller owns their replicas. See docs/proposals/disaggregatedset.md.
+readonly SO_DSET_KIND='DisaggregatedSetRoleScaler'
+readonly SO_DSET_API='disaggregatedset.x-k8s.io/v1'
+readonly SO_DSET_CRD='disaggregatedsets.disaggregatedset.x-k8s.io'
+
+# so_api_version echoes the apiVersion of scale-target kind $1.
+so_api_version() {
+    case "$1" in
+        LeaderWorkerSet) echo "leaderworkerset.x-k8s.io/v1" ;;
+        "$SO_DSET_KIND") echo "$SO_DSET_API" ;;
+        *) echo "apps/v1" ;;
+    esac
+}
+
+# so_dset_role_pod_path echoes, as a JSON path, role $1 (its index in
+# spec.roles) of a DisaggregatedSet: its leader template. Readers fall back to
+# the worker template when the role sets no leader template, as the LWS
+# controller does.
+so_dset_role_pod_path() {
+    printf '["spec","roles",%s,"spec","leaderWorkerTemplate","leaderTemplate"]' "$1"
+}
+
+# so_dset_role_rows reads a DisaggregatedSet listing (JSON, stdin) and echoes
+# one record per role, US-separated (\037) for the reason so_plan_rows gives:
+#
+#   set \037 index \037 role \037 mode \037 slices \037 subRoles
+#     \037 podLabels \037 setLabels \037 envs \037 argv
+#
+# mode is the role scaling mode, Static when unset (the API default); slices
+# is spec.slices, 1 when unset; subRoles the number of sub-roles. The pod
+# labels, envs and argv are read the way so_discover reads a workload: the
+# engine container, by image or launch command, and the leader template
+# falling back to the worker template. argv last: it is the field that can
+# hold anything. Values are scrubbed of US, and of newlines and CR, so one
+# record stays one line.
+so_dset_role_rows() {
+    jq -r '
+        def scrub: tostring | gsub("[\u001f\n\r]"; " ");
+        .items[]?
+        | . as $o
+        | ($o.spec.slices // 1) as $slices
+        | ($o.spec.roles // []) | to_entries[]
+        | .key as $i | .value as $r
+        | ($r.spec.leaderWorkerTemplate // {}) as $lwt
+        | ($lwt.leaderTemplate // $lwt.workerTemplate // {}) as $t
+        | ((([ $t.spec.containers[]?
+               | ((.command // []) + (.args // []) | map(tostring)
+                  | join(" ") | ascii_downcase) as $cmd
+               | select(((.image // "") | ascii_downcase | test("vllm|sglang"))
+                        or ($cmd | test("vllm serve|sglang\\.launch_server|sglang serve")))
+             ] | first) // $t.spec.containers[0]) // {}) as $c
+        | [ $o.metadata.name,
+            ($i | tostring),
+            ($r.name // ""),
+            ($r.scaling.mode // "Static"),
+            ($slices | tostring),
+            (($r.subRoles // []) | length | tostring),
+            (($t.metadata.labels // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(" ")),
+            (($o.metadata.labels // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(" ")),
+            (($c.env // []) | map(select(.value != null and (.value | test("\\s") | not)
+                                         and (.value | test("\\|") | not))
+                                  | .name + "=" + .value) | join(" ")),
+            (($c.command // []) + ($c.args // []) | map(scrub) | join(" "))
+          ] | map(scrub) | join("\u001f")'
+}
+
+# so_dset_role_block echoes why role $2 of DisaggregatedSet $1 cannot be
+# targeted yet, or nothing when it can. $3 is its scaling mode, $4 the set's
+# slices, $5 its number of sub-roles.
+so_dset_role_block() {
+    local set="$1" role="$2" mode="$3" slices="$4" subroles="$5"
+    if [ "${subroles:-0}" -gt 0 ]; then
+        printf '%s' "Role $role of DisaggregatedSet $set has sub-roles, which the scaling manager does not scale yet: a group's sub-role can change after it is assigned. Scale it by hand or through the sub-role scalers yourself."
+        return 0
+    fi
+    if [ "$mode" != "External" ]; then
+        printf '%s' "Role $role of DisaggregatedSet $set is in scaling.mode $mode, so its replica count is spec.roles[$role].spec.replicas, which has no /scale subresource for KEDA to drive. To autoscale it, set scaling.mode: External on the role and remove its spec.replicas (LWS v0.10.0 or newer; the set controller then creates DisaggregatedSetRoleScaler $set-$role, seeded with the current group count, so nothing drains), then re-run this plan."
+        return 0
+    fi
+    if [ "${slices:-1}" -gt 1 ]; then
+        printf '%s' "DisaggregatedSet $set has spec.slices $slices; External roles need slices: 1 (the LWS webhook rejects the combination), so this role cannot be autoscaled as written."
+        return 0
+    fi
+}
+
+# so_discover_dsets writes the plan entries for the DisaggregatedSets in $1:
+# one per serving role, kind DisaggregatedSetRoleScaler, name <set>-<role>.
+# A role that cannot be targeted yet is written `apply: no` with the reason
+# (so_dset_role_block), so the operator sees it rather than a silent gap.
+# Silent when the CRD is absent or the listing cannot be read: the other kinds
+# report their own readability, and a missing CRD is the common case.
+so_discover_dsets() {
+    local ns="$1" listing set idx role mode slices subroles labels objlabels envs args
+    local name model model_ref apply note block pool existing existing_name existing_min existing_max
+    local existing_cost existing_policy existing_is_scaling_manager existing_model existing_kept
+    local min max cost policy pod drain weights caches rs=$'\036'
+    kubectl get crd "$SO_DSET_CRD" >/dev/null 2>&1 || return 0
+    listing="$(kubectl get disaggregatedsets -n "$ns" -o json 2>/dev/null)" || return 0
+    while IFS=$'\037' read -r set idx role mode slices subroles labels objlabels envs args; do
+        [ -n "$set" ] && [ -n "$role" ] || continue
+        so_is_serving "$labels" "$objlabels" || continue
+        name="$set-$role"
+        apply=yes; note=""; existing_name=""
+        min="${LLMSM_DEFAULT_SO_MIN:-1}"; max="${LLMSM_DEFAULT_SO_MAX:-10}"
+        cost="$SO_DEFAULT_VARIANT_COST"; policy=""
+        model=$(so_model_id "$args")
+        model_ref=""
+        case "$model" in '$'*) model_ref="$model" ;; esac
+        model=$(so_resolve_env_ref "$model" "$envs")
+        if [ -z "$model" ]; then
+            apply=no
+            if [ -n "$model_ref" ]; then
+                note="the model is written as $model_ref, a reference the engine container env does not answer. Fill in modelID with the name the engine actually serves and set apply: yes to include it."
+            else
+                note="no --served-model-name, --model, or 'vllm serve <model>' on the role's engine container, so the model could not be read. Fill in modelID and set apply: yes to include it."
+            fi
+        fi
+        block="$(so_dset_role_block "$set" "$role" "$mode" "$slices" "$subroles")"
+        if [ -n "$block" ]; then
+            apply=no
+            note="${note:+$note$rs}$block"
+        fi
+        existing=$(so_existing_info "$ns" "$name")
+        if [ -n "$existing" ]; then
+            IFS=$'\037' read -r existing_name existing_min existing_max existing_cost existing_policy existing_is_scaling_manager existing_model existing_kept _ <<< "$existing"
+            min="$existing_min"; max="$existing_max"; cost="$existing_cost"
+            policy="$existing_policy"
+            if [ "$existing_is_scaling_manager" = "true" ] && [ -z "$block" ]; then
+                so_prefer_existing_model "$ns" "$name"
+                so_kept_keys_note
+                apply=adopt
+                note="${note:+$note$rs}Already targets the scaling manager (ScaledObject $existing_name, min $existing_min, max $existing_max) — apply: adopt refreshes it in place. Set apply: no to leave it untouched."
+            else
+                apply=no
+                note="${note:+$note$rs}Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at the scaling manager instead of adding a second."
+            fi
+        fi
+        pool=$(so_pool "$ns" "$labels")
+        pod="$(so_dset_role_pod_path "$idx")"
+        drain=$(so_drain_note "$ns" disaggregatedsets "$set" "$pod")
+        [ -n "$drain" ] && note="${note:+$note$rs}$drain"
+        weights=$(so_weights_note "$ns" disaggregatedsets "$set" "$pod")
+        [ -n "$weights" ] && note="${note:+$note$rs}$weights"
+        caches=$(so_enginecache_note "$ns" disaggregatedsets "$set" "$pod")
+        [ -n "$caches" ] && note="${note:+$note$rs}$caches"
+        # Not offered to the warm-pool block: a role's groups belong to child
+        # LeaderWorkerSets the block cannot read by this name.
+        SO_WARMPOOL_ROWS="" so_plan_entry "$apply" "$ns" "$SO_DSET_KIND" "$name" "$model" \
+            "$min" "$max" "$cost" "$policy" "$pool" "$existing_name" "$note"
+    done < <(printf '%s' "$listing" | so_dset_role_rows)
+}
+
 so_discover() {
     local ns name args envs labels objlabels model model_ref pool kind apply note drain weights caches
     local existing existing_name existing_min existing_max existing_cost existing_policy existing_is_scaling_manager existing_model existing_kept
@@ -3404,6 +3639,8 @@ so_discover() {
                             | map(tostring | gsub("[\n\r]"; " ")) | join(" "))
                          ] | join("|"))')
         done
+        # DisaggregatedSet roles: one object, one entry per role.
+        so_discover_dsets "$ns"
         # FMA requesters last, and only where nothing above already covers the
         # model. They carry no serving marker, so the loop above cannot see them.
         so_discover_fma_requesters "$ns"
@@ -4502,7 +4739,7 @@ render_scaledobject() {
     # replica count into this argument — so the check that matters is the one next
     # to the thing being built, where no amount of upstream plumbing can skip it.
     [ -n "$model" ] || log_error "refusing to build a ScaledObject for $ns/$target with an empty modelID"
-    [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
+    api="$(so_api_version "$kind")"
 
     local tmpl="${LLMSM_DEFAULT_SO_TEMPLATE:-}"
     if [ -n "$tmpl" ]; then
@@ -4570,8 +4807,8 @@ render_scaledobject() {
 render_default_scaledobject() {
     local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7" cost="${8:-}"
     local policy="${9:-}"
-    local api="apps/v1"
-    [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
+    local api
+    api="$(so_api_version "$kind")"
 
     # Written only when the entry names a tier — an absent key and an empty one
     # mean the same thing to the scaling manager, and only one of them says so to a reader.

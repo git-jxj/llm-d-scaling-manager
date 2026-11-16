@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+#
+# Executes the DisaggregatedSet paths in deploy/lib/scaledobject.sh against a
+# fixture set: discovery (one ScaledObject plan entry per role, targeting the
+# role's DisaggregatedSetRoleScaler), the reasons a role cannot be targeted
+# yet, the workload report, and the namespace scan.
+#
+# Every case has a POSITIVE assertion: a function that does not exist must
+# fail it (see the note at the top of hack/check-workload-gaps.sh).
+#
+# kubectl is stubbed; nothing here touches a cluster.
+
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Sourced through a CR-stripped copy, as check-workload-gaps.sh does: a
+# Windows checkout writes these CRLF.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+for lib in common.sh scaledobject.sh prereqs.sh; do
+    tr -d '\r' < "$ROOT/deploy/lib/$lib" > "$WORK/$lib"
+done
+BLUE='' GREEN='' YELLOW='' RED='' NC=''
+# shellcheck source=/dev/null
+source "$WORK/common.sh"
+# shellcheck source=/dev/null
+source "$WORK/scaledobject.sh"
+# shellcheck source=/dev/null
+source "$WORK/prereqs.sh"
+
+command -v jq >/dev/null 2>&1 || { printf 'FATAL: jq is required to run these checks.\n' >&2; exit 1; }
+
+FAILED=0
+RAN=0
+CASE=""
+EXPECT_CASES="$(grep -c '^CASE="[^"]' "${BASH_SOURCE[0]}")"
+
+fail() {
+    printf 'FAIL  %s\n      %s\n' "$CASE" "$1" >&2
+    FAILED=$((FAILED + 1))
+}
+ok() { RAN=$((RAN + 1)); printf 'ok    %s\n' "$CASE"; }
+assert_contains() {
+    case "$1" in
+        *"$2"*) : ;;
+        *) fail "expected to contain: $2" ;;
+    esac
+}
+assert_not_contains() {
+    case "$1" in
+        *"$2"*) fail "expected NOT to contain: $2" ;;
+        *) : ;;
+    esac
+}
+assert_eq() { [ "$1" = "$2" ] || fail "${3:-value}: want '$2', got '$1'"; }
+
+# --- fixture ----------------------------------------------------------------
+
+# A P/D set as LWS v1.0.0 stores it: prefill External with its own preStop,
+# decode still Static (the shape a rollout-managed deployment starts from),
+# neither with a leader template, so both lead from the worker template. The
+# engine is the SECOND container: a routing sidecar comes first.
+role() {
+    local name="$1" mode="$2" prestop="$3"
+    jq -n --arg name "$name" --arg mode "$mode" --argjson prestop "$prestop" '
+        { name: $name,
+          spec: { replicas: 7,
+                  leaderWorkerTemplate: { size: 4,
+                    workerTemplate: {
+                      metadata: { labels: { "llm-d.ai/role": $name, "llm-d.ai/model": "glm" } },
+                      spec: { containers: [
+                        { name: "routing-proxy", image: "registry.example/router:v1" },
+                        ( { name: "vllm", image: "registry.example/llm-d-cuda:v1",
+                            command: ["/bin/bash", "-c"],
+                            args: ["exec vllm serve /model-cache/models/org/GLM \\\n  --served-model-name org/GLM --port 8200"] }
+                          + (if $prestop then { lifecycle: { preStop: { exec: { command: ["sleep", "30"] } } } } else {} end) )
+                      ] } } } } }
+        + (if $mode == "" then {} else { scaling: { mode: $mode } } end)'
+}
+
+dset() {
+    local slices="$1" prefill_mode="$2" decode_mode="$3"
+    jq -n --argjson slices "$slices" --argjson p "$(role prefill "$prefill_mode" true)" \
+          --argjson d "$(role decode "$decode_mode" false)" '
+        { apiVersion: "disaggregatedset.x-k8s.io/v1", kind: "DisaggregatedSet",
+          metadata: { name: "glm", namespace: "serving" },
+          spec: ({ roles: [ $p, $d ] } + (if $slices == 0 then {} else { slices: $slices } end)) }'
+}
+
+DSET_OBJ=""
+CRD_RC=0
+LIST_RC=0
+reset() { DSET_OBJ="$(dset 0 External "")"; CRD_RC=0; LIST_RC=0; }
+
+kubectl() {
+    case "${1:-}" in
+        get)
+            case "${2:-}" in
+                crd) return "$CRD_RC" ;;
+                disaggregatedsets)
+                    [ "$LIST_RC" -eq 0 ] || return "$LIST_RC"
+                    case "${3:-}" in
+                        -n|-A) printf '%s' "$DSET_OBJ" | jq -c '{ items: [ . ] }' ;;
+                        *) printf '%s' "$DSET_OBJ" ;;
+                    esac ;;
+                *) printf '{"items":[]}' ;;
+            esac ;;
+        *) return 0 ;;
+    esac
+}
+
+# --- cases --------------------------------------------------------------------
+
+CASE="role rows: one record per role, mode defaulting to Static, slices to 1"
+reset
+before=$FAILED
+rows="$(printf '%s' "$DSET_OBJ" | jq -c '{ items: [ . ] }' | so_dset_role_rows)"
+assert_eq "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')" "2" "records"
+IFS=$'\037' read -r set idx r mode slices subroles labels _ <<< "$(printf '%s\n' "$rows" | sed -n 1p)"
+assert_eq "$set/$idx/$r/$mode/$slices/$subroles" "glm/0/prefill/External/1/0" "prefill record"
+assert_contains "$labels" "llm-d.ai/role=prefill"
+IFS=$'\037' read -r set idx r mode _ <<< "$(printf '%s\n' "$rows" | sed -n 2p)"
+assert_eq "$idx/$r/$mode" "1/decode/Static" "decode record"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="role rows: the engine container, not the sidecar listed first, gives the model"
+reset
+before=$FAILED
+rows="$(printf '%s' "$DSET_OBJ" | jq -c '{ items: [ . ] }' | so_dset_role_rows)"
+IFS=$'\037' read -r _ _ _ _ _ _ _ _ _ args <<< "$(printf '%s\n' "$rows" | sed -n 1p)"
+assert_eq "$(so_model_id "$args")" "org/GLM" "modelID"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="role block: External at slices 1 is targetable; Static, slices and sub-roles say why not"
+before=$FAILED
+assert_eq "$(so_dset_role_block glm decode External 1 0)" "" "External, slices 1"
+out="$(so_dset_role_block glm decode Static 1 0)"
+assert_contains "$out" "scaling.mode: External"
+assert_contains "$out" "DisaggregatedSetRoleScaler glm-decode"
+assert_contains "$(so_dset_role_block glm decode External 2 0)" "slices: 1"
+assert_contains "$(so_dset_role_block glm decode External 1 2)" "sub-roles"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="plan: each role targets its role scaler <set>-<role>, never a child LeaderWorkerSet"
+reset
+before=$FAILED
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_contains "$out" "kind: DisaggregatedSetRoleScaler"
+assert_contains "$out" "name: glm-prefill"
+assert_contains "$out" "name: glm-decode"
+assert_contains "$out" 'modelID: "org/GLM"'
+assert_not_contains "$out" "kind: LeaderWorkerSet"
+# prefill (External) is applied; decode (Static) is not, with the reason.
+# Entries are written in role order: prefill first.
+assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "yes"'
+assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 2p)" 'apply: "no"'
+assert_contains "$out" 'is in scaling.mode Static'
+assert_eq "$(printf '%s\n' "$out" | grep -c 'apply: "no"')" "1" "entries written apply: no"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="plan: notes read the role template, falling back to the worker template for the leader"
+reset
+before=$FAILED
+out="$(so_discover_dsets serving 2>/dev/null)"
+# decode has no preStop on its engine: the drain note names it. prefill has
+# one, so exactly one drain note is written.
+assert_contains "$out" "Scale-down will cut in-flight requests: vllm declares no preStop hook"
+assert_eq "$(printf '%s\n' "$out" | grep -c 'declares no preStop hook')" "1" "drain notes"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="plan: slices above 1 keeps an External role out, with the reason"
+reset
+DSET_OBJ="$(dset 2 External External)"
+before=$FAILED
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_eq "$(printf '%s\n' "$out" | grep -c 'apply: "no"')" "2" "entries written apply: no"
+assert_contains "$out" "spec.slices 2"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="plan: no CRD, no entries and no error"
+reset
+CRD_RC=1
+before=$FAILED
+rc=0
+out="$(so_discover_dsets serving 2>&1)" || rc=$?
+assert_eq "$rc" "0" "return code"
+assert_eq "$out" "" "output"
+CRD_RC=0
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_contains "$out" "name: glm-decode"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="scaledobject: a role scaler renders with the disaggregatedset apiVersion"
+before=$FAILED
+assert_eq "$(so_api_version DisaggregatedSetRoleScaler)" "disaggregatedset.x-k8s.io/v1" "apiVersion"
+assert_eq "$(so_api_version LeaderWorkerSet)" "leaderworkerset.x-k8s.io/v1" "LWS apiVersion"
+assert_eq "$(so_api_version Deployment)" "apps/v1" "Deployment apiVersion"
+out="$(render_default_scaledobject serving DisaggregatedSetRoleScaler glm-decode org/GLM scaler:9090 1 4 2>/dev/null)"
+assert_contains "$out" "apiVersion: disaggregatedset.x-k8s.io/v1"
+assert_contains "$out" "kind: DisaggregatedSetRoleScaler"
+assert_contains "$out" "name: glm-decode"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="workload report: counts roles, reports the gap, writes no patch"
+reset
+before=$FAILED
+err="$WORK/report.err"
+out="$(so_workload_report_dsets serving 2>"$err")"
+assert_eq "$out" "2 2" "roles checked, roles with a gap"
+assert_contains "$(cat "$err")" "DisaggregatedSet serving/glm, role decode (spec.roles[1]): not patched"
+assert_contains "$(cat "$err")" "drain: Scale-down will cut in-flight requests"
+# Both roles keep their compile caches in /tmp; only decode lacks a preStop.
+assert_contains "$(cat "$err")" "role prefill (spec.roles[0]): not patched"
+assert_eq "$(grep -c 'drain: ' "$err")" "1" "drain findings"
+assert_eq "$(grep -c 'caches: ' "$err")" "2" "cache findings"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="workload report: an unreadable listing is not a clean one"
+reset
+LIST_RC=1
+before=$FAILED
+rc=0
+out="$(so_workload_report_dsets serving 2>/dev/null)" || rc=$?
+assert_eq "$rc" "1" "return code"
+LIST_RC=0
+assert_eq "$(so_workload_report_dsets serving 2>/dev/null)" "2 2" "readable again"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="namespaces: a set with a serving role is a namespace with model servers, counted once"
+reset
+before=$FAILED
+assert_eq "$(so_namespaces_of_dsets)" "serving" "namespace"
+# The namespace count for preflight. Deployments and LWS list nothing here.
+assert_eq "$(llmsm_model_server_count serving)" "1" "model servers"
+DSET_OBJ="$(printf '%s' "$DSET_OBJ" | jq '.spec.roles[].spec.leaderWorkerTemplate.workerTemplate.metadata.labels = {"app": "other"}')"
+assert_eq "$(so_namespaces_of_dsets)" "" "namespace of a set with no serving role"
+assert_eq "$(llmsm_model_server_count serving)" "0" "model servers of a set with no serving role"
+[ "$FAILED" -eq "$before" ] && ok
+
+# ----------------------------------------------------------------------------
+
+if [ "$FAILED" -gt 0 ]; then
+    printf '\n%d DisaggregatedSet assertion(s) failed.\n' "$FAILED" >&2
+    exit 1
+fi
+if [ "$RAN" -ne "$EXPECT_CASES" ]; then
+    printf '\n%d case(s) reported ok, %d expected -- the run did not finish.\n' \
+        "$RAN" "$EXPECT_CASES" >&2
+    exit 1
+fi
+printf '\nDisaggregatedSet checks passed (%d cases).\n' "$RAN"

@@ -3337,6 +3337,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# preStop hooks pod-wide, or reporting an unreadable workload as healthy all
 	@# parse perfectly and are all wrong about a running cluster.
 	@bash hack/check-workload-gaps.sh
+	@echo "Checking DisaggregatedSet discovery and the role report..."
+	@bash hack/check-disaggregatedset.sh
 	@echo "Checking the benchmark capture helpers..."
 	@# Executes them against a stub kubectl. A capture that replaces the run
 	@# already on disk, or that watches a cluster nobody named, parses perfectly
