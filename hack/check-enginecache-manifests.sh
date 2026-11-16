@@ -266,6 +266,52 @@ sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d'
 NODE_NAME=n3 "$SH" "$FI/epub.sh" > "$FI/epub.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ -d "$FI/eseed/flashinfer" ] && grep -q "published from n3: 0 file(s) copied" "$FI/epub.out" \
     && ok "publish: an empty flashinfer/ (a node from before v0.11.2) publishes nothing, and is no error" || fail "publish empty flashinfer: rc=$rc $(cat "$FI/epub.out")"
+# FlashInfer writes under its base on EVERY start (a lock, its build files,
+# the ninja log) and fails on an entry it cannot write. So what the seed puts
+# under flashinfer/, and what one engine UID built there, must be writable by
+# every user; the other directories stay read-only copies.
+W="$T/fi-modes"; mkdir -p "$W/seed/flashinfer/$FIT/cached_ops/a" "$W/seed/vllm/torch_compile_cache/k" "$W/cache/flashinfer/$FIT/cached_ops/b"
+echo a > "$W/seed/flashinfer/$FIT/cached_ops/a/a.so"; echo l > "$W/seed/flashinfer/$FIT/cached_ops/a/.ninja_log"; echo v > "$W/seed/vllm/torch_compile_cache/k/f"
+echo b > "$W/cache/flashinfer/$FIT/cached_ops/b/b.so"; chmod 755 "$W/cache/flashinfer/$FIT/cached_ops/b"; chmod 644 "$W/cache/flashinfer/$FIT/cached_ops/b/b.so"
+sed -n "/^preparer_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$W/seed|g; s|/engine-cache|$W/cache|g; s|^trap .*||" > "$W/p.sh"
+SEED_MARKER=.seeded SEED_ID=shared:m MARKER=.prepared NODE_NAME=n1 "$SH" "$W/p.sh" > "$W/run1.out" 2>&1; rc=$?
+fi_closed="$(find "$W/cache/flashinfer" -mindepth 1 ! -type l ! -perm -0006 -print | head -3)"
+fi_dirs_closed="$(find "$W/cache/flashinfer" -mindepth 1 -type d ! -perm -0007 -print | head -3)"
+vllm_open="$(find "$W/cache/vllm" -mindepth 1 -perm -0002 -print | head -3)"
+[ "$rc" = 0 ] && [ -f "$W/cache/flashinfer/$FIT/cached_ops/a/.ninja_log" ] && [ -z "$fi_closed" ] && [ -z "$fi_dirs_closed" ] \
+    && [ -f "$W/cache/vllm/torch_compile_cache/k/f" ] && [ -z "$vllm_open" ] \
+    && ok "preparer: everything under flashinfer/ -- seeded, or an engine's own 755 tree -- is readable and writable by every user; vllm/ copies stay read-only" \
+    || fail "flashinfer modes: rc=$rc closed=[$fi_closed] closed dirs=[$fi_dirs_closed] vllm open=[$vllm_open] $(cat "$W/run1.out")"
+sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$W/pseed|g; s|/engine-cache|$W/node|g" > "$W/pub.sh"
+mkdir -p "$W/node/flashinfer/$FIT/cached_ops/c" "$W/node/vllm/k2"; echo c > "$W/node/flashinfer/$FIT/cached_ops/c/c.so"; echo k > "$W/node/vllm/k2/f"
+NODE_NAME=n2 "$SH" "$W/pub.sh" > "$W/pub.out" 2>&1; rc=$?
+pub_closed="$(find "$W/pseed/flashinfer" -mindepth 2 ! -perm -0006 -print | head -3)"
+pub_vllm_open="$(find "$W/pseed/vllm" -mindepth 1 -type f -perm -0002 -print | head -3)"
+[ "$rc" = 0 ] && [ -f "$W/pseed/flashinfer/$FIT/cached_ops/c/c.so" ] && [ -z "$pub_closed" ] && [ -f "$W/pseed/vllm/k2/f" ] && [ -z "$pub_vllm_open" ] \
+    && ok "publish: what it copies under flashinfer/ is writable by every user; vllm/ copies are not" \
+    || fail "publish flashinfer modes: rc=$rc closed=[$pub_closed] vllm open=[$pub_vllm_open] $(cat "$W/pub.out")"
+# The guard each benchmark scenario writes, run against a FlashInfer tree. A
+# directory with no write bit for this user stands for one another UID made
+# (the runner cannot chown): the guard must unset the variable, or FlashInfer
+# fails the engine on its first write. The same tree opened up by the
+# preparer is kept.
+GS="$T/fi-guard"; mkdir -p "$GS/base/$FIT/cached_ops/x"; echo x > "$GS/base/$FIT/cached_ops/x/x.so"
+awk '/<<.EOF.$/ {on=1; next} on && /^ *EOF$/ {exit} on' hack/benchmark/scenarios/guides/two-variant-scaling-manager.yaml | sed 's/^            //' > "$GS/guard.sh"
+grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do$' "$GS/guard.sh" && grep -q 'find "\$d" ! -type l' "$GS/guard.sh" || fail "fi guard: no scenario guard with the FlashInfer tree check extracted: $(cat "$GS/guard.sh")"
+printf '%s\n' 'echo "FI=${FLASHINFER_WORKSPACE_BASE-unset}"' >> "$GS/guard.sh"
+out="$(FLASHINFER_WORKSPACE_BASE="$GS/base" "$SH" "$GS/guard.sh" 2>&1)"
+case "$out" in *"FI=$GS/base"*) ok "guard: a FlashInfer tree this user can write is kept" ;; *) fail "fi guard writable: $out" ;; esac
+if [ "$(id -u)" = 0 ]; then ok "guard: (the unwritable FlashInfer tree case needs a non-root check runner)"; else
+chmod 555 "$GS/base/$FIT/cached_ops/x"
+out="$(FLASHINFER_WORKSPACE_BASE="$GS/base" "$SH" "$GS/guard.sh" 2>&1)"
+case "$out" in *"FI=unset"*"cannot write"*|*"cannot write"*"FI=unset"*) ok "guard: a directory deep in the FlashInfer tree that this user cannot write unsets the variable, with one line" ;; *) fail "fi guard unwritable dir: $out" ;; esac
+chmod 755 "$GS/base/$FIT/cached_ops/x"; chmod 444 "$GS/base/$FIT/cached_ops/x/x.so"
+out="$(FLASHINFER_WORKSPACE_BASE="$GS/base" "$SH" "$GS/guard.sh" 2>&1)"
+case "$out" in *"FI=unset"*) ok "guard: a file in the FlashInfer tree that this user cannot write unsets the variable" ;; *) fail "fi guard unwritable file: $out" ;; esac
+chmod -R a+rwX "$GS/base"
+out="$(FLASHINFER_WORKSPACE_BASE="$GS/base" "$SH" "$GS/guard.sh" 2>&1)"
+case "$out" in *"FI=$GS/base"*) ok "guard: the same tree opened up as the preparer opens it is kept" ;; *) fail "fi guard reopened: $out" ;; esac
+fi
 # the node seeded before the publish ($F, marker workload-pvc:engine-cache) merges again once the seed is stamped
 echo 20261013120000 > "$F/seed/engine-cache/.published"
 mkdir -p "$F/seed/engine-cache/vllm/torch_compile_cache/keyP"; echo p > "$F/seed/engine-cache/vllm/torch_compile_cache/keyP/f"

@@ -2444,7 +2444,9 @@ ENGINENEED
 #   Keep the engine tolerant of a cache path that turns out not to
 #   be writable: vLLM fails hard on a read-only cache directory unless the
 #   variable is unset first, and a storage hiccup must cost one compile, not
-#   the replica. PYTHONPYCACHEPREFIX too: with it set, Python reads bytecode
+#   the replica. FlashInfer writes under its base on every start, so its
+#   whole tree is checked: a directory another user's engine made is enough
+#   to fail this one. PYTHONPYCACHEPREFIX too: with it set, Python reads bytecode
 #   only from it, so one it cannot write is slower than none. In the
 #   container command, before the engine starts (the command belongs to the
 #   chart, so it is not patched here):
@@ -2454,6 +2456,11 @@ ENGINENEED
 #       [ -n "$d" ] || continue
 #       if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
 #         echo "engine cache $v=$d is not writable; using the engine default instead"
+#         unset $v
+#       # FlashInfer writes under its base on every start, hit or miss, and fails
+#       # on an entry it cannot write: the whole tree, not only its top.
+#       elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ! command -v find >/dev/null 2>&1 || find "$d" ! -type l 2>/dev/null | { while IFS= read -r f; do [ -w "$f" ] || exit 0; done; exit 1; }; }; then
+#         echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
 #         unset $v
 #       fi
 #     done

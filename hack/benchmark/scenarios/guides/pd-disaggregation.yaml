@@ -530,6 +530,11 @@ scenario:
                   if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
                     echo "engine cache $v=$d is not writable; using the engine default instead"
                     unset $v
+                  # FlashInfer writes under its base on every start, hit or miss, and fails
+                  # on an entry it cannot write: the whole tree, not only its top.
+                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ! command -v find >/dev/null 2>&1 || find "$d" ! -type l 2>/dev/null | { while IFS= read -r f; do [ -w "$f" ] || exit 0; done; exit 1; }; }; then
+                    echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
+                    unset $v
                   fi
                 done
                 EOF
@@ -745,6 +750,11 @@ scenario:
                   [ -n "$d" ] || continue
                   if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
                     echo "engine cache $v=$d is not writable; using the engine default instead"
+                    unset $v
+                  # FlashInfer writes under its base on every start, hit or miss, and fails
+                  # on an entry it cannot write: the whole tree, not only its top.
+                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ! command -v find >/dev/null 2>&1 || find "$d" ! -type l 2>/dev/null | { while IFS= read -r f; do [ -w "$f" ] || exit 0; done; exit 1; }; }; then
+                    echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
                     unset $v
                   fi
                 done

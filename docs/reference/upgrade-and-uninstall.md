@@ -174,9 +174,14 @@ every start built them again under `$HOME` in the container.
   applied for you: put it in your chart values and remove
   `FLASHINFER_WORKSPACE_DIR`. If your container command carries the
   engine-cache guard, rename the variable in its loop.
-- Nothing to do on the nodes. Existing caches keep working; their `flashinfer/`
-  directory is empty and fills on the next start of each engine configuration.
-  With a seed, run `make engine-cache-publish` once after that.
+- Run `make engine-cache NAMESPACE=<ns>` again with the same arguments, before
+  the workloads take the new variable. FlashInfer writes under its directory
+  on every start, so the preparer now keeps `flashinfer/` writable by every
+  user, and it does that when it restarts. Update the guard in your container
+  command from the emitted file too: it now checks the whole FlashInfer tree.
+- The `flashinfer/` directory of an existing cache is empty and fills on the
+  next start of each engine configuration. With a seed, run
+  `make engine-cache-publish` once after that.
 - Warm pools pick up the new variable when you apply them again.
 
 See [FlashInfer kernels](workload-preparation.md#flashinfer-kernels).

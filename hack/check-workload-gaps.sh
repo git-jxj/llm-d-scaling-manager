@@ -2530,6 +2530,46 @@ fi
 rm -rf "$G"
 [ "$FAILED" -eq "$before" ] && ok
 
+CASE="guard: an entry anywhere under FLASHINFER_WORKSPACE_BASE that this user cannot write unsets it"
+reset; f_vllm_plain
+before=$FAILED
+G="$(mktemp -d)"
+guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
+grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+printf '%s\n' 'echo "FI=${FLASHINFER_WORKSPACE_BASE-unset}"' >> "$G/guard.sh"
+mkdir -p "$G/fi/.cache/flashinfer/90/cached_ops/x"; echo x > "$G/fi/.cache/flashinfer/90/cached_ops/x/x.so"
+out="$(FLASHINFER_WORKSPACE_BASE="$G/fi" sh "$G/guard.sh" 2>&1)"
+assert_contains "$out" "FI=$G/fi"
+assert_not_contains "$out" "cannot write"
+out="$(FLASHINFER_WORKSPACE_BASE="$G/new/fi" sh "$G/guard.sh" 2>&1)"
+assert_contains "$out" "FI=$G/new/fi"            # a base that does not exist yet is made, and kept
+if [ "$(id -u)" = 0 ]; then
+    ok_note="(the unwritable half needs a non-root check runner)"
+    assert_contains "$ok_note" "non-root"
+else
+    # A directory deep in the tree, as another UID would have made it: the top
+    # passes the .writable probe, the tree does not.
+    chmod 555 "$G/fi/.cache/flashinfer/90/cached_ops/x"
+    out="$(FLASHINFER_WORKSPACE_BASE="$G/fi" sh "$G/guard.sh" 2>&1)"
+    assert_contains "$out" "FI=unset"
+    assert_contains "$out" "engine cache FLASHINFER_WORKSPACE_BASE=$G/fi holds an entry this user cannot write"
+    assert_eq "$(printf '%s\n' "$out" | grep -c 'cannot write\|not writable')" "1" "log lines"
+    chmod 755 "$G/fi/.cache/flashinfer/90/cached_ops/x"
+    # ...and a file: the ninja log FlashInfer appends to on every start.
+    chmod 444 "$G/fi/.cache/flashinfer/90/cached_ops/x/x.so"
+    out="$(FLASHINFER_WORKSPACE_BASE="$G/fi" sh "$G/guard.sh" 2>&1)"
+    assert_contains "$out" "FI=unset"
+    chmod 644 "$G/fi/.cache/flashinfer/90/cached_ops/x/x.so"
+    # The check is for FlashInfer only: an unwritable file under the vLLM
+    # cache root is not this check's to judge.
+    mkdir -p "$G/v/sub"; chmod 555 "$G/v/sub"
+    out="$(VLLM_CACHE_ROOT="$G/v" sh -c ". $G/guard.sh; echo \"V=\${VLLM_CACHE_ROOT-unset}\"" 2>&1)"
+    chmod 755 "$G/v/sub"
+    assert_contains "$out" "V=$G/v"
+fi
+rm -rf "$G"
+[ "$FAILED" -eq "$before" ] && ok
+
 # --- the guard reads the installed engine -------------------------------------
 #
 # The rest of the guard decides from the installed package, never the image

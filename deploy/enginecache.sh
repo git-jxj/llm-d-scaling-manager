@@ -289,6 +289,11 @@ for d in vllm flashinfer triton pycache; do
   mkdir -p "/engine-cache/$d" || exit 1
   chmod 1777 "/engine-cache/$d" 2>/dev/null || true
 done
+# The modes merge gives what it copies: readable by every user, and under
+# flashinfer/ writable too. FlashInfer writes under its base on EVERY start,
+# hit or miss (a lock file, its build files, the ninja log), and an engine
+# that cannot write there fails rather than compiling elsewhere.
+dmode=a+rx; fmode=a+r
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
 cpa=0
@@ -320,12 +325,12 @@ merge() {
       if [ -d "$e" ] && [ -d "$t" ] && [ ! -L "$t" ]; then merge "$e" "$t"; fi
     elif [ -d "$e" ]; then
       was="$complete"; wa="$added"; wp="$private"; wpe="$private_eg"; complete=1
-      mkdir "$t" && chmod a+rx "$t" || complete=0
+      mkdir "$t" && chmod "$dmode" "$t" || complete=0
       [ "$complete" = 0 ] || merge "$e" "$t"
       if [ "$complete" = 1 ]; then complete="$was"; else complete=0; rm -rf "$t"; added="$wa"; private="$wp"; private_eg="$wpe"; fi
     elif [ -f "$e" ]; then
       pub=0; ls -ld "$e" | grep -q '^-......r' && pub=1
-      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { complete=0; rm -f "$t"; continue; }
+      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod "$fmode" "$t" || { complete=0; rm -f "$t"; continue; }
       added="$added."
       [ "$pub" = 1 ] || { private="$private."; [ -n "$private_eg" ] || private_eg="$e"; }
     else
@@ -365,6 +370,7 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
   complete=1; added=""; links=""; private=""; private_eg=""
   for d in vllm flashinfer triton pycache; do
     [ -d "$seed_dir/$d" ] || continue
+    if [ "$d" = flashinfer ]; then dmode=a+rwx; fmode=a+rw; else dmode=a+rx; fmode=a+r; fi
     merge "$seed_dir/$d" "/engine-cache/$d"
   done
   merge_report
@@ -375,6 +381,10 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
     echo "engine cache: seeding on $NODE_NAME from $want did not complete (a copy failed and was removed); it is retried when this pod next starts"
   fi
 fi
+# flashinfer/ opened up again for every user at every start: what a merge
+# kept, or one engine UID built under its umask, another UID must be able to
+# write, or FlashInfer fails that engine. Symbolic links are not followed.
+chmod -R a+rwX /engine-cache/flashinfer 2>/dev/null || true
 touch "/engine-cache/$MARKER" || exit 1
 echo "engine cache: prepared on $NODE_NAME: /engine-cache/{vllm,flashinfer,triton,pycache}"
 trap 'exit 0' TERM; while :; do sleep 3600 & wait; done
@@ -850,6 +860,10 @@ dst="/seed${SEED_SUBPATH:+/$SEED_SUBPATH}"
 # umask 022: every directory mkdir -p creates is readable and searchable by
 # every user, as the merge makes its own; one that exists is left as it is
 (umask 022; mkdir -p "$dst") || exit 1
+# The modes merge gives what it copies, as the preparer gives them: under
+# flashinfer/ writable by every user too, since FlashInfer writes there on
+# every start (the preparer opens the node copy up again regardless).
+dmode=a+rx; fmode=a+r
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
 cpa=0
@@ -881,12 +895,12 @@ merge() {
       if [ -d "$e" ] && [ -d "$t" ] && [ ! -L "$t" ]; then merge "$e" "$t"; fi
     elif [ -d "$e" ]; then
       was="$complete"; wa="$added"; wp="$private"; wpe="$private_eg"; complete=1
-      mkdir "$t" && chmod a+rx "$t" || complete=0
+      mkdir "$t" && chmod "$dmode" "$t" || complete=0
       [ "$complete" = 0 ] || merge "$e" "$t"
       if [ "$complete" = 1 ]; then complete="$was"; else complete=0; rm -rf "$t"; added="$wa"; private="$wp"; private_eg="$wpe"; fi
     elif [ -f "$e" ]; then
       pub=0; ls -ld "$e" | grep -q '^-......r' && pub=1
-      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { complete=0; rm -f "$t"; continue; }
+      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod "$fmode" "$t" || { complete=0; rm -f "$t"; continue; }
       added="$added."
       [ "$pub" = 1 ] || { private="$private."; [ -n "$private_eg" ] || private_eg="$e"; }
     else
@@ -903,6 +917,7 @@ complete=1; added=""; links=""; private=""; private_eg=""
 for d in vllm flashinfer triton pycache; do
   [ -d "/engine-cache/$d" ] || continue
   (umask 022; mkdir -p "$dst/$d") || exit 1
+  if [ "$d" = flashinfer ]; then dmode=a+rwx; fmode=a+rw; else dmode=a+rx; fmode=a+r; fi
   merge "/engine-cache/$d" "$dst/$d"
 done
 merge_report

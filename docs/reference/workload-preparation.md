@@ -723,6 +723,11 @@ for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACH
   if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
     echo "engine cache $v=$d is not writable; using the engine default instead"
     unset $v
+  # FlashInfer writes under its base on every start, hit or miss, and fails
+  # on an entry it cannot write: the whole tree, not only its top.
+  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ! command -v find >/dev/null 2>&1 || find "$d" ! -type l 2>/dev/null | { while IFS= read -r f; do [ -w "$f" ] || exit 0; done; exit 1; }; }; then
+    echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
+    unset $v
   fi
 done
 # What the installed engine does by itself, asked of the interpreter
@@ -800,8 +805,21 @@ start.
   chart values, remove `FLASHINFER_WORKSPACE_DIR`, and rename it in the
   guard's loop if your command carries the guard. Once the workload sets
   `FLASHINFER_WORKSPACE_BASE`, the report is quiet.
-- **Nothing to do on the nodes.** The `flashinfer/` directory the preparer
-  made is the base. On each node the first start of each engine configuration
+- **FlashInfer writes on every start, not only on a miss.** It takes a lock
+  file and rewrites its build files and its ninja log under the base, and an
+  engine that cannot write there fails instead of compiling. So the directory
+  must be writable by every engine user on the node:
+  - the preparer makes `flashinfer/` writable by every user at each start, and
+    seed and publish copy it that way. On nodes prepared before v0.11.2, run
+    `make engine-cache` again with the same arguments, so the preparer
+    restarts and does it;
+  - the guard checks the whole tree, not only its top. When any entry is not
+    writable it unsets the variable and logs one line, and FlashInfer works
+    under `$HOME` as it did before v0.11.2: slower, never a lost replica;
+  - without a seed, the first engine on a node creates its tree as its own
+    user. An engine of another user on that node falls back until the
+    preparer next restarts.
+- **Filling it.** On each node the first start of each engine configuration
   fills it. With a seed, run `make engine-cache-publish` once every
   configuration has started, as for the other directories.
 - **One FlashInfer version per directory.** Older FlashInfer releases have no
