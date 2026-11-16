@@ -102,7 +102,8 @@ var _ = Describe("Scale-To-Zero Feature - park and wake the same model", Serial,
 		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRefName)
 		Expect(errIO).NotTo(HaveOccurred())
 		if !ioApplied {
-			Skip("InferenceObjective API not available on cluster; the wake half cannot run")
+			// Optional: an unclassified request queues at priority 0 as well.
+			GinkgoWriter.Println("No InferenceObjective API on this cluster; requests queue at the default priority 0")
 		}
 		DeferCleanup(func() {
 			_ = fixtures.DeleteInferenceObjective(context.Background(), crClient, cfg.LLMDNamespace)

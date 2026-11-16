@@ -19,22 +19,89 @@ import (
 
 const defaultInferenceObjectiveName = "e2e-default"
 
-// EnsureInferenceObjective creates the default InferenceObjective for GIE flow-control
-// queuing when the CRD exists. poolName must match the InferencePool metadata.name (typically the
-// EPP Service name with an "-epp" suffix removed, e.g. optimized-baseline-epp → optimized-baseline).
+// llmdObjectiveGVK is the InferenceObjective the llm-d router reads. Router
+// v1.0.0 reads only this group; earlier routers read it first and fall back to
+// the gateway-api-inference-extension one (inference.networking.x-k8s.io).
+var llmdObjectiveGVK = schema.GroupVersionKind{Group: "llm-d.ai", Version: "v1", Kind: "InferenceObjective"}
+
+// EnsureInferenceObjective creates the default InferenceObjective (priority 0)
+// for the router's flow-control queue when an InferenceObjective API exists.
+// poolName must match the InferencePool metadata.name (typically the EPP
+// Service name with an "-epp" suffix removed, e.g. optimized-baseline-epp →
+// optimized-baseline).
 //
-// Returns applied=true if the object exists or was created. If the InferenceObjective API is not
-// available on the cluster, returns (false, nil).
+// The object is optional. Priority 0 is also what a request that matches no
+// objective gets, so requests queue the same without it. Callers must not
+// treat applied=false as a reason to skip: it only reports that the cluster
+// serves neither InferenceObjective API.
 func EnsureInferenceObjective(ctx context.Context, crClient client.Client, namespace, poolName string) (applied bool, err error) {
 	return EnsureInferenceObjectiveNamed(ctx, crClient, namespace, defaultInferenceObjectiveName, poolName)
 }
 
-// EnsureInferenceObjectiveNamed creates or updates a named InferenceObjective when the CRD exists.
+// EnsureInferenceObjectiveNamed creates or updates a named InferenceObjective.
+// It uses llm-d.ai/v1 when the cluster serves it and the
+// inference.networking.x-k8s.io/v1alpha2 form otherwise; with neither API it
+// returns (false, nil).
 func EnsureInferenceObjectiveNamed(ctx context.Context, crClient client.Client, namespace, objectiveName, poolName string) (applied bool, err error) {
 	poolGroup, gErr := resolveInferencePoolGroup(ctx, crClient, namespace, poolName)
 	if gErr != nil {
 		return false, gErr
 	}
+	applied, err = ensureLLMDInferenceObjective(ctx, crClient, namespace, objectiveName, poolName, poolGroup)
+	if err != nil || applied {
+		return applied, err
+	}
+	return ensureLegacyInferenceObjective(ctx, crClient, namespace, objectiveName, poolName, poolGroup)
+}
+
+// ensureLLMDInferenceObjective writes the llm-d.ai/v1 form. It returns
+// (false, nil) when the cluster does not serve that API.
+func ensureLLMDInferenceObjective(ctx context.Context, crClient client.Client, namespace, objectiveName, poolName, poolGroup string) (bool, error) {
+	desired := buildLLMDInferenceObjective(namespace, objectiveName, poolName, poolGroup)
+	cErr := crClient.Create(ctx, desired)
+	if cErr == nil {
+		return true, nil
+	}
+	if inferenceObjectiveAPIMissing(cErr, llmdObjectiveGVK.Group) {
+		return false, nil
+	}
+	if !apierrors.IsAlreadyExists(cErr) {
+		return false, fmt.Errorf("create %s InferenceObjective %s: %w", llmdObjectiveGVK.GroupVersion(), objectiveName, cErr)
+	}
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(llmdObjectiveGVK)
+	if getErr := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: objectiveName}, current); getErr != nil {
+		return false, fmt.Errorf("get existing %s InferenceObjective %s: %w", llmdObjectiveGVK.GroupVersion(), objectiveName, getErr)
+	}
+	if apiequality.Semantic.DeepEqual(current.Object["spec"], desired.Object["spec"]) {
+		return true, nil
+	}
+	current.Object["spec"] = desired.Object["spec"]
+	if upErr := crClient.Update(ctx, current); upErr != nil {
+		return false, fmt.Errorf("update %s InferenceObjective %s: %w", llmdObjectiveGVK.GroupVersion(), objectiveName, upErr)
+	}
+	return true, nil
+}
+
+func buildLLMDInferenceObjective(namespace, objectiveName, poolName, poolGroup string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"spec": map[string]any{
+			"priority": int64(0),
+			"poolRefs": []any{
+				map[string]any{"group": poolGroup, "kind": "InferencePool", "name": poolName},
+			},
+		},
+	}}
+	obj.SetGroupVersionKind(llmdObjectiveGVK)
+	obj.SetNamespace(namespace)
+	obj.SetName(objectiveName)
+	return obj
+}
+
+// ensureLegacyInferenceObjective writes the inference.networking.x-k8s.io form,
+// which only routers before v1.0.0 read. It returns (false, nil) when the
+// cluster does not serve that API either.
+func ensureLegacyInferenceObjective(ctx context.Context, crClient client.Client, namespace, objectiveName, poolName, poolGroup string) (bool, error) {
 	desired := buildInferenceObjective(namespace, objectiveName, poolName, poolGroup)
 
 	if cErr := crClient.Create(ctx, desired); cErr != nil {
@@ -54,7 +121,7 @@ func EnsureInferenceObjectiveNamed(ctx context.Context, crClient client.Client, 
 			}
 			return true, nil
 		}
-		if inferenceObjectiveAPIMissing(cErr) {
+		if inferenceObjectiveAPIMissing(cErr, infextv1alpha2.GroupName) {
 			return false, nil
 		}
 		return false, fmt.Errorf("create InferenceObjective %s: %w", objectiveName, cErr)
@@ -67,15 +134,23 @@ func DeleteInferenceObjective(ctx context.Context, crClient client.Client, names
 	return DeleteInferenceObjectiveNamed(ctx, crClient, namespace, defaultInferenceObjectiveName)
 }
 
-// DeleteInferenceObjectiveNamed removes a named InferenceObjective if present.
+// DeleteInferenceObjectiveNamed removes a named InferenceObjective from both
+// API groups, ignoring a group the cluster does not serve.
 func DeleteInferenceObjectiveNamed(ctx context.Context, crClient client.Client, namespace, objectiveName string) error {
+	llmd := &unstructured.Unstructured{}
+	llmd.SetGroupVersionKind(llmdObjectiveGVK)
+	llmd.SetNamespace(namespace)
+	llmd.SetName(objectiveName)
+	if err := crClient.Delete(ctx, llmd); err != nil && !apierrors.IsNotFound(err) && !inferenceObjectiveAPIMissing(err, llmdObjectiveGVK.Group) {
+		return err
+	}
 	err := crClient.Delete(ctx, &infextv1alpha2.InferenceObjective{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      objectiveName,
 			Namespace: namespace,
 		},
 	})
-	if apierrors.IsNotFound(err) || inferenceObjectiveAPIMissing(err) {
+	if apierrors.IsNotFound(err) || inferenceObjectiveAPIMissing(err, infextv1alpha2.GroupName) {
 		return nil
 	}
 	return err
@@ -117,7 +192,9 @@ func normalizeInferenceObjectiveSpec(spec infextv1alpha2.InferenceObjectiveSpec)
 	return spec
 }
 
-func inferenceObjectiveAPIMissing(err error) bool {
+// inferenceObjectiveAPIMissing reports whether err says the cluster does not
+// serve the InferenceObjective API of the given group.
+func inferenceObjectiveAPIMissing(err error, group string) bool {
 	if err == nil {
 		return false
 	}
@@ -138,7 +215,7 @@ func inferenceObjectiveAPIMissing(err error) bool {
 	if details == nil {
 		return false
 	}
-	return details.Group == infextv1alpha2.GroupName && details.Kind == "inferenceobjectives"
+	return details.Group == group && details.Kind == "inferenceobjectives"
 }
 
 func resolveInferencePoolGroup(ctx context.Context, crClient client.Client, namespace, poolName string) (string, error) {

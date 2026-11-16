@@ -102,7 +102,8 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRefName)
 		Expect(errIO).NotTo(HaveOccurred())
 		if !ioApplied {
-			Skip("InferenceObjective API not available on cluster")
+			// Optional: an unclassified request queues at priority 0 as well.
+			GinkgoWriter.Println("No InferenceObjective API on this cluster; requests queue at the default priority 0")
 		}
 
 		By("Creating a decode workload and a prefill workload for the same model, both at zero")
