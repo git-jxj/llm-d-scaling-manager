@@ -724,9 +724,18 @@ for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACH
     echo "engine cache $v=$d is not writable; using the engine default instead"
     unset $v
   # FlashInfer writes under its base on every start, hit or miss, and fails
-  # on an entry it cannot write: the whole tree, not only its top.
-  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ! command -v find >/dev/null 2>&1 || find "$d" ! -type l 2>/dev/null | { while IFS= read -r f; do [ -w "$f" ] || exit 0; done; exit 1; }; }; then
+  # on an entry it cannot write. So the whole tree is checked, through a link
+  # at the top, and a find that fails fails the check. The first user to pass
+  # owns the tree (.engine-uid): an engine of another user falls back rather
+  # than race it for the directories it creates.
+  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+    echo "engine cache $v=$d cannot be checked: this image has no find; using the engine default instead"
+    unset $v
+  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecbad=`find "$d/" ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecbad" ]; }; then
     echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
+    unset $v
+  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecu=`id -u`; ln -s "$ecu" "$d/.engine-uid" 2>/dev/null; ecown=`readlink "$d/.engine-uid" 2>/dev/null`; [ "$ecown" != "$ecu" ]; }; then
+    echo "engine cache $v=$d belongs to user ${ecown:-unknown}; using the engine default instead"
     unset $v
   fi
 done
@@ -776,6 +785,9 @@ when its directory is not writable (then the faster choice), or when the image
 ships its bytecode, and the check leaves an empty `.writable` file in that
 directory. The last block is emitted for vLLM only
 ([Depends on the vLLM version](#depends-on-the-vllm-version)).
+The three FlashInfer branches are explained in
+[FlashInfer kernels](#flashinfer-kernels). If your command carries an older
+copy of this guard, replace all of it.
 
 #### FlashInfer kernels
 
@@ -798,36 +810,59 @@ start.
 - **`FLASHINFER_CUBIN_DIR` is not set.** Its default is already the
   `cubins/` directory above, so the base carries it. Setting it would also
   override where an image that bundles its cubins keeps them.
-- **Before v0.11.2, `make workload-patch` set `FLASHINFER_WORKSPACE_DIR`.**
+- **Before v0.12.0, `make workload-patch` set `FLASHINFER_WORKSPACE_DIR`.**
   FlashInfer does not read that variable, so no engine cache held FlashInfer
-  kernels. Run `make workload-patch` again. A workload that still sets the old
-  variable is reported as `BUILDS ITS FLASHINFER KERNELS AGAIN`, and the file
-  sets `FLASHINFER_WORKSPACE_BASE` under the same path, keyed by image. That is a variable with
-  no volume, so it is written to the file and never applied: put it in your
-  chart values, remove `FLASHINFER_WORKSPACE_DIR`, and rename it in the
-  guard's loop if your command carries the guard. Once the workload sets
-  `FLASHINFER_WORKSPACE_BASE`, the report is quiet.
+  kernels. [Upgrading from v0.11.x to v0.12.0](upgrade-and-uninstall.md#upgrading-from-v011x-to-v0120)
+  has the steps. In short: `make workload-patch` reports such a workload as
+  `BUILDS ITS FLASHINFER KERNELS AGAIN` and writes `FLASHINFER_WORKSPACE_BASE`
+  under the same path, keyed by image, with the guard. That variable has no
+  volume of its own, so it is written to the file and never applied. Once the
+  workload sets `FLASHINFER_WORKSPACE_BASE`, the report is quiet.
+- **Replace the guard, do not rename it.** The guard from before v0.12.0 only
+  checks the top directory. The new one also checks the whole FlashInfer tree
+  and gives the tree one owner (below). Renaming the variable in the old loop
+  leaves both checks out. Replace the whole block with the one in the file.
 - **FlashInfer writes on every start, not only on a miss.** It takes a lock
   file and rewrites its build files and its ninja log under the base, and an
-  engine that cannot write there fails instead of compiling. So the directory
-  must be writable by every engine user on the node:
-  - the preparer makes `flashinfer/` writable by every user at each start, and
-    seed and publish copy it that way. On nodes prepared before v0.11.2, run
-    `make engine-cache` again with the same arguments, so the preparer
-    restarts and does it;
-  - the guard checks the whole tree, not only its top. When any entry is not
-    writable it unsets the variable and logs one line, and FlashInfer works
-    under `$HOME` as it did before v0.11.2: slower, never a lost replica;
-  - without a seed, the first engine on a node creates its tree as its own
-    user. An engine of another user on that node falls back until the
-    preparer next restarts.
+  engine that cannot write there fails instead of compiling. So the guard,
+  before the engine starts:
+  - checks every entry of the tree, following a symbolic link at the top. Any
+    entry this user cannot write, or a `find` that fails, unsets the variable;
+  - unsets it when the image has no `find`, since it cannot check;
+  - lets the first user that passes own the tree: it leaves
+    `<base>/.engine-uid`, a symbolic link to its UID. An engine of another user
+    then unsets the variable instead of racing the owner for the directories
+    FlashInfer creates. Engines of the owner's UID, any number at once, keep
+    it.
+
+  Each unset logs one line and FlashInfer works under `$HOME`, as it did
+  before v0.12.0: slower, never a lost replica.
+- **Two users on one node.** The second user's engines fall back for as long
+  as the first user owns the tree. To give the second user a warm cache, give
+  it its own engine-cache directory or a different image. To hand the tree
+  over, delete `<node dir>/engine-cache/flashinfer/<image key>` on the nodes.
+  `umask 000` in the engine command, so that every user could write every
+  tree, is not used: a umask applies to everything the engine writes, so the vLLM,
+  Triton and bytecode caches and any weights it downloads to a shared volume
+  would become writable by every user too.
+- **What it opens up.** `flashinfer/` is `1777`, like the other three
+  directories. Seed and publish copy FlashInfer files writable by every user,
+  because a copy belongs to the preparer and the owning engine must still write
+  it. So any user whose pod mounts the node directory can rewrite a seeded
+  FlashInfer kernel, and the next engine to start loads and runs it. A tree an
+  engine built itself keeps the modes its umask gave it. The preparer sets the
+  four directories back to `1777` at every start wherever it owns them: where
+  it runs as the engines' UID (OpenShift), or where the engines run as root.
+  There the `chmod 1770` lockdown in [What it costs](#what-it-costs) does not
+  hold.
 - **Filling it.** On each node the first start of each engine configuration
   fills it. With a seed, run `make engine-cache-publish` once every
   configuration has started, as for the other directories.
 - **Check it.** After an engine has started and served a request, its
   FlashInfer tree is on the cache, not under `$HOME`. If the guard logged
-  `holds an entry this user cannot write` or `is not writable`, the variable
-  was unset and the tree is not used:
+  `holds an entry this user cannot write`, `belongs to user`,
+  `cannot be checked` or `is not writable`, the variable was unset and the
+  tree is not used:
 
   ```bash
   kubectl exec -n <ns> <engine pod> -- sh -c 'ls "$FLASHINFER_WORKSPACE_BASE/.cache/flashinfer"'
@@ -1014,7 +1049,11 @@ paths). Wipe `<dir>/engine-cache` on the nodes when a namespace or directory
 changes hands: `delete` keeps the caches, and a new tenant with the same
 namespace name and directory would load the old one's. 1777 is a trade-off so
 the engines need no `fsGroup`. A namespace that runs its engines as one UID can
-`chown` the four directories to it and `chmod 1770` them on each node.
+`chown` the four directories to it and `chmod 1770` them on each node. That
+holds only where the preparer does not run as that UID: the preparer sets the
+four directories back to `1777` at each start wherever it owns them (OpenShift,
+or engines that run as root). Seeded FlashInfer files are writable by every
+user ([FlashInfer kernels](#flashinfer-kernels)).
 
 Nothing cleans the cache. The bytecode alone grows about 150 MB per image per
 node, and an old image's key stays after the image is gone: delete

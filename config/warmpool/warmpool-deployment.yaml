@@ -148,6 +148,31 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
+              # The engine-cache guard (docs/reference/workload-preparation.md): a cache
+              # directory this user cannot write costs a compile, not the pool. The
+              # engines the launcher spawns inherit what it leaves set.
+              for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do
+                eval "d=\${$v:-}"
+                [ -n "$d" ] || continue
+                if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
+                  echo "engine cache $v=$d is not writable; using the engine default instead"
+                  unset $v
+                # FlashInfer writes under its base on every start, hit or miss, and fails
+                # on an entry it cannot write. So the whole tree is checked, through a link
+                # at the top, and a find that fails fails the check. The first user to pass
+                # owns the tree (.engine-uid): an engine of another user falls back rather
+                # than race it for the directories it creates.
+                elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+                  echo "engine cache $v=$d cannot be checked: this image has no find; using the engine default instead"
+                  unset $v
+                elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecbad=`find "$d/" ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecbad" ]; }; then
+                  echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
+                  unset $v
+                elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecu=`id -u`; ln -s "$ecu" "$d/.engine-uid" 2>/dev/null; ecown=`readlink "$d/.engine-uid" 2>/dev/null`; [ "$ecown" != "$ecu" ]; }; then
+                  echo "engine cache $v=$d belongs to user ${ecown:-unknown}; using the engine default instead"
+                  unset $v
+                fi
+              done
               exec python3 /app/launcher.py \
               --host 0.0.0.0 \
               --log-level info \

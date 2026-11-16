@@ -1773,11 +1773,11 @@ assert_contains "$(cat "$dir/log")" "no vLLM among them compiles from nothing"
 #
 # FlashInfer reads FLASHINFER_WORKSPACE_BASE and appends .cache/flashinfer to
 # it; FLASHINFER_WORKSPACE_DIR is a name inside FlashInfer, read from no
-# environment. workload-patch wrote the second before v0.11.2, so a workload
+# environment. workload-patch wrote the second before v0.12.0, so a workload
 # patched then has its caches on a claim and still builds every FlashInfer
 # kernel again on every start.
 
-# A workload patched before v0.11.2: everything on the claim, FlashInfer at the
+# A workload patched before v0.12.0: everything on the claim, FlashInfer at the
 # variable FlashInfer does not read.
 f_engine_cache_old_flashinfer() {
     f_engine_cache_on_claim
@@ -1827,7 +1827,7 @@ assert_field 10 ""
 assert_field 1 "vllm"
 [ "$FAILED" -eq "$before" ] && ok
 
-CASE="flashinfer: a workload patched before v0.11.2 gets FLASHINFER_WORKSPACE_BASE at the old path, env only"
+CASE="flashinfer: a workload patched before v0.12.0 gets FLASHINFER_WORKSPACE_BASE at the old path, env only"
 reset; f_engine_cache_old_flashinfer
 before=$FAILED
 doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
@@ -2893,6 +2893,166 @@ done
 rm -rf "$G"
 [ "$FAILED" -eq "$before" ] && ok
 
+
+# The FlashInfer check must fail closed: under `set -eo pipefail` (a chart
+# command often runs so), through a symbolic link at the top, without find,
+# and when a find cannot read part of the tree. Run as the chart would: the
+# guard sourced by sh, dash and bash.
+CASE="guard: the FlashInfer check fails closed -- pipefail, a linked base, an unreadable directory, no find"
+reset; f_vllm_plain
+before=$FAILED
+G="$(mktemp -d)"
+guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
+grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+mkdir -p "$G/real/.cache/flashinfer/90/cached_ops/x"
+ln -s "$G/real" "$G/link"
+fi_run() {   # <shell> <base> [set options]: the guard, then what it left
+    FLASHINFER_WORKSPACE_BASE="$2" "$1" -c "${3:+set $3; }. \"$G/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1
+}
+for sh_ in $GUARD_SHELLS; do
+    rm -f "$G/real/.engine-uid"
+    out="$(fi_run "$sh_" "$G/link")"
+    assert_contains "$out" "FI=$G/link"                        # anchor: a clean linked tree is kept
+done
+if [ "$(id -u)" = 0 ]; then
+    ok_note="(the unwritable half needs a non-root check runner)"
+    assert_contains "$ok_note" "non-root"
+else
+    # Unwritable deep in the tree, reached through the link: checked.
+    chmod 555 "$G/real/.cache/flashinfer/90/cached_ops/x"
+    for sh_ in $GUARD_SHELLS; do
+        out="$(fi_run "$sh_" "$G/link")"
+        assert_contains "$out" "FI=unset"
+        assert_contains "$out" "engine cache FLASHINFER_WORKSPACE_BASE=$G/link holds an entry this user cannot write"
+    done
+    chmod 755 "$G/real/.cache/flashinfer/90/cached_ops/x"
+    # A directory find cannot read: under pipefail the old pipeline read the
+    # failed find as "every entry writable" and kept the variable.
+    chmod 000 "$G/real/.cache/flashinfer/90/cached_ops/x"
+    out="$(fi_run bash "$G/real" "-eo pipefail")"
+    assert_contains "$out" "FI=unset"
+    out="$(fi_run bash "$G/real")"
+    assert_contains "$out" "FI=unset"
+    chmod 755 "$G/real/.cache/flashinfer/90/cached_ops/x"
+fi
+# No find in the image: unset, and said as that -- not as an unwritable entry.
+mkdir -p "$G/bin"
+for t in mkdir touch id ln readlink; do
+    p="$(command -v "$t")" && ln -s "$p" "$G/bin/$t"
+done
+[ ! -e "$G/bin/find" ] || fail "the find-less PATH has find"
+rm -f "$G/real/.engine-uid"
+out="$(FLASHINFER_WORKSPACE_BASE="$G/real" PATH="$G/bin" /bin/sh -c ". \"$G/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1)"
+assert_contains "$out" "FI=unset"
+assert_contains "$out" "engine cache FLASHINFER_WORKSPACE_BASE=$G/real cannot be checked: this image has no find"
+assert_not_contains "$out" "cannot write"
+chmod -R u+rwx "$G"; rm -rf "$G"
+[ "$FAILED" -eq "$before" ] && ok
+
+# Two users on one node: the first to pass owns the tree, and an engine of
+# another user falls back rather than racing it for the directories it makes
+# (made under its umask, they would fail the other engine mid-start).
+CASE="guard: the first user owns a FlashInfer tree; another user's engine falls back, the same user's do not"
+reset; f_vllm_plain
+before=$FAILED
+G="$(mktemp -d)"
+guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
+grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+me="$(id -u)"
+for sh_ in $GUARD_SHELLS; do
+    rm -rf "$G/fi"
+    out="$(FLASHINFER_WORKSPACE_BASE="$G/fi" "$sh_" -c ". \"$G/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1)"
+    assert_contains "$out" "FI=$G/fi"
+    assert_eq "$(readlink "$G/fi/.engine-uid")" "$me" "$sh_: the claim"
+    # The same user again, and four at once: all keep it.
+    out="$(FLASHINFER_WORKSPACE_BASE="$G/fi" "$sh_" -c ". \"$G/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1)"
+    assert_contains "$out" "FI=$G/fi"
+    rm -rf "$G/fi" "$G/par"; mkdir -p "$G/par"
+    for i in 1 2 3 4; do
+        FLASHINFER_WORKSPACE_BASE="$G/fi" "$sh_" -c ". \"$G/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" > "$G/par/$i" 2>&1 &
+    done
+    wait
+    assert_eq "$(cat "$G/par/"* | grep -c "^FI=$G/fi\$")" "4" "$sh_: concurrent starts of one user that kept the base"
+    # Another user's claim: this engine falls back, and says whose it is.
+    rm -f "$G/fi/.engine-uid"; ln -s 4242 "$G/fi/.engine-uid"
+    out="$(FLASHINFER_WORKSPACE_BASE="$G/fi" "$sh_" -c ". \"$G/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1)"
+    assert_contains "$out" "FI=unset"
+    assert_contains "$out" "engine cache FLASHINFER_WORKSPACE_BASE=$G/fi belongs to user 4242"
+    assert_eq "$(readlink "$G/fi/.engine-uid")" "4242" "$sh_: the other user's claim is left alone"
+done
+rm -rf "$G"
+[ "$FAILED" -eq "$before" ] && ok
+
+# A workload that needs only the FlashInfer half still gets the guard: the
+# old guard in its command does not check FLASHINFER_WORKSPACE_BASE, so the
+# file must carry the one that replaces it. No AOT block: no vLLM half.
+CASE="flashinfer: the FlashInfer half alone carries the guard, and the guard runs"
+reset; f_engine_cache_old_flashinfer
+before=$FAILED
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "#   flashinfer:"                       # anchor: the half fired alone
+assert_not_contains "$doc" "#   engine-cache:"
+assert_contains "$doc" "FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
+assert_contains "$doc" "replace all of it; renaming its variables is not enough"
+assert_not_contains "$doc" "VLLM_USE_MEGA_AOT_ARTIFACT"
+G="$(mktemp -d)"
+guard_from "$doc" > "$G/guard.sh"
+out="$(FLASHINFER_WORKSPACE_BASE="$G/fi" sh -c ". \"$G/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1)"
+assert_contains "$out" "FI=$G/fi"
+rm -rf "$G"
+[ "$FAILED" -eq "$before" ] && ok
+
+# The old name anywhere in the command is not the old guard: only a for
+# loop's own word list is. An `unset FLASHINFER_WORKSPACE_DIR` -- what the
+# migration asks for -- or a comment naming it must not be told to change.
+CASE="flashinfer: only a guard loop over the old name reads as the old guard"
+reset; f_engine_cache_old_flashinfer
+before=$FAILED
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_BASE","value":"/engine-cache/flashinfer"}]
+    | .spec.template.spec.containers[0].command = ["/bin/sh","-c"]')"
+fi_args() { FIXTURE="$(printf '%s' "$FIXTURE" | jq -c --arg a "$1" '.spec.template.spec.containers[0].args = [$a]')"; }
+fi_args "for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR; do :; done; exec vllm serve Qwen/Qwen3-0.6B"
+assert_field 10 "loop"                                         # anchor: the old guard is seen
+fi_args "unset FLASHINFER_WORKSPACE_DIR; exec vllm serve Qwen/Qwen3-0.6B"
+assert_field 10 ""
+fi_args "# FLASHINFER_WORKSPACE_DIR is not read by FlashInfer
+exec vllm serve Qwen/Qwen3-0.6B"
+assert_field 10 ""
+fi_args "for m in a b; do echo \$m; done; echo FLASHINFER_WORKSPACE_DIR; exec vllm serve Qwen/Qwen3-0.6B"
+assert_field 10 ""
+fi_args "for x in FLASHINFER_WORKSPACE_DIRS; do :; done; exec vllm serve Qwen/Qwen3-0.6B"
+assert_field 10 ""
+# The old guard on its own line, the way a chart writes it: still seen.
+fi_args "set -e
+for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
+  :
+done
+exec vllm serve Qwen/Qwen3-0.6B"
+assert_field 10 "loop"
+[ "$FAILED" -eq "$before" ] && ok
+
+# No image key (the image reference is empty): the base is the directory
+# alone, for the engine-cache half and the FlashInfer half both.
+CASE="flashinfer: with no image key the base is the directory itself"
+reset; f_engine_cache_old_flashinfer
+before=$FAILED
+assert_eq "$(so_flashinfer_base /engine-cache/flashinfer "")" "/engine-cache/flashinfer" "no image"
+assert_eq "$(so_flashinfer_base /engine-cache/flashinfer "quay.io/x/vllm-openai:v0.11")" "/engine-cache/flashinfer/$KFI" "an image"
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c 'del(.spec.template.spec.containers[0].image)')"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>"$WORK/fi.err")"
+assert_contains "$doc" "#   flashinfer:"
+d="$(mktemp)"; printf '%s\n' "$doc" > "$d"
+assert_eq "$(yq eval '.spec.template.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value' "$d" 2>/dev/null)" \
+    "/engine-cache/flashinfer" "FlashInfer half, no image"
+reset; f_engine_cache_only_gap
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c 'del(.spec.template.spec.containers[0].image)')"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"; printf '%s\n' "$doc" > "$d"
+assert_contains "$doc" "#   engine-cache:"
+assert_eq "$(yq eval '.spec.template.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value' "$d" 2>/dev/null)" \
+    "/engine-cache/flashinfer" "engine-cache half, no image"
+rm -f "$d"
+[ "$FAILED" -eq "$before" ] && ok
+
 # --- the KV-bytes proposal ----------------------------------------------------
 #
 # Model Runner V2 profiles memory with a full CUDA-graph capture; a fixed
@@ -3393,6 +3553,40 @@ lws_driver true true
 assert_eq "$DRIVER_RC" "1" "return code"
 assert_eq "$PATCH_CALLS" "1" "kubectl patch calls"
 assert_contains "$(cat "$DRIVER_LOG")" "1 of 1 workload(s) were NOT patched"
+[ "$FAILED" -eq "$before" ] && ok
+
+
+# Converged but for FlashInfer: both templates patched before v0.12.0, so each
+# sets FLASHINFER_WORKSPACE_DIR. The worker runs another image.
+f_lws_old_flashinfer() {
+    f_lws_converged
+    FIXTURE="$(printf '%s' "$FIXTURE" | jq -c --arg wi "$LWS_WORKER_IMAGE" '
+        .spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].image = $wi
+        | .spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env[1].value = "/engine-cache/pycache/'"$KEY_WORKER"'"
+        | (.spec.leaderWorkerTemplate.leaderTemplate, .spec.leaderWorkerTemplate.workerTemplate).spec.containers[0].env
+            += [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/engine-cache/flashinfer"}]')"
+}
+
+CASE="LWS: the FlashInfer half reaches the leader and the workers, each keyed by its image, with the guard for both"
+reset; f_lws_old_flashinfer
+before=$FAILED
+doc_rc=0
+doc="$(so_workload_patch_doc ns leaderworkersets w "$POD_LWS" 2>"$WORK/lws.err")" || doc_rc=$?
+assert_eq "$doc_rc" "0" "return code"
+assert_contains "$doc" "#   flashinfer:"                                   # anchor: the half fired
+assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value')" "/engine-cache/flashinfer/$KEY_LEADER" "leader base"
+assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value')" "/engine-cache/flashinfer/$KEY_WORKER" "worker base"
+assert_eq "$(lws_get "$doc" '[.spec.leaderWorkerTemplate[].spec.volumes // [] | .[]] | length')" "0" "volumes (env only)"
+assert_contains "$doc" "FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
+assert_contains "$doc" "leader command AND the worker"
+assert_contains "$(cat "$WORK/lws.err")" "ns/w (leaderTemplate) BUILDS ITS FLASHINFER KERNELS AGAIN"
+assert_contains "$(cat "$WORK/lws.err")" "ns/w (workerTemplate) BUILDS ITS FLASHINFER KERNELS AGAIN"
+# Never applied: env only, like the Deployment's.
+reset; lws_scene; f_lws_old_flashinfer
+lws_driver true true true
+assert_eq "$DRIVER_RC" "0" "driver return code"
+assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
+assert_contains "$(cat "$DRIVER_LOG")" "BUILD THEIR FLASHINFER KERNELS AGAIN"
 [ "$FAILED" -eq "$before" ] && ok
 
 # --- LeaderWorkerSets: review round -----------------------------------------

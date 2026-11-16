@@ -171,7 +171,7 @@
 # FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR under it (FlashInfer adds
 # .cache/flashinfer/ under its base, so its kernels and cubins land in
 # flashinfer/<image key>/.cache/flashinfer/; seed and publish copy that tree as they copy
-# the rest, and an empty flashinfer/ -- every node prepared before v0.11.2,
+# the rest, and an empty flashinfer/ -- every node prepared before v0.12.0,
 # when the patch set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not
 # read -- is nothing to copy, not an error) -- and keeps a guard
 # that unsets a variable whose directory is not writable, so a node that is
@@ -293,7 +293,9 @@ done
 # The modes merge gives what it copies: readable by every user, and under
 # flashinfer/ writable too. FlashInfer writes under its base on EVERY start,
 # hit or miss (a lock file, its build files, the ninja log), and an engine
-# that cannot write there fails rather than compiling elsewhere.
+# that cannot write there fails rather than compiling elsewhere; a copy is
+# the preparer's, not the engine user's. The cost: any user on the node can
+# rewrite a seeded FlashInfer kernel.
 dmode=a+rx; fmode=a+r
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
@@ -320,6 +322,9 @@ merge() {
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     n="${e##*/}"; t="$2/$n"
+    # the guard's claim on a FlashInfer tree: one node's engine user, which
+    # another node does not inherit; not cache content, and not worth a line
+    [ "$n" != .engine-uid ] || continue
     if [ -L "$e" ]; then
       links="$links."; echo "engine cache: skipped $e: a symlink, not cache content"
     elif [ -e "$t" ] || [ -L "$t" ]; then
@@ -382,10 +387,11 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
     echo "engine cache: seeding on $NODE_NAME from $want did not complete (a copy failed and was removed); it is retried when this pod next starts"
   fi
 fi
-# flashinfer/ opened up again for every user at every start: what a merge
-# kept, or one engine UID built under its umask, another UID must be able to
-# write, or FlashInfer fails that engine. Symbolic links are not followed.
-chmod -R a+rwX /engine-cache/flashinfer 2>/dev/null || true
+# Nothing under flashinfer/ is opened up beyond what a merge copies. The
+# guard lets one user own each tree (.engine-uid) and sends an engine of any
+# other user to its own default, so no engine needs to write another user's
+# entries; this preparer could not reopen them anyway, with every capability
+# dropped it changes the modes of its own files only.
 touch "/engine-cache/$MARKER" || exit 1
 echo "engine cache: prepared on $NODE_NAME: /engine-cache/{vllm,flashinfer,triton,pycache}"
 trap 'exit 0' TERM; while :; do sleep 3600 & wait; done
@@ -863,7 +869,7 @@ dst="/seed${SEED_SUBPATH:+/$SEED_SUBPATH}"
 (umask 022; mkdir -p "$dst") || exit 1
 # The modes merge gives what it copies, as the preparer gives them: under
 # flashinfer/ writable by every user too, since FlashInfer writes there on
-# every start (the preparer opens the node copy up again regardless).
+# every start and a seeded copy belongs to the preparer, not the engine user.
 dmode=a+rx; fmode=a+r
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
@@ -890,6 +896,9 @@ merge() {
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     n="${e##*/}"; t="$2/$n"
+    # the guard's claim on a FlashInfer tree: one node's engine user, which
+    # another node does not inherit; not cache content, and not worth a line
+    [ "$n" != .engine-uid ] || continue
     if [ -L "$e" ]; then
       links="$links."; echo "engine cache: skipped $e: a symlink, not cache content"
     elif [ -e "$t" ] || [ -L "$t" ]; then

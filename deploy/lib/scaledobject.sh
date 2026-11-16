@@ -823,7 +823,7 @@ so_enginecache_note() {
             # The other caches are fine, or not vLLM's to judge; the bytecode
             # is any Python engine's. A FLASHINFER_WORKSPACE_DIR with no
             # FLASHINFER_WORKSPACE_BASE beside it (what workload-patch wrote
-            # before v0.11.2) keeps no FlashInfer kernel, whatever else does.
+            # before v0.12.0) keeps no FlashInfer kernel, whatever else does.
             case "$fi" in
                 dir:*)
                     printf '%s' "Every start builds its FlashInfer kernels again: ${engine} sets FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read (it reads FLASHINFER_WORKSPACE_BASE), so they go under \$HOME in the container.${also} \`make workload-patch\` writes the fix; see docs/reference/workload-preparation.md#flashinfer-kernels."
@@ -1597,7 +1597,7 @@ llmsm_workload_patch() {
     if [ "$needs_fib" -gt 0 ]; then
         log_warning "$needs_fib model server(s) BUILD THEIR FLASHINFER KERNELS AGAIN on every start."
         log_warning "  They set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read (workload-patch wrote"
-        log_warning "  it before v0.11.2). $out sets FLASHINFER_WORKSPACE_BASE under the same path, keyed by"
+        log_warning "  it before v0.12.0). $out sets FLASHINFER_WORKSPACE_BASE under the same path, keyed by"
         log_warning "  image. It is emitted, not applied: put it in your chart values and remove FLASHINFER_WORKSPACE_DIR."
     fi
 
@@ -1823,20 +1823,25 @@ so_workload_gaps() {
         # .cache/flashinfer under it (under HOME when it is unset).
         # FLASHINFER_WORKSPACE_DIR is a name inside FlashInfer, never read from
         # the environment -- and it is what workload-patch wrote before
-        # v0.11.2. An engine that sets it and not FLASHINFER_WORKSPACE_BASE is
+        # v0.12.0. An engine that sets it and not FLASHINFER_WORKSPACE_BASE is
         # "dir:" and its value (empty when it comes from a ConfigMap or a
         # Secret): its kernels are built again on every start whatever the
-        # other caches do. A command whose guard loop still names
-        # FLASHINFER_WORKSPACE_DIR and not FLASHINFER_WORKSPACE_BASE is "loop":
-        # the guard written before v0.11.2, which leaves the new variable
-        # unguarded once it is set. Anything else is "": no opinion, not a
-        # clean bill.
+        # other caches do. A command with a `for <v> in <names>` loop whose
+        # names include FLASHINFER_WORKSPACE_DIR and not
+        # FLASHINFER_WORKSPACE_BASE is "loop": the guard written before
+        # v0.12.0, which leaves the new variable unguarded once it is set.
+        # Only the word list of the loop counts: the old name elsewhere in the
+        # command (an unset, an echo, a comment) is not that guard. Anything
+        # else is "": no opinion, not a clean bill.
         | ( [ $e.env[]? | select(.name == "FLASHINFER_WORKSPACE_BASE") ] | last ) as $fibase
         | ( [ $e.env[]? | select(.name == "FLASHINFER_WORKSPACE_DIR") ] | last ) as $fidir
+        | ( [ $argv | scan("(?:^|[^A-Za-z0-9_])for +[A-Za-z_][A-Za-z0-9_]* +in +([A-Za-z0-9_ ]*)")
+              | .[0] | split(" ") | select(any(.[]; . == "FLASHINFER_WORKSPACE_DIR")
+                                           and (any(.[]; . == "FLASHINFER_WORKSPACE_BASE") | not)) ]
+            | length > 0 ) as $fiold
         | ( if ($e | not) or $issim then ""
             elif ($fibase == null) and ($fidir != null) then "dir:" + ($fidir.value // "")
-            elif ($argv | test("FLASHINFER_WORKSPACE_DIR"))
-                 and (($argv | test("FLASHINFER_WORKSPACE_BASE")) | not) then "loop"
+            elif $fiold then "loop"
             else "" end ) as $fi
         | [ ($e.name // ""),
             (if ($e | not) then 0 elif ($e.lifecycle.preStop != null) then 1 else 0 end),
@@ -2167,7 +2172,7 @@ so_workload_patch_plan() {
                 || log_warning "  $who RECOMPILES ITS PYTHON BYTECODE on every start: $engine sets no PYTHONPYCACHEPREFIX, so every container compiles its imports again (measured on vLLM: ~11 s of every start)." ;;
     esac
     # FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read and which this
-    # patch wrote before v0.11.2. It never decided anything above -- the
+    # patch wrote before v0.12.0. It never decided anything above -- the
     # caches are judged by VLLM_CACHE_ROOT -- so a workload patched then reads
     # as keeping its caches while FlashInfer builds its kernels under HOME on
     # every start. With the engine-cache half the new variable comes with it;
@@ -2195,7 +2200,7 @@ so_workload_patch_plan() {
             fi ;;
         loop)
             # Said, never patched: the command belongs to the chart.
-            log_warning "  $who: its command guards FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read, and not FLASHINFER_WORKSPACE_BASE. Replace the guard with the one in the emitted file, or rename the variable in its loop: unguarded, an engine that cannot write the FlashInfer tree fails instead of falling back. See docs/reference/workload-preparation.md#flashinfer-kernels." ;;
+            log_warning "  $who: its command guards FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read, and not FLASHINFER_WORKSPACE_BASE. Replace the whole guard with the one in the emitted file; renaming the variable in the old loop is not enough, since the new guard also checks the FlashInfer tree and who owns it. Unguarded, an engine that cannot write the FlashInfer tree fails instead of falling back. See docs/reference/workload-preparation.md#flashinfer-kernels." ;;
     esac
     # Where the bytecode goes: with the vLLM half, under its new mount; else
     # under the durable mount the engine already has (no new volume); else
@@ -2288,7 +2293,7 @@ ENGINEENV
         # FlashInfer reads FLASHINFER_WORKSPACE_BASE and keeps its kernels in
         # .cache/flashinfer/ under it. FLASHINFER_WORKSPACE_DIR, which this
         # replaces, is read by nothing: drop it. If the container command
-        # carries the engine-cache guard, rename the variable in its loop too.
+        # carries the engine-cache guard, replace it with the one below.
         - name: FLASHINFER_WORKSPACE_BASE
           value: ${fibase}
 FIBENV
@@ -2477,19 +2482,23 @@ ENGINENEED
     # PYTHONPYCACHEPREFIX set Python reads bytecode ONLY under the prefix and
     # ignores the image's own __pycache__ directories, so a prefix it cannot
     # write (read-only, another UID's key directory, an SELinux label) is
-    # slower than no prefix. hack/check-workload-gaps.sh runs this text.
-    if [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ]; then
+    # slower than no prefix. The FlashInfer half alone too: it sets
+    # FLASHINFER_WORKSPACE_BASE, which the old guard does not check, so the
+    # file must carry the guard that replaces it. hack/check-workload-gaps.sh
+    # runs this text.
+    if [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ]; then
         cat <<'ENGINEGUARD'
 #
 #   Keep the engine tolerant of a cache path that turns out not to
 #   be writable: vLLM fails hard on a read-only cache directory unless the
 #   variable is unset first, and a storage hiccup must cost one compile, not
 #   the replica. FlashInfer writes under its base on every start, so its
-#   whole tree is checked: a directory another user's engine made is enough
-#   to fail this one. PYTHONPYCACHEPREFIX too: with it set, Python reads bytecode
+#   whole tree is checked, and the first user to start an engine on it owns
+#   it: an engine of another user falls back. PYTHONPYCACHEPREFIX too: with it set, Python reads bytecode
 #   only from it, so one it cannot write is slower than none. In the
 #   container command, before the engine starts (the command belongs to the
-#   chart, so it is not patched here):
+#   chart, so it is not patched here). If the command carries an older copy
+#   of this guard, replace all of it; renaming its variables is not enough:
 #
 #     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
 #       eval "d=\${$v:-}"
@@ -2498,9 +2507,18 @@ ENGINENEED
 #         echo "engine cache $v=$d is not writable; using the engine default instead"
 #         unset $v
 #       # FlashInfer writes under its base on every start, hit or miss, and fails
-#       # on an entry it cannot write: the whole tree, not only its top.
-#       elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ! command -v find >/dev/null 2>&1 || find "$d" ! -type l 2>/dev/null | { while IFS= read -r f; do [ -w "$f" ] || exit 0; done; exit 1; }; }; then
+#       # on an entry it cannot write. So the whole tree is checked, through a link
+#       # at the top, and a find that fails fails the check. The first user to pass
+#       # owns the tree (.engine-uid): an engine of another user falls back rather
+#       # than race it for the directories it creates.
+#       elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+#         echo "engine cache $v=$d cannot be checked: this image has no find; using the engine default instead"
+#         unset $v
+#       elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecbad=`find "$d/" ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecbad" ]; }; then
 #         echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
+#         unset $v
+#       elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecu=`id -u`; ln -s "$ecu" "$d/.engine-uid" 2>/dev/null; ecown=`readlink "$d/.engine-uid" 2>/dev/null`; [ "$ecown" != "$ecu" ]; }; then
+#         echo "engine cache $v=$d belongs to user ${ecown:-unknown}; using the engine default instead"
 #         unset $v
 #       fi
 #     done
@@ -2965,9 +2983,9 @@ HEAD
 TEMPLATE
         so_workload_patch_cache_body | sed 's/^/  /'
     done
-    want_cache="$any_cache" want_engine="$any_engine" want_pyc="$any_pyc" want_evol="$any_evol"
+    want_cache="$any_cache" want_engine="$any_engine" want_pyc="$any_pyc" want_evol="$any_evol" want_fib="$any_fib"
     so_workload_patch_notes
-    if [ "$any_engine" -eq 1 ] || [ "$any_pyc" -eq 1 ]; then
+    if [ "$any_engine" -eq 1 ] || [ "$any_pyc" -eq 1 ] || [ "$any_fib" -eq 1 ]; then
         cat <<'LWSGUARD'
 #
 #   On a LeaderWorkerSet the guard goes in the leader command AND the worker

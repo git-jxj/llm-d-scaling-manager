@@ -539,9 +539,18 @@ scenario:
                     echo "engine cache $v=$d is not writable; using the engine default instead"
                     unset $v
                   # FlashInfer writes under its base on every start, hit or miss, and fails
-                  # on an entry it cannot write: the whole tree, not only its top.
-                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ! command -v find >/dev/null 2>&1 || find "$d" ! -type l 2>/dev/null | { while IFS= read -r f; do [ -w "$f" ] || exit 0; done; exit 1; }; }; then
+                  # on an entry it cannot write. So the whole tree is checked, through a link
+                  # at the top, and a find that fails fails the check. The first user to pass
+                  # owns the tree (.engine-uid): an engine of another user falls back rather
+                  # than race it for the directories it creates.
+                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+                    echo "engine cache $v=$d cannot be checked: this image has no find; using the engine default instead"
+                    unset $v
+                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecbad=`find "$d/" ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecbad" ]; }; then
                     echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
+                    unset $v
+                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecu=`id -u`; ln -s "$ecu" "$d/.engine-uid" 2>/dev/null; ecown=`readlink "$d/.engine-uid" 2>/dev/null`; [ "$ecown" != "$ecu" ]; }; then
+                    echo "engine cache $v=$d belongs to user ${ecown:-unknown}; using the engine default instead"
                     unset $v
                   fi
                 done
@@ -760,9 +769,18 @@ scenario:
                     echo "engine cache $v=$d is not writable; using the engine default instead"
                     unset $v
                   # FlashInfer writes under its base on every start, hit or miss, and fails
-                  # on an entry it cannot write: the whole tree, not only its top.
-                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ! command -v find >/dev/null 2>&1 || find "$d" ! -type l 2>/dev/null | { while IFS= read -r f; do [ -w "$f" ] || exit 0; done; exit 1; }; }; then
+                  # on an entry it cannot write. So the whole tree is checked, through a link
+                  # at the top, and a find that fails fails the check. The first user to pass
+                  # owns the tree (.engine-uid): an engine of another user falls back rather
+                  # than race it for the directories it creates.
+                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+                    echo "engine cache $v=$d cannot be checked: this image has no find; using the engine default instead"
+                    unset $v
+                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecbad=`find "$d/" ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecbad" ]; }; then
                     echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
+                    unset $v
+                  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecu=`id -u`; ln -s "$ecu" "$d/.engine-uid" 2>/dev/null; ecown=`readlink "$d/.engine-uid" 2>/dev/null`; [ "$ecown" != "$ecu" ]; }; then
+                    echo "engine cache $v=$d belongs to user ${ecown:-unknown}; using the engine default instead"
                     unset $v
                   fi
                 done

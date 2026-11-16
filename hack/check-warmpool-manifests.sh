@@ -26,7 +26,7 @@ FAILED=0
 # Every case reports ok or FAIL exactly once. A run that ends early, or a case
 # that silently stops running, otherwise passes having checked less than it
 # says. Change this deliberately with the cases.
-EXPECT_CASES=67
+EXPECT_CASES=70
 CASES=0
 ok()   { CASES=$((CASES + 1)); printf 'ok    %s\n' "$1"; }
 fail() { CASES=$((CASES + 1)); printf 'FAIL  %s\n' "$1"; FAILED=1; }
@@ -260,6 +260,55 @@ WORKER_SECTION="$(printf '%s\n' "$GROUP" | sed -n '/workerTemplate:/,$p')"
 [ "$(printf '%s\n' "$WORKER_SECTION" | grep -c 'name: inference-server')" = 1 ] \
   && ok "workers run the supervisor, which is what the fan-out talks to" \
   || fail "a worker template has no supervisor: warming the group cannot reach its ranks"
+
+
+# --- the engine-cache guard in the launcher command --------------------------
+# The pool's engines write their compile caches to the shared claim, so the
+# launcher command carries the engine-cache guard: a cache directory this user
+# cannot write costs a compile, and a FlashInfer tree another user owns sends
+# this pool's engines to their own default instead of failing them. The guard
+# is shell full of $ and backticks, carried through the generator's unquoted
+# heredoc: compare what is DELIVERED with the manifest, character for
+# character, and then run it.
+WP_ROOT="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
+WP_ARGS='select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "inference-server") | .args[0]'
+GOT_ARGS="$(printf '%s\n' "$POOL" | yq eval-all "$WP_ARGS" -)"
+WANT_ARGS="$(yq eval-all "$WP_ARGS" "$WP_ROOT/config/warmpool/warmpool-deployment.yaml")"
+if printf '%s\n' "$WANT_ARGS" | grep -q '^for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do$' && [ "$GOT_ARGS" = "$WANT_ARGS" ]; then
+  ok "the pool's launcher command is the manifest's, guard included, character for character"
+else
+  fail "the pool's launcher command differs from the manifest's, or has no guard: $(diff <(printf '%s\n' "$WANT_ARGS") <(printf '%s\n' "$GOT_ARGS") | head -5)"
+fi
+gl="$(printf '%s\n' "$GROUP" | grep -c '^ *for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do$')"
+ge="$(printf '%s\n' "$GROUP" | grep -c 'ln -s "\$ecu" "\$d/.engine-uid"')"
+if [ "$gl" = 2 ] && [ "$ge" = 2 ]; then
+  ok "a group's leader and workers both carry the guard"
+else
+  fail "a group's templates carry $gl guard loop(s) and $ge FlashInfer claim(s), 2 of each expected"
+fi
+# Run the delivered guard: everything before the exec, then what it left.
+WPG="$(mktemp -d)"
+printf '%s\n' "$GOT_ARGS" | sed '/^exec python3 /,$d' > "$WPG/guard.sh"
+wp_guard() {   # <base>: what the guard said, and FI=<what it left>
+  env -u VLLM_CACHE_ROOT -u TRITON_CACHE_DIR FLASHINFER_WORKSPACE_BASE="$1" \
+    sh -c ". \"$WPG/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1
+}
+mkdir -p "$WPG/fi/.cache/flashinfer/90/x"
+r1="$(wp_guard "$WPG/fi")"
+rm -f "$WPG/fi/.engine-uid"; ln -s 4242 "$WPG/fi/.engine-uid"
+r2="$(wp_guard "$WPG/fi")"
+rm -f "$WPG/fi/.engine-uid"
+if [ "$(id -u)" = 0 ]; then
+  r3="FI=unset (the unwritable case needs a non-root check runner)"
+else
+  chmod 555 "$WPG/fi/.cache/flashinfer/90/x"; r3="$(wp_guard "$WPG/fi")"; chmod 755 "$WPG/fi/.cache/flashinfer/90/x"
+fi
+case "$r1|$r2|$r3" in
+  "FI=$WPG/fi|"*"belongs to user 4242"*"FI=unset|"*"FI=unset"*)
+    ok "the pool's guard keeps a clean FlashInfer tree and falls back from another user's, or an unwritable one" ;;
+  *) fail "the pool's guard: clean=[$r1] other user=[$r2] unwritable=[$r3]" ;;
+esac
+rm -rf "$WPG"
 
 # A GROUP on the stock launcher is refused outright. It would schedule, go
 # Ready, hold every accelerator and never form an engine -- the silent failure
