@@ -180,7 +180,7 @@ func TestPrometheusPlainHTTPHidesLiteralToken(t *testing.T) {
 	f.add(controllerWithEnv(corev1.EnvVar{Name: envBearerToken, Value: secret}))
 	r := only(t, f.run(t), "prometheus.reachable")
 	if r.Status != Fail || !strings.Contains(r.Detail, envBearerToken+"=(a literal)") ||
-		!strings.Contains(r.Fix, "kubectl set env deployment/"+ControllerDeployment+" -n "+testNS+" "+envBearerToken+"=") {
+		!strings.Contains(r.Fix, "kubectl set env deployment/"+ControllerDeployment+" -n "+testNS+" "+envBearerToken+"-") {
 		t.Errorf("got %s %q fix %q", r.Status, r.Detail, r.Fix)
 	}
 	if strings.Contains(r.Detail+r.Fix, secret) {

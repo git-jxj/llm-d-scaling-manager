@@ -142,6 +142,9 @@ type settingsState struct {
 	// value the controller reads: a literal that is not empty, or
 	// "from <source>" for valueFrom.
 	deployEnv map[string]string
+	// deployRef names the deployEnv keys set by valueFrom: their value is not
+	// known to the preflight, which reads no Secret or ConfigMap key.
+	deployRef map[string]bool
 	// legacyProm holds the promLoaderKeys LegacyConfigMap's config.yaml sets
 	// to a value that is not empty.
 	legacyProm map[string]string
@@ -170,23 +173,38 @@ func (st settingsState) loaderValue(loaderKey, settingKey string) (value, source
 	return "", ""
 }
 
-// allowHTTP is whether the controller allows a plain HTTP Prometheus URL, as
-// its loader reads PROMETHEUS_ALLOW_HTTP.
-func (st settingsState) allowHTTP() bool {
-	v, _ := st.loaderValue(envAllowHTTP, keyAllowHTTP)
+// loaderBool is loaderValue for a boolean key. unknown names the source when
+// the value comes from a valueFrom on the Deployment, which the preflight
+// cannot read: then value is not known, never false.
+func (st settingsState) loaderBool(loaderKey, settingKey string) (value bool, source, unknown string) {
+	v, src := st.loaderValue(loaderKey, settingKey)
+	if strings.HasSuffix(src, " on Deployment "+ControllerDeployment) && st.deployRef[loaderKey] {
+		return false, src, src + " (" + v + ")"
+	}
 	b, _ := strconv.ParseBool(v)
-	return b
+	return b, src, ""
 }
 
-// tlsBesideHTTP names the TLS settings the controller has that it refuses
-// beside an http URL (internal/prometheus ValidateTLSConfig), with where each
-// is set.
-func (st settingsState) tlsBesideHTTP() []string {
-	var out []string
-	if v, src := st.loaderValue(envInsecure, keyPrometheusInsecure); src != "" {
-		if b, _ := strconv.ParseBool(v); b {
-			out = append(out, src)
-		}
+// allowHTTP is whether the controller allows a plain HTTP Prometheus URL, as
+// its loader reads PROMETHEUS_ALLOW_HTTP. unknown is set when that is not
+// known (a valueFrom on the Deployment).
+func (st settingsState) allowHTTP() (allowed bool, unknown string) {
+	b, _, unknown := st.loaderBool(envAllowHTTP, keyAllowHTTP)
+	return b, unknown
+}
+
+// tlsSource is one TLS setting the controller has: the loader key, the
+// setting that sets it ("" for none), and where it is set.
+type tlsSource struct{ loaderKey, settingKey, source string }
+
+// tlsBesideHTTP lists the TLS settings the controller has that it refuses
+// beside an http URL (internal/prometheus ValidateTLSConfig). unknown names
+// a boolean one set by a valueFrom, whose value is not known.
+func (st settingsState) tlsBesideHTTP() (set []tlsSource, unknown []string) {
+	if b, src, u := st.loaderBool(envInsecure, keyPrometheusInsecure); u != "" {
+		unknown = append(unknown, u)
+	} else if b {
+		set = append(set, tlsSource{envInsecure, keyPrometheusInsecure, src})
 	}
 	for _, k := range [][2]string{
 		{envCACert, keyPrometheusCA},
@@ -195,10 +213,10 @@ func (st settingsState) tlsBesideHTTP() []string {
 		{envClientKey, ""},
 	} {
 		if _, src := st.loaderValue(k[0], k[1]); src != "" {
-			out = append(out, src)
+			set = append(set, tlsSource{k[0], k[1], src})
 		}
 	}
-	return out
+	return set, unknown
 }
 
 // bearerToken says where the controller gets a bearer token for Prometheus,
@@ -226,25 +244,29 @@ func (st settingsState) bearerToken() (where, key string, onDeployment bool) {
 // controllerPromEnv reads promLoaderKeys off the controller container of d
 // (managerContainer): the values the controller's loader takes. An empty
 // literal is unset there (viper), so it is left out. A literal bearer token
-// is a secret: it is recorded as "(a literal)", never copied.
-func controllerPromEnv(d *appsv1.Deployment) map[string]string {
-	out := map[string]string{}
+// is a secret: it is recorded as "(a literal)", never copied. refs names the
+// keys set by valueFrom, recorded as "from <source>".
+func controllerPromEnv(d *appsv1.Deployment) (out map[string]string, refs map[string]bool) {
+	out, refs = map[string]string{}, map[string]bool{}
 	if d == nil {
-		return out
+		return out, refs
 	}
 	c := managerContainer(*d)
 	if c == nil {
-		return out
+		return out, refs
 	}
 	for _, e := range c.Env {
 		if !slices.Contains(promLoaderKeys, e.Name) {
 			continue
 		}
+		delete(refs, e.Name)
 		switch {
 		case e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil:
-			out[e.Name] = "from Secret " + e.ValueFrom.SecretKeyRef.Name
+			out[e.Name], refs[e.Name] = "from Secret "+e.ValueFrom.SecretKeyRef.Name, true
+		case e.ValueFrom != nil && e.ValueFrom.ConfigMapKeyRef != nil:
+			out[e.Name], refs[e.Name] = "from ConfigMap "+e.ValueFrom.ConfigMapKeyRef.Name, true
 		case e.ValueFrom != nil:
-			out[e.Name] = "from a reference"
+			out[e.Name], refs[e.Name] = "from a reference", true
 		case strings.TrimSpace(e.Value) != "" && e.Name == envBearerToken:
 			out[e.Name] = "(a literal)"
 		case strings.TrimSpace(e.Value) != "":
@@ -253,11 +275,24 @@ func controllerPromEnv(d *appsv1.Deployment) map[string]string {
 			delete(out, e.Name)
 		}
 	}
+	return out, refs
+}
+
+// upperKeys is config.yaml (old) with its keys upper-cased: viper reads
+// config.yaml keys case-insensitively, and every loader key is upper case.
+func upperKeys(old map[string]any) map[string]any {
+	if old == nil {
+		return nil
+	}
+	out := make(map[string]any, len(old))
+	for k, v := range old {
+		out[strings.ToUpper(k)] = v
+	}
 	return out
 }
 
-// legacyPromValues reads promLoaderKeys from config.yaml (old): those set to
-// a value that is not empty.
+// legacyPromValues reads promLoaderKeys from config.yaml (old, upperKeys):
+// those set to a value that is not empty.
 func legacyPromValues(old map[string]any) map[string]string {
 	out := map[string]string{}
 	for _, k := range promLoaderKeys {
@@ -292,11 +327,12 @@ func (s *state) loadSettings(ctx context.Context) settingsState {
 			if yaml.Unmarshal([]byte(legacy.Data["config.yaml"]), &old) != nil {
 				old = nil
 			}
+			old = upperKeys(old)
 		}
 		var d *appsv1.Deployment
 		st.deployWatch, st.deployWhy, d = s.deploymentWatch(ctx, old)
 		st.deployFound = d != nil
-		st.deployEnv = controllerPromEnv(d)
+		st.deployEnv, st.deployRef = controllerPromEnv(d)
 		st.legacyProm = legacyPromValues(old)
 		st.tokenPathEmptied = s.env.TokenPathEmptied
 		effective := st.deployWatch

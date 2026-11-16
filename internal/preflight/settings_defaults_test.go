@@ -7,8 +7,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// settingsDefaults are the values the shipped settings file holds, key for
-// key: a key the file leaves empty is empty here too.
+// TestSettingsDefaultsAreTheShippedFile checks that settingsDefaults hold the
+// values the shipped settings file holds, key for key: a key the file leaves
+// empty is empty here too.
 func TestSettingsDefaultsAreTheShippedFile(t *testing.T) {
 	b, err := os.ReadFile("../../config/release/settings-configmap.yaml")
 	if err != nil {
