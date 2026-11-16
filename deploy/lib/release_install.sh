@@ -30,6 +30,9 @@ SMT_PROM_CA_PATH=/etc/scaling-manager-prometheus-ca/ca.crt
 SMT_DEPLOY=scaling-manager-controller-manager
 SMT_STATUS_CM=scaling-manager-controller-status
 SMT_PREFLIGHT_JOB=scaling-manager-preflight
+# On the preflight Job with --allow-http: the controller is applied with
+# PROMETHEUS_TOKEN_PATH empty (internal/preflight TokenPathEmptiedEnv).
+SMT_TOKEN_EMPTIED_ENV=LLMSM_PREFLIGHT_TOKEN_PATH_EMPTIED
 SMT_CLUSTER_NS=scaling-manager-system
 SMT_THANOS_URL=https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
 # The checks the preflight cannot make before the controller runs: UNKNOWN in
@@ -325,6 +328,11 @@ smt_render() {
         # patched, so a re-run with the same flags applies the same object.
         D="$SMT_DEPLOY" yq -i '(select(.kind == "Deployment" and .metadata.name == strenv(D)) | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' \
             "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot empty PROMETHEUS_TOKEN_PATH in $SMT_MAIN"
+        # The preflight runs before this Deployment is applied: tell it, so the
+        # token path of a live controller (one crash-looping on it, say) is
+        # not held against the install that removes it.
+        J="$SMT_PREFLIGHT_JOB" E="$SMT_TOKEN_EMPTIED_ENV" yq -i '(select(.kind == "Job" and .metadata.name == strenv(J)) | .spec.template.spec.containers[] | select(.name == "preflight") | .env) += [{"name": strenv(E), "value": "true"}]' \
+            "$SMT_DIR/$SMT_PREFLIGHT" || smt_exit 2 "cannot set $SMT_TOKEN_EMPTIED_ENV in $SMT_PREFLIGHT"
     fi
     if [ -n "$SMT_IMAGE_REPO" ]; then
         for f in "$SMT_MAIN" "$SMT_PREFLIGHT"; do
@@ -524,12 +532,25 @@ smt_settings() {
 #
 # The URL the controller will read decides --allow-http (smt_check_scheme): the
 # one in the live settings when they exist, since they are never written, else
-# the one the flag gives.
+# the one the flag gives. A flag URL of the other scheme than the live one is
+# a switch the settings must make first: the refusal prints both patches.
 smt_settings_preconditions() {
-    local live
+    local live allow want=false had=false
     if smt_get configmap "$SMT_SETTINGS" -n "$SMT_NS"; then
         live="$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusURL // ""')"
+        allow="$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusAllowHTTP // ""')"
+        smt_is_http "$live" && had=true
+        [ -n "$SMT_PROM_URL" ] && smt_is_http "$SMT_PROM_URL" && want=true
+        if [ -n "$live" ] && [ -n "$SMT_PROM_URL" ] && [ "$had" != "$want" ]; then
+            smt_usage "prometheusURL in the live $SMT_SETTINGS is $live, and --prometheus-url $SMT_PROM_URL changes its scheme. install never writes existing settings: change them first, then run this again with the same flags:
+  $(smt_patch_cmd prometheusURL "$SMT_PROM_URL")
+  $(smt_patch_cmd prometheusAllowHTTP "$want")"
+        fi
         [ -z "$live" ] || smt_check_scheme "$live" "prometheusURL in the live $SMT_SETTINGS ($live)"
+        if [ "$SMT_ALLOW_HTTP" = true ] && [ "$allow" != true ]; then
+            smt_usage "--allow-http, and prometheusAllowHTTP in the live $SMT_SETTINGS is \"$allow\", not \"true\": the controller would refuse the http URL. install never writes existing settings: set it first, then run this again with the same flags:
+  $(smt_patch_cmd prometheusAllowHTTP true)"
+        fi
         return 0
     fi
     if [ -z "$SMT_PROM_URL" ]; then

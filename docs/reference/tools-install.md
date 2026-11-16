@@ -82,7 +82,10 @@ only when KEDA's side changed.
 
 If the settings already exist, `install` never writes them. A flag that
 differs from the live value is reported with the `kubectl patch` that would
-change it, and the install goes on.
+change it, and the install goes on. To change the scheme of a live
+`prometheusURL` (http to https or back), run `install` with the new URL: it
+stops before any write and prints the two patches, for `prometheusURL` and
+`prometheusAllowHTTP`; apply them, then run the same command again.
 
 ## Exit codes
 

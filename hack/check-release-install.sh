@@ -635,6 +635,9 @@ tokv() { obj deployment "$1" "$DEP" | jq -c '[.spec.template.spec.containers[] |
 # tokf <file>: the same, read from a rendered file.
 tokf() { yq ea -o json -I 0 'select(.kind == "Deployment")' "$1" | jq -c '[.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value]'; }
 SA_TOKEN=/var/run/secrets/kubernetes.io/serviceaccount/token
+TOKEN_EMPTIED_ENV=LLMSM_PREFLIGHT_TOKEN_PATH_EMPTIED
+# jobenv <namespace>: TOKEN_EMPTIED_ENV on the stored preflight Job, empty when it has none.
+jobenv() { obj job "$1" scaling-manager-preflight | jq -r --arg e "$TOKEN_EMPTIED_ENV" '[.spec.template.spec.containers[].env[]? | select(.name == $e) | .value] | join(",")'; }
 
 reset
 rm -rf "$W/dryh"
@@ -709,13 +712,72 @@ if [ "$rc" = 2 ] && grep -q 'prometheusURL in the live scaling-manager-settings 
 else
     bad "re-run without --allow-http: exit $rc, $(writes) writes, generation $(gen team-a): $(tail -1 "$W/out")"
 fi
+# A live controller crash-looping on the token path the release files set:
+# --allow-http repairs it. The preflight Job is told the Deployment it is about
+# to apply has no token path, so the live one is not held against it.
+jq --arg t "$SA_TOKEN" '(.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = $t' \
+    "$STUB_DIR/obj/deployment/team-a/$DEP.json" > "$W/d.json" && mv "$W/d.json" "$STUB_DIR/obj/deployment/team-a/$DEP.json"
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(tokv team-a)" = '[""]' ] && [ "$(jobenv team-a)" = true ]; then
+    ok "--allow-http over a live controller with the token path: the preflight Job says the token path is emptied, and the emptied Deployment is applied"
+else
+    bad "repair: exit $rc, token $(tokv team-a), preflight Job $TOKEN_EMPTIED_ENV '$(jobenv team-a)': $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+saved_http="$W/after-http-install"
+rm -rf "$saved_http"; cp -R "$STUB_DIR" "$saved_http"
+# set_setting <namespace> <key> <value>: what the printed kubectl patch does.
+set_setting() {
+    jq --arg k "$2" --arg v "$3" '.data[$k] = $v' "$STUB_DIR/obj/configmap/$1/scaling-manager-settings.json" > "$W/s.json" \
+        && mv "$W/s.json" "$STUB_DIR/obj/configmap/$1/scaling-manager-settings.json"
+}
+set_setting team-a prometheusAllowHTTP ""
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"true\"}}'" "$W/out" && [ "$(writes)" = 0 ]; then
+    ok "--allow-http over live http settings without prometheusAllowHTTP: refused before any write, with the patch"
+else
+    bad "--allow-http, the setting missing: exit $rc, $(writes) writes: $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+# From http to https: refused with both patches; after them the same flags install.
+rm -rf "$STUB_DIR"; cp -R "$saved_http" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] && grep -q 'changes its scheme' "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusURL\":\"https://p:9090\"}}'" "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"false\"}}'" "$W/out"; then
+    set_setting team-a prometheusURL https://p:9090
+    set_setting team-a prometheusAllowHTTP false
+    smt install -n team-a --prometheus-url https://p:9090
+    rc=$?
+    if [ "$rc" = 0 ] && [ "$(tokv team-a)" = "[\"$SA_TOKEN\"]" ] && [ "$(jobenv team-a)" = "" ]; then
+        ok "http to https: refused with the two patches, and after them the same flags install the controller with its token"
+    else
+        bad "http to https after the patches: exit $rc, token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+    fi
+else
+    bad "http to https: exit $rc, $(writes) writes: $(tail -3 "$W/out" | tr '\n' ' ')"
+fi
+# From https to http: the same.
 rm -rf "$STUB_DIR"; cp -R "$installed" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
 smt install -n team-a --prometheus-url http://p:9090 --allow-http
 rc=$?
-if [ "$rc" = 2 ] && grep -q 'prometheusURL in the live scaling-manager-settings (https://p:9090)' "$W/out" && [ "$(writes)" = 0 ]; then
-    ok "--allow-http over live https settings is refused before any write: the settings are never written"
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] && grep -q 'changes its scheme' "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusURL\":\"http://p:9090\"}}'" "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"true\"}}'" "$W/out"; then
+    set_setting team-a prometheusURL http://p:9090
+    set_setting team-a prometheusAllowHTTP true
+    smt install -n team-a --prometheus-url http://p:9090 --allow-http
+    rc=$?
+    if [ "$rc" = 0 ] && [ "$(tokv team-a)" = '[""]' ]; then
+        ok "https to http: refused with the two patches, before any write; after them the same flags install the controller without a token path"
+    else
+        bad "https to http after the patches: exit $rc, token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+    fi
 else
-    bad "--allow-http over https settings: exit $rc, $(writes) writes: $(tail -1 "$W/out")"
+    bad "https to http: exit $rc, $(writes) writes: $(tail -3 "$W/out" | tr '\n' ' ')"
 fi
 
 reset m1
@@ -785,7 +847,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=89
+EXPECT_CASES=92
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

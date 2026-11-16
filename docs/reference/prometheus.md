@@ -315,13 +315,17 @@ the service CA.
   `PROMETHEUS_CA_CERT_PATH`/client cert setting, or bearer token auth is set
   alongside it. Everything travels in cleartext, so use it only on a trusted
   network (dev/test or a secured in-cluster path).
-- The release files set `PROMETHEUS_TOKEN_PATH` on the controller's Deployment,
-  and the environment beats the ConfigMaps. For a plain HTTP Prometheus,
+- The release files set `PROMETHEUS_TOKEN_PATH` on the controller's Deployment.
+  The token path has no setting, and an environment variable beats
+  `config.yaml` (a setting beats both). An empty variable counts as unset, so
+  `config.yaml` must not set a token either. For a plain HTTP Prometheus,
   `smt install --prometheus-url http://... --allow-http` sets the
   `prometheusAllowHTTP` setting and applies the Deployment with that variable
-  empty, on every run. By hand: [Install in one
+  empty, on every run; it also repairs a controller already crash-looping on
+  it. By hand: [Install in one
   namespace](../guides/install-in-namespace/README.md#2-settings-and-the-preflight-check).
-  The preflight FAILs a plain HTTP URL while a token is still configured.
+  The preflight FAILs a plain HTTP URL while a token or a TLS setting is still
+  configured, and WARNs before the controller exists.
 
 ### EPP metrics token
 

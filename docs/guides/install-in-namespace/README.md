@@ -77,16 +77,16 @@ smt install -n $NAMESPACE --prometheus-url https://<prometheus>:9090
 ```
 <!-- guide:tools.install end -->
 
+Prometheus serves plain HTTP only? Give its `http://` URL and add
+`--allow-http`, on every run: the controller then reads it unencrypted and
+sends it no token. Without the flag, `install` refuses an `http://` URL.
+
 <!-- guide:tools.adminfinish start -->
 ```bash
 # Cluster admin, after the install. KEDA's client certificate, then the preflight's cluster reads are removed.
 smt admin-finish -n $NAMESPACE
 ```
 <!-- guide:tools.adminfinish end -->
-
-Prometheus serves plain HTTP only? Give its `http://` URL and add
-`--allow-http`, on every run: the controller then reads it unencrypted and
-sends it no token. Without the flag, `install` refuses an `http://` URL.
 
 `install` runs the preflight, stops on a `FAIL` and prints its fix, and ends
 with the `admin-finish` line. It creates the settings once: a later run never
