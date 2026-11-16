@@ -54,6 +54,12 @@ Read the review first; the implementation design says what was built.
   container. Measured 19.9 s to 10.0 s of weight load on a 32B model; estimated
   60-90 s on a GLM-class node with one disk and ~0 with striped NVMe. Reads
   every file, because vLLM does. Off by default.
+- **[Keeping replicas off nodes whose weights are not there yet](weights-node-gate.md)**
+  — built, not yet run on a cluster. The downloader verifies its files, a
+  labeller run by the cluster admin sets and removes `llm-d.ai/<model>-cache=ready`
+  from them, and the workload patch adds a preferred node affinity and an init
+  container that waits for the copy. Why preferred and not required for
+  scaling, and the failure modes.
 
 ## Scaling and actuation
 
