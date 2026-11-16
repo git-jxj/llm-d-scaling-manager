@@ -45,7 +45,7 @@ done
 # Dockerfile.tools lays them out.
 IMGDIR="$W/image"
 mkdir -p "$IMGDIR/release"
-cp "$ROOT/deploy/scaling-manager-tools.sh" "$IMGDIR/"
+cp "$ROOT/deploy/scaling-manager-tools.sh" "$ROOT/deploy/weights.sh" "$IMGDIR/"
 cp -R "$ROOT/deploy/lib" "$IMGDIR/lib"
 printf '%s\n' "$V" > "$IMGDIR/VERSION"
 for f in "$W"/dist/*; do
@@ -54,7 +54,7 @@ done
 # A development image: no baked files.
 DEVDIR="$W/devimage"
 mkdir -p "$DEVDIR"
-cp "$ROOT/deploy/scaling-manager-tools.sh" "$DEVDIR/"
+cp "$ROOT/deploy/scaling-manager-tools.sh" "$ROOT/deploy/weights.sh" "$DEVDIR/"
 cp -R "$ROOT/deploy/lib" "$DEVDIR/lib"
 printf '%s\n' "$V" > "$DEVDIR/VERSION"
 
@@ -625,6 +625,81 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+echo "the weights labeller"
+LNS=scaling-manager-weights-labeller
+largs() { jq -c '.spec.template.spec.containers[0].args' "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json" 2>/dev/null; }
+limg() { jq -r '.spec.template.spec.containers[0].image' "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json" 2>/dev/null; }
+# creset: reset, with the APIService and the controller status a cluster install reads
+creset() {
+    reset "$@"
+    echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+    mkdir -p "$STUB_DIR/obj/configmap/scaling-manager-system"
+    cp "$W/status.json" "$STUB_DIR/obj/configmap/scaling-manager-system/scaling-manager-controller-status.json"
+}
+creset m1 m2 team-b
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+if [ "$(largs)" = '["weights","label","-n","m1","--watch","30","--label-prefix","llm-d.ai"]' ] \
+    && [ "$(limg)" = "ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V" ] \
+    && has_obj rolebinding m1 scaling-manager-weights-labeller-reader && has_obj clusterrole _ scaling-manager-weights-labeller \
+    && jq -e '.rules == [{apiGroups: [""], resources: ["nodes"], verbs: ["get", "list", "patch"]}]' "$STUB_DIR/obj/clusterrole/_/scaling-manager-weights-labeller.json" >/dev/null; then
+    ok "install --scope cluster applies the weights labeller, on this release's tools image, watching its --model-namespace"
+else
+    bad "cluster install labeller: args $(largs), image $(limg): $(grep -i labeller "$W/out" | head -2 | tr '\n' ' ')"
+fi
+smt admin-setup -n team-b --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && [ "$(largs)" = '["weights","label","-n","m1,team-b","--watch","30","--label-prefix","llm-d.ai"]' ] \
+    && has_obj rolebinding team-b scaling-manager-weights-labeller-reader && grep -q 'Added team-b to the weights labeller' "$W/out"; then
+    ok "admin-setup adds its namespace to the running labeller, with namespaced writes (a RoleBinding, the Deployment)"
+else
+    bad "admin-setup add: exit $rc, args $(largs): $(grep -A2 'Weights labeller' "$W/out" | tr '\n' ' ')"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m2
+if [ "$(largs)" = '["weights","label","-n","team-b,m1,m2","--watch","30","--label-prefix","llm-d.ai"]' ] && has_obj rolebinding m2 scaling-manager-weights-labeller-reader; then
+    ok "a re-run of install --scope cluster keeps every namespace the labeller watches and adds its own"
+else
+    bad "cluster re-run merge: args $(largs)"
+fi
+creset m1 team-c
+smt admin-setup -n team-c --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'No weights labeller runs in' "$W/out" && grep -q 'smt install --scope cluster' "$W/out" && ! has_obj deployment "$LNS" weights-labeller; then
+    ok "admin-setup with no labeller says how to add one, creates none, and still succeeds"
+else
+    bad "admin-setup, no labeller: exit $rc: $(grep -A3 'Weights labeller' "$W/out" | tr '\n' ' ')"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+printf 'create rolebindings team-c\n' > "$STUB_DIR/can-i-no"
+smt admin-setup -n team-c --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'smt weights labeller --add -n team-c' "$W/out" && [ "$(largs)" = '["weights","label","-n","m1","--watch","30","--label-prefix","llm-d.ai"]' ] \
+    && ! has_obj rolebinding team-c scaling-manager-weights-labeller-reader; then
+    ok "admin-setup without the rights to add its namespace prints the command, changes nothing, and still succeeds"
+else
+    bad "admin-setup, no rights: exit $rc, args $(largs): $(grep -A3 'Weights labeller' "$W/out" | tr '\n' ' ')"
+fi
+rm -f "$STUB_DIR/can-i-no"
+creset m1
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --no-weights-labeller
+if ! has_obj deployment "$LNS" weights-labeller && grep -q 'Weights labeller: not applied (--no-weights-labeller)' "$W/out"; then
+    ok "--no-weights-labeller applies no labeller, and says so"
+else
+    bad "--no-weights-labeller: $(grep -i labeller "$W/out" | head -2 | tr '\n' ' ')"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --weights-labeller-image mirror.example.com/tools:v1
+[ "$(limg)" = mirror.example.com/tools:v1 ] && ok "--weights-labeller-image sets its image" || bad "--weights-labeller-image: $(limg)"
+rm -rf "$W/drywl"
+smt install --scope cluster --keda-namespace kk --prometheus-url https://prom.example:9090 --model-namespace m1 --dry-run --out "$W/drywl"
+if [ "$(yq ea -o json -I 0 '[select(.kind == "Deployment") | .spec.template.spec.containers[0].args[3]]' "$W/drywl/60-weights-labeller.yaml" 2>/dev/null)" = '["m1"]' ]; then
+    ok "install --scope cluster --dry-run renders the labeller as 60-weights-labeller.yaml"
+else
+    bad "dry-run labeller: $(ls "$W/drywl" | tr '\n' ' ')"
+fi
+smt install -n team-a --prometheus-url https://p:9090 --no-weights-labeller --dry-run --out "$W/x"
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'are for --scope cluster' "$W/out"; then ok "a namespaced install refuses the labeller flags (usage)"; else bad "namespaced labeller flag: exit $rc: $(tail -1 "$W/out")"; fi
+
+# ---------------------------------------------------------------------------
 echo "release-files and llmsm_make_cmd"
 rm -rf "$W/rf"
 smt release-files --out "$W/rf"
@@ -677,7 +752,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=78
+EXPECT_CASES=87
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

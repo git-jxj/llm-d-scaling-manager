@@ -503,6 +503,15 @@ DaemonSets and pods in the namespaces it watches. It must not run in a model
 namespace: anyone who can create pods there could use its ServiceAccount to
 patch nodes. The namespace owner needs none of this.
 
+**Where it is installed.** `smt install --scope cluster` applies and updates
+it, watching every `--model-namespace` and every namespace it already watches
+(`--no-weights-labeller` to leave it out, `--weights-labeller-image` for a
+mirror). `smt admin-setup -n <ns>` adds `<ns>` to a running labeller with
+namespaced rights only (a RoleBinding in `<ns>`, the Deployment in the
+labeller's namespace), or prints the command when there is no labeller or it
+lacks the rights; `smt weights labeller --add -n <ns>` does the same on its
+own. Without the cluster-wide install, run `smt weights labeller` as above.
+
 **What it does not cover.**
 
 - A replica already running when its node's copy breaks keeps running; the

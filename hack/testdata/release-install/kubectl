@@ -10,7 +10,8 @@
 # preflight.log (the log of the Job), preflight.end (Complete, Failed, or
 # none: the Job never ends), job-vanishes (the preflight Job is gone when read),
 # controller.log (the controller log the stale-connection check reads),
-# rollout-timeout (rollout status times out), forbid-namespaces (reading a
+# rollout-timeout (rollout status times out), can-i-no ("<verb> <resource>
+# <namespace>" lines auth can-i answers no), forbid-namespaces (reading a
 # Namespace is Forbidden, as for a namespace owner), apply-fails (a
 # server-side apply is refused by the API server).
 D="${STUB_DIR:?}"
@@ -106,7 +107,10 @@ case "$verb" in
         [ -f "$D/openshift" ] && echo security.openshift.io/v1
         exit 0 ;;
     version) echo '{"clientVersion":{"gitVersion":"v0.0.0-stub"}}'; exit 0 ;;
-    auth) echo yes; exit 0 ;;
+    auth)
+        # can-i-no: "<verb> <resource> <namespace>" lines the caller may not do
+        if [ -f "$D/can-i-no" ] && grep -qxF "${pos[1]:-} ${pos[2]:-} ${ns}" "$D/can-i-no"; then echo no; exit 1; fi
+        echo yes; exit 0 ;;
     label|annotate|patch) echo "${pos[0]}/${pos[1]:-} labeled"; exit 0 ;;
     get)
         if [ -n "$raw" ]; then
@@ -144,7 +148,10 @@ case "$verb" in
             exit 0
         fi
         p="$(path "$r" "$n" "$ns")"
-        [ -f "$p" ] || not_found "$r" "$n"
+        if [ ! -f "$p" ]; then
+            case " $ALL " in *" --ignore-not-found "*) exit 0 ;; esac
+            not_found "$r" "$n"
+        fi
         case "$out" in
             name) echo "$r/$n" ;;
             json)

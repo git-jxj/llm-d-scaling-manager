@@ -20,6 +20,15 @@
 #                                                                             label each node that holds a verified copy, unlabel the rest
 #   weights.sh labeller (-n NS[,NS...] | -A) --image TOOLS_IMAGE [--labeller-namespace LNS] [--watch SECONDS] [--dry-run | --delete]
 #                                                                             run `label --watch` in the cluster, in a namespace of its own
+#   weights.sh labeller --add -n NS [--labeller-namespace LNS] [--dry-run]
+#                                                                             add NS to a running labeller's watch list, with
+#                                                                             rights in NS and LNS only; else print the command
+#
+# Exits of labeller --add: 0 NS is watched (or now is), 3 the caller lacks
+# the rights in NS or LNS (the command that does it is printed), 4 there is
+# no labeller (how to add one is printed). With --merge, labeller apply keeps
+# every namespace the running labeller already watches (smt install --scope
+# cluster uses it, so a namespace admin-setup added is not dropped).
 #
 #   -n, --namespace NS          the namespace the claim and downloader live in
 #                               (label, labeller: the namespaces whose
@@ -86,6 +95,8 @@
 #                               borrow its node rights
 #   --delete                    labeller: remove it (the labels stay; run
 #                               label --clear for them)
+#   --add                       labeller: add -n NS to the running labeller
+#   --merge                     labeller: also watch what it watches now
 #
 # The node gate. A replica scheduled onto a node whose copy is missing or
 # still being written reads a partial model, so the downloader writes its
@@ -182,6 +193,8 @@ ALL_NAMESPACES=false
 WATCH=""
 CLEAR=false
 DELETE=false
+ADD=false
+MERGE=false
 LABEL_PREFIX="llm-d.ai"
 LABELLER_NS="scaling-manager-weights-labeller"
 LABELLER_NAME="weights-labeller"
@@ -998,12 +1011,35 @@ cmd_label() {
 # from the tools image. Every object carries scaling-manager.llmd.ai/part:
 # admin, as the admin objects of the install do: the namespace owner never
 # applies or needs any of it.
-render_labeller() {
-    local labels scope_args ns
-    labels='    app.kubernetes.io/name: weights-labeller
+LABELLER_LABELS='    app.kubernetes.io/name: weights-labeller
     app.kubernetes.io/component: weights-labeller
     app.kubernetes.io/managed-by: scaling-manager-weights
     scaling-manager.llmd.ai/part: admin'
+
+# render_labeller_rolebinding prints the RoleBinding that lets the labeller
+# read the downloaders in namespace $1.
+render_labeller_rolebinding() {
+    cat <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: scaling-manager-weights-labeller-reader
+  namespace: $1
+  labels:
+${LABELLER_LABELS}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: scaling-manager-weights-labeller-reader
+subjects:
+  - kind: ServiceAccount
+    name: ${LABELLER_NAME}
+    namespace: ${LABELLER_NS}
+EOF
+}
+
+render_labeller() {
+    local labels="$LABELLER_LABELS" scope_args ns
     if [ "$ALL_NAMESPACES" = true ]; then
         scope_args='"-A"'
     else
@@ -1090,24 +1126,8 @@ subjects:
 EOF
     else
         for ns in ${NAMESPACE//,/ }; do
-            cat <<EOF
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: scaling-manager-weights-labeller-reader
-  namespace: ${ns}
-  labels:
-${labels}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: scaling-manager-weights-labeller-reader
-subjects:
-  - kind: ServiceAccount
-    name: ${LABELLER_NAME}
-    namespace: ${LABELLER_NS}
-EOF
+            echo "---"
+            render_labeller_rolebinding "$ns"
         done
     fi
     cat <<EOF
@@ -1165,7 +1185,127 @@ EOF
 }
 
 # cmd_labeller applies, prints or deletes the in-cluster labeller.
+# labeller_live_scope prints what the running labeller watches: "-A", a
+# comma-separated namespace list, or nothing when there is none. Returns 1
+# when it cannot be read (not absent: Forbidden or unreachable), 2 when its
+# Deployment does not carry the arguments this script writes.
+labeller_live_scope() {
+    local err out
+    err="$(mktemp)"
+    if ! out="$(kubectl get deployment "$LABELLER_NAME" -n "$LABELLER_NS" --ignore-not-found -o json 2>"$err")"; then
+        cat "$err" >&2
+        rm -f "$err"
+        return 1
+    fi
+    rm -f "$err"
+    [ -n "$out" ] || return 0
+    printf '%s' "$out" | jq -er '
+        (.spec.template.spec.containers[0].args // []) as $a
+        | if ($a | index("-A")) != null then "-A"
+          elif ($a | index("-n")) != null then $a[($a | index("-n")) + 1]
+          else error("no scope") end' 2>/dev/null || return 2
+}
+
+# labeller_add adds NAMESPACE to the running labeller: a RoleBinding in
+# NAMESPACE, and the Deployment re-applied with the namespace in its -n
+# list. Both are namespaced writes, so a namespace admin of NAMESPACE and of
+# the labeller namespace can do it; no cluster-wide right is used.
+labeller_add() {
+    local ns="$NAMESPACE" scope rc=0 list image
+    case "$ns" in *,*) log_error "labeller --add takes one namespace" ;; esac
+    check_scope labeller
+
+    scope="$(labeller_live_scope)" || rc=$?
+
+    case "$rc" in
+        1) echo "Cannot read the weights labeller in ${LABELLER_NS} (kubectl says why, above)."
+           echo "  To watch ${ns}, someone who can patch deployments in ${LABELLER_NS} and create rolebindings in ${ns} runs:"
+           echo "    smt weights labeller --add -n ${ns}"
+           return 3 ;;
+        2) echo "The Deployment ${LABELLER_NAME} in ${LABELLER_NS} does not carry the arguments weights.sh writes; it was not changed."
+           return 3 ;;
+    esac
+    if [ -z "$scope" ]; then
+        echo "No weights labeller runs in ${LABELLER_NS}: nothing labels the nodes whose weights copy verifies."
+        echo "  The cluster admin adds one with the cluster-wide install (smt install --scope cluster ... --model-namespace ${ns}),"
+        echo "  or on its own: smt weights labeller -n ${ns} --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<release>"
+        return 4
+    fi
+    if [ "$scope" = "-A" ]; then
+        echo "The weights labeller in ${LABELLER_NS} watches every namespace, ${ns} included."
+        return 0
+    fi
+    case ",${scope}," in
+        *",${ns},"*) echo "The weights labeller in ${LABELLER_NS} already watches ${ns}."; return 0 ;;
+    esac
+    list="${scope},${ns}"
+    if ! kubectl auth can-i create rolebindings -n "$ns" -q >/dev/null 2>&1 \
+       || ! kubectl auth can-i patch deployments -n "$LABELLER_NS" -q >/dev/null 2>&1; then
+        echo "The weights labeller in ${LABELLER_NS} does not watch ${ns}, and adding it needs create rolebindings in ${ns} and patch deployments in ${LABELLER_NS}."
+        echo "  Someone who has both runs:"
+        echo "    smt weights labeller --add -n ${ns}"
+        return 3
+    fi
+    local live
+    live="$(kubectl get deployment "$LABELLER_NAME" -n "$LABELLER_NS" -o json 2>/dev/null)" || {
+        echo "Could not read the weights labeller in ${LABELLER_NS} again; ${ns} was not added. Run: smt weights labeller --add -n ${ns}"
+        return 3
+    }
+    image="$(printf '%s' "$live" | jq -r '.spec.template.spec.containers[0].image')"
+    local doc
+    doc="$(mktemp)"
+    {
+        render_labeller_rolebinding "$ns"
+        echo "---"
+        # The live Deployment with the new list: everything else it carries
+        # (its image, interval, prefix) stays as it is.
+        printf '%s' "$live" | jq --arg list "$list" '
+            del(.status, .metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp,
+                .metadata.generation, .metadata.managedFields, .metadata.annotations["deployment.kubernetes.io/revision"])
+            | .spec.template.spec.containers[0].args |= (index("-n") as $i | .[:$i + 1] + [$list] + .[$i + 2:])' | yq -P
+    } > "$doc"
+    if [ "$DRY_RUN" = true ]; then
+        cat "$doc"
+        rm -f "$doc"
+        return 0
+    fi
+    if ! kubectl apply -f "$doc" >/dev/null; then
+        rm -f "$doc"
+        echo "The API server refused the change; ${ns} was not added. Run: smt weights labeller --add -n ${ns}"
+        return 3
+    fi
+    rm -f "$doc"
+    echo "Added ${ns} to the weights labeller in ${LABELLER_NS} (it now watches ${list}; image ${image})."
+}
+
 cmd_labeller() {
+    if [ "$ADD" = true ]; then
+        [ "$DELETE" = false ] && [ -z "$IMAGE" ] && [ "$MERGE" = false ] \
+            || log_error "labeller --add takes -n, --labeller-namespace and --dry-run only"
+        local rc=0
+        labeller_add || rc=$?
+        exit "$rc"
+    fi
+    if [ "$MERGE" = true ]; then
+        [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --merge needs -n NS[,NS...] or -A"
+        if [ "$DRY_RUN" = false ] && [ "$ALL_NAMESPACES" = false ]; then
+            local live rc=0 n
+            live="$(labeller_live_scope)" || rc=$?
+            case "$rc" in
+                0) ;;
+                1) log_error "labeller --merge: cannot read the running labeller in ${LABELLER_NS} (kubectl says why, above); nothing was applied" ;;
+                *) log_error "labeller --merge: the Deployment in ${LABELLER_NS} does not carry the arguments weights.sh writes; nothing was applied" ;;
+            esac
+            if [ "$live" = "-A" ]; then
+                ALL_NAMESPACES=true
+                NAMESPACE=""
+            else
+                for n in ${live//,/ }; do
+                    case ",${NAMESPACE}," in *",${n},"*) ;; *) NAMESPACE="${n},${NAMESPACE}" ;; esac
+                done
+            fi
+        fi
+    fi
     if [ "$DELETE" = true ]; then
         [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --delete needs the scope it was applied with (-n NS[,NS...] or -A), to find its RoleBindings"
         [ "$ALL_NAMESPACES" = false ] || [ -z "$NAMESPACE" ] || log_error "labeller: -n and -A together; one or the other"
@@ -1230,6 +1370,8 @@ while [ $# -gt 0 ]; do
         --labeller-namespace) [ "$CMD" = labeller ] || log_error "--labeller-namespace is a labeller option"; LABELLER_NS="$2"; shift 2 ;;
         --clear) [ "$CMD" = label ] || log_error "--clear is a label option"; CLEAR=true; shift ;;
         --delete) [ "$CMD" = labeller ] || log_error "--delete is a labeller option"; DELETE=true; shift ;;
+        --add) [ "$CMD" = labeller ] || log_error "--add is a labeller option"; ADD=true; shift ;;
+        --merge) [ "$CMD" = labeller ] || log_error "--merge is a labeller option"; MERGE=true; shift ;;
         --dry-run) [ "$CMD" != status ] || log_error "--dry-run applies to apply, delete, label and labeller, not status"; DRY_RUN=true; shift ;;
         --all) [ "$CMD" = delete ] || log_error "--all is a delete option"; ALL=true; shift ;;
         -h|--help) usage ;;

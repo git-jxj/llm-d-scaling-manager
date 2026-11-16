@@ -6,17 +6,17 @@
 # repository: only docker or podman, and a kubeconfig.
 #
 #   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS]
-#                                                                cluster admin, once per namespace: the admin objects and the stamp
+#                                                                cluster admin, once per namespace: the admin objects, the stamp, and its namespace on the weights labeller
 #   scaling-manager-tools install -n NS --prometheus-url URL [--quota "GPU=N"] [--prometheus-ca FILE] [--set KEY=VALUE]
 #                                                                namespace owner: settings, preflight, the controller
-#   scaling-manager-tools install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS ...
-#                                                                cluster admin: the cluster-wide install, all steps
+#   scaling-manager-tools install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS ... [--weights-labeller-image IMG | --no-weights-labeller]
+#                                                                cluster admin: the cluster-wide install, all steps, and the weights labeller
 #   scaling-manager-tools admin-finish -n NS [--restart-keda]   cluster admin, after the install: KEDA's client certificate, then drop the preflight's cluster reads
 #   scaling-manager-tools release-files --out DIR               write the release files this image carries
 #                                                                (install and admin-setup: --dry-run --out DIR renders instead; --files DIR installs from other files;
 #                                                                 docs/reference/tools-install.md has every flag and exit code)
 #   scaling-manager-tools prepull      apply|status|delete ...   hold an engine image on every GPU node (deploy/prepull.sh)
-#   scaling-manager-tools weights      apply|status|delete|label|labeller ...
+#   scaling-manager-tools weights      apply|status|delete|label|labeller [--add|--merge] ...
 #                                                                keep a model's weights on every GPU node's disk, and label the nodes whose copy verifies (deploy/weights.sh)
 #   scaling-manager-tools engine-cache apply|status|delete|publish|keys|verify ...
 #                                                                keep the engines' compile caches on every GPU node's disk (deploy/enginecache.sh)

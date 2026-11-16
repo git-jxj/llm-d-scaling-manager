@@ -158,6 +158,21 @@ run a pod as its ServiceAccount and patch nodes. `labeller` refuses a
 `--labeller-namespace` that is also in its scope. The namespace owner needs no
 new rights.
 
+Where it is installed:
+
+- `smt install --scope cluster` applies and updates it. It watches every
+  `--model-namespace`, plus every namespace the running labeller already
+  watches, so a re-run never drops one. `--no-weights-labeller` leaves it out;
+  `--weights-labeller-image` names the image (default: the release's tools
+  image).
+- `smt admin-setup -n NS` (one namespace) checks that a labeller runs, and adds
+  NS to its watch list: a RoleBinding in NS and the labeller's Deployment
+  re-applied with NS in its list. Both are namespaced writes, in NS and the
+  labeller's namespace, so no cluster-wide right is used. With no labeller, or
+  without those rights, it prints the command and still succeeds.
+- `weights.sh labeller` stays the standalone step, for a cluster without the
+  cluster-wide install.
+
 ## 3. Failure modes
 
 | What happens | What the gate does |
@@ -179,8 +194,6 @@ new rights.
   and the leader and workers may read different claims.
 - The gate is emitted, never applied by `workload-patch --apply`: placement is
   the owner's decision.
-- `smt admin-setup` does not install the labeller. It is per cluster, and
-  admin-setup is per model namespace.
 - No admission policy narrows the labeller's node `patch` to its own labels. A
   ValidatingAdmissionPolicy could; not written until it can be tested on a
   cluster.

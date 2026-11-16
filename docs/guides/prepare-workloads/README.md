@@ -177,9 +177,12 @@ Every 30 s it sets `llm-d.ai/<model name>-cache=ready` on each node whose copy
 verifies (every file present at its recorded size), and removes it from a node
 whose copy breaks. A node prepared by other node-preparation tooling that
 already sets this label counts too; the labeller never removes a label it did
-not set. It runs in a namespace of its own, because it can patch nodes. To
-watch more model namespaces, run it again with all of them:
-`-n <ns1>,<ns2>`. The model's label is printed by `weights apply`.
+not set. It runs in a namespace of its own, because it can patch nodes. With
+the cluster-wide install it is already there (`smt install --scope cluster`
+applies it), and `smt admin-setup -n <ns>` adds a namespace to it. Run the
+command above only without either; to watch more namespaces then, run it
+again with all of them (`-n <ns1>,<ns2>`). The model's label is printed by
+`weights apply`.
 
 The patch in the next step uses the label: replicas prefer labelled nodes, and
 each replica waits in a small init container until its node's copy is
