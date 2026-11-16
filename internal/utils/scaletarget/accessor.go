@@ -100,12 +100,18 @@ func PodTolerations(acc ScaleTargetAccessor) []corev1.Toleration {
 	return nil
 }
 
-// IsLeaderWorkerSet reports whether acc is a LeaderWorkerSet. Group size is not
-// the test: an LWS of size 1 is still an LWS, whose pods belong to a
-// StatefulSet and are named by group index, not to a ReplicaSet.
+// IsLeaderWorkerSet reports whether acc's replicas are LeaderWorkerSet groups:
+// a LeaderWorkerSet, or a DisaggregatedSet role, whose groups belong to child
+// LeaderWorkerSets. Group size is not the test: an LWS of size 1 is still an
+// LWS, whose pods belong to a StatefulSet and are named by group index, not to
+// a ReplicaSet. Select such a target's pods with GroupPodLabels or
+// OwnsGroupPod, not by its name.
 func IsLeaderWorkerSet(acc ScaleTargetAccessor) bool {
-	_, ok := acc.(*lwsAccessor)
-	return ok
+	switch acc.(type) {
+	case *lwsAccessor, *dsetRoleAccessor:
+		return true
+	}
+	return false
 }
 
 // RollingOut reports whether acc's workload says it is mid-rollout: a
@@ -134,6 +140,10 @@ func RollingOut(acc ScaleTargetAccessor) bool {
 		return d.Status.ObservedGeneration < d.Generation || d.Status.UpdatedReplicas < d.Status.Replicas
 	case *lwsAccessor:
 		return meta.IsStatusConditionTrue(a.lws.Status.Conditions, string(lwsv1.LeaderWorkerSetUpdateInProgress))
+	case *dsetRoleAccessor:
+		// The DisaggregatedSet's role status, read when the target was
+		// fetched (roleStatusOf). A rollout of the set rolls every role.
+		return a.rollingOut
 	}
 	return false
 }

@@ -55,6 +55,23 @@ func FetchScaleTarget(ctx context.Context, c client.Client, vaName, kind, name, 
 			return nil, err
 		}
 		return NewLWSAccessor(&lws), nil
+	case constants.DisaggregatedSetRoleScalerKind:
+		acc, err := fetchDisaggregatedSetRole(ctx, c, name, namespace)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("DisaggregatedSet role scaler not found for Variant, skipping",
+					"namespace", namespace,
+					"roleScalerName", name,
+					"vaName", vaName)
+			} else {
+				ctrl.LoggerFrom(ctx).Error(err, "Failed to get DisaggregatedSet role",
+					"namespace", namespace,
+					"roleScalerName", name,
+					"vaName", vaName)
+			}
+			return nil, err
+		}
+		return acc, nil
 	}
 	return nil, fmt.Errorf("invalid scale target kind %q", kind)
 }

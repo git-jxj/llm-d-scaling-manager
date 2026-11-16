@@ -119,6 +119,7 @@ in both).
 | get, list | localqueues (kueue.x-k8s.io) | managed namespace | the Kueue quota source |
 | get, list, watch | workloads (kueue.x-k8s.io) | managed namespace | cohort borrowing; granted cluster-wide below only when a policy counts borrowing |
 | get, list, watch | leaderworkersets; get leaderworkersets/scale | managed namespace | LWS scale targets |
+| get | disaggregatedsets, disaggregatedsetrolescalers, disaggregatedsetrolescalers/scale | managed namespace | DisaggregatedSet role scale targets |
 | get, list, watch | servicemonitors | managed namespace | preflight of what is scraped |
 | get, list, watch, create, update, patch, delete | leases | own namespace (`leader-election-role`) | leader election |
 | create, patch | events | own namespace (`leader-election-role`) | |
