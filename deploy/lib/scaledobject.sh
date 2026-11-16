@@ -1801,11 +1801,18 @@ so_workload_gaps() {
         # v0.11.2. An engine that sets it and not FLASHINFER_WORKSPACE_BASE is
         # "dir:" and its value (empty when it comes from a ConfigMap or a
         # Secret): its kernels are built again on every start whatever the
-        # other caches do. Anything else is "": no opinion, not a clean bill.
+        # other caches do. A command whose guard loop still names
+        # FLASHINFER_WORKSPACE_DIR and not FLASHINFER_WORKSPACE_BASE is "loop":
+        # the guard written before v0.11.2, which leaves the new variable
+        # unguarded once it is set. Anything else is "": no opinion, not a
+        # clean bill.
         | ( [ $e.env[]? | select(.name == "FLASHINFER_WORKSPACE_BASE") ] | last ) as $fibase
         | ( [ $e.env[]? | select(.name == "FLASHINFER_WORKSPACE_DIR") ] | last ) as $fidir
-        | ( if ($e | not) or $issim or ($fibase != null) or ($fidir == null) then ""
-            else "dir:" + ($fidir.value // "") end ) as $fi
+        | ( if ($e | not) or $issim then ""
+            elif ($fibase == null) and ($fidir != null) then "dir:" + ($fidir.value // "")
+            elif ($argv | test("FLASHINFER_WORKSPACE_DIR"))
+                 and (($argv | test("FLASHINFER_WORKSPACE_BASE")) | not) then "loop"
+            else "" end ) as $fi
         | [ ($e.name // ""),
             (if ($e | not) then 0 elif ($e.lifecycle.preStop != null) then 1 else 0 end),
             ($t.spec.terminationGracePeriodSeconds // 30),
@@ -2158,6 +2165,9 @@ so_workload_patch_plan() {
                 fibase=""
                 log_warning "  $who BUILDS ITS FLASHINFER KERNELS AGAIN on every start: it sets FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read. Set FLASHINFER_WORKSPACE_BASE to the directory it names, from the same source, and drop FLASHINFER_WORKSPACE_DIR; see docs/reference/workload-preparation.md#flashinfer-kernels."
             fi ;;
+        loop)
+            # Said, never patched: the command belongs to the chart.
+            log_warning "  $who: its command guards FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read, and not FLASHINFER_WORKSPACE_BASE. Replace the guard with the one in the emitted file, or rename the variable in its loop: unguarded, an engine that cannot write the FlashInfer tree fails instead of falling back. See docs/reference/workload-preparation.md#flashinfer-kernels." ;;
     esac
     # Where the bytecode goes: with the vLLM half, under its new mount; else
     # under the durable mount the engine already has (no new volume); else

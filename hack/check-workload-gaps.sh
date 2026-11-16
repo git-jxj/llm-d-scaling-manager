@@ -1860,6 +1860,33 @@ assert_not_contains "$(cat "$dir/log")" "FLASHINFER"
 assert_eq "$(so_enginecache_note ns deployments w "$POD_DEPLOY")" "" "plan note"
 [ "$FAILED" -eq "$before" ] && ok
 
+CASE="flashinfer: a guard loop that still names FLASHINFER_WORKSPACE_DIR is told to change, once _BASE is set too"
+reset; f_engine_cache_old_flashinfer
+before=$FAILED
+# What a workload patched for v0.11.1 carries after the owner sets _BASE:
+# the env is right, the command still guards the old name.
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_BASE","value":"/engine-cache/flashinfer"}]
+    | .spec.template.spec.containers[0].command = ["/bin/sh","-c"]
+    | .spec.template.spec.containers[0].args = ["for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do :; done\nexec vllm serve Qwen/Qwen3-0.6B"]')"
+assert_field 1 "vllm"
+assert_field 10 "loop"
+doc_rc=0
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>"$WORK/fi.err")" || doc_rc=$?
+assert_eq "$doc_rc" "0" "return code"
+assert_eq "$doc" "" "document (the command is the chart's; nothing to write)"
+assert_contains "$(cat "$WORK/fi.err")" "its command guards FLASHINFER_WORKSPACE_DIR"
+# Re-run after the loop is renamed: quiet.
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].args |= map(gsub("FLASHINFER_WORKSPACE_DIR"; "FLASHINFER_WORKSPACE_BASE"))')"
+assert_field 10 ""
+so_workload_patch_doc ns deployments w "$POD_DEPLOY" >/dev/null 2>"$WORK/fi.err"
+assert_not_contains "$(cat "$WORK/fi.err")" "FLASHINFER_WORKSPACE_DIR"
+# A stale variable outranks a stale loop: the variable is the bigger miss.
+reset; f_engine_cache_old_flashinfer
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].command = ["/bin/sh","-c"]
+    | .spec.template.spec.containers[0].args = ["for v in FLASHINFER_WORKSPACE_DIR; do :; done; exec vllm serve Qwen/Qwen3-0.6B"]')"
+assert_field 10 "dir:/engine-cache/flashinfer"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="flashinfer: a value from a ConfigMap, or not a plain path, is said, not written"
 reset; f_engine_cache_on_claim
 before=$FAILED
