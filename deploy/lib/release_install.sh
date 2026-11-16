@@ -103,10 +103,10 @@ smt_parse() {
     shift
     SMT_NS="" SMT_KEDA_NS="" SMT_PROM_URL="" SMT_PROM_CA="" SMT_QUOTA="" SMT_SETS=() SMT_FILES=""
     SMT_DRY_RUN=false SMT_OUT="" SMT_SCOPE=namespace SMT_MODEL_NS=() SMT_PLATFORM="" SMT_STRICT=false
-    SMT_RESTART_KEDA=false SMT_IMAGE_REPO=""
+    SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_ALLOW_HTTP=false
     case "$cmd" in
         admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope " ;;
-        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo " ;;
+        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http " ;;
         admin-finish) allowed=" -n --keda-namespace --files --platform --strict --restart-keda --scope " ;;
         release-files) allowed=" --out " ;;
     esac
@@ -118,7 +118,7 @@ smt_parse() {
             *) smt_usage "$cmd: unknown option $1 (see $cmd --help)" ;;
         esac
         case "$flag" in
-            --dry-run|--strict|--restart-keda) ;;
+            --dry-run|--strict|--restart-keda|--allow-http) ;;
             *) [ $# -ge 2 ] && [ -n "$2" ] || smt_usage "$cmd: $1 needs a value" ;;
         esac
         case "$flag" in
@@ -137,6 +137,7 @@ smt_parse() {
             --dry-run) SMT_DRY_RUN=true; shift ;;
             --strict) SMT_STRICT=true; shift ;;
             --restart-keda) SMT_RESTART_KEDA=true; shift ;;
+            --allow-http) SMT_ALLOW_HTTP=true; shift ;;
         esac
     done
     case "$SMT_SCOPE" in
@@ -180,6 +181,32 @@ smt_parse() {
     if [ -n "$SMT_QUOTA" ]; then
         printf '%s' "$SMT_QUOTA" | grep -qE '^[A-Za-z0-9._-]+=-?[0-9]+(,[A-Za-z0-9._-]+=-?[0-9]+)*$' \
             || smt_usage "$cmd --quota: '$SMT_QUOTA' is not GPU=N[,GPU=N]"
+    fi
+    if [ -n "$SMT_PROM_URL" ]; then
+        smt_check_scheme "$SMT_PROM_URL" "--prometheus-url $SMT_PROM_URL"
+    fi
+    if [ "$SMT_ALLOW_HTTP" = true ] && [ -n "$SMT_PROM_CA" ]; then
+        smt_usage "$cmd --allow-http with --prometheus-ca: a plain HTTP Prometheus has no certificate, and the controller refuses TLS settings beside an http URL"
+    fi
+}
+
+# smt_is_http <url>: the URL is plain HTTP.
+smt_is_http() {
+    case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in http://*) return 0 ;; esac
+    return 1
+}
+
+# smt_check_scheme <url> <what names it>: --allow-http is given exactly when
+# the Prometheus URL the controller reads is plain HTTP, or exit 2. With it,
+# the settings allow HTTP and the controller is applied without a token (the
+# controller refuses to send one over HTTP); without it, it is applied with
+# its ServiceAccount token, which an http URL would make it refuse.
+smt_check_scheme() {
+    if smt_is_http "$1"; then
+        [ "$SMT_ALLOW_HTTP" = true ] \
+            || smt_usage "$2 is plain HTTP, which the controller refuses by default. Add --allow-http to read it unencrypted (the controller then sends Prometheus no token), or give an https URL"
+    elif [ "$SMT_ALLOW_HTTP" = true ]; then
+        smt_usage "--allow-http is for a plain HTTP Prometheus, and $2 is not one: leave --allow-http out"
     fi
 }
 
@@ -290,6 +317,14 @@ smt_render() {
         # platform default, here with the namespace KEDA runs in.
         KEDA_NS="$SMT_KEDA_NS" yq -i '(select(.kind == "NetworkPolicy" and .metadata.name == "scaling-manager-external-scaler") | .spec.ingress[] | select(has("from")) | .from[] | select(has("namespaceSelector")) | .namespaceSelector.matchLabels | select(has("kubernetes.io/metadata.name")) | .["kubernetes.io/metadata.name"]) = strenv(KEDA_NS)' \
             "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot write KEDA namespace $SMT_KEDA_NS into $SMT_MAIN"
+    fi
+    if [ "${SMT_ALLOW_HTTP:-false}" = true ]; then
+        # The controller refuses to send its token over plain HTTP, and env
+        # beats the settings: empty PROMETHEUS_TOKEN_PATH by name, as
+        # llmsm_reconcile_prometheus_scheme does for make. Rendered rather than
+        # patched, so a re-run with the same flags applies the same object.
+        D="$SMT_DEPLOY" yq -i '(select(.kind == "Deployment" and .metadata.name == strenv(D)) | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' \
+            "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot empty PROMETHEUS_TOKEN_PATH in $SMT_MAIN"
     fi
     if [ -n "$SMT_IMAGE_REPO" ]; then
         for f in "$SMT_MAIN" "$SMT_PREFLIGHT"; do
@@ -415,13 +450,15 @@ smt_admin_line() {
 
 # smt_settings_pairs: SMT_PAIRS, the settings keys the flags set, KEY=VALUE.
 # One table: --prometheus-url prometheusURL, --prometheus-ca
-# prometheusCACertPath, --quota limiter=quota and quotas, --set KEY=VALUE.
+# prometheusCACertPath, --quota limiter=quota and quotas, --allow-http
+# prometheusAllowHTTP=true, --set KEY=VALUE.
 smt_settings_pairs() {
     local kv key known
     SMT_PAIRS=()
     [ -z "$SMT_PROM_URL" ] || SMT_PAIRS+=("prometheusURL=$SMT_PROM_URL")
     [ -z "$SMT_PROM_CA" ] || SMT_PAIRS+=("prometheusCACertPath=$SMT_PROM_CA_PATH")
     [ -z "$SMT_QUOTA" ] || SMT_PAIRS+=("limiter=quota" "quotas=$SMT_QUOTA")
+    [ "$SMT_ALLOW_HTTP" != true ] || SMT_PAIRS+=("prometheusAllowHTTP=true")
     known="$(yq '.data | keys | .[]' "$SMT_SHIPPED/scaling-manager-settings.yaml")"
     for kv in "${SMT_SETS[@]}"; do
         key="${kv%%=*}"
@@ -432,6 +469,7 @@ smt_settings_pairs() {
             prometheusURL) smt_usage "--set prometheusURL: give --prometheus-url" ;;
             prometheusCACertPath) smt_usage "--set prometheusCACertPath: give --prometheus-ca <file>; it creates the Secret the path reads" ;;
             quotas) smt_usage "--set quotas: give --quota \"GPU=N\"" ;;
+            prometheusAllowHTTP) smt_usage "--set prometheusAllowHTTP: give --allow-http; it also applies the controller without PROMETHEUS_TOKEN_PATH, which a plain HTTP Prometheus needs" ;;
             limiter) [ -z "$SMT_QUOTA" ] || smt_usage "--set limiter with --quota: --quota sets limiter to quota" ;;
         esac
         SMT_PAIRS+=("$kv")
@@ -483,14 +521,24 @@ smt_settings() {
 
 # smt_settings_preconditions: with no settings, a Prometheus URL is needed
 # before anything is created. Run before the first write.
+#
+# The URL the controller will read decides --allow-http (smt_check_scheme): the
+# one in the live settings when they exist, since they are never written, else
+# the one the flag gives.
 smt_settings_preconditions() {
-    smt_get configmap "$SMT_SETTINGS" -n "$SMT_NS" && return 0
+    local live
+    if smt_get configmap "$SMT_SETTINGS" -n "$SMT_NS"; then
+        live="$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusURL // ""')"
+        [ -z "$live" ] || smt_check_scheme "$live" "prometheusURL in the live $SMT_SETTINGS ($live)"
+        return 0
+    fi
     if [ -z "$SMT_PROM_URL" ]; then
         if [ "$SMT_PLATFORM" = openshift ]; then
             SMT_PROM_URL="$SMT_THANOS_URL"
+            smt_check_scheme "$SMT_PROM_URL" "the OpenShift default, $SMT_PROM_URL,"
             echo "No --prometheus-url: the OpenShift default, $SMT_PROM_URL."
         else
-            smt_usage "no $SMT_SETTINGS in $SMT_NS yet, and no --prometheus-url: give the Prometheus base URL, https"
+            smt_usage "no $SMT_SETTINGS in $SMT_NS yet, and no --prometheus-url: give the Prometheus base URL, https (http with --allow-http)"
         fi
     fi
 }
@@ -880,7 +928,7 @@ smt_dry_install() {
     smt_settings_pairs
     [ -n "$SMT_PROM_URL" ] || [ "$SMT_PLATFORM" = openshift ] \
         || smt_usage "--dry-run renders a fresh install: give --prometheus-url"
-    [ -n "$SMT_PROM_URL" ] || { SMT_PROM_URL="$SMT_THANOS_URL"; smt_settings_pairs; }
+    [ -n "$SMT_PROM_URL" ] || { SMT_PROM_URL="$SMT_THANOS_URL"; smt_check_scheme "$SMT_PROM_URL" "the OpenShift default, $SMT_PROM_URL,"; smt_settings_pairs; }
     smt_dry_write 20-settings.yaml "" "$(smt_settings_file)"
     if [ -n "$SMT_PROM_CA" ]; then
         smt_prometheus_ca_yaml > "$SMT_OUT/25-prometheus-ca.yaml"

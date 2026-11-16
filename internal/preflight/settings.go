@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -32,9 +33,15 @@ const (
 	keyScaleToZero        = config.SettingScaleToZero
 	keyWatchNamespaces    = config.SettingWatchNamespaces
 	keyLogVerbosity       = config.SettingLogVerbosity
-	// keyAllowHTTP is read from the environment or config.yaml only: the
-	// settings ConfigMap does not take it.
-	keyAllowHTTP = "PROMETHEUS_ALLOW_HTTP"
+	keyAllowHTTP          = config.SettingPrometheusAllowHTTP
+)
+
+// The controller container's environment variables the Prometheus checks
+// read: env beats config.yaml, and the settings beat both.
+const (
+	envAllowHTTP   = "PROMETHEUS_ALLOW_HTTP"
+	envTokenPath   = "PROMETHEUS_TOKEN_PATH"
+	envBearerToken = "PROMETHEUS_BEARER_TOKEN"
 )
 
 // settingsDefaults are the values the shipped settings file holds, used for a
@@ -53,6 +60,7 @@ var settingsDefaults = map[string]string{
 	keyScaleToZero:        "false",
 	keyWatchNamespaces:    "",
 	keyLogVerbosity:       "2",
+	keyAllowHTTP:          "false",
 }
 
 // Values the settings keys take.
@@ -66,7 +74,7 @@ const (
 // controller reads it from when the settings do not hold it: the loader key
 // internal/config gives the setting.
 func legacyKeys() map[string]string {
-	out := map[string]string{keyAllowHTTP: keyAllowHTTP}
+	out := map[string]string{}
 	for _, k := range append(config.RestartSettingKeys(), keyPassive) {
 		if loaderKey, ok := config.SettingLoaderKey(k); ok {
 			out[k] = loaderKey
@@ -111,6 +119,89 @@ type settingsState struct {
 	// watched are the namespaces the controller manages: watchNamespaces when
 	// it narrows deployWatch, else deployWatch. Nil is every namespace.
 	watched []string
+	// deployFound: the controller's Deployment exists and was read.
+	deployFound bool
+	// deployEnv holds the Prometheus variables (envAllowHTTP, envTokenPath,
+	// envBearerToken) the controller container sets to a value the controller
+	// reads: a literal that is not empty, or "from <source>" for valueFrom.
+	deployEnv map[string]string
+	// legacyToken names the token key LegacyConfigMap's config.yaml sets,
+	// empty when it sets none. legacyAllowHTTP is its PROMETHEUS_ALLOW_HTTP.
+	legacyToken, legacyAllowHTTP string
+}
+
+// allowHTTP is whether the controller allows a plain HTTP Prometheus URL, as
+// its loader reads PROMETHEUS_ALLOW_HTTP: the settings, else the container's
+// environment, else config.yaml. An empty value is unset.
+func (st settingsState) allowHTTP() bool {
+	v := ""
+	if !slices.Contains(st.fromLegacy, keyAllowHTTP) {
+		v = strings.TrimSpace(st.set[keyAllowHTTP])
+	}
+	if v == "" {
+		v = st.deployEnv[envAllowHTTP]
+	}
+	if v == "" {
+		v = st.legacyAllowHTTP
+	}
+	b, _ := strconv.ParseBool(strings.TrimSpace(v))
+	return b
+}
+
+// bearerToken says where the controller gets a bearer token for Prometheus,
+// as its loader reads PROMETHEUS_TOKEN_PATH and PROMETHEUS_BEARER_TOKEN: the
+// container's environment, else config.yaml. where is empty when it gets
+// none, or when that is not known (no Deployment yet). key is the variable;
+// onDeployment says it is the container's.
+func (st settingsState) bearerToken() (where, key string, onDeployment bool) {
+	for _, k := range []string{envTokenPath, envBearerToken} {
+		if v, ok := st.deployEnv[k]; ok {
+			return fmt.Sprintf("%s=%s on Deployment %s", k, v, ControllerDeployment), k, true
+		}
+	}
+	if st.legacyToken != "" {
+		return fmt.Sprintf("%s in config.yaml of ConfigMap %s", st.legacyToken, LegacyConfigMap), st.legacyToken, false
+	}
+	return "", "", false
+}
+
+// controllerPromEnv reads envAllowHTTP, envTokenPath and envBearerToken off
+// the controller container of d: the values the controller's loader takes.
+// An empty literal is unset there (viper), so it is left out. A literal
+// bearer token is a secret: it is recorded as "(a literal)", never copied.
+func controllerPromEnv(d *appsv1.Deployment) map[string]string {
+	out := map[string]string{}
+	if d == nil || len(d.Spec.Template.Spec.Containers) == 0 {
+		return out
+	}
+	for _, e := range d.Spec.Template.Spec.Containers[0].Env {
+		if e.Name != envAllowHTTP && e.Name != envTokenPath && e.Name != envBearerToken {
+			continue
+		}
+		switch {
+		case e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil:
+			out[e.Name] = "from Secret " + e.ValueFrom.SecretKeyRef.Name
+		case e.ValueFrom != nil:
+			out[e.Name] = "from a reference"
+		case strings.TrimSpace(e.Value) != "" && e.Name == envBearerToken:
+			out[e.Name] = "(a literal)"
+		case strings.TrimSpace(e.Value) != "":
+			out[e.Name] = e.Value
+		default:
+			delete(out, e.Name)
+		}
+	}
+	return out
+}
+
+// legacyTokenKey names the bearer-token key config.yaml (old) sets, or "".
+func legacyTokenKey(old map[string]any) string {
+	for _, k := range []string{envTokenPath, envBearerToken} {
+		if v, ok := old[k]; ok && v != nil && strings.TrimSpace(fmt.Sprint(v)) != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 // value is the effective value of key: set, else the shipped default.
@@ -136,7 +227,14 @@ func (s *state) loadSettings(ctx context.Context) settingsState {
 				old = nil
 			}
 		}
-		st.deployWatch, st.deployWhy = s.deploymentWatch(ctx, old)
+		var d *appsv1.Deployment
+		st.deployWatch, st.deployWhy, d = s.deploymentWatch(ctx, old)
+		st.deployFound = d != nil
+		st.deployEnv = controllerPromEnv(d)
+		st.legacyToken = legacyTokenKey(old)
+		if v, ok := old[envAllowHTTP]; ok && v != nil {
+			st.legacyAllowHTTP = fmt.Sprint(v)
+		}
 		effective := st.deployWatch
 		cm, err := cms.Get(ctx, SettingsConfigMap, metav1.GetOptions{})
 		switch err {
@@ -232,8 +330,8 @@ func quotaKeyFor(watch string) string {
 // the controller's namespace for a namespaced install, every namespace for a
 // cluster-wide one.
 // why says the Deployment could not be read; the value is then the install
-// files' too.
-func (s *state) deploymentWatch(ctx context.Context, old map[string]any) (watch, why string) {
+// files' too. d is the Deployment, nil when it is absent or unread.
+func (s *state) deploymentWatch(ctx context.Context, old map[string]any) (watch, why string, d *appsv1.Deployment) {
 	files := ""
 	if s.env.Scope != ScopeCluster {
 		files = s.env.Namespace
@@ -255,27 +353,27 @@ func (s *state) deploymentWatch(ctx context.Context, old map[string]any) (watch,
 	if err != nil {
 		absent, why := readVerdict(err, "Deployment "+ControllerDeployment+" in "+s.env.Namespace)
 		if absent {
-			return files, ""
+			return files, "", nil
 		}
-		return files, why
+		return files, why, nil
 	}
 	if v, set := watchFlag(*d); set {
-		return config.NormalizeWatchNamespace(v), ""
+		return config.NormalizeWatchNamespace(v), "", d
 	}
 	if cs := d.Spec.Template.Spec.Containers; len(cs) > 0 {
 		expand := containerExpand(*d)
 		for _, e := range cs[0].Env {
 			if e.Name == "WATCH_NAMESPACE" && e.ValueFrom == nil {
 				if v := config.NormalizeWatchNamespace(expand(e.Value)); v != "" {
-					return v, ""
+					return v, "", d
 				}
 			}
 		}
 	}
 	if v, ok := old["WATCH_NAMESPACE"]; ok && v != nil {
-		return config.NormalizeWatchNamespace(fmt.Sprint(v)), ""
+		return config.NormalizeWatchNamespace(fmt.Sprint(v)), "", d
 	}
-	return "", ""
+	return "", "", d
 }
 
 // settingsBudget says whether the controller reads the limiter settings, as

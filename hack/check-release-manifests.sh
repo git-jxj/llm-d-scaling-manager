@@ -377,7 +377,7 @@ check_dir() {
         || say "scaling-manager-metrics-reader.yaml binds a ClusterRole the namespaced file does not hold"
 
     n="$(q scaling-manager-settings.yaml '.[] | select(.kind == "ConfigMap") | .metadata.name + " " + (.data | tojson)')"
-    [ "$n" = 'scaling-manager-settings {"prometheusURL":"","prometheusCACertPath":"","prometheusInsecureSkipVerify":"false","passive":"true","utilizationShare":"off","limiter":"","quotas":"","quotaScope":"namespace","kueue":"false","kueueBorrow":"true","kueueNamespace":"kueue-system","scaleToZero":"false","watchNamespaces":"","logVerbosity":"2"}' ] \
+    [ "$n" = 'scaling-manager-settings {"prometheusURL":"","prometheusCACertPath":"","prometheusInsecureSkipVerify":"false","prometheusAllowHTTP":"","passive":"true","utilizationShare":"off","limiter":"","quotas":"","quotaScope":"namespace","kueue":"false","kueueBorrow":"true","kueueNamespace":"kueue-system","scaleToZero":"false","watchNamespaces":"","logVerbosity":"2"}' ] \
         || say "scaling-manager-settings.yaml: name, keys or defaults differ from the proposal: $n"
 
     # The preflight files: the Job runs `manager preflight check` as its own

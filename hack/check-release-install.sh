@@ -625,6 +625,114 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+echo "A plain HTTP Prometheus: --allow-http"
+# The controller refuses an http URL unless allowed, and refuses to send a
+# bearer token over one; the release Deployment sets PROMETHEUS_TOKEN_PATH.
+DEP=scaling-manager-controller-manager
+gen() { obj deployment "$1" "$DEP" | jq -r '.metadata.generation'; }
+# tokv <namespace>: the PROMETHEUS_TOKEN_PATH values of the stored controller, as a JSON list.
+tokv() { obj deployment "$1" "$DEP" | jq -c '[.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value]'; }
+# tokf <file>: the same, read from a rendered file.
+tokf() { yq ea -o json -I 0 'select(.kind == "Deployment")' "$1" | jq -c '[.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value]'; }
+SA_TOKEN=/var/run/secrets/kubernetes.io/serviceaccount/token
+
+reset
+rm -rf "$W/dryh"
+smt install -n team-a --prometheus-url http://prom.example:9090 --allow-http --dry-run --out "$W/dryh"
+rc=$?
+yq ea '(select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' "$W/dry/50-controller.yaml" > "$W/dry-emptied.yaml"
+if [ "$rc" = 0 ] && [ "$(tokf "$W/dry/50-controller.yaml")" = "[\"$SA_TOKEN\"]" ] && [ "$(tokf "$W/dryh/50-controller.yaml")" = '[""]' ] \
+    && [ "$(norm "$W/dryh/50-controller.yaml")" = "$(norm "$W/dry-emptied.yaml")" ] \
+    && [ "$(yq '.data.prometheusURL + "|" + .data.prometheusAllowHTTP' "$W/dryh/20-settings.yaml")" = 'http://prom.example:9090|true' ]; then
+    ok "--allow-http --dry-run: prometheusAllowHTTP true in the settings, and the controller is the release's with PROMETHEUS_TOKEN_PATH emptied, nothing else changed"
+else
+    bad "--allow-http dry-run: exit $rc, token https $(tokf "$W/dry/50-controller.yaml") http $(tokf "$W/dryh/50-controller.yaml"): $(tail -1 "$W/out")"
+fi
+smt install -n team-a --prometheus-url http://p:9090
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'is plain HTTP, which the controller refuses by default. Add --allow-http' "$W/out" && [ ! -s "$STUB_DIR/calls.log" ]; then
+    ok "an http --prometheus-url without --allow-http is usage (exit 2) naming the flag, before any kubectl call"
+else
+    bad "http without --allow-http: exit $rc: $(tail -1 "$W/out")"
+fi
+smt install -n team-a --prometheus-url https://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--allow-http is for a plain HTTP Prometheus' "$W/out" && [ ! -s "$STUB_DIR/calls.log" ]; then ok "--allow-http with an https URL is usage"; else bad "--allow-http with https: exit $rc: $(tail -1 "$W/out")"; fi
+smt install -n team-a --prometheus-url http://p:9090 --allow-http --prometheus-ca prom-ca.crt
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--allow-http with --prometheus-ca' "$W/out"; then ok "--allow-http with --prometheus-ca is usage"; else bad "--allow-http with a CA: exit $rc: $(tail -1 "$W/out")"; fi
+smt install -n team-a --prometheus-url http://p:9090 --allow-http --set prometheusAllowHTTP=true --dry-run --out "$W/dryx"
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--set prometheusAllowHTTP: give --allow-http' "$W/out"; then ok "--set prometheusAllowHTTP is refused, naming --allow-http"; else bad "--set prometheusAllowHTTP: exit $rc: $(tail -1 "$W/out")"; fi
+
+# The generation the stub keeps: a re-apply that changes the controller bumps it.
+# What a hand patch does: an https install, PROMETHEUS_TOKEN_PATH emptied with
+# kubectl set env, then a re-run that applies the release Deployment again.
+restore
+smt install -n team-a --prometheus-url https://p:9090 > /dev/null 2>&1
+g1="$(gen team-a)"
+jq '(.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' \
+    "$STUB_DIR/obj/deployment/team-a/$DEP.json" > "$W/d.json" && mv "$W/d.json" "$STUB_DIR/obj/deployment/team-a/$DEP.json"
+smt install -n team-a --prometheus-url https://p:9090
+if [ "$(gen team-a)" = $((g1 + 1)) ] && [ "$(tokv team-a)" = "[\"$SA_TOKEN\"]" ]; then
+    ok "control: a re-run over a hand-emptied token path puts the token back and bumps the generation ($g1 -> $(gen team-a))"
+else
+    bad "control: generation $g1 -> $(gen team-a), token $(tokv team-a)"
+fi
+
+restore
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+g1="$(gen team-a)"
+st="$(obj configmap team-a scaling-manager-settings | jq -r '.data.prometheusURL + "|" + .data.prometheusAllowHTTP')"
+if [ "$rc" = 0 ] && [ "$st" = 'http://p:9090|true' ] && [ "$(tokv team-a)" = '[""]' ]; then
+    ok "install --allow-http: the settings allow HTTP and the controller is applied with PROMETHEUS_TOKEN_PATH empty"
+else
+    bad "install --allow-http: exit $rc, settings '$st', token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+before="$(obj configmap team-a scaling-manager-settings)"
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(gen team-a)" = "$g1" ] && [ "$(tokv team-a)" = '[""]' ] && [ "$(obj configmap team-a scaling-manager-settings)" = "$before" ] \
+    && ! grep -q 'kubectl patch' "$W/out" && ! grep -qE '^create ' "$STUB_DIR/calls.log"; then
+    ok "a re-run with the same flags changes nothing: controller generation $g1, settings as they were, no patch printed"
+else
+    bad "re-run --allow-http: exit $rc, generation $g1 -> $(gen team-a), token $(tokv team-a): $(grep -m1 'kubectl patch' "$W/out")"
+fi
+: > "$STUB_DIR/calls.log"
+smt install -n team-a
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'prometheusURL in the live scaling-manager-settings (http://p:9090) is plain HTTP' "$W/out" && grep -q -- '--allow-http' "$W/out" \
+    && [ "$(writes)" = 0 ] && [ "$(gen team-a)" = "$g1" ]; then
+    ok "a re-run without --allow-http on live http settings is refused before any write: it would apply the token again"
+else
+    bad "re-run without --allow-http: exit $rc, $(writes) writes, generation $(gen team-a): $(tail -1 "$W/out")"
+fi
+rm -rf "$STUB_DIR"; cp -R "$installed" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'prometheusURL in the live scaling-manager-settings (https://p:9090)' "$W/out" && [ "$(writes)" = 0 ]; then
+    ok "--allow-http over live https settings is refused before any write: the settings are never written"
+else
+    bad "--allow-http over https settings: exit $rc, $(writes) writes: $(tail -1 "$W/out")"
+fi
+
+reset m1
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url http://p:9090 --allow-http --model-namespace m1
+rc=$?
+g1="$(gen scaling-manager-system)"
+st="$(obj configmap scaling-manager-system scaling-manager-settings | jq -r '.data.prometheusURL + "|" + .data.prometheusAllowHTTP')"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url http://p:9090 --allow-http --model-namespace m1
+rc2=$?
+if [ "$rc$rc2" = 55 ] && [ "$st" = 'http://p:9090|true' ] && [ "$(tokv scaling-manager-system)" = '[""]' ] && [ -n "$g1" ] && [ "$(gen scaling-manager-system)" = "$g1" ]; then
+    ok "install --scope cluster --allow-http: the settings allow HTTP, the controller has no token path, and a re-run keeps generation $g1"
+else
+    bad "cluster --allow-http: exits $rc $rc2, settings '$st', token $(tokv scaling-manager-system), generation $g1 -> $(gen scaling-manager-system): $(tail -1 "$W/out")"
+fi
+
+# ---------------------------------------------------------------------------
 echo "release-files and llmsm_make_cmd"
 rm -rf "$W/rf"
 smt release-files --out "$W/rf"
@@ -677,7 +785,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=78
+EXPECT_CASES=89
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

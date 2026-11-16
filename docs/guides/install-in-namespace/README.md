@@ -84,6 +84,10 @@ smt admin-finish -n $NAMESPACE
 ```
 <!-- guide:tools.adminfinish end -->
 
+Prometheus serves plain HTTP only? Give its `http://` URL and add
+`--allow-http`, on every run: the controller then reads it unencrypted and
+sends it no token. Without the flag, `install` refuses an `http://` URL.
+
 `install` runs the preflight, stops on a `FAIL` and prints its fix, and ends
 with the `admin-finish` line. It creates the settings once: a later run never
 changes them, and prints the `kubectl patch` for a flag that differs. Each
@@ -170,6 +174,16 @@ kubectl patch configmap scaling-manager-settings -n $NAMESPACE --type merge \
   -p '{"data":{"prometheusCACertPath":"/etc/scaling-manager-prometheus-ca/ca.crt"}}'
 ```
 <!-- guide:deploy.promca end -->
+
+If Prometheus serves plain HTTP only, set an `http://` `prometheusURL`, allow
+it, and drop the token the controller would otherwise send over it. Edit the
+file, so applying it again keeps the change:
+
+```bash
+# Only for a plain HTTP Prometheus. Unencrypted, and the controller sends no token.
+kubectl patch configmap scaling-manager-settings -n $NAMESPACE --type merge -p '{"data":{"prometheusAllowHTTP":"true"}}'
+sed -i 's#value: /var/run/secrets/kubernetes.io/serviceaccount/token$#value: ""#' scaling-manager-namespaced.yaml
+```
 
 Now check the prerequisites. The preflight runs as a Job, reads the cluster
 and changes nothing. Its RBAC came with step 1; this applies the Job alone:
