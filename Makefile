@@ -151,7 +151,7 @@ E2E_GO_TIMEOUT              ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),130m
 # which reads as eight product failures rather than a suite that was cut off.
 DEPLOY_ALERTING_RULES       ?= false
 SCALER_BACKEND              ?= keda  # keda (ScaledObject) or none (skip, use pre-installed backend)
-LLM_D_ROUTER_VERSION        ?= v0.9.0
+LLM_D_ROUTER_VERSION        ?= v1.0.0
 GAIE_VERSION                ?= v1.5.0
 SCALE_UP_THRESHOLD          ?=
 SCALE_DOWN_BOUNDARY         ?=
@@ -3483,6 +3483,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# pays a model load into the pool on the first burst and reports it as the
 	@# pool's cost. All of them are 26 minutes of GPU each.
 	@bash hack/check-two-model-scenario.sh
+	@echo "Checking the EPP installer refuses a router older than its values..."
+	@bash hack/check-epp-router-version.sh
+	@echo "Checking the router pins the harness patch writes..."
+	@bash hack/check-harness-router-pins.sh
+	@echo "Checking the benchmark EPP-scrape parsers under both metric namings..."
+	@bash hack/check-epp-metrics-parsers.sh
 	@echo "Checking the TTFT staircase's exit paths and arithmetic..."
 	@# Executes it against a stub kubectl. What protects a shared cluster for a
 	@# multi-day run is its exit paths, and bash -n sees none of them.

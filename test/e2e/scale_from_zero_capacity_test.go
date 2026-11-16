@@ -136,11 +136,7 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		if poolRefName == "" {
 			poolRefName = strings.TrimSuffix(cfg.EPPServiceName, "-epp")
 		}
-		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRefName)
-		Expect(errIO).NotTo(HaveOccurred())
-		if !ioApplied {
-			Skip("InferenceObjective API not available on cluster")
-		}
+		Expect(fixtures.EnsureInferenceObjectiveOptional(ctx, crClient, cfg.LLMDNamespace, poolRefName, GinkgoWriter.Printf)).To(Succeed())
 
 		By("Running an occupier that consumes the whole " + fullAccelerator + " pool")
 		// Also serves condition (2): an active variant is what makes the

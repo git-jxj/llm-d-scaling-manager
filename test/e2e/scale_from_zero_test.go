@@ -398,11 +398,8 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		if poolRefName == "" {
 			poolRefName = strings.TrimSuffix(eppServiceName, "-epp")
 		}
-		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRefName)
-		Expect(errIO).NotTo(HaveOccurred(), "EnsureInferenceObjective should not return a hard error")
-		if !ioApplied {
-			Skip("InferenceObjective API not available on cluster; scale-from-zero requires inference.networking.x-k8s.io InferenceObjective")
-		}
+		Expect(fixtures.EnsureInferenceObjectiveOptional(ctx, crClient, cfg.LLMDNamespace, poolRefName, GinkgoWriter.Printf)).
+			To(Succeed(), "EnsureInferenceObjectiveOptional should not return a hard error")
 		DeferCleanup(func() {
 			_ = fixtures.DeleteInferenceObjective(context.Background(), crClient, cfg.LLMDNamespace)
 		})
@@ -677,7 +674,7 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 
 // createScaleFromZeroTriggerJob creates a job that sends requests to the inference gateway to trigger scale-from-zero
 // Requests go through the gateway (port 80) which routes through EPP, creating the flow control queue
-// that the scale-from-zero engine monitors via the inference_extension_flow_control_queue_size metric
+// that the scale-from-zero engine monitors via the llm_d_epp_flow_control_queue_size metric
 func createScaleFromZeroTriggerJob(name, namespace, gatewayService, modelID string) *batchv1.Job {
 	backoffLimit := int32(3)
 	numRequests := 10

@@ -111,7 +111,7 @@ for _, v := range results["all_metrics"].Values {
     fmt.Printf("%s=%f pod=%s\n", v.Labels["__name__"], v.Value, v.Labels["pod"])
 }
 
-queue := results["inference_pool_average_queue_size"] // one metric only
+queue := results["llm_d_epp_average_queue_size"] // one metric only
 ```
 
 ### Get
@@ -152,26 +152,29 @@ type MetricValue struct {
 Each value's labels are the original metric's labels (e.g. `model_name`,
 `target_model_name`, or `name` for an inference pool), plus:
 
-- `__name__`: the metric name, e.g. `inference_pool_average_queue_size`;
+- `__name__`: the metric name, e.g. `llm_d_epp_average_queue_size`;
 - `pod`: the pod that served it.
 
 ### EPP metrics
 
 EPP pods serve the
-[Gateway API Inference Extension metrics](https://github.com/kubernetes-sigs/gateway-api-inference-extension/blob/main/site-src/guides/metrics-and-observability.md).
+[llm-d router metrics](https://github.com/llm-d/llm-d-router/blob/main/docs/metrics.md).
 Common ones:
 
-- **Requests:** `inference_objective_request_total` (counter),
-  `inference_objective_request_error_total` (counter),
-  `inference_objective_running_requests` (gauge),
-  `inference_objective_request_duration_seconds` (distribution).
-- **Inference pool:** `inference_pool_average_queue_size`,
-  `inference_pool_per_pod_queue_size`,
-  `inference_pool_average_kv_cache_utilization`, `inference_pool_ready_pods`
+- **Requests:** `llm_d_epp_request_total` (counter),
+  `llm_d_epp_request_error_total` (counter),
+  `llm_d_epp_request_running` (gauge),
+  `llm_d_epp_request_duration_seconds` (distribution).
+- **Inference pool:** `llm_d_epp_average_queue_size`,
+  `llm_d_epp_per_endpoint_queue_size`,
+  `llm_d_epp_average_kv_cache_utilization`, `llm_d_epp_ready_endpoints`
   (all gauges).
-- **Flow control (experimental):** `inference_extension_flow_control_queue_size`
-  (gauge), `inference_extension_flow_control_request_queue_duration_seconds`
-  (distribution).
+- **Flow control:** `llm_d_epp_flow_control_queue_size` (gauge),
+  `llm_d_epp_flow_control_request_queue_duration_seconds` (distribution).
+
+Routers before v1.0.0 also export these under the older
+`inference_objective_*`, `inference_pool_*` and `inference_extension_*` names;
+v1.0.0 exports only the `llm_d_epp_*` ones.
 
 ## Integration Examples
 
@@ -201,8 +204,8 @@ func (e *MyEngine) HasPendingRequests(ctx context.Context) (bool, error) {
         return false, err
     }
     for _, name := range []string{
-        "inference_pool_average_queue_size",
-        "inference_extension_flow_control_queue_size",
+        "llm_d_epp_average_queue_size",
+        "llm_d_epp_flow_control_queue_size",
     } {
         if r := results[name]; r != nil {
             for _, v := range r.Values {

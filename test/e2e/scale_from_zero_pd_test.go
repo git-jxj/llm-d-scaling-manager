@@ -99,11 +99,7 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 		if poolRefName == "" {
 			poolRefName = strings.TrimSuffix(cfg.EPPServiceName, "-epp")
 		}
-		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRefName)
-		Expect(errIO).NotTo(HaveOccurred())
-		if !ioApplied {
-			Skip("InferenceObjective API not available on cluster")
-		}
+		Expect(fixtures.EnsureInferenceObjectiveOptional(ctx, crClient, cfg.LLMDNamespace, poolRefName, GinkgoWriter.Printf)).To(Succeed())
 
 		By("Creating a decode workload and a prefill workload for the same model, both at zero")
 		ensureRoleWorkloadAtZero(decodeSvc, decodeDeploy, decodeVar, decodeScal, domain.RoleDecode)

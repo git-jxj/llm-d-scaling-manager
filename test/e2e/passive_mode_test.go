@@ -629,9 +629,8 @@ func sendQueuedRequests(name, modelID string) {
 	if poolRef == "" {
 		poolRef = strings.TrimSuffix(cfg.EPPServiceName, "-epp")
 	}
-	ioApplied, err := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRef)
+	err := fixtures.EnsureInferenceObjectiveOptional(ctx, crClient, cfg.LLMDNamespace, poolRef, GinkgoWriter.Printf)
 	Expect(err).NotTo(HaveOccurred())
-	Expect(ioApplied).To(BeTrue(), "the InferenceObjective API is not on this cluster, so nothing queues")
 	DeferCleanup(func() { _ = fixtures.DeleteInferenceObjective(ctx, crClient, cfg.LLMDNamespace) })
 	job := createScaleFromZeroTriggerJob(name, cfg.LLMDNamespace, discoverInferenceGateway(), modelID)
 	_, err = k8sClient.BatchV1().Jobs(cfg.LLMDNamespace).Create(ctx, job, metav1.CreateOptions{})
