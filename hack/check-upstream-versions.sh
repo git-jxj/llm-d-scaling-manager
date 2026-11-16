@@ -22,7 +22,7 @@ SCRIPT="${CHECK_UPSTREAM_SCRIPT:-$ROOT/hack/upstream-versions.sh}"
 WORKFLOW="${CHECK_UPSTREAM_WORKFLOW:-$ROOT/.github/workflows/upstream-versions.yaml}"
 # One ok or FAIL per case. A run that stops early otherwise passes having
 # checked less than it says. Change this deliberately with the cases.
-EXPECT_CASES=65
+EXPECT_CASES=67
 PASS=0
 FAIL=0
 
@@ -201,6 +201,10 @@ printf '%s\n' '{"message":"API rate limit exceeded"}' > "$FIX/example_foo.1.json
 run --check
 expect_exit "rate-limit body: --check" 2 "$RC"
 expect_has "rate-limit body: says so" "unexpected answer: API rate limit exceeded"
+printf '%s\n' '<html><body>502 Bad Gateway</body></html>' > "$FIX/example_foo.1.json"
+run --check
+expect_exit "non-JSON body: --check" 2 "$RC"
+expect_has "non-JSON body: says so" "unexpected answer: <html><body>502 Bad Gateway"
 
 # 11. No release at all, or only prereleases: nothing to compare with.
 releases example_foo 1 "$(rel v1.3.0-rc.1 2026-02-01 true)"

@@ -189,7 +189,8 @@ for ((i = 0; i < count; i++)); do
             break
         fi
         if ! jq -e 'type == "array"' "$WORK/page.json" >/dev/null 2>&1; then
-            api_error="unexpected answer: $(jq -r '.message? // empty' "$WORK/page.json" 2>/dev/null | cut -c1-160)"
+            # The body may not be JSON at all (an HTML error page).
+            api_error="unexpected answer: $({ jq -r '.message? // empty' "$WORK/page.json" 2>/dev/null || head -c 80 "$WORK/page.json"; } | tr '\n' ' ' | cut -c1-160)"
             break
         fi
         jq -s '.[0] + .[1]' "$WORK/releases.json" "$WORK/page.json" > "$WORK/merged.json"
