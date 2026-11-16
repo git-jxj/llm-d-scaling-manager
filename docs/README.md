@@ -189,6 +189,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **[Kueue borrowing internals](developer-guide/kueue-borrowing.md)** — what is read from Kueue, where borrowing is counted, spent and given back, and how it is tested
 - **[Anatomy of a replica start](developer-guide/replica-start-anatomy.md)** — where the seconds of a vLLM start go, the levers ruled out, and the experimental snapshot restore
 - **[Release process](developer-guide/release-process.md)** · **[Contributing](../CONTRIBUTING.md)**
+- **[Upstream dependencies](developer-guide/upstream-dependencies.md)** — the monthly check of our llm-d-router, FMA, vLLM, KEDA and other pins, and what to do when one falls behind
 
 ## What this project is
 

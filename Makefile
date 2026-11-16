@@ -3572,6 +3572,15 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# Runs the release workflow step against a scratch repository. A backport
 	@# tagged after a newer release used to move latest back to the old line.
 	@bash hack/check-release-latest.sh
+	@echo "Checking the monthly upstream versions report and its issue step..."
+	@# Runs hack/upstream-versions.sh on fixture pins and stubbed API answers,
+	@# and the workflow issue step on a stubbed gh. A failed request, an empty
+	@# release list or a pin the inventory no longer finds all print a tidy
+	@# report; none of them may read as current. Also reads every location in
+	@# hack/upstream-pins.yaml, so a pin moved without its entry fails here.
+	@bash -n hack/upstream-versions.sh
+	@bash -n hack/check-upstream-versions.sh
+	@bash hack/check-upstream-versions.sh
 	@echo "Checking the release files: digest, names, labels, placeholders..."
 	@# Renders what a GitHub Release attaches and asserts the rules of
 	@# docs/proposals/install-from-release.md, then breaks a copy one rule at a

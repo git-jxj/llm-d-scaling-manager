@@ -1,0 +1,213 @@
+# Upstream components this repository pins, and where each pin lives.
+#
+# hack/upstream-versions.sh reads every location listed here, compares the
+# value with the latest stable GitHub release of `repo`, and reports
+# components that are behind. The monthly workflow
+# .github/workflows/upstream-versions.yaml runs it and keeps one issue open
+# while anything is behind (docs/developer-guide/upstream-dependencies.md).
+#
+# This file holds no versions. It says where the real pins are, so it cannot
+# drift from them. Every location of one component must carry the same
+# version; a component whose files disagree is reported, and fails --check.
+# When a location is added, moved or renamed, update it here: a location that
+# yields nothing is reported as "pin not found" and fails --check.
+#
+# Each component:
+#   name       label in the report
+#   repo       GitHub owner/repo whose releases are compared
+#   tagPrefix  release tag prefix, for repositories that release several
+#              things (kube-prometheus-stack-92.7.0); stripped before comparing
+#   note       why it is pinned here, or why its pins are split
+#   pins       locations. `file` is relative to the repository root, and the
+#              version is read with ONE of:
+#                regex  extended regex; group 1 of every matching line is a pin
+#                yq     yq expression; every non-null result is a pin
+#   tracked    true with no pins: we depend on it without pinning it, and the
+#              report shows the latest release for reference only
+#
+# Deliberately left out: Envoy (the llm-d-router-standalone chart picks its
+# image; we pin the chart, not Envoy), build and CI tooling pinned by checksum
+# in the workflows (yq, helm, golangci-lint, promtool), and the reusable
+# llm-d/llm-d-infra workflows (pinned by commit, not by release).
+
+components:
+  # --- llm-d ----------------------------------------------------------------
+  - name: llm-d-router (EPP)
+    repo: llm-d/llm-d-router
+    note: >-
+      Chart and EPP image the e2e and the EPP installer deploy. The benchmark
+      scenarios pin the router separately, below.
+    pins:
+      - file: Makefile
+        regex: '^LLM_D_ROUTER_VERSION[[:space:]]*[?]=[[:space:]]*(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/install-epp.sh
+        regex: 'LLM_D_ROUTER_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+      - file: .github/workflows/ci-pr-checks.yaml
+        regex: 'LLM_D_ROUTER_VERSION:[[:space:]]*"?(v[0-9][0-9a-z.+-]*)'
+      - file: .github/workflows/ci-e2e-openshift.yaml
+        regex: 'LLM_D_ROUTER_VERSION:[[:space:]]*"?(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d-router (EPP, benchmarks)
+    repo: llm-d/llm-d-router
+    note: >-
+      routerEndpointPicker in the benchmark scenarios. Pinned apart from the
+      e2e router because the scenarios need noEndpointRequestTTL (v0.11.0+).
+    pins:
+      - file: hack/benchmark/scenarios/guides/workload-autoscaling.yaml
+        yq: '.scenario[].common.images.routerEndpointPicker.tag'
+      - file: hack/benchmark/scenarios/guides/pd-disaggregation.yaml
+        yq: '.scenario[].common.images.routerEndpointPicker.tag'
+      - file: hack/benchmark/scenarios/guides/two-model-shapes-pd.yaml
+        yq: '.shared.images.routerEndpointPicker.tag'
+
+  - name: llm-d routing sidecar (benchmarks)
+    repo: llm-d/llm-d-router
+    note: >-
+      Built from llm-d-router. Held with the llm-d-modelservice chart: the two
+      must agree on the sidecar flags, so move both pins together.
+    pins:
+      - file: hack/benchmark/scenarios/guides/pd-disaggregation.yaml
+        yq: '.scenario[].common.images.routingSidecar.tag'
+      - file: hack/benchmark/scenarios/guides/two-model-shapes-pd.yaml
+        yq: '.shared.images.routingSidecar.tag'
+
+  - name: llm-d (vendored router values)
+    repo: llm-d/llm-d
+    note: The EPP Helm values are copied from the llm-d guides at this release.
+    pins:
+      - file: deploy/lib/epp-base.values.yaml
+        regex: 'Vendored from llm-d/llm-d@(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/lib/epp-optimized-baseline.values.yaml
+        regex: 'Vendored from llm-d/llm-d@(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d-fast-model-actuation (FMA)
+    repo: llm-d-incubation/llm-d-fast-model-actuation
+    note: Warm-pool launcher image, and the controllers the benchmark installs.
+    pins:
+      - file: Makefile
+        regex: '^FMA_VERSION[[:space:]]*[?]=[[:space:]]*(v[0-9][0-9a-z.+-]*)'
+      - file: hack/benchmark/fma_fixups.sh
+        regex: 'FMA_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+      - file: deploy/warmpool.sh
+        regex: 'llm-d-fast-model-actuation/launcher:(v[0-9][0-9a-z.+-]*)'
+      - file: config/warmpool/warmpool-deployment.yaml
+        regex: 'llm-d-fast-model-actuation/launcher:(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d-inference-sim
+    repo: llm-d/llm-d-inference-sim
+    note: The emulated model server every e2e runs against.
+    pins:
+      - file: test/utils/resources/llmdsim.go
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: test/e2e/fixtures/model_service_conventions.go
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/kind-emulator/install.sh
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: hack/benchmark/two_model_pool.sh
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: config/samples/simulator/nodeSelector/decode/deployment.yaml
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: config/samples/simulator/nodeSelector/prefill/deployment.yaml
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: config/samples/simulator/nodeSelector/decode-lws/lws.yaml
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d-benchmark
+    repo: llm-d/llm-d-benchmark
+    note: Benchmark harness checkout and load-generator image.
+    pins:
+      - file: Makefile
+        regex: '^BENCHMARK_REPO_REF[[:space:]]*[?]=.*,(v[0-9][0-9a-z.+-]*)\)'
+      - file: hack/benchmark/staircase.sh
+        regex: 'llm-d-benchmark:(v[0-9][0-9a-z.+-]*)'
+      - file: hack/benchmark/scenarios/guides/workload-autoscaling.yaml
+        yq: '.scenario[].common.images.benchmark.tag'
+
+  - name: llm-d-modelservice chart
+    repo: llm-d-incubation/llm-d-modelservice
+    tagPrefix: llm-d-modelservice-
+    note: >-
+      Pinned by the harness patch to the last chart that renders the routing
+      sidecar flags the sidecar pin above accepts. Move both together.
+    pins:
+      - file: hack/benchmark/patch_harness.sh
+        regex: '^PINNED = "[[:space:]]*llmDModelservice:[[:space:]]*(v[0-9][0-9a-z.+-]*)"'
+
+  # --- model servers --------------------------------------------------------
+  - name: vLLM (P/D benchmark)
+    repo: vllm-project/vllm
+    note: >-
+      Engine for the P/D benchmark scenario. Other scenarios take the engine
+      llm-d-benchmark pins.
+    pins:
+      - file: hack/benchmark/scenarios/guides/two-model-shapes-pd.yaml
+        yq: '.shared.images.vllm.tag'
+
+  - name: vLLM (two-variant benchmark)
+    repo: vllm-project/vllm
+    note: Engine for the two-variant benchmark scenario.
+    pins:
+      - file: hack/benchmark/scenarios/guides/two-variant-scaling-manager.yaml
+        yq: '.shared.images.vllmOpenai.tag'
+
+  - name: SGLang
+    repo: sgl-project/sglang
+    tracked: true
+    note: Supported model server; no image is pinned here.
+
+  - name: guidellm
+    repo: vllm-project/guidellm
+    tracked: true
+    note: Load generator inside the llm-d-benchmark image; pinned through it.
+
+  # --- Kubernetes add-ons ---------------------------------------------------
+  - name: gateway-api-inference-extension
+    repo: kubernetes-sigs/gateway-api-inference-extension
+    note: InferencePool CRDs the EPP installer applies.
+    pins:
+      - file: Makefile
+        regex: '^GAIE_VERSION[[:space:]]*[?]=[[:space:]]*(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/install-epp.sh
+        regex: 'GAIE_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+      - file: deploy/lib/infra_epp.sh
+        regex: 'GAIE_VERSION:-"?(v[0-9][0-9a-z.+-]*)'
+      - file: .github/workflows/ci-e2e-openshift.yaml
+        regex: 'GAIE_VERSION:[[:space:]]*"?(v[0-9][0-9a-z.+-]*)'
+
+  - name: Gateway API
+    repo: kubernetes-sigs/gateway-api
+    note: Gateway API CRDs the EPP installer applies when absent.
+    pins:
+      - file: deploy/lib/infra_epp.sh
+        regex: 'GATEWAY_API_VERSION:-"?(v[0-9][0-9a-z.+-]*)'
+
+  - name: KEDA
+    repo: kedacore/keda
+    note: Helm chart the installer deploys; the KEDA chart version follows the KEDA release.
+    pins:
+      - file: deploy/install.sh
+        regex: '^KEDA_CHART_VERSION=\$\{KEDA_CHART_VERSION:-([0-9][0-9a-z.+-]*)\}'
+
+  - name: LeaderWorkerSet
+    repo: kubernetes-sigs/lws
+    note: Helm chart the installer deploys for multi-node models.
+    pins:
+      - file: deploy/install.sh
+        regex: '^LWS_CHART_VERSION=\$\{LWS_CHART_VERSION:-"?([0-9][0-9a-z.+-]*)'
+
+  - name: Kueue
+    repo: kubernetes-sigs/kueue
+    note: The e2e installs either the full release or its CRDs; both are one Kueue.
+    pins:
+      - file: deploy/ci-pr-checks/install-kueue.sh
+        regex: '^PINNED_VERSION=(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/ci-pr-checks/install-kueue-crds.sh
+        regex: 'KUEUE_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+
+  - name: kube-prometheus-stack
+    repo: prometheus-community/helm-charts
+    tagPrefix: kube-prometheus-stack-
+    note: Monitoring stack the installer deploys when asked to.
+    pins:
+      - file: deploy/install.sh
+        regex: '^KUBE_PROMETHEUS_STACK_CHART_VERSION=\$\{KUBE_PROMETHEUS_STACK_CHART_VERSION:-([0-9][0-9a-z.+-]*)\}'
