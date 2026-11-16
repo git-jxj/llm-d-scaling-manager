@@ -491,6 +491,32 @@ echo "workload-patch gate"
     ! so_workload_patch_trim "$f2" 1 1 && say_ok "a document carrying only the gate is not applied at all" || say_fail "a gate-only document survived the trim"
     rm -f "$f" "$f2"
 
+    # The init container's wait, run: it passes on a complete copy, and on
+    # none it gives up after WEIGHTS_WAIT_SECONDS, exits 1 and says why.
+    OBJ="$(dep weights-qwen3-32b-1a2b3c4d /model-cache "")"
+    s="$(spec_of "$(doc_of)")"
+    jq -r '.initContainers[0].args[0]' <<< "$s" > "$T/wait.sh"
+    [ "$(jq -r '.initContainers[0].env[] | select(.name == "WEIGHTS_WAIT_SECONDS") | .value' <<< "$s")" = 3600 ] \
+        && say_ok "the wait defaults to 3600 s (60 min)" || say_fail "default wait: $(jq -c '.initContainers[0].env' <<< "$s")"
+    s2="$(LLMSM_WEIGHTS_WAIT_TIMEOUT=120 so_workload_patch_doc ns1 deployments w '["spec","template"]' 2>/dev/null | yq -o json -I0 'select(.kind == "Deployment") | .spec.template.spec')"
+    [ "$(jq -r '.initContainers[0].env[] | select(.name == "WEIGHTS_WAIT_SECONDS") | .value' <<< "$s2")" = 120 ] \
+        && say_ok "LLMSM_WEIGHTS_WAIT_TIMEOUT sets it" || say_fail "LLMSM_WEIGHTS_WAIT_TIMEOUT=120: $(jq -c '.initContainers[0].env' <<< "$s2")"
+    w="$(LLMSM_WEIGHTS_WAIT_TIMEOUT=1h so_workload_patch_doc ns1 deployments w '["spec","template"]' 2>&1 >/dev/null)"
+    case "$w" in *"LLMSM_WEIGHTS_WAIT_TIMEOUT='1h' is not a number of seconds"*) say_ok "a timeout that is not seconds is refused with a warning, and the default kept" ;; *) say_fail "bad timeout: $w" ;; esac
+    grep -q '\$(' "$T/wait.sh" && say_fail "the wait script carries \$( (Kubernetes rewrites it)" || say_ok "the wait script carries no \$( for Kubernetes to rewrite"
+    WEIGHTS_DIR="$T/m/ok" WEIGHTS_WAIT_SECONDS=0 timeout 5 sh "$T/wait.sh" >/dev/null 2>&1 \
+        && say_ok "a complete copy passes at once, even with no time left" || say_fail "the wait failed on a complete copy"
+    WEIGHTS_DIR="$T/m/nomarker" WEIGHTS_WAIT_SECONDS=0 timeout 5 sh "$T/wait.sh" > "$T/wait.out" 2>&1; rc=$?
+    [ "$rc" -eq 1 ] && grep -q "wait-for-weights: gave up after 0s: this node has no complete copy of Qwen/Qwen3-32B at $T/m/nomarker" "$T/wait.out" \
+        && grep -q 'weights status -n ns1' "$T/wait.out" \
+        && say_ok "a copy still being written (no marker): after the timeout it exits 1, naming the model, the directory and the status command" \
+        || say_fail "timeout: rc $rc: $(cat "$T/wait.out")"
+    start=$SECONDS
+    WEIGHTS_DIR="$T/m/absent" WEIGHTS_WAIT_SECONDS=10 timeout 30 sh "$T/wait.sh" > "$T/wait.out" 2>&1; rc=$?
+    took=$((SECONDS - start))
+    [ "$rc" -eq 1 ] && [ "$took" -ge 9 ] && [ "$took" -le 20 ] && grep -q '(0s of 10s' "$T/wait.out" && grep -q 'gave up after 10s' "$T/wait.out" \
+        && say_ok "with 10 s it waits one round ($took s), counts it, and then gives up" || say_fail "10 s wait: rc $rc after $took s: $(cat "$T/wait.out")"
+
     # The HF_HOME cache the weights half proposes is never a node-local
     # weights claim: each node has its own copy there, under models/<id>.
     all_pvcs="$PVCS"

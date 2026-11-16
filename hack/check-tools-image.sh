@@ -235,6 +235,7 @@ refuse "scaledobjects-plan without -n is refused" "needs -n" scaledobjects-plan
 refuse "scaledobjects-apply without --plan is refused" "needs --plan" scaledobjects-apply -n demo
 refuse "scaledobjects-apply with no plan file is refused" "no plan at" scaledobjects-apply -n demo --plan /nonexistent/plan.yaml
 refuse "scaledobjects-plan --plan is refused (it writes, with --out)" "takes --out" scaledobjects-plan -n demo --plan x.yaml
+refuse "workload-patch --weights-wait-timeout that is not seconds is refused" "takes a number of seconds" workload-patch -n demo --weights-wait-timeout 1h
 refuse "a controller namespace that is not a name is refused" "not a namespace name" scaledobjects-plan -n demo --controller-namespace 'Bad_NS'
 refuse "weights --memory with no value says so" "--memory needs a value" weights apply -n demo --memory
 

@@ -508,8 +508,14 @@ patch nodes. The namespace owner needs none of this.
 - A replica already running when its node's copy breaks keeps running; the
   label goes, so no new replica lands there.
 - A replica waiting in `wait-for-weights` on a node the downloader never
-  reaches (outside its node selector) waits forever. Use `required`, or the
-  same node selector on both.
+  reaches (outside its node selector) gets no copy. After
+  `LLMSM_WEIGHTS_WAIT_TIMEOUT` seconds (3600, `--weights-wait-timeout` on
+  `smt workload-patch`; `WEIGHTS_WAIT_SECONDS` in the emitted container) the
+  init container exits 1 with the reason in its log, and the pod shows
+  `Init:Error`, then `Init:CrashLoopBackOff`: the kubelet restarts the init
+  container on the same node, it does not reschedule the pod. Delete the pod
+  to place it again; use `required`, or the same node selector on the model
+  server and the downloader, so it does not happen.
 - A LeaderWorkerSet gets no gate yet.
 - The gate is emitted, never applied by `--apply`.
 
@@ -1435,6 +1441,8 @@ objects. Read what it prints first:
 | --- | --- | --- |
 | `LLMSM_WORKLOAD_PATCH_FILE` | `scaling-manager-workload-patch.yaml` | where the patch is written |
 | `LLMSM_WORKLOAD_PATCH_APPLY` | `false` | `true` also applies the drain half to the live workloads |
+| `LLMSM_WEIGHTS_NODE_AFFINITY` | `preferred` | the weights gate's node affinity: `preferred`, `required` or `none` ([Gate replicas on the weights](#gate-replicas-on-the-weights)) |
+| `LLMSM_WEIGHTS_WAIT_TIMEOUT` | `3600` | seconds the `wait-for-weights` init container waits for the node's copy before it exits 1 |
 | `LLMSM_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered |
 | `LLMSM_DRAIN_SLEEP_SECONDS` | `45` | the preStop sleep — the drain window itself |
 | `LLMSM_MODEL_PVC_NAME` | discovered, else `model-pvc` | the claim the emitted weights volume names. Setting it wins over discovery |

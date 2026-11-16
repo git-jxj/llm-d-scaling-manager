@@ -2606,7 +2606,7 @@ so_workload_patch_doc() {
     case "$(printf '%s %s' "$image" "$argv" | tr '[:upper:]' '[:lower:]')" in
         *vllm*) so_kv_bytes_proposal "$ns" "$name" "$engine" "$argv" ;;
     esac
-    local want_gate=0 gate_model="" gate_key="" gate_claim="" gate_vol="" gate_mount="" gate_sub="" gate_dir="" gate_aff=""
+    local want_gate=0 gate_model="" gate_key="" gate_claim="" gate_vol="" gate_mount="" gate_sub="" gate_dir="" gate_aff="" gate_wait=""
     so_weights_gate_plan "$ns" "$resource" "$name" "$engine"
 
     [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_gate" -eq 1 ] || return 0
@@ -2710,6 +2710,10 @@ PRESTOP
 # template already carries both, when a read fails, and when the mount's
 # subPath does not lead to the model directory.
 #
+# LLMSM_WEIGHTS_WAIT_TIMEOUT: how many seconds the init container waits for
+# the copy before it exits 1 (default 3600), so a node that never gets one
+# shows as a failing pod instead of a pod waiting unseen.
+#
 # LLMSM_WEIGHTS_NODE_AFFINITY: preferred (the default) ranks labelled nodes
 # first and still places a replica elsewhere, where it waits for the copy;
 # required places replicas only on labelled nodes and leaves them Pending
@@ -2789,6 +2793,12 @@ so_weights_gate_plan() {
            else null end) as $aff
         | "\($hasaff and $init) \($aff | if . == null or $hasaff then "" else tojson end)"' 2>/dev/null)"
     [ "$have" = false ] || return 0
+    gate_wait="${LLMSM_WEIGHTS_WAIT_TIMEOUT:-3600}"
+    case "$gate_wait" in
+        ""|*[!0-9]*|0)
+            log_warning "  LLMSM_WEIGHTS_WAIT_TIMEOUT='$gate_wait' is not a number of seconds above 0; the init container waits 3600 s."
+            gate_wait=3600 ;;
+    esac
     gate_aff="$merged"
     want_gate=1
     log_warning "  $ns/$name reads $gate_model from the node-local claim $gate_claim with no weights gate: a replica can land on a node whose copy is missing or still being written."
@@ -2815,16 +2825,30 @@ so_weights_gate_body() {
         imagePullPolicy: IfNotPresent
         # The marker is written after the last file, so a copy still being
         # written never passes; a config is checked too, as the probe does.
+        # After WEIGHTS_WAIT_SECONDS it gives up and exits 1: the pod then
+        # shows Init:Error / Init:CrashLoopBackOff, with the reason in this
+        # container's log, rather than waiting unseen. (expr, not shell
+        # arithmetic: Kubernetes rewrites a dollar and parenthesis.)
         command: ["/bin/sh", "-c"]
         args:
         - |
+          waited=0
           until [ -f "\$WEIGHTS_DIR/.download-complete" ] && { [ -f "\$WEIGHTS_DIR/config.json" ] || [ -f "\$WEIGHTS_DIR/params.json" ]; }; do
-            echo "waiting for this node's copy of ${gate_model} at \$WEIGHTS_DIR (weights status -n ${ns} says which nodes hold it)"
+            if [ "\$waited" -ge "\$WEIGHTS_WAIT_SECONDS" ]; then
+              echo "wait-for-weights: gave up after \${WEIGHTS_WAIT_SECONDS}s: this node has no complete copy of ${gate_model} at \$WEIGHTS_DIR. Its downloader may be failing, or the node may be outside its node selector: weights status -n ${ns}. Exiting 1 so the failure shows." >&2
+              exit 1
+            fi
+            echo "waiting for this node's copy of ${gate_model} at \$WEIGHTS_DIR (\${waited}s of \${WEIGHTS_WAIT_SECONDS}s; weights status -n ${ns} says which nodes hold it)"
             sleep 10
+            waited=\`expr "\$waited" + 10\`
           done
         env:
         - name: WEIGHTS_DIR
           value: ${gate_dir}
+        # How long to wait for the copy before failing (LLMSM_WEIGHTS_WAIT_TIMEOUT
+        # when the patch was written; 3600 unless set).
+        - name: WEIGHTS_WAIT_SECONDS
+          value: "${gate_wait}"
         # Engine images set NVIDIA_VISIBLE_DEVICES=all; this container
         # requests no GPU and must not be handed one.
         - name: NVIDIA_VISIBLE_DEVICES

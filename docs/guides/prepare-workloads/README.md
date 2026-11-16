@@ -183,7 +183,9 @@ watch more model namespaces, run it again with all of them:
 
 The patch in the next step uses the label: replicas prefer labelled nodes, and
 each replica waits in a small init container until its node's copy is
-complete. More: [Gate replicas on the weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights).
+complete, for up to 60 minutes; then it fails, so a node that never gets a
+copy shows as a failing pod (`--weights-wait-timeout` on `workload-patch`
+changes the limit). More: [Gate replicas on the weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights).
 
 ### 5. Write the patch, and put it in the chart
 

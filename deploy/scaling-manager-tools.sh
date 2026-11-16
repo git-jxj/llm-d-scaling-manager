@@ -20,7 +20,7 @@
 #                                                                keep a model's weights on every GPU node's disk, and label the nodes whose copy verifies (deploy/weights.sh)
 #   scaling-manager-tools engine-cache apply|status|delete|publish|keys|verify ...
 #                                                                keep the engines' compile caches on every GPU node's disk (deploy/enginecache.sh)
-#   scaling-manager-tools workload-patch -n NS [--controller-namespace CNS] [--apply] [--apply-weights] [--apply-engine-cache] [--out FILE]
+#   scaling-manager-tools workload-patch -n NS [--controller-namespace CNS] [--apply] [--apply-weights] [--apply-engine-cache] [--out FILE] [--weights-wait-timeout SECONDS]
 #                                                                report and write what the model servers in NS still need (make workload-patch)
 #   scaling-manager-tools scaledobjects-plan -n NS [--controller-namespace CNS] [--out FILE]
 #                                                                write an editable ScaledObject plan for the model servers in NS; applies nothing
@@ -119,13 +119,16 @@ cmd_workload_patch() {
     local ns="" ctl=""
     while [ $# -gt 0 ]; do
         case "$1" in
-            -n|--namespace|--out|--controller-namespace)
+            -n|--namespace|--out|--controller-namespace|--weights-wait-timeout)
                 [ $# -ge 2 ] || die "$1 needs a value" ;;
         esac
         case "$1" in
             -n|--namespace) ns="$2"; shift 2 ;;
             --controller-namespace) ctl="$2"; shift 2 ;;
             --out) export LLMSM_WORKLOAD_PATCH_FILE="$2"; shift 2 ;;
+            --weights-wait-timeout)
+                case "$2" in *[!0-9]*|0) die "workload-patch: --weights-wait-timeout takes a number of seconds above 0, not '$2'" ;; esac
+                export LLMSM_WEIGHTS_WAIT_TIMEOUT="$2"; shift 2 ;;
             --apply) export LLMSM_WORKLOAD_PATCH_APPLY=true; shift ;;
             --apply-weights) export LLMSM_WORKLOAD_PATCH_APPLY_WEIGHTS=true; shift ;;
             --apply-engine-cache) export LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true; shift ;;
@@ -135,6 +138,7 @@ cmd_workload_patch() {
                 echo "  --apply-weights         also apply the weights volume (LLMSM_WORKLOAD_PATCH_APPLY_WEIGHTS=true)"
                 echo "  --apply-engine-cache    also apply the engine-cache volume (LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true)"
                 echo "  --out FILE              where the patch is written (default scaling-manager-workload-patch.yaml)"
+                echo "  --weights-wait-timeout S  how long the wait-for-weights init container waits for the copy before it fails (LLMSM_WEIGHTS_WAIT_TIMEOUT; 3600)"
                 return 0 ;;
             *) die "workload-patch: unknown option $1 (see workload-patch --help)" ;;
         esac

@@ -115,7 +115,9 @@ downloader on the other nodes would finish in minutes.
 So the patch writes **preferred** (weight 100) by default. Labelled nodes come
 first. A replica that lands on an unlabelled node waits in `wait-for-weights`
 until that node's download finishes, which is bounded because the downloader
-runs on every GPU node. `LLMSM_WEIGHTS_NODE_AFFINITY=required` is for models
+runs on every GPU node; after `LLMSM_WEIGHTS_WAIT_TIMEOUT` (60 minutes by
+default) it exits 1, so a node that never gets a copy shows as a failing pod
+instead of a silent wait. `LLMSM_WEIGHTS_NODE_AFFINITY=required` is for models
 whose download takes longer than an acceptable start, or clusters where some
 GPU nodes never get a copy. `none` writes only the init container.
 
@@ -168,7 +170,7 @@ new rights.
 | The labeller is down | labels freeze as they are; a broken copy keeps its label until it is back. The probe and the init container still protect new replicas on nodes that never had a copy |
 | Another tool set the label | left alone; a disagreement with the downloader is reported |
 | The node list is Forbidden | the pass fails and changes nothing |
-| A replica waits on a node the downloader never reaches | it waits forever. Use `required`, or give the model server and the downloader the same node selector |
+| A replica waits on a node the downloader never reaches | after `LLMSM_WEIGHTS_WAIT_TIMEOUT` (60 min) the init container exits 1 with the reason; the pod shows `Init:CrashLoopBackOff` on that node. Use `required`, or give the model server and the downloader the same node selector |
 | A replica is running when its node's copy breaks | it keeps running; only new replicas avoid the node |
 
 ## 4. Not built
