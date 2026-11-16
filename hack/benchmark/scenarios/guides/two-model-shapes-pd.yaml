@@ -58,14 +58,14 @@
 #       default; it is spelled out because the sidecar's flag set and the
 #       chart have to agree (see images below).
 #
-#   images.routingSidecar v0.9.0 and images.routerEndpointPicker v1.0.0,
+#   images.routingSidecar v1.0.0 and images.routerEndpointPicker v1.0.0,
 #       PINNED, as in the P/D guide. The P/D EPP config below is written for
 #       v1.0.0 (apiVersion llm-d.ai/v1, `deciders.prefill`, a declared
-#       metrics-data-source): on the harness default v0.9.0 it does not start,
-#       and without the declared data source every endpoint reads stale and is
-#       scored fully saturated. two-model-shapes runs the harness default EPP, so the EPP
-#       VERSION is a second difference between the two scenarios, not only its
-#       config.
+#       metrics-data-source): on v0.9.0 it does not start, and without the
+#       declared data source every endpoint reads stale and is scored fully
+#       saturated. two-model-shapes runs the harness default EPP, which
+#       patch_harness.sh (fix 6) also sets to v1.0.0, so the two scenarios
+#       differ in EPP config, not version.
 #
 #   router.epp.pluginsConfigFile: pd-config.yaml, per stack (it lives in
 #       `shared:`, so each stack's EPP gets the same file): the P/D guide's
@@ -333,8 +333,9 @@ shared:
   # IMAGES - the P/D pair, pinned together. The routing sidecar and the
   # modelservice chart have to agree on the sidecar's CLI flags, and they are
   # pinned SEPARATELY: hack/benchmark/patch_harness.sh pins the chart to the
-  # version that renders --vllm-port/--connector, and v0.9.0 is the sidecar
-  # that takes those flags. Move both pins together or neither.
+  # version that renders --model-server-port/--kv-connector (v0.4.16), and
+  # v1.0.0 is the sidecar that takes those flags. Move both pins together or
+  # neither.
   #
   # The EPP is v1.0.0 because pd-config.yaml below is written for it
   # (apiVersion llm-d.ai/v1, first read by v1.0.0) and, from v0.11.0 on,
@@ -355,7 +356,7 @@ shared:
     vllm:
       tag: v0.31.0
     routingSidecar:
-      tag: v0.9.0
+      tag: v1.0.0
     routerEndpointPicker:
       tag: v1.0.0
 

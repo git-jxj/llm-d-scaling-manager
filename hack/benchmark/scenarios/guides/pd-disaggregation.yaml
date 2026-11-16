@@ -83,22 +83,22 @@ scenario:
 
       # The routing-proxy init container and the modelservice chart have to
       # agree on the sidecar's CLI flags, and they are pinned SEPARATELY:
-      # hack/benchmark/patch_harness.sh (fix 6) pins the chart to v0.4.15,
-      # which renders --vllm-port/--connector, and the tag here decides which
-      # sidecar receives them. v0.9.0 is the sidecar that takes those flags --
-      # llm-d-benchmark's own default anchor (defaults.yaml,
-      # llm-d-routing-sidecar_version) -- and it is pinned here rather than
-      # inherited so that a benchmark can be reproduced later.
+      # hack/benchmark/patch_harness.sh (fix 6) pins the chart to v0.4.16,
+      # which renders --model-server-port/--kv-connector, and the tag here
+      # decides which sidecar receives them. v1.0.0
+      # (ghcr.io/llm-d/llm-d-router-disagg-sidecar, released with the router)
+      # takes those flags and no longer takes --vllm-port/--connector. It is
+      # pinned here rather than inherited so that a benchmark can be
+      # reproduced later.
       #
-      # This used to say `latest`, written when the chart floated to v0.4.16
-      # (which renders --model-server-port/--kv-connector). Once the chart was
-      # pinned back to v0.4.15 the floating sidecar kept moving, and a fresh
-      # standup on 2026-09-16 crash-looped every decode pod on
-      # "unknown flag: --connector" -- the same failure the old comment
-      # described, from the other side. Move both pins together or neither.
+      # This used to say `latest`, written when the chart floated to v0.4.16.
+      # Once the chart was pinned back to v0.4.15 (for sidecar v0.9.0) the
+      # floating sidecar kept moving, and a fresh standup on 2026-09-16
+      # crash-looped every decode pod on "unknown flag: --connector" -- the
+      # same failure from the other side. Move both pins together or neither.
       images:
         routingSidecar:
-          tag: v0.9.0
+          tag: v1.0.0
         # The router is pinned for the same reason as the sidecar above: it is
         # otherwise inherited from llm-d-benchmark's own anchor and moves
         # underneath a reproduction. It matters more than most images, because

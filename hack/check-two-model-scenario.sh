@@ -1162,6 +1162,8 @@ for plugin in always-disagg-pd-decider disagg-profile-handler prefill-filter dec
 done
 printf '%s\n' "$shared_body" | grep -qE -- '- flowControl$' || missing="$missing featureGates:flowControl"
 printf '%s\n' "$shared_body" | grep -A1 -E '^    routerEndpointPicker:$' | grep -qE 'tag: v1\.0\.0$' || missing="$missing images.routerEndpointPicker=v1.0.0"
+# The sidecar takes the flags patch_harness.sh fix 6's chart (v0.4.16) renders.
+printf '%s\n' "$shared_body" | grep -A1 -E '^    routingSidecar:$' | grep -qE 'tag: v1\.0\.0$' || missing="$missing images.routingSidecar=v1.0.0"
 # llm-d.ai/v1 is first read by router v1.0.0; it and the pin above move together.
 printf '%s\n' "$shared_body" | grep -qE '^            apiVersion: llm-d\.ai/v1$' || missing="$missing pd-config.apiVersion=llm-d.ai/v1"
 [ "$(printf '%s\n' "$pd_body" | grep -c 'kv_connector":"NixlConnector"')" -eq 2 ] || missing="$missing NixlConnector-on-both-roles"

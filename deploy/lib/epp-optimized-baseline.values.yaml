@@ -2,6 +2,10 @@
 ## Layer on top of: epp-base.values.yaml
 ##
 ## Vendored from llm-d/llm-d@v0.8.1 guides/optimized-baseline/router/optimized-baseline.values.yaml.
+## Deliberately NOT moved to llm-d@v1.0.0: that release replaces the plugin set
+## (prefix-cache-affinity-filter + token-load-scorer, calibrated per model and
+## GPU), which changes routing, not just versions. The service port and pod
+## selector below match v1.0.0; the plugins are kept and their apiVersion moved.
 ## Update alongside LLM_D_ROUTER_VERSION when the chart schema changes.
 ## The config's apiVersion, llm-d.ai/v1, is read by router v1.0.0 and newer
 ## only: an older LLM_D_ROUTER_VERSION fails to load it.

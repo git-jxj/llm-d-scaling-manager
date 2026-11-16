@@ -491,7 +491,8 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# Fix 6 -- defaults.yaml: pin the modelservice chart, which floats.
+# Fix 6 -- defaults.yaml: pin the modelservice chart, which floats, with the
+# routing sidecar it must match, and the router EPP image.
 #
 # The chart version is resolved at PLAN time while the sidecar image beside it
 # is pinned, so the two halves of a matched pair drift apart on their own:
@@ -510,43 +511,70 @@ fi
 # and nothing we did changed -- the chart moved underneath a pinned image, which
 # is what `auto` promises to do eventually.
 #
-# Pinned to v0.4.15, the last release compatible with the sidecar tag this
-# harness pins. Both halves of a matched pair get pinned or neither does: a
-# floating dependency is not a property a BENCHMARK can afford, because it makes
-# two runs silently incomparable while both report success.
+# Both halves of a matched pair get pinned or neither does: a floating
+# dependency is not a property a BENCHMARK can afford, because it makes two runs
+# silently incomparable while both report success.
 #
-# Delete this block when the sidecar tag is bumped to a release accepting the
-# flag, and pin the chart to whatever that release pairs with.
+# The pair is now sidecar v1.0.0 (ghcr.io/llm-d/llm-d-router-disagg-sidecar,
+# released from llm-d-router, which dropped --vllm-port and --connector) with
+# chart v0.4.16, the release whose only template change was renaming those two
+# flags to --model-server-port and --kv-connector. It used to be sidecar v0.9.0
+# with chart v0.4.15; a clone patched with that pair is moved to the new one.
+#
+# The same block moves the harness's default EPP image to v1.0.0, so a scenario
+# that does not pin images.routerEndpointPicker runs the router this repo pins
+# everywhere else. The router CHART stays the harness default.
 # ---------------------------------------------------------------------------
 DEFAULTS="$REPO_DIR/config/templates/values/defaults.yaml"
 [ -f "$DEFAULTS" ] || fail "expected file missing: $DEFAULTS"
 
-"$PY" - "$DEFAULTS" <<'PYEOF' || fail "fix 6 (modelservice chart pin) failed"
+"$PY" - "$DEFAULTS" <<'PYEOF' || fail "fix 6 (sidecar/chart/EPP pins) failed"
 import io, sys
 
 path = sys.argv[1]
 src = io.open(path, encoding="utf-8").read()
 
-PINNED = "  llmDModelservice: v0.4.15"
-if PINNED in src:
-    print("  fix 6 (modelservice chart pin): already applied")
-    sys.exit(0)
+import re
 
-ANCHOR = "  llmDModelservice: auto"
-if ANCHOR not in src:
-    sys.exit("anchor missing (upstream shape changed): %r" % ANCHOR)
+# Each pin: (label, regex over the line, the value it must end at). The regex
+# captures everything before the value, so the anchor is the key, not the old
+# value: an upstream default that moves is still found, and a clone patched
+# with the old pair is moved too. No match is a hard error.
+PINS = [
+    ("modelservice chart",
+     r"(?m)^(  llmDModelservice: )(\S+)$", "v0.4.16"),
+    ("routing sidecar",
+     r"(?m)^(  llm-d-routing-sidecar_version: +&llm-d-routing-sidecar_version +)(\S+)$", "v1.0.0"),
+    ("router EPP image",
+     r"(?m)^(  llm-d-router-endpoint-picker_version: +&llm-d-router-endpoint-picker_version +)(\S+)$", "v1.0.0"),
+]
 
 # Comment carried into the clone so anyone reading the rendered values sees why
-# it is not "auto" like its neighbours.
-REPLACEMENT = (
-    "  # scaling-manager-patch: pinned. v0.4.16 emits --model-server-port, which the\n"
-    "  # llm-d-routing-sidecar version pinned above does not accept.\n"
-    + PINNED
-)
+# the chart is not "auto" like its neighbours.
+NOTE = ("  # scaling-manager-patch: pinned with the routing sidecar above; v0.4.16\n"
+        "  # renders --model-server-port/--kv-connector, which sidecar v1.0.0 takes.\n")
+OLD_NOTE = ("  # scaling-manager-patch: pinned. v0.4.16 emits --model-server-port, which the\n"
+            "  # llm-d-routing-sidecar version pinned above does not accept.\n")
 
-src = src.replace(ANCHOR, REPLACEMENT, 1)
+changed = []
+for label, pattern, want in PINS:
+    m = re.search(pattern, src)
+    if not m:
+        sys.exit("anchor missing (upstream shape changed): %s" % label)
+    if m.group(2) == want:
+        continue
+    changed.append("%s %s -> %s" % (label, m.group(2), want))
+    src = src[:m.start(2)] + want + src[m.end(2):]
+
+src = src.replace(OLD_NOTE, "")
+if NOTE not in src:
+    src = src.replace("  llmDModelservice: v0.4.16", NOTE + "  llmDModelservice: v0.4.16", 1)
+
+if not changed:
+    print("  fix 6 (sidecar/chart/EPP pins): already applied")
+    sys.exit(0)
 io.open(path, "w", encoding="utf-8", newline="\n").write(src)
-print("  fix 6 (modelservice chart pin): applied")
+print("  fix 6 (sidecar/chart/EPP pins): " + "; ".join(changed))
 PYEOF
 
 # ---------------------------------------------------------------------------
