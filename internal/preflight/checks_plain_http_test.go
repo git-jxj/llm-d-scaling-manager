@@ -1,6 +1,7 @@
 package preflight
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,7 +38,66 @@ func TestPrometheusPlainHTTP(t *testing.T) {
 		detail string
 		fix    string
 	}{
-		{"allowed, no controller yet", plain, Pass, "must not set " + envTokenPath, ""},
+		{"allowed, no controller yet: WARN naming the sed", plain, Warn, "does not exist yet", "sed -i 's#value: /var/run/secrets/kubernetes.io/serviceaccount/token$#value: \"\"#'"},
+		{"allowed, no controller yet, smt empties the token path", func(f *fixture) {
+			plain(f)
+			f.tokenPathEmptied = true
+		}, Pass, "answered", ""},
+		{"allowed, a live token path smt is about to empty", func(f *fixture) {
+			plain(f)
+			f.tokenPathEmptied = true
+			f.add(controllerWithEnv(corev1.EnvVar{Name: envTokenPath, Value: saTokenPath}))
+		}, Pass, "answered", ""},
+		{"allowed, smt empties the token path, not a bearer token", func(f *fixture) {
+			plain(f)
+			f.tokenPathEmptied = true
+			f.add(controllerWithEnv(corev1.EnvVar{Name: envTokenPath, Value: saTokenPath}, corev1.EnvVar{Name: envBearerToken, Value: "x"}))
+		}, Fail, envBearerToken + "=(a literal)", "kubectl set env"},
+		{"allowed, smt empties the token path, not the one in config.yaml", func(f *fixture) {
+			plain(f)
+			f.tokenPathEmptied = true
+			f.add(cm(testNS, LegacyConfigMap, map[string]string{"config.yaml": envTokenPath + ": " + saTokenPath + "\n"}))
+		}, Fail, envTokenPath + " in config.yaml", "kubectl edit configmap"},
+		{"the token path on the manager container, a sidecar first", func(f *fixture) {
+			plain(f)
+			d := controllerDeployment(testNS)
+			d.Spec.Template.Spec.Containers = []corev1.Container{{Name: "sidecar"},
+				{Name: "manager", Env: []corev1.EnvVar{{Name: envTokenPath, Value: saTokenPath}}}}
+			f.add(d)
+		}, Fail, tokenEnvValue + " on Deployment", "kubectl set env"},
+		{"TLS: insecure on the Deployment, the setting empty", func(f *fixture) {
+			plain(f)
+			f.settings[keyPrometheusInsecure] = ""
+			f.add(controllerWithEnv(corev1.EnvVar{Name: envInsecure, Value: "true"}))
+		}, Fail, "beside it: " + envInsecure + " on Deployment", "https://"},
+		{"TLS: the setting false beats insecure on the Deployment", func(f *fixture) {
+			plain(f)
+			f.add(controllerWithEnv(corev1.EnvVar{Name: envInsecure, Value: "true"}))
+		}, Pass, "answered", ""},
+		{"TLS: insecure false on the Deployment is no TLS setting", func(f *fixture) {
+			plain(f)
+			f.add(controllerWithEnv(corev1.EnvVar{Name: envInsecure, Value: "false"}))
+		}, Pass, "answered", ""},
+		{"TLS: a CA path on the Deployment", func(f *fixture) {
+			plain(f)
+			f.add(controllerWithEnv(corev1.EnvVar{Name: envCACert, Value: "/etc/ca.crt"}))
+		}, Fail, "beside it: " + envCACert + " on Deployment", ""},
+		{"TLS: a server name on the Deployment", func(f *fixture) {
+			plain(f)
+			f.add(controllerWithEnv(corev1.EnvVar{Name: envServerName, Value: "prom"}))
+		}, Fail, "beside it: " + envServerName + " on Deployment", ""},
+		{"TLS: a client certificate on the Deployment", func(f *fixture) {
+			plain(f)
+			f.add(controllerWithEnv(corev1.EnvVar{Name: envClientCert, Value: "/etc/c.crt"}))
+		}, Fail, "beside it: " + envClientCert + " on Deployment", ""},
+		{"TLS: a client key in config.yaml", func(f *fixture) {
+			plain(f)
+			f.add(cm(testNS, LegacyConfigMap, map[string]string{"config.yaml": envClientKey + ": /etc/c.key\n"}))
+		}, Fail, "beside it: " + envClientKey + " in config.yaml", ""},
+		{"TLS: a CA path in the settings", func(f *fixture) {
+			plain(f)
+			f.settings["prometheusCACertPath"] = "/etc/ca.crt"
+		}, Fail, "beside it: prometheusCACertPath in ConfigMap " + SettingsConfigMap, ""},
 		{"allowed, the release Deployment's token path", func(f *fixture) {
 			plain(f)
 			f.add(controllerWithEnv(corev1.EnvVar{Name: envTokenPath, Value: saTokenPath}))
@@ -63,7 +123,7 @@ func TestPrometheusPlainHTTP(t *testing.T) {
 			f.settings[keyPrometheusURL] = plainURL
 			f.settings[keyAllowHTTP] = ""
 			f.add(cm(testNS, LegacyConfigMap, map[string]string{"config.yaml": envAllowHTTP + ": \"true\"\n"}))
-		}, Pass, "answered", ""},
+		}, Warn, "answered", ""},
 		{"the setting false beats the environment", func(f *fixture) {
 			f.settings[keyPrometheusURL] = plainURL
 			f.settings[keyAllowHTTP] = strconv.FormatBool(false)
@@ -92,6 +152,21 @@ func TestPrometheusPlainHTTP(t *testing.T) {
 				t.Errorf("got %s %q fix %q, want %s containing %q, fix %q", r.Status, r.Detail, r.Fix, tc.want, tc.detail, tc.fix)
 			}
 		})
+	}
+}
+
+// The Deployment's watch namespace is read off the manager container, not
+// the first one.
+func TestDeploymentWatchReadsTheManagerContainer(t *testing.T) {
+	f := newFixture(t)
+	d := controllerDeployment(testNS)
+	d.Spec.Template.Spec.Containers = []corev1.Container{
+		{Name: "sidecar", Args: []string{"--watch-namespace=team-z"}},
+		{Name: "manager", Env: []corev1.EnvVar{{Name: "WATCH_NAMESPACE", Value: otherNS}}}}
+	f.add(d)
+	s := &state{env: f.env(t)}
+	if got := s.loadSettings(context.Background()).deployWatch; got != otherNS {
+		t.Errorf("deployWatch %q, want %q from the manager container", got, otherNS)
 	}
 }
 

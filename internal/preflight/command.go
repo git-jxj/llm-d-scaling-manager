@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,6 +98,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	env := &Env{Kube: kube, Dynamic: dyn, Namespace: ns, Scope: sc, NewPrometheus: NewHTTPPrometheus,
 		PrometheusCA: promCA, DialTLS: DialTLS, CheckTimeout: *timeout}
+	env.TokenPathEmptied, _ = strconv.ParseBool(os.Getenv(TokenPathEmptiedEnv))
 	return Execute(ctx, env, *writeResult, stdout, stderr)
 }
 

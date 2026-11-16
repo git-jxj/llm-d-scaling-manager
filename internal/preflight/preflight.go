@@ -113,6 +113,9 @@ type Env struct {
 	DialTLS func(ctx context.Context, addr string) ([]*x509.Certificate, error)
 	// CheckTimeout bounds each check; a check that runs out is UNKNOWN.
 	CheckTimeout time.Duration
+	// TokenPathEmptied: the controller is about to be applied with
+	// PROMETHEUS_TOKEN_PATH empty (TokenPathEmptiedEnv on the Job).
+	TokenPathEmptied bool
 	Now          func() time.Time
 }
 

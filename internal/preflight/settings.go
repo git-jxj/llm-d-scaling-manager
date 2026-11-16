@@ -34,22 +34,39 @@ const (
 	keyWatchNamespaces    = config.SettingWatchNamespaces
 	keyLogVerbosity       = config.SettingLogVerbosity
 	keyAllowHTTP          = config.SettingPrometheusAllowHTTP
+	keyPrometheusCA       = config.SettingPrometheusCACertPath
 )
 
-// The controller container's environment variables the Prometheus checks
-// read: env beats config.yaml, and the settings beat both.
+// The controller's Prometheus loader keys the plain-HTTP check reads, as
+// environment variables of its container and config.yaml keys: env beats
+// config.yaml, and a setting beats both (internal/config loader).
 const (
 	envAllowHTTP   = "PROMETHEUS_ALLOW_HTTP"
 	envTokenPath   = "PROMETHEUS_TOKEN_PATH"
 	envBearerToken = "PROMETHEUS_BEARER_TOKEN"
+	envInsecure    = "PROMETHEUS_TLS_INSECURE_SKIP_VERIFY"
+	envCACert      = "PROMETHEUS_CA_CERT_PATH"
+	envServerName  = "PROMETHEUS_SERVER_NAME"
+	envClientCert  = "PROMETHEUS_CLIENT_CERT_PATH"
+	envClientKey   = "PROMETHEUS_CLIENT_KEY_PATH"
 )
+
+// promLoaderKeys are the loader keys above.
+var promLoaderKeys = []string{envAllowHTTP, envTokenPath, envBearerToken, envInsecure, envCACert, envServerName, envClientCert, envClientKey}
+
+// TokenPathEmptiedEnv is the preflight Job's environment variable that says
+// the controller is about to be applied with PROMETHEUS_TOKEN_PATH empty
+// (smt install --allow-http renders it so): the token path of the live
+// Deployment is then not what the controller will start with.
+const TokenPathEmptiedEnv = "LLMSM_PREFLIGHT_TOKEN_PATH_EMPTIED"
 
 // settingsDefaults are the values the shipped settings file holds, used for a
 // key neither the settings nor the legacy configuration holds.
 var settingsDefaults = map[string]string{
 	keyPrometheusURL:      "",
 	keyPrometheusInsecure: "false",
-	keyPassive:            "true",
+	keyPrometheusCA:       "",
+	keyPassive:          "true",
 	keyUtilizationShare:   config.UtilizationShareSettingOff,
 	keyLimiter:            "",
 	keyQuotas:             "",
@@ -60,7 +77,7 @@ var settingsDefaults = map[string]string{
 	keyScaleToZero:        "false",
 	keyWatchNamespaces:    "",
 	keyLogVerbosity:       "2",
-	keyAllowHTTP:          "false",
+	keyAllowHTTP:          "",
 }
 
 // Values the settings keys take.
@@ -121,31 +138,67 @@ type settingsState struct {
 	watched []string
 	// deployFound: the controller's Deployment exists and was read.
 	deployFound bool
-	// deployEnv holds the Prometheus variables (envAllowHTTP, envTokenPath,
-	// envBearerToken) the controller container sets to a value the controller
-	// reads: a literal that is not empty, or "from <source>" for valueFrom.
+	// deployEnv holds the promLoaderKeys the controller container sets to a
+	// value the controller reads: a literal that is not empty, or
+	// "from <source>" for valueFrom.
 	deployEnv map[string]string
-	// legacyToken names the token key LegacyConfigMap's config.yaml sets,
-	// empty when it sets none. legacyAllowHTTP is its PROMETHEUS_ALLOW_HTTP.
-	legacyToken, legacyAllowHTTP string
+	// legacyProm holds the promLoaderKeys LegacyConfigMap's config.yaml sets
+	// to a value that is not empty.
+	legacyProm map[string]string
+	// tokenPathEmptied: the preflight Job says the controller is about to be
+	// applied with PROMETHEUS_TOKEN_PATH empty (TokenPathEmptiedEnv), so the
+	// live Deployment's token path is not counted.
+	tokenPathEmptied bool
+}
+
+// loaderValue is the value the controller's loader reads for loaderKey: the
+// setting (settingKey, "" for none) when the settings ConfigMap holds it,
+// else the container's environment, else config.yaml. source names where
+// it came from; both are empty when it is unset.
+func (st settingsState) loaderValue(loaderKey, settingKey string) (value, source string) {
+	if settingKey != "" && !slices.Contains(st.fromLegacy, settingKey) {
+		if v := strings.TrimSpace(st.set[settingKey]); v != "" {
+			return v, settingKey + " in ConfigMap " + SettingsConfigMap
+		}
+	}
+	if v, ok := st.deployEnv[loaderKey]; ok {
+		return v, loaderKey + " on Deployment " + ControllerDeployment
+	}
+	if v, ok := st.legacyProm[loaderKey]; ok {
+		return v, loaderKey + " in config.yaml of ConfigMap " + LegacyConfigMap
+	}
+	return "", ""
 }
 
 // allowHTTP is whether the controller allows a plain HTTP Prometheus URL, as
-// its loader reads PROMETHEUS_ALLOW_HTTP: the settings, else the container's
-// environment, else config.yaml. An empty value is unset.
+// its loader reads PROMETHEUS_ALLOW_HTTP.
 func (st settingsState) allowHTTP() bool {
-	v := ""
-	if !slices.Contains(st.fromLegacy, keyAllowHTTP) {
-		v = strings.TrimSpace(st.set[keyAllowHTTP])
-	}
-	if v == "" {
-		v = st.deployEnv[envAllowHTTP]
-	}
-	if v == "" {
-		v = st.legacyAllowHTTP
-	}
-	b, _ := strconv.ParseBool(strings.TrimSpace(v))
+	v, _ := st.loaderValue(envAllowHTTP, keyAllowHTTP)
+	b, _ := strconv.ParseBool(v)
 	return b
+}
+
+// tlsBesideHTTP names the TLS settings the controller has that it refuses
+// beside an http URL (internal/prometheus ValidateTLSConfig), with where each
+// is set.
+func (st settingsState) tlsBesideHTTP() []string {
+	var out []string
+	if v, src := st.loaderValue(envInsecure, keyPrometheusInsecure); src != "" {
+		if b, _ := strconv.ParseBool(v); b {
+			out = append(out, src)
+		}
+	}
+	for _, k := range [][2]string{
+		{envCACert, keyPrometheusCA},
+		{envServerName, config.SettingPrometheusServerName},
+		{envClientCert, ""},
+		{envClientKey, ""},
+	} {
+		if _, src := st.loaderValue(k[0], k[1]); src != "" {
+			out = append(out, src)
+		}
+	}
+	return out
 }
 
 // bearerToken says where the controller gets a bearer token for Prometheus,
@@ -156,26 +209,35 @@ func (st settingsState) allowHTTP() bool {
 func (st settingsState) bearerToken() (where, key string, onDeployment bool) {
 	for _, k := range []string{envTokenPath, envBearerToken} {
 		if v, ok := st.deployEnv[k]; ok {
+			if k == envTokenPath && st.tokenPathEmptied {
+				continue
+			}
 			return fmt.Sprintf("%s=%s on Deployment %s", k, v, ControllerDeployment), k, true
 		}
 	}
-	if st.legacyToken != "" {
-		return fmt.Sprintf("%s in config.yaml of ConfigMap %s", st.legacyToken, LegacyConfigMap), st.legacyToken, false
+	for _, k := range []string{envTokenPath, envBearerToken} {
+		if _, ok := st.legacyProm[k]; ok {
+			return fmt.Sprintf("%s in config.yaml of ConfigMap %s", k, LegacyConfigMap), k, false
+		}
 	}
 	return "", "", false
 }
 
-// controllerPromEnv reads envAllowHTTP, envTokenPath and envBearerToken off
-// the controller container of d: the values the controller's loader takes.
-// An empty literal is unset there (viper), so it is left out. A literal
-// bearer token is a secret: it is recorded as "(a literal)", never copied.
+// controllerPromEnv reads promLoaderKeys off the controller container of d
+// (managerContainer): the values the controller's loader takes. An empty
+// literal is unset there (viper), so it is left out. A literal bearer token
+// is a secret: it is recorded as "(a literal)", never copied.
 func controllerPromEnv(d *appsv1.Deployment) map[string]string {
 	out := map[string]string{}
-	if d == nil || len(d.Spec.Template.Spec.Containers) == 0 {
+	if d == nil {
 		return out
 	}
-	for _, e := range d.Spec.Template.Spec.Containers[0].Env {
-		if e.Name != envAllowHTTP && e.Name != envTokenPath && e.Name != envBearerToken {
+	c := managerContainer(*d)
+	if c == nil {
+		return out
+	}
+	for _, e := range c.Env {
+		if !slices.Contains(promLoaderKeys, e.Name) {
 			continue
 		}
 		switch {
@@ -194,14 +256,18 @@ func controllerPromEnv(d *appsv1.Deployment) map[string]string {
 	return out
 }
 
-// legacyTokenKey names the bearer-token key config.yaml (old) sets, or "".
-func legacyTokenKey(old map[string]any) string {
-	for _, k := range []string{envTokenPath, envBearerToken} {
-		if v, ok := old[k]; ok && v != nil && strings.TrimSpace(fmt.Sprint(v)) != "" {
-			return k
+// legacyPromValues reads promLoaderKeys from config.yaml (old): those set to
+// a value that is not empty.
+func legacyPromValues(old map[string]any) map[string]string {
+	out := map[string]string{}
+	for _, k := range promLoaderKeys {
+		if v, ok := old[k]; ok && v != nil {
+			if s := strings.TrimSpace(fmt.Sprint(v)); s != "" {
+				out[k] = s
+			}
 		}
 	}
-	return ""
+	return out
 }
 
 // value is the effective value of key: set, else the shipped default.
@@ -231,10 +297,8 @@ func (s *state) loadSettings(ctx context.Context) settingsState {
 		st.deployWatch, st.deployWhy, d = s.deploymentWatch(ctx, old)
 		st.deployFound = d != nil
 		st.deployEnv = controllerPromEnv(d)
-		st.legacyToken = legacyTokenKey(old)
-		if v, ok := old[envAllowHTTP]; ok && v != nil {
-			st.legacyAllowHTTP = fmt.Sprint(v)
-		}
+		st.legacyProm = legacyPromValues(old)
+		st.tokenPathEmptied = s.env.TokenPathEmptied
 		effective := st.deployWatch
 		cm, err := cms.Get(ctx, SettingsConfigMap, metav1.GetOptions{})
 		switch err {
@@ -360,9 +424,9 @@ func (s *state) deploymentWatch(ctx context.Context, old map[string]any) (watch,
 	if v, set := watchFlag(*d); set {
 		return config.NormalizeWatchNamespace(v), "", d
 	}
-	if cs := d.Spec.Template.Spec.Containers; len(cs) > 0 {
+	if c := managerContainer(*d); c != nil {
 		expand := containerExpand(*d)
-		for _, e := range cs[0].Env {
+		for _, e := range c.Env {
 			if e.Name == "WATCH_NAMESPACE" && e.ValueFrom == nil {
 				if v := config.NormalizeWatchNamespace(expand(e.Value)); v != "" {
 					return v, "", d
