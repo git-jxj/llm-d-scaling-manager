@@ -315,7 +315,7 @@ func tlsFix(ns string, t tlsSource) string {
 	case strings.HasPrefix(t.source, t.settingKey+" in ConfigMap ") && t.settingKey != "":
 		v := ""
 		if t.settingKey == keyPrometheusInsecure {
-			v = "false"
+			v = settingsDefaults[keyPrometheusInsecure]
 		}
 		return settingsPatch(ns, t.settingKey, v)
 	case strings.Contains(t.source, " on Deployment "):
