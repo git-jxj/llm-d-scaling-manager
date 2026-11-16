@@ -1,19 +1,21 @@
 # Helm values overlay for the llm-d-router-standalone chart to enable the EPP
 # flowControl feature gate. Applied on top of the optimized-baseline guide
 # values when ENABLE_SCALE_TO_ZERO=true. The flowControl gate exposes
-# inference_extension_flow_control_queue_size, which the scaling manager scale-from-zero
-# engine reads to detect pending requests.
+# llm_d_epp_flow_control_queue_size, which the scaling manager scale-from-zero
+# engine reads to detect pending requests. Routers before v1.0.0 also exported
+# it as inference_extension_flow_control_queue_size; v1.0.0 dropped that name.
 #
 # The plugins and schedulingProfiles below are NOT new — they are copied verbatim from
 # deploy/lib/epp-optimized-baseline.values.yaml. They must be repeated here because
 # pluginsCustomConfig is a string value in the Helm chart; Helm's last-(-f)-wins
 # semantics replace the entire string, so the overlay must carry the full config.
-# The only addition over the base values is the featureGates entry.
+# The only addition over the base values is the featureGates entry. Like the base
+# config, it is llm-d.ai/v1, which needs router v1.0.0 or newer.
 router:
   epp:
     pluginsCustomConfig:
       optimized-baseline-plugins.yaml: |
-        apiVersion: llm-d.ai/v1alpha1
+        apiVersion: llm-d.ai/v1
         kind: EndpointPickerConfig
         featureGates:
         - flowControl

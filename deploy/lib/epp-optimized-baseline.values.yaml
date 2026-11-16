@@ -3,6 +3,8 @@
 ##
 ## Vendored from llm-d/llm-d@v0.8.1 guides/optimized-baseline/router/optimized-baseline.values.yaml.
 ## Update alongside LLM_D_ROUTER_VERSION when the chart schema changes.
+## The config's apiVersion, llm-d.ai/v1, is read by router v1.0.0 and newer
+## only: an older LLM_D_ROUTER_VERSION fails to load it.
 
 router:
   extraServicePorts:
@@ -15,7 +17,7 @@ router:
     pluginsConfigFile: "optimized-baseline-plugins.yaml"
     pluginsCustomConfig:
       optimized-baseline-plugins.yaml: |
-        apiVersion: llm-d.ai/v1alpha1
+        apiVersion: llm-d.ai/v1
         kind: EndpointPickerConfig
         plugins:
         - type: queue-scorer

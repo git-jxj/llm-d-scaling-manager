@@ -1161,7 +1161,9 @@ for plugin in always-disagg-pd-decider disagg-profile-handler prefill-filter dec
     printf '%s\n' "$shared_body" | grep -qE -- "- type: $plugin\$" || missing="$missing plugin:$plugin"
 done
 printf '%s\n' "$shared_body" | grep -qE -- '- flowControl$' || missing="$missing featureGates:flowControl"
-printf '%s\n' "$shared_body" | grep -A1 -E '^    routerEndpointPicker:$' | grep -qE 'tag: v0\.11\.0$' || missing="$missing images.routerEndpointPicker=v0.11.0"
+printf '%s\n' "$shared_body" | grep -A1 -E '^    routerEndpointPicker:$' | grep -qE 'tag: v1\.0\.0$' || missing="$missing images.routerEndpointPicker=v1.0.0"
+# llm-d.ai/v1 is first read by router v1.0.0; it and the pin above move together.
+printf '%s\n' "$shared_body" | grep -qE '^            apiVersion: llm-d\.ai/v1$' || missing="$missing pd-config.apiVersion=llm-d.ai/v1"
 [ "$(printf '%s\n' "$pd_body" | grep -c 'kv_connector":"NixlConnector"')" -eq 2 ] || missing="$missing NixlConnector-on-both-roles"
 if printf '%s\n' "$pd_body" | grep -q 'matchLabels'; then
     missing="$missing no-matchLabels(each-InferencePool-would-select-both-models)"

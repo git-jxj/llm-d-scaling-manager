@@ -65,9 +65,10 @@ const (
 // reads to decide whether a workload parked at zero has demand waiting, in
 // preference order. llm-d's EPP renamed the family to the llm_d_epp_ prefix and
 // marks the inference_extension_ name "[Deprecated: Use
-// llm_d_epp_flow_control_queue_size]". Both are exported today, so read the new
-// name and fall back to the old one rather than pinning either — pinning the
-// deprecated name would start failing silently the moment it is dropped.
+// llm_d_epp_flow_control_queue_size]". Routers before v1.0.0 export both and
+// v1.0.0 exports only the new one, so read the new name and fall back to the
+// old one rather than pinning either — pinning the deprecated name failed
+// silently the moment it was dropped.
 var targetEPPMetricNames = []string{
 	constants.EPPFlowControlQueueSize,
 	constants.SchedulerFlowControlQueueSize,

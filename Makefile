@@ -151,7 +151,7 @@ E2E_GO_TIMEOUT              ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),130m
 # which reads as eight product failures rather than a suite that was cut off.
 DEPLOY_ALERTING_RULES       ?= false
 SCALER_BACKEND              ?= keda  # keda (ScaledObject) or none (skip, use pre-installed backend)
-LLM_D_ROUTER_VERSION        ?= v0.9.0
+LLM_D_ROUTER_VERSION        ?= v1.0.0
 GAIE_VERSION                ?= v1.5.0
 SCALE_UP_THRESHOLD          ?=
 SCALE_DOWN_BOUNDARY         ?=

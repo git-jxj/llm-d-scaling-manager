@@ -39,7 +39,8 @@ import (
 
 const (
 	flowControlQueueMetric = "llm_d_epp_flow_control_queue_size"
-	// The GIE name for the same series, still exported as a deprecated alias.
+	// The GIE name for the same series, a deprecated alias that routers before
+	// v1.0.0 still export.
 	flowControlQueueMetricAlias = "inference_extension_flow_control_queue_size"
 	// The token scaling manager itself mounts to scrape EPP. EPP /metrics is authenticated:
 	// an unauthenticated GET returns a one-line "Unauthorized" body, which is

@@ -109,7 +109,8 @@ func (in AnalyzerInput) FlowControlSeries() bool {
 }
 
 // SchedulerQueueMetrics holds model-level queue metrics from the llm-d
-// inference scheduler flow control layer (inference_extension_flow_control_*).
+// inference scheduler flow control layer (llm_d_epp_flow_control_*, or the
+// inference_extension_flow_control_* alias on routers before v1.0.0).
 // These are model-scoped, not per-pod, since the scheduler queues requests
 // before routing them to a specific backend pod.
 //
@@ -120,12 +121,12 @@ func (in AnalyzerInput) FlowControlSeries() bool {
 type SchedulerQueueMetrics struct {
 	// QueueSize is the number of requests currently queued in the
 	// scheduler's flow control layer for this model.
-	// Sourced from inference_extension_flow_control_queue_size.
+	// Sourced from llm_d_epp_flow_control_queue_size (or its pre-v1.0.0 alias).
 	QueueSize int64
 
 	// QueueBytes is the total bytes of request bodies currently queued
 	// in the scheduler's flow control layer for this model.
-	// Sourced from inference_extension_flow_control_queue_bytes.
+	// Sourced from llm_d_epp_flow_control_queue_bytes (or its pre-v1.0.0 alias).
 	// Approximate token count: QueueBytes / BytesPerToken.
 	QueueBytes int64
 }

@@ -70,8 +70,9 @@ data:
 
       # ── Engine-agnostic analyzer: one body (no `engines:` map), used for any engine.
       # Suitable for signals built on EPP/GIE metrics that do not vary by engine.
+      # The router's flow-control queue for the model (needs the EPP flowControl gate).
       pool-queue:
-        query: sum(max_over_time(inference_pool_average_queue_size{namespace="{{.namespace}}",model_name="{{.modelID}}"}[1m]))
+        query: sum(max_over_time(llm_d_epp_flow_control_queue_size{namespace="{{.namespace}}",model_name="{{.modelID}}"}[1m]))
         threshold: "5"
 
   # A policy tier SELECTS and weights them by name. It cannot define one.

@@ -1264,7 +1264,7 @@ act.
 #       - flowControl
 #
 # Measured on the shared GPU cluster: the namespaces whose EPP config carries that list have
-# inference_extension_flow_control_queue_size series; the one built from llm-d's
+# llm_d_epp_flow_control_queue_size series; the one built from llm-d's
 # optimized-baseline guide has no featureGates section and no series.
 #
 # The scaling manager reads the queue by scraping the EPP directly with a token mounted at
@@ -1454,11 +1454,14 @@ llmsm_epp_scrapers() {
 #
 # They are SEPARATE requirements with different fixes, measured on the shared GPU cluster:
 #
-#   inference_extension_scheduler_attempts_total   19 namespaces — published
+#   llm_d_epp_scheduler_attempts_total             19 namespaces — published
 #     (arrival rate -> throughput analyzer)        whenever the EPP is SCRAPED.
 #                                                  No gate needed.
-#   inference_extension_flow_control_queue_size     4 namespaces — only where the
+#   llm_d_epp_flow_control_queue_size               4 namespaces — only where the
 #     (scale-from-zero, llmsm_unmeasured_queue)       flowControl GATE is on.
+#
+# (Routers before v1.0.0 also exported both under an inference_extension_ name;
+# v1.0.0 exports only the llm_d_epp_ names.)
 #
 # The arrival-rate query is PromQL (registration/throughput_analyzer.go), so it
 # needs Prometheus to scrape the EPP; the scaling manager's direct EPP scrape covers only the queue

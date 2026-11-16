@@ -4,7 +4,7 @@
 # Installs Gateway API CRDs, GAIE CRDs, and the llm-d-router-standalone chart (EPP + InferencePool).
 #
 # Required vars: LLM_D_ROUTER_VERSION, GAIE_VERSION, NAMESPACE
-#   LLM_D_ROUTER_VERSION  — chart + EPP image tag from llm-d/llm-d-router (e.g. v0.9.0)
+#   LLM_D_ROUTER_VERSION  — chart + EPP image tag from llm-d/llm-d-router (e.g. v1.0.0)
 #   GAIE_VERSION          — kubernetes-sigs GAIE CRDs ref (e.g. v1.5.0)
 # Required funcs: log_info, log_success, log_warning
 #
@@ -100,7 +100,7 @@ deploy_epp() {
     log_info "Installing llm-d-router-standalone chart (release=optimized-baseline, version=${LLM_D_ROUTER_VERSION})..."
 
     # When scale-to-zero is enabled, add flowControl feature gate to EPP config so the
-    # scale-from-zero engine can read inference_extension_flow_control_queue_size metrics.
+    # scale-from-zero engine can read llm_d_epp_flow_control_queue_size metrics.
     local extra_helm_args=() epp_preexisting=false
     if [ "${ENABLE_SCALE_TO_ZERO:-false}" = "true" ]; then
         log_info "ENABLE_SCALE_TO_ZERO=true: enabling EPP flowControl feature gate..."

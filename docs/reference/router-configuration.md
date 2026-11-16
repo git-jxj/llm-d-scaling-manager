@@ -107,7 +107,7 @@ v0.11.0 and newer split the two: `defaultRequestTTL` for the saturated case,
 enqueue time and the last regime change, so a regime change restarts the
 budget. **v0.9.0 does not**: it has `DefaultRequestTTL` and no empty-pool
 budget, so one number serves both and the only safe choice is the longer one.
-That is why this repo's scenarios pin v0.11.0.
+That is why this repo pins v0.11.0 or newer; it pins v1.0.0 today.
 
 ### Which router version you need
 
@@ -115,13 +115,13 @@ The two-budget split decides whether a scale-to-zero deployment works or
 sheds its own cold starts, so it decides the version. From the shipped binaries,
 not release notes:
 
-| flow-control feature | v0.9.0 | v0.11.0 |
-|---|---|---|
-| `noEndpointRequestTTL` — the scale-from-zero waiting room | **absent** | present |
-| `enableEviction` — in-flight eviction | absent | present |
-| `priority-holdback-policy`, `soft-reflective-ceiling-policy` | absent | present |
-| `sheddable-eviction-filter` | absent | present |
-| `slo-deadline`, `edf-ordering`, round-robin and program-aware fairness | present | present |
+| flow-control feature | v0.9.0 | v0.11.0 | v1.0.0 |
+|---|---|---|---|
+| `noEndpointRequestTTL` — the scale-from-zero waiting room | **absent** | present | present |
+| `enableEviction` — in-flight eviction | absent | present | present |
+| `priority-holdback-policy`, `soft-reflective-ceiling-policy` | absent | present | present |
+| `sheddable-eviction-filter` | absent | present | present |
+| `slo-deadline`, `edf-ordering`, round-robin and program-aware fairness | present | present | present |
 
 **On v0.9.0 no `defaultRequestTTL` serves a scale-to-zero deployment.** Short
 enough for a time-to-first-token objective kills cold starts. Long enough for a
@@ -204,6 +204,34 @@ Measured here after the migration: completions in 27-120 ms (v0.9.0 was
 unpinned router can change how requests spread and how the queue is bounded
 between runs, with nothing in the output saying so.
 
+#### Migrating to v1.0.0
+
+A config that runs on v0.11.0 loads on v1.0.0. What changes:
+
+- **apiVersion.** `EndpointPickerConfig` is `llm-d.ai/v1`. `llm-d.ai/v1alpha1`
+  is still read, with a deprecation line in the log; the older
+  `inference.networking.x-k8s.io/v1alpha1` is rejected. A `llm-d.ai/v1` config
+  does not load on a router older than v1.0.0, so move the apiVersion and the
+  router pin together.
+- **Metric names.** The deprecated `inference_extension_*`, `inference_pool_*`
+  and `inference_objective_*` series are gone; only the `llm_d_epp_*` names
+  remain. The scaling manager reads the `llm_d_epp_*` names first and the old
+  ones only as a fallback, so it needs no change. Dashboards, alerts or
+  scripts of your own that read only the old names go empty.
+- **Removed plugins and fields.** `by-label`, `by-label-selector`,
+  `precise-prefix-cache-scorer`, `tokenizer`, `pd-profile-handler`,
+  `data-parallel-profile-handler`, and the top-level `saturationDetector` and
+  `parser` fields fail the load. Use `prefill-filter`/`decode-filter` or
+  `label-selector-filter`, `precise-prefix-cache-producer` with
+  `prefix-cache-scorer`, `token-producer`, `disagg-profile-handler`,
+  `single-profile-handler`, `flowControl.saturationDetector` and
+  `requestHandler.parsers`.
+- **Legacy API groups.** The router reads `InferenceObjective` only from
+  `llm-d.ai`; an objective in `inference.networking.x-k8s.io` is ignored.
+  `--pool-group inference.networking.x-k8s.io` is rejected at startup.
+- **Pod labels.** `llm-d.ai/role: both` no longer matches the role filters;
+  use `prefill-decode`.
+
 ### What to set
 
 ```yaml
@@ -248,7 +276,7 @@ loop), saturation pins high, dispatch stalls, and queued requests leave at their
 TTL, or with no TTL, never.
 
 Keep the metrics refresh interval well inside the staleness threshold. Watch
-`inference_extension_flow_control_pool_saturation` next to queue size. On the run
+`llm_d_epp_flow_control_pool_saturation` next to queue size. On the run
 above it peaked at 28.8 with the queue 4,772 deep: saturation was reported, but
 the queue had no bound to act on it.
 
@@ -381,8 +409,10 @@ kubectl -n <ns> logs deploy/<model>-router-epp -c epp \
 Expect the weights you set, as floats:
 
 ```
-prefill:{Filters: [prefill-filter/by-label], Scorers: [prefix-cache-scorer: 3.000000, queue-scorer: 2.000000, ...]
+prefill:{Filters: [prefill-filter/prefill-filter], Scorers: [prefix-cache-scorer: 3.000000, queue-scorer: 2.000000, ...]
 ```
+
+Routers before v1.0.0 print the filter as `prefill-filter/by-label`.
 
 ## See also
 

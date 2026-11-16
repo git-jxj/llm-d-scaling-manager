@@ -5,11 +5,15 @@ per-window-rate timeseries to:
     metrics/processed/epp_throughput.json
 
 Source counters (cumulative on the EPP, finite-differenced into rates here):
-    inference_objective_request_total                 -> request_rate   (rps)
-    inference_objective_request_error_total           -> error_rate     (rps)
-    inference_objective_input_tokens_count            -> input_tps
-    inference_objective_output_tokens_count           -> output_tps
-    inference_extension_scheduler_attempts_total      -> sched_attempts_per_s
+    llm_d_epp_request_total                 -> request_rate   (rps)
+    llm_d_epp_request_error_total           -> error_rate     (rps)
+    llm_d_epp_request_input_tokens_count    -> input_tps
+    llm_d_epp_request_output_tokens_count   -> output_tps
+    llm_d_epp_scheduler_attempts_total      -> sched_attempts_per_s
+
+Each falls back to its legacy name (inference_objective_*,
+inference_extension_scheduler_attempts_total) when a scrape has none of the
+current one: routers before v1.0.0 export both, v1.0.0 only llm_d_epp_*.
 
 These signals are already present in the existing EPP raw files; this dumper
 just exposes them in a plot-friendly form. Works on any prior run that has
@@ -24,21 +28,29 @@ import json
 import re
 from pathlib import Path
 
+# key -> (current name, legacy name). Both are summed separately and the
+# current one wins whenever the scrape carries it, so a router that exports
+# both names is not counted twice.
 PATTERNS = {
-    "request_total": re.compile(
-        r'^inference_objective_request_total\{[^}]*model_name="(?P<m>[^"]+)"[^}]*\}\s+([0-9.eE+-]+)'
+    "request_total": (
+        re.compile(r'^llm_d_epp_request_total\{[^}]*model_name="(?P<m>[^"]+)"[^}]*\}\s+([0-9.eE+-]+)'),
+        re.compile(r'^inference_objective_request_total\{[^}]*model_name="(?P<m>[^"]+)"[^}]*\}\s+([0-9.eE+-]+)'),
     ),
-    "request_error_total": re.compile(
-        r'^inference_objective_request_error_total\{[^}]*\}\s+([0-9.eE+-]+)'
+    "request_error_total": (
+        re.compile(r'^llm_d_epp_request_error_total\{[^}]*\}\s+([0-9.eE+-]+)'),
+        re.compile(r'^inference_objective_request_error_total\{[^}]*\}\s+([0-9.eE+-]+)'),
     ),
-    "input_tokens_count": re.compile(
-        r'^inference_objective_input_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'
+    "input_tokens_count": (
+        re.compile(r'^llm_d_epp_request_input_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'),
+        re.compile(r'^inference_objective_input_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'),
     ),
-    "output_tokens_count": re.compile(
-        r'^inference_objective_output_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'
+    "output_tokens_count": (
+        re.compile(r'^llm_d_epp_request_output_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'),
+        re.compile(r'^inference_objective_output_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'),
     ),
-    "sched_attempts_total": re.compile(
-        r'^inference_extension_scheduler_attempts_total\{[^}]*\}\s+([0-9.eE+-]+)'
+    "sched_attempts_total": (
+        re.compile(r'^llm_d_epp_scheduler_attempts_total\{[^}]*\}\s+([0-9.eE+-]+)'),
+        re.compile(r'^inference_extension_scheduler_attempts_total\{[^}]*\}\s+([0-9.eE+-]+)'),
     ),
 }
 
@@ -49,7 +61,7 @@ FILE_RE = re.compile(r"^(?P<pod>.+?)_(?P<ts>\d{10})_metrics\.log$")
 def parse_one(path: Path):
     """Parse one EPP scrape file. Sums by metric (ignoring labels) for
     monotonic counters that are aggregated across label sets."""
-    out = {}
+    sums = {}  # (key, 0=current | 1=legacy) -> summed value
     try:
         text = path.read_text()
     except Exception:
@@ -57,12 +69,23 @@ def parse_one(path: Path):
     for line in text.splitlines():
         if line.startswith("#") or not line:
             continue
-        for key, rx in PATTERNS.items():
-            m = rx.match(line)
-            if m:
-                # Take the last numeric group regardless of named groups
-                val = float(m.group(m.lastindex or 1))
-                out[key] = out.get(key, 0.0) + val
+        matched = False
+        for key, names in PATTERNS.items():
+            for idx, rx in enumerate(names):
+                m = rx.match(line)
+                if m:
+                    # Take the last numeric group regardless of named groups
+                    val = float(m.group(m.lastindex or 1))
+                    sums[(key, idx)] = sums.get((key, idx), 0.0) + val
+                    matched = True
+                    break
+            if matched:
+                break
+    out = {}
+    for key in PATTERNS:
+        for idx in (0, 1):
+            if (key, idx) in sums:
+                out[key] = sums[(key, idx)]
                 break
     return out or None
 

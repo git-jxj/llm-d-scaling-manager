@@ -134,8 +134,16 @@ scenario:
         # after any change here -- a broken P/D split does not crash, it
         # quietly routes everything to one role and the benchmark still looks
         # plausible. See docs/reference/router-configuration.md.
+        #
+        # v1.0.0 since then. The config below loads on it with one change: the
+        # EndpointPickerConfig apiVersion is llm-d.ai/v1 (v1alpha1 is still
+        # read, with a deprecation warning). v1.0.0 also stops exporting the
+        # deprecated inference_extension_* metric names; the scaling manager
+        # reads the llm_d_epp_* names first, so nothing it reads goes missing.
+        # The image moves; the chart stays the harness default, as it did for
+        # v0.11.0.
         routerEndpointPicker:
-          tag: v0.11.0
+          tag: v1.0.0
 
       vllmCommon:
         # rc enables UCX's RDMA transport (RoCE GPUDirect on this cluster --
@@ -259,8 +267,8 @@ scenario:
       # -------------------------------------------------------------------------
       # Routing / GAIE Configuration
       # Reference: https://github.com/llm-d/llm-d/blob/main/guides/pd-disaggregation/router/pd-disaggregation.values.yaml
-      # The plugins block uses the `llm-d.ai/v1alpha1` apiVersion shipped
-      # by the llm-d-router-{standalone,gateway}-dev charts.
+      # The plugins block uses the `llm-d.ai/v1` apiVersion, which the
+      # router reads from v1.0.0 (the pinned image above).
       # -------------------------------------------------------------------------
       router:
         extraServicePorts:
@@ -275,7 +283,7 @@ scenario:
           pluginsConfigFile: "pd-config.yaml"
           pluginsCustomConfig:
             pd-config.yaml: |
-              apiVersion: llm-d.ai/v1alpha1
+              apiVersion: llm-d.ai/v1
               kind: EndpointPickerConfig
               featureGates:
               - flowControl

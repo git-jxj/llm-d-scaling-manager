@@ -2062,8 +2062,11 @@ tests do. The controller goes into `CONTROLLER_NAMESPACE`, which defaults to
 
 - **Scale to zero.** With `SCALE_TO_ZERO_ENABLED=true`, `install-epp.sh`
   enables the EPP flowControl feature gate, so it exposes
-  `inference_extension_flow_control_queue_size`. The scale-from-zero tests
-  create the `e2e-default` InferenceObjective themselves.
+  `llm_d_epp_flow_control_queue_size`. The scale-from-zero tests
+  create the `e2e-default` InferenceObjective themselves. It is in the
+  `inference.networking.x-k8s.io` group, which router v1.0.0 no longer reads;
+  its priority is 0, the default an unclassified request gets anyway, so the
+  tests behave the same without it.
 - **Kueue.** Two specs, see [Kueue specs](#kueue-specs): the quota spec in
   the full tier, the borrowing spec in a CI job of its own.
 - **Monitoring images.** Prometheus comes from kube-prometheus-stack
