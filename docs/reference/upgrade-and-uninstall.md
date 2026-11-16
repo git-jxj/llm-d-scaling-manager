@@ -108,28 +108,6 @@ only to change it. Limiters an admin published in a policy namespace
    NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace> make scaledobjects-rewire
    ```
 
-### The llm-d router: v1.0.0
-
-This tree installs the llm-d router (the EPP) at v1.0.0; v0.11.2 and earlier
-installed v0.9.0. Upgrading the scaling manager does not touch the router.
-
-- **The router you run keeps working.** The scaling manager reads the router's
-  queue under both the old and the new metric names, so a router installed by
-  v0.11.2 needs nothing.
-- **To upgrade the router, move its config with it.** Router v1.0.0 reads the
-  `EndpointPickerConfig` apiVersion `llm-d.ai/v1`; older routers cannot load
-  it. Change the apiVersion and the router version in the same rollout.
-- **Re-running `deploy/install-epp.sh` moves you to v1.0.0.** Its values are
-  `llm-d.ai/v1` now, and it refuses an `LLM_D_ROUTER_VERSION` below v1.0.0. To
-  stay on an older router, do not re-run it for that router.
-- **Your own dashboards and alerts may go empty.** v1.0.0 stops exporting the
-  `inference_extension_*`, `inference_pool_*` and `inference_objective_*`
-  names. Anything of yours that reads only those names shows nothing; move it
-  to the `llm_d_epp_*` names.
-
-What else changes in the router is in
-[router-configuration.md](router-configuration.md#migrating-to-v100).
-
 ### Moving from llm-scaling-manager
 
 This project was renamed when it moved here. Nothing is upgraded across the
@@ -182,6 +160,61 @@ The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
   delete the old `whatif-planner` ClusterRole and ClusterRoleBinding, and the
   `whatif-planner-reader` Role and RoleBinding in each namespace. Or keep the
   old objects: the rules are the same.
+
+#### The llm-d router moves to v1.0.0
+
+v0.11.2 installs the llm-d router (the EPP) at v1.0.0; v0.11.1 and earlier
+installed v0.9.0. Upgrading the scaling manager does not touch a router that
+is already running.
+
+- **A router installed by v0.11.1 or earlier needs nothing.** The scaling
+  manager reads the router's queue under both the old and the new metric
+  names.
+- **To upgrade the router, follow the order in
+  [Migrating to v1.0.0](router-configuration.md#migrating-to-v100):**
+  dashboards and alerts, InferenceObjectives, removed plugins and the image,
+  and only then the `EndpointPickerConfig` apiVersion.
+- **Your own dashboards and alerts on the old metric names go empty on
+  v1.0.0.** Routers before v1.0.0 already export the new names, so move them
+  first; the [old-to-new table](router-configuration.md#metric-names-old-to-new)
+  lists each name and its label changes.
+- **InferenceObjectives in `inference.networking.x-k8s.io` are ignored by
+  v1.0.0**, without an error, and their requests run at priority 0. Recreate
+  them in `llm-d.ai`; the CRD is not installed by `install-epp.sh`. See
+  [InferenceObjectives](router-configuration.md#inferenceobjectives).
+- **P/D: move the routing sidecar and the modelservice chart together.**
+  Sidecar v1.0.0 needs chart v0.4.16; see
+  [P/D routing sidecar](router-configuration.md#pd-routing-sidecar).
+- **Re-running `deploy/install-epp.sh` moves the router to v1.0.0.** Its
+  values are `llm-d.ai/v1`, and it refuses an `LLM_D_ROUTER_VERSION` below
+  v1.0.0. `helm upgrade` from the v0.9.0 chart works in place: both charts
+  select the EPP pods by the same labels. The Deployment is `Recreate`, so the
+  router is down for the restart.
+- **Re-import the bundled dashboard** (`deploy/grafana/operational-dashboard.json`).
+  The old copy still works; the new one no longer draws each replica twice in
+  the per-replica router queue panel on a router that exports both names.
+
+To keep or go back to an older router:
+
+- **Re-install v0.9.0** from a v0.11.1 checkout, whose values are
+  `llm-d.ai/v1alpha1`:
+  ```bash
+  # From a v0.11.1 checkout of this repository
+  LLM_D_ROUTER_VERSION=v0.9.0 NAMESPACE=<ns> ./deploy/install-epp.sh
+  ```
+- **Roll back** an upgrade `install-epp.sh` made. Its Helm release is
+  `optimized-baseline`; the rollback restores the old chart and its config
+  together:
+  ```bash
+  helm history optimized-baseline -n <ns>
+  helm rollback optimized-baseline <revision> -n <ns>
+  ```
+- **Verify** which config the router loaded:
+  ```bash
+  # The apiVersion the router parsed; a load failure names it too
+  kubectl -n <ns> logs deploy/optimized-baseline-epp -c epp \
+    | grep -o -E '"apiVersion":"[^"]*"|no kind "EndpointPickerConfig"[^"]*' | head -3
+  ```
 
 ### Upgrading from v0.11.0 to v0.11.1
 
