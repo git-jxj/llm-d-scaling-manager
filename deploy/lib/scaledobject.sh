@@ -2017,6 +2017,12 @@ so_model_claim() {
           # ROX volume mounts read-only, so every replica would crash on the
           # download rather than merely re-doing it.
           | select((.spec.accessModes // []) | any(. == "ReadWriteMany"))
+          # Not a node-local weights claim (deploy/weights.sh). It is
+          # ReadWriteMany and named weights-..., but each node holds its own
+          # copy under models/<id>: as an HF_HOME download cache every node
+          # would download again into its own directory, and the copy the
+          # downloader made would sit unused.
+          | select(.spec.storageClassName != "node-local-weights")
           # The name test applies here, not only when there are several. A
           # namespace with exactly ONE RWX claim does not thereby have a model
           # cache: in a benchmark namespace that one claim is the RESULTS

@@ -490,6 +490,19 @@ echo "workload-patch gate"
     f2="$(mktemp)"; printf '%s\n' "$(doc_of)" | yq 'select(.kind == "Deployment")' > "$f2"
     ! so_workload_patch_trim "$f2" 1 1 && say_ok "a document carrying only the gate is not applied at all" || say_fail "a gate-only document survived the trim"
     rm -f "$f" "$f2"
+
+    # The HF_HOME cache the weights half proposes is never a node-local
+    # weights claim: each node has its own copy there, under models/<id>.
+    all_pvcs="$PVCS"
+    PVCS="$(jq -c '{items: [.items[] | select(.spec.storageClassName == "node-local-weights")]}' <<< "$all_pvcs")"
+    c1="$(so_model_claim ns1)"
+    PVCS="$(jq -c '{items: [.items[] | select(.spec.storageClassName != "node-local-weights")]}' <<< "$all_pvcs")"
+    c2="$(so_model_claim ns1)"
+    PVCS="$all_pvcs"
+    c3="$(so_model_claim ns1)"
+    [ -z "$c1" ] && [ "$c2" = shared-models ] && [ "$c3" = shared-models ] \
+        && say_ok "the weights half never picks a node-local weights claim as its HF_HOME cache; a shared one beside it is still found" \
+        || say_fail "so_model_claim: alone '$c1' (want none), shared '$c2', both '$c3' (want shared-models)"
     exit $FAILS
 ) || FAILED=1
 
