@@ -105,7 +105,11 @@ whose existing labels name the model differently. It must have the form
 DaemonSet. The labeller writes only keys of that form under its
 `--label-prefix` (`llm-d.ai` by default): a model namespace can edit its own
 DaemonSet, and must not be able to steer the labeller onto `node-role.*` or a
-GPU product label.
+GPU product label. Within the prefix, the namespaces in scope are trusted:
+a pod there with a downloader's labels can set or clear a `-cache` label on
+its node. That is why the scope is a list of model namespaces, and `-A` is
+opt-in. Dropping the organisation means two models of one name share a key;
+`label` warns when it sees that.
 
 ### 2.4 Required or preferred affinity
 

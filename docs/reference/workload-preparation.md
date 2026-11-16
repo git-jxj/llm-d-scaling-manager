@@ -470,7 +470,9 @@ Characters a label name does not allow become `-`; a name longer than 57
 characters keeps its first 48 and a hash of the whole id. `WEIGHTS_NODE_LABEL`
 (`--node-label` on `deploy/weights.sh apply`) replaces the whole key; it must be
 `<prefix>/<name>-cache`, and the labeller writes only under its
-`--label-prefix` (`llm-d.ai` unless set).
+`--label-prefix` (`llm-d.ai` unless set). The organisation is dropped, so
+`Qwen/Qwen3-8B` and `my-org/Qwen3-8B` share a key: a node holding either is
+labelled for both. `label` warns when that happens; give each its own key.
 
 **Labels it did not set.** The labeller records the labels it set in the node
 annotation `scaling-manager.llmd.ai/weights-node-labels` and removes only
@@ -502,6 +504,12 @@ Security `restricted`), with node `get`/`list`/`patch`, namespace `get` (a delet
 DaemonSets and pods in the namespaces it watches. It must not run in a model
 namespace: anyone who can create pods there could use its ServiceAccount to
 patch nodes. The namespace owner needs none of this.
+
+The namespaces it watches are trusted. Anyone who can create pods in one can
+set a `<prefix>/<name>-cache` label on a node, or clear one the labeller set
+(never any other label), with a pod that looks like a downloader. So watch
+the model namespaces by name (`-n`), not `-A`, on a cluster whose namespaces
+are not all trusted.
 
 **Where it is installed.** `smt install --scope cluster` applies and updates
 it, watching every `--model-namespace` and every namespace it already watches

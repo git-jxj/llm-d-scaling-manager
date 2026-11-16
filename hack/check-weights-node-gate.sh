@@ -265,7 +265,7 @@ case "\$1 \$2" in
       forbid_gone "\$4" daemonsets
       case "\$3 \$4" in
         "-n ns1") cat "$T/ds-ns1.json" ;;
-        "-n ns2") cat "$T/ds-ns2.json" ;;
+        "-n ns2") cat "\${STUB_DS_NS2:-$T/ds-ns2.json}" ;;
         "-A -l") [ -n "\${STUB_ALLOW_A:-}" ] || { echo "stub: -A not expected" >&2; exit 2; }; jq -s '{items: map(.items[]) }' "$T/ds-ns1.json" "$T/ds-ns2.json" ;;
         *) echo "stub: daemonset scope: \$*" >&2; exit 2 ;;
       esac ;;
@@ -360,6 +360,14 @@ wait "$wpid"; rc=$?
 took=$((SECONDS - start))
 [ "$rc" -eq 0 ] && [ "$took" -le 2 ]
 expect $? "label --watch exits 0 on TERM while it sleeps, at once (rc $rc after ${took}s)"
+# Two models whose default keys are one: the org is dropped from the key.
+jq '.items[0].metadata.annotations["scaling-manager.llmd.ai/weights-model"] = "my-org/Qwen3-32B"' "$T/ds-ns2.json" > "$T/ds-ns2-fork.json"
+STUB_DS_NS2="$T/ds-ns2-fork.json" runlabel -n ns1,ns2; rc=$?
+[ "$rc" -eq 0 ] && grep -q "one node label for different models: $Q (ns1/weights-qwen: Qwen/Qwen3-32B, ns2/weights-qwen: my-org/Qwen3-32B)" "$T/label.out"
+expect $? "two models on one node label are named in a warning"
+runlabel -n ns1,ns2
+! grep -q 'one node label for different models' "$T/label.out"
+expect $? "one model in two namespaces is not warned about"
 runlabel -n ns1 --label-prefix example.com; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'llm-d.ai/' "$T/patches" && grep -q "its prefix is not example.com" "$T/label.out"
 expect $? "--label-prefix: a DaemonSet asking for another prefix is skipped"

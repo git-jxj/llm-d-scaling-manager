@@ -889,7 +889,7 @@ label_sources() {
             log_warning "label: DaemonSet ${dsns}/${dsname} asks for node label '${key}', which is skipped: ${why}"
             continue
         fi
-        jq -cn --arg ns "$dsns" --arg name "$dsname" --arg key "$key" '{ns: $ns, name: $name, key: $key}'
+        jq -cn --arg ns "$dsns" --arg name "$dsname" --arg key "$key" --arg model "$model" '{ns: $ns, name: $name, key: $key, model: $model}'
     done < <(printf '%s\n' "${lines[@]}" | jq -r --arg ann "$LABEL_ANNOTATION" \
         '.items[]? | [.metadata.namespace, .metadata.name, (.metadata.annotations[$ann] // ""),
                       (.metadata.annotations["scaling-manager.llmd.ai/weights-model"] // "")] | join("\u001f")')
@@ -972,6 +972,14 @@ label_pass() {
             log_warning "label: cannot list the downloader pods in scope; no node was changed"
             return 1
         fi
+        # The default key drops the organisation, so Qwen/Qwen3-8B and
+        # my-org/Qwen3-8B share one: a node that holds either is labelled
+        # for both, and replicas of one may prefer a node holding the other.
+        local collide
+        while IFS= read -r collide; do
+            [ -z "$collide" ] || log_warning "label: one node label for different models: ${collide}. Give each its own with weights.sh apply --node-label."
+        done < <(jq -rs 'group_by(.key)[] | select((map(.model) | unique | length) > 1)
+                         | "\(.[0].key) (" + (map(.ns + "/" + .name + ": " + .model) | join(", ")) + ")"' "$src")
     fi
     if ! kubectl get nodes -o json > "$nodes"; then
         log_warning "label: cannot list nodes (this needs cluster-scoped node get, list and patch: a cluster-admin piece); no node was changed"
