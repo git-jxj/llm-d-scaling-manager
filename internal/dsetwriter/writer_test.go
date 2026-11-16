@@ -111,10 +111,10 @@ func TestApplyConfigurationNamesOnlyReplicas(t *testing.T) {
 		"apiVersion": constants.DisaggregatedSetAPIVersion, "kind": constants.DisaggregatedSetKind,
 		"metadata": map[string]any{"name": "glm", "namespace": ns},
 		"spec": map[string]any{"roles": []any{
-			map[string]any{"name": "decode", "spec": map[string]any{"replicas": int64(5)}},
 			map[string]any{"name": "prefill", "spec": map[string]any{"replicas": int64(2)}},
+			map[string]any{"name": "decode", "spec": map[string]any{"replicas": int64(5)}},
 		}},
-	}, doc.Object)
+	}, doc.Object, "the roles in the set's own order, never re-sorted")
 }
 
 type applied struct {
@@ -161,8 +161,8 @@ func TestPassAppliesDecisionsToStaticRolesOnly(t *testing.T) {
 	assert.False(t, got.force)
 	roles, _, _ := unstructured.NestedSlice(got.doc, "spec", "roles")
 	assert.Equal(t, []any{
-		map[string]any{"name": "decode", "spec": map[string]any{"replicas": int64(5)}},
 		map[string]any{"name": "prefill", "spec": map[string]any{"replicas": int64(2)}},
+		map[string]any{"name": "decode", "spec": map[string]any{"replicas": int64(5)}},
 	}, roles)
 
 	// Registered as a variant the engines size, under the scale-target name a

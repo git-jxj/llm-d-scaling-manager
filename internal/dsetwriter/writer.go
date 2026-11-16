@@ -27,7 +27,6 @@ package dsetwriter
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"time"
 
@@ -231,15 +230,20 @@ func Plan(roles []Role, decided map[string]int32, lo, hi int32) map[string]int32
 // of the named roles of set and nothing else. spec.roles is a list map keyed
 // by name, so the apply owns only spec.roles[name=<role>].spec.replicas of
 // each role it names.
+//
+// The roles are listed in set's own order. A server-side apply orders a list
+// map's items as the applied document lists them, and LWS before v1.0.0
+// hashes spec.roles in order into the set's revision: an apply that listed
+// them in another order would roll every group of every role.
 func ApplyConfiguration(set *unstructured.Unstructured, replicas map[string]int32) *unstructured.Unstructured {
-	names := make([]string, 0, len(replicas))
-	for n := range replicas {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	roles := make([]any, 0, len(names))
-	for _, n := range names {
-		roles = append(roles, map[string]any{"name": n, "spec": map[string]any{"replicas": int64(replicas[n])}})
+	spec, _, _ := unstructured.NestedSlice(set.Object, "spec", "roles")
+	roles := make([]any, 0, len(replicas))
+	for _, r := range spec {
+		m, _ := r.(map[string]any)
+		name, _ := m["name"].(string)
+		if n, ok := replicas[name]; ok {
+			roles = append(roles, map[string]any{"name": name, "spec": map[string]any{"replicas": int64(n)}})
+		}
 	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": constants.DisaggregatedSetAPIVersion,
