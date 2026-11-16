@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	llmdvariant "github.com/llm-d-incubation/llm-d-scaling-manager/internal/variant"
 )
 
@@ -130,5 +131,43 @@ func TestRequirePrefillResolvesPerModelAndTierEntries(t *testing.T) {
 				t.Fatalf("requirePrefill = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A DisaggregatedSet model wakes prefill and decode together by default; its
+// policy can still say requirePrefill: false, and any other model keeps the
+// decode-only default.
+func TestRequirePrefillDefaultsOnForDisaggregatedSet(t *testing.T) {
+	const namespace = "tenant"
+	off := false
+	group := func(kind string) modelGroup {
+		va := llmdvariant.Variant{}
+		va.Spec.ScaleTargetRef.Kind = kind
+		return modelGroup{namespace: namespace, modelID: "org/model", variants: []llmdvariant.Variant{va}}
+	}
+	for _, tc := range []struct {
+		name    string
+		entries map[string]config.ScalingPolicy
+		kind    string
+		want    bool
+	}{
+		{name: "a DisaggregatedSet role, no setting", entries: map[string]config.ScalingPolicy{"default": {}},
+			kind: constants.DisaggregatedSetRoleScalerKind, want: true},
+		{name: "a DisaggregatedSet role, explicitly off",
+			entries: map[string]config.ScalingPolicy{"default": {ScaleFromZero: &config.ScaleFromZeroEnvelope{RequirePrefill: &off}}},
+			kind:    constants.DisaggregatedSetRoleScalerKind, want: false},
+		{name: "a Deployment, no setting", entries: map[string]config.ScalingPolicy{"default": {}},
+			kind: constants.DeploymentKind, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.NewTestConfig()
+			cfg.UpdateScalingPolicyConfigForNamespace(namespace, tc.entries)
+			if got := (&Engine{config: cfg}).requirePrefill(group(tc.kind)); got != tc.want {
+				t.Fatalf("requirePrefill = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if !(&Engine{}).requirePrefill(group(constants.DisaggregatedSetRoleScalerKind)) {
+		t.Fatal("with no config at all, a DisaggregatedSet model must still require prefill")
 	}
 }
