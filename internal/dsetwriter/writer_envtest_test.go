@@ -26,6 +26,9 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
 )
 
+// envNS is the namespace of the envtest's sets.
+const envNS = "dset-writer"
+
 // TestWriterOnAnAPIServer runs the writer against a real API server with the
 // DisaggregatedSet CRD of LWS v1.0.0 (testdata/crd): its list-map keys, its
 // defaults and its all-zero-or-all-non-zero CEL rule are the API server's,
@@ -46,17 +49,16 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 	c, err := client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	require.NoError(t, err)
 
-	const space = "dset-writer"
-	require.NoError(t, c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: space}}))
+	require.NoError(t, c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: envNS}}))
 
 	run := func(t *testing.T, name, mode string, decided map[string]int32) *record.FakeRecorder {
 		t.Helper()
 		store := decision.NewStore()
 		for role, n := range decided {
-			store.Set(space, TargetName(name, role), n)
+			store.Set(envNS, TargetName(name, role), n)
 		}
 		rec := record.NewFakeRecorder(10)
-		live := get(ctx, t, c, space, name)
+		live := get(ctx, t, c, name)
 		anns := live.GetAnnotations()
 		if anns == nil {
 			anns = map[string]string{}
@@ -65,7 +67,7 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		anns[ModelIDAnnotation] = "org/GLM"
 		live.SetAnnotations(anns)
 		require.NoError(t, c.Update(ctx, live, client.FieldOwner("annotator")))
-		w := &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec, Namespaces: []string{space}}
+		w := &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec, Namespaces: []string{envNS}}
 		w.Pass(ctx)
 		return rec
 	}
@@ -74,12 +76,12 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		const name = "applied"
 		gitops := envSet(name, nil)
 		require.NoError(t, c.Apply(ctx, client.ApplyConfigurationFromUnstructured(gitops), client.FieldOwner("gitops")))
-		before := get(ctx, t, c, space, name)
+		before := get(ctx, t, c, name)
 		require.Equal(t, map[string]int64{"prefill": 1, "decode": 1, "encode": 1}, replicasOf(t, before), "the API default")
 
 		run(t, name, "true", map[string]int32{"decode": 5, "encode": 4})
 
-		after := get(ctx, t, c, space, name)
+		after := get(ctx, t, c, name)
 		assert.Equal(t, map[string]int64{"prefill": 1, "decode": 5, "encode": 1}, replicasOf(t, after),
 			"decode moves; prefill keeps its count; the External encode is never written")
 		assert.Equal(t, specWithoutReplicas(t, before), specWithoutReplicas(t, after),
@@ -94,7 +96,7 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		// The source of truth applies again, still without replicas: it
 		// neither conflicts nor resets the writer's count.
 		require.NoError(t, c.Apply(ctx, client.ApplyConfigurationFromUnstructured(envSet(name, nil)), client.FieldOwner("gitops")))
-		assert.Equal(t, int64(5), replicasOf(t, get(ctx, t, c, space, name))["decode"])
+		assert.Equal(t, int64(5), replicasOf(t, get(ctx, t, c, name))["decode"])
 	})
 
 	t.Run("a manager that set replicas keeps them unless forced", func(t *testing.T) {
@@ -103,11 +105,11 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		require.NoError(t, c.Create(ctx, created, client.FieldOwner("kubectl-create")))
 
 		rec := run(t, name, "true", map[string]int32{"decode": 5})
-		assert.Equal(t, int64(2), replicasOf(t, get(ctx, t, c, space, name))["decode"], "a conflict writes nothing")
+		assert.Equal(t, int64(2), replicasOf(t, get(ctx, t, c, name))["decode"], "a conflict writes nothing")
 		assert.True(t, hasEvent(rec, EventConflict), "the conflict is reported on the set")
 
 		run(t, name, "force", map[string]int32{"decode": 5})
-		after := get(ctx, t, c, space, name)
+		after := get(ctx, t, c, name)
 		assert.Equal(t, map[string]int64{"prefill": 2, "decode": 5, "encode": 1}, replicasOf(t, after))
 		assert.NotContains(t, ownedLeaves(t, after, "kubectl-create"), "f:spec/f:roles/k:{\"name\":\"decode\"}/f:spec/f:replicas",
 			"force took the field over")
@@ -121,7 +123,7 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		const name = "defaulted"
 		require.NoError(t, c.Create(ctx, envSet(name, nil), client.FieldOwner("kubectl-create")))
 		rec := run(t, name, "true", map[string]int32{"decode": 5})
-		after := get(ctx, t, c, space, name)
+		after := get(ctx, t, c, name)
 		assert.Equal(t, int64(1), replicasOf(t, after)["decode"], "a conflict writes nothing")
 		assert.True(t, hasEvent(rec, EventConflict), "the conflict is reported on the set")
 		assert.Contains(t, ownedLeaves(t, after, "kubectl-create"), "f:spec/f:roles/k:{\"name\":\"decode\"}/f:spec/f:replicas")
@@ -131,16 +133,16 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		const name = "zero"
 		require.NoError(t, c.Apply(ctx, client.ApplyConfigurationFromUnstructured(envSet(name, nil)), client.FieldOwner("gitops")))
 
-		lone := ApplyConfiguration(get(ctx, t, c, space, name), map[string]int32{"prefill": 0, "decode": 3})
+		lone := ApplyConfiguration(get(ctx, t, c, name), map[string]int32{"prefill": 0, "decode": 3})
 		err := c.Apply(ctx, client.ApplyConfigurationFromUnstructured(lone), client.FieldOwner("someone"))
 		require.True(t, apierrors.IsInvalid(err), "the CEL rule must reject a lone zero: %v", err)
 
 		run(t, name, "true", map[string]int32{"prefill": 0, "decode": 3})
-		assert.Equal(t, map[string]int64{"prefill": 1, "decode": 3, "encode": 1}, replicasOf(t, get(ctx, t, c, space, name)),
+		assert.Equal(t, map[string]int64{"prefill": 1, "decode": 3, "encode": 1}, replicasOf(t, get(ctx, t, c, name)),
 			"prefill decided to zero alone keeps a group")
 
 		run(t, name, "true", map[string]int32{"prefill": 0, "decode": 0})
-		assert.Equal(t, map[string]int64{"prefill": 0, "decode": 0, "encode": 1}, replicasOf(t, get(ctx, t, c, space, name)),
+		assert.Equal(t, map[string]int64{"prefill": 0, "decode": 0, "encode": 1}, replicasOf(t, get(ctx, t, c, name)),
 			"every Static role parked together is accepted")
 	})
 }
@@ -170,7 +172,7 @@ func envSet(name string, replicas map[string]int64) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": constants.DisaggregatedSetAPIVersion,
 		"kind":       constants.DisaggregatedSetKind,
-		"metadata":   map[string]any{"name": name, "namespace": "dset-writer"},
+		"metadata":   map[string]any{"name": name, "namespace": envNS},
 		// Not in name order, and an External role between the Static ones:
 		// the writer's apply must not reorder them.
 		"spec": map[string]any{"roles": []any{
@@ -181,11 +183,11 @@ func envSet(name string, replicas map[string]int64) *unstructured.Unstructured {
 	}}
 }
 
-func get(ctx context.Context, t *testing.T, c client.Client, namespace, name string) *unstructured.Unstructured {
+func get(ctx context.Context, t *testing.T, c client.Client, name string) *unstructured.Unstructured {
 	t.Helper()
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(setGVK)
-	require.NoError(t, c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, u))
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Namespace: envNS, Name: name}, u))
 	return u
 }
 
@@ -245,7 +247,7 @@ func ownedLeaves(t *testing.T, set *unstructured.Unstructured, manager string) [
 			continue
 		}
 		var f map[string]any
-		require.NoError(t, json.Unmarshal(mf.FieldsV1.Raw, &f))
+		require.NoError(t, json.Unmarshal(mf.FieldsV1.GetRawBytes(), &f))
 		walk("", f)
 	}
 	slices.Sort(out)

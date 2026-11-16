@@ -192,6 +192,31 @@ func TestPassWritesNothingWithoutOptInOrChange(t *testing.T) {
 	assert.Equal(t, 2, w.Registry.Len(), "but both Static roles are registered")
 }
 
+// A set the writer cannot scale is refused, on the set, and nothing is
+// written or registered for it.
+func TestPassRefusesWhatItCannotScale(t *testing.T) {
+	store := decision.NewStore()
+	store.Set(ns, "glm-decode", 5)
+
+	sliced := set(optIn("true"), "", 3)
+	require.NoError(t, unstructured.SetNestedField(sliced.Object, int64(2), "spec", "slices"))
+	noModel := set(map[string]any{OptInAnnotation: "true"}, "", 3)
+	for name, s := range map[string]*unstructured.Unstructured{"slices above 1": sliced, "no model-id": noModel} {
+		t.Run(name, func(t *testing.T) {
+			w, got, rec := newWriter(t, s, store, nil)
+			w.Pass(context.Background())
+			assert.Equal(t, 0, got.calls)
+			assert.Equal(t, 0, w.Registry.Len())
+			select {
+			case ev := <-rec.Events:
+				assert.True(t, strings.Contains(ev, EventRefused), ev)
+			default:
+				t.Fatal("a refused set must be told why")
+			}
+		})
+	}
+}
+
 func TestPassIgnoresStalePositiveDecisions(t *testing.T) {
 	store := decision.NewStore()
 	store.Set(ns, "glm-decode", 6)
@@ -199,6 +224,21 @@ func TestPassIgnoresStalePositiveDecisions(t *testing.T) {
 	w.Now = func() time.Time { return time.Now().Add(2 * DefaultDecisionTTL) }
 	w.Pass(context.Background())
 	assert.Equal(t, 0, got.calls)
+
+	// A decision to park never goes stale: it stands until the engines wake
+	// the model.
+	store = decision.NewStore()
+	store.Set(ns, "glm-decode", 0)
+	store.Set(ns, "glm-prefill", 0)
+	w, got, _ = newWriter(t, set(optIn("true"), "", 3), store, nil)
+	w.Now = func() time.Time { return time.Now().Add(2 * DefaultDecisionTTL) }
+	w.Pass(context.Background())
+	require.Equal(t, 1, got.calls)
+	roles, _, _ := unstructured.NestedSlice(got.doc, "spec", "roles")
+	assert.Equal(t, []any{
+		map[string]any{"name": "prefill", "spec": map[string]any{"replicas": int64(0)}},
+		map[string]any{"name": "decode", "spec": map[string]any{"replicas": int64(0)}},
+	}, roles)
 }
 
 func TestPassNeverParksOneStaticRoleAlone(t *testing.T) {
