@@ -18,7 +18,8 @@ import (
 // pod: Pod -> StatefulSet -> LeaderWorkerSet (child, one per role and
 // revision) -> DisaggregatedSet. The DisaggregatedSet object itself is not
 // created: the walk must not need to read it.
-func dsetPod(ns string, labels map[string]string) (*lwsv1.LeaderWorkerSet, *appsv1.StatefulSet, *corev1.Pod) {
+func dsetPod(labels map[string]string) (*lwsv1.LeaderWorkerSet, *appsv1.StatefulSet, *corev1.Pod) {
+	ns := testNamespace
 	lws := &lwsv1.LeaderWorkerSet{ObjectMeta: metav1.ObjectMeta{
 		Name: "glm-0-abc12345-decode", Namespace: ns, UID: "uid-lws",
 		OwnerReferences: []metav1.OwnerReference{{
@@ -45,7 +46,7 @@ func dsetPod(ns string, labels map[string]string) (*lwsv1.LeaderWorkerSet, *apps
 
 func TestResolveScaleTarget_DisaggregatedSetRole(t *testing.T) {
 	ns := testNamespace
-	lws, sts, pod := dsetPod(ns, map[string]string{
+	lws, sts, pod := dsetPod(map[string]string{
 		constants.DisaggregatedSetNameLabelKey: "glm",
 		constants.DisaggregatedSetRoleLabelKey: "decode",
 		lwsv1.SetNameLabelKey:                  "glm-0-abc12345-decode",
@@ -64,7 +65,7 @@ func TestResolveScaleTarget_DisaggregatedSetRole(t *testing.T) {
 
 func TestLocate_DisaggregatedSetRoleRegistered(t *testing.T) {
 	ns := testNamespace
-	lws, sts, pod := dsetPod(ns, map[string]string{constants.DisaggregatedSetRoleLabelKey: "decode"})
+	lws, sts, pod := dsetPod(map[string]string{constants.DisaggregatedSetRoleLabelKey: "decode"})
 	loc, _ := locator.New(newClients(t, lws, sts, pod),
 		variantsOf(registered(ns, constants.DisaggregatedSetRoleScalerKind, "glm-decode")))
 	got, err := loc.Locate(context.Background(), ns, pod.Name)
@@ -77,7 +78,7 @@ func TestLocate_DisaggregatedSetRoleRegistered(t *testing.T) {
 // is replaced on the next rollout, and the set's controller owns its replicas.
 func TestLocate_DisaggregatedSetChildLWSNotATarget(t *testing.T) {
 	ns := testNamespace
-	lws, sts, pod := dsetPod(ns, map[string]string{constants.DisaggregatedSetRoleLabelKey: "decode"})
+	lws, sts, pod := dsetPod(map[string]string{constants.DisaggregatedSetRoleLabelKey: "decode"})
 	loc, _ := locator.New(newClients(t, lws, sts, pod),
 		variantsOf(registered(ns, constants.LeaderWorkerSetKind, lws.Name)))
 	got, err := loc.Locate(context.Background(), ns, pod.Name)
@@ -103,7 +104,7 @@ func TestResolveScaleTarget_DisaggregatedSetUnattributable(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ns := testNamespace
-			lws, sts, pod := dsetPod(ns, labels)
+			lws, sts, pod := dsetPod(labels)
 			loc, _ := locator.New(newClients(t, lws, sts, pod), nil)
 			ref, ok, err := loc.ResolveScaleTarget(context.Background(), ns, pod.Name)
 			if err != nil {
