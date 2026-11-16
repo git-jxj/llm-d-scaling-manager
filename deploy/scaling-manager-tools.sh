@@ -16,7 +16,8 @@
 #                                                                (install and admin-setup: --dry-run --out DIR renders instead; --files DIR installs from other files;
 #                                                                 docs/reference/tools-install.md has every flag and exit code)
 #   scaling-manager-tools prepull      apply|status|delete ...   hold an engine image on every GPU node (deploy/prepull.sh)
-#   scaling-manager-tools weights      apply|status|delete ...   keep a model's weights on every GPU node's disk (deploy/weights.sh)
+#   scaling-manager-tools weights      apply|status|delete|label|labeller ...
+#                                                                keep a model's weights on every GPU node's disk, and label the nodes whose copy verifies (deploy/weights.sh)
 #   scaling-manager-tools engine-cache apply|status|delete|publish|keys|verify ...
 #                                                                keep the engines' compile caches on every GPU node's disk (deploy/enginecache.sh)
 #   scaling-manager-tools workload-patch -n NS [--controller-namespace CNS] [--apply] [--apply-weights] [--apply-engine-cache] [--out FILE]

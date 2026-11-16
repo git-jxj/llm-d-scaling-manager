@@ -16,8 +16,15 @@
 #   weights.sh apply  -n NS --model HFID --path DIR --image IMG [--dry-run]   download HFID under DIR on every accelerator node
 #   weights.sh status -n NS [--model HFID] [--node-selector KEY=VALUE[,...]]  which nodes have it, which are still downloading
 #   weights.sh delete -n NS (--model HFID | --all) [--dry-run]                drop the claim, volume and downloader (files stay)
+#   weights.sh label (-n NS[,NS...] | -A) [--watch SECONDS] [--dry-run] [--clear]
+#                                                                             label each node that holds a verified copy, unlabel the rest
+#   weights.sh labeller (-n NS[,NS...] | -A) --image TOOLS_IMAGE [--labeller-namespace LNS] [--watch SECONDS] [--dry-run | --delete]
+#                                                                             run `label --watch` in the cluster, in a namespace of its own
 #
 #   -n, --namespace NS          the namespace the claim and downloader live in
+#                               (label, labeller: the namespaces whose
+#                               downloaders are trusted to label nodes)
+#   -A, --all-namespaces        label, labeller: every namespace
 #
 # Options:
 #   --model HFID                Hugging Face id, e.g. Qwen/Qwen3-32B
@@ -57,8 +64,44 @@
 #                               k2=v2, as in a nodeSelector)
 #   --toleration KEY            tolerate a taint with KEY (any value, any
 #                               effect); nvidia.com/gpu is always tolerated
+#   --node-label KEY            apply: the node label that says a node holds
+#                               this model, as PREFIX/NAME-cache (default
+#                               llm-d.ai/<model name, lower-cased>-cache,
+#                               the label some clusters' node-preparation
+#                               jobs already set, so both agree on a node)
 #   --dry-run                   apply: print the manifests instead of
-#                               applying them; delete: print what would go
+#                               applying them; delete: print what would go;
+#                               label: print the node changes, make none;
+#                               labeller: print the manifests
+#   --watch SECONDS             label: reconcile every SECONDS, forever
+#   --clear                     label: remove every label this command set
+#                               (after the labeller is deleted)
+#   --label-prefix PREFIX       label, labeller: the only label prefix the
+#                               labeller writes or removes (default
+#                               llm-d.ai); a DaemonSet asking for another
+#                               is skipped
+#   --labeller-namespace LNS    labeller: where it runs (default
+#                               scaling-manager-weights-labeller); never a
+#                               model namespace, whose pod creators could
+#                               borrow its node rights
+#   --delete                    labeller: remove it (the labels stay; run
+#                               label --clear for them)
+#
+# The node gate. A replica scheduled onto a node whose copy is missing or
+# still being written reads a partial model, so the downloader writes its
+# marker only after the last file, with the size of every file in it, and
+# its readiness probe re-checks those files (not just the marker) every
+# 15 s. `label` reads that readiness -- the files, through the kubelet --
+# and sets <key>=ready on every node where each downloader for the key is
+# Ready, and removes it where one is not: a node that loses its copy stops
+# attracting replicas, and a node added for scale-out gets the label only
+# when its own download completes. It removes only labels it set itself
+# (it records them in the node annotation scaling-manager.llmd.ai/
+# weights-node-labels), so a label another tool set is left alone. It
+# patches nodes, which is cluster-scoped: a cluster-admin piece, like apply.
+# The model servers then prefer (or require) the label, and wait in an init
+# container for the marker; `make workload-patch` writes both. Design and
+# failure modes: docs/proposals/weights-node-gate.md.
 #
 # The claim is named weights-<model>-<hash> and printed by apply; a model
 # server mounts the weights at pvc://<claim>/models/HFID. The volume is
@@ -134,6 +177,47 @@ LABEL_COMPONENT="app.kubernetes.io/component=node-local-weights,app.kubernetes.i
 STORAGE_CLASS="node-local-weights"
 MARKER=".download-complete"
 SA_NAME="weights-downloader"
+NODE_LABEL=""
+ALL_NAMESPACES=false
+WATCH=""
+CLEAR=false
+DELETE=false
+LABEL_PREFIX="llm-d.ai"
+LABELLER_NS="scaling-manager-weights-labeller"
+LABELLER_NAME="weights-labeller"
+# The node annotation that lists, comma-separated, the labels `label` set on
+# that node: the only ones it ever removes.
+OWNED_ANNOTATION="scaling-manager.llmd.ai/weights-node-labels"
+LABEL_ANNOTATION="scaling-manager.llmd.ai/weights-node-label"
+
+# VERIFY_PY defines verify(d, marker): "" when directory d holds a complete
+# copy, else why not. Complete is the marker present and listing at least
+# one file, a config.json (params.json for a Mistral-format checkpoint), and
+# every listed file there at its listed size -- the files, not the marker:
+# a disk that failed or was remounted empty leaves no marker, and a file
+# deleted or truncated under a marker fails its size. The downloader and the
+# readiness probe run the same text. Python, not sh: no command
+# substitution, which Kubernetes would rewrite, and no `stat` whose flags
+# differ between images.
+VERIFY_PY='import os, sys
+def verify(d, marker):
+    try:
+        with open(os.path.join(d, marker)) as fh:
+            lines = [l for l in fh.read().splitlines() if l.strip()]
+    except OSError:
+        return "no completion marker"
+    if not lines:
+        return "the completion marker lists no files"
+    if not any(os.path.isfile(os.path.join(d, c)) for c in ("config.json", "params.json")):
+        return "no config.json"
+    for line in lines:
+        size, _, rel = line.partition("\t")
+        try:
+            if os.path.getsize(os.path.join(d, rel)) != int(size):
+                return "wrong size: " + rel
+        except (OSError, ValueError):
+            return "missing: " + rel
+    return ""'
 
 usage() {
     sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; $d'
@@ -179,6 +263,27 @@ check_model() {
 check_path() {
     local why
     why="$(nodedir_ok "$1")" || log_error "--path: ${why}"
+}
+
+# node_label_why says why $1 is not a node label weights.sh writes, or
+# nothing: a label key (PREFIX/NAME) whose NAME ends in -cache. The suffix
+# is the convention, and it keeps the labeller off every other label a node
+# carries -- a role, a zone, a GPU product -- whatever a DaemonSet asks.
+node_label_why() {
+    local why
+    case "$1" in
+        */*-cache) ;;
+        *) echo "not a node label of the form PREFIX/NAME-cache: '$1'"; return 0 ;;
+    esac
+    why="$(accelerator_label_key_ok "$1")" || { echo "$why"; return 0; }
+}
+
+# check_node_label refuses $1 (given as option $2) unless node_label_why
+# accepts it.
+check_node_label() {
+    local why
+    why="$(node_label_why "$1")"
+    [ -z "$why" ] || log_error "$2: ${why}"
 }
 
 check_image() {
@@ -251,6 +356,7 @@ metadata:
   annotations:
     scaling-manager.llmd.ai/weights-model: "${MODEL}"
     scaling-manager.llmd.ai/weights-path: "${NODE_PATH}"
+    scaling-manager.llmd.ai/weights-node-label: "${NODE_LABEL}"
 spec:
   accessModes:
     - ReadWriteMany
@@ -272,6 +378,7 @@ metadata:
   annotations:
     scaling-manager.llmd.ai/weights-model: "${MODEL}"
     scaling-manager.llmd.ai/weights-path: "${NODE_PATH}"
+    scaling-manager.llmd.ai/weights-node-label: "${NODE_LABEL}"
     scaling-manager.llmd.ai/weights-node-selector: "${NODE_SELECTOR}"
 spec:
   selector:
@@ -309,31 +416,84 @@ $(for t in "${TOLERATIONS[@]}"; do printf '        - key: "%s"\n          operat
         - name: download
           image: "${IMAGE}"
           imagePullPolicy: IfNotPresent
-          # The marker is written after the last file; a restart resumes what
-          # huggingface_hub left (it skips complete files). Then the pod
-          # stays, Ready, so the DaemonSet's numberReady is the count of
-          # nodes that hold the model. No command substitution and no
-          # double dollar in the command: Kubernetes rewrites both.
-          command: ["/bin/sh", "-c"]
+          # The marker is written after the last file, atomically, and lists
+          # every file with its size; a restart resumes what huggingface_hub
+          # left (it skips complete files). A copy that fails verification
+          # -- a file gone or short under the marker -- loses its marker
+          # and is downloaded again. Then the pod stays, re-checking every
+          # 5 minutes and exiting (so the kubelet restarts it and it
+          # repairs) when the copy breaks; Ready is the probe below, so
+          # the DaemonSet's numberReady is the count of nodes that hold
+          # the model. No command substitution and no double dollar in
+          # the command: Kubernetes rewrites both.
+          command: ["python3", "-c"]
           args:
             - |
-              python3 - <<'PY' || exit 1
-              import os, sys
-              from huggingface_hub import snapshot_download
+$(printf '%s\n' "$VERIFY_PY" | sed 's/^/              /')
+              import json, signal, time
+              signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
               d = os.environ["TARGET_DIR"]
-              m = os.path.join(d, os.environ["MARKER"])
-              if os.path.exists(m):
+              mk = os.environ["MARKER"]
+              m = os.path.join(d, mk)
+              def manifest():
+                  out = []
+                  for root, dirs, files in os.walk(d):
+                      if root == d:
+                          dirs[:] = [x for x in dirs if x != ".cache"]
+                      for f in files:
+                          rel = os.path.relpath(os.path.join(root, f), d)
+                          if rel not in (mk, mk + ".tmp"):
+                              out.append("%d\t%s" % (os.path.getsize(os.path.join(d, rel)), rel))
+                  return sorted(out)
+              def write_marker():
+                  t = m + ".tmp"
+                  with open(t, "w") as fh:
+                      fh.write("\n".join(manifest()) + "\n")
+                      fh.flush()
+                      os.fsync(fh.fileno())
+                  os.replace(t, m)
+              def legacy_complete():
+                  # An empty marker is an earlier downloader's, written after a
+                  # complete download; it is upgraded to a list only when the
+                  # files still look whole: a config and every shard the index
+                  # names.
+                  if not any(os.path.isfile(os.path.join(d, c)) for c in ("config.json", "params.json")):
+                      return False
+                  for f in os.listdir(d):
+                      if f.endswith(".index.json"):
+                          with open(os.path.join(d, f)) as fh:
+                              shards = set(json.load(fh).get("weight_map", {}).values())
+                          if not shards or not all(os.path.isfile(os.path.join(d, s)) for s in shards):
+                              return False
+                  return True
+              if os.path.isfile(m) and os.path.getsize(m) == 0:
+                  if legacy_complete():
+                      write_marker()
+                  else:
+                      os.remove(m)
+              why = verify(d, mk)
+              if why == "":
                   print("weights: present at", d, flush=True)
               else:
+                  if os.path.exists(m):
+                      print("weights: the copy at", d, "is broken (" + why + "); downloading again", flush=True)
+                      os.remove(m)
                   print("weights: downloading", os.environ["MODEL_ID"], "to", d, flush=True)
+                  from huggingface_hub import snapshot_download
                   snapshot_download(repo_id=os.environ["MODEL_ID"], local_dir=d,
                                     token=os.environ.get("HF_TOKEN") or None,
                                     ignore_patterns=["original/*", "*.msgpack", "*.h5"],
                                     max_workers=8)
-                  open(m, "w").close()
+                  write_marker()
+                  why = verify(d, mk)
+                  if why:
+                      sys.exit("weights: downloaded, but the copy does not verify: " + why)
                   print("weights: complete", flush=True)
-              PY
-              trap 'exit 0' TERM; while :; do sleep 3600 & wait; done
+              while True:
+                  time.sleep(300)
+                  why = verify(d, mk)
+                  if why:
+                      sys.exit("weights: the copy at " + d + " broke (" + why + "); exiting so the restart downloads it again")
           env:
             - name: MODEL_ID
               value: "${MODEL}"
@@ -351,11 +511,26 @@ $(if [ -n "$HF_SECRET" ]; then printf '            - name: HF_TOKEN\n           
           volumeMounts:
             - name: weights
               mountPath: /weights
-          # Ready is "the marker exists": the download finished on this node.
+          # Ready is "the copy verifies": the marker, a config, and every
+          # file it lists at its size, re-checked every 15 s. weights.sh
+          # label reads this to set and remove the node label, so a failure
+          # must persist (three probes) before it unlabels a node, and a
+          # slow disk gets 10 s, not the default 1 s, before a probe fails.
           readinessProbe:
             exec:
-              command: ["test", "-f", "/weights/models/${MODEL}/${MARKER}"]
-            periodSeconds: 10
+              command:
+                - python3
+                - -c
+                - |
+$(printf '%s\n' "$VERIFY_PY" | sed 's/^/                  /')
+                  why = verify(sys.argv[1], sys.argv[2])
+                  if why:
+                      sys.exit("weights: " + why)
+                - "/weights/models/${MODEL}"
+                - "${MARKER}"
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
               cpu: 100m
@@ -380,6 +555,8 @@ cmd_apply() {
     if [ -n "$HF_SECRET" ]; then
         case "$HF_SECRET" in *[!A-Za-z0-9._/-]*|*/*/*) log_error "not a Secret reference: '$HF_SECRET' (NAME or NAME/KEY)" ;; esac
     fi
+    [ -n "$NODE_LABEL" ] || NODE_LABEL="$(llmsm_weights_node_label_key "$MODEL")"
+    check_node_label "$NODE_LABEL" "--node-label"
     if [ "$DRY_RUN" = true ]; then
         render
         return
@@ -413,6 +590,7 @@ cmd_apply() {
     nodedir_claim_capacity "$NAMESPACE" "$claim" "$CAPACITY_GIVEN" "weights.sh delete -n ${NAMESPACE} --model ${MODEL}"
     render | kubectl apply -f - >/dev/null
     log_info "downloading ${MODEL} under ${NODE_PATH} on $(accelerator_selector_text "$NODE_SELECTOR"); claim $(name_for "$MODEL") -- mount pvc://$(name_for "$MODEL")/models/${MODEL}"
+    log_info "node label ${NODE_LABEL}=ready on each node whose copy verifies, once weights.sh label (or the labeller) runs"
     # On OpenShift the downloader runs as the project's range UID and the
     # directory is not relabelled for containers: both are the admin's to
     # prepare on each node before this apply, and neither shows until the
@@ -636,18 +814,403 @@ cmd_delete() {
     return 0
 }
 
+# check_scope refuses a label or labeller scope that is not -n NS[,NS...]
+# (each a namespace name, none twice) or -A, alone.
+check_scope() {
+    if [ "$ALL_NAMESPACES" = true ]; then
+        [ -z "$NAMESPACE" ] || log_error "$1: -n and -A together; one or the other"
+        return 0
+    fi
+    [ -n "$NAMESPACE" ] || log_error "$1 needs -n NS[,NS...] (the namespaces whose downloaders may label nodes) or -A (every namespace)"
+    local ns seen=","
+    case "$NAMESPACE" in ,*|*,|*,,*) log_error "$1: -n '${NAMESPACE}' has an empty namespace" ;; esac
+    for ns in ${NAMESPACE//,/ }; do
+        [[ "$ns" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || log_error "$1: not a namespace name: '${ns}'"
+        case "$seen" in *",${ns},"*) log_error "$1: namespace ${ns} given twice" ;; esac
+        seen="${seen}${ns},"
+    done
+}
+
+check_label_prefix() {
+    [[ "$LABEL_PREFIX" =~ $ACCELERATOR_LABEL_PREFIX_RE ]] && [ "${#LABEL_PREFIX}" -le 253 ] \
+        || log_error "--label-prefix: not a DNS subdomain: '${LABEL_PREFIX}'"
+}
+
+# label_sources prints, one JSON object per line, every weights DaemonSet in
+# scope: its namespace, name and node label. The label is the one apply
+# recorded on it, or for a DaemonSet applied before labels were recorded,
+# the default for its model. A DaemonSet whose label is not PREFIX/NAME-cache
+# under --label-prefix is skipped with a warning: a model namespace can edit
+# its DaemonSet, and what it writes there must not steer a node label
+# outside the convention. Fails when a list fails.
+label_sources() {
+    local ns lines=() list
+    if [ "$ALL_NAMESPACES" = true ]; then
+        list="$(kubectl get daemonset -A -l "$LABEL_COMPONENT" -o json)" || return 1
+        lines+=("$list")
+    else
+        for ns in ${NAMESPACE//,/ }; do
+            list="$(kubectl get daemonset -n "$ns" -l "$LABEL_COMPONENT" -o json)" || return 1
+            lines+=("$list")
+        done
+    fi
+    local dsns dsname key model why
+    while IFS=$'\x1f' read -r dsns dsname key model; do
+        [ -n "$dsname" ] || continue
+        [ -n "$key" ] || key="$(llmsm_weights_node_label_key "$model")"
+        why="$(node_label_why "$key")"
+        if [ -z "$why" ] && [ "${key%%/*}" != "$LABEL_PREFIX" ]; then
+            why="its prefix is not ${LABEL_PREFIX} (--label-prefix)"
+        fi
+        if [ -n "$why" ]; then
+            log_warning "label: DaemonSet ${dsns}/${dsname} asks for node label '${key}', which is skipped: ${why}"
+            continue
+        fi
+        jq -cn --arg ns "$dsns" --arg name "$dsname" --arg key "$key" '{ns: $ns, name: $name, key: $key}'
+    done < <(printf '%s\n' "${lines[@]}" | jq -r --arg ann "$LABEL_ANNOTATION" \
+        '.items[]? | [.metadata.namespace, .metadata.name, (.metadata.annotations[$ann] // ""),
+                      (.metadata.annotations["scaling-manager.llmd.ai/weights-model"] // "")] | join("\u001f")')
+}
+
+# label_pods prints the downloader pods in scope as one JSON list.
+label_pods() {
+    local ns
+    if [ "$ALL_NAMESPACES" = true ]; then
+        kubectl get pods -A -l "$LABEL_COMPONENT" -o json
+        return
+    fi
+    for ns in ${NAMESPACE//,/ }; do
+        kubectl get pods -n "$ns" -l "$LABEL_COMPONENT" -o json || return 1
+    done
+}
+
+# label_once reconciles the node labels once. For each node and each label
+# key, the node should carry KEY=ready when at least one downloader for that
+# key has a pod there and every such downloader has a Ready pod there (its
+# probe verifies the files). It sets what should be there and is not, and
+# removes what it set before and should no longer be there. A label it did
+# not set is never touched; one that disagrees with the downloader is
+# reported. --clear removes every label it set, whatever the downloaders say.
+label_once() {
+    local tmp rc=0
+    tmp="$(mktemp -d)" || return 1
+    label_pass "$tmp/src" "$tmp/pods" "$tmp/nodes" || rc=$?
+    rm -rf "$tmp"
+    return $rc
+}
+
+# label_pass is one pass of label_once, with its three scratch files.
+label_pass() {
+    local src="$1" pods="$2" nodes="$3" plan rc=0
+    : > "$src"; : > "$pods"
+    if [ "$CLEAR" = false ]; then
+        if ! label_sources > "$src"; then
+            log_warning "label: cannot list the weights DaemonSets in scope; no node was changed"
+            return 1
+        fi
+        if ! label_pods > "$pods"; then
+            log_warning "label: cannot list the downloader pods in scope; no node was changed"
+            return 1
+        fi
+    fi
+    if ! kubectl get nodes -o json > "$nodes"; then
+        log_warning "label: cannot list nodes (this needs cluster-scoped node get, list and patch: a cluster-admin piece); no node was changed"
+        return 1
+    fi
+    # One line per node with something to do or say. A node is judged by
+    # its pods per DaemonSet (any Ready pod of that DaemonSet there: an
+    # evicted pod beside its replacement does not count against it), then
+    # per key (every DaemonSet with a pod there Ready).
+    plan="$(jq -c -n --slurpfile src "$src" --slurpfile pods "$pods" --slurpfile nodes "$nodes" \
+        --arg owned_ann "$OWNED_ANNOTATION" --arg prefix "$LABEL_PREFIX/" --argjson clear "$CLEAR" '
+        ($src | map({key: (.ns + "/" + .name), value: .key}) | from_entries) as $keyof
+        | [ $pods[].items[]?
+            | select(.spec.nodeName != null)
+            | {node: .spec.nodeName,
+               ds: (.metadata.namespace + "/" + (.metadata.labels["scaling-manager.llmd.ai/weights"] // "")),
+               ready: (.status.phase == "Running" and .metadata.deletionTimestamp == null
+                       and ((.status.conditions // []) | any(.type == "Ready" and .status == "True")))}
+            | .key = $keyof[.ds]
+            | select(.key != null) ] as $p
+        | $nodes[0].items[]
+        | .metadata.name as $n
+        | (.metadata.labels // {}) as $l
+        | ((.metadata.annotations // {})[$owned_ann] // "" | split(",") | map(select(. != ""))) as $owned
+        | ([ $p[] | select(.node == $n) ] | group_by(.ds)
+           | map({key: .[0].key, ready: any(.ready)}) | group_by(.key)
+           | map({key: .[0].key, value: all(.ready)}) | from_entries) as $judged
+        | (if $clear then {} else $judged end) as $j
+        | ([ $j | to_entries[] | select(.value) | .key ]) as $want
+        | ([ $want[] | select(. as $k | ($l[$k] == null) or (($owned | index($k)) != null and $l[$k] != "ready")) ]) as $set
+        | ([ $owned[] | select(startswith($prefix)) | select(. as $k | ($want | index($k)) == null) ]) as $unset
+        | ([ $want[] | select(. as $k | $l[$k] != null and ($owned | index($k)) == null) ]) as $foreign
+        | ([ $j | to_entries[] | select(.value | not) | .key
+             | select(. as $k | $l[$k] != null and ($owned | index($k)) == null) ]) as $conflict
+        | ((($owned - $unset) + $set) | unique) as $now
+        | select(($set | length) + ($unset | length) + ($foreign | length) + ($conflict | length) > 0)
+        | {node: $n, set: $set, unset: $unset, foreign: $foreign, conflict: $conflict,
+           change: (($set | length) + ($unset | length) > 0),
+           patch: {metadata: {
+             labels: (($set | map({key: ., value: "ready"})) + ($unset | map({key: ., value: null})) | from_entries),
+             annotations: {($owned_ann): (if ($now | length) == 0 then null else ($now | join(",")) end)}}}}')" || {
+        log_warning "label: could not judge the nodes (jq failed); no node was changed"
+        return 1
+    }
+    local line node k
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        node="$(jq -r '.node' <<< "$line")"
+        while IFS= read -r k; do [ -z "$k" ] || echo "  ${node}: ${k}=ready -- its copy verifies"; done < <(jq -r '.set[]' <<< "$line")
+        while IFS= read -r k; do [ -z "$k" ] || echo "  ${node}: remove ${k} -- $([ "$CLEAR" = true ] && echo "--clear" || echo "no verified copy there now")"; done < <(jq -r '.unset[]' <<< "$line")
+        while IFS= read -r k; do [ -z "$k" ] || echo "  ${node}: ${k} kept as it is -- set by something else, and the copy verifies"; done < <(jq -r '.foreign[]' <<< "$line")
+        while IFS= read -r k; do [ -z "$k" ] || echo "  ${node}: ${k} is set by something else, but the downloader there is not Ready -- left alone (not this command's label)"; done < <(jq -r '.conflict[]' <<< "$line")
+        [ "$(jq -r '.change' <<< "$line")" = true ] || continue
+        if [ "$DRY_RUN" = true ]; then
+            echo "  would run: kubectl patch node ${node} --type=merge -p '$(jq -c '.patch' <<< "$line")'"
+        elif ! kubectl patch node "$node" --type=merge -p "$(jq -c '.patch' <<< "$line")" >/dev/null; then
+            log_warning "label: could not patch node ${node}"
+            rc=1
+        fi
+    done <<< "$plan"
+    [ -n "$plan" ] || echo "  every node already carries the labels its copies call for"
+    return $rc
+}
+
+cmd_label() {
+    command -v jq >/dev/null 2>&1 || log_error "jq is required for label"
+    [ "$CLEAR" = true ] || check_scope label
+    check_label_prefix
+    case "$WATCH" in
+        "") label_once; return ;;
+        *[!0-9]*|0) log_error "--watch takes a number of seconds, at least 1: '${WATCH}'" ;;
+    esac
+    [ "$CLEAR" = false ] || log_error "--clear runs once; drop --watch"
+    while :; do
+        label_once || log_warning "label: this pass failed; the next is in ${WATCH}s"
+        sleep "$WATCH"
+    done
+}
+
+# render_labeller prints the labeller: its namespace (Pod Security
+# restricted: it mounts nothing from the node), its ServiceAccount, node
+# get/list/patch for it cluster-wide, read of DaemonSets and pods in the
+# namespaces in scope, and one Deployment running `weights label --watch`
+# from the tools image. Every object carries scaling-manager.llmd.ai/part:
+# admin, as the admin objects of the install do: the namespace owner never
+# applies or needs any of it.
+render_labeller() {
+    local labels scope_args ns
+    labels='    app.kubernetes.io/name: weights-labeller
+    app.kubernetes.io/component: weights-labeller
+    app.kubernetes.io/managed-by: scaling-manager-weights
+    scaling-manager.llmd.ai/part: admin'
+    if [ "$ALL_NAMESPACES" = true ]; then
+        scope_args='"-A"'
+    else
+        scope_args="\"-n\", \"${NAMESPACE}\""
+    fi
+    cat <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${LABELLER_NS}
+  labels:
+${labels}
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${LABELLER_NAME}
+  namespace: ${LABELLER_NS}
+  labels:
+${labels}
+---
+# Nodes: read, and patch for the labels. Cluster-scoped and not narrowable
+# to one label by RBAC, so it lives in a namespace of its own, where only
+# the cluster admin creates pods.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: scaling-manager-weights-labeller
+  labels:
+${labels}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: scaling-manager-weights-labeller
+  labels:
+${labels}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: scaling-manager-weights-labeller
+subjects:
+  - kind: ServiceAccount
+    name: ${LABELLER_NAME}
+    namespace: ${LABELLER_NS}
+---
+# What it judges by: the downloaders and their pods. Read only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: scaling-manager-weights-labeller-reader
+  labels:
+${labels}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+EOF
+    if [ "$ALL_NAMESPACES" = true ]; then
+        cat <<EOF
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: scaling-manager-weights-labeller-reader
+  labels:
+${labels}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: scaling-manager-weights-labeller-reader
+subjects:
+  - kind: ServiceAccount
+    name: ${LABELLER_NAME}
+    namespace: ${LABELLER_NS}
+EOF
+    else
+        for ns in ${NAMESPACE//,/ }; do
+            cat <<EOF
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: scaling-manager-weights-labeller-reader
+  namespace: ${ns}
+  labels:
+${labels}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: scaling-manager-weights-labeller-reader
+subjects:
+  - kind: ServiceAccount
+    name: ${LABELLER_NAME}
+    namespace: ${LABELLER_NS}
+EOF
+        done
+    fi
+    cat <<EOF
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${LABELLER_NAME}
+  namespace: ${LABELLER_NS}
+  labels:
+${labels}
+spec:
+  replicas: 1
+  # One writer: two would only race on the same patches.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: weights-labeller
+  template:
+    metadata:
+      labels:
+${labels//    /        }
+    spec:
+      serviceAccountName: ${LABELLER_NAME}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: label
+          image: "${IMAGE}"
+          imagePullPolicy: IfNotPresent
+          # The tools image entry point; kubectl finds the in-cluster
+          # ServiceAccount (the image's /kube/config is not mounted here).
+          args: ["weights", "label", ${scope_args}, "--watch", "${WATCH}", "--label-prefix", "${LABEL_PREFIX}"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+EOF
+}
+
+# cmd_labeller applies, prints or deletes the in-cluster labeller.
+cmd_labeller() {
+    if [ "$DELETE" = true ]; then
+        [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --delete needs the scope it was applied with (-n NS[,NS...] or -A), to find its RoleBindings"
+        [ "$ALL_NAMESPACES" = false ] || [ -z "$NAMESPACE" ] || log_error "labeller: -n and -A together; one or the other"
+        local ns
+        run_delete delete namespace "$LABELLER_NS" --ignore-not-found
+        run_delete delete clusterrolebinding scaling-manager-weights-labeller scaling-manager-weights-labeller-reader --ignore-not-found
+        run_delete delete clusterrole scaling-manager-weights-labeller scaling-manager-weights-labeller-reader --ignore-not-found
+        if [ "$ALL_NAMESPACES" = false ]; then
+            for ns in ${NAMESPACE//,/ }; do
+                run_delete delete rolebinding -n "$ns" scaling-manager-weights-labeller-reader --ignore-not-found
+            done
+        fi
+        log_info "the labels it set stay on the nodes; weights.sh label --clear removes them"
+        return 0
+    fi
+    check_scope labeller
+    check_label_prefix
+    [ -n "$IMAGE" ] || log_error "labeller needs --image IMG (the release's tools image, which carries kubectl and this script)"
+    check_image "$IMAGE"
+    [ -n "$WATCH" ] || WATCH=30
+    case "$WATCH" in *[!0-9]*|0) log_error "--watch takes a number of seconds, at least 1: '${WATCH}'" ;; esac
+    [[ "$LABELLER_NS" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || log_error "--labeller-namespace: not a namespace name: '${LABELLER_NS}'"
+    case ",${NAMESPACE}," in
+        *",${LABELLER_NS},"*) log_error "--labeller-namespace ${LABELLER_NS} is also in scope (-n): the labeller must not share a namespace with downloaders, whose pod creators could run as it" ;;
+    esac
+    if [ "$DRY_RUN" = true ]; then
+        render_labeller
+        return
+    fi
+    render_labeller | kubectl apply -f - >/dev/null
+    log_info "labeller running in ${LABELLER_NS}: every ${WATCH}s it labels the nodes whose copies verify ($( [ "$ALL_NAMESPACES" = true ] && echo "every namespace" || echo "namespaces ${NAMESPACE}"))"
+}
+
 CMD="${1:-}"
 [ -n "$CMD" ] || usage
 shift
 case "$CMD" in
     -h|--help|help) usage ;;
-    apply|status|delete) ;;
-    *) log_error "unknown command: ${CMD} (apply | status | delete)" ;;
+    apply|status|delete|label|labeller) ;;
+    *) log_error "unknown command: ${CMD} (apply | status | delete | label | labeller)" ;;
 esac
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        -n|--namespace|--model|--path|--image|--hf-token-secret|--capacity|--memory|--node-selector|--toleration)
+        -n|--namespace|--model|--path|--image|--hf-token-secret|--capacity|--memory|--node-selector|--toleration|--node-label|--watch|--label-prefix|--labeller-namespace)
             [ $# -ge 2 ] || log_error "$1 needs a value" ;;
     esac
     case "$1" in
@@ -660,7 +1223,14 @@ while [ $# -gt 0 ]; do
         --memory) MEMORY="$2"; shift 2 ;;
         --node-selector) NODE_SELECTOR="$2"; NODE_SELECTOR_GIVEN=true; shift 2 ;;
         --toleration) accelerator_check_toleration "$2"; TOLERATIONS+=("$2"); shift 2 ;;
-        --dry-run) [ "$CMD" != status ] || log_error "--dry-run applies to apply and delete, not status"; DRY_RUN=true; shift ;;
+        --node-label) [ "$CMD" = apply ] || log_error "--node-label is an apply option"; NODE_LABEL="$2"; shift 2 ;;
+        -A|--all-namespaces) case "$CMD" in label|labeller) ;; *) log_error "$1 is a label and labeller option" ;; esac; ALL_NAMESPACES=true; shift ;;
+        --watch) case "$CMD" in label|labeller) ;; *) log_error "--watch is a label and labeller option" ;; esac; WATCH="$2"; shift 2 ;;
+        --label-prefix) case "$CMD" in label|labeller) ;; *) log_error "--label-prefix is a label and labeller option" ;; esac; LABEL_PREFIX="$2"; shift 2 ;;
+        --labeller-namespace) [ "$CMD" = labeller ] || log_error "--labeller-namespace is a labeller option"; LABELLER_NS="$2"; shift 2 ;;
+        --clear) [ "$CMD" = label ] || log_error "--clear is a label option"; CLEAR=true; shift ;;
+        --delete) [ "$CMD" = labeller ] || log_error "--delete is a labeller option"; DELETE=true; shift ;;
+        --dry-run) [ "$CMD" != status ] || log_error "--dry-run applies to apply, delete, label and labeller, not status"; DRY_RUN=true; shift ;;
         --all) [ "$CMD" = delete ] || log_error "--all is a delete option"; ALL=true; shift ;;
         -h|--help) usage ;;
         *) log_error "unknown option: $1" ;;

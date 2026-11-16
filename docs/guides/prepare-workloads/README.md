@@ -142,7 +142,7 @@ smt engine-cache apply -n $NAMESPACE --path $NODE_DIR --image $ENGINE_IMAGE
 modelservice values, `modelArtifacts.uri: pvc://<claim>/models/<hugging face id>`.
 A gated model needs `--hf-token-secret <secret>`.
 
-`engine-cache apply` makes the claim `engine-cache`. The patch in step 4
+`engine-cache apply` makes the claim `engine-cache`. The patch in step 5
 mounts it.
 
 Then wait for every node:
@@ -159,7 +159,33 @@ smt engine-cache status -n $NAMESPACE
 A cordoned node, or one with a taint the DaemonSet does not tolerate, is listed
 as `excluded` and not counted.
 
-### 4. Write the patch, and put it in the chart
+### 4. Cluster admin: keep replicas off nodes without the weights
+
+A node added for scale-out has no copy until its download finishes. A replica
+placed there meanwhile would read a model that is still being written. The
+labeller marks each node whose copy is complete:
+
+<!-- guide:deploy.gate start -->
+```bash
+# Cluster admin (it patches nodes). Label each GPU node whose copy of the weights verifies, and unlabel it when the copy breaks.
+smt weights labeller -n $NAMESPACE --image $TOOLS
+kubectl get nodes -L llm-d.ai/<model name, lower-cased>-cache
+```
+<!-- guide:deploy.gate end -->
+
+Every 30 s it sets `llm-d.ai/<model name>-cache=ready` on each node whose copy
+verifies (every file present at its recorded size), and removes it from a node
+whose copy breaks. A node prepared by other node-preparation tooling that
+already sets this label counts too; the labeller never removes a label it did
+not set. It runs in a namespace of its own, because it can patch nodes. To
+watch more model namespaces, run it again with all of them:
+`-n <ns1>,<ns2>`. The model's label is printed by `weights apply`.
+
+The patch in the next step uses the label: replicas prefer labelled nodes, and
+each replica waits in a small init container until its node's copy is
+complete. More: [Gate replicas on the weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights).
+
+### 5. Write the patch, and put it in the chart
 
 <!-- guide:deploy.patch start -->
 ```bash
@@ -169,7 +195,9 @@ smt workload-patch -n $NAMESPACE
 <!-- guide:deploy.patch end -->
 
 Per model server, the file holds the drain hook, the `engine-cache` volume, and
-the four variables under it. Copy it into the modelservice values, so the next
+the four variables under it, and for a model server that reads the weights
+claim from step 3, the node affinity and the `wait-for-weights` init container
+of step 4. Copy it into the modelservice values, so the next
 `helm upgrade` keeps it. Also copy the guard written as a comment beside the
 cache half into the container's command: with it, a cache path that is not
 writable costs one compile, not the replica.
@@ -252,6 +280,16 @@ smt weights delete -n $NAMESPACE --all
 smt engine-cache delete -n $NAMESPACE
 ```
 <!-- guide:cleanup.remove end -->
+
+If you ran the labeller in step 4:
+
+<!-- guide:cleanup.labeller start -->
+```bash
+# Cluster admin. Removes the labeller, then the node labels it set; a label another tool set stays.
+smt weights labeller -n $NAMESPACE --delete
+smt weights label --clear
+```
+<!-- guide:cleanup.labeller end -->
 
 `smt.kubeconfig` holds your credentials: delete it when you are done.
 

@@ -310,7 +310,8 @@ What it creates:
   other (the volume carries a `claimRef`);
 - one DaemonSet that downloads the model onto every accelerator node, then
   reports Ready. `weights-status` and the DaemonSet's `numberReady` both mean
-  "the download finished on this node". Placement is the image holder's:
+  "the download finished on this node, and its files are all there"
+  ([Gate replicas on the weights](#gate-replicas-on-the-weights)). Placement is the image holder's:
   `WEIGHTS_NODE_SELECTOR` / `WEIGHTS_TOLERATIONS` default to the `PREPULL_*`
   values.
 
@@ -412,9 +413,11 @@ says so when the cluster has SecurityContextConstraints:
   cannot even see the marker: on OpenShift one directory per project is
   not advice but the only thing that works, unless the disk is mounted
   with `context=` as above.
-- A node that joins later has no copy until the DaemonSet reaches it, and a
-  replica scheduled there meanwhile reads from a directory that is being
-  written. `weights-status` says which nodes are there yet. A cordoned node
+- A node that joins later has no copy until the DaemonSet reaches it. Without
+  the gate below, a replica scheduled there meanwhile reads from a directory
+  that is being written; with it, the replica waits for the copy (or, with a
+  required affinity, is not placed there).
+  `weights-status` says which nodes are there yet. A cordoned node
   or one under `DiskPressure` still counts for the DaemonSet (its controller
   tolerates both) and keeps evicting the downloader; `weights-status` lists
   it as `excluded` and leaves it out of the count, since no engine can start
@@ -428,6 +431,87 @@ measured here.
 The benchmark standup has the same measure under
 `BENCHMARK_MODEL_HOSTPATH=<dir>`; what the harness does with it is in
 [Benchmark the scaling manager](../guides/benchmarking/README.md#replica-start-time-in-the-harness).
+
+### Gate replicas on the weights
+
+Each node holds its own copy, so a replica can land on a node whose copy is
+missing, half-written, or gone (a disk that failed or was remounted empty). The
+gate has three parts:
+
+1. **The downloader verifies the files.** It writes its marker,
+   `.download-complete`, after the last file, and lists every file in it with
+   its size. Its readiness probe checks the marker, a `config.json` (or
+   `params.json`), and every listed file at its size, every 15 s. A copy that
+   stops verifying is downloaded again. A marker written by an earlier version
+   (empty) is upgraded in place when the files look whole, else the model is
+   downloaded again.
+2. **The labeller labels the nodes.** `weights label` sets
+   `llm-d.ai/<name>-cache=ready` on each node where every downloader for that
+   label is Ready, and removes it where one is not, or where its downloader is
+   gone. `weights labeller` runs it in the cluster every 30 s.
+3. **The model server uses the label.** `make workload-patch` writes a node
+   affinity on the label and a `wait-for-weights` init container into each
+   Deployment whose engine mounts a weights claim.
+
+```bash
+# cluster admin: run the labeller in the cluster, for these model namespaces (-A: all)
+smt weights labeller -n <ns>[,<ns>...] --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<release>
+make weights-label NAMESPACE=<ns>[,<ns>]   # or once, from a checkout
+kubectl get nodes -L llm-d.ai/qwen3-32b-cache
+smt weights labeller -n <ns> --delete && smt weights label --clear   # remove it, then its labels
+```
+
+**The label.** `llm-d.ai/<name>-cache=ready`, where `<name>` is the model id
+without its organisation, lower-cased: `Qwen/Qwen3-32B` is
+`llm-d.ai/qwen3-32b-cache`, `meta-llama/Llama-3.1-8B-Instruct` is
+`llm-d.ai/llama-3.1-8b-instruct-cache`. This is the label some clusters'
+node-preparation jobs already set, so a node prepared by either reads the same.
+Characters a label name does not allow become `-`; a name longer than 57
+characters keeps its first 48 and a hash of the whole id. `WEIGHTS_NODE_LABEL`
+(`--node-label` on `deploy/weights.sh apply`) replaces the whole key; it must be
+`<prefix>/<name>-cache`, and the labeller writes only under its
+`--label-prefix` (`llm-d.ai` unless set).
+
+**Labels it did not set.** The labeller records the labels it set in the node
+annotation `scaling-manager.llmd.ai/weights-node-labels` and removes only
+those. A label another tool set is left alone; if the downloader on that node
+is not Ready, `label` says so and changes nothing.
+
+**Required or preferred.** `LLMSM_WEIGHTS_NODE_AFFINITY` picks what the patch
+writes:
+
+| Value | Effect | Use when |
+| --- | --- | --- |
+| `preferred` (default) | labelled nodes first; a replica may still land on a node without the copy, and waits there until the download finishes | scale-out must not stall: the downloader runs on every GPU node, so the wait is bounded by the download |
+| `required` | replicas only on labelled nodes; with none free, they stay `Pending` | the download takes longer than an acceptable start, or some GPU nodes never get a copy |
+| `none` | no affinity; the init container still waits | something else places the replicas |
+
+The required term is added to every existing `nodeSelectorTerms` entry (terms
+are ORed), so a GPU product term the template already has stays. The patch
+replaces the whole list, so it carries the existing entries.
+
+**How the scaling manager counts those nodes.** With `required` and a declared
+`gpu-inventory`, node fit already counts only labelled nodes for that model:
+it reads the template's required node affinity
+([GPU limiter](gpu-limiter.md)). With `preferred`, a node without the copy
+counts as capacity: a replica placed there starts later, but it starts.
+
+**Rights.** `label` lists and patches nodes, which is cluster-scoped. The
+labeller runs in its own namespace (`scaling-manager-weights-labeller`, Pod
+Security `restricted`), with node `get`/`list`/`patch` and read-only access to
+DaemonSets and pods in the namespaces it watches. It must not run in a model
+namespace: anyone who can create pods there could use its ServiceAccount to
+patch nodes. The namespace owner needs none of this.
+
+**What it does not cover.**
+
+- A replica already running when its node's copy breaks keeps running; the
+  label goes, so no new replica lands there.
+- A replica waiting in `wait-for-weights` on a node the downloader never
+  reaches (outside its node selector) waits forever. Use `required`, or the
+  same node selector on both.
+- A LeaderWorkerSet gets no gate yet.
+- The gate is emitted, never applied by `--apply`.
 
 ### Engine caches on the node's disk
 

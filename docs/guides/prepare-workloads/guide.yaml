@@ -45,6 +45,11 @@ deploy:
       smt prepull status -n $NAMESPACE
       smt weights status -n $NAMESPACE
       smt engine-cache status -n $NAMESPACE
+  gate:
+    note: Cluster admin (it patches nodes). Label each GPU node whose copy of the weights verifies, and unlabel it when the copy breaks.
+    run: |
+      smt weights labeller -n $NAMESPACE --image $TOOLS
+      kubectl get nodes -L llm-d.ai/<model name, lower-cased>-cache
   patch:
     note: Writes scaling-manager-workload-patch.yaml here. Copy it into your model server's chart values.
     run: smt workload-patch -n $NAMESPACE
@@ -83,3 +88,8 @@ cleanup:
       smt prepull delete -n $NAMESPACE --all
       smt weights delete -n $NAMESPACE --all
       smt engine-cache delete -n $NAMESPACE
+  labeller:
+    note: Cluster admin. Removes the labeller, then the node labels it set; a label another tool set stays.
+    run: |
+      smt weights labeller -n $NAMESPACE --delete
+      smt weights label --clear

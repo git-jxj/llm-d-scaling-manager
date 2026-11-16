@@ -1140,7 +1140,7 @@ so_workload_patch_one() {
         # in-flight requests" about a workload that already had its drain hook.
         # A LeaderWorkerSet has no drain half, so without a storage opt-in it
         # always lands here.
-        log_info "  $ns/$name needs only a volume or a cache variable -- emitted, not applied."
+        log_info "  $ns/$name needs only a volume, a cache variable or the weights gate -- emitted, not applied."
         return 2
     fi
     if [ "$d_resource" = "leaderworkersets" ]; then
@@ -1223,6 +1223,7 @@ so_workload_patch_trim() {
           | del($s.volumes | select(length == 0))
           | del($s.containers[].volumeMounts | select(length == 0))
           | del($s.containers[].env | select(length == 0))
+          | del($s.affinity) | del($s.initContainers)
           | ... comments=\"\""
     yq eval "$prog" "$doc" > "$stripped" 2>/dev/null
     # What remains is worth applying only if it still carries a change. A
@@ -2599,14 +2600,23 @@ so_workload_patch_doc() {
     case "$(printf '%s %s' "$image" "$argv" | tr '[:upper:]' '[:lower:]')" in
         *vllm*) so_kv_bytes_proposal "$ns" "$name" "$engine" "$argv" ;;
     esac
+    local want_gate=0 gate_model="" gate_key="" gate_claim="" gate_vol="" gate_mount="" gate_sub="" gate_dir="" gate_aff=""
+    so_weights_gate_plan "$ns" "$resource" "$name" "$engine"
 
-    [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || return 0
+    [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_gate" -eq 1 ] || return 0
     [ -z "$kvsay" ] || log_info "$kvsay"
 
     cat <<HDR
 ---
 # ${resource}/${name} in ${ns}   (engine container: ${engine})
 HDR
+    if [ "$want_gate" -eq 1 ]; then
+        cat <<GATEWHY
+#   weights-gate: ${engine} reads ${gate_model} from the node-local claim ${gate_claim},
+#          and nothing keeps a replica off a node whose copy is missing or still
+#          being written.
+GATEWHY
+    fi
     if [ "$want_drain" -eq 1 ]; then
         # Never LOWER an existing grace period. A long grace with no hook is
         # exactly the configuration not to shorten, and the emitted document used
@@ -2659,6 +2669,7 @@ HEAD
       terminationGracePeriodSeconds: ${grace_want}
 GRACE
     fi
+    if [ "$want_gate" -eq 1 ]; then so_weights_gate_body; fi
     cat <<CONTAINERS
       containers:
       - name: ${engine}
@@ -2679,6 +2690,169 @@ PRESTOP
     so_workload_patch_claims "$want_cache" "$want_evol"
     so_workload_patch_cache_body
     so_workload_patch_notes
+    if [ "$want_gate" -eq 1 ]; then so_weights_gate_notes; fi
+}
+
+# so_weights_gate_plan decides the weights gate of Deployment $3 in $1, whose
+# engine container is $4: when that container mounts a node-local weights
+# claim (deploy/weights.sh: storage class node-local-weights, the model in an
+# annotation), every node holds its own copy, and a replica placed where the
+# copy is missing or still being written reads a partial model. The gate is
+# a node affinity on the label weights.sh label sets from the verified files
+# and an init container that waits for the copy's completion marker. It sets
+# in the caller want_gate and the gate_* fields; want_gate stays 0 when the
+# template already carries both, when a read fails, and when the mount's
+# subPath does not lead to the model directory.
+#
+# LLMSM_WEIGHTS_NODE_AFFINITY: preferred (the default) ranks labelled nodes
+# first and still places a replica elsewhere, where it waits for the copy;
+# required places replicas only on labelled nodes and leaves them Pending
+# when none has room; none leaves the affinity out (the init container
+# still waits).
+so_weights_gate_plan() {
+    local ns="$1" resource="$2" name="$3" engine="$4" obj pvcs found mode="${LLMSM_WEIGHTS_NODE_AFFINITY:-preferred}"
+    want_gate=0
+    [ "$resource" = deployments ] || return 0
+    case "$mode" in
+        preferred|required|none) ;;
+        *) log_warning "  LLMSM_WEIGHTS_NODE_AFFINITY='$mode' is not preferred, required or none; the weights gate is left out."
+           return 0 ;;
+    esac
+    obj="$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null)" || return 0
+    pvcs="$(kubectl get pvc -n "$ns" -o json 2>/dev/null)" || return 0
+    [ -n "$obj" ] && [ -n "$pvcs" ] || return 0
+    found="$(printf '%s' "$obj" | jq -r --argjson pvcs "$pvcs" --arg engine "$engine" '
+        .spec.template.spec as $s
+        | ([ $s.containers[]? | select(.name == $engine) ] | first) as $c
+        | [ $pvcs.items[]?
+            | select(.spec.storageClassName == "node-local-weights"
+                     and (.metadata.annotations["scaling-manager.llmd.ai/weights-model"] // "") != "")
+            | {claim: .metadata.name,
+               model: .metadata.annotations["scaling-manager.llmd.ai/weights-model"],
+               key: (.metadata.annotations["scaling-manager.llmd.ai/weights-node-label"] // "")} ] as $wc
+        | [ ($c.volumeMounts // [])[] as $m
+            | ($s.volumes // [])[]
+            | select(.name == $m.name and .persistentVolumeClaim != null)
+            | .persistentVolumeClaim.claimName as $cn
+            | $wc[] | select(.claim == $cn)
+            | . + {vol: $m.name, mount: $m.mountPath, sub: ($m.subPath // "")} ] | first
+        | if . == null then empty
+          else [.model, .key, .claim, .vol, .mount, .sub] | join("\u001f") end' 2>/dev/null)" || return 0
+    [ -n "$found" ] || return 0
+    IFS=$'\037' read -r gate_model gate_key gate_claim gate_vol gate_mount gate_sub <<< "$found"
+    [ -n "$gate_key" ] || gate_key="$(llmsm_weights_node_label_key "$gate_model")"
+    # Where the model directory is inside the container: the claim holds it
+    # at models/<id>, and the mount may start part of the way down.
+    local rel="models/${gate_model}" mnt="${gate_mount%/}" sub="${gate_sub%/}"
+    if [ -z "$sub" ]; then
+        gate_dir="${mnt}/${rel}"
+    elif [ "$sub" = "$rel" ]; then
+        gate_dir="$mnt"
+    elif [ "${rel#"$sub"/}" != "$rel" ]; then
+        gate_dir="${mnt}/${rel#"$sub"/}"
+    else
+        log_warning "  $ns/$name mounts the weights claim $gate_claim with subPath $gate_sub, which does not lead to $rel; the weights gate is left out."
+        return 0
+    fi
+    # The affinity this mode asks for, merged into what the template has:
+    # a strategic merge replaces either list whole, so the emitted list is
+    # the existing entries plus the label. A required term is ANDed into
+    # every existing term (terms are ORed), so a GPU-product term stays.
+    local merged have
+    read -r have merged <<< "$(printf '%s' "$obj" | jq -c -r --arg key "$gate_key" --arg mode "$mode" '
+        .spec.template.spec as $s
+        | ($s.affinity.nodeAffinity // {}) as $na
+        | {key: $key, operator: "In", values: ["ready"]} as $e
+        | ($na.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms // []) as $terms
+        | ($na.preferredDuringSchedulingIgnoredDuringExecution // []) as $pref
+        | (($s.nodeSelector // {})[$key] == "ready") as $bysel
+        | (($s.initContainers // []) | any(.name == "wait-for-weights")) as $init
+        | (if $mode == "required" then
+             $bysel or (($terms | length) > 0 and ($terms | all((.matchExpressions // []) | any(. == $e))))
+           elif $mode == "preferred" then
+             $bysel or ($pref | any((.preference.matchExpressions // []) | any(. == $e)))
+           else true end) as $hasaff
+        | (if $mode == "required" then
+             {nodeAffinity: {requiredDuringSchedulingIgnoredDuringExecution: {nodeSelectorTerms:
+               (if ($terms | length) == 0 then [{matchExpressions: [$e]}]
+                else $terms | map(.matchExpressions = (((.matchExpressions // []) | map(select(.key != $key))) + [$e])) end)}}}
+           elif $mode == "preferred" then
+             {nodeAffinity: {preferredDuringSchedulingIgnoredDuringExecution:
+               (($pref | map(select(((.preference.matchExpressions // []) | map(.key) | index($key)) == null)))
+                + [{weight: 100, preference: {matchExpressions: [$e]}}])}}
+           else null end) as $aff
+        | "\($hasaff and $init) \($aff | if . == null or $hasaff then "" else tojson end)"' 2>/dev/null)"
+    [ "$have" = false ] || return 0
+    gate_aff="$merged"
+    want_gate=1
+}
+
+# so_weights_gate_body prints the gate's affinity and init container, at the
+# indentation of a Deployment's pod spec. The init container runs the
+# engine's own image: it is on the node already (and pre-pulled), it carries
+# /bin/sh, and it passes whatever image policy the engine passes -- a
+# separate small image is one more pull and one more admission to clear.
+so_weights_gate_body() {
+    if [ -n "$gate_aff" ]; then
+        printf '%s\n' "      # The node label weights.sh label sets where the copy verifies (and"
+        printf '%s\n' "      # removes where it stops verifying). LLMSM_WEIGHTS_NODE_AFFINITY=required"
+        printf '%s\n' "      # places replicas only there; a strategic merge replaces this list whole,"
+        printf '%s\n' "      # so it carries the entries the template already had."
+        printf '%s\n' "      affinity:"
+        printf '%s' "$gate_aff" | yq -P -p json -o yaml '.' | sed 's/^/        /'
+    fi
+    cat <<GATEINIT
+      initContainers:
+      - name: wait-for-weights
+        image: ${image}
+        imagePullPolicy: IfNotPresent
+        # The marker is written after the last file, so a copy still being
+        # written never passes; a config is checked too, as the probe does.
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          until [ -f "\$WEIGHTS_DIR/.download-complete" ] && { [ -f "\$WEIGHTS_DIR/config.json" ] || [ -f "\$WEIGHTS_DIR/params.json" ]; }; do
+            echo "waiting for this node's copy of ${gate_model} at \$WEIGHTS_DIR (weights status -n ${ns} says which nodes hold it)"
+            sleep 10
+          done
+        env:
+        - name: WEIGHTS_DIR
+          value: ${gate_dir}
+        # Engine images set NVIDIA_VISIBLE_DEVICES=all; this container
+        # requests no GPU and must not be handed one.
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: void
+        volumeMounts:
+        - name: ${gate_vol}
+          mountPath: ${gate_mount}
+GATEINIT
+    [ -z "$gate_sub" ] || echo "          subPath: ${gate_sub}"
+    cat <<GATEINIT2
+          readOnly: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+GATEINIT2
+}
+
+# so_weights_gate_notes prints what the gate depends on, after the document.
+so_weights_gate_notes() {
+    cat <<GATENOTE
+#
+#   The weights gate waits on the node label ${gate_key}=ready, which
+#   only weights.sh label sets -- run by the cluster admin, or in the cluster
+#   as weights.sh labeller (it patches nodes). Without it a preferred affinity
+#   has no preference and a required one leaves every new replica Pending:
+#     kubectl get nodes -L ${gate_key}
+#   The gate is emitted, never applied: placement is the owner's decision.
+GATENOTE
 }
 
 # so_workload_patch_doc_lws writes the cache halves of LeaderWorkerSet $2 in
