@@ -3487,6 +3487,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash hack/check-epp-router-version.sh
 	@echo "Checking the router pins the harness patch writes..."
 	@bash hack/check-harness-router-pins.sh
+	@echo "Checking the benchmark EPP-scrape parsers under both metric namings..."
+	@bash hack/check-epp-metrics-parsers.sh
 	@echo "Checking the TTFT staircase's exit paths and arithmetic..."
 	@# Executes it against a stub kubectl. What protects a shared cluster for a
 	@# multi-day run is its exit paths, and bash -n sees none of them.
