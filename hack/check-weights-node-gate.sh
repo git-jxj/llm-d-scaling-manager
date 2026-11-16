@@ -347,6 +347,19 @@ for args in "" "-n ns1 -A" "-n ns1,,ns2" "-n ns1,ns1" "-n NS" "-n ns1 --watch 0"
     if PATH="$SP" bash deploy/weights.sh label $args >/dev/null 2>&1; then fail "label $args must be refused"; refused=1; fi
 done
 [ "$refused" -eq 0 ] && ok "label refuses no scope, -n with -A, an empty or repeated or invalid namespace, a bad --watch, --clear with --watch, and a bad prefix"
+# --watch stops on TERM at once, with 0: in the labeller pod this shell is
+# PID 1, which ignores a TERM it does not trap. (Here it is not PID 1, so an
+# untrapped TERM kills it with 143: the exit code is what tells them apart.)
+( PATH="$SP" exec bash deploy/weights.sh label -n ns1 --watch 60 > "$T/watch.out" 2>&1 ) &
+wpid=$!
+for _ in $(seq 1 50); do grep -q 'node-a' "$T/watch.out" 2>/dev/null && break; sleep 0.1; done
+sleep 0.3
+kill -TERM "$wpid"
+start=$SECONDS
+wait "$wpid"; rc=$?
+took=$((SECONDS - start))
+[ "$rc" -eq 0 ] && [ "$took" -le 2 ]
+expect $? "label --watch exits 0 on TERM while it sleeps, at once (rc $rc after ${took}s)"
 runlabel -n ns1 --label-prefix example.com; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'llm-d.ai/' "$T/patches" && grep -q "its prefix is not example.com" "$T/label.out"
 expect $? "--label-prefix: a DaemonSet asking for another prefix is skipped"

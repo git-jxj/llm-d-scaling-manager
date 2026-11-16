@@ -1045,9 +1045,15 @@ cmd_label() {
         *[!0-9]*|0) log_error "--watch takes a number of seconds, at least 1: '${WATCH}'" ;;
     esac
     [ "$CLEAR" = false ] || log_error "--clear runs once; drop --watch"
+    # In the labeller this shell is PID 1, which ignores a TERM it has no
+    # trap for: the pod would hold every rollout (Recreate) for its whole
+    # grace period. The sleep runs in the background so the trap fires at
+    # once rather than after it.
+    trap 'exit 0' TERM
     while :; do
         label_once || log_warning "label: this pass failed; the next is in ${WATCH}s"
-        sleep "$WATCH"
+        sleep "$WATCH" &
+        wait "$!"
     done
 }
 
