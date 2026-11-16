@@ -73,7 +73,7 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 	t.Run("an apply that names no replicas leaves them to the writer, which changes nothing else", func(t *testing.T) {
 		const name = "applied"
 		gitops := envSet(name, nil)
-		require.NoError(t, c.Patch(ctx, gitops, client.Apply, client.FieldOwner("gitops"))) //nolint:staticcheck // SA1019: unstructured apply, as the writer does
+		require.NoError(t, c.Apply(ctx, client.ApplyConfigurationFromUnstructured(gitops), client.FieldOwner("gitops")))
 		before := get(ctx, t, c, space, name)
 		require.Equal(t, map[string]int64{"prefill": 1, "decode": 1, "encode": 1}, replicasOf(t, before), "the API default")
 
@@ -93,7 +93,7 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 
 		// The source of truth applies again, still without replicas: it
 		// neither conflicts nor resets the writer's count.
-		require.NoError(t, c.Patch(ctx, envSet(name, nil), client.Apply, client.FieldOwner("gitops"))) //nolint:staticcheck // SA1019: see above
+		require.NoError(t, c.Apply(ctx, client.ApplyConfigurationFromUnstructured(envSet(name, nil)), client.FieldOwner("gitops")))
 		assert.Equal(t, int64(5), replicasOf(t, get(ctx, t, c, space, name))["decode"])
 	})
 
@@ -129,10 +129,10 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 
 	t.Run("one Static role at zero is rejected by the API; the writer never asks for it", func(t *testing.T) {
 		const name = "zero"
-		require.NoError(t, c.Patch(ctx, envSet(name, nil), client.Apply, client.FieldOwner("gitops"))) //nolint:staticcheck // SA1019: see above
+		require.NoError(t, c.Apply(ctx, client.ApplyConfigurationFromUnstructured(envSet(name, nil)), client.FieldOwner("gitops")))
 
 		lone := ApplyConfiguration(get(ctx, t, c, space, name), map[string]int32{"prefill": 0, "decode": 3})
-		err := c.Patch(ctx, lone, client.Apply, client.FieldOwner("someone")) //nolint:staticcheck // SA1019: see above
+		err := c.Apply(ctx, client.ApplyConfigurationFromUnstructured(lone), client.FieldOwner("someone"))
 		require.True(t, apierrors.IsInvalid(err), "the CEL rule must reject a lone zero: %v", err)
 
 		run(t, name, "true", map[string]int32{"prefill": 0, "decode": 3})

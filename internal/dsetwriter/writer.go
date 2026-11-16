@@ -70,6 +70,7 @@ const (
 	EventScaled   = "RoleReplicasWritten"
 	EventConflict = "RoleReplicasConflict"
 	EventRefused  = "RoleWriterRefused"
+	EventFailed   = "RoleReplicasWriteFailed"
 )
 
 // Defaults.
@@ -299,20 +300,19 @@ func (w *Writer) reconcile(ctx context.Context, set *unstructured.Unstructured) 
 	// Every Static role is written together, so the CEL rule is checked
 	// against one consistent document, and a rejected write leaves no role
 	// half-applied.
-	opts := []client.PatchOption{client.FieldOwner(FieldManager)}
+	opts := []client.ApplyOption{client.FieldOwner(FieldManager)}
 	if mode == "force" {
 		opts = append(opts, client.ForceOwnership)
 	}
-	// Patch with the Apply patch type rather than Client.Apply: the document is
-	// unstructured, for a kind this module has no apply configuration for.
-	if err := w.Client.Patch(ctx, ApplyConfiguration(set, plan), client.Apply, opts...); err != nil { //nolint:staticcheck // SA1019: see above
-
+	if err := w.Client.Apply(ctx, client.ApplyConfigurationFromUnstructured(ApplyConfiguration(set, plan)), opts...); err != nil {
 		if apierrors.IsConflict(err) {
 			w.event(set, corev1.EventTypeWarning, EventConflict,
-				"another field manager owns spec.roles[].spec.replicas (GitOps, kubectl apply): remove replicas from that source, or set "+OptInAnnotation+"=force: "+err.Error())
+				"another field manager owns spec.roles[].spec.replicas. A create or client-side apply (kubectl, Helm, Argo CD without ServerSideApply) owns them even when its manifest leaves them out. "+
+					"Apply the set server-side without replicas, or set "+OptInAnnotation+"=force: "+err.Error())
 			return
 		}
 		logger.Error(err, "Could not write the role replicas", "replicas", plan)
+		w.event(set, corev1.EventTypeWarning, EventFailed, fmt.Sprintf("could not write role replicas %v: %v", changed, err))
 		return
 	}
 	logger.Info("Wrote DisaggregatedSet role replicas", "replicas", changed)

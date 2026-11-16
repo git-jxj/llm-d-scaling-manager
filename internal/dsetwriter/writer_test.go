@@ -12,7 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -120,12 +119,11 @@ func TestApplyConfigurationNamesOnlyReplicas(t *testing.T) {
 type applied struct {
 	calls   int
 	doc     map[string]any
-	ptype   types.PatchType
 	manager string
 	force   bool
 }
 
-func newWriter(t *testing.T, obj *unstructured.Unstructured, store *decision.Store, patchErr error) (*Writer, *applied, *record.FakeRecorder) {
+func newWriter(t *testing.T, obj *unstructured.Unstructured, store *decision.Store, applyErr error) (*Writer, *applied, *record.FakeRecorder) {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	gv := schema.GroupVersion{Group: setGVK.Group, Version: setGVK.Version}
@@ -133,15 +131,17 @@ func newWriter(t *testing.T, obj *unstructured.Unstructured, store *decision.Sto
 	scheme.AddKnownTypeWithName(gv.WithKind(constants.DisaggregatedSetKind+"List"), &unstructured.UnstructuredList{})
 	got := &applied{}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).WithInterceptorFuncs(interceptor.Funcs{
-		Patch: func(_ context.Context, _ client.WithWatch, o client.Object, p client.Patch, opts ...client.PatchOption) error {
+		Apply: func(_ context.Context, _ client.WithWatch, o runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 			got.calls++
-			got.doc = o.(*unstructured.Unstructured).Object
-			got.ptype = p.Type()
-			po := &client.PatchOptions{}
-			po.ApplyOptions(opts)
-			got.manager = po.FieldManager
-			got.force = po.Force != nil && *po.Force
-			return patchErr
+			got.doc = o.(interface{ UnstructuredContent() map[string]any }).UnstructuredContent()
+			ao := (&client.ApplyOptions{}).ApplyOptions(opts)
+			got.manager = ao.FieldManager
+			got.force = ao.Force != nil && *ao.Force
+			return applyErr
+		},
+		Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
+			t.Error("the writer changes a set only by server-side apply")
+			return nil
 		},
 	}).Build()
 	rec := record.NewFakeRecorder(10)
@@ -156,7 +156,6 @@ func TestPassAppliesDecisionsToStaticRolesOnly(t *testing.T) {
 	w.Pass(context.Background())
 
 	require.Equal(t, 1, got.calls)
-	assert.Equal(t, types.ApplyPatchType, got.ptype)
 	assert.Equal(t, FieldManager, got.manager)
 	assert.False(t, got.force)
 	roles, _, _ := unstructured.NestedSlice(got.doc, "spec", "roles")
@@ -230,6 +229,18 @@ func TestPassForceAndConflict(t *testing.T) {
 		assert.True(t, strings.Contains(ev, EventConflict), ev)
 	default:
 		t.Fatal("a conflict must be reported on the set")
+	}
+
+	// Any other failure, a rejected write say, is reported on the set too:
+	// the log alone is not where an operator looks.
+	invalid := apierrors.NewInvalid(setGVK.GroupKind(), "glm", nil)
+	w, _, rec = newWriter(t, set(optIn("true"), "", 3), store, invalid)
+	w.Pass(context.Background())
+	select {
+	case ev := <-rec.Events:
+		assert.True(t, strings.Contains(ev, EventFailed), ev)
+	default:
+		t.Fatal("a failed write must be reported on the set")
 	}
 }
 
