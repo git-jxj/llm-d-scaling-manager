@@ -54,8 +54,10 @@ node prepared by either counts for both.
 - has a readiness probe that checks the marker, a `config.json` (or
   `params.json` for a Mistral-format checkpoint), and every listed file at its
   size, every 15 s, failing only after three misses;
-- re-checks every 5 minutes, and exits when the copy breaks, so the kubelet
-  restarts it and it downloads again;
+- re-checks every 30 s, and when the copy breaks removes the marker and
+  exits, so the kubelet restarts it and it downloads again. The marker goes
+  first because the init container of a replica waits only for the marker and
+  a config: it does not check the sizes;
 - upgrades an empty marker from an earlier version in place, but only when the
   files still look whole (a config, and every shard the index names); else it
   downloads again.

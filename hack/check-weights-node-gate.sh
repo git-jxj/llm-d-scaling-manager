@@ -172,6 +172,21 @@ mkmodel "$T/d/truncated"; printf 'A' > "$T/d/truncated/model-00001-of-00002.safe
 rc="$(run_dl "$T/d/truncated")"
 [ "$(wc -l < "$T/d/truncated.calls")" -eq 1 ] && grep -q 'is broken (wrong size: model-00001-of-00002.safetensors)' "$T/d/truncated.log"
 expect $? "a marker over a truncated file: the copy is called broken, by file, and downloaded again"
+# A copy that breaks while the downloader runs: the marker goes before it
+# exits, so a replica's wait-for-weights (marker and config only) stops
+# passing then, not after the restart.
+mkmodel "$T/d/breaks"
+: > "$T/d/breaks.calls"
+( CALLS="$T/d/breaks.calls" PYTHONPATH="$T/py" TARGET_DIR="$T/d/breaks" MARKER=.download-complete MODEL_ID=org/m RECHECK_SECONDS=1 \
+    timeout 8 python3 "$T/download.py" > "$T/d/breaks.log" 2>&1; echo $? > "$T/d/breaks.rc" ) &
+dl=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'present at' "$T/d/breaks.log" 2>/dev/null && break; sleep 0.2; done
+printf 'A' > "$T/d/breaks/model-00001-of-00002.safetensors"
+wait "$dl"
+[ "$(cat "$T/d/breaks.rc")" = 1 ] && [ ! -e "$T/d/breaks/.download-complete" ] && grep -q 'marker is removed' "$T/d/breaks.log"
+expect $? "a copy that breaks under a running downloader: within its re-check it removes the marker and exits 1 (rc $(cat "$T/d/breaks.rc" 2>/dev/null))"
+grep -q 'every = int(os.environ.get("RECHECK_SECONDS") or "30")' "$T/download.py"
+expect $? "the downloader re-checks every 30 s unless RECHECK_SECONDS says otherwise"
 
 # ---------------------------------------------------------------------------
 # 5. label, offline.

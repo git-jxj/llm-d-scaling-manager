@@ -434,8 +434,8 @@ $(for t in "${TOLERATIONS[@]}"; do printf '        - key: "%s"\n          operat
           # left (it skips complete files). A copy that fails verification
           # -- a file gone or short under the marker -- loses its marker
           # and is downloaded again. Then the pod stays, re-checking every
-          # 5 minutes and exiting (so the kubelet restarts it and it
-          # repairs) when the copy breaks; Ready is the probe below, so
+          # 30 s; when the copy breaks it removes the marker and exits (so
+          # the kubelet restarts it and it repairs); Ready is the probe below, so
           # the DaemonSet's numberReady is the count of nodes that hold
           # the model. No command substitution and no double dollar in
           # the command: Kubernetes rewrites both.
@@ -502,11 +502,18 @@ $(printf '%s\n' "$VERIFY_PY" | sed 's/^/              /')
                   if why:
                       sys.exit("weights: downloaded, but the copy does not verify: " + why)
                   print("weights: complete", flush=True)
+              # The marker goes first, so the wait-for-weights init container
+              # of a replica placed here meanwhile stops passing at once.
+              every = int(os.environ.get("RECHECK_SECONDS") or "30")
               while True:
-                  time.sleep(300)
+                  time.sleep(every)
                   why = verify(d, mk)
                   if why:
-                      sys.exit("weights: the copy at " + d + " broke (" + why + "); exiting so the restart downloads it again")
+                      try:
+                          os.remove(m)
+                      except OSError:
+                          pass
+                      sys.exit("weights: the copy at " + d + " broke (" + why + "); its marker is removed, and the restart downloads it again")
           env:
             - name: MODEL_ID
               value: "${MODEL}"
