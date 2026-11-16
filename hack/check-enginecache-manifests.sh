@@ -1500,4 +1500,41 @@ printf '%s\n' "$rec" | grep -q 'seed="none";' && ok "benchmark-standup: BENCHMAR
 # the preparer compiles for the engine the scenario pins, not the harness default
 printf '%s\n' "$rec" | grep -A2 'if \[ -n "/mnt/local/c" \]; then' | grep -q 'engine_image.sh "[^"]*" "[^"]*/config/scenarios/guides/pd-disaggregation.yaml"' && ok "benchmark-standup: the preparer's image is read with the run's scenario" || fail "benchmark-standup: the preparer's image ignores the scenario's engine pin"
 
+# FlashInfer reads FLASHINFER_WORKSPACE_BASE; FLASHINFER_WORKSPACE_DIR is a
+# name inside FlashInfer, read from no environment. The old name may appear
+# only where it is detected, stripped or explained: the workload-patch
+# detection, the engine-cache notes, the scenario rewriter that drops it, the
+# checks and the docs. Anywhere else -- a manifest, a scenario, a fixture --
+# it is a cache that silently holds nothing.
+fi_rc=0; fi_hits="$(git -C "$ROOT" grep -n FLASHINFER_WORKSPACE_DIR -- . 2>&1)" || fi_rc=$?
+if [ "$fi_rc" -gt 1 ]; then
+    fail "flashinfer: git grep failed (rc $fi_rc): $fi_hits"
+else
+    fi_stray="$(printf '%s\n' "$fi_hits" | grep -Ev '^(deploy/lib/scaledobject\.sh|deploy/enginecache\.sh|hack/benchmark/engine_cache_claim\.sh|hack/check-[a-z-]+\.sh|docs/[^:]*\.md):' | grep -v '^$')"
+    fi_detect="$(printf '%s\n' "$fi_hits" | grep -c '^deploy/lib/scaledobject\.sh:.*select(.name == "FLASHINFER_WORKSPACE_DIR")')"
+    [ -z "$fi_stray" ] && [ "$fi_detect" -ge 1 ] \
+        && ok "flashinfer: FLASHINFER_WORKSPACE_DIR appears only where it is detected, stripped or explained (detection present: $fi_detect)" \
+        || fail "flashinfer: FLASHINFER_WORKSPACE_DIR outside the allowlist (detection lines: $fi_detect): $fi_stray"
+fi
+# Every scenario guard loop over the engine caches names the variable
+# FlashInfer reads, and checks its whole tree.
+fi_loops=0; fi_bad=""
+for sc in $(git -C "$ROOT" ls-files 'hack/benchmark/scenarios/*.yaml'); do
+    n="$(grep -c 'for v in .*VLLM_CACHE_ROOT' "$ROOT/$sc")"
+    [ "$n" -gt 0 ] || continue
+    fi_loops=$((fi_loops + n))
+    [ "$(grep -c 'for v in .*VLLM_CACHE_ROOT.*FLASHINFER_WORKSPACE_BASE' "$ROOT/$sc")" = "$n" ] || fi_bad="$fi_bad $sc(loop)"
+    [ "$(grep -c 'find "\$d" ! -type l' "$ROOT/$sc")" = "$n" ] || fi_bad="$fi_bad $sc(tree check)"
+done
+[ "$fi_loops" -gt 0 ] && [ -z "$fi_bad" ] \
+    && ok "flashinfer: all $fi_loops scenario guard loops name FLASHINFER_WORKSPACE_BASE and check its whole tree" \
+    || fail "flashinfer: scenario guard loops ($fi_loops found) wrong in:$fi_bad"
+# The warm pool sets it in three places that must agree: the manifest, the
+# script that renders a pool, and the e2e fixture.
+fi_wp=""
+for f in config/warmpool/warmpool-deployment.yaml deploy/warmpool.sh test/e2e/fixtures/warm_pool_builder.go; do
+    grep -q 'FLASHINFER_WORKSPACE_BASE' "$ROOT/$f" || fi_wp="$fi_wp $f"
+done
+[ -z "$fi_wp" ] && ok "flashinfer: the warm pool manifest, script and e2e fixture set FLASHINFER_WORKSPACE_BASE" || fail "flashinfer: no FLASHINFER_WORKSPACE_BASE in:$fi_wp"
+
 exit $FAILED
