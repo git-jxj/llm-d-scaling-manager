@@ -43,9 +43,10 @@ VLLM_METRICS = {
     "waiting": re.compile(r"^vllm:num_requests_waiting\{[^}]*\}\s+([0-9.eE+-]+)"),
 }
 # Each pattern takes the current llm_d_epp_ name or the legacy one. Routers
-# before v1.0.0 export both, v1.0.0 only llm_d_epp_. fc_queue and pool_avg keep
-# the first match, so a scrape carrying both counts once. per_pod reads the
-# legacy family only when the scrape has no llm_d_epp_ one (parse_epp_log).
+# before v1.0.0 export both, v1.0.0 only llm_d_epp_. fc_queue and pool_avg take
+# the first matching line only: one series, under whichever name comes first,
+# not a sum over the scrape. per_pod reads the legacy family only when the
+# scrape has no llm_d_epp_ one (parse_epp_log).
 EPP_METRICS = {
     "fc_queue": re.compile(
         r"^(?:llm_d_epp|inference_extension)_flow_control_queue_size\{[^}]*\}\s+([0-9.eE+-]+)"

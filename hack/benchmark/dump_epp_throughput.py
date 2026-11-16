@@ -4,12 +4,16 @@ per-window-rate timeseries to:
 
     metrics/processed/epp_throughput.json
 
-Source counters (cumulative on the EPP, finite-differenced into rates here):
-    llm_d_epp_request_total                 -> request_rate   (rps)
-    llm_d_epp_request_error_total           -> error_rate     (rps)
-    llm_d_epp_request_input_tokens_count    -> input_tps
-    llm_d_epp_request_output_tokens_count   -> output_tps
-    llm_d_epp_scheduler_attempts_total      -> sched_attempts_per_s
+Source counters (cumulative on the EPP, finite-differenced into the per-second
+rates under each sample's "rates" key):
+    llm_d_epp_request_total               -> request_total_per_s        (requests/s)
+    llm_d_epp_request_error_total         -> request_error_total_per_s  (requests/s)
+    llm_d_epp_request_input_tokens_sum    -> input_tokens_sum_per_s     (input tokens/s)
+    llm_d_epp_request_output_tokens_sum   -> output_tokens_sum_per_s    (output tokens/s)
+    llm_d_epp_scheduler_attempts_total    -> sched_attempts_total_per_s (attempts/s)
+
+The token rates come from each histogram's _sum, the tokens observed; its
+_count is the number of requests observed, not tokens.
 
 Each falls back to its legacy name (inference_objective_*,
 inference_extension_scheduler_attempts_total) when a scrape has none of the
@@ -40,13 +44,13 @@ PATTERNS = {
         re.compile(r'^llm_d_epp_request_error_total\{[^}]*\}\s+([0-9.eE+-]+)'),
         re.compile(r'^inference_objective_request_error_total\{[^}]*\}\s+([0-9.eE+-]+)'),
     ),
-    "input_tokens_count": (
-        re.compile(r'^llm_d_epp_request_input_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'),
-        re.compile(r'^inference_objective_input_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'),
+    "input_tokens_sum": (
+        re.compile(r'^llm_d_epp_request_input_tokens_sum\{[^}]*\}\s+([0-9.eE+-]+)'),
+        re.compile(r'^inference_objective_input_tokens_sum\{[^}]*\}\s+([0-9.eE+-]+)'),
     ),
-    "output_tokens_count": (
-        re.compile(r'^llm_d_epp_request_output_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'),
-        re.compile(r'^inference_objective_output_tokens_count\{[^}]*\}\s+([0-9.eE+-]+)'),
+    "output_tokens_sum": (
+        re.compile(r'^llm_d_epp_request_output_tokens_sum\{[^}]*\}\s+([0-9.eE+-]+)'),
+        re.compile(r'^inference_objective_output_tokens_sum\{[^}]*\}\s+([0-9.eE+-]+)'),
     ),
     "sched_attempts_total": (
         re.compile(r'^llm_d_epp_scheduler_attempts_total\{[^}]*\}\s+([0-9.eE+-]+)'),
