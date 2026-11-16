@@ -237,6 +237,35 @@ mode="$(stat -c %a "$Z/cache/pycache" 2>/dev/null)"
 # the seed is nothing to copy, not a failed merge.
 [ "$(cat "$Z/cache/vllm/torch_compile_cache/keyO/f" 2>/dev/null)" = o ] && [ "$(cat "$Z/cache/.seeded")" = old:seed ] && grep -q "1 file(s) copied" "$Z/run1.out" && [ -f "$Z/cache/.prepared" ] \
     && ok "seed: a seed with no pycache/ merges cleanly and the node is prepared" || fail "pre-pycache seed: $(cat "$Z/run1.out"; cat "$Z/cache/.seeded" 2>&1)"
+# FlashInfer: FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer puts its tree
+# at flashinfer/.cache/flashinfer/<arch>/{cached_ops,generated} and cubins at
+# flashinfer/.cache/flashinfer/cubins -- under a DOT directory, which a merge
+# that globbed only plain names would skip. Every node prepared before v0.11.2
+# has an empty flashinfer/ (the patch set FLASHINFER_WORKSPACE_DIR, which
+# FlashInfer does not read): the seed lands in it, and a node that compiled the
+# kernels publishes them.
+FI="$T/flashinfer"; FIT=".cache/flashinfer/90"
+mkdir -p "$FI/seed/flashinfer/$FIT/cached_ops/sampling" "$FI/seed/flashinfer/.cache/flashinfer/cubins/x" "$FI/cache/flashinfer" \
+    "$FI/node/flashinfer/$FIT/cached_ops/norm" "$FI/node/flashinfer/$FIT/generated" "$FI/pseed"
+echo s > "$FI/seed/flashinfer/$FIT/cached_ops/sampling/sampling.so"; echo c > "$FI/seed/flashinfer/.cache/flashinfer/cubins/x/k.cubin"
+echo n > "$FI/node/flashinfer/$FIT/cached_ops/norm/norm.so"; echo g > "$FI/node/flashinfer/$FIT/generated/norm.cu"
+sed -n "/^preparer_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$FI/seed|g; s|/engine-cache|$FI/cache|g; s|^trap .*||" > "$FI/p.sh"
+SEED_MARKER=.seeded SEED_ID=shared:fi MARKER=.prepared NODE_NAME=n1 "$SH" "$FI/p.sh" > "$FI/run1.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$FI/cache/flashinfer/$FIT/cached_ops/sampling/sampling.so" 2>/dev/null)" = s ] \
+    && [ "$(cat "$FI/cache/flashinfer/.cache/flashinfer/cubins/x/k.cubin" 2>/dev/null)" = c ] && grep -q "2 file(s) copied" "$FI/run1.out" \
+    && [ "$(cat "$FI/cache/.seeded")" = shared:fi ] && [ -f "$FI/cache/.prepared" ] \
+    && ok "seed: FlashInfer kernels and cubins under flashinfer/.cache/flashinfer/ land in a node's empty flashinfer/" || fail "seed flashinfer: rc=$rc $(cat "$FI/run1.out"; ls -laR "$FI/cache" | head -30)"
+sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$FI/pseed|g; s|/engine-cache|$FI/node|g" > "$FI/pub.sh"
+NODE_NAME=n2 "$SH" "$FI/pub.sh" > "$FI/pub.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$FI/pseed/flashinfer/$FIT/cached_ops/norm/norm.so" 2>/dev/null)" = n ] \
+    && [ "$(cat "$FI/pseed/flashinfer/$FIT/generated/norm.cu" 2>/dev/null)" = g ] && grep -q "published from n2: 2 file(s) copied" "$FI/pub.out" \
+    && ok "publish: a node's FlashInfer tree under flashinfer/.cache/flashinfer/ is merged into the seed" || fail "publish flashinfer: rc=$rc $(cat "$FI/pub.out"; ls -laR "$FI/pseed" | head -30)"
+# ...and a node whose flashinfer/ is empty publishes nothing from it, cleanly.
+mkdir -p "$FI/empty/flashinfer" "$FI/eseed"
+sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$FI/eseed|g; s|/engine-cache|$FI/empty|g" > "$FI/epub.sh"
+NODE_NAME=n3 "$SH" "$FI/epub.sh" > "$FI/epub.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ -d "$FI/eseed/flashinfer" ] && grep -q "published from n3: 0 file(s) copied" "$FI/epub.out" \
+    && ok "publish: an empty flashinfer/ (a node from before v0.11.2) publishes nothing, and is no error" || fail "publish empty flashinfer: rc=$rc $(cat "$FI/epub.out")"
 # the node seeded before the publish ($F, marker workload-pvc:engine-cache) merges again once the seed is stamped
 echo 20261013120000 > "$F/seed/engine-cache/.published"
 mkdir -p "$F/seed/engine-cache/vllm/torch_compile_cache/keyP"; echo p > "$F/seed/engine-cache/vllm/torch_compile_cache/keyP/f"
@@ -608,7 +637,7 @@ for sc in hack/benchmark/scenarios/guides/*.yaml; do
         sub="$(yq -r '[.. | select(type == "!!map" and has("additionalVolumeMounts")) | .additionalVolumeMounts[] | select(.name == "engine-cache") | has("subPath")] | map(select(.)) | length' "$T/real.yaml")"
         [ "$want" -gt 0 ] && [ "$n" = "$want" ] && [ "$sub" = 0 ] && ok "engine_cache_claim: $(basename "$sc") -- $n engine-cache volume(s) on the claim, no subPath left" || fail "engine_cache_claim on $(basename "$sc"): had $have, wanted $want, on the claim $n, subPaths left $sub"
         if [ "$have" = 0 ]; then
-            wired="$(yq -r "[${EC_ROLES} | select(.vllm.cacheRoot == \"/engine-cache/vllm\" and ([.extraEnvVars[] | select(.name == \"FLASHINFER_WORKSPACE_DIR\" or .name == \"TRITON_CACHE_DIR\") | .value] | join(\",\")) == \"/engine-cache/flashinfer,/engine-cache/triton\" and ([.additionalVolumeMounts[] | select(.name == \"engine-cache\" and .mountPath == \"/engine-cache\")] | length) == 1)] | length" "$T/real.yaml")"
+            wired="$(yq -r "[${EC_ROLES} | select(.vllm.cacheRoot == \"/engine-cache/vllm\" and ([.extraEnvVars[] | select(.name == \"FLASHINFER_WORKSPACE_BASE\" or .name == \"TRITON_CACHE_DIR\") | .value] | join(\",\")) == \"/engine-cache/flashinfer,/engine-cache/triton\" and ([.additionalVolumeMounts[] | select(.name == \"engine-cache\" and .mountPath == \"/engine-cache\")] | length) == 1)] | length" "$T/real.yaml")"
             [ "$wired" = "$roles" ] && grep -q 'added an engine cache' "$T/real.out" && ok "engine_cache_claim: $(basename "$sc") -- had no engine cache; all $roles vLLM role(s) now keep VLLM_CACHE_ROOT, FlashInfer and Triton under /engine-cache" || fail "engine_cache_claim on $(basename "$sc"): added wiring on $wired of $roles role(s): $(cat "$T/real.out")"
         fi
     else

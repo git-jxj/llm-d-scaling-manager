@@ -190,13 +190,14 @@ ok() { RAN=$((RAN + 1)); printf 'ok    %s\n' "$CASE"; }
 # line-oriented and re-emits a delimiterless line whole, so it cannot see the
 # truncation that `read` suffers when a field still contains newlines.
 gaps_field() {
-    local idx="$1" gaps f1 f2 f3 f4 f5 f6 f7 f8 f9
+    local idx="$1" gaps f1 f2 f3 f4 f5 f6 f7 f8 f9 f10
     gaps="$(so_workload_gaps ns deployments w "$POD_DEPLOY")" || return 1
-    IFS=$'\037' read -r f1 f2 f3 f4 f5 f6 f7 f8 f9 <<< "$gaps"
+    IFS=$'\037' read -r f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 <<< "$gaps"
     case "$idx" in
         1) printf '%s' "$f1" ;; 2) printf '%s' "$f2" ;; 3) printf '%s' "$f3" ;;
         4) printf '%s' "$f4" ;; 5) printf '%s' "$f5" ;; 6) printf '%s' "$f6" ;;
         7) printf '%s' "$f7" ;; 8) printf '%s' "$f8" ;; 9) printf '%s' "$f9" ;;
+        10) printf '%s' "$f10" ;;
     esac
 }
 
@@ -1519,16 +1520,18 @@ assert_not_contains "$doc" "#   engine-cache:"
 assert_contains "$doc" "PYTHONPYCACHEPREFIX"
 [ "$FAILED" -eq "$before" ] && ok
 
-CASE="engine cache: nine fields, argv and cachevol where they were, image and bytecode after"
+CASE="engine cache: ten fields, argv and cachevol where they were, image, bytecode and FlashInfer after"
 reset; f_vllm_plain
 before=$FAILED
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env = [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/x"}]')"
 gaps="$(so_workload_gaps ns deployments w "$POD_DEPLOY")"
-IFS=$'\037' read -r e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 <<< "$gaps"
+IFS=$'\037' read -r e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 <<< "$gaps"
 assert_eq "$e6" "vllm serve Qwen/Qwen3-0.6B" "argv (field 6)"
 assert_eq "$e7" "unset" "cachevol (field 7)"
 assert_eq "$e8" "quay.io/x/vllm-openai:v0.11" "image (field 8)"
 assert_eq "$e9" "unset" "bytecode (field 9)"
-assert_eq "$e10" "" "a tenth field"
+assert_eq "$e10" "dir:/x" "FlashInfer (field 10)"
+assert_eq "$e11" "" "an eleventh field"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="engine cache: the patch carries the three variables, the mount and the claim"
@@ -1538,7 +1541,7 @@ doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
 assert_contains "$doc" "#   engine-cache:"
 assert_contains "$doc" "- name: VLLM_CACHE_ROOT"
 assert_contains "$doc" "value: /engine-cache/vllm"
-assert_contains "$doc" "- name: FLASHINFER_WORKSPACE_DIR"
+assert_contains "$doc" "- name: FLASHINFER_WORKSPACE_BASE"
 assert_contains "$doc" "- name: TRITON_CACHE_DIR"
 assert_contains "$doc" "mountPath: /engine-cache"
 assert_contains "$doc" "claimName: engine-cache"
@@ -1766,6 +1769,126 @@ assert_contains "$(cat "$dir/log")" "no vLLM among them compiles from nothing"
 [ -f "$dir/p.yaml" ] && fail "no file should be written for a converged workload"
 [ "$FAILED" -eq "$before" ] && ok
 
+# --- FlashInfer: FLASHINFER_WORKSPACE_BASE, never FLASHINFER_WORKSPACE_DIR ----
+#
+# FlashInfer reads FLASHINFER_WORKSPACE_BASE and appends .cache/flashinfer to
+# it; FLASHINFER_WORKSPACE_DIR is a name inside FlashInfer, read from no
+# environment. workload-patch wrote the second before v0.11.2, so a workload
+# patched then has its caches on a claim and still builds every FlashInfer
+# kernel again on every start.
+
+# A workload patched before v0.11.2: everything on the claim, FlashInfer at the
+# variable FlashInfer does not read.
+f_engine_cache_old_flashinfer() {
+    f_engine_cache_on_claim
+    FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [
+        {"name":"FLASHINFER_WORKSPACE_DIR","value":"/engine-cache/flashinfer"},
+        {"name":"TRITON_CACHE_DIR","value":"/engine-cache/triton"}]')"
+}
+
+CASE="flashinfer: FLASHINFER_WORKSPACE_DIR without _BASE is field 10, dir: and its value"
+reset; f_engine_cache_old_flashinfer
+before=$FAILED
+assert_field 7 "volume:/engine-cache/vllm"      # anchor: the caches read as on the claim
+assert_field 10 "dir:/engine-cache/flashinfer"
+# _BASE beside it, before or after, is the fix: no opinion.
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_BASE","value":"/engine-cache/flashinfer"}]')"
+assert_field 10 ""
+assert_field 7 "volume:/engine-cache/vllm"
+# From a ConfigMap: the stale name is still the stale name, with no value.
+reset; f_engine_cache_on_claim
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_DIR","valueFrom":{"configMapKeyRef":{"name":"c","key":"k"}}}]')"
+assert_field 10 "dir:"
+# Neither variable: no opinion here (the other fields judge the caches).
+reset; f_engine_cache_on_claim
+assert_field 10 ""
+assert_field 1 "vllm"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="flashinfer: a workload patched before v0.11.2 gets FLASHINFER_WORKSPACE_BASE at the old path, env only"
+reset; f_engine_cache_old_flashinfer
+before=$FAILED
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "#   flashinfer:"
+assert_contains "$doc" "- name: FLASHINFER_WORKSPACE_BASE"
+assert_contains "$doc" "value: /engine-cache/flashinfer"
+assert_not_contains "$doc" "#   engine-cache:"
+assert_not_contains "$doc" "volumes:"
+assert_not_contains "$doc" "- name: FLASHINFER_WORKSPACE_DIR"
+d="$(mktemp)"; printf '%s\n' "$doc" > "$d"
+assert_eq "$(yq eval '.spec.template.spec.containers[0].env | map(.name + "=" + .value) | join(",")' "$d" 2>/dev/null)" \
+    "FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer" "env read back"
+rm -f "$d"
+warn="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>&1 >/dev/null)"
+assert_contains "$warn" "BUILDS ITS FLASHINFER KERNELS AGAIN"
+assert_contains "$warn" "Set FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer instead"
+note="$(so_enginecache_note ns deployments w "$POD_DEPLOY")"
+assert_contains "$note" "builds its FlashInfer kernels again"
+assert_contains "$note" "make workload-patch"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="flashinfer: the summary counts it, the half is emitted, never applied, and there is no all-clear"
+reset; LIST_FIXTURE="$(serving_list)"; f_engine_cache_old_flashinfer
+before=$FAILED
+PVC_FIXTURE="$(pvc_list engine-cache:ReadWriteMany model-pvc:ReadWriteMany)"
+DS_FIXTURE='{"status":{"desiredNumberScheduled":2,"numberReady":2}}'
+dir="$(mktemp -d)"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true \
+    LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "0" "return code"
+assert_contains "$(cat "$dir/log")" "1 model server(s) BUILD THEIR FLASHINFER KERNELS AGAIN"
+assert_not_contains "$(cat "$dir/log")" "no vLLM among them compiles from nothing"
+assert_not_contains "$(cat "$dir/log")" "COMPILE FROM NOTHING"
+assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
+assert_contains "$(cat "$dir/log")" "need only a volume or a cache variable"
+assert_contains "$(cat "$dir/p.yaml")" "value: /engine-cache/flashinfer"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="flashinfer: once FLASHINFER_WORKSPACE_BASE is set the re-run is the all-clear, old variable or not"
+reset; LIST_FIXTURE="$(serving_list)"; f_engine_cache_old_flashinfer
+before=$FAILED
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_BASE","value":"/engine-cache/flashinfer"}]')"
+dir="$(mktemp -d)"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "0" "return code"
+assert_contains "$(cat "$dir/log")" "no vLLM among them compiles from nothing"
+assert_not_contains "$(cat "$dir/log")" "FLASHINFER"
+[ -f "$dir/p.yaml" ] && fail "no file should be written for a converged workload"
+assert_eq "$(so_enginecache_note ns deployments w "$POD_DEPLOY")" "" "plan note"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="flashinfer: a value from a ConfigMap, or not a plain path, is said, not written"
+reset; f_engine_cache_on_claim
+before=$FAILED
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_DIR","valueFrom":{"configMapKeyRef":{"name":"c","key":"k"}}}]')"
+doc_rc=0
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>"$WORK/fi.err")" || doc_rc=$?
+assert_eq "$doc_rc" "0" "return code"
+assert_eq "$doc" "" "document"
+assert_contains "$(cat "$WORK/fi.err")" "Set FLASHINFER_WORKSPACE_BASE to the directory it names, from the same source"
+reset; f_engine_cache_on_claim
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/engine-cache/fi: x"}]')"
+assert_eq "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>"$WORK/fi.err")" "" "document for a value that is not a plain path"
+assert_contains "$(cat "$WORK/fi.err")" "from the same source"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="flashinfer: with the engine-cache half the old variable is told to go, and the half carries _BASE"
+reset; f_vllm_plain
+before=$FAILED
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env = [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/tmp/fi"}]')"
+assert_field 10 "dir:/tmp/fi"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>"$WORK/fi.err")"
+assert_contains "$doc" "#   engine-cache:"
+assert_contains "$doc" "- name: FLASHINFER_WORKSPACE_BASE"
+assert_contains "$doc" "value: /engine-cache/flashinfer"
+assert_not_contains "$doc" "#   flashinfer:"
+assert_not_contains "$doc" "value: /tmp/fi"
+assert_contains "$(cat "$WORK/fi.err")" "drop FLASHINFER_WORKSPACE_DIR"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="trim: the weights half can be kept while the engine-cache half goes, and back"
 before=$FAILED
 mk_both() {
@@ -1788,7 +1911,7 @@ spec:
           value: /model-cache/huggingface
         - name: VLLM_CACHE_ROOT
           value: /engine-cache/vllm
-        - name: FLASHINFER_WORKSPACE_DIR
+        - name: FLASHINFER_WORKSPACE_BASE
           value: /engine-cache/flashinfer
         - name: TRITON_CACHE_DIR
           value: /engine-cache/triton
@@ -2298,7 +2421,7 @@ assert_contains "$doc" "mountPath: /engine-cache"
 assert_contains "$doc" "claimName: engine-cache"
 assert_contains "$doc" "engine-cache does NOT exist yet in ns"   # the claim note travels with the volume
 # The guard travels with it: an unwritable prefix is slower than none.
-assert_contains "$doc" "for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
+assert_contains "$doc" "for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
 assert_not_contains "$doc" "- name: VLLM_CACHE_ROOT"
 assert_not_contains "$doc" "preStop"                             # it drains already
 # ...and a mount already at the engine-cache path is used, with no new volume.
@@ -2645,10 +2768,10 @@ for sh_ in $GUARD_SHELLS; do
     shp="$(command -v "$sh_")"
     # Only the guard variables set, everything else unset: -u must not trip.
     out="$(env -u VLLM_USE_MEGA_AOT_ARTIFACT -u PYTHONPYCACHEPREFIX -u VLLM_CACHE_ROOT \
-        -u FLASHINFER_WORKSPACE_DIR -u TRITON_CACHE_DIR PYTHONPATH="$G/v26" VLLM_CACHE_ROOT="$G/c/vllm" \
+        -u FLASHINFER_WORKSPACE_BASE -u TRITON_CACHE_DIR PYTHONPATH="$G/v26" VLLM_CACHE_ROOT="$G/c/vllm" \
         "$sh_" -c "set -eu; . \"$G/guard.sh\"; echo \"AOT=\${VLLM_USE_MEGA_AOT_ARTIFACT-unset} done\"" 2>&1)"
     assert_contains "$out" "AOT=1 done"
-    out="$(env -u VLLM_USE_MEGA_AOT_ARTIFACT -u FLASHINFER_WORKSPACE_DIR -u TRITON_CACHE_DIR \
+    out="$(env -u VLLM_USE_MEGA_AOT_ARTIFACT -u FLASHINFER_WORKSPACE_BASE -u TRITON_CACHE_DIR \
         PYTHONPATH="$G/v32" PATH="$G/bin" VLLM_CACHE_ROOT="$G/c/vllm" PYTHONPYCACHEPREFIX="$G/c/pyc" \
         "$shp" -c "set -eu; . \"$G/guard.sh\"; echo \"AOT=\${VLLM_USE_MEGA_AOT_ARTIFACT-unset} PYC=\${PYTHONPYCACHEPREFIX-unset} done\"" 2>&1)"
     assert_contains "$out" "AOT=unset PYC=$G/c/pyc done"
@@ -3097,7 +3220,7 @@ assert_eq "$(jq -r '[.[] | select(.path | endswith("/-"))] | length' <<< "$PATCH
 assert_eq "$(jq -r '[.[] | select(.op == "add" and (.path | endswith("/spec/volumes")))] | length' <<< "$PATCH_BODY")" "2" "volumes created"
 after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not apply: $PATCH_BODY"
 for t in leaderTemplate workerTemplate; do
-    assert_eq "$(jq -r ".spec.leaderWorkerTemplate.$t.spec.containers[0].env | map(.name) | join(\",\")" <<< "$after")" "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_DIR,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "$t env"
+    assert_eq "$(jq -r ".spec.leaderWorkerTemplate.$t.spec.containers[0].env | map(.name) | join(\",\")" <<< "$after")" "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "$t env"
     assert_eq "$(jq -r ".spec.leaderWorkerTemplate.$t.spec.volumes[0].persistentVolumeClaim.claimName" <<< "$after")" "engine-cache" "$t volume"
 done
 # The weights half had no opt-in, so neither its volume nor HF_HOME went.
@@ -3113,12 +3236,29 @@ assert_eq "$PATCH_CALLS" "1" "kubectl patch calls"
 assert_contains "$PATCH_BODY" '"path":"/spec/leaderWorkerTemplate/leaderTemplate/spec/containers/1/name"'   # the test op, by name
 after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not apply: $PATCH_BODY"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[1].env | map(.name + "=" + .value) | join(",")' <<< "$after")" \
-    "HF_HOME=/tmp/hf,VLLM_CACHE_ROOT=/engine-cache/vllm,FLASHINFER_WORKSPACE_DIR=/engine-cache/flashinfer,TRITON_CACHE_DIR=/engine-cache/triton,PYTHONPYCACHEPREFIX=/engine-cache/pycache/$KEY_LEADER" "leader env"
+    "HF_HOME=/tmp/hf,VLLM_CACHE_ROOT=/engine-cache/vllm,FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer,TRITON_CACHE_DIR=/engine-cache/triton,PYTHONPYCACHEPREFIX=/engine-cache/pycache/$KEY_LEADER" "leader env"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.volumes | map(.name) | join(",")' <<< "$after")" "dshm,engine-cache" "leader volumes"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[1].volumeMounts | map(.name) | join(",")' <<< "$after")" "dshm,engine-cache" "leader mounts"
 assert_eq "$(jq -c '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0]' <<< "$after")" '{"name":"proxy","image":"quay.io/x/proxy:1"}' "sidecar"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env | map(.name) | join(",")' <<< "$after")" \
-    "NCCL_DEBUG,VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_DIR,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "worker env"
+    "NCCL_DEBUG,VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "worker env"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="LWS: a template with FLASHINFER_WORKSPACE_DIR gets the FlashInfer half, emitted and never applied"
+reset; lws_scene; f_lws_converged
+before=$FAILED
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/engine-cache/flashinfer"}]')"
+doc="$(so_workload_patch_doc ns leaderworkersets w "$POD_LWS" 2>/dev/null)"
+assert_contains "$doc" "#   flashinfer:"
+assert_contains "$doc" "leaderTemplate, engine container vllm: flashinfer"
+assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env | map(.name + "=" + .value) | join(",")')" \
+    "FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer" "leader env"
+assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.workerTemplate')" "null" "worker template (nothing to change)"
+lws_driver true true
+assert_eq "$DRIVER_RC" "0" "return code"
+assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) BUILD THEIR FLASHINFER KERNELS AGAIN"
+assert_contains "$(cat "$DRIVER_LOG")" "ns1/w needs only a volume or a cache variable -- emitted, not applied"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="LWS apply: a volume name taken in either template refuses that half for the whole LWS"
@@ -3271,7 +3411,7 @@ assert_eq "$PATCH_CALLS" "1" "kubectl patch calls"
 assert_eq "$(jq -r '[.[] | select(.path | contains("leaderTemplate"))] | length' <<< "$PATCH_BODY")" "0" "leaderTemplate ops"
 after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not apply: $PATCH_BODY"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env | map(.name) | join(",")' <<< "$after")" \
-    "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_DIR,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "worker env"
+    "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "worker env"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate | has("leaderTemplate")' <<< "$after")" "false" "no leaderTemplate created"
 [ "$FAILED" -eq "$before" ] && ok
 
@@ -3284,7 +3424,7 @@ after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not
 assert_eq "$(jq -c '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[1]' <<< "$after")" \
     '{"name":"metrics","image":"quay.io/x/exporter:1","env":[{"name":"PORT","value":"9400"}]}' "sidecar"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env | map(.name) | join(",")' <<< "$after")" \
-    "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_DIR,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "engine env"
+    "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "engine env"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="LWS apply: the warning reads the rollout strategy the LWS declares"

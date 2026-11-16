@@ -708,7 +708,7 @@ containers:
     value: /model-cache
   - name: VLLM_CACHE_ROOT
     value: /model-cache/vllm
-  - name: FLASHINFER_WORKSPACE_DIR
+  - name: FLASHINFER_WORKSPACE_BASE
     value: /model-cache/flashinfer
   - name: TRITON_CACHE_DIR
     value: /model-cache/triton
@@ -869,7 +869,7 @@ containers:
     value: /model-cache
   - name: VLLM_CACHE_ROOT
     value: /model-cache/vllm
-  - name: FLASHINFER_WORKSPACE_DIR
+  - name: FLASHINFER_WORKSPACE_BASE
     value: /model-cache/flashinfer
   - name: TRITON_CACHE_DIR
     value: /model-cache/triton

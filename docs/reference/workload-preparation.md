@@ -32,7 +32,7 @@ Three things decide whether a scale-up helps:
 
 None are scaling-manager settings; they are properties of the model server.
 `make workload-patch` writes the first two. It also writes the engine compile
-cache mount and variables (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR`,
+cache mount and variables (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`,
 `TRITON_CACHE_DIR`), but the storage behind them must exist first: a node
 directory from `make engine-cache`, or a claim you already have
 (`LLMSM_ENGINE_CACHE_CLAIM`). Applying that half is its own opt-in
@@ -61,7 +61,7 @@ Deployment has `.spec.template`.
 | 7 | `preStop` hook on the engine container and `terminationGracePeriodSeconds` above it | every scale-down cuts in-flight streams | `make workload-patch NAMESPACE=<ns>` names workloads without a drain ([below](#draining-before-scale-down)) |
 | 8 | Weights read from a mounted model cache | every scale-up is a download | `make workload-patch NAMESPACE=<ns>` reports `RE-DOWNLOADS ITS WEIGHTS` ([below](#weights-and-the-model-cache)) |
 | 9 | Fast start: image held on the GPU nodes, short probe period | each scale-up pays the pull | `make prepull-status NAMESPACE=<ns>` ([below](#the-rest-of-the-start-path)) |
-| 10 | Engine compile caches (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR`, `TRITON_CACHE_DIR`) and Python bytecode (`PYTHONPYCACHEPREFIX`, any Python engine) on a path that outlives the pod | every replica recompiles: about 14 s of torch.compile against about 3 s cached, and about 11 s of bytecode | `make engine-cache-status NAMESPACE=<ns>`; `make workload-patch` reports `COMPILES FROM NOTHING` or `RECOMPILES ITS PYTHON BYTECODE` ([below](#engine-caches-on-the-nodes-disk)) |
+| 10 | Engine compile caches (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR`) and Python bytecode (`PYTHONPYCACHEPREFIX`, any Python engine) on a path that outlives the pod | every replica recompiles: about 14 s of torch.compile against about 3 s cached, and about 11 s of bytecode | `make engine-cache-status NAMESPACE=<ns>`; `make workload-patch` reports `COMPILES FROM NOTHING` or `RECOMPILES ITS PYTHON BYTECODE` ([below](#engine-caches-on-the-nodes-disk)) |
 | 11 | A ScaledObject whose trigger is `external-push` with this `modelID` | nothing scales it — the controller has no watch of its own | `kubectl get scaledobject -n <ns> -o custom-columns='NAME:.metadata.name,MODEL:.spec.triggers[0].metadata.modelID,READY:.status.conditions[0].status'` |
 
 ## Weights and the model cache
@@ -124,7 +124,7 @@ LeaderWorkerSet), with or without a benchmark harness:
 |---|---|
 | **Nothing installed at container start.** | The container's command runs the engine and nothing else: no `apt`, `pip`, `curl` or clone before it. Anything the engine needs is in the image. A start that depends on a package mirror is as slow as the mirror that day, which is the one term that makes start time *vary* between otherwise identical replicas. |
 | **`startupProbe` period.** | `periodSeconds` of a few seconds; a probe that fires every 30 s reports a started engine up to 30 s late, every time. Keep the time budget by raising `failureThreshold` (period 5 with threshold 360 is the same 30 minutes as period 30 with threshold 60). The first probes fail on connection refused while the server binds; that is what the threshold is for. |
-| **Engine caches that outlive the pod.** | vLLM writes its torch.compile artefacts, the FlashInfer autotune table and Triton's JIT cache under `/tmp` unless told otherwise, so every replica recompiles from nothing. Point `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR` and `TRITON_CACHE_DIR` at a read-write path that outlives the pod and the second replica finds the first one's. The best home is the node's own disk -- [Engine caches on the node's disk](#engine-caches-on-the-nodes-disk), `make engine-cache` -- a shared RWX claim is the other. If the model claim is mounted read-only, use another claim rather than mounting it a second time: a CSI driver publishes a claim once per pod, and the second mount inherits read-only. And make the engine tolerate a cache path that turns out not to be writable -- a storage hiccup must cost one compile, not the replica; vLLM fails hard on a read-only cache directory unless the variable is unset first. The cache is keyed by a hash of the engine config, so a changed model, flag or version misses rather than hits stale. Python bytecode is the same kind of cache, for any Python engine: set `PYTHONPYCACHEPREFIX` beside them, one directory per image ([Python bytecode](#python-bytecode); about 11 s per start). |
+| **Engine caches that outlive the pod.** | vLLM keeps its torch.compile artefacts, FlashInfer its JIT kernels and Triton its JIT cache inside the container unless told otherwise, so every replica recompiles from nothing. Point `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE` and `TRITON_CACHE_DIR` at a read-write path that outlives the pod and the second replica finds the first one's. The best home is the node's own disk -- [Engine caches on the node's disk](#engine-caches-on-the-nodes-disk), `make engine-cache` -- a shared RWX claim is the other. If the model claim is mounted read-only, use another claim rather than mounting it a second time: a CSI driver publishes a claim once per pod, and the second mount inherits read-only. And make the engine tolerate a cache path that turns out not to be writable -- a storage hiccup must cost one compile, not the replica; vLLM fails hard on a read-only cache directory unless the variable is unset first. The cache is keyed by a hash of the engine config, so a changed model, flag or version misses rather than hits stale. Python bytecode is the same kind of cache, for any Python engine: set `PYTHONPYCACHEPREFIX` beside them, one directory per image ([Python bytecode](#python-bytecode); about 11 s per start). |
 | **The image is already on the node.** | An engine image is 10-20 GB; a node that has to pull it adds a minute or more before the container even starts, and the kubelet evicts unused images under disk pressure, so "it was pulled once" does not stay true. `make prepull IMAGES=<image> NAMESPACE=<ns>` holds the image open on every accelerator node (one DaemonSet per image, the image itself asleep, no accelerator requested), and `make prepull-status` says per node whether the kubelet has it -- see [Holding the image on the nodes](#holding-the-image-on-the-nodes). With the image held, a pinned tag should pull `IfNotPresent`: `Always` contacts the registry at every start for a digest that cannot have changed. |
 | **The weights** | are the [section above](#weights-and-the-model-cache) -- the download; for a large model, also [Weights on the node's disk](#weights-on-the-nodes-disk) -- the read. |
 
@@ -431,7 +431,7 @@ The benchmark standup has the same measure under
 
 ### Engine caches on the node's disk
 
-The caches in the table above (torch.compile, FlashInfer autotune, Triton JIT,
+The caches in the table above (torch.compile, FlashInfer kernels, Triton JIT,
 Python bytecode) pay only if the next replica finds them, and a shared RWX claim can fail that.
 Measured on one cluster: nine starts of one decode pod spec, three per node on
 three nodes, were repeatable within 2.5 s per node but split by node into
@@ -528,7 +528,7 @@ containers:
         mountPath: /engine-cache
     env:
       - {name: VLLM_CACHE_ROOT,          value: /engine-cache/vllm}
-      - {name: FLASHINFER_WORKSPACE_DIR, value: /engine-cache/flashinfer}
+      - {name: FLASHINFER_WORKSPACE_BASE, value: /engine-cache/flashinfer}
       - {name: TRITON_CACHE_DIR,         value: /engine-cache/triton}
       - {name: PYTHONPYCACHEPREFIX,      value: /engine-cache/pycache/<image key>}
 ```
@@ -717,7 +717,7 @@ The guard goes in each container command, before the engine starts (on a
 LeaderWorkerSet, the leader's and the worker's):
 
 ```bash
-for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
+for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
   eval "d=\${$v:-}"
   [ -n "$d" ] || continue
   if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
@@ -771,6 +771,42 @@ when its directory is not writable (then the faster choice), or when the image
 ships its bytecode, and the check leaves an empty `.writable` file in that
 directory. The last block is emitted for vLLM only
 ([Depends on the vLLM version](#depends-on-the-vllm-version)).
+
+#### FlashInfer kernels
+
+FlashInfer reads one variable for where it keeps what it builds,
+`FLASHINFER_WORKSPACE_BASE`, and adds `.cache/flashinfer/` under it. With
+`FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer`:
+
+| what | where |
+|---|---|
+| kernels it compiles on first use | `/engine-cache/flashinfer/.cache/flashinfer/<arch>/cached_ops/` |
+| the sources it generates for them | `/engine-cache/flashinfer/.cache/flashinfer/<arch>/generated/` |
+| kernels it downloads (cubins, FlashInfer 0.3 and later) | `/engine-cache/flashinfer/.cache/flashinfer/cubins/` |
+
+Newer FlashInfer releases put a version directory before `<arch>`. Unset, the
+same tree goes under `$HOME` in the container and is built again on every
+start.
+
+- **`FLASHINFER_CUBIN_DIR` is not set.** Its default is already the
+  `cubins/` directory above, so the base carries it. Setting it would also
+  override where an image that bundles its cubins keeps them.
+- **Before v0.11.2, `make workload-patch` set `FLASHINFER_WORKSPACE_DIR`.**
+  FlashInfer does not read that variable, so no engine cache held FlashInfer
+  kernels. Run `make workload-patch` again. A workload that still sets the old
+  variable is reported as `BUILDS ITS FLASHINFER KERNELS AGAIN`, and the file
+  sets `FLASHINFER_WORKSPACE_BASE` to the same path. That is a variable with
+  no volume, so it is written to the file and never applied: put it in your
+  chart values, remove `FLASHINFER_WORKSPACE_DIR`, and rename it in the
+  guard's loop if your command carries the guard. Once the workload sets
+  `FLASHINFER_WORKSPACE_BASE`, the report is quiet.
+- **Nothing to do on the nodes.** The `flashinfer/` directory the preparer
+  made is the base. On each node the first start of each engine configuration
+  fills it. With a seed, run `make engine-cache-publish` once every
+  configuration has started, as for the other directories.
+- **One FlashInfer version per directory.** Older FlashInfer releases have no
+  version in the path, so two images with different FlashInfer versions share
+  one directory. Keep them on separate engine-cache directories.
 
 #### Check the cache without a second start
 
@@ -1359,7 +1395,7 @@ objects. Read what it prints first:
 | `LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE` | `false` | `true` also applies the engine-cache half where it cannot break the workload |
 | `LLMSM_ENGINE_CACHE_CLAIM` | `engine-cache` | the claim the emitted engine-cache volume names, `<claim>[:<subPath>]` — the one `make engine-cache` makes, or a shared RWX claim you already have (whoever can write it runs code in every engine; see above) |
 | `LLMSM_ENGINE_CACHE_VOLUME_NAME` | `engine-cache` | the volume name in the emitted patch |
-| `LLMSM_ENGINE_CACHE_PATH` | `/engine-cache` | where that volume is mounted, and the parent of the emitted `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR` and `TRITON_CACHE_DIR` |
+| `LLMSM_ENGINE_CACHE_PATH` | `/engine-cache` | where that volume is mounted, and the parent of the emitted `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE` and `TRITON_CACHE_DIR` |
 | `LLMSM_ENGINE_CACHE_AOT` | `true` | `false` leaves the `VLLM_USE_MEGA_AOT_ARTIFACT` block (vLLM 0.26 only) out of the emitted guard ([Depends on the vLLM version](#depends-on-the-vllm-version)) |
 
 The `*_NAME` and `*_PATH` variables affect the emitted file only — without the

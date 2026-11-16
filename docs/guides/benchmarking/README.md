@@ -447,7 +447,7 @@ keeps what it wrote.
 
 **Engine caches.** The model PVC is mounted read-only, so the scenarios put the
 compile caches on the harness's `workload-pvc` at `/engine-cache` and point
-`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR` and `TRITON_CACHE_DIR` there. A
+`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE` and `TRITON_CACHE_DIR` there. A
 guard unsets any that is not writable, so the engine compiles instead of failing.
 That fallback was the start-time variance: nine starts on three nodes split into
 51-56 s and 75-81 s, and the slow nodes had `workload-pvc` mounted read-only

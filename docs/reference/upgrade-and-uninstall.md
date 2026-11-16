@@ -161,6 +161,26 @@ The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
   `whatif-planner-reader` Role and RoleBinding in each namespace. Or keep the
   old objects: the rules are the same.
 
+#### FlashInfer kernels now reach the engine cache
+
+Before v0.11.2, `make workload-patch` and the warm pool set
+`FLASHINFER_WORKSPACE_DIR`. FlashInfer does not read that variable; it reads
+`FLASHINFER_WORKSPACE_BASE`. So no engine cache held FlashInfer kernels, and
+every start built them again under `$HOME` in the container.
+
+- Run `make workload-patch NAMESPACE=<ns>` again. A workload that still sets
+  the old variable is reported as `BUILDS ITS FLASHINFER KERNELS AGAIN`, and the
+  file sets `FLASHINFER_WORKSPACE_BASE` to the same path. This change is never
+  applied for you: put it in your chart values and remove
+  `FLASHINFER_WORKSPACE_DIR`. If your container command carries the
+  engine-cache guard, rename the variable in its loop.
+- Nothing to do on the nodes. Existing caches keep working; their `flashinfer/`
+  directory is empty and fills on the next start of each engine configuration.
+  With a seed, run `make engine-cache-publish` once after that.
+- Warm pools pick up the new variable when you apply them again.
+
+See [FlashInfer kernels](workload-preparation.md#flashinfer-kernels).
+
 ### Upgrading from v0.11.0 to v0.11.1
 
 Follow [Upgrade](#upgrade) above: back up the policy, check out `v0.11.1`, and

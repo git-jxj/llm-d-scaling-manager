@@ -3,7 +3,7 @@
 # a replica's start does not depend on a shared volume being writable.
 #
 # vLLM keeps three caches between runs -- the torch.compile artefacts, the
-# FlashInfer autotune table and Triton's JIT cache -- and a replica that finds
+# FlashInfer JIT kernels and Triton's JIT cache -- and a replica that finds
 # them warm skips the compile; one that does not pays it at every start.
 # Pointing them at a shared RWX claim works until the claim does not: measured
 # on one cluster, nine starts of the same pod spec split by node into 51-56 s
@@ -167,7 +167,12 @@
 # keyed by a hash of the engine config, so every model and flag set in the
 # namespace has its own entry and none hits another's). A model server
 # mounts it read-write at, say, /engine-cache and points VLLM_CACHE_ROOT,
-# FLASHINFER_WORKSPACE_DIR and TRITON_CACHE_DIR under it -- and keeps a guard
+# FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR under it (FlashInfer adds
+# .cache/flashinfer/ under its base, so its kernels and cubins land in
+# flashinfer/.cache/flashinfer/; seed and publish copy that tree as they copy
+# the rest, and an empty flashinfer/ -- every node prepared before v0.11.2,
+# when the patch set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not
+# read -- is nothing to copy, not an error) -- and keeps a guard
 # that unsets a variable whose directory is not writable, so a node that is
 # not prepared costs a compile, not the replica. The guard covers
 # PYTHONPYCACHEPREFIX too: with it set Python reads bytecode only from it, so
@@ -632,7 +637,7 @@ cmd_apply() {
     # an existing claim keeps its size (deploy/lib/nodedir.sh says why)
     nodedir_claim_capacity "$NAMESPACE" "$CLAIM" "$CAPACITY_GIVEN" "enginecache.sh delete -n ${NAMESPACE}"
     render | kubectl apply -f - >/dev/null
-    log_info "preparing ${NODE_PATH}/${SUBDIR} on $(accelerator_selector_text "$NODE_SELECTOR"); claim ${CLAIM}${SEED_CLAIM:+, seeded from ${SEED_CLAIM}${SEED_SUBPATH:+:$SEED_SUBPATH}} -- mount it read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_DIR, TRITON_CACHE_DIR and PYTHONPYCACHEPREFIX (pycache/<image key>) under it"
+    log_info "preparing ${NODE_PATH}/${SUBDIR} on $(accelerator_selector_text "$NODE_SELECTOR"); claim ${CLAIM}${SEED_CLAIM:+, seeded from ${SEED_CLAIM}${SEED_SUBPATH:+:$SEED_SUBPATH}} -- mount it read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_BASE, TRITON_CACHE_DIR and PYTHONPYCACHEPREFIX (pycache/<image key>) under it"
     if kubectl api-resources --api-group=security.openshift.io 2>/dev/null | grep -q securitycontextconstraints; then
         log_warning "OpenShift: the preparer and the engines run as the project UID (GID 0) under restricted-v2 and the kubelet does not relabel a hostPath; on each node, before this takes: mkdir -p ${NODE_PATH}/${SUBDIR} && chgrp 0 ${NODE_PATH}/${SUBDIR} && chmod 2775 ${NODE_PATH}/${SUBDIR} && chcon -t container_file_t ${NODE_PATH}/${SUBDIR} (oc debug node/<n> -- chroot /host ...), or a MachineConfig mount with context=system_u:object_r:container_file_t:s0. Not yet run on OpenShift"
     fi

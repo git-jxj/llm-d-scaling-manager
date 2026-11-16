@@ -758,7 +758,7 @@ so_pool() {
 # stays silent. It fires for a workload that was pointed at the Hub directly.
 so_weights_note() {
     local ns="$1" resource="$2" name="$3" pod="$4"
-    local gaps engine prestop grace pvcs onvol argv cachevol image pyc model
+    local gaps engine prestop grace pvcs onvol argv cachevol image pyc fi model
 
     # One detector, shared with the patch emitter. This function used to carry
     # its own copy and the copies disagreed: it accepted "a PVC exists anywhere
@@ -770,7 +770,7 @@ so_weights_note() {
         printf '%s' "Could not read the pod spec, so whether weights persist across scale-ups is unknown -- this is not a report that they do."
         return 0
     fi
-    IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc <<< "$gaps"
+    IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc fi <<< "$gaps"
     [ -n "$engine" ] || return 0
     [ "${onvol:-0}" -eq 1 ] && return 0
 
@@ -789,9 +789,10 @@ so_weights_note() {
 # so_enginecache_note reports when a scale target compiles its kernels on every
 # start, and returns a note when it does.
 #
-# vLLM keeps its torch.compile artefacts, the FlashInfer autotune table and
-# Triton's JIT cache under VLLM_CACHE_ROOT (its two siblings follow it). Unset,
-# they go to /tmp; on an emptyDir, they die with the pod. Either way no replica
+# vLLM keeps its torch.compile artefacts under VLLM_CACHE_ROOT, and the patch
+# puts FlashInfer's (FLASHINFER_WORKSPACE_BASE) and Triton's (TRITON_CACHE_DIR)
+# beside them. Unset, they stay in the container; on an emptyDir, they die
+# with the pod. Either way no replica
 # finds what the previous one compiled, and measured on one cluster that is
 # 14.4 s of torch.compile against 2.9 s from a warm cache, and 8 s more before
 # the API server answered -- a per-replica cost on the path a ScaledObject is
@@ -802,9 +803,9 @@ so_weights_note() {
 # saying it three times is how a reader learns to skip the notes.
 so_enginecache_note() {
     local ns="$1" resource="$2" name="$3" pod="$4"
-    local gaps engine prestop grace pvcs onvol argv cachevol image pyc
+    local gaps engine prestop grace pvcs onvol argv cachevol image pyc fi
     gaps="$(so_workload_gaps "$ns" "$resource" "$name" "$pod")" || return 0
-    IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc <<< "$gaps"
+    IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc fi <<< "$gaps"
     [ -n "$engine" ] || return 0
     local also=""
     case "$pyc" in
@@ -815,12 +816,19 @@ so_enginecache_note() {
     esac
     case "$cachevol" in
         unset)
-            printf '%s' "Every start compiles from nothing: ${engine} keeps its torch.compile, FlashInfer and Triton caches under /tmp (VLLM_CACHE_ROOT is unset), so no replica finds what the previous one compiled -- tens of seconds on every scale-up.${also} \`make workload-patch\` writes the fix; see docs/reference/workload-preparation.md#engine-caches-on-the-nodes-disk." ;;
+            printf '%s' "Every start compiles from nothing: ${engine} keeps its torch.compile, FlashInfer and Triton caches inside the container (VLLM_CACHE_ROOT is unset), so no replica finds what the previous one compiled -- tens of seconds on every scale-up.${also} \`make workload-patch\` writes the fix; see docs/reference/workload-preparation.md#engine-caches-on-the-nodes-disk." ;;
         ephemeral:*)
             printf '%s' "Every start compiles from nothing: ${engine} keeps its compile caches at ${cachevol#ephemeral:}, which is on no volume that outlives the pod, so no replica finds what the previous one compiled -- tens of seconds on every scale-up.${also} \`make workload-patch\` writes the fix; see docs/reference/workload-preparation.md#engine-caches-on-the-nodes-disk." ;;
         *)
             # The other caches are fine, or not vLLM's to judge; the bytecode
-            # is any Python engine's.
+            # is any Python engine's. A FLASHINFER_WORKSPACE_DIR with no
+            # FLASHINFER_WORKSPACE_BASE beside it (what workload-patch wrote
+            # before v0.11.2) keeps no FlashInfer kernel, whatever else does.
+            case "$fi" in
+                dir:*)
+                    printf '%s' "Every start builds its FlashInfer kernels again: ${engine} sets FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read (it reads FLASHINFER_WORKSPACE_BASE), so they go under \$HOME in the container.${also} \`make workload-patch\` writes the fix; see docs/reference/workload-preparation.md#flashinfer-kernels."
+                    return 0 ;;
+            esac
             [ -n "$also" ] || return 0
             printf '%s' "Every start recompiles its Python bytecode: ${engine} sets no PYTHONPYCACHEPREFIX, and engine images ship almost none, so every container compiles its imports again (measured on vLLM: ~11 s of every start). \`make workload-patch\` writes the fix; see docs/reference/workload-preparation.md#engine-caches-on-the-nodes-disk." ;;
     esac
@@ -1212,7 +1220,7 @@ so_workload_patch_trim() {
     # was sent. Filtered as a whole, each list is walked once. `select(. !=
     # null)` on the left keeps a missing list missing rather than creating it.
     [ "$keep_w" -eq 1 ] || { vols="$vols or .name == \"$wvol\""; envs="$envs or .name == \"HF_HOME\""; }
-    [ "$keep_e" -eq 1 ] || { vols="$vols or .name == \"$evol\""; envs="$envs or .name == \"VLLM_CACHE_ROOT\" or .name == \"FLASHINFER_WORKSPACE_DIR\" or .name == \"TRITON_CACHE_DIR\" or .name == \"PYTHONPYCACHEPREFIX\""; }
+    [ "$keep_e" -eq 1 ] || { vols="$vols or .name == \"$evol\""; envs="$envs or .name == \"VLLM_CACHE_ROOT\" or .name == \"FLASHINFER_WORKSPACE_BASE\" or .name == \"TRITON_CACHE_DIR\" or .name == \"PYTHONPYCACHEPREFIX\""; }
     # The comments go too. They are written for whoever reads the FILE, and a
     # removed half leaves its explanation behind as a comment on the document,
     # so the body sent to the API server still spoke of a volume it no longer
@@ -1269,7 +1277,7 @@ so_workload_lws_json_patch() {
             --arg evol "${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}" '
         def ptr: "/" + (map(tostring | gsub("~"; "~0") | gsub("/"; "~1")) | join("/"));
         def half: if . == "HF_HOME" then $wvol
-                  elif . == "VLLM_CACHE_ROOT" or . == "FLASHINFER_WORKSPACE_DIR"
+                  elif . == "VLLM_CACHE_ROOT" or . == "FLASHINFER_WORKSPACE_BASE"
                        or . == "TRITON_CACHE_DIR" or . == "PYTHONPYCACHEPREFIX" then $evol
                   else null end;
         ($live.metadata.resourceVersion // null) as $rv
@@ -1411,7 +1419,7 @@ llmsm_workload_patch() {
     local out="${LLMSM_WORKLOAD_PATCH_FILE:-scaling-manager-workload-patch.yaml}"
     local apply="${LLMSM_WORKLOAD_PATCH_APPLY:-false}"
     local ns resource pod kind name found=0 tmp rc=0
-    local unreadable=0 skipped=0 scanned=0 patched=0 failed=0 deferred=0 needs_cache=0 needs_engine=0 needs_pyc=0
+    local unreadable=0 skipped=0 scanned=0 patched=0 failed=0 deferred=0 needs_cache=0 needs_engine=0 needs_pyc=0 needs_fib=0
     # refused: documents not applied because a controller owns the object.
     # lws_undrained: LeaderWorkerSets so_workload_patch_doc_lws found without a
     # preStop on every template, which it cannot fix and the all-clear must
@@ -1551,7 +1559,7 @@ llmsm_workload_patch() {
     needs_engine=$(grep -c '^#   engine-cache:' "$tmp" 2>/dev/null) || needs_engine=0
     if [ "$needs_engine" -gt 0 ]; then
         log_warning "$needs_engine model server(s) COMPILE FROM NOTHING every time a replica is added."
-        log_warning "  vLLM keeps its torch.compile, FlashInfer and Triton caches under VLLM_CACHE_ROOT; on no"
+        log_warning "  vLLM keeps its torch.compile, FlashInfer and Triton caches inside the container; on no"
         log_warning "  volume that outlives the pod, no replica finds what the previous one compiled (measured:"
         log_warning "  14 s of torch.compile against 3 s warm, and 8 s more before the API server answered)."
         log_warning "  $out has the pod-spec half, and says which claim to use or create -- and what a node"
@@ -1563,6 +1571,12 @@ llmsm_workload_patch() {
         log_warning "  Engine images ship almost no .pyc, so every container compiles its imports again"
         log_warning "  (measured on vLLM: ~11 s of every start). $out points PYTHONPYCACHEPREFIX at the"
         log_warning "  engine cache, one directory per image."
+    fi
+    needs_fib=$(grep -c '^#   flashinfer:' "$tmp" 2>/dev/null) || needs_fib=0
+    if [ "$needs_fib" -gt 0 ]; then
+        log_warning "$needs_fib model server(s) BUILD THEIR FLASHINFER KERNELS AGAIN on every start."
+        log_warning "  They set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read (workload-patch wrote"
+        log_warning "  it before v0.11.2). $out sets FLASHINFER_WORKSPACE_BASE to the same path instead."
     fi
 
     if [ "$apply" = "true" ]; then
@@ -1721,7 +1735,8 @@ so_workload_gaps() {
              | map(tostring | gsub("[\n\r]"; " ")) | join(" ")) ) as $argv
         | ( ($argv | capture("--download-dir[= ]+(?<d>[^ ]+)").d) // $envdir ) as $dldir
         # The compile caches: torch.compile, FlashInfer, Triton. vLLM keeps them
-        # under VLLM_CACHE_ROOT (its two siblings follow it); unset, they go to
+        # under VLLM_CACHE_ROOT (the patch sets FLASHINFER_WORKSPACE_BASE and
+        # TRITON_CACHE_DIR beside it, and judges the three by it); unset, they go to
         # /tmp and every start compiles from nothing. A durable mount is one
         # whose volume outlives the pod -- a claim or a hostPath. An emptyDir
         # dies with the pod, so a cache under it is a cache for one replica,
@@ -1779,6 +1794,18 @@ so_workload_gaps() {
             elif $byroot != null then "mount:" + $byroot
             elif $byemount != null then "mount:" + $byemount
             else "unset" end ) as $pyc
+        # FlashInfer reads FLASHINFER_WORKSPACE_BASE and keeps its kernels in
+        # .cache/flashinfer under it (under HOME when it is unset).
+        # FLASHINFER_WORKSPACE_DIR is a name inside FlashInfer, never read from
+        # the environment -- and it is what workload-patch wrote before
+        # v0.11.2. An engine that sets it and not FLASHINFER_WORKSPACE_BASE is
+        # "dir:" and its value (empty when it comes from a ConfigMap or a
+        # Secret): its kernels are built again on every start whatever the
+        # other caches do. Anything else is "": no opinion, not a clean bill.
+        | ( [ $e.env[]? | select(.name == "FLASHINFER_WORKSPACE_BASE") ] | last ) as $fibase
+        | ( [ $e.env[]? | select(.name == "FLASHINFER_WORKSPACE_DIR") ] | last ) as $fidir
+        | ( if ($e | not) or $issim or ($fibase != null) or ($fidir == null) then ""
+            else "dir:" + ($fidir.value // "") end ) as $fi
         | [ ($e.name // ""),
             (if ($e | not) then 0 elif ($e.lifecycle.preStop != null) then 1 else 0 end),
             ($t.spec.terminationGracePeriodSeconds // 30),
@@ -1804,11 +1831,13 @@ so_workload_gaps() {
             # would land inside it on every reader that was not updated.
             $cachevol,
             # The engine image, which keys the bytecode directory, and the
-            # bytecode answer. Every reader takes all nine fields: `read`
+            # bytecode answer. Every reader takes all ten fields: `read`
             # hands the rest of the line to its last variable, so a reader
             # that stopped at cachevol would find these inside it.
             ($e.image // ""),
-            $pyc
+            $pyc,
+            # The FlashInfer answer, last for the same reason.
+            $fi
           ] | join("\u001f")' 2>/dev/null || return 1
 }
 
@@ -2097,13 +2126,38 @@ so_workload_patch_plan() {
     case "$cachevol" in
         unset)
             want_engine=1
-            log_warning "  $who COMPILES FROM NOTHING on every start: $engine keeps its torch.compile, FlashInfer and Triton caches under /tmp (VLLM_CACHE_ROOT is unset)${pycwhy}." ;;
+            log_warning "  $who COMPILES FROM NOTHING on every start: $engine keeps its torch.compile, FlashInfer and Triton caches inside the container (VLLM_CACHE_ROOT is unset)${pycwhy}." ;;
         ephemeral:*)
             want_engine=1
             log_warning "  $who COMPILES FROM NOTHING on every start: $engine keeps its compile caches at ${cachevol#ephemeral:}, on no volume that outlives the pod${pycwhy}." ;;
         *)
             [ "$want_pyc" -eq 0 ] \
                 || log_warning "  $who RECOMPILES ITS PYTHON BYTECODE on every start: $engine sets no PYTHONPYCACHEPREFIX, so every container compiles its imports again (measured on vLLM: ~11 s of every start)." ;;
+    esac
+    # FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read and which this
+    # patch wrote before v0.11.2. It never decided anything above -- the
+    # caches are judged by VLLM_CACHE_ROOT -- so a workload patched then reads
+    # as keeping its caches while FlashInfer builds its kernels under HOME on
+    # every start. With the engine-cache half the new variable comes with it;
+    # without it, the FlashInfer half (want_fib) sets FLASHINFER_WORKSPACE_BASE
+    # to the old value: FlashInfer puts .cache/flashinfer/ under it, so the
+    # kernels land in the directory the old variable named. Once the workload
+    # sets FLASHINFER_WORKSPACE_BASE, fi is empty and this is silent.
+    case "$fi" in
+        dir:*)
+            fibase="${fi#dir:}"
+            if [ "$want_engine" -eq 1 ]; then
+                fibase=""
+                log_warning "  $who sets FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read; the engine-cache half sets FLASHINFER_WORKSPACE_BASE instead -- drop FLASHINFER_WORKSPACE_DIR."
+            elif [[ "$fibase" =~ ^/[A-Za-z0-9._/-]*$ ]]; then
+                want_fib=1
+                log_warning "  $who BUILDS ITS FLASHINFER KERNELS AGAIN on every start: it sets FLASHINFER_WORKSPACE_DIR=$fibase, which FlashInfer does not read, so they go under \$HOME/.cache/flashinfer in the container. Set FLASHINFER_WORKSPACE_BASE=$fibase instead (FlashInfer adds .cache/flashinfer/ under it); see docs/reference/workload-preparation.md#flashinfer-kernels."
+            else
+                # From a ConfigMap or a Secret, or not a plain absolute path:
+                # said, not written into a YAML value.
+                fibase=""
+                log_warning "  $who BUILDS ITS FLASHINFER KERNELS AGAIN on every start: it sets FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read. Set FLASHINFER_WORKSPACE_BASE to the directory it names, from the same source, and drop FLASHINFER_WORKSPACE_DIR; see docs/reference/workload-preparation.md#flashinfer-kernels."
+            fi ;;
     esac
     # Where the bytecode goes: with the vLLM half, under its new mount; else
     # under the durable mount the engine already has (no new volume); else
@@ -2163,7 +2217,7 @@ so_workload_patch_cache_body() {
     # env, volumeMounts and volumes are each ONE list, filled from whichever
     # halves want them. Two `env:` keys in one mapping is a document yq reads as
     # the second one only, silently, and the API server as invalid.
-    if [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ]; then
+    if [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ]; then
         echo "        env:"
         if [ "$want_cache" -eq 1 ]; then
             cat <<CACHEENV
@@ -2179,13 +2233,25 @@ CACHEENV
         # The three caches vLLM keeps between runs. They are keyed by a hash of
         # the engine config, so a changed model, flag or version misses rather
         # than hits stale, and one claim serves every model in the namespace.
+        # FlashInfer adds .cache/flashinfer/ under its base, so its kernels and
+        # downloaded cubins land in ${emount}/flashinfer/.cache/flashinfer/.
         - name: VLLM_CACHE_ROOT
           value: ${emount}/vllm
-        - name: FLASHINFER_WORKSPACE_DIR
+        - name: FLASHINFER_WORKSPACE_BASE
           value: ${emount}/flashinfer
         - name: TRITON_CACHE_DIR
           value: ${emount}/triton
 ENGINEENV
+        fi
+        if [ "$want_fib" -eq 1 ]; then
+            cat <<FIBENV
+        # FlashInfer reads FLASHINFER_WORKSPACE_BASE and keeps its kernels in
+        # .cache/flashinfer/ under it. FLASHINFER_WORKSPACE_DIR, which this
+        # replaces, is read by nothing: drop it. If the container command
+        # carries the engine-cache guard, rename the variable in its loop too.
+        - name: FLASHINFER_WORKSPACE_BASE
+          value: ${fibase}
+FIBENV
         fi
         if [ "$want_pyc" -eq 1 ]; then
             cat <<PYCENV
@@ -2383,7 +2449,7 @@ ENGINENEED
 #   container command, before the engine starts (the command belongs to the
 #   chart, so it is not patched here):
 #
-#     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
+#     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
 #       eval "d=\${$v:-}"
 #       [ -n "$d" ] || continue
 #       if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
@@ -2558,13 +2624,16 @@ so_kv_bytes_read() {
 
 so_workload_patch_doc() {
     local ns="$1" resource="$2" name="$3" pod="$4"
-    local gaps engine prestop grace pvcs onvol argv cachevol image pyc model
+    local gaps engine prestop grace pvcs onvol argv cachevol image pyc fi model
     local want_drain=0 want_cache=0 want_engine=0 grace_want mountpath claim claim_found=0
     local emount evol eclaim esub eclaim_found=0
     # want_pyc: emit PYTHONPYCACHEPREFIX; want_evol: emit the engine-cache
     # volume, for the vLLM caches or for the bytecode alone; pycdir: the mount
     # the bytecode goes under; pyckey: the image key under pycache/.
     local want_pyc=0 want_evol=0 pycdir="" pyckey="" pycwhy="" who model_hint=""
+    # want_fib: emit FLASHINFER_WORKSPACE_BASE alone, at fibase, in place of
+    # a FLASHINFER_WORKSPACE_DIR the workload sets.
+    local want_fib=0 fibase=""
 
     # A LeaderWorkerSet has two pod templates and no drain half; it has its own
     # emitter.
@@ -2580,7 +2649,7 @@ so_workload_patch_doc() {
         log_warning "  Could not read $resource/$name in $ns -- skipped. It is not being reported as healthy; it was not readable."
         return 3
     fi
-    IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc <<< "$gaps"
+    IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc fi <<< "$gaps"
 
     # No identifiable engine means no idea which container to patch, and the
     # fallback that guessed container 0 is what put hooks on routing proxies.
@@ -2600,7 +2669,7 @@ so_workload_patch_doc() {
         *vllm*) so_kv_bytes_proposal "$ns" "$name" "$engine" "$argv" ;;
     esac
 
-    [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || return 0
+    [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ] || return 0
     [ -z "$kvsay" ] || log_info "$kvsay"
 
     cat <<HDR
@@ -2635,6 +2704,12 @@ ENGINEWHY
 #   bytecode: ${engine} sets no PYTHONPYCACHEPREFIX, so every container compiles
 #          its Python imports again (measured on vLLM: ~11 s of every start).
 PYCWHY
+    fi
+    if [ "$want_fib" -eq 1 ]; then
+        cat <<FIBWHY
+#   flashinfer: ${engine} sets FLASHINFER_WORKSPACE_DIR, which FlashInfer does not
+#          read, so it builds its kernels again under \$HOME on every start.
+FIBWHY
     fi
     [ -z "$kvnote" ] || printf '%s\n' "$kvnote"
     cat <<HEAD
@@ -2702,12 +2777,14 @@ PRESTOP
 # patch.
 so_workload_patch_doc_lws() {
     local ns="$1" name="$2" obj tmpls t pod gaps label halves summary="" i n=0
-    local engine prestop grace pvcs onvol argv cachevol image pyc model
+    local engine prestop grace pvcs onvol argv cachevol image pyc fi model
     local who model_hint="" want_cache=0 want_engine=0 want_pyc=0 want_evol=0 pycdir="" pyckey="" pycwhy=""
+    local want_fib=0 fibase=""
     local mountpath claim claim_found=0 emount evol eclaim esub eclaim_found=0
-    local any_cache=0 any_engine=0 any_pyc=0 any_evol=0 first_model=""
+    local any_cache=0 any_engine=0 any_pyc=0 any_evol=0 any_fib=0 first_model=""
     local plan_lws=1 hooked=1 lgrace="" wgrace=""
     local -a t_name=() t_engine=() t_image=() t_cache=() t_eng=() t_pyc=() t_evol=() t_pycdir=() t_pyckey=()
+    local -a t_fib=() t_fibase=()
 
     if ! obj="$(kubectl get leaderworkersets "$name" -n "$ns" -o json 2>/dev/null)" || [ -z "$obj" ] \
        || ! tmpls="$(printf '%s' "$obj" | jq -r '(.spec.leaderWorkerTemplate // {}) as $w
@@ -2729,12 +2806,13 @@ so_workload_patch_doc_lws() {
             log_warning "  Could not read leaderworkersets/$name in $ns -- skipped. It is not being reported as healthy; it was not readable."
             return 3
         fi
-        IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc <<< "$gaps"
+        IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc fi <<< "$gaps"
         if [ -z "$engine" ]; then
             log_warning "  No vLLM or SGLang container found in the $t of LeaderWorkerSet $ns/$name -- that template is skipped rather than guessing which one serves."
             continue
         fi
         want_cache=0 want_engine=0 want_pyc=0 want_evol=0 pycdir="" pyckey="" pycwhy="" model=""
+        want_fib=0 fibase=""
         who="$ns/$name ($t)"
         so_workload_patch_plan
         if [ -z "$model" ] && [ -n "$argv" ]; then
@@ -2746,15 +2824,17 @@ so_workload_patch_doc_lws() {
         [ "$want_cache" -eq 1 ] && [ -z "$first_model" ] && first_model="$model"
         t_name[n]="$t" t_engine[n]="$engine" t_image[n]="$image"
         t_cache[n]="$want_cache" t_eng[n]="$want_engine" t_pyc[n]="$want_pyc" t_evol[n]="$want_evol"
-        t_pycdir[n]="$pycdir" t_pyckey[n]="$pyckey"
+        t_pycdir[n]="$pycdir" t_pyckey[n]="$pyckey" t_fib[n]="$want_fib" t_fibase[n]="$fibase"
         [ "$want_cache" -eq 1 ] && any_cache=1
         [ "$want_engine" -eq 1 ] && any_engine=1
         [ "$want_pyc" -eq 1 ] && any_pyc=1
         [ "$want_evol" -eq 1 ] && any_evol=1
+        [ "$want_fib" -eq 1 ] && any_fib=1
         halves=""
         [ "$want_cache" -eq 1 ] && halves="$halves, weights"
         [ "$want_engine" -eq 1 ] && halves="$halves, engine-cache"
         [ "$want_pyc" -eq 1 ] && halves="$halves, bytecode"
+        [ "$want_fib" -eq 1 ] && halves="$halves, flashinfer"
         [ -n "$halves" ] || halves=", nothing"
         label="$t"
         [ "$tmpls" = "workerTemplate" ] && label="workerTemplate (leader and workers)"
@@ -2771,7 +2851,7 @@ so_workload_patch_doc_lws() {
         lws_undrained=$(( ${lws_undrained:-0} + 1 ))
     fi
     # Checked and nothing missing: 0, the same answer a healthy Deployment gets.
-    [ "$any_cache" -eq 1 ] || [ "$any_engine" -eq 1 ] || [ "$any_pyc" -eq 1 ] || return 0
+    [ "$any_cache" -eq 1 ] || [ "$any_engine" -eq 1 ] || [ "$any_pyc" -eq 1 ] || [ "$any_fib" -eq 1 ] || return 0
 
     so_workload_patch_claims "$any_cache" "$any_evol"
 
@@ -2796,6 +2876,12 @@ ENGINEWHY
 #   bytecode: the engine sets no PYTHONPYCACHEPREFIX, so every container compiles
 #          its Python imports again (measured on vLLM: ~11 s of every start).
 PYCWHY
+    fi
+    if [ "$any_fib" -eq 1 ]; then
+        cat <<FIBWHY
+#   flashinfer: the engine sets FLASHINFER_WORKSPACE_DIR, which FlashInfer does
+#          not read, so it builds its kernels again under \$HOME on every start.
+FIBWHY
     fi
     printf '%s\n' "#   templates:"
     printf '%s' "$summary"
@@ -2822,7 +2908,8 @@ HEAD
     for ((i = 0; i < n; i++)); do
         want_cache="${t_cache[i]}" want_engine="${t_eng[i]}" want_pyc="${t_pyc[i]}" want_evol="${t_evol[i]}"
         pycdir="${t_pycdir[i]}" pyckey="${t_pyckey[i]}" image="${t_image[i]}"
-        [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || continue
+        want_fib="${t_fib[i]}" fibase="${t_fibase[i]}"
+        [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ] || continue
         cat <<TEMPLATE
     ${t_name[i]}:
       spec:
@@ -2846,7 +2933,7 @@ LWSGUARD
 
 so_drain_note() {
     local ns="$1" resource="$2" name="$3" pod="$4"
-    local gaps engine prestop grace pvcs onvol argv cachevol image pyc
+    local gaps engine prestop grace pvcs onvol argv cachevol image pyc fi
 
     # preStop is checked on the ENGINE, not pod-wide. The previous copy counted
     # containers with a hook across the whole pod, so an llm-d deployment whose
@@ -2856,7 +2943,7 @@ so_drain_note() {
         printf '%s' "Could not read the pod spec, so whether scale-down drains cleanly is unknown -- this is not a report that it does."
         return 0
     fi
-    IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc <<< "$gaps"
+    IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc fi <<< "$gaps"
     [ -n "$engine" ] || return 0
     # A hook of any shape counts. Whether it drains for long enough is the
     # operator's judgement, and guessing at a threshold would produce a warning
