@@ -1,7 +1,8 @@
 # Scaling a DisaggregatedSet
 
-**Status:** design, with a first slice built: discovery, the ScaledObject plan,
-the workload report and RBAC. The open decisions are at the end.
+**Status:** built: discovery, the ScaledObject plan, the workload report, RBAC,
+the role writer for Static roles, and the prefill-with-decode wake. The
+follow-ups are at the end.
 
 ## What a DisaggregatedSet is
 
@@ -103,9 +104,11 @@ LWS repository at `v1.0.0`.
   honour, so there is no joint P:D decision to build.
 - **Scale-to-zero zeroes both roles and wakes them together.** For Static roles
   the API requires it. For External roles it does not, but a prefill with no
-  decode serves nothing. Our scale-from-zero already wakes a model's roles as one
-  group (`internal/engines/scalefromzero/model_group.go`), and may wake decode
-  alone unless `requirePrefillOnScaleFromZero` is set. Decode alone does serve.
+  decode serves nothing. Our scale-from-zero wakes a model's roles as one group
+  (`internal/engines/scalefromzero/model_group.go`). For a model served by a
+  DisaggregatedSet, `requirePrefill` defaults to true, so prefill wakes with
+  decode; a policy can still set it to false. Other models keep the
+  decode-only default.
 - **A scale-down can be held through a rollout.** With `Deferred`, KEDA writes a
   lower count to the role scaler and the groups stay until the rollout ends.
   The actuator must read the scaler's `status.replicas`, not assume its write
@@ -128,7 +131,9 @@ LWS repository at `v1.0.0`.
   sets `scaling.mode: External` on each role, removes `spec.replicas` from it,
   and keeps `slices: 1`. This needs LWS v0.10.0 or newer. The scaler is seeded
   with the current count, so nothing drains at the switch. `make scaledobjects-plan`
-  says this per role and writes `apply: no` until it is done.
+  says this per role and writes `apply: no` until it is done. A set that cannot
+  switch (LWS v0.9.0, or a role that must stay Static) uses the second path
+  below.
 
 ## How each part of ours maps
 
@@ -174,6 +179,76 @@ LWS repository at `v1.0.0`.
 The objects are read as unstructured. The repository stays on its current LWS
 module, and a cluster without the CRD is not affected.
 
+## The second path: writing a Static role's replicas
+
+A Static role has no `/scale`, and LWS v0.9.0 has no role scaler at all, so
+KEDA cannot target the role and never calls us about it. For such a set the
+controller actuates the role itself: the role writer (`internal/dsetwriter`).
+The codebase had no direct actuator to reuse (KEDA actuates everything); the
+writer follows the KEDA HPA repair's shape instead: off by default, leader
+only, uncached reads, its own admin-applied RBAC component.
+
+**Which path.** External role on LWS v0.10.0 or newer: KEDA plus the role
+scaler, always. The writer never writes an External role (the set controller
+ignores its `spec.replicas`). Static role: the writer, if the operator opts in;
+otherwise the role is not scaled. `make scaledobjects-plan` writes a Static role
+`apply: no` and names both options; it creates nothing for the writer path.
+`make workload-patch` reports the role the same on both paths.
+
+**Turning it on.**
+
+1. Add `config/components/dset-role-writer` to the overlay you install. It
+   grants `get`, `list` and `patch` on `disaggregatedsets` and sets
+   `DSET_ROLE_WRITER=true`. Patch reaches every field of every set, so it is an
+   admin decision, never on by default.
+2. Annotate the set:
+
+   ```yaml
+   metadata:
+     annotations:
+       scaling-manager.llmd.ai/role-writer: "true"   # or "force", below
+       scaling-manager.llmd.ai/model-id: org/Model   # the served model name
+       scaling-manager.llmd.ai/min-replicas: "1"     # groups per role; default 1
+       scaling-manager.llmd.ai/max-replicas: "8"     # default 10
+       scaling-manager.llmd.ai/scaling-policy: standard   # optional tier
+   ```
+
+**What it does, every 15 s.** For each opted-in set it registers every Static
+role in the registry, as a KEDA call registers a ScaledObject: entry
+`<set>-<role>-llmsm`, target kind `DisaggregatedSetRoleScaler`, name
+`<set>-<role>`. That is the name a role scaler would have, so attribution and
+the engines are the same on both paths. The scale target is read from the set
+(`spec.roles[].spec.replicas`), since there is no scaler object. The writer then
+reads the decision the engines published for each role, under the external
+scaler's staleness rule (a positive decision older than 3 minutes is ignored),
+and writes the roles whose count changed.
+
+**Safety.**
+
+- **All zero or all non-zero.** The set's CEL rule forbids one Static role at
+  zero while another runs. The writer zeroes Static roles only when every one is
+  decided zero; otherwise a role decided to zero keeps `max(min, 1)` groups.
+  All Static roles go in one write, so the rule is checked on one document.
+- **During a rollout.** A replica change creates no revision, so a write does
+  not start a roll. Scale-up lands in the rollout's pace. Scale-down under
+  `Deferred` (the default) is accepted into `spec` but applied only once the old
+  revision has drained. The writer does not write again: `spec` already holds
+  the target, and nothing it reads changes until the drain ends.
+- **Who owns `replicas`.** The write is a server-side apply with field manager
+  `scaling-manager-role-writer`, naming only `spec.roles[name].spec.replicas`
+  (`spec.roles` is a list map keyed by name). If GitOps, kustomize via
+  `kubectl apply`, or a hand edit owns that field, the apply conflicts. The
+  writer then writes nothing and records a `RoleReplicasConflict` event on the
+  set. There are two fixes. Remove `replicas` from the role in the source of
+  truth, which is what an HPA asks of a Deployment. Or set the annotation to
+  `force`, which takes the field over; the next sync then fights it unless the
+  source drops the field, or ignores it (Argo CD `ignoreDifferences` on
+  `/spec/roles/*/spec/replicas`).
+- **Scope.** Not for `slices > 1` (a role's count is per slice; the engines size
+  its total) and not for roles with sub-roles. Both are refused with an event.
+
+## Rollout and scaling are different jobs
+
 ## Rollout and scaling are different jobs
 
 A rollout tool keeps replica counts fixed and moves the template, group by
@@ -195,26 +270,25 @@ count. On a DisaggregatedSet they meet in three places:
 
 ## Out of scope
 
-- LWS v0.9.0. It has no role scaler and no `/scale` anywhere, so KEDA cannot
-  target a role. Patching `spec.roles[].spec.replicas` ourselves is possible but
-  is a second actuation path; not built.
-- `slices > 1`. Upstream rejects it with External roles.
+- `slices > 1`. Upstream rejects it with External roles, and the role writer
+  refuses it.
 - Sub-roles (`roles[].subRoles`). Their scalers are `<set>-<role>-<sub-role>`,
   and a group's sub-role label can change after assignment. Their pods are not
   attributed.
 - A kind e2e. The CRD installs from the LWS release manifests, but our e2e
   images and fixtures would need a P/D model on it; left for later.
 
-## Open decisions
+## Follow-ups
 
-1. **Release-gated pods as supply.** Should the collector count only pods its
-   InferencePool selects? It is the right answer for any gated deployment, not
-   only this one, and needs the pool selector per variant.
-2. **LWS v0.9.0.** Ask the operator to upgrade to v0.10.0 or newer and switch the
-   roles to External (proposed), or build a spec-patching actuator for Static
-   roles.
-3. **Group keys during a rollout.** Two revisions of one role each have a group
-   0. Code that keys groups by `group-index` alone merges them while a rollout
-   runs. Readings are held while rolling out, but the held-GPU and placement
-   counts are not. Key by child LWS and group index everywhere, or accept it for
-   the rollout window.
+1. **Release-gated pods as supply** (decided: its own PR). The collector will
+   count only pods the variant's InferencePool selects. It is the right answer
+   for any gated deployment, not only this one.
+2. **Group keys during a rollout** (accepted for now). Two revisions of one role
+   each have a group 0. Code that keys groups by `group-index` alone merges them
+   while a rollout runs. Readings are held while rolling out; the held-GPU and
+   placement counts are not. Fix: key by child LWS and group index everywhere.
+3. **Drain timing under `Deferred`** (accepted for now). A lower count waits for
+   the rollout to finish. The actuator reads the live count, but the start-time
+   learner does not yet tell that wait from a slow start.
+4. **The role writer in the installer.** The component is applied by hand; the
+   installer does not yet add it, and there is no namespace-scoped variant.
