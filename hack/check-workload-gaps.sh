@@ -1860,6 +1860,7 @@ LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APP
     LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
 assert_eq "$DRIVER_RC" "0" "return code"
 assert_contains "$(cat "$dir/log")" "1 model server(s) BUILD THEIR FLASHINFER KERNELS AGAIN"
+assert_contains "$(cat "$dir/log")" "It is emitted, not applied: put it in your chart values and remove FLASHINFER_WORKSPACE_DIR."
 assert_not_contains "$(cat "$dir/log")" "no vLLM among them compiles from nothing"
 assert_not_contains "$(cat "$dir/log")" "COMPILE FROM NOTHING"
 assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
@@ -2545,6 +2546,30 @@ PVC_FIXTURE="$(pvc_list engine-cache:ReadWriteMany)"
 DS_FIXTURE='{"status":{"desiredNumberScheduled":2,"numberReady":2}}'
 engine_apply_run
 assert_contains "$(cat "$DRIVER_LOG")" "loses the replica"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="flashinfer: a bytecode volume applied with its opt-in does not carry the FlashInfer half live"
+reset; LIST_FIXTURE="$(serving_list)"; f_sglang_no_pyc
+before=$FAILED
+# SGLang with the old variable: the document has the bytecode half (with the
+# engine-cache volume) and the FlashInfer half (FLASHINFER_WORKSPACE_BASE,
+# env only). The bytecode half may go live; the FlashInfer half never does.
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/engine-cache/flashinfer"}]')"
+PVC_FIXTURE="$(pvc_list engine-cache:ReadWriteMany)"
+DS_FIXTURE='{"status":{"desiredNumberScheduled":2,"numberReady":2}}'
+engine_apply_run
+assert_eq "$PATCH_CALLS" "1" "kubectl patch calls"
+assert_contains "$PATCH_BODY" "value: /engine-cache/pycache/${KEY_SGLANG}"
+assert_contains "$PATCH_BODY" "claimName: engine-cache"
+assert_not_contains "$PATCH_BODY" "FLASHINFER_WORKSPACE_BASE"
+assert_contains "$(cat "$DRIVER_OUT")" "- name: FLASHINFER_WORKSPACE_BASE"     # ...but the file has it
+# ...while the vLLM half keeps the FlashInfer variable it sets itself (anchor).
+reset; LIST_FIXTURE="$(serving_list)"; f_engine_cache_only_gap
+PVC_FIXTURE="$(pvc_list engine-cache:ReadWriteMany)"
+DS_FIXTURE='{"status":{"desiredNumberScheduled":2,"numberReady":2}}'
+engine_apply_run
+assert_contains "$PATCH_BODY" "VLLM_CACHE_ROOT"
+assert_contains "$PATCH_BODY" "FLASHINFER_WORKSPACE_BASE"
 [ "$FAILED" -eq "$before" ] && ok
 
 # The guard is emitted as text for the chart's command. Run that text, as

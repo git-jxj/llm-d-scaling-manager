@@ -182,7 +182,10 @@ every start built them again under `$HOME` in the container.
 - The `flashinfer/` directory of an existing cache is empty and fills on the
   next start of each engine configuration. With a seed, run
   `make engine-cache-publish` once after that.
-- Warm pools pick up the new variable when you apply them again.
+- Warm pools pick up the new variable when you apply them again. Their
+  FlashInfer kernels then live on the pool's shared claim, beside the
+  torch.compile and Triton caches, with the same trade the warm pool manifest
+  already names: compiled code on a volume every pool engine can write.
 
 See [FlashInfer kernels](workload-preparation.md#flashinfer-kernels).
 

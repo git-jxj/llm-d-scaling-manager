@@ -1239,9 +1239,16 @@ so_workload_patch_trim() {
     # removed half leaves its explanation behind as a comment on the document,
     # so the body sent to the API server still spoke of a volume it no longer
     # carried -- harmless to the server, misleading in a log of what was sent.
+    # FLASHINFER_WORKSPACE_BASE goes live only with the vLLM half that set it
+    # (VLLM_CACHE_ROOT beside it in the same container). On its own it is the
+    # FlashInfer half -- the replacement for a FLASHINFER_WORKSPACE_DIR the
+    # owner still has to remove from the chart -- which is emitted, never
+    # applied, even when a bytecode volume in the same document is.
     prog="($s.volumes | select(. != null)) |= map(select(($vols) | not))
           | ($s.containers[].volumeMounts | select(. != null)) |= map(select(($vols) | not))
           | ($s.containers[].env | select(. != null)) |= map(select(($envs) | not))
+          | ($s.containers[] | select(([.env[]? | select(.name == \"VLLM_CACHE_ROOT\")] | length) == 0) | .env | select(. != null))
+              |= map(select(.name != \"FLASHINFER_WORKSPACE_BASE\"))
           | del($s.volumes | select(length == 0))
           | del($s.containers[].volumeMounts | select(length == 0))
           | del($s.containers[].env | select(length == 0))
@@ -1590,7 +1597,8 @@ llmsm_workload_patch() {
     if [ "$needs_fib" -gt 0 ]; then
         log_warning "$needs_fib model server(s) BUILD THEIR FLASHINFER KERNELS AGAIN on every start."
         log_warning "  They set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read (workload-patch wrote"
-        log_warning "  it before v0.11.2). $out sets FLASHINFER_WORKSPACE_BASE to the same path instead."
+        log_warning "  it before v0.11.2). $out sets FLASHINFER_WORKSPACE_BASE under the same path, keyed by"
+        log_warning "  image. It is emitted, not applied: put it in your chart values and remove FLASHINFER_WORKSPACE_DIR."
     fi
 
     if [ "$apply" = "true" ]; then
@@ -1678,10 +1686,13 @@ llmsm_workload_patch() {
 }
 
 # so_workload_gaps reports the pod-spec facts that decide whether autoscaling a
-# workload is safe, as \037-separated fields:
+# workload is safe, as ten \037-separated fields:
 #
 #   engine \037 hasPreStop \037 grace \037 hasPVC \037 weightsOnVolume \037 argv
-#     \037 cacheOnVolume \037 image \037 bytecode
+#     \037 cacheOnVolume \037 image \037 bytecode \037 flashinfer
+#
+# flashinfer is "dir:<value>" (FLASHINFER_WORKSPACE_DIR set, _BASE not),
+# "loop" (a guard loop that names only the old variable), or empty.
 #
 # Returns 1 and prints NOTHING when the object cannot be read. That distinction is
 # the point: an empty result used to mean both "no gaps" and "not allowed to

@@ -2,8 +2,9 @@
 # Keep the engines' compile caches on every accelerator node's local disk, so
 # a replica's start does not depend on a shared volume being writable.
 #
-# vLLM keeps three caches between runs -- the torch.compile artefacts, the
-# FlashInfer JIT kernels and Triton's JIT cache -- and a replica that finds
+# vLLM keeps three caches between runs -- the torch.compile artefacts (with
+# vLLM's FlashInfer autotune results, under VLLM_CACHE_ROOT), FlashInfer's own
+# JIT kernels and Triton's JIT cache -- and a replica that finds
 # them warm skips the compile; one that does not pays it at every start.
 # Pointing them at a shared RWX claim works until the claim does not: measured
 # on one cluster, nine starts of the same pod spec split by node into 51-56 s

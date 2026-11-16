@@ -163,8 +163,9 @@ spec:
             # the shared torch.compile cache cuts compilation from 12.35 s to
             # 3.08 s.
             #
-            # KNOWN RISK, kept deliberately for that measurement: the inductor
-            # and Triton caches below hold COMPILED ARTEFACTS, and they live on
+            # KNOWN RISK, kept deliberately for that measurement: the inductor,
+            # FlashInfer and Triton caches below hold COMPILED ARTEFACTS (and
+            # FlashInfer writes under its directory on every start), and they live on
             # a volume shared with whoever else mounts it. An engine that runs
             # hostile code can poison what another tenant's engine will load and
             # execute. Splitting them into a per-Pod volume closes it and gives
