@@ -3778,8 +3778,9 @@ $(PROMTOOL): $(LOCALBIN)
 	@bash hack/install-promtool.sh $(PROMTOOL) $(PROMTOOL_VERSION)
 
 .PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
+envtest: $(LOCALBIN) ## Download setup-envtest locally if necessary.
+	@# Run the install every time: it is a no-op when setup-envtest-$(ENVTEST_VERSION) exists, and otherwise
+	@# installs it and repoints $(ENVTEST), which a target on the unversioned link alone would leave stale.
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
