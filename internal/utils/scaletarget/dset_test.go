@@ -8,12 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
@@ -283,4 +285,32 @@ func TestFetchScaleTarget_StaticRoleFromTheSet(t *testing.T) {
 	// prefill is External with no scaler yet: not found, not read from the set.
 	_, err = FetchScaleTarget(context.Background(), c, "va", constants.DisaggregatedSetRoleScalerKind, "glm-v2-prefill", dsetNS)
 	assert.True(t, apierrors.IsNotFound(err), "%v", err)
+}
+
+// LWS v0.9.0 has no DisaggregatedSetRoleScaler kind: reading one fails with no
+// REST mapping, not NotFound. That is the version the role writer exists for,
+// so its Static roles must still be read from the set, and promptly.
+func TestFetchScaleTarget_StaticRoleWithoutTheScalerKind(t *testing.T) {
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(dsetGVK, &unstructured.Unstructured{})
+	set := dsetFixture()
+	roles, _, _ := unstructured.NestedSlice(set.Object, "spec", "roles")
+	delete(roles[1].(map[string]any), "scaling") // decode: Static
+	require.NoError(t, unstructured.SetNestedSlice(set.Object, roles, "spec", "roles"))
+	scalerGets := 0
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(set).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if obj.GetObjectKind().GroupVersionKind().Kind == constants.DisaggregatedSetRoleScalerKind {
+				scalerGets++
+				return &meta.NoKindMatchError{GroupKind: dsetRoleScalerGVK.GroupKind(), SearchedVersions: []string{"v1"}}
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+
+	acc, err := FetchScaleTarget(context.Background(), c, "va", constants.DisaggregatedSetRoleScalerKind, "glm-decode", dsetNS)
+	require.NoError(t, err)
+	assert.True(t, IsStaticDisaggregatedSetRole(acc))
+	assert.Equal(t, int32(7), *acc.GetReplicas())
+	assert.Equal(t, 1, scalerGets, "a missing kind is not retried: no backoff can install a CRD")
 }
