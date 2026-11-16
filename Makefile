@@ -3742,8 +3742,10 @@ PROMTOOL ?= $(LOCALBIN)/promtool-$(PROMTOOL_VERSION)
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.17.2
-#ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
-ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
+#ENVTEST_VERSION is the tag of the setup-envtest module to install: the controller-runtime version in go.mod (i.e. v0.24.1).
+# setup-envtest is its own module, tagged with each controller-runtime release. A release branch (release-0.24) no longer
+# resolves: go finds the root module at the branch head, which does not contain the setup-envtest package.
+ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime)
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.9.0
@@ -3776,8 +3778,9 @@ $(PROMTOOL): $(LOCALBIN)
 	@bash hack/install-promtool.sh $(PROMTOOL) $(PROMTOOL_VERSION)
 
 .PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
+envtest: $(LOCALBIN) ## Download setup-envtest locally if necessary.
+	@# Run the install every time: it is a no-op when setup-envtest-$(ENVTEST_VERSION) exists, and otherwise
+	@# installs it and repoints $(ENVTEST), which a target on the unversioned link alone would leave stale.
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
