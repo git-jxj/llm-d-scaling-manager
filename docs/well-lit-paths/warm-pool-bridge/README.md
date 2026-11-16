@@ -87,8 +87,8 @@ Each item is detailed in the [guide's prerequisites](../../guides/warm-pool/inst
   grants the scaling manager `patch` on Pods there (Role `scaling-manager-pod-writer`); its
   ClusterRole only reads Pods. Without the grant it refuses to start the pool
   ([prerequisites](../../guides/warm-pool/install.md#prerequisites)).
-- Two images. The proxy is ours (`ghcr.io/ev-shindin/llm-scaler/warmpool-proxy`,
-  or your `--proxy-image`). A pool of Pods runs upstream Fast Model
+- Two images. The proxy is ours (`ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy`,
+  released with the scaling manager, or your `--proxy-image`). A pool of Pods runs upstream Fast Model
   Actuation's launcher (`ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher`,
   not built here). A pool of **groups** runs our fork
   (`ghcr.io/ev-shindin/fma-launcher`), and `create` refuses without `--launcher-image`.
