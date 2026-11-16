@@ -88,7 +88,13 @@ llmsm_router_version_supported() {
 
 deploy_epp() {
     if ! llmsm_router_version_supported "${LLM_D_ROUTER_VERSION:-}"; then
-        log_error "LLM_D_ROUTER_VERSION=${LLM_D_ROUTER_VERSION:-<unset>} is not supported: the EPP config this installs is apiVersion llm-d.ai/v1, which only router ${LLMSM_MIN_ROUTER_VERSION} and newer can load; an older router fails to start on it. Set LLM_D_ROUTER_VERSION=${LLMSM_MIN_ROUTER_VERSION} or newer. To keep an existing older router, do not re-run this installer for it; see docs/reference/upgrade-and-uninstall.md."
+        local why
+        if [[ "${LLM_D_ROUTER_VERSION:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            why="is older than ${LLMSM_MIN_ROUTER_VERSION}: the EPP config this installs is apiVersion llm-d.ai/v1, which only router ${LLMSM_MIN_ROUTER_VERSION} and newer can load, and an older router fails to start on it."
+        else
+            why="is not a release tag (vX.Y.Z): the EPP config this installs is apiVersion llm-d.ai/v1, and only a release tag says whether the router can load it."
+        fi
+        log_error "LLM_D_ROUTER_VERSION=${LLM_D_ROUTER_VERSION:-<unset>} ${why} Set LLM_D_ROUTER_VERSION=${LLMSM_MIN_ROUTER_VERSION} or newer, or run install-epp.sh from the v0.11.1 checkout to install an older router. See docs/reference/upgrade-and-uninstall.md#the-llm-d-router-moves-to-v100."
         return 1
     fi
     log_info "Deploying EPP infrastructure (llm-d-router-standalone chart ${LLM_D_ROUTER_VERSION}, GAIE CRDs ${GAIE_VERSION})..."
