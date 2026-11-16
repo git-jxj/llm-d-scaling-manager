@@ -641,7 +641,7 @@ SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 -
 if [ "$(largs)" = '["weights","label","-n","m1","--watch","30","--label-prefix","llm-d.ai"]' ] \
     && [ "$(limg)" = "ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V" ] \
     && has_obj rolebinding m1 scaling-manager-weights-labeller-reader && has_obj clusterrole _ scaling-manager-weights-labeller \
-    && jq -e '.rules == [{apiGroups: [""], resources: ["nodes"], verbs: ["get", "list", "patch"]}]' "$STUB_DIR/obj/clusterrole/_/scaling-manager-weights-labeller.json" >/dev/null; then
+    && jq -e '.rules == [{apiGroups: [""], resources: ["nodes"], verbs: ["get", "list", "patch"]}, {apiGroups: [""], resources: ["namespaces"], verbs: ["get"]}]' "$STUB_DIR/obj/clusterrole/_/scaling-manager-weights-labeller.json" >/dev/null; then
     ok "install --scope cluster applies the weights labeller, on this release's tools image, watching its --model-namespace"
 else
     bad "cluster install labeller: args $(largs), image $(limg): $(grep -i labeller "$W/out" | head -2 | tr '\n' ' ')"
@@ -659,6 +659,15 @@ if [ "$(largs)" = '["weights","label","-n","team-b,m1,m2","--watch","30","--labe
     ok "a re-run of install --scope cluster keeps every namespace the labeller watches and adds its own"
 else
     bad "cluster re-run merge: args $(largs)"
+fi
+rm -f "$STUB_DIR/obj/namespace/_/team-b.json"
+# (the exit code is not the point here, as in the cluster cases above: the stub install ends non-zero)
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m2
+rc=$?
+if ! grep -q "weights labeller was not applied" "$W/out" && [ "$(largs)" = '["weights","label","-n","m1,m2","--watch","30","--label-prefix","llm-d.ai"]' ] && grep -q 'team-b, which is gone or being deleted; it is dropped' "$W/out"; then
+    ok "a re-run drops a watched namespace that was deleted since, and says so"
+else
+    bad "cluster re-run, deleted namespace: exit $rc, args $(largs): $(grep -i 'labeller\|team-b' "$W/out" | head -3 | tr '\n' ' ')"
 fi
 creset m1 team-c
 smt admin-setup -n team-c --keda-namespace keda-system
@@ -752,7 +761,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=87
+EXPECT_CASES=88
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

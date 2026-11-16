@@ -251,9 +251,18 @@ mkdir -p "$T/bin"
 cat > "$T/bin/kubectl" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$T/calls"
+gone() { [ -n "\${STUB_NS_GONE:-}" ] && [ "\$1" = "\$STUB_NS_GONE" ]; }
+forbid_gone() { gone "\$1" && { echo "Error from server (Forbidden): \$2 is forbidden: cannot list resource in the namespace \$1" >&2; exit 1; }; }
 case "\$1 \$2" in
+  "get namespace")
+      [ -z "\${STUB_NS_FORBIDDEN:-}" ] || { echo 'Error from server (Forbidden): namespaces is forbidden' >&2; exit 1; }
+      case " \$* " in *" --ignore-not-found "*) ;; *) echo "stub: namespace read without --ignore-not-found" >&2; exit 2 ;; esac
+      gone "\$3" && exit 0
+      [ "\$3" = "\${STUB_NS_TERMINATING:-}" ] && { echo '{"status":{"phase":"Terminating"}}'; exit 0; }
+      echo '{"status":{"phase":"Active"}}' ;;
   "get daemonset")
       case " \$* " in *" -l $LBL "*) ;; *) echo "stub: no label selector: \$*" >&2; exit 2 ;; esac
+      forbid_gone "\$4" daemonsets
       case "\$3 \$4" in
         "-n ns1") cat "$T/ds-ns1.json" ;;
         "-n ns2") cat "$T/ds-ns2.json" ;;
@@ -261,6 +270,7 @@ case "\$1 \$2" in
         *) echo "stub: daemonset scope: \$*" >&2; exit 2 ;;
       esac ;;
   "get pods")
+      forbid_gone "\$4" pods
       case "\$3 \$4" in
         "-n ns1") cat "$T/pods-ns1.json" ;;
         "-n ns2") cat "$T/pods-ns2.json" ;;
@@ -318,6 +328,19 @@ expect $? "-A reads every namespace"
 STUB_NODES_FORBIDDEN=1 runlabel -n ns1; rc=$?
 [ "$rc" -ne 0 ] && [ ! -s "$T/patches" ] && grep -q 'cannot list nodes' "$T/label.out"
 expect $? "a node list that is Forbidden fails the pass and changes nothing"
+# A namespace deleted after the labeller was told to watch it: its
+# RoleBinding went with it, so listing it is Forbidden. The pass goes on
+# for the others (node-g: ns2's download there is gone with ns2).
+STUB_NS_GONE=ns2 runlabel -n ns1,ns2; rc=$?
+[ "$rc" -eq 0 ] && [ "$(patch_of node-g | jq -c '.metadata.labels')" = "{\"$Q\":\"ready\"}" ] && [ -n "$(patch_of node-a)" ] \
+    && grep -q 'namespace ns2 does not exist; it is left out' "$T/label.out" && ! grep -q 'get daemonset -n ns2' "$T/calls"
+expect $? "a deleted namespace in scope is left out, and the pass labels the rest (rc $rc)"
+STUB_NS_TERMINATING=ns2 runlabel -n ns1,ns2; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'namespace ns2 is being deleted' "$T/label.out" && ! grep -q 'get pods -n ns2' "$T/calls"
+expect $? "a namespace being deleted is left out too"
+STUB_NS_FORBIDDEN=1 runlabel -n ns1,ns2; rc=$?
+[ "$rc" -ne 0 ] && [ ! -s "$T/patches" ] && grep -q 'cannot read the namespaces in scope' "$T/label.out"
+expect $? "a namespace that cannot be read fails the pass and changes nothing (Forbidden is not absent)"
 refused=0
 for args in "" "-n ns1 -A" "-n ns1,,ns2" "-n ns1,ns1" "-n NS" "-n ns1 --watch 0" "-n ns1 --watch x" "--clear --watch 5" "-n ns1 --label-prefix bad_prefix"; do
     # shellcheck disable=SC2086
@@ -352,8 +375,9 @@ for d in docs:
 ns = docs[0]
 check(ns["metadata"]["labels"].get("pod-security.kubernetes.io/enforce") == "restricted", "its namespace enforces Pod Security restricted")
 roles = {d["metadata"]["name"]: d for d in docs if d["kind"] == "ClusterRole"}
-check(roles["scaling-manager-weights-labeller"]["rules"] == [{"apiGroups": [""], "resources": ["nodes"], "verbs": ["get", "list", "patch"]}],
-      "node rights: get, list, patch and nothing else: %s" % roles["scaling-manager-weights-labeller"]["rules"])
+check(roles["scaling-manager-weights-labeller"]["rules"] == [{"apiGroups": [""], "resources": ["nodes"], "verbs": ["get", "list", "patch"]},
+                                                         {"apiGroups": [""], "resources": ["namespaces"], "verbs": ["get"]}],
+      "cluster rights: node get, list, patch and namespace get, nothing else: %s" % roles["scaling-manager-weights-labeller"]["rules"])
 reader = roles["scaling-manager-weights-labeller-reader"]["rules"]
 check(all(set(r["verbs"]) <= {"get", "list"} for r in reader) and {x for r in reader for x in r["resources"]} == {"daemonsets", "pods"},
       "the reader reads DaemonSets and pods only: %s" % reader)
@@ -378,7 +402,7 @@ if bad:
     for b in bad:
         print("  FAIL " + b)
     sys.exit(1)
-print("  ok   labeller: own restricted namespace, node get/list/patch only, read-only DaemonSets and pods per namespace in scope (or cluster-wide with -A), part=admin, tools image")
+print("  ok   labeller: own restricted namespace, node get/list/patch and namespace get only, read-only DaemonSets and pods per namespace in scope (or cluster-wide with -A), part=admin, tools image")
 PYEOF
 PASSED=$((PASSED + 1))
 if bash deploy/weights.sh labeller -n ns1,scaling-manager-weights-labeller --image "$TOOLS" --dry-run >/dev/null 2>&1; then fail "the labeller must refuse a namespace in scope as its own"; else ok "the labeller refuses to run in a namespace whose downloaders it trusts"; fi

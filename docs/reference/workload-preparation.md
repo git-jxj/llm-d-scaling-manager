@@ -498,7 +498,7 @@ counts as capacity: a replica placed there starts later, but it starts.
 
 **Rights.** `label` lists and patches nodes, which is cluster-scoped. The
 labeller runs in its own namespace (`scaling-manager-weights-labeller`, Pod
-Security `restricted`), with node `get`/`list`/`patch` and read-only access to
+Security `restricted`), with node `get`/`list`/`patch`, namespace `get` (a deleted namespace it watches is skipped, not an error), and read-only access to
 DaemonSets and pods in the namespaces it watches. It must not run in a model
 namespace: anyone who can create pods there could use its ServiceAccount to
 patch nodes. The namespace owner needs none of this.

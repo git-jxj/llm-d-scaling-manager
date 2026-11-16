@@ -150,7 +150,7 @@ PersistentVolumes):
 - `weights.sh label`, run by the admin with their own credentials; or
 - `weights.sh labeller`, which creates a namespace of its own
   (`scaling-manager-weights-labeller`, Pod Security `restricted`), a
-  ServiceAccount with node `get`/`list`/`patch`, and read-only DaemonSets and
+  ServiceAccount with node `get`/`list`/`patch`, namespace `get`, and read-only DaemonSets and
   pods in the model namespaces it watches (a RoleBinding per namespace, or
   cluster-wide with `-A`). Every object carries `scaling-manager.llmd.ai/part:
   admin`, like the install's admin objects.
@@ -187,6 +187,7 @@ Where it is installed:
 | The labeller is down | labels freeze as they are; a broken copy keeps its label until it is back. The probe and the init container still protect new replicas on nodes that never had a copy |
 | Another tool set the label | left alone; a disagreement with the downloader is reported |
 | The node list is Forbidden | the pass fails and changes nothing |
+| A watched namespace is deleted | it is left out of each pass, so the labels only its downloaders held go; the next `smt install --scope cluster` drops it from the list |
 | A replica waits on a node the downloader never reaches | after `LLMSM_WEIGHTS_WAIT_TIMEOUT` (60 min) the init container exits 1 with the reason; the pod shows `Init:CrashLoopBackOff` on that node. Use `required`, or give the model server and the downloader the same node selector |
 | A replica is running when its node's copy breaks | it keeps running; only new replicas avoid the node |
 

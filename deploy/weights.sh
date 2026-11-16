@@ -869,7 +869,7 @@ label_sources() {
         list="$(kubectl get daemonset -A -l "$LABEL_COMPONENT" -o json)" || return 1
         lines+=("$list")
     else
-        for ns in ${NAMESPACE//,/ }; do
+        for ns in "${SCOPE_NS[@]}"; do
             list="$(kubectl get daemonset -n "$ns" -l "$LABEL_COMPONENT" -o json)" || return 1
             lines+=("$list")
         done
@@ -899,8 +899,41 @@ label_pods() {
         kubectl get pods -A -l "$LABEL_COMPONENT" -o json
         return
     fi
-    for ns in ${NAMESPACE//,/ }; do
+    for ns in "${SCOPE_NS[@]}"; do
         kubectl get pods -n "$ns" -l "$LABEL_COMPONENT" -o json || return 1
+    done
+}
+
+# ns_phase prints the phase of namespace $1 (Active, Terminating), or
+# nothing when there is no such namespace. Fails when it cannot be read.
+ns_phase() {
+    local out
+    out="$(kubectl get namespace "$1" --ignore-not-found -o json)" || return 1
+    [ -n "$out" ] || return 0
+    printf '%s' "$out" | jq -r '.status.phase // "Active"'
+}
+
+# SCOPE_NS is what label_sources and label_pods read with -n: the namespaces
+# of -n that exist now, set by label_scope.
+SCOPE_NS=()
+
+# label_scope sets SCOPE_NS to the namespaces of -n that exist and are not
+# being deleted, and warns about the rest. A deleted namespace takes the
+# labeller's RoleBinding with it, so listing it is Forbidden; failing the
+# pass on that would freeze every node label, for every other namespace,
+# until someone edits the labeller. Its downloaders are gone with it, so
+# leaving it out is the truth: the labels only its downloaders held go. Fails
+# when a namespace cannot be read (Forbidden is not absent).
+label_scope() {
+    local ns phase
+    SCOPE_NS=()
+    for ns in ${NAMESPACE//,/ }; do
+        phase="$(ns_phase "$ns")" || return 1
+        case "$phase" in
+            "") log_warning "label: namespace ${ns} does not exist; it is left out (its downloaders are gone with it)" ;;
+            Terminating) log_warning "label: namespace ${ns} is being deleted; it is left out" ;;
+            *) SCOPE_NS+=("$ns") ;;
+        esac
     done
 }
 
@@ -924,6 +957,10 @@ label_pass() {
     local src="$1" pods="$2" nodes="$3" plan rc=0
     : > "$src"; : > "$pods"
     if [ "$CLEAR" = false ]; then
+        if [ "$ALL_NAMESPACES" = false ] && ! label_scope; then
+            log_warning "label: cannot read the namespaces in scope; no node was changed"
+            return 1
+        fi
         if ! label_sources > "$src"; then
             log_warning "label: cannot list the weights DaemonSets in scope; no node was changed"
             return 1
@@ -1082,6 +1119,11 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "patch"]
+  # Whether a namespace it watches still exists: a deleted one is left out
+  # of the pass rather than failing it.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -1296,7 +1338,7 @@ cmd_labeller() {
     if [ "$MERGE" = true ]; then
         [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --merge needs -n NS[,NS...] or -A"
         if [ "$DRY_RUN" = false ] && [ "$ALL_NAMESPACES" = false ]; then
-            local live rc=0 n
+            local live rc=0 n phase
             live="$(labeller_live_scope)" || rc=$?
             case "$rc" in
                 0) ;;
@@ -1308,7 +1350,15 @@ cmd_labeller() {
                 NAMESPACE=""
             else
                 for n in ${live//,/ }; do
-                    case ",${NAMESPACE}," in *",${n},"*) ;; *) NAMESPACE="${n},${NAMESPACE}" ;; esac
+                    case ",${NAMESPACE}," in *",${n},"*) continue ;; esac
+                    # A namespace deleted since is dropped: its RoleBinding
+                    # cannot be applied, and it has no downloaders left.
+                    phase="$(ns_phase "$n")" \
+                        || log_error "labeller --merge: cannot read namespace ${n}, which the running labeller watches; nothing was applied"
+                    case "$phase" in
+                        ""|Terminating) log_info "the running labeller watches ${n}, which is gone or being deleted; it is dropped" ;;
+                        *) NAMESPACE="${n},${NAMESPACE}" ;;
+                    esac
                 done
             fi
         fi
