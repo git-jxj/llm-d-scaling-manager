@@ -315,13 +315,14 @@ func TestSettingsEdges(t *testing.T) {
 }
 
 // A key the controller does not take from the settings is reported, and not
-// read: PROMETHEUS_ALLOW_HTTP comes from the environment or config.yaml.
+// read: the settings key is prometheusAllowHTTP, and PROMETHEUS_ALLOW_HTTP
+// there is ignored.
 func TestSettingsUnknownKeyIsNotRead(t *testing.T) {
 	f := newFixture(t)
-	f.settings[keyPrometheusURL] = "http://prometheus.monitoring.svc:9090"
-	f.settings[keyAllowHTTP] = valueTrue
+	f.settings[keyPrometheusURL] = plainURL
+	f.settings[envAllowHTTP] = valueTrue
 	rep := f.run(t)
-	if r := only(t, rep, "settings"); r.Status != Warn || !strings.Contains(r.Detail, keyAllowHTTP+" is no setting") {
+	if r := only(t, rep, "settings"); r.Status != Warn || !strings.Contains(r.Detail, envAllowHTTP+" is no setting") {
 		t.Errorf("settings: %s %q", r.Status, r.Detail)
 	}
 	if r := only(t, rep, "prometheus.reachable"); r.Status != Fail || !strings.Contains(r.Detail, "plain HTTP") {

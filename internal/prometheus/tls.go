@@ -123,7 +123,9 @@ func ValidateTLSConfig(cfg *config.Config) error {
 			return fmt.Errorf("plain HTTP Prometheus URL %q is not allowed; set PROMETHEUS_ALLOW_HTTP=true to permit http:// endpoints", baseURL)
 		}
 		if cfg.PrometheusBearerToken() != "" || cfg.PrometheusTokenPath() != "" {
-			return fmt.Errorf("refusing to send bearer token authentication over plain HTTP Prometheus URL %q", baseURL)
+			return fmt.Errorf("refusing to send bearer token authentication over plain HTTP Prometheus URL %q; "+
+				"remove PROMETHEUS_TOKEN_PATH and PROMETHEUS_BEARER_TOKEN from the Deployment and from config.yaml "+
+				"(an empty variable on the Deployment falls back to config.yaml; smt install --allow-http empties the token path), or use an https URL", baseURL)
 		}
 		if insecureSkipVerify || caCertPath != "" || clientCertPath != "" || clientKeyPath != "" || cfg.PrometheusServerName() != "" {
 			return fmt.Errorf("TLS-related settings are not supported with plain HTTP Prometheus URL %q; remove them or use an https:// URL", baseURL)

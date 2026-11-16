@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,7 +98,25 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	env := &Env{Kube: kube, Dynamic: dyn, Namespace: ns, Scope: sc, NewPrometheus: NewHTTPPrometheus,
 		PrometheusCA: promCA, DialTLS: DialTLS, CheckTimeout: *timeout}
+	if env.TokenPathEmptied, err = tokenPathEmptiedFromEnv(); err != nil {
+		_, _ = fmt.Fprintf(stderr, "preflight: %v\n", err)
+		return 2
+	}
 	return Execute(ctx, env, *writeResult, stdout, stderr)
+}
+
+// tokenPathEmptiedFromEnv reads TokenPathEmptiedEnv: false when it is unset
+// or empty, an error naming it when it is not a boolean.
+func tokenPathEmptiedFromEnv() (bool, error) {
+	v := strings.TrimSpace(os.Getenv(TokenPathEmptiedEnv))
+	if v == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("%s=%q is not true or false", TokenPathEmptiedEnv, v)
+	}
+	return b, nil
 }
 
 // Execute runs the checks, prints them, writes the result ConfigMap when
