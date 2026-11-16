@@ -67,7 +67,30 @@ _install_crd_group() {
     kubectl apply "$@" || log_warning "${label} CRD install returned non-zero — check whether they are usable before continuing"
 }
 
+# LLMSM_MIN_ROUTER_VERSION is the oldest router the vendored values load on:
+# their EndpointPickerConfig is llm-d.ai/v1, which router v1.0.0 introduced.
+LLMSM_MIN_ROUTER_VERSION="v1.0.0"
+
+# llmsm_router_version_supported succeeds when $1 is vMAJOR.MINOR.PATCH (a
+# -prerelease suffix allowed) at or above LLMSM_MIN_ROUTER_VERSION. Anything
+# else -- an older release, or a tag that is not a version, such as main --
+# fails, because nothing here can tell whether that router reads llm-d.ai/v1.
+llmsm_router_version_supported() {
+    local v="$1" maj min pat
+    [[ "$v" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]] || return 1
+    maj="${BASH_REMATCH[1]}" min="${BASH_REMATCH[2]}" pat="${BASH_REMATCH[3]}"
+    [[ "$LLMSM_MIN_ROUTER_VERSION" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+    local rmaj="${BASH_REMATCH[1]}" rmin="${BASH_REMATCH[2]}" rpat="${BASH_REMATCH[3]}"
+    [ "$maj" -ne "$rmaj" ] && { [ "$maj" -gt "$rmaj" ]; return; }
+    [ "$min" -ne "$rmin" ] && { [ "$min" -gt "$rmin" ]; return; }
+    [ "$pat" -ge "$rpat" ]
+}
+
 deploy_epp() {
+    if ! llmsm_router_version_supported "${LLM_D_ROUTER_VERSION:-}"; then
+        log_error "LLM_D_ROUTER_VERSION=${LLM_D_ROUTER_VERSION:-<unset>} is not supported: the EPP config this installs is apiVersion llm-d.ai/v1, which only router ${LLMSM_MIN_ROUTER_VERSION} and newer can load; an older router fails to start on it. Set LLM_D_ROUTER_VERSION=${LLMSM_MIN_ROUTER_VERSION} or newer. To keep an existing older router, do not re-run this installer for it; see docs/reference/upgrade-and-uninstall.md."
+        return 1
+    fi
     log_info "Deploying EPP infrastructure (llm-d-router-standalone chart ${LLM_D_ROUTER_VERSION}, GAIE CRDs ${GAIE_VERSION})..."
 
     local _lib_dir

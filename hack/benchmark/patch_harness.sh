@@ -529,12 +529,16 @@ DEFAULTS="$REPO_DIR/config/templates/values/defaults.yaml"
 [ -f "$DEFAULTS" ] || fail "expected file missing: $DEFAULTS"
 
 "$PY" - "$DEFAULTS" <<'PYEOF' || fail "fix 6 (sidecar/chart/EPP pins) failed"
-import io, sys
+import io, re, sys
+
+# The three pins, one line each, so a version inventory can read them.
+MODELSERVICE_CHART = "v0.4.16"
+ROUTING_SIDECAR = "v1.0.0"
+ROUTER_EPP_IMAGE = "v1.0.0"
 
 path = sys.argv[1]
-src = io.open(path, encoding="utf-8").read()
-
-import re
+orig = io.open(path, encoding="utf-8").read()
+src = orig
 
 # Each pin: (label, regex over the line, the value it must end at). The regex
 # captures everything before the value, so the anchor is the key, not the old
@@ -542,19 +546,22 @@ import re
 # with the old pair is moved too. No match is a hard error.
 PINS = [
     ("modelservice chart",
-     r"(?m)^(  llmDModelservice: )(\S+)$", "v0.4.16"),
+     r"(?m)^(  llmDModelservice: )(\S+)$", MODELSERVICE_CHART),
     ("routing sidecar",
-     r"(?m)^(  llm-d-routing-sidecar_version: +&llm-d-routing-sidecar_version +)(\S+)$", "v1.0.0"),
+     r"(?m)^(  llm-d-routing-sidecar_version: +&llm-d-routing-sidecar_version +)(\S+)$", ROUTING_SIDECAR),
     ("router EPP image",
-     r"(?m)^(  llm-d-router-endpoint-picker_version: +&llm-d-router-endpoint-picker_version +)(\S+)$", "v1.0.0"),
+     r"(?m)^(  llm-d-router-endpoint-picker_version: +&llm-d-router-endpoint-picker_version +)(\S+)$", ROUTER_EPP_IMAGE),
 ]
 
 # Comment carried into the clone so anyone reading the rendered values sees why
 # the chart is not "auto" like its neighbours.
-NOTE = ("  # scaling-manager-patch: pinned with the routing sidecar above; v0.4.16\n"
-        "  # renders --model-server-port/--kv-connector, which sidecar v1.0.0 takes.\n")
-OLD_NOTE = ("  # scaling-manager-patch: pinned. v0.4.16 emits --model-server-port, which the\n"
-            "  # llm-d-routing-sidecar version pinned above does not accept.\n")
+NOTE = ("  # scaling-manager-patch: pinned with the routing sidecar above; %s\n"
+        "  # renders --model-server-port/--kv-connector, which sidecar %s takes.\n"
+        % (MODELSERVICE_CHART, ROUTING_SIDECAR))
+# The note earlier versions of this fix wrote, under either patch prefix.
+OLD_NOTE = re.compile(
+    r"(?m)^  # (?:scaling-manager|wva)-patch: pinned\. v0\.4\.16 emits --model-server-port, which the\n"
+    r"  # llm-d-routing-sidecar version pinned above does not accept\.\n")
 
 changed = []
 for label, pattern, want in PINS:
@@ -566,11 +573,15 @@ for label, pattern, want in PINS:
     changed.append("%s %s -> %s" % (label, m.group(2), want))
     src = src[:m.start(2)] + want + src[m.end(2):]
 
-src = src.replace(OLD_NOTE, "")
+src, stripped = OLD_NOTE.subn("", src)
+if stripped:
+    changed.append("old note removed")
+chart_line = "  llmDModelservice: " + MODELSERVICE_CHART
 if NOTE not in src:
-    src = src.replace("  llmDModelservice: v0.4.16", NOTE + "  llmDModelservice: v0.4.16", 1)
+    src = src.replace(chart_line, NOTE + chart_line, 1)
+    changed.append("note added")
 
-if not changed:
+if src == orig:
     print("  fix 6 (sidecar/chart/EPP pins): already applied")
     sys.exit(0)
 io.open(path, "w", encoding="utf-8", newline="\n").write(src)

@@ -3483,6 +3483,10 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# pays a model load into the pool on the first burst and reports it as the
 	@# pool's cost. All of them are 26 minutes of GPU each.
 	@bash hack/check-two-model-scenario.sh
+	@echo "Checking the EPP installer refuses a router older than its values..."
+	@bash hack/check-epp-router-version.sh
+	@echo "Checking the router pins the harness patch writes..."
+	@bash hack/check-harness-router-pins.sh
 	@echo "Checking the TTFT staircase's exit paths and arithmetic..."
 	@# Executes it against a stub kubectl. What protects a shared cluster for a
 	@# multi-day run is its exit paths, and bash -n sees none of them.

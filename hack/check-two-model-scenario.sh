@@ -1166,6 +1166,12 @@ printf '%s\n' "$shared_body" | grep -A1 -E '^    routerEndpointPicker:$' | grep 
 printf '%s\n' "$shared_body" | grep -A1 -E '^    routingSidecar:$' | grep -qE 'tag: v1\.0\.0$' || missing="$missing images.routingSidecar=v1.0.0"
 # llm-d.ai/v1 is first read by router v1.0.0; it and the pin above move together.
 printf '%s\n' "$shared_body" | grep -qE '^            apiVersion: llm-d\.ai/v1$' || missing="$missing pd-config.apiVersion=llm-d.ai/v1"
+# The single-model P/D guide pins the same pair, and the harness patch pins the
+# modelservice chart that renders the flags this sidecar takes.
+guide_body="$(tr -d '\r' < "$SPEC_DIR/pd-disaggregation.yaml" | grep -vE '^[[:space:]]*#')"
+printf '%s\n' "$guide_body" | grep -A1 -E '^        routingSidecar:$' | grep -qE 'tag: v1\.0\.0$' || missing="$missing pd-disaggregation.routingSidecar=v1.0.0"
+printf '%s\n' "$guide_body" | grep -A1 -E '^        routerEndpointPicker:$' | grep -qE 'tag: v1\.0\.0$' || missing="$missing pd-disaggregation.routerEndpointPicker=v1.0.0"
+tr -d '\r' < "$ROOT/hack/benchmark/patch_harness.sh" | grep -qE '^MODELSERVICE_CHART = "v0\.4\.16"$' || missing="$missing patch_harness.MODELSERVICE_CHART=v0.4.16"
 [ "$(printf '%s\n' "$pd_body" | grep -c 'kv_connector":"NixlConnector"')" -eq 2 ] || missing="$missing NixlConnector-on-both-roles"
 if printf '%s\n' "$pd_body" | grep -q 'matchLabels'; then
     missing="$missing no-matchLabels(each-InferencePool-would-select-both-models)"
