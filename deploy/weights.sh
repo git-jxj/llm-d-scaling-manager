@@ -96,7 +96,10 @@
 #   --delete                    labeller: remove it (the labels stay; run
 #                               label --clear for them)
 #   --add                       labeller: add -n NS to the running labeller
-#   --merge                     labeller: also watch what it watches now
+#   --merge                     labeller: also watch what it watches now.
+#                               Without it, an apply that would watch
+#                               fewer namespaces than the running labeller
+#                               is refused
 #
 # The node gate. A replica scheduled onto a node whose copy is missing or
 # still being written reads a partial model, so the downloader writes its
@@ -1263,6 +1266,7 @@ labeller_add() {
     local ns="$NAMESPACE" scope rc=0 list image
     case "$ns" in *,*) log_error "labeller --add takes one namespace" ;; esac
     check_scope labeller
+    [ "$ns" != "$LABELLER_NS" ] || log_error "labeller --add: ${ns} is the labeller's own namespace, never one it watches"
 
     scope="$(labeller_live_scope)" || rc=$?
 
@@ -1335,33 +1339,55 @@ cmd_labeller() {
         labeller_add || rc=$?
         exit "$rc"
     fi
-    if [ "$MERGE" = true ]; then
-        [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --merge needs -n NS[,NS...] or -A"
-        if [ "$DRY_RUN" = false ] && [ "$ALL_NAMESPACES" = false ]; then
-            local live rc=0 n phase
-            live="$(labeller_live_scope)" || rc=$?
-            case "$rc" in
-                0) ;;
-                1) log_error "labeller --merge: cannot read the running labeller in ${LABELLER_NS} (kubectl says why, above); nothing was applied" ;;
-                *) log_error "labeller --merge: the Deployment in ${LABELLER_NS} does not carry the arguments weights.sh writes; nothing was applied" ;;
-            esac
-            if [ "$live" = "-A" ]; then
-                ALL_NAMESPACES=true
-                NAMESPACE=""
-            else
-                for n in ${live//,/ }; do
-                    case ",${NAMESPACE}," in *",${n},"*) continue ;; esac
-                    # A namespace deleted since is dropped: its RoleBinding
-                    # cannot be applied, and it has no downloaders left.
-                    phase="$(ns_phase "$n")" \
-                        || log_error "labeller --merge: cannot read namespace ${n}, which the running labeller watches; nothing was applied"
-                    case "$phase" in
-                        ""|Terminating) log_info "the running labeller watches ${n}, which is gone or being deleted; it is dropped" ;;
-                        *) NAMESPACE="${n},${NAMESPACE}" ;;
-                    esac
-                done
-            fi
+    [ "$MERGE" = false ] || [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --merge needs -n NS[,NS...] or -A"
+    # What the running labeller watches, read before any change: --merge
+    # keeps it, --delete finds its RoleBindings by it, and a plain apply
+    # must not narrow it unseen. A dry run reads no cluster.
+    local live="" rc=0 n phase dropped=""
+    if [ "$DRY_RUN" = false ]; then
+        live="$(labeller_live_scope)" || rc=$?
+        case "$rc" in
+            0) ;;
+            1) log_error "labeller: cannot read the running labeller in ${LABELLER_NS} (kubectl says why, above); nothing was changed" ;;
+            *) [ "$MERGE" = false ] || log_error "labeller --merge: the Deployment in ${LABELLER_NS} does not carry the arguments weights.sh writes; nothing was applied"
+               live="" ;;
+        esac
+    fi
+    if [ "$MERGE" = true ] && [ "$ALL_NAMESPACES" = false ] && [ -n "$live" ]; then
+        if [ "$live" = "-A" ]; then
+            ALL_NAMESPACES=true
+            NAMESPACE=""
+        else
+            # The running list first, in its order, then what is new: a
+            # re-run with the same namespaces renders the same arguments,
+            # and does not restart the labeller.
+            local kept=""
+            for n in ${live//,/ }; do
+                # A namespace deleted since is dropped: its RoleBinding
+                # cannot be applied, and it has no downloaders left.
+                phase="$(ns_phase "$n")" \
+                    || log_error "labeller --merge: cannot read namespace ${n}, which the running labeller watches; nothing was applied"
+                case "$phase" in
+                    ""|Terminating) log_info "the running labeller watches ${n}, which is gone or being deleted; it is dropped" ;;
+                    *) kept="${kept:+${kept},}${n}" ;;
+                esac
+            done
+            for n in ${NAMESPACE//,/ }; do
+                case ",${kept}," in *",${n},"*) ;; *) kept="${kept:+${kept},}${n}" ;; esac
+            done
+            NAMESPACE="$kept"
         fi
+    elif [ "$MERGE" = false ] && [ "$DELETE" = false ] && [ "$ALL_NAMESPACES" = false ] && [ -n "$live" ]; then
+        if [ "$live" = "-A" ]; then
+            dropped="every namespace (-A)"
+        else
+            for n in ${live//,/ }; do
+                case ",${NAMESPACE}," in *",${n},"*) continue ;; esac
+                phase="$(ns_phase "$n")" || log_error "labeller: cannot read namespace ${n}, which the running labeller watches; nothing was applied"
+                case "$phase" in ""|Terminating) ;; *) dropped="${dropped:+${dropped},}${n}" ;; esac
+            done
+        fi
+        [ -z "$dropped" ] || log_error "labeller: the running labeller also watches ${dropped}; -n ${NAMESPACE} alone would stop that, and the node labels only those downloaders hold would go. Add --merge to keep them. To stop watching one, run labeller --delete, then apply the namespaces to keep."
     fi
     if [ "$DELETE" = true ]; then
         [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --delete needs the scope it was applied with (-n NS[,NS...] or -A), to find its RoleBindings"
@@ -1370,11 +1396,17 @@ cmd_labeller() {
         run_delete delete namespace "$LABELLER_NS" --ignore-not-found
         run_delete delete clusterrolebinding scaling-manager-weights-labeller scaling-manager-weights-labeller-reader --ignore-not-found
         run_delete delete clusterrole scaling-manager-weights-labeller scaling-manager-weights-labeller-reader --ignore-not-found
-        if [ "$ALL_NAMESPACES" = false ]; then
-            for ns in ${NAMESPACE//,/ }; do
-                run_delete delete rolebinding -n "$ns" scaling-manager-weights-labeller-reader --ignore-not-found
-            done
-        fi
+        # The RoleBindings in every namespace given, and in every one the
+        # running labeller watches: none is left behind.
+        local rbns=""
+        [ "$ALL_NAMESPACES" = true ] || rbns="$NAMESPACE"
+        [ "$live" = "-A" ] || rbns="${rbns:+${rbns},}${live}"
+        local seen=","
+        for ns in ${rbns//,/ }; do
+            case "$seen" in *",${ns},"*) continue ;; esac
+            seen="${seen}${ns},"
+            run_delete delete rolebinding -n "$ns" scaling-manager-weights-labeller-reader --ignore-not-found
+        done
         log_info "the labels it set stay on the nodes; weights.sh label --clear removes them"
         return 0
     fi

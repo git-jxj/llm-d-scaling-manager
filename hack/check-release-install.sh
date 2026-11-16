@@ -655,8 +655,8 @@ else
     bad "admin-setup add: exit $rc, args $(largs): $(grep -A2 'Weights labeller' "$W/out" | tr '\n' ' ')"
 fi
 SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m2
-if [ "$(largs)" = '["weights","label","-n","team-b,m1,m2","--watch","30","--label-prefix","llm-d.ai"]' ] && has_obj rolebinding m2 scaling-manager-weights-labeller-reader; then
-    ok "a re-run of install --scope cluster keeps every namespace the labeller watches and adds its own"
+if [ "$(largs)" = '["weights","label","-n","m1,team-b,m2","--watch","30","--label-prefix","llm-d.ai"]' ] && has_obj rolebinding m2 scaling-manager-weights-labeller-reader; then
+    ok "a re-run of install --scope cluster keeps every namespace the labeller watches, in its order, and adds its own after them"
 else
     bad "cluster re-run merge: args $(largs)"
 fi
@@ -669,6 +669,34 @@ if ! grep -q "weights labeller was not applied" "$W/out" && [ "$(largs)" = '["we
 else
     bad "cluster re-run, deleted namespace: exit $rc, args $(largs): $(grep -i 'labeller\|team-b' "$W/out" | head -3 | tr '\n' ' ')"
 fi
+# A re-run with a namespace already watched renders the same arguments: a
+# changed list would restart the labeller on every install.
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+if [ "$(largs)" = '["weights","label","-n","m1,m2","--watch","30","--label-prefix","llm-d.ai"]' ]; then
+    ok "a re-run with a namespace it already watches leaves the labeller's arguments as they are"
+else
+    bad "cluster re-run, same namespaces: args $(largs)"
+fi
+# weights.sh labeller on its own, over the running one.
+wl() { (cd "$W/work" && PATH="$W/bin:$PATH" bash "$IMGDIR/weights.sh" "$@") > "$W/out" 2>&1; }
+wl labeller -n m1 --image mirror.example.com/tools:v1
+rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'the running labeller also watches m2' "$W/out" && grep -q 'Add --merge' "$W/out" \
+    && [ "$(largs)" = '["weights","label","-n","m1,m2","--watch","30","--label-prefix","llm-d.ai"]' ] && [ "$(limg)" = "ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V" ]; then
+    ok "labeller -n with fewer namespaces than the running one watches is refused, and changes nothing"
+else
+    bad "labeller narrowing: exit $rc, args $(largs), image $(limg): $(tail -1 "$W/out")"
+fi
+wl labeller -n m1 --delete
+rc=$?
+if [ "$rc" = 0 ] && ! has_obj rolebinding m1 scaling-manager-weights-labeller-reader && ! has_obj rolebinding m2 scaling-manager-weights-labeller-reader; then
+    ok "labeller --delete -n m1 also removes the RoleBinding of every namespace the running one watched"
+else
+    bad "labeller --delete: exit $rc, RoleBinding in m2 left: $(has_obj rolebinding m2 scaling-manager-weights-labeller-reader && echo yes || echo no)"
+fi
+wl labeller --add -n "$LNS"
+rc=$?
+[ "$rc" -ne 0 ] && grep -q "is the labeller's own namespace" "$W/out" && ok "labeller --add refuses the labeller's own namespace" || bad "labeller --add of its own namespace: exit $rc: $(tail -1 "$W/out")"
 creset m1 team-c
 smt admin-setup -n team-c --keda-namespace keda-system
 rc=$?
@@ -761,7 +789,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=88
+EXPECT_CASES=92
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

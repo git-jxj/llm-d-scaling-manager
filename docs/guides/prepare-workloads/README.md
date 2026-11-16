@@ -181,7 +181,7 @@ not set. It runs in a namespace of its own, because it can patch nodes. With
 the cluster-wide install it is already there (`smt install --scope cluster`
 applies it), and `smt admin-setup -n <ns>` adds a namespace to it. Run the
 command above only without either; to watch more namespaces then, run it
-again with all of them (`-n <ns1>,<ns2>`). The model's label is printed by
+again with all of them (`-n <ns1>,<ns2>`), or add `--merge` to keep the ones it watches; it refuses to drop one. The model's label is printed by
 `weights apply`.
 
 The patch in the next step uses the label: replicas prefer labelled nodes, and

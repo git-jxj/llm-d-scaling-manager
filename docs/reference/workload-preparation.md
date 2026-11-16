@@ -510,7 +510,8 @@ mirror). `smt admin-setup -n <ns>` adds `<ns>` to a running labeller with
 namespaced rights only (a RoleBinding in `<ns>`, the Deployment in the
 labeller's namespace), or prints the command when there is no labeller or it
 lacks the rights; `smt weights labeller --add -n <ns>` does the same on its
-own. Without the cluster-wide install, run `smt weights labeller` as above.
+own. Without the cluster-wide install, run `smt weights labeller` as above; it
+refuses to drop a namespace the running labeller watches (`--merge` keeps them).
 
 **What it does not cover.**
 
