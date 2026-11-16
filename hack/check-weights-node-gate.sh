@@ -434,6 +434,8 @@ echo "workload-patch gate"
         || say_fail "init container: $(jq -c .initContainers <<< "$s")"
     case "$d" in *"weights-gate: vllm reads Qwen/Qwen3-32B from the node-local claim weights-qwen3-32b-1a2b3c4d"*"kubectl get nodes -L llm-d.ai/qwen3-32b-cache"*) say_ok "the document says why, and how to see the label" ;; *) say_fail "the why and the note: $d" ;; esac
     grep -q 'docker.io' <<< "$d" && say_fail "the gate names a docker.io image" || say_ok "no docker.io image in the gate"
+    w="$(so_workload_patch_doc ns1 deployments w '["spec","template"]' 2>&1 >/dev/null)"
+    case "$w" in *"ns1/w reads Qwen/Qwen3-32B from the node-local claim weights-qwen3-32b-1a2b3c4d with no weights gate"*) say_ok "the console report names the ungated model server" ;; *) say_fail "console report: $w" ;; esac
 
     OBJ="$(dep weights-qwen3-32b-1a2b3c4d /weights "models/Qwen/Qwen3-32B")"
     s="$(spec_of "$(doc_of)")"

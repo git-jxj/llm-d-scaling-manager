@@ -2785,6 +2785,7 @@ so_weights_gate_plan() {
     [ "$have" = false ] || return 0
     gate_aff="$merged"
     want_gate=1
+    log_warning "  $ns/$name reads $gate_model from the node-local claim $gate_claim with no weights gate: a replica can land on a node whose copy is missing or still being written."
 }
 
 # so_weights_gate_body prints the gate's affinity and init container, at the
