@@ -170,7 +170,7 @@ every start built them again under `$HOME` in the container.
 
 - Run `make workload-patch NAMESPACE=<ns>` again. A workload that still sets
   the old variable is reported as `BUILDS ITS FLASHINFER KERNELS AGAIN`, and the
-  file sets `FLASHINFER_WORKSPACE_BASE` to the same path. This change is never
+  file sets `FLASHINFER_WORKSPACE_BASE` under the same path, keyed by image. This change is never
   applied for you: put it in your chart values and remove
   `FLASHINFER_WORKSPACE_DIR`. If your container command carries the
   engine-cache guard, rename the variable in its loop.

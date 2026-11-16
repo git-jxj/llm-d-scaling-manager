@@ -1786,6 +1786,28 @@ f_engine_cache_old_flashinfer() {
         {"name":"TRITON_CACHE_DIR","value":"/engine-cache/triton"}]')"
 }
 
+# The FlashInfer base is keyed by image, as the bytecode is: FlashInfer 0.2
+# and 0.3 key their tree by GPU architecture only.
+KFI="$(so_pycache_key "quay.io/x/vllm-openai:v0.11")"
+
+CASE="flashinfer: the base is keyed by image, so two images never share a FlashInfer tree"
+reset; f_engine_cache_only_gap
+before=$FAILED
+[ "${#KFI}" -eq 12 ] || fail "no image key: '$KFI'"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+d="$(mktemp)"; printf '%s\n' "$doc" > "$d"
+assert_eq "$(yq eval '.spec.template.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value' "$d" 2>/dev/null)" \
+    "/engine-cache/flashinfer/$KFI" "FLASHINFER_WORKSPACE_BASE"
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].image = "quay.io/x/vllm-openai:v0.12"')"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"; printf '%s\n' "$doc" > "$d"
+other="$(yq eval '.spec.template.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value' "$d" 2>/dev/null)"
+assert_eq "$other" "/engine-cache/flashinfer/$(so_pycache_key "quay.io/x/vllm-openai:v0.12")" "FLASHINFER_WORKSPACE_BASE for another image"
+[ "$other" != "/engine-cache/flashinfer/$KFI" ] || fail "two images share one FlashInfer base"
+# ...and the same key as the bytecode, so one image is one key everywhere.
+assert_contains "$doc" "value: /engine-cache/pycache/$(so_pycache_key "quay.io/x/vllm-openai:v0.12")"
+rm -f "$d"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="flashinfer: FLASHINFER_WORKSPACE_DIR without _BASE is field 10, dir: and its value"
 reset; f_engine_cache_old_flashinfer
 before=$FAILED
@@ -1811,17 +1833,17 @@ before=$FAILED
 doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
 assert_contains "$doc" "#   flashinfer:"
 assert_contains "$doc" "- name: FLASHINFER_WORKSPACE_BASE"
-assert_contains "$doc" "value: /engine-cache/flashinfer"
+assert_contains "$doc" "value: /engine-cache/flashinfer/$KFI"
 assert_not_contains "$doc" "#   engine-cache:"
 assert_not_contains "$doc" "volumes:"
 assert_not_contains "$doc" "- name: FLASHINFER_WORKSPACE_DIR"
 d="$(mktemp)"; printf '%s\n' "$doc" > "$d"
 assert_eq "$(yq eval '.spec.template.spec.containers[0].env | map(.name + "=" + .value) | join(",")' "$d" 2>/dev/null)" \
-    "FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer" "env read back"
+    "FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/$KFI" "env read back"
 rm -f "$d"
 warn="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>&1 >/dev/null)"
 assert_contains "$warn" "BUILDS ITS FLASHINFER KERNELS AGAIN"
-assert_contains "$warn" "Set FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer instead"
+assert_contains "$warn" "Set FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/$KFI instead"
 note="$(so_enginecache_note ns deployments w "$POD_DEPLOY")"
 assert_contains "$note" "builds its FlashInfer kernels again"
 assert_contains "$note" "make workload-patch"
@@ -1842,7 +1864,7 @@ assert_not_contains "$(cat "$dir/log")" "no vLLM among them compiles from nothin
 assert_not_contains "$(cat "$dir/log")" "COMPILE FROM NOTHING"
 assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
 assert_contains "$(cat "$dir/log")" "need only a volume or a cache variable"
-assert_contains "$(cat "$dir/p.yaml")" "value: /engine-cache/flashinfer"
+assert_contains "$(cat "$dir/p.yaml")" "value: /engine-cache/flashinfer/$KFI"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="flashinfer: once FLASHINFER_WORKSPACE_BASE is set the re-run is the all-clear, old variable or not"
@@ -1910,7 +1932,7 @@ assert_field 10 "dir:/tmp/fi"
 doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>"$WORK/fi.err")"
 assert_contains "$doc" "#   engine-cache:"
 assert_contains "$doc" "- name: FLASHINFER_WORKSPACE_BASE"
-assert_contains "$doc" "value: /engine-cache/flashinfer"
+assert_contains "$doc" "value: /engine-cache/flashinfer/$KFI"
 assert_not_contains "$doc" "#   flashinfer:"
 assert_not_contains "$doc" "value: /tmp/fi"
 assert_contains "$(cat "$WORK/fi.err")" "drop FLASHINFER_WORKSPACE_DIR"
@@ -3303,7 +3325,7 @@ assert_eq "$PATCH_CALLS" "1" "kubectl patch calls"
 assert_contains "$PATCH_BODY" '"path":"/spec/leaderWorkerTemplate/leaderTemplate/spec/containers/1/name"'   # the test op, by name
 after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not apply: $PATCH_BODY"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[1].env | map(.name + "=" + .value) | join(",")' <<< "$after")" \
-    "HF_HOME=/tmp/hf,VLLM_CACHE_ROOT=/engine-cache/vllm,FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer,TRITON_CACHE_DIR=/engine-cache/triton,PYTHONPYCACHEPREFIX=/engine-cache/pycache/$KEY_LEADER" "leader env"
+    "HF_HOME=/tmp/hf,VLLM_CACHE_ROOT=/engine-cache/vllm,FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/$KEY_LEADER,TRITON_CACHE_DIR=/engine-cache/triton,PYTHONPYCACHEPREFIX=/engine-cache/pycache/$KEY_LEADER" "leader env"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.volumes | map(.name) | join(",")' <<< "$after")" "dshm,engine-cache" "leader volumes"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[1].volumeMounts | map(.name) | join(",")' <<< "$after")" "dshm,engine-cache" "leader mounts"
 assert_eq "$(jq -c '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0]' <<< "$after")" '{"name":"proxy","image":"quay.io/x/proxy:1"}' "sidecar"
@@ -3319,7 +3341,7 @@ doc="$(so_workload_patch_doc ns leaderworkersets w "$POD_LWS" 2>/dev/null)"
 assert_contains "$doc" "#   flashinfer:"
 assert_contains "$doc" "leaderTemplate, engine container vllm: flashinfer"
 assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env | map(.name + "=" + .value) | join(",")')" \
-    "FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer" "leader env"
+    "FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/$KEY_LEADER" "leader env"
 assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.workerTemplate')" "null" "worker template (nothing to change)"
 lws_driver true true
 assert_eq "$DRIVER_RC" "0" "return code"

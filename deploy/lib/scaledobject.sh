@@ -858,6 +858,20 @@ so_pycache_key() {
     printf '%s' "$sum"
 }
 
+# so_flashinfer_base prints the FLASHINFER_WORKSPACE_BASE to emit under
+# directory $1 for image reference $2: $1/<the image key of so_pycache_key>,
+# or $1 alone when the image has no key. FlashInfer 0.2 and 0.3 key their
+# directory by GPU architecture only, not by version, so two images with
+# different FlashInfer builds would otherwise share one tree.
+so_flashinfer_base() {
+    local key
+    if key="$(so_pycache_key "$2")"; then
+        printf '%s/%s' "$1" "$key"
+    else
+        printf '%s' "$1"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Workload readiness: the pod-spec settings that decide whether autoscaling this
 # workload is safe, reported by the plan and emitted here as a patch.
@@ -2147,8 +2161,9 @@ so_workload_patch_plan() {
     # as keeping its caches while FlashInfer builds its kernels under HOME on
     # every start. With the engine-cache half the new variable comes with it;
     # without it, the FlashInfer half (want_fib) sets FLASHINFER_WORKSPACE_BASE
-    # to the old value: FlashInfer puts .cache/flashinfer/ under it, so the
-    # kernels land in the directory the old variable named. Once the workload
+    # to the old value keyed by image (so_flashinfer_base): FlashInfer puts
+    # .cache/flashinfer/ under it, so the kernels land under the directory the
+    # old variable named. Once the workload
     # sets FLASHINFER_WORKSPACE_BASE, fi is empty and this is silent.
     case "$fi" in
         dir:*)
@@ -2158,7 +2173,9 @@ so_workload_patch_plan() {
                 log_warning "  $who sets FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read; the engine-cache half sets FLASHINFER_WORKSPACE_BASE instead -- drop FLASHINFER_WORKSPACE_DIR."
             elif [[ "$fibase" =~ ^/[A-Za-z0-9._/-]*$ ]]; then
                 want_fib=1
-                log_warning "  $who BUILDS ITS FLASHINFER KERNELS AGAIN on every start: it sets FLASHINFER_WORKSPACE_DIR=$fibase, which FlashInfer does not read, so they go under \$HOME/.cache/flashinfer in the container. Set FLASHINFER_WORKSPACE_BASE=$fibase instead (FlashInfer adds .cache/flashinfer/ under it); see docs/reference/workload-preparation.md#flashinfer-kernels."
+                local olddir="$fibase"
+                fibase="$(so_flashinfer_base "$olddir" "$image")"
+                log_warning "  $who BUILDS ITS FLASHINFER KERNELS AGAIN on every start: it sets FLASHINFER_WORKSPACE_DIR=$olddir, which FlashInfer does not read, so they go under \$HOME/.cache/flashinfer in the container. Set FLASHINFER_WORKSPACE_BASE=$fibase instead (FlashInfer adds .cache/flashinfer/ under it; the last component keys it by image); see docs/reference/workload-preparation.md#flashinfer-kernels."
             else
                 # From a ConfigMap or a Secret, or not a plain absolute path:
                 # said, not written into a YAML value.
@@ -2243,12 +2260,14 @@ CACHEENV
         # The three caches vLLM keeps between runs. They are keyed by a hash of
         # the engine config, so a changed model, flag or version misses rather
         # than hits stale, and one claim serves every model in the namespace.
-        # FlashInfer adds .cache/flashinfer/ under its base, so its kernels and
-        # downloaded cubins land in ${emount}/flashinfer/.cache/flashinfer/.
+        # FlashInfer is the exception: older releases key its directory by GPU
+        # architecture only, so the base is keyed by the image, as the bytecode
+        # is. FlashInfer adds .cache/flashinfer/ under it, so its kernels and
+        # downloaded cubins land in $(so_flashinfer_base "${emount}/flashinfer" "${image}")/.cache/flashinfer/.
         - name: VLLM_CACHE_ROOT
           value: ${emount}/vllm
         - name: FLASHINFER_WORKSPACE_BASE
-          value: ${emount}/flashinfer
+          value: $(so_flashinfer_base "${emount}/flashinfer" "${image}")
         - name: TRITON_CACHE_DIR
           value: ${emount}/triton
 ENGINEENV

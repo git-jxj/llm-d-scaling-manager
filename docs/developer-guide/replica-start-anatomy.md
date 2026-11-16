@@ -57,8 +57,8 @@ Seconds:
   kernels: the patch set `FLASHINFER_WORKSPACE_DIR`, which FlashInfer does not
   read, so they went to `$HOME/.cache/flashinfer` in the container. Any
   FlashInfer build is in both columns. From v0.11.2 the patch sets
-  `FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer`, and they land in
-  `flashinfer/.cache/flashinfer/` on the node.
+  `FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/<image key>`, and they land in
+  `flashinfer/<image key>/.cache/flashinfer/` on the node.
 
 ## Not levers
 

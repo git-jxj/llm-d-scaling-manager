@@ -528,7 +528,7 @@ containers:
         mountPath: /engine-cache
     env:
       - {name: VLLM_CACHE_ROOT,          value: /engine-cache/vllm}
-      - {name: FLASHINFER_WORKSPACE_BASE, value: /engine-cache/flashinfer}
+      - {name: FLASHINFER_WORKSPACE_BASE, value: /engine-cache/flashinfer/<image key>}
       - {name: TRITON_CACHE_DIR,         value: /engine-cache/triton}
       - {name: PYTHONPYCACHEPREFIX,      value: /engine-cache/pycache/<image key>}
 ```
@@ -780,14 +780,16 @@ directory. The last block is emitted for vLLM only
 #### FlashInfer kernels
 
 FlashInfer reads one variable for where it keeps what it builds,
-`FLASHINFER_WORKSPACE_BASE`, and adds `.cache/flashinfer/` under it. With
-`FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer`:
+`FLASHINFER_WORKSPACE_BASE`, and adds `.cache/flashinfer/` under it.
+`make workload-patch` writes
+`FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/<image key>`, with the
+same `<image key>` as the bytecode. Then:
 
 | what | where |
 |---|---|
-| kernels it compiles on first use | `/engine-cache/flashinfer/.cache/flashinfer/<arch>/cached_ops/` |
-| the sources it generates for them | `/engine-cache/flashinfer/.cache/flashinfer/<arch>/generated/` |
-| kernels it downloads (cubins, FlashInfer 0.3 and later) | `/engine-cache/flashinfer/.cache/flashinfer/cubins/` |
+| kernels it compiles on first use | `/engine-cache/flashinfer/<image key>/.cache/flashinfer/<arch>/cached_ops/` |
+| the sources it generates for them | `/engine-cache/flashinfer/<image key>/.cache/flashinfer/<arch>/generated/` |
+| kernels it downloads (cubins, FlashInfer 0.3 and later) | `/engine-cache/flashinfer/<image key>/.cache/flashinfer/cubins/` |
 
 Newer FlashInfer releases put a version directory before `<arch>`. Unset, the
 same tree goes under `$HOME` in the container and is built again on every
@@ -800,7 +802,7 @@ start.
   FlashInfer does not read that variable, so no engine cache held FlashInfer
   kernels. Run `make workload-patch` again. A workload that still sets the old
   variable is reported as `BUILDS ITS FLASHINFER KERNELS AGAIN`, and the file
-  sets `FLASHINFER_WORKSPACE_BASE` to the same path. That is a variable with
+  sets `FLASHINFER_WORKSPACE_BASE` under the same path, keyed by image. That is a variable with
   no volume, so it is written to the file and never applied: put it in your
   chart values, remove `FLASHINFER_WORKSPACE_DIR`, and rename it in the
   guard's loop if your command carries the guard. Once the workload sets
@@ -822,9 +824,11 @@ start.
 - **Filling it.** On each node the first start of each engine configuration
   fills it. With a seed, run `make engine-cache-publish` once every
   configuration has started, as for the other directories.
-- **One FlashInfer version per directory.** Older FlashInfer releases have no
-  version in the path, so two images with different FlashInfer versions share
-  one directory. Keep them on separate engine-cache directories.
+- **One directory per image.** FlashInfer 0.2 and 0.3 put no version in the
+  path, so two images with different FlashInfer builds would share one tree.
+  That is why the base is keyed by image. The warm pool and the benchmark
+  scenarios use a plain `flashinfer/` directory instead: each pins one engine
+  image. Do not point two images at one of them.
 
 #### Check the cache without a second start
 

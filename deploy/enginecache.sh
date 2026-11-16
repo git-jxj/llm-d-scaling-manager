@@ -169,7 +169,7 @@
 # mounts it read-write at, say, /engine-cache and points VLLM_CACHE_ROOT,
 # FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR under it (FlashInfer adds
 # .cache/flashinfer/ under its base, so its kernels and cubins land in
-# flashinfer/.cache/flashinfer/; seed and publish copy that tree as they copy
+# flashinfer/<image key>/.cache/flashinfer/; seed and publish copy that tree as they copy
 # the rest, and an empty flashinfer/ -- every node prepared before v0.11.2,
 # when the patch set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not
 # read -- is nothing to copy, not an error) -- and keeps a guard
