@@ -253,3 +253,34 @@ func TestFetchScaleTarget_DisaggregatedSetRoleScaler(t *testing.T) {
 	_, err = FetchScaleTarget(context.Background(), c, "va", constants.DisaggregatedSetRoleScalerKind, "glm-prefill", dsetNS)
 	assert.True(t, apierrors.IsNotFound(err), "set named by label is read: %v", err)
 }
+
+// A Static role has no role scaler; the role writer registers it under the
+// name a scaler would have, <set>-<role>, and the target is read from the set.
+// Set and role names may both hold dashes.
+func TestFetchScaleTarget_StaticRoleFromTheSet(t *testing.T) {
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(dsetGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(dsetRoleScalerGVK, &unstructured.Unstructured{})
+
+	set := dsetFixture()
+	set.SetName("glm-v2")
+	roles, _, _ := unstructured.NestedSlice(set.Object, "spec", "roles")
+	delete(roles[1].(map[string]any), "scaling") // decode: Static
+	require.NoError(t, unstructured.SetNestedSlice(set.Object, roles, "spec", "roles"))
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(set).Build()
+
+	acc, err := FetchScaleTarget(context.Background(), c, "va", constants.DisaggregatedSetRoleScalerKind, "glm-v2-decode", dsetNS)
+	require.NoError(t, err)
+	assert.True(t, IsStaticDisaggregatedSetRole(acc))
+	assert.Equal(t, "glm-v2-decode", acc.GetName())
+	assert.Equal(t, int32(7), *acc.GetReplicas(), "the role's spec.replicas")
+	assert.Equal(t, int32(7), acc.GetStatusReplicas())
+	assert.Equal(t, map[string]string{
+		constants.DisaggregatedSetNameLabelKey: "glm-v2",
+		constants.DisaggregatedSetRoleLabelKey: "decode",
+	}, GroupPodLabels(acc))
+
+	// prefill is External with no scaler yet: not found, not read from the set.
+	_, err = FetchScaleTarget(context.Background(), c, "va", constants.DisaggregatedSetRoleScalerKind, "glm-v2-prefill", dsetNS)
+	assert.True(t, apierrors.IsNotFound(err), "%v", err)
+}

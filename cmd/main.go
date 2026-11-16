@@ -62,6 +62,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/controllerstatus"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/datastore"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/decision"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/dsetwriter"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/allocation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/throughput"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/scalefromzero"
@@ -1186,6 +1187,27 @@ func main() {
 	if err := mgr.AddReadyzCheck("external-scaler", externalScaler.Ready); err != nil {
 		setupLog.Error(err, "unable to register the KEDA external scaler readiness check")
 		os.Exit(1)
+	}
+
+	// The DisaggregatedSet role writer (DSET_ROLE_WRITER, off by default): the
+	// actuation path for Static roles, which have no /scale for KEDA. Leader
+	// only. Unstructured reads are uncached, so no informer on the sets; the
+	// watched namespaces, or every namespace on a cluster-scoped install.
+	if cfg.DSetRoleWriterEnabled() {
+		writerNamespaces := readableWatched
+		if watchNS == "" {
+			writerNamespaces = nil
+		}
+		if err := mgr.Add(&dsetwriter.Writer{
+			Client:     mgr.GetClient(),
+			Registry:   registry.Default,
+			Decisions:  decision.Default,
+			Recorder:   mgr.GetEventRecorderFor("scaling-manager-dset-role-writer"), //nolint:staticcheck // SA1019: core/v1 events; see the configmap reconciler
+			Namespaces: writerNamespaces,
+		}); err != nil {
+			setupLog.Error(err, "unable to add the DisaggregatedSet role writer to the manager")
+			os.Exit(1)
+		}
 	}
 
 	// The KEDA HPA repair (KEDA_HPA_REPAIR, off by default): on KEDA 2.19 and

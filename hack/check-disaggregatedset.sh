@@ -138,6 +138,8 @@ assert_eq "$(so_dset_role_block glm decode External 1 0)" "" "External, slices 1
 out="$(so_dset_role_block glm decode Static 1 0)"
 assert_contains "$out" "scaling.mode: External"
 assert_contains "$out" "DisaggregatedSetRoleScaler glm-decode"
+# ...and the second path, for a role that cannot take the first.
+assert_contains "$out" "scaling-manager.llmd.ai/role-writer=true"
 assert_contains "$(so_dset_role_block glm decode External 2 0)" "slices: 1"
 assert_contains "$(so_dset_role_block glm decode External 1 2)" "sub-roles"
 [ "$FAILED" -eq "$before" ] && ok

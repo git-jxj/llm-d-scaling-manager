@@ -107,11 +107,12 @@ var advancedSettingKeys = []string{
 	"LEARNED_STATE_BUCKET_RETENTION",
 	"LEARNED_STATE_SNAPSHOT",
 	"KEDA_HPA_REPAIR",
+	"DSET_ROLE_WRITER",
 }
 
 // advancedBoolSettingKeys are the advanced keys that take true or false
 // rather than a duration.
-var advancedBoolSettingKeys = []string{"LEARNED_STATE_SNAPSHOT", "KEDA_HPA_REPAIR"}
+var advancedBoolSettingKeys = []string{"LEARNED_STATE_SNAPSHOT", "KEDA_HPA_REPAIR", "DSET_ROLE_WRITER"}
 
 // Values of the utilizationShare setting.
 const (

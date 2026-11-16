@@ -127,6 +127,7 @@ CrashLoopBackOff
 CreateContainerConfigError
 CreateContainerError
 D
+DSET_ROLE_WRITER
 DataParallelRanks
 Datastore
 DecodeEngineMeasured

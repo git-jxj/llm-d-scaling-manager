@@ -10,7 +10,7 @@ most installs need are on that page.
 Manager ConfigMap keys can also be set as environment variables of the same
 name on the controller Deployment. All of these need a restart.
 `GLOBAL_OPT_INTERVAL`, the `PROMETHEUS_METRICS_CACHE_*` keys, the
-`LEARNED_STATE_*` keys and `KEDA_HPA_REPAIR` can also be set, under the same names, in the
+`LEARNED_STATE_*` keys, `KEDA_HPA_REPAIR` and `DSET_ROLE_WRITER` can also be set, under the same names, in the
 [settings ConfigMap](configuration.md#the-settings-configmap), which wins.
 
 | Name | Where set | Default | Change it when |
@@ -28,6 +28,7 @@ name on the controller Deployment. All of these need a restart.
 | `SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY` | Environment | `10` | many models wake from zero at once |
 | `LEARNED_STATE_EPISODE_GAP`, `LEARNED_STATE_VARIANT_TIMEOUT`, `LEARNED_STATE_BUCKET_RETENTION` | Environment | `24h`, `24h`, `168h` | you test learned-state expiry in a short run ([details](install-options.md#advanced)) |
 | `KEDA_HPA_REPAIR` | Installer variable; also read from the environment or settings | `false` | your KEDA is 2.19 or older and cannot be upgraded: the controller then repairs HPAs KEDA left on the CPU default. Set it through the installer, which also grants the HPA access ([details](keda.md#the-controller-repair-keda_hpa_repair)) |
+| `DSET_ROLE_WRITER` | Environment, through the `config/components/dset-role-writer` component; also read from settings | `false` | a DisaggregatedSet role cannot use a role scaler (Static mode, or LWS before v0.10.0): the controller then writes `spec.roles[].spec.replicas` of sets annotated `scaling-manager.llmd.ai/role-writer`. The component grants `patch` on `disaggregatedsets` ([details](../proposals/disaggregatedset.md#the-second-path-writing-a-static-roles-replicas)) |
 | `CONTROLLER_INSTANCE` | Environment | empty | several controllers share a cluster. Each then manages only ScaledObjects labelled `scaling-manager.llmd.ai/controller-instance=<value>`, labels its metrics with it, and cleans up only its own transfer marks |
 | `POOL_GROUP` | Environment | `inference.networking.k8s.io` | your InferencePools use another API group |
 | `--v`; installer `LLMSM_VERBOSITY` | Flag | `2` | debugging: `3` adds per-replica capacity lines, `4` is debug |
