@@ -18,7 +18,7 @@ name on the controller Deployment. All of these need a restart.
 | `GLOBAL_OPT_INTERVAL` | Manager ConfigMap | `15s` (at least `1s`, else `15s`) | a very large fleet needs a slower decision cycle |
 | `PROMETHEUS_TOKEN_PATH` | Environment | the controller's ServiceAccount token | your Prometheus wants another bearer token file |
 | `PROMETHEUS_BEARER_TOKEN` | Environment | empty | avoid it: it puts a secret in plain configuration. Use a token file |
-| `PROMETHEUS_ALLOW_HTTP`; setting `prometheusAllowHTTP` | Environment or settings | `false` | your Prometheus serves plain HTTP only. Empty `PROMETHEUS_TOKEN_PATH` too: the controller sends no token over HTTP (`smt install --allow-http` does both) |
+| `PROMETHEUS_ALLOW_HTTP`; setting `prometheusAllowHTTP` | Environment or settings | `false` | your Prometheus serves plain HTTP only. `PROMETHEUS_TOKEN_PATH` must then be unset: the controller sends no token over HTTP (`smt install --allow-http` does both). The token path has no setting; an environment variable beats `config.yaml`, and a setting beats both. An empty variable counts as unset, so `config.yaml` must not set a token either |
 | `PROMETHEUS_CLIENT_CERT_PATH`, `PROMETHEUS_CLIENT_KEY_PATH` | Environment | empty | your Prometheus requires a client certificate |
 | `PROMETHEUS_SERVER_NAME`; setting `prometheusServerName` | Environment or settings | empty | Prometheus' certificate names a different host than its URL |
 | `PROMETHEUS_METRICS_CACHE_TTL`, `_CLEANUP_INTERVAL`, `_FETCH_INTERVAL` | Manager ConfigMap | `30s`, `1m`, `30s` | your scrape interval is longer than 30 s |

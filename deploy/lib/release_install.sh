@@ -533,7 +533,8 @@ smt_settings() {
 # The URL the controller will read decides --allow-http (smt_check_scheme): the
 # one in the live settings when they exist, since they are never written, else
 # the one the flag gives. A flag URL of the other scheme than the live one is
-# a switch the settings must make first: the refusal prints both patches.
+# a switch the settings must make first: the refusal prints every patch it
+# needs (smt_switch_patches).
 smt_settings_preconditions() {
     local live allow want=false had=false
     if smt_get configmap "$SMT_SETTINGS" -n "$SMT_NS"; then
@@ -542,13 +543,12 @@ smt_settings_preconditions() {
         smt_is_http "$live" && had=true
         [ -n "$SMT_PROM_URL" ] && smt_is_http "$SMT_PROM_URL" && want=true
         if [ -n "$live" ] && [ -n "$SMT_PROM_URL" ] && [ "$had" != "$want" ]; then
-            smt_usage "prometheusURL in the live $SMT_SETTINGS is $live, and --prometheus-url $SMT_PROM_URL changes its scheme. install never writes existing settings: change them first, then run this again with the same flags:
-  $(smt_patch_cmd prometheusURL "$SMT_PROM_URL")
-  $(smt_patch_cmd prometheusAllowHTTP "$want")"
+            smt_usage "prometheusURL in the live $SMT_SETTINGS is $live, and --prometheus-url $SMT_PROM_URL changes its scheme. install never writes existing settings: run these, then the same command again right away (until then a controller restart fails):
+$(smt_switch_patches "$want" | sed 's/^/  /')"
         fi
         [ -z "$live" ] || smt_check_scheme "$live" "prometheusURL in the live $SMT_SETTINGS ($live)"
         if [ "$SMT_ALLOW_HTTP" = true ] && [ "$allow" != true ]; then
-            smt_usage "--allow-http, and prometheusAllowHTTP in the live $SMT_SETTINGS is \"$allow\", not \"true\": the controller would refuse the http URL. install never writes existing settings: set it first, then run this again with the same flags:
+            smt_usage "prometheusAllowHTTP in the live $SMT_SETTINGS is \"$allow\", not \"true\", so the controller would refuse the http URL. install never writes existing settings: run this, then the same command again:
   $(smt_patch_cmd prometheusAllowHTTP true)"
         fi
         return 0
@@ -561,6 +561,25 @@ smt_settings_preconditions() {
         else
             smt_usage "no $SMT_SETTINGS in $SMT_NS yet, and no --prometheus-url: give the Prometheus base URL, https (http with --allow-http)"
         fi
+    fi
+}
+
+# smt_switch_patches <to http: true|false>: the kubectl patches, one a line,
+# that switch the live settings (KC_OUT) to SMT_PROM_URL. To http: allow it,
+# and clear the TLS settings the controller refuses beside an http URL. To
+# https: stop allowing http, and with --prometheus-ca point at its CA.
+smt_switch_patches() {
+    local to_http="$1" v
+    smt_patch_cmd prometheusURL "$SMT_PROM_URL"
+    smt_patch_cmd prometheusAllowHTTP "$to_http"
+    if [ "$to_http" = true ]; then
+        v="$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusInsecureSkipVerify // ""' | tr 'A-Z' 'a-z')"
+        case "$v" in true|t|1) smt_patch_cmd prometheusInsecureSkipVerify false ;; esac
+        for v in prometheusCACertPath prometheusServerName; do
+            [ -z "$(printf '%s' "$KC_OUT" | jq -r --arg k "$v" '.data[$k] // ""')" ] || smt_patch_cmd "$v" ""
+        done
+    elif [ -n "$SMT_PROM_CA" ] && [ "$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusCACertPath // ""')" != "$SMT_PROM_CA_PATH" ]; then
+        smt_patch_cmd prometheusCACertPath "$SMT_PROM_CA_PATH"
     fi
 }
 
@@ -1024,7 +1043,7 @@ smt_admin_setup() {
     echo "Stamp: ConfigMap $SMT_STAMP ($(smt_version), KEDA in $SMT_KEDA_NS)."
     echo
     echo "Done. The namespace owner runs next, with their own kubeconfig:"
-    echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>"
+    echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>   (an http:// Prometheus: add --allow-http)"
 }
 
 # smt_install: the part of the namespace owner, or with --scope cluster everything.

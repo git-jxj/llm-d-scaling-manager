@@ -450,6 +450,30 @@ else
     fail "the rendered files break the rules above"
 fi
 
+# The sed the install guides give for a plain HTTP Prometheus, and the one the
+# preflight prints (tokenPathSedExpr), are one program, and it empties
+# PROMETHEUS_TOKEN_PATH in each main file by changing exactly that one line.
+Q="'"
+sed_exprs="$( { for g in install-in-namespace install-cluster-wide; do
+        grep 'serviceaccount/token' "$ROOT/docs/guides/$g/README.md" | grep -o "sed -i $Q[^$Q]*$Q" | sed "s/^sed -i $Q//; s/$Q\$//"
+    done
+    grep -o 'const tokenPathSedExpr = `[^`]*`' "$ROOT/internal/preflight/prometheus.go" | sed 's/^const tokenPathSedExpr = `//; s/`$//'
+} | tr -d '\r')"
+nexpr="$(printf '%s\n' "$sed_exprs" | grep -c .)"
+prog="$(printf '%s\n' "$sed_exprs" | sort -u)"
+if [ "$nexpr" -ge 3 ] && [ "$(printf '%s\n' "$prog" | wc -l)" = 1 ] && [ -n "$prog" ]; then
+    pass
+    for f in $MAIN_FILES; do
+        cp "$GOOD/$f" "$WORK/sed-$f"
+        sed -i "$prog" "$WORK/sed-$f"
+        changed="$(diff "$GOOD/$f" "$WORK/sed-$f" | grep -c '^>')"
+        tok="$(yq ea -o json -I 0 'select(.kind == "Deployment")' "$WORK/sed-$f" | jq -c '[.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value]')"
+        if [ "$changed" = 1 ] && [ "$tok" = '[""]' ]; then pass; else fail "$f: the guide sed changed $changed lines, token path $tok"; fi
+    done
+else
+    fail "the guides and the preflight do not give one token-path sed ($nexpr found): $prog"
+fi
+
 # The renderer refuses what would break a rule at the source, and takes a
 # registry with a port.
 for bad_image in "$REPO:v0.11.0" "$REPO:main@$DIGEST" "$REPO@sha256:abc" "localhost:5000/scaling-manager:dev@$DIGEST" "@$DIGEST"; do

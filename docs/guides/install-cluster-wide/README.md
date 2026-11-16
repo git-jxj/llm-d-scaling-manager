@@ -64,8 +64,14 @@ smt install --scope cluster --keda-namespace <the namespace KEDA runs in> \
 <!-- guide:tools.install end -->
 
 Prometheus serves plain HTTP only? Give its `http://` URL and add
-`--allow-http`, on every run: the controller then reads it unencrypted and
-sends it no token. Without the flag, `install` refuses an `http://` URL.
+`--allow-http`, on every `smt install` run (not `admin-setup` or
+`admin-finish`): the controller then reads it unencrypted and sends it no
+token. Without the flag, `install` refuses an `http://` URL.
+
+```bash
+smt install --scope cluster --keda-namespace <the namespace KEDA runs in> \
+  --prometheus-url http://<prometheus>:9090 --model-namespace <model namespace> --allow-http
+```
 
 It stops on a preflight `FAIL` and prints its fix. Run it again at any time:
 it changes nothing that is already right, and never writes existing
@@ -125,6 +131,22 @@ sed -i "s#kubernetes.io/metadata.name: keda\$#kubernetes.io/metadata.name: $KEDA
 ```
 <!-- guide:deploy.kedans end -->
 
+If Prometheus serves plain HTTP only, set `prometheusURL` to its `http://`
+URL and `prometheusAllowHTTP` to `"true"` in `scaling-manager-settings.yaml`
+before you create it, and empty the token path the controller would
+otherwise send over it:
+
+```bash
+# Only for a plain HTTP Prometheus. Unencrypted, and the controller sends no token.
+sed -i 's#value: /var/run/secrets/kubernetes.io/serviceaccount/token$#value: ""#' scaling-manager-cluster.yaml
+```
+
+Repeat this `sed` on every release's file you apply (an upgrade too), or the
+controller gets its token back and crash-loops. Until the controller is
+applied, the preflight's `prometheus.reachable` WARN about
+`PROMETHEUS_TOKEN_PATH` is expected, even after the `sed`: it reads the
+cluster, not the file.
+
 Set `prometheusURL` in `scaling-manager-settings.yaml`, then:
 
 <!-- guide:deploy.settings start -->
@@ -160,16 +182,6 @@ kubectl patch configmap scaling-manager-settings -n scaling-manager-system --typ
   -p '{"data":{"prometheusCACertPath":"/etc/scaling-manager-prometheus-ca/ca.crt"}}'
 ```
 <!-- guide:deploy.promca end -->
-
-If Prometheus serves plain HTTP only, set an `http://` `prometheusURL`, allow
-it, and drop the token the controller would otherwise send over it. Edit the
-file, so applying it again keeps the change:
-
-```bash
-# Only for a plain HTTP Prometheus. Unencrypted, and the controller sends no token.
-kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge -p '{"data":{"prometheusAllowHTTP":"true"}}'
-sed -i 's#value: /var/run/secrets/kubernetes.io/serviceaccount/token$#value: ""#' scaling-manager-cluster.yaml
-```
 
 When you are done with the preflight (after step 3), remove its cluster-wide
 reads; applying the preflight file again restores them:

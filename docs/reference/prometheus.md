@@ -309,23 +309,19 @@ the service CA.
   export PROMETHEUS_TLS_INSECURE_SKIP_VERIFY=true
   ```
 - If your Prometheus is reachable only over plain HTTP (e.g. `kube-prometheus-stack`'s
-  default in-cluster service), set `PROMETHEUS_ALLOW_HTTP=true` and use an
-  `http://` `PROMETHEUS_BASE_URL`. The controller refuses to start if
-  `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY`, `PROMETHEUS_SERVER_NAME`, any
-  `PROMETHEUS_CA_CERT_PATH`/client cert setting, or bearer token auth is set
-  alongside it. Everything travels in cleartext, so use it only on a trusted
-  network (dev/test or a secured in-cluster path).
-- The release files set `PROMETHEUS_TOKEN_PATH` on the controller's Deployment.
-  The token path has no setting, and an environment variable beats
-  `config.yaml` (a setting beats both). An empty variable counts as unset, so
-  `config.yaml` must not set a token either. For a plain HTTP Prometheus,
-  `smt install --prometheus-url http://... --allow-http` sets the
-  `prometheusAllowHTTP` setting and applies the Deployment with that variable
-  empty, on every run; it also repairs a controller already crash-looping on
-  it. By hand: [Install in one
+  default in-cluster service), install with
+  `smt install --prometheus-url http://<prometheus>:9090 --allow-http`, on
+  every `smt install` run. It sets the `prometheusAllowHTTP` setting and
+  applies the controller without `PROMETHEUS_TOKEN_PATH`, which the release
+  files set and the controller refuses to send over HTTP; it also repairs a
+  controller already crash-looping on it. By hand: [Install in one
   namespace](../guides/install-in-namespace/README.md#2-settings-and-the-preflight-check).
-  The preflight FAILs a plain HTTP URL while a token or a TLS setting is still
-  configured, and WARNs before the controller exists.
+  The controller also refuses `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY`,
+  `PROMETHEUS_SERVER_NAME`, a CA or client certificate beside an http URL; the
+  preflight FAILs each with the command that removes it. Where each value is
+  read from: [advanced configuration](configuration-advanced.md). Everything
+  travels in cleartext, so use it only on a trusted network (dev/test or a
+  secured in-cluster path).
 
 ### EPP metrics token
 

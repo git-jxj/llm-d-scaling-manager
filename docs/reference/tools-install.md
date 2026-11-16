@@ -82,10 +82,17 @@ only when KEDA's side changed.
 
 If the settings already exist, `install` never writes them. A flag that
 differs from the live value is reported with the `kubectl patch` that would
-change it, and the install goes on. To change the scheme of a live
-`prometheusURL` (http to https or back), run `install` with the new URL: it
-stops before any write and prints the two patches, for `prometheusURL` and
-`prometheusAllowHTTP`; apply them, then run the same command again.
+change it, and the install goes on. Two cases stop instead, before any
+write, and print the patches to run (exit 2):
+
+- A new URL of the other scheme (http to https or back): the patches for
+  `prometheusURL` and `prometheusAllowHTTP`, and to http also those that
+  clear `prometheusCACertPath`, `prometheusServerName` and
+  `prometheusInsecureSkipVerify` when they are set. Run them, then the same
+  command again right away: until then a controller restart fails, since the
+  live Deployment still has the token setting of the old scheme.
+- `--allow-http` while the live `prometheusAllowHTTP` is not `"true"`: the
+  patch that sets it. Run the printed `kubectl patch`, then the same command.
 
 ## Exit codes
 
@@ -95,7 +102,7 @@ The same for every command.
 | --- | --- | --- |
 | 0 | done; `WARN` and `UNKNOWN` lines, if any, are in the summary | |
 | 1 | the preflight has a `FAIL`: `install` stopped before the controller, or `admin-finish` kept the preflight binding | apply the fix printed under each `FAIL`, run again |
-| 2 | usage: an unknown flag, a missing value, a bad namespace name; or release files that fail their `SHA256SUMS` or are another release; or an image without files and no `--files` | fix the command |
+| 2 | usage: an unknown flag, a missing value, a bad namespace name; or release files that fail their `SHA256SUMS` or are another release; or an image without files and no `--files`; or live settings that `--prometheus-url` or `--allow-http` disagree with (a scheme switch, or `--allow-http` while `prometheusAllowHTTP` is not `"true"`) | fix the command; for the settings, run the printed `kubectl patch`, then the same command |
 | 3 | needs the cluster admin: no stamp, or a stamp from other admin objects (an upgrade that changes them) | the admin runs the `smt admin-setup` line printed |
 | 4 | the cluster is not ready, or needs a person: the namespace does not exist (or you may not read it), KEDA's namespace cannot be found or disagrees with the stamp, KEDA's side was refused (an object of its name this tool did not write, or one it cannot read; the line prints the `kubectl delete` and the command to run again), the controller was installed with `make`, or `admin-finish` ran before `install` | the line says which |
 | 5 | timed out: the controller rollout, the client certificate, the preflight Job, or `scalerTLS: mutual TLS` | the line names the command that shows why |
