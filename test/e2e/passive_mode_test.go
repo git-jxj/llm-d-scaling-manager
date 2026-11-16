@@ -629,9 +629,7 @@ func sendQueuedRequests(name, modelID string) {
 	if poolRef == "" {
 		poolRef = strings.TrimSuffix(cfg.EPPServiceName, "-epp")
 	}
-	// Optional: with no InferenceObjective API, requests still queue at the
-	// default priority 0.
-	_, err := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRef)
+	err := fixtures.EnsureInferenceObjectiveOptional(ctx, crClient, cfg.LLMDNamespace, poolRef, GinkgoWriter.Printf)
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(func() { _ = fixtures.DeleteInferenceObjective(ctx, crClient, cfg.LLMDNamespace) })
 	job := createScaleFromZeroTriggerJob(name, cfg.LLMDNamespace, discoverInferenceGateway(), modelID)

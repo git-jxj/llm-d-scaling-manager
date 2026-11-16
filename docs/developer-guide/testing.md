@@ -2063,9 +2063,11 @@ tests do. The controller goes into `CONTROLLER_NAMESPACE`, which defaults to
 - **Scale to zero.** With `SCALE_TO_ZERO_ENABLED=true`, `install-epp.sh`
   enables the EPP flowControl feature gate, so it exposes
   `llm_d_epp_flow_control_queue_size`. The scale-from-zero tests
-  create the `e2e-default` InferenceObjective themselves, in `llm-d.ai/v1`
-  when the cluster serves it (the only group router v1.0.0 reads) and in
-  `inference.networking.x-k8s.io` otherwise. It is optional: its priority is
+  create the `e2e-default` InferenceObjective themselves, in the first form
+  the cluster serves: `llm-d.ai/v1`, `llm-d.ai/v1alpha2` (both read by router
+  v1.0.0), then `inference.networking.x-k8s.io`, which only older routers
+  read. The kind setup installs only the x-k8s CRD (GAIE), so there the
+  object is the x-k8s one and v1.0.0 ignores it. It is optional: its priority is
   0, the default an unclassified request gets anyway, so with neither API the
   tests run the same and do not skip.
 - **Kueue.** Two specs, see [Kueue specs](#kueue-specs): the quota spec in

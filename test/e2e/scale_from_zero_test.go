@@ -398,12 +398,8 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		if poolRefName == "" {
 			poolRefName = strings.TrimSuffix(eppServiceName, "-epp")
 		}
-		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRefName)
-		Expect(errIO).NotTo(HaveOccurred(), "EnsureInferenceObjective should not return a hard error")
-		if !ioApplied {
-			// Optional: an unclassified request queues at priority 0 as well.
-			GinkgoWriter.Println("No InferenceObjective API on this cluster; requests queue at the default priority 0")
-		}
+		Expect(fixtures.EnsureInferenceObjectiveOptional(ctx, crClient, cfg.LLMDNamespace, poolRefName, GinkgoWriter.Printf)).
+			To(Succeed(), "EnsureInferenceObjectiveOptional should not return a hard error")
 		DeferCleanup(func() {
 			_ = fixtures.DeleteInferenceObjective(context.Background(), crClient, cfg.LLMDNamespace)
 		})
