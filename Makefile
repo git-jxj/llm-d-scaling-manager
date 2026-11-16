@@ -3266,6 +3266,9 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/benchmark/file_capture.sh
 	@bash -n hack/benchmark/staircase.sh
 	@bash -n hack/check-staircase.sh
+	@# The flow-control gate replay (docs/proposals/slo-capacity-planner-ttft.md,
+	@# "As built: the router stage"); the cache prefix keeps .pyc out of the tree.
+	@PYTHONPYCACHEPREFIX=$${TMPDIR:-/tmp}/llmsm-pycache python3 -m py_compile hack/benchmark/replay_fc_gate.py
 	@bash -n hack/check-install-flow.sh
 	@bash -n hack/check-cluster-namespace-checks.sh
 	@bash -n hack/check-watch-namespace-list.sh

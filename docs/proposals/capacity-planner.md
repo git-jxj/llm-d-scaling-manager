@@ -171,12 +171,13 @@ The rule: **no number on screen without what it rests on.**
     (`constants.SLOTTFTPredictionCaveat`), so it cannot drift from the model.
   - `AboveFlowControlOnset`: the rate is past where the router starts holding
     requests; the TTFT is priced, and the region is drawn shaded.
-  - `FlowControlWaitPriced`: the same region with the experimental
-    router-wait switch on. The API has no such switch: it reads fleets as the
-    CLI does, at the shared default (`whatif.DefaultPriceRouterWait`, off),
-    so it shows `AboveFlowControlOnset`, as the SLO analyzer does. Its rate
-    answers stop under the prefill onset (bound `prefill flow-control
-    onset`), so a rate it answers is never one the flag calls a miss. Nor
+  - `FlowControlWaitPriced`: the same region up to 0.9 of the prefill knee
+    with the opt-in router-wait switch on, the gate priced as a stage of the
+    figure. The API has no such switch: it reads fleets as the CLI does, at
+    the shared default (`whatif.DefaultPriceRouterWait`, off), so it shows
+    `AboveFlowControlOnset`, as the SLO analyzer does. Its rate answers stop
+    under the prefill onset (bound `prefill flow-control onset`), so a rate
+    it answers is never one the flag calls a miss. Nor
     does it have switches for the onset placement (`--ps-onsets`) or the
     decode gate's charge (`--charge-decode-gate`): both are unvalidated and
     off by default, and the API answers at the shared defaults so that a
