@@ -108,14 +108,14 @@ shared:
     # place; this file was the odd one out, so the difference was invisible
     # until both were run.
     #
-    # The apiVersion is llm-d.ai/v1alpha1 — the one the working scenario uses
-    # and the one the deployed EPP reports.
+    # The apiVersion is llm-d.ai/v1, which router v1.0.0 reads; the harness
+    # default EPP is v1.0.0 (hack/benchmark/patch_harness.sh fix 6).
     router:
       epp:
         pluginsConfigFile: "scaling-manager-plugins.yaml"
         pluginsCustomConfig:
           scaling-manager-plugins.yaml: |
-            apiVersion: llm-d.ai/v1alpha1
+            apiVersion: llm-d.ai/v1
             kind: EndpointPickerConfig
             featureGates:
               - flowControl

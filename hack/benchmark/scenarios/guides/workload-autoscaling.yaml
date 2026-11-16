@@ -172,8 +172,11 @@ scenario:
         # of its own, so the disaggregation plugin migration v0.11.0 required
         # does not apply to it -- see pd-disaggregation.yaml for that, and
         # docs/reference/router-configuration.md for the migration itself.
+        #
+        # v1.0.0 since then, for the same budget; its config below uses the
+        # llm-d.ai/v1 EndpointPickerConfig apiVersion that v1.0.0 introduced.
         routerEndpointPicker:
-          tag: v0.11.0
+          tag: v1.0.0
     # =========================================================================
     # KUSTOMIZE DEPLOY METHOD   (scope: the ENTIRE stack)
     # -------------------------------------------------------------------------
@@ -267,7 +270,7 @@ scenario:
           pluginsConfigFile: "scaling-manager-plugins.yaml"
           pluginsCustomConfig:
             scaling-manager-plugins.yaml: |
-              apiVersion: llm-d.ai/v1alpha1
+              apiVersion: llm-d.ai/v1
               kind: EndpointPickerConfig
               featureGates:
                 - flowControl

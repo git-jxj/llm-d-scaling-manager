@@ -46,6 +46,7 @@ ConfigMap and the scaling policy as before. Create it once, with
 | `prometheusInsecureSkipVerify` | `true`, `false` | `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY`, else `false` | `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` | restart |
 | `prometheusCACertPath` | an absolute path in the controller's container | `PROMETHEUS_CA_CERT_PATH`, else none | `PROMETHEUS_CA_CERT_PATH` | restart |
 | `prometheusServerName` | a host name | `PROMETHEUS_SERVER_NAME`, else the URL's host | `PROMETHEUS_SERVER_NAME` | restart |
+| `prometheusAllowHTTP` | `true`, `false` | `PROMETHEUS_ALLOW_HTTP`, else `false` | `PROMETHEUS_ALLOW_HTTP` | restart. With `true`, the Deployment must not set `PROMETHEUS_TOKEN_PATH` ([plain HTTP](prometheus.md#security-considerations)) |
 | **`passive`** | `true`, `false` | the policy `default` entry's `passive`, else `LLMSM_PASSIVE`, else `false` | `LLMSM_PASSIVE` | **live** |
 | **`utilizationShare`** | `off`, `shadow`, `active` | the policy `default` entry's `optimizer` block | `make utilization-share-shadow`, `-activate`, `-off` | **live** |
 | `limiter` | `gpu-inventory`, `quota`, or `gpu-inventory,quota` | the policy `default` entry's `limiters`. There is no `none`: to drop a limiter the policy declares, edit the policy | `LLMSM_LIMITER` | live |

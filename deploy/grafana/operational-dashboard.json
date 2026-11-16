@@ -2587,7 +2587,7 @@
           "id": 71,
           "title": "Waiting per replica (EPP per-endpoint queue)",
           "type": "timeseries",
-          "description": "Queue depth broken down per model-server replica, as the EPP sees it.\n\nEngine-agnostic and per-replica at once, which no single engine metric gives: llm-d publishes llm_d_epp_per_endpoint_queue_size (keyed by model_server_endpoint), upstream publishes inference_pool_per_pod_queue_size (keyed by model_server_pod). Both are plotted; only one will have series on a given cluster.",
+          "description": "Queue depth broken down per model-server replica, as the EPP sees it.\n\nEngine-agnostic and per-replica at once, which no single engine metric gives: llm-d publishes llm_d_epp_per_endpoint_queue_size (keyed by model_server_endpoint), upstream and llm-d routers before v1.0.0 publish inference_pool_per_pod_queue_size (keyed by model_server_pod). The first is plotted wherever a namespace has it; the second only in a namespace that does not, so a router exporting both does not show each replica twice.",
           "gridPos": {
             "h": 8,
             "w": 12,
@@ -2601,7 +2601,7 @@
               "refId": "A"
             },
             {
-              "expr": "inference_pool_per_pod_queue_size{namespace=~\"$namespace\"}",
+              "expr": "inference_pool_per_pod_queue_size{namespace=~\"$namespace\"} unless on (namespace) llm_d_epp_per_endpoint_queue_size{namespace=~\"$namespace\"}",
               "legendFormat": "{{model_server_pod}}",
               "refId": "B"
             }
