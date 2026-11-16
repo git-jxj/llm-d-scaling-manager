@@ -2750,7 +2750,20 @@ so_weights_gate_plan() {
           else [.model, .key, .claim, .vol, .mount, .sub] | join("\u001f") end' 2>/dev/null)" || return 0
     [ -n "$found" ] || return 0
     IFS=$'\037' read -r gate_model gate_key gate_claim gate_vol gate_mount gate_sub <<< "$found"
-    [ -n "$gate_key" ] || gate_key="$(llmsm_weights_node_label_key "$gate_model")"
+    # Both come from the claim's annotations, which anyone who can edit the
+    # claim writes, and both are written into the emitted document -- the
+    # model into the init container's shell script. Only what weights.sh
+    # apply itself accepts passes.
+    case "$gate_model" in
+        ""|*/*/*|/*|*/|*..*|*[!A-Za-z0-9._/-]*)
+            log_warning "  $ns/$name: the weights claim $gate_claim names model '$gate_model', which is not a Hugging Face id; the weights gate is left out."
+            return 0 ;;
+    esac
+    case "$gate_key" in
+        "") gate_key="$(llmsm_weights_node_label_key "$gate_model")" ;;
+        */*/*|*[!A-Za-z0-9._/-]*|*/) log_warning "  $ns/$name: the weights claim $gate_claim names node label '$gate_key', which is not a label key; the weights gate is left out."
+            return 0 ;;
+    esac
     # Where the model directory is inside the container: the claim holds it
     # at models/<id>, and the mount may start part of the way down.
     local rel="models/${gate_model}" mnt="${gate_mount%/}" sub="${gate_sub%/}"
@@ -2787,8 +2800,11 @@ so_weights_gate_plan() {
                (if ($terms | length) == 0 then [{matchExpressions: [$e]}]
                 else $terms | map(.matchExpressions = (((.matchExpressions // []) | map(select(.key != $key))) + [$e])) end)}}}
            elif $mode == "preferred" then
+             # A term that names the key loses that expression only; the
+             # rest of the term (a zone, a GPU) keeps its weight.
              {nodeAffinity: {preferredDuringSchedulingIgnoredDuringExecution:
-               (($pref | map(select(((.preference.matchExpressions // []) | map(.key) | index($key)) == null)))
+               (($pref | map(.preference.matchExpressions = ((.preference.matchExpressions // []) | map(select(.key != $key))))
+                       | map(select(((.preference.matchExpressions | length) + ((.preference.matchFields // []) | length)) > 0)))
                 + [{weight: 100, preference: {matchExpressions: [$e]}}])}}
            else null end) as $aff
         | "\($hasaff and $init) \($aff | if . == null or $hasaff then "" else tojson end)"' 2>/dev/null)"
@@ -2821,7 +2837,7 @@ so_weights_gate_body() {
     cat <<GATEINIT
       initContainers:
       - name: wait-for-weights
-        image: ${image}
+        image: $(jq -cn --arg v "$image" '$v')
         imagePullPolicy: IfNotPresent
         # The marker is written after the last file, so a copy still being
         # written never passes; a config is checked too, as the probe does.
@@ -2844,7 +2860,7 @@ so_weights_gate_body() {
           done
         env:
         - name: WEIGHTS_DIR
-          value: ${gate_dir}
+          value: $(jq -cn --arg v "$gate_dir" '$v')
         # How long to wait for the copy before failing (LLMSM_WEIGHTS_WAIT_TIMEOUT
         # when the patch was written; 3600 unless set).
         - name: WEIGHTS_WAIT_SECONDS
@@ -2854,10 +2870,10 @@ so_weights_gate_body() {
         - name: NVIDIA_VISIBLE_DEVICES
           value: void
         volumeMounts:
-        - name: ${gate_vol}
-          mountPath: ${gate_mount}
+        - name: $(jq -cn --arg v "$gate_vol" '$v')
+          mountPath: $(jq -cn --arg v "$gate_mount" '$v')
 GATEINIT
-    [ -z "$gate_sub" ] || echo "          subPath: ${gate_sub}"
+    [ -z "$gate_sub" ] || echo "          subPath: $(jq -cn --arg v "$gate_sub" '$v')"
     cat <<GATEINIT2
           readOnly: true
         resources:

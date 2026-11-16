@@ -517,6 +517,31 @@ echo "workload-patch gate"
     s="$(spec_of "$(doc_of)")"
     [ "$(jq -c '[.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].weight]' <<< "$s")" = "[10,100]" ] \
         && say_ok "preferred: an existing preference is carried in the emitted list" || say_fail "preferred merge: $(jq -c .affinity <<< "$s")"
+    # a preference that names the key beside a zone keeps the zone, at its weight
+    OBJ="$(dep weights-qwen3-32b-1a2b3c4d /model-cache "" '{"affinity":{"nodeAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[
+        {"weight":10,"preference":{"matchExpressions":[{"key":"zone","operator":"In","values":["a"]},{"key":"llm-d.ai/qwen3-32b-cache","operator":"Exists"}]}}]}}}')"
+    s="$(spec_of "$(doc_of)")"
+    jq -e '.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution
+           == [{weight: 10, preference: {matchExpressions: [{key: "zone", operator: "In", values: ["a"]}]}},
+               {weight: 100, preference: {matchExpressions: [{key: "llm-d.ai/qwen3-32b-cache", operator: "In", values: ["ready"]}]}}]' <<< "$s" >/dev/null \
+        && say_ok "preferred: a term naming the key loses that expression only; its zone stays at weight 10" || say_fail "preferred, shared term: $(jq -c .affinity <<< "$s")"
+    # a mount path YAML would misread unquoted reaches the init container as it is
+    OBJ="$(dep weights-qwen3-32b-1a2b3c4d '/model: #x' "")"
+    s="$(spec_of "$(doc_of)")"
+    [ "$(jq -r '.initContainers[0].volumeMounts[0].mountPath' <<< "$s")" = '/model: #x' ] \
+        && [ "$(jq -r '.initContainers[0].env[] | select(.name == "WEIGHTS_DIR") | .value' <<< "$s")" = '/model: #x/models/Qwen/Qwen3-32B' ] \
+        && say_ok "the mount path and the directory are quoted: ': #' survives" || say_fail "quoting: $(jq -c .initContainers <<< "$s")"
+    # a claim whose model annotation is not a Hugging Face id: no gate (it
+    # would be written into the init container's shell script)
+    all_pvcs="$PVCS"
+    PVCS="$(jq -c '.items[0].metadata.annotations["scaling-manager.llmd.ai/weights-model"] = "Qwen/x\"; touch /tmp/pwned; \""' <<< "$all_pvcs")"
+    OBJ="$(dep weights-qwen3-32b-1a2b3c4d /model-cache "")"
+    d="$(doc_of)"
+    w="$(so_workload_patch_doc ns1 deployments w '["spec","template"]' 2>&1 >/dev/null)"
+    PVCS="$all_pvcs"
+    [ -z "$d" ] && case "$w" in *"which is not a Hugging Face id; the weights gate is left out"*) true ;; *) false ;; esac \
+        && say_ok "a model annotation that is not a Hugging Face id gets no gate, and says so" || say_fail "bad model annotation: doc '$d' warning '$w'"
+    OBJ="$(dep weights-qwen3-32b-1a2b3c4d /model-cache "")"
     s="$(LLMSM_WEIGHTS_NODE_AFFINITY=none so_workload_patch_doc ns1 deployments w '["spec","template"]' 2>/dev/null | yq -o json -I0 'select(.kind == "Deployment") | .spec.template.spec')"
     jq -e '.affinity == null and .initContainers[0].name == "wait-for-weights"' <<< "$s" >/dev/null \
         && say_ok "none: no affinity, the init container still" || say_fail "none: $s"
