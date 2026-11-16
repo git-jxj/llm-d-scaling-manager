@@ -116,7 +116,7 @@ type Env struct {
 	// TokenPathEmptied: the controller is about to be applied with
 	// PROMETHEUS_TOKEN_PATH empty (TokenPathEmptiedEnv on the Job).
 	TokenPathEmptied bool
-	Now          func() time.Time
+	Now              func() time.Time
 }
 
 // Report is a whole run.

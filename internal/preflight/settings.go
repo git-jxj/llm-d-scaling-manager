@@ -66,7 +66,7 @@ var settingsDefaults = map[string]string{
 	keyPrometheusURL:      "",
 	keyPrometheusInsecure: "false",
 	keyPrometheusCA:       "",
-	keyPassive:          "true",
+	keyPassive:            "true",
 	keyUtilizationShare:   config.UtilizationShareSettingOff,
 	keyLimiter:            "",
 	keyQuotas:             "",
