@@ -206,7 +206,8 @@ between runs, with nothing in the output saying so.
 
 #### Migrating to v1.0.0
 
-A config that runs on v0.11.0 loads on v1.0.0. What changes:
+A config that runs on v0.11.0 loads on v1.0.0. From v0.9.0, apply
+[Migrating to v0.11.0](#migrating-to-v0110-three-changes) first. What changes:
 
 - **apiVersion.** `EndpointPickerConfig` is `llm-d.ai/v1`. `llm-d.ai/v1alpha1`
   is still read, with a deprecation line in the log; the older

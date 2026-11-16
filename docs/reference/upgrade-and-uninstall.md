@@ -108,6 +108,28 @@ only to change it. Limiters an admin published in a policy namespace
    NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace> make scaledobjects-rewire
    ```
 
+### The llm-d router: v1.0.0
+
+This tree installs the llm-d router (the EPP) at v1.0.0; v0.11.2 and earlier
+installed v0.9.0. Upgrading the scaling manager does not touch the router.
+
+- **The router you run keeps working.** The scaling manager reads the router's
+  queue under both the old and the new metric names, so a router installed by
+  v0.11.2 needs nothing.
+- **To upgrade the router, move its config with it.** Router v1.0.0 reads the
+  `EndpointPickerConfig` apiVersion `llm-d.ai/v1`; older routers cannot load
+  it. Change the apiVersion and the router version in the same rollout.
+- **Re-running `deploy/install-epp.sh` moves you to v1.0.0.** Its values are
+  `llm-d.ai/v1` now, and it refuses an `LLM_D_ROUTER_VERSION` below v1.0.0. To
+  stay on an older router, do not re-run it for that router.
+- **Your own dashboards and alerts may go empty.** v1.0.0 stops exporting the
+  `inference_extension_*`, `inference_pool_*` and `inference_objective_*`
+  names. Anything of yours that reads only those names shows nothing; move it
+  to the `llm_d_epp_*` names.
+
+What else changes in the router is in
+[router-configuration.md](router-configuration.md#migrating-to-v100).
+
 ### Moving from llm-scaling-manager
 
 This project was renamed when it moved here. Nothing is upgraded across the
