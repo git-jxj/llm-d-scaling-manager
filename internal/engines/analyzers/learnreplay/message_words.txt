@@ -140,6 +140,7 @@ DecodeTermOmitted
 DecodeTermPrefixHits
 Deleted
 Deployment
+DisaggregatedSet
 Discarding
 E1-const
 ENABLE_SCALE_TO_ZERO
