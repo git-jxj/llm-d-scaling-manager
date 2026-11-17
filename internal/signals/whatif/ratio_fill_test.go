@@ -150,7 +150,7 @@ func TestRatioByFill_InverseIsMonotone(t *testing.T) {
 		if u != nil || r.ByFill == nil {
 			continue
 		}
-		floor, _ := d.tpotAtFill(d.Band.Lo, r)
+		floor, _ := d.tpotAtFill(d.lowestFill(), r)
 		prev := 0.0
 		for _, f := range []float64{1.01, 1.1, 1.3, 1.6, 2, 3, 5, 8} {
 			target := TPOTTarget{Seconds: f * floor, Percentile: 0.9, Ratio: r}
@@ -163,13 +163,13 @@ func TestRatioByFill_InverseIsMonotone(t *testing.T) {
 			}
 			prev = a.Value
 			if slices.Contains(a.Basis.BoundBy, BoundTPOT) {
-				back, _ := d.tpotAtFill(max(a.Basis.Fill, d.Band.Lo), r)
+				back, _ := d.tpotAtFill(max(a.Basis.Fill, d.lowestFill()), r)
 				near(t, "TPOT back at the answered fill", back, target.Seconds, 1e-9*target.Seconds)
 			}
 		}
 		// At the band's bottom the curve reads at or below the global R_q;
 		// strictly below, the target is looser than one R_q makes it.
-		atLo, _ := r.At(d.Band.Lo)
+		atLo, _ := r.At(d.lowestFill())
 		if atLo >= r.Value {
 			continue
 		}
@@ -288,5 +288,21 @@ func TestRatio_CoarseBucketBoundByMean(t *testing.T) {
 		if !slices.Contains(flags, CoarseTPOTBucket) || slices.Contains(flags, MeanBoundedTPOTPercentile) != c.bounded {
 			t.Errorf("p%g flags %v, want %s, and %s %v", 100*c.q, flags, CoarseTPOTBucket, MeanBoundedTPOTPercentile, c.bounded)
 		}
+	}
+}
+
+// Fills under the band's bottom (0.15 by default) are learned and read like any
+// other: the first bucket starts at 0, so a planner that reads the line below
+// the band finds R_q there.
+func TestRatioByFill_BelowTheBand(t *testing.T) {
+	r := learned(t, append(windowsAt(0.05, 1.1, 8), windowsAt(0.5, 1.6, 8)...))
+	requireBuckets(t, r)
+	if r.ByFill[0].Windows != 8 || r.ByFill[0].Lo != 0 {
+		t.Fatalf("bucket 0: %+v, want the 8 windows at fill 0.05", r.ByFill[0])
+	}
+	at, global := r.At(0.05)
+	near(t, "R_q at fill 0.05", at, 1.1, 1e-9)
+	if global {
+		t.Error("fill 0.05 read the global R_q")
 	}
 }

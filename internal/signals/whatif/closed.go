@@ -305,6 +305,13 @@ func (t TPOTTarget) ratio() (TPOTRatio, []Flag, *Unanswerable) {
 	return TPOTRatio{}, nil, &u
 }
 
+// lowestFill is the lowest fill a TPOT is read at: a fill below it reads the
+// line here, a floor, and slo-to-rate's bisection starts here. Every TPOT
+// reading takes it from this one place, so that moving where the line is read
+// moves the floor, the clamp and the inversion together. R_q by fill covers
+// every fill from 0, so it reads at whatever fill this returns.
+func (d Decode) lowestFill() float64 { return d.Band.Lo }
+
 // tpotAtFill is ITL(k) times R_q at k, and whether the global R_q stood in
 // for a thin fill bucket there.
 func (d Decode) tpotAtFill(k float64, r TPOTRatio) (float64, bool) {
@@ -381,12 +388,12 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	if !(q.Headroom > 0 && q.Headroom <= 1) {
 		return refuse(InvalidInput, fmt.Sprintf("headroom %g, want 0 < headroom <= 1 for question 1", q.Headroom))
 	}
-	floor, _ := d.tpotAtFill(d.Band.Lo, r)
+	floor, _ := d.tpotAtFill(d.lowestFill(), r)
 	if floor >= t.Seconds {
 		return refuse(TargetBelowFloor, fmt.Sprintf("target %.4g ms at or below the floor %.4g ms", 1000*t.Seconds, 1000*floor))
 	}
 	p := d.full()
-	k, global := d.fillForTPOT(t.Seconds, r, d.Band.Lo)
+	k, global := d.fillForTPOT(t.Seconds, r, d.lowestFill())
 	by := []Bound{BoundTPOT}
 	if k > p.fill {
 		k, by = p.fill, []Bound{p.by}
@@ -524,10 +531,10 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 
 // tpotAt is the TPOT at fill k, times R_q at that fill, never below the floor.
 func (d Decode) tpotAt(k, knee float64, r TPOTRatio, flags []Flag) Answer {
-	floor, _ := d.tpotAtFill(d.Band.Lo, r)
+	floor, _ := d.tpotAtFill(d.lowestFill(), r)
 	at := k
-	if k < d.Band.Lo {
-		at = d.Band.Lo
+	if k < d.lowestFill() {
+		at = d.lowestFill()
 		flags = append(flags, BelowFittedBand)
 	}
 	v, global := d.tpotAtFill(at, r)
