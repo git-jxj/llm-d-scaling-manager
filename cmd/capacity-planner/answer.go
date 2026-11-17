@@ -22,6 +22,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource"
 )
 
@@ -41,11 +42,15 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
-	decode                                   int
-	batchCap                                 int64
-	inputTokens, outputTokens                float64
-	headroom, tpotRatio                      float64
-	seed                                     uint64
+	// apiSource is the API's source kind (whatifapi.SourceRecording or
+	// SourcePrometheus) when the server asks, "" from the CLI: it picks the
+	// words a refusal names a calm cycle in (hintSource).
+	apiSource                 string
+	decode                    int
+	batchCap                  int64
+	inputTokens, outputTokens float64
+	headroom, tpotRatio       float64
+	seed                      uint64
 	// ttft, ttftPercentile, assumeVP, assumePromptCV, arrivalCV2, prefill and
 	// prefillVariant are the TTFT half's flags (ttft.go); inputBucket only
 	// refuses per-bucket answers.
@@ -321,6 +326,20 @@ func (f *answerFlags) sourceLine(st *learnreplay.State) string {
 // prometheus reports whether the flags ask to answer from Prometheus
 // rather than from a recording.
 func (f *answerFlags) prometheus() bool { return f.window.prometheus != "" }
+
+// hintSource is the words a calm cycle is named in: the API's source field
+// when the server asks, else the CLI's flag for the source it read.
+func (f *answerFlags) hintSource() hintSource {
+	switch {
+	case f.apiSource == whatifapi.SourceRecording:
+		return hintAPIRecording
+	case f.apiSource != "":
+		return hintAPIPrometheus
+	case f.prometheus():
+		return hintCLIPrometheus
+	}
+	return hintCLIRecording
+}
 
 // pricedVariant is one decode variant as a question prices it: the state
 // read from the recording, the Decode built from it, and the flags every

@@ -39,8 +39,10 @@ const (
 	// figure is then a queue, and held at every rate it would set the zero
 	// load floor at the queue: on a staircase recording that ends in a
 	// collapse, 9 to 17 s against a client's 0.12 to 0.18 s
-	// (DecodeTTFT.Waiting). The planner names the latest calm cycle to
-	// answer at.
+	// (DecodeTTFT.Waiting). It refuses on the backlog, not on the size of
+	// the figure: a queue that has only begun to grow still reads close to
+	// the calm figure, and the next cycles read it higher. The planner names
+	// the latest calm cycle to answer at.
 	DecodeTTFTUnderLoad Reason = "DecodeTTFTUnderLoad"
 )
 

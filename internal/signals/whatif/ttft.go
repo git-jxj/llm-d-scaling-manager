@@ -756,7 +756,7 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 				dt.Seconds, dt.PromptTokens, pf.p.PromptTokens))
 			return ttftPlan{}, &u
 		case dt.Waiting > 0:
-			u := refuse(DecodeTTFTUnderLoad, fmt.Sprintf("decode TTFT was measured while decode was queueing (%.1f s, %d requests waiting)",
+			u := refuse(DecodeTTFTUnderLoad, fmt.Sprintf("decode TTFT %.1f s was measured with %d requests waiting on decode capacity",
 				dt.Seconds, dt.Waiting))
 			return ttftPlan{}, &u
 		default:

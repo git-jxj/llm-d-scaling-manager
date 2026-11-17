@@ -1,13 +1,15 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -45,23 +47,24 @@ func stairPrefill(t *testing.T, phase, cycle string) wireRole {
 // (PinnedDefaultB), so the decode side is that measured TTFT, and held at
 // every rate it set the zero-load floor at 16.6 s and 9.1 s, where the client
 // read 0.12 to 0.18 s at the lowest step. At the last cycle the planner
-// refuses it and names the latest calm cycle; at cycle 240, before the
-// collapse, the floor is under 0.3 s.
+// refuses it and names the latest calm cycle. Before the collapse, and at the
+// cycle it names, the decode side is calm and the floor is that side plus
+// the prefill's own few tens of ms.
 func TestDecodeTTFTUnderLoad_StaircaseCollapse(t *testing.T) {
 	for _, c := range []struct {
 		phase   string
 		waiting string
 		calm    int
 	}{
-		{"b-off", "16.6 s, 283 requests waiting", 249},
-		{"c-on", "9.0 s, 136 requests waiting", 249},
+		{"b-off", "decode TTFT 16.6 s was measured with 283 requests waiting on decode capacity", 249},
+		{"c-on", "decode TTFT 9.0 s was measured with 254 requests waiting on decode capacity", 249},
 	} {
 		t.Run(c.phase, func(t *testing.T) {
 			last := stairPrefill(t, c.phase, "")
 			require.NotNil(t, last.Results.Rate.Refused, "the last cycle is answered")
 			assert.Equal(t, string(whatif.DecodeTTFTUnderLoad), last.Results.Rate.Refused.Reason)
 			assert.Contains(t, last.Results.Rate.Refused.Detail, c.waiting)
-			assert.Contains(t, last.Results.Rate.Refused.Detail, fmt.Sprintf("--cycle %d", c.calm))
+			assert.Contains(t, last.Results.Rate.Refused.Detail, "answer at a calmer cycle: --cycle "+strconv.Itoa(c.calm))
 			assert.Equal(t, c.calm, last.TTFT.DecodeTTFTCalmCycle)
 			assert.Equal(t, "decode engine", last.TTFT.DecodeSide)
 
@@ -70,32 +73,84 @@ func TestDecodeTTFTUnderLoad_StaircaseCollapse(t *testing.T) {
 				require.Nil(t, r.Results.Rate.Refused, "cycle %s", cycle)
 				require.NotNil(t, r.Results.Rate.Answer, "cycle %s", cycle)
 				assert.Zero(t, r.TTFT.DecodeTTFTCalmCycle, "cycle %s", cycle)
-				if cycle == "240" {
-					assert.Less(t, r.Results.Rate.Answer.Basis.Floor, 0.3, "the floor at cycle 240")
-				}
+				decode, floor := r.TTFT.DecodeTTFTSeconds, r.Results.Rate.Answer.Basis.Floor
+				assert.Less(t, decode, 0.3, "cycle %s: the decode engine TTFT is calm", cycle)
+				assert.Less(t, floor-decode, 0.1, "cycle %s: the rest of the floor is prefill's", cycle)
 			}
 		})
 	}
 }
 
-// b-on held its last step: its decode line prices, so the check never reads.
-func TestDecodeTTFTUnderLoad_LinePricedIsUntouched(t *testing.T) {
+// b-on held its last step: its decode line prices, the decode engine's
+// TTFT is never read, and nothing is refused or named.
+func TestDecodeTTFTUnderLoad_ALinePricedFleetIsNotRead(t *testing.T) {
 	r := stairPrefill(t, "b-on", "")
 	require.NotNil(t, r.Results.Rate.Answer)
 	assert.Equal(t, "line", r.TTFT.DecodeSide)
-	assert.Less(t, r.Results.Rate.Answer.Basis.Floor, 0.3)
+	assert.Zero(t, r.TTFT.DecodeTTFTSeconds)
+	assert.Zero(t, r.TTFT.DecodeTTFTCalmCycle)
 }
 
-// The negative control: without the check the collapse's queue is the floor,
-// 9 s and more, and a 2 s target is refused as below it.
-func TestDecodeTTFTUnderLoad_WithoutTheCheck(t *testing.T) {
-	checkDecodeTTFTLoad = false
-	t.Cleanup(func() { checkDecodeTTFTLoad = true })
+// The negative control: the same fleet with the backlog taken off prices the
+// collapse's queue as the floor, 9 s and more, and a 2 s target is refused as
+// below it. The backlog is what tells the two apart.
+func TestDecodeTTFTUnderLoad_WithoutTheBacklog(t *testing.T) {
 	for _, phase := range []string{"b-off", "c-on"} {
-		r := stairPrefill(t, phase, "")
-		require.NotNil(t, r.Results.Rate.Refused, phase)
-		assert.Equal(t, string(whatif.TargetBelowFloor), r.Results.Rate.Refused.Reason, phase)
-		assert.Greater(t, r.TTFT.DecodeTTFTSeconds, 9.0, phase)
-		assert.Zero(t, r.TTFT.DecodeTTFTCalmCycle, phase)
+		f := answerFlags{recording: stairGolden(phase), cycle: "last", window: captureFlags{},
+			assumeVP: 200000, assumeA: 20 * time.Millisecond, set: map[string]bool{"assume-vp": true, "assume-a": true}}
+		st, err := f.readState(context.Background())
+		require.NoError(t, err)
+		variants, err := f.decodeVariants(st)
+		require.NoError(t, err)
+		require.Len(t, variants, 1)
+		ps, err := f.prefillState(st)
+		require.NoError(t, err)
+		pf := f.fleetFor(st, ps, ttftQuestion{q: 0.9}, &variants[0])
+		require.Nil(t, pf.refused, phase)
+		target := whatif.TTFTTarget{Seconds: 2, Percentile: 0.9}
+
+		with := whatif.RateForTTFT(pf.fleet, target)
+		require.IsType(t, whatif.Unanswerable{}, with, phase)
+		assert.Equal(t, whatif.DecodeTTFTUnderLoad, with.(whatif.Unanswerable).Reason, phase)
+
+		clear := pf.fleet
+		clear.DecodeTTFT.Waiting = 0
+		without := whatif.RateForTTFT(clear, target)
+		require.IsType(t, whatif.Unanswerable{}, without, phase)
+		assert.Equal(t, whatif.TargetBelowFloor, without.(whatif.Unanswerable).Reason, phase)
+		assert.Greater(t, clear.DecodeTTFT.Seconds, 9.0, phase)
 	}
+}
+
+// The hint is in the words of the source's own setting: the CLI's flag, or
+// the API's source field; a Prometheus window is ended earlier, since it has
+// no cycle to set. A freeze names it as the CLI does.
+func TestDecodeTTFTUnderLoad_TheHintFollowsTheSource(t *testing.T) {
+	at := time.Date(2026, 11, 6, 2, 6, 3, 0, time.UTC)
+	refusal := whatif.Unanswerable{Reason: whatif.DecodeTTFTUnderLoad, Detail: "decode TTFT 9.0 s was measured with 136 requests waiting on decode capacity"}
+	for _, c := range []struct {
+		hint hintSource
+		want string
+	}{
+		{hintCLIRecording, "; answer at a calmer cycle: --cycle 249, the latest with no decode queue"},
+		{hintCLIPrometheus, "; end the window before decode queued: --to 2026-11-06T02:06:03Z, the latest cycle with no decode queue"},
+		{hintAPIRecording, "; answer at a calmer cycle: source.cycle 249, the latest with no decode queue"},
+		{hintAPIPrometheus, "; end the window before decode queued: source.to 2026-11-06T02:06:03Z, the latest cycle with no decode queue"},
+	} {
+		pf := &pricedFleet{hint: c.hint, pv: &pricedVariant{state: learnreplay.VariantState{
+			DecodeTTFT: learnreplay.DecodeTTFTState{CalmCycle: 249, CalmAt: at}}}}
+		got := pf.calmCycleHint(refusal).(whatif.Unanswerable)
+		assert.Equal(t, refusal.Detail+c.want, got.Detail)
+		assert.Equal(t, 249, pf.in.DecodeTTFTCalmCycle)
+	}
+
+	none := &pricedFleet{pv: &pricedVariant{}}
+	got := none.calmCycleHint(refusal).(whatif.Unanswerable)
+	assert.Equal(t, refusal.Detail+"; no cycle of the source read decode without a queue", got.Detail)
+	assert.Zero(t, none.in.DecodeTTFTCalmCycle)
+
+	other := whatif.Unanswerable{Reason: whatif.InvalidInput, Detail: "x"}
+	pf := &pricedFleet{pv: &pricedVariant{state: learnreplay.VariantState{DecodeTTFT: learnreplay.DecodeTTFTState{CalmCycle: 249}}}}
+	assert.Equal(t, other, pf.calmCycleHint(other), "another reason is left as it is")
+	assert.Zero(t, pf.in.DecodeTTFTCalmCycle, "and names no cycle")
 }

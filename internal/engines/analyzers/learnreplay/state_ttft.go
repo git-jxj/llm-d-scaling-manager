@@ -62,12 +62,19 @@ type DecodeTTFTState struct {
 	// request rate, with the mean effective prompt of the same cycle (the
 	// pair is never split). A cycle with no reading holds an empty slot, so a
 	// figure ages out when the rows stop carrying one. Zero when unread. Its
-	// Waiting is the decode backlog of its cycle (decodeBacklog).
+	// Waiting is the largest decode backlog (decodeBacklog) any cycle of the
+	// window carries, a backlog carried for DecodeTTFTLag after it drains.
 	EngineTTFT whatif.DecodeTTFT
 	// CalmCycle is the latest cycle, through this one, whose window of
-	// whatif.TTFTWindowCycles cycles read no decode backlog on any of them:
-	// the cycle to answer at instead. 0 when no cycle did.
+	// whatif.TTFTWindowCycles cycles carried no decode backlog on any of
+	// them: the cycle to answer at instead, read at CalmAt. 0 when no cycle
+	// did.
 	CalmCycle int
+	CalmAt    time.Time
+	// BacklogUnread says a decode row of the window did not say why its
+	// requests wait (no capacity series): there a backlog cannot be told
+	// from KV pulls in flight, and none is read.
+	BacklogUnread bool
 	// TransferSeconds is prefill.TransferReading's Figure, the one S1 prices
 	// (slo.SwitchTTFTQuietTransfer): the fleet's quiet cycles inside
 	// prefill.HeldDecodeAge of the cycle, else every row's over the same age; 0
@@ -118,20 +125,19 @@ type ttftSamples struct {
 	prompts    map[string]*whatif.PromptWindow
 	shares     map[string]*shareWindow
 	engineTTFT map[string][]whatif.DecodeTTFT
-	// calmRun is how many cycles in a row read no decode backlog, and
-	// lastCalm the latest cycle that closed a calm window (CalmCycle).
-	calmRun, lastCalm map[string]int
-	transfers         map[string]*prefill.TransferWindow
-	terms             map[string]*prefill.DecodeTermWindow
+	// backlogs is each decode variant's latest backlog (backlogTrack.note).
+	backlogs  map[string]*backlogTrack
+	transfers map[string]*prefill.TransferWindow
+	terms     map[string]*prefill.DecodeTermWindow
 	// joint is the model's joint TTFT readings (noteJoint).
 	joint *prefill.JointWindow
 }
 
 func newTTFTSamples() *ttftSamples {
 	return &ttftSamples{prompts: map[string]*whatif.PromptWindow{}, shares: map[string]*shareWindow{},
-		engineTTFT: map[string][]whatif.DecodeTTFT{},
-		calmRun:    map[string]int{}, lastCalm: map[string]int{}, transfers: map[string]*prefill.TransferWindow{},
-		terms: map[string]*prefill.DecodeTermWindow{}, joint: prefill.NewJointWindow()}
+		engineTTFT: map[string][]whatif.DecodeTTFT{}, backlogs: map[string]*backlogTrack{},
+		transfers: map[string]*prefill.TransferWindow{},
+		terms:     map[string]*prefill.DecodeTermWindow{}, joint: prefill.NewJointWindow()}
 }
 
 // noteJoint folds one cycle's prefill and decode rows into the model's joint
@@ -192,24 +198,72 @@ func rolesOf(in domain.AnalyzerInput) map[string]string {
 type decodeRows struct {
 	ttftWeighted, ttftWeight, ttftPlain float64
 	ttftRows                            int
-	// waiting is the largest decodeBacklog of the cycle's serving rows.
+	// waiting is the largest decodeBacklog of the cycle's serving rows, and
+	// unread says a row did not say why its requests wait.
 	waiting int
+	unread  bool
 }
 
 // decodeBacklog is the requests a serving decode row holds waiting on its
-// own capacity, 0 when it holds none. Where vLLM says why requests wait
-// (CapacityQueueKnown) it is the part waiting for scheduling capacity: the
-// rest of a P/D decode queue is KV pulls in flight, which a request pays at
-// any load, and on the staircase goldens it read 1 to 26 with no capacity
-// wait and a decode TTFT under 0.3 s. Where vLLM does not say, it is the whole
-// queue past prefill.MaxDecodeQueue, the decode term's bound on a queue of
-// pulls.
-func decodeBacklog(rm domain.ReplicaMetrics) int {
-	if rm.CapacityQueueKnown {
-		return rm.CapacityQueueLength
+// own capacity, and whether the row says so. Where vLLM says why requests
+// wait (CapacityQueueKnown) it is the part waiting for scheduling capacity.
+// The rest of a P/D decode queue is KV pulls in flight, which a request pays
+// at any load: on the staircase goldens a calm decode read 1 to 26 of them,
+// with a decode TTFT under 0.3 s. A row without the series (an older vLLM,
+// SGLang) cannot tell the two apart, so it reads no backlog, unknown.
+func decodeBacklog(rm domain.ReplicaMetrics) (int, bool) {
+	if !rm.CapacityQueueKnown {
+		return 0, false
 	}
-	if rm.QueueLength > prefill.MaxDecodeQueue {
-		return rm.QueueLength
+	return rm.CapacityQueueLength, true
+}
+
+// DecodeTTFTLag is how long a decode backlog taints the decode engine's TTFT
+// after the queue drains. The TTFT is a mean over the last minute
+// (registration.QueryAvgTTFT), and a request that queued has its first token
+// only once it leaves the queue, so the mean reads high for that minute with
+// the queue already empty: on ttft-staircase-c-on the cycle after the last
+// backlog read 6.8 s with none waiting. 30 s more covers the scrape and the
+// cycle.
+const DecodeTTFTLag = 90 * time.Second
+
+// backlogTrack is one decode variant's backlog over the cycles: the latest
+// backlog and when it was read, the cycles in a row since the last tainted
+// one, the latest cycle that closed a calm window, and the latest cycle whose
+// rows did not say why they wait.
+type backlogTrack struct {
+	last         int
+	lastAt       time.Time
+	seen         bool
+	calmRun      int
+	calm         int
+	calmAt       time.Time
+	unreadCycle  int
+	unreadInView bool
+}
+
+// note folds one cycle's backlog in and returns the backlog the cycle's TTFT
+// carries: the cycle's own, or the latest one read within DecodeTTFTLag
+// before it.
+func (b *backlogTrack) note(d *decodeRows, cycle int, at time.Time) int {
+	if d.unread {
+		b.unreadCycle = cycle
+	}
+	b.unreadInView = b.unreadCycle > 0 && cycle-b.unreadCycle < whatif.TTFTWindowCycles
+	carried := d.waiting
+	switch {
+	case d.waiting > 0:
+		b.last, b.lastAt, b.seen = d.waiting, at, true
+	case b.seen && at.Sub(b.lastAt) <= DecodeTTFTLag:
+		carried = b.last
+	}
+	if carried > 0 {
+		b.calmRun = 0
+		return carried
+	}
+	b.calmRun++
+	if b.calmRun >= min(cycle, whatif.TTFTWindowCycles) {
+		b.calm, b.calmAt = cycle, at
 	}
 	return 0
 }
@@ -260,7 +314,8 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 		if d == nil {
 			continue
 		}
-		d.waiting = max(d.waiting, decodeBacklog(rm))
+		n, known := decodeBacklog(rm)
+		d.waiting, d.unread = max(d.waiting, n), d.unread || !known
 		if rm.AvgTTFTKnown && positive(rm.AvgTTFT) {
 			d.ttftRows++
 			d.ttftPlain += rm.AvgTTFT
@@ -296,19 +351,24 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 				slot.Seconds = d.ttftWeighted / d.ttftWeight
 			}
 		}
-		if slot.Seconds > 0 {
-			slot.Waiting = d.waiting
+		b := t.backlogs[v]
+		if b == nil {
+			b = &backlogTrack{}
+			t.backlogs[v] = b
 		}
+		slot.Waiting = b.note(d, cycle, at)
 		t.engineTTFT[v] = keepLast(t.engineTTFT[v], slot, whatif.TTFTWindowCycles)
-		if d.waiting > 0 {
-			t.calmRun[v] = 0
-			continue
-		}
-		t.calmRun[v]++
-		if t.calmRun[v] >= min(cycle, whatif.TTFTWindowCycles) {
-			t.lastCalm[v] = cycle
-		}
 	}
+}
+
+// windowBacklog is the largest backlog any cycle of the window carries, so
+// a figure the queue raised is caught whichever slot is the largest.
+func windowBacklog(samples []whatif.DecodeTTFT) int {
+	var n int
+	for _, d := range samples {
+		n = max(n, d.Waiting)
+	}
+	return n
 }
 
 // noteTerm folds one cycle, read at now, into each decode variant's readings
@@ -399,7 +459,13 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 	for i := range st.Variants {
 		vs := &st.Variants[i]
 		vs.DecodeTTFT.EngineTTFT = largestTTFT(t.engineTTFT[vs.Variant])
-		vs.DecodeTTFT.CalmCycle = t.lastCalm[vs.Variant]
+		if vs.DecodeTTFT.EngineTTFT.Seconds > 0 {
+			vs.DecodeTTFT.EngineTTFT.Waiting = windowBacklog(t.engineTTFT[vs.Variant])
+		}
+		if b := t.backlogs[vs.Variant]; b != nil {
+			vs.DecodeTTFT.CalmCycle, vs.DecodeTTFT.CalmAt = b.calm, b.calmAt
+			vs.DecodeTTFT.BacklogUnread = b.unreadInView
+		}
 		var est prefill.DecodeTermEstimate
 		if w := t.terms[vs.Variant]; w != nil {
 			est = w.Estimate()
