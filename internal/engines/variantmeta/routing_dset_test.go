@@ -100,7 +100,9 @@ func dsetVariant(role string) llmdvariant.Variant {
 // DisaggregatedSet roles: a pool that selects the set by the label its
 // controller stamps on every Pod selects both roles -- the parked prefill by
 // its template, with the group labels added, and the running decode by its
-// leader. Neither is held, so scale from zero wakes the parked prefill. A pool
+// leader. Neither is held, so scale from zero wakes the parked prefill. The
+// same holds for a pool keyed on the child LeaderWorkerSet's name, which no
+// template can carry: it is taken to match, as pod-template-hash is. A pool
 // that selects one role only holds the other, running or parked: a role the
 // router does not reach is held like any variant. Workers are never counted.
 func TestRouteDisaggregatedSetRoles(t *testing.T) {
@@ -120,6 +122,8 @@ func TestRouteDisaggregatedSetRoles(t *testing.T) {
 		decodeUnroutedPods int
 	}{
 		{name: "pool selects the set", pool: map[string]string{constants.DisaggregatedSetNameLabelKey: "glm"},
+			selected: []string{"v-decode", "v-prefill"}},
+		{name: "pool selects by the child LeaderWorkerSet name", pool: map[string]string{lwsv1.SetNameLabelKey: "glm-decode-abc12"},
 			selected: []string{"v-decode", "v-prefill"}},
 		{name: "pool selects decode only", pool: map[string]string{"llm-d.ai/role": "decode"},
 			selected: []string{"v-decode"}, held: []string{"v-prefill"}},
