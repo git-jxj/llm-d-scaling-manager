@@ -223,13 +223,14 @@ const batchedDPBudget = 256
 
 // usesBatchedDPMoE is vLLM's ParallelConfig.use_batched_dp_moe, the same in
 // every supported release: expert parallelism, more than one DP rank, and the
-// deepep_low_latency or nixl_ep all-to-all (--all2all-backend, else
-// VLLM_ALL2ALL_BACKEND). Such an engine's default budget is 256 tokens.
+// deepep_low_latency or nixl_ep all-to-all named by --all2all-backend. Such an
+// engine's default budget is 256 tokens.
+//
+// Only the flag counts. vLLM stopped reading VLLM_ALL2ALL_BACKEND around v0.16
+// (vllm-project/vllm#33535): an engine that still carries the variable runs the
+// default all-to-all, and the accelerator's budget, in every supported release.
 func usesBatchedDPMoE(p *EngineParams) bool {
 	backend := layoutValue(p, "all2all_backend")
-	if backend == "" {
-		backend = layoutValue(p, envAll2AllKey)
-	}
 	return p.ExpertParallel && parallelSize(p.DataParallelSize) > 1 &&
 		(backend == "deepep_low_latency" || backend == "nixl_ep")
 }

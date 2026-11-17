@@ -70,8 +70,12 @@ func TestBatchedDPMoEBudget(t *testing.T) {
 			append(wide, "--all2all-backend", "deepep_low_latency"), nil, 256},
 		{"nixl_ep on H100, v0.27.1", imageV0271, acceleratorH,
 			append(wide, "--all2all-backend", "nixl_ep"), nil, 256},
-		{"the backend from the environment, unknown image", imageUnknown, acceleratorA,
-			wide, []corev1.EnvVar{{Name: "VLLM_ALL2ALL_BACKEND", Value: "deepep_low_latency"}}, 256},
+		{"the environment variable alone is not read (gone since v0.16)", imageV034, acceleratorB,
+			wide, []corev1.EnvVar{{Name: "VLLM_ALL2ALL_BACKEND", Value: "deepep_low_latency"}}, 16384},
+		{"the environment variable alone, unknown image on an A100", imageUnknown, acceleratorA,
+			wide, []corev1.EnvVar{{Name: "VLLM_ALL2ALL_BACKEND", Value: "nixl_ep"}}, 2048},
+		{"the flag, unknown image on an A100", imageUnknown, acceleratorA,
+			append(wide, "--all2all-backend", "deepep_low_latency"), nil, 256},
 		{"the flag wins over the environment", imageV034, acceleratorB,
 			append(wide, "--all2all-backend", "deepep_high_throughput"),
 			[]corev1.EnvVar{{Name: "VLLM_ALL2ALL_BACKEND", Value: "deepep_low_latency"}}, 16384},
@@ -95,26 +99,38 @@ func TestBatchedDPMoEBudget(t *testing.T) {
 }
 
 // The step budget depends on the accelerator, and the arguments digest
-// hashes the budget. A variant whose accelerator reads empty for a cycle must
-// keep its arguments: a different digest would read as a rollout.
-func TestAnEmptyAcceleratorReadingKeepsTheArguments(t *testing.T) {
-	s := NewStore()
-	st := versionedDeployment(imageUnknown, nil)
-	now := time.Now()
-	s.LoadFromScaleTarget("ns", "m", "v", acceleratorA, 1, st, now)
-	first := s.Get("ns", "m", "v").EngineParams
-	tag, budget := first.ArgsTag(), first.EffectiveMaxBatchedTokens
+// hashes the budget. A variant whose accelerator reads as not resolved for a
+// cycle must keep its arguments: a different digest would read as a rollout.
+// Production sends "unknown" (no label) and "unresolved" (the stabiliser has
+// no memo), not only "".
+func TestAnUnresolvedAcceleratorReadingKeepsTheArguments(t *testing.T) {
+	for _, reading := range []string{"", "unknown", "unresolved"} {
+		t.Run("reading "+reading, func(t *testing.T) {
+			s := NewStore()
+			st := versionedDeployment(imageUnknown, nil)
+			now := time.Now()
+			s.LoadFromScaleTarget("ns", "m", "v", acceleratorA, 1, st, now)
+			first := s.Get("ns", "m", "v").EngineParams
+			tag, budget := first.ArgsTag(), first.EffectiveMaxBatchedTokens
 
-	s.LoadFromScaleTarget("ns", "m", "v", "", 1, st, now.Add(time.Second))
-	again := s.Get("ns", "m", "v").EngineParams
-	if again.ArgsTag() != tag || again.EffectiveMaxBatchedTokens != budget {
-		t.Errorf("an empty accelerator reading moved the arguments: budget %d -> %d, tag %s -> %s",
-			budget, again.EffectiveMaxBatchedTokens, tag, again.ArgsTag())
-	}
+			s.LoadFromScaleTarget("ns", "m", "v", reading, 1, st, now.Add(time.Second))
+			again := s.Get("ns", "m", "v").EngineParams
+			if again.ArgsTag() != tag || again.EffectiveMaxBatchedTokens != budget {
+				t.Errorf("reading %q moved the arguments: budget %d -> %d, tag %s -> %s",
+					reading, budget, again.EffectiveMaxBatchedTokens, tag, again.ArgsTag())
+			}
 
-	// Another variant never seen on an accelerator keeps the unsized default.
-	s.LoadFromScaleTarget("ns", "m", "w", "", 1, st, now)
-	if got := s.Get("ns", "m", "w").EngineParams.EffectiveMaxBatchedTokens; got != 8192 {
-		t.Errorf("a variant never seen on an accelerator: budget %d, want 8192", got)
+			// A real move to another accelerator still moves them.
+			s.LoadFromScaleTarget("ns", "m", "v", acceleratorH, 1, st, now.Add(2*time.Second))
+			if got := s.Get("ns", "m", "v").EngineParams.EffectiveMaxBatchedTokens; got != 8192 {
+				t.Errorf("after a move to an H100: budget %d, want 8192", got)
+			}
+
+			// A variant never resolved keeps the unsized default.
+			s.LoadFromScaleTarget("ns", "m", "w", reading, 1, st, now)
+			if got := s.Get("ns", "m", "w").EngineParams.EffectiveMaxBatchedTokens; got != 8192 {
+				t.Errorf("a variant never resolved: budget %d, want 8192", got)
+			}
+		})
 	}
 }

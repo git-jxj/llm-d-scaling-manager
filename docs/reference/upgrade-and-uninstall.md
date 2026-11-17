@@ -135,31 +135,40 @@ changed, and there is no compatibility path. Reinstall.
 
 The scaling manager now reads which vLLM release each variant runs, and fills
 the flags an engine leaves unset with that release's defaults (see
-[vLLM versions](vllm-versions.md)). The fingerprint that keys learned state
-moves to version 5 with it.
+[vLLM versions](vllm-versions.md)).
 
-- **Every variant measures its own capacity again once.** On the first
-  restart after the upgrade, each variant's learned k2 is restored as a
-  lower-only previous figure, as after any change of engine arguments. The
-  latency, SLO and throughput windows keyed on the arguments start again. The
+**Most variants keep their learned state.** A variant whose resolved values did
+not change restores as its own: one that passes the sizing flags, and an
+unknown image on an H100 or H200, for example.
+
+**These variants relearn**, each because a flag it leaves unset now resolves
+to a different value:
+
+- any engine on an A100 or on a GPU below 70 GiB without
+  `--max-num-batched-tokens`: 8192 becomes 2048. This includes private,
+  unknown and simulator images, since the rule is the same in every vLLM
+  release. This one also changes its estimate;
+- a `vllm-openai` tag v0.28 or later on a GPU of 160 GiB or more without
+  `--max-num-batched-tokens`: 8192 becomes 16384;
+- a wide-EP engine (expert parallel, DP above 1, `--all2all-backend`
+  `deepep_low_latency` or `nixl_ep`) without `--max-num-batched-tokens`: 256;
+- a `vllm-openai` tag v0.20 or later without `--gpu-memory-utilization`
+  (0.9 becomes 0.92), and a v0.34 tag without it (1.0) or without
+  `--block-size` (64).
+
+What you see for those:
+
+- **On the first restart, the restore logs "the variant's engine arguments,
+  or the vLLM defaults they resolve to, changed".** Their arguments did not
+  change on the cluster.
+- **They may run more replicas than before for up to about six and a half
+  hours.** The old k2 is kept as a lower-only previous figure (`P2-prior` in
+  the k2-decision log). Where it is below what the new arguments derive, the
+  variant is priced at the old figure: held 30 minutes, then relaxed over 6
+  hours of serving, or replaced once the variant saturates twice under the new
+  arguments. That is the safe direction, but it costs replicas.
+- **Their latency, SLO and throughput windows start again**, and their
   `llmsm_engine_config` series get new label values.
-- **The restart logs "the variant's engine arguments, or the version of their
-  fingerprint, changed".** Expected once per variant. Your arguments did not
-  change.
-- **Some variants also get a different estimate**, because the default they
-  are priced with changed. Each has the flag unset:
-  - any engine on an A100 or on a GPU below 70 GiB without
-    `--max-num-batched-tokens`: 8192 becomes 2048. This includes private,
-    unknown and simulator images, since the rule is the same in every vLLM
-    release;
-  - a `vllm-openai` tag v0.28 or later on a GPU of 160 GiB or more without
-    `--max-num-batched-tokens`: 8192 becomes 16384;
-  - a wide-EP engine (expert parallel, DP above 1, `deepep_low_latency` or
-    `nixl_ep` all-to-all) without `--max-num-batched-tokens`: 256;
-  - a `vllm-openai` tag v0.20 or later without `--gpu-memory-utilization`
-    (0.9 becomes 0.92), and a v0.34 tag without it (1.0) or without
-    `--block-size` (64). These change only which variants count as the same
-    configuration.
 - **Nothing to do.** To keep a figure from changing, pass the flag on the
   engine with the value you want.
 

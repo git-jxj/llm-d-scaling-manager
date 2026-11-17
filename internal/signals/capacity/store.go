@@ -367,19 +367,23 @@ func (s *Store) Delete(namespace, modelID, variantName string) bool {
 }
 
 // defaultsAccelerator is the accelerator the engine defaults are resolved on
-// for the variant at key: accelerator when it is known, else the last one the
-// variant was loaded on. An accelerator that reads empty for a cycle (a
-// stabiliser that has not settled, a pod list that came back empty) then
-// keeps the variant's arguments, rather than resolving the step budget for an
-// unknown device and reading as a rollout.
+// for the variant at key: accelerator when it is resolved, else the last
+// resolved one the variant was loaded on. A reading of "", "unknown" or
+// "unresolved" for a cycle (a stabiliser that has not settled, a pod list that
+// came back empty) then keeps the variant's arguments, rather than resolving
+// the step budget for an unknown device and reading as a rollout. A variant
+// never resolved keeps the reading it has.
 func (s *Store) defaultsAccelerator(key, accelerator string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if accelerator != "" {
+	if constants.IsAcceleratorResolved(accelerator) {
 		s.defaultsAccel[key] = accelerator
 		return accelerator
 	}
-	return s.defaultsAccel[key]
+	if last, ok := s.defaultsAccel[key]; ok {
+		return last
+	}
+	return accelerator
 }
 
 // EvictStale removes capacity records that have not been updated within the

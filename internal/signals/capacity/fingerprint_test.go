@@ -274,16 +274,13 @@ func TestFingerprintVersionParticipates(t *testing.T) {
 // stored by v0.10.2 compare its arguments as if hashed alike (k2_borrow.go).
 // The digest below is what v0.10.2 (version 3) wrote for this configuration,
 // computed at 354cbb69b.
-func TestFingerprintVersionIsFive(t *testing.T) {
-	if FingerprintVersion != 5 {
-		t.Fatalf("FingerprintVersion is %d, want 5: version 5 resolves unset flags to the vLLM release's defaults", FingerprintVersion)
+func TestFingerprintVersionIsFour(t *testing.T) {
+	if FingerprintVersion != 4 {
+		t.Fatalf("FingerprintVersion is %d, want 4: version 4 adds max_num_active_seqs (ev-shindin/llm-scaling-manager#334)", FingerprintVersion)
 	}
 	p := &EngineParams{Engine: "vllm", MaxNumSeqs: 256, Image: "vllm:v1"}
-	switch got := p.Fingerprint(); got {
-	case "685b446b731842fd":
+	if got := p.Fingerprint(); got == "685b446b731842fd" {
 		t.Fatalf("the digest is version 3's (%s)", got)
-	case "707df74aeb634d34":
-		t.Fatalf("the digest is version 4's (%s)", got)
 	}
 }
 
