@@ -17,8 +17,11 @@ import (
 // figure on one shape class, from one measured run: the region the run
 // covered and the signed error it read over it. A figure inside a row's
 // region carries that row's error; any other figure reads OUTSIDE VALIDATED
-// REGION, with what put it outside. The rows are data (envelope.json), so
-// that a new run adds rows without code.
+// REGION, with what put it outside. The region holds every input that shapes
+// the figure, the traffic's prompt spread and arrivals first: a figure
+// priced on an input the run did not price at is outside, whatever else
+// matches. The rows are data (envelope.json), so that a new run adds rows
+// without code.
 
 // FigureKind is a kind of figure the planner prints.
 type FigureKind string
@@ -39,11 +42,17 @@ const (
 	FigurePrefillKnee FigureKind = "prefill-knee"
 	// FigureDecodeKnee is decode's knee.
 	FigureDecodeKnee FigureKind = "decode-knee"
+	// FigureFlowControlOnset is the prefill stage's flow-control onset: the
+	// rate past which the router holds requests.
+	FigureFlowControlOnset FigureKind = "flow-control-onset"
 	// FigureRateAtTTFT is the rate at a TTFT target. Its knee share is the
 	// rate over the fleet's lower knee.
 	FigureRateAtTTFT FigureKind = "rate-at-ttft"
 	// FigureRateAtTPOT is decode's rate at a TPOT target.
 	FigureRateAtTPOT FigureKind = "rate-at-tpot"
+	// FigureOperatingCap is a rate the operating-point cap set: headroom
+	// times the lower knee.
+	FigureOperatingCap FigureKind = "operating-point-cap"
 	// FigurePrefillLatency is the prefill pods' own latency, without the
 	// decode side (TTFTParts.OwnPrefill and EngineWait): a client measures
 	// TTFT end to end only.
@@ -58,15 +67,16 @@ const (
 	TopologyAggregated = "aggregated"
 )
 
-// The flow-control states a class names.
+// The flow-control states a class names; "" is not known (no queue series).
 const (
 	FlowControlNameOff = "off"
 	FlowControlNameOn  = "on"
 )
 
 // FigureClass is what a figure was priced at, as the envelope's regions are
-// drawn: the fleet, its accelerator and its traffic. A zero count or length
-// is unknown, and an unknown value is outside any region that bounds it.
+// drawn: the fleet, its accelerator, its traffic and how each was known. A
+// zero count or length is unknown, and an unknown value is outside any
+// region that bounds it.
 type FigureClass struct {
 	Topology        string
 	Accelerator     string
@@ -74,17 +84,28 @@ type FigureClass struct {
 	DecodeReplicas  int
 	PromptTokens    float64
 	OutputTokens    float64
+	// PromptCV is the prompt's spread priced; PromptCVUnknown says nothing
+	// measured or stated it, so it is the planner's default (AssumedPromptCV).
+	PromptCV        float64
+	PromptCVUnknown bool
 	// ArrivalCV2 is the arrivals' Ca^2; 0 reads as Poisson (1).
-	ArrivalCV2  float64
-	FlowControl string
+	// ArrivalsUnknown says nothing measured or stated them: Poisson assumed.
+	ArrivalCV2      float64
+	ArrivalsUnknown bool
+	FlowControl     string
 }
 
 // FleetClass is the class of a P/D fleet's figures, less the accelerator,
-// which the fleet does not carry.
+// which the fleet does not carry, and less what the caller knows of how the
+// spread and the arrivals were read: PromptCVUnknown is the fleet's
+// PromptCVAssumed, which a stated spread also sets.
 func FleetClass(fl TTFTFleet) FigureClass {
 	c := FigureClass{Topology: TopologyPD, PrefillReplicas: fl.Prefill.Replicas, PromptTokens: fl.Prefill.PromptTokens,
-		ArrivalCV2: fl.Prefill.ArrivalCV2, FlowControl: FlowControlNameOff}
-	if fl.FlowControl.State == FlowControlOn {
+		PromptCV: fl.Prefill.PromptCV, PromptCVUnknown: fl.Prefill.PromptCVAssumed, ArrivalCV2: fl.Prefill.ArrivalCV2}
+	switch fl.FlowControl.State {
+	case FlowControlOff:
+		c.FlowControl = FlowControlNameOff
+	case FlowControlOn:
 		c.FlowControl = FlowControlNameOn
 	}
 	if fl.Decode != nil {
@@ -100,11 +121,37 @@ type Figure struct {
 	Percentile float64
 	Class      FigureClass
 	// KneeShare is the figure's rate over its knee (FigureKind says which);
-	// 0 where it has none.
+	// 0 is unknown, and outside any row that bounds it.
 	KneeShare float64
 	// Flags are the figure's own: some put it outside every region
 	// (Envelope.OutsideFlags).
 	Flags []Flag
+}
+
+// RateFigure is a rate at a target as the envelope judges it, on the CLI and
+// the API alike: a rate-at-ttft where a TTFT bound set it, a rate-at-tpot
+// where only decode's did, and the operating-point cap where only the cap
+// did. boundBy is the rate's bounds as written (Basis.BoundBy); its knee
+// share is value over the lower knee.
+func RateFigure(value float64, boundBy []string, q float64, class FigureClass, lowerKnee float64, flags []Flag) Figure {
+	ttftSide := []Bound{BoundTTFT, BoundDecodeAdmission, BoundPrefillOnset, BoundDecodeOnset, BoundDecodeGateCharge, BoundPrefillKnee}
+	kind := FigureOperatingCap
+	for _, b := range boundBy {
+		switch {
+		case strings.Contains(b, string(BoundTTFT)) || slices.Contains(ttftSide, Bound(b)):
+			kind = FigureRateAtTTFT
+		case kind != FigureRateAtTTFT && (b == string(BoundTPOT) || b == "decode "+string(BoundTPOT)):
+			kind = FigureRateAtTPOT
+		}
+	}
+	f := Figure{Kind: kind, Class: class, Flags: flags}
+	if kind == FigureRateAtTTFT {
+		f.Percentile = q
+	}
+	if value > 0 && lowerKnee > 0 {
+		f.KneeShare = value / lowerKnee
+	}
+	return f
 }
 
 // Span is a closed range, Lo to Hi.
@@ -113,8 +160,17 @@ type Span struct {
 	Hi float64 `json:"hi"`
 }
 
-// holds reports whether the span holds v.
-func (s Span) holds(v float64) bool { return v >= s.Lo && v <= s.Hi }
+// spanSlack is how far past a stored bound a value still holds: the bounds
+// are stored rounded, and a figure equal to one as printed is inside.
+const spanSlack = 1e-9
+
+// holds reports whether the span holds v, ends included.
+func (s Span) holds(v float64) bool {
+	return v >= s.Lo-spanSlack*math.Max(1, math.Abs(s.Lo)) && v <= s.Hi+spanSlack*math.Max(1, math.Abs(s.Hi))
+}
+
+// shareSlack is the knee share's: stored to 3 decimals.
+const shareSlack = 5e-4
 
 // Region is where a row was measured. An empty list or a nil span bounds
 // nothing.
@@ -124,13 +180,32 @@ type Region struct {
 	PrefillReplicas []int     `json:"prefillReplicas,omitempty"`
 	DecodeReplicas  []int     `json:"decodeReplicas,omitempty"`
 	PromptTokens    *Span     `json:"promptTokens,omitempty"`
+	PromptCV        *Span     `json:"promptCV,omitempty"`
 	OutputTokens    *Span     `json:"outputTokens,omitempty"`
 	ArrivalCV2      *Span     `json:"arrivalCV2,omitempty"`
 	FlowControl     []string  `json:"flowControl,omitempty"`
 	Percentiles     []float64 `json:"percentiles,omitempty"`
-	// MaxKneeShare is the highest knee share measured; 0 bounds nothing.
+	// MinKneeShare and MaxKneeShare are the lowest and highest knee share
+	// measured, ends included; 0 bounds nothing.
+	MinKneeShare float64 `json:"minKneeShare,omitempty"`
 	MaxKneeShare float64 `json:"maxKneeShare,omitempty"`
 }
+
+// The kinds of range a row's error is.
+const (
+	// SpreadPercentiles is the 10th to the 90th percentile of 5 or more
+	// point readings, with ErrorMin and ErrorMax beside it.
+	SpreadPercentiles = "p10-p90"
+	// SpreadMinMax is the lowest to the highest of fewer than 5 point
+	// readings.
+	SpreadMinMax = "min-max"
+	// SpreadBracket is the ends of brackets: the measured figure lay between
+	// two ladder steps, so each reading is a range, not a point.
+	SpreadBracket = "bracket"
+	// SpreadOneSided is a bound: the run only showed the measured figure was
+	// past a step, so the error is known on one side.
+	SpreadOneSided = "one-sided"
+)
 
 // EnvelopeRow is one kind of figure on one shape class, from one run.
 type EnvelopeRow struct {
@@ -140,13 +215,16 @@ type EnvelopeRow struct {
 	Source string `json:"source"`
 	Region Region `json:"region"`
 	// ErrorLo and ErrorHi are the signed error, the model's figure over the
-	// measured one less 1: the 10th and the 90th percentile of the
-	// readings, or, where a reading is a bracket (a knee, a rate at a
-	// target), the lowest and the highest end of any. Nil is unbounded on
-	// that side: a measured rate that was only bounded.
+	// measured one less 1, as Spread says. Nil is unbounded on that side.
 	ErrorLo *float64 `json:"errorLo,omitempty"`
 	ErrorHi *float64 `json:"errorHi,omitempty"`
-	// Readings is how many readings the error rests on.
+	// ErrorMin and ErrorMax are the lowest and the highest point reading,
+	// beside a p10-p90.
+	ErrorMin *float64 `json:"errorMin,omitempty"`
+	ErrorMax *float64 `json:"errorMax,omitempty"`
+	// Spread is the kind of range ErrorLo and ErrorHi are.
+	Spread string `json:"spread"`
+	// Readings is how many independent readings the error rests on.
 	Readings int `json:"readings"`
 }
 
@@ -176,7 +254,8 @@ func DefaultEnvelope() Envelope {
 	return e
 }
 
-// ParseEnvelope reads an envelope, refusing a row that judges nothing.
+// ParseEnvelope reads an envelope, refusing a row that judges nothing or
+// says its error wrongly.
 func ParseEnvelope(raw []byte) (Envelope, error) {
 	var e Envelope
 	if err := json.Unmarshal(raw, &e); err != nil {
@@ -192,6 +271,10 @@ func ParseEnvelope(raw []byte) (Envelope, error) {
 			return Envelope{}, fmt.Errorf("envelope: row %d: no readings", i)
 		case r.ErrorLo == nil && r.ErrorHi == nil:
 			return Envelope{}, fmt.Errorf("envelope: row %d: no error on either side", i)
+		case !slices.Contains([]string{SpreadPercentiles, SpreadMinMax, SpreadBracket, SpreadOneSided}, r.Spread):
+			return Envelope{}, fmt.Errorf("envelope: row %d: spread %q", i, r.Spread)
+		case r.Spread == SpreadPercentiles && r.Readings < 5:
+			return Envelope{}, fmt.Errorf("envelope: row %d: a p10-p90 of %d readings: under 5 is a min-max", i, r.Readings)
 		}
 	}
 	return e, nil
@@ -208,13 +291,29 @@ type Validation struct {
 // Validated reports whether a row holds the figure.
 func (v Validation) Validated() bool { return v.Row != nil }
 
-// String is the figure's label: "validated: error -2..+16% (q32 staircase)"
-// or "OUTSIDE VALIDATED REGION (why)".
+// String is the figure's label: "validated: error -2..+16% (p10-p90,
+// min-max -5..+18%, n=12; q32 staircase)" or "OUTSIDE VALIDATED REGION
+// (why)". The count and the kind of range are always printed.
 func (v Validation) String() string {
-	if v.Row == nil {
+	r := v.Row
+	if r == nil {
 		return "OUTSIDE VALIDATED REGION (" + v.Outside + ")"
 	}
-	return "validated: error " + ErrorText(v.Row.ErrorLo, v.Row.ErrorHi) + " (" + v.Row.Source + ")"
+	n := fmt.Sprintf("n=%d", r.Readings)
+	switch r.Spread {
+	case SpreadPercentiles:
+		return fmt.Sprintf("validated: error %s (p10-p90, min-max %s, %s; %s)", ErrorText(r.ErrorLo, r.ErrorHi),
+			ErrorText(r.ErrorMin, r.ErrorMax), n, r.Source)
+	case SpreadMinMax:
+		return fmt.Sprintf("validated: error %s (min-max, %s; %s)", ErrorText(r.ErrorLo, r.ErrorHi), n, r.Source)
+	case SpreadBracket:
+		what := "between ladder steps"
+		if r.Readings == 1 {
+			what = "single reading, between two ladder steps"
+		}
+		return fmt.Sprintf("validated: error %s (%s, %s; %s)", ErrorText(r.ErrorLo, r.ErrorHi), n, what, r.Source)
+	}
+	return fmt.Sprintf("validated: one-sided, error %s (%s, the run stopped short; %s)", ErrorText(r.ErrorLo, r.ErrorHi), n, r.Source)
 }
 
 // ErrorText prints a signed error range in percent: "-2..+16%", or one side
@@ -238,16 +337,11 @@ func ErrorText(lo, hi *float64) string {
 	return "unbounded"
 }
 
-// Judge says whether a row holds f, and why not when none does: the reason
-// a flag gives, or the first miss of the row it misses least.
+// Judge says whether a row holds f, and why not when none does: the first
+// miss of the row of its kind it misses least.
 func (e Envelope) Judge(f Figure) Validation {
 	if f.Class.Topology == TopologyAggregated {
 		return Validation{Outside: "aggregated variants: never measured"}
-	}
-	for _, fl := range f.Flags {
-		if why, ok := e.OutsideFlags[fl]; ok {
-			return Validation{Outside: why}
-		}
 	}
 	best, bestMisses := "", math.MaxInt
 	for i := range e.Rows {
@@ -255,7 +349,7 @@ func (e Envelope) Judge(f Figure) Validation {
 		if r.Figure != f.Kind {
 			continue
 		}
-		misses := r.Region.misses(f)
+		misses := r.Region.misses(f, e.OutsideFlags)
 		if len(misses) == 0 {
 			return Validation{Row: r}
 		}
@@ -272,8 +366,10 @@ func (e Envelope) Judge(f Figure) Validation {
 	return Validation{Outside: best}
 }
 
-// misses is what of f the region does not hold, in words, in a fixed order.
-func (g Region) misses(f Figure) []string {
+// misses is what of f the region does not hold, in words: the inputs that
+// shape a figure first (the prompt's spread, the arrivals, an assumed
+// term), then the fleet, the shape and the load.
+func (g Region) misses(f Figure, outside map[Flag]string) []string {
 	var out []string
 	c := f.Class
 	if c.Topology != g.Topology {
@@ -281,6 +377,34 @@ func (g Region) misses(f Figure) []string {
 	}
 	if len(g.Percentiles) > 0 && !slices.Contains(g.Percentiles, f.Percentile) {
 		out = append(out, fmt.Sprintf("%s, measured %s", statisticText(f.Percentile), statisticsText(g.Percentiles)))
+	}
+	if s := g.PromptCV; s != nil {
+		switch {
+		case c.PromptCVUnknown:
+			out = append(out, fmt.Sprintf("prompt spread not measured (cv %s assumed), measured at cv %s", ratioText(c.PromptCV), spanText(*s, ratioText)))
+		case !s.holds(c.PromptCV):
+			out = append(out, fmt.Sprintf("prompt cv %s, measured %s", ratioText(c.PromptCV), spanText(*s, ratioText)))
+		}
+	}
+	ca2 := c.ArrivalCV2
+	if ca2 == 0 {
+		ca2 = 1
+	}
+	if s := g.ArrivalCV2; s != nil {
+		switch {
+		case c.ArrivalsUnknown:
+			out = append(out, fmt.Sprintf("arrivals not measured (Poisson assumed), measured at Ca^2 %s", spanText(*s, ratioText)))
+		case !s.holds(ca2):
+			out = append(out, fmt.Sprintf("arrivals Ca^2 %s, measured %s", ratioText(ca2), spanText(*s, ratioText)))
+		}
+	}
+	for _, fl := range f.Flags {
+		if why, ok := outside[fl]; ok {
+			out = append(out, why)
+		}
+	}
+	if len(g.FlowControl) > 0 && !slices.Contains(g.FlowControl, c.FlowControl) {
+		out = append(out, fmt.Sprintf("flow control %s, measured %s", orUnknown(c.FlowControl), strings.Join(g.FlowControl, ", ")))
 	}
 	if len(g.Accelerators) > 0 && !slices.Contains(g.Accelerators, c.Accelerator) {
 		out = append(out, fmt.Sprintf("accelerator %s, measured %s", orUnknown(c.Accelerator), strings.Join(g.Accelerators, ", ")))
@@ -297,20 +421,25 @@ func (g Region) misses(f Figure) []string {
 	if s := g.OutputTokens; s != nil && !(c.OutputTokens > 0 && s.holds(c.OutputTokens)) {
 		out = append(out, fmt.Sprintf("output %s tokens, measured %s", amountText(c.OutputTokens), spanText(*s, amountText)))
 	}
-	ca2 := c.ArrivalCV2
-	if ca2 == 0 {
-		ca2 = 1
-	}
-	if s := g.ArrivalCV2; s != nil && !s.holds(ca2) {
-		out = append(out, fmt.Sprintf("arrivals Ca^2 %s, measured %s", ratioText(ca2), spanText(*s, ratioText)))
-	}
-	if len(g.FlowControl) > 0 && !slices.Contains(g.FlowControl, c.FlowControl) {
-		out = append(out, fmt.Sprintf("flow control %s, measured %s", orUnknown(c.FlowControl), strings.Join(g.FlowControl, ", ")))
-	}
-	if g.MaxKneeShare > 0 && f.KneeShare > g.MaxKneeShare {
-		out = append(out, fmt.Sprintf("at %.2f of the knee, measured up to %.2f", f.KneeShare, g.MaxKneeShare))
+	if g.MinKneeShare > 0 || g.MaxKneeShare > 0 {
+		switch {
+		case f.KneeShare <= 0:
+			out = append(out, "rate against the knee unknown")
+		case g.MaxKneeShare > 0 && f.KneeShare > g.MaxKneeShare+shareSlack:
+			out = append(out, fmt.Sprintf("at %.3f of the knee, measured %s", f.KneeShare, shareText(g)))
+		case f.KneeShare < g.MinKneeShare-shareSlack:
+			out = append(out, fmt.Sprintf("at %.3f of the knee, measured %s", f.KneeShare, shareText(g)))
+		}
 	}
 	return out
+}
+
+// shareText is a region's knee shares in words.
+func shareText(g Region) string {
+	if g.MinKneeShare > 0 {
+		return fmt.Sprintf("%.3f to %.3f", g.MinKneeShare, g.MaxKneeShare)
+	}
+	return fmt.Sprintf("up to %.3f", g.MaxKneeShare)
 }
 
 // unknownText stands for a class value no input gave.

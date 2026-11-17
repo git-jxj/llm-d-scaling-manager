@@ -142,15 +142,28 @@ func ValidationOf(v whatif.Validation) *Validation {
 // kind at statistic q, priced at share of its knee (0: none); a refused
 // figure has no number to judge, and is f as it is.
 func validate(f Figure, kind whatif.FigureKind, q float64, class whatif.FigureClass, share float64) Figure {
+	return judged(f, whatif.Figure{Kind: kind, Percentile: q, Class: class, KneeShare: share})
+}
+
+// validateRate is validate for a rate at a target, judged as the CLI judges
+// it (whatif.RateFigure): by what bound it, at its share of the lower knee.
+func validateRate(f Figure, q float64, class whatif.FigureClass, lowerKnee float64) Figure {
 	if f.Value == nil {
 		return f
 	}
-	flags := make([]whatif.Flag, len(f.Flags))
-	for i, name := range f.Flags {
-		flags[i] = whatif.Flag(name)
+	return judged(f, whatif.RateFigure(*f.Value, f.BoundBy, q, class, lowerKnee, nil))
+}
+
+// judged is f with the verdict on wf, which takes f's flags.
+func judged(f Figure, wf whatif.Figure) Figure {
+	if f.Value == nil {
+		return f
 	}
-	f.Validation = ValidationOf(whatif.DefaultEnvelope().Judge(whatif.Figure{Kind: kind, Percentile: q, Class: class,
-		KneeShare: share, Flags: flags}))
+	wf.Flags = make([]whatif.Flag, len(f.Flags))
+	for i, name := range f.Flags {
+		wf.Flags[i] = whatif.Flag(name)
+	}
+	f.Validation = ValidationOf(whatif.DefaultEnvelope().Judge(wf))
 	return f
 }
 

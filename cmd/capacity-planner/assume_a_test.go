@@ -26,7 +26,7 @@ func TestAssumeA_AnswersWhatARefusalLeftOpen(t *testing.T) {
 
 	text, _ := runCmd(t, slices.Concat(q, []string{"--assume-a", "11ms"})...)
 	assert.NotContains(t, text, "NoFixedLatency", text)
-	assert.Contains(t, text, "end to end; OUTSIDE VALIDATED REGION (a assumed, not learned); a ASSUMED")
+	assert.Regexp(t, `end to end; OUTSIDE VALIDATED REGION \(.+\); a ASSUMED`, text)
 	assert.Contains(t, text, "a 11.00 ms ASSUMED;", "no figure was learned to print beside it")
 	assert.Contains(t, text, "a 11ms (--assume-a)")
 	assert.Contains(t, text, string(assumedA))

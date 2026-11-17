@@ -14,8 +14,10 @@ import (
 // (internal/signals/whatif); these types are the one place the planner's
 // answers are given names on the wire, and schemaVersion says which names.
 // Removing, renaming or retyping a key, or changing its meaning, bumps
-// schemaVersion; a key absent unless a new flag asks for it does not. Either
-// way the pinned key list in testdata/schema-v<N>.txt changes
+// schemaVersion. Adding a key does not: a key absent unless a new flag asks
+// for it, or an object beside the others that a reader of the version before
+// ignores and whose absence means what it meant before (validation, absent on
+// a refusal and on a figure no row judges). Either way the pinned key list in testdata/schema-v<N>.txt changes
 // (TestJSONSchemaIsPinned).
 
 // schemaVersion is the version of the JSON output's schema. 3: the TTFT's

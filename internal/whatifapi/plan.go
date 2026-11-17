@@ -535,7 +535,8 @@ func withFlag(f Figure, flag string) Figure {
 
 // validatePlan sets the envelope's verdict on the figures a plan reads: the
 // knees, the TTFT at the rate and the rate at its target, the TPOT's two
-// points, and the limits.
+// points, and the limits. A marginal step is another fleet's, and carries
+// none.
 func validatePlan(out *PlanResponse, k Knobs, c whatif.FigureClass, cs *curveSet, rate float64) {
 	m := out.TTFT.Markers
 	if m.PrefillKnee != nil {
@@ -545,17 +546,13 @@ func validatePlan(out *PlanResponse, k Knobs, c whatif.FigureClass, cs *curveSet
 		*m.DecodeKnee = validate(*m.DecodeKnee, whatif.FigureDecodeKnee, 0, c, 0)
 	}
 	q := k.TTFTPercentile
-	rateShare := func(f Figure) float64 {
-		if f.Value == nil || !cs.kneeOK {
-			return 0
-		}
-		return shareOf(*f.Value, cs.lowerKnee)
+	knee := 0.0
+	if cs.kneeOK {
+		knee = cs.lowerKnee
 	}
 	l := &out.TTFT.Line
-	if cs.kneeOK {
-		l.AtRate.Figure = validate(l.AtRate.Figure, whatif.FigureTTFT, q, c, shareOf(rate, cs.lowerKnee))
-	}
-	l.AtTarget.Rate = validate(l.AtTarget.Rate, whatif.FigureRateAtTTFT, q, c, rateShare(l.AtTarget.Rate))
+	l.AtRate.Figure = validate(l.AtRate.Figure, whatif.FigureTTFT, q, c, shareOf(rate, knee))
+	l.AtTarget.Rate = validateRate(l.AtTarget.Rate, q, c, knee)
 	if t := out.TPOT; t != nil {
 		kind := whatif.FigureMeanTPOT
 		if k.TPOTPercentile != 0 {
@@ -566,10 +563,10 @@ func validatePlan(out *PlanResponse, k Knobs, c whatif.FigureClass, cs *curveSet
 		t.AtTarget.Rate = validate(t.AtTarget.Rate, whatif.FigureRateAtTPOT, 0, c, 0)
 	}
 	lim := &out.Limits
-	lim.Prefill = validate(lim.Prefill, whatif.FigureRateAtTTFT, q, c, rateShare(lim.Prefill))
+	lim.Prefill = validateRate(lim.Prefill, q, c, knee)
 	if lim.Decode != nil {
 		*lim.Decode = validate(*lim.Decode, whatif.FigureRateAtTPOT, 0, c, 0)
 	}
-	lim.Fleet.Figure = validate(lim.Fleet.Figure, whatif.FigureRateAtTTFT, q, c, rateShare(lim.Fleet.Figure))
-	lim.Fleet.WithoutHeadroom = validate(lim.Fleet.WithoutHeadroom, whatif.FigureRateAtTTFT, q, c, rateShare(lim.Fleet.WithoutHeadroom))
+	lim.Fleet.Figure = validateRate(lim.Fleet.Figure, q, c, knee)
+	lim.Fleet.WithoutHeadroom = validateRate(lim.Fleet.WithoutHeadroom, q, c, knee)
 }

@@ -1,9 +1,9 @@
-knee            13.31 r/s   decode, batch cap binds at fill 0.732; OUTSIDE VALIDATED REGION (decode's knee: no measured run crossed it)
+knee            13.31 r/s   decode, batch cap binds at fill 0.732; OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)
 operating rate  11.32 r/s   0.85 x knee (scaleUpThreshold)
 mean TPOT       3.66 ms     [3.65 .. 3.70]   line ols, observed fill up to 0.50; OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)
 TPOT p90        4.76 ms     [4.74 .. 4.81]   per request; R_q 1.3 ASSUMED (no TPOT histogram); OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)
 prefill knee    30.00 r/s   [25.50 .. 34.50] N_p 1 x V_P 30000 / (f 1 x 1000 tokens); OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED
-TTFT p90        373.4 ms    [302.6 .. 489.1] end to end; OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED
+TTFT p90        373.4 ms    [302.6 .. 489.1] end to end; OUTSIDE VALIDATED REGION (prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721); V_P ASSUMED
                 (bands: V_P +-15%, a sweep, not a confidence interval)
                 (343.4 ms if prefill and decode waits were independent)
                 (floor 133.3 ms, pooled 331.4 ms, worst pod utilization 0.377)

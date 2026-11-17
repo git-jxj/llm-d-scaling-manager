@@ -26,6 +26,7 @@ var servedRecordings = map[string]string{
 	"throughput-sweep.jsonl.gz": outputSpreadRun,
 	"short.jsonl.gz":            shortRun,
 	"saturated.jsonl.gz":        saturatedRun,
+	"q32.jsonl.gz":              q32Recording,
 }
 
 // servedAPI is the API on a directory holding the goldens' recordings, and
@@ -263,6 +264,12 @@ func parityCases() []parityCase {
 				Assume: &whatifapi.Assume{VP: fp(30000), A: fp(0.009), PromptCV: fp(0.06)},
 				SLO:    &whatifapi.SLORequest{TTFT: obj("p90", 1), TPOT: obj(statMean, 0.01)}}
 		}, replicasQuestion},
+		{"ttft-q32-as-priced-json", "q32.jsonl.gz", "", func(r float64) whatifapi.PlanRequest {
+			sent := &whatifapi.Traffic{Mix: &whatifapi.Mix{PromptTokens: 8000, OutputTokens: 200}, ArrivalCV2: fp(1)}
+			return whatifapi.PlanRequest{Fleet: &whatifapi.FleetKnob{Prefill: ip(2), Decode: ip(2)}, Traffic: at(r, sent),
+				Assume: &whatifapi.Assume{PromptCV: fp(0.0577)},
+				SLO:    &whatifapi.SLORequest{TTFT: obj("p90", 1), TPOT: obj(statMean, 0.01)}}
+		}, replicasQuestion},
 		{"ttft-assume-a-json", "saturated.jsonl.gz", "", func(r float64) whatifapi.PlanRequest {
 			return whatifapi.PlanRequest{Traffic: at(r, nil), Assume: &whatifapi.Assume{A: fp(0.011)},
 				SLO: &whatifapi.SLORequest{TTFT: obj("p95", 1), TPOT: obj(statMean, 0.01)}}
@@ -285,7 +292,7 @@ func TestServeParityCoversEveryJSONGolden(t *testing.T) {
 	}
 	slices.Sort(names)
 	slices.Sort(covered)
-	require.Len(t, names, 10, "the JSON goldens")
+	require.Len(t, names, 11, "the JSON goldens")
 	assert.Equal(t, names, covered)
 }
 

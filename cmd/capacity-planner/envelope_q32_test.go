@@ -16,8 +16,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -148,6 +150,7 @@ var q32State = sync.OnceValues(func() (*learnreplay.State, error) {
 	if err != nil {
 		return nil, err
 	}
+	ctrllog.SetLogger(logr.Discard())
 	// As runFreeze: the driver's prompts share no prefix.
 	for i := range st.Variants {
 		st.Variants[i].Shape.PrefixHitRate = 0
@@ -202,9 +205,11 @@ func q32Buckets(t *testing.T) map[string]q32Bucket {
 // bracket where the measured figure is a range, with nil an open end.
 type q32Reading struct {
 	lo, hi *float64
-	// share is the knee share the reading was taken at.
-	share float64
-	fc    string
+	// share is the knee share the reading was taken at, and target the
+	// predicted figure a bracket read (a knee, an onset, a rate).
+	target float64
+	share  float64
+	fc     string
 }
 
 func fptr(x float64) *float64 { return &x }
@@ -335,7 +340,11 @@ func analyzeQ32(t *testing.T) q32Analysis {
 		add("step %s %s %d: %.3f r/s, %.2f of the knee: %s; %s", s.bucket, s.fc, s.step, s.rate, share, strings.Join(parts, "; "), status)
 	}
 
-	// The knee: the last step held and the first not.
+	// The knee and the onset: the last step held and the first not. A step
+	// counts as held by its completions, void or not: the noise floor voids
+	// a step's TTFT percentiles, not its count. With flow control off the
+	// fleet runs to the knee; with it on, the router stops it at its prefill
+	// onset, so a crossing there reads the onset, not the knee.
 	for _, phase := range q32Phases(steps) {
 		b := buckets[phase[0].bucket]
 		var lastHeld, firstNot *q32Step
@@ -346,22 +355,31 @@ func analyzeQ32(t *testing.T) q32Analysis {
 				firstNot = &phase[i]
 			}
 		}
-		head := fmt.Sprintf("knee %s %s: predicted %.3f r/s", phase[0].bucket, phase[0].fc, b.now.Knee)
+		kind, predicted, what := whatif.FigurePrefillKnee, b.now.Knee, "knee"
+		if b.now.Knee != b.now.PrefillKnee {
+			kind = whatif.FigureDecodeKnee
+		}
+		if phase[0].fc == whatif.FlowControlNameOn {
+			kind, predicted, what = whatif.FigureFlowControlOnset, b.now.Onsets.Prefill, "onset"
+		}
+		head := fmt.Sprintf("%s %s %s: predicted %.3f r/s", what, phase[0].bucket, phase[0].fc, predicted)
 		switch {
 		case lastHeld == nil:
 			add("%s, no step held", head)
+		case firstNot == nil && kind == whatif.FigureFlowControlOnset:
+			add("%s, held to %.3f, every step held: the ladder stopped under it", head, lastHeld.rate)
 		case firstNot == nil:
-			add("%s, held to %.3f, every step held: not crossed", head, lastHeld.rate)
-		default:
-			lo, hi := relErr(b.now.Knee, firstNot.rate), relErr(b.now.Knee, lastHeld.rate)
-			add("%s, held to %.3f, first not held %.3f: error %s to %s", head, lastHeld.rate, firstNot.rate, pctText(&lo), pctText(&hi))
-			kind := whatif.FigurePrefillKnee
-			if b.now.Knee != b.now.PrefillKnee {
-				kind = whatif.FigureDecodeKnee
-			}
+			hi := relErr(predicted, lastHeld.rate)
+			add("%s, held to %.3f, every step held: error at most %s", head, lastHeld.rate, pctText(&hi))
 			g := group(kind, phase[0].bucket, 0)
 			g.brackets, g.shareless = true, true
-			g.readings = append(g.readings, q32Reading{lo: fptr(lo), hi: fptr(hi), fc: phase[0].fc})
+			g.readings = append(g.readings, q32Reading{hi: fptr(hi), fc: phase[0].fc, target: predicted})
+		default:
+			lo, hi := relErr(predicted, firstNot.rate), relErr(predicted, lastHeld.rate)
+			add("%s, held to %.3f, first not held %.3f: error %s to %s", head, lastHeld.rate, firstNot.rate, pctText(&lo), pctText(&hi))
+			g := group(kind, phase[0].bucket, 0)
+			g.brackets, g.shareless = true, true
+			g.readings = append(g.readings, q32Reading{lo: fptr(lo), hi: fptr(hi), fc: phase[0].fc, target: predicted})
 		}
 	}
 
@@ -387,8 +405,9 @@ func analyzeQ32(t *testing.T) q32Analysis {
 					below = s
 				}
 			}
-			head := fmt.Sprintf("rate %s %s %s %.1f ms: predicted %.3f r/s", phase[0].bucket, phase[0].fc, statText(q), 1000*target.Seconds, predicted)
-			r := q32Reading{share: predicted / b.now.Knee, fc: phase[0].fc}
+			head := fmt.Sprintf("rate %s %s %s %.1f ms: predicted %.3f r/s, %.3f of the knee", phase[0].bucket, phase[0].fc,
+				statText(q), 1000*target.Seconds, predicted, predicted/b.now.Knee)
+			r := q32Reading{share: predicted / b.now.Knee, fc: phase[0].fc, target: predicted}
 			switch {
 			case below == nil && above == nil:
 				add("%s, no valid step", head)
@@ -417,17 +436,12 @@ func analyzeQ32(t *testing.T) q32Analysis {
 		if len(row.Region.Percentiles) > 0 || row.Figure == whatif.FigureMeanTPOT {
 			what += " " + statText(g.q)
 		}
-		upTo := ""
+		share := ""
 		if row.Region.MaxKneeShare > 0 {
-			upTo = fmt.Sprintf(", up to %.2f of the knee", row.Region.MaxKneeShare)
+			share = fmt.Sprintf(", %.3f to %.3f of the knee", row.Region.MinKneeShare, row.Region.MaxKneeShare)
 		}
-		readings := fmt.Sprintf("%d readings", row.Readings)
-		if row.Readings == 1 {
-			readings = "1 reading"
-		}
-		add("envelope %s, %s: error %s over %s, flow control %s%s",
-			what, row.Shape, whatif.ErrorText(row.ErrorLo, row.ErrorHi), readings,
-			strings.Join(g.flowControl(), " and "), upTo)
+		add("envelope %s, %s, flow control %s%s: %s", what, row.Shape, strings.Join(g.flowControl(), " and "), share,
+			whatif.Validation{Row: &row}.String())
 	}
 	return a
 }
@@ -445,26 +459,57 @@ func q32Phases(steps []q32Step) [][]q32Step {
 	return out
 }
 
-// q32Row is the envelope row a group draws.
+// q32RateSlack is how far either side of a measured target's knee share a
+// rate row reaches: half the ladder's spacing there (0.05 of the knee).
+const q32RateSlack = 0.025
+
+// share3 is a knee share to the 3 decimals a region stores.
+func share3(x float64) float64 { return math.Round(1000*x) / 1000 }
+
+// q32Row is the envelope row a group draws. The region holds every input that
+// shapes the figure as the run priced it: the spread and the arrivals sent
+// (for the figures the prefill queue shapes), the fleet, the accelerator, the
+// lengths and the load.
 func q32Row(b q32Bucket, g *q32Group) whatif.EnvelopeRow {
 	sent := func(x float64) *whatif.Span { return &whatif.Span{Lo: x / q32Tolerance, Hi: x * q32Tolerance} }
 	region := whatif.Region{Topology: b.class.Topology, Accelerators: []string{b.class.Accelerator},
 		PrefillReplicas: []int{b.spec.Prefill}, DecodeReplicas: []int{b.spec.Decode},
-		PromptTokens: sent(b.spec.Prompt), OutputTokens: sent(b.spec.Output), ArrivalCV2: sent(b.spec.Ca2)}
+		PromptTokens: sent(b.spec.Prompt), OutputTokens: sent(b.spec.Output),
+		PromptCV: sent(b.off.Prefill.PromptCV), ArrivalCV2: sent(b.spec.Ca2)}
 	switch g.kind {
 	case whatif.FigureTTFT, whatif.FigureRateAtTTFT:
 		region.Percentiles = []float64{g.q}
 	case whatif.FigureMeanTPOT:
-		// Decode's TPOT reads neither the prefill pods nor the router's gate.
-		region.PrefillReplicas = nil
+		// Decode's TPOT reads neither the prefill pods, nor the prompts'
+		// spread, nor the arrivals, nor the router's gate.
+		region.PrefillReplicas, region.PromptCV, region.ArrivalCV2 = nil, nil, nil
+	case whatif.FigurePrefillKnee:
+		// A knee is a capacity: no spread or arrivals move it.
+		region.PromptCV, region.ArrivalCV2 = nil, nil
+	case whatif.FigureDecodeKnee:
+		// Nor do the prefill pods move decode's.
+		region.PrefillReplicas, region.PromptCV, region.ArrivalCV2 = nil, nil, nil
 	}
 	errs := make([]float64, 0, len(g.readings))
-	row := whatif.EnvelopeRow{Figure: g.kind, Source: q32Source, Readings: len(g.readings),
+	row := whatif.EnvelopeRow{Figure: g.kind, Source: q32Source,
 		Shape: fmt.Sprintf("%.0f-token prompts, %.0f out, Ca^2 %g", b.spec.Prompt, b.spec.Output, b.spec.Ca2)}
 	open := [2]bool{}
+	var targets []float64
 	for _, r := range g.readings {
 		if !g.shareless {
-			region.MaxKneeShare = max(region.MaxKneeShare, r.share)
+			lo, hi := r.share, r.share
+			if g.kind == whatif.FigureRateAtTTFT {
+				lo, hi = r.share-q32RateSlack, r.share+q32RateSlack
+			}
+			if region.MaxKneeShare == 0 || share3(lo) < region.MinKneeShare {
+				region.MinKneeShare = share3(lo)
+			}
+			region.MaxKneeShare = max(region.MaxKneeShare, share3(hi))
+		}
+		// Targets equal to 3 decimals are one: off and on price the same
+		// target to within rounding.
+		if t3 := share3(r.target); r.target > 0 && !slices.Contains(targets, t3) {
+			targets = append(targets, t3)
 		}
 		if !g.brackets {
 			errs = append(errs, *r.lo)
@@ -482,19 +527,31 @@ func q32Row(b q32Bucket, g *q32Group) whatif.EnvelopeRow {
 		}
 	}
 	region.FlowControl = g.flowControl()
-	if g.kind == whatif.FigureMeanTPOT {
+	// A knee is a capacity, and decode's TPOT does not read the router's gate.
+	if g.kind == whatif.FigureMeanTPOT || g.kind == whatif.FigurePrefillKnee || g.kind == whatif.FigureDecodeKnee {
 		region.FlowControl = nil
 	}
-	if g.brackets {
+	switch {
+	case g.brackets:
+		// A bracket's readings are the distinct figures it read: one target
+		// read with flow control off and on is one reading.
+		row.Readings = len(targets)
+		row.Spread = whatif.SpreadBracket
 		if open[0] {
-			row.ErrorLo = nil
+			row.ErrorLo, row.Spread = nil, whatif.SpreadOneSided
 		}
 		if open[1] {
-			row.ErrorHi = nil
+			row.ErrorHi, row.Spread = nil, whatif.SpreadOneSided
 		}
-	} else {
+	default:
 		slices.Sort(errs)
-		row.ErrorLo, row.ErrorHi = fptr(percentileOf(errs, 0.1)), fptr(percentileOf(errs, 0.9))
+		row.Readings = len(errs)
+		row.ErrorMin, row.ErrorMax = fptr(errs[0]), fptr(errs[len(errs)-1])
+		row.ErrorLo, row.ErrorHi, row.Spread = row.ErrorMin, row.ErrorMax, whatif.SpreadMinMax
+		if len(errs) >= 5 {
+			row.ErrorLo, row.ErrorHi = fptr(percentileOf(errs, 0.1)), fptr(percentileOf(errs, 0.9))
+			row.Spread = whatif.SpreadPercentiles
+		}
 	}
 	row.Region = region
 	return row
@@ -576,7 +633,7 @@ func TestStaircaseQ32_TheShippedEnvelopeJudgesTheRun(t *testing.T) {
 
 	past := in
 	past.KneeShare = 0.99
-	assert.Contains(t, env.Judge(past).String(), "OUTSIDE VALIDATED REGION (at 0.99 of the knee")
+	assert.Contains(t, env.Judge(past).String(), "OUTSIDE VALIDATED REGION (at 0.990 of the knee, measured 0.400 to 0.900)")
 
 	four := in
 	four.Class.PrefillReplicas = 4
@@ -599,6 +656,35 @@ func TestStaircaseQ32_WithoutProcessorSharingTheErrorsMove(t *testing.T) {
 		}
 	}
 	t.Logf("without processor sharing, lines moved by kind: %v of %d", moved, len(wantLines))
-	assert.Positive(t, moved["step"], "the per-step TTFT errors move")
-	assert.Positive(t, moved["envelope"], "the envelope rows move")
+	// 43 of the 47 steps (the 4 every model refuses at the knee stay), all
+	// 12 rate readings, and 14 of the 23 rows. The 9 that stay are the 8
+	// TPOT, knee and onset rows, which processor sharing does not price, and
+	// one rate row whose bound prints the same either way.
+	assert.Equal(t, map[string]int{"step": 43, "rate": 12, "envelope": 14}, moved)
+}
+
+// The prompt's spread keeps a figure priced on the default spread out: the
+// same TTFT at bucket B's fleet and load reads validated at the spread the run
+// sent and outside at the assumed cv 2, and only the spread keeps it out. With
+// the rows' spread dropped (the review's finding: the label landed on another
+// model, +18..+108% claimed where the error was about +430%), it would read
+// validated.
+func TestStaircaseQ32_TheAssumedSpreadIsOutside(t *testing.T) {
+	buckets := q32Buckets(t)
+	env := whatif.DefaultEnvelope()
+	b := buckets["B"]
+	sent := whatif.Figure{Kind: whatif.FigureTTFT, Percentile: 0.9, Class: b.class, KneeShare: 0.85}
+	require.True(t, env.Judge(sent).Validated(), env.Judge(sent).String())
+
+	assumed := sent
+	assumed.Class.PromptCV, assumed.Class.PromptCVUnknown = whatif.AssumedPromptCV, true
+	v := env.Judge(assumed)
+	assert.Equal(t, "OUTSIDE VALIDATED REGION (prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721)", v.String())
+
+	blind := env
+	blind.Rows = slices.Clone(env.Rows)
+	for i := range blind.Rows {
+		blind.Rows[i].Region.PromptCV = nil
+	}
+	assert.True(t, blind.Judge(assumed).Validated(), "without the spread in the region the assumed figure would pass: the region is what holds it out")
 }

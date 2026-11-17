@@ -286,7 +286,7 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 				}
 				why = fmt.Sprintf("%s x %s (%s)", num(a.headroom), of, src)
 				if a.ttft != nil && a.ttft.prefillBinds {
-					why += "; " + a.ttft.fleet.verdict(a.ttft.fleet.kneeValidation(a.ttft.knee))
+					why += "; prefill knee " + a.ttft.fleet.verdict(a.ttft.fleet.kneeValidation(a.ttft.knee))
 				}
 			}
 			row(&b, "operating rate", rateText(r.Value), spanText(r.Sensitivity, "%.2f", 1, false), why)

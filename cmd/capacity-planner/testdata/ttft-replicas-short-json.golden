@@ -194,8 +194,8 @@
             },
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (V_P assumed, not learned)",
-              "outside": "V_P assumed, not learned"
+              "label": "OUTSIDE VALIDATED REGION (prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721)",
+              "outside": "prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721"
             }
           }
         }

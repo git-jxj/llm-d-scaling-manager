@@ -45,6 +45,14 @@ func workedTTFT(args ...string) []string {
 		"--assume-vp", "30000"}, workedShape)
 }
 
+// q32TTFT is a question on the q32 staircase's warm-up (q32Recording) at
+// bucket B's fleet and shape: 2 prefill and 2 decode pods, 8000 tokens in and
+// 200 out. The command comes first in args, then its flags.
+func q32TTFT(args ...string) []string {
+	return slices.Concat(args[:1], []string{"--recording", q32Recording, "--prefill", "2", "--decode", "2",
+		"--assume-input-tokens", "8000", "--assume-output-tokens", "200"}, args[1:])
+}
+
 // pullTTFT is the throughput sweep's fleet (outputSpreadRun) priced with its
 // KV pull a stage: two prefill pods, a narrow prompt spread, V_P and a
 // assumed.
@@ -96,6 +104,18 @@ func TestTTFTGolden(t *testing.T) {
 		// committed recording prices a decode line with D fitted.
 		{"ttft-replicas-pull", pullTTFT(), 0},
 		{"ttft-replicas-pull-json", slices.Concat(pullTTFT(), []string{"-o", "json"}), 0},
+		// The q32 staircase's warm-up at bucket B's fleet and shape. Asked
+		// plainly, the spread is the default cv 2 and the arrivals assumed
+		// Poisson, which the run never priced: every prefill figure is
+		// outside. Asked as the run was priced (the spread and the arrivals
+		// it sent, and flow control stated off), they read validated. The JSON
+		// case leaves flow control to the recording, as the API does (its
+		// parity case): its TTFT reads outside, its mean TPOT validated.
+		{"ttft-q32-assumed-spread", q32TTFT("replicas-to-slo", "--ttft-percentile", "90"), 0},
+		{"ttft-q32-as-priced", q32TTFT("replicas-to-slo", "--ttft-percentile", "90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "--flow-control", "off"), 0},
+		{"ttft-q32-as-priced-json", q32TTFT("replicas-to-slo", "--ttft-percentile", "90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "-o", "json"), 0},
+		{"ttft-q32-rate-as-priced", q32TTFT("slo-to-rate", "--ttft", "7599.1ms@p90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "--flow-control", "off"), 0},
+		{"ttft-q32-rate-assumed-spread", q32TTFT("slo-to-rate", "--ttft", "7599.1ms@p90"), 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { checkGolden(t, c.name, c.code, c.args) })
@@ -109,7 +129,7 @@ func TestTTFT_SaysUnvalidatedAndAssumedInTextAndJSON(t *testing.T) {
 	for _, q := range [][]string{workedTTFT("replicas-to-slo", "--ttft-percentile", "90"), workedTTFT("slo-to-rate", "--ttft", "1s@p90")} {
 		text, code := runCmd(t, q...)
 		require.Equal(t, 0, code, text)
-		assert.Contains(t, text, "OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED")
+		assert.Regexp(t, `OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED`, text)
 		assert.Contains(t, text, "TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read "+
 			"1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it.")
 		assert.Contains(t, text, "UnvalidatedTTFT")
@@ -730,11 +750,11 @@ func TestTTFT_ThePrefillKneeBindsTheOperatingRate(t *testing.T) {
 	assert.NotContains(t, w.Roles[0].Results.Knee.Answer.Flags, string(whatif.UnvalidatedTTFT), "decode's own knee rests on no V_P")
 
 	text, _ := runCmd(t, low...)
-	assert.Contains(t, text, "0.85 x prefill knee (scaleUpThreshold); OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED")
+	assert.Contains(t, text, "0.85 x prefill knee (scaleUpThreshold); prefill knee OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED")
 	var tpotRows int
 	for line := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(line, "mean TPOT") || strings.HasPrefix(line, "TPOT p90") {
-			assert.Contains(t, line, "at the prefill knee's rate; OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED")
+			assert.Contains(t, line, "at the prefill knee's rate; OUTSIDE VALIDATED REGION (")
 			tpotRows++
 		}
 	}

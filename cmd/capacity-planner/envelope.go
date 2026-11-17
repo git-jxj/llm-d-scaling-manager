@@ -1,6 +1,8 @@
 package main
 
 import (
+	"slices"
+
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
@@ -41,9 +43,12 @@ func (pv pricedVariant) class() whatif.FigureClass {
 	return c
 }
 
-// class is the class of a fleet's figures.
+// class is the class of a fleet's figures: a spread or arrivals stated by a
+// flag are known, as a measured one is; the defaults are not.
 func (pf *pricedFleet) class() whatif.FigureClass {
 	c := whatif.FleetClass(pf.fleet)
+	c.PromptCVUnknown = pf.fleet.Prefill.PromptCVAssumed && !pf.statedCV
+	c.ArrivalsUnknown = slices.Contains(pf.flags, assumedPoisson) && !slices.Contains(pf.flags, assumedArrivalCV2)
 	if pf.pv != nil {
 		c.Accelerator = pf.pv.state.Accelerator
 		if pf.fleet.Decode == nil {
@@ -87,13 +92,24 @@ func (pf *pricedFleet) kneeValidation(r whatif.Result) whatif.Validation {
 	return judge(whatif.FigurePrefillKnee, 0, pf.class(), 0, r)
 }
 
-// rateValidation judges a rate at a TTFT target.
-func (pf *pricedFleet) rateValidation(q float64, r whatif.Result) whatif.Validation {
-	s := 0.0
-	if a, ok := r.(whatif.Answer); ok && a.Basis.TTFT != nil {
-		s = share(a.Value, a.Basis.TTFT.KneeRate)
+// rateValidation judges a rate asked at a TTFT target, the prefill role's or
+// the fleet's, as whatif.RateFigure reads it: by what bound it, at its share
+// of the lower knee, which the prefill role's answer carries (role). The API
+// judges its limits the same way.
+func (pf *pricedFleet) rateValidation(q float64, r, role whatif.Result) whatif.Validation {
+	a, ok := r.(whatif.Answer)
+	if !ok {
+		return judge(whatif.FigureRateAtTTFT, q, pf.class(), 0, r)
 	}
-	return judge(whatif.FigureRateAtTTFT, q, pf.class(), s, r)
+	knee := 0.0
+	if p, ok := role.(whatif.Answer); ok && p.Basis.TTFT != nil {
+		knee = p.Basis.TTFT.KneeRate
+	}
+	by := make([]string, len(a.Basis.BoundBy))
+	for i, b := range a.Basis.BoundBy {
+		by[i] = string(b)
+	}
+	return whatif.DefaultEnvelope().Judge(whatif.RateFigure(a.Value, by, q, pf.class(), knee, a.Flags))
 }
 
 // kneeValidation judges decode's knee.

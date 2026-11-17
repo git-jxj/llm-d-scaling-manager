@@ -108,8 +108,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (decode's knee: no measured run crossed it)",
-              "outside": "decode's knee: no measured run crossed it"
+              "label": "OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)",
+              "outside": "accelerator resource-01, measured H200"
             }
           }
         },

@@ -1,0 +1,304 @@
+{
+  "schemaVersion": 3,
+  "question": "replicas-to-slo",
+  "source": {
+    "recording": "testdata/staircase-q32/warmup.jsonl.gz",
+    "namespace": "ns-01",
+    "model": "model-02",
+    "firstCycle": 1,
+    "lastCycle": 580,
+    "totalCycles": 580,
+    "firstAt": "2026-11-14T07:09:46.613863541Z",
+    "lastAt": "2026-11-14T09:35:09.792943235Z"
+  },
+  "bands": {
+    "method": "block bootstrap",
+    "blockCycles": 4,
+    "resamples": 200,
+    "seed": 1,
+    "loPercent": 10,
+    "hiPercent": 90
+  },
+  "roles": [
+    {
+      "role": "decode",
+      "variant": "variant-01",
+      "inputs": {
+        "line": {
+          "a": 0.04249685049858612,
+          "b": 0.010425088112190157,
+          "tier": "held",
+          "readings": 0,
+          "fromCycle": 0,
+          "toCycle": 0,
+          "resamples": 0,
+          "tierChanges": 0,
+          "check": {
+            "status": "not-run",
+            "compared": 0,
+            "onRamp": 0,
+            "aboveBand": 0,
+            "tooOld": 65,
+            "past": 0,
+            "medianErrorPct": 0,
+            "worstErrorPct": 0,
+            "signedErrorPct": 0,
+            "fromCycle": 0,
+            "toCycle": 0,
+            "rowKVPerRequest": 0,
+            "otherShape": false
+          }
+        },
+        "fillBand": {
+          "lo": 0.15,
+          "hi": 0.8
+        },
+        "capacityTokens": 764672,
+        "kvPerRequest": 8114.099089776806,
+        "shape": {
+          "inputTokens": 8000,
+          "inputSource": "assumed",
+          "outputTokens": 200,
+          "outputSource": "assumed",
+          "outputDispersion": 1.1409908977680596,
+          "prefixHitRate": 0,
+          "fromCycle": 560,
+          "toCycle": 579,
+          "cycles": 20
+        },
+        "batchCap": 256,
+        "batchCapSource": "flags",
+        "ranks": 1,
+        "replicas": 2,
+        "replicasFrom": "--decode",
+        "headroom": 0.85,
+        "rate": 3.440468108887058,
+        "rateSource": "headroom x prefill knee"
+      },
+      "results": {
+        "knee": {
+          "answer": {
+            "value": 16.95075000755562,
+            "unit": "r/s",
+            "basis": {
+              "fill": 0.795841134150669,
+              "kneeRate": 16.95075000755562,
+              "floor": 0,
+              "uncapped": 0,
+              "boundBy": [
+                "band top"
+              ],
+              "tier": "held"
+            },
+            "flags": [
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 8000 tokens, measured 800 to 1250)",
+              "outside": "prompt 8000 tokens, measured 800 to 1250"
+            }
+          }
+        },
+        "operatingRate": {
+          "answer": {
+            "value": 3.440468108887058,
+            "unit": "r/s",
+            "basis": {
+              "fill": 0.04504851800465884,
+              "kneeRate": 16.95075000755562,
+              "floor": 0,
+              "uncapped": 0,
+              "boundBy": [],
+              "tier": "held"
+            },
+            "flags": [
+              "AssumedShape",
+              "HeldLine",
+              "UnvalidatedTTFT",
+              "VPLowerBound",
+              "VPScaledToPrompt",
+              "AssumedPromptSpread"
+            ],
+            "sensitivity": {
+              "lo": 2.542954689177391,
+              "hi": 3.9565383252201167
+            }
+          }
+        },
+        "meanTPOT": {
+          "answer": {
+            "value": 0.016799615686978076,
+            "unit": "s",
+            "basis": {
+              "fill": 0.04504851800465884,
+              "kneeRate": 16.95075000755562,
+              "floor": 0.016799615686978076,
+              "uncapped": 0,
+              "boundBy": [],
+              "tier": "held"
+            },
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine",
+              "UnvalidatedTTFT",
+              "VPLowerBound",
+              "VPScaledToPrompt",
+              "AssumedPromptSpread"
+            ],
+            "validation": {
+              "validated": true,
+              "label": "validated: error +36..+45% (p10-p90, min-max +33..+46%, n=12; q32 staircase)",
+              "source": "q32 staircase",
+              "shape": "8000-token prompts, 200 out, Ca^2 1",
+              "errorLo": 0.3567485077591815,
+              "errorHi": 0.45070952353510335,
+              "readings": 12
+            }
+          }
+        }
+      }
+    },
+    {
+      "role": "prefill",
+      "variant": "variant-02",
+      "ttft": {
+        "decodeVariant": "variant-01",
+        "percentile": 0.9,
+        "rate": 3.440468108887058,
+        "rateSource": "headroom x prefill knee",
+        "replicas": 2,
+        "replicasFrom": "--prefill",
+        "vp": 17046.48,
+        "vpSource": "learned",
+        "vpOrigin": "peak-under-queue",
+        "vpPromptTokens": 7984.303256867742,
+        "fixedLatencySeconds": 0.009011691426531434,
+        "fixedLatencySource": "learned",
+        "imbalance": 1,
+        "imbalanceSource": "learned",
+        "promptTokens": 8000,
+        "promptSource": "assumed",
+        "promptCV": 0.0577,
+        "promptCVSource": "assumed",
+        "arrivalCV2": 1,
+        "arrivalsSource": "assumed",
+        "transferSecondsPerToken": 0.0000028114833006122766,
+        "transferSource": "held by the decode term, not priced",
+        "decodeSide": "line",
+        "decodeBaseSeconds": -0.08874498911329295,
+        "decodePerTokenSeconds": 0.000012311228655172654,
+        "routerHopBaseSeconds": -0.02158598458382821,
+        "routerHopPerTokenSeconds": 0.00002559333408175386,
+        "decodeTermSource": "measured",
+        "routerHopSource": "measured",
+        "decodePerStep": 8.627566545897512,
+        "flowControl": "off, inferred",
+        "assumed": [
+          "prompt 8000 tokens (--assume-input-tokens)",
+          "prompt cv 0.0577 (--assume-prompt-cv)",
+          "flow control off (no queue series)",
+          "arrivals Ca^2 1 (--arrival-cv2)",
+          "Poisson arrivals at decode admission (--arrival-cv2 does not reach it)"
+        ]
+      },
+      "results": {
+        "knee": {
+          "answer": {
+            "value": 4.0476095398671275,
+            "unit": "r/s",
+            "basis": {
+              "fill": 0,
+              "kneeRate": 4.0476095398671275,
+              "floor": 0,
+              "uncapped": 0,
+              "boundBy": [
+                "prefill knee"
+              ],
+              "tier": ""
+            },
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPLowerBound",
+              "VPScaledToPrompt",
+              "AssumedPromptSpread"
+            ],
+            "sensitivity": {
+              "lo": 2.991711399032225,
+              "hi": 4.654750970847196
+            },
+            "validation": {
+              "validated": true,
+              "label": "validated: one-sided, error at most +0% (n=1, the run stopped short; q32 staircase)",
+              "source": "q32 staircase",
+              "shape": "8000-token prompts, 200 out, Ca^2 1",
+              "errorHi": -0.00009645754270570794,
+              "readings": 1
+            }
+          }
+        },
+        "ttft": {
+          "answer": {
+            "value": 7.599109523510692,
+            "unit": "s",
+            "basis": {
+              "fill": 0,
+              "kneeRate": 4.0476095398671275,
+              "floor": 0.8405156392690134,
+              "uncapped": 0,
+              "boundBy": [],
+              "tier": "held"
+            },
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPLowerBound",
+              "VPScaledToPrompt",
+              "AssumedPromptSpread",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "TransferHeld",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "parts": {
+              "independent": 7.599109523510692,
+              "pooled": 7.599109523510692,
+              "decodeShare": 2.4038589600613925e-40,
+              "engineWait": 2.800006577142657,
+              "kvPullWait": 0.0009052648279237142,
+              "ownPrefill": 0.8063670010530012,
+              "decodeWait": 3.558562253683682e-41,
+              "firstStep": 0,
+              "decodeEngine": 0.017714939431497434,
+              "routerHop": 0,
+              "prefillUtilization": 0.8499999999999999,
+              "vpMarginApplied": 0.05,
+              "waitScale": 0,
+              "waitOffset": 0,
+              "decodeWaitProbability": 2.4038589600613925e-40,
+              "prefillKnee": 4.0476095398671275,
+              "decodeKnee": 16.95075000755562
+            },
+            "sensitivity": {
+              "lo": 3.830185105522033,
+              "hi": 1870592203661731.8,
+              "refused": "Saturated"
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (flow control unknown, measured off, on)",
+              "outside": "flow control unknown, measured off, on"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "exitCode": 0,
+  "note": "estimate from no readings of the line's own of a 580-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: no recording has checked it at a stated Ca^2."
+}

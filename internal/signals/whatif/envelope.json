@@ -1,6 +1,111 @@
 {
   "rows": [
     {
+      "figure": "decode-knee",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        }
+      },
+      "errorHi": -0.000028938153787794185,
+      "spread": "one-sided",
+      "readings": 1
+    },
+    {
+      "figure": "flow-control-onset",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "on"
+        ]
+      },
+      "errorLo": -0.035896495711570164,
+      "errorHi": 0.0175618923933607,
+      "spread": "bracket",
+      "readings": 1
+    },
+    {
+      "figure": "flow-control-onset",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "on"
+        ]
+      },
+      "errorLo": -0.07211253380060167,
+      "errorHi": -0.04316978084008927,
+      "spread": "bracket",
+      "readings": 1
+    },
+    {
       "figure": "mean-tpot",
       "shape": "1000-token prompts, 1000 out, Ca^2 1",
       "source": "q32 staircase",
@@ -20,14 +125,14 @@
           "lo": 800,
           "hi": 1250
         },
-        "arrivalCV2": {
-          "lo": 0.8,
-          "hi": 1.25
-        },
-        "maxKneeShare": 0.8999940441660581
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
       "errorLo": 0.04925288584083967,
       "errorHi": 0.18480749580455985,
+      "errorMin": 0.030936693663242698,
+      "errorMax": 0.19313757524595365,
+      "spread": "p10-p90",
       "readings": 12
     },
     {
@@ -50,14 +155,14 @@
           "lo": 160,
           "hi": 250
         },
-        "arrivalCV2": {
-          "lo": 0.8,
-          "hi": 1.25
-        },
-        "maxKneeShare": 0.21491674400107197
+        "minKneeShare": 0.096,
+        "maxKneeShare": 0.215
       },
       "errorLo": 0.3567485077591815,
       "errorHi": 0.45070952353510335,
+      "errorMin": 0.33121092941077324,
+      "errorMax": 0.45814808240270755,
+      "spread": "p10-p90",
       "readings": 12
     },
     {
@@ -80,14 +185,14 @@
           "lo": 160,
           "hi": 250
         },
-        "arrivalCV2": {
-          "lo": 3.2,
-          "hi": 5
-        },
-        "maxKneeShare": 0.20294087273227768
+        "minKneeShare": 0.096,
+        "maxKneeShare": 0.203
       },
       "errorLo": 0.33937906213599933,
       "errorHi": 0.425993090072294,
+      "errorMin": 0.32298147681013023,
+      "errorMax": 0.43449140028161715,
+      "spread": "p10-p90",
       "readings": 10
     },
     {
@@ -112,17 +217,10 @@
         "outputTokens": {
           "lo": 160,
           "hi": 250
-        },
-        "arrivalCV2": {
-          "lo": 0.8,
-          "hi": 1.25
-        },
-        "flowControl": [
-          "on"
-        ]
+        }
       },
-      "errorLo": 0.052694288652048726,
-      "errorHi": 0.1110649299662716,
+      "errorHi": -0.00009645754270570794,
+      "spread": "one-sided",
       "readings": 1
     },
     {
@@ -147,17 +245,10 @@
         "outputTokens": {
           "lo": 160,
           "hi": 250
-        },
-        "arrivalCV2": {
-          "lo": 3.2,
-          "hi": 5
-        },
-        "flowControl": [
-          "on"
-        ]
+        }
       },
-      "errorLo": 0.21222208441663004,
-      "errorHi": 0.2500338294833624,
+      "errorHi": -0.00009645754270570794,
+      "spread": "one-sided",
       "readings": 1
     },
     {
@@ -179,6 +270,10 @@
           "lo": 800,
           "hi": 1250
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 800,
           "hi": 1250
@@ -194,10 +289,12 @@
         "percentiles": [
           0.9
         ],
-        "maxKneeShare": 0.8499999999999578
+        "minKneeShare": 0.825,
+        "maxKneeShare": 0.875
       },
       "errorHi": -0.05554930556504423,
-      "readings": 2
+      "spread": "one-sided",
+      "readings": 1
     },
     {
       "figure": "rate-at-ttft",
@@ -218,6 +315,10 @@
           "lo": 800,
           "hi": 1250
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 800,
           "hi": 1250
@@ -233,10 +334,12 @@
         "percentiles": [
           0.95
         ],
-        "maxKneeShare": 0.8499999999999578
+        "minKneeShare": 0.825,
+        "maxKneeShare": 0.875
       },
       "errorHi": -0.05554930556504423,
-      "readings": 2
+      "spread": "one-sided",
+      "readings": 1
     },
     {
       "figure": "rate-at-ttft",
@@ -256,6 +359,10 @@
         "promptTokens": {
           "lo": 6400,
           "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
         },
         "outputTokens": {
           "lo": 160,
@@ -272,10 +379,12 @@
         "percentiles": [
           0.9
         ],
-        "maxKneeShare": 0.8499999999999089
+        "minKneeShare": 0.825,
+        "maxKneeShare": 0.875
       },
       "errorHi": -0.05559480952877016,
-      "readings": 2
+      "spread": "one-sided",
+      "readings": 1
     },
     {
       "figure": "rate-at-ttft",
@@ -296,6 +405,10 @@
           "lo": 6400,
           "hi": 10000
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 160,
           "hi": 250
@@ -311,10 +424,12 @@
         "percentiles": [
           0.95
         ],
-        "maxKneeShare": 0.8499999999999089
+        "minKneeShare": 0.825,
+        "maxKneeShare": 0.875
       },
       "errorHi": -0.05559480952877016,
-      "readings": 2
+      "spread": "one-sided",
+      "readings": 1
     },
     {
       "figure": "rate-at-ttft",
@@ -335,6 +450,10 @@
           "lo": 6400,
           "hi": 10000
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 160,
           "hi": 250
@@ -350,9 +469,11 @@
         "percentiles": [
           0.9
         ],
-        "maxKneeShare": 0.8499999999999089
+        "minKneeShare": 0.74,
+        "maxKneeShare": 0.875
       },
       "errorHi": 0.00013607816473548695,
+      "spread": "one-sided",
       "readings": 2
     },
     {
@@ -374,6 +495,10 @@
           "lo": 6400,
           "hi": 10000
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 160,
           "hi": 250
@@ -389,9 +514,11 @@
         "percentiles": [
           0.95
         ],
-        "maxKneeShare": 0.8499999999999089
+        "minKneeShare": 0.74,
+        "maxKneeShare": 0.875
       },
       "errorHi": 0.020492835848713087,
+      "spread": "one-sided",
       "readings": 2
     },
     {
@@ -413,6 +540,10 @@
           "lo": 800,
           "hi": 1250
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 800,
           "hi": 1250
@@ -428,10 +559,14 @@
         "percentiles": [
           0
         ],
-        "maxKneeShare": 0.8999940441660581
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
       "errorLo": -0.035704607952240786,
       "errorHi": 0.17708330513520704,
+      "errorMin": -0.047117945531881866,
+      "errorMax": 0.1834931820127601,
+      "spread": "p10-p90",
       "readings": 12
     },
     {
@@ -453,6 +588,10 @@
           "lo": 800,
           "hi": 1250
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 800,
           "hi": 1250
@@ -468,10 +607,14 @@
         "percentiles": [
           0.9
         ],
-        "maxKneeShare": 0.8999940441660581
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
       "errorLo": -0.0031686417060293563,
       "errorHi": 0.14038369691279928,
+      "errorMin": -0.024295264666893912,
+      "errorMax": 0.16221102053842684,
+      "spread": "p10-p90",
       "readings": 12
     },
     {
@@ -493,6 +636,10 @@
           "lo": 800,
           "hi": 1250
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 800,
           "hi": 1250
@@ -508,10 +655,14 @@
         "percentiles": [
           0.95
         ],
-        "maxKneeShare": 0.8999940441660581
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
       "errorLo": -0.025180533509062283,
       "errorHi": 0.11868427243979869,
+      "errorMin": -0.039051401224804994,
+      "errorMax": 0.1446326469004755,
+      "spread": "p10-p90",
       "readings": 12
     },
     {
@@ -533,6 +684,10 @@
           "lo": 6400,
           "hi": 10000
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 160,
           "hi": 250
@@ -548,10 +703,14 @@
         "percentiles": [
           0
         ],
-        "maxKneeShare": 0.9000374082821215
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
       "errorLo": 0.29110810447187335,
       "errorHi": 0.9477453954515686,
+      "errorMin": 0.2693569109842153,
+      "errorMax": 1.486565592670619,
+      "spread": "p10-p90",
       "readings": 12
     },
     {
@@ -572,6 +731,10 @@
         "promptTokens": {
           "lo": 6400,
           "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
         },
         "outputTokens": {
           "lo": 160,
@@ -588,10 +751,14 @@
         "percentiles": [
           0.9
         ],
-        "maxKneeShare": 0.9000374082821215
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
       "errorLo": 0.18155186244861887,
       "errorHi": 1.0792975325275418,
+      "errorMin": 0.1534425180325436,
+      "errorMax": 1.561173147263153,
+      "spread": "p10-p90",
       "readings": 12
     },
     {
@@ -613,6 +780,10 @@
           "lo": 6400,
           "hi": 10000
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 160,
           "hi": 250
@@ -628,10 +799,14 @@
         "percentiles": [
           0.95
         ],
-        "maxKneeShare": 0.9000374082821215
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
       "errorLo": 0.18163413114669424,
       "errorHi": 1.0200383921476248,
+      "errorMin": 0.05422850378021993,
+      "errorMax": 1.7383267089432048,
+      "spread": "p10-p90",
       "readings": 12
     },
     {
@@ -652,6 +827,10 @@
         "promptTokens": {
           "lo": 6400,
           "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
         },
         "outputTokens": {
           "lo": 160,
@@ -668,10 +847,14 @@
         "percentiles": [
           0
         ],
-        "maxKneeShare": 0.8498843492974192
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.85
       },
       "errorLo": 0.30088085623245236,
       "errorHi": 0.9285281735301888,
+      "errorMin": 0.22372696292809846,
+      "errorMax": 1.2677408152481973,
+      "spread": "p10-p90",
       "readings": 9
     },
     {
@@ -692,6 +875,10 @@
         "promptTokens": {
           "lo": 6400,
           "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
         },
         "outputTokens": {
           "lo": 160,
@@ -708,10 +895,14 @@
         "percentiles": [
           0.9
         ],
-        "maxKneeShare": 0.8498843492974192
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.85
       },
       "errorLo": 0.4538122908523821,
       "errorHi": 1.3066435260412201,
+      "errorMin": 0.33353665994757353,
+      "errorMax": 1.6707845432105413,
+      "spread": "p10-p90",
       "readings": 9
     },
     {
@@ -733,6 +924,10 @@
           "lo": 6400,
           "hi": 10000
         },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
         "outputTokens": {
           "lo": 160,
           "hi": 250
@@ -748,10 +943,14 @@
         "percentiles": [
           0.95
         ],
-        "maxKneeShare": 0.8498843492974192
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.85
       },
       "errorLo": 0.4352480473757116,
       "errorHi": 1.448125450208511,
+      "errorMin": 0.37223788543537983,
+      "errorMax": 1.8601115469016247,
+      "spread": "p10-p90",
       "readings": 9
     }
   ],
@@ -761,7 +960,7 @@
     "AssumedVP": "V_P assumed, not learned"
   },
   "never": {
-    "decode-knee": "decode's knee: no measured run crossed it",
+    "operating-point-cap": "the operating-point cap is headroom times the knee: read the knee's verdict",
     "percentile-tpot": "TPOT percentiles: never scored against a client",
     "prefill-latency": "prefill's own latency: a client measures TTFT end to end only",
     "rate-at-tpot": "rate at a TPOT target: never measured"

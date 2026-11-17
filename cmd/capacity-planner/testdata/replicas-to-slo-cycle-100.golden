@@ -1,4 +1,4 @@
-knee            32.38 r/s   decode, batch cap binds at fill 0.612; OUTSIDE VALIDATED REGION (decode's knee: no measured run crossed it)
+knee            32.38 r/s   decode, batch cap binds at fill 0.612; OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)
 operating rate  27.52 r/s   0.85 x knee (scaleUpThreshold)
 mean TPOT       3.20 ms                      line held; OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)
 shape           IL 1003 OL 500 (measured, cycles 81-100)

@@ -702,6 +702,7 @@ bounded
 boundedBy
 bounds
 bound|
+bracket
 bridge
 bridgePerReplica
 bridges
@@ -1191,6 +1192,7 @@ flooredTo
 floors
 flow
 flow-control
+flow-control-onset
 flowControl
 folded
 for
@@ -1569,6 +1571,7 @@ kv_utilization_out_of_range
 label
 label_
 labels
+ladder
 lagFraction
 landed
 lands
@@ -1747,6 +1750,7 @@ metricsCount
 mid-rollout
 mid-run
 milliseconds
+min-max
 minKSpread
 minReplicas
 minSamples
@@ -1827,6 +1831,7 @@ multi-Pod
 multiple
 must
 mutually
+n
 n-dependence
 n-dependent
 n/a
@@ -1967,6 +1972,7 @@ once
 one
 one-minute
 one-pod
+one-sided
 ones
 only
 onset
@@ -1976,6 +1982,7 @@ onto
 open
 operating
 operating-point
+operating-point-cap
 operation
 operator
 optimization
@@ -2031,6 +2038,7 @@ owner_kind
 owner_name
 owning
 p
+p10-p90
 page_size
 panic
 panicked

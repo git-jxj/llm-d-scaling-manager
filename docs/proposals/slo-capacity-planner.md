@@ -566,57 +566,128 @@ mutation-checked:
 
 ### Calibration envelope, as built
 
-Every figure the planner prints now carries the envelope's verdict
+Every figure the planner prints carries the envelope's verdict
 (`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated: error
-LO..HI% (SOURCE)` when a measured row's region holds it, `OUTSIDE VALIDATED
-REGION (why)` when none does. For an operator's reading:
+LO..HI% (RANGE, n=N; SOURCE)` when a measured row's region holds it, `OUTSIDE
+VALIDATED REGION (why)` when none does. Validated means measured, not accurate.
+For an operator's reading:
 [how accurate each figure is](../guides/capacity-planner/accuracy.md).
 
 **The rows are data**, in `internal/signals/whatif/envelope.json`, embedded. A
-row is one figure kind on one shape class from one run: its region (topology,
-accelerators, prefill and decode counts, prompt, output and Ca² spans, flow
-control states, statistics, the highest knee share measured) and its signed
-error, model over measured less 1. On point readings (TTFT, TPOT) the error is
-their 10th to 90th percentile; on brackets (a knee, a rate at a target) it is
-the lowest and highest end, and a side only bounded is left open. The file also
-lists the flags that put a figure outside every row (`AboveFlowControlOnset`,
-`AssumedVP`, `AssumedA`) and why each kind with no row has none. A new run adds
-rows under its own `source`; nothing in code changes.
+row is one figure kind on one shape class from one run. Its region holds every
+input that shapes the figure as the run priced it:
 
-**The q32 rows** come from the Qwen3-32B TP 2 staircase on H200 (2 prefill and 2
-decode Pods, buckets A, B and C, flow control off and on, one repeat, 47 steps).
-`cmd/capacity-planner/testdata/staircase-q32/` holds its warm-up recording
-(exported, so pseudonymised; the phases' own recordings are not committed: no
-figure reads them), the run's frozen file, and the client's figures per step.
-`TestStaircaseQ32_TheErrorsAreFrozen` replays the warm-up once, prices each
-bucket as `capacity-planner freeze` does, and writes every step's model figure
-beside the client's to `testdata/staircase-q32-validation.golden`, then draws the
-rows from them. A row's region reaches 1.25x either way of the shape sent, a
-stated tolerance; its knee share is the highest step it read. Readings leave out
-void steps (under the run's noise floor, or with requests evicted) and, for TTFT,
-steps past the flow-control onset. A knee reading is the last step held and the
-first not (completions within 3% of those due, none failed); a rate reading is
-where the client's percentile crossed the frozen target over valid steps. The
-golden shows no drift from the run's frozen curve at the ladder's rates.
+- the prompts' spread (cv) and the arrivals (Ca²), each measured or stated, not
+  defaulted;
+- the flow-control state, known, not inferred from a missing series;
+- the topology, accelerator, prefill and decode counts, and prompt and output
+  lengths;
+- the statistic, and the band of knee shares measured, ends included.
+
+A row also says what kind of range its error is, and over how many independent
+readings:
+
+- p10-p90 with min-max, for 5 or more point readings;
+- min-max, under 5;
+- a bracket between ladder steps;
+- one-sided, where the run stopped short.
+
+The label always prints the count and the range's kind. The file lists the flags
+that put a figure outside every row (`AboveFlowControlOnset`, `AssumedVP`,
+`AssumedA`) and why each kind with no row has none. A new run adds rows under
+its own `source`; nothing in code changes.
+
+**A rate is judged by what bound it**, on the CLI and the API alike
+(`whatif.RateFigure`):
+
+- a TTFT bound: rate-at-ttft;
+- decode's TPOT: rate-at-tpot, never measured;
+- the operating-point cap alone: the cap, judged by the knee.
+
+Its knee share is the rate over the lower knee, and a share that is not known is
+outside any row that bounds one.
+
+**The q32 rows** come from the Qwen3-32B TP 2 staircase on H200: 2 prefill and 2
+decode Pods, buckets A, B and C, flow control off and on, one repeat, 47 steps.
+`cmd/capacity-planner/testdata/staircase-q32/` holds:
+
+- its warm-up recording, exported, so pseudonymised. The phases' own recordings
+  are not committed: no figure reads them.
+- the run's frozen file;
+- the client's figures for every step.
+
+`TestStaircaseQ32_TheErrorsAreFrozen` works in four steps:
+
+1. It replays the warm-up once, in about 35 s.
+2. It prices each bucket as `capacity-planner freeze` does, at the sent spread
+   (cv 0.0577), arrivals and flow control.
+3. It writes every step's model figure beside the client's to
+   `testdata/staircase-q32-validation.golden`.
+4. It draws the rows from those errors.
+
+How the rows are drawn:
+
+- **Spans.** A row's length, spread and Ca² spans reach 1.25x either way of what
+  was sent. That is a stated tolerance, not a measured one.
+- **Knee shares.** TTFT and TPOT rows span the shares of the steps they read.
+- **Rate rows.** A rate row spans its one target's share, ±0.025: half the
+  ladder's spacing there.
+- **Left out.** Readings leave out void steps (under the run's noise floor, or
+  with requests evicted). TTFT readings also leave out steps past the
+  flow-control onset.
+- **Knees and onsets.** A knee reading is the last step held and the first step
+  not held. A step held when its completions came within 3% of those due and
+  none failed; a void step counts, since the noise floor voids its percentiles,
+  not its count. Knees are read with flow control off, where every phase held to
+  the predicted knee (one-sided, at most +0%). With flow control on, the router
+  stopped buckets B and C near the prefill onset; those crossings are the
+  flow-control-onset rows.
+- **Rates.** A rate reading is where the client's percentile crossed the frozen
+  target over valid steps.
+
+At the ladder's rates, the golden shows the planner at this commit reproducing
+the run's frozen curve.
 
 | Figure | A: 1000 in, 1000 out, Poisson | B: 8000 in, 200 out, Poisson | C: 8000 in, 200 out, Ca² 4 |
 | --- | --- | --- | --- |
-| TTFT mean / p90 / p95 | -4..+18 / +0..+14 / -3..+12% (12) | +29..+95 / +18..+108 / +18..+102% (12) | +30..+93 / +45..+131 / +44..+145% (9) |
-| Mean TPOT | +5..+18% (12) | +36..+45% (12) | +34..+43% (10) |
-| Prefill knee, flow control on | not crossed | +5..+11% (1) | +21..+25% (1) |
-| Rate at the p90 / p95 target | at most -6 / -6% (2) | at most -6 / -6% (2) | at most +0 / +2% (2) |
+| TTFT mean / p90 / p95, p10-p90 | -4..+18 / +0..+14 / -3..+12% (12) | +29..+95 / +18..+108 / +18..+102% (12) | +30..+93 / +45..+131 / +44..+145% (9) |
+| Mean TPOT, p10-p90 | +5..+18% (12) | +36..+45% (12) | +34..+43% (10) |
+| Knee, flow control off | at most +0% (1) | at most +0% (1) | at most +0% (1) |
+| Flow-control onset | not reached | -4..+2% (1, bracket) | -7..-4% (1, bracket) |
+| Rate at the p90 / p95 target | at most -6 / -6% (1) | at most -6 / -6% (1) | at most +0 / +2% (2) |
 
-**The negative control.** Priced first come, first served
-(`processorSharing` off, as `firstCome` does), 43 of the 47 step lines, all 12 rate lines
-and 14 of the 20 envelope rows move (the knee and TPOT rows, which processor sharing does not price, stay), so the frozen table fails;
-`TestStaircaseQ32_WithoutProcessorSharingTheErrorsMove` holds that.
+The TTFT readings are 6 load levels, each with flow control off and on (C on: 3
+levels, below its onset). The two phases share the model's figure, so the error
+grows with the knee share within a row: B's mean reads +27% at 0.40 of the knee
+and +63% to +149% at 0.90.
 
-**What it does not cover.** Aggregated variants, prefill's own latency, TPOT
-percentiles, decode's knee and its rate at a TPOT target, p99, any prefill count
-but 2, and any accelerator but H200 read outside. The decode knee was never
-crossed (bucket A held to its knee). The capacity planner's `/v1/plan` judges its
-knees, points A and B, the TPOT's points and its limits, not curve points;
-`capacity-planner at-replicas` and `/v1/report` take the same verdicts when they land.
+**Negative controls.**
+
+- `TestStaircaseQ32_WithoutProcessorSharingTheErrorsMove` prices first come,
+  first served (`processorSharing` off, as `firstCome` does), and pins how many
+  lines of the frozen table move.
+- `TestStaircaseQ32_TheAssumedSpreadIsOutside` shows that the spread alone keeps
+  a TTFT priced at the default cv 2 out. With the rows' spread dropped, the same
+  figure would read validated. That is the bug the first draft shipped: +18..+108%
+  claimed where the error was about +430%.
+- The CLI goldens `ttft-q32-assumed-spread` and `ttft-q32-as-priced` show the
+  same question asked plainly (outside) and as the run was priced (validated).
+
+**What it does not cover.** These read outside:
+
+- aggregated variants;
+- prefill's own latency;
+- TPOT percentiles;
+- decode's rate at a TPOT target;
+- a rate the cap alone set;
+- p99;
+- any prefill count but 2;
+- any accelerator but H200.
+
+The `UnvalidatedTTFT` flag stays: it marks the TTFT model as not a bound, which
+a measured envelope does not change. The verdict is per figure.
+`capacity-planner at-replicas` and `/v1/report` take the same verdicts when they
+land.
 
 ## PR plan
 
