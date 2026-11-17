@@ -85,6 +85,12 @@ type Engine struct {
 	// Key is namespace/name from utils.GetNamespacedKey.
 	vaEventTracker map[string]bool
 
+	// routing is what each variant last reported about the replicas no
+	// InferencePool selects (pool_routing.go), keyed namespace/variant, so a
+	// change is logged once.
+	routingMu sync.Mutex
+	routing   map[string]routingState
+
 	// policies reports which scaling policy tier each model resolved to, and the
 	// two ways that resolution goes wrong silently — an unknown tier name, and one
 	// model's variants naming different tiers. Change-throttled; see
@@ -2252,6 +2258,12 @@ func (e *Engine) prepareModelData(
 	// threaded to the optimizer (via ModelScalingRequest.Variants) as the source
 	// of truth for variant identity/cost/accelerator.
 	variantMetadata := variantmeta.Discover(ctx, modelVAs, scaleTargets, k8sClient, observeAccelerators(e.Config))
+	// Supply is what the router can reach: replicas no InferencePool selects
+	// are marked, their rows dropped here, and their count taken out of supply
+	// after the analyzers (applyRouting). A held variant is not sized.
+	variantmeta.Route(ctx, variantMetadata, modelVAs, scaleTargets, k8sClient, e.poolLister())
+	replicaMetrics = dropUnroutedRows(replicaMetrics, variantMetadata)
+	e.reportRouting(ctx, modelID, namespace, variantMetadata, variants)
 	variantStates := make([]domain.VariantReplicaState, 0, len(variantMetadata))
 	for _, m := range variantMetadata {
 		variantStates = append(variantStates, m.ToReplicaState())

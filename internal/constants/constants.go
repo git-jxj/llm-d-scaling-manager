@@ -175,6 +175,10 @@ const (
 	K8SEventOptimizationFailed                = "OptimizationFailed"
 	K8SEventUnattributedReadyPods             = "UnattributedReadyPods"
 	K8SEventThroughputAnalyzerRestartRequired = "ThroughputAnalyzerRestartRequired"
+	// K8SEventHeldNotInPool is a Warning on a variant whose pod template no
+	// InferencePool selects while another variant of its model is routed: it is
+	// held at its replica count and its replicas are not counted as supply.
+	K8SEventHeldNotInPool = "HeldNotInInferencePool"
 	// K8SEventConfigEntryRejected is a Warning on a scaling-policy ConfigMap
 	// one of whose entries was rejected.
 	K8SEventConfigEntryRejected = "ConfigEntryRejected"

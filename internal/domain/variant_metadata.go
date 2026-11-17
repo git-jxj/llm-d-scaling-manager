@@ -126,6 +126,26 @@ type VariantMetadata struct {
 	// it; the placement timeout releases it in a namespace that counts no
 	// borrowing, where nothing else will.
 	GatedAt map[string]time.Time
+
+	// The replicas the router cannot reach: Pods of this variant that no
+	// InferencePool in the namespace selects, in a model some pool does
+	// select (docs/proposals/pool-selected-supply.md). Zero when the model is
+	// not routed, when the pools could not be read, and when every Pod is
+	// selected -- each of which leaves supply counted as before.
+	//
+	// UnroutedReplicas counts live replicas that are Ready or starting, in
+	// scale-target units (an LWS group counts once, by its leader); stuck
+	// Pods are left to StuckReplicas so nothing is subtracted twice.
+	// UnroutedReady is the Ready part of it. UnroutedPods names every live
+	// unselected Pod, so its metric rows can be dropped.
+	UnroutedReplicas int      `learnrec:"omitzero"`
+	UnroutedReady    int      `learnrec:"omitzero"`
+	UnroutedPods     []string `learnrec:"omitzero"`
+	// HeldUnrouted is set when the variant's pod template matches no pool
+	// selector while another variant of the model does. Every replica it runs
+	// is out of the router's reach, so it contributes no supply and no demand
+	// and is held at its current replica count until a pool selects it.
+	HeldUnrouted bool `learnrec:"omitzero"`
 }
 
 // ToReplicaState projects the metadata onto the VariantReplicaState the analyzers

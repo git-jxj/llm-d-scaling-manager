@@ -312,6 +312,7 @@ P2-prior
 P3-k2
 P4-k1
 POD_NAMESPACE
+POOL_GROUP
 PR
 PROMETHEUS_ALLOW_HTTP
 PROMETHEUS_BASE_URL
@@ -421,6 +422,7 @@ Thanos
 The
 This
 TierUnstable
+To
 TokenGapPercentile
 TooFewDecodeMinutes
 TooFewHopWindows
@@ -862,6 +864,7 @@ counter
 counting
 counts
 covers
+create
 creation
 crept
 critical
@@ -1632,6 +1635,7 @@ linear
 lines
 list
 listed
+listing
 lists
 live
 liveness
@@ -2423,6 +2427,7 @@ room
 rose
 round
 routed
+routedVariants
 router
 routerMeasured
 row
@@ -2536,6 +2541,7 @@ selected
 selector
 selectors
 selects
+sends
 seq
 seqs
 sequence
@@ -2951,6 +2957,7 @@ undispatched
 undone
 uneven-ranks
 unexported
+unhold
 unit
 unknown
 unknownPeaks
@@ -2964,6 +2971,8 @@ unreadAt
 unreadReplicas
 unreadable
 unresolved
+unrouted
+unroutedReady
 unservable
 unsigned
 unsizable

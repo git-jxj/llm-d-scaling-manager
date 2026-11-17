@@ -315,6 +315,17 @@ The engine aggregates to model level:
 - **`TotalAnticipatedSupply`** = Σ ((ready + **pending**) replicas × per-replica capacity)
 - **`TotalDemand`** = the demand above
 
+Only replicas the router can reach count. In a model that an InferencePool
+selects, a Pod no pool selects gets no router traffic, so it is left out of
+supply, of pending replicas and of demand. A variant whose pod template no
+pool selects is **held** at its replica count: the router can never reach
+it, so adding replicas to it would add no supply. The controller logs it,
+records a `HeldNotInInferencePool` Warning Event and publishes
+`llmsm_unrouted_replicas`. To release it, add labels to its pod template
+that an InferencePool selects, or create a pool that selects it. A model no
+pool selects, or a namespace whose pools cannot be read, is counted as
+before. See [the design note](../proposals/pool-selected-supply.md).
+
 Demand should sit at the target utilization of supply, so the supply *needed* is
 `demand ÷ scaleUpThreshold` (at 0.85, demand should be 85% of supply). That gives two
 signals:

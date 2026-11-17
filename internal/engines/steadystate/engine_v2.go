@@ -1578,6 +1578,7 @@ func buildCapacities(ctx context.Context, nr *allocation.NamedAnalyzerResult, me
 			if m, ok := metaByVariant[result.VariantCapacities[i].VariantName]; ok {
 				result.VariantCapacities[i].Role = m.Role
 				clampReplicaCountToScaleTarget(&result.VariantCapacities[i], m)
+				applyRouting(&result.VariantCapacities[i], m)
 			}
 		}
 	}

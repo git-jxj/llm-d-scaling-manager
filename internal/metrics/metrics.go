@@ -60,6 +60,7 @@ var (
 	desiredReplicas      *prometheus.GaugeVec
 	unattributedGPUs     *prometheus.GaugeVec
 	unmeasuredQueue      *prometheus.GaugeVec
+	unroutedReplicas     *prometheus.GaugeVec
 	variantAtMaxReplicas *prometheus.GaugeVec
 	modelScalingBlocked  *prometheus.GaugeVec
 	modelReplicas        *prometheus.GaugeVec
@@ -180,6 +181,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	// unmeasuredQueueLabels: model-level, since the whole point is that no
 	// variant could be attributed to carry it.
 	unmeasuredQueueLabels := []string{constants.LabelNamespace, constants.LabelModelName}
+	// unroutedReplicasLabels: per variant, under its model so a model's
+	// series can be replaced as one each cycle.
+	unroutedReplicasLabels := []string{constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName}
 	// Per-variant, unlike the model-level gauge above: the ceiling is configured
 	// on the ScaledObject, so one variant of a model can be pinned while a
 	// sibling has headroom.
@@ -242,6 +246,7 @@ func InitMetrics(registry prometheus.Registerer) error {
 		learnedK2Labels = append(learnedK2Labels, constants.LabelControllerInstance)
 		learnerLabels = append(learnerLabels, constants.LabelControllerInstance)
 		unmeasuredQueueLabels = append(unmeasuredQueueLabels, constants.LabelControllerInstance)
+		unroutedReplicasLabels = append(unroutedReplicasLabels, constants.LabelControllerInstance)
 		variantAtMaxLabels = append(variantAtMaxLabels, constants.LabelControllerInstance)
 		modelScalingBlockedLabels = append(modelScalingBlockedLabels, constants.LabelControllerInstance)
 		modelReplicasLabels = append(modelReplicasLabels, constants.LabelControllerInstance)
@@ -520,6 +525,16 @@ func InitMetrics(registry prometheus.Registerer) error {
 				"engine pod is scraped at all.",
 		},
 		unmeasuredQueueLabels,
+	)
+
+	unroutedReplicas = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.LLMSMUnroutedReplicas,
+			Help: "Replicas of a variant that no InferencePool selects, in a model some pool does select. " +
+				"The router sends them no traffic, so they are not counted as supply. " +
+				"For a variant whose pod template matches no pool it is every replica, and the variant is held.",
+		},
+		unroutedReplicasLabels,
 	)
 
 	variantAtMaxReplicas = prometheus.NewGaugeVec(
@@ -921,6 +936,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registry.Register(unmeasuredQueue); err != nil {
 		return fmt.Errorf("failed to register unmeasuredQueue metric: %w", err)
 	}
+	if err := registry.Register(unroutedReplicas); err != nil {
+		return fmt.Errorf("failed to register unroutedReplicas metric: %w", err)
+	}
 	if err := registry.Register(modelsProcessedGauge); err != nil {
 		return fmt.Errorf("failed to register modelsProcessedGauge metric: %w", err)
 	}
@@ -1150,6 +1168,30 @@ func SetUnmeasuredQueue(namespace, modelName string, queued int) {
 		labels[constants.LabelControllerInstance] = controllerInstance
 	}
 	unmeasuredQueue.With(labels).Set(float64(queued))
+}
+
+// SetUnroutedReplicas replaces a model's llmsm_unrouted_replicas series with
+// the given per-variant counts. Variants absent from counts lose their series,
+// so a variant that left the model or became selected does not linger.
+func SetUnroutedReplicas(namespace, modelName string, counts map[string]int) {
+	if unroutedReplicas == nil {
+		return
+	}
+	unroutedReplicas.DeletePartialMatch(prometheus.Labels{
+		constants.LabelNamespace: namespace,
+		constants.LabelModelName: modelName,
+	})
+	for variant, n := range counts {
+		labels := prometheus.Labels{
+			constants.LabelNamespace:   namespace,
+			constants.LabelModelName:   modelName,
+			constants.LabelVariantName: variant,
+		}
+		if controllerInstance != "" {
+			labels[constants.LabelControllerInstance] = controllerInstance
+		}
+		unroutedReplicas.With(labels).Set(float64(n))
+	}
 }
 
 // SetVariantAtMaxReplicas records whether a variant's target is sitting on its
@@ -2632,7 +2674,7 @@ func (m *MetricsEmitter) DeleteAnalyzerTarget(analyzer, namespace, modelID, vari
 
 // DeleteAnalyzerSeriesForModel removes every llmsm_analyzer_demand and
 // llmsm_analyzer_target series for a model instance, across all analyzers, roles
-// and variants. Used when a model stops being reconciled entirely, where the
+// and variants, and its llmsm_unrouted_replicas series. Used when a model stops being reconciled entirely, where the
 // per-series bookkeeping the engine keeps for live models no longer applies.
 func (m *MetricsEmitter) DeleteAnalyzerSeriesForModel(namespace, modelID string) {
 	match := prometheus.Labels{
@@ -2647,6 +2689,9 @@ func (m *MetricsEmitter) DeleteAnalyzerSeriesForModel(namespace, modelID string)
 	}
 	if analyzerObservedReplicas != nil {
 		analyzerObservedReplicas.DeletePartialMatch(match)
+	}
+	if unroutedReplicas != nil {
+		unroutedReplicas.DeletePartialMatch(match)
 	}
 }
 
