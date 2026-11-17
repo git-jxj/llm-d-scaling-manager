@@ -571,4 +571,5 @@ func validatePlan(out *PlanResponse, k Knobs, c whatif.FigureClass, cs *curveSet
 		*lim.Decode = validate(*lim.Decode, whatif.FigureRateAtTPOT, 0, c, 0)
 	}
 	lim.Fleet.Figure = validate(lim.Fleet.Figure, whatif.FigureRateAtTTFT, q, c, rateShare(lim.Fleet.Figure))
+	lim.Fleet.WithoutHeadroom = validate(lim.Fleet.WithoutHeadroom, whatif.FigureRateAtTTFT, q, c, rateShare(lim.Fleet.WithoutHeadroom))
 }
