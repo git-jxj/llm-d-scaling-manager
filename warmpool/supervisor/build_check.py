@@ -12,6 +12,7 @@ import sys
 
 import gputranslator  # noqa: F401
 import launcher
+import psutil
 import uvicorn  # noqa: F401
 import vllm
 
@@ -59,11 +60,21 @@ def main() -> int:
             bad.append(f"{name}{inspect.signature(fn)} lacks {missing}")
     if not hasattr(launcher.UsageContext, "OPENAI_API_SERVER"):
         bad.append("UsageContext has no OPENAI_API_SERVER")
+    # psutil 7.2 waits through pidfd_open() and re-raises its EINVAL for a PID
+    # being reaped (giampaolo/psutil#2715): a DELETE then fails with a 500.
+    # The launcher's _wait_procs absorbs it; a re-vendored launcher without it
+    # must not ship on such a psutil.
+    ver = tuple(int(x) for x in psutil.__version__.split(".")[:2])
+    if ver >= (7, 2) and not hasattr(launcher, "_wait_procs"):
+        bad.append(f"psutil {psutil.__version__} raises EINVAL from wait; launcher has no _wait_procs")
     for line in bad:
         print("launcher check:", line)
     if bad:
         return 1
-    print(f"vllm {vllm.__version__}: launcher imports ok, {len(CALLS)} call signatures ok")
+    print(
+        f"vllm {vllm.__version__}, psutil {psutil.__version__}: launcher imports ok, "
+        f"{len(CALLS)} call signatures ok"
+    )
     return 0
 
 

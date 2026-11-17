@@ -57,7 +57,7 @@ image whose vLLM matches the workload:
 
 Upstream base: Fast Model Actuation **v0.8.0**, commit
 **`3f67d2c4c5c51baa6016fc24630222decd94971f`**, directory
-`inference_server/launcher/`. Two changes on top (plus one comment whose
+`inference_server/launcher/`. Three changes on top (plus one comment whose
 issue number became a full link):
 
 1. **The follower-rank fix**: a rank > 0 of a multi-node engine runs vLLM's
@@ -66,10 +66,16 @@ issue number became a full link):
    `ev-shindin/llm-d-fast-model-actuation`; not upstream.
 2. **The vLLM v0.34 import paths**: v0.34 moved `make_arg_parser`,
    `validate_parsed_serve_args`, `cli_env_setup` and `run_server`.
+3. **`_wait_procs`**: psutil 7.2, which the vLLM v0.34 image ships, re-raises
+   `EINVAL` from its pidfd wait for a process being reaped
+   ([giampaolo/psutil#2715](https://github.com/giampaolo/psutil/issues/2715)),
+   so a DELETE that had to SIGKILL failed with HTTP 500. The wrapper treats
+   `EINVAL` as gone, re-checks the rest, and keeps waiting. Upstream FMA v0.8.0
+   has the same bug.
 
 | file | origin | why it earns its place |
 | --- | --- | --- |
-| `supervisor/launcher.py` | `inference_server/launcher/launcher.py`, with the two changes | spawns and supervises vLLM engines inside one container. Proven: every 2-3 s wake measured on the test cluster came from an instance it created |
+| `supervisor/launcher.py` | `inference_server/launcher/launcher.py`, with the three changes | spawns and supervises vLLM engines inside one container. Proven: every 2-3 s wake measured on the test cluster came from an instance it created |
 | `supervisor/gputranslator.py` | `inference_server/launcher/gputranslator.py`, unchanged | GPU UUID ↔ index mapping via pynvml, with a mock mode for tests |
 | `supervisor/tests/` | `inference_server/launcher/tests/`, with the vLLM stubs moved to the v0.34 paths; `test_follower_rank.py` is ours | the launcher's unit tests |
 
@@ -79,7 +85,7 @@ keep GPU memory; and a delete no longer blocks the launcher's API while it
 waits.
 
 To move to a newer upstream: merge the new upstream `launcher.py` with this
-one (`git merge-file`, the old upstream as base), keep the two changes, and
+one (`git merge-file`, the old upstream as base), keep the three changes, and
 update the base commit here and in the header of `launcher.py`.
 
 ### The image built from it
@@ -139,7 +145,7 @@ likely to change, and it must be changeable without touching the data plane.
 
 All four are done. Note where: three of them turned out to be decisions the scaling manager
 makes when CALLING the launcher, not modifications to the launcher itself, which
-is why the copy here carries only the two changes listed above.
+is why the copy here carries only the three changes listed above.
 
 1. **The Pod holds the GPUs.** Done in the manifest. The pool Deployment requests `nvidia.com/gpu`, and
    the supervisor allocates the container's own devices among instances rather

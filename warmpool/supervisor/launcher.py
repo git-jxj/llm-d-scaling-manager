@@ -15,10 +15,12 @@
 
 # Vendored by llm-d-scaling-manager. Upstream base: llm-d-fast-model-actuation
 # v0.8.0, commit 3f67d2c4c5c51baa6016fc24630222decd94971f,
-# inference_server/launcher/launcher.py. Two changes on top, nothing else:
+# inference_server/launcher/launcher.py. Three changes on top, nothing else:
 #   1. the follower-rank branch in vllm_kickoff (a multi-node engine's rank > 0
 #      runs vLLM's headless executor), first carried in fork commit 65ba31b;
-#   2. the vLLM v0.34 module layout in the vllm imports below.
+#   2. the vLLM v0.34 module layout in the vllm imports below;
+#   3. _wait_procs, around psutil.wait_procs: psutil 7.2 re-raises EINVAL from
+#      its pidfd wait for a PID being reaped (giampaolo/psutil#2715).
 # This file runs only in the image built by Dockerfile.warmpool-launcher.
 # See warmpool/README.md before changing it.
 
@@ -28,6 +30,7 @@ vLLM Launcher
 """
 
 import asyncio
+import errno
 import logging
 import multiprocessing
 import os
@@ -35,6 +38,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from http import HTTPStatus  # HTTP Status Codes
@@ -218,6 +222,30 @@ def dump_process_group(subject: str, pgpid: int, when: str) -> set[psutil.Proces
     return ans
 
 
+def _wait_procs(procs, timeout: float) -> list[psutil.Process]:
+    """psutil.wait_procs(procs, timeout), returning the processes still alive.
+
+    psutil 7.2.x waits through pidfd_open(), and re-raises its EINVAL
+    (giampaolo/psutil#2715, fixed after 7.2.2). The kernel returns EINVAL, not
+    ESRCH, for a PID whose task is being or has been reaped -- and these PIDs
+    are reaped by their own parents (the engine's API server and EngineCore)
+    while the launcher waits on them. EINVAL therefore means the process is
+    gone; re-check the rest and keep waiting for what is left.
+    """
+    deadline = time.monotonic() + timeout
+    alive = list(procs)
+    while True:
+        try:
+            _, alive = psutil.wait_procs(alive, timeout=max(0.0, deadline - time.monotonic()))
+            return alive
+        except OSError as err:
+            if err.errno != errno.EINVAL:
+                raise
+            alive = [p for p in alive if p.is_running()]
+            if not alive or time.monotonic() >= deadline:
+                return alive
+
+
 async def _await_procs(procs: set[psutil.Process], timeout: float) -> None:
     """psutil.wait_procs(procs, timeout), but sleeping on the event loop.
 
@@ -231,7 +259,7 @@ async def _await_procs(procs: set[psutil.Process], timeout: float) -> None:
     deadline = loop.time() + timeout
     alive = list(procs)
     while True:
-        _, alive = psutil.wait_procs(alive, timeout=0)
+        alive = _wait_procs(alive, 0)
         remaining = deadline - loop.time()
         if not alive or remaining <= 0:
             return
@@ -439,7 +467,7 @@ class VllmInstance:
                 if procs is None:
                     self.process.join(timeout=timeout)
                 else:
-                    psutil.wait_procs(procs, timeout=timeout)
+                    _wait_procs(procs, timeout)
                 procs = next(steps)
         except StopIteration as done:
             return done.value

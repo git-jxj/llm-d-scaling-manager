@@ -34,6 +34,13 @@ ENV USER=vllm
 # these two are pinned: their own dependencies (urllib3, google-auth, ...)
 # resolve at build time, so two builds of one tag can differ in those. The
 # released image is pinned by its digest.
+#
+# psutil is the base's, not pinned here: vLLM requires it unpinned, and 7.2.2
+# is the newest release (2026-01-28), so v0.34.0 should ship it (FMA's
+# v0.8.0 image, built on vLLM v0.26.0 in 2026-11, does). That psutil
+# re-raises EINVAL from its pidfd wait (giampaolo/psutil#2715; fixed upstream,
+# unreleased), which the launcher's _wait_procs absorbs. build_check.py prints
+# the version and fails on psutil >= 7.2 without that wrapper.
 RUN uv pip install --system --no-cache nvidia-ml-py==13.615.71 kubernetes==34.1.0
 
 COPY warmpool/supervisor/launcher.py warmpool/supervisor/gputranslator.py /app/
