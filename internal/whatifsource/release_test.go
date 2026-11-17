@@ -57,7 +57,7 @@ func TestRelease_ARolloutInTheWindowIsNamed(t *testing.T) {
 	got, flags := variantRelease(t, releaseScan(map[string]map[string]int{
 		"m-dec": {imageV034: 40, imageV032: 20}, "m-pre": {imageV027: 30}}, nil), opts)
 	assert.Equal(t, map[string]string{"m-dec": "0.34 image tag", "m-pre": "0.27 image tag"}, got)
-	assert.Contains(t, flags, "variant m-dec ran more than one vLLM release in the window: mostly 0.34, also 0.32; read as the first")
+	assert.Contains(t, flags, "variant m-dec ran more than one vLLM release in the window: mostly 0.34, also 0.32; read as 0.34")
 	for _, f := range flags {
 		assert.NotContains(t, f, "variant m-pre ran")
 	}
@@ -66,7 +66,21 @@ func TestRelease_ARolloutInTheWindowIsNamed(t *testing.T) {
 	got, flags = variantRelease(t, releaseScan(map[string]map[string]int{"m-dec": {imageV027: 60}},
 		map[string]map[string]int{"m-dec": {"0.32": 10, "v0.34.0": 50}}), opts)
 	assert.Equal(t, map[string]string{"m-dec": "0.34 annotation"}, got)
-	assert.Contains(t, flags, "variant m-dec ran more than one vLLM release in the window: mostly 0.34, also 0.32; read as the first")
+	assert.Contains(t, flags, "variant m-dec ran more than one vLLM release in the window: mostly 0.34, also 0.32; read as 0.34")
+
+	// The release most Pods ran wins, counted by release, not by image: two
+	// patch tags of 0.34 outnumber one 0.32 tag that is more common alone,
+	// and the image is the most common one of that release. Annotations
+	// that spell one release two ways count together too.
+	out, flags := windowVariants(releaseScan(map[string]map[string]int{
+		"m-dec": {imageV034: 20, "registry.example.com/vllm/vllm-openai:v0.34.1": 25, imageV032: 30}}, nil), opts)
+	require.Len(t, out, 1)
+	assert.Equal(t, capacity.VLLMVersion{Major: 0, Minor: 34}, out[0].Params.VLLMVersion)
+	assert.Equal(t, "registry.example.com/vllm/vllm-openai:v0.34.1", out[0].Params.Image)
+	assert.Contains(t, flags, "variant m-dec ran more than one vLLM release in the window: mostly 0.34, also 0.32; read as 0.34")
+	got, _ = variantRelease(t, releaseScan(map[string]map[string]int{"m-dec": {imageV027: 60}},
+		map[string]map[string]int{"m-dec": {"0.34": 20, "v0.34.0": 25, "0.32": 30}}), opts)
+	assert.Equal(t, map[string]string{"m-dec": "0.34 annotation"}, got)
 }
 
 // What the workload shows wins over the flags, as in the controller, and a
@@ -94,6 +108,19 @@ func TestRelease_TheFlagsStandInAndDisagreementIsNamed(t *testing.T) {
 	assert.Equal(t, VLLMVersionFromFlag, out[0].Params.VLLMVersionFrom)
 	assert.Equal(t, "ghcr.io/llm-d/llm-d-cuda:v0.4.0", out[0].Params.Image)
 	assert.NotContains(t, flags, fmt.Sprintf(FlagVLLMVersionUnknown, 1, 1))
+
+	// Two flags that disagree, with nothing from the workload: the
+	// conflict is named, and --vllm-version is used.
+	opts = base
+	opts.VLLMVersion, opts.EngineImage = "0.27", imageV034
+	got, flags = variantRelease(t, releaseScan(map[string]map[string]int{"m-dec": {}}, nil), opts)
+	assert.Equal(t, map[string]string{"m-dec": "0.27 --vllm-version"}, got)
+	assert.Contains(t, flags, "variant m-dec: --vllm-version 0.27 and --engine-image (0.34) disagree; read as 0.27, from --vllm-version")
+	opts.VLLMVersion = "0.34"
+	_, flags = variantRelease(t, releaseScan(map[string]map[string]int{"m-dec": {}}, nil), opts)
+	for _, f := range flags {
+		assert.NotContains(t, f, "disagree")
+	}
 
 	got, flags = variantRelease(t, releaseScan(llmd, nil), base)
 	assert.Equal(t, map[string]string{"m-dec": " none"}, got)

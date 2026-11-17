@@ -80,12 +80,17 @@ const (
 	// FlagVLLMVersionMixed: a variant's Pods ran more than one release in
 	// the window; the one most of them ran is used. A format: the variant,
 	// that release, the others.
-	FlagVLLMVersionMixed = "variant %s ran more than one vLLM release in the window: mostly %s, also %s; read as the first"
+	FlagVLLMVersionMixed = "variant %s ran more than one vLLM release in the window: mostly %s, also %s; read as %s"
 	// FlagVLLMVersionFlagIgnored: a flag names another release than the
 	// workload shows, and the workload's is used, as the controller would. A
 	// format: the variant, its release and where it was read, the flag's
 	// release and the flag.
 	FlagVLLMVersionFlagIgnored = "variant %s runs vLLM %s (from %s), not %s as %s states: the workload's is used"
+	// FlagVLLMVersionFlagsDisagree: with no release from the workload,
+	// --vllm-version and --engine-image's tag name different releases;
+	// --vllm-version is used. A format: the variant, the two releases, the
+	// one used.
+	FlagVLLMVersionFlagsDisagree = "variant %s: --vllm-version %s and --engine-image (%s) disagree; read as %s, from --vllm-version"
 )
 
 // Options configure a capture.
@@ -646,33 +651,37 @@ type release struct {
 // (FlagVLLMVersionMixed), and a flag that names another release than the
 // workload shows (FlagVLLMVersionFlagIgnored).
 func releaseOf(name string, info *variantInfo, opts Options) (release, []string) {
-	if opts.Engine == inferenceengine.EngineSGLang {
-		return release{image: opts.EngineImage}, nil
-	}
-	live, liveOK := mostCommon(info.images)
 	image := opts.EngineImage
-	if liveOK {
-		image = live
-	}
-	var rel release
-	var seen map[capacity.VLLMVersion]int
-	switch a, ok := mostCommon(info.versions); {
-	case ok:
-		rel = release{image: image, annotation: a, from: capacity.VLLMVersionFromAnnotation}
-		seen = releasesOf(info.versions, capacity.ParseVLLMVersion)
-	case liveOK && capacity.VLLMVersionFromImage(live).Known():
-		rel = release{image: live, from: capacity.VLLMVersionFromImageTag}
-		seen = releasesOf(info.images, capacity.VLLMVersionFromImage)
-	case opts.VLLMVersion != "":
-		return release{image: image, annotation: opts.VLLMVersion, from: VLLMVersionFromFlag}, nil
-	case capacity.VLLMVersionFromImage(image).Known():
-		return release{image: image, from: VLLMVersionFromEngineImage}, nil
-	default:
+	if opts.Engine == inferenceengine.EngineSGLang {
+		// No release to read, but the image is the engine's, fingerprinted
+		// as the controller fingerprints it.
+		if live, ok := mostCommon(info.images); ok {
+			image = live
+		}
 		return release{image: image}, nil
 	}
-	used := capacity.ParseVLLMVersion(rel.annotation)
-	if !used.Known() {
-		used = capacity.VLLMVersionFromImage(rel.image)
+	versions := releasesOf(info.versions, capacity.ParseVLLMVersion)
+	tagged := releasesOf(info.images, capacity.VLLMVersionFromImage)
+	var rel release
+	var seen map[capacity.VLLMVersion]int
+	var used capacity.VLLMVersion
+	switch {
+	case len(versions) > 0:
+		used, seen = mostCommonRelease(versions), versions
+		rel = release{annotation: used.String(), from: capacity.VLLMVersionFromAnnotation}
+		if live, ok := mostCommon(info.images); ok {
+			image = live
+		}
+		rel.image = image
+	case len(tagged) > 0:
+		used, seen = mostCommonRelease(tagged), tagged
+		// The image most Pods ran of the release most Pods ran.
+		rel = release{image: mostCommonNaming(info.images, used), from: capacity.VLLMVersionFromImageTag}
+	default:
+		if live, ok := mostCommon(info.images); ok {
+			image = live
+		}
+		return flagsRelease(name, image, opts)
 	}
 	var flags []string
 	if len(seen) > 1 {
@@ -682,7 +691,7 @@ func releaseOf(name string, info *variantInfo, opts Options) (release, []string)
 				also = append(also, v.String())
 			}
 		}
-		flags = append(flags, fmt.Sprintf(FlagVLLMVersionMixed, name, used.String(), strings.Join(also, ", ")))
+		flags = append(flags, fmt.Sprintf(FlagVLLMVersionMixed, name, used.String(), strings.Join(also, ", "), used.String()))
 	}
 	for _, f := range []struct {
 		flag    string
@@ -719,6 +728,51 @@ func engineImageOf(images []string) string {
 		return images[0]
 	}
 	return ""
+}
+
+// flagsRelease is the release the flags state where the workload shows none:
+// --vllm-version, else --engine-image's tag. Two flags that name different
+// releases are flagged (FlagVLLMVersionFlagsDisagree): --vllm-version wins,
+// as the annotation it stands for wins over a tag.
+func flagsRelease(name, image string, opts Options) (release, []string) {
+	stated := capacity.ParseVLLMVersion(opts.VLLMVersion)
+	tag := capacity.VLLMVersionFromImage(opts.EngineImage)
+	switch {
+	case stated.Known():
+		rel := release{image: image, annotation: opts.VLLMVersion, from: VLLMVersionFromFlag}
+		if tag.Known() && tag != stated {
+			return rel, []string{fmt.Sprintf(FlagVLLMVersionFlagsDisagree, name, stated.String(), tag.String(), stated.String())}
+		}
+		return rel, nil
+	case capacity.VLLMVersionFromImage(image).Known():
+		return release{image: image, from: VLLMVersionFromEngineImage}, nil
+	}
+	return release{image: image}, nil
+}
+
+// mostCommonRelease is the release counts holds most often, the newest on
+// a tie.
+func mostCommonRelease(counts map[capacity.VLLMVersion]int) capacity.VLLMVersion {
+	var best capacity.VLLMVersion
+	for _, v := range slices.SortedFunc(maps.Keys(counts), compareReleases) {
+		if !best.Known() || counts[v] > counts[best] {
+			best = v
+		}
+	}
+	return best
+}
+
+// mostCommonNaming is the image counts holds most often among those whose
+// tag names release v, the first in order on a tie.
+func mostCommonNaming(counts map[string]int, v capacity.VLLMVersion) string {
+	naming := map[string]int{}
+	for image, n := range counts {
+		if capacity.VLLMVersionFromImage(image) == v {
+			naming[image] = n
+		}
+	}
+	image, _ := mostCommon(naming)
+	return image
 }
 
 // releasesOf is how many of counts' entries name each release, as read reads

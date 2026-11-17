@@ -54,7 +54,7 @@ func TestEngine_TheReleaseSetsTheReportedDefaults(t *testing.T) {
 		{"an image whose tag is not vLLM's", []string{"--accelerator", "NVIDIA-H200",
 			"--engine-image", "ghcr.io/llm-d/llm-d-cuda:v0.4.0"},
 			wireEngine{VLLMVersionFrom: capacity.VLLMVersionUnread, StepBudget: 8192, GPUMemoryUtilization: 0.9, BlockSize: 16}},
-		// The budget is where the release moves the estimate: from v0.28 an
+		// The budget is where the release moves the reported figures: from v0.28 an
 		// accelerator of 160 GiB or more steps 16384 tokens, and an unknown
 		// release gets the smaller of the two.
 		{"v0.34 on a B200", []string{"--accelerator", "NVIDIA-B200", "--vllm-version", "0.34"},

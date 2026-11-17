@@ -514,6 +514,10 @@ The capture adds a `flag:` line when:
 
 A recording made before the planner read releases says `vLLM release not recorded`.
 
+A capture now keys learned state by the engine's real image, as the
+controller does (for SGLang too, though SGLang has no release to read). Learned
+state from a capture made before this release is not reused.
+
 ## Load on Prometheus
 
 A capture turns every query the controller asks into one range query over the
