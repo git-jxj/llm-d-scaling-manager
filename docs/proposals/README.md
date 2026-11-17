@@ -137,6 +137,12 @@ Read the review first; the implementation design says what was built.
   the count scaling manager derives capacity from means "Pods that reported metrics", is
   used as though it meant "Pods taking traffic", and the gap produced three
   symptoms investigated as unrelated bugs.
+- **[Count only the replicas the router can reach](pool-selected-supply.md)** —
+  proposed, one decision open. A Pod its InferencePool does not select takes no
+  router traffic but is counted as supply, so the model is scaled too low.
+  Reads the pools per cycle, drops such Pods from supply and from arriving
+  supply, falls back to today's count when the pools cannot be read, and asks
+  what to do with a whole variant no pool selects.
 
 Traffic shape and the units capacity is priced in — read the per-token economy
 last; it is the unit change that makes the other two land.
