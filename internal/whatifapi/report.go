@@ -31,15 +31,25 @@ type ReportRequest struct {
 	// "1k/4k/0.3"). Absent, the measured shape.
 	Shapes []string `json:"shapes,omitempty"`
 	// Loads are the table's rates: "5r/s", "80%" of the shape's fleet knee,
-	// or "seen". Absent, 50%, 80%, 100% and seen.
+	// "seen", or the load seen grown, "seen x1.5" (also "seen×1.5",
+	// "seen*1.5"): a what-if with its own column and its own verdict, which
+	// never replaces the verdict at the load seen. Absent, 50%, 80%, 100% and
+	// seen.
 	Loads []string `json:"loads,omitempty"`
-	// LoadSeen is the load to judge at in place of the source's mean arrival
-	// rate, requests per second; LoadSeenX multiplies it (1.5 asks what 50%
-	// more traffic does). Both default to the source's rate, times 1.
-	LoadSeen  *float64    `json:"loadSeen,omitempty"`
+	// LoadStatistic is the statistic of the source's per-cycle arrival rate
+	// the fleet is judged at: "mean", "p95" or "peak"; absent, p95.
+	LoadStatistic string `json:"loadStatistic,omitempty"`
+	// LoadSeen is the load to judge at in place of the source's, requests per
+	// second; absent, the source's rate at LoadStatistic.
+	LoadSeen *float64 `json:"loadSeen,omitempty"`
+	// LoadSeenX is an alias that adds the load "seen xN" to Loads: a growth
+	// what-if, not the load judged at.
 	LoadSeenX *float64    `json:"loadSeenX,omitempty"`
 	Headroom  *float64    `json:"headroom,omitempty"`
 	SLO       *SLORequest `json:"slo,omitempty"`
+	// ArrivalCV2 is the arrivals' squared coefficient of variation, Ca^2;
+	// absent, Poisson (1), as for a plan's traffic.arrivalCV2.
+	ArrivalCV2 *float64 `json:"arrivalCV2,omitempty"`
 	// TTFTStatistics are the TTFT statistics the tables print, "mean" or
 	// "pNN"; absent, p50 and p90.
 	TTFTStatistics []string `json:"ttftStatistics,omitempty"`
@@ -58,8 +68,11 @@ type ReportQuery struct {
 	Shapes []ReportShapeAsk
 	// Loads are the table's rates; none is 50%, 80%, 100% and seen.
 	Loads []ReportLoadAsk
-	// LoadSeen is the load to judge at; 0 is the source's. LoadSeenX
-	// multiplies it; 0 is 1.
+	// LoadStatistic is the statistic of the source's per-cycle arrival rate
+	// judged at (LoadMean, LoadP95, LoadPeak); "" is DefaultLoadStatistic.
+	LoadStatistic string
+	// LoadSeen is the load to judge at; 0 is the source's. LoadSeenX, when
+	// above 0 and not 1, adds the growth load "seen xLoadSeenX" to Loads.
 	LoadSeen, LoadSeenX float64
 	// Headroom is the operating point's fraction of the fleet knee; 0 is the
 	// policy's.
@@ -88,12 +101,22 @@ type ReportShapeAsk struct {
 }
 
 // ReportLoadAsk is one rate of the tables: Rate requests per second, Share
-// of the shape's fleet knee, or Seen, the load judged at.
+// of the shape's fleet knee, or Seen, the load judged at, times X when X is
+// above 0 and not 1 (a growth what-if, judged on its own).
 type ReportLoadAsk struct {
 	Rate, Share float64
 	Seen        bool
-	// Label is the load as asked ("5r/s", "80%", "seen").
+	X           float64
+	// Label is the load as asked ("5r/s", "80%", "seen", "seen x1.5").
 	Label string
+}
+
+// Grown says the load is the load seen grown by X.
+func (l ReportLoadAsk) Grown() bool { return l.Seen && l.X > 0 && l.X != 1 }
+
+// GrowthLoad is the load seen grown by x, as "seen x1.5" asks it.
+func GrowthLoad(x float64) ReportLoadAsk {
+	return ReportLoadAsk{Seen: true, X: x, Label: "seen x" + strconv.FormatFloat(x, 'f', -1, 64)}
 }
 
 // ReportTarget is one SLO target: Seconds at Percentile q, or the mean at 0.
@@ -114,10 +137,33 @@ const (
 	VerdictNotJudged = "NOT JUDGED"
 )
 
-// The marks a summary cell carries.
+// The statistics of the source's per-cycle arrival rate a fleet can be judged
+// at: the mean, the 95th percentile (nearest rank) and the highest, over the
+// cycles that read a rate above 0.
+const (
+	LoadMean = "mean"
+	LoadP95  = "p95"
+	LoadPeak = "peak"
+)
+
+// DefaultLoadStatistic is the statistic judged at when none is asked: p95, so
+// that a window whose mean hides its busy part is judged at the busy part.
+const DefaultLoadStatistic = LoadP95
+
+// The scopes a verdict covers: the whole fleet, or decode alone when the
+// prefill side does not price.
+const (
+	ScopeFleet      = "fleet"
+	ScopeDecodeOnly = "decode only"
+)
+
+// The marks a summary cell carries. CellOnset is a TTFT miss that comes from
+// the rate being past the prefill flow-control onset, where the router
+// queues, and not from the figure.
 const (
 	CellMet       = "met"
 	CellMissed    = "missed"
+	CellOnset     = "missed at onset"
 	CellSaturated = "saturated"
 	CellUnknown   = "unknown"
 	CellNoTarget  = "no target"
@@ -158,6 +204,9 @@ type ReportShape struct {
 	Capacity        ReportLimits  `json:"capacity"`
 	Table           []ReportRow   `json:"table"`
 	Verdict         ReportVerdict `json:"verdict"`
+	// Growth is the verdict at each growth load asked ("seen x1.5"), in the
+	// order asked: what-ifs beside Verdict, never in its place.
+	Growth []ReportGrowth `json:"growth"`
 	// Flags is every flag a figure of the shape carries, once each.
 	Flags []string `json:"flags"`
 	// Assumed is every input the shape's answer assumed, in words.
@@ -187,21 +236,40 @@ type ReportFleet struct {
 	DecodeFrom  string `json:"decodeFrom"`
 }
 
-// ReportLoad is the load the fleet is judged at.
+// ReportLoad is the load the fleet is judged at, and the load the source saw.
 type ReportLoad struct {
 	// Rate is the load judged at: Seen times X.
 	Rate Figure `json:"rate"`
-	// Seen is the load the source saw, or the one asked in its place, and
-	// Source which ("observed mean", "asked" or "none").
-	Seen   *float64 `json:"seen,omitempty"`
-	Source string   `json:"source"`
-	X      float64  `json:"x"`
+	// Seen is the load the source saw at Statistic, or the one asked in its
+	// place, and Source which ("observed", "asked" or "none"). The verdict
+	// is judged at it; a growth load is a what-if of its own (Growth).
+	Seen      *float64 `json:"seen,omitempty"`
+	Source    string   `json:"source"`
+	Statistic string   `json:"statistic"`
 	// Cycles is how many cycles the window holds, and CyclesWithTraffic how
-	// many of them read an arrival rate above 0: the mean is over those.
+	// many of them read an arrival rate above 0: Mean, P95 and Peak are of
+	// those, one rate per cycle.
 	Cycles            int      `json:"cycles"`
 	CyclesWithTraffic int      `json:"cyclesWithTraffic"`
+	Mean              *float64 `json:"mean,omitempty"`
+	P95               *float64 `json:"p95,omitempty"`
 	Peak              *float64 `json:"peak,omitempty"`
+	// Rolling is the busiest stretch of the window: the highest mean rate over
+	// consecutive cycles spanning RollingWindow; nil with fewer cycles.
+	Rolling *ReportRolling `json:"rolling,omitempty"`
 }
+
+// ReportRolling is the highest rolling mean of the per-cycle arrival rate,
+// over Cycles consecutive cycles spanning about WindowSeconds.
+type ReportRolling struct {
+	WindowSeconds float64 `json:"windowSeconds"`
+	Cycles        int     `json:"cycles"`
+	Peak          float64 `json:"peak"`
+}
+
+// RollingWindow is the span of ReportLoad.Rolling: about the scale-up lag, so
+// that it tells a load the fleet must hold from one cycle's spike.
+const RollingWindow = 2 * time.Minute
 
 // ReportUse is the utilization at the load.
 type ReportUse struct {
@@ -281,8 +349,9 @@ type ReportRow struct {
 }
 
 // ReportCell is one cell of the shape-by-load summary: TTFT p90 and the
-// TPOT percentile, and Mark, whether the SLO targets hold at the rate
-// (CellMet, CellMissed, CellSaturated, CellUnknown, CellNoTarget).
+// TPOT percentile (the mean where the percentile is refused: TPOT.Statistic
+// says which), and Mark, whether the SLO targets hold at the rate (CellMet,
+// CellMissed, CellOnset, CellSaturated, CellUnknown, CellNoTarget).
 type ReportCell struct {
 	TTFT ReportStat `json:"ttft"`
 	TPOT ReportStat `json:"tpot"`
@@ -295,13 +364,28 @@ type ReportStat struct {
 	Figure
 }
 
-// ReportVerdict is the fleet judged at the load: Verdict, why in numbers,
-// the roles that can lose a replica, and each fleet checked.
+// ReportVerdict is the fleet judged at the load: Verdict, Summary in one
+// plain sentence, why in numbers (Reason), the roles that can lose a replica
+// (Shrink) or one more replica of which makes the fleet hold (Grow), and each
+// fleet checked. Scope is ScopeDecodeOnly when the prefill side does not
+// price: such a verdict is never OVER-PROVISIONED.
 type ReportVerdict struct {
 	Verdict string        `json:"verdict"`
+	Summary string        `json:"summary"`
+	Scope   string        `json:"scope"`
 	Reason  string        `json:"reason"`
 	Shrink  []string      `json:"shrink"`
+	Grow    []string      `json:"grow"`
 	Checks  []ReportCheck `json:"checks"`
+}
+
+// ReportGrowth is the fleet judged at the load seen grown by X: Load is the
+// load as labelled ("seen x1.5"), Rate the rate judged at.
+type ReportGrowth struct {
+	Load    string        `json:"load"`
+	X       float64       `json:"x"`
+	Rate    float64       `json:"rate"`
+	Verdict ReportVerdict `json:"verdict"`
 }
 
 // ReportCheck is one fleet checked at the load: whether it holds every SLO
@@ -421,6 +505,21 @@ func ReportQueryOf(req ReportRequest) (ReportQuery, error) {
 		}
 		q.Loads = append(q.Loads, l)
 	}
+	if req.LoadStatistic != "" {
+		if err := CheckLoadStatistic(req.LoadStatistic); err != nil {
+			return q, InputError{Err: fmt.Errorf("loadStatistic: %w", err)}
+		}
+		if req.LoadSeen != nil {
+			return q, InputErrorf("loadStatistic and loadSeen: the load is the source's at a statistic or the one stated, not both")
+		}
+		q.LoadStatistic = req.LoadStatistic
+	}
+	if a := req.ArrivalCV2; a != nil {
+		if !usable(*a) {
+			return q, InputErrorf("arrivalCV2 %g, want a finite value above 0: 1 is Poisson", *a)
+		}
+		q.ArrivalCV2 = ptr(*a)
+	}
 	for _, c := range []struct {
 		name string
 		x    *float64
@@ -479,6 +578,15 @@ func ReportQueryOf(req ReportRequest) (ReportQuery, error) {
 	return q, nil
 }
 
+// CheckLoadStatistic checks a load statistic: LoadMean, LoadP95 or LoadPeak.
+func CheckLoadStatistic(s string) error {
+	switch s {
+	case LoadMean, LoadP95, LoadPeak:
+		return nil
+	}
+	return fmt.Errorf("%q, want %s, %s or %s", s, LoadMean, LoadP95, LoadPeak)
+}
+
 // ParseReportShape reads a shape: "measured", or "IL/OL[/hit]", lengths in
 // tokens with an optional k (1024 tokens), and hit a rate in [0, 1).
 func ParseReportShape(s string) (ReportShapeAsk, error) {
@@ -523,11 +631,25 @@ func tokens(s string) (float64, error) {
 	return x * scale, nil
 }
 
-// ParseReportLoad reads a load: "seen", "80%" of the knee, or "5r/s".
+// ParseReportLoad reads a load: "seen", the load seen grown ("seen x1.5",
+// "seen×1.5" or "seen*1.5"), "80%" of the knee, or "5r/s".
 func ParseReportLoad(s string) (ReportLoadAsk, error) {
 	switch {
 	case s == "seen":
 		return ReportLoadAsk{Seen: true, Label: s}, nil
+	case strings.HasPrefix(s, "seen"):
+		g := strings.TrimSpace(strings.TrimPrefix(s, "seen"))
+		for _, p := range []string{"x", "×", "*"} {
+			if strings.HasPrefix(g, p) {
+				g = strings.TrimSpace(strings.TrimPrefix(g, p))
+				break
+			}
+		}
+		x, err := strconv.ParseFloat(g, 64)
+		if err != nil || !usable(x) || math.IsInf(x, 0) {
+			return ReportLoadAsk{}, fmt.Errorf("load %q, want the load seen grown by a finite factor above 0 (seen x1.5)", s)
+		}
+		return GrowthLoad(x), nil
 	case strings.HasSuffix(s, "%"):
 		x, err := strconv.ParseFloat(strings.TrimSuffix(s, "%"), 64)
 		if err != nil || !(x > 0 && x <= 100) {

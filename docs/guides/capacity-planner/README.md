@@ -348,8 +348,8 @@ with `--prefill` and `--decode`; without them it judges the recorded counts.
 
 <!-- guide:fleet.check start -->
 ```bash
-# From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw and
-# at that load grown by a fifth, for its own shape and two it never saw. The sample learned no prefill
+# From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw, with
+# what that load grown by a fifth does beside it, for its own shape and two it never saw. The sample learned no prefill
 # speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at 50%, 80% and 100%
 # of the knee and the load seen.
 bin/capacity-planner at-replicas \
@@ -362,19 +362,43 @@ bin/capacity-planner at-replicas \
 
 It replays the recording once and answers, for each shape and load:
 
-- **Load judged.** The mean arrival rate over the window's cycles with
-  traffic, times `--load-seen-x` (1.5 asks what 50% more traffic does).
-  `--load-seen` sets it instead.
+- **Load judged.** The p95 of the arrival rate the window read, one reading
+  per cycle with traffic. The report prints the mean, p95 and peak, and the
+  busiest 2 minutes (a rolling mean). `--load-statistic mean|p95|peak` picks
+  the one judged; `--load-seen` states a load instead. The mean hides a busy
+  part: on the staircase sample it is 31.6 r/s, the p95 41.7 and the peak
+  43.2.
+- **Growth.** `--load "seen x1.5"` (also `seen×1.5`, `seen*1.5`) asks what
+  50% more traffic does: a column of its own and a "with 1.5x traffic" line
+  under the verdict. It never changes the verdict at the load seen.
+  `--load-seen-x 1.5` is an alias that adds the same column.
 - **Summary.** One row per shape (`--shape`, repeatable: `measured`, or
   `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
-  repeatable: `80%` of that shape's fleet knee, `5r/s`, or `seen`). Each cell
-  is TTFT p90 / TPOT p90 in ms at that rate, and a word: `ok` every target
-  met, `MISS` a target missed, `SAT` saturated, `?` not judged. A shape
-  outside the lengths the recording saw is marked EXTRAPOLATED.
-- **Verdict per shape.** UNDER-PROVISIONED when the load is above headroom
-  times the fleet knee, or a target is missed there. OVER-PROVISIONED when
-  one replica fewer of a role still holds every target with headroom; it
-  names the role. RIGHT-SIZED otherwise. The reason gives the numbers.
+  repeatable: `80%` of that shape's fleet knee, `5r/s`, or `seen`). A cell
+  such as `637/16.4 @19.07 ok` is TTFT p90 637 ms and TPOT p90 16.4 ms at
+  19.07 r/s, and the SLO's own statistics are met there. The mark is `ok`
+  met, `MISS` missed, `MISS*` missed because the rate is past the prefill
+  flow-control onset (the router queues) though the figure is within, `SAT`
+  saturated, `?` not judged. A TPOT ending in `m` is the mean, where the
+  percentile is refused. A shape outside the lengths or prefix-hit rate the
+  recording saw is marked EXTRAPOLATED.
+- **Verdict per shape**, in one sentence:
+  - UNDER-PROVISIONED: the load is past headroom times the fleet knee, or a
+    target is missed there. It names the role to add and why: the role that
+    sets the knee when the fleet saturates, decode for TPOT, and for TTFT the
+    role whose wait is the larger part of it (the prefill queue or decode
+    admission). It says whether one more replica of that role is enough.
+  - OVER-PROVISIONED: one replica fewer of a role still holds every target
+    with headroom at the same load. It names the role. A decode replica
+    removed rests on the decode knee, which is not validated.
+  - RIGHT-SIZED: the fleet holds, and one replica fewer of any role does not.
+  - NOT JUDGED: a figure the verdict needs is refused (the sentence says
+    which), there is no load, or the prefill side is not priced. With no
+    prefill speed learned, decode alone is judged: the report never calls
+    such a fleet right-sized or over-provisioned, gives no fleet rate at the
+    SLO, and exits 3. Under-provisioned decode is still UNDER-PROVISIONED.
+
+  The `checks` lines give each fleet tried and its numbers.
 - **Per shape:** utilization at the load (decode KV fill, batch slots, wait
   probability; prefill utilization pooled and on the busiest pod), the
   prefill, decode and fleet knees in req/s and output tok/s with what binds
@@ -382,27 +406,32 @@ It replays the recording once and answers, for each shape and load:
   the SLO against each load. `e2e mean (sum)` is TTFT mean + (OL - 1) x TPOT
   mean, not a percentile.
 
-The targets are the policy's unless `--ttft` and `--tpot` set them. A role
-the recording cannot price is answered without it: with no prefill speed
-learned, decode alone, and the exit code is 3. `-o json` prints the same
-report as [`POST /v1/report`](api.md#the-report).
+The targets are the policy's unless `--ttft` and `--tpot` set them. Exit 0
+means the report answered, whatever the verdict; exit 3 means a role or a
+figure was refused. Scripts read the verdict from `-o json`
+(`shapes[].verdict.verdict`), which prints the same report as
+[`POST /v1/report`](api.md#the-report).
 
 The sample above prints (the start of it):
 
 ```text
 ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-06 02:18-03:30Z, cycle 289 of 289
-load judged     37.91 r/s = 1.2 x 31.59 r/s, the mean of the 282 of 289 cycles with traffic; peak 43.24 r/s
+load judged     41.70 r/s, the p95 of the 282 of 289 cycles with traffic
+load seen       per cycle: mean 31.59, p95 41.70, peak 43.24 r/s; busiest 2m0s (8 cycles): 42.13 r/s
 SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
-cells: TTFT p90 / TPOT p90 ms @ r/s, - refused (the reason is in the shape's table); ok every target met, MISS a target missed, SAT saturated, ? not judged
-summary                     50%                 80%                    5r/s               seen x1.2
-  measured                  637/16.4 @19.07 ok  2490/16.4 @30.51 MISS  388/16.4 @5.00 ok  -/63.6 @37.91 SAT
-  1k/1k EXTRAPOLATED        134/16.4 @18.27 ok  152/16.4 @29.24 ok     124/16.4 @5.00 ok  -/- @37.91 SAT
-  16k/200/0.3 EXTRAPOLATED  898/16.4 @13.36 ok  3673/16.4 @21.37 MISS  567/16.4 @5.00 ok  -/- @37.91 SAT
+cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
+mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
+summary                     50%                 80%                    5r/s               seen            seen x1.2
+  measured                  637/16.4 @19.07 ok  2490/16.4 @30.51 MISS  388/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  1k/1k EXTRAPOLATED        134/16.4 @18.27 ok  152/16.4 @29.24 ok     124/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  16k/200/0.3 EXTRAPOLATED  898/16.4 @13.36 ok  3673/16.4 @21.37 MISS  567/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
 verdicts
-  measured                  UNDER-PROVISIONED
-  1k/1k EXTRAPOLATED        UNDER-PROVISIONED
-  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED
-
+  measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates; add decode replicas (decode sets the knee): one more is not enough.
+                            with 1.2x traffic (seen x1.2): UNDER-PROVISIONED: at 1.2 x the p95 load (50.0 r/s), 1.3x the fleet knee of 38.1 r/s, the fleet saturates; add decode replicas (decode sets the knee): one more is not enough.
+  1k/1k EXTRAPOLATED        UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 36.5 r/s, the fleet saturates; add decode replicas (decode sets the knee): one more makes it hold.
+                            with 1.2x traffic (seen x1.2): UNDER-PROVISIONED: at 1.2 x the p95 load (50.0 r/s), 1.4x the fleet knee of 36.5 r/s, the fleet saturates; add decode replicas (decode sets the knee): one more is not enough.
+  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.6x the fleet knee of 26.7 r/s, the fleet saturates; add decode replicas (decode sets the knee): one more is not enough.
+                            with 1.2x traffic (seen x1.2): UNDER-PROVISIONED: at 1.2 x the p95 load (50.0 r/s), 1.9x the fleet knee of 26.7 r/s, the fleet saturates; add decode replicas (decode sets the knee): one more is not enough.
 ```
 
 Read the not-validated lines at the end: the decode knee read 44% to 103%

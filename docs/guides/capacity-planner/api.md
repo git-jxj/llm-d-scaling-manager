@@ -228,7 +228,8 @@ A size with no fleet within the bound is a 200 with `unmet`, not an error.
 ## The report
 
 `POST /v1/report` judges one fleet: is it under-provisioned, right-sized or
-over-provisioned at the load the source saw? Resolve the source first, then:
+over-provisioned at the load the source saw (its p95 by default)? Resolve
+the source first, then:
 
 ```bash
 curl -s localhost:8080/v1/report -H 'Content-Type: application/json' -d '{"inputsId": "sha256:...",
@@ -245,9 +246,11 @@ Every field but `inputsId` has a default.
 | --- | --- | --- |
 | `fleet.prefill`, `fleet.decode` | the recorded counts | The fleet to judge. |
 | `shapes` | `["measured"]` | Request shapes, at most 6: `measured`, or `IL/OL[/hit]` in tokens, `k` for 1024 (`8k/200`, `1k/4k/0.3`). |
-| `loads` | `["50%", "80%", "100%", "seen"]` | The tables' rates, at most 8: a share of each shape's fleet knee (`80%`), a rate (`5r/s`), or `seen`. |
-| `loadSeen` | the source's mean arrival rate | The load to judge at, requests per second. |
-| `loadSeenX` | 1 | Multiplies the load seen: `1.5` asks what 50% more traffic does. |
+| `loads` | `["50%", "80%", "100%", "seen"]` | The tables' rates, at most 8: a share of each shape's fleet knee (`80%`), a rate (`5r/s`), `seen`, or the load seen grown (`seen x1.5`, also `seen×1.5` or `seen*1.5`): a what-if with its own column and its own verdict in `shapes[].growth`. |
+| `loadStatistic` | `p95` | Which statistic of the source's per-cycle arrival rate to judge at: `mean`, `p95` or `peak`. Not with `loadSeen`. |
+| `loadSeen` | the source's rate at `loadStatistic` | The load to judge at, requests per second. |
+| `loadSeenX` | none | An alias that adds `seen xN` to `loads`. It never changes the load judged at. |
+| `arrivalCV2` | 1 (Poisson) | The arrivals' Ca^2, as a plan's `traffic.arrivalCV2`. |
 | `headroom` | the policy's `scaleUpThreshold` | The operating point, a fraction of the fleet knee in (0, 1). |
 | `slo.ttft`, `slo.tpot` | the policy's targets | `statistic` (`mean` or `pNN`) and `target` in seconds. |
 | `ttftStatistics` | `["p50", "p90"]` | The TTFT statistics the tables print, at most 4. |
@@ -258,13 +261,14 @@ The answer:
 
 | Field | Holds |
 | --- | --- |
-| `load` | The load judged at (`rate`), the load seen and its source (`observed mean`, `asked` or `none`), the growth `x`, and the cycles it was read over. |
+| `load` | The load judged at (`rate`), the load seen and its source (`observed`, `asked` or `none`), the `statistic` judged (`mean`, `p95`, `peak`, or `stated`), the cycles read, the per-cycle `mean`, `p95` and `peak`, and `rolling`, the busiest 2 minutes' mean. |
 | `loads` | The tables' rates, in order: the summary's columns. |
-| `shapes[]` | One per shape asked, in order. `extrapolated` is true when IL or OL lies outside the per-cycle means the source saw, with `extrapolatedWhy`. |
+| `shapes[]` | One per shape asked, in order. `extrapolated` is true when IL, OL or the prefix-hit rate lies outside the per-cycle means the source saw, with `extrapolatedWhy`. |
 | `shapes[].utilization` | At the load judged: decode's KV fill, batch slots occupied of the fleet's slots, and wait probability; prefill's utilization pooled and on the busiest pod. |
 | `shapes[].capacity` | The prefill, decode and fleet knees, the operating point and the highest rate that holds every target (`maxAtSLO`), each with output tokens a second and what binds it. |
-| `shapes[].table[]` | One row per load: TTFT at each statistic, TPOT mean and percentile, and `e2eMeanSum`, TTFT mean + (OL - 1) x TPOT mean, a sum of means and not a percentile. `cell` is the row in the summary: TTFT p90, the TPOT percentile, and `mark` (`met`, `missed`, `saturated`, `unknown`, `no target`). |
-| `shapes[].verdict` | `UNDER-PROVISIONED` when the load judged is past headroom times the fleet knee or a target is missed there; `OVER-PROVISIONED` when one replica fewer of a role still holds every target with headroom (`shrink` names the role); `RIGHT-SIZED` otherwise; `NOT JUDGED` with no knee or no load. `reason` gives the numbers, and `checks` each fleet tried. |
+| `shapes[].table[]` | One row per load: TTFT at each statistic, TPOT mean and percentile, and `e2eMeanSum`, TTFT mean + (OL - 1) x TPOT mean, a sum of means and not a percentile. `cell` is the row in the summary: TTFT p90, the TPOT percentile (the mean where it is refused; `tpot.statistic` says which), and `mark`, the SLO judged at its own statistics (`met`, `missed`, `missed at onset` for a TTFT past the prefill flow-control onset, `saturated`, `unknown`, `no target`). |
+| `shapes[].verdict` | `UNDER-PROVISIONED` when the load judged is past headroom times the fleet knee or a target is missed there (`grow` names the roles one more replica of makes it hold); `OVER-PROVISIONED` when one replica fewer of a role still holds every target with headroom at the same load (`shrink` names the role); `RIGHT-SIZED` otherwise; `NOT JUDGED` with no knee, no load, a target its own check cannot price, or a prefill side that does not price (`scope` `decode only`: never right-sized or over-provisioned, and no `maxAtSLO`). `summary` is one plain sentence, `reason` gives the numbers, and `checks` each fleet tried. |
+| `shapes[].growth[]` | One per growth load asked, in order: `load` (`seen x1.5`), `x`, the `rate` judged at, and a `verdict` of the same form. A what-if beside `verdict`, never in its place. |
 | `notValidated` | What no run has validated: the decode knee read 44% to 103% high on the goldens, and TTFT is unvalidated. |
 
 Each shape and load is priced from the one replay the inputs resolved: a

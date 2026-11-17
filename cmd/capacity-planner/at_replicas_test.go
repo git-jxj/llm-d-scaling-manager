@@ -10,13 +10,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -36,8 +37,12 @@ func atStair(args ...string) []string {
 	return slices.Concat([]string{"at-replicas", "--recording", stairBOn}, stairAssumed, args)
 }
 
-// The report's golden outputs: a P/D fleet at the load the window saw
-// (under-provisioned: the TTFT target is missed there), the same as JSON, one
+// reportDeadline bounds one report in a test, so that a slow or looping
+// change fails the test that met it rather than go test's whole run.
+const reportDeadline = 2 * time.Minute
+
+// The report's golden outputs: a P/D fleet at the window's p95 load
+// (under-provisioned, and exit 0: the report answered), the same as JSON, one
 // over-provisioned by a decode replica at a stated load, and a decode-only
 // answer where the prefill side does not price. The JSON golden is named
 // .json, not -json: TestServeParity covers the plan's JSON goldens, and the
@@ -48,8 +53,8 @@ func TestAtReplicasGolden(t *testing.T) {
 		args []string
 		code int
 	}{
-		{"at-replicas-staircase", atStair(), 0},
-		{"at-replicas-staircase.json", atStair("-o", "json"), 0},
+		{"at-replicas-staircase", atStair(), 3},
+		{"at-replicas-staircase.json", atStair("-o", "json"), 3},
 		{"at-replicas-over", atStair("--decode", "3", "--load-seen", "20"), 0},
 		// V_P is refused on the sweep: the report answers for decode alone,
 		// and exits 3 for the role that refused.
@@ -66,17 +71,33 @@ func TestAtReplicasGolden(t *testing.T) {
 	}
 }
 
-// stairState is the staircase replayed once, to its last cycle.
-func stairState(t *testing.T) *learnreplay.State {
-	t.Helper()
-	f := answerFlags{recording: stairBOn, cycle: "last", set: map[string]bool{}, warn: io.Discard}
-	st, err := f.readState(context.Background())
-	require.NoError(t, err)
-	return st
+// replayed is a recording replayed to its last cycle once per test binary:
+// every test that prices on the state shares the one replay.
+type replayed struct {
+	once sync.Once
+	path string
+	st   *learnreplay.State
+	err  error
 }
 
+func (r *replayed) state(t *testing.T) *learnreplay.State {
+	t.Helper()
+	r.once.Do(func() {
+		f := answerFlags{recording: r.path, cycle: "last", set: map[string]bool{}, warn: io.Discard}
+		r.st, r.err = f.readState(context.Background())
+	})
+	require.NoError(t, r.err)
+	return r.st
+}
+
+var (
+	stairReplay = &replayed{path: stairBOn}
+	sweepReplay = &replayed{path: outputSpreadRun}
+)
+
 // stairQuery is the report's question on the staircase: the assumed prefill,
-// the targets, and np prefill and nd decode replicas at load.
+// the targets, and np prefill and nd decode replicas at load (0: the
+// window's p95).
 func stairQuery(np, nd int, load float64) whatifapi.ReportQuery {
 	vp, a := 200000.0, 0.020
 	return whatifapi.ReportQuery{Prefill: np, Decode: nd, LoadSeen: load, TTFTPercentiles: []float64{0.9}, TPOTPercentile: 0.9,
@@ -84,12 +105,20 @@ func stairQuery(np, nd int, load float64) whatifapi.ReportQuery {
 		Assume: whatifapi.Assume{VP: &vp, A: &a}}
 }
 
-// stairReport prices q on st.
-func stairReport(t *testing.T, st *learnreplay.State, q whatifapi.ReportQuery) *whatifapi.ReportResponse {
+// priceReport prices q on st within reportDeadline.
+func priceReport(t *testing.T, st *learnreplay.State, q whatifapi.ReportQuery) *whatifapi.ReportResponse {
 	t.Helper()
-	rep, err := buildReport(context.Background(), st, &servedState{st: st, decodeVariant: "variant-01"}, q)
+	ctx, cancel := context.WithTimeout(t.Context(), reportDeadline)
+	defer cancel()
+	rep, err := buildReport(ctx, st, &servedState{st: st, decodeVariant: "variant-01"}, q)
 	require.NoError(t, err)
 	return rep
+}
+
+// stairReport prices q on the staircase.
+func stairReport(t *testing.T, q whatifapi.ReportQuery) *whatifapi.ReportResponse {
+	t.Helper()
+	return priceReport(t, stairReplay.state(t), q)
 }
 
 // verdictRank orders the verdicts: more replicas never move a fleet down it.
@@ -112,13 +141,12 @@ func verdictRank(t *testing.T, v string) int {
 // sweep must see all three verdicts, so that it is not met by one verdict
 // everywhere. Every fleet is priced from one replay.
 func TestAtReplicas_VerdictMonotoneInN(t *testing.T) {
-	st := stairState(t)
 	const maxP, maxD = 3, 5
 	rank := map[[2]int]int{}
 	seen := map[string]bool{}
 	for np := 1; np <= maxP; np++ {
 		for nd := 1; nd <= maxD; nd++ {
-			rep := stairReport(t, st, stairQuery(np, nd, 20))
+			rep := stairReport(t, stairQuery(np, nd, 20))
 			rank[[2]int{np, nd}] = verdictRank(t, rep.Shapes[0].Verdict.Verdict)
 			seen[rep.Shapes[0].Verdict.Verdict] = true
 		}
@@ -140,19 +168,23 @@ func TestAtReplicas_VerdictMonotoneInN(t *testing.T) {
 // The verdict names the role that can shrink, and is judged at the load, not
 // at the operating point: at 20 r/s, two prefill and three decode replicas
 // hold with one decode replica fewer, not with one prefill replica fewer.
+// An over-provisioned decode carries the decode knee's caveat in its one
+// sentence; an under-provisioned fleet names the replica that makes it hold.
 func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
-	st := stairState(t)
-	rep := stairReport(t, st, stairQuery(2, 3, 20))
-	assert.Equal(t, whatifapi.VerdictOver, rep.Shapes[0].Verdict.Verdict, rep.Shapes[0].Verdict.Reason)
-	assert.Equal(t, []string{roleDecode}, rep.Shapes[0].Verdict.Shrink)
-	require.Len(t, rep.Shapes[0].Verdict.Checks, 3)
-	for _, c := range rep.Shapes[0].Verdict.Checks {
+	rep := stairReport(t, stairQuery(2, 3, 20))
+	v := rep.Shapes[0].Verdict
+	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Reason)
+	assert.Equal(t, []string{roleDecode}, v.Shrink)
+	assert.Equal(t, whatifapi.ScopeFleet, v.Scope)
+	assert.Contains(t, v.Summary, "decode knee this rests on is not validated")
+	require.Len(t, v.Checks, 3)
+	for _, c := range v.Checks {
 		assert.True(t, strings.HasPrefix(c.Reason, "20.00 r/s "), "each fleet is checked at the load: %s", c.Reason)
 	}
 	byFleet := func(np, nd int) whatifapi.ReportCheck {
-		i := slices.IndexFunc(rep.Shapes[0].Verdict.Checks, func(c whatifapi.ReportCheck) bool { return c.Prefill == np && c.Decode == nd })
+		i := slices.IndexFunc(v.Checks, func(c whatifapi.ReportCheck) bool { return c.Prefill == np && c.Decode == nd })
 		require.GreaterOrEqual(t, i, 0)
-		return rep.Shapes[0].Verdict.Checks[i]
+		return v.Checks[i]
 	}
 	assert.True(t, byFleet(2, 3).Holds)
 	assert.True(t, byFleet(2, 2).Holds, byFleet(2, 2).Reason)
@@ -160,82 +192,219 @@ func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
 
 	// Two decode replicas are right-sized at that load: one fewer of either
 	// role misses.
-	rep = stairReport(t, st, stairQuery(2, 2, 20))
+	rep = stairReport(t, stairQuery(2, 2, 20))
 	assert.Equal(t, whatifapi.VerdictRight, rep.Shapes[0].Verdict.Verdict, rep.Shapes[0].Verdict.Reason)
 	assert.Empty(t, rep.Shapes[0].Verdict.Shrink)
-	// One decode replica is under-provisioned: 20 r/s is past 0.85 of its knee.
-	rep = stairReport(t, st, stairQuery(2, 1, 20))
-	assert.Equal(t, whatifapi.VerdictUnder, rep.Shapes[0].Verdict.Verdict, rep.Shapes[0].Verdict.Reason)
+	// One decode replica is under-provisioned: 20 r/s is past 0.85 of its
+	// knee, and a second decode replica is what makes it hold.
+	rep = stairReport(t, stairQuery(2, 1, 20))
+	v = rep.Shapes[0].Verdict
+	assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Reason)
+	assert.Equal(t, []string{roleDecode}, v.Grow, v.Summary)
+	assert.Contains(t, v.Summary, "add decode replicas (decode sets the knee): one more makes it hold")
 }
 
-// The load judged at is the load the window saw by default: the mean of the
-// cycles that read an arrival rate above 0.
-func TestAtReplicas_LoadIsTheWindowsMean(t *testing.T) {
-	st := stairState(t)
-	var sum float64
-	n := 0
-	for _, x := range st.ArrivalRates {
-		if x > 0 {
-			sum += x
-			n++
+// The verdict's sentence is one plain sentence: it starts with the verdict,
+// ends with one full stop, and carries no reason code.
+func TestAtReplicas_VerdictIsOnePlainSentence(t *testing.T) {
+	sweep := sweepReplay.state(t)
+	cases := map[string]whatifapi.ReportVerdict{}
+	for _, q := range []whatifapi.ReportQuery{stairQuery(2, 1, 20), stairQuery(2, 2, 20), stairQuery(2, 3, 20), stairQuery(3, 4, 0)} {
+		v := stairReport(t, q).Shapes[0].Verdict
+		cases[v.Verdict+" staircase"] = v
+	}
+	nj := sweepQuery()
+	nj.TTFT = &whatifapi.ReportTarget{Seconds: 2, Percentile: 0.9}
+	cases["sweep TTFT"] = priceReport(t, sweep, nj).Shapes[0].Verdict
+	cases["sweep decode only"] = priceReport(t, sweep, sweepQuery()).Shapes[0].Verdict
+	for name, v := range cases {
+		assert.True(t, strings.HasPrefix(v.Summary, v.Verdict+": "), "%s: %s", name, v.Summary)
+		assert.True(t, strings.HasSuffix(v.Summary, "."), "%s: %s", name, v.Summary)
+		assert.Equal(t, 1, strings.Count(v.Summary, ". ")+1, "%s: %s", name, v.Summary)
+		for _, code := range []string{"NoPrefillCapacity", "Saturated", "AboveDecodeOnset", "TPOTBucketTooWide", "NoTraffic"} {
+			assert.NotContains(t, v.Summary, code, name)
 		}
 	}
-	require.Positive(t, n)
-	require.Len(t, st.ArrivalRates, st.Cycles, "one rate per cycle")
-	rep := stairReport(t, st, stairQuery(0, 0, 0))
-	require.NotNil(t, rep.Load.Rate.Value)
-	assert.InDelta(t, sum/float64(n), *rep.Load.Rate.Value, 1e-12)
-	assert.Equal(t, "observed mean", rep.Load.Source)
-	assert.Equal(t, n, rep.Load.CyclesWithTraffic)
-	i := slices.IndexFunc(rep.Shapes[0].Table, func(r whatifapi.ReportRow) bool { return r.Label == "load seen" })
-	require.GreaterOrEqual(t, i, 0)
-	assert.Equal(t, *rep.Load.Rate.Value, rep.Shapes[0].Table[i].Rate)
-	assert.True(t, strings.HasPrefix(rep.Shapes[0].Verdict.Checks[0].Reason, rateText(sum/float64(n))+" "), rep.Shapes[0].Verdict.Checks[0].Reason)
 }
 
-// The 100% row is the knee itself: its rate is KneeRate's on the decode
-// variant where decode binds, and the prefill knee's where prefill does, to
-// the bit.
-func TestAtReplicas_KneeRowIsTheKnee(t *testing.T) {
-	st := stairState(t)
-	for _, c := range []struct {
-		name  string
-		np    int
-		binds string
-	}{{"decode binds", 2, roleDecode}, {"prefill binds", 1, rolePrefill}} {
-		t.Run(c.name, func(t *testing.T) {
-			s := &servedState{st: st, decodeVariant: "variant-01"}
-			rep, err := buildReport(context.Background(), st, s, stairQuery(c.np, 2, 20))
-			require.NoError(t, err)
-			i := slices.IndexFunc(rep.Shapes[0].Table, func(r whatifapi.ReportRow) bool { return r.ShareOfKnee != nil && *r.ShareOfKnee == 1 })
-			require.GreaterOrEqual(t, i, 0, "a 100%% row")
-			require.NotNil(t, rep.Shapes[0].Capacity.FleetKnee.Value)
-			assert.Equal(t, *rep.Shapes[0].Capacity.FleetKnee.Value, rep.Shapes[0].Table[i].Rate)
-			sf, err := s.fleetAt(whatifapi.Knobs{Prefill: c.np, Decode: 2, TTFTPercentile: 0.9, Headroom: 0.85,
-				Assume: stairQuery(0, 0, 0).Assume})
-			require.NoError(t, err)
-			knee := whatif.KneeRate(sf.pv.decode)
-			if c.binds == rolePrefill {
-				knee = whatif.PrefillKnee(sf.pf.fleet.Prefill)
-			}
-			k, ok := knee.(whatif.Answer)
-			require.True(t, ok, "%+v", knee)
-			assert.Equal(t, k.Value, rep.Shapes[0].Table[i].Rate)
-			assert.Equal(t, c.binds, rep.Shapes[0].Capacity.FleetKnee.Binds)
-			// At the knee the binding role is saturated: decode's TPOT, or
-			// prefill's TTFT.
-			fig := rep.Shapes[0].Table[i].TPOTMean
-			if c.binds == rolePrefill {
-				fig = rep.Shapes[0].Table[i].TTFT[0].Figure
-			}
-			assert.Equal(t, "saturated", figText(fig, "%.1f", 1))
-		})
+// sweepQuery is the decode-only question on the throughput sweep: TPOT mean
+// at 5 ms, judged at the window's mean, where decode alone holds.
+func sweepQuery() whatifapi.ReportQuery {
+	return whatifapi.ReportQuery{TTFTPercentiles: []float64{0.5, 0.9}, TPOTPercentile: 0.9, LoadStatistic: whatifapi.LoadMean,
+		TPOT: &whatifapi.ReportTarget{Seconds: 0.005}}
+}
+
+// A fleet whose own check is not judged is NOT JUDGED, never RIGHT-SIZED: on
+// the sweep, the TTFT target cannot be priced (no prefill speed), and at the
+// window's mean decode holds. With no TTFT target, decode alone is judged and
+// the scope says so: NOT JUDGED, never RIGHT-SIZED or OVER-PROVISIONED, and no
+// fleet rate at the SLO, as slo-to-rate gives none.
+func TestAtReplicas_NotJudged(t *testing.T) {
+	sweep := sweepReplay.state(t)
+	q := sweepQuery()
+	q.TTFT = &whatifapi.ReportTarget{Seconds: 2, Percentile: 0.9}
+	v := priceReport(t, sweep, q).Shapes[0].Verdict
+	assert.Equal(t, whatifapi.VerdictNotJudged, v.Verdict, v.Reason)
+	require.NotEmpty(t, v.Checks)
+	assert.False(t, v.Checks[0].Known, v.Checks[0].Reason)
+	assert.Contains(t, v.Summary, "TTFT p90 cannot be priced")
+
+	for _, nd := range []int{0, 3} {
+		q := sweepQuery()
+		q.Decode = nd
+		rep := priceReport(t, sweep, q)
+		s := rep.Shapes[0]
+		assert.Equal(t, whatifapi.VerdictNotJudged, s.Verdict.Verdict, "decode %d: %s", nd, s.Verdict.Reason)
+		assert.Equal(t, whatifapi.ScopeDecodeOnly, s.Verdict.Scope)
+		assert.Empty(t, s.Verdict.Shrink)
+		assert.Nil(t, s.Capacity.MaxAtSLO.Value, "decode %d: no fleet rate with prefill not priced", nd)
+		assert.Contains(t, s.Flags, string(decodeOnly))
 	}
+}
+
+// The load is the window's per-cycle arrival rate at a statistic: by
+// definition its p95 is a rate the window read, at or above 95% of the
+// cycles with traffic and above fewer than 95% of them; the mean is below
+// it and the peak at or above it. The verdict is judged at the statistic
+// asked, p95 by default.
+func TestAtReplicas_LoadStatistics(t *testing.T) {
+	st := stairReplay.state(t)
+	var rates []float64
+	for _, x := range st.ArrivalRates {
+		if x > 0 {
+			rates = append(rates, x)
+		}
+	}
+	require.Len(t, st.ArrivalRates, st.Cycles, "one rate per cycle")
+	rep := stairReport(t, stairQuery(0, 0, 0))
+	l := rep.Load
+	require.NotNil(t, l.P95)
+	assert.Equal(t, whatifapi.LoadP95, l.Statistic)
+	assert.Equal(t, "observed", l.Source)
+	assert.Equal(t, len(rates), l.CyclesWithTraffic)
+	assert.Equal(t, *l.P95, *l.Rate.Value)
+	assert.Contains(t, rates, *l.P95)
+	atOrBelow, below := 0, 0
+	for _, x := range rates {
+		if x <= *l.P95 {
+			atOrBelow++
+		}
+		if x < *l.P95 {
+			below++
+		}
+	}
+	assert.GreaterOrEqual(t, float64(atOrBelow), 0.95*float64(len(rates)))
+	assert.Less(t, float64(below), 0.95*float64(len(rates)))
+	assert.Less(t, *l.Mean, *l.P95)
+	assert.LessOrEqual(t, *l.P95, *l.Peak)
+	// The staircase is read every 15 s: two minutes are eight cycles, and
+	// their busiest mean lies between the window's mean and its peak.
+	require.NotNil(t, l.Rolling)
+	assert.Equal(t, 8, l.Rolling.Cycles)
+	assert.InDelta(t, 120, l.Rolling.WindowSeconds, 5)
+	assert.Greater(t, l.Rolling.Peak, *l.Mean)
+	assert.LessOrEqual(t, l.Rolling.Peak, *l.Peak)
+
+	for _, stat := range []string{whatifapi.LoadMean, whatifapi.LoadPeak} {
+		q := stairQuery(0, 0, 0)
+		q.LoadStatistic = stat
+		got := stairReport(t, q).Load
+		assert.Equal(t, stat, got.Statistic)
+		want := map[string]*float64{whatifapi.LoadMean: l.Mean, whatifapi.LoadPeak: l.Peak}[stat]
+		assert.Equal(t, *want, *got.Rate.Value, stat)
+	}
+	q := stairQuery(0, 0, 0)
+	q.LoadStatistic, q.LoadSeenX = whatifapi.LoadPeak, 1.5
+	grown := stairReport(t, q)
+	assert.Equal(t, *l.Peak, *grown.Load.Rate.Value, "growth never moves the load judged at")
+	require.Len(t, grown.Shapes[0].Growth, 1)
+	assert.InDelta(t, 1.5**l.Peak, grown.Shapes[0].Growth[0].Rate, 1e-9)
+}
+
+// Growth is a what-if beside the verdict, never in its place: at 20 r/s two
+// prefill and three decode replicas are over-provisioned, and asking what
+// twice the traffic does (--load-seen-x 2) leaves that verdict, the load
+// judged and every other row as they were, and adds its own column and its
+// own verdict, which differs. "seen x2" in the loads asks the same.
+func TestAtReplicas_GrowthIsAWhatIf(t *testing.T) {
+	base := stairReport(t, stairQuery(2, 3, 20))
+	q := stairQuery(2, 3, 20)
+	q.LoadSeenX = 2
+	grown := stairReport(t, q)
+
+	assert.Equal(t, base.Load, grown.Load)
+	assert.Equal(t, base.Shapes[0].Verdict, grown.Shapes[0].Verdict, "the verdict at the load seen")
+	assert.Equal(t, whatifapi.VerdictOver, grown.Shapes[0].Verdict.Verdict)
+	assert.Empty(t, base.Shapes[0].Growth)
+	assert.Equal(t, append(slices.Clone(base.Loads), "seen x2"), grown.Loads)
+	require.Len(t, grown.Shapes[0].Table, len(base.Shapes[0].Table)+1)
+	assert.Equal(t, base.Shapes[0].Table, grown.Shapes[0].Table[:len(base.Shapes[0].Table)], "the other columns")
+	last := grown.Shapes[0].Table[len(grown.Shapes[0].Table)-1]
+	assert.Equal(t, "seen x2", last.Load)
+	assert.InDelta(t, 40, last.Rate, 1e-9)
+
+	require.Len(t, grown.Shapes[0].Growth, 1)
+	g := grown.Shapes[0].Growth[0]
+	assert.Equal(t, "seen x2", g.Load)
+	assert.InDelta(t, 2, g.X, 0)
+	assert.InDelta(t, 40, g.Rate, 1e-9)
+	assert.NotEqual(t, whatifapi.VerdictOver, g.Verdict.Verdict, g.Verdict.Summary)
+	assert.Contains(t, g.Verdict.Summary, "2 x the stated load")
+
+	sh, err := whatifapi.ParseReportLoad("seen\u00d72")
+	require.NoError(t, err)
+	q = stairQuery(2, 3, 20)
+	q.Loads = []whatifapi.ReportLoadAsk{sh}
+	byLoad := stairReport(t, q)
+	require.Len(t, byLoad.Shapes[0].Growth, 1)
+	assert.Equal(t, g, byLoad.Shapes[0].Growth[0])
+}
+
+// at-replicas prices on the paths the other questions take: on the same
+// recording and flags, its knees are replicas-to-slo's, its TTFT at a stated
+// load is replicas-to-slo's at that rate, and its highest rate at the SLO is
+// slo-to-rate's fleet rate, each to the bit.
+func TestAtReplicas_AgreesWithTheOtherQuestions(t *testing.T) {
+	const load = 20.0
+	base := []string{"--recording", stairBOn, "--assume-vp", "200000", "--assume-a", "20ms"}
+	r2s, code := runCmd(t, slices.Concat([]string{"replicas-to-slo"}, base, []string{"--ttft-percentile", "90", "--rate", "20", "-o", "json"})...)
+	require.Equal(t, 0, code, r2s)
+	s2r, code := runCmd(t, slices.Concat([]string{"slo-to-rate"}, base, []string{"--ttft", "2s@p90", "--tpot", "30ms", "-o", "json"})...)
+	require.Equal(t, 0, code, s2r)
+	role := func(out wireOutput, name string) wireResults {
+		i := slices.IndexFunc(out.Roles, func(r wireRole) bool { return r.Role == name })
+		require.GreaterOrEqual(t, i, 0, "no %s role", name)
+		return out.Roles[i].Results
+	}
+	answer := func(r *wireResult) float64 {
+		require.NotNil(t, r)
+		require.NotNil(t, r.Answer, "%+v", r.Refused)
+		return r.Answer.Value
+	}
+	r2sOut, s2rOut := decodeOutput(t, r2s), decodeOutput(t, s2r)
+
+	rep := stairReport(t, stairQuery(0, 0, load))
+	s := rep.Shapes[0]
+	require.NotNil(t, s.Capacity.DecodeKnee.Value)
+	require.NotNil(t, s.Capacity.PrefillKnee.Value)
+	require.NotNil(t, s.Capacity.MaxAtSLO.Value)
+	assert.Equal(t, answer(role(r2sOut, roleDecode).Knee), *s.Capacity.DecodeKnee.Value, "decode knee")
+	assert.Equal(t, answer(role(r2sOut, rolePrefill).Knee), *s.Capacity.PrefillKnee.Value, "prefill knee")
+	assert.Equal(t, answer(role(s2rOut, "fleet").Rate), *s.Capacity.MaxAtSLO.Value, "max at SLO")
+
+	ttft := role(r2sOut, rolePrefill).TTFT
+	require.NotNil(t, ttft)
+	require.NotNil(t, ttft.Answer, "%+v", ttft.Refused)
+	i := slices.IndexFunc(s.Table, func(r whatifapi.ReportRow) bool { return r.Load == "seen" })
+	require.GreaterOrEqual(t, i, 0)
+	require.Equal(t, load, s.Table[i].Rate)
+	require.NotNil(t, s.Table[i].TTFT[0].Value)
+	assert.Equal(t, ttft.Answer.Value, *s.Table[i].TTFT[0].Value, "TTFT p90 at %g r/s", load)
 }
 
 // POST /v1/report is the command: the same question asked of the API gives
 // the command's JSON, but for the recording's path, which the API never
-// names.
+// names. A stated Ca^2 reaches both.
 func TestAtReplicas_APIIsTheCommand(t *testing.T) {
 	dir := t.TempDir()
 	b, err := os.ReadFile(stairBOn)
@@ -244,7 +413,7 @@ func TestAtReplicas_APIIsTheCommand(t *testing.T) {
 	h := whatifapi.New(whatifapi.Config{Resolver: &servedSources{recordings: dir, warn: io.Discard}, WhatifSchema: "schema-v3"}).Handler()
 	in, _ := apiInputs(t, h, "stair.jsonl.gz", "")
 	code, body := apiPost(t, h, "/v1/report", whatifapi.ReportRequest{InputsID: in.InputsID,
-		Fleet: &whatifapi.FleetKnob{Decode: ip(3)}, LoadSeen: fp(20), Shapes: []string{"measured", "1k/1k"},
+		Fleet: &whatifapi.FleetKnob{Decode: ip(3)}, LoadSeen: fp(20), Shapes: []string{"measured", "1k/1k"}, ArrivalCV2: fp(2),
 		SLO:    &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p90", Target: fp(2)}, TPOT: &whatifapi.Objective{Statistic: statMean, Target: fp(0.030)}},
 		Assume: &whatifapi.Assume{VP: fp(200000), A: fp(0.020)}})
 	require.Equal(t, http.StatusOK, code, "%s", body)
@@ -253,14 +422,15 @@ func TestAtReplicas_APIIsTheCommand(t *testing.T) {
 	dec.DisallowUnknownFields()
 	require.NoError(t, dec.Decode(&got))
 
-	text, exit := runCmd(t, atStair("--decode", "3", "--load-seen", "20", "--shape", "measured", "--shape", "1k/1k", "-o", "json")...)
+	text, exit := runCmd(t, atStair("--decode", "3", "--load-seen", "20", "--shape", "measured", "--shape", "1k/1k",
+		"--arrival-cv2", "2", "-o", "json")...)
 	require.Equal(t, 0, exit, text)
 	var want whatifapi.ReportResponse
 	require.NoError(t, json.Unmarshal([]byte(text), &want))
 	assert.Equal(t, stairBOn, want.Source.Recording)
 	want.Source.Recording = ""
 	assert.Equal(t, want, got)
-	assert.Equal(t, whatifapi.VerdictOver, got.Shapes[0].Verdict.Verdict)
+	assert.Contains(t, got.Shapes[0].Assumed, "arrivals Ca^2 2 (--arrival-cv2)", "the stated Ca^2 is priced")
 }
 
 // A report asked wrongly is refused before anything is priced.
@@ -277,6 +447,9 @@ func TestAtReplicas_RefusesABadQuestion(t *testing.T) {
 		{"ttft without a unit", atStair("--ttft", "2"), "--ttft"},
 		{"tpot percentile 100", atStair("--tpot-percentile", "100"), "--tpot-percentile"},
 		{"a flag it does not read", atStair("--ps-onsets"), "--ps-onsets"},
+		{"a load statistic it does not know", atStair("--load-statistic", "p99"), "--load-statistic"},
+		{"a load statistic and a stated load", atStair("--load-statistic", "peak", "--load-seen", "20"), "--load-statistic"},
+		{"a growth of 0", atStair("--load", "seen x0"), "--load"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			out, code := runCmd(t, c.args...)
@@ -291,7 +464,7 @@ func TestAtReplicas_RefusesABadQuestion(t *testing.T) {
 
 // shapeKnees is the fleet knee at each shape, every shape priced in one
 // report from one replay.
-func shapeKnees(t *testing.T, st *learnreplay.State, shapes ...string) []float64 {
+func shapeKnees(t *testing.T, shapes ...string) []float64 {
 	t.Helper()
 	q := stairQuery(0, 0, 20)
 	for _, s := range shapes {
@@ -299,7 +472,7 @@ func shapeKnees(t *testing.T, st *learnreplay.State, shapes ...string) []float64
 		require.NoError(t, err)
 		q.Shapes = append(q.Shapes, sh)
 	}
-	rep := stairReport(t, st, q)
+	rep := stairReport(t, q)
 	require.Len(t, rep.Shapes, len(shapes))
 	knees := make([]float64, len(shapes))
 	for i, s := range rep.Shapes {
@@ -314,7 +487,6 @@ func shapeKnees(t *testing.T, st *learnreplay.State, shapes ...string) []float64
 // (a request holds its slot longer). Each step must fall, not only not
 // rise, so a shape that is not priced fails here.
 func TestAtReplicas_KneeFallsAsTheShapeGrows(t *testing.T) {
-	st := stairState(t)
 	for _, c := range []struct {
 		name   string
 		shapes []string
@@ -323,7 +495,7 @@ func TestAtReplicas_KneeFallsAsTheShapeGrows(t *testing.T) {
 		{"OL at IL 8k", []string{"8k/100", "8k/200", "8k/400", "8k/800"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			knees := shapeKnees(t, st, c.shapes...)
+			knees := shapeKnees(t, c.shapes...)
 			for i := 1; i < len(knees); i++ {
 				assert.Less(t, knees[i], knees[i-1], "%s then %s", c.shapes[i-1], c.shapes[i])
 			}
@@ -332,18 +504,20 @@ func TestAtReplicas_KneeFallsAsTheShapeGrows(t *testing.T) {
 }
 
 // A shape far from the recording's is flagged, not hidden; the measured one
-// never is.
+// never is. A prefix-hit rate the recording never saw is as far as a length.
 func TestAtReplicas_FarShapesAreExtrapolated(t *testing.T) {
-	st := stairState(t)
 	q := stairQuery(0, 0, 20)
-	for _, s := range []string{"measured", "8000/200", "1k/1k"} {
+	for _, s := range []string{"measured", "8000/200", "1k/1k", "8000/200/0", "8000/200/0.3"} {
 		sh, err := whatifapi.ParseReportShape(s)
 		require.NoError(t, err)
 		q.Shapes = append(q.Shapes, sh)
 	}
-	rep := stairReport(t, st, q)
+	rep := stairReport(t, q)
 	assert.False(t, rep.Shapes[0].Extrapolated)
 	assert.False(t, rep.Shapes[1].Extrapolated, rep.Shapes[1].ExtrapolatedWhy)
 	assert.True(t, rep.Shapes[2].Extrapolated)
 	assert.Contains(t, rep.Shapes[2].Flags, string(extrapolatedShape))
+	assert.False(t, rep.Shapes[3].Extrapolated, rep.Shapes[3].ExtrapolatedWhy)
+	assert.True(t, rep.Shapes[4].Extrapolated)
+	assert.Contains(t, rep.Shapes[4].ExtrapolatedWhy, "prefix hit 0.30")
 }

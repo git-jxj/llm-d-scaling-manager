@@ -592,7 +592,7 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	case f.set["assume-input-tokens"]:
 		p.PromptTokens = pf.effectivePrompt(f.inputTokens)
 		pf.in.PromptSource = shapeAssumed
-		pf.assume("prompt %s tokens (--assume-input-tokens)", num(round(p.PromptTokens)))
+		pf.assume("prompt %s tokens "+assumeInputTokensWords, num(round(p.PromptTokens)))
 	case ps.PromptTokens > 0:
 		p.PromptTokens, pf.in.PromptSource = ps.PromptTokens, shapeMeasured
 		pf.in.PromptFromCycle, pf.in.PromptToCycle = ps.PromptFromCycle, ps.PromptToCycle

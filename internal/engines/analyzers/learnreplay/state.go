@@ -599,10 +599,11 @@ func (vs *VariantState) refit() {
 	}
 }
 
-// ShapeRange is the range of a variant's per-cycle mean lengths, over the
-// cycles with traffic; Cycles is how many, 0 with none.
+// ShapeRange is the range of a variant's per-cycle mean lengths and prefix-hit
+// rate, over the cycles with traffic; Cycles is how many, 0 with none.
 type ShapeRange struct {
 	ILMin, ILMax, OLMin, OLMax float64
+	HitMin, HitMax             float64
 	Cycles                     int
 }
 
@@ -615,10 +616,11 @@ func noteRanges(ranges map[string]ShapeRange, shapes map[string][]shapeSample, n
 		}
 		x, r := s[len(s)-1], ranges[v]
 		if r.Cycles == 0 {
-			r = ShapeRange{ILMin: x.il, ILMax: x.il, OLMin: x.ol, OLMax: x.ol}
+			r = ShapeRange{ILMin: x.il, ILMax: x.il, OLMin: x.ol, OLMax: x.ol, HitMin: x.hit, HitMax: x.hit}
 		}
 		r.ILMin, r.ILMax = min(r.ILMin, x.il), max(r.ILMax, x.il)
 		r.OLMin, r.OLMax = min(r.OLMin, x.ol), max(r.OLMax, x.ol)
+		r.HitMin, r.HitMax = min(r.HitMin, x.hit), max(r.HitMax, x.hit)
 		r.Cycles++
 		ranges[v] = r
 	}

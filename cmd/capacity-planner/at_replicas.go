@@ -41,6 +41,7 @@ func (l *listFlag) Set(s string) error {
 type reportFlags struct {
 	shapes, loads     listFlag
 	loadSeen, seenX   float64
+	loadStatistic     string
 	tpot, tpotPercent string
 }
 
@@ -54,9 +55,12 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.Lookup("headroom").Usage = "the operating point as a fraction of the fleet knee, in (0, 1); default the policy's scaleUpThreshold"
 	var rf reportFlags
 	fs.Var(&rf.shapes, "shape", "a request shape to answer for, repeatable: measured (the default), or IL/OL[/hit] in tokens, k for 1024 (8k/200, 1k/4k/0.3)")
-	fs.Var(&rf.loads, "load", "a rate the tables price, repeatable: 5r/s, 80% of the shape's fleet knee, or seen; default 50%, 80%, 100% and seen")
-	fs.Float64Var(&rf.loadSeen, "load-seen", 0, "the load to judge at, requests per second, in place of the window's mean arrival rate")
-	fs.Float64Var(&rf.seenX, "load-seen-x", 0, "multiply the load seen: 1.5 asks what 50% more traffic does")
+	fs.Var(&rf.loads, "load", "a rate the tables price, repeatable: 5r/s, 80% of the shape's fleet knee, seen, or seen x1.5 (a growth what-if with its own verdict); default 50%, 80%, 100% and seen")
+	fs.StringVar(&rf.loadStatistic, "load-statistic", whatifapi.DefaultLoadStatistic,
+		"the statistic of the window's per-cycle arrival rate to judge at: mean, p95 or peak")
+	fs.Float64Var(&rf.loadSeen, "load-seen", 0, "the load to judge at, requests per second, in place of the window's")
+	fs.Float64Var(&rf.seenX, "load-seen-x", 0, "an alias for --load 'seen xN': a column and a verdict at the load seen times N "+
+		"(1.5 asks what 50% more traffic does), beside the verdict at the load seen, which it never changes")
 	fs.StringVar(&rf.tpot, "tpot", "", "the TPOT target to judge by: a mean (30ms) or a per-request percentile (60ms@p90); default the policy's")
 	fs.StringVar(&rf.tpotPercent, "tpot-percentile", "90", "the TPOT percentile the tables print beside the mean, in percent; mean for the mean alone")
 	if ok, err := parse(fs, args); !ok {
@@ -140,8 +144,16 @@ func (f *answerFlags) reportQuery(rf reportFlags) (whatifapi.ReportQuery, error)
 		return q, usagef("--load-seen-x %g, want a finite factor above 0", rf.seenX)
 	case f.set["headroom"] && !(f.headroom > 0 && f.headroom < 1):
 		return q, usagef("--headroom %g, want a fraction of the knee in (0, 1)", f.headroom)
+	case f.set["load-statistic"] && f.set["load-seen"]:
+		return q, usagef("--load-statistic and --load-seen: the load is the window's at a statistic or the one stated, not both")
+	}
+	if err := whatifapi.CheckLoadStatistic(rf.loadStatistic); err != nil {
+		return q, usagef("--load-statistic %v", err)
 	}
 	q.Prefill, q.Decode, q.LoadSeen, q.LoadSeenX = f.prefill, f.decode, rf.loadSeen, rf.seenX
+	if f.set["load-statistic"] {
+		q.LoadStatistic = rf.loadStatistic
+	}
 	if f.set["headroom"] {
 		q.Headroom = f.headroom
 	}
@@ -283,7 +295,7 @@ func windowText(s whatifapi.ReportSource) string {
 // cellMarks are the summary's marks in words, so that a cell does not rely on
 // color.
 var cellMarks = map[string]string{
-	whatifapi.CellMet: "ok", whatifapi.CellMissed: "MISS", whatifapi.CellSaturated: "SAT",
+	whatifapi.CellMet: "ok", whatifapi.CellMissed: "MISS", whatifapi.CellOnset: "MISS*", whatifapi.CellSaturated: "SAT",
 	whatifapi.CellUnknown: "?", whatifapi.CellNoTarget: "",
 }
 
@@ -315,7 +327,10 @@ func reportText(r *whatifapi.ReportResponse) string {
 	verdicts := make([][]string, 1, 1+len(r.Shapes))
 	verdicts[0] = []string{"verdicts"}
 	for _, s := range r.Shapes {
-		verdicts = append(verdicts, []string{"  " + shapeName(s), s.Verdict.Verdict})
+		verdicts = append(verdicts, []string{"  " + shapeName(s), s.Verdict.Summary})
+		for _, g := range s.Growth {
+			verdicts = append(verdicts, []string{"", growthText(g)})
+		}
 	}
 	b.WriteString(columns(verdicts))
 	for _, s := range r.Shapes {
@@ -329,30 +344,37 @@ func reportText(r *whatifapi.ReportResponse) string {
 	return b.String()
 }
 
-// loadText is the load judged at and where it came from.
+// loadText is the load judged at and where it came from, and the load the
+// window saw: its mean, p95 and peak per cycle, and its busiest stretch.
 func loadText(l whatifapi.ReportLoad) string {
 	s := figText(l.Rate, "%.2f r/s", 1)
-	if l.Seen != nil && l.X != 1 {
-		s += fmt.Sprintf(" = %s x %.2f r/s", num(l.X), *l.Seen)
-	}
 	switch l.Source {
-	case "observed mean":
-		s += fmt.Sprintf(", the mean of the %d of %d cycles with traffic", l.CyclesWithTraffic, l.Cycles)
+	case "observed":
+		s += fmt.Sprintf(", the %s of the %d of %d cycles with traffic", l.Statistic, l.CyclesWithTraffic, l.Cycles)
 	case sourceAsked:
 		s += " (--load-seen)"
 	}
-	if l.Peak != nil {
-		s += fmt.Sprintf("; peak %.2f r/s", *l.Peak)
+	if l.Mean != nil {
+		s += fmt.Sprintf("\n%-16sper cycle: mean %.2f, p95 %.2f, peak %.2f r/s", "load seen", *l.Mean, *l.P95, *l.Peak)
+		if l.Rolling != nil {
+			s += fmt.Sprintf("; busiest %s (%d cycles): %.2f r/s", time.Duration(l.Rolling.WindowSeconds*float64(time.Second)).Round(time.Second),
+				l.Rolling.Cycles, l.Rolling.Peak)
+		}
 	}
 	return s
 }
 
 // summaryText is the shape-by-load matrix: each cell TTFT p90 and the TPOT
-// percentile, and its mark in words.
+// percentile, and its mark in words. A cell whose TPOT percentile is refused
+// prints the mean, marked m.
 func summaryText(r *whatifapi.ReportResponse) string {
-	tpot := "TPOT p90"
-	if len(r.Shapes) > 0 && len(r.Shapes[0].Table) > 0 {
-		tpot = "TPOT " + r.Shapes[0].Table[0].Cell.TPOT.Statistic
+	tpot := whatifapi.ReportStatisticName(0)
+	for _, s := range r.Shapes {
+		for _, row := range s.Table {
+			if row.TPOTPercentile != nil {
+				tpot = row.TPOTPercentile.Statistic
+			}
+		}
 	}
 	head := append(make([]string, 0, 1+len(r.Loads)), "summary")
 	head = append(head, r.Loads...)
@@ -373,7 +395,11 @@ func summaryText(r *whatifapi.ReportResponse) string {
 				continue
 			}
 			c := s.Table[i].Cell
-			text := fmt.Sprintf("%s/%s @%.2f", cellText(c.TTFT.Figure, "%.0f"), cellText(c.TPOT.Figure, "%.1f"), s.Table[i].Rate)
+			tp := cellText(c.TPOT.Figure, "%.1f")
+			if c.TPOT.Value != nil && c.TPOT.Statistic != tpot {
+				tp += "m"
+			}
+			text := fmt.Sprintf("%s/%s @%.2f", cellText(c.TTFT.Figure, "%.0f"), tp, s.Table[i].Rate)
 			if m := cellMarks[c.Mark]; m != "" {
 				text += " " + m
 			}
@@ -381,8 +407,21 @@ func summaryText(r *whatifapi.ReportResponse) string {
 		}
 		cells = append(cells, row)
 	}
-	return fmt.Sprintf("cells: TTFT p90 / %s ms @ r/s, - refused (the reason is in the shape's table); ok every target met, MISS a target missed, SAT saturated, ? not judged\n", tpot) +
-		columns(cells)
+	legend := fmt.Sprintf("cell = TTFT p90 ms / TPOT %s ms @ the rate priced, r/s; - refused (the shape's table says why)", tpot)
+	if tpot != whatifapi.ReportStatisticName(0) {
+		legend += fmt.Sprintf("; m the TPOT mean, where the %s is refused", tpot)
+	}
+	return legend + "\nmark = " + markLegend(r.SLO) + "\n" + columns(cells)
+}
+
+// markLegend says what a cell's mark judges: the SLO's own statistics, which
+// need not be the ones the cell prints.
+func markLegend(s whatifapi.ReportSLO) string {
+	if s.TTFT == nil && s.TPOT == nil {
+		return "SAT saturated (no SLO target to judge)"
+	}
+	return fmt.Sprintf("the SLO (%s) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset "+
+		"(the router queues) though the figure is within, SAT saturated, ? not judged", sloText(s))
 }
 
 // shapeText is one shape's detail.
@@ -402,7 +441,10 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 		pre += fmt.Sprintf(" (f %.3g)", p.Imbalance)
 	}
 	fmt.Fprintf(b, "  %-14s%s\n", rolePrefill, pre)
-	fmt.Fprintf(b, "  %-14s%s: %s\n", "verdict", s.Verdict.Verdict, s.Verdict.Reason)
+	fmt.Fprintf(b, "  %-14s%s\n", "verdict", s.Verdict.Summary)
+	for _, g := range s.Growth {
+		fmt.Fprintf(b, "  %-14s%s\n", "", growthText(g))
+	}
 
 	c := s.Capacity
 	const capLayout = "  %-18s%-10s%-12s%s\n"
@@ -441,6 +483,11 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 	if len(s.Flags) > 0 {
 		fmt.Fprintf(b, "flags: %s\n", strings.Join(s.Flags, "; "))
 	}
+}
+
+// growthText is a growth what-if's verdict line.
+func growthText(g whatifapi.ReportGrowth) string {
+	return fmt.Sprintf("with %sx traffic (%s): %s", num(g.X), g.Load, g.Verdict.Summary)
 }
 
 // refusedDetail is a refused figure's detail, "" otherwise.

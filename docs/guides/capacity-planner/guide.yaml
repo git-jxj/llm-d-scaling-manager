@@ -121,8 +121,8 @@ tunnel:
 fleet:
   check:
     note: |
-      From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw and
-      at that load grown by a fifth, for its own shape and two it never saw. The sample learned no prefill
+      From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw, with
+      what that load grown by a fifth does beside it, for its own shape and two it never saw. The sample learned no prefill
       speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at 50%, 80% and 100%
       of the knee and the load seen.
     run: |

@@ -20,9 +20,10 @@
 //	                                 [--rate R] [--prompt I] [--hop D] [-o json]
 //	capacity-planner replicas-to-slo|slo-to-rate --prometheus URL --namespace NS (--kube-state-metrics | --role-of ROLE=SELECTOR ...)
 //	                                 --from T0 --to T1 [capture's flags] [the question's flags]
-//	capacity-planner at-replicas     --recording FILE [--cycle N|last] [--model M] [--prefill N] [--decode N] [--load R]
+//	capacity-planner at-replicas     --recording FILE [--cycle N|last] [--model M] [--prefill N] [--decode N]
+//	                                 [--shape S ...] [--load L ...] [--load-statistic mean|p95|peak | --load-seen R] [--load-seen-x X]
 //	                                 [--ttft 2s@p90] [--tpot 30ms] [--headroom H] [--ttft-percentile 50,90] [--tpot-percentile 90]
-//	                                 [the --assume-* flags] [-o json]
+//	                                 [--arrival-cv2 C] [the --assume-* flags] [-o json]
 //	capacity-planner serve           [--recordings DIR] [--prometheus URL capture's flags --namespace NS [--allowed-namespaces NS,...]]
 //	                                 [--listen 127.0.0.1:8080] [--auth none|kubernetes --tls-cert-file F --tls-key-file F [--token-audiences A,...]]
 //	                                 [--listen-all-in-container (in a container: --listen 0.0.0.0:PORT, no auth)]
