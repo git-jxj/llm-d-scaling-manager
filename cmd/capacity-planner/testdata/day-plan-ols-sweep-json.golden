@@ -53,7 +53,6 @@
         "decode": 1
       },
       "flags": [
-        "RateFromDecodeRows",
         "WindowShape"
       ]
     },
@@ -101,13 +100,34 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "hadLimit": {
+        "value": 1.3622779373899458,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "KVBoundSlots",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
       "actual": {
         "prefill": 1,
         "decode": 1
       },
       "verdict": "match",
       "flags": [
-        "RateFromDecodeRows",
         "UnvalidatedTTFT",
         "AssumedVP",
         "AssumedPromptSpread",
@@ -147,6 +167,28 @@
       },
       "limit": {
         "value": 2.716313627870333,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "KVBoundSlots",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
+      "hadLimit": {
+        "value": 1.3622779373899458,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -212,6 +254,29 @@
       },
       "limit": {
         "value": 11.731843882702066,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "KVBoundSlots",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 3.087802507640303,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -299,6 +364,26 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "hadLimit": {
+        "value": 13.555893210131739,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
       "actual": {
         "prefill": 1,
         "decode": 1
@@ -364,6 +449,27 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "hadLimit": {
+        "value": 13.56558476257338,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "BelowFittedBand",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
       "actual": {
         "prefill": 1,
         "decode": 1
@@ -404,9 +510,27 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 1
+        "decode": 1,
+        "atLeast": true
       },
       "limit": {
+        "value": 4.9032541764919895,
+        "unit": "r/s",
+        "band": {
+          "lo": 4.853534658316559,
+          "hi": 4.9304339998548885
+        },
+        "floor": 0.002222528576045067,
+        "uncapped": 5.1239088475092895,
+        "boundBy": [
+          "operating-point cap"
+        ],
+        "flags": [
+          "AssumedShape",
+          "OutputSpreadUnread"
+        ]
+      },
+      "hadLimit": {
         "value": 4.9032541764919895,
         "unit": "r/s",
         "band": {
@@ -453,7 +577,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2
+        "decode": 2,
+        "atLeast": true
       },
       "limit": {
         "value": 5.29061969170168,
@@ -464,6 +589,23 @@
         },
         "floor": 0.002222528576045067,
         "uncapped": 5.503139442816849,
+        "boundBy": [
+          "operating-point cap"
+        ],
+        "flags": [
+          "AssumedShape",
+          "OutputSpreadUnread"
+        ]
+      },
+      "hadLimit": {
+        "value": 2.64530984585084,
+        "unit": "r/s",
+        "band": {
+          "lo": 2.618204414836544,
+          "hi": 2.660339195829898
+        },
+        "floor": 0.002222528576045067,
+        "uncapped": 2.7515697214084245,
         "boundBy": [
           "operating-point cap"
         ],
@@ -502,7 +644,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2
+        "decode": 2,
+        "atLeast": true
       },
       "limit": {
         "value": 3.6601822437707376,
@@ -513,6 +656,23 @@
         },
         "floor": 0.002222528576045067,
         "uncapped": 3.809999335331627,
+        "boundBy": [
+          "operating-point cap"
+        ],
+        "flags": [
+          "AssumedShape",
+          "OutputSpreadUnread"
+        ]
+      },
+      "hadLimit": {
+        "value": 1.8300911218853688,
+        "unit": "r/s",
+        "band": {
+          "lo": 1.8113694279530455,
+          "hi": 1.8404487106931016
+        },
+        "floor": 0.002222528576045067,
+        "uncapped": 1.9049996676658134,
         "boundBy": [
           "operating-point cap"
         ],
@@ -564,6 +724,27 @@
           "UnvalidatedTTFT",
           "AssumedVP",
           "AssumedImbalance",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
+      "hadLimit": {
+        "value": 9.075521922811769,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
           "AssumedPromptSpread",
           "TransferOmitted",
           "DecodeTermOmitted",
@@ -642,6 +823,28 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "hadLimit": {
+        "value": 5.801037343836157,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "BelowFittedBand",
+          "KVBoundSlots",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
       "actual": {
         "prefill": 1,
         "decode": 1
@@ -683,7 +886,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2
+        "decode": 2,
+        "atLeast": true
       },
       "limit": {
         "value": 3.6286913111141295,
@@ -694,6 +898,24 @@
         },
         "floor": 0.002222528576045067,
         "uncapped": 3.753800464705252,
+        "boundBy": [
+          "operating-point cap"
+        ],
+        "flags": [
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 1.8143456555570647,
+        "unit": "r/s",
+        "band": {
+          "lo": 1.7955275613904569,
+          "hi": 1.8249524642745092
+        },
+        "floor": 0.002222528576045067,
+        "uncapped": 1.876900232352626,
         "boundBy": [
           "operating-point cap"
         ],
@@ -734,10 +956,7 @@
       "actual": {
         "prefill": 1,
         "decode": 1
-      },
-      "flags": [
-        "RateFromDecodeRows"
-      ]
+      }
     }
   ],
   "hours": [
@@ -768,8 +987,8 @@
         "max": 29.82
       },
       "needed": {
-        "prefill": 5,
-        "decode": 4
+        "prefill": 4,
+        "decode": 2
       },
       "actual": {
         "prefill": 1,
@@ -782,19 +1001,17 @@
   ],
   "summary": {
     "peakNeeded": {
-      "prefill": 5,
-      "decode": 4
+      "prefill": 4,
+      "decode": 2
     },
     "minNeeded": {
       "prefill": 1,
       "decode": 1
     },
     "neededReplicaHours": {
-      "prefill": 1.5,
       "decode": 1.75
     },
     "hadReplicaHours": {
-      "prefill": 0.5833333333333333,
       "decode": 0.9166666666666667
     },
     "hadReplicaHoursAll": {
@@ -805,8 +1022,6 @@
       "prefill": 1,
       "decode": 1
     },
-    "neededGpuHours": 3.25,
-    "hadGpuHours": 1.5,
     "hadGpuHoursAll": 2.1666666666666665,
     "underHours": [
       "2026-11-01T22:00:00Z"
@@ -824,14 +1039,17 @@
       "match": 2,
       "sizedForMean": 0,
       "sizedForP95": 11,
-      "sizedForMax": 0
+      "sizedForMax": 0,
+      "prefillNotPriced": 4
     }
   },
   "searched": 39,
   "notes": [
     "Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
-    "Each bucket is sized for the p95 of its cycles' rates (the p95 of cycle rates needs 20 cycles in the bucket, else the mean), on the fleet's limit at the SLO and headroom 0.85 (POST /v1/size's search).",
+    "Each bucket is sized for the p95 of its cycles' rates. A p95 needs 20 cycles in the bucket; with fewer the bucket is sized for its mean, which is less conservative (FewCyclesForP95).",
+    "Needed is the fewest replicas whose fleet limit, at the SLO and headroom 0.85, reaches the rate: decode's fewest first, then prefill's (POST /v1/size's search). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: under when its limit falls short, over when one replica fewer of either role would still serve it.",
     "A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.",
-    "Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands."
+    "Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.",
+    "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). The fleet's limit, which decode admission can hold down, is not priced."
   ]
 }

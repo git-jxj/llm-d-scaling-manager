@@ -374,14 +374,14 @@ REFUSED prefill's TTFT (TargetBelowFloor), in 4 buckets: target 0.5 s at or belo
   what to do: The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail.
   what the plan did: Prefill is not sized: decode is sized alone, on its TPOT target and its knee times headroom.
 
+each hour: the need of its busiest bucket, the fewest pods it had, and the fleet it had judged whole at each bucket's rate
 hour (UTC)        rate mean  rate p95 need P need D  had P  had D
 2026-11-01 21:00       0.73      1.00      1      1      1      1  ok
-2026-11-01 22:00       6.88     29.68      5      4      1      1  UNDER (SLO risk)
+2026-11-01 22:00       6.88     29.68      4      2      1      1  UNDER (SLO risk)
 
 buckets: 11 sized (9 under, 0 over, 2 match; 11 for the p95, 0 for the mean, 0 for the max), 0 beyond the bound, 0 refused, 2 too little data, 0 no data
-needed: peak 5 prefill + 4 decode, min 1 prefill + 1 decode
-replica-hours over the 11 sized buckets: needed 1.50 prefill + 1.75 decode, had 0.58 prefill + 0.92 decode
-GPU-hours over the sized buckets: needed 3.25, had 1.50
+needed: at the busiest bucket 4 prefill + 2 decode, at the quietest 1 prefill + 1 decode (the fewest replicas, decode first; another mix may serve too)
+replica-hours over the 11 sized buckets: needed 1.75 decode (prefill not priced in 4 of the 11), had 0.92 decode (prefill not priced in 4 of the 11)
 had over every bucket with data: 1.08 prefill + 1.08 decode replica-hours, 2.17 GPU-hours (GPUs per replica: 1 prefill, 1 decode)
 hours under (SLO risk): 22:00
 hours over (waste): none
@@ -392,10 +392,14 @@ It exits 3: four buckets of 4k-token prompts cannot meet a 500 ms TTFT at
 any replica count, so their prefill is not sized and their decode is sized
 alone. A higher `--ttft` sizes them.
 
+- **Needed.** The fewest replicas that serve the bucket's rate under the SLO
+  and headroom: the fewest decode first, then the fewest prefill with them.
+  Another mix may serve the rate too. An hour's need is its busiest bucket's.
 - **Sized for.** Each bucket is sized for the p95 of its cycles' rates when it
   holds 20 cycles or more (5 minutes at a 15 s cycle), else for their mean,
-  flagged `FewCyclesForP95`. `--size-for mean|p95|max` sets it; the table and
-  each bucket say which was used. `--bucket 15m` sets the bucket.
+  which is less conservative, flagged `FewCyclesForP95`. `--size-for
+  mean|p95|max` sets it; the table and each bucket say which was used.
+  `--bucket 15m` sets the bucket.
 - **Shape.** Each bucket is priced at its own observed prompt and output
   length. A bucket whose cycles read none is priced at the source's shape and
   flagged `WindowShape`. `--assume-input-tokens` and `--assume-output-tokens`
@@ -412,12 +416,18 @@ alone. A higher `--ttft` sizes them.
   also exits 3.
 - **Too little data.** A bucket with fewer than 30 requests (`--min-requests`)
   is not sized. A bucket no cycle fell in has no data. Neither counts as under
-  or over.
+  or over. A plan that sizes no bucket at all exits 3.
 - **Had.** The median serving pods of the priced prefill and decode variants
-  over the bucket. An hour is UNDER when any of its buckets had fewer than it
-  needed (SLO risk), and over when every sized bucket had more (waste).
-  Replica-hours and GPU-hours needed and had are over the sized buckets; the
-  last line is what the fleet ran over every bucket with data.
+  over the bucket; the rate is the model's (`OtherVariantsServed` where
+  another variant also served). The fleet it had is judged whole, at the
+  bucket's rate: UNDER (SLO risk) when its limit falls short, over (waste)
+  when one replica fewer of either role would still serve it. An hour is
+  UNDER when any of its buckets is, and over when every sized bucket is.
+  Replica-hours and GPU-hours needed and had are over the sized buckets, and
+  left out for prefill when any of them did not price it; the last line is
+  what the fleet ran over every bucket with data.
+- **Prefill not priced.** Decode is then sized on its own limit alone, a
+  lower bound: `at least`, and `>=` in the table.
 - **Steady state.** Each bucket is sized as if its rate held. It ignores the
   time a replica takes to start: a fleet that follows the plan must start
   replicas that long before the rate arrives.

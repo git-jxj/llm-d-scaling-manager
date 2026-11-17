@@ -17,8 +17,10 @@ import (
 type CycleSample struct {
 	At time.Time
 	// ArrivalRate is the model's request rate, requests per second, as the
-	// cycle's input carries it; RateKnown is false when the input carries
-	// none (no router series), and the rate is then the decode rows' sum.
+	// cycle's input carries it. RateKnown is false when the input carries
+	// none (no router series) while decode rows served requests: the rate is
+	// then the request rates of every decode row of the model, summed. A
+	// cycle with neither is idle, its rate a known 0.
 	ArrivalRate float64
 	RateKnown   bool
 	// PrefillPods and DecodePods are the pods of each role that served at
@@ -32,6 +34,10 @@ type CycleSample struct {
 	// decode row read an output length.
 	PromptTokens, OutputTokens, PrefixHitRate float64
 	HasShape                                  bool
+	// OtherPods is the serving pods of prefill and decode variants other
+	// than the counted ones: the model's rate served by pods the counts
+	// leave out.
+	OtherPods int
 }
 
 // SeriesVariants names the variants a series counts: the prefill and the
@@ -80,7 +86,7 @@ func Series(recording []byte, q StateQuery, v SeriesVariants) ([]CycleSample, er
 // sampleOf is one cycle's sample of in, read at at, of the variants v
 // names.
 func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSample {
-	s := CycleSample{At: at, ArrivalRate: in.ArrivalRate, RateKnown: in.ArrivalRate > 0}
+	s := CycleSample{At: at, ArrivalRate: in.ArrivalRate}
 	roles := rolesOf(in)
 	counted := func(variant, role string) bool {
 		switch role {
@@ -102,10 +108,16 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 			s.DecodeGPUs = max(s.DecodeGPUs, vs.GPUsPerReplica)
 		}
 	}
-	var weight, il, ol, hit, decodeRate float64
+	var weight, il, ol, hit, modelRate float64
 	for _, rm := range in.ReplicaMetrics {
 		role := domain.CanonicalRole(roles[rm.VariantName])
+		if role == domain.RoleDecode && rm.RequestRateKnown && rm.RequestRate > 0 {
+			modelRate += rm.RequestRate
+		}
 		if !counted(rm.VariantName, role) {
+			if (role == domain.RolePrefill || role == domain.RoleDecode) && prefill.Serving(rm) {
+				s.OtherPods++
+			}
 			continue
 		}
 		if prefill.Serving(rm) {
@@ -122,7 +134,6 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 		w := 0.0
 		if rm.RequestRateKnown && rm.RequestRate > 0 {
 			w = rm.RequestRate
-			decodeRate += w
 		}
 		if !(rm.AvgOutputTokens > 0) || !(w > 0) {
 			continue
@@ -135,8 +146,9 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 	if weight > 0 {
 		s.PromptTokens, s.OutputTokens, s.PrefixHitRate, s.HasShape = il/weight, ol/weight, hit/weight, true
 	}
+	s.RateKnown = in.ArrivalRate > 0 || modelRate == 0
 	if !s.RateKnown {
-		s.ArrivalRate = decodeRate
+		s.ArrivalRate = modelRate
 	}
 	return s
 }

@@ -22,6 +22,45 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
+// The day plan's tests replay each recording once per test binary: every
+// day-plan command line on a recording shares one resolved source, as the
+// CLI would resolve it (resolveDay), and every plan of one source and one
+// request is priced once (planDay). A replay of a staircase takes seconds;
+// the commands below ask about the same few dozen times.
+var (
+	resolved   sync.Map // key: recording, model, variants -> func() (*whatifapi.Resolved, error)
+	planned    sync.Map // key: *Resolved and the request -> func() (*whatifapi.DayPlanResponse, error)
+	realResolv = resolveDay
+	realPlan   = planDay
+)
+
+func init() {
+	resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*whatifapi.Resolved, error) {
+		if f.recording == "" {
+			return realResolv(ctx, f, warn)
+		}
+		key := strings.Join([]string{f.recording, f.model, f.prefillVariant, f.decodeVariant}, "\x00")
+		once, _ := resolved.LoadOrStore(key, sync.OnceValues(func() (*whatifapi.Resolved, error) {
+			return realResolv(context.Background(), f, io.Discard)
+		}))
+		return once.(func() (*whatifapi.Resolved, error))()
+	}
+	planDay = func(ctx context.Context, res *whatifapi.Resolved, req whatifapi.DayPlanRequest, schema string) (*whatifapi.DayPlanResponse, error) {
+		b, err := json.Marshal(req)
+		if err != nil {
+			return nil, err
+		}
+		key := struct {
+			res *whatifapi.Resolved
+			req string
+		}{res, string(b) + schema}
+		once, _ := planned.LoadOrStore(key, sync.OnceValues(func() (*whatifapi.DayPlanResponse, error) {
+			return realPlan(context.Background(), res, req, schema)
+		}))
+		return once.(func() (*whatifapi.DayPlanResponse, error))()
+	}
+}
+
 // dayArgs are the day plan's golden question on the guide's sample
 // recording: V_P assumed, as the guide's sample assumes it.
 var dayArgs = []string{"day-plan", "--recording", olsSweep, "--model", "model-02", "--assume-vp", "30000",
@@ -31,17 +70,22 @@ var dayArgs = []string{"day-plan", "--recording", olsSweep, "--model", "model-02
 // prefill and one decode variant, two pods each.
 const stairDir = "../../internal/engines/analyzers/learnreplay/testdata/goldens/"
 
-// The day plan's goldens, text and JSON, on the sample recording (its 4k-token
-// buckets put the 500 ms TTFT under the zero-load floor: prefill refused
-// there, exit 3) and on real
-// P/D staircases: b-on with V_P and a assumed sizes every bucket; b-on as
-// recorded learned no V_P, so decode is sized alone and the plan exits 3
-// naming the refusal; b-off as recorded refuses every term that sizes a
-// role, and says so, exit 3, with no figure of a need. go test
-// ./cmd/capacity-planner -run TestDayPlanGolden -update rewrites them.
+// stair is a staircase recording's path.
+func stair(name string) string { return stairDir + name + "/recording.jsonl.gz" }
+
+// stairAssumed are the terms the b-on staircase did not learn, assumed, and
+// targets it can meet.
+var stairAssumed = []string{"--assume-vp", "200000", "--assume-a", "20ms", "--ttft", "2s@p90", "--tpot", "30ms"}
+
+// The day plan's goldens, text and JSON. On the sample recording its
+// 4k-token buckets put the 500 ms TTFT under the zero-load floor: prefill
+// refused there, exit 3. On real P/D staircases: b-on with V_P and a assumed
+// sizes every bucket; b-on as recorded learned no V_P, so decode is sized
+// alone, a lower bound, and the plan exits 3 naming the refusal; b-off as
+// recorded refuses every term that sizes a role, and says so, exit 3, with
+// no figure of a need. go test ./cmd/capacity-planner -run TestDayPlanGolden
+// -update rewrites them.
 func TestDayPlanGolden(t *testing.T) {
-	stair := func(name string) string { return stairDir + name + "/recording.jsonl.gz" }
-	assumed := []string{"--assume-vp", "200000", "--assume-a", "20ms", "--ttft", "2s@p90", "--tpot", "30ms"}
 	for _, c := range []struct {
 		name string
 		args []string
@@ -49,7 +93,7 @@ func TestDayPlanGolden(t *testing.T) {
 	}{
 		{"day-plan-ols-sweep", dayArgs, 3},
 		{"day-plan-ols-sweep-json", append(slices.Clone(dayArgs), "-o", "json"), 3},
-		{"day-plan-staircase-b-on-assumed", slices.Concat([]string{"day-plan", "--recording", stair("ttft-staircase-b-on")}, assumed), 0},
+		{"day-plan-staircase-b-on-assumed", slices.Concat([]string{"day-plan", "--recording", stair("ttft-staircase-b-on")}, stairAssumed), 0},
 		{"day-plan-staircase-b-on", []string{"day-plan", "--recording", stair("ttft-staircase-b-on")}, 3},
 		{"day-plan-staircase-b-on-json", []string{"day-plan", "-o", "json", "--recording", stair("ttft-staircase-b-on")}, 3},
 		{"day-plan-staircase-b-off", []string{"day-plan", "--recording", stair("ttft-staircase-b-off")}, 3},
@@ -58,17 +102,21 @@ func TestDayPlanGolden(t *testing.T) {
 	}
 }
 
+// dayJSON is a day-plan command line's JSON plan and exit code.
+func dayJSON(t *testing.T, args ...string) (*whatifapi.DayPlanResponse, int) {
+	t.Helper()
+	out, code := runCmd(t, slices.Concat([]string{"day-plan", "-o", "json"}, args)...)
+	var p whatifapi.DayPlanResponse
+	require.NoError(t, jsonStrict([]byte(out), &p), out)
+	return &p, code
+}
+
 // On real P/D staircases a refusal is the source's, not a bucket's: no
-// bucket is unmet, a refused prefill leaves decode sized alone with no
-// prefill figure, and a refused decode knee sizes nothing and names why.
+// bucket is unmet, a refused prefill leaves decode sized alone, a lower
+// bound, with no prefill figure, and a refused decode knee sizes nothing,
+// names why and exits 3.
 func TestDayPlanStaircaseRefusals(t *testing.T) {
-	decode := func(name string, args ...string) (*whatifapi.DayPlanResponse, int) {
-		out, code := runCmd(t, slices.Concat([]string{"day-plan", "-o", "json", "--recording", stairDir + name + "/recording.jsonl.gz"}, args)...)
-		var p whatifapi.DayPlanResponse
-		require.NoError(t, jsonStrict([]byte(out), &p), out)
-		return &p, code
-	}
-	onlyDecode, code := decode("ttft-staircase-b-on")
+	onlyDecode, code := dayJSON(t, "--recording", stair("ttft-staircase-b-on"))
 	assert.Equal(t, 3, code)
 	require.Len(t, onlyDecode.Refused, 1)
 	assert.Equal(t, "NoPrefillCapacity", onlyDecode.Refused[0].Reason)
@@ -78,13 +126,14 @@ func TestDayPlanStaircaseRefusals(t *testing.T) {
 	for _, b := range onlyDecode.Buckets {
 		if b.Needed != nil {
 			assert.Nil(t, b.Needed.Prefill, "%s: prefill sized without V_P", b.Start)
+			assert.True(t, b.Needed.AtLeast, "%s: decode alone is a lower bound", b.Start)
 			assert.Contains(t, b.Flags, whatifapi.FlagPrefillNotPriced)
 		}
 	}
 	assert.Nil(t, onlyDecode.Summary.NeededGPUHours, "half a fleet's GPUs are not set beside a whole fleet's")
 	assert.Nil(t, onlyDecode.Summary.NeededReplicaHours.Prefill)
 
-	none, code := decode("ttft-staircase-b-off")
+	none, code := dayJSON(t, "--recording", stair("ttft-staircase-b-off"))
 	assert.Equal(t, 3, code)
 	assert.Zero(t, none.Summary.Counts.Sized)
 	assert.Zero(t, none.Summary.Counts.Unmet)
@@ -101,7 +150,7 @@ func TestDayPlanStaircaseRefusals(t *testing.T) {
 	}
 	assert.Equal(t, []string{"ttft:NoFixedLatency", "decodeKnee:PinnedDefaultB"}, reasons)
 
-	full, code := decode("ttft-staircase-b-on", "--assume-vp", "200000", "--assume-a", "20ms", "--ttft", "2s@p90", "--tpot", "30ms")
+	full, code := dayJSON(t, slices.Concat([]string{"--recording", stair("ttft-staircase-b-on")}, stairAssumed)...)
 	assert.Equal(t, 0, code)
 	assert.Empty(t, full.Refused)
 	assert.Equal(t, len(full.Buckets), full.Summary.Counts.Sized)
@@ -111,25 +160,21 @@ func TestDayPlanStaircaseRefusals(t *testing.T) {
 	}
 }
 
-// olsRes is the sample recording resolved once per test binary: each
-// resolve replays it.
-var olsRes = sync.OnceValues(func() (*whatifapi.Resolved, error) {
-	src := &servedSources{recordings: filepath.Dir(olsSweep), warn: io.Discard}
-	return src.Resolve(context.Background(), whatifapi.InputsRequest{Model: "model-02",
-		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(olsSweep)}})
-})
+// A plan that sizes no bucket exits 3, even with nothing refused and no rate
+// beyond the bound: every bucket has too little data.
+func TestDayPlanNothingSizedExits3(t *testing.T) {
+	p, code := dayJSON(t, slices.Concat([]string{"--recording", stair("ttft-staircase-b-on"), "--min-requests", "1e12"}, stairAssumed)...)
+	assert.Empty(t, p.Refused)
+	assert.Zero(t, p.Summary.Counts.Unmet)
+	assert.Zero(t, p.Summary.Counts.Sized)
+	assert.Equal(t, len(p.Buckets), p.Summary.Counts.TooLittleData)
+	assert.Equal(t, 3, code)
+}
 
-// resolved is olsRes for t, with series in place of the recording's when
-// given: a copy, so that no test changes another's.
-func resolved(t *testing.T, series []whatifapi.SeriesSample) *whatifapi.Resolved {
-	t.Helper()
-	res, err := olsRes()
-	require.NoError(t, err)
-	out := *res
-	if series != nil {
-		out.Series = series
-	}
-	return &out
+// olsRes is the sample recording, resolved as the CLI resolves it, once per
+// test binary.
+func olsRes() (*whatifapi.Resolved, error) {
+	return resolveDay(context.Background(), &dayPlanFlags{recording: olsSweep, model: "model-02"}, io.Discard)
 }
 
 // stubResolver resolves every request to one Resolved.
@@ -139,29 +184,54 @@ func (s stubResolver) Resolve(context.Context, whatifapi.InputsRequest) (*whatif
 	return s.res, nil
 }
 
+// dayPlanParity is each JSON golden of the day plan, with the recording it
+// was planned from and the request its command line asks.
+func dayPlanParity() map[string]struct {
+	flags dayPlanFlags
+	req   whatifapi.DayPlanRequest
+} {
+	minReq := fp(whatifapi.DefaultMinRequests)
+	return map[string]struct {
+		flags dayPlanFlags
+		req   whatifapi.DayPlanRequest
+	}{
+		"day-plan-ols-sweep-json": {dayPlanFlags{recording: olsSweep, model: "model-02"}, whatifapi.DayPlanRequest{
+			SLO: &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p95", Target: fp(0.5)},
+				TPOT: &whatifapi.Objective{Statistic: statMean, Target: fp(0.004)}},
+			Assume: &whatifapi.Assume{VP: fp(30000)}, MinRequests: minReq, Step: "5m0s"}},
+		"day-plan-staircase-b-on-json": {dayPlanFlags{recording: stair("ttft-staircase-b-on")}, whatifapi.DayPlanRequest{
+			MinRequests: minReq, Step: "5m0s"}},
+	}
+}
+
 // POST /v1/dayplan's body is the CLI's JSON golden, byte for byte but for
-// the ids: one code path.
+// the ids: one code path, for every JSON golden of the day plan.
 func TestDayPlanAPIParity(t *testing.T) {
-	h := whatifapi.New(whatifapi.Config{Resolver: stubResolver{resolved(t, nil)}, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion)}).Handler()
-	code, body := apiPost(t, h, "/v1/inputs", whatifapi.InputsRequest{Model: "model-02"})
-	require.Equal(t, 200, code, "%s", body)
-	var in whatifapi.InputsResponse
-	require.NoError(t, json.Unmarshal(body, &in))
-	code, body = apiPost(t, h, "/v1/dayplan", whatifapi.DayPlanRequest{InputsID: in.InputsID,
-		SLO: &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p95", Target: fp(0.5)},
-			TPOT: &whatifapi.Objective{Statistic: statMean, Target: fp(0.004)}},
-		Assume: &whatifapi.Assume{VP: fp(30000)}, MinRequests: fp(whatifapi.DefaultMinRequests), Step: "5m0s"})
-	require.Equal(t, 200, code, "%s", body)
-	var api whatifapi.DayPlanResponse
-	require.NoError(t, jsonStrict(body, &api))
-	golden, err := os.ReadFile(filepath.Join("testdata", "day-plan-ols-sweep-json.golden"))
-	require.NoError(t, err)
-	var cli whatifapi.DayPlanResponse
-	require.NoError(t, jsonStrict(golden, &cli))
-	assert.NotEmpty(t, cli.WhatifSchema, "the CLI names the schema its figures follow")
-	api.DayPlanID, cli.DayPlanID, api.InputsID, cli.InputsID = "", "", "", ""
-	assert.Equal(t, cli, api)
-	assert.NotEmpty(t, api.Buckets)
+	for golden, c := range dayPlanParity() {
+		t.Run(golden, func(t *testing.T) {
+			res, err := resolveDay(context.Background(), &c.flags, io.Discard)
+			require.NoError(t, err)
+			h := whatifapi.New(whatifapi.Config{Resolver: stubResolver{res}, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion)}).Handler()
+			code, body := apiPost(t, h, "/v1/inputs", whatifapi.InputsRequest{})
+			require.Equal(t, 200, code, "%s", body)
+			var in whatifapi.InputsResponse
+			require.NoError(t, json.Unmarshal(body, &in))
+			req := c.req
+			req.InputsID = in.InputsID
+			code, body = apiPost(t, h, "/v1/dayplan", req)
+			require.Equal(t, 200, code, "%s", body)
+			var api whatifapi.DayPlanResponse
+			require.NoError(t, jsonStrict(body, &api))
+			b, err := os.ReadFile(filepath.Join("testdata", golden+".golden"))
+			require.NoError(t, err)
+			var cli whatifapi.DayPlanResponse
+			require.NoError(t, jsonStrict(b, &cli))
+			assert.NotEmpty(t, cli.WhatifSchema, "the CLI names the schema its figures follow")
+			api.DayPlanID, cli.DayPlanID, api.InputsID, cli.InputsID = "", "", "", ""
+			assert.Equal(t, cli, api)
+			assert.NotEmpty(t, api.Buckets)
+		})
+	}
 }
 
 // day24h is a day of synthesized cycles every 15 s from 2026-11-01 00:00
@@ -237,7 +307,9 @@ func TestDayPlan24hGolden(t *testing.T) {
 // replicas found reaches the bucket's own p95, every bucket sized, and
 // decode, sized first, never needs fewer replicas at a higher rate. Sizing
 // every bucket at one rate, the window's mean, fails both: a bucket over the
-// mean is short of it.
+// mean is short of it. Prefill need not rise with the rate (decode first:
+// one more decode replica can take prefill's place), so nothing is asserted
+// of it.
 func TestDayPlanNeededFollowsRate(t *testing.T) {
 	p := dayPlan24h(t)
 	assert.Equal(t, whatifapi.SizeForP95, p.SizeFor)
@@ -261,6 +333,35 @@ func TestDayPlanNeededFollowsRate(t *testing.T) {
 	assert.Greater(t, peak.Decode+*peak.Prefill, low.Decode+*low.Prefill, "a day from 2 to 16 r/s needs the same fleet all day")
 	assert.NotEmpty(t, p.Summary.UnderHours, "the peak needs more than 2 prefill and 3 decode")
 	assert.NotEmpty(t, p.Summary.OverHours, "the night needs fewer")
+}
+
+// The fleet a bucket had is judged whole at the bucket's rate. At 10:15 of
+// the day the fewest replicas, decode first, are 3 prefill and 1 decode
+// for 10.9 r/s; the fleet that ran, 2 prefill and 3 decode, serves some 18
+// r/s, so the bucket is no SLO risk, though prefill alone (2 against 3)
+// reads short. Every verdict is the had fleet's limit against the rate.
+func TestDayPlanVerdictIsTheFleetItHad(t *testing.T) {
+	p := dayPlan24h(t)
+	var b *whatifapi.DayBucket
+	for i := range p.Buckets {
+		if p.Buckets[i].Start.Format("15:04") == "10:15" {
+			b = &p.Buckets[i]
+		}
+	}
+	require.NotNil(t, b)
+	require.NotNil(t, b.Needed.Prefill)
+	assert.Greater(t, *b.Needed.Prefill, b.Actual.Prefill, "the case: prefill alone reads short")
+	require.NotNil(t, b.HadLimit.Value)
+	assert.GreaterOrEqual(t, *b.HadLimit.Value, *b.SizedRate, "the fleet it had serves the rate")
+	assert.NotEqual(t, whatifapi.VerdictUnder, b.Verdict)
+	for _, x := range p.Buckets {
+		if x.Status != whatifapi.BucketSized {
+			continue
+		}
+		short := *x.HadLimit.Value < *x.SizedRate*(1-1e-9)
+		assert.Equal(t, short, x.Verdict == whatifapi.VerdictUnder, "%s: had %g r/s at %g r/s, verdict %s",
+			x.Start.Format("15:04"), *x.HadLimit.Value, *x.SizedRate, x.Verdict)
+	}
 }
 
 // jsonStrict decodes b into v, refusing a field v does not name.

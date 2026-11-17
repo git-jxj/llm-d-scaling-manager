@@ -50,7 +50,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 1
+        "decode": 1,
+        "atLeast": true
       },
       "limit": {
         "value": 16.044131255904265,
@@ -58,6 +59,21 @@
         "band": {
           "lo": 18.73416212414297,
           "hi": 21.91845469398918
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -99,9 +115,25 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2
+        "decode": 2,
+        "atLeast": true
       },
       "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
         "value": 32.08826251180853,
         "unit": "r/s",
         "band": {
@@ -146,9 +178,25 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2
+        "decode": 2,
+        "atLeast": true
       },
       "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
         "value": 32.08826251180853,
         "unit": "r/s",
         "band": {
@@ -193,9 +241,25 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2
+        "decode": 2,
+        "atLeast": true
       },
       "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
         "value": 32.08826251180853,
         "unit": "r/s",
         "band": {
@@ -240,9 +304,25 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2
+        "decode": 2,
+        "atLeast": true
       },
       "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
         "value": 32.08826251180853,
         "unit": "r/s",
         "band": {
@@ -287,9 +367,25 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2
+        "decode": 2,
+        "atLeast": true
       },
       "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
         "value": 32.08826251180853,
         "unit": "r/s",
         "band": {
@@ -334,7 +430,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -342,6 +439,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -381,7 +493,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -389,6 +502,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -428,7 +556,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -436,6 +565,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -475,7 +619,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -483,6 +628,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -522,7 +682,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -530,6 +691,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -569,7 +745,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -577,6 +754,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -616,7 +808,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -624,6 +817,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -663,7 +871,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -671,6 +880,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -710,7 +934,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "limit": {
         "value": 48.13239376771279,
@@ -718,6 +943,21 @@
         "band": {
           "lo": 56.20248637242891,
           "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -758,7 +998,8 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 1
+        "decode": 1,
+        "atLeast": true
       },
       "limit": {
         "value": 16.044131255904265,
@@ -766,6 +1007,21 @@
         "band": {
           "lo": 18.73416212414297,
           "hi": 21.91845469398918
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "hadLimit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
         },
         "boundBy": [
           "band top"
@@ -798,7 +1054,8 @@
         "max": 35.72
       },
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "actual": {
         "prefill": 2,
@@ -816,7 +1073,8 @@
         "max": 43.24
       },
       "needed": {
-        "decode": 3
+        "decode": 3,
+        "atLeast": true
       },
       "actual": {
         "prefill": 2,
@@ -829,10 +1087,12 @@
   ],
   "summary": {
     "peakNeeded": {
-      "decode": 3
+      "decode": 3,
+      "atLeast": true
     },
     "minNeeded": {
-      "decode": 1
+      "decode": 1,
+      "atLeast": true
     },
     "neededReplicaHours": {
       "decode": 3.25
@@ -866,14 +1126,17 @@
       "match": 5,
       "sizedForMean": 3,
       "sizedForP95": 13,
-      "sizedForMax": 0
+      "sizedForMax": 0,
+      "prefillNotPriced": 16
     }
   },
   "searched": 5,
   "notes": [
     "Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
-    "Each bucket is sized for the p95 of its cycles' rates (the p95 of cycle rates needs 20 cycles in the bucket, else the mean), on the fleet's limit at the SLO and headroom 0.85 (POST /v1/size's search).",
+    "Each bucket is sized for the p95 of its cycles' rates. A p95 needs 20 cycles in the bucket; with fewer the bucket is sized for its mean, which is less conservative (FewCyclesForP95).",
+    "Needed is the fewest replicas whose fleet limit, at the SLO and headroom 0.85, reaches the rate: decode's fewest first, then prefill's (POST /v1/size's search). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: under when its limit falls short, over when one replica fewer of either role would still serve it.",
     "A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.",
-    "Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands."
+    "Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.",
+    "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). The fleet's limit, which decode admission can hold down, is not priced."
   ]
 }

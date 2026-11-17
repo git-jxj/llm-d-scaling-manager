@@ -139,6 +139,15 @@ function dayRoleValue(which, role) {
   return b => b[which] && b[which][role] != null ? b[which][role] : null;
 }
 
+// dayUnderIn reports whether a sized bucket's red wash shows in role's
+// panel: the fleet it had, judged whole at the bucket's rate, falls short
+// (verdict under), and the role was sized (decode sized alone washes decode
+// only). The wash follows the verdict, never a role's count against the
+// fewest replicas found: another mix may serve the rate.
+function dayUnderIn(b, role) {
+  return b.status === "sized" && b.verdict === "under" && b.needed && b.needed[role] != null;
+}
+
 // dayUnmetIn reports whether a bucket's unmet rate is short in role's
 // panel: the role short, or the fleet (both).
 function dayUnmetIn(b, role) {
@@ -146,8 +155,10 @@ function dayUnmetIn(b, role) {
 }
 
 // dayRoleRefusal is the refusal that leaves role unsized in the whole plan,
-// or null: prefill's TTFT, or for both roles decode's knee.
+// or null: prefill's TTFT, or for both roles decode's knee, where no bucket
+// sized the role at all.
 function dayRoleRefusal(plan, role) {
+  if (plan.buckets.some(k => k.needed && k.needed[role] != null)) return null;
   const rs = plan.refused || [];
   return rs.find(r => r.term === "decodeKnee") || (role === "prefill" ? rs.find(r => r.term === "ttft") : null) || null;
 }
@@ -184,10 +195,11 @@ function dayPlanSVG(plan) {
     if (integer) {
       for (const k of b) {
         const t = dayTime(k.start), x = X(t).toFixed(1), w = (X(t + step) - X(t)).toFixed(1);
-        if (k.needed && k.actual && k.needed[p.key] != null && k.actual[p.key] < k.needed[p.key]) {
+        if (dayUnderIn(k, p.key)) {
           g += `<rect class="dunder" data-under="${esc(p.key)}" x="${x}" y="${p.top}" width="${w}" height="${p.h}"/>`;
         }
         if (dayUnmetIn(k, p.key)) {
+          g += `<rect class="dunder" data-under-unmet="${esc(p.key)}" x="${x}" y="${p.top}" width="${w}" height="${p.h}"/>`;
           g += `<rect class="dunmet" fill="url(#dayhatch)" data-unmet="${esc(p.key)}" x="${x}" y="${p.top}" width="${w}" height="${p.h}"/>`;
         }
       }
@@ -210,11 +222,11 @@ function dayPlanSVG(plan) {
       if (m != null) labels.push({y: Y(m), text: "mean"});
       if (q != null) labels.push({y: Y(q), text: "p95"});
     } else {
-      for (const run of dayRuns(b, dayRoleValue("actual", p.key))) {
-        g += `<path class="line c-had" data-series="${p.key}-actual" d="${dayStep(run, step, X, Y)}"/>`;
-      }
       for (const run of dayRuns(b, dayRoleValue("needed", p.key))) {
         g += `<path class="line c-need" data-series="${p.key}-needed" d="${dayStep(run, step, X, Y)}"/>`;
+      }
+      for (const run of dayRuns(b, dayRoleValue("actual", p.key))) {
+        g += `<path class="line c-had" data-series="${p.key}-actual" d="${dayStep(run, step, X, Y)}"/>`;
       }
       const n = lastOf(dayRoleValue("needed", p.key)), a = lastOf(dayRoleValue("actual", p.key));
       if (n != null) labels.push({y: Y(n), text: "needed"});
@@ -223,6 +235,9 @@ function dayPlanSVG(plan) {
       if (r) {
         g += `<text class="pnote" data-refused="${esc(p.key)}" x="${DAY_L + lay.pw / 2}" y="${p.top + p.h / 2}" text-anchor="middle">` +
           `${esc(p.title)} not sized: ${esc(DAY_TERMS[r.term] || r.term)} refused (${esc(r.reason)})</text>`;
+      } else if (p.key === "decode" && b.some(k => k.needed && k.needed.atLeast)) {
+        g += `<text class="pnote" data-lower-bound="decode" x="${DAY_L + 4}" y="${p.top + 12}">` +
+          `where prefill is not priced, needed is at least: decode's own limit alone</text>`;
       }
     }
     g += dayLabels(labels, xr + 6, p.top, p.top + p.h);
@@ -265,7 +280,7 @@ function dayLegend() {
     `<rect class="${cls}"${fill ? ` fill="url(#dayhatch-l)"` : ""} x="1" y="1" width="16" height="8"/></svg>`;
   return `<span>${sw("c-rate")}rate, mean of the bucket's cycles</span><span>${box("dband")}spread within the bucket, mean to p95</span>` +
     `<span>${sw("c-need")}replicas needed</span><span>${sw("c-had")}replicas the fleet had</span>` +
-    `<span>${box("dunder")}had fewer than needed (SLO risk)</span><span>${box("dunmet", true)}no fleet within the bound serves the rate</span>`;
+    `<span>${box("dunder")}the fleet it had falls short of the rate (SLO risk)</span><span>${box("dunmet", true)}no fleet within the bound serves the rate</span>`;
 }
 
 // DAY_STATUS is a bucket's status in words.
@@ -283,9 +298,10 @@ function dayBucketAt(plan, t) {
   return null;
 }
 
-// dayNeededText is a bucket's needed fleet in words.
+// dayNeededText is a bucket's needed fleet in words: decode sized alone is
+// a lower bound.
 function dayNeededText(n) {
-  return n.prefill != null ? `${n.prefill} prefill, ${n.decode} decode` : `${n.decode} decode (prefill not priced)`;
+  return n.prefill != null ? `${n.prefill} prefill, ${n.decode} decode` : `at least ${n.decode} decode (prefill not priced)`;
 }
 
 // dayTip is the tooltip of a bucket: every value at that time, as rows of
@@ -303,6 +319,7 @@ function dayTip(plan, b) {
   row("requests", b.requests ? b.requests.toFixed(0) : "0");
   if (b.needed) row("needed", dayNeededText(b.needed));
   if (b.actual) row("had", `${b.actual.prefill} prefill, ${b.actual.decode} decode`);
+  if (b.hadLimit && b.hadLimit.value != null) row("had fleet serves", dayFmt(b.hadLimit.value) + " r/s");
   if (b.verdict) row("verdict", DAY_VERDICT[b.verdict] || b.verdict);
   if (b.unmet) row("beyond the bound", `${b.unmetRole || "fleet"}: ${b.unmet.reason}`);
   if (b.shape && b.shape.promptTokens != null) row("prompt, output", `${b.shape.promptTokens.toFixed(0)}, ${b.shape.outputTokens != null ? b.shape.outputTokens.toFixed(0) : "-"} tokens (${b.shape.source})`);
@@ -358,8 +375,10 @@ function daySummaryText(plan) {
   const days = daySpansDays(plan);
   const hours = hs => hs.length ? hs.map(h => dayClock(dayTime(h), days)).join(", ") : "none";
   if (s.peakNeeded) {
-    out.push(`Needed at peak ${dayNeededText(s.peakNeeded)}; at least ${dayNeededText(s.minNeeded)}.`);
+    out.push(`Needed at the busiest bucket ${dayNeededText(s.peakNeeded)}; at the quietest ${dayNeededText(s.minNeeded)}.`);
+    out.push("The fewest replicas, decode first: another mix may serve the rate too. The fleet the bucket had is judged whole, at the bucket's rate.");
     if (s.neededGpuHours != null) out.push(`Over the ${c.sized} sized buckets: GPU-hours needed ${s.neededGpuHours.toFixed(1)}, had ${s.hadGpuHours.toFixed(1)}.`);
+    else if (c.prefillNotPriced) out.push(`No GPU-hours of the need: prefill is not priced in ${c.prefillNotPriced} of the ${c.sized} sized buckets.`);
     out.push(`Hours under (SLO risk): ${hours(s.underHours)}. Hours over (waste): ${hours(s.overHours)}.`);
   } else {
     out.push("No bucket was sized: see the refusals above.");

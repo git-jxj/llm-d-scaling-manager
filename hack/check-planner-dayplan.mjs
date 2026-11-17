@@ -74,12 +74,22 @@ try {
     const x = xs(p.d);
     check(`${p["data-series"]} inside the plot`, x.length > 0 && Math.min(...x) >= L - 0.1 && Math.max(...x) <= R + 0.1, `${Math.min(...x)}..${Math.max(...x)}`);
   }
-  // The red wash: one rectangle per bucket a role was short in.
+  // The red wash follows the verdict, the fleet it had judged whole: one
+  // rectangle per sized bucket under, in the panel of each role it sized.
   for (const role of ["prefill", "decode"]) {
-    const want = plan.buckets.filter(b => b.needed && b.actual && b.needed[role] != null && b.actual[role] < b.needed[role]).length;
+    const want = plan.buckets.filter(b => b.status === "sized" && b.verdict === "under" && b.needed[role] != null).length;
     const got = attrs(g.markup, "rect").filter(a => a["data-under"] === role).length;
     check(`${role} washed where short`, got === want, `${got} washed, ${want} short`);
   }
+  // A bucket whose prefill reads short, but whose fleet serves the rate
+  // whole, is not washed.
+  const fine = copy(plan);
+  const fb = fine.buckets.find(b => b.status === "sized" && b.needed.prefill != null);
+  fb.needed.prefill = fb.actual.prefill + 2;
+  fb.verdict = "match";
+  check("a fleet that serves whole is not washed", attrs(dayPlanSVG(fine).markup, "rect").filter(a => a["data-under"]).length ===
+    attrs(g.markup, "rect").filter(a => a["data-under"]).length - (plan.buckets.find(b => b.start === fb.start).verdict === "under" ? (fb.needed.prefill != null ? 2 : 1) : 0));
+
   // The hatch: only in the panel of the role short (both for the fleet). The
   // golden has no bucket beyond the bound: three sized ones are made so,
   // one short of prefill, one of decode, one of both.
@@ -99,6 +109,10 @@ try {
     const got = attrs(bg, "rect").filter(a => a["data-unmet"] === role).length;
     check(`${role} hatched only where it is short`, got === 2, `${got} hatched, want 2`);
   }
+  for (const role of ["prefill", "decode"]) {
+    const got = attrs(bg, "rect").filter(a => a["data-under-unmet"] === role).length;
+    check(`${role} washed red where beyond the bound too`, got === 2, `${got}`);
+  }
   check("the hatch is the pattern", attrs(bg, "rect").filter(a => a["data-unmet"]).every(a => a.fill === "url(#dayhatch)") && bg.includes('<pattern id="dayhatch"'));
   check("no hatch where nothing is beyond the bound", attrs(g.markup, "rect").filter(a => a["data-unmet"]).length === 0);
   // The labels name the series, never a value.
@@ -117,6 +131,12 @@ try {
   const legend = dayLegend();
   for (const cls of ["c-rate", "dband", "c-need", "c-had", "dunder", "dunmet"]) check(`the legend shows ${cls}`, legend.includes(`class="${cls}"`) || legend.includes(`class="line ${cls}"`));
   check("the legend's hatch is filled", legend.includes('fill="url(#dayhatch-l)"') && legend.includes('<pattern id="dayhatch-l"'));
+
+  // Needed is drawn first, wide, and had over it, so that where they are
+  // equal both show.
+  for (const role of ["prefill", "decode"]) {
+    check(`${role} had drawn over needed`, g.markup.indexOf(`data-series="${role}-actual"`) > g.markup.indexOf(`data-series="${role}-needed"`));
+  }
 
   // A gap: a bucket with no data in the middle breaks the needed line into two.
   const gap = copy(plan);
@@ -138,6 +158,15 @@ try {
   check("decode-only draws what prefill had", hs.has("prefill-actual"));
   check("the prefill panel says it is not sized", attrs(hg, "text").some(a => a["data-refused"] === "prefill") &&
     texts(hg).some(t => t.includes("Prefill replicas not sized") && t.includes("NoPrefillCapacity")));
+  check("the decode panel says its need is a lower bound", attrs(hg, "text").some(a => a["data-lower-bound"] === "decode") &&
+    texts(hg).some(t => t.includes("needed is at least")));
+  const priced = copy(plan);
+  priced.refused = [];
+  priced.buckets.forEach(k => { if (k.needed && k.needed.prefill == null) { delete k.needed; k.status = "tooLittleData"; } });
+  check("a fully priced plan has no lower-bound note", !attrs(dayPlanSVG(priced).markup, "text").some(a => a["data-lower-bound"]));
+  check("a plan that priced prefill somewhere says nothing of it refused", !attrs(g.markup, "text").some(a => a["data-refused"] === "prefill"));
+  check("but the decode panel says its lower bound", attrs(g.markup, "text").some(a => a["data-lower-bound"] === "decode"));
+  check("the tip says at least", dayTip(half, half.buckets.find(x => x.needed)).rows.some(r => r[0] === "needed" && r[1].startsWith("at least")));
   check("no hatch for a refusal of the source", attrs(hg, "rect").filter(a => a["data-unmet"]).length === 0);
   check("the refusals say what to do", dayRefusedHTML(half).includes("--assume-vp"));
   check("decode-only summary names no prefill figure", daySummaryText(half)[0].includes("prefill not priced"));
@@ -156,7 +185,7 @@ try {
   check("the bucket table has every bucket", (dayBucketsTable(plan).match(/<tr>/g) || []).length === plan.buckets.length + 1);
   check("the bucket table says why a bucket was not sized", dayBucketsTable(bound).includes("prefill: ReplicaBoundReached"));
   check("the tip says the bound", dayTip(bound, unmet[1]).rows.some(r => r[0] === "beyond the bound" && r[1] === "decode: ReplicaBoundReached"));
-  check("the summary says the peak", daySummaryText(plan)[0].startsWith("Needed at peak"));
+  check("the summary says the busiest bucket's need", daySummaryText(plan)[0].startsWith("Needed at the busiest bucket"));
 
   // Everything a plan carries is text, never markup: a flag, a reason, a
   // refusal's words, the hour's verdict.

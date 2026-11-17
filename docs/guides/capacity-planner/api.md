@@ -249,8 +249,8 @@ target under the zero-load floor) leaves prefill unsized and decode sized
 alone, on its knee times headroom (and its TPOT, where that prices); when
 decode's knee is refused too, nothing is sized. Each lands in `refused`. Only a
 rate no fleet within `maxReplicas` serves is a bucket's own `unmet`. The CLI
-exits 3 when `refused` is not empty or a bucket is unmet, and prints the
-plan either way.
+exits 3 when `refused` is not empty, a bucket is unmet, or no bucket was
+sized, and prints the plan either way.
 
 Each bucket is priced at its own observed prompt and output length (rounded
 to a 5% grid, so buckets of nearly one shape share their priced fleets), or
@@ -261,9 +261,9 @@ bucket when the stated length lies outside what the buckets observed.
 | Key | What it is |
 | --- | --- |
 | `from`, `to`, `step`, `sizeFor`, `sizeForSource`, `minRequests`, `ttft`, `tpot`, `headroom`, `maxReplicas` | What was planned. |
-| `buckets[]` | `start`, `samples` (cycles), `requests`, `rate` (`mean`, `p95`, `max` of its cycle rates), `sizedFor` and `sizedRate`, `shape`, `status`, `needed` and `limit` (sized; `needed.prefill` absent when prefill is not priced), `unmet` and `unmetRole` (beyond the bound), `actual` (the median serving pods of the priced prefill and decode variants), `verdict` (`under`, `over`, `match`, `refused`) and `flags`. |
-| `hours[]` | Per UTC hour: the rate over its cycles, the most replicas a bucket needed, the fewest it had, `unmet` (buckets beyond the bound), and the verdict: `under` when any bucket was under or beyond the bound, `refused` when every bucket with data was refused, `over` when every sized bucket was over. |
-| `summary` | `peakNeeded`, `minNeeded`, replica-hours and GPU-hours needed and had over the sized buckets (absent when none was sized; GPU-hours also when prefill was not priced), `hadReplicaHoursAll` and `hadGpuHoursAll` over every bucket with data, `underHours`, `overHours`, `refusedHours`, and the counts, including how many buckets were sized for each statistic. |
+| `buckets[]` | `start`, `samples` (cycles), `requests`, `rate` (`mean`, `p95`, `max` of its cycle rates), `sizedFor` and `sizedRate`, `shape`, `status`, `needed` and `limit` (sized: the fewest replicas, decode first, and another mix may serve too; `needed.prefill` absent and `needed.atLeast` true when prefill is not priced, decode then a lower bound), `unmet` and `unmetRole` (beyond the bound), `actual` (the median serving pods of the priced prefill and decode variants), `hadLimit` (the limit of the fleet it had, priced whole), `verdict` (`under` when `hadLimit` falls short of the rate, `over` when one replica fewer of either role still serves it, `match`, `refused`) and `flags`. |
+| `hours[]` | Per UTC hour: the rate over its cycles, the need of its busiest sized bucket (the one of the highest sized rate), the fewest pods it had, `unmet` (buckets beyond the bound), and the verdict: `under` when any bucket was under or beyond the bound, `refused` when every bucket with data was refused, `over` when every sized bucket was over. |
+| `summary` | `peakNeeded` and `minNeeded` (the needs of the busiest and the quietest sized buckets), replica-hours and GPU-hours needed and had over the sized buckets (absent when none was sized; prefill's hours and the GPU-hours also when any sized bucket did not price prefill, `counts.prefillNotPriced`), `hadReplicaHoursAll` and `hadGpuHoursAll` over every bucket with data, `underHours`, `overHours`, `refusedHours`, and the counts, including how many buckets were sized for each statistic. |
 | `searched` | How many fleets the plan priced. |
 | `refused[]` | Every term the source cannot price at any rate, with `role`, `term` (`ttft`, `tpot`, `decodeKnee`), `reason`, `detail`, `hint` (what to do), `effect` (what the plan did instead) and `buckets`. Empty when every term priced. |
 | `notes` | What it does not price: scale-up lag (it sizes steady state), and the prefix hit rate. |

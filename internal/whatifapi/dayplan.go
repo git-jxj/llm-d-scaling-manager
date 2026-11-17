@@ -39,6 +39,9 @@ type SeriesSample struct {
 	OutputTokens            float64
 	PrefixHitRate           float64
 	HasShape                bool
+	// OtherPods is the serving pods of prefill and decode variants other
+	// than the priced ones.
+	OtherPods int
 }
 
 // The day plan's defaults and bounds.
@@ -111,6 +114,13 @@ const (
 	// FlagPrefillNotPriced is a bucket whose prefill replicas are not sized,
 	// the source being unable to price its TTFT (Refused).
 	FlagPrefillNotPriced = "PrefillNotPriced"
+	// FlagFleetRefused is a bucket whose fleet limit the source refuses at
+	// more replicas than one (Refused, term fleet).
+	FlagFleetRefused = "FleetRefused"
+	// FlagOtherVariantsServed is a bucket in which a prefill or decode
+	// variant other than the priced ones served: the rate is the model's,
+	// and part of it went to pods Actual does not count.
+	FlagOtherVariantsServed = "OtherVariantsServed"
 )
 
 // DayPlanRequest is POST /v1/dayplan. Every field but InputsID defaults as a
@@ -199,11 +209,16 @@ type DayShape struct {
 	Source        string   `json:"source"`
 }
 
-// DayNeeded is the replicas a bucket needed: prefill is absent where the
-// source cannot price it (Refused).
+// DayNeeded is the fewest replicas that serve a bucket's rate, decode's
+// fewest first, then prefill's with them: one fleet that serves it, and
+// another mix may serve it too. Prefill is absent where the source cannot
+// price it (Refused); Decode is then sized on decode's own limit alone, a
+// lower bound (AtLeast): the fleet's limit, which decode admission can hold
+// down, is not priced.
 type DayNeeded struct {
 	Prefill *int `json:"prefill,omitempty"`
 	Decode  int  `json:"decode"`
+	AtLeast bool `json:"atLeast,omitempty"`
 }
 
 // DayBucket is one bucket: what it saw, what it was sized for, the fleet it
@@ -225,6 +240,9 @@ type DayBucket struct {
 	// the limit they were sized on.
 	Needed *DayNeeded `json:"needed,omitempty"`
 	Limit  *Figure    `json:"limit,omitempty"`
+	// HadLimit is the limit of the fleet the bucket had, priced whole at the
+	// same targets and headroom: the verdict's basis.
+	HadLimit *Figure `json:"hadLimit,omitempty"`
 	// Unmet is why no fleet within the bound serves the rate, and UnmetRole
 	// the role short: "prefill", "decode" or "fleet" (both).
 	Unmet     *Refusal `json:"unmet,omitempty"`
@@ -300,6 +318,8 @@ type DayCounts struct {
 	SizedForMean  int `json:"sizedForMean"`
 	SizedForP95   int `json:"sizedForP95"`
 	SizedForMax   int `json:"sizedForMax"`
+	// PrefillNotPriced is how many sized buckets have no prefill figure.
+	PrefillNotPriced int `json:"prefillNotPriced"`
 }
 
 // handleDayPlan is POST /v1/dayplan.
@@ -564,7 +584,9 @@ func bucketShape(samples []SeriesSample) (prompt, output, hit float64, ok bool) 
 
 // sizedRate is the statistic a bucket of n cycles is sized for, and its
 // rate: the one asked, but the mean in place of a p95 of fewer than
-// MinPercentileCycles cycles.
+// MinPercentileCycles cycles (a nearest-rank p95 of so few is the highest
+// cycle). The mean is the less conservative of the two: the bucket is
+// flagged FewCyclesForP95.
 func (q *dayQuestion) sizedRate(r DayRate, n int) (string, float64) {
 	switch {
 	case q.sizeFor == SizeForP95 && n >= MinPercentileCycles:
@@ -580,7 +602,20 @@ const (
 	termTTFT       = "ttft"
 	termTPOT       = "tpot"
 	termDecodeKnee = "decodeKnee"
+	// termFleet is a fleet's limit refused at more replicas than one, which
+	// the probe at one replica a role did not see.
+	termFleet = "fleet"
 )
+
+// addRefusal adds r to refused, once per role, term and reason.
+func addRefusal(refused *[]DayRefusal, r DayRefusal) {
+	for _, x := range *refused {
+		if x.Role == r.Role && x.Term == r.Term && x.Reason == r.Reason {
+			return
+		}
+	}
+	*refused = append(*refused, r)
+}
 
 // dayGroup is one shape's sizing: the sizer of the terms that price, and
 // whether decode is sized alone (prefill refused) or nothing is (decode's
@@ -629,14 +664,7 @@ func refusalHint(term string, reason whatif.Reason) string {
 // sizing: a TPOT term that refuses is dropped, and a TTFT term that refuses
 // leaves decode sized alone. Each refusal is added to refused once.
 func (q *dayQuestion) group(ctx context.Context, k Knobs, refused *[]DayRefusal) (*dayGroup, error) {
-	add := func(r DayRefusal) {
-		for _, x := range *refused {
-			if x.Role == r.Role && x.Term == r.Term && x.Reason == r.Reason {
-				return
-			}
-		}
-		*refused = append(*refused, r)
-	}
+	add := func(r DayRefusal) { addRefusal(refused, r) }
 	sc := q.sc
 	g := &dayGroup{limits: map[int]whatif.Result{}}
 	newSizer := func() *sizer {
@@ -708,8 +736,9 @@ func (q *dayQuestion) decodeLimit(ctx context.Context, g *dayGroup, d int) (what
 	return r, nil
 }
 
-// sizeBucket sizes db for rate on g.
-func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket, rate float64) error {
+// sizeBucket sizes db for rate on g, then judges the fleet it had: priced
+// whole, at the same rate, targets and headroom (hadVerdict).
+func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket, rate float64, refused *[]DayRefusal) error {
 	db.Flags = appendNew(db.Flags, g.flags...)
 	switch {
 	case g.refused:
@@ -729,16 +758,15 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 				return err
 			}
 			x, _ := valueOf(r)
-			db.Status, db.UnmetRole = BucketUnmet, roleDecode
+			db.Status, db.UnmetRole, db.Verdict = BucketUnmet, roleDecode, VerdictUnder
 			db.Unmet = &Refusal{Reason: ReasonReplicaBound, Detail: fmt.Sprintf("At %d decode replicas, the bound, decode's limit is %.4g r/s, short of %.4g r/s",
 				q.bound.Decode, x, rate)}
 			return nil
 		}
 		lim := figureOf(g.limits[d], unitRate, false)
-		db.Status, db.Needed, db.Limit = BucketSized, &DayNeeded{Decode: d}, &lim
+		db.Status, db.Needed, db.Limit = BucketSized, &DayNeeded{Decode: d, AtLeast: true}, &lim
 		db.Flags = appendNew(db.Flags, lim.Flags...)
-		db.Verdict = verdictOf(*db.Needed, *db.Actual)
-		return nil
+		return q.hadVerdict(ctx, g, db, rate)
 	}
 	z := g.z
 	z.rate = rate
@@ -747,7 +775,18 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 		return err
 	}
 	if u := res.Unmet; u != nil {
-		db.Status, db.Unmet, db.UnmetRole = BucketUnmet, &u.Refused, u.Role
+		if u.Refused.Reason != ReasonReplicaBound {
+			// A refusal the probe at one replica a role did not see: it
+			// holds at more replicas, whatever the rate. It is the
+			// source's, not the bucket's.
+			addRefusal(refused, DayRefusal{Role: u.Role, Term: termFleet, Reason: u.Refused.Reason, Detail: u.Refused.Detail,
+				Hint:   refusalHint(termFleet, whatif.Reason(u.Refused.Reason)),
+				Effect: "These buckets are not sized: the source refuses the fleet's limit at more replicas than one."})
+			db.Status, db.Verdict = BucketRefused, VerdictRefused
+			db.Flags = appendNew(db.Flags, FlagFleetRefused)
+			return nil
+		}
+		db.Status, db.Unmet, db.UnmetRole, db.Verdict = BucketUnmet, &u.Refused, u.Role, VerdictUnder
 		db.Flags = appendNew(db.Flags, u.AtBound.Limit.Flags...)
 		return nil
 	}
@@ -756,7 +795,60 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 	lim := figureOf(z.seen[n].fleet, unitRate, false)
 	db.Status, db.Needed, db.Limit = BucketSized, &DayNeeded{Prefill: &p, Decode: n.Decode}, &lim
 	db.Flags = appendNew(db.Flags, lim.Flags...)
-	db.Verdict = verdictOf(*db.Needed, *db.Actual)
+	return q.hadVerdict(ctx, g, db, rate)
+}
+
+// hadVerdict judges the fleet a bucket had, as one fleet, at the bucket's
+// rate: under when its limit does not reach the rate; over when it does and
+// a fleet of one replica fewer of either role does too (as at-replicas
+// judges over); else match. The fewest replicas found (Needed) are one fleet
+// that serves the rate, decode first: another mix may serve it as well,
+// and the fleet it had is judged on its own mix, never role by role against
+// Needed. With prefill not priced, decode is judged alone.
+func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket, rate float64) error {
+	a := *db.Actual
+	serves := func(n FleetCounts) (bool, whatif.Result, error) {
+		if n.Decode < 1 || (!g.decodeOnly && n.Prefill < 1) {
+			return false, nil, nil
+		}
+		if g.decodeOnly {
+			r, err := q.decodeLimit(ctx, g, n.Decode)
+			return err == nil && resultReaches(r, rate, false), r, err
+		}
+		v, err := g.z.at(ctx, n)
+		if err != nil {
+			return false, nil, err
+		}
+		g.z.rate = rate
+		return g.z.meets(v), v.fleet, nil
+	}
+	ok, r, err := serves(a)
+	if err != nil {
+		return err
+	}
+	if r != nil {
+		f := figureOf(r, unitRate, false)
+		db.HadLimit = &f
+	}
+	if !ok {
+		db.Verdict = VerdictUnder
+		return nil
+	}
+	fewer := []FleetCounts{{Prefill: a.Prefill, Decode: a.Decode - 1}}
+	if !g.decodeOnly {
+		fewer = append(fewer, FleetCounts{Prefill: a.Prefill - 1, Decode: a.Decode})
+	}
+	for _, n := range fewer {
+		ok, _, err := serves(n)
+		if err != nil {
+			return err
+		}
+		if ok {
+			db.Verdict = VerdictOver
+			return nil
+		}
+	}
+	db.Verdict = VerdictMatch
 	return nil
 }
 
@@ -805,6 +897,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		if slices.ContainsFunc(b.samples, func(x SeriesSample) bool { return !x.RateKnown }) {
 			db.Flags = append(db.Flags, FlagRateFromDecodeRows)
 		}
+		if slices.ContainsFunc(b.samples, func(x SeriesSample) bool { return x.OtherPods > 0 }) {
+			db.Flags = append(db.Flags, FlagOtherVariantsServed)
+		}
 		k := q.k
 		if p, o, h, ok := bucketShape(b.samples); ok {
 			for i, v := range []float64{p, o} {
@@ -845,7 +940,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := q.sizeBucket(ctx, g, &db, rate); err != nil {
+		if err := q.sizeBucket(ctx, g, &db, rate, &out.Refused); err != nil {
 			return nil, err
 		}
 		out.Buckets = append(out.Buckets, db)
@@ -869,10 +964,21 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	out.Summary = summaryOf(out.Buckets, out.Hours, q.step, gpus)
 	out.Notes = append(out.Notes,
 		"Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
-		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates (the p95 of cycle rates needs %d cycles in the bucket, else the mean), "+
-			"on the fleet's limit at the SLO and headroom %.2f (POST /v1/size's search).", q.sizeFor, MinPercentileCycles, q.sc.Headroom),
+		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates. A p95 needs %d cycles in the bucket; with fewer the bucket is sized for its mean, "+
+			"which is less conservative (FewCyclesForP95).", q.sizeFor, MinPercentileCycles),
+		fmt.Sprintf("Needed is the fewest replicas whose fleet limit, at the SLO and headroom %.2f, reaches the rate: decode's fewest first, then prefill's "+
+			"(POST /v1/size's search). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: "+
+			"under when its limit falls short, over when one replica fewer of either role would still serve it.", q.sc.Headroom),
 		fmt.Sprintf("A bucket with fewer than %.0f requests is not sized (too little data); a bucket no cycle fell in has no data.", q.minRequests),
-		"Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands.")
+		"Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. "+
+			"A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.")
+	for _, r := range out.Refused {
+		if r.Term == termTTFT {
+			out.Notes = append(out.Notes, "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). "+
+				"The fleet's limit, which decode admission can hold down, is not priced.")
+			break
+		}
+	}
 	return out, nil
 }
 
@@ -881,7 +987,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 func (q *dayQuestion) countRefused(out *DayPlanResponse) {
 	for i := range out.Refused {
 		r := &out.Refused[i]
-		flag := map[string]string{termTPOT: FlagTPOTNotPriced, termTTFT: FlagPrefillNotPriced}[r.Term]
+		flag := map[string]string{termTPOT: FlagTPOTNotPriced, termTTFT: FlagPrefillNotPriced, termFleet: FlagFleetRefused}[r.Term]
 		for _, b := range out.Buckets {
 			if (flag != "" && slices.Contains(b.Flags, flag)) || (r.Term == termDecodeKnee && b.Status == BucketRefused) {
 				r.Buckets++
@@ -900,49 +1006,25 @@ func appendNew(s []string, xs ...string) []string {
 	return s
 }
 
-// verdictOf is a bucket's verdict: under when a priced role had fewer than
-// it needed, over when none had fewer and one had more.
-func verdictOf(needed DayNeeded, actual FleetCounts) string {
-	short := actual.Decode < needed.Decode
-	more := actual.Decode > needed.Decode
-	if needed.Prefill != nil {
-		short = short || actual.Prefill < *needed.Prefill
-		more = more || actual.Prefill > *needed.Prefill
+// peakBucket reports whether b is a sized bucket of a higher sized rate than
+// best (nil, none yet), or lower with low.
+func peakBucket(b DayBucket, best *DayBucket, low bool) bool {
+	if b.Needed == nil || b.SizedRate == nil {
+		return false
 	}
-	switch {
-	case short:
-		return VerdictUnder
-	case more:
-		return VerdictOver
+	if best == nil {
+		return true
 	}
-	return VerdictMatch
+	if low {
+		return *b.SizedRate < *best.SizedRate
+	}
+	return *b.SizedRate > *best.SizedRate
 }
 
-// maxNeeded is the larger of a and b, role by role; a prefill priced in
-// one only is that one's.
-func maxNeeded(a, b DayNeeded, larger bool) DayNeeded {
-	pick := func(x, y int) int {
-		if larger {
-			return max(x, y)
-		}
-		return min(x, y)
-	}
-	out := DayNeeded{Decode: pick(a.Decode, b.Decode)}
-	switch {
-	case a.Prefill != nil && b.Prefill != nil:
-		p := pick(*a.Prefill, *b.Prefill)
-		out.Prefill = &p
-	case a.Prefill != nil:
-		p := *a.Prefill
-		out.Prefill = &p
-	case b.Prefill != nil:
-		p := *b.Prefill
-		out.Prefill = &p
-	}
-	return out
-}
-
-// hoursOf is the buckets by UTC hour.
+// hoursOf is the buckets by UTC hour. An hour's need is the fleet its
+// busiest sized bucket needed, the one of the highest sized rate: one fleet
+// a bucket needed, never the most of each role from different buckets,
+// since the fewest prefill replicas need not rise with the rate.
 func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 	var out []DayHour
 	byHour := map[time.Time][]SeriesSample{}
@@ -950,9 +1032,13 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 		h := x.At.UTC().Truncate(time.Hour)
 		byHour[h] = append(byHour[h], x)
 	}
-	type tally struct{ under, over, match, refused, withData int }
+	type tally struct {
+		under, over, match, refused, withData int
+		peak                                  *DayBucket
+	}
 	var t []tally
-	for _, b := range buckets {
+	for i := range buckets {
+		b := &buckets[i]
 		h := b.Start.Truncate(time.Hour)
 		if len(out) == 0 || !out[len(out)-1].Start.Equal(h) {
 			out = append(out, DayHour{Start: h})
@@ -991,16 +1077,16 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 		case VerdictMatch:
 			c.match++
 		}
-		if hr.Needed == nil {
-			n := *b.Needed
-			hr.Needed = &n
-		} else {
-			n := maxNeeded(*hr.Needed, *b.Needed, true)
-			hr.Needed = &n
+		if peakBucket(*b, c.peak, false) {
+			c.peak = b
 		}
 	}
 	for i := range out {
 		c := t[i]
+		if c.peak != nil {
+			n := *c.peak.Needed
+			out[i].Needed = &n
+		}
 		switch {
 		case c.under > 0:
 			out[i].Verdict = VerdictUnder
@@ -1015,13 +1101,19 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 	return out
 }
 
-// summaryOf is the plan's summary.
+// summaryOf is the plan's summary. Peak and least needed are the fleets of
+// the sized buckets of the highest and the lowest sized rate. Prefill's
+// replica-hours, and the GPU-hours, are given only when every sized bucket
+// priced prefill: over fewer, they would compare a subset under the label
+// of the whole.
 func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus FleetCounts) DaySummary {
 	s := DaySummary{UnderHours: []time.Time{}, OverHours: []time.Time{}, RefusedHours: []time.Time{}}
 	h := step.Hours()
 	var need, had RoleHours
-	prefillPriced := false
-	for _, b := range buckets {
+	var needP, hadP float64
+	var peak, least *DayBucket
+	for i := range buckets {
+		b := &buckets[i]
 		switch b.Status {
 		case BucketNoData:
 			s.Counts.NoData++
@@ -1056,23 +1148,28 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 		case VerdictMatch:
 			s.Counts.Match++
 		}
-		n := *b.Needed
-		if s.PeakNeeded == nil {
-			p, m := maxNeeded(n, n, true), maxNeeded(n, n, false)
-			s.PeakNeeded, s.MinNeeded = &p, &m
-		} else {
-			p, m := maxNeeded(*s.PeakNeeded, n, true), maxNeeded(*s.MinNeeded, n, false)
-			s.PeakNeeded, s.MinNeeded = &p, &m
+		if peakBucket(*b, peak, false) {
+			peak = b
 		}
+		if peakBucket(*b, least, true) {
+			least = b
+		}
+		n := *b.Needed
 		need.Decode += float64(n.Decode) * h
 		had.Decode += float64(b.Actual.Decode) * h
-		if n.Prefill != nil {
-			prefillPriced = true
-			need.Prefill = ptr(valueOr(need.Prefill) + float64(*n.Prefill)*h)
-			had.Prefill = ptr(valueOr(had.Prefill) + float64(b.Actual.Prefill)*h)
+		if n.Prefill == nil {
+			s.Counts.PrefillNotPriced++
+			continue
 		}
+		needP += float64(*n.Prefill) * h
+		hadP += float64(b.Actual.Prefill) * h
 	}
 	if s.Counts.Sized > 0 {
+		p, l := *peak.Needed, *least.Needed
+		s.PeakNeeded, s.MinNeeded = &p, &l
+		if s.Counts.PrefillNotPriced == 0 {
+			need.Prefill, had.Prefill = ptr(needP), ptr(hadP)
+		}
 		s.NeededReplicaHours, s.HadReplicaHours = &need, &had
 	}
 	if gpus.Prefill > 0 && gpus.Decode > 0 {
@@ -1082,9 +1179,9 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 			return ptr(valueOr(r.Prefill)*float64(g.Prefill) + r.Decode*float64(g.Decode))
 		}
 		s.HadGPUHoursAll = gh(s.HadReplicaHoursAll)
-		// A need with prefill unpriced has no GPU-hours: half a fleet's
-		// GPUs set beside a whole fleet's would read as waste.
-		if s.Counts.Sized > 0 && prefillPriced {
+		// A need with prefill unpriced in any bucket has no GPU-hours: half
+		// a fleet's GPUs set beside a whole fleet's would read as waste.
+		if s.Counts.Sized > 0 && s.Counts.PrefillNotPriced == 0 {
 			s.NeededGPUHours, s.HadGPUHours = gh(need), gh(had)
 		}
 	}

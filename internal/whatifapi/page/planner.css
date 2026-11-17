@@ -205,8 +205,14 @@ td:first-child, th:first-child { text-align: left; }
 .daysum, .daynotes { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
 .daynotes { font-size: 12px; color: var(--muted); }
 svg .ptitle { fill: var(--text-primary); font-weight: 600; }
-svg .dband, .legend .dband { fill: var(--series-1); fill-opacity: 0.18; stroke: none; }
-svg .dunder, .legend .dunder { fill: var(--critical); fill-opacity: 0.24; stroke: none; }
+/* Washes at about 10%, as the dataviz reference has them; the band a step
+   stronger in dark mode, where 10% of the hue on the dark surface is lost. */
+svg .dband, .legend .dband { fill: var(--series-1); fill-opacity: 0.12; stroke: none; }
+svg .dunder, .legend .dunder { fill: var(--critical); fill-opacity: 0.12; stroke: none; }
+@media (prefers-color-scheme: dark) {
+  svg .dband, .legend .dband { fill-opacity: 0.26; }
+  svg .dunder, .legend .dunder { fill-opacity: 0.2; }
+}
 /* The hatch's fill is the pattern, set on the element: no fill here. */
 svg .dunmet, .legend .dunmet { stroke: none; }
 svg .hatchl { stroke: var(--muted); stroke-width: 1.5; }
@@ -215,5 +221,9 @@ svg .pnote { fill: var(--text-secondary); font-size: 12px; }
 .c-need { stroke: var(--series-2); fill: var(--series-2); }
 .c-had { stroke: var(--muted); fill: var(--muted); }
 svg .line.c-had, svg .line.c-need, svg .line.c-rate { fill: none; }
+/* Needed is drawn wide under had, so that where the two are equal both
+   show: the grey line inside the orange one. */
+svg .line.c-need { stroke-width: 4; }
+svg .line.c-had { stroke-width: 1.5; }
 .dayrefused { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--critical); }
 .dayrefused .hint { color: var(--text-secondary); }

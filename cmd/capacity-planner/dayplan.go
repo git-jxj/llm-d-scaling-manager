@@ -32,7 +32,7 @@ func seriesOf(data []byte, st *learnreplay.State, v learnreplay.SeriesVariants) 
 	for i, c := range cycles {
 		out[i] = whatifapi.SeriesSample{At: c.At, Rate: c.ArrivalRate, RateKnown: c.RateKnown, Prefill: c.PrefillPods, Decode: c.DecodePods,
 			PrefillGPUs: c.PrefillGPUs, DecodeGPUs: c.DecodeGPUs, PromptTokens: c.PromptTokens, OutputTokens: c.OutputTokens,
-			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape}
+			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods}
 	}
 	return out, nil
 }
@@ -71,7 +71,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.tpot, "tpot", "", "the TPOT target: a mean (4ms) or a percentile (4ms@p90), or none; default the policy's")
 	fs.Float64Var(&f.headroom, "headroom", 0, "the operating point as a fraction of the knee; default the policy's")
 	fs.StringVar(&f.bucket, "bucket", whatifapi.DefaultDayPlanStep.String(), "the length of a bucket, each sized on its own")
-	fs.StringVar(&f.sizeFor, "size-for", "", "the rate of a bucket to size for: mean, p95 or max of its cycles; default p95 when the buckets hold 10 cycles or more, else mean")
+	fs.StringVar(&f.sizeFor, "size-for", "", "the rate of a bucket to size for: mean, p95 or max of its cycles; default p95, but the mean, less conservative and flagged FewCyclesForP95, for a bucket of fewer than 20 cycles")
 	fs.Float64Var(&f.minRequests, "min-requests", whatifapi.DefaultMinRequests, "the fewest requests a bucket must hold to be sized")
 	fs.IntVar(&f.maxPrefill, "max-prefill", 0, "the most prefill replicas a bucket is sized to; 0 is 32")
 	fs.IntVar(&f.maxDecode, "max-decode", 0, "the most decode replicas a bucket is sized to; 0 is 32")
@@ -91,7 +91,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	// The analyzers the replay runs log through controller-runtime, which
 	// the CLI never shows.
 	ctrllog.SetLogger(logr.Discard())
-	res, err := f.resolve(ctx, warn)
+	res, err := resolveDay(ctx, &f, warn)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err != nil {
 		return err
 	}
-	plan, err := whatifapi.DayPlan(ctx, res, req, "schema-v"+strconv.Itoa(schemaVersion))
+	plan, err := planDay(ctx, res, req, "schema-v"+strconv.Itoa(schemaVersion))
 	if err != nil {
 		if whatifapi.IsInputError(err) {
 			return usageError{err}
@@ -119,14 +119,24 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	return dayPlanExit(plan)
 }
 
-// dayPlanExit is the day plan's exit: 3 when the source refused a term or a
-// bucket's rate is beyond the bound, as a refused role exits elsewhere; the
-// output is printed either way.
+// dayPlanExit is the day plan's exit: 3 when the source refused a term, a
+// bucket's rate is beyond the bound, or no bucket was sized at all, as a
+// refused role exits elsewhere; the output is printed either way.
 func dayPlanExit(p *whatifapi.DayPlanResponse) error {
-	if len(p.Refused) > 0 || p.Summary.Counts.Unmet > 0 {
+	if len(p.Refused) > 0 || p.Summary.Counts.Unmet > 0 || p.Summary.Counts.Sized == 0 {
 		return exitStatus(3)
 	}
 	return nil
+}
+
+// planDay plans the day: whatifapi.DayPlan, which tests replace with one
+// that prices each plan once per test binary.
+var planDay = whatifapi.DayPlan
+
+// resolveDay resolves a day plan's source: f.resolve, which tests replace
+// with one that replays each recording once per test binary.
+var resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*whatifapi.Resolved, error) {
+	return f.resolve(ctx, warn)
 }
 
 // resolve reads the source as serve resolves it: a recording by its file,
@@ -262,6 +272,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 			what, r.Reason, r.Buckets, r.Detail, r.Hint, r.Effect)
 	}
 	b.WriteString("\n")
+	b.WriteString("each hour: the need of its busiest bucket, the fewest pods it had, and the fleet it had judged whole at each bucket's rate\n")
 	const layout = "%-17s %9s %9s %6s %6s %6s %6s  %s\n"
 	fmt.Fprintf(&b, layout, "hour (UTC)", "rate mean", "rate p95", "need P", "need D", "had P", "had D", "")
 	for _, h := range p.Hours {
@@ -272,6 +283,9 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		np, nd, ap, ad := "-", "-", "-", "-"
 		if h.Needed != nil {
 			nd = strconv.Itoa(h.Needed.Decode)
+			if h.Needed.AtLeast {
+				nd = ">=" + nd
+			}
 			if h.Needed.Prefill != nil {
 				np = strconv.Itoa(*h.Needed.Prefill)
 			}
@@ -291,20 +305,15 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	fmt.Fprintf(&b, "\nbuckets: %d sized (%d under, %d over, %d match; %d for the p95, %d for the mean, %d for the max), "+
 		"%d beyond the bound, %d refused, %d too little data, %d no data\n",
 		c.Sized, c.Under, c.Over, c.Match, c.SizedForP95, c.SizedForMean, c.SizedForMax, c.Unmet, c.Refused, c.TooLittleData, c.NoData)
-	fleet := func(n *whatifapi.DayNeeded) string {
-		if n.Prefill == nil {
-			return fmt.Sprintf("%d decode (prefill not priced)", n.Decode)
-		}
-		return fmt.Sprintf("%d prefill + %d decode", *n.Prefill, n.Decode)
-	}
 	hours := func(r *whatifapi.RoleHours) string {
 		if r.Prefill == nil {
-			return fmt.Sprintf("%.2f decode (prefill not priced)", r.Decode)
+			return fmt.Sprintf("%.2f decode (prefill not priced in %d of the %d)", r.Decode, c.PrefillNotPriced, c.Sized)
 		}
 		return fmt.Sprintf("%.2f prefill + %.2f decode", *r.Prefill, r.Decode)
 	}
 	if s.PeakNeeded != nil {
-		fmt.Fprintf(&b, "needed: peak %s, min %s\n", fleet(s.PeakNeeded), fleet(s.MinNeeded))
+		fmt.Fprintf(&b, "needed: at the busiest bucket %s, at the quietest %s (the fewest replicas, decode first; another mix may serve too)\n",
+			neededText(s.PeakNeeded), neededText(s.MinNeeded))
 		fmt.Fprintf(&b, "replica-hours over the %d sized buckets: needed %s, had %s\n",
 			c.Sized, hours(s.NeededReplicaHours), hours(s.HadReplicaHours))
 		if s.NeededGPUHours != nil {
@@ -333,6 +342,15 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	}
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// neededText is a needed fleet in words: decode sized alone is a lower
+// bound.
+func neededText(n *whatifapi.DayNeeded) string {
+	if n.Prefill == nil {
+		return fmt.Sprintf("at least %d decode (prefill not priced)", n.Decode)
+	}
+	return fmt.Sprintf("%d prefill + %d decode", *n.Prefill, n.Decode)
 }
 
 // valueOrZero is *p, or 0 when p is nil.

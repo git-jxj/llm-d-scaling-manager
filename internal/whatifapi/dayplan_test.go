@@ -1,11 +1,15 @@
 package whatifapi
 
 import (
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // cycles is n cycles every gap from t0, each at rate.
@@ -35,14 +39,12 @@ func TestBucketizeAcrossDST(t *testing.T) {
 			assert.Equal(t, 5*time.Minute, x.start.Sub(b[i-1].start))
 		}
 	}
-	// The hour hours are UTC too: 25 of them, each once.
-	hours := hoursOf(series, make([]DayBucket, 0))
-	assert.Empty(t, hours)
+	// The hours are UTC too: 25 of them, each once.
 	db := make([]DayBucket, len(b))
 	for i, x := range b {
 		db[i] = DayBucket{Start: x.start}
 	}
-	hours = hoursOf(series, db)
+	hours := hoursOf(series, db)
 	require.Len(t, hours, 25)
 	for i := 1; i < len(hours); i++ {
 		assert.Equal(t, time.Hour, hours[i].Start.Sub(hours[i-1].Start))
@@ -82,15 +84,119 @@ func TestRateOf(t *testing.T) {
 	assert.Equal(t, DayRate{Mean: 4, P95: 4, Max: 4}, rateOf([]SeriesSample{{Rate: 4}}))
 }
 
-// Under is either role short; over is neither short and one more.
-func TestVerdictOf(t *testing.T) {
-	two := 2
-	assert.Equal(t, VerdictUnder, verdictOf(DayNeeded{Prefill: &two, Decode: 2}, FleetCounts{3, 1}))
-	assert.Equal(t, VerdictOver, verdictOf(DayNeeded{Prefill: &two, Decode: 2}, FleetCounts{2, 3}))
-	assert.Equal(t, VerdictMatch, verdictOf(DayNeeded{Prefill: &two, Decode: 2}, FleetCounts{2, 2}))
-	// Prefill not priced: decode alone decides, whatever prefill had.
-	assert.Equal(t, VerdictMatch, verdictOf(DayNeeded{Decode: 2}, FleetCounts{0, 2}))
-	assert.Equal(t, VerdictUnder, verdictOf(DayNeeded{Decode: 3}, FleetCounts{9, 2}))
+// stubDay is a day plan of n cycles every 15 s at rate, a fleet of had
+// prefill and decode pods, on the stub's fleets (stub_test.go): prefill knee
+// 10 r/s a replica, decode 12, TTFT 0.2 s and TPOT 12 ms targets, headroom
+// 0.85.
+func stubDay(t *testing.T, r *stubResolver, n int, rate float64, had FleetCounts) *DayPlanResponse {
+	t.Helper()
+	res, err := r.Resolve(t.Context(), InputsRequest{})
+	require.NoError(t, err)
+	t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	for i := range n {
+		res.Series = append(res.Series, SeriesSample{At: t0.Add(time.Duration(i) * 15 * time.Second), Rate: rate, RateKnown: true,
+			Prefill: had.Prefill, Decode: had.Decode})
+	}
+	p, err := DayPlan(t.Context(), res, DayPlanRequest{}, "schema-v3")
+	require.NoError(t, err)
+	return p
+}
+
+// The fleet a bucket had is judged whole, at the bucket's rate, never role
+// by role against the fewest replicas found. Here decode admission cuts the
+// prefill knee a hundredfold below 3 prefill and 3 decode replicas, so the
+// search, decode first, finds 3 prefill and 1 decode for 6 r/s; the fleet
+// had, 2 prefill and 3 decode, serves 6 r/s too (its limit 10 r/s), and
+// neither 1+3 (5 r/s) nor 2+2 (cut) does: it matches. Role by role it would
+// read under, prefill 2 against 3.
+func TestDayPlanJudgesTheFleetItHadWhole(t *testing.T) {
+	r := &stubResolver{dip: func(p, d int) bool { return p < 3 && d < 3 }}
+	p := stubDay(t, r, 20, 6, FleetCounts{Prefill: 2, Decode: 3})
+	require.Len(t, p.Buckets, 1)
+	b := p.Buckets[0]
+	require.Equal(t, BucketSized, b.Status)
+	require.NotNil(t, b.Needed.Prefill)
+	assert.Equal(t, DayNeeded{Prefill: ptrInt(3), Decode: 1}, *b.Needed)
+	require.NotNil(t, b.HadLimit)
+	require.NotNil(t, b.HadLimit.Value)
+	assert.GreaterOrEqual(t, *b.HadLimit.Value, 6.0, "the fleet it had serves the rate")
+	assert.Equal(t, VerdictMatch, b.Verdict, "judged whole, 2+3 serves 6 r/s and one replica fewer does not")
+	assert.Empty(t, p.Summary.UnderHours)
+
+	// More than enough: 4+4 serves, and so does 3+4: over.
+	over := stubDay(t, r, 20, 6, FleetCounts{Prefill: 4, Decode: 4})
+	assert.Equal(t, VerdictOver, over.Buckets[0].Verdict)
+	// Too few: 1+1 serves 0.1 r/s: under.
+	under := stubDay(t, r, 20, 6, FleetCounts{Prefill: 1, Decode: 1})
+	assert.Equal(t, VerdictUnder, under.Buckets[0].Verdict)
+	assert.Len(t, under.Summary.UnderHours, 1)
+	// No decode pod serves nothing: under, with no figure to price.
+	none := stubDay(t, r, 20, 6, FleetCounts{Prefill: 2, Decode: 0})
+	assert.Equal(t, VerdictUnder, none.Buckets[0].Verdict)
+}
+
+// ptrInt is a pointer to n.
+func ptrInt(n int) *int { return &n }
+
+// A source that cannot price prefill sizes decode alone, as a lower bound
+// (AtLeast), names the refusal once, gives no GPU-hours of a need, and
+// judges decode alone.
+func TestDayPlanDecodeAloneIsALowerBound(t *testing.T) {
+	p := stubDay(t, &stubResolver{refusePrefill: true}, 20, 6, FleetCounts{Prefill: 1, Decode: 1})
+	require.Len(t, p.Refused, 1)
+	assert.Equal(t, termTTFT, p.Refused[0].Term)
+	assert.Equal(t, string(whatif.NoPrefillCapacity), p.Refused[0].Reason)
+	b := p.Buckets[0]
+	require.NotNil(t, b.Needed)
+	assert.Equal(t, DayNeeded{Decode: 1, AtLeast: true}, *b.Needed)
+	assert.Contains(t, b.Flags, FlagPrefillNotPriced)
+	assert.Equal(t, VerdictMatch, b.Verdict)
+	assert.Equal(t, 1, p.Summary.Counts.PrefillNotPriced)
+	assert.Nil(t, p.Summary.NeededGPUHours)
+	assert.Nil(t, p.Summary.NeededReplicaHours.Prefill)
+	assert.True(t, slices.ContainsFunc(p.Notes, func(n string) bool { return strings.Contains(n, "lower bound") }))
+}
+
+// A refusal that holds at more replicas than one, which the probe at one a
+// role does not see, is still the source's: the buckets are refused and it
+// lands in Refused, not as a bucket beyond the bound. The stub refuses the
+// prefill limit with NoImbalance from 2 prefill replicas on, as a pricer that
+// left the imbalance f unlearned would; 6 r/s needs 2.
+func TestDayPlanRefusalAtMoreReplicas(t *testing.T) {
+	p := stubDay(t, &stubResolver{refuseFrom2: whatif.NoImbalance}, 20, 6, FleetCounts{Prefill: 2, Decode: 2})
+	assert.Zero(t, p.Summary.Counts.Unmet, "no rate is beyond the bound")
+	assert.Equal(t, 1, p.Summary.Counts.Refused)
+	require.Len(t, p.Refused, 1)
+	assert.Equal(t, termFleet, p.Refused[0].Term)
+	assert.Equal(t, string(whatif.NoImbalance), p.Refused[0].Reason)
+	assert.Equal(t, 1, p.Refused[0].Buckets)
+	assert.Equal(t, BucketRefused, p.Buckets[0].Status)
+
+	// The same at 4 r/s, which one prefill replica serves: sized.
+	low := stubDay(t, &stubResolver{refuseFrom2: whatif.NoImbalance}, 20, 4, FleetCounts{Prefill: 2, Decode: 2})
+	assert.Equal(t, 1, low.Summary.Counts.Sized)
+	assert.Empty(t, low.Refused)
+}
+
+// A bucket is sized for its p95 from 20 cycles on; of 19 it is sized for its
+// mean, flagged, since a nearest-rank p95 of 19 is the highest cycle.
+func TestDayPlanP95NeedsTwentyCycles(t *testing.T) {
+	q := &dayQuestion{sizeFor: SizeForP95}
+	r := DayRate{Mean: 5, P95: 9, Max: 10}
+	stat, rate := q.sizedRate(r, MinPercentileCycles)
+	assert.Equal(t, SizeForP95, stat)
+	assert.Equal(t, 9.0, rate)
+	stat, rate = q.sizedRate(r, MinPercentileCycles-1)
+	assert.Equal(t, SizeForMean, stat)
+	assert.Equal(t, 5.0, rate)
+	assert.Equal(t, 20, MinPercentileCycles, "the docs, the CLI help and the page say 20")
+	// Through a plan: 19 cycles of one bucket.
+	p := stubDay(t, &stubResolver{}, 19, 3, FleetCounts{Prefill: 1, Decode: 1})
+	assert.Equal(t, SizeForMean, p.Buckets[0].SizedFor)
+	assert.Contains(t, p.Buckets[0].Flags, FlagFewCyclesForP95)
+	p = stubDay(t, &stubResolver{}, 20, 3, FleetCounts{Prefill: 1, Decode: 1})
+	assert.Equal(t, SizeForP95, p.Buckets[0].SizedFor)
+	assert.NotContains(t, p.Buckets[0].Flags, FlagFewCyclesForP95)
 }
 
 // An hour is under when any bucket is under or beyond the bound, refused
@@ -128,6 +234,10 @@ func TestDayQuestionRefusals(t *testing.T) {
 		Policy: PolicyInfo{Headroom: 0.85, TTFT: &PolicyObjective{Statistic: "p90", Seconds: 1}}}
 	series := cycles(time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC), 15*time.Second, 100, 1)
 	e := &inputsEntry{id: "x", doc: doc, series: series}
+	// 12.5 hours at a 15 s step is 3000 steps, and two more buckets: over
+	// the cap; at 16 s, under it.
+	t0 := series[0].At
+	long := &inputsEntry{id: "y", doc: doc, series: []SeriesSample{{At: t0}, {At: t0.Add(750 * time.Minute)}}}
 	for name, c := range map[string]struct {
 		e    *inputsEntry
 		req  DayPlanRequest
@@ -138,7 +248,9 @@ func TestDayQuestionRefusals(t *testing.T) {
 		"a rate":      {e, DayPlanRequest{Traffic: &Traffic{Classes: &Classes{}}}, "traffic.classes"},
 		"a bad step":  {e, DayPlanRequest{Step: "1s"}, "step"},
 		"a bad stat":  {e, DayPlanRequest{SizeFor: "p50"}, "sizeFor"},
-		"many":        {e, DayPlanRequest{Step: "15s", MaxReplicas: nil}, ""},
+		"15s":         {e, DayPlanRequest{Step: "15s"}, ""},
+		"too many":    {long, DayPlanRequest{Step: "15s"}, "3000 a day plan sizes"},
+		"just enough": {long, DayPlanRequest{Step: "16s"}, ""},
 		"a bad floor": {e, DayPlanRequest{MinRequests: ptr(-1)}, "minRequests"},
 	} {
 		_, err := dayQuestionOf(c.e, c.req)
