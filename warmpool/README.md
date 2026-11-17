@@ -63,7 +63,9 @@ commit **`65ba31b`** (upstream `2c01cf8`, plus the port-conflict reclaim fix in
 > GROUP pool must be given `--launcher-image` naming a build that carries it:
 > `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless`, whose `launcher.py` is
 > byte-identical to this copy (verified by extracting it from the published
-> image). Nothing automatic keeps the three in step; this copy fell a commit
+> image). That build is v0.6.4 plus the follower fix, so group pools do not yet
+> have v0.8.0's eviction fixes (stopping the engine's whole process group, and a
+> stop that does not block the launcher). Nothing automatic keeps the three in step; this copy fell a commit
 > behind the image once already, which hid the very fix that makes group pools
 > work from anyone reading it here.
 >

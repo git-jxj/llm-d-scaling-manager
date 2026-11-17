@@ -272,7 +272,7 @@ delete it when they go
 | `9090` | gRPC over **mutual TLS** when the install can turn it on, else plaintext ([when](install-options.md#external-scaler-mutual-tls)) | Service `scaling-manager-external-scaler` (ClusterIP); NetworkPolicy `scaling-manager-external-scaler` admits only KEDA's namespace, where the admin phase wrote it (below) | with TLS, only a client certificate the install's CA signed for `scaling-manager-keda-client`; in plaintext, **none** | the KEDA external scaler |
 | `8443` | HTTPS | Service `scaling-manager-controller-manager-metrics-service` (ClusterIP) | TokenReview + SubjectAccessReview on `get /metrics` | self-signed certificate unless `--metrics-cert-path` is set (OpenShift sets it, from the service CA) |
 | `8081` | HTTP | no Service; the kubelet's probes | none | `/healthz`, `/readyz` |
-| `8001` (warm pool only) | HTTP, **plaintext** | the warm-pool pod's launcher (supervisor); also `8002` (proxy control) and `9001`-`9016` (engine instances) | **none** | the supervisor starts engine processes with **caller-supplied argv and env**, in a pod that mounts the shared model cache (`model-pvc`) **read-write**. The only protection is the pool's NetworkPolicy, see below |
+| `8001` (warm pool only) | HTTP, **plaintext** | the warm-pool pod's launcher (supervisor); also `8002` (proxy control) and `9001`-`9016` (engine instances) | **none** | the supervisor starts engine processes with **caller-supplied argv and env**, in a pod that mounts the shared model cache (`model-pvc`) **read-write**. The launcher image runs as **root** (upstream publishes it that way), so the pool Pod does not set `runAsNonRoot`. The only protection is the pool's NetworkPolicy, see below |
 
 **The warm-pool NetworkPolicy.** `deploy/warmpool.sh` renders one per pool,
 `llmsm-warm-pool-<pool>`, in the pool's namespace:
@@ -286,8 +286,8 @@ delete it when they go
   On `:8001` the launcher serves `/health`, `/v2/vllm/instances` (list, watch,
   create, delete, log) and, since launcher v0.7.0, `GET /v2/gpu-debug`, which runs a fixed
   `nvidia-smi` command and returns its output. It takes no input and changes
-  nothing, but it shows the node's GPUs and their processes, so the same rule
-  keeps it to the controller.
+  nothing, but it shows the Pod's GPUs, their memory use and any processes
+  `nvidia-smi` can see, so the same rule keeps it to the controller.
 - A pool whose unit spans several pods (`GROUP_SIZE` > 1) also admits **all
   ports, `:8001` included,** from any pod carrying that pool's labels, so the
   ranks can reach each other.

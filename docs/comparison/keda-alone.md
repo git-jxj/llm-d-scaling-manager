@@ -116,7 +116,7 @@ or wake endpoint: the scaling manager drives vLLM's own sleep mode (`/sleep`,
 Single-Pod pools run upstream launcher v0.8.0 unchanged
 ([`warmpool-deployment.yaml`](../../config/warmpool/warmpool-deployment.yaml));
 group pools need `--launcher-image ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless`,
-our fork, which adds a port-conflict reclaim and routes LeaderWorkerSet
+our fork of v0.6.4, without v0.8.0's eviction fixes, which adds a port-conflict reclaim and routes LeaderWorkerSet
 follower ranks to the headless executor, so engines that span machines can be
 pooled too
 ([what is copied, and from where](../../warmpool/README.md#what-is-copied-and-from-where)).

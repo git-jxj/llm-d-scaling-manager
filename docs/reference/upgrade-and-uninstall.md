@@ -129,6 +129,25 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.11.2 to v0.12.0
+
+#### The warm-pool launcher moves to v0.8.0
+
+Single-Pod warm pools now run FMA launcher v0.8.0; v0.11.2 ran v0.6.4. With
+v0.8.0, evicting a model stops every process of its engine, so its GPU memory
+is freed, and the launcher keeps answering health checks while it evicts.
+
+- **Existing pools stay on v0.6.4.** The controller does not update a pool.
+  A pool picks up v0.8.0 only when you run `deploy/warmpool.sh create` again
+  with the same flags, or re-apply the `config/warmpool/` overlay.
+- **Do it in a quiet window.** The pool Deployment uses `strategy: Recreate`,
+  so the update restarts every pool Pod at once and drops every warm engine.
+  The pool is cold until the new Pods have pulled the image and loaded their
+  models again. Pre-pulling the image on the GPU nodes shortens that window.
+- **Staying on v0.6.4 is safe.** The controller talks to both the same way.
+- **Group pools do not change.** They keep the v0.6.4-based headless image
+  given with `--launcher-image` ([pools of groups](../guides/warm-pool/groups.md#a-group-needs-a-patched-supervisor-image)).
+
 ### Upgrading from v0.11.1 to v0.11.2
 
 The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
