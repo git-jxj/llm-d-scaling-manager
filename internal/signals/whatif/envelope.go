@@ -393,7 +393,7 @@ func (g Region) misses(f Figure, outside map[Flag]string) []string {
 	if s := g.ArrivalCV2; s != nil {
 		switch {
 		case c.ArrivalsUnknown:
-			out = append(out, fmt.Sprintf("arrivals not measured (Poisson assumed), measured at Ca^2 %s", spanText(*s, ratioText)))
+			out = append(out, "arrivals not measured (Poisson assumed), measured at Ca^2 "+spanText(*s, ratioText))
 		case !s.holds(ca2):
 			out = append(out, fmt.Sprintf("arrivals Ca^2 %s, measured %s", ratioText(ca2), spanText(*s, ratioText)))
 		}
