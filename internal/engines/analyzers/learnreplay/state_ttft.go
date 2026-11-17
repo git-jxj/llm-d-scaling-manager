@@ -65,9 +65,10 @@ type DecodeTTFTState struct {
 	// Waiting is the largest decode backlog (decodeBacklog) any cycle of the
 	// window carries, a backlog carried for DecodeTTFTLag after it drains.
 	EngineTTFT whatif.DecodeTTFT
-	// CalmCycle is the latest cycle, through this one, whose window of
-	// whatif.TTFTWindowCycles cycles carried no decode backlog on any of
-	// them: the cycle to answer at instead, read at CalmAt. 0 when no cycle
+	// CalmCycle is the latest cycle, through this one, that read a decode
+	// TTFT and closed a run of whatif.TTFTWindowCycles such cycles carrying no
+	// decode backlog (idle cycles between them neither count nor break the
+	// run): the cycle to answer at instead, read at CalmAt. 0 when no cycle
 	// did.
 	CalmCycle int
 	CalmAt    time.Time
@@ -219,12 +220,16 @@ func decodeBacklog(rm domain.ReplicaMetrics) (int, bool) {
 }
 
 // DecodeTTFTLag is how long a decode backlog taints the decode engine's TTFT
-// after the queue drains. The TTFT is a mean over the last minute
+// after the last cycle that read it. The TTFT is a rate over one minute
 // (registration.QueryAvgTTFT), and a request that queued has its first token
-// only once it leaves the queue, so the mean reads high for that minute with
-// the queue already empty: on ttft-staircase-c-on the cycle after the last
-// backlog read 6.8 s with none waiting. 30 s more covers the scrape and the
-// cycle.
+// only once it leaves the queue, so for up to a minute the mean holds the
+// queue's wait with the queue empty. The capacity series is held over the
+// same minute (max_over_time[1m], registration.QueryCapacityQueueLength), so
+// while that hold lasts the two drain together. It does not always last: on
+// ttft-staircase-c-on a pod that was going away read 143 waiting, then 0 on
+// the next cycle, and one pod read 6.8 s with its own capacity at 0. So the
+// lag is the query's minute, again, and 30 s for the scrape, the fetch cache
+// and the cycle. Neither interval is in the recording, so it is a constant.
 const DecodeTTFTLag = 90 * time.Second
 
 // backlogTrack is one decode variant's backlog over the cycles: the latest
@@ -244,8 +249,12 @@ type backlogTrack struct {
 
 // note folds one cycle's backlog in and returns the backlog the cycle's TTFT
 // carries: the cycle's own, or the latest one read within DecodeTTFTLag
-// before it.
-func (b *backlogTrack) note(d *decodeRows, cycle int, at time.Time) int {
+// before it. read says the cycle has a decode TTFT: only such a cycle counts
+// toward a calm window, so a calm cycle is one the planner can answer at with
+// a calm decode figure, never an idle one; an idle cycle clears nothing. The
+// window must be whole: the first cycles of a window that begins during a
+// backlog's tail cannot see it.
+func (b *backlogTrack) note(d *decodeRows, cycle int, at time.Time, read bool) int {
 	if d.unread {
 		b.unreadCycle = cycle
 	}
@@ -261,8 +270,11 @@ func (b *backlogTrack) note(d *decodeRows, cycle int, at time.Time) int {
 		b.calmRun = 0
 		return carried
 	}
+	if !read {
+		return 0
+	}
 	b.calmRun++
-	if b.calmRun >= min(cycle, whatif.TTFTWindowCycles) {
+	if b.calmRun >= whatif.TTFTWindowCycles {
 		b.calm, b.calmAt = cycle, at
 	}
 	return 0
@@ -356,7 +368,7 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 			b = &backlogTrack{}
 			t.backlogs[v] = b
 		}
-		slot.Waiting = b.note(d, cycle, at)
+		slot.Waiting = b.note(d, cycle, at, slot.Seconds > 0)
 		t.engineTTFT[v] = keepLast(t.engineTTFT[v], slot, whatif.TTFTWindowCycles)
 	}
 }

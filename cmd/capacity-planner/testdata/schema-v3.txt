@@ -270,6 +270,7 @@ roles[].ttft.decodeHeldPromptTokens number
 roles[].ttft.decodePerStep number
 roles[].ttft.decodePerTokenSeconds number
 roles[].ttft.decodeSide string
+roles[].ttft.decodeTTFTCalmAt string
 roles[].ttft.decodeTTFTCalmCycle number
 roles[].ttft.decodeTTFTPromptTokens number
 roles[].ttft.decodeTTFTSeconds number

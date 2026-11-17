@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // stairGolden is a staircase golden's recording.
@@ -141,7 +145,13 @@ func TestDecodeTTFTUnderLoad_TheHintFollowsTheSource(t *testing.T) {
 			DecodeTTFT: learnreplay.DecodeTTFTState{CalmCycle: 249, CalmAt: at}}}}
 		got := pf.calmCycleHint(refusal).(whatif.Unanswerable)
 		assert.Equal(t, refusal.Detail+c.want, got.Detail)
-		assert.Equal(t, 249, pf.in.DecodeTTFTCalmCycle)
+		if c.hint == hintCLIPrometheus || c.hint == hintAPIPrometheus {
+			assert.Zero(t, pf.in.DecodeTTFTCalmCycle, "a window's cycle is no address")
+			assert.Equal(t, "2026-11-06T02:06:03Z", pf.in.DecodeTTFTCalmAt)
+		} else {
+			assert.Equal(t, 249, pf.in.DecodeTTFTCalmCycle)
+			assert.Empty(t, pf.in.DecodeTTFTCalmAt)
+		}
 	}
 
 	none := &pricedFleet{pv: &pricedVariant{}}
@@ -153,4 +163,47 @@ func TestDecodeTTFTUnderLoad_TheHintFollowsTheSource(t *testing.T) {
 	pf := &pricedFleet{pv: &pricedVariant{state: learnreplay.VariantState{DecodeTTFT: learnreplay.DecodeTTFTState{CalmCycle: 249}}}}
 	assert.Equal(t, other, pf.calmCycleHint(other), "another reason is left as it is")
 	assert.Zero(t, pf.in.DecodeTTFTCalmCycle, "and names no cycle")
+}
+
+// Through the API a recording source names the cycle by its own field: the
+// server passes the source's kind down to the fleet it prices.
+func TestDecodeTTFTUnderLoad_TheAPINamesSourceCycle(t *testing.T) {
+	dir := t.TempDir()
+	b, err := os.ReadFile(stairGolden("b-off"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b-off.jsonl.gz"), b, 0o600))
+	s := &servedSources{recordings: dir}
+	res, err := s.Resolve(context.Background(), whatifapi.InputsRequest{
+		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: "b-off.jsonl.gz"}})
+	require.NoError(t, err)
+	vp, a := 200000.0, 0.02
+	fl, err := res.Pricer.Fleet(whatifapi.Knobs{Headroom: 0.85, Assume: whatifapi.Assume{VP: &vp, A: &a}})
+	require.NoError(t, err)
+	got, ok := fl.TTFTAt(1).(whatif.Unanswerable)
+	require.True(t, ok, "%#v", fl.TTFTAt(1))
+	assert.Equal(t, whatif.DecodeTTFTUnderLoad, got.Reason)
+	assert.Contains(t, got.Detail, "; answer at a calmer cycle: source.cycle 249, the latest with no decode queue")
+	assert.NotContains(t, got.Detail, "--cycle")
+}
+
+// Where the decode engine does not say why requests wait, a backlog cannot
+// be read: the figure is priced, not refused, and the answer carries
+// DecodeQueueUnread for a client to act on.
+func TestDecodeTTFTUnderLoad_AnUnreadQueueIsFlagged(t *testing.T) {
+	st := workedState(t)
+	f := answerFlags{set: map[string]bool{"assume-vp": true}, assumeVP: 30000}
+	variants, err := f.decodeVariants(st)
+	require.NoError(t, err)
+	ps, err := f.prefillState(st)
+	require.NoError(t, err)
+	noLine := variants[0]
+	noLine.decode.Line.A, noLine.decode.Line.B = 0, 0
+	noLine.state.DecodeTTFT.EngineTTFT = whatif.DecodeTTFT{Seconds: 0.03, PromptTokens: 1000}
+	for _, unread := range []bool{false, true} {
+		noLine.state.DecodeTTFT.BacklogUnread = unread
+		pf := f.fleetFor(st, ps, ttftQuestion{q: 0.9}, &noLine)
+		got := pf.priced(func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, 1, 0.9) })
+		require.IsType(t, whatif.TTFT{}, got)
+		assert.Equal(t, unread, slices.Contains(got.(whatif.TTFT).Flags, decodeQueueUnread), "unread %v", unread)
+	}
 }

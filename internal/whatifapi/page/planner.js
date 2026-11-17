@@ -23,6 +23,7 @@ const FLAG_WORDS = {
   TransferHeld: ["The KV transfer time was read on earlier cycles and held.", "a quiet reading of the transfer at this load"],
   DecodeSideOmitted: ["Decode's part of the TTFT (its admission wait and first token) is left out: the TTFT over-promises.", "a decode ITL line or the decode engine's TTFT"],
   DecodeTTFTUnmeasured: ["Decode's TTFT was not measured, so the KV pull and first token are left out (25% to 65% on the recordings).", "the decode engine's TTFT histogram"],
+  DecodeQueueUnread: ["The decode engine does not say why requests wait, so a decode TTFT measured while decode was queueing is not caught: the floor may be a queue.", "vLLM v0.20.0 or later, which reports the capacity wait"],
   DecodeEngineMeasured: ["Decode's part of the TTFT is the decode engine's measured TTFT, in place of the admission wait.", "a decode ITL line"],
   DecodeTermOmitted: ["The decode engine's TTFT has no fit: the older, smaller sum stands for it, and the TTFT over-promises.", "readings of the decode engine's TTFT across load"],
   DecodeStepSlopeAssumed: ["The decode term rises with an assumed slope from where it was measured.", "readings of the decode engine's TTFT across load"],

@@ -54,6 +54,11 @@ const (
 const (
 	// assumedArrivalCV2 is a Ca^2 --arrival-cv2 supplied.
 	assumedArrivalCV2 whatif.Flag = "AssumedArrivalCV2"
+	// decodeQueueUnread is a decode side priced from the decode engine's
+	// measured TTFT whose rows do not say why requests wait (no capacity
+	// series): a figure read while decode queued is not caught there, and
+	// held at every rate it is the floor (whatif.DecodeTTFTUnderLoad).
+	decodeQueueUnread whatif.Flag = "DecodeQueueUnread"
 )
 
 // outputSpreadUnreadWords is whatif.OutputSpreadUnread in words, on the assumed
@@ -677,6 +682,7 @@ func (pf *pricedFleet) decodeSide() {
 		pf.in.DecodeTTFTSeconds = pf.fleet.DecodeTTFT.Seconds
 		pf.in.DecodeTTFTPromptTokens = pf.fleet.DecodeTTFT.PromptTokens
 		if pf.pv != nil && pf.pv.state.DecodeTTFT.BacklogUnread {
+			pf.flags = append(pf.flags, decodeQueueUnread)
 			pf.assume("%s", backlogUnreadWords)
 		}
 		return
@@ -713,8 +719,12 @@ func (pf *pricedFleet) calmCycleHint(r whatif.Result) whatif.Result {
 		u.Detail += "; no cycle of the source read decode without a queue"
 		return u
 	}
-	pf.in.DecodeTTFTCalmCycle = d.CalmCycle
 	at := d.CalmAt.UTC().Format(time.RFC3339)
+	if pf.hint == hintCLIPrometheus || pf.hint == hintAPIPrometheus {
+		pf.in.DecodeTTFTCalmAt = at
+	} else {
+		pf.in.DecodeTTFTCalmCycle = d.CalmCycle
+	}
 	switch pf.hint {
 	case hintCLIPrometheus:
 		u.Detail += fmt.Sprintf("; end the window before decode queued: --to %s, the latest cycle with no decode queue", at)

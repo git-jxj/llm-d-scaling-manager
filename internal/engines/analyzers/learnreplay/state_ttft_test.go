@@ -569,3 +569,46 @@ func TestDecodeTTFT_WaitingAndCalmCycle(t *testing.T) {
 		assert.False(t, d.BacklogUnread, "the goldens carry the capacity series")
 	}
 }
+
+// After a collapse the traffic often stops. An idle cycle reads no decode
+// TTFT, so it is never named calm: answered there, the decode side would be
+// left out, not read calm. The calm cycle stays the last one that read a calm
+// figure until a window of such readings follows.
+func TestTTFTSamples_AnIdleTailIsNotCalm(t *testing.T) {
+	row := func(ttft float64, capacity int) domain.ReplicaMetrics {
+		r := decodeRow("d0", ttft, 10)
+		r.CapacityQueueKnown, r.CapacityQueueLength = true, capacity
+		return r
+	}
+	s := newTTFTSamples()
+	t0 := time.Unix(1000, 0)
+	note := func(cycle int, rows ...domain.ReplicaMetrics) {
+		s.note(pdInput(append([]domain.ReplicaMetrics{prefillRow("p0", 8000, 1)}, rows...)...), cycle, t0.Add(time.Duration(cycle)*15*time.Second))
+	}
+	for c := 1; c <= 6; c++ {
+		note(c, row(0.15, 0))
+	}
+	note(7, row(9, 136))
+	for c := 8; c <= 22; c++ {
+		note(c)
+	}
+	assert.Equal(t, 6, s.backlogs["dec"].calm, "an idle tail names no calm cycle")
+	for c := 23; c < 23+whatif.TTFTWindowCycles; c++ {
+		note(c, row(0.15, 0))
+	}
+	assert.Equal(t, 22+whatif.TTFTWindowCycles, s.backlogs["dec"].calm, "a window of calm readings does")
+}
+
+// A window that begins inside a backlog's tail cannot see the backlog: its
+// first cycles are not named calm on less than a whole window.
+func TestTTFTSamples_AShortWindowIsNotCalm(t *testing.T) {
+	s := newTTFTSamples()
+	r := decodeRow("d0", 0.15, 10)
+	r.CapacityQueueKnown = true
+	for c := 1; c < whatif.TTFTWindowCycles; c++ {
+		s.note(pdInput(prefillRow("p0", 8000, 1), r), c, time.Unix(int64(15*c), 0))
+		assert.Zero(t, s.backlogs["dec"].calm, "cycle %d", c)
+	}
+	s.note(pdInput(prefillRow("p0", 8000, 1), r), whatif.TTFTWindowCycles, time.Unix(int64(15*whatif.TTFTWindowCycles), 0))
+	assert.Equal(t, whatif.TTFTWindowCycles, s.backlogs["dec"].calm)
+}

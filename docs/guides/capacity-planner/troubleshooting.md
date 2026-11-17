@@ -53,6 +53,11 @@ and under **Inputs**; the API puts it in `refused`.
 | `NoPerRequestLengths` on the observed rate and bucket shares | Expected: the source carries no per-request lengths. | Nothing; the mix line uses the mean prompt and output. |
 | `NotRecorded`, `UnreadableArgument` on `maxModelLen` | No `--max-model-len` in the recorded arguments, or one the planner cannot read. | Pass the engine arguments as the engine ran them. |
 
+A TTFT flagged `DecodeQueueUnread` uses a decode TTFT the planner cannot check
+for a queue: the engine does not report why requests wait (SGLang, or vLLM
+before v0.20.0). If the floor is seconds where your clients see far less, it
+was measured while decode was saturated. Answer at an earlier cycle or window.
+
 A figure flagged `AssumedShape`, `AssumedTPOTRatio` or with an assumed term
 stands, but rests on a value you typed. The **Flags** drawer says what clears
 each flag.

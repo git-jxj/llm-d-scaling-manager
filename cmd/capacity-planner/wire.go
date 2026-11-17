@@ -144,8 +144,12 @@ type wireTTFT struct {
 	DecodeTTFTSeconds      float64 `json:"decodeTTFTSeconds,omitempty"`
 	DecodeTTFTPromptTokens float64 `json:"decodeTTFTPromptTokens,omitempty"`
 	// DecodeTTFTCalmCycle is the latest cycle with no decode queue, present
-	// only on a DecodeTTFTUnderLoad refusal: the cycle to answer at.
-	DecodeTTFTCalmCycle int `json:"decodeTTFTCalmCycle,omitempty"`
+	// only on a DecodeTTFTUnderLoad refusal from a recording: the cycle to
+	// answer at. DecodeTTFTCalmAt is that cycle's time (RFC 3339) in its
+	// place from a Prometheus window, whose cycles no flag can name: the
+	// time to end the window at.
+	DecodeTTFTCalmCycle int    `json:"decodeTTFTCalmCycle,omitempty"`
+	DecodeTTFTCalmAt    string `json:"decodeTTFTCalmAt,omitempty"`
 	// DecodeTermSource and RouterHopSource say where the line's decode term
 	// and hop came from (measured, assumed; the term may be omitted), each
 	// with why no fit stands. The figures are the term as priced: on no fit
