@@ -199,9 +199,10 @@ var _ = Describe("EngineTPOTRatio", func() {
 	It("answers, coarse and flagged, up to the line", func() {
 		r, flags, refused := EngineTPOTRatio([]TPOTWindow{window(0.020)}, 0.9)
 		Expect(refused).ToNot(HaveOccurred())
-		// Read inside the coarse bucket: rank 90 is 40 of its 45 above 10 ms.
-		Expect(r.Value).To(BeNumerically("~", (0.010+0.010*40.0/45)/0.010, 1e-9))
-		Expect(flags).To(ConsistOf(CoarseTPOTBucket, InterpolatedTPOTPercentile, EngineTPOTHistogram))
+		// The mean caps nothing here: the 5 requests above the rank may each
+		// sit at the edge.
+		Expect(r.Value).To(BeNumerically("~", 2, 1e-9))
+		Expect(flags).To(ConsistOf(CoarseTPOTBucket, EngineTPOTHistogram))
 	})
 
 	It("refuses past it, keeping both flags", func() {
@@ -218,16 +219,16 @@ var _ = Describe("EngineTPOTRatio", func() {
 		for i := range ws {
 			ws[i] = window(0.012)
 		}
-		ws[0] = window(0.5)
+		// Rank 14 of 20 (ratioRank), the fourteenth width sorted: six wide
+		// windows are the most it stands, and a seventh reaches the rank.
+		Expect(ratioRank(20)).To(Equal(13))
+		for i := range 6 {
+			ws[i] = window(0.5)
+			_, _, refused := EngineTPOTRatio(ws, 0.9)
+			Expect(refused).ToNot(HaveOccurred(), "%d wide windows", i+1)
+		}
+		ws[6] = window(0.5)
 		_, _, refused := EngineTPOTRatio(ws, 0.9)
-		Expect(refused).ToNot(HaveOccurred())
-		// Rank 18 of 20, the eighteenth width sorted: two wide windows are the
-		// most it stands, and a third reaches the rank.
-		ws[1] = window(0.5)
-		_, _, refused = EngineTPOTRatio(ws, 0.9)
-		Expect(refused).ToNot(HaveOccurred())
-		ws[2] = window(0.5)
-		_, _, refused = EngineTPOTRatio(ws, 0.9)
 		Expect(refused).To(HaveOccurred())
 	})
 

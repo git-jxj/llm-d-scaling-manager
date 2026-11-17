@@ -104,8 +104,11 @@ func TestRatioByFill_ThinBucketFallsBackToGlobal(t *testing.T) {
 	d := olsSweep()
 	slo := SLOAtReplicas(d, ReplicasQuery{Rate: 0.5 * mustAnswer(t, KneeRate(d)).Value, PercentileTarget: &TPOTTarget{Percentile: 0.9, Ratio: r}})
 	p := mustAnswer(t, slo.PercentileTPOT)
-	if k := p.Basis.Fill; k > 0.1 && !p.HasFlag(GlobalTPOTRatio) {
-		t.Errorf("p90 at fill %g, inside a thin bucket's reach, is not flagged %s: %v", k, GlobalTPOTRatio, p.Flags)
+	if k := p.Basis.Fill; !(k > 0.1) {
+		t.Fatalf("p90 priced at fill %g: the fixture no longer reaches past the learned bucket's center", k)
+	}
+	if !p.HasFlag(GlobalTPOTRatio) {
+		t.Errorf("p90 at fill %g, inside a thin bucket's reach, is not flagged %s: %v", p.Basis.Fill, GlobalTPOTRatio, p.Flags)
 	}
 
 	thin := learned(t, windowsAt(0.5, 1.4, MinFillRatioWindows-1))
@@ -181,7 +184,14 @@ func TestRatioByFill_InverseIsMonotone(t *testing.T) {
 			looser++
 			continue
 		}
-		if one := mustAnswer(t, rateFor(d, flat, 1)); curve.Value < one.Value {
+		// Where the curve reads below one R_q at one R_q's own answer fill, the
+		// product is under the target there, so the curve's fill and rate are
+		// at least as high.
+		one := mustAnswer(t, rateFor(d, flat, 1))
+		if at, _ := r.At(one.Basis.Fill); at > r.Value {
+			continue
+		}
+		if curve.Value < one.Value*(1-1e-9) {
 			t.Fatalf("by fill %g r/s, below one R_q's %g", curve.Value, one.Value)
 		}
 		looser++
@@ -194,10 +204,50 @@ func TestRatioByFill_InverseIsMonotone(t *testing.T) {
 // A by-fill curve that falls, or holds a ratio below 1, is refused: it would
 // fold slo-to-rate's inverse over.
 func TestRatioByFill_FallingCurveIsRefused(t *testing.T) {
-	r := TPOTRatio{Value: 1.5, ByFill: []FillRatio{{Lo: 0, Hi: 0.2, Value: 1.6}, {Lo: 0.2, Hi: 0.4, Value: 1.2}}}
-	res := rateFor(olsSweep(), TPOTTarget{Seconds: 0.01, Percentile: 0.9, Ratio: r}, 1)
-	if u, ok := res.(Unanswerable); !ok || u.Reason != InvalidInput {
-		t.Errorf("a falling curve priced: %#v", res)
+	tile := func(values ...float64) []FillRatio {
+		out := make([]FillRatio, len(values))
+		for i, v := range values {
+			out[i] = FillRatio{Lo: float64(i) * FillRatioBucketWidth, Hi: float64(i+1) * FillRatioBucketWidth, Value: v}
+		}
+		return out
+	}
+	gap := tile(1.2, 1.3, 1.4, 1.5, 1.6)
+	gap[2].Lo = 0.45
+	short := tile(1.2, 1.3, 1.4, 1.5)
+	for name, curve := range map[string][]FillRatio{
+		"falling":         tile(1.6, 1.2, 1.3, 1.4, 1.5),
+		"below 1":         tile(0.9, 1.2, 1.3, 1.4, 1.5),
+		"a gap":           gap,
+		"short of a full": short,
+	} {
+		r := TPOTRatio{Value: 1.5, ByFill: curve}
+		res := rateFor(olsSweep(), TPOTTarget{Seconds: 0.01, Percentile: 0.9, Ratio: r}, 1)
+		if u, ok := res.(Unanswerable); !ok || u.Reason != InvalidInput {
+			t.Errorf("%s curve priced: %#v", name, res)
+		}
+	}
+	ok := TPOTRatio{Value: 1.5, ByFill: tile(1.2, 1.3, 1.4, 1.5, 1.6)}
+	if a := mustAnswer(t, rateFor(olsSweep(), TPOTTarget{Seconds: 0.01, Percentile: 0.9, Ratio: ok}, 1)); !(a.Value > 0) {
+		t.Errorf("a curve that tiles [0, 1] and rises priced %g r/s", a.Value)
+	}
+}
+
+// slo-to-rate flags the global stand-in only where the target sets the rate:
+// capped at the operating point, the target's fill is not the answer's.
+func TestRatioByFill_GlobalFlagOnlyWhereTPOTBinds(t *testing.T) {
+	d := olsSweep()
+	thinTop := TPOTRatio{Value: 1.3, ByFill: []FillRatio{
+		{Lo: 0, Hi: 0.2, Value: 1.1, Windows: 9}, {Lo: 0.2, Hi: 0.4, Value: 1.1, Windows: 9},
+		{Lo: 0.4, Hi: 0.6, Value: 1.3, Thin: true}, {Lo: 0.6, Hi: 0.8, Value: 1.3, Thin: true}, {Lo: 0.8, Hi: 1, Value: 1.3, Thin: true},
+	}}
+	target := TPOTTarget{Seconds: 0.0045, Percentile: 0.9, Ratio: thinTop}
+	free := mustAnswer(t, rateFor(d, target, 1))
+	if !slices.Contains(free.Basis.BoundBy, BoundTPOT) || !free.HasFlag(GlobalTPOTRatio) {
+		t.Fatalf("uncapped: bound by %v, flags %v; want TPOT and %s at fill %g", free.Basis.BoundBy, free.Flags, GlobalTPOTRatio, free.Basis.Fill)
+	}
+	capped := mustAnswer(t, rateFor(d, target, 0.5))
+	if slices.Contains(capped.Basis.BoundBy, BoundTPOT) || capped.HasFlag(GlobalTPOTRatio) {
+		t.Errorf("capped at the operating point: bound by %v, flags %v; want no %s", capped.Basis.BoundBy, capped.Flags, GlobalTPOTRatio)
 	}
 }
 
@@ -211,27 +261,32 @@ func requireBuckets(t *testing.T, r TPOTRatio) {
 
 // Coarse router buckets (10, 20, 40 ms) around a 14 ms mean hold p50, p90 and
 // p99 in one bucket. Read at its upper edge, all three give 20/14 and price
-// one TPOT; read inside it, each keeps its own ratio, and the answer says the
-// reading was interpolated.
-func TestRatio_CoarseBucketKeepsEachPercentile(t *testing.T) {
+// one TPOT. The window's sum caps p50 lower: the 500 requests at or above the
+// median would each be at least it, and the sum leaves 4 ms a request over
+// the bucket's 10 ms floor, spread over those 500. p90 and p99 share the edge,
+// which is all a 10 ms bucket can say about them without under-stating.
+func TestRatio_CoarseBucketBoundByMean(t *testing.T) {
 	w := TPOTWindow{
 		Buckets: []HistogramBucket{{UpperEdge: 0.010, Count: 0}, {UpperEdge: 0.020, Count: 1000}, {UpperEdge: 0.040, Count: 1000}, {UpperEdge: math.Inf(1), Count: 1000}},
 		Sum:     14, Count: 1000,
 	}
 	windows := []TPOTWindow{w, w, w}
-	var prev float64
-	for _, q := range []float64{0.5, 0.9, 0.99} {
-		r, flags, u := TPOTRatioFromWindows(windows, q)
+	for _, c := range []struct {
+		q       float64
+		want    float64
+		bounded bool
+	}{
+		{0.5, (0.010 + 4.0/500) / 0.014, true},
+		{0.9, 0.020 / 0.014, false},
+		{0.99, 0.020 / 0.014, false},
+	} {
+		r, flags, u := TPOTRatioFromWindows(windows, c.q)
 		if u != nil {
-			t.Fatalf("p%g refused: %v", 100*q, *u)
+			t.Fatalf("p%g refused: %v", 100*c.q, *u)
 		}
-		near(t, "R_q read inside the bucket", r.Value, (0.010+q*0.010)/0.014, 1e-9)
-		if !(r.Value > prev) {
-			t.Errorf("p%g reads %g, not above the lower percentile's %g", 100*q, r.Value, prev)
-		}
-		prev = r.Value
-		if !slices.Contains(flags, InterpolatedTPOTPercentile) || !slices.Contains(flags, CoarseTPOTBucket) {
-			t.Errorf("p%g flags %v, want %s and %s", 100*q, flags, CoarseTPOTBucket, InterpolatedTPOTPercentile)
+		near(t, "R_q", r.Value, c.want, 1e-9)
+		if !slices.Contains(flags, CoarseTPOTBucket) || slices.Contains(flags, MeanBoundedTPOTPercentile) != c.bounded {
+			t.Errorf("p%g flags %v, want %s, and %s %v", 100*c.q, flags, CoarseTPOTBucket, MeanBoundedTPOTPercentile, c.bounded)
 		}
 	}
 }

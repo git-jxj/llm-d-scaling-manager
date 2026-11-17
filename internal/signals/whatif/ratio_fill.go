@@ -27,8 +27,12 @@ type FillRatio struct {
 	Hi float64 `json:"hi"`
 	// Value is the R_q priced in the bucket: its own, read by the rule of
 	// TPOTRatioFromWindows on its windows alone, or the global R_q when the
-	// bucket is thin; then raised to the bucket below it, so that R_q never
-	// falls as the fill rises.
+	// bucket is thin; then raised to the bucket below it (a running maximum
+	// over fill). The rise is imposed, not learned: it keeps ITL(k)·R_q(k)
+	// rising so that slo-to-rate's bisection has one answer, and it is safe,
+	// since raising a ratio only prices a percentile higher. Its cost is that
+	// one high bucket lifts every bucket above it; Learned keeps the bucket's
+	// own reading.
 	Value float64 `json:"value"`
 	// Learned is the bucket's own R_q before the raise, 0 when thin.
 	Learned float64 `json:"learned,omitempty"`
@@ -67,18 +71,26 @@ func (r TPOTRatio) At(k float64) (float64, bool) {
 	return lo.Value + w*(hi.Value-lo.Value), lo.Thin && w < 1 || hi.Thin && w > 0
 }
 
-// check refuses a by-fill curve that is not one TPOTRatioByFill learns: a
-// value below 1 or not finite, buckets out of order, or a value that falls as
-// the fill rises. A curve that breaks it would let slo-to-rate's inverse fold
-// over.
+// check refuses a by-fill curve that is not one fillRatios learns: a value
+// below 1 or not finite, a value that falls as the fill rises, or buckets that
+// do not tile [0, 1] edge to edge. A falling curve would let slo-to-rate's
+// inverse fold over; a gap would be read as if the buckets met.
 func (r TPOTRatio) check() *Unanswerable {
-	prev := FillRatio{Lo: math.Inf(-1), Hi: math.Inf(-1), Value: 1}
+	if len(r.ByFill) == 0 {
+		return nil
+	}
+	prev := FillRatio{Hi: 0, Value: 1}
 	for i, b := range r.ByFill {
-		if !Finite(b.Value) || !(b.Value >= prev.Value) || !(b.Lo >= prev.Hi) || !(b.Hi > b.Lo) {
-			u := refuse(InvalidInput, fmt.Sprintf("R_q by fill, bucket %d [%g, %g) at %g after %g: want rising buckets and a ratio of at least 1 that never falls", i, b.Lo, b.Hi, b.Value, prev.Value))
+		if !Finite(b.Value) || !(b.Value >= prev.Value) || b.Lo != prev.Hi || !(b.Hi > b.Lo) || !(b.Hi <= 1) {
+			u := refuse(InvalidInput, fmt.Sprintf("R_q by fill, bucket %d [%g, %g) at %g after [%g, %g) at %g: want buckets that tile [0, 1] and a ratio of at least 1 that never falls",
+				i, b.Lo, b.Hi, b.Value, prev.Lo, prev.Hi, prev.Value))
 			return &u
 		}
 		prev = b
+	}
+	if prev.Hi != 1 {
+		u := refuse(InvalidInput, fmt.Sprintf("R_q by fill ends at %g, want 1", prev.Hi))
+		return &u
 	}
 	return nil
 }
@@ -108,7 +120,9 @@ func fillRatios(windows []TPOTWindow, q, global float64) []FillRatio {
 			b.Thin, b.Value = true, global
 		} else {
 			slices.Sort(rs)
-			b.Learned = max(1, rs[int(math.Ceil(ratioPercentile*float64(len(rs))))-1])
+			// With MinFillRatioWindows windows, ratioRank is the largest:
+			// a thin-but-learned bucket reads its worst window.
+			b.Learned = max(1, rs[ratioRank(len(rs))])
 			b.Value, learned = b.Learned, true
 		}
 		if i > 0 {

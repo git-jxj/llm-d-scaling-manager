@@ -246,6 +246,7 @@ METRICS_SECURE
 MalformedHistogram
 MaxDecodeGateClosedShare
 MaxPSPromptCV
+MeanBoundedTPOTPercentile
 MeasuredLowConfirmFor
 Metrics
 Mimir
@@ -2412,7 +2413,6 @@ rho
 rhoP
 rhoPull
 rises
-rising
 role
 role-of
 roleRC
@@ -2874,6 +2874,7 @@ tier-1
 tier-2
 tierHeld
 tiers
+tile
 time
 time-base
 timeBase

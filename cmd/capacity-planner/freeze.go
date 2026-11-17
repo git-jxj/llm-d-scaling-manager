@@ -30,7 +30,10 @@ import (
 // and the prefix hit rate is 0, since the driver's prompts share no prefix.
 // The file holds no clock, path, namespace or pod name.
 
-// frozenVersion is the frozen file's format.
+// frozenVersion is the frozen file's format. R_q by fill (tpotRatio[].byFill)
+// and each bucket's percentileTPOT were added without a bump: both are
+// optional, and a file without them reads as before, a percentile at the mean
+// times the global ratio.
 const frozenVersion = 1
 
 // freezeSpec is the part of a staircase spec the prediction reads. The rest of
@@ -112,6 +115,11 @@ type frozenBucket struct {
 	OperatingRate float64 `json:"operatingRate"`
 	// MeanTPOT is decode's mean TPOT at the operating rate.
 	MeanTPOT float64 `json:"meanTPOT"`
+	// PercentileTPOT is decode's TPOT at each spec percentile at the operating
+	// rate, priced with R_q at the operating fill (R_q by fill where it was
+	// learned): what the staircase scores a percentile against. A percentile
+	// whose R_q was refused is absent.
+	PercentileTPOT []frozenPercentileTPOT `json:"percentileTPOT,omitempty"`
 	// Onsets are the flow-control onsets, in requests per second.
 	Onsets whatif.Onsets `json:"onsets"`
 	// VP, A and Imbalance are the inputs priced; Flags and Assumed the fleet's own.
@@ -340,6 +348,31 @@ func (f *freezeFlags) heldTargets() (map[string]map[float64]float64, error) {
 	return held, nil
 }
 
+// frozenPercentileTPOT is decode's TPOT at one percentile.
+type frozenPercentileTPOT struct {
+	Percentile float64       `json:"percentile"`
+	Seconds    float64       `json:"seconds"`
+	Fill       float64       `json:"fill"`
+	Flags      []whatif.Flag `json:"flags,omitempty"`
+}
+
+// percentileTPOTs is decode's TPOT at each percentile at rate, priced on R_q
+// as the warm-up learned it, at the fill the rate runs at.
+func percentileTPOTs(st *learnreplay.State, d whatif.Decode, rate float64, percentiles []float64) []frozenPercentileTPOT {
+	out := make([]frozenPercentileTPOT, 0, len(percentiles))
+	for _, p := range percentiles {
+		r, flags, u := whatif.TPOTRatioFromWindows(st.TPOTWindows, p/100)
+		if u != nil {
+			continue
+		}
+		q := whatif.ReplicasQuery{Rate: rate, PercentileTarget: &whatif.TPOTTarget{Percentile: p / 100, Ratio: r}}
+		if a, ok := whatif.SLOAtReplicas(d, q).PercentileTPOT.(whatif.Answer); ok {
+			out = append(out, frozenPercentileTPOT{Percentile: p, Seconds: a.Value, Fill: a.Basis.Fill, Flags: append(flags, a.Flags...)})
+		}
+	}
+	return out
+}
+
 // frozenRatioOf is R_q as the warm-up learned it.
 func frozenRatioOf(st *learnreplay.State, q float64) frozenRatio {
 	r, flags, u := whatif.TPOTRatioFromWindows(st.TPOTWindows, q)
@@ -431,6 +464,7 @@ func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b fre
 		if m, ok := whatif.SLOAtReplicas(*off.Decode, whatif.ReplicasQuery{Rate: out.OperatingRate}).MeanTPOT.(whatif.Answer); ok {
 			out.MeanTPOT = m.Value
 		}
+		out.PercentileTPOT = percentileTPOTs(st, *off.Decode, out.OperatingRate, spec.Percentiles)
 	}
 	for _, p := range spec.Percentiles {
 		t, why := pricedTarget(off, on, out.OperatingRate, p, spec.TargetFloorMargin, held[b.Name])

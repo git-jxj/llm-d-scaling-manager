@@ -280,9 +280,11 @@ kill %1
   KV-fill band of 0.2 where the source saw at least 5 windows in the band, so
   the tail can widen as load rises. A band with fewer windows uses the ratio
   read over every fill, and figures priced there are flagged
-  `GlobalTPOTRatio`. Where the router's histogram buckets are too wide to
-  tell p50, p90 and p99 apart, each is read inside its bucket and flagged
-  `InterpolatedTPOTPercentile`: finer buckets give a firmer figure.
+  `GlobalTPOTRatio`. A percentile is never read below the true one. Where
+  the router's histogram buckets are wide, it is read at the bucket's top, or
+  lower where the measured mean proves it, flagged
+  `MeanBoundedTPOTPercentile`; p90 and p99 in one wide bucket read the same.
+  Finer router TPOT buckets give a firmer figure.
 - **Flags and inputs.** Every figure carries the flags it rests on. The
   **Flags** drawer lists each once, in words, with what clears it. The
   **Inputs** drawer shows each term with its source, the terms the source

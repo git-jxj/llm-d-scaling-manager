@@ -275,25 +275,26 @@ type TPOTRatio struct {
 }
 
 // one is the multiplier of the mean: R_q = 1 at every fill.
-var one = TPOTRatio{Value: 1}
+func one() TPOTRatio { return TPOTRatio{Value: 1} }
 
 // ratio resolves the multiplier a target applies to the mean ITL: 1 for the
 // mean, R_q for a percentile, with the flags it brings.
 func (t TPOTTarget) ratio() (TPOTRatio, []Flag, *Unanswerable) {
 	var u Unanswerable
+	curve := t.Ratio.check()
 	switch {
 	case t.OverTokenGaps:
 		u = refuse(TokenGapPercentile, "percentiles over token gaps are not modelled; use a per-request TPOT percentile")
 	case t.Percentile == 0:
-		return one, nil, nil
+		return one(), nil, nil
 	case !(t.Percentile > 0 && t.Percentile < 1):
 		u = refuse(InvalidInput, fmt.Sprintf("TPOT percentile %g, want 0 < q < 1", t.Percentile))
 	case t.Ratio.Value == 0:
 		u = refuse(NoTPOTHistogram, fmt.Sprintf("no R_q for the p%g TPOT: no histogram and none assumed", 100*t.Percentile))
 	case !Finite(t.Ratio.Value) || !(t.Ratio.Value >= 1):
 		u = refuse(InvalidInput, fmt.Sprintf("R_q %g, want a finite ratio of at least 1", t.Ratio.Value))
-	case t.Ratio.check() != nil:
-		u = *t.Ratio.check()
+	case curve != nil:
+		u = *curve
 	default:
 		var flags []Flag
 		if t.Ratio.Assumed {
@@ -386,9 +387,6 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	}
 	p := d.full()
 	k, global := d.fillForTPOT(t.Seconds, r, d.Band.Lo)
-	if global {
-		flags = append(flags, GlobalTPOTRatio)
-	}
 	by := []Bound{BoundTPOT}
 	if k > p.fill {
 		k, by = p.fill, []Bound{p.by}
@@ -417,6 +415,11 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 			}
 		}
 		by = append([]Bound{BoundOperatingPoint}, by...)
+	}
+	// The thin bucket's stand-in matters only where the target sets the rate:
+	// k* is then the answer's fill.
+	if global && slices.Contains(by, BoundTPOT) {
+		flags = append(flags, GlobalTPOTRatio)
 	}
 	return Answer{Value: rate, Flags: flags, Basis: Basis{
 		Fill: k, KneeRate: knee, Floor: floor, Uncapped: uncapped, BoundBy: by, Tier: d.Tier,
@@ -501,7 +504,7 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 	}
 	k := res.(Answer).Value
 	out.Rate = Answer{Value: rate, Basis: Basis{Fill: k, KneeRate: knee, BoundBy: rateBy, Tier: d.Tier}}
-	out.MeanTPOT = d.tpotAt(k, knee, one, nil)
+	out.MeanTPOT = d.tpotAt(k, knee, one(), nil)
 	if p := q.PercentileTarget; p != nil {
 		if p.Percentile == 0 && !p.OverTokenGaps {
 			// A percentile asked with no percentile is a caller's mistake,

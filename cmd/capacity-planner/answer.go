@@ -609,21 +609,25 @@ func (f *answerFlags) ratioNote(st *learnreplay.State, r whatif.TPOTRatio) strin
 	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + byFillNote(r)
 }
 
-// byFillNote is R_q by fill for the human output: the ratio at the lowest
-// and the highest fill bucket, and how many buckets held enough windows; ""
-// with one ratio at every fill.
+// byFillNote is R_q by fill for the human output: each fill bucket's ratio,
+// its own reading where the rise over fill raised it, and the global ratio
+// standing in where the bucket was thin; "" with one ratio at every fill.
 func byFillNote(r whatif.TPOTRatio) string {
-	b := r.ByFill
-	if len(b) == 0 {
+	if len(r.ByFill) == 0 {
 		return ""
 	}
-	learned := 0
-	for _, fr := range b {
-		if !fr.Thin {
-			learned++
+	parts := make([]string, 0, len(r.ByFill))
+	for _, fr := range r.ByFill {
+		p := fmt.Sprintf("%.1f-%.1f %.3g", fr.Lo, fr.Hi, fr.Value)
+		switch {
+		case fr.Thin:
+			p += fmt.Sprintf(" (global, %d windows)", fr.Windows)
+		case fr.Learned != fr.Value:
+			p += fmt.Sprintf(" (own %.3g, raised)", fr.Learned)
 		}
+		parts = append(parts, p)
 	}
-	return fmt.Sprintf(", by fill %.3g to %.3g (%d of %d buckets learned)", b[0].Value, b[len(b)-1].Value, learned, len(b))
+	return ", by fill " + strings.Join(parts, ", ")
 }
 
 // num prints a ratio or fill with no trailing zeros.

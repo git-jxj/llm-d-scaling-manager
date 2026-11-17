@@ -566,65 +566,88 @@ func bucketed(samples []float64, edges []float64) TPOTWindow {
 }
 
 // A known per-request TPOT distribution, bucketed on the router's default
-// edges, gives an R_q at or above the true ratio where the q bucket is read at
-// its edge, and within the bucket's width of it where a coarse one is read
-// inside; R_q is never below 1, even
-// from a window whose bucketed quantile falls below its mean.
+// edges, gives an R_q at or above the true ratio at p50, p90 and p99: each
+// window's reading is at or above its own quantile, whether read at the q
+// bucket's edge or at the bound its mean sets, so the order statistic R_q is
+// read at is at or above the true one. Not one draw may under-state. R_q is
+// never below 1, even from a window whose bucketed quantile falls below its
+// mean.
 func TestProperty_TPOTRatio(t *testing.T) {
 	r := rand.New(rand.NewPCG(8, 9))
 	const q = 0.9
-	checked, interpolated := 0, 0
+	checked, bounded := 0, 0
 	for draw := range 200 {
 		mean := 0.002 + 0.006*r.Float64()
 		sigma := 0.05 + 0.6*r.Float64()
 		n := 1 + r.IntN(20)
 		windows := make([]TPOTWindow, 0, n)
-		truth := make([]float64, 0, n)
+		samples := make([][]float64, 0, n)
 		for range n {
-			samples := make([]float64, 50+r.IntN(500))
-			for i := range samples {
-				samples[i] = mean * math.Exp(sigma*r.NormFloat64()-sigma*sigma/2)
+			s := make([]float64, 50+r.IntN(500))
+			for i := range s {
+				s[i] = mean * math.Exp(sigma*r.NormFloat64()-sigma*sigma/2)
 			}
-			w := bucketed(samples, layouts[draw%len(layouts)])
-			windows = append(windows, w)
-			s := slices.Clone(samples)
-			slices.Sort(s)
-			truth = append(truth, s[int(math.Ceil(q*float64(len(s))))-1]/(w.Sum/w.Count))
+			windows = append(windows, bucketed(s, layouts[draw%len(layouts)]))
+			samples = append(samples, s)
 		}
-		slices.Sort(truth)
-		trueRatio := max(1, truth[int(math.Ceil(0.90*float64(len(truth))))-1])
-		res := ratioFrom(windows, q)
-		if u, ok := res.(Unanswerable); ok {
-			if u.Reason != TPOTQuantileUnbounded {
-				t.Fatalf("draw %d: %v", draw, u)
+		for _, pq := range []float64{0.5, q, 0.99} {
+			truth := make([]float64, 0, n)
+			for i, s := range samples {
+				s = slices.Clone(s)
+				slices.Sort(s)
+				truth = append(truth, s[int(math.Ceil(pq*float64(len(s))))-1]/(windows[i].Sum/windows[i].Count))
 			}
-			continue
-		}
-		got := mustAnswer(t, res)
-		checked++
-		// A coarse q bucket is read inside it, so each window's reading is
-		// within the bucket's width of its true quantile, and so is the 90th
-		// percentile of the readings. Read at the upper edge, it is at or
-		// above the truth.
-		slack := 0.0
-		if got.HasFlag(InterpolatedTPOTPercentile) {
-			interpolated++
-			for _, w := range windows {
-				if rd, empty, err := readWindow(w, q); err == nil && !empty {
-					slack = max(slack, rd.width)
+			slices.Sort(truth)
+			trueRatio := max(1, truth[ratioRank(len(truth))])
+			res := ratioFrom(windows, pq)
+			if u, ok := res.(Unanswerable); ok {
+				if u.Reason != TPOTQuantileUnbounded {
+					t.Fatalf("draw %d p%g: %v", draw, 100*pq, u)
 				}
+				continue
+			}
+			got := mustAnswer(t, res)
+			checked++
+			if got.HasFlag(MeanBoundedTPOTPercentile) {
+				bounded++
+			}
+			if got.Value < trueRatio*(1-1e-12) {
+				t.Errorf("draw %d p%g (mean %g, sigma %g): R_q %g below the true %g", draw, 100*pq, mean, sigma, got.Value, trueRatio)
+			}
+			if got.Value < 1 {
+				t.Fatalf("draw %d: R_q %g below 1", draw, got.Value)
 			}
 		}
-		if got.Value < trueRatio*(1-1e-12)-slack {
-			t.Fatalf("draw %d (mean %g, sigma %g): R_q %g below the true %g by more than the bucket's %g", draw, mean, sigma, got.Value, trueRatio, slack)
-		}
-		if got.Value < 1 {
-			t.Fatalf("draw %d: R_q %g below 1", draw, got.Value)
+	}
+	if checked < 570 || bounded == 0 || bounded == checked {
+		t.Fatalf("%d of 600 readings gave a ratio, %d bounded by the mean: the draw is not exercising both readings", checked, bounded)
+	}
+
+	// Mass high in a coarse bucket: 18.5 ms mean, nearly all of it in
+	// (10, 20] ms and the p90 near 19.5 ms. Spreading the bucket's requests
+	// evenly would put p50 at 15 ms and p90 at 19 ms, both low; the bound
+	// does not.
+	high := make([]float64, 0, 1000)
+	for i := range 1000 {
+		high = append(high, 0.0175+0.0025*float64(i)/999)
+	}
+	hw := bucketed(high, routerEdges)
+	for _, pq := range []float64{0.5, 0.9, 0.99} {
+		s := slices.Clone(high)
+		slices.Sort(s)
+		want := max(1, s[int(math.Ceil(pq*float64(len(s))))-1]/(hw.Sum/hw.Count))
+		if got := mustAnswer(t, ratioFrom([]TPOTWindow{hw}, pq)); got.Value < want*(1-1e-12) {
+			t.Errorf("mass high in the bucket, p%g: R_q %g below the true %g", 100*pq, got.Value, want)
 		}
 	}
 
-	if checked < 190 || interpolated == 0 || interpolated == checked {
-		t.Fatalf("%d of 200 draws gave a ratio, %d read inside a coarse bucket: the draw is not exercising both readings", checked, interpolated)
+	// The bound is tight: just under half of a coarse bucket's requests sit at
+	// its floor and the rest at 17 ms, so the median is 17 ms and the sum
+	// allows barely more. A bound any lower reads under the truth.
+	tight := bucketed(append(slices.Repeat([]float64{0.0100001}, 499), slices.Repeat([]float64{0.017}, 501)...), routerEdges)
+	tr := mustAnswer(t, ratioFrom([]TPOTWindow{tight}, 0.5))
+	if want := 0.017 / (tight.Sum / tight.Count); tr.Value < want || tr.Value > 1.01*want || !tr.HasFlag(MeanBoundedTPOTPercentile) {
+		t.Errorf("tight bound: R_q %g, want at most 1%% above the true %g, flagged %s: %v", tr.Value, want, MeanBoundedTPOTPercentile, tr.Flags)
 	}
 
 	// A window whose 90th percentile bucket tops out under its mean: nine in
@@ -635,13 +658,13 @@ func TestProperty_TPOTRatio(t *testing.T) {
 		t.Errorf("R_q from a quantile below the mean = %g, want 1", got.Value)
 	}
 
-	// The page's resolution note: at a 3.66 ms mean the p90 lands in (2.05, 5],
-	// a bucket wider than a quarter of the mean: read inside it, 90% of the way
-	// up its count, and flagged coarse and interpolated, not 1.37 at its edge.
+	// The page's resolution note: at a 3.66 ms mean the p90 lands in (2.05, 5]
+	// and reads 1.37, flagged coarse: with every request at the mean, the sum
+	// bound caps nothing below the edge.
 	flat := bucketed(slices.Repeat([]float64{0.00366}, 100), routerEdges)
 	got := mustAnswer(t, ratioFrom([]TPOTWindow{flat}, q))
-	near(t, "R_q on the default edges at 3.66 ms", got.Value, (0.00205+0.9*0.00295)/0.00366, 1e-12)
-	if !got.HasFlag(CoarseTPOTBucket) || !got.HasFlag(InterpolatedTPOTPercentile) {
+	near(t, "R_q on the default edges at 3.66 ms", got.Value, 0.005/0.00366, 1e-12)
+	if !got.HasFlag(CoarseTPOTBucket) {
 		t.Errorf("a (2.05, 5] ms bucket at a 3.66 ms mean is not flagged coarse")
 	}
 	fine := bucketed(slices.Repeat([]float64{0.00366}, 100), []float64{0.0035, 0.00375, 0.004, math.Inf(1)})
@@ -654,11 +677,11 @@ func TestProperty_TPOTRatio(t *testing.T) {
 	// not refused. Here +Inf reads 99.5 under the 5 ms bucket's 100: the
 	// running maximum makes the total 100, so the p99.9 rank is 99.9 and lands
 	// in (2.05, 5] ms. Ranked against the dipped 99.5 it would be 99.4, and
-	// read inside (0, 2.05] ms, under-stating the tail.
+	// read 2.05 ms, under-stating the tail.
 	dip := TPOTWindow{Buckets: []HistogramBucket{
 		{UpperEdge: 0.00205, Count: 99.6}, {UpperEdge: 0.005, Count: 100}, {UpperEdge: math.Inf(1), Count: 99.5},
 	}, Sum: 0.2, Count: 100}
-	near(t, "R_q over a dip", mustAnswer(t, ratioFrom([]TPOTWindow{dip}, 0.999)).Value, (0.00205+0.75*0.00295)/0.002, 1e-12)
+	near(t, "R_q over a dip", mustAnswer(t, ratioFrom([]TPOTWindow{dip}, 0.999)).Value, 0.005/0.002, 1e-12)
 
 	// The rank is against the +Inf bucket's count, the histogram's own total,
 	// not _count, scraped separately: here _count reads 101 against 100 in

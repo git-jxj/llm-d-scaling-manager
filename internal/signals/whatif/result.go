@@ -138,12 +138,11 @@ const (
 	// EngineTPOTHistogram is an R_q read from the engine's TPOT histogram in
 	// place of the router's, or a refusal of it.
 	EngineTPOTHistogram Flag = "EngineTPOTHistogram"
-	// InterpolatedTPOTPercentile is an R_q read inside a coarse histogram
-	// bucket, linearly in its count, as histogram_quantile reads it, rather
-	// than at the bucket's upper edge: each percentile keeps its own ratio,
-	// but the reading assumes the bucket's requests spread evenly, and can
-	// under-state the percentile. It comes with CoarseTPOTBucket.
-	InterpolatedTPOTPercentile Flag = "InterpolatedTPOTPercentile"
+	// MeanBoundedTPOTPercentile is an R_q read below its coarse bucket's upper
+	// edge, at the most the window's mean lets the percentile be: never below
+	// the true percentile, and different for percentiles that share the
+	// bucket where the mean allows it. It comes with CoarseTPOTBucket.
+	MeanBoundedTPOTPercentile Flag = "MeanBoundedTPOTPercentile"
 	// GlobalTPOTRatio is a percentile TPOT priced at a fill whose bucket of
 	// R_q by fill held fewer than MinFillRatioWindows windows: the global
 	// R_q stood in for the bucket's own.

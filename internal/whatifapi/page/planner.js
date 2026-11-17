@@ -38,7 +38,7 @@ const FLAG_WORDS = {
   AssumedTPOTRatio: ["The TPOT percentile is the mean times a ratio R_q you assumed.", "the router's per-request TPOT histogram (recorder R1)"],
   CoarseTPOTBucket: ["R_q was read off a histogram bucket wider than a quarter of the mean: the bucket grid sets it.", "finer TPOT histogram buckets"],
   EngineTPOTHistogram: ["R_q comes from the engine's TPOT histogram, not the router's.", "the router's per-request TPOT histogram"],
-  InterpolatedTPOTPercentile: ["R_q was read inside a coarse histogram bucket, assuming its requests spread evenly: each percentile has its own ratio, but it may read low.", "finer TPOT histogram buckets"],
+  MeanBoundedTPOTPercentile: ["R_q was read below its coarse histogram bucket's edge, at the most the window's mean allows: never below the true percentile, but still wide.", "finer TPOT histogram buckets"],
   GlobalTPOTRatio: ["Too few windows were read at this fill: R_q is the one read over every fill.", "readings at this load"],
   BelowFittedBand: ["The fill is below the band the ITL line was fitted over: TPOT is read at the band's bottom, a safe floor.", "readings at lower fill"],
   KVBoundSlots: ["Decode slots are set by KV capacity, an approximation.", "nothing: a property of the fleet"],
