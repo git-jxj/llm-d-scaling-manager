@@ -167,9 +167,9 @@ labeller marks each node whose copy is complete:
 
 <!-- guide:deploy.gate start -->
 ```bash
-# Cluster admin (it patches nodes). Label each GPU node whose copy of the weights verifies, and unlabel it when the copy breaks.
-smt weights labeller -n $NAMESPACE --image $TOOLS
-kubectl get nodes -L llm-d.ai/<model name, lower-cased>-cache
+# Cluster admin (it patches nodes). Label each GPU node whose copy of the weights is present at its recorded size, and unlabel it when the copy breaks. --merge keeps the namespaces it already watches; status names the node label and counts the nodes that carry it.
+smt weights labeller -n $NAMESPACE --image $TOOLS --merge
+smt weights status -n $NAMESPACE
 ```
 <!-- guide:deploy.gate end -->
 
@@ -180,9 +180,13 @@ already sets this label counts too; the labeller never removes a label it did
 not set. It runs in a namespace of its own, because it can patch nodes. With
 the cluster-wide install it is already there (`smt install --scope cluster`
 applies it), and `smt admin-setup -n <ns>` adds a namespace to it. Run the
-command above only without either; to watch more namespaces then, run it
-again with all of them (`-n <ns1>,<ns2>`), or add `--merge` to keep the ones it watches; it refuses to drop one. The model's label is printed by
-`weights apply`.
+command above only without either. With `--merge` it keeps the namespaces it
+already watches; without it, it refuses to drop one. `weights status` names
+the model's node label and counts the nodes that carry it.
+
+A LeaderWorkerSet gets no gate: `workload-patch` says so for each one that
+reads node-local weights. Check every node holds the copy (`weights status`)
+before it scales out.
 
 The patch in the next step uses the label: replicas prefer labelled nodes, and
 each replica waits in a small init container until its node's copy is
@@ -286,13 +290,14 @@ smt engine-cache delete -n $NAMESPACE
 ```
 <!-- guide:cleanup.remove end -->
 
-If you ran the labeller in step 4:
+If you ran the labeller in step 4, take this namespace off it. To remove the
+labeller for every namespace, see [Gate replicas on the
+weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights).
 
 <!-- guide:cleanup.labeller start -->
 ```bash
-# Cluster admin. Removes the labeller, then the node labels it set; a label another tool set stays.
-smt weights labeller -n $NAMESPACE --delete
-smt weights label --clear
+# Takes this namespace off the labeller (patch on Deployments in its namespace, delete on RoleBindings in yours). Its next pass removes the node labels only this namespace's copies held; other namespaces keep theirs.
+smt weights labeller --remove -n $NAMESPACE
 ```
 <!-- guide:cleanup.labeller end -->
 

@@ -444,7 +444,9 @@ gate has three parts:
    `params.json`), and every listed file at its size, every 15 s. A copy that
    stops verifying is downloaded again. A marker written by an earlier version
    (empty) is upgraded in place when the files look whole, else the model is
-   downloaded again.
+   downloaded again. A downloader applied before v0.12.0 checked only that the
+   marker exists. The labeller skips it and says so. Run `weights apply` for
+   that model again.
 2. **The labeller labels the nodes.** `weights label` sets
    `llm-d.ai/<name>-cache=ready` on each node where every downloader for that
    label is Ready, and removes it where one is not, or where its downloader is
@@ -455,11 +457,32 @@ gate has three parts:
 
 ```bash
 # cluster admin: run the labeller in the cluster, for these model namespaces (-A: all)
-smt weights labeller -n <ns>[,<ns>...] --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<release>
+smt weights labeller -n <ns>[,<ns>...] --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<release> --merge
 make weights-label NAMESPACE=<ns>[,<ns>]   # or once, from a checkout
-kubectl get nodes -L llm-d.ai/qwen3-32b-cache
-smt weights labeller -n <ns> --delete && smt weights label --clear   # remove it, then its labels
+smt weights status -n <ns>                 # each model's node label, and how many nodes carry it
+smt weights labeller --remove -n <ns>      # stop watching one namespace; the others keep their labels
+smt weights labeller --delete && smt weights label --clear   # the whole cluster: remove it, then its labels
 ```
+
+`--remove` re-applies the labeller without `<ns>` and deletes its RoleBinding
+there. On its next pass the labeller removes the labels only `<ns>`'s copies
+held. It needs `patch` on Deployments in the labeller's namespace and `delete`
+on RoleBindings in `<ns>`. Use `--delete` and `label --clear` only to remove the
+labeller for every namespace.
+
+**Health.** The labeller writes ConfigMap `weights-labeller-status` in its own
+namespace when its state changes:
+
+```bash
+kubectl get configmap weights-labeller-status -n scaling-manager-weights-labeller -o yaml
+```
+
+`state` is `ok`, `degraded` (a namespace could not be read, or a node could not
+be patched) or `failed` (nothing was changed this pass). `detail` says what, and
+`since` says when this state began. A namespace it cannot read keeps the labels
+it asked for when last read, unchanged; the other namespaces are labelled as
+usual. If the labeller has not read that namespace since it started, no label
+is removed anywhere until it can.
 
 **The label.** `llm-d.ai/<name>-cache=ready`, where `<name>` is the model id
 without its organisation, lower-cased: `Qwen/Qwen3-32B` is
@@ -501,7 +524,8 @@ counts as capacity: a replica placed there starts later, but it starts.
 **Rights.** `label` lists and patches nodes, which is cluster-scoped. The
 labeller runs in its own namespace (`scaling-manager-weights-labeller`, Pod
 Security `restricted`), with node `get`/`list`/`patch`, namespace `get` (a deleted namespace it watches is skipped, not an error), and read-only access to
-DaemonSets and pods in the namespaces it watches. It must not run in a model
+DaemonSets and pods in the namespaces it watches. In its own namespace it may
+`create` ConfigMaps, and `get` and `patch` its status ConfigMap. It must not run in a model
 namespace: anyone who can create pods there could use its ServiceAccount to
 patch nodes. The namespace owner needs none of this.
 
@@ -512,9 +536,17 @@ the model namespaces by name (`-n`), not `-A`, on a cluster whose namespaces
 are not all trusted.
 
 **Where it is installed.** `smt install --scope cluster` applies and updates
-it, watching every `--model-namespace` and every namespace it already watches
-(`--no-weights-labeller` to leave it out, `--weights-labeller-image` for a
-mirror). `smt admin-setup -n <ns>` adds `<ns>` to a running labeller with
+it, watching every `--model-namespace` and every namespace it already watches.
+It applies a new one only when a model namespace has a weights DaemonSet
+(`weights apply`); otherwise it prints the command to add it later. Use
+`--no-weights-labeller` to leave it out, `--weights-labeller-image` for a
+mirror or a digest. The release flow cannot pin the tools image by digest
+for you: the tools image carries the release files, so its digest is known only
+after it is built. To pin it, pass `--weights-labeller-image` with the digest
+from the release notes. With `--dry-run`, `60-weights-labeller.yaml` watches
+exactly the `--model-namespace` list, and applying it replaces a running
+labeller's list. In GitOps, keep the full `-n` list in git and do not use
+`labeller --add`. `smt admin-setup -n <ns>` adds `<ns>` to a running labeller with
 namespaced rights only (a RoleBinding in `<ns>`, the Deployment in the
 labeller's namespace), or prints the command when there is no labeller or it
 lacks the rights; `smt weights labeller --add -n <ns>` does the same on its
@@ -531,10 +563,15 @@ refuses to drop a namespace the running labeller watches (`--merge` keeps them).
   `smt workload-patch`; `WEIGHTS_WAIT_SECONDS` in the emitted container) the
   init container exits 1 with the reason in its log, and the pod shows
   `Init:Error`, then `Init:CrashLoopBackOff`: the kubelet restarts the init
-  container on the same node, it does not reschedule the pod. Delete the pod
+  container on the same node, it does not reschedule the pod. Each restart
+  waits the full timeout again, plus the kubelet's back-off. Delete the pod
   to place it again; use `required`, or the same node selector on the model
   server and the downloader, so it does not happen.
-- A LeaderWorkerSet gets no gate yet.
+- The init container checks the marker and a config, not the file sizes. A
+  file truncated under its marker passes it. The downloader's probe catches it
+  within 15 s (the label goes), and its re-check removes the marker.
+- A LeaderWorkerSet gets no gate. `make workload-patch` says so for each
+  template that reads a node-local weights claim.
 - The gate is emitted, never applied by `--apply`.
 
 ### Engine caches on the node's disk

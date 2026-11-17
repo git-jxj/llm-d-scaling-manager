@@ -156,7 +156,7 @@ PersistentVolumes):
   (`scaling-manager-weights-labeller`, Pod Security `restricted`), a
   ServiceAccount with node `get`/`list`/`patch`, namespace `get`, and read-only DaemonSets and
   pods in the model namespaces it watches (a RoleBinding per namespace, or
-  cluster-wide with `-A`). Every object carries `scaling-manager.llmd.ai/part:
+  cluster-wide with `-A`), and its status ConfigMap in its own namespace. Every object carries `scaling-manager.llmd.ai/part:
   admin`, like the install's admin objects.
 
 It must not run in a model namespace: anyone with `pods/create` there could
@@ -168,9 +168,11 @@ Where it is installed:
 
 - `smt install --scope cluster` applies and updates it. It watches every
   `--model-namespace`, plus every namespace the running labeller already
-  watches, so a re-run never drops one. `--no-weights-labeller` leaves it out;
-  `--weights-labeller-image` names the image (default: the release's tools
-  image).
+  watches, so a re-run never drops one. It applies a new one only when a model
+  namespace has a weights DaemonSet; otherwise it prints how to add it.
+  `--no-weights-labeller` leaves it out; `--weights-labeller-image` names the
+  image (default: the release's tools image, by tag: the tools image carries
+  the release files, so its digest is known only after it is built).
 - `smt admin-setup -n NS` (one namespace) checks that a labeller runs, and adds
   NS to its watch list: a RoleBinding in NS and the labeller's Deployment
   re-applied with NS in its list. Both are namespaced writes, in NS and the
@@ -178,6 +180,11 @@ Where it is installed:
   without those rights, it prints the command and still succeeds.
 - `weights.sh labeller` stays the standalone step, for a cluster without the
   cluster-wide install.
+- `weights.sh labeller --remove -n NS` takes one namespace off (the same two
+  namespaced writes); `--delete` removes it for the whole cluster, as does the
+  uninstall of a cluster-wide install.
+- Its health is ConfigMap `weights-labeller-status` in its own namespace,
+  written when the state changes.
 
 ## 3. Failure modes
 
@@ -190,15 +197,19 @@ Where it is installed:
 | The downloader is deleted (`weights delete`) | no downloader pod on the node: the label goes |
 | The labeller is down | labels freeze as they are; a broken copy keeps its label until it is back. The probe and the init container still protect new replicas on nodes that never had a copy |
 | Another tool set the label | left alone; a disagreement with the downloader is reported |
-| The node list is Forbidden | the pass fails and changes nothing |
+| The node list is Forbidden | the pass fails and changes nothing; ConfigMap `weights-labeller-status` says `failed` |
+| A watched namespace cannot be read (Forbidden) | the labels it asked for when last read are held as they are, the other namespaces are labelled as usual; not read since the labeller started, no label is removed anywhere. The status says `degraded` and names it |
+| A downloader from before v0.12.0 (it records no node label; its probe checked the marker only) | skipped, with a warning; `weights apply` again |
 | A watched namespace is deleted | it is left out of each pass, so the labels only its downloaders held go; the next `smt install --scope cluster` drops it from the list |
-| A replica waits on a node the downloader never reaches | after `LLMSM_WEIGHTS_WAIT_TIMEOUT` (60 min) the init container exits 1 with the reason; the pod shows `Init:CrashLoopBackOff` on that node. Use `required`, or give the model server and the downloader the same node selector |
+| A replica waits on a node the downloader never reaches | after `LLMSM_WEIGHTS_WAIT_TIMEOUT` (60 min) the init container exits 1 with the reason; the pod shows `Init:CrashLoopBackOff` on that node. Each restart waits the full timeout again, plus the kubelet's back-off; the pod is not rescheduled. Use `required`, or give the model server and the downloader the same node selector |
+| A file is truncated under a marker while a replica starts | the init container checks the marker and a config only, so it passes; the probe fails within 15 s (the label goes) and the downloader's re-check removes the marker |
 | A replica is running when its node's copy breaks | it keeps running; only new replicas avoid the node |
 
 ## 4. Not built
 
 - A LeaderWorkerSet gets no gate yet: its patch is a JSON patch per template,
-  and the leader and workers may read different claims.
+  and the leader and workers may read different claims. `workload-patch` warns
+  for each template that reads a node-local weights claim.
 - The gate is emitted, never applied by `workload-patch --apply`: placement is
   the owner's decision.
 - No admission policy narrows the labeller's node `patch` to its own labels. A

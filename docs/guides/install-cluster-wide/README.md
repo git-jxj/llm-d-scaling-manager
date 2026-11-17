@@ -45,6 +45,12 @@ model namespace, creates the settings, runs the preflight, installs the
 controller, gives KEDA its client certificate, and removes the preflight's
 cluster reads. Needs docker.
 
+If a model namespace keeps its weights on the nodes' disks (`smt weights apply`),
+the install also runs the weights labeller. It labels each GPU node whose copy
+is complete, and it can patch nodes ([Gate replicas on the
+weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights)).
+`--no-weights-labeller` leaves it out.
+
 <!-- guide:tools.setup start -->
 ```bash
 # Once per machine. The release's tools image, by the digest the release prints.
@@ -296,6 +302,16 @@ kubectl delete configmap,secret -n scaling-manager-system \
   -l 'app.kubernetes.io/part-of=scaling-manager,scaling-manager.llmd.ai/scaler-tls!=ca'
 ```
 <!-- guide:cleanup.uninstall end -->
+
+If the tools install applied the weights labeller (it prints `Weights labeller` and the namespaces it watches), remove it with the tools image:
+
+<!-- guide:cleanup.labeller start -->
+```bash
+# Only if the install applied the weights labeller (it said so). Removes it, then the node labels it set; a label another tool set stays.
+smt weights labeller --delete
+smt weights label --clear
+```
+<!-- guide:cleanup.labeller end -->
 
 Delete the model-server monitor in each model namespace with the same `sed`
 and `kubectl delete -f -`. The namespace `scaling-manager-system` and the scaler
