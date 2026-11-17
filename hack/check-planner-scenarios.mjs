@@ -486,7 +486,7 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   const v = reportView({slo, load: {rate: {value: 47.39}}, loads: ["50%", "seen x1.5"], notValidated: ["decode knee: not validated", "TTFT is UNVALIDATED"],
     shapes: [
       {label: "measured", flags: ["UnvalidatedTTFT", "AssumedPoissonArrivals", "SomethingRare"], capacity: knees(38.14, "decode"),
-        verdict: {verdict: "UNDER-PROVISIONED", reason: "r"}, utilization: {decode: {kvFill: {refused: {reason: "Saturated"}}, bandTop: 0.8}, prefill: {}},
+        verdict: {verdict: "UNDER-PROVISIONED", reason: "TTFT p95 AboveDecodeOnset misses 2000.0 ms"}, utilization: {decode: {kvFill: {refused: {reason: "Saturated"}}, bandTop: 0.8}, prefill: {}},
         table: [row("50%", 19.07, {value: 0.6367}, {value: 0.00699}, "met"), row("seen x1.5", 47.39, {refused: {reason: "Saturated"}}, {value: 0.0271}, "saturated")]},
       {label: "1k/1k", extrapolated: true, extrapolatedWhy: "IL 1024 outside", capacity: knees(36.55, "decode"),
         verdict: {verdict: "OVER-PROVISIONED", shrink: ["prefill", "decode"]}, utilization: {decode: {}, prefill: {}},
@@ -504,12 +504,18 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("the legend names the statistics and targets", v.legendStats === "Each cell is TTFT p95 · TPOT mean. Marks are judged against TTFT p95 2000 ms and TPOT mean 30 ms.",
     v.legendStats);
   check("an extrapolated shape is marked", v.rows[1].extrapolated && !v.rows[0].extrapolated && v.rows[1].why === "IL 1024 outside");
-  check("a refusal reads in words", v.details[0].lines.some(l => l.includes("decode KV fill saturated: no steady state at this load")),
+  check("a refusal reads in words", v.details[0].lines.some(l => l.includes("At the load: decode saturated: no steady state at this load")),
     JSON.stringify(v.details[0].lines));
   check("common flags read as phrases, the rest counted", JSON.stringify(v.details[0].flags.phrases) ===
     JSON.stringify(["TTFT is not validated", "assumes Poisson arrivals"]) && v.details[0].flags.more === 1 &&
     v.details[0].flags.codes === "UnvalidatedTTFT, AssumedPoissonArrivals, SomethingRare");
   check("the notes stay apart", v.notes.length === 2);
+  check("decode use reads in words", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8, slotsOccupied: {value: 48.2}, slots: 228, waitProbability: {value: 0.004}}) ===
+    "decode KV 17% full (of 80% usable), 48 of 228 batch slots busy, 0% of requests wait for a slot", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8}));
+  check("prefill use reads in words", ctx.prefillUse({pooled: {value: 0.6312}, worstPod: {value: 0.71}}) === "prefill 63% busy pooled, 71% on the busiest pod");
+  check("a verdict word is set apart from its sentence", v.verdicts[1].verdict === "OVER-PROVISIONED" && v.verdicts[1].rest.startsWith("at 47.4 r/s one prefill"));
+  check("a refusal code in a reason reads in words", v.details[0].lines.includes("The numbers: TTFT p95 router-queued misses 2000.0 ms"),
+    JSON.stringify(v.details[0].lines));
   check("a refusal with no words names its reason", refusalText({refused: {reason: "Odd"}}) === "not priced (Odd)");
   check("no flags is no phrases", flagSummary(undefined).phrases.length === 0);
   check("a no-target cell has a word", reportView({loads: ["50%"], shapes: [{label: "m", capacity: knees(1, "decode"), verdict: {},
@@ -531,7 +537,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 261;
+const EXPECTED_CASES = 265;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

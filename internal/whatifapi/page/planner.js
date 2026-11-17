@@ -2011,7 +2011,8 @@ function renderReport(r) {
   for (const s of v.verdicts) {
     const li = document.createElement("li");
     li.appendChild(shapeLabel(s));
-    li.appendChild(textNode("span", " " + s.text, "rverdict"));
+    li.appendChild(textNode("b", " " + s.verdict + ": "));
+    li.appendChild(textNode("span", s.rest, "rverdict"));
     verdicts.appendChild(li);
   }
   el("rlegendstats").textContent = v.legendStats;

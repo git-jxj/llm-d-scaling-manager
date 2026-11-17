@@ -282,25 +282,31 @@ kill %1
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
 - **Is this fleet the right size?** Below the graphs, judge the fleet the
-  knobs set at the load the source saw. Add a row per request shape: IL and
-  OL in tokens (`k` for 1024) and, optionally, the prefix hit rate; a blank
-  row is the measured shape. Type the loads, comma separated: `80%` of each
-  shape's fleet knee, `5r/s`, or `seen`. Set **Load seen times** to 1.5 to
-  ask what 50% more traffic does. Press **Judge the fleet**.
-  - First, each shape's verdict: UNDER-PROVISIONED, RIGHT-SIZED, or
-    OVER-PROVISIONED with the role that can lose a replica.
-  - Then the matrix: one row per shape, one column per load. Each cell is
-    TTFT p90 / TPOT in ms at that load's rate, and a word: `ok` every target
-    met, `MISS` a target missed, `SAT` saturated, `?` not judged. The colour
-    repeats the word; the legend says which is which. A refused figure is `-`.
-  - A shape outside the lengths the source saw is marked EXTRAPOLATED.
-  - Open a shape below the matrix for its knees, its utilization at the load
-    and the reason for its verdict, in numbers.
+  knobs set at the load the source saw.
+  1. Add a row per request shape: IL and OL in tokens (`k` for 1024) and,
+     optionally, the prefix hit rate. A blank row is the measured shape.
+  2. Type the loads, comma separated: `80%` of each shape's knee, `5r/s`, or
+     `seen`. Set **Load seen times** to 1.5 to ask what 50% more traffic does.
+  3. Press **Judge the fleet**.
 
-  The targets, headroom and typed terms are the ones the knobs above set. A
-  server from before the report says so under the button; the rest of the
-  page works. The same report is `capacity-planner at-replicas` and
-  `POST /v1/report`.
+  The answer reads top down:
+  - **Verdicts**, one sentence per shape: UNDER-PROVISIONED (and which role
+    to add), RIGHT-SIZED, or OVER-PROVISIONED (and which role can lose a
+    replica).
+  - **The matrix**, one row per shape and one column per load. A cell is the
+    TTFT and TPOT at your SLO's statistics, at that load's rate, and a word:
+    `ok` every target met, `MISS` a target missed, `SAT` saturated, `?` not
+    judged, `no SLO` no target set. The colour repeats the word. A shape
+    outside the lengths the source saw is marked EXTRAPOLATED.
+  - **Each shape**, closed until you open it: the knees, how busy decode and
+    prefill are at the load, the numbers behind the verdict, and what the
+    figures rest on.
+  - **How accurate is this?** What no run has validated yet.
+
+  The report uses the knobs above: fleet, targets, headroom and typed terms.
+  Change a knob and the page asks you to judge again. A server from before
+  the report says so under the button; the rest of the page works. The same
+  report is `capacity-planner at-replicas` and `POST /v1/report`.
 
 A refused figure, or an error, is explained in
 [Troubleshooting](troubleshooting.md).

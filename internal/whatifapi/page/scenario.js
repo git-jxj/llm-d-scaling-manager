@@ -566,7 +566,7 @@ function roundRate(r) {
 function msText(f) {
   if (f && f.value != null) return roundMs(f.value) + " ms";
   const reason = f && f.refused ? f.refused.reason : "";
-  return reason === "Saturated" ? "saturated" : reason === "AboveDecodeOnset" ? "past onset" : "-";
+  return reason === "Saturated" ? "saturated" : reason === "AboveDecodeOnset" ? "router-queued" : "-";
 }
 
 // rowFigures is a row's two latencies at the SLO's statistics: the TTFT at
@@ -636,8 +636,12 @@ function reportView(r) {
       return {text: `TTFT ${msText(f.ttft)} · TPOT ${msText(f.tpot)}${rate}`, cls: m[0], word: m[1]};
     }),
   }));
-  const verdicts = shapes.map(s => ({label: s.label, extrapolated: !!s.extrapolated, verdict: (s.verdict || {}).verdict || "",
-    text: verdictText(s, load)}));
+  const verdicts = shapes.map(s => {
+    const word = (s.verdict || {}).verdict || "NOT JUDGED", text = verdictText(s, load);
+    // rest is the sentence after its verdict, which the page sets in bold.
+    const rest = text.startsWith(word + ": ") ? text.slice(word.length + 2) : text;
+    return {label: s.label, extrapolated: !!s.extrapolated, verdict: word, text, rest};
+  });
   const details = shapes.map(s => {
     const c = s.capacity || {}, u = s.utilization || {decode: {}, prefill: {}};
     const rate = f => (f && f.value != null ? roundRate(f.value) + " r/s" : refusalText(f));
@@ -648,9 +652,8 @@ function reportView(r) {
         s.extrapolated ? `Extrapolated: ${s.extrapolatedWhy}.` : "",
         `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
           `Operating point ${rate(c.operating)}; the most that meets every target ${rate(c.maxAtSLO)}.`,
-        `At the load: decode KV fill ${share(u.decode.kvFill)} (band top ${u.decode.bandTop}), waiting for a slot ${share(u.decode.waitProbability)}; ` +
-          `prefill busy ${share(u.prefill.pooled)} pooled, ${share(u.prefill.worstPod)} on the busiest pod.`,
-        `Why: ${(s.verdict || {}).reason || ""}`,
+        `At the load: ${decodeUse(u.decode)}; ${prefillUse(u.prefill)}.`,
+        `The numbers: ${plainReason((s.verdict || {}).reason || "")}`,
       ].filter(x => x),
       flags: flagSummary(s.flags),
     };
@@ -670,4 +673,34 @@ function reportMissing(status, error) {
 // one asked for inputs since replaced is dropped.
 function reportCurrent(askedFor, current) {
   return !!askedFor && askedFor === current;
+}
+
+// pct is a share as a whole percent.
+function pct(x) {
+  return Math.round(100 * x) + "%";
+}
+
+// decodeUse is decode's utilization at the load, in words.
+function decodeUse(d) {
+  if (!d || !d.kvFill || d.kvFill.value == null) return "decode " + refusalText(d && d.kvFill);
+  const wait = d.waitProbability && d.waitProbability.value != null ? `, ${pct(d.waitProbability.value)} of requests wait for a slot` : "";
+  const slots = d.slotsOccupied && d.slotsOccupied.value != null ? `, ${Math.round(d.slotsOccupied.value)} of ${d.slots} batch slots busy` : "";
+  return `decode KV ${pct(d.kvFill.value)} full (of ${pct(d.bandTop)} usable)${slots}${wait}`;
+}
+
+// prefillUse is prefill's utilization at the load, in words.
+function prefillUse(p) {
+  if (!p || !p.pooled || p.pooled.value == null) return "prefill " + refusalText(p && p.pooled);
+  return `prefill ${pct(p.pooled.value)} busy pooled, ${pct(p.worstPod.value)} on the busiest pod`;
+}
+
+// REASON_WORDS replace the refusal codes in a verdict's reason.
+const REASON_WORDS = {AboveDecodeOnset: "router-queued", NoPrefillCapacity: "unpriced (no prefill speed)",
+  NoFixedLatency: "unpriced (no prefill latency)", NoTPOTHistogram: "unpriced (no TPOT histogram)"};
+
+// plainReason is a verdict's reason with its refusal codes in words.
+function plainReason(s) {
+  let out = s;
+  for (const [code, words] of Object.entries(REASON_WORDS)) out = out.split(code).join(words);
+  return out;
 }
