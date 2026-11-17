@@ -169,6 +169,31 @@ To shorten the cold window, hold the image on the GPU nodes first:
 - **Group pools do not change.** They keep the v0.6.4-based headless image
   given with `--launcher-image` ([pools of groups](../guides/warm-pool/groups.md#a-group-needs-a-patched-supervisor-image)).
 
+#### The weights labeller
+
+Only if you keep model weights on the nodes' disks (`smt weights apply`).
+
+- `smt install --scope cluster` now runs the weights labeller. It labels each
+  GPU node whose copy of the weights verifies. It patches nodes; its grants
+  are in the [security model](security-model.md#grants-made-after-install).
+  The install applies it only when a `--model-namespace` has a weights
+  DaemonSet. Otherwise it prints how to add it later. To leave it out, pass
+  `--no-weights-labeller`.
+- Run `smt weights apply` again for each model, with the same flags. Before
+  v0.12.0 the downloader's readiness probe checked only that the marker file
+  exists. The labeller does not trust those downloaders: it skips each one
+  and says so in its log. The new downloader keeps a whole copy already on
+  the node; it downloads again only a copy that is not whole.
+- Then run `smt workload-patch -n <namespace>`. It writes the node affinity and
+  the `wait-for-weights` init container into each model server that reads
+  node-local weights ([Gate replicas on the
+  weights](workload-preparation.md#gate-replicas-on-the-weights)).
+- To check the labeller:
+
+  ```bash
+  kubectl get configmap weights-labeller-status -n scaling-manager-weights-labeller -o yaml
+  ```
+
 ### Upgrading from v0.11.1 to v0.11.2
 
 The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
@@ -1372,6 +1397,7 @@ make undeploy-scaling-manager NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace>
 | the EPP `/metrics` authentication ClusterRoleBindings this install made (`llm-d.ai/applied-for=$NS`), and ClusterRole `scaling-manager-epp-metrics-auth` with the last of them | cluster-scoped: a namespace owner cannot read them, and the uninstall prints the cluster admin's `kubectl delete` command |
 | RoleBinding `scaling-manager-pod-writer-<suffix>` in every workload namespace, and Role `scaling-manager-pod-writer` where no other controller's binding uses it | made by `deploy/warmpool.sh create`, utilization-share activate, and the upgrade to this release |
 | `scaling-manager-utilization-share-history`, `scaling-manager-controller-status` and `scaling-manager-learned-state` | written by the controller, not rendered, so deleted by name. An uninstall and reinstall therefore starts learned state cold; upgrade in place to keep it |
+| the weights labeller (namespace `scaling-manager-weights-labeller`, ClusterRoles and bindings `scaling-manager-weights-labeller` and `-reader`, the RoleBinding in each watched namespace) and the node labels it set | only for `SCOPE=cluster`, where `smt install --scope cluster` applies it. Needs cluster rights; what fails is printed with its command (`deploy/weights.sh labeller --delete`, then `deploy/weights.sh label --clear`) |
 | the ScaledObjects **this installer created** | KEDA restores each workload to its pre-autoscaling replica count as they go. Keep them with `UNDEPLOY_SCALEDOBJECTS=false` |
 
 ### What it leaves
@@ -1390,6 +1416,7 @@ make undeploy-scaling-manager NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace>
 | Role `scaling-manager-pod-writer` and RoleBinding `scaling-manager-pod-writer-<suffix>` the uninstall could not read or delete | it may not list RoleBindings across the cluster, or delete them there. It lists each one with its `kubectl delete` command, or says it could not look | (cluster admin) see [Leftover pod-write grants](#leftover-pod-write-grants) |
 | Role `scaling-manager-pod-writer` in a namespace another controller also uses | that controller's binding still needs it | nothing; it goes with that controller |
 | Role `scaling-manager-pod-writer` and RoleBinding `scaling-manager-pod-writer-<suffix>` everywhere, when the controller Deployment is still there | the delete failed, or its result could not be read. A running controller still needs the grant | remove the Deployment, then run the uninstall again |
+| the replicas the DisaggregatedSet role writer last wrote (`DSET_ROLE_WRITER=true`) | they are the set's own spec; a model the writer parked stays at zero. The writer's grant itself is removed | remove the `scaling-manager.llmd.ai/role-writer` annotation and set each Static role's `replicas` back ([Turn it off](disaggregatedset.md#turn-it-off)) |
 | utilization-share transfer marks on pods | written while the optimizer acted | [Transfer marks left on pods](troubleshooting.md#transfer-marks-left-on-pods-after-a-downgrade); set `shadow: true` and wait a cycle **before** uninstalling to avoid them |
 
 ### Leftover pod-write grants

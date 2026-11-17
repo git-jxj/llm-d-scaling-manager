@@ -19,8 +19,9 @@ metadata:
   namespace: my-models
 spec:
   scaleTargetRef:
-    apiVersion: apps/v1                      # leaderworkerset.x-k8s.io/v1 for an LWS
-    kind: Deployment                         # or LeaderWorkerSet
+    apiVersion: apps/v1                      # leaderworkerset.x-k8s.io/v1 for an LWS,
+                                             # disaggregatedset.x-k8s.io/v1 for a DisaggregatedSet role
+    kind: Deployment                         # or LeaderWorkerSet, or DisaggregatedSetRoleScaler (<set>-<role>)
     name: qwen-decode
   pollingInterval: 5
   cooldownPeriod: 30

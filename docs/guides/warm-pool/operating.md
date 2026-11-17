@@ -104,10 +104,20 @@ cover are failing, and the pool is hiding it.
 `namespaceSelector` must name the namespace the controller runs in ([step
 2](install.md#2-edit-the-four-things-the-manifests-cannot-know)).
 
-**The pool does not start at all.** The log says
-`the warm pool is disabled: this controller may not patch Pods`.
-Grant it in the pool namespace (Role `scaling-manager-pod-writer`). From the repository
-root, as someone who may create Roles there:
+**The pool does not start at all.** The log says one of three things.
+
+- `warm pool off: no warm pool is declared in this namespace` (info): when the
+  controller started, it found no pool Deployment or LeaderWorkerSet and no
+  ScaledObject naming a pool. Create the pool first ([Install](install.md)),
+  then do the steps below.
+- `the warm pool is disabled: this controller may not patch Pods` (error): the
+  pool exists, but the controller may not lend its Pods.
+- `could not check whether a warm pool is declared in this namespace` (error):
+  the controller may not list Deployments or LeaderWorkerSets there. The
+  shipped Role grants both; restore it, then do the steps below.
+
+Grant patch on Pods in the pool namespace (Role `scaling-manager-pod-writer`).
+From the repository root, as someone who may create Roles there:
 
 ```bash
 bash deploy/lib/pod_writer.sh <pool namespace> <controller namespace> | kubectl apply -f -
