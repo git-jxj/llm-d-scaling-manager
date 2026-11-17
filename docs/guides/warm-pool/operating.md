@@ -104,9 +104,12 @@ cover are failing, and the pool is hiding it.
 `namespaceSelector` must name the namespace the controller runs in ([step
 2](install.md#2-edit-the-four-things-the-manifests-cannot-know)).
 
-**The pool does not start at all.** The log says
+**The pool does not start at all.** The log says, at ERROR,
 `the warm pool is disabled: this controller may not patch Pods`.
-Grant it in the pool namespace (Role `scaling-manager-pod-writer`). From the repository
+If it instead says `warm pool off: no warm pool is declared in this namespace`,
+the controller found no pool Deployment and no ScaledObject naming a pool when
+it started: create the pool first ([Install](install.md)), then grant patch and
+restart. Grant it in the pool namespace (Role `scaling-manager-pod-writer`). From the repository
 root, as someone who may create Roles there:
 
 ```bash

@@ -1691,7 +1691,9 @@ func runWarmPool(
 			"starting the warm pool anyway. If borrows fail, check RBAC first",
 			"namespace", warmPoolNS, "err", err.Error())
 	case !allowed:
-		setupLog.Error(nil, warmpool.BorrowDenied, "namespace", warmPoolNS)
+		// An ERROR only where a pool is declared; a namespace that never asked
+		// for one gets one info line saying the pool is off.
+		warmpool.ReportBorrowDenied(ctx, setupLog, mgr.GetAPIReader(), registry.Default.Snapshot, warmPoolNS)
 		return nil
 	}
 
