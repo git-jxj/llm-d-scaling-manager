@@ -340,6 +340,28 @@ EOF
     log_success "the scaling manager uninstalled"
 }
 
+# llmsm_remove_weights_labeller removes the weights labeller that
+# `smt install --scope cluster` applies (deploy/weights.sh labeller), and the
+# node labels it set, on the uninstall of a cluster-wide install
+# (LLMSM_SCOPE=cluster). Nothing when no labeller runs. Both steps need
+# cluster rights (namespaces, ClusterRoles, node patch); what fails is
+# printed with its command, and the uninstall goes on.
+llmsm_remove_weights_labeller() {
+    [ "${LLMSM_SCOPE:-namespace}" = cluster ] || return 0
+    local out weights
+    weights="$(dirname "${BASH_SOURCE[0]}")/../weights.sh"
+    if ! out="$(kubectl get deployment weights-labeller -n scaling-manager-weights-labeller --ignore-not-found -o name 2>&1)"; then
+        log_warning "Could not read the weights labeller ($out); if one runs, a cluster admin removes it: deploy/weights.sh labeller --delete, then deploy/weights.sh label --clear"
+        return 0
+    fi
+    [ -n "$out" ] || return 0
+    log_info "Removing the weights labeller the cluster-wide install applied, then the node labels it set"
+    bash "$weights" labeller --delete \
+        || log_warning "The weights labeller was not removed; a cluster admin runs: deploy/weights.sh labeller --delete"
+    bash "$weights" label --clear \
+        || log_warning "The node labels the weights labeller set were not all removed; a cluster admin runs: deploy/weights.sh label --clear"
+}
+
 cleanup() {
     log_info "Starting undeployment process..."
     log_info "======================================"
@@ -386,6 +408,7 @@ cleanup() {
         if declare -F llmsm_remove_epp_metrics_auth >/dev/null; then
             llmsm_remove_epp_metrics_auth
         fi
+        llmsm_remove_weights_labeller
         # After the ScaledObjects are gone, so nothing dials the old address.
         if declare -F llmsm_scaler_keda_restart_after_undeploy >/dev/null; then
             llmsm_scaler_keda_restart_after_undeploy

@@ -106,10 +106,10 @@ smt_parse() {
     shift
     SMT_NS="" SMT_KEDA_NS="" SMT_PROM_URL="" SMT_PROM_CA="" SMT_QUOTA="" SMT_SETS=() SMT_FILES=""
     SMT_DRY_RUN=false SMT_OUT="" SMT_SCOPE=namespace SMT_MODEL_NS=() SMT_PLATFORM="" SMT_STRICT=false
-    SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_ALLOW_HTTP=false
+    SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_WL_IMAGE="" SMT_WL_OFF=false SMT_ALLOW_HTTP=false
     case "$cmd" in
         admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope " ;;
-        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http " ;;
+        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller " ;;
         admin-finish) allowed=" -n --keda-namespace --files --platform --strict --restart-keda --scope " ;;
         release-files) allowed=" --out " ;;
     esac
@@ -121,7 +121,7 @@ smt_parse() {
             *) smt_usage "$cmd: unknown option $1 (see $cmd --help)" ;;
         esac
         case "$flag" in
-            --dry-run|--strict|--restart-keda|--allow-http) ;;
+            --dry-run|--strict|--restart-keda|--no-weights-labeller|--allow-http) ;;
             *) [ $# -ge 2 ] && [ -n "$2" ] || smt_usage "$cmd: $1 needs a value" ;;
         esac
         case "$flag" in
@@ -137,6 +137,8 @@ smt_parse() {
             --model-namespace) SMT_MODEL_NS+=("$2"); shift 2 ;;
             --platform) SMT_PLATFORM="$2"; shift 2 ;;
             --image-repo) SMT_IMAGE_REPO="$2"; shift 2 ;;
+            --weights-labeller-image) SMT_WL_IMAGE="$2"; shift 2 ;;
+            --no-weights-labeller) SMT_WL_OFF=true; shift ;;
             --dry-run) SMT_DRY_RUN=true; shift ;;
             --strict) SMT_STRICT=true; shift ;;
             --restart-keda) SMT_RESTART_KEDA=true; shift ;;
@@ -178,6 +180,13 @@ smt_parse() {
         esac
         case "${SMT_IMAGE_REPO##*/}" in *:*) smt_usage "$cmd --image-repo: give REGISTRY/PATH, without a tag" ;; esac
     fi
+    if [ "$SMT_SCOPE" != cluster ] && { [ -n "$SMT_WL_IMAGE" ] || [ "$SMT_WL_OFF" = true ]; }; then
+        smt_usage "$cmd: --weights-labeller-image and --no-weights-labeller are for --scope cluster; in one namespace, the cluster admin runs: smt weights labeller -n <ns> --image <tools image>"
+    fi
+    [ -z "$SMT_WL_IMAGE" ] || [ "$SMT_WL_OFF" = false ] || smt_usage "$cmd: --weights-labeller-image and --no-weights-labeller together; one or the other"
+    case "$SMT_WL_IMAGE" in
+        *[!A-Za-z0-9._:/@-]*) smt_usage "$cmd --weights-labeller-image: '$SMT_WL_IMAGE' is not an image reference" ;;
+    esac
     if [ -n "$SMT_PROM_CA" ] && [ ! -r "$SMT_PROM_CA" ]; then
         smt_usage "$cmd --prometheus-ca: cannot read '$SMT_PROM_CA' (a path under the mounted /work)"
     fi
@@ -938,6 +947,111 @@ smt_finish() {
     echo "Removed ClusterRoleBinding $SMT_PREFLIGHT_CRB: the preflight's cluster reads are needed only while it runs."
 }
 
+# --- The weights labeller ------------------------------------------------------
+#
+# The labeller (deploy/weights.sh labeller; docs/proposals/weights-node-gate.md)
+# patches nodes, so it is a cluster-wide piece: the cluster-wide install
+# applies and updates it, watching every --model-namespace and every namespace
+# it already watches -- but only where it has work: a model namespace with a
+# weights DaemonSet (weights.sh apply), or a labeller already running. Else it
+# says how to add it later. A namespaced admin-setup only checks it is there,
+# adds its own namespace to its watch list with namespaced rights, and
+# otherwise prints the command.
+SMT_WL_NS=scaling-manager-weights-labeller
+SMT_WL_DS_SELECTOR=app.kubernetes.io/component=node-local-weights,app.kubernetes.io/managed-by=scaling-manager-weights
+
+# smt_wl_image echoes the image the labeller runs: --weights-labeller-image,
+# else the tools image of this release. Returns 1 when there is none to name:
+# a development image, or a mirror (--image-repo) whose tools path this
+# cannot know.
+smt_wl_image() {
+    local v
+    if [ -n "$SMT_WL_IMAGE" ]; then
+        printf '%s\n' "$SMT_WL_IMAGE"
+        return 0
+    fi
+    [ -z "$SMT_IMAGE_REPO" ] || return 1
+    v="$(smt_version)"
+    case "$v" in ""|unreleased) return 1 ;; esac
+    printf 'ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:%s\n' "$v"
+}
+
+# smt_wl_list echoes the --model-namespace list, comma-separated.
+smt_wl_list() {
+    local IFS=,
+    printf '%s\n' "${SMT_MODEL_NS[*]}"
+}
+
+# smt_weights_labeller: the cluster-wide install applies or updates the
+# labeller. Skipped, and said so, with --no-weights-labeller, with no
+# --model-namespace, with no image to run, and when no model namespace keeps
+# weights on the node and no labeller runs yet. A read that fails skips it
+# too, naming what could not be read (Forbidden is not absent); the install
+# goes on.
+smt_weights_labeller() {
+    local img m n have="" running=false
+    if [ "$SMT_WL_OFF" = true ]; then
+        echo "Weights labeller: not applied (--no-weights-labeller)."
+        return 0
+    fi
+    if [ ${#SMT_MODEL_NS[@]} -eq 0 ]; then
+        echo "Weights labeller: not applied (no --model-namespace to watch)."
+        return 0
+    fi
+    if ! img="$(smt_wl_image)"; then
+        echo "Weights labeller: not applied: no tools image to run it with (a development image, or --image-repo). Give --weights-labeller-image <tools image>."
+        return 0
+    fi
+    if ! kc_capture get deployment weights-labeller -n "$SMT_WL_NS" --ignore-not-found -o json; then
+        echo "Weights labeller: not applied: could not read Deployment weights-labeller in $SMT_WL_NS ($(printf '%s' "$KC_ERR" | head -n 1))."
+        return 0
+    fi
+    [ -z "$KC_OUT" ] || running=true
+    if [ "$running" = false ]; then
+        for m in "${SMT_MODEL_NS[@]}"; do
+            if ! kc_capture get daemonset -n "$m" -l "$SMT_WL_DS_SELECTOR" -o json; then
+                echo "Weights labeller: not applied: could not read the DaemonSets in $m ($(printf '%s' "$KC_ERR" | head -n 1)), so whether it keeps weights on the node is not known."
+                return 0
+            fi
+            n="$(printf '%s' "$KC_OUT" | jq '.items | length' 2>/dev/null)" || n=0
+            [ "${n:-0}" -eq 0 ] || have="${have:+$have, }$m"
+        done
+        if [ -z "$have" ]; then
+            echo "Weights labeller: not applied: no model namespace keeps weights on the node (no weights.sh apply DaemonSet in $(smt_wl_list | sed 's/,/, /g'))."
+            echo "  After weights apply, run this install again, or: smt weights labeller -n <model namespace> --image $img --merge"
+            return 0
+        fi
+    fi
+    echo "Weights labeller (labels the GPU nodes whose weights copy verifies; it patches nodes$([ "$running" = true ] && echo "; updating the one running" || echo "; weights on the node in $have")):"
+    bash "$HERE/weights.sh" labeller -n "$(smt_wl_list)" --image "$img" --merge \
+        || smt_exit 7 "the weights labeller was not applied (weights.sh labeller exited non-zero, above)"
+}
+
+# smt_weights_labeller_dry: the labeller as a file, for --dry-run. No cluster
+# is read, so it watches the --model-namespace list only.
+smt_weights_labeller_dry() {
+    local img
+    [ "$SMT_WL_OFF" = false ] && [ ${#SMT_MODEL_NS[@]} -gt 0 ] || return 0
+    img="$(smt_wl_image)" || { echo "  (weights labeller not rendered: give --weights-labeller-image)"; return 0; }
+    bash "$HERE/weights.sh" labeller -n "$(smt_wl_list)" --image "$img" --dry-run > "$SMT_OUT/60-weights-labeller.yaml" \
+        || smt_exit 2 "the weights labeller did not render"
+    echo "  $SMT_OUT/60-weights-labeller.yaml (only where a model namespace keeps weights on the node; it watches exactly --model-namespace and, applied, replaces a running labeller's list: keep the full list in git, and do not use labeller --add)"
+}
+
+# smt_admin_setup_labeller: admin-setup checks the labeller is there and adds
+# this namespace to its watch list. Never fails admin-setup: the labeller is
+# an addition to the weights preparation, not to the install.
+smt_admin_setup_labeller() {
+    local rc=0
+    echo "Weights labeller:"
+    bash "$HERE/weights.sh" labeller --add -n "$SMT_NS" > "$SMT_TMP/labeller.out" 2>&1 || rc=$?
+    sed 's/^/  /' "$SMT_TMP/labeller.out"
+    case "$rc" in
+        0|3|4) ;;
+        *) echo "  (weights.sh labeller --add exited $rc; admin-setup goes on)" ;;
+    esac
+}
+
 # --- dry-run -----------------------------------------------------------------
 
 # smt_dry_write <file> [part] <source>: one step file in SMT_OUT.
@@ -1021,6 +1135,7 @@ smt_admin_setup() {
         echo "  $SMT_OUT/19-admin-setup-stamp.yaml"
         [ "$SMT_PLATFORM" != openshift ] || echo "  then: kubectl label namespace $SMT_NS openshift.io/user-monitoring=true --overwrite"
         echo "KEDA's namespace in the scaler NetworkPolicy: $SMT_KEDA_NS ($SMT_KEDA_FROM)."
+        echo "Weights labeller: admin-setup adds $SMT_NS to its watch list when one runs (smt weights labeller --add -n $SMT_NS)."
         return 0
     fi
     smt_header admin-setup
@@ -1041,6 +1156,7 @@ smt_admin_setup() {
     smt_stamp_yaml > "$SMT_TMP/stamp.yaml"
     smt_kc apply -f "$SMT_TMP/stamp.yaml"
     echo "Stamp: ConfigMap $SMT_STAMP ($(smt_version), KEDA in $SMT_KEDA_NS)."
+    smt_admin_setup_labeller
     echo
     echo "Done. The namespace owner runs next, with their own kubeconfig:"
     echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>   (an http:// Prometheus: add --allow-http)"
@@ -1064,6 +1180,7 @@ smt_install() {
             smt_dry_admin
         fi
         smt_dry_install
+        [ "$SMT_SCOPE" = namespace ] || smt_weights_labeller_dry
         [ "$SMT_SCOPE" = namespace ] || echo "KEDA's side of mutual TLS is not rendered: it copies the client certificate the controller makes. After the apply, run: smt install --scope cluster ... again."
         return 0
     fi
@@ -1132,6 +1249,7 @@ smt_install_cluster() {
     echo "Scaler TLS Secrets:"
     smt_scaler_secrets
     smt_controller
+    smt_weights_labeller
     smt_finish
     echo
     echo "Installed in $SMT_NS for the cluster, passive, serving the scaler over mutual TLS."

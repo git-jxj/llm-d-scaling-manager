@@ -1035,6 +1035,24 @@ llmsm_ns_suffix() {
     fi
 }
 
+# llmsm_weights_node_label_key echoes the node label that says a node holds a
+# verified copy of model $1 (a Hugging Face id): llm-d.ai/<name>-cache, the
+# key some clusters' node-preparation jobs already set, so a node prepared
+# either way carries the same label. <name> is the model's name without its
+# organisation, lower-cased (meta-llama/Llama-3.1-8B-Instruct -> llama-3.1-8b-instruct), with any
+# character a label name does not allow replaced by '-' and the ends trimmed
+# to a letter or digit. A name too long for the 63-character label name keeps
+# its first 48 characters and a hash of the whole id, so two long ids do not
+# fold onto one key. deploy/weights.sh --node-label replaces the whole key.
+llmsm_weights_node_label_key() {
+    local name="${1##*/}"
+    name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g; s/-\{2,\}/-/g; s/^[^a-z0-9]*//; s/[^a-z0-9]*$//')"
+    if [ "${#name}" -gt 57 ]; then
+        name="$(printf '%s' "${name:0:48}" | sed 's/[^a-z0-9]*$//')-$(llmsm_ns_suffix "$1")"
+    fi
+    printf 'llm-d.ai/%s-cache' "${name:-model}"
+}
+
 # llmsm_kueue_reader_names sets LLMSM_KUEUE_READER_NAMES to the Namespaces, space
 # separated, that the Kueue reader of the controller installed in $1 may `get`:
 # $2 first (the namespace it manages), then every name the live ClusterRole

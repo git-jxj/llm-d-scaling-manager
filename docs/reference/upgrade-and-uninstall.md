@@ -129,6 +129,33 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.11.x to v0.12.0
+
+#### The weights labeller
+
+Only if you keep model weights on the nodes' disks (`smt weights apply`).
+
+- `smt install --scope cluster` now runs the weights labeller. It labels each
+  GPU node whose copy of the weights verifies. It patches nodes; its grants
+  are in the [security model](security-model.md#grants-made-after-install).
+  The install applies it only when a `--model-namespace` has a weights
+  DaemonSet. Otherwise it prints how to add it later. To leave it out, pass
+  `--no-weights-labeller`.
+- Run `smt weights apply` again for each model, with the same flags. Before
+  v0.12.0 the downloader's readiness probe checked only that the marker file
+  exists. The labeller does not trust those downloaders: it skips each one
+  and says so in its log. The new downloader keeps a whole copy already on
+  the node; it downloads again only a copy that is not whole.
+- Then run `smt workload-patch -n <namespace>`. It writes the node affinity and
+  the `wait-for-weights` init container into each model server that reads
+  node-local weights ([Gate replicas on the
+  weights](workload-preparation.md#gate-replicas-on-the-weights)).
+- To check the labeller:
+
+  ```bash
+  kubectl get configmap weights-labeller-status -n scaling-manager-weights-labeller -o yaml
+  ```
+
 ### Upgrading from v0.11.1 to v0.11.2
 
 The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
@@ -1332,6 +1359,7 @@ make undeploy-scaling-manager NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace>
 | the EPP `/metrics` authentication ClusterRoleBindings this install made (`llm-d.ai/applied-for=$NS`), and ClusterRole `scaling-manager-epp-metrics-auth` with the last of them | cluster-scoped: a namespace owner cannot read them, and the uninstall prints the cluster admin's `kubectl delete` command |
 | RoleBinding `scaling-manager-pod-writer-<suffix>` in every workload namespace, and Role `scaling-manager-pod-writer` where no other controller's binding uses it | made by `deploy/warmpool.sh create`, utilization-share activate, and the upgrade to this release |
 | `scaling-manager-utilization-share-history`, `scaling-manager-controller-status` and `scaling-manager-learned-state` | written by the controller, not rendered, so deleted by name. An uninstall and reinstall therefore starts learned state cold; upgrade in place to keep it |
+| the weights labeller (namespace `scaling-manager-weights-labeller`, ClusterRoles and bindings `scaling-manager-weights-labeller` and `-reader`, the RoleBinding in each watched namespace) and the node labels it set | only for `SCOPE=cluster`, where `smt install --scope cluster` applies it. Needs cluster rights; what fails is printed with its command (`deploy/weights.sh labeller --delete`, then `deploy/weights.sh label --clear`) |
 | the ScaledObjects **this installer created** | KEDA restores each workload to its pre-autoscaling replica count as they go. Keep them with `UNDEPLOY_SCALEDOBJECTS=false` |
 
 ### What it leaves
