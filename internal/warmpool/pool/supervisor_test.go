@@ -38,7 +38,7 @@ func newFakeSupervisor(t *testing.T) *fakeSupervisor {
 
 // client points a Supervisor at the fake, bypassing the podIP:port construction.
 func (f *fakeSupervisor) client() *Supervisor {
-	return &Supervisor{client: f.server.Client(), baseURL: f.server.URL}
+	return &Supervisor{client: f.server.Client(), baseURL: f.server.URL, deleteRetryDelay: time.Millisecond}
 }
 
 func TestListAcceptsTheLauncherEnvelopeShape(t *testing.T) {
@@ -153,55 +153,117 @@ func TestDeleteIsIdempotent(t *testing.T) {
 	}
 }
 
-// failedDeleteThenList answers a DELETE with the 500 launcher v0.8.0 gives when
-// psutil's wait raises EINVAL, and a list with whatever instances are given.
-func failedDeleteThenList(listBody string) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			http.Error(w, "[Errno 22] Invalid argument", http.StatusInternalServerError)
+// deleteScript answers DELETEs with the given status codes in turn (the last
+// one repeats), and every list with listBody. It counts both.
+type deleteScript struct {
+	codes    []int
+	listBody string
+	deletes  int
+	lists    int
+}
+
+func (d *deleteScript) respond(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		code := d.codes[min(d.deletes, len(d.codes)-1)]
+		d.deletes++
+		if code == http.StatusOK {
+			_, _ = w.Write([]byte(`{"status":"terminated","instance_id":"evicted"}`))
 			return
 		}
-		_, _ = w.Write([]byte(listBody))
+		// The body launcher v0.8.0 sends with its 500.
+		http.Error(w, "[Errno 22] Invalid argument", code)
+		return
+	}
+	d.lists++
+	_, _ = w.Write([]byte(d.listBody))
+}
+
+const (
+	listEmpty   = `{"revision":3,"total_instances":0,"running_instances":0,"instances":[]}`
+	listStopped = `{"revision":3,"total_instances":1,"running_instances":0,` +
+		`"instances":[{"instance_id":"evicted","status":"stopped","options":"--port 9001"}]}`
+)
+
+func listWithStatus(status string) string {
+	return `{"revision":3,"total_instances":1,"running_instances":0,` +
+		`"instances":[{"instance_id":"evicted","status":"` + status + `","options":"--port 9001"}]}`
+}
+
+func runDelete(t *testing.T, d *deleteScript) error {
+	t.Helper()
+	f := newFakeSupervisor(t)
+	f.respond = d.respond
+	return f.client().Delete(context.Background(), "evicted")
+}
+
+func TestDeleteRetriesA500AndTakesTheRetrysSuccess(t *testing.T) {
+	// Measured on launcher v0.8.0: a 500 after the SIGKILL escalation, then 200
+	// for the same DELETE sent again, which also removes the stale entry.
+	d := &deleteScript{codes: []int{500, 200}, listBody: listStopped}
+	if err := runDelete(t, d); err != nil {
+		t.Fatalf("a retry that succeeds must make the delete succeed: %v", err)
+	}
+	if d.deletes != 2 || d.lists != 0 {
+		t.Errorf("want 2 deletes and no list, got %d deletes and %d lists", d.deletes, d.lists)
 	}
 }
 
-func TestDeleteTreatsA500AsDoneWhenTheInstanceIsGone(t *testing.T) {
-	// Measured: v0.8.0 answers 500 after escalating to SIGKILL with the engine
-	// and its GPU memory already freed. Failing the eviction then makes the next
-	// pass count a dead copy as resident and evict it again.
-	f := newFakeSupervisor(t)
-	f.respond = failedDeleteThenList(`{"revision":3,"total_instances":0,"running_instances":0,"instances":[]}`)
-	if err := f.client().Delete(context.Background(), "evicted"); err != nil {
-		t.Fatalf("a 500 for an instance that is gone must be success: %v", err)
-	}
-	if f.callCount != 2 || f.lastPath != "GET "+instancesPath {
-		t.Errorf("want the DELETE then one list, got %d calls, last %q", f.callCount, f.lastPath)
+func TestDeleteTakesA404OnTheRetryAsSuccess(t *testing.T) {
+	d := &deleteScript{codes: []int{500, 404}, listBody: listStopped}
+	if err := runDelete(t, d); err != nil {
+		t.Fatalf("an instance gone by the retry is deleted: %v", err)
 	}
 }
 
-func TestDeleteTreatsA500AsDoneWhenTheInstanceIsStopped(t *testing.T) {
-	f := newFakeSupervisor(t)
-	f.respond = failedDeleteThenList(`{"revision":3,"total_instances":1,"running_instances":0,` +
-		`"instances":[{"instance_id":"evicted","status":"stopped","options":"--port 9001"}]}`)
-	if err := f.client().Delete(context.Background(), "evicted"); err != nil {
-		t.Fatalf("a 500 for a stopped instance must be success: %v", err)
-	}
-}
-
-func TestDeleteKeepsA500WhenTheInstanceStillRuns(t *testing.T) {
-	f := newFakeSupervisor(t)
-	f.respond = failedDeleteThenList(`{"revision":3,"total_instances":1,"running_instances":1,` +
-		`"instances":[{"instance_id":"evicted","status":"running","options":"--port 9001"}]}`)
-	err := f.client().Delete(context.Background(), "evicted")
+func TestDeleteKeepsTheErrorWhenBothFailAndTheInstanceIsListed(t *testing.T) {
+	// "stopped" says only that the API server is dead. EngineCore or a worker
+	// may still hold the GPU, so a listed instance is never proof of a delete.
+	d := &deleteScript{codes: []int{500, 500}, listBody: listStopped}
+	err := runDelete(t, d)
 	if err == nil {
-		t.Fatal("a 500 for an instance still running must stay an error")
+		t.Fatal("two failed deletes of a listed instance must stay an error")
 	}
 	if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "Invalid argument") {
 		t.Errorf("the supervisor's own words must survive: %v", err)
 	}
+	if d.deletes != 2 || d.lists != 1 {
+		t.Errorf("want 2 deletes and 1 list, got %d and %d", d.deletes, d.lists)
+	}
 }
 
-func TestDeleteKeepsA500WhenTheListFails(t *testing.T) {
+func TestDeleteSucceedsWhenBothFailButTheInstanceIsGone(t *testing.T) {
+	d := &deleteScript{codes: []int{500, 500}, listBody: listEmpty}
+	if err := runDelete(t, d); err != nil {
+		t.Fatalf("an instance no longer listed is deleted: %v", err)
+	}
+}
+
+func TestDeleteRetriesEvery5xx(t *testing.T) {
+	for _, code := range []int{http.StatusBadGateway, http.StatusServiceUnavailable} {
+		d := &deleteScript{codes: []int{code, 200}, listBody: listStopped}
+		if err := runDelete(t, d); err != nil {
+			t.Errorf("%d then 200 must succeed: %v", code, err)
+		}
+		if d.deletes != 2 {
+			t.Errorf("%d: want the delete retried, got %d deletes", code, d.deletes)
+		}
+		d = &deleteScript{codes: []int{code, code}, listBody: listStopped}
+		if err := runDelete(t, d); err == nil {
+			t.Errorf("%d twice with the instance listed must stay an error", code)
+		}
+	}
+}
+
+func TestDeleteNeverTakesAListedStatusAsProof(t *testing.T) {
+	for _, status := range []string{"", "stopping", "not_running", "running"} {
+		d := &deleteScript{codes: []int{500, 500}, listBody: listWithStatus(status)}
+		if err := runDelete(t, d); err == nil {
+			t.Errorf("status %q: a listed instance must keep the error", status)
+		}
+	}
+}
+
+func TestDeleteKeepsTheErrorWhenTheListFails(t *testing.T) {
 	f := newFakeSupervisor(t)
 	f.respond = func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "[Errno 22] Invalid argument", http.StatusInternalServerError)
@@ -211,17 +273,30 @@ func TestDeleteKeepsA500WhenTheListFails(t *testing.T) {
 	}
 }
 
-func TestDeleteDoesNotListAfterA4xx(t *testing.T) {
-	// Only a server failure is re-checked. A refusal is the supervisor's answer.
-	f := newFakeSupervisor(t)
-	f.respond = func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "bad id", http.StatusBadRequest)
-	}
-	if err := f.client().Delete(context.Background(), "evicted"); err == nil {
+func TestDeleteDoesNotRetryA4xx(t *testing.T) {
+	// Only a server failure is retried. A refusal is the supervisor's answer.
+	d := &deleteScript{codes: []int{http.StatusBadRequest}, listBody: listEmpty}
+	if err := runDelete(t, d); err == nil {
 		t.Fatal("a 400 must stay an error")
 	}
-	if f.callCount != 1 {
-		t.Errorf("want only the DELETE, got %d calls", f.callCount)
+	if d.deletes != 1 || d.lists != 0 {
+		t.Errorf("want only the DELETE, got %d deletes and %d lists", d.deletes, d.lists)
+	}
+}
+
+func TestDeleteRetryHonoursContextCancellation(t *testing.T) {
+	f := newFakeSupervisor(t)
+	d := &deleteScript{codes: []int{500, 200}, listBody: listEmpty}
+	f.respond = d.respond
+	s := f.client()
+	s.deleteRetryDelay = time.Hour
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := s.Delete(ctx, "evicted"); err == nil {
+		t.Fatal("a cancelled wait must return the first error")
+	}
+	if d.deletes != 1 {
+		t.Errorf("want no retry after cancellation, got %d deletes", d.deletes)
 	}
 }
 

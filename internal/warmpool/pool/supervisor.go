@@ -31,7 +31,14 @@ const instancesPath = "/v2/vllm/instances"
 type Supervisor struct {
 	client  *http.Client
 	baseURL string
+	// deleteRetryDelay is the pause before Delete retries a 5xx. Zero means
+	// defaultDeleteRetryDelay; tests shorten it.
+	deleteRetryDelay time.Duration
 }
+
+// defaultDeleteRetryDelay gives a stop that failed midway time to finish before
+// the DELETE is sent again.
+const defaultDeleteRetryDelay = 2 * time.Second
 
 // NewSupervisor addresses the supervisor in the Pod at podIP.
 func NewSupervisor(podIP string, timeout time.Duration) *Supervisor {
@@ -149,50 +156,75 @@ func (s *Supervisor) Create(ctx context.Context, id string, spec InstanceSpec) (
 // controller that must know whether it already evicted something is a controller
 // that will get it wrong after a restart.
 //
-// A 5xx is checked against the instance list before it is believed. Launcher
-// v0.8.0 answers 500 ("[Errno 22] Invalid argument") when a stop has to
-// escalate to SIGKILL, although the engine and its GPU memory are gone by then:
-// psutil 7.2.2 re-raises an EINVAL from pidfd_open() for a process that was just
-// reaped (giampaolo/psutil#2715). So on a 5xx the list is read once; an instance
-// that is no longer there, or no longer running, was deleted, and the 500 is
-// only logged. Anything else, including a list that cannot be read, is still
-// the error it was, and the reconciler evicts again on its next pass.
+// A 5xx is retried once, after a short pause. Launcher v0.8.0 answers 500
+// ("[Errno 22] Invalid argument") when a stop escalates to SIGKILL: psutil
+// 7.2.2 re-raises an EINVAL from pidfd_open() for a process being reaped
+// (giampaolo/psutil#2715). That 500 comes in the middle of the stop, with the
+// instance still in the launcher's table and possibly an EngineCore or worker
+// still holding the GPU, so neither the 500 nor a listed status says the GPU is
+// free. A second DELETE finishes the stop and removes the entry: measured, it
+// answers 200. If the retry fails too, the instance counts as deleted only when
+// the list no longer has it at all. Otherwise the first error is returned and
+// the reconciler evicts again on its next pass.
 func (s *Supervisor) Delete(ctx context.Context, id string) error {
-	_, err := s.do(ctx, http.MethodDelete, instancesPath+"/"+url.PathEscape(id), nil)
-	var status statusError
-	if !errors.As(err, &status) {
-		return err
+	first := s.deleteOnce(ctx, id)
+	if !isServerError(first) {
+		return first
 	}
-	if status.code == http.StatusNotFound {
+	delay := s.deleteRetryDelay
+	if delay <= 0 {
+		delay = defaultDeleteRetryDelay
+	}
+	select {
+	case <-ctx.Done():
+		return first
+	case <-time.After(delay):
+	}
+	logger := log.FromContext(ctx).V(logging.DEFAULT)
+	retry := s.deleteOnce(ctx, id)
+	if retry == nil {
+		logger.Info("the supervisor failed a delete and the retry succeeded",
+			"instance", id, "firstErr", first.Error())
 		return nil
 	}
-	if status.code >= http.StatusInternalServerError {
-		if state, stopped := s.stoppedAfterFailedDelete(ctx, id); stopped {
-			log.FromContext(ctx).V(logging.DEFAULT).Info(
-				"the supervisor failed the delete, but the instance is stopped; treating it as deleted",
-				"instance", id, "listed", state, "err", err.Error())
-			return nil
-		}
+	if s.absent(ctx, id) {
+		logger.Info("the supervisor failed a delete twice, but the instance is no longer listed; treating it as deleted",
+			"instance", id, "firstErr", first.Error(), "retryErr", retry.Error())
+		return nil
+	}
+	return first
+}
+
+// deleteOnce sends one DELETE. A 404 is success.
+func (s *Supervisor) deleteOnce(ctx context.Context, id string) error {
+	_, err := s.do(ctx, http.MethodDelete, instancesPath+"/"+url.PathEscape(id), nil)
+	var status statusError
+	if errors.As(err, &status) && status.code == http.StatusNotFound {
+		return nil
 	}
 	return err
 }
 
-// stoppedAfterFailedDelete reads the list once and reports whether id is gone
-// or listed as not running, with what the list said ("absent" or its status).
-// An unreadable list, or an instance with no status, counts as still running:
-// the safe answer is the error, which the next pass retries.
-func (s *Supervisor) stoppedAfterFailedDelete(ctx context.Context, id string) (string, bool) {
+// isServerError reports whether err is a 5xx answer from the supervisor.
+func isServerError(err error) bool {
+	var status statusError
+	return errors.As(err, &status) && status.code >= http.StatusInternalServerError
+}
+
+// absent reports whether the list was read and does not contain id. Any listed
+// status, known or not, counts as present, and so does a list that cannot be
+// read: only absence proves the launcher has let the instance go.
+func (s *Supervisor) absent(ctx context.Context, id string) bool {
 	instances, err := s.List(ctx)
 	if err != nil {
-		return "", false
+		return false
 	}
 	for _, inst := range instances {
-		if inst.ID != id {
-			continue
+		if inst.ID == id {
+			return false
 		}
-		return inst.Status, inst.Status != "" && inst.Status != "running"
 	}
-	return "absent", true
+	return true
 }
 
 func (s *Supervisor) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
