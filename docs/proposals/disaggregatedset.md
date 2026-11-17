@@ -186,7 +186,7 @@ KEDA cannot target the role and never calls us about it. For such a set the
 controller actuates the role itself: the role writer (`internal/dsetwriter`).
 The codebase had no direct actuator to reuse (KEDA actuates everything); the
 writer follows the KEDA HPA repair's shape instead: off by default, leader
-only, uncached reads, its own admin-applied RBAC component.
+only, uncached reads, its own opt-in grant (`DSET_ROLE_WRITER`).
 
 **Which path.** External role on LWS v0.10.0 or newer: KEDA plus the role
 scaler, always. The writer never writes an External role (the set controller
@@ -195,91 +195,25 @@ otherwise the role is not scaled. `make scaledobjects-plan` writes a Static role
 `apply: no` and names both options; it creates nothing for the writer path.
 `make workload-patch` reports the role the same on both paths.
 
-**Turning it on.**
+How to turn it on and off, what it writes, its safety rules and its events
+are in [DisaggregatedSet roles](../reference/disaggregatedset.md). The design
+points, in short:
 
-1. Apply `config/components/dset-role-writer` on top of your overlay. It
-   grants `get`, `list` and `patch` on `disaggregatedsets` and sets
-   `DSET_ROLE_WRITER=true`. Patch reaches every field of every set, so it is an
-   admin decision, never on by default. The installer does not add it, so
-   write a kustomization above the overlay you install:
-
-   ```yaml
-   apiVersion: kustomize.config.k8s.io/v1beta1
-   kind: Kustomization
-   namespace: scaling-manager-system   # the controller's namespace
-   resources:
-   - <path>/config/overlays/cluster-scoped/kubernetes   # the overlay you install
-   components:
-   - <path>/config/components/dset-role-writer
-   ```
-
-   Then `kubectl apply -k` that directory. Do not list the component in the
-   overlay's own `components`: the overlay's name prefix is then applied to it
-   twice, the patch that turns the writer on matches nothing, and the build
-   succeeds with the writer off. Check with
-   `kubectl -n scaling-manager-system get deploy scaling-manager-controller-manager -o yaml | grep -A1 DSET_ROLE_WRITER`.
-2. Annotate the set:
-
-   ```yaml
-   metadata:
-     annotations:
-       scaling-manager.llmd.ai/role-writer: "true"   # or "force", below
-       scaling-manager.llmd.ai/model-id: org/Model   # the served model name
-       scaling-manager.llmd.ai/min-replicas: "1"     # groups per role; default 1
-       scaling-manager.llmd.ai/max-replicas: "8"     # default 10
-       scaling-manager.llmd.ai/scaling-policy: standard   # optional tier
-   ```
-
-**What it does, every 15 s.** For each opted-in set it registers every Static
-role in the registry, as a KEDA call registers a ScaledObject: entry
-`<set>-<role>-llmsm`, target kind `DisaggregatedSetRoleScaler`, name
-`<set>-<role>`. That is the name a role scaler would have, so attribution and
-the engines are the same on both paths. The scale target is read from the set
-(`spec.roles[].spec.replicas`), since there is no scaler object. The writer then
-reads the decision the engines published for each role, under the external
-scaler's staleness rule (a positive decision older than 3 minutes is ignored),
-and writes the roles whose count changed.
-
-**Safety.**
-
-- **All zero or all non-zero.** The set's CEL rule forbids one Static role at
-  zero while another runs. The writer zeroes Static roles only when every one is
-  decided zero; otherwise a role decided to zero keeps `max(min, 1)` groups.
-  All Static roles go in one write, so the rule is checked on one document.
-- **During a rollout.** A replica change creates no revision, so a write does
-  not start a roll. Scale-up lands in the rollout's pace. Scale-down under
-  `Deferred` (the default) is accepted into `spec` but applied only once the old
-  revision has drained. The writer does not write again: `spec` already holds
-  the target, and nothing it reads changes until the drain ends.
-- **Role order.** The write lists the roles in the set's own order. A
-  server-side apply reorders a list to match the applied document, and LWS
-  v0.9.0 and v0.10.0, and sets created before v1.0.0, hash `spec.roles` in
-  order into the revision: a reordered list would roll every group.
-- **Who owns `replicas`.** The write is a server-side apply with field manager
-  `scaling-manager-role-writer`, naming only `spec.roles[name].spec.replicas`
-  (`spec.roles` is a list map keyed by name). If another manager owns that
-  field, the apply conflicts. The writer then writes nothing and records a
-  `RoleReplicasConflict` event on the set. Who owns it depends on how the set
-  is written:
-  - **Server-side apply** (`kubectl apply --server-side`, Argo CD with
-    `ServerSideApply=true`, Flux): the source owns only the fields in its
-    manifest. Remove `replicas` from each Static role there, as an HPA asks of
-    a Deployment, and `"true"` works.
-  - **Create or client-side apply** (`kubectl create`, plain `kubectl apply`,
-    Helm, Argo CD by default): the source owns every field of the stored set,
-    including the `replicas` the API filled in with its default of 1. Removing
-    `replicas` from the manifest does not release them. Use `force`, or switch
-    the source to server-side apply.
-
-  `force` takes the field over. The next sync then fights it unless the source
-  drops the field, or ignores it (Argo CD `ignoreDifferences` on
-  `/spec/roles/*/spec/replicas`).
-- **Scope.** Not for `slices > 1` (a role's count is per slice; the engines size
-  its total): the set is refused with a `RoleWriterRefused` event. A role with
-  sub-roles is skipped, without an event; the set's other Static roles are
-  still written, as the CEL rule exempts such a role.
-- **Other failures**, a rejected write say, are recorded as a
-  `RoleReplicasWriteFailed` event on the set.
+- It registers each Static role of an annotated set in the registry, as a
+  KEDA call registers a ScaledObject, under the name a role scaler would have
+  (`<set>-<role>`), so attribution and the engines are the same on both paths.
+- It applies the engines' decisions with one server-side apply per set,
+  naming only `spec.roles[name].spec.replicas`, in the set's own role order.
+- It does what KEDA and the HPA do on the other path: it asks the external
+  scaler's passive resolver and writes nothing for a passive model, applies
+  the external scaler's staleness rule, and holds a scale-down for the HPA's
+  default 5-minute stabilization window.
+- It keeps the set's all-zero-or-all-non-zero rule, and refuses sets it
+  cannot size (`slices` above 1, no model, bad bounds) with an event.
+- The installer grants it with `DSET_ROLE_WRITER=true`, like
+  `KEDA_HPA_REPAIR`: a ClusterRole or a namespaced Role, renamed per
+  install, copied into each managed namespace, revoked when the variable is
+  off and by the uninstall.
 
 ## Rollout and scaling are different jobs
 
@@ -322,19 +256,3 @@ count. On a DisaggregatedSet they meet in three places:
 3. **Drain timing under `Deferred`** (accepted for now). A lower count waits for
    the rollout to finish. The actuator reads the live count, but the start-time
    learner does not yet tell that wait from a slow start.
-4. **The role writer in the installer.** The component is applied by hand, and
-   the installer does not know it. Until it does:
-   - the installer renders and applies the overlay without the component.
-     Apply your kustomization again after every install or upgrade, and check
-     `DSET_ROLE_WRITER` as above;
-   - the ClusterRole and binding have fixed names, not the per-install names
-     the installer gives its own. Apply it for one install per cluster: a
-     second install's apply replaces the binding's subject, and the first
-     controller loses `patch`;
-   - there is no namespace-scoped variant. On a namespace-scoped install the
-     grant still reaches every DisaggregatedSet in the cluster, though the
-     writer lists only the namespaces it watches.
-
-   Wiring it in follows `KEDA_HPA_REPAIR`: an installer variable, a
-   namespaced component copied into each watched namespace, per-install
-   renaming, and revocation when the variable is off.

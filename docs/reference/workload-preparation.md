@@ -1218,7 +1218,8 @@ LeaderWorkerSet template per role under `spec.roles[].spec.leaderWorkerTemplate`
   `DisaggregatedSetRoleScaler` named `<set>-<role>`, seeded with the role's current
   group count, and `make scaledobjects-plan` targets it. A role in the default
   `Static` mode is listed with `apply: no` and this reason. See
-  [Scaling a DisaggregatedSet](../proposals/disaggregatedset.md).
+  [DisaggregatedSet roles](disaggregatedset.md), which also covers the role writer
+  for a role that must stay Static.
 
 ## Writing the patch: `make workload-patch`
 
