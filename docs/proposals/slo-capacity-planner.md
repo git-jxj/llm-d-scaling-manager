@@ -291,8 +291,9 @@ read, one rule kept: an `R_q` never reads below the truth.
 
 **Measured.** Qwen3-32B P/D, 2 + 2 replicas, learned from each run's warm-up
 recording, against the client's per-step TPOT: q32j is 45 steps over three
-shapes, q132d 4 steps at 8000/200. Mean error of the prediction over the
-measurement, before (main) and after:
+shapes, q132d 2 steps at 8000/200 (its other 2 steps are void: the fleet was
+short). Mean error of the prediction over the measurement, before (main) and
+after:
 
 | Run | Reading | Steps | Before | After |
 | --- | --- | --- | --- | --- |
@@ -300,10 +301,10 @@ measurement, before (main) and after:
 | q32j | p50 | 45 | +139% | +41% |
 | q32j | p90 | 45 | +125% | +106% |
 | q32j | p99 | 45 | +113% | +111% |
-| q132d | mean | 4 | +33% | +33% |
-| q132d | p50 | 4 | +147% | +45% |
-| q132d | p90 | 4 | +130% | +112% |
-| q132d | p99 | 4 | +116% | +114% |
+| q132d | mean | 2 | +35% | +35% |
+| q132d | p50 | 2 | +151% | +48% |
+| q132d | p90 | 2 | +135% | +116% |
+| q132d | p99 | 2 | +121% | +119% |
 
 No step reads below its measurement, before or after. The percentiles now
 separate: on the q32j 8000/200 steps p50, p90 and p99 read 18.3, 28.5 and
@@ -323,7 +324,7 @@ q32j). Two causes, in order of size:
   at 16.8 ms on the 8000/200 steps against 11.5 to 13 ms measured.
 
 R_q by fill moved these runs little: the A steps show p50's ratio rising from
-1.09 at the lowest fill to 1.21 near the knee, and p90's barely, because the
+1.09 at the lowest fill to 1.25 near the knee, and p90's barely, because the
 same coarse edges set every fill's reading. It is built and tested, and not
 validated by these runs. Router TPOT edges a few percent apart around the
 target are what would firm up R_q; until then a percentile TPOT from the router
