@@ -22,13 +22,30 @@
 #              version is read with ONE of:
 #                regex  extended regex; group 1 of every matching line is a pin
 #                yq     yq expression; every non-null result is a pin
+#              A pin with `from: OWNER/REPO` and `at: COMPONENT` is read from
+#              `file` in that GitHub repository, at the version we pin for the
+#              component named by `at` (listed above it). It is for a version
+#              we get through another pin rather than set ourselves.
+#   hold       a pin kept behind on purpose:
+#                version  the pin being held; when the pin moves and this
+#                         does not, the report says "hold is stale"
+#                reason   why, in one line
+#                until    review date, YYYY-MM-DD. Until then the component
+#                         reads "held", not "behind", and does not keep the
+#                         monthly issue open; after it, "behind" again.
+#              Renew the date, or move the pin, when it comes up.
 #   tracked    true with no pins: we depend on it without pinning it, and the
 #              report shows the latest release for reference only
 #
 # Deliberately left out: Envoy (the llm-d-router-standalone chart picks its
 # image; we pin the chart, not Envoy), build and CI tooling pinned by checksum
-# in the workflows (yq, helm, golangci-lint, promtool), and the reusable
-# llm-d/llm-d-infra workflows (pinned by commit, not by release).
+# in the workflows (yq, helm, golangci-lint, promtool), the reusable
+# llm-d/llm-d-infra workflows (pinned by commit, not by release), and
+# developer conveniences nothing installs for a user: cert-manager in
+# deploy/kubernetes/create-kind-cluster-with-nvidia.sh and the Grafana images
+# in deploy/grafana/benchmark-grafana.yaml. KEDA_TESTED_VERSION in
+# deploy/lib/scaler_runtime.sh is a minor (2.21), not a release; it moves with
+# the KEDA pin by hand (docs/developer-guide/upstream-dependencies.md).
 
 components:
   # --- llm-d ----------------------------------------------------------------
@@ -73,12 +90,26 @@ components:
 
   - name: llm-d (vendored router values)
     repo: llm-d/llm-d
-    note: The EPP Helm values are copied from the llm-d guides at this release.
+    note: The base EPP Helm values are copied from the llm-d guides at this release.
     pins:
       - file: deploy/lib/epp-base.values.yaml
         regex: 'Vendored from llm-d/llm-d@(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d (optimized-baseline plugins)
+    repo: llm-d/llm-d
+    note: >-
+      The optimized-baseline overrides take their layout from the current
+      guide but keep the plugin set of an older one.
+    pins:
       - file: deploy/lib/epp-optimized-baseline.values.yaml
-        regex: 'Vendored from llm-d/llm-d@(v[0-9][0-9a-z.+-]*)'
+        regex: 'Plugins from llm-d/llm-d@(v[0-9][0-9a-z.+-]*)'
+    hold:
+      version: v0.8.1
+      reason: >-
+        the newer guide replaces the plugin set (prefix-cache-affinity-filter +
+        token-load-scorer, calibrated per model and GPU), which changes routing;
+        see the file's header
+      until: "2027-02-01"
 
   - name: llm-d-fast-model-actuation (FMA)
     repo: llm-d-incubation/llm-d-fast-model-actuation
@@ -127,18 +158,37 @@ components:
     repo: llm-d-incubation/llm-d-modelservice
     tagPrefix: llm-d-modelservice-
     note: >-
-      Pinned by the harness patch to the last chart that renders the routing
+      Pinned by the harness patch to the chart that renders the routing
       sidecar flags the sidecar pin above accepts. Move both together.
     pins:
       - file: hack/benchmark/patch_harness.sh
-        regex: '^PINNED = "[[:space:]]*llmDModelservice:[[:space:]]*(v[0-9][0-9a-z.+-]*)"'
+        regex: '^MODELSERVICE_CHART = "(v[0-9][0-9a-z.+-]*)"'
+    hold:
+      version: v0.4.16
+      reason: >-
+        matched with the routing sidecar pin; a newer chart can render flags
+        that sidecar rejects (hack/benchmark/patch_harness.sh)
+      until: "2027-02-01"
 
   # --- model servers --------------------------------------------------------
-  - name: vLLM (P/D benchmark)
+  - name: vLLM (harness default)
     repo: vllm-project/vllm
     note: >-
-      Engine for the P/D benchmark scenario. Other scenarios take the engine
-      llm-d-benchmark pins.
+      The engine most of the repository runs: every benchmark scenario that
+      does not pin its own, and the prepull, engine-cache and start-time
+      measurements. It is the llm-d-benchmark default at the ref we pin, so
+      moving the llm-d-benchmark pin moves it. The warm pool's FMA launcher
+      image carries its own vLLM (the same release at FMA v0.6.4), which moves
+      with the FMA pin.
+    pins:
+      - from: llm-d/llm-d-benchmark
+        at: llm-d-benchmark
+        file: config/templates/values/defaults.yaml
+        yq: 'explode(.) | .images.vllm.tag'
+
+  - name: vLLM (P/D benchmark)
+    repo: vllm-project/vllm
+    note: Engine for the P/D benchmark scenario, pinned apart from the harness default.
     pins:
       - file: hack/benchmark/scenarios/guides/two-model-shapes-pd.yaml
         yq: '.shared.images.vllm.tag'
@@ -174,6 +224,15 @@ components:
       - file: .github/workflows/ci-e2e-openshift.yaml
         regex: 'GAIE_VERSION:[[:space:]]*"?(v[0-9][0-9a-z.+-]*)'
 
+  - name: gateway-api-inference-extension (Go module)
+    repo: kubernetes-sigs/gateway-api-inference-extension
+    note: >-
+      The Go API the controller is built against. Apart from the CRD pin above:
+      the two have moved separately. Dependabot skips sigs.k8s.io minor bumps.
+    pins:
+      - file: go.mod
+        regex: '^[[:space:]]*sigs\.k8s\.io/gateway-api-inference-extension (v[0-9][0-9a-z.+-]*)'
+
   - name: Gateway API
     repo: kubernetes-sigs/gateway-api
     note: Gateway API CRDs the EPP installer applies when absent.
@@ -182,18 +241,30 @@ components:
         regex: 'GATEWAY_API_VERSION:-"?(v[0-9][0-9a-z.+-]*)'
 
   - name: KEDA
-    repo: kedacore/keda
-    note: Helm chart the installer deploys; the KEDA chart version follows the KEDA release.
+    repo: kedacore/charts
+    note: >-
+      Helm chart the installer deploys, the Go module the controller builds
+      against, and the chart version the install-flow check mocks. Compared
+      with chart releases, so "behind" means a chart you can install exists.
     pins:
       - file: deploy/install.sh
         regex: '^KEDA_CHART_VERSION=\$\{KEDA_CHART_VERSION:-([0-9][0-9a-z.+-]*)\}'
+      - file: go.mod
+        regex: '^[[:space:]]*github\.com/kedacore/keda/v2 (v[0-9][0-9a-z.+-]*)'
+      - file: hack/check-install-flow.sh
+        regex: '^KEDA_CHART_VERSION="([0-9][0-9a-z.+-]*)"'
 
   - name: LeaderWorkerSet
     repo: kubernetes-sigs/lws
-    note: Helm chart the installer deploys for multi-node models.
+    note: >-
+      Helm chart the installer deploys for multi-node models, and the Go
+      module the controller builds against. Dependabot skips sigs.k8s.io
+      minor bumps.
     pins:
       - file: deploy/install.sh
         regex: '^LWS_CHART_VERSION=\$\{LWS_CHART_VERSION:-"?([0-9][0-9a-z.+-]*)'
+      - file: go.mod
+        regex: '^[[:space:]]*sigs\.k8s\.io/lws (v[0-9][0-9a-z.+-]*)'
 
   - name: Kueue
     repo: kubernetes-sigs/kueue
@@ -203,6 +274,20 @@ components:
         regex: '^PINNED_VERSION=(v[0-9][0-9a-z.+-]*)'
       - file: deploy/ci-pr-checks/install-kueue-crds.sh
         regex: 'KUEUE_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+
+  - name: Kubernetes (kind node image)
+    repo: kubernetes/kubernetes
+    note: >-
+      The Kubernetes version of the kind clusters the e2e and the emulator
+      create. A kindest/node image for a new release ships with a kind
+      release; check kind's release notes for it before moving.
+    pins:
+      - file: Makefile
+        regex: '^K8S_VERSION[[:space:]]*[?]=[[:space:]]*(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/kind-emulator/setup.sh
+        regex: '^DEFAULT_K8S_VERSION="(v[0-9][0-9a-z.+-]*)"'
+      - file: deploy/kubernetes/create-kind-cluster-with-nvidia.sh
+        regex: 'kindest/node:(v[0-9][0-9a-z.+-]*)'
 
   - name: kube-prometheus-stack
     repo: prometheus-community/helm-charts

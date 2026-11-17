@@ -9,7 +9,8 @@ name: Upstream versions
 # first run that finds everything current. A run that could not check a
 # component (an API error, or a pin the inventory no longer finds) updates the
 # issue but never closes it, and the job fails: an unanswered question is not
-# a current pin.
+# a current pin. A pin held on purpose (`hold` in the inventory) does not keep
+# the issue open until its review date passes.
 #
 # docs/developer-guide/upstream-dependencies.md says what to do with the issue.
 # hack/check-upstream-versions.sh, run by `make lint-deploy-scripts`, runs the
@@ -50,7 +51,7 @@ jobs:
           YQ_SHA256: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
         run: |
           set -euo pipefail
-          curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/yq \
+          curl -fsSL --connect-timeout 10 --max-time 60 --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/yq \
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
           sudo install -m 0755 /tmp/yq /usr/local/bin/yq
@@ -101,7 +102,7 @@ jobs:
           if [ "$STATUS" = 0 ]; then
             if [ -n "$number" ]; then
               gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
-                --comment "Every pinned upstream component is current as of $today."
+                --comment "Every pinned upstream component is current, or held on purpose, as of $today."
               echo "closed #$number"
             else
               echo "every pin is current; no issue open"
@@ -114,10 +115,15 @@ jobs:
               --body "Report refreshed on $today by the monthly upstream versions check."
             echo "updated #$number"
           else
-            # The label may not exist yet; creating it twice is the only
-            # failure tolerated here, and the create below needs it.
-            gh label create "$ISSUE_LABEL" --repo "$GITHUB_REPOSITORY" --color ededed \
-              --description "Monthly report of upstream components behind our pins" 2>/dev/null || true
+            # The label may not exist yet, and the create below needs it.
+            # "already exists" is the only failure tolerated.
+            if ! out="$(gh label create "$ISSUE_LABEL" --repo "$GITHUB_REPOSITORY" --color ededed \
+                --description "Monthly report of upstream components behind our pins" 2>&1)"; then
+              case "$out" in
+                *"already exists"*) ;;
+                *) echo "::error::cannot create label $ISSUE_LABEL: $out"; exit 1 ;;
+              esac
+            fi
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
               --label "$ISSUE_LABEL" --body-file "$REPORT_FILE"
           fi

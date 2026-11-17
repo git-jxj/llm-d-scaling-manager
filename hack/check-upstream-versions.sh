@@ -22,7 +22,7 @@ SCRIPT="${CHECK_UPSTREAM_SCRIPT:-$ROOT/hack/upstream-versions.sh}"
 WORKFLOW="${CHECK_UPSTREAM_WORKFLOW:-$ROOT/.github/workflows/upstream-versions.yaml}"
 # One ok or FAIL per case. A run that stops early otherwise passes having
 # checked less than it says. Change this deliberately with the cases.
-EXPECT_CASES=67
+EXPECT_CASES=109
 PASS=0
 FAIL=0
 
@@ -50,18 +50,32 @@ trap 'rm -rf "$WORK"' EXIT
 
 # --- the stubbed GitHub API -------------------------------------------------
 # Answers .../repos/OWNER/REPO/releases?...&page=N from $FIX/OWNER_REPO.N.json.
-# OWNER_REPO.fail makes every request for that repository fail like curl -f
-# on a 403; a page with no file answers [] like the API past the last page.
+# OWNER_REPO.fail makes every request for that repository fail like an HTTP
+# error; a page with no file answers [] like the API past the last page.
+# .../repos/OWNER/REPO/contents/PATH?ref=REF answers the file
+# $FIX/OWNER_REPO.contents.REF, base64-encoded like the API.
 FIX="$WORK/api"
 mkdir -p "$FIX"
 cat > "$WORK/fetch" <<'STUB'
 #!/usr/bin/env bash
 url="$1"
 path="${url#*/repos/}"
+echo "$url" >> "$FIX/requests.log"
+case "$url" in
+    */contents/*)
+        repo="${path%%/contents/*}"
+        f="$FIX/${repo//\//_}.contents.${url##*ref=}"
+        if [ -f "$f" ]; then
+            jq -n --arg c "$(base64 -w 76 < "$f")" '{content: $c, encoding: "base64"}'
+            exit 0
+        fi
+        echo "HTTP 404: Not Found" >&2
+        exit 22
+        ;;
+esac
 repo="${path%%/releases*}"
 key="${repo//\//_}"
 page="${url##*page=}"
-echo "$url" >> "$FIX/requests.log"
 if [ -e "$FIX/$key.fail" ]; then
     echo "curl: (22) The requested URL returned error: 403" >&2
     exit 22
@@ -115,16 +129,20 @@ set_pins() {
 }
 
 # 1. Current. Newer prereleases, drafts and rc tags upstream did not flag are
-#    not "latest".
+#    not "latest" -- vLLM's own shapes included (v0.33.0rc3, .devN), which it
+#    publishes with prerelease=false.
 rm -f "$FIX"/*
 inventory "$FOO_A"
 set_pins v1.2.0 v1.2.0
-releases example_foo 1 "$(rel v1.4.0-rc.1 2026-02-20)" "$(rel v1.3.0 2026-02-10 true)" \
+releases example_foo 1 "$(rel v1.5.0.dev0 2026-02-25)" "$(rel v1.4.0rc3 2026-02-22)" \
+    "$(rel v1.4.0-rc.1 2026-02-20)" "$(rel v1.3.0 2026-02-10 true)" \
     "$(rel v1.3.5 2026-02-15 false true)" "$(rel v1.2.0 2026-01-01)"
 run
 expect_exit "current: report mode" 0 "$RC"
 expect_has "current: status" "| foo | v1.2.0 | v1.2.0 | 2026-01-01 | - | current |"
 expect_not "current: no prerelease, draft or rc is latest" "v1.3"
+expect_not "current: an unflagged rc3 tag is not latest" "v1.4.0rc3"
+expect_not "current: an unflagged .dev0 tag is not latest" "v1.5.0.dev0"
 run --check
 expect_exit "current: --check" 0 "$RC"
 expect_has "current: summary" "1 current, 0 behind, 0 with pins that disagree, 0 could not be checked"
@@ -272,6 +290,16 @@ if [ "$(grep -c . "$FIX/requests.log")" = 1 ]; then
 else
     fail "pagination: a short page is the last one" "$(cat "$FIX/requests.log")"
 fi
+# An old-branch patch at the end of a full page (Kubernetes patches several
+# branches) is not our pin: read on until the pin itself.
+set_pins v1.1.0 v1.1.0
+page1=()
+for ((n = 100; n >= 2; n--)); do page1+=("$(rel "v1.1.$n" 2026-02-01)"); done
+page1+=("$(rel v1.0.9 2026-01-20)")
+releases example_foo 1 "${page1[@]}"
+releases example_foo 2 "$(rel v1.1.1 2026-01-10)" "$(rel v1.1.0 2026-01-01)"
+run
+expect_has "pagination: an old-branch patch does not end the count" "| 100 releases, 31 days | behind |"
 
 # 16. A broken inventory is a broken tool: exit 2 in both modes.
 inventory '  - name: nothing
@@ -281,12 +309,169 @@ expect_exit "invalid inventory: report mode" 2 "$RC"
 run --check
 expect_exit "invalid inventory: --check" 2 "$RC"
 
-# 17. The real inventory: every location yields a pin. Offline, so every
-#     component is "could not check" -- and none is "pin not found".
+# 17. The real fetch, against a fake curl: a network failure or a rate limit
+#     stops the run at the first request, exits 2 in both modes, and says why.
+#     Never "current". An ordinary HTTP error fails that component only.
+rm -f "$FIX"/*
+inventory "$FOO_A" '  - name: bar
+    repo: example/bar
+    pins:
+      - file: deploy/a.sh
+        regex: '"'"'FOO_VERSION:-(v[0-9][0-9a-z.+-]*)\}'"'"''
+set_pins v1.2.0 v1.2.0
+mkdir -p "$WORK/fakecurl"
+cat > "$WORK/fakecurl/curl" <<'STUB'
+#!/usr/bin/env bash
+out="" prev=""
+for a in "$@"; do
+    [ "$prev" = "-o" ] && out="$a"
+    prev="$a"
+done
+echo "curl $*" >> "$FAKE_CURL_LOG"
+case "$FAKE_CURL_MODE" in
+    dns) echo "curl: (6) Could not resolve host: api.github.com" >&2; printf '000'; exit 6 ;;
+    403) printf '%s' '{"message":"API rate limit exceeded for 192.0.2.1."}' > "$out"; printf '403' ;;
+    429) printf '%s' '{"message":"Too many requests"}' > "$out"; printf '429' ;;
+    404) printf '%s' '{"message":"Not Found"}' > "$out"; printf '404' ;;
+    ok) printf '%s' '[{"tag_name":"v1.2.0","published_at":"2026-01-01T12:00:00Z","prerelease":false,"draft":false}]' > "$out"; printf '200' ;;
+esac
+exit 0
+STUB
+chmod +x "$WORK/fakecurl/curl"
+# real MODE [--check]: run the script with the fake curl; sets OUT, RC, CALLS.
+real() {
+    local mode="$1"
+    shift
+    : > "$WORK/curl.log"
+    OUT="$(env -u GITHUB_TOKEN -u UPSTREAM_FETCH PATH="$WORK/fakecurl:$PATH" FAKE_CURL_MODE="$mode" \
+        FAKE_CURL_LOG="$WORK/curl.log" UPSTREAM_PINS_FILE="$PINS/inventory.yaml" UPSTREAM_PINS_ROOT="$PINS" \
+        UPSTREAM_TODAY=2026-03-01 bash "$SCRIPT" "$@" 2>&1)"
+    RC=$?
+    CALLS="$(grep -c . "$WORK/curl.log")"
+}
+real ok --check
+expect_exit "real fetch: an answer reads as one" 0 "$RC"
+expect_has "real fetch: both components current" "2 current, 0 behind"
+if grep -q -- '--max-time 30' "$WORK/curl.log" && grep -q -- '--connect-timeout 10' "$WORK/curl.log"; then
+    ok "real fetch: every request has a hard timeout"
+else
+    fail "real fetch: no hard timeout on curl" "$(head -n 1 "$WORK/curl.log")"
+fi
+real dns
+expect_exit "network down: report mode exits 2" 2 "$RC"
+expect_has "network down: says why" "network failure (curl exit 6)"
+expect_has "network down: says it stopped" "**Stopped asking GitHub**"
+expect_has "network down: the rest were not asked" "| bar | v1.2.0 | ? | ? | - | **could not check**: not asked"
+expect_not "network down: never current" "| current |"
+if [ "$CALLS" = 1 ]; then ok "network down: one request, not one per component"; else fail "network down: $CALLS requests"; fi
+real dns --check
+expect_exit "network down: --check" 2 "$RC"
+real 403 --check
+expect_exit "rate limit 403: --check" 2 "$RC"
+expect_has "rate limit 403: says so" "HTTP 403: API rate limit exceeded"
+expect_has "rate limit 403: says it stopped" "**Stopped asking GitHub**"
+if [ "$CALLS" = 1 ]; then ok "rate limit 403: one request"; else fail "rate limit 403: $CALLS requests"; fi
+real 429 --check
+expect_exit "rate limit 429: --check" 2 "$RC"
+expect_has "rate limit 429: says so" "HTTP 429: Too many requests"
+real 404 --check
+expect_exit "HTTP 404: --check" 2 "$RC"
+expect_has "HTTP 404: says so" "HTTP 404: Not Found"
+expect_not "HTTP 404: does not stop the run" "Stopped asking"
+if [ "$CALLS" = 2 ]; then ok "HTTP 404: the next component is still asked"; else fail "HTTP 404: $CALLS requests"; fi
+# The real curl, against a port nothing listens on: its exit code reaches
+# the report.
+if command -v curl >/dev/null 2>&1; then
+    OUT="$(env -u GITHUB_TOKEN -u UPSTREAM_FETCH UPSTREAM_API_URL=http://127.0.0.1:9 UPSTREAM_CURL_RETRY=0 \
+        UPSTREAM_PINS_FILE="$PINS/inventory.yaml" UPSTREAM_PINS_ROOT="$PINS" bash "$SCRIPT" --check 2>&1)"
+    RC=$?
+    if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -qF "network failure (curl exit 7)"; then
+        ok "real curl, connection refused: network failure, exit 2"
+    else
+        fail "real curl, connection refused (exit $RC)" "$OUT"
+    fi
+else
+    fail "real curl, connection refused: curl not found"
+fi
+
+# 18. Holds: a pin behind on purpose reads "held" until its review date, and
+#     does not keep the issue open; after the date it is behind again; a hold
+#     the pin has moved past is an error.
+rm -f "$FIX"/*
+set_pins v1.2.0 v1.2.0
+releases example_foo 1 "$(rel v1.3.0 2026-02-01)" "$(rel v1.2.0 2026-01-01)"
+hold() {  # hold VERSION UNTIL
+    inventory "$FOO_A" '    hold:
+      version: '"$1"'
+      reason: matched with another pin
+      until: "'"$2"'"'
+}
+hold v1.2.0 2026-06-01
+run --check
+expect_exit "held: --check" 0 "$RC"
+expect_has "held: row" "| 1 release, 31 days | held until 2026-06-01: matched with another pin |"
+expect_has "held: summary" "0 behind, 0 with pins that disagree, 0 could not be checked, 0 tracked but not pinned, 1 held on purpose"
+hold v1.2.0 2026-03-01
+run --check
+expect_exit "held: the review date itself is still held" 0 "$RC"
+hold v1.2.0 2026-02-28
+run --check
+expect_exit "hold ended: --check" 1 "$RC"
+expect_has "hold ended: says so" "| behind (hold ended 2026-02-28: matched with another pin) |"
+hold v1.1.0 2026-06-01
+run --check
+expect_exit "stale hold: --check" 2 "$RC"
+expect_has "stale hold: says so" "**hold is stale**: held at v1.1.0, pinned at v1.2.0"
+inventory "$FOO_A" '    hold:
+      version: v1.2.0
+      reason: no date'
+run
+expect_exit "hold without a review date: invalid inventory" 2 "$RC"
+
+# 19. A pin read upstream, at the ref another pin names (the harness default
+#     engine, read from llm-d-benchmark at our llm-d-benchmark pin).
+rm -f "$FIX"/*
+printf 'BENCH_REF=v0.7.8\n' > "$PINS/deploy/bench.sh"
+inventory '  - name: bench
+    repo: example/bench
+    pins:
+      - file: deploy/bench.sh
+        regex: '"'"'^BENCH_REF=(v[0-9][0-9a-z.+-]*)'"'"'' '  - name: engine
+    repo: example/engine
+    pins:
+      - from: example/bench
+        at: bench
+        file: config/defaults.yaml
+        yq: '"'"'explode(.) | .images.vllm.tag'"'"''
+printf 'v:\n  vllm_version: &vllm_version v0.26.0\nimages:\n  vllm:\n    tag: *vllm_version\n' > "$FIX/example_bench.contents.v0.7.8"
+releases example_bench 1 "$(rel v0.7.8 2026-01-01)"
+releases example_engine 1 "$(rel v0.27.0 2026-02-01)" "$(rel v0.26.0 2026-01-01)"
+: > "$FIX/requests.log"
+run --check
+expect_exit "upstream pin: --check" 1 "$RC"
+expect_has "upstream pin: value read through the anchor" "| engine | v0.26.0 | v0.27.0 | 2026-02-01 | 1 release, 31 days | behind |"
+expect_has "upstream pin: location names repository, ref and file" '`example/bench@v0.7.8:config/defaults.yaml`: v0.26.0'
+if grep -qF 'example/bench/contents/config/defaults.yaml?ref=v0.7.8' "$FIX/requests.log"; then
+    ok "upstream pin: read at the ref our pin names"
+else
+    fail "upstream pin: not read at our ref" "$(cat "$FIX/requests.log")"
+fi
+rm -f "$FIX/example_bench.contents.v0.7.8"
+run --check
+expect_exit "upstream pin unreadable: --check" 2 "$RC"
+expect_has "upstream pin unreadable: could not check, not pin not found" "| engine | - | ? | ? | - | **could not check**: request failed (exit 22) HTTP 404: Not Found"
+printf 'BENCH_REF=v0.7.8\nBENCH_REF=v0.7.9\n' > "$PINS/deploy/bench.sh"
+run --check
+expect_has "upstream pin, ref ambiguous: pin not found" "(no single pin for bench above it)"
+
+# 20. The real inventory: every location yields a pin. Offline, so every
+#     component is "could not check" -- and none is "pin not found", and no
+#     hold is stale.
 OUT="$(UPSTREAM_FETCH=false UPSTREAM_PINS_FILE="$ROOT/hack/upstream-pins.yaml" UPSTREAM_PINS_ROOT="$ROOT" \
     bash "$SCRIPT" 2>&1)"
 n_components="$(tr -d '\r' < "$ROOT/hack/upstream-pins.yaml" | yq '.components | length' -)"
 expect_not "real inventory: every pin location is found" "pin not found"
+expect_not "real inventory: every hold matches its pin" "hold is stale"
 expect_has "real inventory: every component read, none answered" "**$n_components components:** 0 current, 0 behind, 0 with pins that disagree, $n_components could not be checked"
 
 # --- the workflow -----------------------------------------------------------
@@ -334,7 +519,10 @@ case "$1 $2" in
         [ "${GH_LIST_FAIL:-}" = 1 ] && { echo "HTTP 502" >&2; exit 1; }
         [ -n "${GH_OPEN:-}" ] && echo "$GH_OPEN"
         ;;
-    "label create") [ "${GH_LABEL_EXISTS:-}" = 1 ] && exit 1 ;;
+    "label create")
+        [ "${GH_LABEL_EXISTS:-}" = 1 ] && { echo "label with name \"$3\" already exists; use \`--force\` to update" >&2; exit 1; }
+        [ "${GH_LABEL_FAIL:-}" = 1 ] && { echo "HTTP 403: Resource not accessible by integration" >&2; exit 1; }
+        ;;
 esac
 exit 0
 STUB
@@ -371,6 +559,12 @@ gh_not "issue: unchecked components never close it" "gh issue close"
 gh_has "issue: unchecked components update it" "gh issue edit 7"
 issue 1 "" GH_LABEL_EXISTS=1
 gh_has "issue: an existing label does not stop the create" "gh issue create"
+issue 1 "" GH_LABEL_FAIL=1
+if [ "$RC" -ne 0 ] && ! printf '%s' "$GH" | grep -qF "gh issue create" && printf '%s' "$OUT" | grep -qF "cannot create label"; then
+    ok "issue: any other label failure fails the step and says so"
+else
+    fail "issue: a label failure (exit $RC)" "$OUT"
+fi
 issue 1 "" GH_LIST_FAIL=1
 if [ "$RC" -ne 0 ] && ! printf '%s' "$GH" | grep -qF "gh issue create"; then
     ok "issue: a failed list fails the step and creates nothing"
