@@ -3291,6 +3291,7 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/compare-baked-release-files.sh
 	@bash -n hack/testdata/release-install/kubectl
 	@bash -n test/tools-install/e2e.sh
+	@bash -n test/tools-install/rv_snapshot.sh
 	@bash -n hack/check-controller-ready.sh
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
@@ -3325,6 +3326,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# the apply left a window where a new pod started active, and a
 	@# passive: false read through the yq alternative operator came back empty.
 	@bash hack/check-passive-keep.sh
+	@echo "Checking the tools-install e2e snapshot ignores a KEDA status write..."
+	@# Executes rv_snapshot against a stub kubectl. KEDA patches the status of a
+	@# ClusterTriggerAuthentication when it finalizes a ScaledObject, and the
+	@# second-install check failed on that write, which no install made.
+	@bash -n hack/check-tools-install-rv-snapshot.sh
+	@bash hack/check-tools-install-rv-snapshot.sh
 	@echo "Checking the controller readiness check..."
 	@# Executes it against a stub kubectl. `rollout status` passes at once for
 	@# a Deployment at 0 replicas, so an install over a controller at 0/0
