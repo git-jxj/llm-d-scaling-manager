@@ -7,7 +7,10 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
@@ -85,10 +88,11 @@ func ReportBorrowDenied(ctx context.Context, logger logr.Logger, r client.Reader
 }
 
 // poolDeclared reports whether the namespace declares a warm pool: a
-// ScaledObject trigger that names one, or a pool Deployment. The Deployment is
-// read as well as the registry because the registry fills as KEDA calls, so at
-// startup it is usually still empty, and an unnamed pool from before named
-// pools has no trigger at all.
+// ScaledObject trigger that names one, or a pool workload -- a Deployment, or a
+// LeaderWorkerSet for a multi-host pool. The workloads are read as well as the
+// registry because the registry fills as KEDA calls, so at startup it is
+// usually still empty, and an unnamed pool from before named pools has no
+// trigger at all.
 func poolDeclared(ctx context.Context, r client.Reader, snapshot func() []registry.Entry, namespace string) (bool, error) {
 	if snapshot != nil {
 		for _, entry := range snapshot() {
@@ -97,13 +101,27 @@ func poolDeclared(ctx context.Context, r client.Reader, snapshot func() []regist
 			}
 		}
 	}
+	inNS := client.InNamespace(namespace)
+	labelled := client.MatchingLabels{pool.ComponentLabel: pool.ComponentValue}
+
 	var deployments appsv1.DeploymentList
-	if err := r.List(ctx, &deployments,
-		client.InNamespace(namespace),
-		client.MatchingLabels{pool.ComponentLabel: pool.ComponentValue},
-		client.Limit(1),
-	); err != nil {
+	if err := r.List(ctx, &deployments, inNS, labelled, client.Limit(1)); err != nil {
 		return false, fmt.Errorf("list warm pool deployments in %s: %w", namespace, err)
 	}
-	return len(deployments.Items) > 0, nil
+	if len(deployments.Items) > 0 {
+		return true, nil
+	}
+
+	var sets lwsv1.LeaderWorkerSetList
+	err := r.List(ctx, &sets, inNS, labelled, client.Limit(1))
+	switch {
+	case meta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err):
+		// No LeaderWorkerSet CRD on this cluster (the scheme registers the
+		// type only when the CRD exists), so there is no LWS pool. Anything
+		// else, Forbidden included, is a read that did not answer.
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("list warm pool leaderworkersets in %s: %w", namespace, err)
+	}
+	return len(sets.Items) > 0, nil
 }
