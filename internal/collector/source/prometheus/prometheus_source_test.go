@@ -18,11 +18,12 @@ type mockPrometheusAPI struct {
 	queryFunc func(ctx context.Context, query string, ts time.Time, opts ...v1.Option) (model.Value, v1.Warnings, error)
 }
 
-func (m *mockPrometheusAPI) Query(ctx context.Context, query string, ts time.Time, opts ...v1.Option) (model.Value, v1.Warnings, error) {
+func (m *mockPrometheusAPI) Query(ctx context.Context, query string, ts time.Time, opts ...v1.Option) (model.Value, v1.Warnings, v1.Infos, error) {
 	if m.queryFunc != nil {
-		return m.queryFunc(ctx, query, ts, opts...)
+		v, w, err := m.queryFunc(ctx, query, ts, opts...)
+		return v, w, nil, err
 	}
-	return nil, nil, nil
+	return nil, nil, nil, nil
 }
 
 // Implement remaining API methods as no-ops for interface compliance
@@ -45,11 +46,11 @@ func (m *mockPrometheusAPI) DeleteSeries(ctx context.Context, matches []string, 
 func (m *mockPrometheusAPI) Flags(ctx context.Context) (v1.FlagsResult, error) {
 	return v1.FlagsResult{}, nil
 }
-func (m *mockPrometheusAPI) LabelNames(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...v1.Option) (model.LabelNames, v1.Warnings, error) {
-	return nil, nil, nil
+func (m *mockPrometheusAPI) LabelNames(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...v1.Option) (model.LabelNames, v1.Warnings, v1.Infos, error) {
+	return nil, nil, nil, nil
 }
-func (m *mockPrometheusAPI) LabelValues(ctx context.Context, label string, matches []string, startTime, endTime time.Time, opts ...v1.Option) (model.LabelValues, v1.Warnings, error) {
-	return nil, nil, nil
+func (m *mockPrometheusAPI) LabelValues(ctx context.Context, label string, matches []string, startTime, endTime time.Time, opts ...v1.Option) (model.LabelValues, v1.Warnings, v1.Infos, error) {
+	return nil, nil, nil, nil
 }
 func (m *mockPrometheusAPI) Metadata(ctx context.Context, metric, limit string) (map[string][]v1.Metadata, error) {
 	return nil, nil
@@ -57,8 +58,8 @@ func (m *mockPrometheusAPI) Metadata(ctx context.Context, metric, limit string) 
 func (m *mockPrometheusAPI) QueryExemplars(ctx context.Context, query string, startTime, endTime time.Time) ([]v1.ExemplarQueryResult, error) {
 	return nil, nil
 }
-func (m *mockPrometheusAPI) QueryRange(ctx context.Context, query string, r v1.Range, opts ...v1.Option) (model.Value, v1.Warnings, error) {
-	return nil, nil, nil
+func (m *mockPrometheusAPI) QueryRange(ctx context.Context, query string, r v1.Range, opts ...v1.Option) (model.Value, v1.Warnings, v1.Infos, error) {
+	return nil, nil, nil, nil
 }
 func (m *mockPrometheusAPI) Rules(ctx context.Context, matches []string) (v1.RulesResult, error) {
 	return v1.RulesResult{}, nil
@@ -66,8 +67,8 @@ func (m *mockPrometheusAPI) Rules(ctx context.Context, matches []string) (v1.Rul
 func (m *mockPrometheusAPI) Runtimeinfo(ctx context.Context) (v1.RuntimeinfoResult, error) {
 	return v1.RuntimeinfoResult{}, nil
 }
-func (m *mockPrometheusAPI) Series(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...v1.Option) ([]model.LabelSet, v1.Warnings, error) {
-	return nil, nil, nil
+func (m *mockPrometheusAPI) Series(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...v1.Option) ([]model.LabelSet, v1.Warnings, v1.Infos, error) {
+	return nil, nil, nil, nil
 }
 func (m *mockPrometheusAPI) Snapshot(ctx context.Context, skipHead bool) (v1.SnapshotResult, error) {
 	return v1.SnapshotResult{}, nil
