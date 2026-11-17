@@ -3,6 +3,7 @@ package scaletarget
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -30,9 +31,6 @@ type dsetRoleAccessor struct {
 	lwsAccessor
 	set, role  string
 	rollingOut bool
-	// static is a role with no role scaler (scaling.mode Static, or LWS
-	// before v0.10.0): its count is the set's spec.roles[].spec.replicas.
-	static bool
 }
 
 // DisaggregatedSetRole returns the DisaggregatedSet and role acc scales, and
@@ -62,7 +60,11 @@ func fetchDisaggregatedSetRole(ctx context.Context, c client.Client, name, names
 			// No role scaler: a Static role, or an LWS without the
 			// DisaggregatedSetRoleScaler kind at all (before v0.10.0).
 			// Only the role writer registers such a target.
-			if acc, ok := fetchStaticRole(ctx, c, name, namespace); ok {
+			acc, serr := fetchStaticRole(ctx, c, name, namespace)
+			if serr != nil {
+				return nil, serr
+			}
+			if acc != nil {
 				return acc, nil
 			}
 		}
@@ -83,21 +85,37 @@ func fetchDisaggregatedSetRole(ctx context.Context, c client.Client, name, names
 }
 
 // fetchStaticRole resolves <set>-<role> to a Static role of a DisaggregatedSet
-// in namespace. Both halves may hold dashes, so each split is tried, the
-// longest role first, and the first set that exists and has a Static role of
-// that name wins. One read per candidate set; a target that is not such a
-// role answers false.
-func fetchStaticRole(ctx context.Context, c client.Client, name, namespace string) (ScaleTargetAccessor, bool) {
+// in namespace. Both halves may hold dashes, so every split is tried, one
+// read per candidate set. Nil and no error when no split names a Static role
+// of an existing set: the target is not such a role. A read that fails other
+// than NotFound or NoMatch (Forbidden, a timeout) is returned, never taken for
+// absence. Two splits that both name a Static role -- sets "glm" with role
+// "v2-decode" and "glm-v2" with role "decode" -- are an error: the name
+// cannot say which, and a guess would scale the wrong set.
+func fetchStaticRole(ctx context.Context, c client.Client, name, namespace string) (ScaleTargetAccessor, error) {
+	var found ScaleTargetAccessor
+	var foundSet string
 	for i := strings.Index(name, "-"); i > 0 && i < len(name)-1; {
 		setName, role := name[:i], name[i+1:]
 		set := &unstructured.Unstructured{}
 		set.SetGroupVersionKind(dsetGVK)
-		if err := c.Get(ctx, client.ObjectKey{Name: setName, Namespace: namespace}, set); err == nil {
+		err := c.Get(ctx, client.ObjectKey{Name: setName, Namespace: namespace}, set)
+		switch {
+		case err == nil:
 			if RoleScalingMode(set, role) == "Static" {
-				if acc, err := NewDisaggregatedSetStaticRoleAccessor(set, role); err == nil {
-					return acc, true
+				acc, aerr := NewDisaggregatedSetStaticRoleAccessor(set, role)
+				if aerr != nil {
+					return nil, aerr
 				}
+				if found != nil {
+					return nil, fmt.Errorf("%s/%s is ambiguous: DisaggregatedSet %s and DisaggregatedSet %s both have a Static role it names; rename one",
+						namespace, name, foundSet, setName)
+				}
+				found, foundSet = acc, setName
 			}
+		case apierrors.IsNotFound(err) || meta.IsNoMatchError(err):
+		default:
+			return nil, fmt.Errorf("reading DisaggregatedSet %s/%s for target %s: %w", namespace, setName, name, err)
 		}
 		j := strings.Index(name[i+1:], "-")
 		if j < 0 {
@@ -105,7 +123,28 @@ func fetchStaticRole(ctx context.Context, c client.Client, name, namespace strin
 		}
 		i += j + 1
 	}
-	return nil, false
+	return found, nil
+}
+
+// DisaggregatedSetRoleGone reports whether the DisaggregatedSet role named
+// name in namespace is gone: no role scaler of that name and no Static role
+// a set names so, or the kind not served at all. One read per candidate, no
+// backoff; any other error is not an absence.
+func DisaggregatedSetRoleGone(ctx context.Context, c client.Client, name, namespace string) (bool, error) {
+	scaler := &unstructured.Unstructured{}
+	scaler.SetGroupVersionKind(dsetRoleScalerGVK)
+	err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, scaler)
+	switch {
+	case err == nil:
+		return scaler.GetDeletionTimestamp() != nil, nil
+	case !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err):
+		return false, err
+	}
+	acc, err := fetchStaticRole(ctx, c, name, namespace)
+	if err != nil {
+		return false, err
+	}
+	return acc == nil || acc.GetDeletionTimestamp() != nil, nil
 }
 
 // disaggregatedSetOf is the DisaggregatedSet a role scaler belongs to: its
@@ -146,7 +185,7 @@ func NewDisaggregatedSetRoleAccessor(scaler, set *unstructured.Unstructured) (Sc
 	}
 	return buildRoleAccessor(set, role, metav1.ObjectMeta{
 		Name: scaler.GetName(), Namespace: scaler.GetNamespace(), UID: scaler.GetUID(), DeletionTimestamp: deleted,
-	}, int32(desired), int32(current), false)
+	}, clampInt32(desired), clampInt32(current))
 }
 
 // NewDisaggregatedSetStaticRoleAccessor builds the scale target of a Static
@@ -154,8 +193,14 @@ func NewDisaggregatedSetRoleAccessor(scaler, set *unstructured.Unstructured) (Sc
 // the role's spec.replicas (1 when unset, the API default), which only the
 // role writer (internal/dsetwriter) changes. Its name is <set>-<role>, the
 // name a role scaler would have, so attribution is the same on both paths.
-// It refuses an External role: that one is the role scaler's.
+// It refuses an External role: that one is the role scaler's. It refuses a
+// set of more than one slice, as the role writer does: a role's count is then
+// per slice, while the engines would size its total.
 func NewDisaggregatedSetStaticRoleAccessor(set *unstructured.Unstructured, role string) (ScaleTargetAccessor, error) {
+	if slices, found, _ := unstructured.NestedInt64(set.Object, "spec", "slices"); found && slices > 1 {
+		return nil, fmt.Errorf("DisaggregatedSet %s/%s has spec.slices %d: a Static role is scaled only in a set of one slice",
+			set.GetNamespace(), set.GetName(), slices)
+	}
 	if RoleScalingMode(set, role) == "External" {
 		return nil, fmt.Errorf("DisaggregatedSet %s/%s role %q is External: it is scaled through its %s",
 			set.GetNamespace(), set.GetName(), role, constants.DisaggregatedSetRoleScalerKind)
@@ -178,7 +223,13 @@ func NewDisaggregatedSetStaticRoleAccessor(set *unstructured.Unstructured, role 
 	return buildRoleAccessor(set, role, metav1.ObjectMeta{
 		Name: set.GetName() + "-" + role, Namespace: set.GetNamespace(), UID: set.GetUID(),
 		DeletionTimestamp: set.GetDeletionTimestamp(),
-	}, int32(desired), int32(current), true)
+	}, clampInt32(desired), clampInt32(current))
+}
+
+// clampInt32 is n bounded to [0, MaxInt32], so a count stored as an int64
+// never wraps into a negative one.
+func clampInt32(n int64) int32 {
+	return int32(min(max(n, 0), math.MaxInt32))
 }
 
 // RoleScalingMode is role's spec.roles[].scaling.mode in set: "Static" when
@@ -199,17 +250,10 @@ func RoleScalingMode(set *unstructured.Unstructured, role string) string {
 	return ""
 }
 
-// IsStaticDisaggregatedSetRole reports whether acc is a DisaggregatedSet role
-// with no role scaler, actuated by the role writer rather than KEDA.
-func IsStaticDisaggregatedSetRole(acc ScaleTargetAccessor) bool {
-	a, ok := acc.(*dsetRoleAccessor)
-	return ok && a.static
-}
-
 // buildRoleAccessor is the scale target of role in set, named and dated by
 // om, at desired and current groups.
 func buildRoleAccessor(set *unstructured.Unstructured, role string, om metav1.ObjectMeta,
-	desired, current int32, static bool) (ScaleTargetAccessor, error) {
+	desired, current int32) (ScaleTargetAccessor, error) {
 	roleSpec, err := roleOf(set, role)
 	if err != nil {
 		return nil, err
@@ -227,7 +271,6 @@ func buildRoleAccessor(set *unstructured.Unstructured, role string, om metav1.Ob
 	status, rolling := roleStatusOf(set, role)
 	status.Replicas = current
 	return &dsetRoleAccessor{
-		static: static,
 		lwsAccessor: lwsAccessor{lws: &lwsv1.LeaderWorkerSet{
 			ObjectMeta: om,
 			Spec:       spec,
@@ -300,8 +343,8 @@ func roleStatusOf(set *unstructured.Unstructured, role string) (lwsv1.LeaderWork
 		replicas, _, _ := unstructured.NestedInt64(m, "replicas")
 		ready, _, _ := unstructured.NestedInt64(m, "readyReplicas")
 		updated, _, _ := unstructured.NestedInt64(m, "updatedReplicas")
-		out.ReadyReplicas = int32(ready)
-		out.UpdatedReplicas = int32(updated)
+		out.ReadyReplicas = clampInt32(ready)
+		out.UpdatedReplicas = clampInt32(updated)
 		return out, rolling || updated < replicas
 	}
 	return out, true

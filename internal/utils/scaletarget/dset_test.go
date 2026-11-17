@@ -273,7 +273,10 @@ func TestFetchScaleTarget_StaticRoleFromTheSet(t *testing.T) {
 
 	acc, err := FetchScaleTarget(context.Background(), c, "va", constants.DisaggregatedSetRoleScalerKind, "glm-v2-decode", dsetNS)
 	require.NoError(t, err)
-	assert.True(t, IsStaticDisaggregatedSetRole(acc))
+	setName, role, ok := DisaggregatedSetRole(acc)
+	require.True(t, ok)
+	assert.Equal(t, []string{"glm-v2", "decode"}, []string{setName, role})
+	assert.Nil(t, Annotations(acc), "a role has no object of its own to annotate")
 	assert.Equal(t, "glm-v2-decode", acc.GetName())
 	assert.Equal(t, int32(7), *acc.GetReplicas(), "the role's spec.replicas")
 	assert.Equal(t, int32(7), acc.GetStatusReplicas())
@@ -310,7 +313,8 @@ func TestFetchScaleTarget_StaticRoleWithoutTheScalerKind(t *testing.T) {
 
 	acc, err := FetchScaleTarget(context.Background(), c, "va", constants.DisaggregatedSetRoleScalerKind, "glm-decode", dsetNS)
 	require.NoError(t, err)
-	assert.True(t, IsStaticDisaggregatedSetRole(acc))
+	_, _, ok := DisaggregatedSetRole(acc)
+	assert.True(t, ok)
 	assert.Equal(t, int32(7), *acc.GetReplicas())
 	assert.Equal(t, 1, scalerGets, "a missing kind is not retried: no backoff can install a CRD")
 }
