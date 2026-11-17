@@ -126,19 +126,11 @@ controller_pods() {
 objects_of() {
     yq e 'select(.kind != null) | [.kind, (.metadata.namespace // "-"), .metadata.name] | join(" ")' "$@" | grep -vE '^(Job|Deployment) '
 }
-# rv_snapshot <out> <objects file>: the resourceVersion of each object, or absent.
-rv_snapshot() {
-    local kind ns name rv
-    while read -r kind ns name; do
-        [ -n "$kind" ] || continue
-        if [ "$ns" = - ]; then
-            rv="$(kubectl get "$kind" "$name" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null)" || rv=absent
-        else
-            rv="$(kubectl get "$kind" "$name" -n "$ns" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null)" || rv=absent
-        fi
-        printf '%s %s %s %s\n' "$kind" "$ns" "$name" "${rv:-absent}"
-    done < "$2" > "$1"
-}
+# rv_snapshot <out> <objects file>: the resourceVersion of each object, or for
+# a (Cluster)TriggerAuthentication, whose status KEDA writes, a digest of it
+# without the status. See rv_snapshot.sh.
+# shellcheck source=test/tools-install/rv_snapshot.sh
+. "$(dirname "${BASH_SOURCE[0]}")/rv_snapshot.sh"
 
 # preflight_clean <log>: the last preflight summary in an smt log has no FAIL.
 preflight_clean() {
@@ -301,9 +293,11 @@ rv_snapshot "$WORK/rv-after.txt" "$WORK/objects.txt"
 gen_after="$(kubectl get deployment "$DEPLOY" -n "$NS" -o jsonpath="{.metadata.generation}")"
 [ -n "$gen_before" ] && [ "$gen_before" = "$gen_after" ] || fail "second install" "the controller Deployment generation moved from $gen_before to $gen_after"
 changed="$(diff "$WORK/rv-before.txt" "$WORK/rv-after.txt" | grep '^>' || true)"
-[ -z "$changed" ] || fail "second install" "resourceVersion changed: $(echo $changed)"
+[ -z "$changed" ] || fail "second install" "resourceVersion (or TriggerAuthentication spec digest) changed: $(echo $changed)"
 present="$(grep -vc ' absent$' "$WORK/rv-after.txt")"
-pass "a second install changes no resourceVersion ($present objects, the preflight Job aside) and not the controller generation ($gen_after)"
+digests="$(grep -c ' spec:[0-9a-f]\{64\}$' "$WORK/rv-after.txt")"
+[ "$digests" -gt 0 ] || fail "second install" "no ClusterTriggerAuthentication was compared by its spec digest; the KEDA auth went unchecked"
+pass "a second install changes no resourceVersion ($present objects, $digests TriggerAuthentication by spec digest, the preflight Job aside) and not the controller generation ($gen_after)"
 
 if [ "$SCOPE" = namespace ]; then
     smt_as admin admin-finish-again admin-finish -n "$NS" || fail "second admin-finish" "exit $?"
