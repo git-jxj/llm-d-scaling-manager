@@ -132,14 +132,16 @@ func TestMeanTPOTAtTheFill_TheInterceptsProvenanceSetsTheFloor(t *testing.T) {
 // the band's bottom gives the band's bottom back. A floor under B is B.
 func TestMeanTPOTAtTheFill_TheLeastITLBelowTheBandFloorsIt(t *testing.T) {
 	d := q32jDecode(TierOLS)
-	d.BelowBand.LeastITL = 0.0120 // the fill 0.0371
-	low := mustAnswer(t, SLOAtReplicas(d, ReplicasQuery{Rate: 1.619}).MeanTPOT) // fill 0.019
+	// A floor of 12.0 ms sits at the fill 0.0371; 1.619 r/s runs at 0.019.
+	d.BelowBand.LeastITL = 0.0120
+	low := mustAnswer(t, SLOAtReplicas(d, ReplicasQuery{Rate: 1.619}).MeanTPOT)
 	near(t, "under the floor's fill", low.Value, 0.0120, 1e-12)
 	near(t, "the floor", low.Basis.Floor, 0.0120, 1e-12)
 	if !low.HasFlag(BelowFittedBand) {
 		t.Errorf("not flagged below the band: %v", low.Flags)
 	}
-	high := mustAnswer(t, SLOAtReplicas(d, ReplicasQuery{Rate: 4.048}).MeanTPOT) // fill 0.055
+	// 4.048 r/s runs at 0.055, above the floor's fill.
+	high := mustAnswer(t, SLOAtReplicas(d, ReplicasQuery{Rate: 4.048}).MeanTPOT)
 	near(t, "above the floor's fill", high.Value, d.Line.ITLAt(high.Basis.Fill), 1e-12)
 	if u, ok := RateForTPOT(d, RateQuery{Target: TPOTTarget{Seconds: 0.0118}, Headroom: 1}).(Unanswerable); !ok || u.Reason != TargetBelowFloor {
 		t.Errorf("a target under the floor was answered: %#v", u)
