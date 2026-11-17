@@ -471,3 +471,36 @@ func TestTTFTSamples_TheJointFeedIsS1s(t *testing.T) {
 	}
 	assert.Equal(t, prefill.NoQueueFreeMinutes, other.joint.Estimate().PrefillWorkRefused, "two decode variants: not fed")
 }
+
+// A decode backlog is the capacity wait where vLLM names it, so a queue of KV
+// pulls in flight is none; without that series, the queue past
+// prefill.MaxDecodeQueue.
+func TestDecodeBacklog(t *testing.T) {
+	assert.Zero(t, decodeBacklog(domain.ReplicaMetrics{QueueLength: 26, CapacityQueueKnown: true}))
+	assert.Equal(t, 48, decodeBacklog(domain.ReplicaMetrics{QueueLength: 52, CapacityQueueLength: 48, CapacityQueueKnown: true}))
+	assert.Equal(t, 26, decodeBacklog(domain.ReplicaMetrics{QueueLength: 26}))
+	assert.Zero(t, decodeBacklog(domain.ReplicaMetrics{QueueLength: prefill.MaxDecodeQueue}))
+}
+
+// On b-off the last cycle's decode engine TTFT was read with hundreds
+// waiting, and cycle 249 is the latest whose window read none; at 240 the
+// figure is calm.
+func TestDecodeTTFT_WaitingAndCalmCycle(t *testing.T) {
+	last := goldenState(t, "ttft-staircase-b-off", 0)
+	early := goldenState(t, "ttft-staircase-b-off", 240)
+	for _, c := range []struct {
+		st      *State
+		waiting bool
+		calm    int
+	}{{last, true, 249}, {early, false, 240}} {
+		var d *DecodeTTFTState
+		for i := range c.st.Variants {
+			if c.st.Variants[i].DecodeTTFT.EngineTTFT.Seconds > 0 {
+				d = &c.st.Variants[i].DecodeTTFT
+			}
+		}
+		require.NotNil(t, d, "cycle %d", c.st.Cycle)
+		assert.Equal(t, c.waiting, d.EngineTTFT.Waiting > 0, "cycle %d: %d waiting", c.st.Cycle, d.EngineTTFT.Waiting)
+		assert.Equal(t, c.calm, d.CalmCycle, "cycle %d", c.st.Cycle)
+	}
+}

@@ -134,6 +134,7 @@ DecodeEngineMeasured
 DecodeOnsetUnchecked
 DecodeSideOmitted
 DecodeStepSlopeAssumed
+DecodeTTFTUnderLoad
 DecodeTTFTUnmeasured
 DecodeTermFloored
 DecodeTermOmitted
@@ -2231,6 +2232,7 @@ queueThreshold
 queued
 queuedMinutes
 queuedRequests
+queueing
 quiet
 quota
 quota-limiter

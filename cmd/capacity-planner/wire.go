@@ -143,6 +143,9 @@ type wireTTFT struct {
 	DecodeSide             string  `json:"decodeSide,omitempty"`
 	DecodeTTFTSeconds      float64 `json:"decodeTTFTSeconds,omitempty"`
 	DecodeTTFTPromptTokens float64 `json:"decodeTTFTPromptTokens,omitempty"`
+	// DecodeTTFTCalmCycle is the latest cycle with no decode queue, present
+	// only on a DecodeTTFTUnderLoad refusal: the cycle to answer at.
+	DecodeTTFTCalmCycle int `json:"decodeTTFTCalmCycle,omitempty"`
 	// DecodeTermSource and RouterHopSource say where the line's decode term
 	// and hop came from (measured, assumed; the term may be omitted), each
 	// with why no fit stands. The figures are the term as priced: on no fit

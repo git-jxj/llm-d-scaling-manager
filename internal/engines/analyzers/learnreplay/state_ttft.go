@@ -61,8 +61,13 @@ type DecodeTTFTState struct {
 	// cycles, the largest, each a mean over the rows weighted by their
 	// request rate, with the mean effective prompt of the same cycle (the
 	// pair is never split). A cycle with no reading holds an empty slot, so a
-	// figure ages out when the rows stop carrying one. Zero when unread.
+	// figure ages out when the rows stop carrying one. Zero when unread. Its
+	// Waiting is the decode backlog of its cycle (decodeBacklog).
 	EngineTTFT whatif.DecodeTTFT
+	// CalmCycle is the latest cycle, through this one, whose window of
+	// whatif.TTFTWindowCycles cycles read no decode backlog on any of them:
+	// the cycle to answer at instead. 0 when no cycle did.
+	CalmCycle int
 	// TransferSeconds is prefill.TransferReading's Figure, the one S1 prices
 	// (slo.SwitchTTFTQuietTransfer): the fleet's quiet cycles inside
 	// prefill.HeldDecodeAge of the cycle, else every row's over the same age; 0
@@ -113,15 +118,19 @@ type ttftSamples struct {
 	prompts    map[string]*whatif.PromptWindow
 	shares     map[string]*shareWindow
 	engineTTFT map[string][]whatif.DecodeTTFT
-	transfers  map[string]*prefill.TransferWindow
-	terms      map[string]*prefill.DecodeTermWindow
+	// calmRun is how many cycles in a row read no decode backlog, and
+	// lastCalm the latest cycle that closed a calm window (CalmCycle).
+	calmRun, lastCalm map[string]int
+	transfers         map[string]*prefill.TransferWindow
+	terms             map[string]*prefill.DecodeTermWindow
 	// joint is the model's joint TTFT readings (noteJoint).
 	joint *prefill.JointWindow
 }
 
 func newTTFTSamples() *ttftSamples {
 	return &ttftSamples{prompts: map[string]*whatif.PromptWindow{}, shares: map[string]*shareWindow{},
-		engineTTFT: map[string][]whatif.DecodeTTFT{}, transfers: map[string]*prefill.TransferWindow{},
+		engineTTFT: map[string][]whatif.DecodeTTFT{},
+		calmRun:    map[string]int{}, lastCalm: map[string]int{}, transfers: map[string]*prefill.TransferWindow{},
 		terms: map[string]*prefill.DecodeTermWindow{}, joint: prefill.NewJointWindow()}
 }
 
@@ -183,6 +192,26 @@ func rolesOf(in domain.AnalyzerInput) map[string]string {
 type decodeRows struct {
 	ttftWeighted, ttftWeight, ttftPlain float64
 	ttftRows                            int
+	// waiting is the largest decodeBacklog of the cycle's serving rows.
+	waiting int
+}
+
+// decodeBacklog is the requests a serving decode row holds waiting on its
+// own capacity, 0 when it holds none. Where vLLM says why requests wait
+// (CapacityQueueKnown) it is the part waiting for scheduling capacity: the
+// rest of a P/D decode queue is KV pulls in flight, which a request pays at
+// any load, and on the staircase goldens it read 1 to 26 with no capacity
+// wait and a decode TTFT under 0.3 s. Where vLLM does not say, it is the whole
+// queue past prefill.MaxDecodeQueue, the decode term's bound on a queue of
+// pulls.
+func decodeBacklog(rm domain.ReplicaMetrics) int {
+	if rm.CapacityQueueKnown {
+		return rm.CapacityQueueLength
+	}
+	if rm.QueueLength > prefill.MaxDecodeQueue {
+		return rm.QueueLength
+	}
+	return 0
 }
 
 // prefillRows is one prefill variant's readings in one cycle.
@@ -231,6 +260,7 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 		if d == nil {
 			continue
 		}
+		d.waiting = max(d.waiting, decodeBacklog(rm))
 		if rm.AvgTTFTKnown && positive(rm.AvgTTFT) {
 			d.ttftRows++
 			d.ttftPlain += rm.AvgTTFT
@@ -266,7 +296,18 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 				slot.Seconds = d.ttftWeighted / d.ttftWeight
 			}
 		}
+		if slot.Seconds > 0 {
+			slot.Waiting = d.waiting
+		}
 		t.engineTTFT[v] = keepLast(t.engineTTFT[v], slot, whatif.TTFTWindowCycles)
+		if d.waiting > 0 {
+			t.calmRun[v] = 0
+			continue
+		}
+		t.calmRun[v]++
+		if t.calmRun[v] >= min(cycle, whatif.TTFTWindowCycles) {
+			t.lastCalm[v] = cycle
+		}
 	}
 }
 
@@ -358,6 +399,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 	for i := range st.Variants {
 		vs := &st.Variants[i]
 		vs.DecodeTTFT.EngineTTFT = largestTTFT(t.engineTTFT[vs.Variant])
+		vs.DecodeTTFT.CalmCycle = t.lastCalm[vs.Variant]
 		var est prefill.DecodeTermEstimate
 		if w := t.terms[vs.Variant]; w != nil {
 			est = w.Estimate()

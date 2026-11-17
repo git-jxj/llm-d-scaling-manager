@@ -673,9 +673,37 @@ func (pf *pricedFleet) decodeSide() {
 		pf.in.DecodeSide = sideDecodeEngine
 		pf.in.DecodeTTFTSeconds = pf.fleet.DecodeTTFT.Seconds
 		pf.in.DecodeTTFTPromptTokens = pf.fleet.DecodeTTFT.PromptTokens
+		switch {
+		case !checkDecodeTTFTLoad:
+			pf.fleet.DecodeTTFT.Waiting = 0
+		case pf.fleet.DecodeTTFT.Waiting > 0 && pf.pv != nil:
+			pf.in.DecodeTTFTCalmCycle = pf.pv.state.DecodeTTFT.CalmCycle
+		}
 		return
 	}
 	pf.in.DecodeSide = sideOmitted
+}
+
+// checkDecodeTTFTLoad passes the decode backlog a decode engine TTFT was
+// read with, so whatif refuses one read while decode was queueing
+// (whatif.DecodeTTFTUnderLoad). A test turns it off to show what the check
+// holds back.
+var checkDecodeTTFTLoad = true
+
+// calmCycleHint is a DecodeTTFTUnderLoad refusal with the latest calm cycle
+// to answer at, or the word that the recording has none; any other result
+// as it is.
+func (pf *pricedFleet) calmCycleHint(r whatif.Result) whatif.Result {
+	u, ok := r.(whatif.Unanswerable)
+	if !ok || u.Reason != whatif.DecodeTTFTUnderLoad {
+		return r
+	}
+	if c := pf.in.DecodeTTFTCalmCycle; c > 0 {
+		u.Detail += fmt.Sprintf("; answer at a calmer cycle with --cycle %d, the latest with no decode queue", c)
+	} else {
+		u.Detail += "; no cycle of the recording read decode without a queue"
+	}
+	return u
 }
 
 // decodeTerm is the term on the decode line: what the recording's cycles
@@ -871,7 +899,7 @@ func (pf *pricedFleet) priced(price func(whatif.TTFTFleet) whatif.Result) whatif
 	if pf.refused != nil {
 		return *pf.refused
 	}
-	return pf.floorFlags(pf.qualify(price(pf.fleet)))
+	return pf.calmCycleHint(pf.floorFlags(pf.qualify(price(pf.fleet))))
 }
 
 // floorFlags adds to a floor refusal what S1's side says of the floor: above the

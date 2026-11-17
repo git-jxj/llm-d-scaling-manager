@@ -339,6 +339,11 @@ type DecodeTTFT struct {
 	// prompt, prefix hits included: with prefix hits the ratio I/PromptTokens
 	// tracks the pull only as far as the hit rate holds.
 	PromptTokens float64
+	// Waiting is the decode backlog of the same cycle: the requests a decode
+	// pod held waiting on its own capacity, 0 for none. Above 0 the figure
+	// is a queue, and held at every rate it would be the floor at zero load,
+	// so the TTFT is refused (DecodeTTFTUnderLoad). S1 does not read it.
+	Waiting int
 }
 
 // MinDecodeTTFTPrompt is the least prompt, in tokens, a measured decode-engine
@@ -749,6 +754,10 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 		case !Finite(dt.at(pf.p.PromptTokens)):
 			u := refuse(InvalidInput, fmt.Sprintf("decode engine TTFT %g s at %g prompt tokens overflows at the prompt asked, %g tokens",
 				dt.Seconds, dt.PromptTokens, pf.p.PromptTokens))
+			return ttftPlan{}, &u
+		case dt.Waiting > 0:
+			u := refuse(DecodeTTFTUnderLoad, fmt.Sprintf("decode TTFT was measured while decode was queueing (%.1f s, %d requests waiting)",
+				dt.Seconds, dt.Waiting))
 			return ttftPlan{}, &u
 		default:
 			// The decode engine's TTFT holds the KV pull: pricing T_xfer

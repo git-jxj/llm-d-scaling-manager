@@ -45,6 +45,7 @@ and under **Inputs**; the API puts it in `refused`.
 | `NoCapacity`, `NoBatchCap` | No KV capacity, or no batch cap, for the replica. | Make sure Prometheus keeps `vllm:cache_config_info`; pass the engine arguments (`--engine-args`) or `--batch-cap` when you record or serve. |
 | `NoTPOTHistogram` | A TPOT percentile asked with no ratio R_q of percentile to mean. | Type an assumed ratio (**TPOT percentile**, API `assume.tpotRatio`), or ask for the mean. |
 | `TargetBelowFloor` | The target is under what any number of replicas reaches. | Raise the target. More replicas do not help. |
+| `DecodeTTFTUnderLoad` | Decode has no ITL line, so TTFT uses the decode engine's measured TTFT. That TTFT was measured while decode was queueing, so it is a queue, not a floor. | Answer at the cycle the message names (`--cycle`, JSON `decodeTTFTCalmCycle`), the latest with no decode queue. Or record a window that ends before decode saturates. |
 | `Saturated` | The rate is at or past the lower knee. | Lower the rate, or add replicas of the role whose knee is lower. |
 | `AboveDecodeOnset`, `FlowControlUnknown` | With router flow control on, the rate is at the decode gate's onset, or the onsets cannot be placed. | Lower the rate; record with the router's series ([metrics](metrics.md#router-epp)). |
 | `ReplicaBoundReached` (size) | No fleet within **Search up to** serves the rate. | Raise **Search up to** (API `maxReplicas`, at most 64), lower the rate, or raise the target that binds. |
