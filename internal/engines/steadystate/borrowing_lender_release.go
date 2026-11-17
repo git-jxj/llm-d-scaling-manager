@@ -67,6 +67,9 @@ func variantReleaseBound(e *Engine, key string, acc scaletarget.ScaleTargetAcces
 			if !ok {
 				entry, ok = e.Variants.FindByScaleTarget(ns, constants.LeaderWorkerSetKind, acc.GetName())
 			}
+			if !ok {
+				entry, ok = e.Variants.FindByScaleTarget(ns, constants.DisaggregatedSetRoleScalerKind, acc.GetName())
+			}
 			if ok {
 				if w := entry.Target.ScaleDownWindowSeconds; w != nil {
 					longer(&window, time.Duration(*w)*time.Second)

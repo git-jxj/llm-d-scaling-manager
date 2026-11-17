@@ -17,6 +17,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learn"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/scaletarget"
 )
 
 const (
@@ -136,6 +137,18 @@ func (e *Engine) scaleTargetGone(ctx context.Context, v metrics.LearnerVariant) 
 		obj = &appsv1.Deployment{}
 	case constants.LeaderWorkerSetKind:
 		obj = &lwsv1.LeaderWorkerSet{}
+	case constants.DisaggregatedSetRoleScalerKind:
+		// A role scaler, or a Static role of a set with none: both are
+		// read unstructured, so the scaletarget package decides.
+		if e.client == nil {
+			return false
+		}
+		gone, err := scaletarget.DisaggregatedSetRoleGone(ctx, e.client, v.Target.Name, v.Namespace)
+		if err != nil {
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Could not read the DisaggregatedSet role of a variant missing from the registry; keeping its learner series",
+				"namespace", v.Namespace, "target", v.Target.Name, "error", err.Error())
+		}
+		return gone
 	default:
 		return false
 	}

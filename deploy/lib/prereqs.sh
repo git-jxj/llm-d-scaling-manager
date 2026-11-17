@@ -601,6 +601,12 @@ llmsm_model_server_count() {
                 ] | length' 2>/dev/null | tail -1 | tr -cd '0-9' || true)"
         total=$((total + ${n:-0}))
     done
+    # A DisaggregatedSet holds its model servers in spec.roles, one template
+    # per role; a set with a serving role counts once.
+    n="$(kubectl get disaggregatedsets -n "$ns" -o json 2>/dev/null \
+        | jq --argjson markers "$(so_serving_markers_json)" \
+            "[ .items[] | $SO_DSET_SERVING_JQ ] | length" 2>/dev/null | tail -1 | tr -cd '0-9' || true)"
+    total=$((total + ${n:-0}))
     echo "$total"
 }
 

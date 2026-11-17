@@ -187,7 +187,8 @@ func holdsGPUs(p *corev1.Pod) bool {
 }
 
 // ListVariantPods lists the pods of one scale target. A LeaderWorkerSet's pods
-// carry its name in the set-name label. A Deployment's are matched by its pod
+// carry its name in the set-name label, a DisaggregatedSet role's carry the set
+// and role labels (scaletarget.GroupPodLabels). A Deployment's are matched by its pod
 // template labels AND by ownership -- controlled by one of its ReplicaSets,
 // which are named <deployment>-<pod-template-hash> -- because two variants of
 // one model routinely share template labels, and a label match alone would
@@ -197,7 +198,7 @@ func ListVariantPods(ctx context.Context, c client.Client, namespace string,
 	if scaletarget.IsLeaderWorkerSet(acc) {
 		var list corev1.PodList
 		if err := c.List(ctx, &list, client.InNamespace(namespace),
-			client.MatchingLabels{lwsv1.SetNameLabelKey: acc.GetName()}); err != nil {
+			client.MatchingLabels(scaletarget.GroupPodLabels(acc))); err != nil {
 			return nil, err
 		}
 		return list.Items, nil
