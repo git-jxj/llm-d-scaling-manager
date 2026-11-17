@@ -14,7 +14,7 @@ workaround.
 
 | Boundary | Who is on each side | What crosses it |
 | --- | --- | --- |
-| Kubernetes API | controller ServiceAccount ↔ API server | reads of pods, workloads, nodes, ConfigMaps, InferencePools, ScaledObjects, HPAs, Kueue queues; pod patches, an HPA annotation (only with `KEDA_HPA_REPAIR`), Events, Leases, two ConfigMaps of its own |
+| Kubernetes API | controller ServiceAccount ↔ API server | reads of pods, workloads, nodes, ConfigMaps, InferencePools, ScaledObjects, HPAs, Kueue queues; pod patches, an HPA annotation (only with `KEDA_HPA_REPAIR`), the replicas of Static DisaggregatedSet roles (only with the role writer), Events, Leases, two ConfigMaps of its own |
 | KEDA → controller | KEDA operator ↔ gRPC on `:9090` | scale target names, trigger metadata (`modelID`, `variantCost`, ...); replica counts back |
 | Prometheus → controller | the scraping Prometheus ↔ `:8443` | the controller's own `llmsm_*` metrics |
 | Controller → Prometheus / Thanos | controller ↔ your Prometheus | PromQL queries, carrying the controller's own ServiceAccount token |
@@ -119,6 +119,8 @@ in both).
 | get, list | localqueues (kueue.x-k8s.io) | managed namespace | the Kueue quota source |
 | get, list, watch | workloads (kueue.x-k8s.io) | managed namespace | cohort borrowing; granted cluster-wide below only when a policy counts borrowing |
 | get, list, watch | leaderworkersets; get leaderworkersets/scale | managed namespace | LWS scale targets |
+| get | disaggregatedsets, disaggregatedsetrolescalers, disaggregatedsetrolescalers/scale | managed namespace | DisaggregatedSet role scale targets |
+| get, list, **patch** | disaggregatedsets | managed namespace (`dset-role-writer-role`, **only with `DSET_ROLE_WRITER=true`**) | the [role writer](disaggregatedset.md): writing the replicas of Static roles. `patch` reaches every field of every set in the namespace. Not in the manager Role; the installer adds this Role and its binding only when asked, and removes them otherwise |
 | get, list, watch | servicemonitors | managed namespace | preflight of what is scraped |
 | get, list, watch, create, update, patch, delete | leases | own namespace (`leader-election-role`) | leader election |
 | create, patch | events | own namespace (`leader-election-role`) | |
@@ -191,6 +193,7 @@ cluster-wide. The differences that matter for review:
 | get, list | resourcequotas | **every namespace** | the GPU bound Kueue borrowing checks in each managed namespace |
 | get, list, watch | **deployments**, replicasets, statefulsets | **every namespace** | scale targets, the owners of GPU pods for the Kueue managed check, and the `kueue-controller-manager` Deployment (Kueue's version and whether it runs) |
 | get, list, **patch** | **horizontalpodautoscalers** | **every namespace** (ClusterRole `keda-hpa-repair-role-<suffix>`, **only with `KEDA_HPA_REPAIR=true`**) | the KEDA HPA repair. `patch` reaches every HPA in the cluster, including its `minReplicas`, `maxReplicas` and metrics, not only the annotation the repair writes: RBAC cannot narrow a patch to one key. The repair writes only to HPAs whose owner is a ScaledObject naming this scaler. Not part of `manager-role`: the installer adds it only when asked, and removes it otherwise |
+| get, list, **patch** | **disaggregatedsets** | **every namespace** (ClusterRole `dset-role-writer-role-<suffix>`, **only with `DSET_ROLE_WRITER=true`**) | the [DisaggregatedSet role writer](disaggregatedset.md). `patch` reaches every field of every set in the cluster, templates included, not only the replicas the writer applies. The writer applies only `spec.roles[].spec.replicas` of Static roles of sets annotated `scaling-manager.llmd.ai/role-writer`. Not part of `manager-role`: the installer adds it only when asked, and removes it otherwise |
 | get | leases, by name: `c1f6bfd2.kueue.x-k8s.io` | **every namespace** | Kueue's leader-election Lease, whether Kueue runs. `resourceNames` narrows the name, not the namespace |
 
 `node-reader` and `kueue-reader` are not rendered at this scope; `manager-role`
@@ -239,7 +242,7 @@ a quota: the Kueue controller read and the cluster-wide borrowing read.
 
 The controller **never writes Deployments, StatefulSets, LeaderWorkerSets or
 ScaledObjects**, and writes to an HPA only the one annotation below. KEDA does
-the scaling. What it does write:
+the scaling, except of the Static roles of a DisaggregatedSet when the role writer is on. What it does write:
 
 | Object | What | When |
 | --- | --- | --- |
@@ -247,6 +250,7 @@ the scaling. What it does write:
 | Pods (annotation) | `llm-d.ai/utilization-share-transfer` — a transfer mark, restoring the previous deletion cost when removed | utilization-share optimizer only |
 | Pods (labels) | the labels in an **InferencePool's selector**, added to and removed from warm-pool pods | warm pool only. **This moves live traffic**: a labelled pool pod joins the InferencePool and the EPP routes requests to it. The selector is the tenant's; the controller refuses to write the three labels that make a pod part of its own Deployment and its NetworkPolicy (`app.kubernetes.io/component`, `app.kubernetes.io/name`, `control-plane`) |
 | HPAs (annotation) | `scaling-manager.llmd.ai/keda-rewire`, a timestamp, on an HPA KEDA built for this scaler's ScaledObject without the scaler's metric. KEDA re-derives the HPA and removes it | `KEDA_HPA_REPAIR` only |
+| DisaggregatedSets (spec) | `spec.roles[].spec.replicas` of Static roles, by server-side apply as field manager `scaling-manager-role-writer` | the role writer only (`DSET_ROLE_WRITER=true`), on sets annotated `scaling-manager.llmd.ai/role-writer` |
 | Events | create, patch | warnings and decisions, mostly on ScaledObjects |
 | Leases | leader election | own namespace |
 | ConfigMap `scaling-manager-utilization-share-history` | the optimizer's need history | own namespace, utilization-share only |

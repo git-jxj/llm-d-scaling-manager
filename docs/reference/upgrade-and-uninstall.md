@@ -1350,6 +1350,7 @@ make undeploy-scaling-manager NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace>
 | Role `scaling-manager-pod-writer` and RoleBinding `scaling-manager-pod-writer-<suffix>` the uninstall could not read or delete | it may not list RoleBindings across the cluster, or delete them there. It lists each one with its `kubectl delete` command, or says it could not look | (cluster admin) see [Leftover pod-write grants](#leftover-pod-write-grants) |
 | Role `scaling-manager-pod-writer` in a namespace another controller also uses | that controller's binding still needs it | nothing; it goes with that controller |
 | Role `scaling-manager-pod-writer` and RoleBinding `scaling-manager-pod-writer-<suffix>` everywhere, when the controller Deployment is still there | the delete failed, or its result could not be read. A running controller still needs the grant | remove the Deployment, then run the uninstall again |
+| the replicas the DisaggregatedSet role writer last wrote (`DSET_ROLE_WRITER=true`) | they are the set's own spec; a model the writer parked stays at zero. The writer's grant itself is removed | remove the `scaling-manager.llmd.ai/role-writer` annotation and set each Static role's `replicas` back ([Turn it off](disaggregatedset.md#turn-it-off)) |
 | utilization-share transfer marks on pods | written while the optimizer acted | [Transfer marks left on pods](troubleshooting.md#transfer-marks-left-on-pods-after-a-downgrade); set `shadow: true` and wait a cycle **before** uninstalling to avoid them |
 
 ### Leftover pod-write grants

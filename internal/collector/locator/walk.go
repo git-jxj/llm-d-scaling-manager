@@ -59,6 +59,14 @@ func walkOwnersUp(ctx context.Context, r client.Reader, start client.Object, nam
 			return nil, fmt.Errorf("ownerReference cycle at %s/%s/%s", next.APIVersion, next.Kind, next.Name)
 		}
 
+		if owner.Kind == constants.DisaggregatedSetKind && owner.APIVersion == constants.DisaggregatedSetAPIVersion {
+			// Recorded without a read, and the walk ends here: the scale
+			// target of a DisaggregatedSet's pod is named from the set and
+			// the pod's role label (resolveScaleTarget), and the set itself
+			// has no owner the walk cares about.
+			chain = append(chain, next)
+			break
+		}
 		obj, ok := newTypedFor(owner)
 		if !ok {
 			// Unknown kind — stop walking but return what we have so far.

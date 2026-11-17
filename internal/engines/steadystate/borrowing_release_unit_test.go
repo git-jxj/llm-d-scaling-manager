@@ -11,11 +11,13 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/allocation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/kueue"
@@ -111,6 +113,43 @@ func TestModelOfPodAndPreemptedPod(t *testing.T) {
 	}
 	if got := modelOfPod(requests, targets, "other-ns", &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "chat-1"}}); got != "" {
 		t.Errorf("a pod of another namespace matched %q", got)
+	}
+}
+
+// A DisaggregatedSet role's pods belong to child LeaderWorkerSets whose names
+// carry a revision, never the role scaler's name; they are matched by the set
+// and role labels.
+func TestModelOfPod_DisaggregatedSetRole(t *testing.T) {
+	scaler := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "glm-decode", "namespace": "b", "labels": map[string]any{
+			constants.DisaggregatedSetNameLabelKey: "glm", constants.DisaggregatedSetRoleLabelKey: "decode"}},
+		"spec": map[string]any{"replicas": int64(2)},
+	}}
+	set := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "glm", "namespace": "b"},
+		"spec": map[string]any{"roles": []any{map[string]any{"name": "decode", "spec": map[string]any{
+			"leaderWorkerTemplate": map[string]any{"workerTemplate": map[string]any{}}}}}},
+	}}
+	acc, err := scaletarget.NewDisaggregatedSetRoleAccessor(scaler, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := []allocation.ModelScalingRequest{
+		{ModelID: "glm", Namespace: "b", VariantStates: []domain.VariantReplicaState{{VariantName: "glm-decode-v"}}},
+	}
+	targets := map[string]scaletarget.ScaleTargetAccessor{"b/glm-decode-v": acc}
+	pod := func(role string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "glm-0-abc12345-" + role + "-0", Labels: map[string]string{
+			lwsv1.SetNameLabelKey:                  "glm-0-abc12345-" + role,
+			constants.DisaggregatedSetNameLabelKey: "glm",
+			constants.DisaggregatedSetRoleLabelKey: role,
+		}}}
+	}
+	if got := modelOfPod(requests, targets, "b", pod("decode")); got != "b/glm" {
+		t.Errorf("decode pod: modelOfPod = %q, want b/glm", got)
+	}
+	if got := modelOfPod(requests, targets, "b", pod("prefill")); got != "" {
+		t.Errorf("prefill pod of an unmanaged role: modelOfPod = %q, want none", got)
 	}
 }
 

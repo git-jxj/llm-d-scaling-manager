@@ -24,7 +24,9 @@ import (
 func shareEventObject(acc scaletarget.ScaleTargetAccessor) *corev1.ObjectReference {
 	ref := &corev1.ObjectReference{Namespace: acc.GetNamespace(), Name: acc.GetName(), UID: acc.GetUID(),
 		Kind: constants.DeploymentKind, APIVersion: appsv1.SchemeGroupVersion.String()}
-	if scaletarget.IsLeaderWorkerSet(acc) {
+	if _, _, ok := scaletarget.DisaggregatedSetRole(acc); ok {
+		ref.Kind, ref.APIVersion = constants.DisaggregatedSetRoleScalerKind, constants.DisaggregatedSetAPIVersion
+	} else if scaletarget.IsLeaderWorkerSet(acc) {
 		ref.Kind, ref.APIVersion = constants.LeaderWorkerSetKind, lwsv1.GroupVersion.String()
 	}
 	return ref

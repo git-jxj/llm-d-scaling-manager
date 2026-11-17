@@ -3344,6 +3344,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# preStop hooks pod-wide, or reporting an unreadable workload as healthy all
 	@# parse perfectly and are all wrong about a running cluster.
 	@bash hack/check-workload-gaps.sh
+	@echo "Checking DisaggregatedSet discovery and the role report..."
+	@bash hack/check-disaggregatedset.sh
 	@echo "Checking the benchmark capture helpers..."
 	@# Executes them against a stub kubectl. A capture that replaces the run
 	@# already on disk, or that watches a cluster nobody named, parses perfectly
@@ -3401,6 +3403,10 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# a revoke under the wrong names, a Forbidden delete read as removed, or
 	@# an uninstall that leaves the grant all parse, and all exit 0.
 	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-keda-hpa-repair.sh
+	@echo "Checking the DisaggregatedSet role writer grant..."
+	@# The same handling for DSET_ROLE_WRITER, and what the install renders with
+	@# and without it: the grant, its binding and the switch on the Deployment.
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-dset-role-writer.sh
 	@echo "Checking the EPP /metrics authentication grant..."
 	@# Runs epp-metrics-auth against a stubbed kubectl. A grant that binds the
 	@# wrong ServiceAccount, reads a Forbidden list as no pools, or binds twice

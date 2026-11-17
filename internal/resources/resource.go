@@ -20,6 +20,7 @@ import (
 	"context"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -56,13 +57,17 @@ func PodGPURequests(pod *corev1.Pod) int {
 	return max(initMax, GetContainersGPUs(pod.Spec.Containers))
 }
 
-// GetResourceWithBackoff performs a Get operation with exponential backoff retry logic
+// GetResourceWithBackoff performs a Get operation with exponential backoff
+// retry logic. NotFound and a kind with no REST mapping (its CRD is not
+// installed) are returned at once, as they are: no retry fixes them, and a
+// caller tells them apart (meta.IsNoMatchError), which the backoff's timeout
+// error would hide.
 func GetResourceWithBackoff[T client.Object](ctx context.Context, c client.Client, objKey client.ObjectKey, obj T, backoff wait.Backoff, resourceType string) error {
 	return wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
 		err := c.Get(ctx, objKey, obj)
 		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return false, err // Don't retry on notFound errors
+			if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+				return false, err
 			}
 
 			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Error(err, "transient error getting resource, retrying",

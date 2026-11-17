@@ -1199,6 +1199,28 @@ To patch a live LWS instead, use a JSON patch (`kubectl patch lws <name> -n <ns>
 — a `--type=merge` patch replaces the whole `containers` list. Both are reverted
 by the next `helm upgrade` if a chart owns the object.
 
+### On a DisaggregatedSet
+
+A DisaggregatedSet (`disaggregatedset.x-k8s.io`, LWS v0.10.0 or newer) holds one
+LeaderWorkerSet template per role under `spec.roles[].spec.leaderWorkerTemplate`.
+
+- **`make workload-patch` reports, and writes nothing.** For each serving role it
+  logs the same findings as above (drain, weights, engine caches), naming the
+  role and its index. It never writes or applies a patch: any template change
+  rolls every group of every role. Make the change in the role template, where
+  the set is owned, and roll it out the way you roll out a release.
+- **Drain each role as a LeaderWorkerSet**: a preStop on the leader and on every
+  worker of the role's template, with the worker's grace period at least the
+  leader's. The DisaggregatedSet controller deletes groups directly on
+  scale-down.
+- **To autoscale a role**, set `scaling.mode: External` on it and remove its
+  `spec.replicas`, keeping `spec.slices` at 1. The controller then creates a
+  `DisaggregatedSetRoleScaler` named `<set>-<role>`, seeded with the role's current
+  group count, and `make scaledobjects-plan` targets it. A role in the default
+  `Static` mode is listed with `apply: no` and this reason. See
+  [DisaggregatedSet roles](disaggregatedset.md), which also covers the role writer
+  for a role that must stay Static.
+
 ## Writing the patch: `make workload-patch`
 
 The sections above share one shape: a pod spec that is fine at a fixed replica

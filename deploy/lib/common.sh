@@ -793,6 +793,8 @@ LLMSM_SHARED_CLUSTER_ROLE_BINDINGS=(
     scaling-manager-policy-namespace-reader-rolebinding
     # The opt-in KEDA HPA repair grant (KEDA_HPA_REPAIR=true, cluster scope).
     scaling-manager-keda-hpa-repair-rolebinding
+    # The opt-in role writer grant (DSET_ROLE_WRITER=true, cluster scope).
+    scaling-manager-dset-role-writer-rolebinding
 )
 
 # LLMSM_OWNED_CLUSTER_ROLES are the ClusterRoles this project defines, mapped to the
@@ -824,6 +826,8 @@ LLMSM_OWNED_CLUSTER_ROLES=(
     "scaling-manager-policy-namespace-reader-role:scaling-manager-policy-namespace-reader-rolebinding"
     # Rendered only with KEDA_HPA_REPAIR=true (and by the undeploy).
     "scaling-manager-keda-hpa-repair-role:scaling-manager-keda-hpa-repair-rolebinding"
+    # Rendered only with DSET_ROLE_WRITER=true (and by the undeploy).
+    "scaling-manager-dset-role-writer-role:scaling-manager-dset-role-writer-rolebinding"
 )
 
 # llmsm_keda_hpa_repair_on reports whether KEDA_HPA_REPAIR asks for the KEDA
@@ -941,6 +945,78 @@ llmsm_revoke_keda_hpa_repair() {
                 log_info "KEDA_HPA_REPAIR is not true: removed the HPA grant (get, list, patch on horizontalpodautoscalers) an earlier install made."
             fi
             log_info "  A split install: re-run the controller phase without it too ($(llmsm_make_cmd deploy-scaling-manager INSTALL_PHASE=scaling-manager)), which turns the repair off in the Deployment. Until then the controller keeps trying, and LLMSMKEDAHPAWiringUnread fires."
+            ;;
+    esac
+    return 0
+}
+
+# llmsm_dset_role_writer_on reports whether DSET_ROLE_WRITER asks for the
+# DisaggregatedSet role writer (internal/dsetwriter): true. Unset and false do
+# not; anything else is refused, as KEDA_HPA_REPAIR is.
+llmsm_dset_role_writer_on() {
+    case "${DSET_ROLE_WRITER:-false}" in
+        true) return 0 ;;
+        false) return 1 ;;
+        *) log_error "DSET_ROLE_WRITER must be true or false (got '${DSET_ROLE_WRITER}')" ;;
+    esac
+}
+
+# llmsm_dset_role_writer_component echoes the component that carries the role
+# writer's grant for this install's scope: a ClusterRole for cluster scope, a
+# Role in the controller's namespace for namespace scope.
+llmsm_dset_role_writer_component() {
+    if [ "$(llmsm_install_scope)" = "namespace" ]; then
+        echo dset-role-writer-namespaced
+    else
+        echo dset-role-writer
+    fi
+}
+
+# llmsm_append_dset_role_writer_component links the role writer component into
+# overlay directory $1, as llmsm_append_keda_hpa_repair_component does its
+# own: added with DSET_ROLE_WRITER=true, and by the undeploy always.
+llmsm_append_dset_role_writer_component() {
+    local dir="$1" c
+    c="$(llmsm_dset_role_writer_component)"
+    ln -sfn "$LLMSM_PROJECT/config/components/$c" "$dir/$c"
+    if grep -q '^components:' "$dir/kustomization.yaml"; then
+        printf -- '- ./%s\n' "$c" >> "$dir/kustomization.yaml"
+    else
+        printf 'components:\n- ./%s\n' "$c" >> "$dir/kustomization.yaml"
+    fi
+}
+
+# llmsm_revoke_dset_role_writer deletes the role writer grant an earlier
+# install made, for an install without DSET_ROLE_WRITER=true, as
+# llmsm_revoke_keda_hpa_repair does the HPA grant. The writer leaves the
+# replicas it wrote: a model it parked stays at zero (docs/reference/
+# disaggregatedset.md, "Turn it off").
+llmsm_revoke_dset_role_writer() {
+    local suffix state specs=()
+    suffix="$(llmsm_ns_suffix "$LLMSM_NS")"
+    if [ "$(llmsm_install_scope)" = "namespace" ]; then
+        specs=("rolebinding scaling-manager-dset-role-writer-rolebinding $LLMSM_NS"
+               "role scaling-manager-dset-role-writer-role $LLMSM_NS")
+    else
+        specs=("clusterrolebinding scaling-manager-dset-role-writer-rolebinding-$suffix"
+               "clusterrole scaling-manager-dset-role-writer-role-$suffix")
+    fi
+    state="$(llmsm_delete_hpa_repair_grant "${specs[@]}")"
+    case "${state%%|*}" in
+        forbidden)
+            log_warning "DSET_ROLE_WRITER is not true, so the DisaggregatedSet grant (get, list, patch on disaggregatedsets) an earlier install may have made should go, and you may not delete it (Forbidden). A cluster admin runs:  $(llmsm_hpa_repair_delete_cmd "${specs[@]}")"
+            ;;
+        failed)
+            log_warning "DSET_ROLE_WRITER is not true, and the DisaggregatedSet grant an earlier install may have made could not be deleted (${state#*|}). Delete it with:  $(llmsm_hpa_repair_delete_cmd "${specs[@]}")"
+            ;;
+        deleted)
+            if llmsm_render_active; then
+                log_info "DSET_ROLE_WRITER is not true: admin.sh deletes the DisaggregatedSet grant (get, list, patch on disaggregatedsets) an earlier install made."
+            else
+                log_info "DSET_ROLE_WRITER is not true: removed the DisaggregatedSet grant (get, list, patch on disaggregatedsets) an earlier install made."
+            fi
+            log_info "  A split install: re-run the controller phase without it too ($(llmsm_make_cmd deploy-scaling-manager INSTALL_PHASE=scaling-manager)), which turns the writer off in the Deployment."
+            log_info "  The writer leaves the replicas it wrote. A model it parked stays at zero: set each Static role's replicas back by hand."
             ;;
     esac
     return 0
@@ -1448,6 +1524,9 @@ llmsm_render_manifests() {
         printf 'namespace: %s\nresources:\n- ./base\n' "$ns" > "$tmp/kustomization.yaml"
         if llmsm_keda_hpa_repair_on 2>/dev/null; then
             llmsm_append_keda_hpa_repair_component "$tmp"
+        fi
+        if llmsm_dset_role_writer_on 2>/dev/null; then
+            llmsm_append_dset_role_writer_component "$tmp"
         fi
         llmsm_append_crb_name_patches "$tmp/kustomization.yaml" "$ns"
         # The same per-install decisions deploy_scaling_manager_controller applies, so the

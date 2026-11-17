@@ -94,6 +94,11 @@ Read the review first; the implementation design says what was built.
   model. Holds the live count when our trigger is alone; stays inert beside
   KEDA's own triggers so KEDA scales and we observe. Records the audit of what
   compares against the controller's own previous output.
+- **[Scaling a DisaggregatedSet](disaggregatedset.md)** — built. How the LWS
+  project's prefill/decode object scales (independent roles, one `/scale` per
+  role through `DisaggregatedSetRoleScaler`), what that means for us, the role
+  writer for Static roles (LWS v0.9.0), and the follow-ups: release-gated pods
+  as supply, group keys during a rollout.
 
 ## Install and release
 
