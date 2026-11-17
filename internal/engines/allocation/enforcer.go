@@ -132,6 +132,11 @@ func (e *Enforcer) applyScaleToZeroOnDecisions(
 		if d.ModelID != modelID || d.Namespace != namespace {
 			continue
 		}
+		// A held variant keeps its count: nothing moves it, and a canary
+		// served outside the router may have traffic this count cannot see.
+		if d.HeldUnrouted {
+			continue
+		}
 		d.TargetReplicas = 0
 		updateDecisionAction(d, optimizerName, constants.EnforcerPolicyTypeScaleToZero, e.metricsEmitter)
 	}
@@ -152,8 +157,14 @@ func (e *Enforcer) ensureMinimumReplicasOnDecisions(
 	logger := ctrl.LoggerFrom(ctx)
 
 	// Calculate total replicas for this model
+	// A held variant does not count towards the minimum, and is never the one
+	// given it: the router cannot reach it, so a model whose routed variants
+	// are all at zero has no endpoint, however many replicas it holds.
 	totalReplicas := 0
 	for i := range decisions {
+		if decisions[i].HeldUnrouted {
+			continue
+		}
 		if decisions[i].ModelID == modelID && decisions[i].Namespace == namespace {
 			totalReplicas += decisions[i].TargetReplicas
 		}
@@ -169,7 +180,7 @@ func (e *Enforcer) ensureMinimumReplicasOnDecisions(
 
 	for i := range decisions {
 		d := &decisions[i]
-		if d.ModelID != modelID || d.Namespace != namespace {
+		if d.ModelID != modelID || d.Namespace != namespace || d.HeldUnrouted {
 			continue
 		}
 		cost := d.Cost
