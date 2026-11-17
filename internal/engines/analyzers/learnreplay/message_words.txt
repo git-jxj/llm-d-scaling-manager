@@ -1,6 +1,7 @@
 -
 --
 --data-parallel-size
+--engine-image
 --force
 --from
 --kube-state-metrics
@@ -12,6 +13,7 @@
 --role-of
 --step
 --tensor-parallel-size
+--vllm-version
 -1
 -1000
 -Inf
@@ -42,6 +44,7 @@
 /tmp/
 0
 0-9
+0.34
 0.95
 1
 1/muChoice.maxRatio
@@ -577,6 +580,7 @@ analyzerTuning
 analyzers
 and
 annotation
+annotation_
 another
 answer
 answered
@@ -1357,6 +1361,7 @@ if
 ignored
 ignoring
 image
+image_spec
 imbalanced
 immutable
 implausible
@@ -1528,8 +1533,10 @@ known
 known-failures
 known-truth
 kube-state-metrics
+kube_deployment_annotations
 kube_deployment_spec_replicas
 kube_node_labels
+kube_pod_container_info
 kube_pod_container_resource_requests
 kube_pod_created
 kube_pod_deletion_timestamp
@@ -1665,7 +1672,6 @@ llm-d.ai/utilization-share-transfer
 llm_d_epp_flow_control_queue_size
 llmsm_unattributed_gpus
 llmsm_utilization_share_floor_excess_gpus
-lmsysorg/sglang
 lo
 load
 loadImbalance
@@ -2821,6 +2827,7 @@ switch
 system
 t
 t4
+tag
 tail
 take
 taken
@@ -3067,7 +3074,6 @@ vllm
 vllm-openai
 vllm-openai-rocm
 vllm.entrypoints
-vllm/vllm-openai
 vllm:cache_config_info
 vllm:num_requests_running
 vllm:request_generation_tokens_count

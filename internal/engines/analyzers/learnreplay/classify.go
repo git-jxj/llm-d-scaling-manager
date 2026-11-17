@@ -203,6 +203,7 @@ var valueRules = map[string]rule{
 	"HoldReasons": {class: classHoldReason},
 	"Effect":      {class: classVocab}, "KvCacheDtype": {class: classVocab}, "WeightDtype": {class: classVocab},
 	"Quantization": {class: classVocab}, "KVConnector": {class: classVocab},
+	"VLLMVersionFrom":     {class: classVocab},
 	"KVOffloadingBackend": {class: classVocab}, "MemoryLayout": {class: classVocab},
 
 	"Accelerator": {classAccelerator, "accelerator"}, "AcceleratorName": {classAccelerator, "accelerator"},
