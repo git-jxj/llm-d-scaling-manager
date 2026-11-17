@@ -83,16 +83,22 @@ docs() {
     yq -o json -I 0 '.' "$src" | grep -v '^null$'
 }
 
-# store <json>: write the object; prints <resource>/<name>.
+# store <json>: write the object; prints <resource>/<name>. metadata.generation
+# goes up when .spec changes, as on the API server, so a check can tell a
+# re-apply that changed the controller from one that did not.
 store() {
-    local o="$1" r n s p
+    local o="$1" r n s p gen=1
     r="$(res "$(printf '%s' "$o" | jq -r .kind)")"
     n="$(printf '%s' "$o" | jq -r .metadata.name)"
     s="$(printf '%s' "$o" | jq -r '.metadata.namespace // empty')"
     s="${s:-$ns}"
     p="$(path "$r" "$n" "$s")"
     mkdir -p "$(dirname "$p")"
-    printf '%s' "$o" | jq --arg rv "$RANDOM$RANDOM" '.metadata.resourceVersion = $rv' > "$p"
+    if [ -f "$p" ]; then
+        gen="$(jq -r '.metadata.generation // 1' "$p")"
+        [ "$(jq -c -S '.spec // null' "$p")" = "$(printf '%s' "$o" | jq -c -S '.spec // null')" ] || gen=$((gen + 1))
+    fi
+    printf '%s' "$o" | jq --arg rv "$RANDOM$RANDOM" --argjson g "$gen" '.metadata.resourceVersion = $rv | .metadata.generation = $g' > "$p"
     printf '%s/%s' "$r" "$n"
 }
 

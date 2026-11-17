@@ -63,6 +63,16 @@ smt install --scope cluster --keda-namespace <the namespace KEDA runs in> \
 ```
 <!-- guide:tools.install end -->
 
+Prometheus serves plain HTTP only? Give its `http://` URL and add
+`--allow-http`, on every `smt install` run (not `admin-setup` or
+`admin-finish`): the controller then reads it unencrypted and sends it no
+token. Without the flag, `install` refuses an `http://` URL.
+
+```bash
+smt install --scope cluster --keda-namespace <the namespace KEDA runs in> \
+  --prometheus-url http://<prometheus>:9090 --model-namespace <model namespace> --allow-http
+```
+
 It stops on a preflight `FAIL` and prints its fix. Run it again at any time:
 it changes nothing that is already right, and never writes existing
 settings. Every flag and exit code:
@@ -120,6 +130,22 @@ export KEDA_NS=<the namespace KEDA runs in>
 sed -i "s#kubernetes.io/metadata.name: keda\$#kubernetes.io/metadata.name: $KEDA_NS#" scaling-manager-cluster.yaml
 ```
 <!-- guide:deploy.kedans end -->
+
+If Prometheus serves plain HTTP only, set `prometheusURL` to its `http://`
+URL and `prometheusAllowHTTP` to `"true"` in `scaling-manager-settings.yaml`
+before you create it, and empty the token path the controller would
+otherwise send over it:
+
+```bash
+# Only for a plain HTTP Prometheus. Unencrypted, and the controller sends no token.
+sed -i 's#value: /var/run/secrets/kubernetes.io/serviceaccount/token$#value: ""#' scaling-manager-cluster.yaml
+```
+
+Repeat this `sed` on every release's file you apply (an upgrade too), or the
+controller gets its token back and crash-loops. Until the controller is
+applied, the preflight's `prometheus.reachable` WARN about
+`PROMETHEUS_TOKEN_PATH` is expected, even after the `sed`: it reads the
+cluster, not the file.
 
 Set `prometheusURL` in `scaling-manager-settings.yaml`, then:
 

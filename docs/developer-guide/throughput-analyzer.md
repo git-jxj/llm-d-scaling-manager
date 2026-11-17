@@ -460,8 +460,8 @@ new-variant state, by design:
        │ vllm:request_generation_tokens_*        (QueryAvgOutputTokens       → AvgOutputTokens)
        │ vllm:request_prompt_tokens_*            (QueryAvgInputTokens        → AvgInputTokens)
        │ vllm:prefix_cache_{hits,queries}_total  (QueryPrefixCacheHitRate    → PrefixCacheHitRate)
-       │ inference_extension_flow_control_*      (QueryModelArrivalRate      → AnalyzerInput.ArrivalRate)
-       │ inference_extension_flow_control_*      (QuerySchedulerQueueSize    → QueueSize)
+       │ llm_d_epp_flow_control_*                (QueryModelArrivalRate      → AnalyzerInput.ArrivalRate)
+       │ llm_d_epp_flow_control_*                (QuerySchedulerQueueSize    → QueueSize)
        ↓
 ┌─────────────────────────┐
 │ ReplicaMetricsCollector │  ← internal/collector/ (replica_metrics.go sequences query/extract/attribute)

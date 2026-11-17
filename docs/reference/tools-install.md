@@ -69,8 +69,9 @@ only when KEDA's side changed.
 | `--keda-namespace KNS` | `admin-setup`, `install --scope cluster`, `admin-finish` | where KEDA runs. `admin-setup` default: the live scaler NetworkPolicy, else the namespace serving the external-metrics APIService, else (OpenShift) `openshift-keda`. `admin-finish` default: the namespace `admin-setup` wrote in its stamp, which must agree with the live NetworkPolicy, else the APIService |
 | `--prometheus-url URL` | `install` | sets `prometheusURL` when the settings are created. Required then, except on OpenShift (Thanos Querier) |
 | `--prometheus-ca FILE` | `install` | a CA file under the mounted `/work`: creates or updates Secret `scaling-manager-prometheus-ca`, sets `prometheusCACertPath` on a first install, restarts the controller when it changed |
+| `--allow-http` | `install` | for a Prometheus that serves plain HTTP only: sets `prometheusAllowHTTP: "true"` on a first install, and applies the controller with `PROMETHEUS_TOKEN_PATH` empty, since the controller refuses to send its token over HTTP. Give it on every run: `install` refuses an `http://` URL (the flag's, or the live settings') without it, and an `https://` one with it. Not with `--prometheus-ca` |
 | `--quota "GPU=N[,GPU=N]"` | `install` | sets `limiter: quota` and `quotas` |
-| `--set KEY=VALUE` | `install` | any other settings key, on a first install. Not a key a flag sets (`prometheusURL`, `prometheusCACertPath`, `quotas`; `limiter` with `--quota`). Not `passive`: the install is passive, and the refusal prints the `kubectl patch` to run after `admin-finish` |
+| `--set KEY=VALUE` | `install` | any other settings key, on a first install. Not a key a flag sets (`prometheusURL`, `prometheusCACertPath`, `prometheusAllowHTTP`, `quotas`; `limiter` with `--quota`). Not `passive`: the install is passive, and the refusal prints the `kubectl patch` to run after `admin-finish` |
 | `--model-namespace NS` | `install --scope cluster` | a namespace with model servers; repeat it. Add one later by running again with it |
 | `--platform kubernetes\|openshift` | all | overrides the detection (API discovery of `security.openshift.io`) |
 | `--files DIR` | `admin-setup`, `install`, `admin-finish` | install from release files in DIR instead of the image's. They must match their `SHA256SUMS` and be this image's release |
@@ -83,7 +84,17 @@ only when KEDA's side changed.
 
 If the settings already exist, `install` never writes them. A flag that
 differs from the live value is reported with the `kubectl patch` that would
-change it, and the install goes on.
+change it, and the install goes on. Two cases stop instead, before any
+write, and print the patches to run (exit 2):
+
+- A new URL of the other scheme (http to https or back): the patches for
+  `prometheusURL` and `prometheusAllowHTTP`, and to http also those that
+  clear `prometheusCACertPath`, `prometheusServerName` and
+  `prometheusInsecureSkipVerify` when they are set. Run them, then the same
+  command again right away: until then a controller restart fails, since the
+  live Deployment still has the token setting of the old scheme.
+- `--allow-http` while the live `prometheusAllowHTTP` is not `"true"`: the
+  patch that sets it. Run the printed `kubectl patch`, then the same command.
 
 ## Exit codes
 
@@ -93,7 +104,7 @@ The same for every command.
 | --- | --- | --- |
 | 0 | done; `WARN` and `UNKNOWN` lines, if any, are in the summary | |
 | 1 | the preflight has a `FAIL`: `install` stopped before the controller, or `admin-finish` kept the preflight binding | apply the fix printed under each `FAIL`, run again |
-| 2 | usage: an unknown flag, a missing value, a bad namespace name; or release files that fail their `SHA256SUMS` or are another release; or an image without files and no `--files` | fix the command |
+| 2 | usage: an unknown flag, a missing value, a bad namespace name; or release files that fail their `SHA256SUMS` or are another release; or an image without files and no `--files`; or live settings that `--prometheus-url` or `--allow-http` disagree with (a scheme switch, or `--allow-http` while `prometheusAllowHTTP` is not `"true"`) | fix the command; for the settings, run the printed `kubectl patch`, then the same command |
 | 3 | needs the cluster admin: no stamp, or a stamp from other admin objects (an upgrade that changes them) | the admin runs the `smt admin-setup` line printed |
 | 4 | the cluster is not ready, or needs a person: the namespace does not exist (or you may not read it), KEDA's namespace cannot be found or disagrees with the stamp, KEDA's side was refused (an object of its name this tool did not write, or one it cannot read; the line prints the `kubectl delete` and the command to run again), the controller was installed with `make`, or `admin-finish` ran before `install` | the line says which |
 | 5 | timed out: the controller rollout, the client certificate, the preflight Job, or `scalerTLS: mutual TLS` | the line names the command that shows why |

@@ -62,6 +62,8 @@ type fixture struct {
 	certs certs
 	// now overrides the run's clock when set.
 	now time.Time
+	// tokenPathEmptied is Env.TokenPathEmptied: smt install --allow-http.
+	tokenPathEmptied bool
 }
 
 type reaction struct {
@@ -407,9 +409,10 @@ func (f *fixture) env(t *testing.T) *Env {
 			}
 			return f.prom, nil
 		},
-		PrometheusCA: f.promCA,
-		DialTLS:      f.dialer(),
-		CheckTimeout: 5 * time.Second,
+		PrometheusCA:     f.promCA,
+		DialTLS:          f.dialer(),
+		CheckTimeout:     5 * time.Second,
+		TokenPathEmptied: f.tokenPathEmptied,
 		Now: func() time.Time {
 			if !f.now.IsZero() {
 				return f.now

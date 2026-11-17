@@ -737,6 +737,271 @@ rc=$?
 if [ "$rc" = 2 ] && grep -q 'are for --scope cluster' "$W/out"; then ok "a namespaced install refuses the labeller flags (usage)"; else bad "namespaced labeller flag: exit $rc: $(tail -1 "$W/out")"; fi
 
 # ---------------------------------------------------------------------------
+echo "A plain HTTP Prometheus: --allow-http"
+# The controller refuses an http URL unless allowed, and refuses to send a
+# bearer token over one; the release Deployment sets PROMETHEUS_TOKEN_PATH.
+DEP=scaling-manager-controller-manager
+gen() { obj deployment "$1" "$DEP" | jq -r '.metadata.generation'; }
+# tokv <namespace>: the PROMETHEUS_TOKEN_PATH values of the stored controller, as a JSON list.
+tokv() { obj deployment "$1" "$DEP" | jq -c '[.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value]'; }
+# tokf <file>: the same, read from a rendered file.
+tokf() { yq ea -o json -I 0 'select(.kind == "Deployment")' "$1" | jq -c '[.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value]'; }
+SA_TOKEN=/var/run/secrets/kubernetes.io/serviceaccount/token
+TOKEN_EMPTIED_ENV=LLMSM_PREFLIGHT_TOKEN_PATH_EMPTIED
+# jobenv <namespace>: TOKEN_EMPTIED_ENV on the stored preflight Job, empty when it has none.
+jobenv() { obj job "$1" scaling-manager-preflight | jq -r --arg e "$TOKEN_EMPTIED_ENV" '[.spec.template.spec.containers[].env[]? | select(.name == $e) | .value] | join(",")'; }
+
+reset
+rm -rf "$W/dryh"
+smt install -n team-a --prometheus-url http://prom.example:9090 --allow-http --dry-run --out "$W/dryh"
+rc=$?
+yq ea '(select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' "$W/dry/50-controller.yaml" > "$W/dry-emptied.yaml"
+if [ "$rc" = 0 ] && [ "$(tokf "$W/dry/50-controller.yaml")" = "[\"$SA_TOKEN\"]" ] && [ "$(tokf "$W/dryh/50-controller.yaml")" = '[""]' ] \
+    && [ "$(norm "$W/dryh/50-controller.yaml")" = "$(norm "$W/dry-emptied.yaml")" ] \
+    && [ "$(yq '.data.prometheusURL + "|" + .data.prometheusAllowHTTP' "$W/dryh/20-settings.yaml")" = 'http://prom.example:9090|true' ]; then
+    ok "--allow-http --dry-run: prometheusAllowHTTP true in the settings, and the controller is the release's with PROMETHEUS_TOKEN_PATH emptied, nothing else changed"
+else
+    bad "--allow-http dry-run: exit $rc, token https $(tokf "$W/dry/50-controller.yaml") http $(tokf "$W/dryh/50-controller.yaml"): $(tail -1 "$W/out")"
+fi
+smt install -n team-a --prometheus-url http://p:9090
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'is plain HTTP, which the controller refuses by default. Add --allow-http' "$W/out" && [ ! -s "$STUB_DIR/calls.log" ]; then
+    ok "an http --prometheus-url without --allow-http is usage (exit 2) naming the flag, before any kubectl call"
+else
+    bad "http without --allow-http: exit $rc: $(tail -1 "$W/out")"
+fi
+smt install -n team-a --prometheus-url https://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--allow-http is for a plain HTTP Prometheus' "$W/out" && [ ! -s "$STUB_DIR/calls.log" ]; then ok "--allow-http with an https URL is usage"; else bad "--allow-http with https: exit $rc: $(tail -1 "$W/out")"; fi
+smt install -n team-a --prometheus-url http://p:9090 --allow-http --prometheus-ca prom-ca.crt
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--allow-http with --prometheus-ca' "$W/out"; then ok "--allow-http with --prometheus-ca is usage"; else bad "--allow-http with a CA: exit $rc: $(tail -1 "$W/out")"; fi
+smt install -n team-a --prometheus-url http://p:9090 --allow-http --set prometheusAllowHTTP=true --dry-run --out "$W/dryx"
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--set prometheusAllowHTTP: give --allow-http' "$W/out"; then ok "--set prometheusAllowHTTP is refused, naming --allow-http"; else bad "--set prometheusAllowHTTP: exit $rc: $(tail -1 "$W/out")"; fi
+
+# The generation the stub keeps: a re-apply that changes the controller bumps it.
+# What a hand patch does: an https install, PROMETHEUS_TOKEN_PATH emptied with
+# kubectl set env, then a re-run that applies the release Deployment again.
+restore
+smt install -n team-a --prometheus-url https://p:9090 > /dev/null 2>&1
+g1="$(gen team-a)"
+jq '(.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' \
+    "$STUB_DIR/obj/deployment/team-a/$DEP.json" > "$W/d.json" && mv "$W/d.json" "$STUB_DIR/obj/deployment/team-a/$DEP.json"
+smt install -n team-a --prometheus-url https://p:9090
+if [ "$(gen team-a)" = $((g1 + 1)) ] && [ "$(tokv team-a)" = "[\"$SA_TOKEN\"]" ]; then
+    ok "control: a re-run over a hand-emptied token path puts the token back and bumps the generation ($g1 -> $(gen team-a))"
+else
+    bad "control: generation $g1 -> $(gen team-a), token $(tokv team-a)"
+fi
+
+restore
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+g1="$(gen team-a)"
+st="$(obj configmap team-a scaling-manager-settings | jq -r '.data.prometheusURL + "|" + .data.prometheusAllowHTTP')"
+if [ "$rc" = 0 ] && [ "$st" = 'http://p:9090|true' ] && [ "$(tokv team-a)" = '[""]' ]; then
+    ok "install --allow-http: the settings allow HTTP and the controller is applied with PROMETHEUS_TOKEN_PATH empty"
+else
+    bad "install --allow-http: exit $rc, settings '$st', token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+before="$(obj configmap team-a scaling-manager-settings)"
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(gen team-a)" = "$g1" ] && [ "$(tokv team-a)" = '[""]' ] && [ "$(obj configmap team-a scaling-manager-settings)" = "$before" ] \
+    && ! grep -q 'kubectl patch' "$W/out" && ! grep -qE '^create ' "$STUB_DIR/calls.log"; then
+    ok "a re-run with the same flags changes nothing: controller generation $g1, settings as they were, no patch printed"
+else
+    bad "re-run --allow-http: exit $rc, generation $g1 -> $(gen team-a), token $(tokv team-a): $(grep -m1 'kubectl patch' "$W/out")"
+fi
+: > "$STUB_DIR/calls.log"
+smt install -n team-a
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'prometheusURL in the live scaling-manager-settings (http://p:9090) is plain HTTP' "$W/out" && grep -q -- '--allow-http' "$W/out" \
+    && [ "$(writes)" = 0 ] && [ "$(gen team-a)" = "$g1" ]; then
+    ok "a re-run without --allow-http on live http settings is refused before any write: it would apply the token again"
+else
+    bad "re-run without --allow-http: exit $rc, $(writes) writes, generation $(gen team-a): $(tail -1 "$W/out")"
+fi
+# A live controller crash-looping on the token path the release files set:
+# --allow-http repairs it. The preflight Job is told the Deployment it is about
+# to apply has no token path, so the live one is not held against it.
+jq --arg t "$SA_TOKEN" '(.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = $t' \
+    "$STUB_DIR/obj/deployment/team-a/$DEP.json" > "$W/d.json" && mv "$W/d.json" "$STUB_DIR/obj/deployment/team-a/$DEP.json"
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(tokv team-a)" = '[""]' ] && [ "$(jobenv team-a)" = true ]; then
+    ok "--allow-http over a live controller with the token path: the preflight Job says the token path is emptied, and the emptied Deployment is applied"
+else
+    bad "repair: exit $rc, token $(tokv team-a), preflight Job $TOKEN_EMPTIED_ENV '$(jobenv team-a)': $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+saved_http="$W/after-http-install"
+rm -rf "$saved_http"; cp -R "$STUB_DIR" "$saved_http"
+# set_setting <namespace> <key> <value>: what the printed kubectl patch does.
+set_setting() {
+    jq --arg k "$2" --arg v "$3" '.data[$k] = $v' "$STUB_DIR/obj/configmap/$1/scaling-manager-settings.json" > "$W/s.json" \
+        && mv "$W/s.json" "$STUB_DIR/obj/configmap/$1/scaling-manager-settings.json"
+}
+set_setting team-a prometheusAllowHTTP ""
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"true\"}}'" "$W/out" && [ "$(writes)" = 0 ]; then
+    ok "--allow-http over live http settings without prometheusAllowHTTP: refused before any write, with the patch"
+else
+    bad "--allow-http, the setting missing: exit $rc, $(writes) writes: $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+# From http to https: refused with both patches; after them the same flags install.
+rm -rf "$STUB_DIR"; cp -R "$saved_http" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] && grep -q 'changes its scheme' "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusURL\":\"https://p:9090\"}}'" "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"false\"}}'" "$W/out"; then
+    set_setting team-a prometheusURL https://p:9090
+    set_setting team-a prometheusAllowHTTP false
+    smt install -n team-a --prometheus-url https://p:9090
+    rc=$?
+    if [ "$rc" = 0 ] && [ "$(tokv team-a)" = "[\"$SA_TOKEN\"]" ] && [ "$(jobenv team-a)" = "" ]; then
+        ok "http to https: refused with the two patches, and after them the same flags install the controller with its token"
+    else
+        bad "http to https after the patches: exit $rc, token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+    fi
+else
+    bad "http to https: exit $rc, $(writes) writes: $(tail -3 "$W/out" | tr '\n' ' ')"
+fi
+# From https to http: the same.
+rm -rf "$STUB_DIR"; cp -R "$installed" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] && grep -q 'changes its scheme' "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusURL\":\"http://p:9090\"}}'" "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"true\"}}'" "$W/out"; then
+    set_setting team-a prometheusURL http://p:9090
+    set_setting team-a prometheusAllowHTTP true
+    smt install -n team-a --prometheus-url http://p:9090 --allow-http
+    rc=$?
+    if [ "$rc" = 0 ] && [ "$(tokv team-a)" = '[""]' ]; then
+        ok "https to http: refused with the two patches, before any write; after them the same flags install the controller without a token path"
+    else
+        bad "https to http after the patches: exit $rc, token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+    fi
+else
+    bad "https to http: exit $rc, $(writes) writes: $(tail -3 "$W/out" | tr '\n' ' ')"
+fi
+# A switch prints every patch it needs: to http, the TLS settings the
+# controller refuses beside an http URL; to https with --prometheus-ca, its CA.
+rm -rf "$STUB_DIR"; cp -R "$installed" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+set_setting team-a prometheusCACertPath /etc/scaling-manager-prometheus-ca/ca.crt
+set_setting team-a prometheusInsecureSkipVerify True
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] && grep -q 'the same command again right away' "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusCACertPath\":\"\"}}'" "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusInsecureSkipVerify\":\"false\"}}'" "$W/out" \
+    && ! grep -qF '"prometheusServerName"' "$W/out"; then
+    ok "https to http with a CA path and insecureSkipVerify set: the switch also prints the patches that clear them, and none for an unset key"
+else
+    bad "https to http, TLS settings: exit $rc: $(tail -6 "$W/out" | tr '\n' ' ')"
+fi
+rm -rf "$STUB_DIR"; cp -R "$saved_http" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url https://p:9090 --prometheus-ca prom-ca.crt
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusCACertPath\":\"/etc/scaling-manager-prometheus-ca/ca.crt\"}}'" "$W/out"; then
+    ok "http to https with --prometheus-ca: the switch also prints the prometheusCACertPath patch"
+else
+    bad "http to https with a CA: exit $rc: $(tail -5 "$W/out" | tr '\n' ' ')"
+fi
+# --allow-http without --prometheus-url.
+restore
+smt install -n team-a --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'no --prometheus-url' "$W/out" && [ "$(writes)" = 0 ]; then ok "--allow-http, no settings, no --prometheus-url: exit 2 before any write"; else bad "--allow-http, no URL: exit $rc: $(tail -1 "$W/out")"; fi
+rm -rf "$W/dryo2"
+smt install -n team-a --platform openshift --allow-http --dry-run --out "$W/dryo2"
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--allow-http is for a plain HTTP Prometheus, and the OpenShift default' "$W/out" && [ ! -s "$W/dryo2/20-settings.yaml" ]; then
+    ok "--allow-http on OpenShift with no --prometheus-url: the https default is refused, nothing rendered"
+else
+    bad "--allow-http, OpenShift default: exit $rc: $(tail -1 "$W/out")"
+fi
+rm -rf "$STUB_DIR"; cp -R "$installed" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'prometheusURL in the live scaling-manager-settings (https://p:9090) is not one' "$W/out" && [ "$(writes)" = 0 ]; then
+    ok "--allow-http, no --prometheus-url, live https settings: refused before any write"
+else
+    bad "--allow-http over live https, no URL: exit $rc: $(tail -1 "$W/out")"
+fi
+rm -rf "$STUB_DIR"; cp -R "$saved_http" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --allow-http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(tokv team-a)" = '[""]' ]; then ok "--allow-http, no --prometheus-url, live http settings: installs, the token path empty"; else bad "--allow-http over live http, no URL: exit $rc, token $(tokv team-a): $(tail -1 "$W/out")"; fi
+# A scheme in capitals is http too.
+reset
+smt install -n team-a --prometheus-url HTTP://P:9090 --dry-run --out "$W/dryu"
+rc1=$?
+rm -rf "$W/dryu"
+smt install -n team-a --prometheus-url HTTP://P:9090 --allow-http --dry-run --out "$W/dryu"
+rc2=$?
+if [ "$rc1$rc2" = 20 ] && [ "$(tokf "$W/dryu/50-controller.yaml")" = '[""]' ] && [ "$(yq '.data.prometheusAllowHTTP' "$W/dryu/20-settings.yaml")" = true ]; then
+    ok "HTTP:// is plain HTTP: refused without --allow-http, rendered without the token path with it"
+else
+    bad "HTTP://: exits $rc1 $rc2, token $(tokf "$W/dryu/50-controller.yaml" 2>/dev/null)"
+fi
+# --files: the render and the Job flag apply to files given on the command line.
+rm -rf "$W/dryf2"
+smt_in "$DEVDIR" install -n team-a --prometheus-url http://p:9090 --allow-http --files "$W/dist" --dry-run --out "$W/dryf2"
+rc=$?
+fenv="$(yq ea -o json -I 0 'select(.kind == "Job")' "$W/dryf2/30-preflight.yaml" | jq -r --arg e "$TOKEN_EMPTIED_ENV" '[.spec.template.spec.containers[].env[]? | select(.name == $e) | .value] | join(",")')"
+if [ "$rc" = 0 ] && [ "$(tokf "$W/dryf2/50-controller.yaml")" = '[""]' ] && [ "$fenv" = true ]; then
+    ok "--files <dir> --allow-http: the controller without the token path, the preflight Job told so"
+else
+    bad "--files --allow-http: exit $rc, token $(tokf "$W/dryf2/50-controller.yaml"), Job '$fenv': $(tail -1 "$W/out")"
+fi
+# Files whose Deployment sets no PROMETHEUS_TOKEN_PATH: nothing to empty, nothing added.
+rm -rf "$W/notoken"; cp -R "$W/dist" "$W/notoken"
+yq -i 'del(select(.kind == "Deployment") | .spec.template.spec.containers[].env[] | select(.name == "PROMETHEUS_TOKEN_PATH"))' "$W/notoken/scaling-manager-namespaced.yaml"
+(cd "$W/notoken" && sha256sum scaling-manager-*.yaml > SHA256SUMS)
+rm -rf "$W/dryn"
+smt_in "$DEVDIR" install -n team-a --prometheus-url http://p:9090 --allow-http --files "$W/notoken" --dry-run --out "$W/dryn"
+rc=$?
+if [ "$rc" = 0 ] && [ "$(tokf "$W/notoken/scaling-manager-namespaced.yaml")" = '[]' ] && [ "$(tokf "$W/dryn/50-controller.yaml")" = '[]' ]; then
+    ok "a Deployment with no PROMETHEUS_TOKEN_PATH entry: --allow-http renders it as it is, adding none"
+else
+    bad "no token path entry: exit $rc, files $(tokf "$W/notoken/scaling-manager-namespaced.yaml"), rendered $(tokf "$W/dryn/50-controller.yaml" 2>/dev/null): $(tail -1 "$W/out")"
+fi
+# The Job variable smt sets is the one the preflight reads.
+goenv="$(sed -n 's/^const TokenPathEmptiedEnv = "\([A-Z_]*\)"$/\1/p' "$ROOT/internal/preflight/settings.go" | tr -d '\r')"
+shenv="$(sed -n 's/^SMT_TOKEN_EMPTIED_ENV=\([A-Z_]*\)$/\1/p' "$ROOT/deploy/lib/release_install.sh")"
+if [ -n "$goenv" ] && [ "$goenv" = "$shenv" ] && [ "$goenv" = "$TOKEN_EMPTIED_ENV" ]; then
+    ok "release_install.sh sets the Job variable the preflight reads: $goenv"
+else
+    bad "the Job variable: Go '$goenv', release_install.sh '$shenv', this check '$TOKEN_EMPTIED_ENV'"
+fi
+restore
+smt admin-setup -n team-a --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'an http:// Prometheus: add --allow-http' "$W/out"; then ok "admin-setup ends with the install line and the --allow-http hint"; else bad "admin-setup closing line: exit $rc: $(tail -1 "$W/out")"; fi
+
+reset m1
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url http://p:9090 --allow-http --model-namespace m1
+rc=$?
+g1="$(gen scaling-manager-system)"
+st="$(obj configmap scaling-manager-system scaling-manager-settings | jq -r '.data.prometheusURL + "|" + .data.prometheusAllowHTTP')"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url http://p:9090 --allow-http --model-namespace m1
+rc2=$?
+if [ "$rc$rc2" = 55 ] && [ "$st" = 'http://p:9090|true' ] && [ "$(tokv scaling-manager-system)" = '[""]' ] && [ -n "$g1" ] && [ "$(gen scaling-manager-system)" = "$g1" ]; then
+    ok "install --scope cluster --allow-http: the settings allow HTTP, the controller has no token path, and a re-run keeps generation $g1"
+else
+    bad "cluster --allow-http: exits $rc $rc2, settings '$st', token $(tokv scaling-manager-system), generation $g1 -> $(gen scaling-manager-system): $(tail -1 "$W/out")"
+fi
+
+# ---------------------------------------------------------------------------
 echo "release-files and llmsm_make_cmd"
 rm -rf "$W/rf"
 smt release-files --out "$W/rf"
@@ -789,7 +1054,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=92
+EXPECT_CASES=117
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
