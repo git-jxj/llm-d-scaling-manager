@@ -763,7 +763,7 @@
   "never": {
     "decode-knee": "decode's knee: no measured run crossed it",
     "percentile-tpot": "TPOT percentiles: never scored against a client",
-    "rate-at-tpot": "rate at a TPOT target: never measured",
-    "prefill-latency": "prefill's own latency: a client measures TTFT end to end only"
+    "prefill-latency": "prefill's own latency: a client measures TTFT end to end only",
+    "rate-at-tpot": "rate at a TPOT target: never measured"
   }
 }

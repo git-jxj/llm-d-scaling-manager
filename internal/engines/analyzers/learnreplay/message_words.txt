@@ -293,6 +293,7 @@ NonPositiveStepSlope
 NotTriggerScaleUp
 Nothing
 OLS
+OUTSIDE
 OnePod
 Optimization
 Optimizer
@@ -351,6 +352,7 @@ PromptSpreadAbovePeak
 PromptSpreadClamped
 Published
 PullUnseen
+REGION
 REST_CLIENT_TIMEOUT
 ROLE
 R_q
@@ -449,6 +451,7 @@ Utilization
 V
 V2
 VA
+VALIDATED
 VAs
 VLLM_ALL2ALL_BACKEND
 VLLM_USE_V1
@@ -539,6 +542,7 @@ against
 age
 ageSeconds
 aged
+aggregated
 ago
 agree
 agreeCycles
@@ -899,6 +903,7 @@ declared
 declares
 declined
 decode
+decode-knee
 decode-only
 decode-queue-unknown
 decode-style
@@ -1029,6 +1034,7 @@ effectiveClusterQuotas
 effectiveInputTokens
 effectiveNamespaceQuotas
 effective_max_batched_tokens
+either
 election
 elsewhere
 emit
@@ -1068,6 +1074,7 @@ entries
 entry
 env
 env.VLLM_ALL2ALL_BACKEND
+envelope
 environment
 ep
 ep_size
@@ -1710,6 +1717,7 @@ maximum
 may
 mayOrder
 mean
+mean-tpot
 meanNeedGPUs
 meanRemaining
 means
@@ -2043,6 +2051,7 @@ past
 path
 paused
 paused-replicas
+pd
 pd-pair-borrows-whole
 peak-under-queue
 peakClaimGPUs
@@ -2067,6 +2076,7 @@ perReplicaRate
 perReplicaTokensPerSec
 percent
 percentile
+percentile-tpot
 percentiles
 period
 persist
@@ -2135,6 +2145,8 @@ prefill-capacity-observe
 prefill-capacity-observed
 prefill-catchup
 prefill-demand-held
+prefill-knee
+prefill-latency
 prefill-required
 prefill-throughput-bound-reading
 prefillBoundHeld
@@ -2246,6 +2258,8 @@ ran
 range
 rank
 rate
+rate-at-tpot
+rate-at-ttft
 rateRefused
 rates
 rather
@@ -2896,6 +2910,7 @@ too
 too-few-readings
 took
 top
+topology
 totalAvail
 totalDecisions
 totalDemand
