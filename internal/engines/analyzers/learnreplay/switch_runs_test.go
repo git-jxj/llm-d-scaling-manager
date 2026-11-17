@@ -1784,6 +1784,12 @@ func TestGoldens_ASwitchWithTwoRowsPanics(t *testing.T) {
 // the same bytes as at 1c9a34fe8, since 4b-2 moved none). It also holds the
 // base digests of the outputs a throughput switch could move that the
 // expectation does not name, so the measured rows need no new lookup.
+//
+// The seven learned-state.csv entries of acceptance, engine, mu-paths,
+// start-restored and the three start-seed fixtures are the all-off replay at
+// FingerprintVersion 5: the version moved only the engine digests in those
+// files (every other byte is the same), so each switch still moves exactly
+// what it did.
 var switchBase = withDigests(staircaseBase, map[string]string{
 	"acceptance/results.csv":            "7aef7e7391f761fe984f89720d61b0583048b330989c449098dce8ec2d285981",
 	"acceptance/variant-capacities.csv": "47ad82ad3c017924b6cc5398d9578ddd28ab95fdc547adcec6decb69abcc91b3",
@@ -1805,9 +1811,9 @@ var switchBase = withDigests(staircaseBase, map[string]string{
 
 	// Learner PR 5c's outputs (SwitchStartBlendsFirstSamples), at main
 	// 602054e98, 5b merged. e1-tuned/results.csv is ev-shindin/llm-scaling-manager#467's row above, the same digest.
-	"acceptance/learned-state.csv":                "da4251071addee288ecbe495759e2af257fa54b3511bbb93c5eddf4517ecc7a9",
-	"engine/learned-state.csv":                    "d823bbfe7f483ebca87d84224c0ae3faa5daef6546f14ffd5648937dc885dacf",
-	"mu-paths/learned-state.csv":                  "97ca32de070b4879ac59a3171a6a9387d91e08cc42c7a267e82f2576e35fa621",
+	"acceptance/learned-state.csv":                "61388f30bbdd5494012bdae7b3ab31d9039aa9ee4c29204cd96869a4e6b2031a",
+	"engine/learned-state.csv":                    "b3f7136c618d0638cb216747189435f9dce0bdd568dc0f5c66fd9d9e57c920f7",
+	"mu-paths/learned-state.csv":                  "6c32dae632cbabd51ecd3adc51fdecd26f96364c92b71f829c788a309e787d66",
 	"ols-sweep/composite-results.csv":             "d8a462aaa27a4c08077f8974172dd140d11a5ed2d675b932c632659d752db432",
 	"ols-sweep/results.csv":                       "06edf09352f73434d7a519884cccd872f8a68152d83b7b926b78c937052482a5",
 	"ols-sweep-slo/composite-results.csv":         "e7fbf20c0e73f463cb6c772129a2b97ed5664dc77103abef83a9b550ba660ce1",
@@ -1835,15 +1841,15 @@ var switchBase = withDigests(staircaseBase, map[string]string{
 	// The start-seed goldens have no base commit: each digest is the output
 	// replayed with every switch of replaySwitches off, at 59772fce2.
 	"start-seed/composite-results.csv":       "2c3b9c87e8540ac2281582ac49f0d740458109bca6c2f63f4b30c319fb4543dd",
-	"start-seed/learned-state.csv":           "860fbdbd8559d29d4caf900c85802657bbacd811bf816175ae21c6d574f06346",
+	"start-seed/learned-state.csv":           "dd17a66768237c22527740aebe26b31d131bb92ea8ccdd15bd08646024eea0e6",
 	"start-seed/results.csv":                 "84c0d2fee77414c2816bb49818aa0466ddbc51501e29dbc621430c7b21bb7265",
-	"start-seed-restart/learned-state.csv":   "ae524f09cd431c1bd754cc903d0870d0d32e9b9b39b9a2a2999595e4cf7c4eb4",
-	"start-seed-restart-2/learned-state.csv": "099f2c638296ba7f62820ed86fbfdcaf30dfcfc1e6d069bbc8b80080414a835d",
+	"start-seed-restart/learned-state.csv":   "569e16e87eb78d6bff42c95e13acc4ca7bb8d93fcc4da45860b05a4baacab0ff",
+	"start-seed-restart-2/learned-state.csv": "e89441fcce6c408fbf331475614c5ac989224a697c707def0f71508ab0cc6372",
 
 	// start-restored has no base commit either: every switch of
 	// replaySwitches off, at 9c7aa470c.
 	"start-restored/composite-results.csv": "9838f3fcbd4a6d6f1aa2786eb7c24ba97c1da456d976903eb9307c7f363eab9e",
-	"start-restored/learned-state.csv":     "7bcb943f4f131f080ab70e27571c1dcffaad974d840ddb11954f9ef79d88afee",
+	"start-restored/learned-state.csv":     "dd46bbe895fa450a8e6ffd091e4f83759e1910a0b8f10c8df0e91859b6955472",
 	"start-restored/results.csv":           "6b7a8e062c42203b92eff8e2a1738a98aafb91c69a29c229dbcbfd3b5821cc0d",
 	// The throughput-sweep goldens, replayed with this PR's switches all off.
 	"throughput-sweep-restart/composite-holds.csv":    "e753e8d995badf84c780c9ae9e7f077ef0a6e0d738a1b6e46d330d10964d9092",
