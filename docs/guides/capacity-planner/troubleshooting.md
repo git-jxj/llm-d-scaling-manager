@@ -56,6 +56,21 @@ A figure flagged `AssumedShape`, `AssumedTPOTRatio` or with an assumed term
 stands, but rests on a value you typed. The **Flags** drawer says what clears
 each flag.
 
+## The planner and the controller disagree on TPOT
+
+The planner reads the decode line below its fitted band, at the fill a replica
+actually runs at; the controller keeps the band's bottom (0.15 by default) as
+its floor. Two things follow:
+
+- A TPOT target between the line's intercept and its value at the band's bottom
+  gets a rate from the planner, but the controller marks it infeasible and
+  scales the variant on saturation alone.
+- With short requests whose batch cap binds below the band, the controller
+  prices up to about 1.6x less capacity a replica than the planner, so it may
+  run more replicas than the planner sized.
+
+Both are expected. A figure read below the band carries `BelowFittedBand`.
+
 ## API errors
 
 | You see | Fix |

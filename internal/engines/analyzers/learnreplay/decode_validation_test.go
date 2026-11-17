@@ -145,7 +145,7 @@ func rowShape(rm domain.ReplicaMetrics) shape.Shape {
 }
 
 // meanTPOTCheck is the frozen line at each row's fill, clamped as an answer
-// is (to the band's top, and below to whatif.LowestFill for the line's tier),
+// is (to the band's top, and below to whatif.LowestFill for the line),
 // against the ITL the engine read there. The bound reads that
 // figure. The line beside it prints the unclamped one too, and how many rows
 // the clamp moved each way: a figure in bound only through the clamp says so.
@@ -166,7 +166,7 @@ func meanTPOTCheck(vs VariantState, band whatif.FillBand, rows []domain.ReplicaM
 		case k > band.Hi:
 			above++
 		}
-		predicted := vs.Line.ITLAt(min(max(k, whatif.LowestFill(band, vs.Tier)), band.Hi))
+		predicted := vs.Line.ITLAt(min(max(k, whatif.LowestFill(band, vs.Tier, vs.Line, vs.BelowBandITL)), band.Hi))
 		errs = append(errs, 100*(predicted-rm.AvgITL)/rm.AvgITL)
 		raw = append(raw, 100*(vs.Line.ITLAt(k)-rm.AvgITL)/rm.AvgITL)
 	}

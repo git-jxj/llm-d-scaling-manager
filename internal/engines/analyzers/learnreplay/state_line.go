@@ -31,12 +31,19 @@ type fillAt struct {
 type lineSamples struct {
 	steady, ramps, above map[string][]whatif.LineRow
 	fills                map[string][]fillAt
+	// least is each variant's least mean ITL read below the band: the
+	// readings the line's fit drops as idle (whatif.BelowBand.LeastITL).
+	least map[string]float64
 }
 
 func newLineSamples() *lineSamples {
 	return &lineSamples{steady: map[string][]whatif.LineRow{}, ramps: map[string][]whatif.LineRow{},
-		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}}
+		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}, least: map[string]float64{}}
 }
+
+// leastBelowBand is the least mean ITL, in seconds, any of the variant's
+// replicas read below the band up to the cycle; 0 with none.
+func (l *lineSamples) leastBelowBand(variant string) float64 { return l.least[variant] }
 
 // rows is the variant's rows, of all three.
 func (l *lineSamples) rows(variant string) []whatif.LineRow {
@@ -50,7 +57,7 @@ func (l *lineSamples) rows(variant string) []whatif.LineRow {
 func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 	policy, _ := in.Config.(*config.ScalingPolicy)
 	steady := policy.ITLSteadiness()
-	_, top := policy.ITLBand()
+	bottom, top := policy.ITLBand()
 	roles := rolesOf(in)
 	for _, rm := range in.ReplicaMetrics {
 		if !prefill.Serving(rm) || domain.CanonicalRole(roles[rm.VariantName]) == domain.RolePrefill {
@@ -62,6 +69,11 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 			s = s.WithOutputDispersion(shape.Dispersion(rm.AvgOutputTokens, rm.AvgOutputTokensSquared))
 		}
 		ramp := l.onRamp(rm.PodName, fillAt{k: k, kvReq: s.KVreq, at: at}, steady)
+		if k > 0 && k < bottom && rm.ITLState() == domain.ITLFinite && rm.AvgITL > 0 {
+			if least, ok := l.least[rm.VariantName]; !ok || rm.AvgITL < least {
+				l.least[rm.VariantName] = rm.AvgITL
+			}
+		}
 		if !rm.GenerationTokenRateKnown || !(rm.GenerationTokenRate > 0) || !(k >= itl.DefaultGPSMinKForVerification) {
 			continue
 		}

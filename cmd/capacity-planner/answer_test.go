@@ -63,7 +63,7 @@ func TestGolden(t *testing.T) {
 		{"replicas-to-slo-no-histogram", slices.Concat([]string{"replicas-to-slo", "--recording", olsSweep,
 			"--tpot-percentile", "90"}, workedShape), 3},
 		{"slo-to-rate-below-floor", slices.Concat([]string{"slo-to-rate", "--recording", olsSweep,
-			"--tpot", "1.5ms"}, workedShape), 3},
+			"--tpot", "2ms"}, workedShape), 3},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { checkGolden(t, c.name, c.code, c.args) })
@@ -139,8 +139,7 @@ func TestWorkedExampleFromTheRecording(t *testing.T) {
 	near(t, "operating rate", r.OperatingRate.Answer.Value, 11.32, 0.005)
 	near(t, "fill at the operating rate", r.OperatingRate.Answer.Basis.Fill, 0.474, 0.0005)
 	near(t, "mean TPOT", r.MeanTPOT.Answer.Value, 0.00366, 0.000005)
-	// The line is ols, so its floor is B, not ITL at the band's bottom (2.22 ms).
-	near(t, "TPOT floor", r.MeanTPOT.Answer.Basis.Floor, 0.001557, 0.000005)
+	near(t, "TPOT floor", r.MeanTPOT.Answer.Basis.Floor, 0.00222, 0.000005)
 	near(t, "TPOT p90", r.PercentileTPOT.Answer.Value, 0.00476, 0.000005)
 	for name, res := range map[string]*wireResult{"knee": r.Knee, "operating rate": r.OperatingRate,
 		"mean TPOT": r.MeanTPOT, "TPOT p90": r.PercentileTPOT} {
@@ -283,7 +282,7 @@ func TestExitCodes(t *testing.T) {
 		{"answered, question 1", q1("--tpot", "4ms"), 0, "11.32 r/s"},
 		{"help is not an error", []string{"replicas-to-slo", "-h"}, 0, ""},
 		{"refused: no TPOT histogram", q2("--tpot-percentile", "90"), 3, "NoTPOTHistogram"},
-		{"refused: target below the floor", q1("--tpot", "1.5ms"), 3, "TargetBelowFloor"},
+		{"refused: target below the floor", q1("--tpot", "2ms"), 3, "TargetBelowFloor"},
 		{"refused: percentile target with no ratio", q1("--tpot", "4ms@p90"), 3, "NoTPOTHistogram"},
 		{"refused: saturated at --rate", q2("--rate", "20"), 3, "Saturated"},
 		{"answered: --decode 0 takes the recorded count", q2("--decode", "0"), 0, "knee"},

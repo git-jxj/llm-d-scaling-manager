@@ -155,6 +155,10 @@ type VariantState struct {
 	// LineRows is the variant's rows of its latest cycles that have one, off
 	// a ramp and on one, for the line check (state_line.go).
 	LineRows []whatif.LineRow
+	// BelowBandITL is the least mean ITL, in seconds, any of the variant's
+	// replicas read at a fill under the band's bottom up to the cycle: the
+	// floor below the band (whatif.BelowBand.LeastITL). 0 with none.
+	BelowBandITL float64
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -285,6 +289,7 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
+		st.Variants[i].BelowBandITL = lines.leastBelowBand(st.Variants[i].Variant)
 	}
 	return st, nil
 }

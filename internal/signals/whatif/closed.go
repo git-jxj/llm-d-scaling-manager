@@ -3,7 +3,6 @@ package whatif
 import (
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 )
@@ -41,6 +40,21 @@ type Decode struct {
 	// know it. A pinned-B or held line on the default intercept is refused
 	// (PinnedDefaultB).
 	Tier string
+	// BelowBand says how the line is read below the band; the zero value
+	// reads it at the band's bottom, as the controller prices.
+	BelowBand BelowBand
+}
+
+// BelowBand is how a Decode reads its line at a fill under the band's bottom.
+type BelowBand struct {
+	// Read reads the line at the fill itself, down to the floor LowestFill
+	// sets, when its intercept came from a full fit (MeasuredIntercept). The
+	// planner sets it; the controller does not.
+	Read bool
+	// LeastITL is the least mean ITL, in seconds, a replica of the variant
+	// read at a fill under the band's bottom: readings the line's fit drops
+	// as idle. The line is never read below it. 0 when there was none.
+	LeastITL float64
 }
 
 // check refuses a Decode the planner cannot price, naming the first input
@@ -98,30 +112,53 @@ func (d Decode) onDefaultB() bool {
 	return false
 }
 
-// LowestFill is the lowest fill a line of the given tier is read at, below
-// band: 0 for a line whose intercept B was fitted on the variant's own
-// readings, where the floor is B itself, and band.Lo otherwise.
+// MeasuredIntercept reports a line whose intercept B came from a full fit of
+// the variant's own readings: an ols fit, or a pinned-B, held or above-band
+// line, which carry the B of the key's last full fit (whatif's band.go reads
+// it as fit.Baseline), unless that is the default, itl.DefaultBaselineSec,
+// which no fit measured. A borrowed line is another variant's, and a line of
+// unknown tier has no known provenance: neither is measured here.
+func MeasuredIntercept(tier string, line itl.Model) bool {
+	switch tier {
+	case TierOLS:
+		return true
+	case TierPinnedB, TierHeld, TierAboveBand:
+		return math.Abs(line.B-itl.DefaultBaselineSec) > defaultBTolerance*itl.DefaultBaselineSec
+	}
+	return false
+}
+
+// LowestFill is the lowest fill the line is read at, below band, when the
+// reading below the band is asked for (BelowBand.Read):
 //
-// A measured intercept is an ols fit, or a line the tracker held (it keeps
-// the last fit's B; a held line on the default intercept is refused,
-// PinnedDefaultB). Such a line runs down to B at zero fill, the engine's step
-// with nothing to contend with. A pinned-B, above-band or borrowed line, or
-// one whose tier is not known, rests on an intercept the variant did not
-// measure, and keeps the band's bottom as its floor.
+//   - band.Lo, the band's bottom, for an intercept no full fit measured
+//     (MeasuredIntercept);
+//   - the fill at which the line reaches leastITL, the least ITL a replica
+//     read below the band, clamped to [0, band.Lo], so that the line is
+//     never read below what an engine was seen to do there;
+//   - 0, where the floor is B itself, when no replica read an ITL below the
+//     band (leastITL 0). Such a fill is still flagged BelowFittedBand.
 //
 // Measured on the Qwen3-32B P/D staircases at fills of 0.02 to 0.06, a held
 // line read at the fill came within -5% to +1% of the mean TPOT the clients
 // saw; read at the band's bottom, 0.15, it was 29% to 46% high.
-func LowestFill(band FillBand, tier string) float64 {
-	if tier == TierOLS || tier == TierHeld {
+func LowestFill(band FillBand, tier string, line itl.Model, leastITL float64) float64 {
+	if !MeasuredIntercept(tier, line) || !(line.A > 0) {
+		return band.Lo
+	}
+	if !(leastITL > 0) || !Finite(leastITL) {
 		return 0
 	}
-	return band.Lo
+	return min(max((leastITL-line.B)/line.A, 0), band.Lo)
 }
 
-// lowestFill is LowestFill for d's band and tier.
+// lowestFill is the lowest fill d reads its line at: LowestFill when the
+// reading below the band is asked for, the band's bottom otherwise.
 func (d Decode) lowestFill() float64 {
-	return LowestFill(d.Band, d.Tier)
+	if !d.BelowBand.Read {
+		return d.Band.Lo
+	}
+	return LowestFill(d.Band, d.Tier, d.Line, d.BelowBand.LeastITL)
 }
 
 // fullPoint is where a replica saturates: the sequences it runs there, the
@@ -338,11 +375,11 @@ type RateQuery struct {
 // (docs/proposals/slo-capacity-planner.md, "Question 1").
 //
 // It inverts ITL(k)*R_q = t at k* = (t/R_q - B)/A (R_q = 1 for the mean),
-// refuses with TargetBelowFloor when the floor, ITL(lowestFill)*R_q (B*R_q
-// for a measured intercept), already reaches t, flags BelowFittedBand when k*
-// is below the band, clamps k* to k_full, and prices N_d * lambda_rep(k*). The rate is then capped
-// at the operating point, headroom times the knee, because past it the
-// admission wait is no longer small; a headroom of 1 lifts the cap.
+// refuses with TargetBelowFloor when the floor, ITL(lowestFill)*R_q, already
+// reaches t, clamps k* to k_full, and prices N_d * lambda_rep(k*). The rate
+// is then capped at the operating point, headroom times the knee, because
+// past it the admission wait is no longer small; a headroom of 1 lifts the
+// cap. A final fill below the band is flagged BelowFittedBand.
 //
 // Basis.Uncapped is the rate the target alone allows, Basis.Fill the fill the
 // answer runs at, and Basis.BoundBy what set the rate.
@@ -368,12 +405,11 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	p := d.full()
 	k := (t.Seconds/r - d.Line.B) / d.Line.A
 	by := []Bound{BoundTPOT}
-	if k < d.Band.Lo {
-		flags = append(flags, BelowFittedBand)
-	}
+	// below is whether the answer's fill sits under the band: set once per
+	// place k is set, and flagged once, at the end.
+	below := k < d.Band.Lo
 	if k > p.fill {
-		k, by = p.fill, []Bound{p.by}
-		flags = append(slices.DeleteFunc(flags, func(f Flag) bool { return f == BelowFittedBand }), p.flags()...)
+		k, by, below = p.fill, []Bound{p.by}, p.belowBand
 	}
 	knee := d.kneeRate()
 	uncapped := float64(d.Replicas) * d.replicaRate(k)
@@ -392,12 +428,12 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 			if !ok {
 				return refuse(Saturated, fmt.Sprintf("no fill carries the operating point %g r/s", op))
 			}
-			rate, k, by, flags = op, kop, nil, slices.DeleteFunc(flags, func(f Flag) bool { return f == BelowFittedBand })
-			if kop < d.Band.Lo {
-				flags = append(flags, BelowFittedBand)
-			}
+			rate, k, by, below = op, kop, nil, kop < d.Band.Lo
 		}
 		by = append([]Bound{BoundOperatingPoint}, by...)
+	}
+	if below {
+		flags = append(flags, BelowFittedBand)
 	}
 	return Answer{Value: rate, Flags: flags, Basis: Basis{
 		Fill: k, KneeRate: knee, Floor: floor, Uncapped: uncapped, BoundBy: by, Tier: d.Tier,

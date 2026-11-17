@@ -82,7 +82,7 @@ estimate from cycles 1-226, not a guarantee; see basis (-o json)
 
 These are the proposal's figures, at `cv` 1. [As built](#ttft-as-built) the CLI
 assumes S1's `cv` 2, prints no TTFT band and adds a `prefill knee` row: the same
-commands read 373 ms and 0.28 r/s, the 20 ms a hop the recording has no fit of
+commands read 373 ms and 0.25 r/s, the 20 ms a hop the recording has no fit of
 ([the decode term](slo-capacity-planner-ttft.md#as-built-the-decode-term)). The prefill
 pod is priced as processor sharing
 ([as built](slo-capacity-planner-ttft.md#as-built-processor-sharing)), but past a prompt
@@ -290,21 +290,51 @@ transfer and `ITL(k_low)` alone exceed `T`, `TargetBelowFloor`.
    never beats `ITL(k_low)` (times `R_q`); TTFT never beats
    `a + I_q/V_P + ITL(k_low)`.
 
-**The lowest fill the line is read at, `k_low`.** For a line whose intercept `B`
-was fitted on the variant (tier `ols`, or `held`), `k_low` is 0: below the band
-the line is read at the fill itself, and the floor is `B` (times `R_q`). For any
-other line (`pinned-B`, `above-band`, `borrowed`) `k_low` is the band's bottom,
-`analyzerTuning.itlBand.minObservableK`, 0.15 by default. Either way a fill below
-the band is flagged `BelowFittedBand`. Questions 1 and 2, the knee, the admission
-chain and TTFT's decode step all read the same `k_low`, so a rate from question 1
-fed back to question 2 gives the target back.
+**The lowest fill the line is read at, `k_low`** (`whatif.LowestFill`). It
+depends on where the line's intercept `B` came from:
+
+- **From a full fit** of the variant's own readings: an `ols` line, or a
+  `pinned-B`, `held` or `above-band` line, which carry the `B` of the key's
+  last full fit. Below the band the line is read at the fill itself, but never
+  below the least mean ITL any replica of the variant read under the band
+  (the readings the fit drops as idle). `k_low` is the fill where the line
+  reaches that ITL, clamped to `[0, band.lo]`; with no such reading it is 0 and
+  the floor is `B`.
+- **Not from a fit**: the default intercept (`itl.DefaultBaselineSec`, 6 ms),
+  a `borrowed` line's donor `B`, or a line of unknown tier. `k_low` is the
+  band's bottom, `analyzerTuning.itlBand.minObservableK`, 0.15 by default. A
+  `pinned-B` or `held` line on the default `B` is refused (`PinnedDefaultB`).
+
+A fill below the band is flagged `BelowFittedBand` either way. Questions 1 and 2,
+the knee, the admission chain and TTFT's decode step all read the same `k_low`,
+so a rate from question 1 fed back to question 2 gives the target back. A
+`held` line is never refitted, so it has no bootstrap band, below the band or in
+it: its `B` and `A` are as old as the fit that stored them, and only the flags
+`HeldLine` and `BelowFittedBand` say so.
 
 Why: on the Qwen3-32B TP2 P/D staircases at 8000/200 the decode pods ran at a
 fill of 0.02 to 0.06. Read at 0.15, the held line (A 42.5 ms, B 10.4 ms) priced
 16.8 ms at every step; the clients measured 11.5 to 13.0 ms, so the mean read 29%
 to 46% high. Read at the planner's own closed-form fill, which came within 0.01
 of the measured KV fill, it reads -5% to +1% (31 steps; -4% on a second run, 4
-steps). `TestMeanTPOTAtTheFill_Q32jStaircase` freezes it.
+steps). `TestMeanTPOTAtTheFill_Q32jStaircase` freezes it. The least ITL read under
+the band was 10.76 ms on both runs, a floor at a fill of 0.008 and 0.014, under
+every step: the floor is a margin, not a change to these figures. One model and
+one engine back this; `throughput-sweep-restart` (below) is a held line that
+still reads 32.6% slow below the band, so the reading is not uniformly accurate
+there.
+
+**Where the planner and the controller differ.** The controller's own pricing
+keeps the band's bottom as its floor (`whatif.PriceTPOT`,
+`whatif.ReachableFill`). Two cases follow:
+
+- A TPOT target between `B` and `ITL(band.lo)`: the planner answers a rate, the
+  controller marks the target infeasible and leaves the variant to saturation
+  scaling.
+- A batch cap that binds below the band (short requests): the planner reads the
+  knee at the slots' own fill, the controller at the band's bottom, so the
+  controller prices up to `ITL(band.lo)/ITL(slot fill)` less capacity a replica,
+  1.6x on the q32j line, and may scale to more replicas than the planner says.
 
 **Two headroom conventions.** The tool applies 0.85 in rate; saturation applies
 it in fill (`whatif.PricingK` = `KvCacheThreshold × ScaleUpThreshold`, 0.68). The rate is
@@ -355,7 +385,7 @@ figures are reproduced by two independent scripts.
 | Prefill `ρ`, `θ` | 0.377, 53.5 ms |
 | **TTFT p90**, optimised union bound | **160 ms** (decode share of the tail 0.032; independent 154 ms) |
 | TTFT p95, optimised union bound | 231 ms (independent 210 ms; adding the p95s would give 224 ms) |
-| Floors | TPOT 2.22 ms; TTFT 91.6 ms, at the band's bottom. The CLI reads this `ols` line below the band, so it prints the TPOT floor as `B`, 1.56 ms |
+| Floors | TPOT 2.22 ms; TTFT 91.6 ms |
 | Flow-control onsets, if it were on | decode 12.50 r/s (0.94 of the knee), prefill 25.6 r/s: above every answer here, so nothing changes |
 
 **Question 1 on the same fleet: mean TPOT 4 ms, TTFT 200 ms.**
@@ -500,8 +530,9 @@ as `OUT`. The file sits there so that the goldens gate makes a PR name it.
 Nothing here tunes the model. The error is predicted minus measured, so above 0 the
 line reads slow on TPOT and fast on the knee. A figure needs at least 5 rows. The bound
 reads the figure clamped as an answer is: to the band's top, and below the band to
-`k_low`, which is the row's own fill for an `ols` or `held` line. The unclamped one is the
-line read at the row's own fill, and "rows clamped" is how many rows sit outside the band.
+`k_low`. The unclamped one is the line read at the row's own fill, and "rows clamped" is how
+many rows sit outside the band. For a line with a fitted `B` the two columns coincide below
+the band, unless a row sits under the variant's least below-band ITL.
 
 | Golden | Tier at the freeze | Mean TPOT error | Unclamped | Rows | Rows clamped | Against ±10% | Knee error | Windows | Against ±15% |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1015,7 +1046,7 @@ prefill knee    30.00 r/s   [25.50 .. 34.50] N_p 1 x V_P 30000 / (f 1 x 1000 tok
 TTFT p90        373.4 ms    [302.6 .. 489.1] end to end; UNVALIDATED; V_P ASSUMED
                 (bands: V_P +-15%, a sweep, not a confidence interval)
                 (343.4 ms if prefill and decode waits were independent)
-                (floor 132.6 ms, pooled 331.4 ms, worst pod utilization 0.377)
+                (floor 133.3 ms, pooled 331.4 ms, worst pod utilization 0.377)
 ttft inputs     V_P 30000 ASSUMED; a 11.04 ms learned; f 1 (one pod); N_p 1 (--prefill); prompt 1000 tokens (assumed); decode by its line, term omitted, hop assumed
 assumed         V_P 30000 tok/s (--assume-vp); prompt 1000 tokens (--assume-input-tokens); prompt cv 2 (no computed-prompt histogram); decode term omitted (no fit, TooFewDecodeMinutes, and no quiet decode row): T_xfer + ITL stands for it; router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow control off (no queue series); Poisson arrivals
 ```
@@ -1024,10 +1055,10 @@ That is the worked example with the CLI's `cv` of 2 and an assumed 20 ms hop. At
 that spread the price is the larger of processor sharing's and the first-come
 queue's (flag `SpreadBeyondProcessorSharing`), here first come's, so 373 ms where
 the page, at `cv` 1 on the old sum, has 160 ms (processor sharing alone reads 250
-ms); `a` is P1's 11.04 ms. Question 1 at 200 ms p95 reads 0.28 r/s where the page
-has 11.10, and the JSON's note says the assumed term moved it from 1.21.
+ms); `a` is P1's 11.04 ms. Question 1 at 200 ms p95 reads 0.25 r/s where the page
+has 11.10, and the JSON's note says the assumed term moved it from 1.19.
 `--assume-prompt-cv 1`, the page's `cv`, reads 9.64 (processor sharing's, the
-larger there), and `--arrival-cv2 4` on top of it 4.22
+larger there), and `--arrival-cv2 4` on top of it 4.21
 (`TestInputs_TheWorkedExampleAtTheStatedInputs`; 10.80 and 4.80 first come).
 `TestTTFT_TheWorkedExampleFromTheRecording` puts `cv` 1, the old sum and the
 first-come queue back on the fleet the CLI read, and gets the page's figures within
@@ -1222,7 +1253,7 @@ four results only `meanTPOT` is kept here):
             "basis": {
               "fill": 0.4740967917873882,
               "kneeRate": 13.313632625239457,
-              "floor": 0.0015568837184686396,
+              "floor": 0.002222528576045067,
               "uncapped": 0,
               "boundBy": [],
               "tier": "ols"

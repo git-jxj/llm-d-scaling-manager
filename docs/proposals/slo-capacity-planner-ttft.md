@@ -567,7 +567,8 @@ roles' rates.
   above 1e8, where the incomplete gamma cancels (cv 1e-7 read 8% high).
 - `W_decode` is D2's admission chain (`DecodeAdmission`), bounded at 1e6
   slots. `ITL(k_d)` is the line at the closed-form decode fill, read no lower
-  than `k_low` (0 for a measured intercept, the band's bottom otherwise).
+  than `k_low` (the least below-band ITL's fill for an intercept from a full
+  fit, the band's bottom otherwise).
 - The search over `β` is a log grid on `(0, min(P_wait, 1 − q)]` followed by
   a golden-section refinement. The even split is a candidate as well, so the
   answer is never above it.
