@@ -140,9 +140,10 @@ spec:
           # v0.8.0, the first release whose DELETE both frees the GPU and keeps
           # the launcher answering. v0.7.0 made a stop kill the engine's whole
           # process group, so worker children no longer keep GPU memory after an
-          # eviction; v0.8.0 moved that wait off the event loop. v0.7.x is
+          # eviction (not after the engine's API server has already died: then
+          # DELETE stops nothing, on any version); v0.8.0 moved that wait off the event loop. v0.7.x is
           # skipped: there a stuck instance still blocks the launcher, /health
-          # included, for up to ~30 s, long enough to fail the readiness probe.
+          # included, for up to ~30 s, which can fail the readiness probe.
           # v0.6.5 changed nothing in the launcher. All of v0.6.4 through
           # v0.8.0 ship the same vLLM (0.26.0), so sleep and wake are unchanged.
           image: ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:9c9d03f0d485be9b0529a1623813ebfea24066156233ee13f4177c96bcbbf656

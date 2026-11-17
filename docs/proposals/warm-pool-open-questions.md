@@ -70,7 +70,7 @@ images:
 | | image | vLLM |
 | --- | --- | --- |
 | model servers | `vllm/vllm-openai:v0.26.0` | 0.26.0 |
-| pool Pods | `llm-d-fast-model-actuation/launcher:v0.6.4` | 0.26.0 |
+| pool Pods | `llm-d-fast-model-actuation/launcher:v0.8.0` | 0.26.0 |
 
 They agree today. Nothing keeps them agreeing. The model-server image is ours to
 bump; the launcher's vLLM is whatever FMA built it on, because the launcher
