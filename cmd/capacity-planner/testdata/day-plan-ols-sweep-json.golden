@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "whatifSchema": "",
+  "whatifSchema": "schema-v3",
   "dayPlanId": "sha256:ae0b14862cd2867adbd874dba43ea1e74632b8eb532406f655954b09042f1b52",
   "inputsId": "sha256:615136db4ad0cc3f5fb97b94410f23727f1cb1cfe4d968f3564d287ee654b87b",
   "banner": "TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.",
@@ -23,6 +23,17 @@
     "prefill": 32,
     "decode": 32
   },
+  "refused": [
+    {
+      "role": "prefill",
+      "term": "ttft",
+      "reason": "TargetBelowFloor",
+      "detail": "target 0.5 s at or below the TTFT floor 0.6788 s",
+      "hint": "The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail.",
+      "effect": "Prefill is not sized: decode is sized alone, on its TPOT target and its knee times headroom.",
+      "buckets": 4
+    }
+  ],
   "buckets": [
     {
       "start": "2026-11-01T21:50:00Z",
@@ -42,8 +53,8 @@
         "decode": 1
       },
       "flags": [
-        "WindowShape",
-        "FewSamples"
+        "RateFromDecodeRows",
+        "WindowShape"
       ]
     },
     {
@@ -55,6 +66,7 @@
         "p95": 1,
         "max": 1.36
       },
+      "sizedFor": "p95",
       "sizedRate": 1,
       "shape": {
         "promptTokens": 1012.1148211105417,
@@ -95,6 +107,7 @@
       },
       "verdict": "match",
       "flags": [
+        "RateFromDecodeRows",
         "UnvalidatedTTFT",
         "AssumedVP",
         "AssumedPromptSpread",
@@ -119,6 +132,7 @@
         "p95": 1.8800000000000001,
         "max": 1.92
       },
+      "sizedFor": "p95",
       "sizedRate": 1.8800000000000001,
       "shape": {
         "promptTokens": 1002.1631265660521,
@@ -183,6 +197,7 @@
         "p95": 9.540000000000001,
         "max": 16.64
       },
+      "sizedFor": "p95",
       "sizedRate": 9.540000000000001,
       "shape": {
         "promptTokens": 998.391777767987,
@@ -249,6 +264,7 @@
         "p95": 29.560000000000002,
         "max": 29.72
       },
+      "sizedFor": "p95",
       "sizedRate": 29.560000000000002,
       "shape": {
         "promptTokens": 1000.5400618212494,
@@ -313,6 +329,7 @@
         "p95": 29.8,
         "max": 29.82
       },
+      "sizedFor": "p95",
       "sizedRate": 29.8,
       "shape": {
         "promptTokens": 1005.3894563592829,
@@ -377,6 +394,7 @@
         "p95": 2.88,
         "max": 2.9
       },
+      "sizedFor": "p95",
       "sizedRate": 2.88,
       "shape": {
         "promptTokens": 4098.16210609924,
@@ -384,21 +402,37 @@
         "prefixHitRate": 0,
         "source": "bucket"
       },
-      "status": "unmet",
-      "unmet": {
-        "reason": "TargetBelowFloor",
-        "detail": "target 0.5 s at or below the TTFT floor 0.6788 s",
+      "status": "sized",
+      "needed": {
+        "decode": 1
+      },
+      "limit": {
+        "value": 4.9032541764919895,
+        "unit": "r/s",
+        "band": {
+          "lo": 4.853534658316559,
+          "hi": 4.9304339998548885
+        },
+        "floor": 0.002222528576045067,
+        "uncapped": 5.1239088475092895,
+        "boundBy": [
+          "operating-point cap"
+        ],
         "flags": [
-          "DecodeTermOmitted",
-          "RouterHopAssumed",
-          "AssumedVP",
-          "AssumedPromptSpread"
+          "AssumedShape",
+          "OutputSpreadUnread"
         ]
       },
       "actual": {
         "prefill": 1,
         "decode": 1
-      }
+      },
+      "verdict": "match",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "OutputSpreadUnread"
+      ]
     },
     {
       "start": "2026-11-01T22:25:00Z",
@@ -409,6 +443,7 @@
         "p95": 2.88,
         "max": 2.9
       },
+      "sizedFor": "p95",
       "sizedRate": 2.88,
       "shape": {
         "promptTokens": 6002.34770993272,
@@ -416,21 +451,37 @@
         "prefixHitRate": 0,
         "source": "bucket"
       },
-      "status": "unmet",
-      "unmet": {
-        "reason": "TargetBelowFloor",
-        "detail": "target 0.5 s at or below the TTFT floor 0.987 s",
+      "status": "sized",
+      "needed": {
+        "decode": 2
+      },
+      "limit": {
+        "value": 5.29061969170168,
+        "unit": "r/s",
+        "band": {
+          "lo": 5.236408829673088,
+          "hi": 5.320678391659796
+        },
+        "floor": 0.002222528576045067,
+        "uncapped": 5.503139442816849,
+        "boundBy": [
+          "operating-point cap"
+        ],
         "flags": [
-          "DecodeTermOmitted",
-          "RouterHopAssumed",
-          "AssumedVP",
-          "AssumedPromptSpread"
+          "AssumedShape",
+          "OutputSpreadUnread"
         ]
       },
       "actual": {
         "prefill": 1,
         "decode": 1
-      }
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "OutputSpreadUnread"
+      ]
     },
     {
       "start": "2026-11-01T22:30:00Z",
@@ -441,6 +492,7 @@
         "p95": 2,
         "max": 2
       },
+      "sizedFor": "p95",
       "sizedRate": 2,
       "shape": {
         "promptTokens": 4852.230365888334,
@@ -448,21 +500,37 @@
         "prefixHitRate": 0,
         "source": "bucket"
       },
-      "status": "unmet",
-      "unmet": {
-        "reason": "TargetBelowFloor",
-        "detail": "target 0.5 s at or below the TTFT floor 0.8179 s",
+      "status": "sized",
+      "needed": {
+        "decode": 2
+      },
+      "limit": {
+        "value": 3.6601822437707376,
+        "unit": "r/s",
+        "band": {
+          "lo": 3.622738855906091,
+          "hi": 3.680897421386203
+        },
+        "floor": 0.002222528576045067,
+        "uncapped": 3.809999335331627,
+        "boundBy": [
+          "operating-point cap"
+        ],
         "flags": [
-          "DecodeTermOmitted",
-          "RouterHopAssumed",
-          "AssumedVP",
-          "AssumedPromptSpread"
+          "AssumedShape",
+          "OutputSpreadUnread"
         ]
       },
       "actual": {
         "prefill": 1,
         "decode": 1
-      }
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "OutputSpreadUnread"
+      ]
     },
     {
       "start": "2026-11-01T22:35:00Z",
@@ -473,6 +541,7 @@
         "p95": 15.96,
         "max": 15.96
       },
+      "sizedFor": "p95",
       "sizedRate": 15.96,
       "shape": {
         "promptTokens": 1028.094213614944,
@@ -537,6 +606,7 @@
         "p95": 15.860000000000001,
         "max": 15.92
       },
+      "sizedFor": "p95",
       "sizedRate": 15.860000000000001,
       "shape": {
         "promptTokens": 1404.2223454139196,
@@ -603,6 +673,7 @@
         "p95": 2,
         "max": 2.38
       },
+      "sizedFor": "p95",
       "sizedRate": 2,
       "shape": {
         "promptTokens": 4552.895020153841,
@@ -610,21 +681,39 @@
         "prefixHitRate": 0,
         "source": "bucket"
       },
-      "status": "unmet",
-      "unmet": {
-        "reason": "TargetBelowFloor",
-        "detail": "target 0.5 s at or below the TTFT floor 0.7806 s",
+      "status": "sized",
+      "needed": {
+        "decode": 2
+      },
+      "limit": {
+        "value": 3.6286913111141295,
+        "unit": "r/s",
+        "band": {
+          "lo": 3.5910551227809138,
+          "hi": 3.6499049285490184
+        },
+        "floor": 0.002222528576045067,
+        "uncapped": 3.753800464705252,
+        "boundBy": [
+          "operating-point cap"
+        ],
         "flags": [
-          "DecodeTermOmitted",
-          "RouterHopAssumed",
-          "AssumedVP",
-          "AssumedPromptSpread"
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
         "prefill": 1,
         "decode": 1
-      }
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "OutputSpreadUnread",
+        "ExtrapolatedFill"
+      ]
     },
     {
       "start": "2026-11-01T22:50:00Z",
@@ -647,7 +736,7 @@
         "decode": 1
       },
       "flags": [
-        "FewSamples"
+        "RateFromDecodeRows"
       ]
     }
   ],
@@ -668,7 +757,8 @@
         "decode": 1
       },
       "verdict": "match",
-      "sized": 1
+      "sized": 1,
+      "unmet": 0
     },
     {
       "start": "2026-11-01T22:00:00Z",
@@ -686,7 +776,8 @@
         "decode": 1
       },
       "verdict": "under",
-      "sized": 6
+      "sized": 10,
+      "unmet": 0
     }
   ],
   "summary": {
@@ -700,37 +791,47 @@
     },
     "neededReplicaHours": {
       "prefill": 1.5,
-      "decode": 1.1666666666666665
+      "decode": 1.75
     },
-    "actualReplicaHours": {
+    "hadReplicaHours": {
       "prefill": 0.5833333333333333,
-      "decode": 0.5833333333333333
+      "decode": 0.9166666666666667
+    },
+    "hadReplicaHoursAll": {
+      "prefill": 1.0833333333333333,
+      "decode": 1.0833333333333333
     },
     "gpusPerReplica": {
       "prefill": 1,
       "decode": 1
     },
-    "neededGpuHours": 2.6666666666666665,
-    "actualGpuHours": 1.1666666666666665,
+    "neededGpuHours": 3.25,
+    "hadGpuHours": 1.5,
+    "hadGpuHoursAll": 2.1666666666666665,
     "underHours": [
       "2026-11-01T22:00:00Z"
     ],
     "overHours": [],
+    "refusedHours": [],
     "counts": {
-      "sized": 7,
-      "unmet": 4,
+      "sized": 11,
+      "unmet": 0,
+      "refused": 0,
       "tooLittleData": 2,
       "noData": 0,
-      "under": 6,
+      "under": 9,
       "over": 0,
-      "match": 1
+      "match": 2,
+      "sizedForMean": 0,
+      "sizedForP95": 11,
+      "sizedForMax": 0
     }
   },
-  "searched": 79,
+  "searched": 39,
   "notes": [
     "Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
-    "Each bucket is sized for the p95 of its cycles' rates, on the fleet's limit at the SLO and headroom 0.85 (POST /v1/size's search).",
+    "Each bucket is sized for the p95 of its cycles' rates (the p95 of cycle rates needs 20 cycles in the bucket, else the mean), on the fleet's limit at the SLO and headroom 0.85 (POST /v1/size's search).",
     "A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.",
-    "Actual is the median serving pods of each role over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands."
+    "Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands."
   ]
 }

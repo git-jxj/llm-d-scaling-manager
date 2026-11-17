@@ -351,11 +351,12 @@ Prometheus.
 
 On the page, load the source, set the SLO and headroom as usual, and press
 **Plan the day** under the graphs. Three charts share one time axis: the
-request rate (its mean, and a band up to its p95), then prefill replicas and
-decode replicas, each as needed against had. A bucket the fleet had fewer
-replicas than it needed is shaded red; one no fleet within the bound serves is
-grey. Hover a bucket for every value at that time; the hours are in the table
-view.
+request rate (the mean of the bucket's cycles, and a wash up to their p95),
+then prefill replicas and decode replicas, each as needed against had. A
+bucket the fleet had fewer replicas than it needed is washed red; a bucket no
+fleet within the bound serves is hatched, in the panel of the role short.
+Hover a bucket for every value at that time; the table views list every hour
+and every bucket, with why a bucket was not sized.
 
 From the command line, on the sample recording (about an hour, so two hours
 in the table):
@@ -366,36 +367,57 @@ capacity-planner day-plan --recording recordings/ols-sweep.jsonl.gz --model mode
 ```
 
 ```text
-Day plan for ns-01/model-02, 2026-11-01 21:50 to 2026-11-01 22:55 UTC, buckets of 5m0s sized for the p95 rate (default)
+Day plan for ns-01/model-02, 2026-11-01 21:50 to 2026-11-01 22:55 UTC, buckets of 5m0s, each sized for the p95 of its cycle rates (default; the mean where a bucket holds fewer than 20 cycles)
 SLO: TTFT p95 500ms, TPOT mean 4ms; headroom 0.85. TTFT model UNVALIDATED. ...
 
-hour (UTC)        rate mean  rate p95 need P need D  had P  had D  
+REFUSED prefill's TTFT (TargetBelowFloor), in 4 buckets: target 0.5 s at or below the TTFT floor 0.6788 s
+  what to do: The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail.
+  what the plan did: Prefill is not sized: decode is sized alone, on its TPOT target and its knee times headroom.
+
+hour (UTC)        rate mean  rate p95 need P need D  had P  had D
 2026-11-01 21:00       0.73      1.00      1      1      1      1  ok
 2026-11-01 22:00       6.88     29.68      5      4      1      1  UNDER (SLO risk)
 
-buckets: 7 sized (6 under, 0 over, 1 match), 4 unmet, 2 too little data, 0 no data
+buckets: 11 sized (9 under, 0 over, 2 match; 11 for the p95, 0 for the mean, 0 for the max), 0 beyond the bound, 0 refused, 2 too little data, 0 no data
 needed: peak 5 prefill + 4 decode, min 1 prefill + 1 decode
-replica-hours (sized buckets): needed 1.50 prefill + 1.17 decode, had 0.58 prefill + 0.58 decode
-GPU-hours: needed 2.67, used 1.17 (GPUs per replica: 1 prefill, 1 decode)
+replica-hours over the 11 sized buckets: needed 1.50 prefill + 1.75 decode, had 0.58 prefill + 0.92 decode
+GPU-hours over the sized buckets: needed 3.25, had 1.50
+had over every bucket with data: 1.08 prefill + 1.08 decode replica-hours, 2.17 GPU-hours (GPUs per replica: 1 prefill, 1 decode)
 hours under (SLO risk): 22:00
 hours over (waste): none
-flags: WindowShape, FewSamples, UnvalidatedTTFT, AssumedVP, ... (every flag the buckets carry)
+flags: RateFromDecodeRows, WindowShape, PrefillNotPriced, UnvalidatedTTFT, AssumedVP, ... (every flag the buckets carry)
 ```
 
-- **Sized for.** Each bucket is sized for the p95 of its cycles' rates when
-  the buckets hold 10 cycles or more, else for the mean. `--size-for
-  mean|p95|max` sets it. `--bucket 15m` sets the bucket.
+It exits 3: four buckets of 4k-token prompts cannot meet a 500 ms TTFT at
+any replica count, so their prefill is not sized and their decode is sized
+alone. A higher `--ttft` sizes them.
+
+- **Sized for.** Each bucket is sized for the p95 of its cycles' rates when it
+  holds 20 cycles or more (5 minutes at a 15 s cycle), else for their mean,
+  flagged `FewCyclesForP95`. `--size-for mean|p95|max` sets it; the table and
+  each bucket say which was used. `--bucket 15m` sets the bucket.
 - **Shape.** Each bucket is priced at its own observed prompt and output
   length. A bucket whose cycles read none is priced at the source's shape and
   flagged `WindowShape`. `--assume-input-tokens` and `--assume-output-tokens`
   price every bucket at one stated length, flagged `EXTRAPOLATED` when it lies
   outside what the buckets observed.
+- **What the source cannot price.** A prefill rate V_P or a fixed latency a
+  it did not learn, a TTFT target under the TTFT at zero load, or a decode line
+  it did not fit refuses every rate alike. The plan says so at the top, with
+  what to do, and sizes what does price: decode alone when prefill is refused,
+  decode without its TPOT when the TPOT is refused. When nothing prices, no
+  bucket is sized and no figure of a need is printed. It then exits 3.
+- **Beyond the bound.** A bucket whose rate no fleet within `--max-prefill`
+  and `--max-decode` (32 each) serves is not sized; its hour is UNDER. It
+  also exits 3.
 - **Too little data.** A bucket with fewer than 30 requests (`--min-requests`)
   is not sized. A bucket no cycle fell in has no data. Neither counts as under
   or over.
-- **Had.** The median serving pods of each role over the bucket. An hour is
-  UNDER when any of its buckets had fewer than it needed (SLO risk), and over
-  when every sized bucket had more (waste).
+- **Had.** The median serving pods of the priced prefill and decode variants
+  over the bucket. An hour is UNDER when any of its buckets had fewer than it
+  needed (SLO risk), and over when every sized bucket had more (waste).
+  Replica-hours and GPU-hours needed and had are over the sized buckets; the
+  last line is what the fleet ran over every bucket with data.
 - **Steady state.** Each bucket is sized as if its rate held. It ignores the
   time a replica takes to start: a fleet that follows the plan must start
   replicas that long before the rate arrives.

@@ -1,22 +1,28 @@
 // Runs the capacity planner page's day plan drawing
-// (internal/whatifapi/page/dayplan.js) on the day plan the CLI's golden
-// holds, and on that plan cut into pieces: the charts share one time axis,
-// every series is drawn, a gap breaks the lines, and a bucket short of what
-// it needed is shaded. Called by hack/check-planner-scenarios.sh.
+// (internal/whatifapi/page/dayplan.js) on the day plans the CLI's goldens
+// hold, and on those plans cut into pieces: the charts share one time axis,
+// every series is drawn, a gap breaks the lines, a bucket short of what it
+// needed is washed, a bucket beyond the bound is hatched in the panel of the
+// role short only, a role the source cannot price says so and draws no
+// needed line, and everything taken from a plan is escaped. Called by
+// hack/check-planner-scenarios.sh.
 //
-// Usage: node hack/check-planner-dayplan.mjs [scenario.js dayplan.js plan.json]
+// Usage: node hack/check-planner-dayplan.mjs [scenario.js dayplan.js plan.json decode-only-plan.json]
 import fs from "node:fs";
 import vm from "node:vm";
 
-const [scen, day, golden] = [
+const [scen, day, golden, decodeOnly] = [
   process.argv[2] || "internal/whatifapi/page/scenario.js",
   process.argv[3] || "internal/whatifapi/page/dayplan.js",
   process.argv[4] || "cmd/capacity-planner/testdata/day-plan-ols-sweep-json.golden",
+  process.argv[5] || "cmd/capacity-planner/testdata/day-plan-staircase-b-on-json.golden",
 ];
 const ctx = vm.createContext({URLSearchParams});
 for (const f of [scen, day]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
-const {dayPlanSVG, dayBucketAt, dayTip, dayHoursTable, daySummaryText} = ctx;
+const {dayPlanSVG, dayBucketAt, dayTip, dayTipHTML, dayHoursTable, dayBucketsTable, dayRefusedHTML, daySummaryText, dayLegend} = ctx;
 const plan = JSON.parse(fs.readFileSync(golden, "utf8"));
+const half = JSON.parse(fs.readFileSync(decodeOnly, "utf8"));
+const copy = x => JSON.parse(JSON.stringify(x));
 
 let passed = 0;
 const failures = [];
@@ -41,6 +47,11 @@ function xs(d) {
   return [...d.matchAll(/[ML](-?[\d.]+),/g)].map(m => +m[1]);
 }
 
+// texts is every text element's content.
+function texts(markup) {
+  return [...markup.matchAll(/<text\b[^>]*>([^<]*)<\/text>/g)].map(m => m[1]);
+}
+
 try {
   check("the golden plan has buckets", plan.buckets && plan.buckets.length > 5, plan.buckets && plan.buckets.length);
   const sized = plan.buckets.filter(b => b.status === "sized");
@@ -63,25 +74,52 @@ try {
     const x = xs(p.d);
     check(`${p["data-series"]} inside the plot`, x.length > 0 && Math.min(...x) >= L - 0.1 && Math.max(...x) <= R + 0.1, `${Math.min(...x)}..${Math.max(...x)}`);
   }
-  // The shading: one rectangle per bucket a role was short in.
+  // The red wash: one rectangle per bucket a role was short in.
   for (const role of ["prefill", "decode"]) {
-    const want = plan.buckets.filter(b => b.needed && b.actual && b.actual[role] < b.needed[role]).length;
+    const want = plan.buckets.filter(b => b.needed && b.actual && b.needed[role] != null && b.actual[role] < b.needed[role]).length;
     const got = attrs(g.markup, "rect").filter(a => a["data-under"] === role).length;
-    check(`${role} shaded where short`, got === want, `${got} shaded, ${want} short`);
+    check(`${role} washed where short`, got === want, `${got} washed, ${want} short`);
   }
-  // A bucket no fleet serves is greyed in both replica panels.
-  const unmet = plan.buckets.filter(b => b.status === "unmet").length;
-  check("unmet buckets greyed", attrs(g.markup, "rect").filter(a => a["data-unmet"]).length === 2 * unmet, unmet);
+  // The hatch: only in the panel of the role short (both for the fleet). The
+  // golden has no bucket beyond the bound: three sized ones are made so,
+  // one short of prefill, one of decode, one of both.
+  const bound = copy(plan);
+  const made = bound.buckets.filter(b => b.status === "sized").slice(0, 3);
+  check("three sized buckets to put beyond the bound", made.length === 3);
+  made.forEach((b, i) => {
+    b.status = "unmet";
+    b.unmetRole = ["prefill", "decode", "fleet"][i];
+    b.unmet = {reason: "ReplicaBoundReached", detail: "At 32 prefill and 32 decode replicas, the bound searched"};
+    delete b.needed;
+    delete b.verdict;
+  });
+  const unmet = bound.buckets.filter(b => b.status === "unmet");
+  const bg = dayPlanSVG(bound).markup;
+  for (const role of ["prefill", "decode"]) {
+    const got = attrs(bg, "rect").filter(a => a["data-unmet"] === role).length;
+    check(`${role} hatched only where it is short`, got === 2, `${got} hatched, want 2`);
+  }
+  check("the hatch is the pattern", attrs(bg, "rect").filter(a => a["data-unmet"]).every(a => a.fill === "url(#dayhatch)") && bg.includes('<pattern id="dayhatch"'));
+  check("no hatch where nothing is beyond the bound", attrs(g.markup, "rect").filter(a => a["data-unmet"]).length === 0);
+  // The labels name the series, never a value.
+  const labels = attrs(g.markup, "text").filter(a => a.class === "lbl");
+  const names = texts(g.markup).filter(t => /^(mean|p95|needed|had)(, (mean|p95|needed|had))*$/.test(t));
+  check("every direct label is a series name", labels.length > 0 && names.length === labels.length, texts(g.markup).join("|"));
+  check("no label is a number", !texts(g.markup).some(t => /^(mean|p95|needed|had) [\d.]/.test(t)));
   // No label sits on another.
-  const labels = attrs(g.markup, "text").filter(a => a.class === "lbl").map(a => ({x: +a.x, y: +a.y}));
-  for (let i = 0; i < labels.length; i++) {
-    for (let j = i + 1; j < labels.length; j++) {
-      check(`labels ${i} and ${j} apart`, labels[i].x !== labels[j].x || Math.abs(labels[i].y - labels[j].y) >= 11.9, JSON.stringify([labels[i], labels[j]]));
+  const ls = labels.map(a => ({x: +a.x, y: +a.y}));
+  for (let i = 0; i < ls.length; i++) {
+    for (let j = i + 1; j < ls.length; j++) {
+      check(`labels ${i} and ${j} apart`, ls[i].x !== ls[j].x || Math.abs(ls[i].y - ls[j].y) >= 11.9, JSON.stringify([ls[i], ls[j]]));
     }
   }
+  // The legend has a swatch for every mark, the hatch with its own pattern.
+  const legend = dayLegend();
+  for (const cls of ["c-rate", "dband", "c-need", "c-had", "dunder", "dunmet"]) check(`the legend shows ${cls}`, legend.includes(`class="${cls}"`) || legend.includes(`class="line ${cls}"`));
+  check("the legend's hatch is filled", legend.includes('fill="url(#dayhatch-l)"') && legend.includes('<pattern id="dayhatch-l"'));
 
   // A gap: a bucket with no data in the middle breaks the needed line into two.
-  const gap = JSON.parse(JSON.stringify(plan));
+  const gap = copy(plan);
   const mid = gap.buckets.findIndex((b, i) => i > 0 && b.status === "sized" && gap.buckets[i - 1].status === "sized" &&
     gap.buckets[i + 1] && gap.buckets[i + 1].status === "sized");
   check("the golden has three sized buckets in a row", mid > 0);
@@ -90,19 +128,52 @@ try {
   gap.buckets[mid] = {start: gap.buckets[mid].start, samples: 0, requests: 0, shape: {source: "window"}, status: "noData"};
   check("a gap breaks the line", runs(gap) === before + 1, `${before} then ${runs(gap)}`);
 
+  // A plan whose prefill the source cannot price: decode alone, and the
+  // prefill panel says why, with no needed line and no hatch.
+  check("the decode-only golden refuses prefill", (half.refused || []).some(r => r.term === "ttft"));
+  const hg = dayPlanSVG(half).markup;
+  const hs = new Set(attrs(hg, "path").map(a => a["data-series"]));
+  check("decode-only draws decode needed", hs.has("decode-needed"));
+  check("decode-only draws no prefill needed", !hs.has("prefill-needed"));
+  check("decode-only draws what prefill had", hs.has("prefill-actual"));
+  check("the prefill panel says it is not sized", attrs(hg, "text").some(a => a["data-refused"] === "prefill") &&
+    texts(hg).some(t => t.includes("Prefill replicas not sized") && t.includes("NoPrefillCapacity")));
+  check("no hatch for a refusal of the source", attrs(hg, "rect").filter(a => a["data-unmet"]).length === 0);
+  check("the refusals say what to do", dayRefusedHTML(half).includes("--assume-vp"));
+  check("decode-only summary names no prefill figure", daySummaryText(half)[0].includes("prefill not priced"));
+  const nothing = copy(half);
+  nothing.buckets.forEach(b => { if (b.status === "sized") { b.status = "refused"; delete b.needed; b.verdict = "refused"; } });
+  nothing.summary.peakNeeded = null;
+  check("a plan with nothing sized says so", daySummaryText(nothing)[0].startsWith("No bucket was sized"));
+
   // The tooltip names every value of the bucket under the pointer.
   const b = sized[0], t = Date.parse(b.start) / 1000 + plan.step / 2;
   check("the bucket at a time", dayBucketAt(plan, t) === b);
   check("no bucket past the end", dayBucketAt(plan, x1 + 1) === null);
   const tip = dayTip(plan, b).rows.map(r => r[0]);
   for (const k of ["rate mean", "rate p95", "sized for", "needed", "had", "verdict"]) check(`the tip has ${k}`, tip.includes(k), tip.join(","));
-  check("the table has every hour", (dayHoursTable(plan).match(/<tr>/g) || []).length === plan.hours.length + 1);
+  check("the hour table has every hour", (dayHoursTable(plan).match(/<tr>/g) || []).length === plan.hours.length + 1);
+  check("the bucket table has every bucket", (dayBucketsTable(plan).match(/<tr>/g) || []).length === plan.buckets.length + 1);
+  check("the bucket table says why a bucket was not sized", dayBucketsTable(bound).includes("prefill: ReplicaBoundReached"));
+  check("the tip says the bound", dayTip(bound, unmet[1]).rows.some(r => r[0] === "beyond the bound" && r[1] === "decode: ReplicaBoundReached"));
   check("the summary says the peak", daySummaryText(plan)[0].startsWith("Needed at peak"));
-  // Markup from the plan is escaped: a flag is text, never markup.
-  const evil = JSON.parse(JSON.stringify(plan));
-  evil.buckets[0].flags = ["<img src=x onerror=1>"];
-  const rows = dayTip(evil, evil.buckets[0]).rows;
-  check("a flag is data", rows.some(r => r[1].includes("<img")));
+
+  // Everything a plan carries is text, never markup: a flag, a reason, a
+  // refusal's words, the hour's verdict.
+  const evil = copy(half);
+  const tag = "<img src=x onerror=1>";
+  const eb = evil.buckets.find(x => x.status === "sized");
+  eb.flags = [tag];
+  eb.sizedFor = tag;
+  evil.refused[0].detail = tag;
+  evil.refused[0].hint = tag;
+  evil.hours[0].verdict = "x" + tag;
+  for (const [name, html] of [["the tooltip", dayTipHTML(evil, eb)], ["the bucket table", dayBucketsTable(evil)],
+    ["the refusals", dayRefusedHTML(evil)]]) {
+    check(`${name} escapes`, html.includes("&lt;img") && !html.includes("<img"), html.slice(0, 120));
+  }
+  const hours = dayHoursTable(evil);
+  check("the hour table writes no markup of a plan", !hours.includes("<img"));
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }
@@ -112,7 +183,7 @@ if (failures.length) {
   for (const f of failures) console.error("  " + f);
   process.exit(1);
 }
-if (passed < 30) {
+if (passed < 40) {
   console.error(`FAIL: only ${passed} day plan checks ran`);
   process.exit(1);
 }

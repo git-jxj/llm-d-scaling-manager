@@ -1,0 +1,879 @@
+{
+  "schemaVersion": 1,
+  "whatifSchema": "schema-v3",
+  "dayPlanId": "sha256:3fecb2a2d164877ed7e048b48c55cf1a8f6f76aef1ccf82d53c2099a4b4d3c03",
+  "inputsId": "sha256:273982439b94fabac4555dd8d9408e900f40c912f397d57bfa091731dd41ca2e",
+  "banner": "TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.",
+  "from": "2026-11-06T02:15:00Z",
+  "to": "2026-11-06T03:35:00Z",
+  "step": 300,
+  "sizeFor": "p95",
+  "sizeForSource": "default",
+  "minRequests": 30,
+  "ttft": {
+    "statistic": "p95",
+    "target": 0.19
+  },
+  "headroom": 0.85,
+  "maxReplicas": {
+    "prefill": 32,
+    "decode": 32
+  },
+  "refused": [
+    {
+      "role": "prefill",
+      "term": "ttft",
+      "reason": "NoPrefillCapacity",
+      "detail": "P1 refused V_P of variant-02: NoPrefillCapacity; pass --assume-vp for a flagged answer",
+      "hint": "The source learned no prefill rate V_P (it saw no prefill pod busy enough). Assume one: --assume-vp, or on the page Assume a term, V_P.",
+      "effect": "Prefill is not sized: decode is sized alone, on its knee times headroom.",
+      "buckets": 16
+    }
+  ],
+  "buckets": [
+    {
+      "start": "2026-11-06T02:15:00Z",
+      "samples": 6,
+      "requests": 157.40292032398202,
+      "rate": {
+        "mean": 1.7464166666666667,
+        "p95": 7.438500000000001,
+        "max": 7.438500000000001
+      },
+      "sizedFor": "mean",
+      "sizedRate": 1.7464166666666667,
+      "shape": {
+        "promptTokens": 8007.139642457165,
+        "outputTokens": 200.3112076027625,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 1
+      },
+      "limit": {
+        "value": 16.044131255904265,
+        "unit": "r/s",
+        "band": {
+          "lo": 18.73416212414297,
+          "hi": 21.91845469398918
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "over",
+      "flags": [
+        "RateFromDecodeRows",
+        "FewCyclesForP95",
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T02:20:00Z",
+      "samples": 20,
+      "requests": 5214.298950176531,
+      "rate": {
+        "mean": 17.35610477777778,
+        "p95": 18.86,
+        "max": 19.04
+      },
+      "sizedFor": "p95",
+      "sizedRate": 18.86,
+      "shape": {
+        "promptTokens": 7995.988997259266,
+        "outputTokens": 200.01205292980535,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 2
+      },
+      "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "match",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T02:25:00Z",
+      "samples": 20,
+      "requests": 5477.143943172241,
+      "rate": {
+        "mean": 18.231,
+        "p95": 19.02,
+        "max": 19.760000000000005
+      },
+      "sizedFor": "p95",
+      "sizedRate": 19.02,
+      "shape": {
+        "promptTokens": 7998.423755525561,
+        "outputTokens": 199.91038832852638,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 2
+      },
+      "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "match",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T02:30:00Z",
+      "samples": 20,
+      "requests": 7222.343283081601,
+      "rate": {
+        "mean": 24.040000000000003,
+        "p95": 25.04,
+        "max": 25.22
+      },
+      "sizedFor": "p95",
+      "sizedRate": 25.04,
+      "shape": {
+        "promptTokens": 8003.7044682068445,
+        "outputTokens": 200.11736802595658,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 2
+      },
+      "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "match",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T02:35:00Z",
+      "samples": 20,
+      "requests": 7406.507028195119,
+      "rate": {
+        "mean": 24.653,
+        "p95": 25.96,
+        "max": 28.52
+      },
+      "sizedFor": "p95",
+      "sizedRate": 25.96,
+      "shape": {
+        "promptTokens": 8007.071089245529,
+        "outputTokens": 200.21952149982536,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 2
+      },
+      "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "match",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T02:40:00Z",
+      "samples": 20,
+      "requests": 9132.77926216296,
+      "rate": {
+        "mean": 30.399,
+        "p95": 31.16,
+        "max": 31.54
+      },
+      "sizedFor": "p95",
+      "sizedRate": 31.16,
+      "shape": {
+        "promptTokens": 8006.342285913271,
+        "outputTokens": 199.9390916798532,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 2
+      },
+      "limit": {
+        "value": 32.08826251180853,
+        "unit": "r/s",
+        "band": {
+          "lo": 37.46832424828594,
+          "hi": 43.83690938797836
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "match",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T02:45:00Z",
+      "samples": 20,
+      "requests": 9384.239383957443,
+      "rate": {
+        "mean": 31.236000000000008,
+        "p95": 32.34,
+        "max": 32.38
+      },
+      "sizedFor": "p95",
+      "sizedRate": 32.34,
+      "shape": {
+        "promptTokens": 8000.564472433626,
+        "outputTokens": 200.01533076327047,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T02:50:00Z",
+      "samples": 20,
+      "requests": 10059.306162538322,
+      "rate": {
+        "mean": 33.483000000000004,
+        "p95": 34.86,
+        "max": 35.08
+      },
+      "sizedFor": "p95",
+      "sizedRate": 34.86,
+      "shape": {
+        "promptTokens": 8007.820054670675,
+        "outputTokens": 200.08083437867163,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T02:55:00Z",
+      "samples": 20,
+      "requests": 10306.860691043277,
+      "rate": {
+        "mean": 34.306999999999995,
+        "p95": 35.22,
+        "max": 35.72
+      },
+      "sizedFor": "p95",
+      "sizedRate": 35.22,
+      "shape": {
+        "promptTokens": 7991.899261214301,
+        "outputTokens": 200.02606675958577,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T03:00:00Z",
+      "samples": 20,
+      "requests": 10743.385848710403,
+      "rate": {
+        "mean": 35.760000000000005,
+        "p95": 36.76,
+        "max": 36.800000000000004
+      },
+      "sizedFor": "p95",
+      "sizedRate": 36.76,
+      "shape": {
+        "promptTokens": 7994.09191645955,
+        "outputTokens": 199.9628127494847,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T03:05:00Z",
+      "samples": 20,
+      "requests": 10871.068706252401,
+      "rate": {
+        "mean": 36.185,
+        "p95": 37.62,
+        "max": 37.800000000000004
+      },
+      "sizedFor": "p95",
+      "sizedRate": 37.62,
+      "shape": {
+        "promptTokens": 7994.045867060845,
+        "outputTokens": 199.9424115555136,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T03:10:00Z",
+      "samples": 20,
+      "requests": 11651.586503650324,
+      "rate": {
+        "mean": 38.78300000000001,
+        "p95": 39.6,
+        "max": 40.34
+      },
+      "sizedFor": "p95",
+      "sizedRate": 39.6,
+      "shape": {
+        "promptTokens": 8000.486746595175,
+        "outputTokens": 199.98161694910792,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T03:15:00Z",
+      "samples": 20,
+      "requests": 11542.22989154376,
+      "rate": {
+        "mean": 38.419000000000004,
+        "p95": 40.02,
+        "max": 41.52
+      },
+      "sizedFor": "p95",
+      "sizedRate": 40.02,
+      "shape": {
+        "promptTokens": 7998.371272048702,
+        "outputTokens": 199.9377494039078,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T03:20:00Z",
+      "samples": 20,
+      "requests": 12482.27615330592,
+      "rate": {
+        "mean": 41.548,
+        "p95": 42.660000000000004,
+        "max": 42.660000000000004
+      },
+      "sizedFor": "p95",
+      "sizedRate": 42.660000000000004,
+      "shape": {
+        "promptTokens": 8000.744564045814,
+        "outputTokens": 200.03456870153158,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T03:25:00Z",
+      "samples": 19,
+      "requests": 11730.900090452882,
+      "rate": {
+        "mean": 41.1021052631579,
+        "p95": 43.24,
+        "max": 43.24
+      },
+      "sizedFor": "mean",
+      "sizedRate": 41.1021052631579,
+      "shape": {
+        "promptTokens": 8002.657536381664,
+        "outputTokens": 199.99242912487458,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 3
+      },
+      "limit": {
+        "value": 48.13239376771279,
+        "unit": "r/s",
+        "band": {
+          "lo": 56.20248637242891,
+          "hi": 65.75536408196754
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "flags": [
+        "FewCyclesForP95",
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-06T03:30:00Z",
+      "samples": 4,
+      "requests": 516.1391747227201,
+      "rate": {
+        "mean": 8.590000000000002,
+        "p95": 24.6,
+        "max": 24.6
+      },
+      "sizedFor": "mean",
+      "sizedRate": 8.590000000000002,
+      "shape": {
+        "promptTokens": 8002.06007768091,
+        "outputTokens": 199.9256484008095,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "decode": 1
+      },
+      "limit": {
+        "value": 16.044131255904265,
+        "unit": "r/s",
+        "band": {
+          "lo": 18.73416212414297,
+          "hi": 21.91845469398918
+        },
+        "boundBy": [
+          "band top"
+        ],
+        "flags": [
+          "AssumedShape",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "over",
+      "flags": [
+        "RateFromDecodeRows",
+        "FewCyclesForP95",
+        "PrefillNotPriced",
+        "AssumedShape",
+        "ExtrapolatedFill"
+      ]
+    }
+  ],
+  "hours": [
+    {
+      "start": "2026-11-06T02:00:00Z",
+      "rate": {
+        "mean": 25.81072647925032,
+        "p95": 34.52,
+        "max": 35.72
+      },
+      "needed": {
+        "decode": 3
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "sized": 9,
+      "unmet": 0
+    },
+    {
+      "start": "2026-11-06T03:00:00Z",
+      "rate": {
+        "mean": 37.63577235772356,
+        "p95": 42.5,
+        "max": 43.24
+      },
+      "needed": {
+        "decode": 3
+      },
+      "actual": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "verdict": "under",
+      "sized": 7,
+      "unmet": 0
+    }
+  ],
+  "summary": {
+    "peakNeeded": {
+      "decode": 3
+    },
+    "minNeeded": {
+      "decode": 1
+    },
+    "neededReplicaHours": {
+      "decode": 3.25
+    },
+    "hadReplicaHours": {
+      "decode": 2.666666666666666
+    },
+    "hadReplicaHoursAll": {
+      "prefill": 2.666666666666666,
+      "decode": 2.666666666666666
+    },
+    "gpusPerReplica": {
+      "prefill": 1,
+      "decode": 1
+    },
+    "hadGpuHoursAll": 5.333333333333332,
+    "underHours": [
+      "2026-11-06T02:00:00Z",
+      "2026-11-06T03:00:00Z"
+    ],
+    "overHours": [],
+    "refusedHours": [],
+    "counts": {
+      "sized": 16,
+      "unmet": 0,
+      "refused": 0,
+      "tooLittleData": 0,
+      "noData": 0,
+      "under": 9,
+      "over": 2,
+      "match": 5,
+      "sizedForMean": 3,
+      "sizedForP95": 13,
+      "sizedForMax": 0
+    }
+  },
+  "searched": 5,
+  "notes": [
+    "Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
+    "Each bucket is sized for the p95 of its cycles' rates (the p95 of cycle rates needs 20 cycles in the bucket, else the mean), on the fleet's limit at the SLO and headroom 0.85 (POST /v1/size's search).",
+    "A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.",
+    "Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands."
+  ]
+}

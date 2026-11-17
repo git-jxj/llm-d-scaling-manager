@@ -22,15 +22,15 @@ import (
 const defaultDayWindow = 24 * time.Hour
 
 // seriesOf is every cycle of st's model in the recording data, as the API's
-// day plan reads them.
-func seriesOf(data []byte, st *learnreplay.State) ([]whatifapi.SeriesSample, error) {
-	cycles, err := learnreplay.Series(data, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID})
+// day plan reads them, counted for the variants v names.
+func seriesOf(data []byte, st *learnreplay.State, v learnreplay.SeriesVariants) ([]whatifapi.SeriesSample, error) {
+	cycles, err := learnreplay.Series(data, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID}, v)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]whatifapi.SeriesSample, len(cycles))
 	for i, c := range cycles {
-		out[i] = whatifapi.SeriesSample{At: c.At, Rate: c.ArrivalRate, Prefill: c.PrefillPods, Decode: c.DecodePods,
+		out[i] = whatifapi.SeriesSample{At: c.At, Rate: c.ArrivalRate, RateKnown: c.RateKnown, Prefill: c.PrefillPods, Decode: c.DecodePods,
 			PrefillGPUs: c.PrefillGPUs, DecodeGPUs: c.DecodeGPUs, PromptTokens: c.PromptTokens, OutputTokens: c.OutputTokens,
 			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape}
 	}
@@ -99,7 +99,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err != nil {
 		return err
 	}
-	plan, err := whatifapi.DayPlan(ctx, res, req)
+	plan, err := whatifapi.DayPlan(ctx, res, req, "schema-v"+strconv.Itoa(schemaVersion))
 	if err != nil {
 		if whatifapi.IsInputError(err) {
 			return usageError{err}
@@ -109,9 +109,24 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if f.output == outputJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
-		return enc.Encode(plan)
+		err = enc.Encode(plan)
+	} else {
+		err = writeDayPlanText(out, res.Inputs, plan)
 	}
-	return writeDayPlanText(out, res.Inputs, plan)
+	if err != nil {
+		return err
+	}
+	return dayPlanExit(plan)
+}
+
+// dayPlanExit is the day plan's exit: 3 when the source refused a term or a
+// bucket's rate is beyond the bound, as a refused role exits elsewhere; the
+// output is printed either way.
+func dayPlanExit(p *whatifapi.DayPlanResponse) error {
+	if len(p.Refused) > 0 || p.Summary.Counts.Unmet > 0 {
+		return exitStatus(3)
+	}
+	return nil
 }
 
 // resolve reads the source as serve resolves it: a recording by its file,
@@ -222,18 +237,31 @@ func objectiveOf(name, s string) (*whatifapi.Objective, error) {
 	return o, nil
 }
 
-// writeDayPlanText is the day plan's human output: the hours, then the
-// summary and the notes.
+// writeDayPlanText is the day plan's human output: what the source could
+// not price, the hours, then the summary and the notes.
 func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.DayPlanResponse) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Day plan for %s/%s, %s to %s UTC, buckets of %s sized for the %s rate (%s)\n",
+	days := p.From.Format("2006-01-02") != p.To.Add(-time.Nanosecond).Format("2006-01-02")
+	at := func(t time.Time) string {
+		if days {
+			return t.Format("01-02 15:04")
+		}
+		return t.Format("15:04")
+	}
+	fmt.Fprintf(&b, "Day plan for %s/%s, %s to %s UTC, buckets of %s, each sized for the %s of its cycle rates (%s; the mean where a bucket holds fewer than %d cycles)\n",
 		in.Namespace, in.Model, p.From.Format("2006-01-02 15:04"), p.To.Format("2006-01-02 15:04"),
-		time.Duration(p.Step*float64(time.Second)), p.SizeFor, p.SizeForSource)
+		time.Duration(p.Step*float64(time.Second)), p.SizeFor, p.SizeForSource, whatifapi.MinPercentileCycles)
 	fmt.Fprintf(&b, "SLO: TTFT %s %s", p.TTFT.Statistic, fmtSeconds(p.TTFT.Target))
 	if p.TPOT != nil {
 		fmt.Fprintf(&b, ", TPOT %s %s", p.TPOT.Statistic, fmtSeconds(p.TPOT.Target))
 	}
-	fmt.Fprintf(&b, "; headroom %.2f. %s\n\n", p.Headroom, p.Banner)
+	fmt.Fprintf(&b, "; headroom %.2f. %s\n", p.Headroom, p.Banner)
+	for _, r := range p.Refused {
+		what := map[string]string{"ttft": "prefill's TTFT", "tpot": "decode's TPOT", "decodeKnee": "decode's knee"}[r.Term]
+		fmt.Fprintf(&b, "\nREFUSED %s (%s), in %d buckets: %s\n  what to do: %s\n  what the plan did: %s\n",
+			what, r.Reason, r.Buckets, r.Detail, r.Hint, r.Effect)
+	}
+	b.WriteString("\n")
 	const layout = "%-17s %9s %9s %6s %6s %6s %6s  %s\n"
 	fmt.Fprintf(&b, layout, "hour (UTC)", "rate mean", "rate p95", "need P", "need D", "had P", "had D", "")
 	for _, h := range p.Hours {
@@ -243,31 +271,60 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		}
 		np, nd, ap, ad := "-", "-", "-", "-"
 		if h.Needed != nil {
-			np, nd = strconv.Itoa(h.Needed.Prefill), strconv.Itoa(h.Needed.Decode)
+			nd = strconv.Itoa(h.Needed.Decode)
+			if h.Needed.Prefill != nil {
+				np = strconv.Itoa(*h.Needed.Prefill)
+			}
 		}
 		if h.Actual != nil {
 			ap, ad = strconv.Itoa(h.Actual.Prefill), strconv.Itoa(h.Actual.Decode)
 		}
 		verdict := map[string]string{whatifapi.VerdictUnder: "UNDER (SLO risk)", whatifapi.VerdictOver: "over (waste)",
-			whatifapi.VerdictMatch: "ok", "": "not sized"}[h.Verdict]
+			whatifapi.VerdictMatch: "ok", whatifapi.VerdictRefused: "REFUSED (see above)", "": "not sized"}[h.Verdict]
+		if h.Unmet > 0 {
+			verdict += fmt.Sprintf(", %d bucket(s) beyond %d replicas", h.Unmet, max(p.MaxReplicas.Prefill, p.MaxReplicas.Decode))
+		}
 		fmt.Fprintf(&b, layout, h.Start.Format("2006-01-02 15:04"), mean, p95, np, nd, ap, ad, verdict)
 	}
 	s := p.Summary
 	c := s.Counts
-	fmt.Fprintf(&b, "\nbuckets: %d sized (%d under, %d over, %d match), %d unmet, %d too little data, %d no data\n",
-		c.Sized, c.Under, c.Over, c.Match, c.Unmet, c.TooLittleData, c.NoData)
+	fmt.Fprintf(&b, "\nbuckets: %d sized (%d under, %d over, %d match; %d for the p95, %d for the mean, %d for the max), "+
+		"%d beyond the bound, %d refused, %d too little data, %d no data\n",
+		c.Sized, c.Under, c.Over, c.Match, c.SizedForP95, c.SizedForMean, c.SizedForMax, c.Unmet, c.Refused, c.TooLittleData, c.NoData)
+	fleet := func(n *whatifapi.DayNeeded) string {
+		if n.Prefill == nil {
+			return fmt.Sprintf("%d decode (prefill not priced)", n.Decode)
+		}
+		return fmt.Sprintf("%d prefill + %d decode", *n.Prefill, n.Decode)
+	}
+	hours := func(r *whatifapi.RoleHours) string {
+		if r.Prefill == nil {
+			return fmt.Sprintf("%.2f decode (prefill not priced)", r.Decode)
+		}
+		return fmt.Sprintf("%.2f prefill + %.2f decode", *r.Prefill, r.Decode)
+	}
 	if s.PeakNeeded != nil {
-		fmt.Fprintf(&b, "needed: peak %d prefill + %d decode, min %d prefill + %d decode\n",
-			s.PeakNeeded.Prefill, s.PeakNeeded.Decode, s.MinNeeded.Prefill, s.MinNeeded.Decode)
+		fmt.Fprintf(&b, "needed: peak %s, min %s\n", fleet(s.PeakNeeded), fleet(s.MinNeeded))
+		fmt.Fprintf(&b, "replica-hours over the %d sized buckets: needed %s, had %s\n",
+			c.Sized, hours(s.NeededReplicaHours), hours(s.HadReplicaHours))
+		if s.NeededGPUHours != nil {
+			fmt.Fprintf(&b, "GPU-hours over the sized buckets: needed %.2f, had %.2f\n", *s.NeededGPUHours, *s.HadGPUHours)
+		}
+	} else {
+		b.WriteString("needed: no bucket was sized\n")
 	}
-	fmt.Fprintf(&b, "replica-hours (sized buckets): needed %.2f prefill + %.2f decode, had %.2f prefill + %.2f decode\n",
-		s.NeededReplicaHours.Prefill, s.NeededReplicaHours.Decode, s.ActualReplicaHours.Prefill, s.ActualReplicaHours.Decode)
-	if s.NeededGPUHours != nil {
-		fmt.Fprintf(&b, "GPU-hours: needed %.2f, used %.2f (GPUs per replica: %d prefill, %d decode)\n",
-			*s.NeededGPUHours, *s.ActualGPUHours, s.GPUsPerReplica.Prefill, s.GPUsPerReplica.Decode)
+	fmt.Fprintf(&b, "had over every bucket with data: %.2f prefill + %.2f decode replica-hours", valueOrZero(s.HadReplicaHoursAll.Prefill), s.HadReplicaHoursAll.Decode)
+	if s.HadGPUHoursAll != nil {
+		fmt.Fprintf(&b, ", %.2f GPU-hours (GPUs per replica: %d prefill, %d decode)", *s.HadGPUHoursAll, s.GPUsPerReplica.Prefill, s.GPUsPerReplica.Decode)
 	}
-	fmt.Fprintf(&b, "hours under (SLO risk): %s\n", hourList(s.UnderHours))
-	fmt.Fprintf(&b, "hours over (waste): %s\n", hourList(s.OverHours))
+	b.WriteString("\n")
+	if c.Sized > 0 {
+		fmt.Fprintf(&b, "hours under (SLO risk): %s\n", hourList(s.UnderHours, at))
+		fmt.Fprintf(&b, "hours over (waste): %s\n", hourList(s.OverHours, at))
+	}
+	if len(s.RefusedHours) > 0 {
+		fmt.Fprintf(&b, "hours refused: %s\n", hourList(s.RefusedHours, at))
+	}
 	if flags := dayFlags(p); len(flags) > 0 {
 		fmt.Fprintf(&b, "flags: %s\n", strings.Join(flags, ", "))
 	}
@@ -278,17 +335,25 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	return err
 }
 
+// valueOrZero is *p, or 0 when p is nil.
+func valueOrZero(p *float64) float64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
 // fmtSeconds is a target in ms.
 func fmtSeconds(x float64) string { return fmt.Sprintf("%gms", x*1000) }
 
-// hourList is hours as HH:MM, or none.
-func hourList(hs []time.Time) string {
+// hourList is hours as at writes them, or none.
+func hourList(hs []time.Time, at func(time.Time) string) string {
 	if len(hs) == 0 {
 		return "none"
 	}
 	s := make([]string, len(hs))
 	for i, h := range hs {
-		s[i] = h.Format("15:04")
+		s[i] = at(h)
 	}
 	return strings.Join(s, ", ")
 }

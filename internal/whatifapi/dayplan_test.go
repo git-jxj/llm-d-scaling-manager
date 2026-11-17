@@ -84,9 +84,42 @@ func TestRateOf(t *testing.T) {
 
 // Under is either role short; over is neither short and one more.
 func TestVerdictOf(t *testing.T) {
-	assert.Equal(t, VerdictUnder, verdictOf(FleetCounts{2, 2}, FleetCounts{3, 1}))
-	assert.Equal(t, VerdictOver, verdictOf(FleetCounts{2, 2}, FleetCounts{2, 3}))
-	assert.Equal(t, VerdictMatch, verdictOf(FleetCounts{2, 2}, FleetCounts{2, 2}))
+	two := 2
+	assert.Equal(t, VerdictUnder, verdictOf(DayNeeded{Prefill: &two, Decode: 2}, FleetCounts{3, 1}))
+	assert.Equal(t, VerdictOver, verdictOf(DayNeeded{Prefill: &two, Decode: 2}, FleetCounts{2, 3}))
+	assert.Equal(t, VerdictMatch, verdictOf(DayNeeded{Prefill: &two, Decode: 2}, FleetCounts{2, 2}))
+	// Prefill not priced: decode alone decides, whatever prefill had.
+	assert.Equal(t, VerdictMatch, verdictOf(DayNeeded{Decode: 2}, FleetCounts{0, 2}))
+	assert.Equal(t, VerdictUnder, verdictOf(DayNeeded{Decode: 3}, FleetCounts{9, 2}))
+}
+
+// An hour is under when any bucket is under or beyond the bound, refused
+// when every bucket with data is refused, and over only when every sized
+// bucket is over and none is unmet.
+func TestHourVerdicts(t *testing.T) {
+	t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	a := &FleetCounts{2, 2}
+	b := func(i int, status, verdict string) DayBucket {
+		x := DayBucket{Start: t0.Add(time.Duration(i) * 5 * time.Minute), Status: status, Verdict: verdict, Actual: a}
+		if status == BucketSized {
+			x.Needed = &DayNeeded{Decode: 1}
+		}
+		return x
+	}
+	for name, c := range map[string]struct {
+		buckets []DayBucket
+		want    string
+	}{
+		"over":           {[]DayBucket{b(0, BucketSized, VerdictOver), b(1, BucketSized, VerdictOver)}, VerdictOver},
+		"over and unmet": {[]DayBucket{b(0, BucketSized, VerdictOver), b(1, BucketUnmet, "")}, VerdictUnder},
+		"all refused":    {[]DayBucket{b(0, BucketRefused, VerdictRefused), b(1, BucketRefused, VerdictRefused)}, VerdictRefused},
+		"over and match": {[]DayBucket{b(0, BucketSized, VerdictOver), b(1, BucketSized, VerdictMatch)}, VerdictMatch},
+		"too little":     {[]DayBucket{b(0, BucketTooLittleData, "")}, ""},
+	} {
+		h := hoursOf(nil, c.buckets)
+		require.Len(t, h, 1, name)
+		assert.Equal(t, c.want, h[0].Verdict, name)
+	}
 }
 
 // A day plan refuses what it cannot answer before pricing anything.

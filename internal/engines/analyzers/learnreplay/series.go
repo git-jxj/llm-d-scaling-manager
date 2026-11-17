@@ -34,11 +34,20 @@ type CycleSample struct {
 	HasShape                                  bool
 }
 
+// SeriesVariants names the variants a series counts: the prefill and the
+// decode variant a plan prices. An empty name counts every variant of the
+// role.
+type SeriesVariants struct {
+	Prefill, Decode string
+}
+
 // Series is every cycle of the model q names, oldest first, read from the
-// recording's saturation Analyze events without replaying them. q.Cycle is
-// ignored: the series is the whole recording. A *QueryError is a model the
-// recording does not hold or names ambiguously.
-func Series(recording []byte, q StateQuery) ([]CycleSample, error) {
+// recording's saturation Analyze events without replaying them. Pods, GPUs
+// and lengths are the variants v names, so that what the fleet had is
+// counted for the variants a plan sizes. q.Cycle is ignored: the series is
+// the whole recording. A *QueryError is a model the recording does not hold
+// or names ambiguously.
+func Series(recording []byte, q StateQuery, v SeriesVariants) ([]CycleSample, error) {
 	ns, model, _, err := resolveModel(recording, q)
 	if err != nil {
 		return nil, err
@@ -63,16 +72,29 @@ func Series(recording []byte, q StateQuery) ([]CycleSample, error) {
 		if in.Namespace != ns || in.ModelID != model {
 			continue
 		}
-		out = append(out, sampleOf(in, ev.Now))
+		out = append(out, sampleOf(in, ev.Now, v))
 	}
 	return out, nil
 }
 
-// sampleOf is one cycle's sample of in, read at at.
-func sampleOf(in domain.AnalyzerInput, at time.Time) CycleSample {
+// sampleOf is one cycle's sample of in, read at at, of the variants v
+// names.
+func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSample {
 	s := CycleSample{At: at, ArrivalRate: in.ArrivalRate, RateKnown: in.ArrivalRate > 0}
 	roles := rolesOf(in)
+	counted := func(variant, role string) bool {
+		switch role {
+		case domain.RolePrefill:
+			return v.Prefill == "" || variant == v.Prefill
+		case domain.RoleDecode:
+			return v.Decode == "" || variant == v.Decode
+		}
+		return false
+	}
 	for _, vs := range in.VariantStates {
+		if !counted(vs.VariantName, domain.CanonicalRole(vs.Role)) {
+			continue
+		}
 		switch domain.CanonicalRole(vs.Role) {
 		case domain.RolePrefill:
 			s.PrefillGPUs = max(s.PrefillGPUs, vs.GPUsPerReplica)
@@ -83,6 +105,9 @@ func sampleOf(in domain.AnalyzerInput, at time.Time) CycleSample {
 	var weight, il, ol, hit, decodeRate float64
 	for _, rm := range in.ReplicaMetrics {
 		role := domain.CanonicalRole(roles[rm.VariantName])
+		if !counted(rm.VariantName, role) {
+			continue
+		}
 		if prefill.Serving(rm) {
 			switch role {
 			case domain.RolePrefill:

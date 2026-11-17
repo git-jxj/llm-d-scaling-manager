@@ -255,11 +255,13 @@
       <button type="button" id="dayrun" disabled>Plan the day</button>
     </div>
     <div id="dayout" hidden>
+      <ul class="dayrefused" id="dayrefused" hidden></ul>
       <ul class="daysum" id="daysum"></ul>
+      <div class="legend" id="daylegend"></div>
       <svg id="daychart" viewBox="0 0 960 500" role="img" aria-labelledby="daytitle daydesc"></svg>
       <p class="sr" id="daydesc"></p>
-      <div class="legend" id="daylegend"></div>
       <details><summary>Table view: the hours</summary><div id="daytable"></div></details>
+      <details><summary>Table view: every bucket, with why a bucket was not sized</summary><div id="daybuckets"></div></details>
       <ul class="daynotes" id="daynotes"></ul>
     </div>
   </section>

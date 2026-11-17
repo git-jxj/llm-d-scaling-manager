@@ -238,8 +238,19 @@ a 24-hour window. It takes the size's `slo`, `assume`, `headroom` and
 | Key | Default | Notes |
 | --- | --- | --- |
 | `step` | `5m` | A bucket's length, a Go duration from `15s` to `24h`. Buckets start on the step in UTC. |
-| `sizeFor` | `p95`, or `mean` | The rate of a bucket's cycles to size for: `mean`, `p95` or `max`. The default is `p95` when the buckets hold 10 cycles or more (median), else `mean`; `sizeForSource` says which. |
+| `sizeFor` | `p95` | The rate of a bucket's cycles to size for: `mean`, `p95` or `max`. A bucket of fewer than 20 cycles asked for its `p95` is sized for its `mean` and flagged `FewCyclesForP95`; each bucket's `sizedFor` says which. |
 | `minRequests` | 30 | A bucket with fewer requests is `tooLittleData`, not sized. |
+
+A term the source cannot price at any rate is not a bucket's refusal. The plan
+probes each shape once at one replica a role: a TPOT it cannot price
+(`PinnedDefaultB`, `NoLine`) is dropped and decode is sized on the fleet
+limit; a TTFT it cannot price (`NoPrefillCapacity`, `NoFixedLatency`, a
+target under the zero-load floor) leaves prefill unsized and decode sized
+alone, on its knee times headroom (and its TPOT, where that prices); when
+decode's knee is refused too, nothing is sized. Each lands in `refused`. Only a
+rate no fleet within `maxReplicas` serves is a bucket's own `unmet`. The CLI
+exits 3 when `refused` is not empty or a bucket is unmet, and prints the
+plan either way.
 
 Each bucket is priced at its own observed prompt and output length (rounded
 to a 5% grid, so buckets of nearly one shape share their priced fleets), or
@@ -250,10 +261,11 @@ bucket when the stated length lies outside what the buckets observed.
 | Key | What it is |
 | --- | --- |
 | `from`, `to`, `step`, `sizeFor`, `sizeForSource`, `minRequests`, `ttft`, `tpot`, `headroom`, `maxReplicas` | What was planned. |
-| `buckets[]` | `start`, `samples` (cycles), `requests`, `rate` (`mean`, `p95`, `max` over its cycles), `sizedRate`, `shape`, `status` (`sized`, `unmet`, `tooLittleData`, `noData`), `needed` and `limit` (sized), `unmet` (the refusal), `actual` (the median serving pods of each role), `verdict` (`under`, `over`, `match`) and `flags`. |
-| `hours[]` | Per UTC hour: the rate over its cycles, the most replicas a bucket needed, the fewest it had, and `under` when any bucket was under, `over` when every sized bucket was over. |
-| `summary` | `peakNeeded`, `minNeeded`, replica-hours needed and had (sized buckets), GPU-hours where the source states GPUs per replica, `underHours`, `overHours`, and the bucket counts. |
+| `buckets[]` | `start`, `samples` (cycles), `requests`, `rate` (`mean`, `p95`, `max` of its cycle rates), `sizedFor` and `sizedRate`, `shape`, `status`, `needed` and `limit` (sized; `needed.prefill` absent when prefill is not priced), `unmet` and `unmetRole` (beyond the bound), `actual` (the median serving pods of the priced prefill and decode variants), `verdict` (`under`, `over`, `match`, `refused`) and `flags`. |
+| `hours[]` | Per UTC hour: the rate over its cycles, the most replicas a bucket needed, the fewest it had, `unmet` (buckets beyond the bound), and the verdict: `under` when any bucket was under or beyond the bound, `refused` when every bucket with data was refused, `over` when every sized bucket was over. |
+| `summary` | `peakNeeded`, `minNeeded`, replica-hours and GPU-hours needed and had over the sized buckets (absent when none was sized; GPU-hours also when prefill was not priced), `hadReplicaHoursAll` and `hadGpuHoursAll` over every bucket with data, `underHours`, `overHours`, `refusedHours`, and the counts, including how many buckets were sized for each statistic. |
 | `searched` | How many fleets the plan priced. |
+| `refused[]` | Every term the source cannot price at any rate, with `role`, `term` (`ttft`, `tpot`, `decodeKnee`), `reason`, `detail`, `hint` (what to do), `effect` (what the plan did instead) and `buckets`. Empty when every term priced. |
 | `notes` | What it does not price: scale-up lag (it sizes steady state), and the prefix hit rate. |
 
 ```bash

@@ -6,8 +6,9 @@ import (
 	"math"
 	"net/http"
 	"slices"
-	"sort"
 	"time"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // The day plan (POST /v1/dayplan): the prefill and decode replicas a
@@ -16,13 +17,22 @@ import (
 // search (sizer.search) on the same priced fleets: the learned state is read
 // once, by the inputs, and every bucket of one shape shares one sizer, whose
 // fleets are priced once whatever the rate. Nothing new is modelled.
+//
+// A term the source cannot price refuses every rate alike: a prefill rate
+// V_P or a fixed latency a it did not learn, a TTFT target under the TTFT at
+// zero load, a decode line it did not fit. Such a refusal is not a bucket's:
+// the plan probes each shape once, drops the term it cannot price, sizes on
+// what does price, and says so in Refused. Only a rate no fleet within the
+// bound serves is a bucket's own refusal (unmet).
 
 // SeriesSample is one cycle of the source: its time, the model's arrival
-// rate, the serving pods of each role, and the traffic's shape where the
-// cycle read one (HasShape).
+// rate (RateKnown false where it is the decode rows' sum), the serving pods
+// of the priced variants, and the traffic's shape where the cycle read one
+// (HasShape).
 type SeriesSample struct {
 	At                      time.Time
 	Rate                    float64
+	RateKnown               bool
 	Prefill, Decode         int
 	PrefillGPUs, DecodeGPUs int
 	PromptTokens            float64
@@ -43,9 +53,10 @@ const (
 	// DefaultMinRequests is the fewest requests a bucket must hold to be
 	// sized when the request names none.
 	DefaultMinRequests = 30
-	// minPercentileSamples is the median samples a bucket must hold for its
-	// p95 to be the default the plan sizes for.
-	minPercentileSamples = 10
+	// MinPercentileCycles is the fewest cycles a bucket must hold to be
+	// sized for its p95: of fewer, the p95 is the highest cycle or the one
+	// under it, and the bucket is sized for its mean instead.
+	MinPercentileCycles = 20
 	// shapeGrid is the ratio between neighbouring shapes a bucket's
 	// observed lengths are rounded to, so that buckets of nearly the same
 	// shape share a sizer and its priced fleets.
@@ -64,15 +75,20 @@ const (
 	BucketSized         = "sized"
 	BucketTooLittleData = "tooLittleData"
 	BucketNoData        = "noData"
-	BucketUnmet         = "unmet"
+	// BucketUnmet is a bucket whose rate no fleet within the bound serves.
+	BucketUnmet = "unmet"
+	// BucketRefused is a bucket no role could be sized for: every term
+	// that sizes decode is refused (Refused says why).
+	BucketRefused = "refused"
 )
 
 // A bucket's or an hour's verdict: the fleet it had against the one it
 // needed.
 const (
-	VerdictUnder = "under"
-	VerdictOver  = "over"
-	VerdictMatch = "match"
+	VerdictUnder   = "under"
+	VerdictOver    = "over"
+	VerdictMatch   = "match"
+	VerdictRefused = "refused"
 )
 
 // The flags a day plan adds to a bucket, beside the planner's own.
@@ -83,9 +99,18 @@ const (
 	// FlagExtrapolated is a bucket priced at a stated shape outside the
 	// lengths the window's buckets observed.
 	FlagExtrapolated = "Extrapolated"
-	// FlagFewSamples is a bucket whose percentile rests on fewer than
-	// minPercentileSamples cycles.
-	FlagFewSamples = "FewSamples"
+	// FlagFewCyclesForP95 is a bucket asked for its p95 and sized for its
+	// mean: it holds fewer than MinPercentileCycles cycles.
+	FlagFewCyclesForP95 = "FewCyclesForP95"
+	// FlagRateFromDecodeRows is a bucket with a cycle whose input carried no
+	// model arrival rate: its rate is the decode rows' request rates summed.
+	FlagRateFromDecodeRows = "RateFromDecodeRows"
+	// FlagTPOTNotPriced is a bucket sized without its TPOT target, which the
+	// source cannot price (Refused).
+	FlagTPOTNotPriced = "TPOTNotPriced"
+	// FlagPrefillNotPriced is a bucket whose prefill replicas are not sized,
+	// the source being unable to price its TTFT (Refused).
+	FlagPrefillNotPriced = "PrefillNotPriced"
 )
 
 // DayPlanRequest is POST /v1/dayplan. Every field but InputsID defaults as a
@@ -101,16 +126,16 @@ type DayPlanRequest struct {
 	// Step is a bucket's length, a Go duration ("5m"); default 5m.
 	Step string `json:"step,omitempty"`
 	// SizeFor is the rate of a bucket the fleet is sized for: "mean", "p95"
-	// or "max" of its cycles' rates. Default p95 when the buckets hold
-	// enough cycles for one (a median of 10), else mean.
+	// or "max" of its cycles' rates; default p95. A bucket of fewer than
+	// MinPercentileCycles cycles asked for its p95 is sized for its mean.
 	SizeFor string `json:"sizeFor,omitempty"`
 	// MinRequests is the fewest requests a bucket must hold to be sized;
 	// default 30.
 	MinRequests *float64 `json:"minRequests,omitempty"`
 }
 
-// DayPlanResponse is a day plan: every bucket, the hours they make, and the
-// summary.
+// DayPlanResponse is a day plan: every bucket, the hours they make, the
+// summary, and what the source could not price.
 type DayPlanResponse struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	WhatifSchema  string `json:"whatifSchema"`
@@ -122,8 +147,8 @@ type DayPlanResponse struct {
 	To   time.Time `json:"to"`
 	// Step is a bucket's length, seconds.
 	Step float64 `json:"step"`
-	// SizeFor is what each bucket was sized for, and SizeForSource
-	// "request" or "default".
+	// SizeFor is what was asked of each bucket, and SizeForSource
+	// "request" or "default"; each bucket says what it was sized for.
 	SizeFor       string            `json:"sizeFor"`
 	SizeForSource string            `json:"sizeForSource"`
 	MinRequests   float64           `json:"minRequests"`
@@ -132,13 +157,30 @@ type DayPlanResponse struct {
 	TPOT        *ResolvedObjective `json:"tpot,omitempty"`
 	Headroom    float64            `json:"headroom"`
 	MaxReplicas FleetCounts        `json:"maxReplicas"`
-	Buckets     []DayBucket        `json:"buckets"`
-	Hours       []DayHour          `json:"hours"`
-	Summary     DaySummary         `json:"summary"`
+	// Refused is every term the source could not price, which the plan
+	// dropped, with what it did instead; empty when every term priced.
+	Refused []DayRefusal `json:"refused"`
+	Buckets []DayBucket  `json:"buckets"`
+	Hours   []DayHour    `json:"hours"`
+	Summary DaySummary   `json:"summary"`
 	// Searched is how many fleets the day plan priced.
 	Searched int `json:"searched"`
 	// Notes are what the plan does not price, in words.
 	Notes []string `json:"notes"`
+}
+
+// DayRefusal is a term the source cannot price at any rate: the role it
+// sizes, the term ("ttft", "tpot" or "decodeKnee"), the reason and its
+// detail, what to do about it (Hint), what the plan did instead (Effect),
+// and how many buckets it touched.
+type DayRefusal struct {
+	Role    string `json:"role"`
+	Term    string `json:"term"`
+	Reason  string `json:"reason"`
+	Detail  string `json:"detail"`
+	Hint    string `json:"hint"`
+	Effect  string `json:"effect"`
+	Buckets int    `json:"buckets"`
 }
 
 // DayRate is a bucket's or an hour's request rate over its cycles, r/s.
@@ -157,6 +199,13 @@ type DayShape struct {
 	Source        string   `json:"source"`
 }
 
+// DayNeeded is the replicas a bucket needed: prefill is absent where the
+// source cannot price it (Refused).
+type DayNeeded struct {
+	Prefill *int `json:"prefill,omitempty"`
+	Decode  int  `json:"decode"`
+}
+
 // DayBucket is one bucket: what it saw, what it was sized for, the fleet it
 // needed and the fleet it had.
 type DayBucket struct {
@@ -166,18 +215,22 @@ type DayBucket struct {
 	Samples  int      `json:"samples"`
 	Requests float64  `json:"requests"`
 	Rate     *DayRate `json:"rate,omitempty"`
-	// SizedRate is the rate the bucket was sized for.
+	// SizedFor is the statistic of the cycles' rates the bucket was sized
+	// for, and SizedRate that rate.
+	SizedFor  string   `json:"sizedFor,omitempty"`
 	SizedRate *float64 `json:"sizedRate,omitempty"`
 	Shape     DayShape `json:"shape"`
 	Status    string   `json:"status"`
 	// Needed is the fewest replicas that serve SizedRate (sized), and Limit
-	// the fleet's limit there.
-	Needed *FleetCounts `json:"needed,omitempty"`
-	Limit  *Figure      `json:"limit,omitempty"`
-	// Unmet is why no fleet within the bound serves the rate.
-	Unmet *Refusal `json:"unmet,omitempty"`
-	// Actual is the median serving pods of each role over the bucket's
-	// cycles; absent with no cycles.
+	// the limit they were sized on.
+	Needed *DayNeeded `json:"needed,omitempty"`
+	Limit  *Figure    `json:"limit,omitempty"`
+	// Unmet is why no fleet within the bound serves the rate, and UnmetRole
+	// the role short: "prefill", "decode" or "fleet" (both).
+	Unmet     *Refusal `json:"unmet,omitempty"`
+	UnmetRole string   `json:"unmetRole,omitempty"`
+	// Actual is the median serving pods of each priced variant over the
+	// bucket's cycles; absent with no cycles.
 	Actual  *FleetCounts `json:"actual,omitempty"`
 	Verdict string       `json:"verdict,omitempty"`
 	Flags   []string     `json:"flags,omitempty"`
@@ -185,51 +238,68 @@ type DayBucket struct {
 
 // DayHour is one hour of buckets, for a table: its rate over every cycle,
 // the most replicas any of its buckets needed, the fewest it had, and its
-// verdict: under when any bucket was under, over when every sized bucket
-// was over.
+// verdict: under when any bucket was under or unmet, refused when every
+// bucket with data was refused, over when every sized bucket was over.
 type DayHour struct {
 	Start   time.Time    `json:"start"`
 	Rate    *DayRate     `json:"rate,omitempty"`
-	Needed  *FleetCounts `json:"needed,omitempty"`
+	Needed  *DayNeeded   `json:"needed,omitempty"`
 	Actual  *FleetCounts `json:"actual,omitempty"`
 	Verdict string       `json:"verdict,omitempty"`
-	// Sized is how many of its buckets were sized.
+	// Sized and Unmet are how many of its buckets were sized and unmet.
 	Sized int `json:"sized"`
+	Unmet int `json:"unmet"`
 }
 
-// DaySummary is the plan in a few figures. Replica-hours count sized
-// buckets only; GPU-hours are present where the source states the GPUs per
-// replica.
+// DaySummary is the plan in a few figures. The needed and the had
+// replica-hours over the sized buckets compare like with like; HadAll is
+// what the fleet ran over every bucket with data. Every figure of a need is
+// absent when no bucket was sized; a role's is absent when it was not
+// priced.
 type DaySummary struct {
-	PeakNeeded         *FleetCounts `json:"peakNeeded,omitempty"`
-	MinNeeded          *FleetCounts `json:"minNeeded,omitempty"`
-	NeededReplicaHours RoleHours    `json:"neededReplicaHours"`
-	ActualReplicaHours RoleHours    `json:"actualReplicaHours"`
-	GPUsPerReplica     *FleetCounts `json:"gpusPerReplica,omitempty"`
-	NeededGPUHours     *float64     `json:"neededGpuHours,omitempty"`
-	ActualGPUHours     *float64     `json:"actualGpuHours,omitempty"`
-	// UnderHours are the hours with a bucket under (SLO risk), OverHours
-	// those whose every sized bucket was over (waste).
-	UnderHours []time.Time `json:"underHours"`
-	OverHours  []time.Time `json:"overHours"`
-	Counts     DayCounts   `json:"counts"`
+	PeakNeeded *DayNeeded `json:"peakNeeded,omitempty"`
+	MinNeeded  *DayNeeded `json:"minNeeded,omitempty"`
+	// NeededReplicaHours and HadReplicaHours are over the sized buckets;
+	// HadReplicaHoursAll over every bucket with data.
+	NeededReplicaHours *RoleHours `json:"neededReplicaHours,omitempty"`
+	HadReplicaHours    *RoleHours `json:"hadReplicaHours,omitempty"`
+	HadReplicaHoursAll RoleHours  `json:"hadReplicaHoursAll"`
+	// GPUsPerReplica is the priced variants' GPUs per replica, where the
+	// source states them; the GPU-hours follow the replica-hours.
+	GPUsPerReplica *FleetCounts `json:"gpusPerReplica,omitempty"`
+	NeededGPUHours *float64     `json:"neededGpuHours,omitempty"`
+	HadGPUHours    *float64     `json:"hadGpuHours,omitempty"`
+	HadGPUHoursAll *float64     `json:"hadGpuHoursAll,omitempty"`
+	// UnderHours are the hours with a bucket under or unmet (SLO risk),
+	// OverHours those whose every sized bucket was over (waste), and
+	// RefusedHours those whose every bucket with data was refused.
+	UnderHours   []time.Time `json:"underHours"`
+	OverHours    []time.Time `json:"overHours"`
+	RefusedHours []time.Time `json:"refusedHours"`
+	Counts       DayCounts   `json:"counts"`
 }
 
-// RoleHours is replica-hours per role.
+// RoleHours is replica-hours per role; Prefill is absent where prefill was
+// not priced.
 type RoleHours struct {
-	Prefill float64 `json:"prefill"`
-	Decode  float64 `json:"decode"`
+	Prefill *float64 `json:"prefill,omitempty"`
+	Decode  float64  `json:"decode"`
 }
 
-// DayCounts is how many buckets ended each way.
+// DayCounts is how many buckets ended each way, and how many were sized for
+// each statistic.
 type DayCounts struct {
 	Sized         int `json:"sized"`
 	Unmet         int `json:"unmet"`
+	Refused       int `json:"refused"`
 	TooLittleData int `json:"tooLittleData"`
 	NoData        int `json:"noData"`
 	Under         int `json:"under"`
 	Over          int `json:"over"`
 	Match         int `json:"match"`
+	SizedForMean  int `json:"sizedForMean"`
+	SizedForP95   int `json:"sizedForP95"`
+	SizedForMax   int `json:"sizedForMax"`
 }
 
 // handleDayPlan is POST /v1/dayplan.
@@ -287,8 +357,9 @@ func (s *Server) dayPlan(ctx context.Context, req DayPlanRequest) ([]byte, error
 }
 
 // DayPlan answers req against a source resolved outside a server: the CLI's
-// day-plan, on the same code path as POST /v1/dayplan.
-func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest) (*DayPlanResponse, error) {
+// day-plan, on the same code path as POST /v1/dayplan. whatifSchema is the
+// CLI schema the figures follow, as Config.WhatifSchema.
+func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest, whatifSchema string) (*DayPlanResponse, error) {
 	doc := res.Inputs
 	doc.InputsID = contentID("inputs", res.Content)
 	e := &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series}
@@ -301,7 +372,8 @@ func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest) (*DayPlanRe
 	if err != nil {
 		return nil, err
 	}
-	out.SchemaVersion, out.DayPlanID, out.InputsID, out.Banner = SchemaVersion, contentID("dayplan", q.key()), e.id, banner
+	out.SchemaVersion, out.WhatifSchema, out.DayPlanID, out.InputsID, out.Banner = SchemaVersion, whatifSchema,
+		contentID("dayplan", q.key()), e.id, banner
 	return out, nil
 }
 
@@ -339,7 +411,7 @@ func dayQuestionOf(e *inputsEntry, req DayPlanRequest) (*dayQuestion, error) {
 	if t := req.Traffic; t != nil && t.Classes != nil {
 		return nil, InputErrorf("traffic.classes: a day plan sizes each bucket for its own observed rate; give the mix and arrivalCV2 only")
 	}
-	q := &dayQuestion{e: e, step: DefaultDayPlanStep, minRequests: DefaultMinRequests}
+	q := &dayQuestion{e: e, step: DefaultDayPlanStep, minRequests: DefaultMinRequests, sizeFor: SizeForP95}
 	if req.Step != "" {
 		d, err := time.ParseDuration(req.Step)
 		if err != nil || d < minDayPlanStep || d > maxDayPlanStep {
@@ -377,10 +449,6 @@ func dayQuestionOf(e *inputsEntry, req DayPlanRequest) (*dayQuestion, error) {
 	}
 	switch req.SizeFor {
 	case "":
-		q.sizeFor = SizeForMean
-		if medianSamples(bucketize(e.series, q.step)) >= minPercentileSamples {
-			q.sizeFor = SizeForP95
-		}
 	case SizeForMean, SizeForP95, SizeForMax:
 		q.sizeFor, q.sizeFromReq = req.SizeFor, true
 	default:
@@ -419,21 +487,6 @@ func bucketize(series []SeriesSample, step time.Duration) []dayBucket {
 	return out
 }
 
-// medianSamples is the median cycles of the buckets that hold any.
-func medianSamples(buckets []dayBucket) int {
-	var n []int
-	for _, b := range buckets {
-		if len(b.samples) > 0 {
-			n = append(n, len(b.samples))
-		}
-	}
-	if len(n) == 0 {
-		return 0
-	}
-	sort.Ints(n)
-	return n[len(n)/2]
-}
-
 // sampleStep is the series' cycle: the median gap between cycles, the step
 // when there is one cycle.
 func sampleStep(series []SeriesSample, step time.Duration) time.Duration {
@@ -467,7 +520,7 @@ func rateOf(samples []SeriesSample) DayRate {
 // medianInt is the median of xs, the upper one of an even count.
 func medianInt(xs []int) int {
 	s := slices.Clone(xs)
-	sort.Ints(s)
+	slices.Sort(s)
 	return s[len(s)/2]
 }
 
@@ -509,15 +562,202 @@ func bucketShape(samples []SeriesSample) (prompt, output, hit float64, ok bool) 
 	return prompt / w, output / w, hit / w, true
 }
 
-// sizedRate is the rate of r the plan sizes for.
-func (q *dayQuestion) sizedRate(r DayRate) float64 {
-	switch q.sizeFor {
-	case SizeForP95:
-		return r.P95
-	case SizeForMax:
-		return r.Max
+// sizedRate is the statistic a bucket of n cycles is sized for, and its
+// rate: the one asked, but the mean in place of a p95 of fewer than
+// MinPercentileCycles cycles.
+func (q *dayQuestion) sizedRate(r DayRate, n int) (string, float64) {
+	switch {
+	case q.sizeFor == SizeForP95 && n >= MinPercentileCycles:
+		return SizeForP95, r.P95
+	case q.sizeFor == SizeForMax:
+		return SizeForMax, r.Max
 	}
-	return r.Mean
+	return SizeForMean, r.Mean
+}
+
+// The terms a DayRefusal names.
+const (
+	termTTFT       = "ttft"
+	termTPOT       = "tpot"
+	termDecodeKnee = "decodeKnee"
+)
+
+// dayGroup is one shape's sizing: the sizer of the terms that price, and
+// whether decode is sized alone (prefill refused) or nothing is (decode's
+// knee refused too).
+type dayGroup struct {
+	z *sizer
+	// decodeOnly sizes decode alone, on decodeLimit; refused sizes nothing.
+	decodeOnly, refused bool
+	// flags are the day plan's own flags every bucket of the group carries.
+	flags []string
+	// limits is decode's own limit by replica count, priced once.
+	limits map[int]whatif.Result
+}
+
+// isRefusal reports whether r is a refusal.
+func isRefusal(r whatif.Result) bool {
+	_, ok := r.(whatif.Unanswerable)
+	return ok
+}
+
+// dayRefusalOf is r's refusal as a DayRefusal of role and term, with the hint
+// and the effect.
+func dayRefusalOf(role, term string, r whatif.Result, effect string) DayRefusal {
+	u, _ := r.(whatif.Unanswerable)
+	return DayRefusal{Role: role, Term: term, Reason: string(u.Reason), Detail: u.Detail, Hint: refusalHint(term, u.Reason), Effect: effect}
+}
+
+// refusalHint is what to do about a refusal, in words.
+func refusalHint(term string, reason whatif.Reason) string {
+	switch {
+	case reason == whatif.NoPrefillCapacity:
+		return "The source learned no prefill rate V_P (it saw no prefill pod busy enough). Assume one: --assume-vp, or on the page Assume a term, V_P."
+	case reason == whatif.NoFixedLatency:
+		return "The source learned no fixed prefill latency a (too few low-load minutes). Assume one: --assume-a, or on the page Assume a term, a."
+	case reason == whatif.TargetBelowFloor && term == termTTFT:
+		return "The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail."
+	case reason == whatif.TargetBelowFloor:
+		return "The TPOT target is under decode's TPOT at zero load: no replica count meets it. Raise the TPOT target."
+	case term == termTPOT || term == termDecodeKnee:
+		return "The source fitted no decode ITL line it can price (" + string(reason) + "): record a window with decode under varied load, or ask no TPOT target (--tpot none)."
+	}
+	return "See the detail; docs/guides/capacity-planner/troubleshooting.md lists every reason."
+}
+
+// group probes k's fleet once, at one replica a role, and builds its
+// sizing: a TPOT term that refuses is dropped, and a TTFT term that refuses
+// leaves decode sized alone. Each refusal is added to refused once.
+func (q *dayQuestion) group(ctx context.Context, k Knobs, refused *[]DayRefusal) (*dayGroup, error) {
+	add := func(r DayRefusal) {
+		for _, x := range *refused {
+			if x.Role == r.Role && x.Term == r.Term && x.Reason == r.Reason {
+				return
+			}
+		}
+		*refused = append(*refused, r)
+	}
+	sc := q.sc
+	g := &dayGroup{limits: map[int]whatif.Result{}}
+	newSizer := func() *sizer {
+		return &sizer{e: q.e, sc: sc, k: k, bound: q.bound, seen: map[FleetCounts]sizeEval{}, plain: map[FleetCounts]sizeEval{}}
+	}
+	g.z = newSizer()
+	one := FleetCounts{Prefill: 1, Decode: 1}
+	v, err := g.z.at(ctx, one)
+	if err != nil {
+		return nil, err
+	}
+	if sc.TPOT != nil && isRefusal(v.decode) {
+		add(dayRefusalOf(roleDecode, termTPOT, v.decode, "TPOT is not priced: decode is sized on the fleet limit, TTFT and its knee times headroom."))
+		g.flags = append(g.flags, FlagTPOTNotPriced)
+		sc.TPOT = nil
+		g.z = newSizer()
+		if v, err = g.z.at(ctx, one); err != nil {
+			return nil, err
+		}
+	}
+	if !isRefusal(v.prefill) {
+		return g, nil
+	}
+	how := "its knee times headroom"
+	if sc.TPOT != nil {
+		how = "its TPOT target and its knee times headroom"
+	}
+	add(dayRefusalOf(rolePrefill, termTTFT, v.prefill, "Prefill is not sized: decode is sized alone, on "+how+"."))
+	g.decodeOnly = true
+	g.flags = append(g.flags, FlagPrefillNotPriced)
+	lim, err := q.decodeLimit(ctx, g, 1)
+	if err != nil {
+		return nil, err
+	}
+	if isRefusal(lim) {
+		add(dayRefusalOf(roleDecode, termDecodeKnee, lim, "Nothing is sized: decode's own limit is refused too."))
+		g.refused = true
+	}
+	return g, nil
+}
+
+// decodeLimit is decode's own limit at d replicas: with a TPOT target, the
+// TPOT rate under the operating-point cap (the size's decode limit); with
+// none, decode's knee times headroom. Priced once per count.
+func (q *dayQuestion) decodeLimit(ctx context.Context, g *dayGroup, d int) (whatif.Result, error) {
+	if r, ok := g.limits[d]; ok {
+		return r, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	k := g.z.k
+	k.Prefill, k.Decode = 1, d
+	fl, err := q.e.pricer.Fleet(k)
+	if err != nil {
+		return nil, err
+	}
+	var r whatif.Result
+	if g.z.sc.TPOT != nil {
+		r, _, _ = fl.PlainLimits(g.z.sc.TTFT.Target, g.z.sc.TPOT.Target, g.z.sc.Headroom)
+	} else {
+		r = fl.DecodeKnee()
+		if a, ok := r.(whatif.Answer); ok {
+			a.Value *= g.z.sc.Headroom
+			r = a
+		}
+	}
+	g.limits[d] = r
+	return r, nil
+}
+
+// sizeBucket sizes db for rate on g.
+func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket, rate float64) error {
+	db.Flags = appendNew(db.Flags, g.flags...)
+	switch {
+	case g.refused:
+		db.Status, db.Verdict = BucketRefused, VerdictRefused
+		return nil
+	case g.decodeOnly:
+		d, ok, err := smallest(1, q.bound.Decode, func(d int) (bool, error) {
+			r, err := q.decodeLimit(ctx, g, d)
+			return err == nil && resultReaches(r, rate, false), err
+		})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			r, err := q.decodeLimit(ctx, g, q.bound.Decode)
+			if err != nil {
+				return err
+			}
+			x, _ := valueOf(r)
+			db.Status, db.UnmetRole = BucketUnmet, roleDecode
+			db.Unmet = &Refusal{Reason: ReasonReplicaBound, Detail: fmt.Sprintf("At %d decode replicas, the bound, decode's limit is %.4g r/s, short of %.4g r/s",
+				q.bound.Decode, x, rate)}
+			return nil
+		}
+		lim := figureOf(g.limits[d], unitRate, false)
+		db.Status, db.Needed, db.Limit = BucketSized, &DayNeeded{Decode: d}, &lim
+		db.Flags = appendNew(db.Flags, lim.Flags...)
+		db.Verdict = verdictOf(*db.Needed, *db.Actual)
+		return nil
+	}
+	z := g.z
+	z.rate = rate
+	res, err := z.search(ctx)
+	if err != nil {
+		return err
+	}
+	if u := res.Unmet; u != nil {
+		db.Status, db.Unmet, db.UnmetRole = BucketUnmet, &u.Refused, u.Role
+		db.Flags = appendNew(db.Flags, u.AtBound.Limit.Flags...)
+		return nil
+	}
+	n := res.Answer.Fleet
+	p := n.Prefill
+	lim := figureOf(z.seen[n].fleet, unitRate, false)
+	db.Status, db.Needed, db.Limit = BucketSized, &DayNeeded{Prefill: &p, Decode: n.Decode}, &lim
+	db.Flags = appendNew(db.Flags, lim.Flags...)
+	db.Verdict = verdictOf(*db.Needed, *db.Actual)
+	return nil
 }
 
 // plan sizes every bucket.
@@ -526,22 +766,25 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	buckets := bucketize(series, q.step)
 	cycle := sampleStep(series, q.step).Seconds()
 	out := &DayPlanResponse{Step: q.step.Seconds(), SizeFor: q.sizeFor, SizeForSource: "default", MinRequests: q.minRequests,
-		TTFT: q.sc.TTFT, TPOT: q.sc.TPOT, Headroom: q.sc.Headroom, MaxReplicas: q.bound,
+		TTFT: q.sc.TTFT, TPOT: q.sc.TPOT, Headroom: q.sc.Headroom, MaxReplicas: q.bound, Refused: []DayRefusal{},
 		From: buckets[0].start, To: buckets[len(buckets)-1].start.Add(q.step)}
 	if q.sizeFromReq {
 		out.SizeForSource = "request"
 	}
 	stated := !q.sc.Mix.Observed
 	var lo, hi [2]float64
-	sizers := map[[2]float64]*sizer{}
-	sizerFor := func(k Knobs) *sizer {
+	groups := map[[2]float64]*dayGroup{}
+	groupFor := func(k Knobs) (*dayGroup, error) {
 		key := [2]float64{k.PromptTokens, k.OutputTokens}
-		z := sizers[key]
-		if z == nil {
-			z = &sizer{e: q.e, sc: q.sc, k: k, bound: q.bound, seen: map[FleetCounts]sizeEval{}, plain: map[FleetCounts]sizeEval{}}
-			sizers[key] = z
+		if g := groups[key]; g != nil {
+			return g, nil
 		}
-		return z
+		g, err := q.group(ctx, k, &out.Refused)
+		if err != nil {
+			return nil, err
+		}
+		groups[key] = g
+		return g, nil
 	}
 	gpus := FleetCounts{}
 	for _, x := range series {
@@ -559,6 +802,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		db.Requests = r.Mean * cycle * float64(len(b.samples))
 		a := actualOf(b.samples)
 		db.Actual = &a
+		if slices.ContainsFunc(b.samples, func(x SeriesSample) bool { return !x.RateKnown }) {
+			db.Flags = append(db.Flags, FlagRateFromDecodeRows)
+		}
 		k := q.k
 		if p, o, h, ok := bucketShape(b.samples); ok {
 			for i, v := range []float64{p, o} {
@@ -585,40 +831,29 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 				db.Shape.OutputTokens = ptr(k.OutputTokens)
 			}
 		}
-		if q.sizeFor != SizeForMean && len(b.samples) < minPercentileSamples {
-			db.Flags = append(db.Flags, FlagFewSamples)
-		}
 		if db.Requests < q.minRequests || !(r.Mean > 0) {
 			db.Status = BucketTooLittleData
 			out.Buckets = append(out.Buckets, db)
 			continue
 		}
-		rate := q.sizedRate(r)
-		db.SizedRate = ptr(rate)
-		z := sizerFor(k)
-		z.rate = rate
-		res, err := z.search(ctx)
+		stat, rate := q.sizedRate(r, len(b.samples))
+		if q.sizeFor == SizeForP95 && stat != SizeForP95 {
+			db.Flags = append(db.Flags, FlagFewCyclesForP95)
+		}
+		db.SizedFor, db.SizedRate = stat, ptr(rate)
+		g, err := groupFor(k)
 		if err != nil {
 			return nil, err
 		}
-		if u := res.Unmet; u != nil {
-			db.Status = BucketUnmet
-			db.Unmet = &u.Refused
-			db.Flags = appendNew(db.Flags, u.AtBound.Limit.Flags...)
-			out.Buckets = append(out.Buckets, db)
-			continue
+		if err := q.sizeBucket(ctx, g, &db, rate); err != nil {
+			return nil, err
 		}
-		n := res.Answer.Fleet
-		db.Status, db.Needed = BucketSized, &n
-		lim := figureOf(z.seen[n].fleet, unitRate, false)
-		db.Limit = &lim
-		db.Flags = appendNew(db.Flags, lim.Flags...)
-		db.Verdict = verdictOf(n, a)
 		out.Buckets = append(out.Buckets, db)
 	}
-	for _, z := range sizers {
-		out.Searched += z.searched()
+	for _, g := range groups {
+		out.Searched += g.z.searched() + len(g.limits)
 	}
+	q.countRefused(out)
 	if stated {
 		k := q.k
 		outside := func(v float64, i int) bool { return v > 0 && hi[i] > 0 && (v < lo[i] || v > hi[i]) }
@@ -634,10 +869,25 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	out.Summary = summaryOf(out.Buckets, out.Hours, q.step, gpus)
 	out.Notes = append(out.Notes,
 		"Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
-		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates, on the fleet's limit at the SLO and headroom %.2f (POST /v1/size's search).", q.sizeFor, q.sc.Headroom),
+		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates (the p95 of cycle rates needs %d cycles in the bucket, else the mean), "+
+			"on the fleet's limit at the SLO and headroom %.2f (POST /v1/size's search).", q.sizeFor, MinPercentileCycles, q.sc.Headroom),
 		fmt.Sprintf("A bucket with fewer than %.0f requests is not sized (too little data); a bucket no cycle fell in has no data.", q.minRequests),
-		"Actual is the median serving pods of each role over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands.")
+		"Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands.")
 	return out, nil
+}
+
+// countRefused counts, for each refusal, the buckets of its role and term
+// that were sized or refused under it.
+func (q *dayQuestion) countRefused(out *DayPlanResponse) {
+	for i := range out.Refused {
+		r := &out.Refused[i]
+		flag := map[string]string{termTPOT: FlagTPOTNotPriced, termTTFT: FlagPrefillNotPriced}[r.Term]
+		for _, b := range out.Buckets {
+			if (flag != "" && slices.Contains(b.Flags, flag)) || (r.Term == termDecodeKnee && b.Status == BucketRefused) {
+				r.Buckets++
+			}
+		}
+	}
 }
 
 // appendNew appends each of xs not already in s.
@@ -650,16 +900,46 @@ func appendNew(s []string, xs ...string) []string {
 	return s
 }
 
-// verdictOf is a bucket's verdict: under when either role had fewer than it
-// needed, over when neither had fewer and one had more.
-func verdictOf(needed, actual FleetCounts) string {
+// verdictOf is a bucket's verdict: under when a priced role had fewer than
+// it needed, over when none had fewer and one had more.
+func verdictOf(needed DayNeeded, actual FleetCounts) string {
+	short := actual.Decode < needed.Decode
+	more := actual.Decode > needed.Decode
+	if needed.Prefill != nil {
+		short = short || actual.Prefill < *needed.Prefill
+		more = more || actual.Prefill > *needed.Prefill
+	}
 	switch {
-	case actual.Prefill < needed.Prefill || actual.Decode < needed.Decode:
+	case short:
 		return VerdictUnder
-	case actual.Prefill > needed.Prefill || actual.Decode > needed.Decode:
+	case more:
 		return VerdictOver
 	}
 	return VerdictMatch
+}
+
+// maxNeeded is the larger of a and b, role by role; a prefill priced in
+// one only is that one's.
+func maxNeeded(a, b DayNeeded, larger bool) DayNeeded {
+	pick := func(x, y int) int {
+		if larger {
+			return max(x, y)
+		}
+		return min(x, y)
+	}
+	out := DayNeeded{Decode: pick(a.Decode, b.Decode)}
+	switch {
+	case a.Prefill != nil && b.Prefill != nil:
+		p := pick(*a.Prefill, *b.Prefill)
+		out.Prefill = &p
+	case a.Prefill != nil:
+		p := *a.Prefill
+		out.Prefill = &p
+	case b.Prefill != nil:
+		p := *b.Prefill
+		out.Prefill = &p
+	}
+	return out
 }
 
 // hoursOf is the buckets by UTC hour.
@@ -670,17 +950,21 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 		h := x.At.UTC().Truncate(time.Hour)
 		byHour[h] = append(byHour[h], x)
 	}
+	type tally struct{ under, over, match, refused, withData int }
+	var t []tally
 	for _, b := range buckets {
 		h := b.Start.Truncate(time.Hour)
 		if len(out) == 0 || !out[len(out)-1].Start.Equal(h) {
 			out = append(out, DayHour{Start: h})
+			t = append(t, tally{})
 			if s := byHour[h]; len(s) > 0 {
 				r := rateOf(s)
 				out[len(out)-1].Rate = &r
 			}
 		}
-		hr := &out[len(out)-1]
+		hr, c := &out[len(out)-1], &t[len(t)-1]
 		if b.Actual != nil {
+			c.withData++
 			if hr.Actual == nil {
 				a := *b.Actual
 				hr.Actual = &a
@@ -688,23 +972,44 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 				hr.Actual.Prefill, hr.Actual.Decode = min(hr.Actual.Prefill, b.Actual.Prefill), min(hr.Actual.Decode, b.Actual.Decode)
 			}
 		}
+		switch b.Status {
+		case BucketUnmet:
+			hr.Unmet++
+			c.under++
+		case BucketRefused:
+			c.refused++
+		}
 		if b.Needed == nil {
 			continue
 		}
 		hr.Sized++
+		switch b.Verdict {
+		case VerdictUnder:
+			c.under++
+		case VerdictOver:
+			c.over++
+		case VerdictMatch:
+			c.match++
+		}
 		if hr.Needed == nil {
 			n := *b.Needed
 			hr.Needed = &n
 		} else {
-			hr.Needed.Prefill, hr.Needed.Decode = max(hr.Needed.Prefill, b.Needed.Prefill), max(hr.Needed.Decode, b.Needed.Decode)
+			n := maxNeeded(*hr.Needed, *b.Needed, true)
+			hr.Needed = &n
 		}
+	}
+	for i := range out {
+		c := t[i]
 		switch {
-		case b.Verdict == VerdictUnder || hr.Verdict == VerdictUnder:
-			hr.Verdict = VerdictUnder
-		case b.Verdict == VerdictOver && (hr.Verdict == "" || hr.Verdict == VerdictOver):
-			hr.Verdict = VerdictOver
-		default:
-			hr.Verdict = VerdictMatch
+		case c.under > 0:
+			out[i].Verdict = VerdictUnder
+		case c.refused > 0 && c.refused == c.withData:
+			out[i].Verdict = VerdictRefused
+		case c.over > 0 && c.match == 0:
+			out[i].Verdict = VerdictOver
+		case c.match > 0 || c.over > 0:
+			out[i].Verdict = VerdictMatch
 		}
 	}
 	return out
@@ -712,8 +1017,10 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 
 // summaryOf is the plan's summary.
 func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus FleetCounts) DaySummary {
-	s := DaySummary{UnderHours: []time.Time{}, OverHours: []time.Time{}}
+	s := DaySummary{UnderHours: []time.Time{}, OverHours: []time.Time{}, RefusedHours: []time.Time{}}
 	h := step.Hours()
+	var need, had RoleHours
+	prefillPriced := false
 	for _, b := range buckets {
 		switch b.Status {
 		case BucketNoData:
@@ -722,11 +1029,25 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 			s.Counts.TooLittleData++
 		case BucketUnmet:
 			s.Counts.Unmet++
+		case BucketRefused:
+			s.Counts.Refused++
+		}
+		if b.Actual != nil {
+			s.HadReplicaHoursAll.Prefill = ptr(valueOr(s.HadReplicaHoursAll.Prefill) + float64(b.Actual.Prefill)*h)
+			s.HadReplicaHoursAll.Decode += float64(b.Actual.Decode) * h
 		}
 		if b.Needed == nil {
 			continue
 		}
 		s.Counts.Sized++
+		switch b.SizedFor {
+		case SizeForMean:
+			s.Counts.SizedForMean++
+		case SizeForP95:
+			s.Counts.SizedForP95++
+		case SizeForMax:
+			s.Counts.SizedForMax++
+		}
 		switch b.Verdict {
 		case VerdictUnder:
 			s.Counts.Under++
@@ -737,22 +1058,35 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 		}
 		n := *b.Needed
 		if s.PeakNeeded == nil {
-			p, m := n, n
+			p, m := maxNeeded(n, n, true), maxNeeded(n, n, false)
 			s.PeakNeeded, s.MinNeeded = &p, &m
 		} else {
-			s.PeakNeeded.Prefill, s.PeakNeeded.Decode = max(s.PeakNeeded.Prefill, n.Prefill), max(s.PeakNeeded.Decode, n.Decode)
-			s.MinNeeded.Prefill, s.MinNeeded.Decode = min(s.MinNeeded.Prefill, n.Prefill), min(s.MinNeeded.Decode, n.Decode)
+			p, m := maxNeeded(*s.PeakNeeded, n, true), maxNeeded(*s.MinNeeded, n, false)
+			s.PeakNeeded, s.MinNeeded = &p, &m
 		}
-		s.NeededReplicaHours.Prefill += float64(n.Prefill) * h
-		s.NeededReplicaHours.Decode += float64(n.Decode) * h
-		s.ActualReplicaHours.Prefill += float64(b.Actual.Prefill) * h
-		s.ActualReplicaHours.Decode += float64(b.Actual.Decode) * h
+		need.Decode += float64(n.Decode) * h
+		had.Decode += float64(b.Actual.Decode) * h
+		if n.Prefill != nil {
+			prefillPriced = true
+			need.Prefill = ptr(valueOr(need.Prefill) + float64(*n.Prefill)*h)
+			had.Prefill = ptr(valueOr(had.Prefill) + float64(b.Actual.Prefill)*h)
+		}
+	}
+	if s.Counts.Sized > 0 {
+		s.NeededReplicaHours, s.HadReplicaHours = &need, &had
 	}
 	if gpus.Prefill > 0 && gpus.Decode > 0 {
 		g := gpus
 		s.GPUsPerReplica = &g
-		s.NeededGPUHours = ptr(s.NeededReplicaHours.Prefill*float64(g.Prefill) + s.NeededReplicaHours.Decode*float64(g.Decode))
-		s.ActualGPUHours = ptr(s.ActualReplicaHours.Prefill*float64(g.Prefill) + s.ActualReplicaHours.Decode*float64(g.Decode))
+		gh := func(r RoleHours) *float64 {
+			return ptr(valueOr(r.Prefill)*float64(g.Prefill) + r.Decode*float64(g.Decode))
+		}
+		s.HadGPUHoursAll = gh(s.HadReplicaHoursAll)
+		// A need with prefill unpriced has no GPU-hours: half a fleet's
+		// GPUs set beside a whole fleet's would read as waste.
+		if s.Counts.Sized > 0 && prefillPriced {
+			s.NeededGPUHours, s.HadGPUHours = gh(need), gh(had)
+		}
 	}
 	for _, hr := range hours {
 		switch hr.Verdict {
@@ -760,7 +1094,17 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 			s.UnderHours = append(s.UnderHours, hr.Start)
 		case VerdictOver:
 			s.OverHours = append(s.OverHours, hr.Start)
+		case VerdictRefused:
+			s.RefusedHours = append(s.RefusedHours, hr.Start)
 		}
 	}
 	return s
+}
+
+// valueOr is *p, or 0 when p is nil.
+func valueOr(p *float64) float64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }

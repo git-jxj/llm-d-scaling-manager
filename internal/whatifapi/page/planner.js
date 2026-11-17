@@ -1914,13 +1914,12 @@ function renderDay() {
   const g = dayPlanSVG(d), svg = el("daychart");
   svg.setAttribute("viewBox", g.viewBox);
   svg.innerHTML = g.markup;
-  const sw = cls => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="line ${cls}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
-  const box = cls => `<svg viewBox="0 0 18 10" aria-hidden="true"><rect class="${cls}" x="1" y="1" width="16" height="8"/></svg>`;
-  el("daylegend").innerHTML = `<span>${sw("c-0")}rate mean; replicas needed</span><span>${box("dband")}rate, mean to p95</span>` +
-    `<span>${sw("c-had")}replicas the fleet had</span><span>${box("dunder")}had fewer than needed (SLO risk)</span>` +
-    `<span>${box("dunmet")}no fleet within the bound serves the bucket</span>`;
+  el("daylegend").innerHTML = dayLegend();
+  el("dayrefused").innerHTML = dayRefusedHTML(d);
+  el("dayrefused").hidden = !(d.refused && d.refused.length);
   el("daydesc").textContent = daySummaryText(d).join(" ");
   el("daytable").innerHTML = dayHoursTable(d);
+  el("daybuckets").innerHTML = dayBucketsTable(d);
   el("daynotes").innerHTML = d.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(d.banner)}</li>`;
   dayHover(svg, g);
 }

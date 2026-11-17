@@ -22,4 +22,4 @@ fi
 
 node hack/check-planner-scenarios.mjs internal/whatifapi/page/scenario.js
 node hack/check-planner-dayplan.mjs internal/whatifapi/page/scenario.js internal/whatifapi/page/dayplan.js \
-  cmd/capacity-planner/testdata/day-plan-ols-sweep-json.golden
+  cmd/capacity-planner/testdata/day-plan-ols-sweep-json.golden cmd/capacity-planner/testdata/day-plan-staircase-b-on-json.golden

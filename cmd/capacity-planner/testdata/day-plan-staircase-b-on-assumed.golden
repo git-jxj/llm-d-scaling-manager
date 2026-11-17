@@ -1,0 +1,19 @@
+Day plan for ns-01/model-02, 2026-11-06 02:15 to 2026-11-06 03:35 UTC, buckets of 5m0s, each sized for the p95 of its cycle rates (default; the mean where a bucket holds fewer than 20 cycles)
+SLO: TTFT p90 2000ms, TPOT mean 30ms; headroom 0.85. TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.
+
+hour (UTC)        rate mean  rate p95 need P need D  had P  had D  
+2026-11-06 02:00      25.81     34.52      2      3      2      2  UNDER (SLO risk)
+2026-11-06 03:00      37.64     42.50      3      3      2      2  UNDER (SLO risk)
+
+buckets: 16 sized (10 under, 2 over, 4 match; 13 for the p95, 3 for the mean, 0 for the max), 0 beyond the bound, 0 refused, 0 too little data, 0 no data
+needed: peak 3 prefill + 3 decode, min 1 prefill + 1 decode
+replica-hours over the 16 sized buckets: needed 2.92 prefill + 3.33 decode, had 2.67 prefill + 2.67 decode
+GPU-hours over the sized buckets: needed 6.25, had 5.33
+had over every bucket with data: 2.67 prefill + 2.67 decode replica-hours, 5.33 GPU-hours (GPUs per replica: 1 prefill, 1 decode)
+hours under (SLO risk): 02:00, 03:00
+hours over (waste): none
+flags: RateFromDecodeRows, FewCyclesForP95, UnvalidatedTTFT, AssumedVP, AssumedPromptSpread, RouterHopAssumed, SpreadBeyondProcessorSharing, BelowFittedBand, KVBoundSlots, AssumedShape, AssumedPoissonArrivals, AssumedA, AssumedImbalance
+note: Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.
+note: Each bucket is sized for the p95 of its cycles' rates (the p95 of cycle rates needs 20 cycles in the bucket, else the mean), on the fleet's limit at the SLO and headroom 0.85 (POST /v1/size's search).
+note: A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.
+note: Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands.
