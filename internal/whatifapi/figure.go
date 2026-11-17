@@ -110,7 +110,7 @@ func refusedFigure(u *Refusal) Figure {
 }
 
 // Validation is the calibration envelope's verdict on a figure
-// (whatif.Envelope; docs/reference/capacity-planner-accuracy.md): the measured
+// (whatif.Envelope; docs/guides/capacity-planner/accuracy.md): the measured
 // row whose region holds it, or why none does.
 type Validation struct {
 	Validated bool `json:"validated"`

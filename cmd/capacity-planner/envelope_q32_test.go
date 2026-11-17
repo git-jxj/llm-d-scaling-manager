@@ -25,7 +25,7 @@ import (
 
 // The Qwen3-32B staircase (tensor parallelism 2, 2 prefill and 2 decode pods
 // on H200, buckets A, B and C, flow control off and on, one repeat) as the
-// planner's calibration (docs/reference/capacity-planner-accuracy.md):
+// planner's calibration (docs/guides/capacity-planner/accuracy.md):
 // every step's model figure beside what the client measured, frozen in
 // testdata/staircase-q32-validation.golden, and the envelope rows they draw
 // frozen in internal/signals/whatif/envelope.json. A change to the model, the

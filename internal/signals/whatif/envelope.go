@@ -13,7 +13,7 @@ import (
 
 // The calibration envelope: where the planner's figures were measured
 // against a client, and how far off they read there
-// (docs/reference/capacity-planner-accuracy.md). Each row is one kind of
+// (docs/guides/capacity-planner/accuracy.md). Each row is one kind of
 // figure on one shape class, from one measured run: the region the run
 // covered and the signed error it read over it. A figure inside a row's
 // region carries that row's error; any other figure reads OUTSIDE VALIDATED
