@@ -153,6 +153,78 @@ func TestDeleteIsIdempotent(t *testing.T) {
 	}
 }
 
+// failedDeleteThenList answers a DELETE with the 500 launcher v0.8.0 gives when
+// psutil's wait raises EINVAL, and a list with whatever instances are given.
+func failedDeleteThenList(listBody string) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			http.Error(w, "[Errno 22] Invalid argument", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(listBody))
+	}
+}
+
+func TestDeleteTreatsA500AsDoneWhenTheInstanceIsGone(t *testing.T) {
+	// Measured: v0.8.0 answers 500 after escalating to SIGKILL with the engine
+	// and its GPU memory already freed. Failing the eviction then makes the next
+	// pass count a dead copy as resident and evict it again.
+	f := newFakeSupervisor(t)
+	f.respond = failedDeleteThenList(`{"revision":3,"total_instances":0,"running_instances":0,"instances":[]}`)
+	if err := f.client().Delete(context.Background(), "evicted"); err != nil {
+		t.Fatalf("a 500 for an instance that is gone must be success: %v", err)
+	}
+	if f.callCount != 2 || f.lastPath != "GET "+instancesPath {
+		t.Errorf("want the DELETE then one list, got %d calls, last %q", f.callCount, f.lastPath)
+	}
+}
+
+func TestDeleteTreatsA500AsDoneWhenTheInstanceIsStopped(t *testing.T) {
+	f := newFakeSupervisor(t)
+	f.respond = failedDeleteThenList(`{"revision":3,"total_instances":1,"running_instances":0,` +
+		`"instances":[{"instance_id":"evicted","status":"stopped","options":"--port 9001"}]}`)
+	if err := f.client().Delete(context.Background(), "evicted"); err != nil {
+		t.Fatalf("a 500 for a stopped instance must be success: %v", err)
+	}
+}
+
+func TestDeleteKeepsA500WhenTheInstanceStillRuns(t *testing.T) {
+	f := newFakeSupervisor(t)
+	f.respond = failedDeleteThenList(`{"revision":3,"total_instances":1,"running_instances":1,` +
+		`"instances":[{"instance_id":"evicted","status":"running","options":"--port 9001"}]}`)
+	err := f.client().Delete(context.Background(), "evicted")
+	if err == nil {
+		t.Fatal("a 500 for an instance still running must stay an error")
+	}
+	if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "Invalid argument") {
+		t.Errorf("the supervisor's own words must survive: %v", err)
+	}
+}
+
+func TestDeleteKeepsA500WhenTheListFails(t *testing.T) {
+	f := newFakeSupervisor(t)
+	f.respond = func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "[Errno 22] Invalid argument", http.StatusInternalServerError)
+	}
+	if err := f.client().Delete(context.Background(), "evicted"); err == nil {
+		t.Fatal("an unreadable list proves nothing; the 500 must stay an error")
+	}
+}
+
+func TestDeleteDoesNotListAfterA4xx(t *testing.T) {
+	// Only a server failure is re-checked. A refusal is the supervisor's answer.
+	f := newFakeSupervisor(t)
+	f.respond = func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "bad id", http.StatusBadRequest)
+	}
+	if err := f.client().Delete(context.Background(), "evicted"); err == nil {
+		t.Fatal("a 400 must stay an error")
+	}
+	if f.callCount != 1 {
+		t.Errorf("want only the DELETE, got %d calls", f.callCount)
+	}
+}
+
 func TestErrorsCarryTheSupervisorsOwnWords(t *testing.T) {
 	f := newFakeSupervisor(t)
 	f.respond = func(w http.ResponseWriter, _ *http.Request) {

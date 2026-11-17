@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
 )
 
 // SupervisorPort is where the in-Pod supervisor listens. It is the launcher's
@@ -144,13 +148,51 @@ func (s *Supervisor) Create(ctx context.Context, id string, spec InstanceSpec) (
 // instance is not an error: eviction is idempotent by design, because a
 // controller that must know whether it already evicted something is a controller
 // that will get it wrong after a restart.
+//
+// A 5xx is checked against the instance list before it is believed. Launcher
+// v0.8.0 answers 500 ("[Errno 22] Invalid argument") when a stop has to
+// escalate to SIGKILL, although the engine and its GPU memory are gone by then:
+// psutil 7.2.2 re-raises an EINVAL from pidfd_open() for a process that was just
+// reaped (giampaolo/psutil#2715). So on a 5xx the list is read once; an instance
+// that is no longer there, or no longer running, was deleted, and the 500 is
+// only logged. Anything else, including a list that cannot be read, is still
+// the error it was, and the reconciler evicts again on its next pass.
 func (s *Supervisor) Delete(ctx context.Context, id string) error {
 	_, err := s.do(ctx, http.MethodDelete, instancesPath+"/"+url.PathEscape(id), nil)
 	var status statusError
-	if errors.As(err, &status) && status.code == http.StatusNotFound {
+	if !errors.As(err, &status) {
+		return err
+	}
+	if status.code == http.StatusNotFound {
 		return nil
 	}
+	if status.code >= http.StatusInternalServerError {
+		if state, stopped := s.stoppedAfterFailedDelete(ctx, id); stopped {
+			log.FromContext(ctx).V(logging.DEFAULT).Info(
+				"the supervisor failed the delete, but the instance is stopped; treating it as deleted",
+				"instance", id, "listed", state, "err", err.Error())
+			return nil
+		}
+	}
 	return err
+}
+
+// stoppedAfterFailedDelete reads the list once and reports whether id is gone
+// or listed as not running, with what the list said ("absent" or its status).
+// An unreadable list, or an instance with no status, counts as still running:
+// the safe answer is the error, which the next pass retries.
+func (s *Supervisor) stoppedAfterFailedDelete(ctx context.Context, id string) (string, bool) {
+	instances, err := s.List(ctx)
+	if err != nil {
+		return "", false
+	}
+	for _, inst := range instances {
+		if inst.ID != id {
+			continue
+		}
+		return inst.Status, inst.Status != "" && inst.Status != "running"
+	}
+	return "absent", true
 }
 
 func (s *Supervisor) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
