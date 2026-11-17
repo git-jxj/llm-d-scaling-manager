@@ -1785,6 +1785,7 @@ most
 mount
 move
 moved
+moves
 ms
 mu
 mu-exact-repeat-is-use
@@ -2318,6 +2319,7 @@ rejoined
 relaxed
 release
 release-taken
+releaseTo
 releaseToNonReclaimingLenders
 released
 released-to-lender

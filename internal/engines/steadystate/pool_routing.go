@@ -383,12 +383,17 @@ func (e *Engine) resolveRouting(
 	// established, else the last one while it is fresh, with the running
 	// variants' kept verdicts folded in.
 	var selected, held []string
+	publishAt := now
 	known := len(results) > 0 && results[0].Known
 	switch prevModel, ok := e.modelRouting[modelKey]; {
 	case known:
 		selected, held = results[0].Selected, results[0].Held
 	case ok && now.Sub(prevModel.at) <= routingVerdictTTL:
+		// Reused, so it keeps the time it was established: it lapses
+		// routingVerdictTTL after the last good read, as the per-variant
+		// verdicts do.
 		selected, held = prevModel.selected, prevModel.held
+		publishAt = prevModel.at
 		for _, v := range heldRunning {
 			if !slices.Contains(held, v) {
 				held = append(held, v)
@@ -407,7 +412,7 @@ func (e *Engine) resolveRouting(
 	}
 	metrics.SetUnroutedReplicas(namespace, modelID, counts)
 	if known || len(selected)+len(held) > 0 {
-		e.publishModelRouting(namespace, modelID, selected, held, now)
+		e.publishModelRouting(namespace, modelID, selected, held, publishAt)
 	} else if len(results) > 0 {
 		// Unknown for longer than the hold keeps it: no routing, as before.
 		e.publishModelRouting(namespace, modelID, nil, nil, now)

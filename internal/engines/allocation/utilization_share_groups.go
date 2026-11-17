@@ -227,14 +227,6 @@ func PlannedModels(groups []ShareGroup) map[string]bool {
 	return out
 }
 
-// BuildShareGroups turns one cycle's requests and constraints into the groups
-// the utilization-share optimizer evaluates. A model is planned when its
-// composite signal is live and informative and all its variants share one
-// accelerator type; otherwise it is frozen for the cycle (proposal §6.1 step 1).
-//
-// Committed is today's replica count, not yet the GPUs held including
-// terminating pods: that count (VariantReplicaState.HeldReplicas) is a
-// prerequisite of actuation, not of the shadow evaluation this serves.
 // hasHeldVariant reports whether any variant of the request is held
 // (VariantMetadata.HeldUnrouted).
 func hasHeldVariant(req ModelScalingRequest) bool {
@@ -246,6 +238,14 @@ func hasHeldVariant(req ModelScalingRequest) bool {
 	return false
 }
 
+// BuildShareGroups turns one cycle's requests and constraints into the groups
+// the utilization-share optimizer evaluates. A model is planned when its
+// composite signal is live and informative and all its variants share one
+// accelerator type; otherwise it is frozen for the cycle (proposal §6.1 step 1).
+//
+// Committed is today's replica count, not yet the GPUs held including
+// terminating pods: that count (VariantReplicaState.HeldReplicas) is a
+// prerequisite of actuation, not of the shadow evaluation this serves.
 func BuildShareGroups(requests []ModelScalingRequest, constraints []*ResourceConstraints, opts ShareGroupOptions) []ShareGroup {
 	if len(constraints) == 0 {
 		return nil

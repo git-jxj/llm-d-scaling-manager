@@ -73,7 +73,9 @@ each variant's last verdict for **5 minutes** (`routingVerdictTTL`, ten cycles
 at the default interval): a held variant stays held and is not sized, and
 unselected Pods stay excluded. After 5 minutes without a good read, the
 verdict lapses and every replica is counted as before, the same as an install
-whose pools were never readable. A lapse is logged once; it is not a release.
+whose pools were never readable. The model's selected and held lists, which
+scale from zero reads, keep the time of the last good read too and lapse at the
+same moment. A lapse is logged once; it is not a release.
 A variant never seen before is counted as before at once.
 
 A failed pool listing is counted once per namespace per cycle in
@@ -122,6 +124,16 @@ is held, as before v0.12.0.
 - **Warm pool.** A lent Pod carries the pool's selector labels by design, so
   it stays selected; it is demand and not supply, as before. A held variant is
   never short, so the pool does not lend to it.
+- **Short windows where scale from zero reads as before.** Until the first
+  steady-state cycle after a restart publishes the routing, and while only the
+  parked-variant listing fails, scale from zero has no routing for a model and
+  treats it as before the feature: a running held canary covers it, and a
+  parked held variant could be woken. Both last about one cycle. A variant
+  created between cycles in a routed model is in neither list and does not
+  cover it until the next cycle: at worst one extra wake.
+- **A blocked Kueue release is logged.** A release that would lower a held
+  variant leaves it alone and logs that once every 10 minutes, naming the
+  variant, so a quota a lender cannot get back is visible.
 - **Not covered yet.** The warm pool's return rule reads rows before they are
   filtered, and an external analyzer sums its own PromQL series, which never
   pass through this filter. Both are follow-ups.

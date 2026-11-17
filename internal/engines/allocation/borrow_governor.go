@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/accelerator"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
@@ -1407,15 +1409,37 @@ func heldOf(s domain.VariantReplicaState) int {
 	return s.CurrentReplicas
 }
 
+// heldReleaseLogEvery is how often a release blocked by a held variant is
+// logged again while it stays blocked.
+const heldReleaseLogEvery = 10 * time.Minute
+
+// heldReleaseLogged is when a blocked release was last logged, by variant key.
+var heldReleaseLogged sync.Map
+
 // lowerTo caps a decision's target at to, as a scale-down the release owns.
 // A held variant (no InferencePool selects it) is left alone: nothing moves it.
+// The release it blocks is logged, once per heldReleaseLogEvery, so a quota a
+// lender cannot get back is visible.
 func lowerTo(decisions []domain.VariantDecision, byVariant map[string]int, key string, to int, reason string) {
 	i, ok := byVariant[key]
 	if !ok {
 		return
 	}
 	d := &decisions[i]
-	if d.HeldUnrouted || d.TargetReplicas <= to {
+	if d.HeldUnrouted {
+		if d.TargetReplicas > to {
+			now := time.Now()
+			if last, seen := heldReleaseLogged.Load(key); !seen || now.Sub(last.(time.Time)) >= heldReleaseLogEvery {
+				heldReleaseLogged.Store(key, now)
+				ctrl.Log.WithName("borrow").Info("a Kueue release cannot lower a held variant: no InferencePool selects it, and nothing moves a held variant",
+					"variant", d.VariantName, "namespace", d.Namespace, "replicas", d.TargetReplicas,
+					"releaseTo", to, "release", reason,
+					"fix", "add labels to its pod template that an InferencePool selects, or remove the variant")
+			}
+		}
+		return
+	}
+	if d.TargetReplicas <= to {
 		return
 	}
 	d.TargetReplicas = to
