@@ -112,6 +112,12 @@ llmsm_undeploy_watch_namespace_rbac() {
         kubectl delete rolebinding "$hbinding" -n "$watched" --ignore-not-found > /dev/null 2>&1 || true
         kubectl delete role "$hrole" -n "$watched" --ignore-not-found > /dev/null 2>&1 || true
     fi
+    if declare -F llmsm_watch_dset_role_writer_names >/dev/null; then
+        local drole dbinding
+        read -r drole dbinding <<< "$(llmsm_watch_dset_role_writer_names)"
+        kubectl delete rolebinding "$dbinding" -n "$watched" --ignore-not-found > /dev/null 2>&1 || true
+        kubectl delete role "$drole" -n "$watched" --ignore-not-found > /dev/null 2>&1 || true
+    fi
     log_info "Removed the controller's permissions in $watched (Role/$role, RoleBinding/$binding)"
 }
 
@@ -143,6 +149,8 @@ EOF
     # the KEDA HPA repair grant an install made with it (absent objects are
     # ignored).
     llmsm_append_keda_hpa_repair_component "$tmp_overlay"
+    # And the role writer's grant (DSET_ROLE_WRITER), the same way.
+    llmsm_append_dset_role_writer_component "$tmp_overlay"
 
     # The SAME rename the install applied. Without it, `delete -k` resolves the
     # FIXED binding names and removes whichever install currently owns them — so

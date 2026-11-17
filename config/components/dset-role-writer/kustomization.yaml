@@ -8,17 +8,14 @@ kind: Component
 # v0.10.0). External roles are scaled by KEDA through their role scaler and
 # need none of this.
 #
-# Opt-in, admin-applied, and NOT listed in any overlay: it grants patch on every
-# DisaggregatedSet in the cluster, which reaches every field of the set, and
-# turns the writer on in the Deployment. The installer does not add it.
+# Opt-in, and NOT listed in any overlay: the installer adds it to the render
+# only with DSET_ROLE_WRITER=true (llmsm_append_dset_role_writer_component). It
+# grants get, list and patch on every DisaggregatedSet in the cluster, which
+# reaches every field of the set, and turns the writer on in the Deployment.
 #
-# Apply it ABOVE the overlay, in a kustomization of your own that lists the
-# overlay under resources, this component under components, and the
-# controller's namespace under `namespace:`. The names here are final, as the
-# overlay's namePrefix leaves them. Listed in the overlay's own components
-# instead, the names get the prefix twice and the Deployment patch matches
-# nothing, so the writer stays off with no error; without `namespace:`, the
-# binding's subject has none. See docs/proposals/disaggregatedset.md.
+# Applied at the installer's top level, above the overlay's namePrefix, so the
+# names here are the final ones; the installer renames the ClusterRole and its
+# binding per install like the others (LLMSM_OWNED_CLUSTER_ROLES).
 resources:
 - dset-role-writer-clusterrole.yaml
 - dset-role-writer-clusterrolebinding.yaml

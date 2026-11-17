@@ -3349,7 +3349,7 @@ so_dset_role_block() {
         return 0
     fi
     if [ "$mode" != "External" ]; then
-        printf '%s' "Role $role of DisaggregatedSet $set is in scaling.mode $mode, so its replica count is spec.roles[$role].spec.replicas, which has no /scale subresource for KEDA to drive. Preferred: set scaling.mode: External on the role and remove its spec.replicas (LWS v0.10.0 or newer; the set controller then creates DisaggregatedSetRoleScaler $set-$role, seeded with the current group count, so nothing drains), then re-run this plan. Otherwise (LWS v0.9.0, or the role must stay Static): no ScaledObject; install the dset-role-writer component and annotate the set scaling-manager.llmd.ai/role-writer=true and scaling-manager.llmd.ai/model-id, and the controller writes the role's replicas itself."
+        printf '%s' "Role $role of DisaggregatedSet $set is in scaling.mode $mode, so its replica count is spec.roles[$role].spec.replicas, which has no /scale subresource for KEDA to drive. Preferred: set scaling.mode: External on the role and remove its spec.replicas (LWS v0.10.0 or newer; the set controller then creates DisaggregatedSetRoleScaler $set-$role, seeded with the current group count, so nothing drains), then re-run this plan. Otherwise (LWS v0.9.0, or the role must stay Static): no ScaledObject; install with DSET_ROLE_WRITER=true, annotate the set scaling-manager.llmd.ai/role-writer=true and scaling-manager.llmd.ai/model-id, and the controller writes the role's replicas itself (docs/reference/disaggregatedset.md)."
         return 0
     fi
     if [ "${slices:-1}" -gt 1 ]; then
