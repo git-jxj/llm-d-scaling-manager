@@ -374,7 +374,7 @@ func wiPods() []client.Object {
 // wiImage is the engines' image. Its tag names the vLLM release, which the
 // controller reads off the Deployment and a capture off
 // kube_pod_container_info, so both resolve the release's defaults alike.
-const wiImage = "quay.io/vllm/vllm-openai:v0.34.0"
+const wiImage = "registry.example.com/vllm/vllm-openai:v0.34.0"
 
 // wiDeployment is a variant's Deployment, as a capture describes it from
 // its flags and kube-state-metrics (whatifsource scaleTargetOf).

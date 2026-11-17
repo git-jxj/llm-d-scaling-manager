@@ -144,6 +144,8 @@ const (
 	VLLMVersionFromAnnotation = "annotation"
 	// VLLMVersionFromImageTag: the tag of a vllm-openai image.
 	VLLMVersionFromImageTag = "image tag"
+	// VLLMVersionUnread: nothing named the release, which is unknown.
+	VLLMVersionUnread = "none"
 )
 
 // vllmVersionOf is the release a scale target states with the

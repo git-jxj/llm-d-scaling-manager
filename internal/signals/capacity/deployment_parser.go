@@ -41,6 +41,9 @@ func ParseEngineArgsOn(engine inferenceengine.Engine, scaleTarget scaletarget.Sc
 	params.DeclaredBatchCap = declaredBatchCap(annots)
 	if params.Engine == inferenceengine.EngineVLLM {
 		params.VLLMVersion, params.VLLMVersionFrom = vllmVersionOf(annots, params.Image)
+		if params.VLLMVersionFrom == "" {
+			params.VLLMVersionFrom = VLLMVersionUnread
+		}
 		applyVLLMDefaults(&params, accelerator)
 	}
 	return params
@@ -261,7 +264,8 @@ type EngineParams struct {
 	// VLLMVersionFrom says where VLLMVersion was read from:
 	// VLLMVersionFromAnnotation, VLLMVersionFromImageTag, or what a caller
 	// that builds the scale target itself names (the capacity planner's
-	// capture flags); "" when the release is unknown. Provenance only, never
+	// capture flags); VLLMVersionUnread when nothing names it, and "" in a
+	// recording made before the release was read. Provenance only, never
 	// hashed or compared. Left out of a recording while empty, so a
 	// recording made before it reads back byte for byte.
 	VLLMVersionFrom string `learnrec:"omitzero"`

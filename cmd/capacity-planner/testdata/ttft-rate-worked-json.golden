@@ -82,11 +82,11 @@
         "engine": {
           "engine": "vllm",
           "stepBudget": 8192,
-          "stepBudgetSource": "flag",
+          "stepBudgetSource": "not recorded",
           "gpuMemoryUtilization": 0.9,
-          "gpuMemoryUtilizationSource": "default",
+          "gpuMemoryUtilizationSource": "not recorded",
           "blockSize": 128,
-          "blockSizeSource": "default"
+          "blockSizeSource": "not recorded"
         }
       },
       "results": {
@@ -124,11 +124,11 @@
         "prefillEngine": {
           "engine": "vllm",
           "stepBudget": 65536,
-          "stepBudgetSource": "flag",
+          "stepBudgetSource": "not recorded",
           "gpuMemoryUtilization": 0.9,
-          "gpuMemoryUtilizationSource": "default",
+          "gpuMemoryUtilizationSource": "not recorded",
           "blockSize": 128,
-          "blockSizeSource": "default"
+          "blockSizeSource": "not recorded"
         },
         "percentile": 0.95,
         "targetSeconds": 0.2,

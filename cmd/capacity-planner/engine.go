@@ -9,16 +9,20 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
-// What the engine figures were read from: the engine's flag, or the default
-// its release runs (docs/reference/vllm-versions.md).
+// What the engine figures were read from: the engine's flag, the default
+// its release runs (docs/reference/vllm-versions.md), or nothing a recording
+// made before the release was read can say.
 const (
-	engineSetByFlag = "flag"
-	engineDefault   = "default"
+	engineSetByFlag     = "flag"
+	engineDefault       = "default"
+	engineNotRecorded   = "not recorded"
+	notPricedYetWording = "for reference, not priced yet"
 )
 
-// wireEngine is the engine a variant was priced as: which one, for vLLM the
-// release and where it was read from, and the figures that release's
-// defaults decide where the engine's flags set none.
+// wireEngine is the engine a variant runs: which one, for vLLM the release
+// and where it was read from, and the figures that release's defaults decide
+// where the engine's flags set none. It is reported for reference: no answer
+// reads these figures yet.
 type wireEngine struct {
 	Engine string `json:"engine"`
 	// VLLMVersion is the release ("0.34"), absent when unknown, and
@@ -43,7 +47,10 @@ func engineOf(p *capacity.EngineParams) *wireEngine {
 		return nil
 	}
 	source := func(set bool) string {
-		if set {
+		switch {
+		case notRecorded(p):
+			return engineNotRecorded
+		case set:
 			return engineSetByFlag
 		}
 		return engineDefault
@@ -86,17 +93,25 @@ func engineInfo(p *capacity.EngineParams) *whatifapi.EngineInfo {
 		BlockSize: w.BlockSize, BlockSizeSource: w.BlockSizeSource}
 }
 
+// notRecorded reports whether p is a vLLM engine's from a recording made
+// before the release was read: it names no release and no reason why, and
+// its figures' sources were not recorded either.
+func notRecorded(p *capacity.EngineParams) bool {
+	return p.Engine != inferenceengine.EngineSGLang && !p.VLLMVersion.Known() && p.VLLMVersionFrom == ""
+}
+
 // engineText names the engine p describes and, for vLLM, the release and
-// where it was read from: "vLLM 0.34 (from image tag)". An unknown release
-// says so: the defaults are then an unknown release's.
+// where it was read from: "vLLM 0.34 (from image tag)".
 func engineText(p *capacity.EngineParams) string {
 	switch {
 	case p == nil:
 		return "engine not recorded"
 	case p.Engine == inferenceengine.EngineSGLang:
 		return "SGLang"
+	case notRecorded(p):
+		return "vLLM release not recorded"
 	case !p.VLLMVersion.Known():
-		return "vLLM release unknown (an unknown release's defaults)"
+		return "vLLM release unknown"
 	case p.VLLMVersionFrom == "":
 		return "vLLM " + p.VLLMVersion.String()
 	}
@@ -104,13 +119,16 @@ func engineText(p *capacity.EngineParams) string {
 }
 
 // engineRowText is engineText with the figures the release decides where
-// the flags do not: the step budget, the memory share and the block size.
+// the flags do not: the step budget, the memory share and the block size,
+// said to be reported only, as no answer reads them yet. A recording made
+// before the release was read gets engineText alone: its figures' sources
+// are not known.
 func engineRowText(p *capacity.EngineParams) string {
 	w := engineOf(p)
-	if w == nil {
+	if w == nil || notRecorded(p) {
 		return engineText(p)
 	}
-	return fmt.Sprintf("%s: step budget %d (%s), GPU memory %s (%s), block size %d (%s)", engineText(p),
-		w.StepBudget, w.StepBudgetSource, num(w.GPUMemoryUtilization), w.GPUMemoryUtilizationSource,
+	return fmt.Sprintf("%s; %s: step budget %d (%s), GPU memory %s (%s), block size %d (%s)", engineText(p),
+		notPricedYetWording, w.StepBudget, w.StepBudgetSource, num(w.GPUMemoryUtilization), w.GPUMemoryUtilizationSource,
 		w.BlockSize, w.BlockSizeSource)
 }

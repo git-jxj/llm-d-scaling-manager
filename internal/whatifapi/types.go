@@ -95,11 +95,13 @@ type RoleInfo struct {
 	Engine   *EngineInfo `json:"engine,omitempty"`
 }
 
-// EngineInfo is the engine a variant was priced as: which one, for vLLM the
-// release and where it was read from (annotation, image tag, --vllm-version,
-// --engine-image; both absent when unknown), and the figures that release's
-// defaults decide where the engine's flags set none, each with its source
-// (flag or default). See docs/reference/vllm-versions.md.
+// EngineInfo is the engine a variant runs: which one, for vLLM the release
+// and where it was read from (annotation, image tag, --vllm-version,
+// --engine-image, none; both absent in a recording made before the release
+// was read), and the figures that release's defaults decide where the
+// engine's flags set none, each with its source (flag, default, not
+// recorded). It is reported for reference: no figure of an answer reads it
+// yet. See docs/reference/vllm-versions.md.
 type EngineInfo struct {
 	Engine                     string  `json:"engine"`
 	Summary                    string  `json:"summary"`

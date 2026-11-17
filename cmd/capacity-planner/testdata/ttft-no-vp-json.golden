@@ -28,11 +28,11 @@
         "prefillEngine": {
           "engine": "vllm",
           "stepBudget": 65536,
-          "stepBudgetSource": "flag",
+          "stepBudgetSource": "not recorded",
           "gpuMemoryUtilization": 0.9,
-          "gpuMemoryUtilizationSource": "default",
+          "gpuMemoryUtilizationSource": "not recorded",
           "blockSize": 128,
-          "blockSizeSource": "default"
+          "blockSizeSource": "not recorded"
         },
         "targetSeconds": 1,
         "assumed": []

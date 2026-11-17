@@ -7,6 +7,7 @@
 --kube-state-metrics
 --max-num-seqs
 --max-running-requests
+--metric-annotations-allowlist
 --metric-labels-allowlist
 --model-path
 --pipeline-parallel-size
@@ -144,6 +145,7 @@ DecodeTermOmitted
 DecodeTermPrefixHits
 Deleted
 Deployment
+Deployments
 DisaggregatedSet
 Discarding
 E1-const
@@ -1123,6 +1125,7 @@ expected
 expects
 expert_parallel
 expert_parallel_size
+export
 exported
 exports
 external
@@ -1808,6 +1811,7 @@ moe_a2a_backend
 monotonicity
 more
 most
+mostly
 mount
 move
 moved
@@ -2770,6 +2774,7 @@ starts
 stashed
 stashedWindows
 state
+states
 static
 stationary
 statistic
@@ -3073,6 +3078,7 @@ victim
 vllm
 vllm-openai
 vllm-openai-rocm
+vllm-version
 vllm.entrypoints
 vllm:cache_config_info
 vllm:num_requests_running

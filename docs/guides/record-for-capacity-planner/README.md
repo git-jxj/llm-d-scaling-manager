@@ -36,7 +36,9 @@ is the reference for both.
   `curl --version` says which), plus `kubectl get` on the model Deployments.
 - [ ] kube-state-metrics in the same Prometheus, for readiness and roles,
   with `--metric-labels-allowlist=pods=[llm-d.ai/role],nodes=[nvidia.com/gpu.product]`
-  so it exports each Pod's role and each node's accelerator.
+  so it exports each Pod's role and each node's accelerator, and, optionally,
+  `--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]`
+  so it exports the [vLLM release](#the-vllm-release) annotation.
   Without it, see [Without kube-state-metrics](#without-kube-state-metrics).
 
 <!-- guide:prerequisites start -->
@@ -474,15 +476,19 @@ Ready), and LeaderWorkerSets (use `--role-of`). The `flag:` lines name each.
 ## The vLLM release
 
 vLLM changes the defaults of `--max-num-batched-tokens`,
-`--gpu-memory-utilization` and `--block-size` between releases, and the
-planner prices each variant with its release's defaults, as the controller
-does. See [vLLM versions](../../reference/vllm-versions.md) for the values.
+`--gpu-memory-utilization` and `--block-size` between releases. The planner
+records which release each variant runs and shows the values those defaults
+resolve to, the ones the controller uses. They key the learned state, and
+the answers report them for reference: no figure of an answer reads them
+yet. See [vLLM versions](../../reference/vllm-versions.md) for the values.
 
 With `--kube-state-metrics` the capture reads the release from what the
 workload ran: the Deployment's `scaling-manager.llmd.ai/vllm-version`
 annotation, else a `vllm-openai` image tag. kube-state-metrics exports the
 image by default; the annotation needs
 `--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]`.
+kube-state-metrics exports no LeaderWorkerSet annotations, so an annotated
+LeaderWorkerSet reads as unknown.
 
 Where neither is there (llm-d's own images, a digest, no kube-state-metrics),
 give the release yourself:
@@ -491,14 +497,22 @@ give the release yourself:
 bin/capacity-planner capture ... --vllm-version 0.34
 ```
 
-What the workload shows wins over the flags. The capture prints the release
-and where it came from on each variant's line, and every answer repeats it:
+What the workload shows wins over the flags, as in the controller. The
+capture prints the release and where it came from on each variant's line,
+and every answer repeats it:
 
 ```
-engine          vLLM 0.34 (from image tag): step budget 8192 (default), GPU memory 1 (default), block size 64 (default)
+engine          vLLM 0.34 (from image tag); for reference, not priced yet: step budget 8192 (default), GPU memory 1 (default), block size 64 (default)
 ```
 
-`vLLM release unknown` means the planner used an unknown release's defaults.
+The capture adds a `flag:` line when:
+
+- a flag names another release than the workload shows (the workload's is used);
+- a variant ran more than one release in the window (the one most Pods ran is used);
+- no annotation, tag or flag names the release (`vLLM release unknown`): give
+  `--vllm-version`, or allowlist the annotation.
+
+A recording made before the planner read releases says `vLLM release not recorded`.
 
 ## Load on Prometheus
 
