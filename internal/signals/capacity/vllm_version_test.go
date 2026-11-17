@@ -72,20 +72,21 @@ func TestVLLMVersionAnnotationWinsOverTheTag(t *testing.T) {
 	cases := []struct {
 		annotation, image string
 		want              VLLMVersion
+		from              string
 	}{
-		{"", imageV0271, VLLMVersion{0, 27}},
-		{"0.34", imageUnknown, VLLMVersion{0, 34}},
-		{"0.34", imageV0271, VLLMVersion{0, 34}},
-		{"not a version", imageV0271, VLLMVersion{0, 27}},
-		{"not a version", imageUnknown, VLLMVersion{}},
+		{"", imageV0271, VLLMVersion{0, 27}, VLLMVersionFromImageTag},
+		{"0.34", imageUnknown, VLLMVersion{0, 34}, VLLMVersionFromAnnotation},
+		{"0.34", imageV0271, VLLMVersion{0, 34}, VLLMVersionFromAnnotation},
+		{"not a version", imageV0271, VLLMVersion{0, 27}, VLLMVersionFromImageTag},
+		{"not a version", imageUnknown, VLLMVersion{}, ""},
 	}
 	for _, tc := range cases {
 		annots := map[string]string{}
 		if tc.annotation != "" {
 			annots[annotations.VLLMVersion] = tc.annotation
 		}
-		if got := vllmVersionOf(annots, tc.image); got != tc.want {
-			t.Errorf("annotation %q, image %q: got %v, want %v", tc.annotation, tc.image, got, tc.want)
+		if got, from := vllmVersionOf(annots, tc.image); got != tc.want || from != tc.from {
+			t.Errorf("annotation %q, image %q: got %v from %q, want %v from %q", tc.annotation, tc.image, got, from, tc.want, tc.from)
 		}
 	}
 }

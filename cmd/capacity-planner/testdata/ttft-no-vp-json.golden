@@ -25,6 +25,15 @@
       "variant": "variant-02",
       "ttft": {
         "decodeVariant": "variant-01",
+        "prefillEngine": {
+          "engine": "vllm",
+          "stepBudget": 65536,
+          "stepBudgetSource": "flag",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "default",
+          "blockSize": 128,
+          "blockSizeSource": "default"
+        },
         "targetSeconds": 1,
         "assumed": []
       },

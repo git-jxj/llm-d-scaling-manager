@@ -87,10 +87,30 @@ type FleetInfo struct {
 	Decode  RoleInfo  `json:"decode"`
 }
 
-// RoleInfo is one role's variant and its replica count at the cycle.
+// RoleInfo is one role's variant and its replica count at the cycle, and
+// the engine it runs.
 type RoleInfo struct {
-	Variant  string `json:"variant"`
-	Replicas int    `json:"replicas"`
+	Variant  string      `json:"variant"`
+	Replicas int         `json:"replicas"`
+	Engine   *EngineInfo `json:"engine,omitempty"`
+}
+
+// EngineInfo is the engine a variant was priced as: which one, for vLLM the
+// release and where it was read from (annotation, image tag, --vllm-version,
+// --engine-image; both absent when unknown), and the figures that release's
+// defaults decide where the engine's flags set none, each with its source
+// (flag or default). See docs/reference/vllm-versions.md.
+type EngineInfo struct {
+	Engine                     string  `json:"engine"`
+	Summary                    string  `json:"summary"`
+	VLLMVersion                string  `json:"vllmVersion,omitempty"`
+	VLLMVersionFrom            string  `json:"vllmVersionFrom,omitempty"`
+	StepBudget                 int64   `json:"stepBudget"`
+	StepBudgetSource           string  `json:"stepBudgetSource"`
+	GPUMemoryUtilization       float64 `json:"gpuMemoryUtilization"`
+	GPUMemoryUtilizationSource string  `json:"gpuMemoryUtilizationSource"`
+	BlockSize                  int64   `json:"blockSize"`
+	BlockSizeSource            string  `json:"blockSizeSource"`
 }
 
 // Observed is the traffic the source saw.

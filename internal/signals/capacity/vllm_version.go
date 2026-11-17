@@ -137,13 +137,26 @@ func vllmVersionOfRef(ref string) VLLMVersion {
 // "vllm" image or a "vllm-openai-patched" build has a tag scheme of its own.
 var vllmRepositories = map[string]bool{"vllm-openai": true, "vllm-openai-rocm": true}
 
+// Where a release was read from (EngineParams.VLLMVersionFrom).
+const (
+	// VLLMVersionFromAnnotation: the scaling-manager.llmd.ai/vllm-version
+	// annotation.
+	VLLMVersionFromAnnotation = "annotation"
+	// VLLMVersionFromImageTag: the tag of a vllm-openai image.
+	VLLMVersionFromImageTag = "image tag"
+)
+
 // vllmVersionOf is the release a scale target states with the
-// scaling-manager.llmd.ai/vllm-version annotation, else the one its image tag names.
-func vllmVersionOf(annots map[string]string, image string) VLLMVersion {
+// scaling-manager.llmd.ai/vllm-version annotation, else the one its image tag
+// names, and where it was read from ("" when unknown).
+func vllmVersionOf(annots map[string]string, image string) (VLLMVersion, string) {
 	if v := ParseVLLMVersion(annots[annotations.VLLMVersion]); v.Known() {
-		return v
+		return v, VLLMVersionFromAnnotation
 	}
-	return VLLMVersionFromImage(image)
+	if v := VLLMVersionFromImage(image); v.Known() {
+		return v, VLLMVersionFromImageTag
+	}
+	return VLLMVersion{}, ""
 }
 
 // The defaults this package used before it read versions. They stay the

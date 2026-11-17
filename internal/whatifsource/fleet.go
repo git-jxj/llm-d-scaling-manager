@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/annotations"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/locator"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
@@ -54,13 +55,17 @@ const (
 	ksmPodNode        = `kube_pod_info{namespace="%[1]s"}`
 	ksmNodeLabels     = `kube_node_labels`
 	ksmDeployReplicas = `kube_deployment_spec_replicas{namespace="%[1]s"}`
+	// The image each container runs, and the Deployments' annotations:
+	// annotation_* only for the keys --metric-annotations-allowlist names.
+	ksmPodContainers    = `kube_pod_container_info{namespace="%[1]s"}`
+	ksmDeployAnnotation = `kube_deployment_annotations{namespace="%[1]s"}`
 )
 
 // KSM is the kube-state-metrics queries a capture of one namespace asks.
 type KSM struct {
 	PodLabels, PodOwner, ReplicaSetOwner, PodRunning, PodReady, PodReadyTime string
 	PodCreated, PodStarted, PodDeleted, PodGPUs, PodNode, NodeLabels         string
-	DeploymentReplicas                                                       string
+	DeploymentReplicas, PodContainers, DeploymentAnnotations                 string
 }
 
 // KSMQueries is the kube-state-metrics queries a capture of namespace
@@ -73,7 +78,8 @@ func KSMQueries(namespace string) KSM {
 		PodRunning: in(ksmPodRunning), PodReady: in(ksmPodReady), PodReadyTime: in(ksmPodReadyTime),
 		PodCreated: in(ksmPodCreated), PodStarted: in(ksmPodStarted), PodDeleted: in(ksmPodDeleted),
 		PodGPUs: in(ksmPodGPUs), PodNode: in(ksmPodNode), NodeLabels: ksmNodeLabels,
-		DeploymentReplicas: in(ksmDeployReplicas),
+		DeploymentReplicas: in(ksmDeployReplicas), PodContainers: in(ksmPodContainers),
+		DeploymentAnnotations: in(ksmDeployAnnotation),
 	}
 }
 
@@ -96,8 +102,11 @@ type pod struct {
 	// overlap is every --role-of that picked it; more than one is refused
 	// (ErrRoleOverlap).
 	overlap []string
-	// ownerKind is the kind kube-state-metrics says owns it.
-	ownerKind string
+	// ownerKind is the kind kube-state-metrics says owns it, and deployment
+	// the Deployment behind its ReplicaSet, "" for none.
+	ownerKind, deployment string
+	// images is the image of each of its containers, sorted.
+	images []string
 
 	running, ready, deleting bool
 	created, started, since  time.Time
@@ -119,12 +128,16 @@ type fleet struct {
 	// node's accelerator.
 	replicas  map[string]int
 	nodeAccel map[string]string
+	// vllmVersion is the scaling-manager.llmd.ai/vllm-version annotation of
+	// each Deployment that kube-state-metrics exports it for.
+	vllmVersion map[string]string
 }
 
 // fleetAt reads the fleet at the step api is set to.
 func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, roleOf []RoleOf) (*fleet, error) {
 	f := &fleet{namespace: namespace, ksm: ksm, roleOf: roleOf, pods: map[string]*pod{},
-		named: map[string]*pod{}, replicas: map[string]int{}, nodeAccel: map[string]string{}}
+		named: map[string]*pod{}, replicas: map[string]int{}, nodeAccel: map[string]string{},
+		vllmVersion: map[string]string{}}
 	if !ksm {
 		return f, nil
 	}
@@ -146,6 +159,7 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 	runningV, readyV, readyTimeV := ask(k.PodRunning), ask(k.PodReady), ask(k.PodReadyTime)
 	createdV, startedV, deletedV := ask(k.PodCreated), ask(k.PodStarted), ask(k.PodDeleted)
 	gpusV, nodeV, nodeLabelsV, replicasV := ask(k.PodGPUs), ask(k.PodNode), ask(k.NodeLabels), ask(k.DeploymentReplicas)
+	containersV, annotationsV := ask(k.PodContainers), ask(k.DeploymentAnnotations)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +212,7 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 		rs := string(s.Metric["owner_name"])
 		if d := rsOwner[rs]; d != "" {
 			owner[name] = d
+			f.pods[name].deployment = d
 			// A Deployment's ReplicaSet is named <deployment>-<pod-template-hash>.
 			f.pods[name].revision = strings.TrimPrefix(rs, d+"-")
 		}
@@ -225,6 +240,25 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 	for _, s := range replicasV {
 		if d := string(s.Metric["deployment"]); d != "" && finite(float64(s.Value)) {
 			f.replicas[d] = int(math.Round(float64(s.Value)))
+		}
+	}
+	for _, s := range containersV {
+		p := f.pods[string(s.Metric["pod"])]
+		// image_spec is the image the spec names; image, which older
+		// kube-state-metrics export alone, the one the runtime reports.
+		image := string(s.Metric["image_spec"])
+		if image == "" {
+			image = string(s.Metric["image"])
+		}
+		if p != nil && image != "" && !slices.Contains(p.images, image) {
+			p.images = append(p.images, image)
+			slices.Sort(p.images)
+		}
+	}
+	versionLabel := model.LabelName(ksmAnnotationName(annotations.VLLMVersion))
+	for _, s := range annotationsV {
+		if d, v := string(s.Metric["deployment"]), string(s.Metric[versionLabel]); d != "" && v != "" {
+			f.vllmVersion[d] = v
 		}
 	}
 	for name, p := range f.pods {

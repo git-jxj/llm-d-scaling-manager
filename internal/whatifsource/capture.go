@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/annotations"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/registration"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source"
@@ -101,6 +102,15 @@ type Options struct {
 	// does not give.
 	GPUsPerReplica int
 	Accelerator    string
+	// VLLMVersion and EngineImage stand in for the vLLM release where
+	// kube-state-metrics gives none: VLLMVersion as the
+	// scaling-manager.llmd.ai/vllm-version annotation would state it ("0.34"),
+	// EngineImage as the engine container's image. The release decides the
+	// defaults of the flags the engine leaves unset (see
+	// docs/reference/vllm-versions.md); without either, and without
+	// kube-state-metrics, it is unknown.
+	VLLMVersion string
+	EngineImage string
 	// Force captures a window of more than MaxStepQueries steps times
 	// queries, or more than MaxSamples samples.
 	Force bool
@@ -209,6 +219,8 @@ func (o *Options) check() error {
 		return fmt.Errorf("batch cap %d is negative", o.BatchCap)
 	case o.GPUsPerReplica < 0:
 		return fmt.Errorf("GPUs per replica %d is negative", o.GPUsPerReplica)
+	case o.VLLMVersion != "" && !capacity.ParseVLLMVersion(o.VLLMVersion).Known():
+		return fmt.Errorf("vLLM version %q is not a release such as 0.34", o.VLLMVersion)
 	}
 	return CheckRoleOf(o.RoleOf)
 }
@@ -244,6 +256,11 @@ type variantInfo struct {
 	// Pods' accelerators; empty without kube-state-metrics.
 	gpus   map[int]int
 	accels map[string]int
+	// images counts its Pods' images whose tag names a vLLM release
+	// (capacity.VLLMVersionFromImage), and versions its Deployments'
+	// scaling-manager.llmd.ai/vllm-version annotations; both empty without
+	// kube-state-metrics.
+	images, versions map[string]int
 	// multiPod is whether kube-state-metrics shows its Pods in multi-Pod
 	// groups (FlagMultiPodGroups).
 	multiPod bool
@@ -482,7 +499,8 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 			scan.engines[name] = true
 			v := scan.variants[p.variant]
 			if v == nil {
-				v = &variantInfo{model: modelID, role: p.role, gpus: map[int]int{}, accels: map[string]int{}}
+				v = &variantInfo{model: modelID, role: p.role, gpus: map[int]int{}, accels: map[string]int{},
+					images: map[string]int{}, versions: map[string]int{}}
 				scan.variants[p.variant] = v
 			}
 			scan.inferred = scan.inferred || p.inferred
@@ -493,6 +511,14 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 				}
 				if a := f.nodeAccel[p.node]; a != "" {
 					v.accels[a]++
+				}
+				for _, image := range p.images {
+					if capacity.VLLMVersionFromImage(image).Known() {
+						v.images[image]++
+					}
+				}
+				if a := f.vllmVersion[p.deployment]; capacity.ParseVLLMVersion(a).Known() {
+					v.versions[a]++
 				}
 			}
 			if _, ok := p.labels[ksmLabelName("llm-d.ai/role")]; ok {
@@ -539,10 +565,15 @@ func windowVariants(scan *windowScan, opts Options) ([]learnreplay.CaptureVarian
 		if !ok {
 			accel, accelFromFlags = opts.Accelerator, opts.KubeStateMetrics
 		}
-		st := scaleTargetOf(opts, name, info.model, gpus, accel)
+		rel := releaseOf(info, opts)
+		st := scaleTargetOf(opts, name, info.model, gpus, accel, rel)
+		params := capacity.ParseEngineArgsOn(inferenceengine.Detect(st), st, accel)
+		if params.VLLMVersion.Known() {
+			params.VLLMVersionFrom = rel.from
+		}
 		out = append(out, learnreplay.CaptureVariant{
 			ModelID: info.model, Name: name, Role: info.role, Accelerator: accel, GpuCount: gpus,
-			Params: capacity.ParseEngineArgsOn(inferenceengine.Detect(st), st, accel),
+			Params: params,
 		})
 	}
 	if scan.inferred {
@@ -571,17 +602,72 @@ func windowVariants(scan *windowScan, opts Options) ([]learnreplay.CaptureVarian
 	return out, flags
 }
 
+// Where a capture's flags gave a variant's vLLM release
+// (capacity.EngineParams.VLLMVersionFrom); a release kube-state-metrics gave
+// is capacity.VLLMVersionFromAnnotation or capacity.VLLMVersionFromImageTag.
+const (
+	VLLMVersionFromFlag        = "--vllm-version"
+	VLLMVersionFromEngineImage = "--engine-image"
+)
+
+// release is the image and the vllm-version annotation a variant's stand-in
+// Deployment carries, and where the release they name came from ("" when
+// they name none).
+type release struct {
+	image, annotation, from string
+}
+
+// releaseOf is the release of a variant's engine: what kube-state-metrics
+// shows its workload running, read as the controller reads it (the
+// annotation, then the image tag), else what the flags state
+// (--vllm-version, then --engine-image's tag). Where the window's Pods ran
+// more than one, the one most of them did. SGLang has no release to read.
+func releaseOf(info *variantInfo, opts Options) release {
+	if opts.Engine == inferenceengine.EngineSGLang {
+		return release{image: opts.EngineImage}
+	}
+	live, liveOK := mostCommon(info.images)
+	image := opts.EngineImage
+	if liveOK {
+		image = live
+	}
+	if a, ok := mostCommon(info.versions); ok {
+		return release{image: image, annotation: a, from: capacity.VLLMVersionFromAnnotation}
+	}
+	switch {
+	case liveOK:
+		return release{image: live, from: capacity.VLLMVersionFromImageTag}
+	case opts.VLLMVersion != "":
+		return release{image: image, annotation: opts.VLLMVersion, from: VLLMVersionFromFlag}
+	case capacity.VLLMVersionFromImage(image).Known():
+		return release{image: image, from: VLLMVersionFromEngineImage}
+	}
+	return release{image: image}
+}
+
+// releaseOfVariant is the release a variant's stand-in was built with, read
+// back from what was parsed off it.
+func releaseOfVariant(v learnreplay.CaptureVariant) release {
+	rel := release{image: v.Params.Image, from: v.Params.VLLMVersionFrom}
+	if rel.from == capacity.VLLMVersionFromAnnotation || rel.from == VLLMVersionFromFlag {
+		rel.annotation = v.Params.VLLMVersion.String()
+	}
+	return rel
+}
+
 // scaleTargetOf is a Deployment that stands for a variant's workload: the
-// engine and its arguments, the GPUs and the accelerator. The engine
-// parameters are parsed from it as the engine parses a real one, and the
-// collector detects the engine from it.
-func scaleTargetOf(opts Options, variant, modelID string, gpus int, accel string) scaletarget.ScaleTargetAccessor {
-	// The image names are never pulled: this Deployment is never applied.
-	// They are only what inferenceengine.Detect reads the engine from.
-	c := corev1.Container{Name: "vllm", Image: "vllm/vllm-openai", Command: []string{"vllm", "serve", modelID}}
+// engine and its arguments, the GPUs, the accelerator and the release. The
+// engine parameters are parsed from it as the engine parses a real one, and
+// the collector detects the engine from it.
+func scaleTargetOf(opts Options, variant, modelID string, gpus int, accel string, rel release) scaletarget.ScaleTargetAccessor {
+	// The image is never pulled: this Deployment is never applied. The
+	// engine is detected from the launch command and the release read from
+	// the image tag or the annotation, as from a real one. With no image
+	// known the stand-in names none rather than invent one.
+	c := corev1.Container{Name: "vllm", Image: rel.image, Command: []string{"vllm", "serve", modelID}}
 	batchFlag := "--max-num-seqs"
 	if opts.Engine == inferenceengine.EngineSGLang {
-		c = corev1.Container{Name: "sglang", Image: "lmsysorg/sglang",
+		c = corev1.Container{Name: "sglang", Image: rel.image,
 			Command: []string{"python3", "-m", "sglang.launch_server", "--model-path", modelID}}
 		batchFlag = "--max-running-requests"
 	}
@@ -600,6 +686,9 @@ func scaleTargetOf(opts Options, variant, modelID string, gpus int, accel string
 	}
 	if accel != "" {
 		d.Spec.Template.Spec.NodeSelector = map[string]string{acceleratorNodeLabel: accel}
+	}
+	if rel.annotation != "" {
+		d.Annotations = map[string]string{annotations.VLLMVersion: rel.annotation}
 	}
 	return scaletarget.NewDeploymentAccessor(d)
 }
@@ -715,7 +804,8 @@ func collectModel(ctx context.Context, c *collector.ReplicaMetricsCollector, f *
 	targets := make(map[string]scaletarget.ScaleTargetAccessor, len(active))
 	for _, name := range active {
 		v := variants[name]
-		targets[utils.GetNamespacedKey(opts.Namespace, name)] = scaleTargetOf(opts, name, modelID, v.GpuCount, v.Accelerator)
+		targets[utils.GetNamespacedKey(opts.Namespace, name)] = scaleTargetOf(opts, name, modelID, v.GpuCount, v.Accelerator,
+			releaseOfVariant(v))
 	}
 	rows, err := c.CollectReplicaMetrics(ctx, modelID, opts.Namespace, targets, nil, nil)
 	if err != nil {

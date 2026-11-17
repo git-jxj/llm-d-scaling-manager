@@ -78,6 +78,15 @@
         "tpot": {
           "targetSeconds": 0.004,
           "windows": 0
+        },
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "flag",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "default",
+          "blockSize": 128,
+          "blockSizeSource": "default"
         }
       },
       "results": {
