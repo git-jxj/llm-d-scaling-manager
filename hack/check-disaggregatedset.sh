@@ -250,16 +250,16 @@ SO_OBJS="$(jq -n '{ items: [
       spec: { scaleTargetRef: { name: "glm-prefill" }, minReplicaCount: 2, maxReplicaCount: 6,
               triggers: [ { type: "external", metadata: { scalerAddress: "scaling-manager-external-scaler.llmsm.svc:9090", modelID: "org/GLM" } } ] } } ] }')"
 out="$(so_discover_dsets serving 2>/dev/null)"
-assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "adopt"'
+assert_contains "$(printf '%s\n' "$out" | grep -e '- apply:' | sed -n 1p)" 'apply: "adopt"'
 assert_contains "$out" "Already targets the scaling manager (ScaledObject glm-prefill-so, min 2, max 6)"
 SO_OBJS="$(jq -n '{ items: [
     { metadata: { name: "glm-prefill-cpu" },
       spec: { scaleTargetRef: { name: "glm-prefill" }, minReplicaCount: 1, maxReplicaCount: 4,
               triggers: [ { type: "cpu", metadata: { value: "80" } } ] } } ] }')"
 out="$(so_discover_dsets serving 2>/dev/null)"
-assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "no"'
+assert_contains "$(printf '%s\n' "$out" | grep -e '- apply:' | sed -n 1p)" 'apply: "no"'
 assert_contains "$out" "Already scaled by ScaledObject glm-prefill-cpu"
-assert_eq "$(printf '%s\n' "$out" | grep -c 'apply: "no"')" "2" "entries written apply: no"
+assert_eq "$(printf '%s\n' "$out" | grep -c -e '- apply: "no"')" "2" "entries written apply: no"
 SO_OBJS=""
 [ "$FAILED" -eq "$before" ] && ok
 
@@ -274,12 +274,12 @@ with_ref() {
 DSET_OBJ="$(with_ref '[{"name": "MODEL_NAME", "value": "org/FromEnv"}]')"
 out="$(so_discover_dsets serving 2>/dev/null)"
 assert_contains "$out" 'modelID: "org/FromEnv"'
-assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "yes"'
+assert_contains "$(printf '%s\n' "$out" | grep -e '- apply:' | sed -n 1p)" 'apply: "yes"'
 reset
 DSET_OBJ="$(with_ref '[]')"
 out="$(so_discover_dsets serving 2>/dev/null)"
 assert_contains "$out" 'the model is written as $(MODEL_NAME), a reference the engine container env does not answer'
-assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "no"'
+assert_contains "$(printf '%s\n' "$out" | grep -e '- apply:' | sed -n 1p)" 'apply: "no"'
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="plan: a role with sub-roles is written apply: no, with the reason"
@@ -287,7 +287,7 @@ reset
 before=$FAILED
 DSET_OBJ="$(printf '%s' "$DSET_OBJ" | jq '.spec.roles[0].subRoles = [{"name": "a"}, {"name": "b"}]')"
 out="$(so_discover_dsets serving 2>/dev/null)"
-assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "no"'
+assert_contains "$(printf '%s\n' "$out" | grep -e '- apply:' | sed -n 1p)" 'apply: "no"'
 assert_contains "$out" "sub-roles"
 [ "$FAILED" -eq "$before" ] && ok
 
@@ -296,7 +296,7 @@ reset
 before=$FAILED
 DSET_OBJ="$(printf '%s' "$DSET_OBJ" | jq '.spec.roles[].spec.leaderWorkerTemplate.workerTemplate.metadata.labels = {"app": "other"}')"
 out="$(so_discover_dsets serving 2>/dev/null)"
-assert_eq "$(printf '%s\n' "$out" | grep -c 'apply:')" "0" "entries"
+assert_eq "$(printf '%s\n' "$out" | grep -c -e '- apply:')" "0" "entries"
 assert_not_contains "$out" "glm-"
 [ "$FAILED" -eq "$before" ] && ok
 

@@ -212,12 +212,16 @@ func TestPassWarnsOnceUntilSomethingChanges(t *testing.T) {
 
 	// The owner lets go: one write succeeds, the next conflict is news.
 	w.Client = interceptor.NewClient(w.Client.(client.WithWatch), interceptor.Funcs{
-		Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error { return nil },
+		Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+			return nil
+		},
 	})
 	w.Pass(context.Background())
 	assert.Equal(t, 1, countReason(drain(rec), EventScaled))
 	w.Client = interceptor.NewClient(w.Client.(client.WithWatch), interceptor.Funcs{
-		Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error { return conflict },
+		Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+			return conflict
+		},
 	})
 	w.Pass(context.Background())
 	assert.Equal(t, 1, countReason(drain(rec), EventConflict))
@@ -392,4 +396,3 @@ func TestPassParksAfterTheWindow(t *testing.T) {
 		map[string]any{"name": "decode", "spec": map[string]any{"replicas": int64(0)}},
 	}, rolesOf(got.doc))
 }
-
