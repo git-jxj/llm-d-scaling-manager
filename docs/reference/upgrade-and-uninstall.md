@@ -129,6 +129,40 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.11.2 to v0.12.0
+
+#### Learned state after the vLLM-version change
+
+The scaling manager now reads which vLLM release each variant runs, and fills
+the flags an engine leaves unset with that release's defaults (see
+[vLLM versions](vllm-versions.md)). The fingerprint that keys learned state
+moves to version 5 with it.
+
+- **Every variant measures its own capacity again once.** On the first
+  restart after the upgrade, each variant's learned k2 is restored as a
+  lower-only previous figure, as after any change of engine arguments. The
+  latency, SLO and throughput windows keyed on the arguments start again. The
+  `llmsm_engine_config` series get new label values.
+- **The restart logs "the variant's engine arguments, or the version of their
+  fingerprint, changed".** Expected once per variant. Your arguments did not
+  change.
+- **Some variants also get a different estimate**, because the default they
+  are priced with changed. Each has the flag unset:
+  - any engine on an A100 or on a GPU below 70 GiB without
+    `--max-num-batched-tokens`: 8192 becomes 2048. This includes private,
+    unknown and simulator images, since the rule is the same in every vLLM
+    release;
+  - a `vllm-openai` tag v0.28 or later on a GPU of 160 GiB or more without
+    `--max-num-batched-tokens`: 8192 becomes 16384;
+  - a wide-EP engine (expert parallel, DP above 1, `deepep_low_latency` or
+    `nixl_ep` all-to-all) without `--max-num-batched-tokens`: 256;
+  - a `vllm-openai` tag v0.20 or later without `--gpu-memory-utilization`
+    (0.9 becomes 0.92), and a v0.34 tag without it (1.0) or without
+    `--block-size` (64). These change only which variants count as the same
+    configuration.
+- **Nothing to do.** To keep a figure from changing, pass the flag on the
+  engine with the value you want.
+
 ### Upgrading from v0.11.1 to v0.11.2
 
 The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.

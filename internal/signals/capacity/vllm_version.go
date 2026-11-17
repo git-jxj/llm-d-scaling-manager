@@ -18,15 +18,24 @@ import (
 //	                          1.0 with the extensible KV cache, else 0.92
 //	--block-size              16 before v0.34; 64 from v0.34
 //	--max-num-batched-tokens  2048 below 70 GiB or on an A100; 8192 at 70 GiB
-//	                          or more; from v0.28, 16384 at 160 GiB or more
+//	                          or more; from v0.28, 16384 at 160 GiB or more;
+//	                          256 in every release for a wide-EP engine with a
+//	                          batched all-to-all and DP > 1
 //
-// The version comes from the scaling-manager.llmd.ai/vllm-version annotation, else from the
-// image tag. vLLM exports no version metric, so a running engine cannot be
-// asked. An unknown version never gets the newest defaults: it keeps the
-// values used before releases were read. The memory share (0.9) and block size
-// (16) are at or below every release's, and on a large accelerator the budget
-// is the smaller of the two it could be, so an unknown engine is priced with
-// less, never more.
+// The version comes from the scaling-manager.llmd.ai/vllm-version annotation,
+// else from the image tag. vLLM exports no version metric, so a running engine
+// cannot be asked. A release after v0.34 is read with v0.34's defaults.
+//
+// What each default changes here. The step budget enters the derived k2, so it
+// moves the estimate: an unknown release on a large accelerator gets the
+// smaller of its two possible budgets. An accelerator this package does not
+// recognise keeps 8192, which can be above what a small GPU really runs. The
+// memory share and the block size do not size the KV cache here -- a running
+// engine reports that -- they decide which engines count as the same
+// configuration (IsCapacityCompatible, the fingerprints), and the block size
+// enters k1 only with --num-gpu-blocks-override. An unknown release keeps the
+// values used before releases were read (0.9, 16), so its identity is what it
+// was.
 
 // VLLMVersion is a vLLM release as major and minor. The zero value is unknown.
 type VLLMVersion struct {
@@ -117,12 +126,16 @@ func vllmVersionOfRef(ref string) VLLMVersion {
 	if colon <= slash {
 		return VLLMVersion{}
 	}
-	repo := ref[slash+1 : colon]
-	if repo != "vllm" && !strings.HasPrefix(repo, "vllm-openai") {
+	if !vllmRepositories[ref[slash+1:colon]] {
 		return VLLMVersion{}
 	}
 	return ParseVLLMVersion(ref[colon+1:])
 }
+
+// vllmRepositories are the image names vLLM publishes its server under, kept
+// by any mirror. Only these name vLLM's release in their tag: a team's own
+// "vllm" image or a "vllm-openai-patched" build has a tag scheme of its own.
+var vllmRepositories = map[string]bool{"vllm-openai": true, "vllm-openai-rocm": true}
 
 // vllmVersionOf is the release a scale target states with the
 // scaling-manager.llmd.ai/vllm-version annotation, else the one its image tag names.
@@ -182,24 +195,53 @@ func vllmDefaultBlockSize(v VLLMVersion) int64 {
 //
 // From v0.28, accelerators with 160 GiB or more (B200, B300, MI300X) get
 // 16384. Below that the rule is the same in every supported release: 8192 at
-// 70 GiB or more unless the device is an A100, 2048 otherwise. An accelerator
-// this package cannot size keeps 8192, as before; an unknown release on a
-// large accelerator gets 8192 too, the smaller of its two possible budgets.
+// 70 GiB or more unless the device is an A100, 2048 otherwise. From v0.33 a
+// GB10 is in the 2048 tier despite its memory. An accelerator this package
+// cannot size keeps 8192, as before; an unknown release gets the smaller of
+// its possible budgets.
 func vllmDefaultMaxNumBatchedTokens(v VLLMVersion, accelerator string) int64 {
-	gib, a100, ok := acceleratorMemoryGiB(accelerator)
+	m, ok := acceleratorMemoryGiB(accelerator)
 	switch {
 	case !ok:
 		return legacyMaxNumBatchedTokens
-	case gib >= 160:
+	case m.gib >= 160:
 		if v.AtLeast(0, 28) {
 			return 16384
 		}
 		return 8192
-	case gib >= 70 && !a100:
+	case m.gb10 && (!v.Known() || v.AtLeast(0, 33)):
+		return 2048
+	case m.gib >= 70 && !m.a100:
 		return 8192
 	default:
 		return 2048
 	}
+}
+
+// batchedDPBudget is vLLM's DEFAULT_MAX_NUM_BATCHED_TOKENS_FOR_BATCHED_DP.
+const batchedDPBudget = 256
+
+// usesBatchedDPMoE is vLLM's ParallelConfig.use_batched_dp_moe, the same in
+// every supported release: expert parallelism, more than one DP rank, and the
+// deepep_low_latency or nixl_ep all-to-all (--all2all-backend, else
+// VLLM_ALL2ALL_BACKEND). Such an engine's default budget is 256 tokens.
+func usesBatchedDPMoE(p *EngineParams) bool {
+	backend := layoutValue(p, "all2all_backend")
+	if backend == "" {
+		backend = layoutValue(p, envAll2AllKey)
+	}
+	return p.ExpertParallel && parallelSize(p.DataParallelSize) > 1 &&
+		(backend == "deepep_low_latency" || backend == "nixl_ep")
+}
+
+// layoutValue is the value MemoryLayout records for key, or "".
+func layoutValue(p *EngineParams, key string) string {
+	for _, part := range strings.Split(p.MemoryLayout, ";") {
+		if v, ok := strings.CutPrefix(part, key+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // acceleratorMemory maps a fragment of an accelerator name, as nodes label it
@@ -211,27 +253,40 @@ var acceleratorMemory = []struct {
 	gib      float64
 }{
 	{"gb300", 279}, {"b300", 268},
-	{"gb200", 185}, {"b200", 179},
-	{"mi355", 288}, {"mi325", 256}, {"mi300x", 192},
+	{"gb200", 185}, {"b200", 179}, {"b100", 179}, {"gb10", 119},
+	{"mi355", 288}, {"mi325", 256}, {"mi308x", 192}, {"mi300x", 192}, {"mi300a", 128},
 	{"gh200", 95}, {"h200", 140}, {"h100", 79}, {"h800", 79}, {"h20", 95},
 	{"a100", 80}, {"a800", 80},
-	{"l40", 45}, {"l4", 22}, {"a10", 22}, {"a40", 45}, {"t4", 15}, {"v100", 32},
+	{"l40", 45}, {"l20", 45}, {"l4", 22}, {"a10", 22}, {"a40", 45}, {"t4", 15}, {"v100", 32},
 }
 
-// acceleratorMemoryGiB is an accelerator's memory as vLLM sees it, whether
-// vLLM treats it as an A100 (its name contains "a100"), and whether the name
-// was recognised at all.
-func acceleratorMemoryGiB(accelerator string) (gib float64, a100 bool, ok bool) {
+// acceleratorClass is what vLLM's budget defaults read from a device: its
+// memory, and the two names it treats specially.
+type acceleratorClass struct {
+	gib  float64
+	a100 bool // the name contains "a100": never the 70 GiB tier
+	gb10 bool // a GB10: the small tier from v0.33
+}
+
+// acceleratorMemoryGiB is an accelerator's class as vLLM sees it, and whether
+// the name was recognised at all. A 40 GB A800 is told from the 80 GB one by
+// its name.
+func acceleratorMemoryGiB(accelerator string) (acceleratorClass, bool) {
 	name := strings.ToLower(accelerator)
 	if name == "" {
-		return 0, false, false
+		return acceleratorClass{}, false
 	}
 	for _, m := range acceleratorMemory {
-		if strings.Contains(name, m.fragment) {
-			return m.gib, strings.Contains(name, "a100"), true
+		if !strings.Contains(name, m.fragment) {
+			continue
 		}
+		c := acceleratorClass{gib: m.gib, a100: strings.Contains(name, "a100"), gb10: m.fragment == "gb10"}
+		if m.fragment == "a800" && strings.Contains(name, "40g") {
+			c.gib = 40
+		}
+		return c, true
 	}
-	return 0, false, false
+	return acceleratorClass{}, false
 }
 
 // applyVLLMDefaults replaces the defaults the vLLM parser left in place with
@@ -246,6 +301,10 @@ func applyVLLMDefaults(p *EngineParams, accelerator string) {
 		p.BlockSize = vllmDefaultBlockSize(v)
 	}
 	if p.MaxNumBatchedTokens <= 0 && p.IsV1Engine && p.ChunkedPrefillEnabled {
-		p.EffectiveMaxBatchedTokens = vllmDefaultMaxNumBatchedTokens(v, accelerator)
+		if usesBatchedDPMoE(p) {
+			p.EffectiveMaxBatchedTokens = batchedDPBudget
+		} else {
+			p.EffectiveMaxBatchedTokens = vllmDefaultMaxNumBatchedTokens(v, accelerator)
+		}
 	}
 }

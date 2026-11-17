@@ -17,9 +17,10 @@ import (
 // ParseEngineArgs parses a scale target's container args using the parser
 // appropriate for the given inference engine, returning the shared
 // EngineParams. It dispatches to ParseSGLangArgs for SGLang and ParseVLLMArgs
-// otherwise (the default), so existing vLLM behavior is unchanged. The
-// accelerator is not known here, so the step budget keeps the default for an
-// unsized accelerator; ParseEngineArgsOn takes one.
+// otherwise (the default). The accelerator is not known here, so the step
+// budget keeps the default for an unsized accelerator. Production callers know
+// the accelerator and use ParseEngineArgsOn; this form is for tests and for a
+// caller that has none.
 func ParseEngineArgs(engine inferenceengine.Engine, scaleTarget scaletarget.ScaleTargetAccessor) EngineParams {
 	return ParseEngineArgsOn(engine, scaleTarget, "")
 }
@@ -727,28 +728,30 @@ const keyDtype = "dtype"
 // is no such flag.
 var mappedValueKeys = map[string]struct{}{
 	// vLLM
-	"gpu_memory_utilization":  {},
-	"block_size":              {},
-	"kv_cache_dtype":          {},
-	keyDtype:                  {},
-	"quantization":            {},
-	"tensor_parallel_size":    {},
-	"num_gpu_blocks_override": {},
-	"max_num_batched_tokens":  {},
-	"max_num_seq":             {},
-	"max_num_seqs":            {},
-	"max_model_len":           {},
-	maxNumActiveSeqsKey:       {},
-	"data_parallel_size":      {},
-	"pipeline_parallel_size":  {},
-	"speculative_config":      {},
-	"kv_transfer_config":      {},
-	"kv_offloading_size":      {},
-	"kv_offloading_backend":   {},
-	"kv_cache_memory_bytes":   {},
-	"num_redundant_experts":   {},
-	"eplb_config":             {},
-	"all2all_backend":         {},
+	"gpu_memory_utilization": {},
+	// vLLM's alias for it (v0.32 and later).
+	"device_memory_utilization": {},
+	"block_size":                {},
+	"kv_cache_dtype":            {},
+	keyDtype:                    {},
+	"quantization":              {},
+	"tensor_parallel_size":      {},
+	"num_gpu_blocks_override":   {},
+	"max_num_batched_tokens":    {},
+	"max_num_seq":               {},
+	"max_num_seqs":              {},
+	"max_model_len":             {},
+	maxNumActiveSeqsKey:         {},
+	"data_parallel_size":        {},
+	"pipeline_parallel_size":    {},
+	"speculative_config":        {},
+	"kv_transfer_config":        {},
+	"kv_offloading_size":        {},
+	"kv_offloading_backend":     {},
+	"kv_cache_memory_bytes":     {},
+	"num_redundant_experts":     {},
+	"eplb_config":               {},
+	"all2all_backend":           {},
 	// SGLang
 	"mem_fraction_static":  {},
 	"page_size":            {},
@@ -1071,7 +1074,7 @@ func parseArgsWith(args []string, params *EngineParams, env map[string]string,
 // argparse does.
 func applyParam(key, value string, params *EngineParams) applyResult {
 	switch key {
-	case "gpu_memory_utilization":
+	case "gpu_memory_utilization", "device_memory_utilization":
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil || !usableFraction(v) {
 			return applyUnusable
@@ -1087,7 +1090,8 @@ func applyParam(key, value string, params *EngineParams) applyResult {
 		params.BlockSizeSet = true
 	case "enable_extensible_kv_cache":
 		params.ExtensibleKVCache = 1
-	case "no_enable_extensible_kv_cache":
+	case "no_enable_extensible_kv_cache", "enable_elastic_ep":
+		// Elastic EP turns the extensible KV cache off (v0.34).
 		params.ExtensibleKVCache = -1
 	case "kv_cache_dtype":
 		if !usableWord(value) {

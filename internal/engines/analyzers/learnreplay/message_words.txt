@@ -62,6 +62,7 @@
 394
 3s
 4
+40g
 5
 50
 5m
@@ -620,6 +621,7 @@ avgOutputTokens
 awaiting-in-flight
 awaiting-return
 b
+b100
 b200
 b300
 back
@@ -925,6 +927,7 @@ decodeTTFTPrompt
 decodeTermRefused
 decodeVariant
 deduced
+deepep_low_latency
 deeper
 default
 defaultPolicy
@@ -957,6 +960,7 @@ derivedOK
 derivedRate
 desiredReplicas
 detected
+device_memory_utilization
 did
 differ
 differences
@@ -1042,6 +1046,7 @@ empty
 enable
 enable_chunked_prefill
 enable_dp_attention
+enable_elastic_ep
 enable_ep_moe
 enable_eplb
 enable_expert_parallel
@@ -1152,6 +1157,7 @@ fill
 filled
 filling
 finding
+fingerprint
 finite
 first
 first-sample
@@ -1222,6 +1228,7 @@ gap
 gaps
 gate
 gates
+gb10
 gb200
 gb300
 generated
@@ -1571,6 +1578,7 @@ kv_offloading_size
 kv_transfer_config
 kv_transfer_config.kv_connector
 kv_utilization_out_of_range
+l20
 l4
 l40
 label
@@ -1750,7 +1758,9 @@ metrics-cert-name
 metrics-cert-path
 metrics-secure
 metricsCount
+mi300a
 mi300x
+mi308x
 mi325
 mi355
 mid-rollout
@@ -1877,6 +1887,7 @@ newest
 newestGroup
 next
 nil
+nixl_ep
 no
 no-capacity
 no-change
@@ -3052,6 +3063,7 @@ via
 victim
 vllm
 vllm-openai
+vllm-openai-rocm
 vllm.entrypoints
 vllm/vllm-openai
 vllm:cache_config_info

@@ -30,7 +30,9 @@ func TestWakeReadsEachReleasesAnswer(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == wakeUpPath {
+				// Not wakeUpPath, so this file builds on a commit without
+				// the constant (the negative control).
+				if strings.TrimPrefix(r.URL.Path, "/") == "wake_up" {
 					_, _ = w.Write([]byte(tc.body))
 					return
 				}

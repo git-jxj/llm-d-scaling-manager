@@ -54,7 +54,15 @@ import (
 // (issue ev-shindin/llm-scaling-manager#334). It is the first bump to cross a release: on the first
 // restart after the upgrade every variant's restored k2 is a lower-only
 // previous figure, as after any change of arguments.
-const FingerprintVersion = 4
+//
+// Version 5 changes how three hashed values are derived: the memory share,
+// the block size and the step budget an engine leaves unset now resolve to
+// the defaults of its vLLM release on its accelerator (vllm_version.go), not
+// to one fixed set. No field is added. As for version 4, on the first restart
+// after the upgrade every variant's restored k2 is a lower-only previous
+// figure, and each variant measures its own again
+// (docs/reference/upgrade-and-uninstall.md).
+const FingerprintVersion = 5
 
 // fingerprintLength is how much of the digest reaches the label. 16 hex
 // characters is 64 bits: for the few hundred distinct engine configurations a

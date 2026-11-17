@@ -51,9 +51,14 @@ func TestVLLMVersionFromImage(t *testing.T) {
 		"registry.example.com/team/llm-d-cuda:sha-1a2b3c4": {},
 		"ghcr.io/llm-d/llm-d-inference-sim:v0.9.0":         {},
 		"": {},
-		"vllm/vllm-openai:v0.27.1,vllm/vllm-openai:v0.27.0": {0, 27},
-		"vllm/vllm-openai:v0.27.1,vllm/vllm-openai:v0.34.0": {},
-		"vllm/vllm-openai:v0.27.1,quay.io/x/router:v0.27.1": {},
+		"vllm/vllm-openai:v0.27.1,vllm/vllm-openai:v0.27.0":      {0, 27},
+		"vllm/vllm-openai:v0.27.1,vllm/vllm-openai:v0.34.0":      {},
+		"vllm/vllm-openai:v0.27.1,quay.io/x/router:v0.27.1":      {},
+		"vllm/vllm-openai:v0.34.0rc1":                            {0, 34},
+		"vllm/vllm-openai:nightly-0123456789abcdef":              {},
+		"registry.example.com/team/vllm:0.5.2":                   {},
+		"vllm/vllm:v0.34.0":                                      {},
+		"registry.example.com/x/vllm-openai-patched:v0.33.0-fix": {},
 	}
 	for in, want := range cases {
 		if got := VLLMVersionFromImage(in); got != want {
@@ -102,34 +107,40 @@ func TestVLLMVersionOrdering(t *testing.T) {
 }
 
 // Node labels spell one accelerator several ways; each must land in vLLM's
-// tier for it, and a name not in the table must say so.
-func TestAcceleratorMemoryTiers(t *testing.T) {
-	cases := []struct {
-		name string
-		tier string // "large" >=160 GiB, "mid" >=70 GiB not A100, "small", "unknown"
-	}{
-		{"NVIDIA-B200", "large"}, {"NVIDIA-GB200", "large"}, {"B300", "large"},
-		{"AMD-Instinct-MI300X", "large"},
-		{"NVIDIA-H100-80GB-HBM3", "mid"}, {"nvidia-h100-80gb", "mid"}, {"H200", "mid"},
-		{"NVIDIA-H20", "mid"}, {"NVIDIA-GH200-480GB", "mid"}, {"NVIDIA-A800-SXM4-80GB", "mid"},
-		{"NVIDIA-A100-SXM4-80GB", "small"}, {"A100_NVLINK_80GB", "small"}, {"nvidia-tesla-a100", "small"},
-		{"NVIDIA-L40S", "small"}, {"NVIDIA-L4", "small"}, {"NVIDIA-A10G", "small"}, {"Tesla-T4", "small"},
-		{"", "unknown"}, {"some-new-accelerator", "unknown"},
+// budget tier for it on v0.34: 16384 at 160 GiB or more, 8192 at 70 GiB or
+// more unless an A100, 2048 otherwise, and 8192 for a name not in the table.
+func TestAcceleratorBudgetTiers(t *testing.T) {
+	v034 := VLLMVersion{0, 34}
+	cases := map[string]int64{
+		"NVIDIA-B200": 16384, "NVIDIA-GB200": 16384, "B300": 16384, "NVIDIA-B100": 16384,
+		"AMD-Instinct-MI300X": 16384, "AMD-Instinct-MI308X": 16384,
+		"NVIDIA-H100-80GB-HBM3": 8192, "nvidia-h100-80gb": 8192, "H200": 8192,
+		"NVIDIA-H20": 8192, "NVIDIA-GH200-480GB": 8192, "NVIDIA-A800-SXM4-80GB": 8192,
+		"AMD-Instinct-MI300A":   8192,
+		"NVIDIA-A100-SXM4-80GB": 2048, "A100_NVLINK_80GB": 2048, "nvidia-tesla-a100": 2048,
+		"NVIDIA-A800-SXM4-40GB": 2048, "NVIDIA-L40S": 2048, "NVIDIA-L20": 2048,
+		"NVIDIA-L4": 2048, "NVIDIA-A10G": 2048, "Tesla-T4": 2048,
+		"": 8192, "some-new-accelerator": 8192,
 	}
-	for _, tc := range cases {
-		gib, a100, ok := acceleratorMemoryGiB(tc.name)
-		got := "unknown"
-		switch {
-		case !ok:
-		case gib >= 160:
-			got = "large"
-		case gib >= 70 && !a100:
-			got = "mid"
-		default:
-			got = "small"
+	for name, want := range cases {
+		if got := vllmDefaultMaxNumBatchedTokens(v034, name); got != want {
+			t.Errorf("%q on v0.34: budget %d, want %d", name, got, want)
 		}
-		if got != tc.tier {
-			t.Errorf("%q: tier %s (%.0f GiB, a100=%v), want %s", tc.name, got, gib, a100, tc.tier)
+	}
+}
+
+// vLLM moved the GB10 into the 2048 tier at v0.33 despite its memory. Before
+// that it ran 8192; an unknown release gets the smaller.
+func TestGB10BudgetByRelease(t *testing.T) {
+	for _, tc := range []struct {
+		v    VLLMVersion
+		want int64
+	}{
+		{VLLMVersion{0, 27}, 8192}, {VLLMVersion{0, 32}, 8192},
+		{VLLMVersion{0, 33}, 2048}, {VLLMVersion{0, 34}, 2048}, {VLLMVersion{}, 2048},
+	} {
+		if got := vllmDefaultMaxNumBatchedTokens(tc.v, "NVIDIA-GB10"); got != tc.want {
+			t.Errorf("GB10 on %q: budget %d, want %d", tc.v.String(), got, tc.want)
 		}
 	}
 }

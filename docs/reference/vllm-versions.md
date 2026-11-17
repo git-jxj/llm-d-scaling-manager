@@ -2,7 +2,8 @@
 
 The scaling manager supports **vLLM v0.26 through v0.34 and recent main
 builds**. Variants on different versions can run side by side in one cluster.
-Each variant is read on its own.
+Each variant is read on its own. A release after v0.34 is read with the v0.34
+defaults below until this page lists it.
 
 ## What to do
 
@@ -10,8 +11,8 @@ Each variant is read on its own.
    `--max-num-batched-tokens`, `--gpu-memory-utilization` and `--block-size`,
    the scaling manager uses them, and the version no longer matters.
 2. **Otherwise, let the scaling manager know the version.** A stock image
-   (`vllm/vllm-openai:v0.34.0`, or a mirror that keeps the name `vllm-openai`)
-   is read from its tag. For any other image, such as a private build, a digest
+   (`vllm/vllm-openai:v0.34.0` or `vllm-openai-rocm`, or a mirror that keeps
+   either name) is read from its tag. For any other image, such as a private build, a digest
    or an image built on top of vLLM, annotate the Deployment or
    LeaderWorkerSet itself, not its pod template, so nothing restarts:
 
@@ -37,13 +38,19 @@ source at each release tag:
 | `--max-num-batched-tokens`, 160 GiB or more (B200, GB200, B300, MI300X) | 8192 | 16384 | 16384 | 8192 |
 | `--max-num-batched-tokens`, 70 GiB or more (H100, H200), not an A100 | 8192 | 8192 | 8192 | 8192 |
 | `--max-num-batched-tokens`, below 70 GiB, or an A100 | 2048 | 2048 | 2048 | 2048 |
+| `--max-num-batched-tokens`, expert parallel, DP above 1, `deepep_low_latency` or `nixl_ep` all-to-all | 256 | 256 | 256 | 256 |
 
 - **The accelerator is read from the variant's accelerator name.** A name the
-  scaling manager does not recognise keeps 8192.
-- **The unknown column is the cautious one.** On a recognised accelerator,
-  each value is at or below what any release would use. An unknown engine is
-  priced with less KV cache and a smaller step budget, which orders more
-  replicas, not fewer.
+  scaling manager does not recognise keeps 8192, which can be more than a
+  small GPU really runs. A GB10 is in the 2048 row from v0.33.
+- **What each default changes.** The step budget enters the capacity
+  estimate. On a large accelerator an unknown version gets the smaller of its
+  two possible budgets, which orders more replicas, not fewer. The memory
+  share and the block size do not size the KV cache: a running engine reports
+  that. They decide which engines count as the same configuration, and the
+  block size enters the estimate only with `--num-gpu-blocks-override`.
+- **`--performance-mode throughput`** doubles vLLM's default budget. The
+  scaling manager does not read it and uses the lower figure.
 - **v0.34 with a KV connector.** v0.34 keeps 0.92 when a connector such as
   NIXL runs without an IMEX channel. A pod spec does not show the IMEX
   channel, so any connector counts as 0.92.
@@ -105,7 +112,9 @@ version. The step budget is not reported by any version, so pass
 A new image changes the defaults of every flag the engine is not given. If a
 default changes, the scaling manager treats it as new engine arguments: it
 learns the variant's capacity again instead of carrying the old figure. With
-the flags passed explicitly, an image change keeps what was learned.
+the flags passed explicitly, an image change keeps the learned capacity,
+throughput and start time. Latency lines are learned again on any image
+change.
 
 See also [preparing a workload](workload-preparation.md#depends-on-the-vllm-version)
 for the start-time options that depend on the version.
