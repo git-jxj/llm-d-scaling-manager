@@ -6,20 +6,21 @@
 # repository: only docker or podman, and a kubeconfig.
 #
 #   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS]
-#                                                                cluster admin, once per namespace: the admin objects and the stamp
+#                                                                cluster admin, once per namespace: the admin objects, the stamp, and its namespace on the weights labeller
 #   scaling-manager-tools install -n NS --prometheus-url URL [--quota "GPU=N"] [--prometheus-ca FILE] [--allow-http] [--set KEY=VALUE]
 #                                                                namespace owner: settings, preflight, the controller
-#   scaling-manager-tools install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS ...
-#                                                                cluster admin: the cluster-wide install, all steps
+#   scaling-manager-tools install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS ... [--weights-labeller-image IMG | --no-weights-labeller]
+#                                                                cluster admin: the cluster-wide install, all steps, and the weights labeller
 #   scaling-manager-tools admin-finish -n NS [--restart-keda]   cluster admin, after the install: KEDA's client certificate, then drop the preflight's cluster reads
 #   scaling-manager-tools release-files --out DIR               write the release files this image carries
 #                                                                (install and admin-setup: --dry-run --out DIR renders instead; --files DIR installs from other files;
 #                                                                 docs/reference/tools-install.md has every flag and exit code)
 #   scaling-manager-tools prepull      apply|status|delete ...   hold an engine image on every GPU node (deploy/prepull.sh)
-#   scaling-manager-tools weights      apply|status|delete ...   keep a model's weights on every GPU node's disk (deploy/weights.sh)
+#   scaling-manager-tools weights      apply|status|delete|label|labeller [--add|--merge] ...
+#                                                                keep a model's weights on every GPU node's disk, and label the nodes whose copy verifies (deploy/weights.sh)
 #   scaling-manager-tools engine-cache apply|status|delete|publish|keys|verify ...
 #                                                                keep the engines' compile caches on every GPU node's disk (deploy/enginecache.sh)
-#   scaling-manager-tools workload-patch -n NS [--controller-namespace CNS] [--apply] [--apply-weights] [--apply-engine-cache] [--out FILE]
+#   scaling-manager-tools workload-patch -n NS [--controller-namespace CNS] [--apply] [--apply-weights] [--apply-engine-cache] [--out FILE] [--weights-wait-timeout SECONDS]
 #                                                                report and write what the model servers in NS still need (make workload-patch)
 #   scaling-manager-tools scaledobjects-plan -n NS [--controller-namespace CNS] [--out FILE]
 #                                                                write an editable ScaledObject plan for the model servers in NS; applies nothing
@@ -118,13 +119,18 @@ cmd_workload_patch() {
     local ns="" ctl=""
     while [ $# -gt 0 ]; do
         case "$1" in
-            -n|--namespace|--out|--controller-namespace)
+            -n|--namespace|--out|--controller-namespace|--weights-wait-timeout)
                 [ $# -ge 2 ] || die "$1 needs a value" ;;
         esac
         case "$1" in
             -n|--namespace) ns="$2"; shift 2 ;;
             --controller-namespace) ctl="$2"; shift 2 ;;
             --out) export LLMSM_WORKLOAD_PATCH_FILE="$2"; shift 2 ;;
+            --weights-wait-timeout)
+                case "$2" in ""|*[!0-9]*) die "workload-patch: --weights-wait-timeout takes a number of seconds above 0, not '$2'" ;; esac
+                # 10#: 00 is zero, 010 is ten (not octal)
+                [ "$((10#$2))" -gt 0 ] || die "workload-patch: --weights-wait-timeout takes a number of seconds above 0, not '$2'"
+                export LLMSM_WEIGHTS_WAIT_TIMEOUT="$((10#$2))"; shift 2 ;;
             --apply) export LLMSM_WORKLOAD_PATCH_APPLY=true; shift ;;
             --apply-weights) export LLMSM_WORKLOAD_PATCH_APPLY_WEIGHTS=true; shift ;;
             --apply-engine-cache) export LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true; shift ;;
@@ -134,6 +140,7 @@ cmd_workload_patch() {
                 echo "  --apply-weights         also apply the weights volume (LLMSM_WORKLOAD_PATCH_APPLY_WEIGHTS=true)"
                 echo "  --apply-engine-cache    also apply the engine-cache volume (LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true)"
                 echo "  --out FILE              where the patch is written (default scaling-manager-workload-patch.yaml)"
+                echo "  --weights-wait-timeout S  how long the wait-for-weights init container waits for the copy before it fails (LLMSM_WEIGHTS_WAIT_TIMEOUT; 3600)"
                 return 0 ;;
             *) die "workload-patch: unknown option $1 (see workload-patch --help)" ;;
         esac

@@ -93,11 +93,12 @@ check(env["HF_TOKEN"]["valueFrom"]["secretKeyRef"] == {"name": "hf-token", "key"
 mount = c["volumeMounts"][0]
 check(mount["name"] == vols[0]["name"] and mount["mountPath"] == "/weights", "the claim is mounted at /weights")
 probe = c["readinessProbe"]["exec"]["command"]
-check(probe == ["test", "-f", "/weights/models/Qwen/Qwen3-32B/.download-complete"], "Ready is the completion marker under the mount: %s" % probe)
+check(probe[:2] == ["python3", "-c"] and "def verify(" in probe[2] and probe[3:] == ["/weights/models/Qwen/Qwen3-32B", ".download-complete"],
+      "Ready is the copy verifying (the marker and its files) under the mount: %s" % probe[3:])
 check(env["MARKER"]["value"] == ".download-complete", "the marker the script writes is the one the probe tests")
 script = c["args"][0]
 check("snapshot_download" in script and "$(" not in script and "$$" not in script, "the download script uses huggingface_hub and carries no $( or $$ (Kubernetes rewrites both)")
-check(c["command"] == ["/bin/sh", "-c"], "sh -c with the script as args")
+check(c["command"] == ["python3", "-c"], "python3 -c with the program as args")
 res = c.get("resources", {})
 for section in ("requests", "limits"):
     for k in res.get(section, {}):

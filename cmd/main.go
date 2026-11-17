@@ -62,6 +62,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/controllerstatus"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/datastore"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/decision"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/dsetwriter"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/allocation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/throughput"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/scalefromzero"
@@ -1188,6 +1189,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The DisaggregatedSet role writer (DSET_ROLE_WRITER, off by default): the
+	// actuation path for Static roles, which have no /scale for KEDA. Leader
+	// only. Unstructured reads are uncached, so no informer on the sets; the
+	// readable watched namespaces, or every namespace on a cluster-scoped
+	// install. Namespace-scoped with none readable lists nothing, as the KEDA
+	// HPA repair below: the writer must never fall back to the whole cluster.
+	switch {
+	case !cfg.DSetRoleWriterEnabled():
+	case watchNS != "" && len(readableWatched) == 0:
+		setupLog.Info("DSET_ROLE_WRITER is on, but no watched namespace is readable: the DisaggregatedSet role writer does not run")
+	default:
+		writer := &dsetwriter.Writer{
+			Client:        mgr.GetClient(),
+			Registry:      registry.Default,
+			Decisions:     decision.Default,
+			Recorder:      mgr.GetEventRecorderFor("scaling-manager-dset-role-writer"), //nolint:staticcheck // SA1019: core/v1 events; see the configmap reconciler
+			Namespaces:    readableWatched,
+			AllNamespaces: watchNS == "",
+		}
+		wirePassive(passiveResolver, passiveComponents{RoleWriter: writer})
+		if err := mgr.Add(writer); err != nil {
+			setupLog.Error(err, "unable to add the DisaggregatedSet role writer to the manager")
+			os.Exit(1)
+		}
+	}
+
 	// The KEDA HPA repair (KEDA_HPA_REPAIR, off by default): on KEDA 2.19 and
 	// older a ScaledObject created within about two minutes of a controller
 	// restart keeps an HPA without this scaler's metric. Leader only; reads
@@ -1803,12 +1830,13 @@ type passiveComponents struct {
 	Scaler        *scaler.Server
 	Demand        *warmpool.Demand
 	Guard         *warmpoolpool.PassiveGuard
+	RoleWriter    *dsetwriter.Writer
 }
 
 // wirePassive hands one resolver to every component in c, so the external
-// scaler, both engines and the warm pool answer "is this model passive?" the
-// same way. A component added to passiveComponents and not wired here fails
-// TestWirePassiveReachesEveryComponent.
+// scaler, both engines, the warm pool and the role writer answer "is this
+// model passive?" the same way. A component added to passiveComponents and
+// not wired here fails TestWirePassiveReachesEveryComponent.
 func wirePassive(r *passive.Resolver, c passiveComponents) {
 	variantPassive := func(namespace, variant string) bool {
 		m, _ := r.Variant(namespace, variant)
@@ -1828,5 +1856,8 @@ func wirePassive(r *passive.Resolver, c passiveComponents) {
 	}
 	if c.Guard != nil {
 		c.Guard.Passive = variantPassive
+	}
+	if c.RoleWriter != nil {
+		c.RoleWriter.Passive = r
 	}
 }

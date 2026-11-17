@@ -50,10 +50,10 @@ them against their `SHA256SUMS` before it uses them.
 
 | command | who | what it does |
 | --- | --- | --- |
-| `smt admin-setup -n NS [--keda-namespace KNS]` | cluster admin, once per namespace | the `part=admin` objects, the preflight's RBAC, the model-namespace file, KEDA's namespace in the scaler NetworkPolicy, and a stamp (ConfigMap `scaling-manager-admin-setup`) |
+| `smt admin-setup -n NS [--keda-namespace KNS]` | cluster admin, once per namespace | the `part=admin` objects, the preflight's RBAC, the model-namespace file, KEDA's namespace in the scaler NetworkPolicy, and a stamp (ConfigMap `scaling-manager-admin-setup`). Then adds NS to the [weights labeller](workload-preparation.md#gate-replicas-on-the-weights)'s watch list, with rights in NS and the labeller's namespace only; with no labeller, or without those rights, it prints the command instead and still succeeds |
 | `smt install -n NS --prometheus-url URL` | namespace owner | the settings (created once), the preflight, the scaler TLS Secrets (created once), the controller, the preflight again |
 | `smt admin-finish -n NS` | cluster admin, after `install` | KEDA's client certificate, a controller restart when it changed, waits for `mutual TLS`, the preflight, then removes the preflight's cluster reads |
-| `smt install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS` | cluster admin | all three, for one controller in `scaling-manager-system` |
+| `smt install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS` | cluster admin | all three, for one controller in `scaling-manager-system`, and the [weights labeller](workload-preparation.md#gate-replicas-on-the-weights) (it patches nodes), watching every `--model-namespace` and every namespace it already watches. A new labeller only when a model namespace has a weights DaemonSet; otherwise it prints how to add it |
 | `smt release-files --out DIR` | anyone | writes the release files the image carries, to verify with cosign or apply by hand |
 
 Every command can be run again, and again after a failure part way. A
@@ -75,7 +75,9 @@ only when KEDA's side changed.
 | `--model-namespace NS` | `install --scope cluster` | a namespace with model servers; repeat it. Add one later by running again with it |
 | `--platform kubernetes\|openshift` | all | overrides the detection (API discovery of `security.openshift.io`) |
 | `--files DIR` | `admin-setup`, `install`, `admin-finish` | install from release files in DIR instead of the image's. They must match their `SHA256SUMS` and be this image's release |
-| `--image-repo REGISTRY/PATH` | `install` | for a mirror: the controller and preflight images from there, same digest |
+| `--image-repo REGISTRY/PATH` | `install` | for a mirror: the controller and preflight images from there, same digest. With `--scope cluster`, give `--weights-labeller-image` too, or no labeller is applied |
+| `--weights-labeller-image IMG` | `install --scope cluster` | the image the weights labeller runs. Default: this release's tools image, `ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<release>`, by tag (the tools image carries the release files, so its digest is known only after it is built). Pass `tools@sha256:<digest>` from the release notes to pin it |
+| `--no-weights-labeller` | `install --scope cluster` | apply no weights labeller (one already running is left as it is) |
 | `--dry-run --out DIR` | `admin-setup`, `install` | writes the objects in apply order, one file per step, and contacts no cluster |
 | `--strict` | `install`, `admin-finish` | stop on a preflight `UNKNOWN` the controller does not answer. After `admin-finish` (the preflight binding removed), the checks its cluster reads made are refused and do not stop it |
 | `--restart-keda` | `admin-finish`, `install --scope cluster` | restart KEDA's operator when it still holds a connection from before a reinstall. Without it, the command prints the restart |
