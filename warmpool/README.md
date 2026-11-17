@@ -41,15 +41,29 @@ exists to pair transient requester Pods with launchers. A pool needs none of it:
 the scaling manager already runs a control loop, knows the InferencePools, and decides what
 should be warm.
 
+## Which launcher image to use
+
+A pool's engines run the launcher image's vLLM, not the workload's. Pick the
+image whose vLLM matches the workload:
+
+| workload's vLLM | pool | launcher image |
+| --- | --- | --- |
+| v0.26 | pool of Pods | FMA's `launcher`, pinned in `config/warmpool/warmpool-deployment.yaml` (the default; nothing to pass) |
+| v0.26 | pool of groups | `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless`, with `--launcher-image` ([groups](../docs/guides/warm-pool/groups.md)) |
+| v0.34.0 | either | `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher`, from v0.12.0, with `--launcher-image`. Not yet run on a GPU |
+| any other | either | none published; build one from FMA's launcher on that vLLM |
+
 ## What is copied, and from where
 
 Upstream base: Fast Model Actuation **v0.8.0**, commit
 **`3f67d2c4c5c51baa6016fc24630222decd94971f`**, directory
-`inference_server/launcher/`. Two changes on top, and nothing else:
+`inference_server/launcher/`. Two changes on top (plus one comment whose
+issue number became a full link):
 
 1. **The follower-rank fix**: a rank > 0 of a multi-node engine runs vLLM's
-   headless executor instead of an API server. First carried in fork commit
-   `65ba31b` of `ev-shindin/llm-d-fast-model-actuation`; not upstream.
+   headless executor instead of an API server, as vLLM's own `run_headless`
+   does. First carried in fork commit `65ba31b` of
+   `ev-shindin/llm-d-fast-model-actuation`; not upstream.
 2. **The vLLM v0.34 import paths**: v0.34 moved `make_arg_parser`,
    `validate_parsed_serve_args`, `cli_env_setup` and `run_server`.
 

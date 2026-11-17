@@ -493,7 +493,8 @@ var warmableFlags = map[string]bool{
 //
 // The cost, on any vLLM: the value is part of the torch.compile cache key, so a
 // warm copy of a workload that names none no longer shares its compile cache
-// (on v0.26 that workload runs at 0.92). One extra compile per model.
+// (on v0.26 that workload runs at 0.92: CacheConfig.gpu_memory_utilization's
+// default in vllm/config/cache.py at v0.26.0). One extra compile per model.
 const defaultGPUMemoryUtilization = 0.9
 
 // withGPUMemoryUtilization applies the pool's own value, if it has one, and

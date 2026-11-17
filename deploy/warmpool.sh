@@ -172,6 +172,8 @@ create options:
                        The pool's engines run THIS image's vLLM, not the
                        workload's: use an image whose vLLM matches the
                        workload's (that one only for vLLM v0.34.0 workloads).
+                       Which image when: warmpool/README.md, "Which launcher
+                       image to use".
   --no-network-policy  do not create the ingress boundary. For clusters where
                        policy is managed centrally -- NOT a convenience: without
                        one, :8001 accepts caller-supplied argv from anything that

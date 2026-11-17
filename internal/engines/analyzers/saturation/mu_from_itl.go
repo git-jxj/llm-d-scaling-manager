@@ -146,9 +146,10 @@ func (a *SaturationAnalyzer) itlUnderArgs(key, args string) {
 // 4.4 GiB free at 0.95 on an 80 GiB card). Its ITL(k) is the latency of an
 // engine sharing a card, which is not the latency of one of this variant's own
 // replicas -- and k itself is read against a KV budget the sleepers have
-// already eaten into. A pool that does set an explicit GPUMemoryUtilization
-// does also change the digest, but the exclusion cannot rest on that: zero
-// inherits the workload's value, and zero is the default.
+// already eaten into. A pool whose --gpu-memory-utilization differs from the
+// workload's does also change the digest, but the exclusion cannot rest on
+// that: with --warm-pool-gpu-memory-utilization=0 the copy inherits the
+// workload's value, and the 0.90 default can equal it.
 //
 // Above itl.DefaultMaxObservableK the
 // engine preempts rather than slowing down and the line stops describing it, so

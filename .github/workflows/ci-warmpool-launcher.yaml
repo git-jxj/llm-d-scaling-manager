@@ -8,7 +8,9 @@ name: CI - Warm-pool launcher image
 # on its platform.
 #
 # Called by ci-release.yaml (release-warmpool-launcher-build), which pushes
-# each platform by digest and joins them into the signed, tagged index.
+# each platform by digest and joins them into the signed, tagged index, and by
+# ci-pr-checks.yaml (warmpool-launcher-image), build-only, on PRs that touch
+# the launcher, so both legs run before any release tag does.
 #
 # Run by hand (Actions -> this workflow -> Run workflow) as a dry run of the
 # release legs before a release that first carries them: with push unchecked
@@ -18,8 +20,9 @@ on:
   workflow_call:
     inputs:
       image:
-        description: 'Repository to push to, e.g. ghcr.io/<owner>/llm-d-scaling-manager/warmpool-launcher'
-        required: true
+        description: 'Repository to push to; default ghcr.io/<owner>/llm-d-scaling-manager/warmpool-launcher'
+        required: false
+        default: ''
         type: string
       push:
         description: 'Push each platform by digest and upload the digests as artifacts'
@@ -109,4 +112,5 @@ jobs:
           name: warmpool-launcher-digest-${{ matrix.arch }}
           path: ${{ runner.temp }}/launcher-digests/${{ matrix.arch }}
           if-no-files-found: error
-          retention-days: 1
+          # Long enough to re-run the join job alone after a failure.
+          retention-days: 7

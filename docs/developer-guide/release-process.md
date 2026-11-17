@@ -59,10 +59,9 @@ instead.
    `release-warmpool-launcher`, which joins them into one index and signs it.
    Nothing installs it by default yet, so the release files do not wait for it
    ([warmpool/README.md](../../warmpool/README.md#the-image-built-from-it)).
-   Before the first release that carries these jobs, dispatch
-   `ci-warmpool-launcher.yaml` by hand on `main` (Actions, Run workflow) as a
-   dry run: both platforms must build. Check **push** to also push each
-   platform by digest, untagged.
+   PRs that touch the launcher build both platforms with the same workflow,
+   without pushing; before v0.12.0, dispatch it with **push**
+   ([Prerequisites](#prerequisites)).
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line
@@ -77,6 +76,10 @@ has a tag on `main`, and only when `newTag` on the tagged commit equals the tag.
   access ([first release](#the-first-release-to-a-new-package)).
 - [ ] The commit you will tag passed its PR checks, including the e2e runs. The
   release reruns the PR checks, not the e2e suites.
+- [ ] Before the first release that carries the warm-pool launcher jobs
+  (v0.12.0): `ci-warmpool-launcher.yaml` dispatched on `main` with **push**
+  checked, and both legs green. The PR job builds both platforms but never
+  pushes, so this is the first push by digest.
 
 The workflow checks where a tag is, not who reviewed it. Review on `main` and
 `release-*` is enforced only by the repository's branch rules, if set.

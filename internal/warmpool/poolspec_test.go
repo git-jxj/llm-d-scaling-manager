@@ -230,28 +230,36 @@ func TestAPoolsOwnGPUUtilisationReachesItsWarmCopies(t *testing.T) {
 	// warmPoolGPUMemoryUtilization was read into PoolSpec and then never used:
 	// every pool ran at the controller-wide value whatever its trigger said.
 	const flag = "--gpu-memory-utilization"
-	in := policy.VariantDemand{
-		Model: pool.ModelRef{Namespace: "workload", Variant: "qwen",
-			EngineOptions: "--model m " + flag + " 0.9"},
+	const controllers = "--model m " + flag + " 0.9"
+	variant := func(warmPool string) policy.VariantDemand {
+		return policy.VariantDemand{
+			Model:    pool.ModelRef{Namespace: "workload", Variant: "qwen-" + warmPool, EngineOptions: controllers},
+			WarmPool: warmPool,
+		}
 	}
 	pools := []PoolSpec{{Name: "small", GPUMemoryUtilization: 0.6}, {Name: "plain"}}
+	// One slice for every pool, as the reconciler passes it.
+	shared := []policy.VariantDemand{variant("small"), variant("plain")}
 
-	in.WarmPool = "small"
-	got := VariantsFor([]policy.VariantDemand{in}, pools[0], pools)
-	if len(got) != 1 {
-		t.Fatalf("want the variant in its pool, got %+v", got)
+	got := map[string][]policy.VariantDemand{}
+	for _, spec := range pools {
+		got[spec.Name] = VariantsFor(shared, spec, pools)
 	}
-	if want := "--model m " + flag + " 0.6"; got[0].Model.EngineOptions != want {
-		t.Errorf("pool value not applied: %q, want %q", got[0].Model.EngineOptions, want)
+	if len(got["small"]) != 1 || len(got["plain"]) != 1 {
+		t.Fatalf("want one variant per pool, got %+v", got)
 	}
-	if in.Model.EngineOptions != "--model m "+flag+" 0.9" {
-		t.Errorf("the caller's variant was modified: %q", in.Model.EngineOptions)
+	if want := "--model m " + flag + " 0.6"; got["small"][0].Model.EngineOptions != want {
+		t.Errorf("pool value not applied: %q, want %q", got["small"][0].Model.EngineOptions, want)
 	}
-
-	in.WarmPool = "plain"
-	got = VariantsFor([]policy.VariantDemand{in}, pools[1], pools)
-	if len(got) != 1 || got[0].Model.EngineOptions != "--model m "+flag+" 0.9" {
-		t.Errorf("a pool with no value of its own must keep the controller's: %+v", got)
+	if got["plain"][0].Model.EngineOptions != controllers {
+		t.Errorf("a pool with no value of its own must keep the controller's: %q", got["plain"][0].Model.EngineOptions)
+	}
+	// The shared slice is the reconciler's for the whole pass: a pool's value
+	// written into it would reach every later reader of that slice.
+	for _, v := range shared {
+		if v.Model.EngineOptions != controllers {
+			t.Errorf("VariantsFor modified the caller's slice: %s now %q", v.Model.Variant, v.Model.EngineOptions)
+		}
 	}
 }
 

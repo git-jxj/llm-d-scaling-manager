@@ -214,3 +214,17 @@ func TestAPoolTriggerCarriesNoOutputSeed(t *testing.T) {
 		t.Errorf("a pool trigger must carry no output seed, have %d", m.DefaultOutputTokens)
 	}
 }
+
+// TestParsePoolMetaRejectsAGPUUtilisationOutsideItsRange: NaN passes a
+// `v <= 0 || v > 1` guard, and the pool would then drop it without a word.
+func TestParsePoolMetaRejectsAGPUUtilisationOutsideItsRange(t *testing.T) {
+	for _, raw := range []string{"NaN", "0", "-0.5", "1.5", "Inf", "x"} {
+		if _, err := ParsePoolMeta(map[string]string{WarmPoolNameKey: "p", WarmPoolGPUMemoryUtilizationKey: raw}); err == nil {
+			t.Errorf("%s=%q was accepted", WarmPoolGPUMemoryUtilizationKey, raw)
+		}
+	}
+	m, err := ParsePoolMeta(map[string]string{WarmPoolNameKey: "p", WarmPoolGPUMemoryUtilizationKey: "0.75"})
+	if err != nil || m.GPUMemoryUtilization != 0.75 {
+		t.Errorf("0.75: got %v, %v", m.GPUMemoryUtilization, err)
+	}
+}

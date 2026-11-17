@@ -36,10 +36,13 @@ From v0.12.0 on there is a second choice, built and released by this repo:
 It carries the same follower fix on FMA's newer launcher (v0.8.0) and runs
 vLLM v0.34.0, and it is signed. **Use it only for workloads that run vLLM
 v0.34.0:** the pool's engines run the launcher's vLLM, not the workload's, and
-the fork image above runs v0.26.0. It has **not** run a group on a GPU yet, so the
-fork image above stays the one to use until it has. The copy in
-`warmpool/supervisor/` is the source of this new image, not of the fork image.
-See [our own launcher image](install.md#our-own-launcher-image-optional-not-yet-the-default).
+the fork image above runs v0.26.0. So: a v0.26 workload takes the fork image,
+and a v0.34.0 workload takes this one, which has **not** run a group on a GPU
+yet. The copy in `warmpool/supervisor/` is the source of this new image, not
+of the fork image. Which image fits which workload:
+[the table in `warmpool/README.md`](../../../warmpool/README.md#which-launcher-image-to-use);
+how to get and verify it:
+[our own launcher image](install.md#our-own-launcher-image-optional-not-yet-the-default).
 
 It is refused rather than warned about because the failure is silent: the group
 schedules, goes Ready, holds every accelerator, and every admission times out
