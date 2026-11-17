@@ -1,0 +1,18 @@
+Day plan for ns-01/model-02, 2026-11-01 21:50 to 2026-11-01 22:55 UTC, buckets of 5m0s sized for the p95 rate (default)
+SLO: TTFT p95 500ms, TPOT mean 4ms; headroom 0.85. TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.
+
+hour (UTC)        rate mean  rate p95 need P need D  had P  had D  
+2026-11-01 21:00       0.73      1.00      1      1      1      1  ok
+2026-11-01 22:00       6.88     29.68      5      4      1      1  UNDER (SLO risk)
+
+buckets: 7 sized (6 under, 0 over, 1 match), 4 unmet, 2 too little data, 0 no data
+needed: peak 5 prefill + 4 decode, min 1 prefill + 1 decode
+replica-hours (sized buckets): needed 1.50 prefill + 1.17 decode, had 0.58 prefill + 0.58 decode
+GPU-hours: needed 2.67, used 1.17 (GPUs per replica: 1 prefill, 1 decode)
+hours under (SLO risk): 22:00
+hours over (waste): none
+flags: WindowShape, FewSamples, UnvalidatedTTFT, AssumedVP, AssumedPromptSpread, TransferOmitted, DecodeTermOmitted, RouterHopAssumed, SpreadBeyondProcessorSharing, FlowControlInferredOff, HeldByDecodeAdmission, KVBoundSlots, AssumedShape, OutputSpreadUnread, AssumedPoissonArrivals, ExtrapolatedFill, AssumedImbalance
+note: Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.
+note: Each bucket is sized for the p95 of its cycles' rates, on the fleet's limit at the SLO and headroom 0.85 (POST /v1/size's search).
+note: A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.
+note: Actual is the median serving pods of each role over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands.

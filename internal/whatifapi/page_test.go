@@ -47,6 +47,7 @@ func TestPageServed(t *testing.T) {
 		"/":                 {"text/html; charset=utf-8", `<script src="page/planner.js" defer></script>`},
 		"/page/planner.js":  {"text/javascript; charset=utf-8", "FLAG_WORDS"},
 		"/page/scenario.js": {"text/javascript; charset=utf-8", "function linkProblem"},
+		"/page/dayplan.js":  {"text/javascript; charset=utf-8", "function dayPlanSVG"},
 		"/page/planner.css": {"text/css; charset=utf-8", "prefers-color-scheme: dark"},
 	} {
 		rec := get(h, path, "")
@@ -121,13 +122,15 @@ func TestPageLoadsNothingExternal(t *testing.T) {
 		}
 	}
 	html := pageText(t, "index.html")
-	// Two scripts by src, the scenario logic first: planner.js calls it.
-	assert.Equal(t, 2, strings.Count(html, "<script"), "two scripts, by src")
-	assert.Less(t, strings.Index(html, `<script src="page/scenario.js" defer></script>`), strings.Index(html, `<script src="page/planner.js" defer></script>`))
+	// Three scripts by src, scenario.js first, then dayplan.js, which calls
+	// its esc, then planner.js, which calls both.
+	assert.Equal(t, 3, strings.Count(html, "<script"), "three scripts, by src")
+	assert.Less(t, strings.Index(html, `<script src="page/scenario.js" defer></script>`), strings.Index(html, `<script src="page/dayplan.js" defer></script>`))
+	assert.Less(t, strings.Index(html, `<script src="page/dayplan.js" defer></script>`), strings.Index(html, `<script src="page/planner.js" defer></script>`))
 	assert.GreaterOrEqual(t, strings.Index(html, `<script src="page/scenario.js" defer></script>`), 0)
 	// The page reaches its files and the API by paths relative to itself, so
 	// that a proxy may serve it under a prefix.
-	for _, name := range []string{"planner.js", "scenario.js"} {
+	for _, name := range []string{"planner.js", "scenario.js", "dayplan.js"} {
 		js := pageText(t, name)
 		for _, abs := range []string{`"/v1/`, "`/v1/", `'/v1/`, `"/page/`} {
 			assert.NotContains(t, js, abs, "an absolute path in %s", name)
@@ -355,4 +358,25 @@ func TestSourcesWithoutLister(t *testing.T) {
 	rec := get(New(Config{Resolver: &stubResolver{}}).Handler(), "/v1/sources", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"schemaVersion": 1, "prometheus": false, "namespaces": [], "recordings": []}`, rec.Body.String())
+}
+
+// The page plans a day: a button that posts v1/dayplan by a relative path
+// with no fleet and no rate in it (each bucket's are its own), and draws the
+// result as dayplan.js's three charts on one time axis, with a legend, a
+// table view and a tooltip, and no second y axis on any chart.
+func TestPagePlansADay(t *testing.T) {
+	html, js, day := pageText(t, "index.html"), pageText(t, "planner.js"), pageText(t, "dayplan.js")
+	for _, id := range []string{"dayrun", "daystep", "daysize", "daychart", "daylegend", "daytable", "daysum", "daynotes"} {
+		assert.Contains(t, html, `id="`+id+`"`)
+	}
+	assert.Contains(t, js, `api("POST", "v1/dayplan", dayRequest())`)
+	for _, want := range []string{"delete req.fleet", "delete req.traffic.classes", "dayPlanSVG(d)", "dayTipHTML(state.day, b)", "dayHoursTable(d)"} {
+		assert.Contains(t, js, want)
+	}
+	for _, want := range []string{`key: "rate"`, `key: "prefill"`, `key: "decode"`, `data-x0="${lay.x0}"`, "data-under", `"rate-p95"`, `"${p.key}-needed"`, `"${p.key}-actual"`} {
+		assert.Contains(t, day, want)
+	}
+	// One y scale per chart: the only text-anchor="end" ticks are drawn at
+	// the left margin.
+	assert.Equal(t, 1, strings.Count(day, `x="${DAY_L - 8}"`), "one y axis a chart")
 }

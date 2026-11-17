@@ -2,7 +2,7 @@
 
 ## Overview
 
-The capacity planner is a web page that answers four questions about one
+The capacity planner is a web page that answers five questions about one
 model's prefill/decode fleet:
 
 1. With this many prefill and decode replicas, what TTFT and TPOT do I get at
@@ -11,6 +11,7 @@ model's prefill/decode fleet:
    out first?
 3. What changes if I add a replica, or tighten a target?
 4. How many prefill and decode replicas does a given rate need?
+5. How many replicas did each hour of a day need, and how many did the fleet have?
 
 It reads what your fleet did, from a window of Prometheus or from a
 recording, and prices answers with the same model the `capacity-planner`
@@ -338,6 +339,68 @@ the fleet it found.
 Each plan has a time limit, 5 minutes unless the server was started with
 another `--plan-budget`. A plan past it is refused with `PlanBudgetExceeded`
 ([the plan budget](api.md#the-plan-budget)).
+
+## Plan replicas over a day
+
+How many prefill and decode replicas did your traffic need, hour by hour,
+and how many did the fleet have? The planner cuts the window into buckets (5
+minutes by default), reads each bucket's request rate, sizes it as **What
+fleet does this traffic need?** sizes one rate, and sets the replicas the fleet
+had beside it. Use a window of a day: a recording of a day, or 24 hours of
+Prometheus.
+
+On the page, load the source, set the SLO and headroom as usual, and press
+**Plan the day** under the graphs. Three charts share one time axis: the
+request rate (its mean, and a band up to its p95), then prefill replicas and
+decode replicas, each as needed against had. A bucket the fleet had fewer
+replicas than it needed is shaded red; one no fleet within the bound serves is
+grey. Hover a bucket for every value at that time; the hours are in the table
+view.
+
+From the command line, on the sample recording (about an hour, so two hours
+in the table):
+
+```bash
+# --prometheus URL --namespace NS --kube-state-metrics in place of --recording reads the last 24 hours.
+capacity-planner day-plan --recording recordings/ols-sweep.jsonl.gz --model model-02 --assume-vp 30000 --ttft 500ms@p95 --tpot 4ms
+```
+
+```text
+Day plan for ns-01/model-02, 2026-11-01 21:50 to 2026-11-01 22:55 UTC, buckets of 5m0s sized for the p95 rate (default)
+SLO: TTFT p95 500ms, TPOT mean 4ms; headroom 0.85. TTFT model UNVALIDATED. ...
+
+hour (UTC)        rate mean  rate p95 need P need D  had P  had D  
+2026-11-01 21:00       0.73      1.00      1      1      1      1  ok
+2026-11-01 22:00       6.88     29.68      5      4      1      1  UNDER (SLO risk)
+
+buckets: 7 sized (6 under, 0 over, 1 match), 4 unmet, 2 too little data, 0 no data
+needed: peak 5 prefill + 4 decode, min 1 prefill + 1 decode
+replica-hours (sized buckets): needed 1.50 prefill + 1.17 decode, had 0.58 prefill + 0.58 decode
+GPU-hours: needed 2.67, used 1.17 (GPUs per replica: 1 prefill, 1 decode)
+hours under (SLO risk): 22:00
+hours over (waste): none
+flags: WindowShape, FewSamples, UnvalidatedTTFT, AssumedVP, ... (every flag the buckets carry)
+```
+
+- **Sized for.** Each bucket is sized for the p95 of its cycles' rates when
+  the buckets hold 10 cycles or more, else for the mean. `--size-for
+  mean|p95|max` sets it. `--bucket 15m` sets the bucket.
+- **Shape.** Each bucket is priced at its own observed prompt and output
+  length. A bucket whose cycles read none is priced at the source's shape and
+  flagged `WindowShape`. `--assume-input-tokens` and `--assume-output-tokens`
+  price every bucket at one stated length, flagged `EXTRAPOLATED` when it lies
+  outside what the buckets observed.
+- **Too little data.** A bucket with fewer than 30 requests (`--min-requests`)
+  is not sized. A bucket no cycle fell in has no data. Neither counts as under
+  or over.
+- **Had.** The median serving pods of each role over the bucket. An hour is
+  UNDER when any of its buckets had fewer than it needed (SLO risk), and over
+  when every sized bucket had more (waste).
+- **Steady state.** Each bucket is sized as if its rate held. It ignores the
+  time a replica takes to start: a fleet that follows the plan must start
+  replicas that long before the rate arrives.
+- **JSON.** `-o json` prints every bucket, as `POST /v1/dayplan` returns it
+  ([the day plan](api.md#the-day-plan)).
 
 ## Set your own prompt buckets
 

@@ -193,3 +193,20 @@ td:first-child, th:first-child { text-align: left; }
 @media (max-width: 1000px) {
   .controls, .charts, .summary { grid-template-columns: 1fr; }
 }
+
+/* The day plan: three charts on one time axis. The rate's band is a wash of
+   its line's hue; the replicas the fleet had are the recessive grey, the
+   replicas needed the accent; a bucket short of what it needed is washed
+   red. */
+.dayplan { margin-top: 12px; }
+.dayplan .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+#daychart { width: 100%; height: auto; display: block; margin-top: 8px; }
+#dayout.stale { opacity: 0.45; transition: opacity 0.2s; }
+.daysum, .daynotes { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+.daynotes { font-size: 12px; color: var(--muted); }
+svg .ptitle { fill: var(--text-primary); font-weight: 600; }
+svg .dband, .legend .dband { fill: var(--series-1); fill-opacity: 0.12; stroke: none; }
+svg .dunder, .legend .dunder { fill: var(--critical); fill-opacity: 0.12; stroke: none; }
+svg .dunmet, .legend .dunmet { fill: var(--grid); stroke: none; }
+.c-had { stroke: var(--muted); fill: var(--muted); }
+svg .line.c-had { fill: none; }

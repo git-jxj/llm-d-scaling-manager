@@ -1,0 +1,736 @@
+{
+  "schemaVersion": 1,
+  "whatifSchema": "",
+  "dayPlanId": "sha256:ae0b14862cd2867adbd874dba43ea1e74632b8eb532406f655954b09042f1b52",
+  "inputsId": "sha256:615136db4ad0cc3f5fb97b94410f23727f1cb1cfe4d968f3564d287ee654b87b",
+  "banner": "TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.",
+  "from": "2026-11-01T21:50:00Z",
+  "to": "2026-11-01T22:55:00Z",
+  "step": 300,
+  "sizeFor": "p95",
+  "sizeForSource": "default",
+  "minRequests": 30,
+  "ttft": {
+    "statistic": "p95",
+    "target": 0.5
+  },
+  "tpot": {
+    "statistic": "mean",
+    "target": 0.004
+  },
+  "headroom": 0.85,
+  "maxReplicas": {
+    "prefill": 32,
+    "decode": 32
+  },
+  "buckets": [
+    {
+      "start": "2026-11-01T21:50:00Z",
+      "samples": 2,
+      "requests": 0,
+      "rate": {
+        "mean": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "shape": {
+        "source": "window"
+      },
+      "status": "tooLittleData",
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "flags": [
+        "WindowShape",
+        "FewSamples"
+      ]
+    },
+    {
+      "start": "2026-11-01T21:55:00Z",
+      "samples": 20,
+      "requests": 242.58002060269797,
+      "rate": {
+        "mean": 0.807831388888889,
+        "p95": 1,
+        "max": 1.36
+      },
+      "sizedRate": 1,
+      "shape": {
+        "promptTokens": 1012.1148211105417,
+        "outputTokens": 4025.2199583308234,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "limit": {
+        "value": 1.3622779373899458,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "KVBoundSlots",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "match",
+      "flags": [
+        "UnvalidatedTTFT",
+        "AssumedVP",
+        "AssumedPromptSpread",
+        "TransferOmitted",
+        "DecodeTermOmitted",
+        "RouterHopAssumed",
+        "SpreadBeyondProcessorSharing",
+        "FlowControlInferredOff",
+        "HeldByDecodeAdmission",
+        "KVBoundSlots",
+        "AssumedShape",
+        "OutputSpreadUnread",
+        "AssumedPoissonArrivals"
+      ]
+    },
+    {
+      "start": "2026-11-01T22:00:00Z",
+      "samples": 20,
+      "requests": 503.57871722496,
+      "rate": {
+        "mean": 1.677,
+        "p95": 1.8800000000000001,
+        "max": 1.92
+      },
+      "sizedRate": 1.8800000000000001,
+      "shape": {
+        "promptTokens": 1002.1631265660521,
+        "outputTokens": 4004.263677781811,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "prefill": 1,
+        "decode": 2
+      },
+      "limit": {
+        "value": 2.716313627870333,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "KVBoundSlots",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "under",
+      "flags": [
+        "UnvalidatedTTFT",
+        "AssumedVP",
+        "AssumedPromptSpread",
+        "TransferOmitted",
+        "DecodeTermOmitted",
+        "RouterHopAssumed",
+        "SpreadBeyondProcessorSharing",
+        "FlowControlInferredOff",
+        "HeldByDecodeAdmission",
+        "KVBoundSlots",
+        "AssumedShape",
+        "OutputSpreadUnread",
+        "AssumedPoissonArrivals"
+      ]
+    },
+    {
+      "start": "2026-11-01T22:05:00Z",
+      "samples": 20,
+      "requests": 726.6908143616,
+      "rate": {
+        "mean": 2.42,
+        "p95": 9.540000000000001,
+        "max": 16.64
+      },
+      "sizedRate": 9.540000000000001,
+      "shape": {
+        "promptTokens": 998.391777767987,
+        "outputTokens": 2497.658584373436,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "prefill": 1,
+        "decode": 4
+      },
+      "limit": {
+        "value": 11.731843882702066,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "KVBoundSlots",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals",
+          "ExtrapolatedFill"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "under",
+      "flags": [
+        "UnvalidatedTTFT",
+        "AssumedVP",
+        "AssumedPromptSpread",
+        "TransferOmitted",
+        "DecodeTermOmitted",
+        "RouterHopAssumed",
+        "SpreadBeyondProcessorSharing",
+        "FlowControlInferredOff",
+        "HeldByDecodeAdmission",
+        "KVBoundSlots",
+        "AssumedShape",
+        "OutputSpreadUnread",
+        "AssumedPoissonArrivals",
+        "ExtrapolatedFill"
+      ]
+    },
+    {
+      "start": "2026-11-01T22:10:00Z",
+      "samples": 20,
+      "requests": 6266.056703836159,
+      "rate": {
+        "mean": 20.866999999999997,
+        "p95": 29.560000000000002,
+        "max": 29.72
+      },
+      "sizedRate": 29.560000000000002,
+      "shape": {
+        "promptTokens": 1000.5400618212494,
+        "outputTokens": 636.2656395914438,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "prefill": 4,
+        "decode": 2
+      },
+      "limit": {
+        "value": 35.39168272366424,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedImbalance",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "under",
+      "flags": [
+        "UnvalidatedTTFT",
+        "AssumedVP",
+        "AssumedImbalance",
+        "AssumedPromptSpread",
+        "TransferOmitted",
+        "DecodeTermOmitted",
+        "RouterHopAssumed",
+        "SpreadBeyondProcessorSharing",
+        "FlowControlInferredOff",
+        "HeldByDecodeAdmission",
+        "AssumedShape",
+        "OutputSpreadUnread",
+        "AssumedPoissonArrivals"
+      ]
+    },
+    {
+      "start": "2026-11-01T22:15:00Z",
+      "samples": 20,
+      "requests": 6475.655955251197,
+      "rate": {
+        "mean": 21.564999999999994,
+        "p95": 29.8,
+        "max": 29.82
+      },
+      "sizedRate": 29.8,
+      "shape": {
+        "promptTokens": 1005.3894563592829,
+        "outputTokens": 500.026165532458,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "prefill": 4,
+        "decode": 2
+      },
+      "limit": {
+        "value": 36.15022476314212,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedImbalance",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "under",
+      "flags": [
+        "UnvalidatedTTFT",
+        "AssumedVP",
+        "AssumedImbalance",
+        "AssumedPromptSpread",
+        "TransferOmitted",
+        "DecodeTermOmitted",
+        "RouterHopAssumed",
+        "SpreadBeyondProcessorSharing",
+        "FlowControlInferredOff",
+        "HeldByDecodeAdmission",
+        "AssumedShape",
+        "OutputSpreadUnread",
+        "AssumedPoissonArrivals"
+      ]
+    },
+    {
+      "start": "2026-11-01T22:20:00Z",
+      "samples": 20,
+      "requests": 693.8095564390401,
+      "rate": {
+        "mean": 2.3105,
+        "p95": 2.88,
+        "max": 2.9
+      },
+      "sizedRate": 2.88,
+      "shape": {
+        "promptTokens": 4098.16210609924,
+        "outputTokens": 808.4694790373828,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "unmet",
+      "unmet": {
+        "reason": "TargetBelowFloor",
+        "detail": "target 0.5 s at or below the TTFT floor 0.6788 s",
+        "flags": [
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "AssumedVP",
+          "AssumedPromptSpread"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      }
+    },
+    {
+      "start": "2026-11-01T22:25:00Z",
+      "samples": 20,
+      "requests": 667.5344887397712,
+      "rate": {
+        "mean": 2.2229997005939994,
+        "p95": 2.88,
+        "max": 2.9
+      },
+      "sizedRate": 2.88,
+      "shape": {
+        "promptTokens": 6002.34770993272,
+        "outputTokens": 997.8901203684339,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "unmet",
+      "unmet": {
+        "reason": "TargetBelowFloor",
+        "detail": "target 0.5 s at or below the TTFT floor 0.987 s",
+        "flags": [
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "AssumedVP",
+          "AssumedPromptSpread"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      }
+    },
+    {
+      "start": "2026-11-01T22:30:00Z",
+      "samples": 20,
+      "requests": 503.27843176448005,
+      "rate": {
+        "mean": 1.6760000000000002,
+        "p95": 2,
+        "max": 2
+      },
+      "sizedRate": 2,
+      "shape": {
+        "promptTokens": 4852.230365888334,
+        "outputTokens": 1678.5433932251847,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "unmet",
+      "unmet": {
+        "reason": "TargetBelowFloor",
+        "detail": "target 0.5 s at or below the TTFT floor 0.8179 s",
+        "flags": [
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "AssumedVP",
+          "AssumedPromptSpread"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      }
+    },
+    {
+      "start": "2026-11-01T22:35:00Z",
+      "samples": 20,
+      "requests": 3387.2199942143993,
+      "rate": {
+        "mean": 11.279999999999998,
+        "p95": 15.96,
+        "max": 15.96
+      },
+      "sizedRate": 15.96,
+      "shape": {
+        "promptTokens": 1028.094213614944,
+        "outputTokens": 1194.4959569319278,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "prefill": 2,
+        "decode": 2
+      },
+      "limit": {
+        "value": 17.179636983424583,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedImbalance",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "under",
+      "flags": [
+        "UnvalidatedTTFT",
+        "AssumedVP",
+        "AssumedImbalance",
+        "AssumedPromptSpread",
+        "TransferOmitted",
+        "DecodeTermOmitted",
+        "RouterHopAssumed",
+        "SpreadBeyondProcessorSharing",
+        "FlowControlInferredOff",
+        "HeldByDecodeAdmission",
+        "AssumedShape",
+        "OutputSpreadUnread",
+        "AssumedPoissonArrivals"
+      ]
+    },
+    {
+      "start": "2026-11-01T22:40:00Z",
+      "samples": 20,
+      "requests": 1541.0649831833598,
+      "rate": {
+        "mean": 5.132,
+        "p95": 15.860000000000001,
+        "max": 15.92
+      },
+      "sizedRate": 15.860000000000001,
+      "shape": {
+        "promptTokens": 1404.2223454139196,
+        "outputTokens": 571.9106040769857,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "sized",
+      "needed": {
+        "prefill": 5,
+        "decode": 1
+      },
+      "limit": {
+        "value": 16.76289886158615,
+        "unit": "r/s",
+        "boundBy": [
+          "TTFT p95, end to end"
+        ],
+        "flags": [
+          "UnvalidatedTTFT",
+          "AssumedVP",
+          "AssumedImbalance",
+          "AssumedPromptSpread",
+          "TransferOmitted",
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "SpreadBeyondProcessorSharing",
+          "FlowControlInferredOff",
+          "HeldByDecodeAdmission",
+          "KVBoundSlots",
+          "AssumedShape",
+          "OutputSpreadUnread",
+          "AssumedPoissonArrivals"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "under",
+      "flags": [
+        "UnvalidatedTTFT",
+        "AssumedVP",
+        "AssumedImbalance",
+        "AssumedPromptSpread",
+        "TransferOmitted",
+        "DecodeTermOmitted",
+        "RouterHopAssumed",
+        "SpreadBeyondProcessorSharing",
+        "FlowControlInferredOff",
+        "HeldByDecodeAdmission",
+        "KVBoundSlots",
+        "AssumedShape",
+        "OutputSpreadUnread",
+        "AssumedPoissonArrivals"
+      ]
+    },
+    {
+      "start": "2026-11-01T22:45:00Z",
+      "samples": 20,
+      "requests": 290.67629007793363,
+      "rate": {
+        "mean": 0.9679998812239983,
+        "p95": 2,
+        "max": 2.38
+      },
+      "sizedRate": 2,
+      "shape": {
+        "promptTokens": 4552.895020153841,
+        "outputTokens": 1736.042004383983,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "unmet",
+      "unmet": {
+        "reason": "TargetBelowFloor",
+        "detail": "target 0.5 s at or below the TTFT floor 0.7806 s",
+        "flags": [
+          "DecodeTermOmitted",
+          "RouterHopAssumed",
+          "AssumedVP",
+          "AssumedPromptSpread"
+        ]
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      }
+    },
+    {
+      "start": "2026-11-01T22:50:00Z",
+      "samples": 4,
+      "requests": 3.0028546047999995,
+      "rate": {
+        "mean": 0.049999999999999996,
+        "p95": 0.18,
+        "max": 0.18
+      },
+      "shape": {
+        "promptTokens": 998.4179104477613,
+        "outputTokens": 4011.92039800995,
+        "prefixHitRate": 0,
+        "source": "bucket"
+      },
+      "status": "tooLittleData",
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "flags": [
+        "FewSamples"
+      ]
+    }
+  ],
+  "hours": [
+    {
+      "start": "2026-11-01T21:00:00Z",
+      "rate": {
+        "mean": 0.7343921717171717,
+        "p95": 1,
+        "max": 1.36
+      },
+      "needed": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "match",
+      "sized": 1
+    },
+    {
+      "start": "2026-11-01T22:00:00Z",
+      "rate": {
+        "mean": 6.875343096256663,
+        "p95": 29.68,
+        "max": 29.82
+      },
+      "needed": {
+        "prefill": 5,
+        "decode": 4
+      },
+      "actual": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "verdict": "under",
+      "sized": 6
+    }
+  ],
+  "summary": {
+    "peakNeeded": {
+      "prefill": 5,
+      "decode": 4
+    },
+    "minNeeded": {
+      "prefill": 1,
+      "decode": 1
+    },
+    "neededReplicaHours": {
+      "prefill": 1.5,
+      "decode": 1.1666666666666665
+    },
+    "actualReplicaHours": {
+      "prefill": 0.5833333333333333,
+      "decode": 0.5833333333333333
+    },
+    "gpusPerReplica": {
+      "prefill": 1,
+      "decode": 1
+    },
+    "neededGpuHours": 2.6666666666666665,
+    "actualGpuHours": 1.1666666666666665,
+    "underHours": [
+      "2026-11-01T22:00:00Z"
+    ],
+    "overHours": [],
+    "counts": {
+      "sized": 7,
+      "unmet": 4,
+      "tooLittleData": 2,
+      "noData": 0,
+      "under": 6,
+      "over": 0,
+      "match": 1
+    }
+  },
+  "searched": 79,
+  "notes": [
+    "Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
+    "Each bucket is sized for the p95 of its cycles' rates, on the fleet's limit at the SLO and headroom 0.85 (POST /v1/size's search).",
+    "A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.",
+    "Actual is the median serving pods of each role over the bucket's cycles. The prefix hit rate is reported, not priced: the learned state's stands."
+  ]
+}
