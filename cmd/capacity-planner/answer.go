@@ -600,13 +600,28 @@ func onRatio(r whatif.Result, ratio whatif.TPOTRatio, flags []whatif.Flag) whati
 func (f *answerFlags) ratioNote(st *learnreplay.State, r whatif.TPOTRatio) string {
 	switch {
 	case f.engineTPOT:
-		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st)) + byFillNote(r)
+		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st)) + worstNote(st.EngineTPOTWindows) + byFillNote(r)
 	case r.Assumed && len(st.TPOTWindows) == 0:
 		return fmt.Sprintf("R_q %s ASSUMED (no TPOT histogram)", num(r.Value))
 	case r.Assumed:
 		return fmt.Sprintf("R_q %s ASSUMED (the recording's %d TPOT windows not used)", num(r.Value), len(st.TPOTWindows))
 	}
-	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + byFillNote(r)
+	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + worstNote(st.TPOTWindows) + byFillNote(r)
+}
+
+// worstNote says R_q is the worst window where so few windows held requests
+// that the median's margin reaches the largest (whatif.WorstWindow).
+func worstNote(windows []whatif.TPOTWindow) string {
+	n := 0
+	for _, w := range windows {
+		if w.Count > 0 {
+			n++
+		}
+	}
+	if !whatif.WorstWindow(n) {
+		return ""
+	}
+	return fmt.Sprintf(" (the worst of %d)", n)
 }
 
 // byFillNote is R_q by fill for the human output: each fill bucket's ratio,
@@ -624,6 +639,8 @@ func byFillNote(r whatif.TPOTRatio) string {
 			p += fmt.Sprintf(" (global, %d windows)", fr.Windows)
 		case fr.Learned != fr.Value:
 			p += fmt.Sprintf(" (own %.3g, raised)", fr.Learned)
+		case whatif.WorstWindow(fr.Windows):
+			p += fmt.Sprintf(" (the worst of %d)", fr.Windows)
 		}
 		parts = append(parts, p)
 	}

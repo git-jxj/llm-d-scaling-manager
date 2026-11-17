@@ -240,18 +240,22 @@ read, one rule kept: an `R_q` never reads below the truth.
   wider than a quarter of the mean is now read at the lower of its upper edge
   and the most the window's sum allows. Every request is at least its bucket's
   lower edge, and the requests at or above the rank inside the `q` bucket are
-  at least the quantile, so `mean*total >= floorSum + (cum - rank)*(x - lower)`
-  caps the quantile `x`. That is a bound, not an estimate: it is never below
-  the true quantile. It separates p50 from p90 where the mean allows it, and
-  leaves p90 and p99 on the bucket's edge where it does not; the answer is
-  flagged `MeanBoundedTPOTPercentile` when it read below the edge. An earlier
-  version of this PR read inside the bucket linearly, as `histogram_quantile`
-  does; on the property test's lognormal draws that under-stated the truth in
-  8 of 595 readings, by up to 7.1%, and is gone.
+  at least the quantile, so `sum >= floorSum + (cum - rank)*(x - lower)` caps
+  the quantile `x`. That is a bound, not an estimate: it is never below the
+  true quantile. It separates p50 from p90 where the mean allows it, and leaves
+  p90 and p99 on the bucket's edge where it does not; the answer is flagged
+  `MeanBoundedTPOTPercentile` when it read below the edge. The bound needs the
+  sum of exactly the requests the buckets count, so it is skipped, and the
+  bucket's edge read, where that is not shown: the engine fall-back, whose sum
+  is its count times a step-time ITL (`TPOTWindow.SumMeasured` false), and a
+  window whose buckets hold more requests than `_count`, scraped a moment
+  apart. Reading inside the bucket linearly, as `histogram_quantile` does,
+  under-states the truth (8 of 595 readings on the property test's lognormal
+  draws, by up to 7.1%), and is not done.
 - **The median window plus a margin, not the 90th percentile** (`ratioRank`).
   `R_q` is the lowest order statistic of the per-window ratios that is at or
   above their median with 90% confidence: `P(Binomial(n, 1/2) <= k) >= 0.9`.
-  With 576 windows that is about the 304th; with 5 or fewer it is the largest,
+  With 576 windows that is about the 304th; with 6 or fewer it is the largest,
   the worst window. Each window's reading is at or above its own quantile, so
   `R_q` is at or above the median window's true ratio with that confidence.
   The 90th percentile it replaces priced a p50 at a p90-of-p50 across windows.
@@ -267,8 +271,15 @@ read, one rule kept: an `R_q` never reads below the truth.
     it, a running maximum over fill; `learned` keeps the bucket's own reading,
     and the human note prints both. Raising a ratio only prices a percentile
     higher, so it is safe, and it keeps `ITL(k)·R_q(k)` strictly rising so
-    that slo-to-rate's bisection on `[band.Lo, 1]` has one answer. Its cost is
-    that one high bucket lifts every bucket above it.
+    that slo-to-rate's bisection has one answer. Its cost is that one high
+    bucket lifts every bucket above it.
+  - **A step, not a line.** A fill reads its own bucket's value across
+    `[Lo, Hi)`, never a blend with the bucket below, so no fill reads under the
+    ratio its bucket priced. Where the product jumps past the target at a
+    bucket's edge, slo-to-rate answers on the side below it.
+  - **Small counts.** With 6 windows or fewer, in all or in one bucket, the
+    median's margin reaches the largest: `R_q` is the worst window, and the
+    human note says "(the worst of N)".
   - **Checked.** A curve that falls, holds a ratio below 1, or does not tile
     `[0, 1]` edge to edge is refused `InvalidInput`.
   - **Used** by replicas-to-slo, slo-to-rate and the `/v1/plan` curves. The
@@ -304,7 +315,7 @@ coarse-bucket bound and the median rank, not from R_q by fill.
 q32j). Two causes, in order of size:
 
 - **R_q itself, about 1.6 times.** It prices p90 over the mean at 1.70
-  (28.5 / 16.8 ms), against 1.02 to 1.09 measured by the client. The router's
+  (28.5 / 16.8 ms), against 1.02 to 1.10 measured by the client. The router's
   10, 20 and 40 ms edges cannot place a percentile inside a 10 ms bucket around
   a 12 to 30 ms mean: the bound proves little above the median, so p90 and p99
   sit near the bucket's edge.

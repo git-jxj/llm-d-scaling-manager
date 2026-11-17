@@ -323,8 +323,10 @@ func (d Decode) tpotAtFill(k float64, r TPOTRatio) (float64, bool) {
 // one ratio it is the closed form (t/R_q - B)/A. With R_q by fill the product
 // rises strictly in k (A and B are positive and R_q never falls), so k* is
 // found by bisection on [lo, 1]; past a full cache R_q is flat at its last
-// bucket, and the closed form at that ratio is exact there. The flag says the
-// global R_q stood in for a thin bucket at k*.
+// bucket, and the closed form at that ratio is exact there. R_q steps up at a
+// bucket's edge, where the product can jump past t: the bisection returns the
+// side below t, so the fill answered never prices a TPOT above the target.
+// The flag says the global R_q stood in for a thin bucket at k*.
 func (d Decode) fillForTPOT(t float64, r TPOTRatio, lo float64) (float64, bool) {
 	if len(r.ByFill) == 0 {
 		return (t/r.Value - d.Line.B) / d.Line.A, false
@@ -345,8 +347,8 @@ func (d Decode) fillForTPOT(t float64, r TPOTRatio, lo float64) (float64, bool) 
 			hi = mid
 		}
 	}
-	_, global := r.At(hi)
-	return hi, global
+	_, global := r.At(lo)
+	return lo, global
 }
 
 // RateQuery is question 1's input beyond the fleet.
@@ -417,7 +419,7 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 				return refuse(Saturated, fmt.Sprintf("no fill carries the operating point %g r/s", op))
 			}
 			rate, k, by, flags = op, kop, nil, slices.DeleteFunc(flags, func(f Flag) bool { return f == BelowFittedBand })
-			if kop < d.Band.Lo {
+			if kop < d.lowestFill() {
 				flags = append(flags, BelowFittedBand)
 			}
 		}

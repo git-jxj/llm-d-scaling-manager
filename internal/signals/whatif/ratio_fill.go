@@ -42,33 +42,22 @@ type FillRatio struct {
 	Thin bool `json:"thin,omitempty"`
 }
 
-// center is the fill R_q is read at exactly, between two buckets' centers
-// interpolated.
-func (b FillRatio) center() float64 { return (b.Lo + b.Hi) / 2 }
-
 // At is R_q at fill k, and whether the global R_q stood in for a thin bucket
 // there. A ratio with no ByFill is Value at every fill. With ByFill, R_q is
-// read between the two bucket centers around k, linearly, and flat past the
-// first and the last center. Since the buckets never fall, neither does At.
+// the Value of the bucket holding k, [Lo, Hi), the last bucket closed at its
+// top and fills past it read there: a step, never between buckets, so no fill
+// reads below the ratio its own bucket priced. Since the buckets never fall,
+// neither does At.
 func (r TPOTRatio) At(k float64) (float64, bool) {
 	b := r.ByFill
 	if len(b) == 0 {
 		return r.Value, false
 	}
-	if k <= b[0].center() {
-		return b[0].Value, b[0].Thin
-	}
-	last := len(b) - 1
-	if k >= b[last].center() {
-		return b[last].Value, b[last].Thin
-	}
 	i := 0
-	for k > b[i+1].center() {
+	for i < len(b)-1 && k >= b[i].Hi {
 		i++
 	}
-	lo, hi := b[i], b[i+1]
-	w := (k - lo.center()) / (hi.center() - lo.center())
-	return lo.Value + w*(hi.Value-lo.Value), lo.Thin && w < 1 || hi.Thin && w > 0
+	return b[i].Value, b[i].Thin
 }
 
 // check refuses a by-fill curve that is not one fillRatios learns: a value

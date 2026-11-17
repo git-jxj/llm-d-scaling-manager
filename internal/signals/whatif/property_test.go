@@ -553,6 +553,7 @@ func bucketed(samples []float64, edges []float64) TPOTWindow {
 	for i, e := range edges {
 		w.Buckets[i].UpperEdge = e
 	}
+	w.SumMeasured = true
 	for _, s := range samples {
 		w.Sum += s
 		w.Count++
@@ -648,6 +649,29 @@ func TestProperty_TPOTRatio(t *testing.T) {
 	tr := mustAnswer(t, ratioFrom([]TPOTWindow{tight}, 0.5))
 	if want := 0.017 / (tight.Sum / tight.Count); tr.Value < want || tr.Value > 1.01*want || !tr.HasFlag(MeanBoundedTPOTPercentile) {
 		t.Errorf("tight bound: R_q %g, want at most 1%% above the true %g, flagged %s: %v", tr.Value, want, MeanBoundedTPOTPercentile, tr.Flags)
+	}
+
+	// Two sums the bound may not lean on, each on the tight window above, where
+	// a sum 2% off moves the bound under the truth:
+	//   - the engine's, its count times a step-time ITL 2% under the
+	//     per-request mean: not the histogram's _sum (SumMeasured false);
+	//   - _sum and _count scraped a moment before the buckets, missing the
+	//     last 5% of requests, all slow ones: the buckets hold more than
+	//     _count, and the extra requests' share of the sum is unknown.
+	// Both read the bucket's upper edge.
+	truth := 0.017
+	engine := tight
+	engine.Sum, engine.SumMeasured = 0.98*tight.Sum, false
+	late := bucketed(append(slices.Repeat([]float64{0.0100001}, 499), slices.Repeat([]float64{0.017}, 451)...), routerEdges)
+	late.Buckets = slices.Clone(tight.Buckets)
+	for name, w := range map[string]TPOTWindow{"an engine sum 2% low": engine, "buckets past _count": late} {
+		got := mustAnswer(t, ratioFrom([]TPOTWindow{w}, 0.5))
+		if want := truth / (w.Sum / w.Count); got.Value < want*(1-1e-12) {
+			t.Errorf("%s: R_q %g below the true %g", name, got.Value, want)
+		}
+		if got.HasFlag(MeanBoundedTPOTPercentile) {
+			t.Errorf("%s: bounded by a sum that does not cover the buckets: %v", name, got.Flags)
+		}
 	}
 
 	// A window whose 90th percentile bucket tops out under its mean: nine in

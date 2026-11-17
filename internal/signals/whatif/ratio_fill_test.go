@@ -62,9 +62,14 @@ func TestRatioByFill_RisesWithFill(t *testing.T) {
 		}
 		prev = got
 	}
-	// Between two centers R_q is read linearly.
-	mid, _ := r.At(0.2)
-	near(t, "R_q between 0.1 and 0.3", mid, 1.2, 1e-9)
+	// R_q is the bucket's own across the bucket, a step at its edge: a fill
+	// near a bucket's bottom never reads the lower bucket's ratio.
+	below, _ := r.At(0.199)
+	near(t, "R_q just under 0.2", below, 1.1, 1e-9)
+	at, _ := r.At(0.2)
+	near(t, "R_q at 0.2", at, 1.3, 1e-9)
+	edge, _ := r.At(0.41)
+	near(t, "R_q just inside 0.4-0.6", edge, 1.5, 1e-9)
 }
 
 // A bucket reading below the one under it is raised to it: R_q never falls
@@ -102,10 +107,10 @@ func TestRatioByFill_ThinBucketFallsBackToGlobal(t *testing.T) {
 	}
 
 	d := olsSweep()
-	slo := SLOAtReplicas(d, ReplicasQuery{Rate: 0.5 * mustAnswer(t, KneeRate(d)).Value, PercentileTarget: &TPOTTarget{Percentile: 0.9, Ratio: r}})
+	slo := SLOAtReplicas(d, ReplicasQuery{Rate: 0.8 * mustAnswer(t, KneeRate(d)).Value, PercentileTarget: &TPOTTarget{Percentile: 0.9, Ratio: r}})
 	p := mustAnswer(t, slo.PercentileTPOT)
-	if k := p.Basis.Fill; !(k > 0.1) {
-		t.Fatalf("p90 priced at fill %g: the fixture no longer reaches past the learned bucket's center", k)
+	if k := p.Basis.Fill; !(k >= 0.2) {
+		t.Fatalf("p90 priced at fill %g: the fixture no longer reaches the thin buckets above 0.2", k)
 	}
 	if !p.HasFlag(GlobalTPOTRatio) {
 		t.Errorf("p90 at fill %g, inside a thin bucket's reach, is not flagged %s: %v", p.Basis.Fill, GlobalTPOTRatio, p.Flags)
@@ -163,8 +168,14 @@ func TestRatioByFill_InverseIsMonotone(t *testing.T) {
 			}
 			prev = a.Value
 			if slices.Contains(a.Basis.BoundBy, BoundTPOT) {
-				back, _ := d.tpotAtFill(max(a.Basis.Fill, d.lowestFill()), r)
-				near(t, "TPOT back at the answered fill", back, target.Seconds, 1e-9*target.Seconds)
+				// The answered fill holds the target, and the fill just past
+				// it does not: the inverse stops on the safe side of a step.
+				k := max(a.Basis.Fill, d.lowestFill())
+				back, _ := d.tpotAtFill(k, r)
+				past, _ := d.tpotAtFill(k+1e-9, r)
+				if back > target.Seconds*(1+1e-9) || past < target.Seconds*(1-1e-6) {
+					t.Fatalf("target %g s: TPOT %g at the answered fill %g, %g just past it", target.Seconds, back, k, past)
+				}
 			}
 		}
 		// At the band's bottom the curve reads at or below the global R_q;
@@ -268,7 +279,7 @@ func requireBuckets(t *testing.T, r TPOTRatio) {
 func TestRatio_CoarseBucketBoundByMean(t *testing.T) {
 	w := TPOTWindow{
 		Buckets: []HistogramBucket{{UpperEdge: 0.010, Count: 0}, {UpperEdge: 0.020, Count: 1000}, {UpperEdge: 0.040, Count: 1000}, {UpperEdge: math.Inf(1), Count: 1000}},
-		Sum:     14, Count: 1000,
+		Sum:     14, Count: 1000, SumMeasured: true,
 	}
 	windows := []TPOTWindow{w, w, w}
 	for _, c := range []struct {

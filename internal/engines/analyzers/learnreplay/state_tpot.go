@@ -17,8 +17,10 @@ import (
 // The collector reads the histogram's buckets and not its _sum, so the
 // window's mean is each row's own ITL, weighted by its requests: the assumption
 // a mean TPOT target already makes, that a request-weighted mean and a step-time
-// mean agree. A row with no finite ITL, or edges another row does not share,
-// is left out. ok is false with no row left.
+// mean agree. That sum is not the histogram's, so SumMeasured stays false and
+// a coarse bucket is read at its upper edge: the mean bound needs the sum of
+// the very requests the buckets count. A row with no finite ITL, or edges
+// another row does not share, is left out. ok is false with no row left.
 func engineTPOTWindow(rows []domain.ReplicaMetrics, roles map[string]string) (whatif.TPOTWindow, bool) {
 	var w whatif.TPOTWindow
 	for _, rm := range rows {

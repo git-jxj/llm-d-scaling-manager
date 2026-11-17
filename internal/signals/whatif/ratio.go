@@ -27,6 +27,12 @@ type TPOTWindow struct {
 	// A window with no fill counts toward the global R_q only.
 	Fill      float64
 	FillKnown bool
+	// SumMeasured says Sum is the histogram's own _sum over the same
+	// requests the buckets count, which a coarse bucket's bound needs
+	// (quantileRead.meanBound). A sum built another way, the engine's
+	// count times its step-time ITL, is not: its window is read at the q
+	// bucket's upper edge.
+	SumMeasured bool
 }
 
 // coarseBucketWidth is the width of the q bucket, over the window's mean,
@@ -157,12 +163,22 @@ func ratioAndWidth(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, float64,
 // ratioRank is the index, in n sorted per-window ratios, R_q is read at: the
 // lowest order statistic at or above the median with probability
 // medianConfidence, P(Binomial(n, 1/2) <= k) >= medianConfidence. It is the
-// median plus a margin that shrinks as windows accrue: with 5 windows or fewer
+// median plus a margin that shrinks as windows accrue: with 6 windows or fewer
 // it is the largest (the worst window), with 30 the 19th, with 576 about the
 // 304th. Each window's reading is already at or above its own quantile
 // (readWindow), so R_q is at or above the median window's true ratio with that
 // confidence.
 func ratioRank(n int) int {
+	return medianRank(n)
+}
+
+// WorstWindow reports whether R_q from n windows is the worst of them
+// (ratioRank picks the largest): true for 6 windows or fewer, so the human
+// output can say so.
+func WorstWindow(n int) bool { return n > 0 && ratioRank(n) == n-1 }
+
+// medianRank is ratioRank's arithmetic.
+func medianRank(n int) int {
 	cdf := 0.0
 	for k := range n {
 		lg, _ := math.Lgamma(float64(n + 1))
@@ -205,7 +221,7 @@ func readWindow(w TPOTWindow, q float64) (windowReading, bool, error) {
 	rd := windowReading{ratio: qr.upper / mean, width: (qr.upper - qr.lower) / mean}
 	if rd.width > coarseBucketWidth {
 		rd.coarse = true
-		if b := qr.meanBound(mean); b < qr.upper {
+		if b := qr.meanBound(w); b < qr.upper {
 			rd.ratio, rd.bounded = b/mean, true
 		}
 	}
@@ -221,16 +237,21 @@ type quantileRead struct {
 	floorSum         float64
 }
 
-// meanBound is the most the q quantile can be, given the window's mean: the
+// meanBound is the most the q quantile can be, given the window's sum: the
 // observations at or above the rank inside the bucket, cum - rank of them, are
 // each at least the quantile x, and every observation is at least its bucket's
-// lower edge, so mean*total >= floorSum + (cum - rank)*(x - lower). It is the
-// upper edge where that caps nothing: no observation above the rank in the
-// bucket, or a sum below the floor, which only data scraped a moment apart
-// gives.
-func (qr quantileRead) meanBound(mean float64) float64 {
-	above, slack := qr.cum-qr.rank, mean*qr.total-qr.floorSum
-	if !(above > 0) || !(slack >= 0) {
+// lower edge, so sum >= floorSum + (cum - rank)*(x - lower).
+//
+// The sum must cover every observation the buckets count. It is the upper
+// edge, which caps nothing, where that is not shown: a sum not measured
+// (TPOTWindow.SumMeasured), buckets holding more observations than _count
+// (scraped a moment apart: the extra ones' share of the sum is unknown), no
+// observation above the rank in the bucket, or a sum below the floor. With
+// _count at or above the buckets' total, _sum covers them and more, so the
+// bound only loosens.
+func (qr quantileRead) meanBound(w TPOTWindow) float64 {
+	above, slack := qr.cum-qr.rank, w.Sum-qr.floorSum
+	if !w.SumMeasured || qr.total > w.Count || !(above > 0) || !(slack >= 0) {
 		return qr.upper
 	}
 	return min(qr.upper, qr.lower+slack/above)
