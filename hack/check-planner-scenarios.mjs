@@ -479,7 +479,7 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("seven shapes are refused", reportRequest({inputsId: "i", shapes: [1, 2, 3, 4, 5, 6, 7].map(n => ({il: n + "k", ol: "1k"}))}).body === null);
   check("a bad load is refused before asking", reportRequest({inputsId: "i", loads: "fast"}).body === null);
 
-  const row = (load, rate, ttft, tpot, mark) => ({load, rate, ttft: [{statistic: "p95", ...ttft}], tpotMean: tpot,
+  const row = (load, rate, ttft, tpot, mark) => ({load, rate, ttft: [{statistic: "p90", value: 0.001}, {statistic: "p95", ...ttft}], tpotMean: tpot,
     tpotPercentile: {statistic: "p90", value: 0.0164}, cell: {mark}});
   const knees = (knee, binds) => ({fleetKnee: {value: knee, binds}, headroom: 0.85, prefillKnee: {value: 49.8}, decodeKnee: {value: knee},
     operating: {value: 0.85 * knee}, maxAtSLO: {value: 26.2}});
@@ -488,13 +488,13 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
       {label: "measured", flags: ["UnvalidatedTTFT", "AssumedPoissonArrivals", "SomethingRare"], capacity: knees(38.14, "decode"),
         verdict: {verdict: "UNDER-PROVISIONED", reason: "TTFT p95 AboveDecodeOnset misses 2000.0 ms"}, utilization: {decode: {kvFill: {refused: {reason: "Saturated"}}, bandTop: 0.8}, prefill: {}},
         table: [row("50%", 19.07, {value: 0.6367}, {value: 0.00699}, "met"), row("seen x1.5", 47.39, {refused: {reason: "Saturated"}}, {value: 0.0271}, "saturated")]},
-      {label: "1k/1k", extrapolated: true, extrapolatedWhy: "IL 1024 outside", capacity: knees(36.55, "decode"),
+      {label: "1k/1k", source: "asked", extrapolated: true, extrapolatedWhy: "IL 1024 outside", capacity: knees(36.55, "decode"),
         verdict: {verdict: "OVER-PROVISIONED", shrink: ["prefill", "decode"]}, utilization: {decode: {}, prefill: {}},
         table: [row("50%", 18.27, {value: 1.5894}, {value: 0.007}, "missed")]}]});
   check("a verdict past the knee says so in words", v.verdicts[0].text ===
-    "UNDER-PROVISIONED: at 47.4 r/s the fleet is past 85% of its 38.1 r/s knee, set by decode; add decode replicas.", v.verdicts[0].text);
+    "UNDER-PROVISIONED: at 47.4 r/s the load is 1.2x the fleet's 38.1 r/s knee; add decode replicas.", v.verdicts[0].text);
   check("an over-provisioned verdict names the roles", v.verdicts[1].text ===
-    "OVER-PROVISIONED: at 47.4 r/s one prefill or one decode replica fewer still meets every target with headroom.", v.verdicts[1].text);
+    "OVER-PROVISIONED: if all 47.4 r/s were 1k/1k requests, one prefill or one decode replica fewer still meets every target with headroom.", v.verdicts[1].text);
   check("a load all shapes price alike carries its rate in the header", v.header[1] === "seen x1.5 (47.4 r/s)", v.header[1]);
   check("a load whose rate differs by shape keeps it in the cell", v.header[0] === "50%" && v.rows[0].cells[0].text.endsWith("@ 19.1 r/s"), v.rows[0].cells[0].text);
   check("a cell shows the SLO's statistics, rounded", v.rows[0].cells[0].text.startsWith("TTFT 637 ms · TPOT 7.0 ms"), v.rows[0].cells[0].text);
@@ -510,10 +510,43 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     JSON.stringify(["TTFT is not validated", "assumes Poisson arrivals"]) && v.details[0].flags.more === 1 &&
     v.details[0].flags.codes === "UnvalidatedTTFT, AssumedPoissonArrivals, SomethingRare");
   check("the notes stay apart", v.notes.length === 2);
+  // Each verdict band, each said in its own words.
+  const one = (load, capacity, verdict, extra) => reportView(Object.assign({slo, load: {rate: {value: load}}, loads: [],
+    shapes: [Object.assign({label: "measured", capacity, verdict, utilization: {decode: {}, prefill: {}}, table: []}, extra || {})]})).verdicts[0].text;
+  check("between headroom and the knee the verdict says past 85%",
+    one(35, knees(38.14, "decode (prefill not priced)"), {verdict: "UNDER-PROVISIONED"}) ===
+    "UNDER-PROVISIONED: at 35 r/s the fleet is past 85% of its 38.1 r/s knee, set by decode; add decode replicas.",
+    one(35, knees(38.14, "decode (prefill not priced)"), {verdict: "UNDER-PROVISIONED"}));
+  check("past both roles' knees both are named", one(47.39, Object.assign(knees(38.14, "decode"), {prefillKnee: {value: 30}}), {verdict: "UNDER-PROVISIONED"}) ===
+    "UNDER-PROVISIONED: at 47.4 r/s the load is 1.2x the fleet's 38.1 r/s knee; add prefill and decode replicas.");
+  check("a missed TTFT is named, with no role guessed", one(31.6, knees(38.14, "decode"), {verdict: "UNDER-PROVISIONED",
+    reason: "2 prefill + 2 decode: 31.60 r/s within 0.85 x the fleet knee 38.14 r/s = 32.42 r/s; TTFT p95 7621.0 ms misses 2000.0 ms; TPOT mean 7.6 ms meets 30.0 ms"}) ===
+    "UNDER-PROVISIONED: at 31.6 r/s TTFT p95 7.6 s misses 2 s.");
+  check("a missed TPOT asks for decode", one(31.6, knees(38.14, "decode"), {verdict: "UNDER-PROVISIONED",
+    reason: "x; TPOT mean 41.2 ms misses 30.0 ms"}) === "UNDER-PROVISIONED: at 31.6 r/s TPOT mean 41 ms misses 30 ms; add decode replicas.");
+
+  // The TPOT percentile the SLO judges is the one shown and named.
+  const p90 = {ttft: {statistic: "p95", target: 2}, tpot: {statistic: "p90", target: 0.03}};
+  const vp = reportView({slo: p90, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "measured", capacity: knees(38.14, "decode"),
+    verdict: {}, utilization: {decode: {}, prefill: {}}, table: [row("10r/s", 10, {value: 0.5}, {value: 0.00699}, "met")]}]});
+  check("a p90 TPOT SLO shows the p90", vp.rows[0].cells[0].text === "TTFT 500 ms · TPOT 16 ms", vp.rows[0].cells[0].text);
+  check("a p90 TPOT SLO is named in the legend", vp.legendStats.startsWith("Each cell is TTFT p95 · TPOT p90."), vp.legendStats);
+  check("a rate load is not named twice", vp.header[0] === "10r/s", vp.header[0]);
+  check("a TTFT is read at the SLO's statistic, not the first one", v.rows[0].cells[0].text.startsWith("TTFT 637 ms"), v.rows[0].cells[0].text);
+  check("a cell's parts stay apart for wrapping", JSON.stringify(vp.rows[0].cells[0].parts) === JSON.stringify(["TTFT 500 ms", "TPOT 16 ms"]));
+
+  // A TPOT at the decode line's floor says so.
+  const vf = reportView({slo, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "measured", capacity: knees(38.14, "decode"),
+    verdict: {}, utilization: {decode: {}, prefill: {}}, table: [row("10r/s", 10, {value: 0.5}, {value: 0.00699, flags: ["BelowFittedBand"]}, "met")]}]});
+  check("a floor TPOT reads at most", vf.rows[0].cells[0].text.includes("TPOT ≤7.0 ms"), vf.rows[0].cells[0].text);
+  check("the legend explains the floor mark", vf.legendStats.includes("≤ marks a TPOT at the decode line's floor"), vf.legendStats);
+  check("no floor, no floor note", !v.legendStats.includes("floor"));
+  check("a TTFT is never marked as a floor", ctx.reportView({slo, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "m", capacity: knees(38.14, "decode"), verdict: {},
+    utilization: {decode: {}, prefill: {}}, table: [Object.assign(row("10r/s", 10, {value: 0.5, flags: ["BelowFittedBand"]}, {value: 0.007}, "met"))]}]}).rows[0].cells[0].parts[0] === "TTFT 500 ms");
   check("decode use reads in words", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8, slotsOccupied: {value: 48.2}, slots: 228, waitProbability: {value: 0.004}}) ===
     "decode KV 17% full (of 80% usable), 48 of 228 batch slots busy, 0% of requests wait for a slot", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8}));
   check("prefill use reads in words", ctx.prefillUse({pooled: {value: 0.6312}, worstPod: {value: 0.71}}) === "prefill 63% busy pooled, 71% on the busiest pod");
-  check("a verdict word is set apart from its sentence", v.verdicts[1].verdict === "OVER-PROVISIONED" && v.verdicts[1].rest.startsWith("at 47.4 r/s one prefill"));
+  check("a verdict word is set apart from its sentence", v.verdicts[1].verdict === "OVER-PROVISIONED" && v.verdicts[1].rest.startsWith("if all 47.4 r/s were 1k/1k requests, one prefill"));
   check("a refusal code in a reason reads in words", v.details[0].lines.includes("The numbers: TTFT p95 router-queued misses 2000.0 ms"),
     JSON.stringify(v.details[0].lines));
   check("a refusal with no words names its reason", refusalText({refused: {reason: "Odd"}}) === "not priced (Odd)");
@@ -537,7 +570,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 265;
+const EXPECTED_CASES = 278;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

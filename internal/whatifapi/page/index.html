@@ -251,7 +251,7 @@
       </fieldset>
       <fieldset>
         <legend>Loads</legend>
-        <label for="rloads">Rates, comma separated</label>
+        <label for="rloads">Loads, comma separated</label>
         <input id="rloads" type="text" value="50%, 80%, 100%, seen" aria-describedby="rloadshint">
         <p class="hint" id="rloadshint">80% is a share of each shape's fleet knee, 5r/s a rate, seen the load the source saw.</p>
         <label for="rgrowth">Load seen times</label>
@@ -262,7 +262,7 @@
     </div>
     <p id="rstatus" class="hint" aria-live="polite"></p>
     <div id="rresult" hidden>
-      <ul id="rverdicts" class="rverdicts"></ul>
+      <ul id="rverdicts" class="rverdicts" tabindex="-1" aria-label="Verdicts"></ul>
       <p class="hint" id="rlegend"><span class="rmark met">ok</span> every target met
         <span class="rmark missed">MISS</span> a target missed <span class="rmark saturated">SAT</span> saturated
         <span class="rmark unknown">?</span> not judged <span class="rmark notarget">no SLO</span> no target set.

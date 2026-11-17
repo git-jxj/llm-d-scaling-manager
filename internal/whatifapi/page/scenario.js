@@ -562,9 +562,11 @@ function roundRate(r) {
   return r >= 100 ? String(Math.round(r)) : r >= 10 ? r.toFixed(1).replace(/\.0$/, "") : r.toFixed(2).replace(/\.?0+$/, "");
 }
 
-// msText is a latency figure in words: "637 ms", or its refusal, short.
-function msText(f) {
-  if (f && f.value != null) return roundMs(f.value) + " ms";
+// msText is a latency figure in words: "637 ms", or its refusal, short. A
+// TPOT (tpot true) read at the decode line's floor is marked as at most that.
+function msText(f, tpot) {
+  // A figure read at the band's bottom is the line's floor: the latency is at most it.
+  if (f && f.value != null) return (tpot && isFloor(f) ? "≤" : "") + roundMs(f.value) + " ms";
   const reason = f && f.refused ? f.refused.reason : "";
   return reason === "Saturated" ? "saturated" : reason === "AboveDecodeOnset" ? "router-queued" : "-";
 }
@@ -576,7 +578,7 @@ function rowFigures(row, slo) {
   const tStat = slo && slo.ttft ? slo.ttft.statistic : "p90";
   const pStat = slo && slo.tpot ? slo.tpot.statistic : "mean";
   const ttft = (row.ttft || []).find(s => s.statistic === tStat) || (row.ttft || [])[0] || {statistic: tStat};
-  let tpot = {statistic: "mean", value: row.tpotMean ? row.tpotMean.value : undefined, refused: row.tpotMean ? row.tpotMean.refused : undefined};
+  let tpot = Object.assign({statistic: "mean"}, row.tpotMean || {});
   if (pStat !== "mean" && row.tpotPercentile) tpot = row.tpotPercentile;
   return {ttft, tpot};
 }
@@ -586,19 +588,40 @@ function verdictText(s, load) {
   const v = s.verdict || {}, c = s.capacity || {};
   const knee = c.fleetKnee && c.fleetKnee.value, h = c.headroom;
   const binds = String((c.fleetKnee && c.fleetKnee.binds) || "").split(" ")[0];
-  const at = load != null ? `at ${roundRate(load)} r/s` : "at the load seen";
+  const rate = load != null ? `${roundRate(load)} r/s` : "the load seen";
+  // A shape the question typed is a what-if: all of the load at that shape.
+  const at = s.source === "asked" ? `if all ${rate} were ${s.label} requests,` : `at ${rate}`;
   switch (v.verdict) {
-  case "UNDER-PROVISIONED":
+  case "UNDER-PROVISIONED": {
+    if (knee != null && load != null && load >= knee) {
+      // Past the knee: every role whose own knee the load passes needs more.
+      const roles = [["prefill", c.prefillKnee], ["decode", c.decodeKnee]].filter(([, k]) => k && k.value != null && load >= k.value).map(([r]) => r);
+      const add = roles.length ? roles.join(" and ") : binds;
+      return `UNDER-PROVISIONED: ${at} the load is ${(load / knee).toFixed(1)}x the fleet's ${roundRate(knee)} r/s knee; add ${add} replicas.`;
+    }
     if (knee != null && load != null && load > h * knee) {
       return `UNDER-PROVISIONED: ${at} the fleet is past ${Math.round(100 * h)}% of its ${roundRate(knee)} r/s knee, set by ${binds}; add ${binds} replicas.`;
     }
-    return `UNDER-PROVISIONED: ${at} a latency target is missed; add ${binds || "more"} replicas.`;
+    const missed = missedTarget(v.reason);
+    // Only a missed TPOT says which role: decode sets it.
+    const add = missed.startsWith("TPOT") ? " add decode replicas." : "";
+    return `UNDER-PROVISIONED: ${at} ${missed || "a latency target is missed"};${add}`.replace(/;$/, ".");
+  }
   case "OVER-PROVISIONED":
     return `OVER-PROVISIONED: ${at} one ${(v.shrink || []).join(" or one ")} replica fewer still meets every target with headroom.`;
   case "RIGHT-SIZED":
     return `RIGHT-SIZED: ${at} every target is met with headroom, and one replica fewer of either role would not be.`;
   }
   return `NOT JUDGED: ${v.reason || "no knee or no load to judge at"}.`;
+}
+
+// missedTarget is the first target a verdict's reason says is missed, in
+// words ("TTFT p95 7.6 s misses 2 s"); "" with none.
+function missedTarget(reason) {
+  const m = /(TTFT|TPOT) (\S+) ([0-9.]+) ms misses ([0-9.]+) ms/.exec(String(reason || ""));
+  if (!m) return "";
+  const t = ms => (Number(ms) >= 1000 ? (Number(ms) / 1000).toFixed(1).replace(/\.0$/, "") + " s" : Math.round(Number(ms)) + " ms");
+  return `${m[1]} ${m[2]} ${t(m[3])} misses ${t(m[4])}`;
 }
 
 // sloLine says what a cell's mark is judged against.
@@ -622,18 +645,24 @@ function reportView(r) {
   const header = loads.map(l => {
     const rates = shapes.map(s => (s.table || []).find(t => t.load === l)).filter(t => t).map(t => roundRate(t.rate));
     const one = rates.length && rates.every(x => x === rates[0]);
-    return one ? `${l} (${rates[0]} r/s)` : l;
+    if (!one) return l;
+    // A load that is a rate already names it.
+    return l.endsWith("r/s") ? l : `${l} (${rates[0]} r/s)`;
   });
-  const sameRate = loads.map((l, i) => header[i] !== l);
+  const sameRate = loads.map((l, i) => header[i] !== l || l.endsWith("r/s"));
+  let floors = false;
   const rows = shapes.map(s => ({
     label: s.label, extrapolated: !!s.extrapolated, why: s.extrapolatedWhy || "",
     cells: loads.map((l, i) => {
       const row = (s.table || []).find(t => t.load === l);
-      if (!row) return {text: "not priced", cls: "none", word: ""};
+      if (!row) return {text: "not priced", parts: ["not priced"], cls: "none", word: ""};
       const f = rowFigures(row, slo);
       const m = REPORT_MARKS[row.cell.mark] || ["unknown", "?"];
       const rate = sameRate[i] ? "" : ` @ ${roundRate(row.rate)} r/s`;
-      return {text: `TTFT ${msText(f.ttft)} · TPOT ${msText(f.tpot)}${rate}`, cls: m[0], word: m[1]};
+      if (isFloor(f.tpot)) floors = true;
+      const parts = [`TTFT ${msText(f.ttft, false)}`, `TPOT ${msText(f.tpot, true)}`];
+      if (rate) parts.push(rate.trim());
+      return {text: parts.join(" · ").replace(" · @", " @"), parts, cls: m[0], word: m[1]};
     }),
   }));
   const verdicts = shapes.map(s => {
@@ -659,7 +688,8 @@ function reportView(r) {
     };
   });
   return {verdicts, header, rows, details, notes: r.notValidated || [],
-    legendStats: `Each cell is TTFT ${tStat} · TPOT ${pStat}. ${sloLine(slo)}`};
+    legendStats: `Each cell is TTFT ${tStat} · TPOT ${pStat}. ${sloLine(slo)}` +
+      (floors ? " ≤ marks a TPOT at the decode line's floor: below the fill it was fitted over, so at most that." : "")};
 }
 
 // reportMissing reports whether an answer says the server has no
@@ -703,4 +733,10 @@ function plainReason(s) {
   let out = s;
   for (const [code, words] of Object.entries(REASON_WORDS)) out = out.split(code).join(words);
   return out;
+}
+
+// isFloor reports whether a figure was read at the decode line's floor, the
+// bottom of the band it was fitted over (BelowFittedBand).
+function isFloor(f) {
+  return !!(f && f.value != null && (f.flags || []).includes("BelowFittedBand"));
 }

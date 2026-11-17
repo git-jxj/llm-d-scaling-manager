@@ -338,6 +338,7 @@ async function loadInputs() {
 // operating point the first plan returns: the source carries no rate.
 function setInputs(inputs) {
   el("rrun").disabled = false;
+  state.reportGen = (state.reportGen || 0) + 1;
   el("rresult").hidden = true;
   el("rstatus").textContent = "";
   state.inputs = inputs;
@@ -1859,7 +1860,10 @@ function wire() {
   el("scenexport").onclick = exportScenario;
   el("scenimport").onchange = () => importScenario(el("scenimport").files[0]);
   el("pina").onclick = pinA;
-  el("rshapeadd").onclick = () => addShapeRow("", "", "");
+  el("rshapeadd").onclick = () => { addShapeRow("", "", ""); const last = el("rshapes").lastElementChild; if (last) last.querySelector("input").focus(); reportStale(); };
+  // Editing what the report asks hides an answer to something else.
+  el("rshapes").addEventListener("input", reportStale);
+  el("rloads").oninput = el("rgrowth").oninput = reportStale;
   el("rrun").onclick = runReport;
   addShapeRow("", "", "");
   el("unpin").onclick = unpin;
@@ -1909,6 +1913,7 @@ function addShapeRow(il, ol, hit) {
     const next = row.nextElementSibling || row.previousElementSibling;
     row.remove();
     renumberShapes();
+    reportStale();
     (next ? next.querySelector("input") : el("rshapeadd")).focus();
   };
   row.appendChild(drop);
@@ -1927,14 +1932,36 @@ function shapeRows() {
 // reportStale says a drawn report no longer matches the knobs: it is hidden
 // until the fleet is judged again.
 function reportStale() {
-  if (el("rresult").hidden) return;
+  // Any answer still in flight is for the question before this change.
+  state.reportGen = (state.reportGen || 0) + 1;
+  if (el("rresult").hidden && !state.reportBusy) return;
   el("rresult").hidden = true;
   el("rstatus").textContent = "The knobs changed: judge the fleet again.";
 }
 
+// reportToken names the question on screen: the inputs and every change
+// since (reportStale). An answer to an older token is dropped.
+function reportToken() {
+  return (state.inputs ? state.inputs.inputsId : "") + "#" + (state.reportGen || 0);
+}
+
+// judgedText says what a report found, for the live region.
+function judgedText(r) {
+  const counts = {};
+  for (const s of r.shapes || []) {
+    const v = (s.verdict || {}).verdict || "NOT JUDGED";
+    counts[v] = (counts[v] || 0) + 1;
+  }
+  const n = (r.shapes || []).length;
+  return `Judged ${n} shape${n === 1 ? "" : "s"}: ` + Object.entries(counts).map(([v, c]) => `${c} ${v.toLowerCase()}`).join(", ") + ".";
+}
+
 // runReport asks the server to judge the fleet the knobs set, at the
 // shapes and loads asked, with the plan's headroom, SLO and assumed terms.
+// The button stays focusable while it runs (aria-disabled), so focus is not
+// lost; on an answer it moves to the verdicts.
 async function runReport() {
+  if (state.reportBusy) return;
   if (!state.inputs || !state.k) {
     el("rstatus").textContent = "Load a source first.";
     return;
@@ -1946,24 +1973,28 @@ async function runReport() {
     el("rstatus").textContent = asked.problem;
     return;
   }
-  const askedFor = state.inputs.inputsId;
-  el("rstatus").textContent = "Judging the fleet...";
-  el("rrun").disabled = true;
+  const token = reportToken();
+  state.reportBusy = true;
+  el("rrun").setAttribute("aria-disabled", "true");
+  el("rstatus").textContent = "Judging the fleet... (many shapes and loads take up to half a minute)";
   try {
     const r = await api("POST", "v1/report", asked.body);
-    // An answer for inputs since replaced is dropped.
-    if (!state.inputs || !reportCurrent(askedFor, state.inputs.inputsId)) return;
+    // An answer to a question since changed is dropped.
+    if (!reportCurrent(token, reportToken())) return;
     renderReport(r);
-    el("rstatus").textContent = "";
+    el("rstatus").textContent = judgedText(r);
+    el("rverdicts").focus();
   } catch (e) {
-    if (!state.inputs || !reportCurrent(askedFor, state.inputs.inputsId)) return;
+    if (!reportCurrent(token, reportToken())) return;
     const status = Number(String(e.message).split(":")[0]);
     el("rresult").hidden = true;
     el("rstatus").textContent = reportMissing(status, e.message)
       ? "This server has no fleet report (POST /v1/report): it runs a release from before capacity-planner at-replicas. The rest of the page works."
       : "The report failed: " + e.message;
   } finally {
-    el("rrun").disabled = false;
+    state.reportBusy = false;
+    el("rrun").removeAttribute("aria-disabled");
+    if (!reportCurrent(token, reportToken())) el("rstatus").textContent = "The knobs changed: judge the fleet again.";
   }
 }
 
@@ -2028,7 +2059,13 @@ function renderReport(r) {
     th.appendChild(shapeLabel(row));
     tr.appendChild(th);
     for (const c of row.cells) {
-      const td = textNode("td", c.text, c.cls);
+      // Each figure on its own unbroken line part, so a narrow page wraps between them.
+      const td = document.createElement("td");
+      td.className = c.cls;
+      c.parts.forEach((p, i) => {
+        if (i) td.appendChild(document.createTextNode(i === 2 ? " " : " · "));
+        td.appendChild(textNode("span", p, "rpart"));
+      });
       if (c.word) td.appendChild(textNode("span", c.word, "rmark " + c.cls));
       tr.appendChild(td);
     }

@@ -374,7 +374,8 @@ func TestPageJudgesTheFleet(t *testing.T) {
 	for _, want := range []string{`api("POST", "v1/report", asked.body)`,
 		`reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),`,
 		`loads: el("rloads").value, growth: el("rgrowth").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume})`,
-		"function schedule(ms) {\n  reportStale();", `reportCurrent(askedFor, state.inputs.inputsId)`, `(next ? next.querySelector("input") : el("rshapeadd")).focus();`,
+		"function schedule(ms) {\n  reportStale();", `reportCurrent(token, reportToken())`, `el("rshapes").addEventListener("input", reportStale);`,
+		`el("rloads").oninput = el("rgrowth").oninput = reportStale;`, `el("rverdicts").focus();`, `el("rrun").setAttribute("aria-disabled", "true");`, `(next ? next.querySelector("input") : el("rshapeadd")).focus();`,
 		`reportMissing(status, e.message)`, "This server has no fleet report (POST /v1/report)", `" EXTRAPOLATED"`} {
 		assert.Contains(t, js, want)
 	}

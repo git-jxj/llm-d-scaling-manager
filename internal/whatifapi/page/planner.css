@@ -205,12 +205,14 @@ td:first-child, th:first-child { text-align: left; }
 .rmark.missed, td.missed { background: color-mix(in srgb, var(--critical) 22%, transparent); }
 .rmark.saturated, td.saturated { background: color-mix(in srgb, var(--warning) 25%, transparent); }
 .rmark.unknown, td.unknown { background: color-mix(in srgb, var(--muted) 18%, transparent); }
-.rextra { color: var(--warning); font-weight: 600; }
+.rextra { color: #8a5c00; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .rextra { color: var(--warning); } }
+.rpart { white-space: nowrap; }
 
 .rmark.notarget, td.notarget { background: color-mix(in srgb, var(--muted) 10%, transparent); }
 td.none { color: var(--muted); font-style: italic; }
 #rmatrix td .rmark { margin-left: 6px; }
-#rloads { width: 28ch; }
+#rloads { width: 40ch; max-width: 100%; }
 .rverdicts { list-style: none; padding: 0; margin: 8px 0; }
 .rverdicts li { margin: 4px 0; font-size: 14px; }
 .rverdicts .rverdict { font-weight: normal; }
@@ -218,3 +220,4 @@ td.none { color: var(--muted); font-style: italic; }
 #rdetail details { margin: 4px 0; }
 #rdetail details p { margin: 4px 0 4px 16px; }
 .rmore { display: inline-block; margin-left: 8px; }
+#rmatrix { display: block; overflow-x: auto; max-width: 100%; }

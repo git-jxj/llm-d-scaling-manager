@@ -292,11 +292,14 @@ kill %1
   The answer reads top down:
   - **Verdicts**, one sentence per shape: UNDER-PROVISIONED (and which role
     to add), RIGHT-SIZED, or OVER-PROVISIONED (and which role can lose a
-    replica).
+    replica). A typed shape is a what-if: its verdict reads "if all 31.6 r/s
+    were 16k/200 requests".
   - **The matrix**, one row per shape and one column per load. A cell is the
     TTFT and TPOT at your SLO's statistics, at that load's rate, and a word:
     `ok` every target met, `MISS` a target missed, `SAT` saturated, `?` not
-    judged, `no SLO` no target set. The colour repeats the word. A shape
+    judged, `no SLO` no target set. The colour repeats the word. A TPOT
+    marked `≤` is the decode line's floor: the load sits below the fill
+    the line was fitted over, so the TPOT is at most that. A shape
     outside the lengths the source saw is marked EXTRAPOLATED.
   - **Each shape**, closed until you open it: the knees, how busy decode and
     prefill are at the load, the numbers behind the verdict, and what the
