@@ -569,6 +569,9 @@ function roundMs(s) {
 
 // roundRate is a rate in r/s, to three significant figures at most.
 function roundRate(r) {
+  // A hair up, so that a half rounds up as the server's figures do (62.55 is
+  // 62.549999... in binary).
+  r += 1e-9 * Math.max(1, Math.abs(r));
   return r >= 100 ? String(Math.round(r)) : r >= 10 ? r.toFixed(1).replace(/\.0$/, "") : r.toFixed(2).replace(/\.?0+$/, "");
 }
 
@@ -676,10 +679,10 @@ function reportView(r) {
     }),
   }));
   const verdicts = shapes.map(s => {
-    const v = verdictLine(s.verdict, verdictText(s, load));
+    const v = verdictLine(s.verdict, verdictText(s, load), r.fleet);
     // Growth is its own line beside the verdict, never in its place.
-    const growth = (s.growth || []).map(g => Object.assign(verdictLine(g.verdict, ""),
-      {lead: `with ${g.x}× traffic`, rate: g.rate}));
+    const growth = (s.growth || []).map(g => Object.assign(verdictLine(g.verdict, "", r.fleet),
+      {lead: `with ${g.x}× traffic (${roundRate(g.rate)} r/s)`, rate: g.rate}));
     return Object.assign(v, {label: s.label, extrapolated: !!s.extrapolated, whatIf: s.source === "asked",
       decodeOnly: (s.verdict || {}).scope === "decode only", growth});
   });
@@ -694,6 +697,7 @@ function reportView(r) {
         `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
           `Operating point ${rate(c.operating)}; the most that meets every target ${rate(c.maxAtSLO)}.`,
         `At the load: ${decodeUse(u.decode)}; ${prefillUse(u.prefill)}.`,
+        ...roleLines(s.verdict),
         `The numbers: ${plainReason((s.verdict || {}).reason || "")}`,
       ].filter(x => x),
       flags: flagSummary(s.flags),
@@ -756,12 +760,39 @@ function isFloor(f) {
 // verdictLine is one verdict as a line: its word, the sentence after it
 // (the server's summary, else the page's own words from fallback), and both
 // whole.
-function verdictLine(v, fallback) {
+function verdictLine(v, fallback, has) {
   const word = (v && v.verdict) || "NOT JUDGED";
   const text = (v && v.summary) || fallback || word;
   // rest is the sentence after its verdict, which the page sets in bold.
-  const rest = text.startsWith(word + ": ") ? text.slice(word.length + 2) : text;
-  return {verdict: word, text, rest};
+  let rest = text.startsWith(word + ": ") ? text.slice(word.length + 2) : text;
+  const needs = neededText(v && v.needed, has);
+  // The fleet needed is shown as its own chip, so the sentence does not
+  // repeat it.
+  if (needs) rest = rest.replace(NEEDS_CLAUSE, "").replace(/;\s*\(/, " (").replace(/[;,]\s*\./, ".");
+  return {verdict: word, text, rest, needs, unmet: !!(v && v.needed && v.needed.unmet)};
+}
+
+// NEEDS_CLAUSE is the "needs P prefill + D decode (has p + d), or a + b"
+// clause of a summary.
+const NEEDS_CLAUSE = /;?\s*needs [^;()]*\(has \d+ \+ \d+\)(,? or \d+ \+ \d+)*/;
+
+// neededText is the fleet a verdict needs, in words: "needs 3 prefill +
+// 4 decode (has 2 + 2)", "or 4 + 3" for each alternative, "at least" where
+// the prefill side is not priced, or the bound no fleet within serves.
+function neededText(n, has) {
+  if (!n) return "";
+  if (n.unmet) return `no fleet up to ${n.maxReplicas} replicas serves this (${n.unmet} does not reach the load)`;
+  const now = has ? ` (has ${has.prefill} + ${has.decode})` : "";
+  if (n.decodeOnly) return `needs at least ${n.decode} decode${has ? ` (has ${has.decode})` : ""}; prefill is not priced`;
+  const alt = (n.alternatives || []).map(a => `or ${a.prefill} + ${a.decode}`).join(", ");
+  return `needs ${n.prefill} prefill + ${n.decode} decode${now}` + (alt ? ", " + alt : "");
+}
+
+// roleLines is a verdict's per-role judgment: a line per role, whether it has
+// a replica to spare, and why.
+function roleLines(v) {
+  return ((v && v.roles) || []).map(r => `${r.role[0].toUpperCase() + r.role.slice(1)}: ${r.spare ? "has a replica to spare" : "no replica to spare"}` +
+    (r.detail ? ` (${r.detail})` : "") + ".");
 }
 
 // LOAD_STATISTICS are the load statistics a report judges at.
@@ -774,5 +805,7 @@ function loadLine(l) {
   const at = l.statistic === "stated" ? `the stated load of ${roundRate(l.rate.value)} r/s`
     : `the ${l.statistic || "observed"} load of ${roundRate(l.rate.value)} r/s`;
   const seen = [["mean", l.mean], ["p95", l.p95], ["peak", l.peak]].filter(([, x]) => x != null).map(([k, x]) => `${k} ${roundRate(x)}`);
-  return `Judged at ${at}` + (seen.length ? `; the source saw ${seen.join(", ")} r/s over ${l.cyclesWithTraffic} busy cycles.` : ".");
+  // Under 20 busy cycles the p95 is the peak: too few to tell them apart.
+  const peakNote = l.p95IsPeak && l.statistic === "p95" ? " (= peak: fewer than 20 cycles)" : "";
+  return `Judged at ${at}${peakNote}` + (seen.length ? `; the source saw ${seen.join(", ")} r/s over ${l.cyclesWithTraffic} busy cycles.` : ".");
 }

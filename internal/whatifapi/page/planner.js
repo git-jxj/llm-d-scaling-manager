@@ -2046,13 +2046,15 @@ function renderReport(r) {
     if (s.whatIf) li.appendChild(textNode("span", " if all traffic were this shape", "rwhatif"));
     if (s.decodeOnly) li.appendChild(textNode("span", "decode only", "rmark unknown rscope"));
     li.appendChild(textNode("b", " " + s.verdict + ": "));
-    li.appendChild(textNode("span", s.rest, "rverdict"));
+    if (s.needs) li.appendChild(textNode("span", s.needs, s.unmet ? "rneeds unmet" : "rneeds"));
+    li.appendChild(textNode("span", " " + s.rest, "rverdict"));
     // Growth sits under the verdict it grows from, never in its place.
     for (const g of s.growth) {
       const p = textNode("div", "", "rgrowthline");
       p.appendChild(textNode("span", g.lead + ": "));
       p.appendChild(textNode("b", g.verdict + ": "));
-      p.appendChild(textNode("span", g.rest));
+      if (g.needs) p.appendChild(textNode("span", g.needs, g.unmet ? "rneeds unmet" : "rneeds"));
+      p.appendChild(textNode("span", " " + g.rest));
       li.appendChild(p);
     }
     verdicts.appendChild(li);

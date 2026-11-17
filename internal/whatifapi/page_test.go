@@ -374,7 +374,7 @@ func TestPageJudgesTheFleet(t *testing.T) {
 	for _, want := range []string{`api("POST", "v1/report", asked.body)`,
 		`reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),`,
 		`loads: el("rloads").value, growth: el("rgrowth").value, loadStatistic: el("rloadstat").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume})`,
-		`el("rload").textContent = v.load;`, `for (const g of s.growth) {`,
+		`el("rload").textContent = v.load;`, `for (const g of s.growth) {`, `if (s.needs) li.appendChild(textNode("span", s.needs, s.unmet ? "rneeds unmet" : "rneeds"));`,
 		"function schedule(ms) {\n  reportStale();", `reportCurrent(token, reportToken())`, `el("rshapes").addEventListener("input", reportStale);`,
 		`el("rloads").oninput = el("rgrowth").oninput = el("rloadstat").onchange = reportStale;`, `el("rverdicts").focus();`, `el("rrun").setAttribute("aria-disabled", "true");`, `(next ? next.querySelector("input") : el("rshapeadd")).focus();`,
 		`reportMissing(status, e.message)`, "This server has no fleet report (POST /v1/report)", `" EXTRAPOLATED"`} {
@@ -389,4 +389,21 @@ func TestPageJudgesTheFleet(t *testing.T) {
 	require.True(t, start >= 0 && end > start, "the report section is found")
 	assert.NotContains(t, js[start:end], "innerHTML", "the report is drawn as text nodes")
 	assert.NotContains(t, js[start:end], "insertAdjacentHTML")
+}
+
+// The page's two scripts share one global scope: a function declared in both
+// is silently the later one's, so scenario.js and planner.js declare each
+// name once (a clash made the report call planner.js's rolesText).
+func TestPageScriptsDeclareEachFunctionOnce(t *testing.T) {
+	decl := regexp.MustCompile(`(?m)^(?:async )?function (\w+)\(`)
+	seen := map[string]string{}
+	for _, file := range []string{"scenario.js", "planner.js"} {
+		for _, m := range decl.FindAllStringSubmatch(pageText(t, file), -1) {
+			if prev, ok := seen[m[1]]; ok {
+				t.Errorf("function %s is declared in %s and in %s", m[1], prev, file)
+			}
+			seen[m[1]] = file
+		}
+	}
+	require.Greater(t, len(seen), 100, "found too few functions")
 }

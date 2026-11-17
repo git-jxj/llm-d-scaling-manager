@@ -557,13 +557,37 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
         verdict: {verdict: "RIGHT-SIZED", scope: "decode only", summary: "RIGHT-SIZED: at the p95 load of 41.7 r/s every target holds."}}]});
   check("the verdict is the server's summary", vg.verdicts[0].rest === "at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates.",
     vg.verdicts[0].rest);
-  check("growth is its own line beside the verdict", vg.verdicts[0].growth.length === 1 && vg.verdicts[0].growth[0].lead === "with 1.5× traffic" &&
+  check("growth is its own line beside the verdict", vg.verdicts[0].growth.length === 1 && vg.verdicts[0].growth[0].lead === "with 1.5× traffic (62.6 r/s)" &&
     vg.verdicts[0].growth[0].verdict === "UNDER-PROVISIONED" && vg.verdicts[0].verdict === "UNDER-PROVISIONED", JSON.stringify(vg.verdicts[0].growth));
   check("a decode-only verdict says so", vg.verdicts[1].decodeOnly && !vg.verdicts[0].decodeOnly);
   check("a typed shape's verdict is a what-if", vg.verdicts[1].whatIf && !vg.verdicts[0].whatIf);
   check("the load line names the statistic and the others", vg.load ===
     "Judged at the p95 load of 41.7 r/s; the source saw mean 31.6, p95 41.7, peak 43.2 r/s over 282 busy cycles.", vg.load);
   check("a missed-at-onset cell says so", S("REPORT_MARKS")["missed at onset"][1] === "MISS at onset");
+  // The fleet needed: a chip of its own, the sentence not repeating it.
+  const {neededText, verdictLine, roleLines, loadLine} = ctx;
+  const has = {prefill: 2, decode: 2};
+  check("the fleet needed reads in words", neededText({prefill: 3, decode: 4, maxReplicas: 32}, has) === "needs 3 prefill + 4 decode (has 2 + 2)");
+  check("alternatives follow it", neededText({prefill: 19, decode: 5, alternatives: [{prefill: 18, decode: 6}], maxReplicas: 32}, has) ===
+    "needs 19 prefill + 5 decode (has 2 + 2), or 18 + 6");
+  check("decode only needs at least", neededText({prefill: 0, decode: 3, decodeOnly: true, maxReplicas: 32}, has) ===
+    "needs at least 3 decode (has 2); prefill is not priced");
+  check("an unmet fleet names the bound", neededText({prefill: 0, decode: 0, unmet: "fleet", maxReplicas: 32}, has) ===
+    "no fleet up to 32 replicas serves this (fleet does not reach the load)");
+  check("no needed is no chip", neededText(undefined, has) === "");
+  const vl = verdictLine({verdict: "UNDER-PROVISIONED", needed: {prefill: 19, decode: 5, alternatives: [{prefill: 18, decode: 6}], maxReplicas: 32},
+    summary: "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.6x the fleet knee of 26.7 r/s, the fleet saturates; needs 19 prefill + 5 decode (has 2 + 2), or 18 + 6 (prefill f 1.5 assumed at 19 pods)."}, "", has);
+  check("the sentence does not repeat the fleet needed", vl.rest === "at the p95 load of 41.7 r/s, 1.6x the fleet knee of 26.7 r/s, the fleet saturates (prefill f 1.5 assumed at 19 pods).",
+    vl.rest);
+  check("the chip carries it", vl.needs === "needs 19 prefill + 5 decode (has 2 + 2), or 18 + 6");
+  const vs = verdictLine({verdict: "UNDER-PROVISIONED", needed: {prefill: 5, decode: 5, maxReplicas: 32},
+    summary: "UNDER-PROVISIONED: 1.6x the fleet knee (38.1 r/s); needs 5 prefill + 5 decode (has 2 + 2)."}, "", has);
+  check("a short growth sentence loses only the clause", vs.rest === "1.6x the fleet knee (38.1 r/s).", vs.rest);
+  check("each role says whether it has a replica to spare", JSON.stringify(roleLines({roles: [{role: "decode", spare: true, detail: "3 decode hold"},
+    {role: "prefill", spare: false}]})) === JSON.stringify(["Decode: has a replica to spare (3 decode hold).", "Prefill: no replica to spare."]));
+  check("a p95 that is the peak says so", loadLine({rate: {value: 12}, statistic: "p95", p95IsPeak: true, p95: 12, peak: 12, cyclesWithTraffic: 9})
+    .startsWith("Judged at the p95 load of 12 r/s (= peak: fewer than 20 cycles);"));
+  check("a half rounds up", ctx.roundRate(62.55) === "62.6");
   check("a TTFT is never marked as a floor", ctx.reportView({slo, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "m", capacity: knees(38.14, "decode"), verdict: {},
     utilization: {decode: {}, prefill: {}}, table: [Object.assign(row("10r/s", 10, {value: 0.5, flags: ["BelowFittedBand"]}, {value: 0.007}, "met"))]}]}).rows[0].cells[0].parts[0] === "TTFT 500 ms");
   check("decode use reads in words", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8, slotsOccupied: {value: 48.2}, slots: 228, waitProbability: {value: 0.004}}) ===
@@ -593,7 +617,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 289;
+const EXPECTED_CASES = 300;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

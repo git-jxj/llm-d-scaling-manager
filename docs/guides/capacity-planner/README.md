@@ -296,7 +296,10 @@ kill %1
   - **The load judged**, and the mean, p95 and peak the source saw.
   - **Verdicts**, one sentence per shape at that load: UNDER-PROVISIONED
     (and which role to add), RIGHT-SIZED, or OVER-PROVISIONED (and which
-    role can lose a replica). With a growth set, a second line under each
+    role can lose a replica), with the fleet it needs in a box: "needs 3
+    prefill + 4 decode (has 2 + 2)", other fleets that also serve as "or 4 +
+    3", "at least" when prefill is not priced, or "no fleet up to 32
+    replicas serves this". With a growth set, a second line under each
     says what the grown traffic does. A typed shape is a what-if, marked "if
     all traffic were this shape". "decode only" marks a verdict the prefill
     side could not price.
