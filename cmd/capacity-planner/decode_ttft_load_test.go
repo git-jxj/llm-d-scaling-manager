@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,7 +65,7 @@ func TestDecodeTTFTUnderLoad_StaircaseCollapse(t *testing.T) {
 			assert.Equal(t, c.calm, last.TTFT.DecodeTTFTCalmCycle)
 			assert.Equal(t, "decode engine", last.TTFT.DecodeSide)
 
-			for _, cycle := range []string{"240", fmt.Sprint(c.calm)} {
+			for _, cycle := range []string{"240", strconv.Itoa(c.calm)} {
 				r := stairPrefill(t, c.phase, cycle)
 				require.Nil(t, r.Results.Rate.Refused, "cycle %s", cycle)
 				require.NotNil(t, r.Results.Rate.Answer, "cycle %s", cycle)
