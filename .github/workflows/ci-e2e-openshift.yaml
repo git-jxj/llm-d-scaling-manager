@@ -462,7 +462,7 @@ jobs:
       MAX_NUM_SEQS: ${{ github.event.inputs.max_num_seqs || '5' }}
       HPA_STABILIZATION_SECONDS: ${{ github.event.inputs.hpa_stabilization_seconds || '240' }}
       SKIP_CLEANUP: ${{ github.event.inputs.skip_cleanup || 'false' }}
-      LLM_D_ROUTER_VERSION: v0.9.0
+      LLM_D_ROUTER_VERSION: v1.0.0
       GAIE_VERSION: v1.5.0
       # PR-specific namespaces for isolation between concurrent PR tests
       LLMD_NAMESPACE: llm-d-autoscaler-pr-${{ needs.gate.outputs.pr_number || github.run_id }}

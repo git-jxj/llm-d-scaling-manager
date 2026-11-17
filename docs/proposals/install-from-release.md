@@ -248,6 +248,7 @@ point: an upgrade never touches it.
 | --- | --- | --- | --- |
 | `prometheusURL` | empty; preflight FAILs until set | `PROMETHEUS_URL` (detected) → `PROMETHEUS_BASE_URL` | restart |
 | `prometheusInsecureSkipVerify` | `"false"` | `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` | restart |
+| `prometheusAllowHTTP` | empty (`false`); `"true"` for an `http://` URL, with `PROMETHEUS_TOKEN_PATH` empty on the Deployment | `PROMETHEUS_ALLOW_HTTP` | restart |
 | `passive` | `"true"` | `LLMSM_PASSIVE` (read at start today) | **live** |
 | `utilizationShare` | `"off"`; `off`, `shadow` or `active` | `make utilization-share-shadow/-activate/-off` | **live** |
 | `limiter` | empty; `gpu-inventory`, `quota`, or both comma-separated | `LLMSM_LIMITER` | live |

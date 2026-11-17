@@ -4,7 +4,7 @@
 # Installs Gateway API CRDs, GAIE CRDs, and the llm-d-router-standalone chart (EPP + InferencePool).
 #
 # Required vars: LLM_D_ROUTER_VERSION, GAIE_VERSION, NAMESPACE
-#   LLM_D_ROUTER_VERSION  — chart + EPP image tag from llm-d/llm-d-router (e.g. v0.9.0)
+#   LLM_D_ROUTER_VERSION  — chart + EPP image tag from llm-d/llm-d-router (e.g. v1.0.0)
 #   GAIE_VERSION          — kubernetes-sigs GAIE CRDs ref (e.g. v1.5.0)
 # Required funcs: log_info, log_success, log_warning
 #
@@ -67,7 +67,36 @@ _install_crd_group() {
     kubectl apply "$@" || log_warning "${label} CRD install returned non-zero — check whether they are usable before continuing"
 }
 
+# LLMSM_MIN_ROUTER_VERSION is the oldest router the vendored values load on:
+# their EndpointPickerConfig is llm-d.ai/v1, which router v1.0.0 introduced.
+LLMSM_MIN_ROUTER_VERSION="v1.0.0"
+
+# llmsm_router_version_supported succeeds when $1 is vMAJOR.MINOR.PATCH (a
+# -prerelease suffix allowed) at or above LLMSM_MIN_ROUTER_VERSION. Anything
+# else -- an older release, or a tag that is not a version, such as main --
+# fails, because nothing here can tell whether that router reads llm-d.ai/v1.
+llmsm_router_version_supported() {
+    local v="$1" maj min pat
+    [[ "$v" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]] || return 1
+    maj="${BASH_REMATCH[1]}" min="${BASH_REMATCH[2]}" pat="${BASH_REMATCH[3]}"
+    [[ "$LLMSM_MIN_ROUTER_VERSION" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+    local rmaj="${BASH_REMATCH[1]}" rmin="${BASH_REMATCH[2]}" rpat="${BASH_REMATCH[3]}"
+    [ "$maj" -ne "$rmaj" ] && { [ "$maj" -gt "$rmaj" ]; return; }
+    [ "$min" -ne "$rmin" ] && { [ "$min" -gt "$rmin" ]; return; }
+    [ "$pat" -ge "$rpat" ]
+}
+
 deploy_epp() {
+    if ! llmsm_router_version_supported "${LLM_D_ROUTER_VERSION:-}"; then
+        local why
+        if [[ "${LLM_D_ROUTER_VERSION:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            why="is older than ${LLMSM_MIN_ROUTER_VERSION}: the EPP config this installs is apiVersion llm-d.ai/v1, which only router ${LLMSM_MIN_ROUTER_VERSION} and newer can load, and an older router fails to start on it."
+        else
+            why="is not a release tag (vX.Y.Z): the EPP config this installs is apiVersion llm-d.ai/v1, and only a release tag says whether the router can load it."
+        fi
+        log_error "LLM_D_ROUTER_VERSION=${LLM_D_ROUTER_VERSION:-<unset>} ${why} Set LLM_D_ROUTER_VERSION=${LLMSM_MIN_ROUTER_VERSION} or newer, or run install-epp.sh from the v0.11.1 checkout to install an older router. See docs/reference/upgrade-and-uninstall.md#the-llm-d-router-moves-to-v100."
+        return 1
+    fi
     log_info "Deploying EPP infrastructure (llm-d-router-standalone chart ${LLM_D_ROUTER_VERSION}, GAIE CRDs ${GAIE_VERSION})..."
 
     local _lib_dir
@@ -100,7 +129,7 @@ deploy_epp() {
     log_info "Installing llm-d-router-standalone chart (release=optimized-baseline, version=${LLM_D_ROUTER_VERSION})..."
 
     # When scale-to-zero is enabled, add flowControl feature gate to EPP config so the
-    # scale-from-zero engine can read inference_extension_flow_control_queue_size metrics.
+    # scale-from-zero engine can read llm_d_epp_flow_control_queue_size metrics.
     local extra_helm_args=() epp_preexisting=false
     if [ "${ENABLE_SCALE_TO_ZERO:-false}" = "true" ]; then
         log_info "ENABLE_SCALE_TO_ZERO=true: enabling EPP flowControl feature gate..."

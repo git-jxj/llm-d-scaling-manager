@@ -151,7 +151,7 @@ E2E_GO_TIMEOUT              ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),130m
 # which reads as eight product failures rather than a suite that was cut off.
 DEPLOY_ALERTING_RULES       ?= false
 SCALER_BACKEND              ?= keda  # keda (ScaledObject) or none (skip, use pre-installed backend)
-LLM_D_ROUTER_VERSION        ?= v0.9.0
+LLM_D_ROUTER_VERSION        ?= v1.0.0
 GAIE_VERSION                ?= v1.5.0
 SCALE_UP_THRESHOLD          ?=
 SCALE_DOWN_BOUNDARY         ?=
@@ -3483,6 +3483,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# pays a model load into the pool on the first burst and reports it as the
 	@# pool's cost. All of them are 26 minutes of GPU each.
 	@bash hack/check-two-model-scenario.sh
+	@echo "Checking the EPP installer refuses a router older than its values..."
+	@bash hack/check-epp-router-version.sh
+	@echo "Checking the router pins the harness patch writes..."
+	@bash hack/check-harness-router-pins.sh
+	@echo "Checking the benchmark EPP-scrape parsers under both metric namings..."
+	@bash hack/check-epp-metrics-parsers.sh
 	@echo "Checking the TTFT staircase's exit paths and arithmetic..."
 	@# Executes it against a stub kubectl. What protects a shared cluster for a
 	@# multi-day run is its exit paths, and bash -n sees none of them.
@@ -3751,8 +3757,10 @@ PROMTOOL ?= $(LOCALBIN)/promtool-$(PROMTOOL_VERSION)
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.17.2
-#ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
-ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
+#ENVTEST_VERSION is the tag of the setup-envtest module to install: the controller-runtime version in go.mod (i.e. v0.24.1).
+# setup-envtest is its own module, tagged with each controller-runtime release. A release branch (release-0.24) no longer
+# resolves: go finds the root module at the branch head, which does not contain the setup-envtest package.
+ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime)
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.9.0
@@ -3785,8 +3793,9 @@ $(PROMTOOL): $(LOCALBIN)
 	@bash hack/install-promtool.sh $(PROMTOOL) $(PROMTOOL_VERSION)
 
 .PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
+envtest: $(LOCALBIN) ## Download setup-envtest locally if necessary.
+	@# Run the install every time: it is a no-op when setup-envtest-$(ENVTEST_VERSION) exists, and otherwise
+	@# installs it and repoints $(ENVTEST), which a target on the unversioned link alone would leave stale.
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint

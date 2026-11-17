@@ -107,10 +107,10 @@ func watchedBy(d appsv1.Deployment) ([]string, bool) {
 // passes, $(VAR) references resolved (containerExpand), and whether it passes
 // one. The last one wins, as pflag reads a repeated flag.
 func watchFlag(d appsv1.Deployment) (value string, set bool) {
-	if len(d.Spec.Template.Spec.Containers) == 0 {
+	c := managerContainer(d)
+	if c == nil {
 		return "", false
 	}
-	c := d.Spec.Template.Spec.Containers[0]
 	expand := containerExpand(d)
 	args := append(append([]string(nil), c.Command...), c.Args...)
 	for i, a := range args {
@@ -124,14 +124,33 @@ func watchFlag(d appsv1.Deployment) (value string, set bool) {
 	return value, set
 }
 
+// controllerContainer is the name of the controller's container in its
+// Deployment (config/base/manager/deployment.yaml).
+const controllerContainer = "manager"
+
+// managerContainer is the controller container of d: the one named
+// controllerContainer, else the first; nil when d has none.
+func managerContainer(d appsv1.Deployment) *corev1.Container {
+	cs := d.Spec.Template.Spec.Containers
+	for i := range cs {
+		if cs[i].Name == controllerContainer {
+			return &cs[i]
+		}
+	}
+	if len(cs) == 0 {
+		return nil
+	}
+	return &cs[0]
+}
+
 // containerExpand resolves $(VAR) references in a value of the controller
 // container, as the kubelet does: from the container's env, with
 // $(POD_NAMESPACE) and a metadata.namespace fieldRef the Deployment's namespace.
 func containerExpand(d appsv1.Deployment) func(string) string {
 	env := map[string]string{"POD_NAMESPACE": d.Namespace}
 	var c corev1.Container
-	if cs := d.Spec.Template.Spec.Containers; len(cs) > 0 {
-		c = cs[0]
+	if m := managerContainer(d); m != nil {
+		c = *m
 	}
 	for _, e := range c.Env {
 		if e.ValueFrom == nil {

@@ -42,15 +42,23 @@ VLLM_METRICS = {
     "running": re.compile(r"^vllm:num_requests_running\{[^}]*\}\s+([0-9.eE+-]+)"),
     "waiting": re.compile(r"^vllm:num_requests_waiting\{[^}]*\}\s+([0-9.eE+-]+)"),
 }
+# Each pattern takes the current llm_d_epp_ name or the legacy one. Routers
+# before v1.0.0 export both, v1.0.0 only llm_d_epp_. fc_queue and pool_avg take
+# the first matching line only: one series, under whichever name comes first,
+# not a sum over the scrape. per_pod reads the legacy family only when the
+# scrape has no llm_d_epp_ one (parse_epp_log).
 EPP_METRICS = {
     "fc_queue": re.compile(
-        r"^inference_extension_flow_control_queue_size\{[^}]*\}\s+([0-9.eE+-]+)"
+        r"^(?:llm_d_epp|inference_extension)_flow_control_queue_size\{[^}]*\}\s+([0-9.eE+-]+)"
     ),
     "pool_avg": re.compile(
-        r"^inference_pool_average_queue_size\{[^}]*\}\s+([0-9.eE+-]+)"
+        r"^(?:llm_d_epp|inference_pool)_average_queue_size\{[^}]*\}\s+([0-9.eE+-]+)"
     ),
     "per_pod": re.compile(
-        r'^inference_pool_per_pod_queue_size\{model_server_pod="([^"]+)"[^}]*\}\s+([0-9.eE+-]+)'
+        r'^llm_d_epp_per_endpoint_queue_size\{[^}]*model_server_endpoint="([^"]+)"[^}]*\}\s+([0-9.eE+-]+)'
+    ),
+    "per_pod_legacy": re.compile(
+        r'^inference_pool_per_pod_queue_size\{[^}]*model_server_pod="([^"]+)"[^}]*\}\s+([0-9.eE+-]+)'
     ),
 }
 
@@ -83,6 +91,7 @@ def parse_epp_log(path: Path):
         return None
     fc = pa = None
     per_pod = defaultdict(float)
+    per_pod_legacy = defaultdict(float)
     for line in text.splitlines():
         if fc is None:
             m = EPP_METRICS["fc_queue"].match(line)
@@ -97,6 +106,12 @@ def parse_epp_log(path: Path):
         m = EPP_METRICS["per_pod"].match(line)
         if m:
             per_pod[m.group(1)] = float(m.group(2))
+            continue
+        m = EPP_METRICS["per_pod_legacy"].match(line)
+        if m:
+            per_pod_legacy[m.group(1)] = float(m.group(2))
+    if not per_pod:
+        per_pod = per_pod_legacy
     return {
         "fc_queue": fc or 0.0,
         "pool_avg": pa or 0.0,

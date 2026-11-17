@@ -207,10 +207,33 @@ func checkPrometheusReachable(ctx context.Context, s *state) ([]Result, string) 
 	if err != nil || u.Host == "" {
 		return []Result{{Status: Fail, Detail: fmt.Sprintf("%s=%q is not a URL with a host", keyPrometheusURL, raw), Fix: setURL("https://...")}}, ""
 	}
-	if u.Scheme == "http" && st.value(keyAllowHTTP) != valueTrue {
-		return []Result{{Status: Fail,
-			Detail: raw + " is plain HTTP, which the controller refuses: it sends its ServiceAccount token to Prometheus",
-			Fix:    setURL("https://" + u.Host + u.Path)}}, ""
+	// pass is the result for a Prometheus that answered. Before the
+	// controller's Deployment exists, a plain HTTP URL is a WARN unless smt
+	// install said it applies the controller without a token: the release
+	// files set PROMETHEUS_TOKEN_PATH, which the controller refuses over HTTP.
+	pass := func(detail string) []Result {
+		return []Result{{Status: Pass, Detail: detail}}
+	}
+	plain := u.Scheme == "http"
+	if plain {
+		if r, stop := plainHTTPResult(st, raw, ns, setURL("https://"+u.Host+u.Path)); stop {
+			return []Result{r}, ""
+		}
+		switch {
+		case st.deployWhy != "":
+			// Forbidden is not absent: the token check was not made.
+			pass = func(detail string) []Result {
+				return []Result{{Status: Unknown,
+					Detail: detail + "; whether the controller's Deployment sets a token, which it refuses to send over plain HTTP, is not known: " + st.deployWhy}}
+			}
+		case !st.deployFound && !st.tokenPathEmptied:
+			pass = func(detail string) []Result {
+				return []Result{{Status: Warn,
+					Detail: detail + fmt.Sprintf("; the controller's Deployment does not exist yet, and the release files set %s on it, which the controller refuses over plain HTTP", envTokenPath),
+					Fix: "before applying the controller, empty it in the main file: " + tokenPathSed +
+						"\n# smt install --allow-http does it for you"}}
+			}
+		}
 	}
 	ca := s.env.PrometheusCA
 	insecure := st.value(keyPrometheusInsecure) == valueTrue
@@ -230,10 +253,15 @@ func checkPrometheusReachable(ctx context.Context, s *state) ([]Result, string) 
 	switch {
 	case err == nil:
 		s.prom, s.promUsable = prom, true
-		return []Result{{Status: Pass, Detail: fmt.Sprintf("%s answered in %s%s", raw, took, note)}}, ""
+		return pass(fmt.Sprintf("%s answered in %s%s", raw, took, note)), ""
+	case errors.As(err, &perr) && perr.Kind == PromDenied && plain:
+		s.promWhy = fmt.Sprintf("Prometheus refused an unauthenticated query (%v): the metrics are not checked", err)
+		return []Result{{Status: Fail,
+			Detail: fmt.Sprintf("%s refused an unauthenticated query (%v); over plain HTTP the controller sends no token either, so its queries are refused too", raw, err),
+			Fix:    "let this endpoint answer queries without a token, or use an https URL, where the controller sends its ServiceAccount token: " + setURL("https://"+u.Host+u.Path)}}, ""
 	case errors.As(err, &perr) && perr.Kind == PromDenied:
 		s.promWhy = fmt.Sprintf("Prometheus refused the preflight's account (%v): the metrics are not checked", err)
-		return []Result{{Status: Pass, Detail: fmt.Sprintf("%s answered (%v for the preflight's account: network and TLS work; the controller queries with its own)%s", raw, err, note)}}, ""
+		return pass(fmt.Sprintf("%s answered (%v for the preflight's account: network and TLS work; the controller queries with its own)%s", raw, err, note)), ""
 	case errors.As(err, &perr) && perr.Kind == PromTLS:
 		fix := fmt.Sprintf("kubectl create secret generic %s -n %s --from-file=ca.crt=<the CA that signs Prometheus's certificate>", PrometheusCASecret, ns)
 		if ca != nil {
@@ -247,6 +275,103 @@ func checkPrometheusReachable(ctx context.Context, s *state) ([]Result, string) 
 		return []Result{{Status: Fail, Detail: fmt.Sprintf("%s did not answer within the check's time: %v", raw, err), Fix: "check the URL, and that no NetworkPolicy blocks " + ns + " from reaching it"}}, ""
 	}
 	return []Result{{Status: Fail, Detail: fmt.Sprintf("%s: %v", raw, err), Fix: "check the URL, and that no NetworkPolicy blocks " + ns + " from reaching it"}}, ""
+}
+
+// tokenPathSedExpr is the sed program the install guides run on a release
+// main file to empty PROMETHEUS_TOKEN_PATH (hack/check-release-manifests.sh
+// checks the guides use it and that it changes exactly one line).
+const tokenPathSedExpr = `s#value: /var/run/secrets/kubernetes.io/serviceaccount/token$#value: ""#`
+
+// tokenPathSed is that sed, on the main file of each install.
+const tokenPathSed = `sed -i '` + tokenPathSedExpr + `' scaling-manager-namespaced.yaml   # or scaling-manager-cluster.yaml, scaling-manager-namespaced-openshift.yaml, scaling-manager-cluster-openshift.yaml`
+
+// settingsPatch is the kubectl patch that sets one key of the settings.
+func settingsPatch(ns, key, value string) string {
+	return fmt.Sprintf("kubectl patch configmap %s -n %s --type merge -p '{\"data\":{\"%s\":\"%s\"}}'", SettingsConfigMap, ns, key, value)
+}
+
+// tokenFix is how to stop the controller sending the token key over plain
+// HTTP, where the Deployment sets it: in the file it is applied from (or the
+// next apply brings it back), and on the live Deployment when there is one.
+func tokenFix(st settingsState, ns, key string) string {
+	if key != envTokenPath {
+		fix := fmt.Sprintf("remove %s from the controller container in the main file you apply", key)
+		if st.deployFound {
+			fix = fmt.Sprintf("kubectl set env deployment/%s -n %s %s-\n# and %s, or the next apply brings it back", ControllerDeployment, ns, key, fix)
+		}
+		return fix
+	}
+	if !st.deployFound {
+		return tokenPathSed
+	}
+	return fmt.Sprintf("kubectl set env deployment/%s -n %s %s=", ControllerDeployment, ns, key) +
+		"\n# and in the main file you apply, or the next apply brings it back: " + tokenPathSed
+}
+
+// tlsFix is how to remove one TLS setting: a patch of the settings, an unset
+// on the Deployment, or an edit of config.yaml.
+func tlsFix(ns string, t tlsSource) string {
+	switch {
+	case strings.HasPrefix(t.source, t.settingKey+" in ConfigMap ") && t.settingKey != "":
+		v := ""
+		if t.settingKey == keyPrometheusInsecure {
+			v = settingsDefaults[keyPrometheusInsecure]
+		}
+		return settingsPatch(ns, t.settingKey, v)
+	case strings.Contains(t.source, " on Deployment "):
+		return fmt.Sprintf("kubectl set env deployment/%s -n %s %s-   # and in the main file you apply", ControllerDeployment, ns, t.loaderKey)
+	}
+	return fmt.Sprintf("kubectl edit configmap %s -n %s   # remove %s from config.yaml", LegacyConfigMap, ns, t.loaderKey)
+}
+
+// plainHTTPResult is the result for an http:// Prometheus URL raw the
+// controller refuses to start on (internal/prometheus ValidateTLSConfig): one
+// it is not told to allow, one it would send a bearer token to, or one with
+// a TLS setting beside it; UNKNOWN when a valueFrom the preflight cannot
+// read decides. stop is false when it starts on it. toHTTPS is the patch to
+// an https URL.
+func plainHTTPResult(st settingsState, raw, ns, toHTTPS string) (r Result, stop bool) {
+	allowed, unknown := st.allowHTTP()
+	if unknown != "" {
+		return Result{Status: Unknown,
+			Detail: fmt.Sprintf("%s is plain HTTP, and whether the controller allows it is not known: %s comes from a reference the preflight does not read", raw, unknown)}, true
+	}
+	if !allowed {
+		token := tokenFix(st, ns, envTokenPath)
+		return Result{Status: Fail,
+			Detail: fmt.Sprintf("%s is plain HTTP, which the controller refuses unless %s is true", raw, keyAllowHTTP),
+			Fix: toHTTPS +
+				"\n# or, to read it over plain HTTP (unencrypted, no token): smt install ... --prometheus-url " + raw + " --allow-http" +
+				"\n# by hand: " + settingsPatch(ns, keyAllowHTTP, valueTrue) +
+				"\n#   and empty the token path (the controller sends no token over plain HTTP): " + strings.ReplaceAll(token, "\n# ", "\n#   ")}, true
+	}
+	set, unknownTLS := st.tlsBesideHTTP()
+	if len(set) > 0 {
+		var names, fixes []string
+		for _, t := range set {
+			names = append(names, t.source)
+			fixes = append(fixes, tlsFix(ns, t))
+		}
+		return Result{Status: Fail,
+			Detail: fmt.Sprintf("%s is plain HTTP, and the controller refuses TLS settings beside it: %s", raw, strings.Join(names, "; ")),
+			Fix:    strings.Join(fixes, "\n") + "\n# or use an https URL: " + toHTTPS}, true
+	}
+	tok, key, onDeployment := st.bearerToken()
+	if tok != "" {
+		fix := fmt.Sprintf("kubectl edit configmap %s -n %s   # remove %s from config.yaml", LegacyConfigMap, ns, key)
+		if onDeployment {
+			fix = tokenFix(st, ns, key) +
+				"\n# smt install ... --allow-http applies the controller with PROMETHEUS_TOKEN_PATH empty, so a re-run keeps it so"
+		}
+		return Result{Status: Fail,
+			Detail: fmt.Sprintf("%s is plain HTTP and the controller has a bearer token for it (%s): it refuses to send one over plain HTTP, and does not start", raw, tok),
+			Fix:    fix + "\n# or use an https URL: " + toHTTPS}, true
+	}
+	if len(unknownTLS) > 0 {
+		return Result{Status: Unknown,
+			Detail: fmt.Sprintf("%s is plain HTTP, and whether the controller has a TLS setting it refuses beside it is not known: %s comes from a reference the preflight does not read", raw, strings.Join(unknownTLS, "; "))}, true
+	}
+	return Result{}, false
 }
 
 // prometheusCandidates names the Prometheus resources in the cluster, for a
