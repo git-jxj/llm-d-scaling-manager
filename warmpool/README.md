@@ -57,7 +57,7 @@ commit **`65ba31b`** (upstream `2c01cf8`, plus the port-conflict reclaim fix in
 > `65ba31b`; edit them upstream and re-copy rather than in place.
 >
 > Which image runs depends on the pool. A SINGLE-POD pool runs upstream
-> `launcher:v0.6.4`, pinned by digest in
+> `launcher:v0.8.0`, pinned by digest in
 > `config/warmpool/warmpool-deployment.yaml` -- a different build from this copy,
 > and it does not need the follower fix because a group of one has no follower. A
 > GROUP pool must be given `--launcher-image` naming a build that carries it:

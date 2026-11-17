@@ -113,7 +113,7 @@ and the model switch measured on the pool runs on it. The launcher has no sleep
 or wake endpoint: the scaling manager drives vLLM's own sleep mode (`/sleep`,
 `/wake_up`) directly, the role FMA's controller plays
 ([the split of responsibilities](../../warmpool/README.md#the-split-of-responsibilities)).
-Single-Pod pools run upstream launcher v0.6.4 unchanged
+Single-Pod pools run upstream launcher v0.8.0 unchanged
 ([`warmpool-deployment.yaml`](../../config/warmpool/warmpool-deployment.yaml));
 group pools need `--launcher-image ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless`,
 our fork, which adds a port-conflict reclaim and routes LeaderWorkerSet
@@ -134,8 +134,8 @@ this project's scale-up path on an H100 test cluster on 2026-08-18/19
 - **A GPU quota did not bound it**: a `LauncherConfig` does not express the pool.
 
 llm-d's guide now pins FMA 0.6.5, a stable release published 2026-08-31, after
-our test. We have not re-tested the binding on it, and our single-Pod pin is
-still 0.6.4.
+our test. We have not re-tested the binding on it. Our single-Pod pools now run
+launcher v0.8.0, the launcher alone, without FMA's controller.
 
 What replaced the binding is the [warm pool](../well-lit-paths/warm-pool-bridge/):
 each pool Pod owns its GPU for its whole life, so there is no bind to place

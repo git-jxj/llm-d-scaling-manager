@@ -73,7 +73,8 @@ func (s *Supervisor) List(ctx context.Context) ([]Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The launcher this pool pins (v0.6.0-alpha.13) answers with an ENVELOPE:
+	// The launcher answers with an ENVELOPE (every release from v0.6.0-alpha.13
+	// through v0.8.0, the one this pool pins):
 	//
 	//   {"revision":1,"total_instances":1,"running_instances":1,"instances":[...]}
 	//

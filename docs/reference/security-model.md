@@ -283,6 +283,11 @@ delete it when they go
   controller pods (`app.kubernetes.io/name=scaling-manager`,
   `control-plane=controller-manager`) in the namespace given as
   `--scaling-manager-namespace`. Anyone who can start a pod with those labels there passes.
+  On `:8001` the launcher serves `/health`, `/v2/vllm/instances` (list, watch,
+  create, delete, log) and, since launcher v0.7.0, `GET /v2/gpu-debug`, which runs a fixed
+  `nvidia-smi` command and returns its output. It takes no input and changes
+  nothing, but it shows the node's GPUs and their processes, so the same rule
+  keeps it to the controller.
 - A pool whose unit spans several pods (`GROUP_SIZE` > 1) also admits **all
   ports, `:8001` included,** from any pod carrying that pool's labels, so the
   ranks can reach each other.
@@ -435,7 +440,7 @@ answers at that address. Set `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` to
 | Image | Default | Recommendation |
 | --- | --- | --- |
 | Controller | from a checkout of `main`: `ghcr.io/llm-d-incubation/llm-d-scaling-manager:main`, a **floating** tag rebuilt on every push to main. The installer sets `imagePullPolicy: Always` for it; a kustomize or GitOps render keeps the manifest's `IfNotPresent`, so a node keeps whichever `:main` it pulled first. From a checkout of a release tag: that release's image, signed with cosign | install a release: `git checkout v0.11.1`, which deploys `:v0.11.1`, or pin its digest from the [release notes](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases), `IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:<digest>` (the digest form has not been verified end to end through the installer yet) ([upgrade and uninstall](upgrade-and-uninstall.md#pin-the-version)). A floating tag means any pod restart can run different code. A registry host with a port (`host:5000/...`) is not parsed correctly by the installer yet; use a Kustomize overlay for that until it is fixed |
-| Warm-pool launcher | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.6.4@sha256:...` | pinned by digest in `config/warmpool/` |
+| Warm-pool launcher | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:...` (single-Pod pools) | pinned by digest in `config/warmpool/`. Not cosign-signed upstream, so the digest is the only integrity check |
 | Warm-pool proxy | `ghcr.io/ev-shindin/llm-scaler/warmpool-proxy:v11@sha256:...` | pinned by digest; a fork-built image |
 
 `LLMSM_IMAGE_PULL_SECRET` names an existing pull Secret for a private registry; the
