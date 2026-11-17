@@ -15,6 +15,24 @@ cannot have a role scaler. Not supported on either path: sets with
 `spec.slices` above 1, and sub-roles. How the scaling manager reads a set is in
 the [proposal](../proposals/disaggregatedset.md).
 
+## Passive mode
+
+For a [passive](scaling-policy.md) model the scaling manager changes no
+replica count of any role, on either path:
+
+- **KEDA (`External` roles).** The external scaler answers each role's
+  ScaledObject with the role's current count, read from its
+  `DisaggregatedSetRoleScaler`, so the HPA holds it. A role at zero stays at
+  zero. If that read fails, the scaler answers an error, not a number, and
+  KEDA and the HPA change nothing. (With other triggers on the ScaledObject it
+  answers 0 and lets those triggers scale, as for any workload.)
+- **Role writer (`Static` roles).** It writes nothing to the set: no
+  scale-up, no scale-down, no wake from zero, and no lifting of a role parked
+  alone.
+
+The engines still size the roles and publish the counts they would set, so
+you can compare before turning passive off.
+
 ## Turn on the role writer
 
 1. Install with `DSET_ROLE_WRITER=true`, with the variables you installed with:
@@ -80,7 +98,8 @@ controller manages:
 It holds what KEDA and the HPA hold on the other path:
 
 - **Passive.** For a [passive](scaling-policy.md) model it registers the roles
-  but writes nothing; the would-be counts are still published.
+  but writes nothing; the would-be counts are still published. See
+  [Passive mode](#passive-mode).
 - **Scale-down window.** A lower count waits 5 minutes, the HPA's default
   `scaleDown.stabilizationWindowSeconds`: the writer applies the highest count
   planned in the last 5 minutes. A higher count is written at once. Parking at
