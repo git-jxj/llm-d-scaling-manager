@@ -98,7 +98,12 @@
             },
             "flags": [
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (decode's knee: no measured run crossed it)",
+              "outside": "decode's knee: no measured run crossed it"
+            }
           }
         },
         "operatingRate": {
@@ -142,7 +147,12 @@
             },
             "flags": [
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (1 decode pods, measured 2)",
+              "outside": "1 decode pods, measured 2"
+            }
           }
         }
       }

@@ -96,6 +96,9 @@ type VariantState struct {
 	Variant, Role string
 	// Replicas is the variant's replica count as the cycle priced it.
 	Replicas int
+	// Accelerator is the variant's accelerator as the cycle's input named
+	// it, "" where it named none.
+	Accelerator string
 	// Line is the ITL line the variant was priced on, zero with none; Tier
 	// is where it came from (whatif.TierOLS and the rest, "" with no line)
 	// and BorrowedFrom the donor of a borrowed one (namespace/variant).
@@ -493,6 +496,11 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 	minSettled := st.Policy.ITLSteadiness().MinSettledSamples
 	for _, vc := range res.VariantCapacities {
 		vs := VariantState{Variant: vc.VariantName, Role: vc.Role, Replicas: vc.ReplicaCount, MinSettled: minSettled}
+		for _, rs := range in.VariantStates {
+			if rs.VariantName == vc.VariantName {
+				vs.Accelerator = rs.AcceleratorName
+			}
+		}
 		if sr := vc.ServiceRate; sr != nil && sr.HasLine {
 			vs.Line = itl.Model{A: sr.LineSlope, B: sr.LineIntercept}
 		}

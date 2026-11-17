@@ -1,6 +1,6 @@
-knee            13.31 r/s   decode, batch cap binds at fill 0.732
+knee            13.31 r/s   decode, batch cap binds at fill 0.732; OUTSIDE VALIDATED REGION (decode's knee: no measured run crossed it)
 operating rate  11.32 r/s   0.85 x knee (scaleUpThreshold)
-mean TPOT       3.66 ms     [3.65 .. 3.70]   line ols, observed fill up to 0.50
+mean TPOT       3.66 ms     [3.65 .. 3.70]   line ols, observed fill up to 0.50; OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)
 TPOT p90        refused: NoTPOTHistogram (the recording carries no TPOT histogram; pass --assume-tpot-ratio for a flagged answer)
 shape           IL 1000 OL 1000 (assumed)
 line check      ok at another shape (rows at KV 6502 a request, priced at 1500): median 3.0% off the rate read, line low; 0 of 10 rows past 15%, worst 4.4%, fill 0.52-0.55, cycles 122-131; left out 20 on a ramp, 0 above the band, 10 older than 30m0s

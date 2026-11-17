@@ -564,6 +564,60 @@ mutation-checked:
 - Every `Unanswerable` reason has a case; NaN gives a reason, never 0 or +Inf.
 - `V_P` is never above the busy-minute median on a synthetic pod.
 
+### Calibration envelope, as built
+
+Every figure the planner prints now carries the envelope's verdict
+(`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated: error
+LO..HI% (SOURCE)` when a measured row's region holds it, `OUTSIDE VALIDATED
+REGION (why)` when none does. For an operator's reading:
+[how accurate each figure is](../guides/capacity-planner/accuracy.md).
+
+**The rows are data**, in `internal/signals/whatif/envelope.json`, embedded. A
+row is one figure kind on one shape class from one run: its region (topology,
+accelerators, prefill and decode counts, prompt, output and Ca² spans, flow
+control states, statistics, the highest knee share measured) and its signed
+error, model over measured less 1. On point readings (TTFT, TPOT) the error is
+their 10th to 90th percentile; on brackets (a knee, a rate at a target) it is
+the lowest and highest end, and a side only bounded is left open. The file also
+lists the flags that put a figure outside every row (`AboveFlowControlOnset`,
+`AssumedVP`, `AssumedA`) and why each kind with no row has none. A new run adds
+rows under its own `source`; nothing in code changes.
+
+**The q32 rows** come from the Qwen3-32B TP 2 staircase on H200 (2 prefill and 2
+decode Pods, buckets A, B and C, flow control off and on, one repeat, 47 steps).
+`cmd/capacity-planner/testdata/staircase-q32/` holds its warm-up recording
+(exported, so pseudonymised; the phases' own recordings are not committed: no
+figure reads them), the run's frozen file, and the client's figures per step.
+`TestStaircaseQ32_TheErrorsAreFrozen` replays the warm-up once, prices each
+bucket as `capacity-planner freeze` does, and writes every step's model figure
+beside the client's to `testdata/staircase-q32-validation.golden`, then draws the
+rows from them. A row's region reaches 1.25x either way of the shape sent, a
+stated tolerance; its knee share is the highest step it read. Readings leave out
+void steps (under the run's noise floor, or with requests evicted) and, for TTFT,
+steps past the flow-control onset. A knee reading is the last step held and the
+first not (completions within 3% of those due, none failed); a rate reading is
+where the client's percentile crossed the frozen target over valid steps. The
+golden shows no drift from the run's frozen curve at the ladder's rates.
+
+| Figure | A: 1000 in, 1000 out, Poisson | B: 8000 in, 200 out, Poisson | C: 8000 in, 200 out, Ca² 4 |
+| --- | --- | --- | --- |
+| TTFT mean / p90 / p95 | -4..+18 / +0..+14 / -3..+12% (12) | +29..+95 / +18..+108 / +18..+102% (12) | +30..+93 / +45..+131 / +44..+145% (9) |
+| Mean TPOT | +5..+18% (12) | +36..+45% (12) | +34..+43% (10) |
+| Prefill knee, flow control on | not crossed | +5..+11% (1) | +21..+25% (1) |
+| Rate at the p90 / p95 target | at most -6 / -6% (2) | at most -6 / -6% (2) | at most +0 / +2% (2) |
+
+**The negative control.** Priced first come, first served
+(`processorSharing` off, as `firstCome` does), 43 of the 47 step lines, all 12 rate lines
+and 14 of the 20 envelope rows move (the knee and TPOT rows, which processor sharing does not price, stay), so the frozen table fails;
+`TestStaircaseQ32_WithoutProcessorSharingTheErrorsMove` holds that.
+
+**What it does not cover.** Aggregated variants, prefill's own latency, TPOT
+percentiles, decode's knee and its rate at a TPOT target, p99, any prefill count
+but 2, and any accelerator but H200 read outside. The decode knee was never
+crossed (bucket A held to its knee). The capacity planner's `/v1/plan` judges its
+knees, points A and B, the TPOT's points and its limits, not curve points;
+`capacity-planner at-replicas` and `/v1/report` take the same verdicts when they land.
+
 ## PR plan
 
 Learner PRs follow [the learner rules](analyzer-learner.md): one behaviour change
@@ -1346,6 +1400,15 @@ roles[].results.knee.answer.sensitivity.hi number
 roles[].results.knee.answer.sensitivity.lo number
 roles[].results.knee.answer.sensitivity.refused string
 roles[].results.knee.answer.unit string
+roles[].results.knee.answer.validation object
+roles[].results.knee.answer.validation.errorHi number
+roles[].results.knee.answer.validation.errorLo number
+roles[].results.knee.answer.validation.label string
+roles[].results.knee.answer.validation.outside string
+roles[].results.knee.answer.validation.readings number
+roles[].results.knee.answer.validation.shape string
+roles[].results.knee.answer.validation.source string
+roles[].results.knee.answer.validation.validated boolean
 roles[].results.knee.answer.value number
 roles[].results.knee.refused object
 roles[].results.knee.refused.assumedTermDecides boolean
@@ -1374,6 +1437,15 @@ roles[].results.meanTPOT.answer.sensitivity.hi number
 roles[].results.meanTPOT.answer.sensitivity.lo number
 roles[].results.meanTPOT.answer.sensitivity.refused string
 roles[].results.meanTPOT.answer.unit string
+roles[].results.meanTPOT.answer.validation object
+roles[].results.meanTPOT.answer.validation.errorHi number
+roles[].results.meanTPOT.answer.validation.errorLo number
+roles[].results.meanTPOT.answer.validation.label string
+roles[].results.meanTPOT.answer.validation.outside string
+roles[].results.meanTPOT.answer.validation.readings number
+roles[].results.meanTPOT.answer.validation.shape string
+roles[].results.meanTPOT.answer.validation.source string
+roles[].results.meanTPOT.answer.validation.validated boolean
 roles[].results.meanTPOT.answer.value number
 roles[].results.meanTPOT.refused object
 roles[].results.meanTPOT.refused.assumedTermDecides boolean
@@ -1402,6 +1474,15 @@ roles[].results.operatingRate.answer.sensitivity.hi number
 roles[].results.operatingRate.answer.sensitivity.lo number
 roles[].results.operatingRate.answer.sensitivity.refused string
 roles[].results.operatingRate.answer.unit string
+roles[].results.operatingRate.answer.validation object
+roles[].results.operatingRate.answer.validation.errorHi number
+roles[].results.operatingRate.answer.validation.errorLo number
+roles[].results.operatingRate.answer.validation.label string
+roles[].results.operatingRate.answer.validation.outside string
+roles[].results.operatingRate.answer.validation.readings number
+roles[].results.operatingRate.answer.validation.shape string
+roles[].results.operatingRate.answer.validation.source string
+roles[].results.operatingRate.answer.validation.validated boolean
 roles[].results.operatingRate.answer.value number
 roles[].results.operatingRate.refused object
 roles[].results.operatingRate.refused.assumedTermDecides boolean
@@ -1430,6 +1511,15 @@ roles[].results.percentileTPOT.answer.sensitivity.hi number
 roles[].results.percentileTPOT.answer.sensitivity.lo number
 roles[].results.percentileTPOT.answer.sensitivity.refused string
 roles[].results.percentileTPOT.answer.unit string
+roles[].results.percentileTPOT.answer.validation object
+roles[].results.percentileTPOT.answer.validation.errorHi number
+roles[].results.percentileTPOT.answer.validation.errorLo number
+roles[].results.percentileTPOT.answer.validation.label string
+roles[].results.percentileTPOT.answer.validation.outside string
+roles[].results.percentileTPOT.answer.validation.readings number
+roles[].results.percentileTPOT.answer.validation.shape string
+roles[].results.percentileTPOT.answer.validation.source string
+roles[].results.percentileTPOT.answer.validation.validated boolean
 roles[].results.percentileTPOT.answer.value number
 roles[].results.percentileTPOT.refused object
 roles[].results.percentileTPOT.refused.assumedTermDecides boolean
@@ -1458,6 +1548,15 @@ roles[].results.rate.answer.sensitivity.hi number
 roles[].results.rate.answer.sensitivity.lo number
 roles[].results.rate.answer.sensitivity.refused string
 roles[].results.rate.answer.unit string
+roles[].results.rate.answer.validation object
+roles[].results.rate.answer.validation.errorHi number
+roles[].results.rate.answer.validation.errorLo number
+roles[].results.rate.answer.validation.label string
+roles[].results.rate.answer.validation.outside string
+roles[].results.rate.answer.validation.readings number
+roles[].results.rate.answer.validation.shape string
+roles[].results.rate.answer.validation.source string
+roles[].results.rate.answer.validation.validated boolean
 roles[].results.rate.answer.value number
 roles[].results.rate.refused object
 roles[].results.rate.refused.assumedTermDecides boolean
@@ -1506,6 +1605,15 @@ roles[].results.ttft.answer.sensitivity.hi number
 roles[].results.ttft.answer.sensitivity.lo number
 roles[].results.ttft.answer.sensitivity.refused string
 roles[].results.ttft.answer.unit string
+roles[].results.ttft.answer.validation object
+roles[].results.ttft.answer.validation.errorHi number
+roles[].results.ttft.answer.validation.errorLo number
+roles[].results.ttft.answer.validation.label string
+roles[].results.ttft.answer.validation.outside string
+roles[].results.ttft.answer.validation.readings number
+roles[].results.ttft.answer.validation.shape string
+roles[].results.ttft.answer.validation.source string
+roles[].results.ttft.answer.validation.validated boolean
 roles[].results.ttft.answer.value number
 roles[].results.ttft.refused object
 roles[].results.ttft.refused.assumedTermDecides boolean

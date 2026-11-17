@@ -190,6 +190,9 @@ Every figure is an object holding `value` or `refused`, never both. A refused
 figure has no number, and no refusal is written as 0. A figure's `band` is its
 bootstrap band over the ITL line's readings; its `sensitivity` is the span over
 V_P and f, ±15%, with `hiRefused` or `loRefused` where a corner is refused.
+The knees, both points, the TPOT's points and the limits carry `validation`:
+whether a measured run covered the figure, and how far off it read there
+([how accurate each figure is](accuracy.md)). Curve points carry none.
 The full key list is pinned in
 [`internal/whatifapi/testdata/schema-v1.txt`](../../../internal/whatifapi/testdata/schema-v1.txt).
 

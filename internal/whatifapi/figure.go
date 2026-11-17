@@ -108,3 +108,56 @@ func refusedFigure(u *Refusal) Figure {
 	c.Flags = slices.Clone(u.Flags)
 	return Figure{Refused: &c}
 }
+
+// Validation is the calibration envelope's verdict on a figure
+// (whatif.Envelope; docs/reference/capacity-planner-accuracy.md): the measured
+// row whose region holds it, or why none does.
+type Validation struct {
+	Validated bool `json:"validated"`
+	// Label is the verdict in words: "validated: error -2..+16% (q32
+	// staircase)", or "OUTSIDE VALIDATED REGION (why)".
+	Label string `json:"label"`
+	// Source, Shape, ErrorLo, ErrorHi and Readings are the row that holds
+	// the figure, absent outside it. The errors are signed shares, the model
+	// over the measured figure less 1; one absent is unbounded on its side.
+	Source   string   `json:"source,omitempty"`
+	Shape    string   `json:"shape,omitempty"`
+	ErrorLo  *float64 `json:"errorLo,omitempty"`
+	ErrorHi  *float64 `json:"errorHi,omitempty"`
+	Readings int      `json:"readings,omitempty"`
+	// Outside is why no row holds the figure.
+	Outside string `json:"outside,omitempty"`
+}
+
+// ValidationOf is v on the wire.
+func ValidationOf(v whatif.Validation) *Validation {
+	w := &Validation{Validated: v.Validated(), Label: v.String(), Outside: v.Outside}
+	if r := v.Row; r != nil {
+		w.Source, w.Shape, w.ErrorLo, w.ErrorHi, w.Readings = r.Source, r.Shape, r.ErrorLo, r.ErrorHi, r.Readings
+	}
+	return w
+}
+
+// validate is f with the shipped envelope's verdict on it, as a figure of
+// kind at statistic q, priced at share of its knee (0: none); a refused
+// figure has no number to judge, and is f as it is.
+func validate(f Figure, kind whatif.FigureKind, q float64, class whatif.FigureClass, share float64) Figure {
+	if f.Value == nil {
+		return f
+	}
+	flags := make([]whatif.Flag, len(f.Flags))
+	for i, name := range f.Flags {
+		flags[i] = whatif.Flag(name)
+	}
+	f.Validation = ValidationOf(whatif.DefaultEnvelope().Judge(whatif.Figure{Kind: kind, Percentile: q, Class: class,
+		KneeShare: share, Flags: flags}))
+	return f
+}
+
+// shareOf is rate over knee; 0 where either is not a figure.
+func shareOf(rate, knee float64) float64 {
+	if !(rate > 0 && knee > 0) {
+		return 0
+	}
+	return rate / knee
+}

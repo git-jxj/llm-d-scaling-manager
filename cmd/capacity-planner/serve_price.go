@@ -470,3 +470,6 @@ func (sf *servedFleet) TPOTRatio() whatifapi.Ratio {
 
 // Assumed is the fleet's assumed inputs as read, in the CLI's words.
 func (sf *servedFleet) Assumed() []string { return sf.assumed }
+
+// Class is the class of the fleet's figures, as the CLI judges them.
+func (sf *servedFleet) Class() whatif.FigureClass { return sf.pf.class() }

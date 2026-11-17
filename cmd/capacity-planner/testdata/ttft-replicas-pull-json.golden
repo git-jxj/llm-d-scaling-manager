@@ -98,7 +98,12 @@
             },
             "flags": [
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (decode's knee: no measured run crossed it)",
+              "outside": "decode's knee: no measured run crossed it"
+            }
           }
         },
         "operatingRate": {
@@ -142,7 +147,12 @@
             },
             "flags": [
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (1 decode pods, measured 2)",
+              "outside": "1 decode pods, measured 2"
+            }
           }
         }
       }
@@ -218,6 +228,11 @@
             "sensitivity": {
               "lo": 29.553807790730264,
               "hi": 54.09676235742668
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (V_P assumed, not learned)",
+              "outside": "V_P assumed, not learned"
             }
           }
         },
@@ -267,6 +282,11 @@
             "sensitivity": {
               "lo": 0.19554831873055709,
               "hi": 1.087923746410954
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (V_P assumed, not learned)",
+              "outside": "V_P assumed, not learned"
             }
           }
         }
@@ -274,5 +294,5 @@
     }
   ],
   "exitCode": 0,
-  "note": "estimate from 14 readings (cycles 64-77) of a 83-cycle recording, not a guarantee; see basis (-o json); TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the sent spread (cv 0.06) it read up to 33% under the router's percentile on the P2 recordings. V_P ASSUMED. a ASSUMED."
+  "note": "estimate from 14 readings (cycles 64-77) of a 83-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: at the sent spread (cv 0.06) it read up to 33% under the router's percentile on the P2 recordings. V_P ASSUMED. a ASSUMED."
 }

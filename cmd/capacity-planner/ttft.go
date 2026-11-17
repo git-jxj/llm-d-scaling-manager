@@ -63,7 +63,7 @@ const outputSpreadUnreadWords = "no output-length histogram: KVreq is ILeff + OL
 // The closing note's measured halves. The figures are the frozen P2 table's
 // (TestTTFTFrozen_TheNotesFigures, learnreplay).
 const (
-	ttftNoteOpen     = "TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: "
+	ttftNoteOpen     = "TTFT is not a bound, and is validated only where its figure says so: "
 	ttftNoteAssumed  = "at the assumed prompt cv %s it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33%% under it."
 	ttftNoteMeasured = "at the sent spread (cv 0.06) it read up to 33% under the router's percentile on the P2 recordings."
 	// ttftNoteArrivals stands for both: the P2 table was read at Poisson arrivals.
@@ -822,9 +822,10 @@ func (pf *pricedFleet) aText() string {
 	return a + " learned"
 }
 
-// verdict is the words every TTFT figure prints beside it.
-func (pf *pricedFleet) verdict() string {
-	v := "UNVALIDATED"
+// verdict is the words every TTFT figure prints beside it: the envelope's
+// verdict on the figure, and each input the figure assumed.
+func (pf *pricedFleet) verdict(on whatif.Validation) string {
+	v := on.String()
 	if pf.assumedVP {
 		v += "; V_P ASSUMED"
 	}
@@ -1071,7 +1072,7 @@ func (o *operatingTTFT) decodeNote() string {
 	if o == nil || !o.prefillBinds {
 		return ""
 	}
-	return "; at the prefill knee's rate; " + o.fleet.verdict()
+	return "; at the prefill knee's rate; " + o.fleet.verdict(o.fleet.kneeValidation(o.knee))
 }
 
 // fleetRate is question 1's fleet row: the smaller of the roles' rates and
@@ -1150,7 +1151,7 @@ func (pf *pricedFleet) kneeBasis(knee float64) string {
 		margin = fmt.Sprintf(" x (1 - %s margin)", num(p.VPMargin))
 	}
 	return fmt.Sprintf("N_p %d x V_P %s%s / (f %.4g x %s tokens); %s", p.Replicas, num(round(vp)), margin,
-		pf.in.Imbalance, num(round(p.PromptTokens)), pf.verdict())
+		pf.in.Imbalance, num(round(p.PromptTokens)), pf.verdict(pf.kneeValidation(pf.knee())))
 }
 
 // writeRows prints question 2's TTFT rows.
@@ -1161,7 +1162,7 @@ func (o operatingTTFT) writeRows(b *strings.Builder) {
 	}
 	switch v := o.ttft.(type) {
 	case whatif.TTFT:
-		row(b, o.q.label(), msText(v.Seconds), spanText(v.Sensitivity, "%.1f", 1000, true), "end to end; "+pf.verdict())
+		row(b, o.q.label(), msText(v.Seconds), spanText(v.Sensitivity, "%.1f", 1000, true), "end to end; "+pf.verdict(pf.ttftValidation(o.q.q, o.rate, o.ttft)))
 		fmt.Fprintf(b, "%-16s(bands: %s, a sweep, not a confidence interval)\n", "", pf.sweptText())
 		if msText(v.Independent) != msText(v.Seconds) {
 			fmt.Fprintf(b, "%-16s(%s if prefill and decode waits were independent)\n", "", msText(v.Independent))
@@ -1179,7 +1180,7 @@ func writeRateRows(b *strings.Builder, layout string, pf *pricedFleet, fleets in
 	role := pf.label(rolePrefill, fleets)
 	switch r := ttft.(type) {
 	case whatif.Answer:
-		fmt.Fprintf(b, layout, role, rateText(r.Value), ttftBoundText(q, r.Basis.BoundBy), pf.sweptBasis(r))
+		fmt.Fprintf(b, layout, role, rateText(r.Value), ttftBoundText(q, r.Basis.BoundBy), pf.sweptBasis(q.q, r))
 	case whatif.Unanswerable:
 		fmt.Fprintf(b, "%-9s%s\n", role, refusedText(r))
 	}
@@ -1187,13 +1188,13 @@ func writeRateRows(b *strings.Builder, layout string, pf *pricedFleet, fleets in
 	role = pf.label("fleet", fleets)
 	switch r := fleet.(type) {
 	case whatif.Answer:
-		fmt.Fprintf(b, layout, role, rateText(r.Value), boundText(r.Basis.BoundBy), pf.sweptBasis(r))
+		fmt.Fprintf(b, layout, role, rateText(r.Value), boundText(r.Basis.BoundBy), pf.sweptBasis(q.q, r))
 	case whatif.Unanswerable:
 		fmt.Fprintf(b, "%-9s%s\n", role, refusedText(r))
 	}
 }
 
 // sweptBasis is a rate's basis on question 1: the verdict and the rate's span.
-func (pf *pricedFleet) sweptBasis(a whatif.Answer) string {
-	return fmt.Sprintf("%s %s at %s", pf.verdict(), spanText(a.Sensitivity, "%.2f", 1, false), pf.sweptText())
+func (pf *pricedFleet) sweptBasis(q float64, a whatif.Answer) string {
+	return fmt.Sprintf("%s %s at %s", pf.verdict(pf.rateValidation(q, a)), spanText(a.Sensitivity, "%.2f", 1, false), pf.sweptText())
 }

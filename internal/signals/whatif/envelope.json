@@ -1,0 +1,781 @@
+{
+  "rows": [
+    {
+      "figure": "mean-tpot",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "maxKneeShare": 0.8999940441660581
+      },
+      "errorLo": 0.04925288584083967,
+      "errorHi": 0.18480749580455985,
+      "readings": 12
+    },
+    {
+      "figure": "mean-tpot",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "maxKneeShare": 0.21491674400107197
+      },
+      "errorLo": 0.3567485077591815,
+      "errorHi": 0.45070952353510335,
+      "readings": 12
+    },
+    {
+      "figure": "mean-tpot",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "maxKneeShare": 0.20294087273227768
+      },
+      "errorLo": 0.33937906213599933,
+      "errorHi": 0.425993090072294,
+      "readings": 10
+    },
+    {
+      "figure": "prefill-knee",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "on"
+        ]
+      },
+      "errorLo": 0.052694288652048726,
+      "errorHi": 0.1110649299662716,
+      "readings": 1
+    },
+    {
+      "figure": "prefill-knee",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "on"
+        ]
+      },
+      "errorLo": 0.21222208441663004,
+      "errorHi": 0.2500338294833624,
+      "readings": 1
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "maxKneeShare": 0.8499999999999578
+      },
+      "errorHi": -0.05554930556504423,
+      "readings": 2
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "maxKneeShare": 0.8499999999999578
+      },
+      "errorHi": -0.05554930556504423,
+      "readings": 2
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "maxKneeShare": 0.8499999999999089
+      },
+      "errorHi": -0.05559480952877016,
+      "readings": 2
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "maxKneeShare": 0.8499999999999089
+      },
+      "errorHi": -0.05559480952877016,
+      "readings": 2
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "maxKneeShare": 0.8499999999999089
+      },
+      "errorHi": 0.00013607816473548695,
+      "readings": 2
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "maxKneeShare": 0.8499999999999089
+      },
+      "errorHi": 0.020492835848713087,
+      "readings": 2
+    },
+    {
+      "figure": "ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0
+        ],
+        "maxKneeShare": 0.8999940441660581
+      },
+      "errorLo": -0.035704607952240786,
+      "errorHi": 0.17708330513520704,
+      "readings": 12
+    },
+    {
+      "figure": "ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "maxKneeShare": 0.8999940441660581
+      },
+      "errorLo": -0.0031686417060293563,
+      "errorHi": 0.14038369691279928,
+      "readings": 12
+    },
+    {
+      "figure": "ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "maxKneeShare": 0.8999940441660581
+      },
+      "errorLo": -0.025180533509062283,
+      "errorHi": 0.11868427243979869,
+      "readings": 12
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0
+        ],
+        "maxKneeShare": 0.9000374082821215
+      },
+      "errorLo": 0.29110810447187335,
+      "errorHi": 0.9477453954515686,
+      "readings": 12
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "maxKneeShare": 0.9000374082821215
+      },
+      "errorLo": 0.18155186244861887,
+      "errorHi": 1.0792975325275418,
+      "readings": 12
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "maxKneeShare": 0.9000374082821215
+      },
+      "errorLo": 0.18163413114669424,
+      "errorHi": 1.0200383921476248,
+      "readings": 12
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0
+        ],
+        "maxKneeShare": 0.8498843492974192
+      },
+      "errorLo": 0.30088085623245236,
+      "errorHi": 0.9285281735301888,
+      "readings": 9
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "maxKneeShare": 0.8498843492974192
+      },
+      "errorLo": 0.4538122908523821,
+      "errorHi": 1.3066435260412201,
+      "readings": 9
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "maxKneeShare": 0.8498843492974192
+      },
+      "errorLo": 0.4352480473757116,
+      "errorHi": 1.448125450208511,
+      "readings": 9
+    }
+  ],
+  "outsideFlags": {
+    "AboveFlowControlOnset": "past the flow-control onset, where the router's wait is not priced",
+    "AssumedA": "a assumed, not learned",
+    "AssumedVP": "V_P assumed, not learned"
+  },
+  "never": {
+    "decode-knee": "decode's knee: no measured run crossed it",
+    "percentile-tpot": "TPOT percentiles: never scored against a client",
+    "rate-at-tpot": "rate at a TPOT target: never measured",
+    "prefill-latency": "prefill's own latency: a client measures TTFT end to end only"
+  }
+}

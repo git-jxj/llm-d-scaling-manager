@@ -108,7 +108,8 @@ func wantOf(r *wireResult) whatifapi.Figure {
 		return whatifapi.Figure{Refused: refusalWant(r.Refused)}
 	}
 	a := r.Answer
-	f := whatifapi.Figure{Value: fp(a.Value), BoundBy: a.Basis.BoundBy, Flags: a.Flags, Sensitivity: spanWant(a.Sensitivity, a.Unit == unitSeconds)}
+	f := whatifapi.Figure{Value: fp(a.Value), BoundBy: a.Basis.BoundBy, Flags: a.Flags, Sensitivity: spanWant(a.Sensitivity, a.Unit == unitSeconds),
+		Validation: a.Validation}
 	if a.Band != nil {
 		f.Band = &whatifapi.Band{Lo: a.Band.Lo, Hi: a.Band.Hi}
 	}
@@ -130,7 +131,7 @@ func wantTTFT(r *wireTTFTResult) whatifapi.Figure {
 		return whatifapi.Figure{Refused: refusalWant(r.Refused)}
 	}
 	a := r.Answer
-	f := whatifapi.Figure{Value: fp(a.Value), Flags: a.Flags, Sensitivity: spanWant(a.Sensitivity, true)}
+	f := whatifapi.Figure{Value: fp(a.Value), Flags: a.Flags, Sensitivity: spanWant(a.Sensitivity, true), Validation: a.Validation}
 	if a.Basis.Floor > 0 {
 		f.Floor = fp(a.Basis.Floor)
 	}

@@ -99,7 +99,12 @@
               "AssumedShape",
               "OutputSpreadUnread",
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (decode's knee: no measured run crossed it)",
+              "outside": "decode's knee: no measured run crossed it"
+            }
           }
         },
         "operatingRate": {
@@ -145,7 +150,12 @@
             "flags": [
               "AssumedShape",
               "OutputSpreadUnread"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)",
+              "outside": "accelerator resource-01, measured H200"
+            }
           }
         }
       }
@@ -214,6 +224,11 @@
             "sensitivity": {
               "lo": 25.5,
               "hi": 34.5
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (V_P assumed, not learned)",
+              "outside": "V_P assumed, not learned"
             }
           }
         },
@@ -264,6 +279,11 @@
             "sensitivity": {
               "lo": 0.3025852532584969,
               "hi": 0.4891439530276733
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (V_P assumed, not learned)",
+              "outside": "V_P assumed, not learned"
             }
           }
         }
@@ -271,5 +291,5 @@
     }
   ],
   "exitCode": 0,
-  "note": "estimate from 15 readings (cycles 197-220) of a 226-cycle recording, not a guarantee; see basis (-o json); TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED."
+  "note": "estimate from 15 readings (cycles 197-220) of a 226-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED."
 }

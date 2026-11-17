@@ -105,7 +105,12 @@
               "AssumedShape",
               "OutputSpreadUnread",
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (decode's knee: no measured run crossed it)",
+              "outside": "decode's knee: no measured run crossed it"
+            }
           }
         },
         "operatingRate": {
@@ -151,7 +156,12 @@
             "flags": [
               "AssumedShape",
               "OutputSpreadUnread"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)",
+              "outside": "accelerator resource-01, measured H200"
+            }
           }
         },
         "percentileTPOT": {
@@ -174,7 +184,12 @@
               "AssumedTPOTRatio",
               "AssumedShape",
               "OutputSpreadUnread"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
           }
         }
       }

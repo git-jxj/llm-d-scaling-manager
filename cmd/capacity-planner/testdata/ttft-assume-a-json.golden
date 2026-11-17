@@ -140,6 +140,11 @@
             "sensitivity": {
               "lo": 2.9440620132284576,
               "hi": 3.9831427237796775
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (1 prefill pods, measured 2)",
+              "outside": "1 prefill pods, measured 2"
             }
           }
         },
@@ -187,6 +192,11 @@
               "lo": 7.423901727165208,
               "hi": 14.634239395210875,
               "refused": "Saturated"
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (a assumed, not learned)",
+              "outside": "a assumed, not learned"
             }
           }
         }
@@ -194,5 +204,5 @@
     }
   ],
   "exitCode": 3,
-  "note": "estimate from no readings of the line's own of a 193-cycle recording, not a guarantee; see basis (-o json); TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. a ASSUMED."
+  "note": "estimate from no readings of the line's own of a 193-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. a ASSUMED."
 }

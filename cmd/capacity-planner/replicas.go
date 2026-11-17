@@ -19,7 +19,9 @@ type replicasAnswer struct {
 	// query is the question as priced: the prefill knee may set its rate.
 	// ttft is the TTFT asked, nil with none; headroom the operating point's
 	// fraction of the knee.
-	query    whatif.ReplicasQuery
+	query whatif.ReplicasQuery
+	// tpotQ is the TPOT percentile asked, 0 with none.
+	tpotQ    float64
 	ttft     *operatingTTFT
 	headroom float64
 }
@@ -104,6 +106,7 @@ func replicasToSLO(ctx context.Context, args []string, out, warn io.Writer) erro
 			fleet = fleets[i]
 		}
 		a, priced := replicasAt(pv, fleet, ttft, query, given, h, r)
+		a.tpotQ = q
 		answers = append(answers, a)
 		results = append(results, priced...)
 	}
@@ -138,8 +141,9 @@ func replicasToSLO(ctx context.Context, args []string, out, warn io.Writer) erro
 				in.TPOT = f.tpotInputs(st, 0, q, a.ratio)
 			}
 			w.Roles = append(w.Roles, wireRole{Role: "decode", Variant: a.pv.state.Variant, Inputs: in, Results: wireResults{
-				Knee: toWire(a.slo.KneeRate, unitRate), OperatingRate: toWire(a.slo.Rate, unitRate),
-				MeanTPOT: toWire(a.slo.MeanTPOT, unitSeconds), PercentileTPOT: toWire(a.slo.PercentileTPOT, unitSeconds),
+				Knee: validated(toWire(a.slo.KneeRate, unitRate), a.pv.kneeValidation(a.slo.KneeRate)), OperatingRate: toWire(a.slo.Rate, unitRate),
+				MeanTPOT:       validated(toWire(a.slo.MeanTPOT, unitSeconds), a.tpotValidation(0, a.slo.MeanTPOT)),
+				PercentileTPOT: validated(toWire(a.slo.PercentileTPOT, unitSeconds), a.tpotValidation(q, a.slo.PercentileTPOT)),
 			}})
 			if a.ttft != nil {
 				w.Roles = append(w.Roles, a.ttft.wire())
@@ -266,7 +270,8 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 			continue
 		}
 		knee := a.slo.KneeRate.(whatif.Answer)
-		row(&b, "knee", rateText(knee.Value), "", fmt.Sprintf("decode, %s binds at fill %.3f", boundText(knee.Basis.BoundBy), knee.Basis.Fill))
+		row(&b, "knee", rateText(knee.Value), "", fmt.Sprintf("decode, %s binds at fill %.3f; %s", boundText(knee.Basis.BoundBy), knee.Basis.Fill,
+			a.pv.kneeValidation(knee)))
 		switch r := a.slo.Rate.(type) {
 		case whatif.Answer:
 			why := "--rate"
@@ -281,16 +286,16 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 				}
 				why = fmt.Sprintf("%s x %s (%s)", num(a.headroom), of, src)
 				if a.ttft != nil && a.ttft.prefillBinds {
-					why += "; " + a.ttft.fleet.verdict()
+					why += "; " + a.ttft.fleet.verdict(a.ttft.fleet.kneeValidation(a.ttft.knee))
 				}
 			}
 			row(&b, "operating rate", rateText(r.Value), spanText(r.Sensitivity, "%.2f", 1, false), why)
 		case whatif.Unanswerable:
 			fmt.Fprintf(&b, "%-16s%s\n", "operating rate", refusedText(r))
 		}
-		tpotRow(&b, "mean TPOT", a.slo.MeanTPOT, lineText(a.pv)+a.ttft.decodeNote())
+		tpotRow(&b, "mean TPOT", a.slo.MeanTPOT, lineText(a.pv)+a.ttft.decodeNote()+"; "+a.tpotValidation(0, a.slo.MeanTPOT).String())
 		if a.slo.PercentileTPOT != nil {
-			tpotRow(&b, "TPOT p"+strings.TrimPrefix(pct, "p"), a.slo.PercentileTPOT, "per request; "+f.ratioNote(st, a.ratio)+a.ttft.decodeNote())
+			tpotRow(&b, "TPOT p"+strings.TrimPrefix(pct, "p"), a.slo.PercentileTPOT, "per request; "+f.ratioNote(st, a.ratio)+a.ttft.decodeNote()+"; "+a.tpotValidation(a.tpotQ, a.slo.PercentileTPOT).String())
 		}
 		if a.ttft != nil {
 			a.ttft.writeRows(&b)
@@ -347,4 +352,14 @@ func row(b *strings.Builder, label, value, band, basis string) {
 		return
 	}
 	fmt.Fprintf(b, "%-16s%-12s%-16s %s\n", label, value, band, basis)
+}
+
+// tpotValidation judges one of the answer's TPOTs, read at its operating
+// rate: the mean (q 0) or a percentile.
+func (a replicasAnswer) tpotValidation(q float64, r whatif.Result) whatif.Validation {
+	rate := 0.0
+	if v, ok := a.slo.Rate.(whatif.Answer); ok {
+		rate = v.Value
+	}
+	return a.pv.tpotValidation(q, rate, a.slo.KneeRate, r)
 }
