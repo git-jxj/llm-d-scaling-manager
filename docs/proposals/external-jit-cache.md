@@ -3,248 +3,252 @@
 **Status:** proposal, 2026-11-16; nothing built. Depends on: PR #146 (FlashInfer
 cache fix, not merged).
 
-**The task.** Some clusters run an external cache manager, usually a sidecar,
-that keeps the engine's compiled caches in a shared store. On those workloads
-`make workload-patch` should prepare the image and the weights, leave the
-compile caches to the manager, and say so. Today it reports the workload as
-compiling from nothing, and writes a patch that, if applied, takes the caches
-away from the manager.
+**What you do.** If another component owns your engine's compile caches:
+
+1. Annotate the pod template with
+   `scaling-manager.llmd.ai/engine-cache-owner: external`.
+2. Run `make workload-patch`.
+3. Read the report: it lists the caches it left to the owner and any it still
+   patches.
+
+Adding the annotation changes the pod template, so it **restarts every
+replica**, and each restart on a large model is a cold start. Add it in a quiet
+window or with your next planned rollout.
+
+## The problem
+
+Some clusters run a cache manager, usually a sidecar, that keeps the engine's
+compiled caches in a shared store. On those workloads `make workload-patch`
+reports "COMPILES FROM NOTHING", and `--apply-engine-cache` moves the caches
+out of the manager's directory. The manager then shares copies without them,
+and later pods start "warm" but compile anyway.
 
 ## What we rely on
 
-Only this behaviour, from no particular implementation:
+Only this, from no particular implementation:
 
-- **Restore before start.** Before the engine starts, the manager restores the
-  caches for the pod's key from the store into a pod-local directory (an
-  `emptyDir` it shares with the engine).
+- **Restore before start.** Before the engine starts, the manager copies the
+  caches for the pod's key from the store into a directory inside the pod.
 - **Publish after serving.** Once the engine has served for a while, the
-  manager publishes that directory back to the store.
-- **First wins per key.** The first copy published for a key is the one every
-  later pod restores.
+  manager copies that directory back to the store.
+- **First copy wins.** The first copy stored for a key is the one later pods
+  restore, until the manager replaces it.
 
-The key comes from the engine build, the GPU type and the model's parallel
-layout. The manager does not hold the image on the node or put the weights on
-the node's disk; those stay ours.
-
-## The engine-cache variables
-
-"The set" below means the engine-cache variables of
-`deploy/lib/scaledobject.sh`, listed once in `so_workload_patch_trim` and the
-LeaderWorkerSet `half()`:
-
-- today: `VLLM_CACHE_ROOT`, `TRITON_CACHE_DIR`, `PYTHONPYCACHEPREFIX`;
-- after PR #146: `FLASHINFER_WORKSPACE_BASE` (keyed by image), with its own
-  FlashInfer half;
-- added by the cache PR (see [Order](#order)): `DG_JIT_CACHE_DIR`,
-  `TRTLLM_DG_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR`, `CUDA_CACHE_PATH`,
-  `XDG_CACHE_HOME`.
-
-Every rule on this page applies to the whole set, so a variable added later
-needs no edit here.
-
-## Where the two collide today
-
-| | ours today (after PR #146) | with a cache manager | effect |
-| --- | --- | --- | --- |
-| Patch report | an engine whose `VLLM_CACHE_ROOT` sits on an `emptyDir` is "COMPILES FROM NOTHING" | that `emptyDir` is the manager's restore target | a false alarm on every such workload |
-| Emitted patch | sets the set under `/engine-cache`, and `FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/<image key>` | the same names already point at the manager's directory | applied, it moves the caches off that directory: the manager publishes copies without them, and later pods restore "warm" and compile anyway |
-| FlashInfer warning | "BUILDS ITS FLASHINFER KERNELS AGAIN" for a workload that sets `FLASHINFER_WORKSPACE_DIR` | the manager may set either name | a warning about a cache that is not ours to fix |
-| LeaderWorkerSet apply | replaces an env entry of the same name in place | the manager's entries are those entries | the same, on every group |
-| `engine-cache keys` / `verify` | look for the key on the node directory | the key is in the `emptyDir`, never on the node | every node reported missing the key |
-| Start-time estimate | one estimate per variant | starts are warm (copy found) or cold (first pod per key, or after an image change) | see [Start time](#7-start-time) |
-
-## Shapes
-
-- **`emptyDir` plus a manager.** This page.
-- **`VLLM_CACHE_ROOT` on the workload's own claim.** Classified `volume:` and
-  left alone today. No change.
-- **Cache baked into the image.** Reported as "COMPILES FROM NOTHING" today.
-  The same annotation covers it.
+The manager computes the key. We assume only that a new image starts a new key.
 
 ## What changes
 
-### 1. An annotation decides
+### The annotation
 
-On the pod template:
-
-```yaml
-metadata:
-  annotations:
-    scaling-manager.llmd.ai/engine-cache-owner: external   # or: ours
-```
-
-- `external`: the rules in 2-4 apply.
-- `ours`: today's behaviour, and the suggestion below is not printed. This is
-  the opt-out when the suggestion is wrong.
-- absent: today's behaviour.
-
-It is a new key. The existing `scaling-manager.llmd.ai/engine-cache` label
-holds a claim name and is not reused.
+| value | effect |
+| --- | --- |
+| `external` | caches the pod spec points somewhere are left to the owner (below) |
+| `ours` | today's behaviour; the report says the caches are ours |
+| absent | today's behaviour |
+| anything else (`External`, `yes`) | treated as `ours`, with a warning naming the value |
 
 A LeaderWorkerSet is decided per template. If only one template is annotated,
-that template gets external handling, the other gets ours, and the report says
-so.
+the report says which one gets which.
 
-**Suggestion only.** When there is no annotation and an `emptyDir` that holds a
-variable of the set is also mounted by another container that mounts durable
-storage (a claim, hostPath, NFS, a CSI inline volume or a generic ephemeral
-volume), the report prints one line suggesting the annotation. It never changes
-the patch. The same shape matches a weights downloader that mounts a scratch
-`emptyDir`, and a guess must not silence a real warning. It also misses
-managers that mount the store inside the container (FUSE) and cache variables
-set from a ConfigMap.
+Without the annotation, if an `emptyDir` holding an engine cache is also
+mounted by a container that mounts storage (a claim, hostPath, NFS, CSI or
+generic ephemeral volume), the report suggests the annotation. The suggestion
+never changes the patch: a weights downloader with a scratch `emptyDir` has the
+same shape, and a guess must not silence a real warning.
 
-### 2. External: per variable
+### Per cache variable, with `external`
 
-- **A variable of the set that the workload sets** is left alone: no variable,
-  mount or `/engine-cache` volume of ours for it.
-- **A variable the workload does not set** gets ours, as today, and the report
-  names it, with the manager's directory as the alternative that would put it
-  in the shared copy.
-- PR #146's FlashInfer half and its warning follow the same rule: suppressed
-  when the workload sets `FLASHINFER_WORKSPACE_BASE`, ours when it does not.
-- The drain half, the weights half and the `prepull` check do not change.
-- `--apply-engine-cache` applies only the uncovered variables. If every
-  variable is covered, it is refused with a non-zero exit and the reason.
-- `engine-cache keys` and `verify` say the caches are managed elsewhere.
+- **Set in the pod spec:** left alone. No variable, mount or volume of ours
+  for it.
+- **Not set in the pod spec:** we patch it as today, and the report names it,
+  with the owner's directory as the alternative that would put it in the
+  shared copy. A variable set only inside the image counts as not set: repeat
+  it in the pod spec to leave it to the owner.
+- **FlashInfer:** if the owner sets `FLASHINFER_WORKSPACE_DIR` and not
+  `FLASHINFER_WORKSPACE_BASE`, we do not patch it, but the warning stays,
+  addressed to the owner: FlashInfer reads only `FLASHINFER_WORKSPACE_BASE`.
+- The drain and weights patches and the `prepull` check do not change.
+- `--apply-engine-cache` applies only the variables we still patch. If there
+  are none, it refuses, with a non-zero exit and the reason.
+- `make engine-cache-keys` and `make engine-cache-verify` say the caches are
+  managed elsewhere instead of reporting the key missing on every node.
 
-What the operator sees:
+### A workload patched before it was annotated
+
+It carries our `engine-cache` volume next to the manager. The report flags this
+as a conflict and says:
+
+- remove our volume, its mounts, and the cache variables that point under
+  `/engine-cache`;
+- delete the copies the manager stored while our patch was applied. They lack
+  the moved caches and are restored until the manager replaces them;
+- if our volume is a shared ReadWriteMany claim: several pods compiling into
+  one claim have lost files, and left a pod Running and never Ready.
+
+### What the report shows
 
 ```
 deployment/qwen-decode: engine caches owned externally (scaling-manager.llmd.ai/engine-cache-owner=external)
-  store: claim jit-store, mounted read-write by cache-sync: anyone who can mount it read-write can change the code this engine runs
-  TORCHINDUCTOR_CACHE_DIR: not set by the owner; emitted under /engine-cache
+  store: claim jit-store, mounted read-write by cache-sync; see Trust
+  TORCHINDUCTOR_CACHE_DIR: not set in the pod spec; patched under /engine-cache
 ```
 
-and in the patch file:
+If the store is not visible in the pod spec (mounted inside the manager's
+container, for example):
+
+```
+  store: not visible in the pod spec; check who can write it
+```
+
+The patch file carries one comment:
 
 ```yaml
 # engine caches: owned externally; only TORCHINDUCTOR_CACHE_DIR is ours (see the report)
 ```
 
-### 3. Already patched workloads
+### Writable files
 
-A workload that was patched before it was annotated has our `engine-cache`
-volume next to the manager, and its `VLLM_CACHE_ROOT` now classifies as
-`volume:`, so today it is silent. With the annotation (or the suggestion's
-shape), our volume next to a manager is reported as a conflict:
+Restored files must be writable by the engine's user. Where they are not,
+FlashInfer fails instead of compiling. The report still offers the writable
+guard, as text the owner pastes, including PR #146's check of the whole
+FlashInfer tree.
 
-- the revert: remove our volume, its mounts, and the variables of the set that
-  point under `/engine-cache`;
-- delete the store's copies written while the patch was applied. They lack the
-  moved caches and, first wins, are restored forever;
-- if our half points at a shared ReadWriteMany claim, say so: several pods
-  autotuning into one claim lost files, and a pod stayed Running and never
-  Ready.
+## Trust
 
-### 4. Guard and trust
+Compiled caches are code: Triton and FlashInfer libraries run as native code,
+and torch.compile artifacts include Python the engine runs. With a shared
+store, **one bad copy reaches every node that starts that key**, and stays
+there until it is replaced. Nothing checks a copy between store and restore.
 
-**Guard.** Still offered in external mode, as text the owner pastes, including
-PR #146's whole-tree check for FlashInfer. A manager that restores as root and
-keeps file owners, or restores a copy made by another UID, leaves files a
-non-root engine cannot write. FlashInfer then fails instead of compiling.
+- Whoever can write the store, or stores the first copy for a key, runs code in
+  every later pod of that key. The engine container writes the directory the
+  manager publishes, so a compromised engine pod that publishes first poisons
+  the key everywhere.
+- Recommended: only a publisher the operator controls can write the store;
+  serving pods mount it read-only. That needs a manager with a separate
+  publisher or a restore-only mode. Where every pod publishes, every pod can
+  write, and the report says so.
+- The engine container should never mount the store itself. The report warns
+  if it does.
+- Pin images by digest. Unpinned, you cannot tie the cached code to the image
+  you checked. If the manager keys on the tag, a moved tag also restores old
+  kernels into a new engine.
 
-**Trust.** Triton and FlashInfer libraries and cubins run as native code, and
-torch.compile artifacts include Python the engine executes. Whoever can write
-the store, or publish first for a key, runs code in every later pod of that
-key. Deferring does not create this risk; it is the same as for our cache
-("trust it as you would the engine image"). The report:
+## Python bytecode: images before vLLM v0.32 only
 
-- names the store and how it is mounted (example above);
-- recommends a read-only mount for pods that only restore, where the manager
-  allows it;
-- warns when the image is not pinned by digest: a key built on a moved tag
-  restores old kernels into a new engine.
-
-The 1777 / 1770 question from PR #146 does not apply here: external mode
-creates no node directory of ours. The `emptyDir` is pod-local; the store's
-access control is what matters.
-
-### 5. Python bytecode: images before vLLM v0.32 only
-
-From v0.32 on, vLLM images ship their bytecode and the existing guard unsets
+From v0.32 on, vLLM images ship their bytecode and our guard unsets
 `PYTHONPYCACHEPREFIX`, so there is nothing to offer. For older images the report
-offers, without applying, `PYTHONPYCACHEPREFIX=<manager dir>/pycache/<image key>`,
-so the bytecode rides in the shared copy (about 11 s per start, measured on
-vLLM 0.26). It widens the trust surface: a `.pyc` is checked only against its
-source's mtime and size.
-
-### 6. vLLM v0.34
-
-- `vllm download-kernels` (v0.32 on) fetches FlashInfer's precompiled cubins.
-  In external mode they land under
-  `FLASHINFER_WORKSPACE_BASE/.cache/flashinfer/cubins` and ride in the shared
-  copy. The preparer still mentions it, report only.
-- The shared Triton compile pool (v0.33) must inherit `TRITON_CACHE_DIR`, or its
-  workers compile outside the manager's directory. Confirm before building.
-- Every cache key changes once at the v0.34 bump (vLLM #65652). Expect one cold
-  start per key after the upgrade.
-
-### 7. Start time
-
-- `replicaStartSeconds` is only a prior: once three Pods are measured, the
-  measured estimate rules, and sizing never reads a start shorter than one
-  already measured.
-- The first start of every key is cold by construction.
-- **Decision:** recommend seeding the cold start for the first start of each
-  key, or no seed. Seeding the warm start protects nothing.
-- **Decision:** the 3600 s cap on a credible start does not change here. A
-  group worker can wait up to 30 min for its leader and then compile cold; that
-  passes 3600 s only if the cold compile takes over 30 min, and raising the cap
-  weakens the readiness-blip guard. The better fix, later, is to measure a
-  worker from its leader's decision.
-
-Warm and cold figures such as "3 min warm, 20 min cold" are illustrative, not
-measured on a given version.
-
-Later, if the manager publishes its warm/cold decision as a per-pod metric, the
-learner keeps two estimates per variant: the next replica is warm if the last
-Pod of this variant and image was warm. That needs no read of the store. The
-metric is scraped like any pod metric, one series per pod.
-
-### 8. Our engine-cache backend stays
-
-We do not ship the manager as a backend of `make engine-cache`. Ours needs no
-change to the engine container and no shared store at run time; a manager needs
-a store and a key someone maintains, and fits where nodes are short-lived or a
-group must start all warm or all cold. The guide names both.
+offers, without applying, `PYTHONPYCACHEPREFIX=<owner dir>/pycache/<image key>`,
+so bytecode rides in the shared copy (about 11 s per start on vLLM 0.26). It
+adds to the trust risk: a `.pyc` is checked only against its source's time
+stamp and size.
 
 ## Upgrade note
 
-For v0.12.0 in `docs/reference/upgrade-and-uninstall.md`: a workload annotated
-`scaling-manager.llmd.ai/engine-cache-owner: external` stops reporting
-"COMPILES FROM NOTHING" and gets no engine-cache patch for the variables it
-sets; annotate `ours` to keep today's report. Expect one cold start per cache
-key after the vLLM v0.34 bump.
+For v0.12.0 in `docs/reference/upgrade-and-uninstall.md`:
 
-## Order
-
-After PR #146 merges, one cache PR builds the shared variable set with the five
-new variables, the annotation, and the report changes in 1-6. Start time (7) is
-separate.
+- New: annotate `scaling-manager.llmd.ai/engine-cache-owner: external` when
+  another component owns the compile caches; see
+  `docs/reference/workload-preparation.md`.
+- Separately: the vLLM v0.34 bump changes every cache key, so expect one cold
+  start per key, with or without a cache manager.
 
 ## Not doing
 
-- Reading the manager's logs, files or store from the controller.
+- Reading the manager's logs, files or store.
 - Changing the manager's pod spec, or emitting its manifests.
 - Letting the suggestion change the patch.
-- Any change to `make prepull` or `make weights`, or to the 3600 s cap.
+- Any change to `make prepull` or `make weights`, or to the 3600 s start cap.
+- Shipping a cache manager as a backend of `make engine-cache`. Ours needs no
+  shared store; a manager fits where nodes are short-lived, or where caches
+  must be shared across nodes. The guide names both.
 
-## Tests
+## For maintainers
 
-`hack/check-workload-gaps.sh` fixtures, each run against the parent commit
-first, where it must fail:
+### Where the cache variables live today
 
-- Deployment, `external`, every variable covered: no engine-cache half, no
-  FlashInfer half or warning, no "COMPILES FROM NOTHING"; the guard text is
-  still offered.
-- The same with one variable uncovered: ours emitted for it, and reported.
-- `ours`: today's output, no suggestion.
-- The suggestion's shape, no annotation: today's patch plus the suggestion.
-- The downloader shape (scratch `emptyDir` plus a weights claim): today's
-  warning still printed, patch unchanged.
-- LeaderWorkerSet with the annotation on one template only.
-- Already patched: conflict reported, with the revert.
+On main, `deploy/lib/scaledobject.sh` spells them out in five places:
+
+- the trim, `so_workload_patch_trim`;
+- the `half` jq def in `so_workload_lws_json_patch`;
+- the emitted env block;
+- the writable guard loop;
+- the classifier (on `VLLM_CACHE_ROOT`).
+
+The trim and `half` list `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR`,
+`TRITON_CACHE_DIR` and `PYTHONPYCACHEPREFIX`. PR #146 replaces
+`FLASHINFER_WORKSPACE_DIR` with `FLASHINFER_WORKSPACE_BASE`. The cache PR makes
+these one list and adds `DG_JIT_CACHE_DIR`, `TRTLLM_DG_CACHE_DIR`,
+`TORCHINDUCTOR_CACHE_DIR`, `CUDA_CACHE_PATH` and `XDG_CACHE_HOME` to it. The
+rules above then apply to the whole list.
+
+### Restructuring the per-variable rule needs
+
+After PR #146 the patch is written per group, not per variable: one block
+always sets `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE` and
+`TRITON_CACHE_DIR` together, and the trim drops `FLASHINFER_WORKSPACE_BASE`
+from a container without `VLLM_CACHE_ROOT`. The build must:
+
+- emit each variable on its own;
+- drop that trim rule, so `FLASHINFER_WORKSPACE_BASE` can be emitted alone;
+- never replace, on a LeaderWorkerSet, an env entry the owner set.
+
+### vLLM v0.34 (unverified, check before building)
+
+- `vllm download-kernels` (said to arrive in v0.32) fetches FlashInfer's
+  precompiled kernels under `FLASHINFER_WORKSPACE_BASE`; with an owner they
+  ride in the shared copy. The preparer mentions it, report only.
+- The shared Triton compile pool (said to arrive in v0.33) must inherit
+  `TRITON_CACHE_DIR`, or its workers compile outside the owner's directory.
+- vLLM #65652 is said to change every cache key once at the bump.
+
+### Start time
+
+- `replicaStartSeconds` is only a starting value: once three Pods are
+  measured, the measurement wins.
+- The first start of every key is cold. **Decision:** recommend a cold
+  `replicaStartSeconds` for the first start of each key, or none.
+- **Decision:** the 3600 s cap stays. A pod that waits on another before
+  compiling cold can exceed it, but only when the cold compile is very long,
+  and raising the cap would let a brief readiness drop count as a start.
+- Later, if the manager publishes a per-pod warm/cold metric, keep two
+  estimates per variant: the next replica is warm if the last Pod of this
+  variant and image was warm. One series per pod; no read of the store.
+
+PR #146 asks whether its node directory should be mode 1777 or 1770. That does
+not apply here: external mode creates no node directory of ours.
+
+### Order
+
+After PR #146 merges, one cache PR builds the single variable list with the
+five new variables, the annotation, the restructuring above, and the report.
+Start time is separate.
+
+### Tests
+
+`hack/check-workload-gaps.sh` fixtures. Each asserts a report line or patch
+that does not exist yet, so each fails on the parent commit:
+
+- `external`, every variable covered: no engine-cache patch, no "COMPILES FROM
+  NOTHING", the "owned externally" line, guard text still offered.
+- `external`, `TORCHINDUCTOR_CACHE_DIR` uncovered: ours for it, and its report
+  line.
+- `external`, owner sets `VLLM_CACHE_ROOT` but not `FLASHINFER_WORKSPACE_BASE`:
+  `FLASHINFER_WORKSPACE_BASE` emitted alone.
+- `external`, owner sets `FLASHINFER_WORKSPACE_BASE` but not `VLLM_CACHE_ROOT`:
+  ours for `VLLM_CACHE_ROOT`, the owner's `FLASHINFER_WORKSPACE_BASE` untouched,
+  on a Deployment and a LeaderWorkerSet.
+- `external`, owner sets `FLASHINFER_WORKSPACE_DIR` only: no FlashInfer patch,
+  the warning addressed to the owner.
+- `external`, cache variables set only in the image: ours emitted, each named
+  as set only in the image.
+- `ours`: today's patch, plus the "caches are ours" line.
+- An unknown value: today's patch, plus the warning naming the value.
+- No annotation, manager shape: today's patch, plus the suggestion.
+- No annotation, downloader shape: today's warning and patch, plus the
+  suggestion.
+- LeaderWorkerSet annotated on one template: the per-template line.
+- Patched before annotated: the conflict and the revert.
 - `--apply-engine-cache` with every variable covered: refused, non-zero exit.
 
 And a start-learner unit test with warm and cold samples from one variant.
