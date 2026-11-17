@@ -27,10 +27,17 @@ ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless
 sha256:e836bcf5bfa1268b5ec1c8027ba9732e2cafff11ab554dd8dbac67b110c65faf
 ```
 
-It is `vllm/vllm-openai:v0.26.0` with the fork's `launcher.py` on top, and that
-file is byte-identical to the readable copy in `warmpool/supervisor/` (checked by
-extracting it from the published image). Pin the digest to keep the image fixed,
-or build your own from the [fork](https://github.com/ev-shindin/llm-d-fast-model-actuation).
+It is `vllm/vllm-openai:v0.26.0` with the fork's `launcher.py` on top. Pin the
+digest to keep the image fixed, or build your own from the
+[fork](https://github.com/ev-shindin/llm-d-fast-model-actuation).
+
+From v0.12.0 on there is a second choice, built and released by this repo:
+`ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher:<release>`.
+It carries the same follower fix on FMA's newer launcher (v0.8.0) and runs
+vLLM v0.34.0, and it is signed. It has **not** run a group on a GPU yet, so the
+fork image above stays the one to use until it has. The copy in
+`warmpool/supervisor/` is the source of this new image, not of the fork image.
+See [our own launcher image](install.md#our-own-launcher-image-optional-not-yet-the-default).
 
 It is refused rather than warned about because the failure is silent: the group
 schedules, goes Ready, holds every accelerator, and every admission times out

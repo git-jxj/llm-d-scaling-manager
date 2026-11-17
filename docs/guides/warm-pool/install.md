@@ -41,6 +41,31 @@ groups needs the fork, because the stock launcher cannot start a multi-node
 follower at all. Why the stock launcher is required: see
 [Details](#why-the-launcher-image-is-required).
 
+#### Our own launcher image (optional, not yet the default)
+
+From v0.12.0 on, each release also publishes a launcher built here:
+
+```
+ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher:<release>
+```
+
+- It is FMA's launcher (v0.8.0) with the follower fix, so it serves pools of
+  Pods and pools of groups alike.
+- It runs **vLLM v0.34.0**. The FMA images above run v0.26.0.
+- It is signed with cosign, like the controller image.
+
+To use it, pass it to `create`, pinned by digest:
+
+```bash
+deploy/warmpool.sh create ... --launcher-image ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher@sha256:<digest>
+```
+
+It has not run on a GPU yet; the default stays on FMA's images until it has.
+On vLLM v0.34, every warm copy carries `--gpu-memory-utilization`: when neither
+the pool nor the workload sets one, the controller passes 0.9, because vLLM's
+own default is now 1.0 and would leave no room for sleepers. What the image is
+and how it is built: [`warmpool/README.md`](../../../warmpool/README.md#the-image-built-from-it).
+
 ## Turning it on during installation
 
 The installer can create pools in the same pass that creates ScaledObjects. It
@@ -318,9 +343,11 @@ both halves:
 
 You could substitute your own: the launcher's source is vendored at
 `warmpool/supervisor/`, and any image offering the same instance API over vLLM
-would do. FMA's is used because it is the one proven on this cluster. This repo
-does not build that image, so the vendored source is for reading, not shipping;
-if FMA publishes a newer launcher, the copy here may differ from the one running.
+would do. FMA's is the default because it is the one proven on this cluster.
+This repo now builds an image from the vendored source
+([above](#our-own-launcher-image-optional-not-yet-the-default)), but the default
+manifests still run FMA's, so the copy here differs from the one running until
+that default moves.
 
 This is the live FMA dependency the [FMA post-mortem](../../proposals/fma-post-mortem.md)
 warns about: FMA was dropped as an *actuation strategy*, but its launcher still

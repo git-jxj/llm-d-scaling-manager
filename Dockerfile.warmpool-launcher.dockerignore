@@ -1,0 +1,6 @@
+# The build context of Dockerfile.warmpool-launcher (BuildKit reads
+# <Dockerfile>.dockerignore in place of .dockerignore). Only the two files it
+# copies.
+*
+!warmpool/supervisor/launcher.py
+!warmpool/supervisor/gputranslator.py

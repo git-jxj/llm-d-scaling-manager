@@ -51,6 +51,13 @@ instead.
    others. The planner replays recordings with the controller's learners, so
    it is never released apart from the controller
    ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
+7. **The warm-pool launcher image**, under the same tag:
+   `ghcr.io/<repository owner>/llm-d-scaling-manager/warmpool-launcher:<tag>`
+   (`Dockerfile.warmpool-launcher`: the launcher in `warmpool/supervisor/` on
+   the vLLM base). Jobs `release-warmpool-launcher-build`, one per platform on
+   its own runner, and `release-warmpool-launcher`, which joins them into one
+   index and signs it. Nothing installs it by default yet, so the release
+   files do not wait for it ([warmpool/README.md](../../warmpool/README.md#the-image-built-from-it)).
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line
@@ -290,7 +297,9 @@ repository has **Write** on it, as above. Until then `docker pull` of the
 tools image fails with `401 Unauthorized` (or `denied`) for every operator.
 The capacity planner image is a third, `llm-d-scaling-manager/capacity-planner`,
 created by the first release that carries the `release-capacity-planner` job:
-the same two settings apply.
+the same two settings apply. The warm-pool launcher image is a fourth,
+`llm-d-scaling-manager/warmpool-launcher`, created by the first release that
+carries the `release-warmpool-launcher` job: the same two settings apply.
 
 ---
 

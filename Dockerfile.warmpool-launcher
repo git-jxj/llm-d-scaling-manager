@@ -1,0 +1,40 @@
+# The warm-pool launcher: the supervisor container of a pool Pod. It is
+# llm-d-fast-model-actuation's launcher (vendored in warmpool/supervisor/, see
+# warmpool/README.md) on the vLLM image the engines run, so the launcher and
+# the engines it starts share one vLLM.
+#
+# The base is the vLLM project's own v0.34.0 build, from the registry its
+# release pipeline pushes to, pinned by digest. It is byte-identical to
+# vllm/vllm-openai:v0.34.0 (same index digest; the image label
+# ai.vllm.image.tag says so), without going through Docker Hub. The tag is
+# the vLLM commit of v0.34.0. To move vLLM, change BASE_IMAGE and VLLM_VERSION
+# together: the build fails when they disagree.
+ARG BASE_IMAGE=public.ecr.aws/q9t5s3a7/vllm-release-repo:62d4bc3c7e33b1b6c906e233e6af2d3506c482ca@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
+FROM ${BASE_IMAGE}
+ARG VLLM_VERSION=0.34.0
+
+LABEL org.opencontainers.image.source="https://github.com/llm-d-incubation/llm-d-scaling-manager"
+LABEL org.opencontainers.image.description="Warm-pool launcher - starts, lists and stops vLLM engines in a pool Pod"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+WORKDIR /app
+
+# As upstream: torch reads the user name through getpwuid() at import, which
+# fails for an arbitrary UID with no /etc/passwd entry (OpenShift restricted
+# SCC). Seeding USER avoids it. See https://github.com/vllm-project/vllm/issues/44548
+ENV USER=vllm
+
+# gputranslator.py needs both; vLLM ships neither. uv, as vLLM's own image
+# installs, so the image's pins (/etc/uv-overrides.txt) still apply.
+RUN uv pip install --system --no-cache nvidia-ml-py==13.615.71 kubernetes==34.1.0
+
+COPY warmpool/supervisor/launcher.py warmpool/supervisor/gputranslator.py /app/
+
+# The import check. The unit tests stub vLLM, so they cannot see a vLLM module
+# move; this imports the launcher against the real vLLM, so a moved import
+# fails the build rather than a pool Pod. It also proves the base is the vLLM
+# the launcher was ported to.
+RUN cd /app && python3 -c "import sys, vllm, uvicorn, launcher, gputranslator; v = vllm.__version__; print('vllm', v, 'launcher imports ok'); sys.exit(0 if v == '${VLLM_VERSION}' else 'vllm is ' + v + ', want ${VLLM_VERSION}')"
+
+# Started by the pool Pod's own command: python3 /app/launcher.py ...
+ENTRYPOINT []
