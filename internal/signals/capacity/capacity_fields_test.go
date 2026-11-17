@@ -77,6 +77,15 @@ var (
 		// flag or the default. Only the ITL fit's sequence-cap exception reads
 		// it (ExplicitMaxNumSeqs).
 		"MaxNumSeqsSet": "provenance of the compared MaxNumSeqs",
+		// The vLLM release and the provenance of the memory share and block
+		// size. They act only through the compared GpuMemoryUtilization,
+		// BlockSize and EffectiveMaxBatchedTokens they resolve
+		// (applyVLLMDefaults), so two releases whose defaults differ already
+		// compare unequal, and two whose defaults agree are the same engine.
+		"VLLMVersion":             "resolved into the compared memory share, block size and budget",
+		"GpuMemoryUtilizationSet": "provenance of the compared GpuMemoryUtilization",
+		"BlockSizeSet":            "provenance of the compared BlockSize",
+		"ExtensibleKVCache":       "resolved into the compared GpuMemoryUtilization",
 		// The engine's code. It can move capacity across a release, but a tag
 		// changes on every rebuild, and comparing it would refuse every record
 		// across a routine rollout -- for estimateStoredCapacity a refused

@@ -16,7 +16,7 @@ func QueryPrometheusWithBackoff(ctx context.Context, promAPI promv1.API, query s
 	var lastErr error
 
 	err = wait.ExponentialBackoffWithContext(ctx, constants.PrometheusQueryBackoff, func(ctx context.Context) (bool, error) {
-		val, warn, err = promAPI.Query(ctx, query, time.Now())
+		val, warn, _, err = promAPI.Query(ctx, query, time.Now())
 		if err != nil {
 			// Record the last error so that we can surface it if the backoff is exhausted.
 			lastErr = err
@@ -42,7 +42,7 @@ func ValidatePrometheusAPIWithBackoff(ctx context.Context, promAPI promv1.API, b
 	return wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
 		// Test with a simple query that should always work
 		query := "up"
-		_, _, err := promAPI.Query(ctx, query, time.Now())
+		_, _, _, err := promAPI.Query(ctx, query, time.Now())
 		if err != nil {
 			ctrl.LoggerFrom(ctx).Error(err, "Prometheus API validation failed, retrying - ", "query: ", query)
 			return false, nil // Retry on transient errors

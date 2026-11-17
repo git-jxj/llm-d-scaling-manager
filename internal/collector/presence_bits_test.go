@@ -39,14 +39,14 @@ type promStub struct {
 	failed map[string]bool
 }
 
-func (s *promStub) Query(_ context.Context, q string, _ time.Time, _ ...promv1.Option) (model.Value, promv1.Warnings, error) {
+func (s *promStub) Query(_ context.Context, q string, _ time.Time, _ ...promv1.Option) (model.Value, promv1.Warnings, promv1.Infos, error) {
 	if s.failed[q] {
-		return nil, nil, errors.New("query timed out")
+		return nil, nil, nil, errors.New("query timed out")
 	}
 	if v, ok := s.series[q]; ok {
-		return v, nil, nil
+		return v, nil, nil, nil
 	}
-	return model.Vector{}, nil, nil
+	return model.Vector{}, nil, nil, nil
 }
 
 // parsedSource is a real PrometheusSource that registers whatever the
