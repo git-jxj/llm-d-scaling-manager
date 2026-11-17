@@ -126,19 +126,11 @@ controller_pods() {
 objects_of() {
     yq e 'select(.kind != null) | [.kind, (.metadata.namespace // "-"), .metadata.name] | join(" ")' "$@" | grep -vE '^(Job|Deployment) '
 }
-# rv_snapshot <out> <objects file>: the resourceVersion of each object, or absent.
-rv_snapshot() {
-    local kind ns name rv
-    while read -r kind ns name; do
-        [ -n "$kind" ] || continue
-        if [ "$ns" = - ]; then
-            rv="$(kubectl get "$kind" "$name" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null)" || rv=absent
-        else
-            rv="$(kubectl get "$kind" "$name" -n "$ns" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null)" || rv=absent
-        fi
-        printf '%s %s %s %s\n' "$kind" "$ns" "$name" "${rv:-absent}"
-    done < "$2" > "$1"
-}
+# rv_snapshot <out> <objects file>: the resourceVersion of each object, or for
+# a (Cluster)TriggerAuthentication, whose status KEDA writes, a digest of it
+# without the status. See rv_snapshot.sh.
+# shellcheck source=test/tools-install/rv_snapshot.sh
+. "$(dirname "${BASH_SOURCE[0]}")/rv_snapshot.sh"
 
 # preflight_clean <log>: the last preflight summary in an smt log has no FAIL.
 preflight_clean() {
@@ -172,6 +164,11 @@ run_smoke() {
 
 # --- kubeconfigs and inputs --------------------------------------------------
 
+# Without jq or sha256sum every object of the resourceVersion check would read
+# absent on both sides, and absent equals absent.
+for tool in jq sha256sum; do
+    command -v "$tool" >/dev/null 2>&1 || fail setup "$tool is not installed"
+done
 kubectl config view --minify --flatten > "$WORK/admin.kubeconfig" || fail setup "cannot read the current kubeconfig"
 chmod 0600 "$WORK/admin.kubeconfig"
 server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
@@ -288,7 +285,7 @@ fi
 
 run_smoke
 
-rv_snapshot "$WORK/rv-before.txt" "$WORK/objects.txt"
+rv_snapshot "$WORK/rv-before.txt" "$WORK/objects.txt" "$LOGS/rv-before"
 gen_before="$(kubectl get deployment "$DEPLOY" -n "$NS" -o jsonpath="{.metadata.generation}")"
 pods_before="$(controller_pods)"
 [ -n "$pods_before" ] || fail rerun "no running controller pod"
@@ -297,13 +294,26 @@ if [ "$SCOPE" = namespace ]; then
 else
     smt_as admin install-again install --scope cluster --keda-namespace "$KEDA_NS" --model-namespace "$MODEL_NS" "${INSTALL_FLAGS[@]}" || fail "second install" "exit $?"
 fi
-rv_snapshot "$WORK/rv-after.txt" "$WORK/objects.txt"
+rv_snapshot "$WORK/rv-after.txt" "$WORK/objects.txt" "$LOGS/rv-after"
+cp "$WORK/rv-before.txt" "$WORK/rv-after.txt" "$LOGS/"
 gen_after="$(kubectl get deployment "$DEPLOY" -n "$NS" -o jsonpath="{.metadata.generation}")"
 [ -n "$gen_before" ] && [ "$gen_before" = "$gen_after" ] || fail "second install" "the controller Deployment generation moved from $gen_before to $gen_after"
 changed="$(diff "$WORK/rv-before.txt" "$WORK/rv-after.txt" | grep '^>' || true)"
-[ -z "$changed" ] || fail "second install" "resourceVersion changed: $(echo $changed)"
+if [ -n "$changed" ]; then
+    rv_snapshot_explain "$LOGS/rv-before" "$LOGS/rv-after" "$changed" | tee "$LOGS/rv-explain.txt"
+    fail "second install" "resourceVersion (or TriggerAuthentication spec digest) changed: $(echo $changed); see rv-explain.txt for what moved"
+fi
+# A read that fails is absent before and after, and absent equals absent. The
+# one object that may be gone is the preflight ClusterRoleBinding, which the
+# install removes when its preflight passes.
+if [ "$SCOPE" = namespace ]; then preflight_crb="scaling-manager-preflight-$NS"; else preflight_crb=scaling-manager-preflight; fi
+absent="$(grep ' absent$' "$WORK/rv-after.txt" | sed 's/ absent$//')"
+[ "$absent" = "ClusterRoleBinding - $preflight_crb" ] \
+    || fail "second install" "absent after it: [$(printf "%s" "$absent" | paste -sd, -)], want only ClusterRoleBinding $preflight_crb; an object that cannot be read is compared absent with absent"
 present="$(grep -vc ' absent$' "$WORK/rv-after.txt")"
-pass "a second install changes no resourceVersion ($present objects, the preflight Job aside) and not the controller generation ($gen_after)"
+digests="$(grep -c ' spec:[0-9a-f]\{64\}$' "$WORK/rv-after.txt")"
+[ "$digests" -eq 1 ] || fail "second install" "$digests ClusterTriggerAuthentications compared by their spec digest, want 1"
+pass "a second install changes no resourceVersion ($present objects, $digests TriggerAuthentication by spec digest; the preflight Job aside, its ClusterRoleBinding gone) and not the controller generation ($gen_after)"
 
 if [ "$SCOPE" = namespace ]; then
     smt_as admin admin-finish-again admin-finish -n "$NS" || fail "second admin-finish" "exit $?"

@@ -80,7 +80,8 @@ type InFlightLedger struct {
 // a restored entry counts the target's pods from the moment it is restored
 // (RestoreInFlightWith).
 type ScaleTargetRef struct {
-	// Kind is constants.DeploymentKind or constants.LeaderWorkerSetKind.
+	// Kind is constants.DeploymentKind, constants.LeaderWorkerSetKind or
+	// constants.DisaggregatedSetRoleScalerKind.
 	Kind string
 	// Name is the scale target's name, in the variant's namespace.
 	Name string
@@ -93,7 +94,9 @@ func ScaleTargetRefOf(acc scaletarget.ScaleTargetAccessor) ScaleTargetRef {
 		return ScaleTargetRef{}
 	}
 	kind := constants.DeploymentKind
-	if scaletarget.IsLeaderWorkerSet(acc) {
+	if _, _, ok := scaletarget.DisaggregatedSetRole(acc); ok {
+		kind = constants.DisaggregatedSetRoleScalerKind
+	} else if scaletarget.IsLeaderWorkerSet(acc) {
 		kind = constants.LeaderWorkerSetKind
 	}
 	return ScaleTargetRef{Kind: kind, Name: acc.GetName()}

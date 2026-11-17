@@ -45,10 +45,16 @@ model namespace, creates the settings, runs the preflight, installs the
 controller, gives KEDA its client certificate, and removes the preflight's
 cluster reads. Needs docker.
 
+If a model namespace keeps its weights on the nodes' disks (`smt weights apply`),
+the install also runs the weights labeller. It labels each GPU node whose copy
+is complete, and it can patch nodes ([Gate replicas on the
+weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights)).
+`--no-weights-labeller` leaves it out.
+
 <!-- guide:tools.setup start -->
 ```bash
 # Once per machine. The release's tools image, by the digest the release prints.
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
@@ -63,6 +69,16 @@ smt install --scope cluster --keda-namespace <the namespace KEDA runs in> \
 ```
 <!-- guide:tools.install end -->
 
+Prometheus serves plain HTTP only? Give its `http://` URL and add
+`--allow-http`, on every `smt install` run (not `admin-setup` or
+`admin-finish`): the controller then reads it unencrypted and sends it no
+token. Without the flag, `install` refuses an `http://` URL.
+
+```bash
+smt install --scope cluster --keda-namespace <the namespace KEDA runs in> \
+  --prometheus-url http://<prometheus>:9090 --model-namespace <model namespace> --allow-http
+```
+
 It stops on a preflight `FAIL` and prints its fix. Run it again at any time:
 it changes nothing that is already right, and never writes existing
 settings. Every flag and exit code:
@@ -76,7 +92,7 @@ The same install with `kubectl`: for GitOps, or to see each step.
 <!-- guide:prerequisites.download start -->
 ```bash
 # The release files. Pick the release you install.
-V=<release, for example v0.11.1>
+V=<release, for example v0.11.2>
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
 for f in cluster settings preflight-cluster scaler-tls model-namespace keda-auth; do
   curl -fsSLO $URL/scaling-manager-$f.yaml
@@ -120,6 +136,22 @@ export KEDA_NS=<the namespace KEDA runs in>
 sed -i "s#kubernetes.io/metadata.name: keda\$#kubernetes.io/metadata.name: $KEDA_NS#" scaling-manager-cluster.yaml
 ```
 <!-- guide:deploy.kedans end -->
+
+If Prometheus serves plain HTTP only, set `prometheusURL` to its `http://`
+URL and `prometheusAllowHTTP` to `"true"` in `scaling-manager-settings.yaml`
+before you create it, and empty the token path the controller would
+otherwise send over it:
+
+```bash
+# Only for a plain HTTP Prometheus. Unencrypted, and the controller sends no token.
+sed -i 's#value: /var/run/secrets/kubernetes.io/serviceaccount/token$#value: ""#' scaling-manager-cluster.yaml
+```
+
+Repeat this `sed` on every release's file you apply (an upgrade too), or the
+controller gets its token back and crash-loops. Until the controller is
+applied, the preflight's `prometheus.reachable` WARN about
+`PROMETHEUS_TOKEN_PATH` is expected, even after the `sed`: it reads the
+cluster, not the file.
 
 Set `prometheusURL` in `scaling-manager-settings.yaml`, then:
 
@@ -270,6 +302,16 @@ kubectl delete configmap,secret -n scaling-manager-system \
   -l 'app.kubernetes.io/part-of=scaling-manager,scaling-manager.llmd.ai/scaler-tls!=ca'
 ```
 <!-- guide:cleanup.uninstall end -->
+
+If the tools install applied the weights labeller (it prints `Weights labeller` and the namespaces it watches), remove it with the tools image:
+
+<!-- guide:cleanup.labeller start -->
+```bash
+# Only if the install applied the weights labeller (it said so). Removes it, then the node labels it set; a label another tool set stays.
+smt weights labeller --delete
+smt weights label --clear
+```
+<!-- guide:cleanup.labeller end -->
 
 Delete the model-server monitor in each model namespace with the same `sed`
 and `kubectl delete -f -`. The namespace `scaling-manager-system` and the scaler

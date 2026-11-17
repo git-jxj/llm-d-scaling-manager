@@ -16,7 +16,8 @@ metadata:
   name: scaling-manager-settings
   namespace: __NAMESPACE__
 data:
-  # Prometheus (or Thanos Querier) base URL, https. Required; the preflight
+  # Prometheus (or Thanos Querier) base URL, https (http only with
+  # prometheusAllowHTTP). Required; the preflight
   # FAILs until it is set. restart.
   # On OpenShift: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
   prometheusURL: ""
@@ -28,6 +29,10 @@ data:
   # Skip verifying Prometheus's certificate. Leave "false" and set
   # prometheusCACertPath instead. restart.
   prometheusInsecureSkipVerify: "false"
+  # "true" to read an http:// prometheusURL, unencrypted. The controller then
+  # sends no token, so its Deployment must not set PROMETHEUS_TOKEN_PATH:
+  # smt install --allow-http sets both. Empty: false. restart.
+  prometheusAllowHTTP: ""
   # Decide, log and publish, but change no replica count. live.
   passive: "true"
   # Utilization share: off, shadow or active. active also needs

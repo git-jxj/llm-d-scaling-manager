@@ -30,6 +30,9 @@ SMT_PROM_CA_PATH=/etc/scaling-manager-prometheus-ca/ca.crt
 SMT_DEPLOY=scaling-manager-controller-manager
 SMT_STATUS_CM=scaling-manager-controller-status
 SMT_PREFLIGHT_JOB=scaling-manager-preflight
+# On the preflight Job with --allow-http: the controller is applied with
+# PROMETHEUS_TOKEN_PATH empty (internal/preflight TokenPathEmptiedEnv).
+SMT_TOKEN_EMPTIED_ENV=LLMSM_PREFLIGHT_TOKEN_PATH_EMPTIED
 SMT_CLUSTER_NS=scaling-manager-system
 SMT_THANOS_URL=https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
 # The checks the preflight cannot make before the controller runs: UNKNOWN in
@@ -103,10 +106,10 @@ smt_parse() {
     shift
     SMT_NS="" SMT_KEDA_NS="" SMT_PROM_URL="" SMT_PROM_CA="" SMT_QUOTA="" SMT_SETS=() SMT_FILES=""
     SMT_DRY_RUN=false SMT_OUT="" SMT_SCOPE=namespace SMT_MODEL_NS=() SMT_PLATFORM="" SMT_STRICT=false
-    SMT_RESTART_KEDA=false SMT_IMAGE_REPO=""
+    SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_WL_IMAGE="" SMT_WL_OFF=false SMT_ALLOW_HTTP=false
     case "$cmd" in
         admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope " ;;
-        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo " ;;
+        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller " ;;
         admin-finish) allowed=" -n --keda-namespace --files --platform --strict --restart-keda --scope " ;;
         release-files) allowed=" --out " ;;
     esac
@@ -118,7 +121,7 @@ smt_parse() {
             *) smt_usage "$cmd: unknown option $1 (see $cmd --help)" ;;
         esac
         case "$flag" in
-            --dry-run|--strict|--restart-keda) ;;
+            --dry-run|--strict|--restart-keda|--no-weights-labeller|--allow-http) ;;
             *) [ $# -ge 2 ] && [ -n "$2" ] || smt_usage "$cmd: $1 needs a value" ;;
         esac
         case "$flag" in
@@ -134,9 +137,12 @@ smt_parse() {
             --model-namespace) SMT_MODEL_NS+=("$2"); shift 2 ;;
             --platform) SMT_PLATFORM="$2"; shift 2 ;;
             --image-repo) SMT_IMAGE_REPO="$2"; shift 2 ;;
+            --weights-labeller-image) SMT_WL_IMAGE="$2"; shift 2 ;;
+            --no-weights-labeller) SMT_WL_OFF=true; shift ;;
             --dry-run) SMT_DRY_RUN=true; shift ;;
             --strict) SMT_STRICT=true; shift ;;
             --restart-keda) SMT_RESTART_KEDA=true; shift ;;
+            --allow-http) SMT_ALLOW_HTTP=true; shift ;;
         esac
     done
     case "$SMT_SCOPE" in
@@ -174,12 +180,45 @@ smt_parse() {
         esac
         case "${SMT_IMAGE_REPO##*/}" in *:*) smt_usage "$cmd --image-repo: give REGISTRY/PATH, without a tag" ;; esac
     fi
+    if [ "$SMT_SCOPE" != cluster ] && { [ -n "$SMT_WL_IMAGE" ] || [ "$SMT_WL_OFF" = true ]; }; then
+        smt_usage "$cmd: --weights-labeller-image and --no-weights-labeller are for --scope cluster; in one namespace, the cluster admin runs: smt weights labeller -n <ns> --image <tools image>"
+    fi
+    [ -z "$SMT_WL_IMAGE" ] || [ "$SMT_WL_OFF" = false ] || smt_usage "$cmd: --weights-labeller-image and --no-weights-labeller together; one or the other"
+    case "$SMT_WL_IMAGE" in
+        *[!A-Za-z0-9._:/@-]*) smt_usage "$cmd --weights-labeller-image: '$SMT_WL_IMAGE' is not an image reference" ;;
+    esac
     if [ -n "$SMT_PROM_CA" ] && [ ! -r "$SMT_PROM_CA" ]; then
         smt_usage "$cmd --prometheus-ca: cannot read '$SMT_PROM_CA' (a path under the mounted /work)"
     fi
     if [ -n "$SMT_QUOTA" ]; then
         printf '%s' "$SMT_QUOTA" | grep -qE '^[A-Za-z0-9._-]+=-?[0-9]+(,[A-Za-z0-9._-]+=-?[0-9]+)*$' \
             || smt_usage "$cmd --quota: '$SMT_QUOTA' is not GPU=N[,GPU=N]"
+    fi
+    if [ -n "$SMT_PROM_URL" ]; then
+        smt_check_scheme "$SMT_PROM_URL" "--prometheus-url $SMT_PROM_URL"
+    fi
+    if [ "$SMT_ALLOW_HTTP" = true ] && [ -n "$SMT_PROM_CA" ]; then
+        smt_usage "$cmd --allow-http with --prometheus-ca: a plain HTTP Prometheus has no certificate, and the controller refuses TLS settings beside an http URL"
+    fi
+}
+
+# smt_is_http <url>: the URL is plain HTTP.
+smt_is_http() {
+    case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in http://*) return 0 ;; esac
+    return 1
+}
+
+# smt_check_scheme <url> <what names it>: --allow-http is given exactly when
+# the Prometheus URL the controller reads is plain HTTP, or exit 2. With it,
+# the settings allow HTTP and the controller is applied without a token (the
+# controller refuses to send one over HTTP); without it, it is applied with
+# its ServiceAccount token, which an http URL would make it refuse.
+smt_check_scheme() {
+    if smt_is_http "$1"; then
+        [ "$SMT_ALLOW_HTTP" = true ] \
+            || smt_usage "$2 is plain HTTP, which the controller refuses by default. Add --allow-http to read it unencrypted (the controller then sends Prometheus no token), or give an https URL"
+    elif [ "$SMT_ALLOW_HTTP" = true ]; then
+        smt_usage "--allow-http is for a plain HTTP Prometheus, and $2 is not one: leave --allow-http out"
     fi
 }
 
@@ -290,6 +329,19 @@ smt_render() {
         # platform default, here with the namespace KEDA runs in.
         KEDA_NS="$SMT_KEDA_NS" yq -i '(select(.kind == "NetworkPolicy" and .metadata.name == "scaling-manager-external-scaler") | .spec.ingress[] | select(has("from")) | .from[] | select(has("namespaceSelector")) | .namespaceSelector.matchLabels | select(has("kubernetes.io/metadata.name")) | .["kubernetes.io/metadata.name"]) = strenv(KEDA_NS)' \
             "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot write KEDA namespace $SMT_KEDA_NS into $SMT_MAIN"
+    fi
+    if [ "${SMT_ALLOW_HTTP:-false}" = true ]; then
+        # The controller refuses to send its token over plain HTTP, and env
+        # beats the settings: empty PROMETHEUS_TOKEN_PATH by name, as
+        # llmsm_reconcile_prometheus_scheme does for make. Rendered rather than
+        # patched, so a re-run with the same flags applies the same object.
+        D="$SMT_DEPLOY" yq -i '(select(.kind == "Deployment" and .metadata.name == strenv(D)) | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' \
+            "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot empty PROMETHEUS_TOKEN_PATH in $SMT_MAIN"
+        # The preflight runs before this Deployment is applied: tell it, so the
+        # token path of a live controller (one crash-looping on it, say) is
+        # not held against the install that removes it.
+        J="$SMT_PREFLIGHT_JOB" E="$SMT_TOKEN_EMPTIED_ENV" yq -i '(select(.kind == "Job" and .metadata.name == strenv(J)) | .spec.template.spec.containers[] | select(.name == "preflight") | .env) += [{"name": strenv(E), "value": "true"}]' \
+            "$SMT_DIR/$SMT_PREFLIGHT" || smt_exit 2 "cannot set $SMT_TOKEN_EMPTIED_ENV in $SMT_PREFLIGHT"
     fi
     if [ -n "$SMT_IMAGE_REPO" ]; then
         for f in "$SMT_MAIN" "$SMT_PREFLIGHT"; do
@@ -415,13 +467,15 @@ smt_admin_line() {
 
 # smt_settings_pairs: SMT_PAIRS, the settings keys the flags set, KEY=VALUE.
 # One table: --prometheus-url prometheusURL, --prometheus-ca
-# prometheusCACertPath, --quota limiter=quota and quotas, --set KEY=VALUE.
+# prometheusCACertPath, --quota limiter=quota and quotas, --allow-http
+# prometheusAllowHTTP=true, --set KEY=VALUE.
 smt_settings_pairs() {
     local kv key known
     SMT_PAIRS=()
     [ -z "$SMT_PROM_URL" ] || SMT_PAIRS+=("prometheusURL=$SMT_PROM_URL")
     [ -z "$SMT_PROM_CA" ] || SMT_PAIRS+=("prometheusCACertPath=$SMT_PROM_CA_PATH")
     [ -z "$SMT_QUOTA" ] || SMT_PAIRS+=("limiter=quota" "quotas=$SMT_QUOTA")
+    [ "$SMT_ALLOW_HTTP" != true ] || SMT_PAIRS+=("prometheusAllowHTTP=true")
     known="$(yq '.data | keys | .[]' "$SMT_SHIPPED/scaling-manager-settings.yaml")"
     for kv in "${SMT_SETS[@]}"; do
         key="${kv%%=*}"
@@ -432,6 +486,7 @@ smt_settings_pairs() {
             prometheusURL) smt_usage "--set prometheusURL: give --prometheus-url" ;;
             prometheusCACertPath) smt_usage "--set prometheusCACertPath: give --prometheus-ca <file>; it creates the Secret the path reads" ;;
             quotas) smt_usage "--set quotas: give --quota \"GPU=N\"" ;;
+            prometheusAllowHTTP) smt_usage "--set prometheusAllowHTTP: give --allow-http; it also applies the controller without PROMETHEUS_TOKEN_PATH, which a plain HTTP Prometheus needs" ;;
             limiter) [ -z "$SMT_QUOTA" ] || smt_usage "--set limiter with --quota: --quota sets limiter to quota" ;;
         esac
         SMT_PAIRS+=("$kv")
@@ -483,15 +538,57 @@ smt_settings() {
 
 # smt_settings_preconditions: with no settings, a Prometheus URL is needed
 # before anything is created. Run before the first write.
+#
+# The URL the controller will read decides --allow-http (smt_check_scheme): the
+# one in the live settings when they exist, since they are never written, else
+# the one the flag gives. A flag URL of the other scheme than the live one is
+# a switch the settings must make first: the refusal prints every patch it
+# needs (smt_switch_patches).
 smt_settings_preconditions() {
-    smt_get configmap "$SMT_SETTINGS" -n "$SMT_NS" && return 0
+    local live allow want=false had=false
+    if smt_get configmap "$SMT_SETTINGS" -n "$SMT_NS"; then
+        live="$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusURL // ""')"
+        allow="$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusAllowHTTP // ""')"
+        smt_is_http "$live" && had=true
+        [ -n "$SMT_PROM_URL" ] && smt_is_http "$SMT_PROM_URL" && want=true
+        if [ -n "$live" ] && [ -n "$SMT_PROM_URL" ] && [ "$had" != "$want" ]; then
+            smt_usage "prometheusURL in the live $SMT_SETTINGS is $live, and --prometheus-url $SMT_PROM_URL changes its scheme. install never writes existing settings: run these, then the same command again right away (until then a controller restart fails):
+$(smt_switch_patches "$want" | sed 's/^/  /')"
+        fi
+        [ -z "$live" ] || smt_check_scheme "$live" "prometheusURL in the live $SMT_SETTINGS ($live)"
+        if [ "$SMT_ALLOW_HTTP" = true ] && [ "$allow" != true ]; then
+            smt_usage "prometheusAllowHTTP in the live $SMT_SETTINGS is \"$allow\", not \"true\", so the controller would refuse the http URL. install never writes existing settings: run this, then the same command again:
+  $(smt_patch_cmd prometheusAllowHTTP true)"
+        fi
+        return 0
+    fi
     if [ -z "$SMT_PROM_URL" ]; then
         if [ "$SMT_PLATFORM" = openshift ]; then
             SMT_PROM_URL="$SMT_THANOS_URL"
+            smt_check_scheme "$SMT_PROM_URL" "the OpenShift default, $SMT_PROM_URL,"
             echo "No --prometheus-url: the OpenShift default, $SMT_PROM_URL."
         else
-            smt_usage "no $SMT_SETTINGS in $SMT_NS yet, and no --prometheus-url: give the Prometheus base URL, https"
+            smt_usage "no $SMT_SETTINGS in $SMT_NS yet, and no --prometheus-url: give the Prometheus base URL, https (http with --allow-http)"
         fi
+    fi
+}
+
+# smt_switch_patches <to http: true|false>: the kubectl patches, one a line,
+# that switch the live settings (KC_OUT) to SMT_PROM_URL. To http: allow it,
+# and clear the TLS settings the controller refuses beside an http URL. To
+# https: stop allowing http, and with --prometheus-ca point at its CA.
+smt_switch_patches() {
+    local to_http="$1" v
+    smt_patch_cmd prometheusURL "$SMT_PROM_URL"
+    smt_patch_cmd prometheusAllowHTTP "$to_http"
+    if [ "$to_http" = true ]; then
+        v="$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusInsecureSkipVerify // ""' | tr 'A-Z' 'a-z')"
+        case "$v" in true|t|1) smt_patch_cmd prometheusInsecureSkipVerify false ;; esac
+        for v in prometheusCACertPath prometheusServerName; do
+            [ -z "$(printf '%s' "$KC_OUT" | jq -r --arg k "$v" '.data[$k] // ""')" ] || smt_patch_cmd "$v" ""
+        done
+    elif [ -n "$SMT_PROM_CA" ] && [ "$(printf '%s' "$KC_OUT" | jq -r '.data.prometheusCACertPath // ""')" != "$SMT_PROM_CA_PATH" ]; then
+        smt_patch_cmd prometheusCACertPath "$SMT_PROM_CA_PATH"
     fi
 }
 
@@ -850,6 +947,111 @@ smt_finish() {
     echo "Removed ClusterRoleBinding $SMT_PREFLIGHT_CRB: the preflight's cluster reads are needed only while it runs."
 }
 
+# --- The weights labeller ------------------------------------------------------
+#
+# The labeller (deploy/weights.sh labeller; docs/proposals/weights-node-gate.md)
+# patches nodes, so it is a cluster-wide piece: the cluster-wide install
+# applies and updates it, watching every --model-namespace and every namespace
+# it already watches -- but only where it has work: a model namespace with a
+# weights DaemonSet (weights.sh apply), or a labeller already running. Else it
+# says how to add it later. A namespaced admin-setup only checks it is there,
+# adds its own namespace to its watch list with namespaced rights, and
+# otherwise prints the command.
+SMT_WL_NS=scaling-manager-weights-labeller
+SMT_WL_DS_SELECTOR=app.kubernetes.io/component=node-local-weights,app.kubernetes.io/managed-by=scaling-manager-weights
+
+# smt_wl_image echoes the image the labeller runs: --weights-labeller-image,
+# else the tools image of this release. Returns 1 when there is none to name:
+# a development image, or a mirror (--image-repo) whose tools path this
+# cannot know.
+smt_wl_image() {
+    local v
+    if [ -n "$SMT_WL_IMAGE" ]; then
+        printf '%s\n' "$SMT_WL_IMAGE"
+        return 0
+    fi
+    [ -z "$SMT_IMAGE_REPO" ] || return 1
+    v="$(smt_version)"
+    case "$v" in ""|unreleased) return 1 ;; esac
+    printf 'ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:%s\n' "$v"
+}
+
+# smt_wl_list echoes the --model-namespace list, comma-separated.
+smt_wl_list() {
+    local IFS=,
+    printf '%s\n' "${SMT_MODEL_NS[*]}"
+}
+
+# smt_weights_labeller: the cluster-wide install applies or updates the
+# labeller. Skipped, and said so, with --no-weights-labeller, with no
+# --model-namespace, with no image to run, and when no model namespace keeps
+# weights on the node and no labeller runs yet. A read that fails skips it
+# too, naming what could not be read (Forbidden is not absent); the install
+# goes on.
+smt_weights_labeller() {
+    local img m n have="" running=false
+    if [ "$SMT_WL_OFF" = true ]; then
+        echo "Weights labeller: not applied (--no-weights-labeller)."
+        return 0
+    fi
+    if [ ${#SMT_MODEL_NS[@]} -eq 0 ]; then
+        echo "Weights labeller: not applied (no --model-namespace to watch)."
+        return 0
+    fi
+    if ! img="$(smt_wl_image)"; then
+        echo "Weights labeller: not applied: no tools image to run it with (a development image, or --image-repo). Give --weights-labeller-image <tools image>."
+        return 0
+    fi
+    if ! kc_capture get deployment weights-labeller -n "$SMT_WL_NS" --ignore-not-found -o json; then
+        echo "Weights labeller: not applied: could not read Deployment weights-labeller in $SMT_WL_NS ($(printf '%s' "$KC_ERR" | head -n 1))."
+        return 0
+    fi
+    [ -z "$KC_OUT" ] || running=true
+    if [ "$running" = false ]; then
+        for m in "${SMT_MODEL_NS[@]}"; do
+            if ! kc_capture get daemonset -n "$m" -l "$SMT_WL_DS_SELECTOR" -o json; then
+                echo "Weights labeller: not applied: could not read the DaemonSets in $m ($(printf '%s' "$KC_ERR" | head -n 1)), so whether it keeps weights on the node is not known."
+                return 0
+            fi
+            n="$(printf '%s' "$KC_OUT" | jq '.items | length' 2>/dev/null)" || n=0
+            [ "${n:-0}" -eq 0 ] || have="${have:+$have, }$m"
+        done
+        if [ -z "$have" ]; then
+            echo "Weights labeller: not applied: no model namespace keeps weights on the node (no weights.sh apply DaemonSet in $(smt_wl_list | sed 's/,/, /g'))."
+            echo "  After weights apply, run this install again, or: smt weights labeller -n <model namespace> --image $img --merge"
+            return 0
+        fi
+    fi
+    echo "Weights labeller (labels the GPU nodes whose weights copy verifies; it patches nodes$([ "$running" = true ] && echo "; updating the one running" || echo "; weights on the node in $have")):"
+    bash "$HERE/weights.sh" labeller -n "$(smt_wl_list)" --image "$img" --merge \
+        || smt_exit 7 "the weights labeller was not applied (weights.sh labeller exited non-zero, above)"
+}
+
+# smt_weights_labeller_dry: the labeller as a file, for --dry-run. No cluster
+# is read, so it watches the --model-namespace list only.
+smt_weights_labeller_dry() {
+    local img
+    [ "$SMT_WL_OFF" = false ] && [ ${#SMT_MODEL_NS[@]} -gt 0 ] || return 0
+    img="$(smt_wl_image)" || { echo "  (weights labeller not rendered: give --weights-labeller-image)"; return 0; }
+    bash "$HERE/weights.sh" labeller -n "$(smt_wl_list)" --image "$img" --dry-run > "$SMT_OUT/60-weights-labeller.yaml" \
+        || smt_exit 2 "the weights labeller did not render"
+    echo "  $SMT_OUT/60-weights-labeller.yaml (only where a model namespace keeps weights on the node; it watches exactly --model-namespace and, applied, replaces a running labeller's list: keep the full list in git, and do not use labeller --add)"
+}
+
+# smt_admin_setup_labeller: admin-setup checks the labeller is there and adds
+# this namespace to its watch list. Never fails admin-setup: the labeller is
+# an addition to the weights preparation, not to the install.
+smt_admin_setup_labeller() {
+    local rc=0
+    echo "Weights labeller:"
+    bash "$HERE/weights.sh" labeller --add -n "$SMT_NS" > "$SMT_TMP/labeller.out" 2>&1 || rc=$?
+    sed 's/^/  /' "$SMT_TMP/labeller.out"
+    case "$rc" in
+        0|3|4) ;;
+        *) echo "  (weights.sh labeller --add exited $rc; admin-setup goes on)" ;;
+    esac
+}
+
 # --- dry-run -----------------------------------------------------------------
 
 # smt_dry_write <file> [part] <source>: one step file in SMT_OUT.
@@ -880,7 +1082,7 @@ smt_dry_install() {
     smt_settings_pairs
     [ -n "$SMT_PROM_URL" ] || [ "$SMT_PLATFORM" = openshift ] \
         || smt_usage "--dry-run renders a fresh install: give --prometheus-url"
-    [ -n "$SMT_PROM_URL" ] || { SMT_PROM_URL="$SMT_THANOS_URL"; smt_settings_pairs; }
+    [ -n "$SMT_PROM_URL" ] || { SMT_PROM_URL="$SMT_THANOS_URL"; smt_check_scheme "$SMT_PROM_URL" "the OpenShift default, $SMT_PROM_URL,"; smt_settings_pairs; }
     smt_dry_write 20-settings.yaml "" "$(smt_settings_file)"
     if [ -n "$SMT_PROM_CA" ]; then
         smt_prometheus_ca_yaml > "$SMT_OUT/25-prometheus-ca.yaml"
@@ -933,6 +1135,7 @@ smt_admin_setup() {
         echo "  $SMT_OUT/19-admin-setup-stamp.yaml"
         [ "$SMT_PLATFORM" != openshift ] || echo "  then: kubectl label namespace $SMT_NS openshift.io/user-monitoring=true --overwrite"
         echo "KEDA's namespace in the scaler NetworkPolicy: $SMT_KEDA_NS ($SMT_KEDA_FROM)."
+        echo "Weights labeller: admin-setup adds $SMT_NS to its watch list when one runs (smt weights labeller --add -n $SMT_NS)."
         return 0
     fi
     smt_header admin-setup
@@ -953,9 +1156,10 @@ smt_admin_setup() {
     smt_stamp_yaml > "$SMT_TMP/stamp.yaml"
     smt_kc apply -f "$SMT_TMP/stamp.yaml"
     echo "Stamp: ConfigMap $SMT_STAMP ($(smt_version), KEDA in $SMT_KEDA_NS)."
+    smt_admin_setup_labeller
     echo
     echo "Done. The namespace owner runs next, with their own kubeconfig:"
-    echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>"
+    echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>   (an http:// Prometheus: add --allow-http)"
 }
 
 # smt_install: the part of the namespace owner, or with --scope cluster everything.
@@ -976,6 +1180,7 @@ smt_install() {
             smt_dry_admin
         fi
         smt_dry_install
+        [ "$SMT_SCOPE" = namespace ] || smt_weights_labeller_dry
         [ "$SMT_SCOPE" = namespace ] || echo "KEDA's side of mutual TLS is not rendered: it copies the client certificate the controller makes. After the apply, run: smt install --scope cluster ... again."
         return 0
     fi
@@ -1044,6 +1249,7 @@ smt_install_cluster() {
     echo "Scaler TLS Secrets:"
     smt_scaler_secrets
     smt_controller
+    smt_weights_labeller
     smt_finish
     echo
     echo "Installed in $SMT_NS for the cluster, passive, serving the scaler over mutual TLS."

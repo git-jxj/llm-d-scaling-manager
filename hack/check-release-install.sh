@@ -45,7 +45,7 @@ done
 # Dockerfile.tools lays them out.
 IMGDIR="$W/image"
 mkdir -p "$IMGDIR/release"
-cp "$ROOT/deploy/scaling-manager-tools.sh" "$IMGDIR/"
+cp "$ROOT/deploy/scaling-manager-tools.sh" "$ROOT/deploy/weights.sh" "$IMGDIR/"
 cp -R "$ROOT/deploy/lib" "$IMGDIR/lib"
 printf '%s\n' "$V" > "$IMGDIR/VERSION"
 for f in "$W"/dist/*; do
@@ -54,7 +54,7 @@ done
 # A development image: no baked files.
 DEVDIR="$W/devimage"
 mkdir -p "$DEVDIR"
-cp "$ROOT/deploy/scaling-manager-tools.sh" "$DEVDIR/"
+cp "$ROOT/deploy/scaling-manager-tools.sh" "$ROOT/deploy/weights.sh" "$DEVDIR/"
 cp -R "$ROOT/deploy/lib" "$DEVDIR/lib"
 printf '%s\n' "$V" > "$DEVDIR/VERSION"
 
@@ -625,6 +625,434 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+echo "the weights labeller"
+LNS=scaling-manager-weights-labeller
+largs() { jq -c '.spec.template.spec.containers[0].args' "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json" 2>/dev/null; }
+limg() { jq -r '.spec.template.spec.containers[0].image' "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json" 2>/dev/null; }
+# creset: reset, with the APIService and the controller status a cluster install reads
+creset() {
+    reset "$@"
+    echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+    mkdir -p "$STUB_DIR/obj/configmap/scaling-manager-system"
+    cp "$W/status.json" "$STUB_DIR/obj/configmap/scaling-manager-system/scaling-manager-controller-status.json"
+}
+# wds NS: a weights DaemonSet in NS, as weights.sh apply leaves one.
+wds() {
+    mkdir -p "$STUB_DIR/obj/daemonset/$1"
+    jq -n --arg ns "$1" '{apiVersion: "apps/v1", kind: "DaemonSet", metadata: {name: "weights-x", namespace: $ns,
+        labels: {"app.kubernetes.io/component": "node-local-weights", "app.kubernetes.io/managed-by": "scaling-manager-weights"}}}' \
+        > "$STUB_DIR/obj/daemonset/$1/weights-x.json"
+}
+creset m1 m2 team-b
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --model-namespace m2
+if ! has_obj deployment "$LNS" weights-labeller && ! has_obj clusterrole _ scaling-manager-weights-labeller \
+    && grep -q 'Weights labeller: not applied: no model namespace keeps weights on the node (no weights.sh apply DaemonSet in m1, m2)' "$W/out" \
+    && grep -q "After weights apply, run this install again, or: smt weights labeller -n <model namespace> --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V --merge" "$W/out" \
+    && grep -q "KEDA's client certificate" "$W/out"; then
+    ok "install --scope cluster with no weights DaemonSet in any model namespace applies no labeller, and says how to add it"
+else
+    bad "no weights, no labeller: $(grep -A1 -i 'labeller' "$W/out" | head -3 | tr '\n' ' ')"
+fi
+touch "$STUB_DIR/forbid-daemonsets"
+wds m1
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+rm -f "$STUB_DIR/forbid-daemonsets"
+if ! has_obj deployment "$LNS" weights-labeller && grep -q 'Weights labeller: not applied: could not read the DaemonSets in m1 (Error from server (Forbidden)' "$W/out" \
+    && grep -q "KEDA's client certificate" "$W/out"; then
+    ok "DaemonSets that cannot be read: no labeller, the namespace and kubectl's reason named, and the install goes on (Forbidden is not absent)"
+else
+    bad "Forbidden DaemonSets: $(grep -i 'labeller' "$W/out" | head -2 | tr '\n' ' ')"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+if [ "$(largs)" = '["weights","label","-n","m1","--watch","30","--label-prefix","llm-d.ai"]' ] \
+    && [ "$(limg)" = "ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V" ] \
+    && has_obj rolebinding m1 scaling-manager-weights-labeller-reader && has_obj clusterrole _ scaling-manager-weights-labeller \
+    && jq -e '.rules == [{apiGroups: [""], resources: ["nodes"], verbs: ["get", "list", "patch"]}, {apiGroups: [""], resources: ["namespaces"], verbs: ["get"]}]' "$STUB_DIR/obj/clusterrole/_/scaling-manager-weights-labeller.json" >/dev/null; then
+    ok "install --scope cluster applies the weights labeller, on this release's tools image, watching its --model-namespace"
+else
+    bad "cluster install labeller: args $(largs), image $(limg): $(grep -i labeller "$W/out" | head -2 | tr '\n' ' ')"
+fi
+smt admin-setup -n team-b --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && [ "$(largs)" = '["weights","label","-n","m1,team-b","--watch","30","--label-prefix","llm-d.ai"]' ] \
+    && has_obj rolebinding team-b scaling-manager-weights-labeller-reader && grep -q 'Added team-b to the weights labeller' "$W/out"; then
+    ok "admin-setup adds its namespace to the running labeller, with namespaced writes (a RoleBinding, the Deployment)"
+else
+    bad "admin-setup add: exit $rc, args $(largs): $(grep -A2 'Weights labeller' "$W/out" | tr '\n' ' ')"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m2
+if [ "$(largs)" = '["weights","label","-n","m1,team-b,m2","--watch","30","--label-prefix","llm-d.ai"]' ] && has_obj rolebinding m2 scaling-manager-weights-labeller-reader; then
+    ok "a re-run of install --scope cluster keeps every namespace the labeller watches, in its order, and adds its own after them"
+else
+    bad "cluster re-run merge: args $(largs)"
+fi
+rm -f "$STUB_DIR/obj/namespace/_/team-b.json"
+# (the exit code is not the point here, as in the cluster cases above: the stub install ends non-zero)
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m2
+rc=$?
+if ! grep -q "weights labeller was not applied" "$W/out" && [ "$(largs)" = '["weights","label","-n","m1,m2","--watch","30","--label-prefix","llm-d.ai"]' ] && grep -q 'team-b, which is gone or being deleted; it is dropped' "$W/out"; then
+    ok "a re-run drops a watched namespace that was deleted since, and says so"
+else
+    bad "cluster re-run, deleted namespace: exit $rc, args $(largs): $(grep -i 'labeller\|team-b' "$W/out" | head -3 | tr '\n' ' ')"
+fi
+# A re-run with a namespace already watched renders the same arguments: a
+# changed list would restart the labeller on every install.
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+if [ "$(largs)" = '["weights","label","-n","m1,m2","--watch","30","--label-prefix","llm-d.ai"]' ]; then
+    ok "a re-run with a namespace it already watches leaves the labeller's arguments as they are"
+else
+    bad "cluster re-run, same namespaces: args $(largs)"
+fi
+# weights.sh labeller on its own, over the running one.
+wl() { (cd "$W/work" && PATH="$W/bin:$PATH" bash "$IMGDIR/weights.sh" "$@") > "$W/out" 2>&1; }
+wl labeller -n m1 --image mirror.example.com/tools:v1
+rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'the running labeller also watches m2' "$W/out" && grep -q 'Add --merge' "$W/out" \
+    && [ "$(largs)" = '["weights","label","-n","m1,m2","--watch","30","--label-prefix","llm-d.ai"]' ] && [ "$(limg)" = "ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V" ]; then
+    ok "labeller -n with fewer namespaces than the running one watches is refused, and changes nothing"
+else
+    bad "labeller narrowing: exit $rc, args $(largs), image $(limg): $(tail -1 "$W/out")"
+fi
+wl labeller -n m1 --delete
+rc=$?
+if [ "$rc" = 0 ] && ! has_obj rolebinding m1 scaling-manager-weights-labeller-reader && ! has_obj rolebinding m2 scaling-manager-weights-labeller-reader; then
+    ok "labeller --delete -n m1 also removes the RoleBinding of every namespace the running one watched"
+else
+    bad "labeller --delete: exit $rc, RoleBinding in m2 left: $(has_obj rolebinding m2 scaling-manager-weights-labeller-reader && echo yes || echo no)"
+fi
+wl labeller --add -n "$LNS"
+rc=$?
+[ "$rc" -ne 0 ] && grep -q "is the labeller's own namespace" "$W/out" && ok "labeller --add refuses the labeller's own namespace" || bad "labeller --add of its own namespace: exit $rc: $(tail -1 "$W/out")"
+creset m1 team-c
+wds m1
+smt admin-setup -n team-c --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'No weights labeller runs in' "$W/out" && grep -q 'smt install --scope cluster' "$W/out" && ! has_obj deployment "$LNS" weights-labeller; then
+    ok "admin-setup with no labeller says how to add one, creates none, and still succeeds"
+else
+    bad "admin-setup, no labeller: exit $rc: $(grep -A3 'Weights labeller' "$W/out" | tr '\n' ' ')"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+printf 'create rolebindings team-c\n' > "$STUB_DIR/can-i-no"
+smt admin-setup -n team-c --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'smt weights labeller --add -n team-c' "$W/out" && [ "$(largs)" = '["weights","label","-n","m1","--watch","30","--label-prefix","llm-d.ai"]' ] \
+    && ! has_obj rolebinding team-c scaling-manager-weights-labeller-reader; then
+    ok "admin-setup without the rights to add its namespace prints the command, changes nothing, and still succeeds"
+else
+    bad "admin-setup, no rights: exit $rc, args $(largs): $(grep -A3 'Weights labeller' "$W/out" | tr '\n' ' ')"
+fi
+rm -f "$STUB_DIR/can-i-no"
+creset m1
+wds m1
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --no-weights-labeller
+if ! has_obj deployment "$LNS" weights-labeller && grep -q 'Weights labeller: not applied (--no-weights-labeller)' "$W/out"; then
+    ok "--no-weights-labeller applies no labeller, and says so"
+else
+    bad "--no-weights-labeller: $(grep -i labeller "$W/out" | head -2 | tr '\n' ' ')"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --weights-labeller-image mirror.example.com/tools:v1
+[ "$(limg)" = mirror.example.com/tools:v1 ] && ok "--weights-labeller-image sets its image" || bad "--weights-labeller-image: $(limg)"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --image-repo mirror.example.com/sm
+if grep -q 'Weights labeller: not applied: no tools image to run it with (a development image, or --image-repo)' "$W/out" && [ "$(limg)" = mirror.example.com/tools:v1 ]; then
+    ok "--image-repo without --weights-labeller-image: the labeller is left as it is, and why is said"
+else
+    bad "--image-repo labeller: image $(limg): $(grep -i 'labeller' "$W/out" | head -2 | tr '\n' ' ')"
+fi
+smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --weights-labeller-image 'bad image'
+rc=$?
+[ "$rc" = 2 ] && grep -q "is not an image reference" "$W/out" && ok "a malformed --weights-labeller-image is refused (usage)" || bad "bad labeller image: exit $rc: $(tail -1 "$W/out")"
+# A labeller Deployment this script did not write: weights.sh refuses to merge
+# into it, and the install says so and exits 7.
+jq '.spec.template.spec.containers[0].args = ["sh", "-c", "sleep 1d"]' "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json" > "$W/foreign.json"
+cp "$W/foreign.json" "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+rc=$?
+if [ "$rc" = 7 ] && grep -q 'the weights labeller was not applied (weights.sh labeller exited non-zero, above)' "$W/out" \
+    && grep -q 'does not carry the arguments weights.sh writes' "$W/out" && [ "$(largs)" = '["sh","-c","sleep 1d"]' ]; then
+    ok "a labeller Deployment weights.sh did not write is not merged into: the install exits 7 and names it"
+else
+    bad "foreign labeller: exit $rc, args $(largs): $(grep -i 'labeller' "$W/out" | head -2 | tr '\n' ' ')"
+fi
+rm -rf "$W/drywl"
+smt install --scope cluster --keda-namespace kk --prometheus-url https://prom.example:9090 --model-namespace m1 --dry-run --out "$W/drywl"
+if [ "$(yq ea -o json -I 0 '[select(.kind == "Deployment") | .spec.template.spec.containers[0].args[3]]' "$W/drywl/60-weights-labeller.yaml" 2>/dev/null)" = '["m1"]' ] \
+    && grep -q 'it watches exactly --model-namespace and, applied, replaces a running labeller.s list: keep the full list in git, and do not use labeller --add' "$W/out" \
+    && ! grep -q 'keeps every namespace the running labeller already watches' "$W/out"; then
+    ok "install --scope cluster --dry-run renders the labeller as 60-weights-labeller.yaml"
+else
+    bad "dry-run labeller: $(ls "$W/drywl" | tr '\n' ' ')"
+fi
+smt install -n team-a --prometheus-url https://p:9090 --no-weights-labeller --dry-run --out "$W/x"
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'are for --scope cluster' "$W/out"; then ok "a namespaced install refuses the labeller flags (usage)"; else bad "namespaced labeller flag: exit $rc: $(tail -1 "$W/out")"; fi
+
+# ---------------------------------------------------------------------------
+echo "A plain HTTP Prometheus: --allow-http"
+# The controller refuses an http URL unless allowed, and refuses to send a
+# bearer token over one; the release Deployment sets PROMETHEUS_TOKEN_PATH.
+DEP=scaling-manager-controller-manager
+gen() { obj deployment "$1" "$DEP" | jq -r '.metadata.generation'; }
+# tokv <namespace>: the PROMETHEUS_TOKEN_PATH values of the stored controller, as a JSON list.
+tokv() { obj deployment "$1" "$DEP" | jq -c '[.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value]'; }
+# tokf <file>: the same, read from a rendered file.
+tokf() { yq ea -o json -I 0 'select(.kind == "Deployment")' "$1" | jq -c '[.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value]'; }
+SA_TOKEN=/var/run/secrets/kubernetes.io/serviceaccount/token
+TOKEN_EMPTIED_ENV=LLMSM_PREFLIGHT_TOKEN_PATH_EMPTIED
+# jobenv <namespace>: TOKEN_EMPTIED_ENV on the stored preflight Job, empty when it has none.
+jobenv() { obj job "$1" scaling-manager-preflight | jq -r --arg e "$TOKEN_EMPTIED_ENV" '[.spec.template.spec.containers[].env[]? | select(.name == $e) | .value] | join(",")'; }
+
+reset
+rm -rf "$W/dryh"
+smt install -n team-a --prometheus-url http://prom.example:9090 --allow-http --dry-run --out "$W/dryh"
+rc=$?
+yq ea '(select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' "$W/dry/50-controller.yaml" > "$W/dry-emptied.yaml"
+if [ "$rc" = 0 ] && [ "$(tokf "$W/dry/50-controller.yaml")" = "[\"$SA_TOKEN\"]" ] && [ "$(tokf "$W/dryh/50-controller.yaml")" = '[""]' ] \
+    && [ "$(norm "$W/dryh/50-controller.yaml")" = "$(norm "$W/dry-emptied.yaml")" ] \
+    && [ "$(yq '.data.prometheusURL + "|" + .data.prometheusAllowHTTP' "$W/dryh/20-settings.yaml")" = 'http://prom.example:9090|true' ]; then
+    ok "--allow-http --dry-run: prometheusAllowHTTP true in the settings, and the controller is the release's with PROMETHEUS_TOKEN_PATH emptied, nothing else changed"
+else
+    bad "--allow-http dry-run: exit $rc, token https $(tokf "$W/dry/50-controller.yaml") http $(tokf "$W/dryh/50-controller.yaml"): $(tail -1 "$W/out")"
+fi
+smt install -n team-a --prometheus-url http://p:9090
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'is plain HTTP, which the controller refuses by default. Add --allow-http' "$W/out" && [ ! -s "$STUB_DIR/calls.log" ]; then
+    ok "an http --prometheus-url without --allow-http is usage (exit 2) naming the flag, before any kubectl call"
+else
+    bad "http without --allow-http: exit $rc: $(tail -1 "$W/out")"
+fi
+smt install -n team-a --prometheus-url https://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--allow-http is for a plain HTTP Prometheus' "$W/out" && [ ! -s "$STUB_DIR/calls.log" ]; then ok "--allow-http with an https URL is usage"; else bad "--allow-http with https: exit $rc: $(tail -1 "$W/out")"; fi
+smt install -n team-a --prometheus-url http://p:9090 --allow-http --prometheus-ca prom-ca.crt
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--allow-http with --prometheus-ca' "$W/out"; then ok "--allow-http with --prometheus-ca is usage"; else bad "--allow-http with a CA: exit $rc: $(tail -1 "$W/out")"; fi
+smt install -n team-a --prometheus-url http://p:9090 --allow-http --set prometheusAllowHTTP=true --dry-run --out "$W/dryx"
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--set prometheusAllowHTTP: give --allow-http' "$W/out"; then ok "--set prometheusAllowHTTP is refused, naming --allow-http"; else bad "--set prometheusAllowHTTP: exit $rc: $(tail -1 "$W/out")"; fi
+
+# The generation the stub keeps: a re-apply that changes the controller bumps it.
+# What a hand patch does: an https install, PROMETHEUS_TOKEN_PATH emptied with
+# kubectl set env, then a re-run that applies the release Deployment again.
+restore
+smt install -n team-a --prometheus-url https://p:9090 > /dev/null 2>&1
+g1="$(gen team-a)"
+jq '(.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = ""' \
+    "$STUB_DIR/obj/deployment/team-a/$DEP.json" > "$W/d.json" && mv "$W/d.json" "$STUB_DIR/obj/deployment/team-a/$DEP.json"
+smt install -n team-a --prometheus-url https://p:9090
+if [ "$(gen team-a)" = $((g1 + 1)) ] && [ "$(tokv team-a)" = "[\"$SA_TOKEN\"]" ]; then
+    ok "control: a re-run over a hand-emptied token path puts the token back and bumps the generation ($g1 -> $(gen team-a))"
+else
+    bad "control: generation $g1 -> $(gen team-a), token $(tokv team-a)"
+fi
+
+restore
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+g1="$(gen team-a)"
+st="$(obj configmap team-a scaling-manager-settings | jq -r '.data.prometheusURL + "|" + .data.prometheusAllowHTTP')"
+if [ "$rc" = 0 ] && [ "$st" = 'http://p:9090|true' ] && [ "$(tokv team-a)" = '[""]' ]; then
+    ok "install --allow-http: the settings allow HTTP and the controller is applied with PROMETHEUS_TOKEN_PATH empty"
+else
+    bad "install --allow-http: exit $rc, settings '$st', token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+before="$(obj configmap team-a scaling-manager-settings)"
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(gen team-a)" = "$g1" ] && [ "$(tokv team-a)" = '[""]' ] && [ "$(obj configmap team-a scaling-manager-settings)" = "$before" ] \
+    && ! grep -q 'kubectl patch' "$W/out" && ! grep -qE '^create ' "$STUB_DIR/calls.log"; then
+    ok "a re-run with the same flags changes nothing: controller generation $g1, settings as they were, no patch printed"
+else
+    bad "re-run --allow-http: exit $rc, generation $g1 -> $(gen team-a), token $(tokv team-a): $(grep -m1 'kubectl patch' "$W/out")"
+fi
+: > "$STUB_DIR/calls.log"
+smt install -n team-a
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'prometheusURL in the live scaling-manager-settings (http://p:9090) is plain HTTP' "$W/out" && grep -q -- '--allow-http' "$W/out" \
+    && [ "$(writes)" = 0 ] && [ "$(gen team-a)" = "$g1" ]; then
+    ok "a re-run without --allow-http on live http settings is refused before any write: it would apply the token again"
+else
+    bad "re-run without --allow-http: exit $rc, $(writes) writes, generation $(gen team-a): $(tail -1 "$W/out")"
+fi
+# A live controller crash-looping on the token path the release files set:
+# --allow-http repairs it. The preflight Job is told the Deployment it is about
+# to apply has no token path, so the live one is not held against it.
+jq --arg t "$SA_TOKEN" '(.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "PROMETHEUS_TOKEN_PATH") | .value) = $t' \
+    "$STUB_DIR/obj/deployment/team-a/$DEP.json" > "$W/d.json" && mv "$W/d.json" "$STUB_DIR/obj/deployment/team-a/$DEP.json"
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(tokv team-a)" = '[""]' ] && [ "$(jobenv team-a)" = true ]; then
+    ok "--allow-http over a live controller with the token path: the preflight Job says the token path is emptied, and the emptied Deployment is applied"
+else
+    bad "repair: exit $rc, token $(tokv team-a), preflight Job $TOKEN_EMPTIED_ENV '$(jobenv team-a)': $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+saved_http="$W/after-http-install"
+rm -rf "$saved_http"; cp -R "$STUB_DIR" "$saved_http"
+# set_setting <namespace> <key> <value>: what the printed kubectl patch does.
+set_setting() {
+    jq --arg k "$2" --arg v "$3" '.data[$k] = $v' "$STUB_DIR/obj/configmap/$1/scaling-manager-settings.json" > "$W/s.json" \
+        && mv "$W/s.json" "$STUB_DIR/obj/configmap/$1/scaling-manager-settings.json"
+}
+set_setting team-a prometheusAllowHTTP ""
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"true\"}}'" "$W/out" && [ "$(writes)" = 0 ]; then
+    ok "--allow-http over live http settings without prometheusAllowHTTP: refused before any write, with the patch"
+else
+    bad "--allow-http, the setting missing: exit $rc, $(writes) writes: $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+# From http to https: refused with both patches; after them the same flags install.
+rm -rf "$STUB_DIR"; cp -R "$saved_http" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] && grep -q 'changes its scheme' "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusURL\":\"https://p:9090\"}}'" "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"false\"}}'" "$W/out"; then
+    set_setting team-a prometheusURL https://p:9090
+    set_setting team-a prometheusAllowHTTP false
+    smt install -n team-a --prometheus-url https://p:9090
+    rc=$?
+    if [ "$rc" = 0 ] && [ "$(tokv team-a)" = "[\"$SA_TOKEN\"]" ] && [ "$(jobenv team-a)" = "" ]; then
+        ok "http to https: refused with the two patches, and after them the same flags install the controller with its token"
+    else
+        bad "http to https after the patches: exit $rc, token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+    fi
+else
+    bad "http to https: exit $rc, $(writes) writes: $(tail -3 "$W/out" | tr '\n' ' ')"
+fi
+# From https to http: the same.
+rm -rf "$STUB_DIR"; cp -R "$installed" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] && grep -q 'changes its scheme' "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusURL\":\"http://p:9090\"}}'" "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusAllowHTTP\":\"true\"}}'" "$W/out"; then
+    set_setting team-a prometheusURL http://p:9090
+    set_setting team-a prometheusAllowHTTP true
+    smt install -n team-a --prometheus-url http://p:9090 --allow-http
+    rc=$?
+    if [ "$rc" = 0 ] && [ "$(tokv team-a)" = '[""]' ]; then
+        ok "https to http: refused with the two patches, before any write; after them the same flags install the controller without a token path"
+    else
+        bad "https to http after the patches: exit $rc, token $(tokv team-a): $(tail -2 "$W/out" | tr '\n' ' ')"
+    fi
+else
+    bad "https to http: exit $rc, $(writes) writes: $(tail -3 "$W/out" | tr '\n' ' ')"
+fi
+# A switch prints every patch it needs: to http, the TLS settings the
+# controller refuses beside an http URL; to https with --prometheus-ca, its CA.
+rm -rf "$STUB_DIR"; cp -R "$installed" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+set_setting team-a prometheusCACertPath /etc/scaling-manager-prometheus-ca/ca.crt
+set_setting team-a prometheusInsecureSkipVerify True
+smt install -n team-a --prometheus-url http://p:9090 --allow-http
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] && grep -q 'the same command again right away' "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusCACertPath\":\"\"}}'" "$W/out" \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusInsecureSkipVerify\":\"false\"}}'" "$W/out" \
+    && ! grep -qF '"prometheusServerName"' "$W/out"; then
+    ok "https to http with a CA path and insecureSkipVerify set: the switch also prints the patches that clear them, and none for an unset key"
+else
+    bad "https to http, TLS settings: exit $rc: $(tail -6 "$W/out" | tr '\n' ' ')"
+fi
+rm -rf "$STUB_DIR"; cp -R "$saved_http" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url https://p:9090 --prometheus-ca prom-ca.crt
+rc=$?
+if [ "$rc" = 2 ] && [ "$(writes)" = 0 ] \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"prometheusCACertPath\":\"/etc/scaling-manager-prometheus-ca/ca.crt\"}}'" "$W/out"; then
+    ok "http to https with --prometheus-ca: the switch also prints the prometheusCACertPath patch"
+else
+    bad "http to https with a CA: exit $rc: $(tail -5 "$W/out" | tr '\n' ' ')"
+fi
+# --allow-http without --prometheus-url.
+restore
+smt install -n team-a --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'no --prometheus-url' "$W/out" && [ "$(writes)" = 0 ]; then ok "--allow-http, no settings, no --prometheus-url: exit 2 before any write"; else bad "--allow-http, no URL: exit $rc: $(tail -1 "$W/out")"; fi
+rm -rf "$W/dryo2"
+smt install -n team-a --platform openshift --allow-http --dry-run --out "$W/dryo2"
+rc=$?
+if [ "$rc" = 2 ] && grep -q -- '--allow-http is for a plain HTTP Prometheus, and the OpenShift default' "$W/out" && [ ! -s "$W/dryo2/20-settings.yaml" ]; then
+    ok "--allow-http on OpenShift with no --prometheus-url: the https default is refused, nothing rendered"
+else
+    bad "--allow-http, OpenShift default: exit $rc: $(tail -1 "$W/out")"
+fi
+rm -rf "$STUB_DIR"; cp -R "$installed" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --allow-http
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'prometheusURL in the live scaling-manager-settings (https://p:9090) is not one' "$W/out" && [ "$(writes)" = 0 ]; then
+    ok "--allow-http, no --prometheus-url, live https settings: refused before any write"
+else
+    bad "--allow-http over live https, no URL: exit $rc: $(tail -1 "$W/out")"
+fi
+rm -rf "$STUB_DIR"; cp -R "$saved_http" "$STUB_DIR"; : > "$STUB_DIR/calls.log"
+smt install -n team-a --allow-http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(tokv team-a)" = '[""]' ]; then ok "--allow-http, no --prometheus-url, live http settings: installs, the token path empty"; else bad "--allow-http over live http, no URL: exit $rc, token $(tokv team-a): $(tail -1 "$W/out")"; fi
+# A scheme in capitals is http too.
+reset
+smt install -n team-a --prometheus-url HTTP://P:9090 --dry-run --out "$W/dryu"
+rc1=$?
+rm -rf "$W/dryu"
+smt install -n team-a --prometheus-url HTTP://P:9090 --allow-http --dry-run --out "$W/dryu"
+rc2=$?
+if [ "$rc1$rc2" = 20 ] && [ "$(tokf "$W/dryu/50-controller.yaml")" = '[""]' ] && [ "$(yq '.data.prometheusAllowHTTP' "$W/dryu/20-settings.yaml")" = true ]; then
+    ok "HTTP:// is plain HTTP: refused without --allow-http, rendered without the token path with it"
+else
+    bad "HTTP://: exits $rc1 $rc2, token $(tokf "$W/dryu/50-controller.yaml" 2>/dev/null)"
+fi
+# --files: the render and the Job flag apply to files given on the command line.
+rm -rf "$W/dryf2"
+smt_in "$DEVDIR" install -n team-a --prometheus-url http://p:9090 --allow-http --files "$W/dist" --dry-run --out "$W/dryf2"
+rc=$?
+fenv="$(yq ea -o json -I 0 'select(.kind == "Job")' "$W/dryf2/30-preflight.yaml" | jq -r --arg e "$TOKEN_EMPTIED_ENV" '[.spec.template.spec.containers[].env[]? | select(.name == $e) | .value] | join(",")')"
+if [ "$rc" = 0 ] && [ "$(tokf "$W/dryf2/50-controller.yaml")" = '[""]' ] && [ "$fenv" = true ]; then
+    ok "--files <dir> --allow-http: the controller without the token path, the preflight Job told so"
+else
+    bad "--files --allow-http: exit $rc, token $(tokf "$W/dryf2/50-controller.yaml"), Job '$fenv': $(tail -1 "$W/out")"
+fi
+# Files whose Deployment sets no PROMETHEUS_TOKEN_PATH: nothing to empty, nothing added.
+rm -rf "$W/notoken"; cp -R "$W/dist" "$W/notoken"
+yq -i 'del(select(.kind == "Deployment") | .spec.template.spec.containers[].env[] | select(.name == "PROMETHEUS_TOKEN_PATH"))' "$W/notoken/scaling-manager-namespaced.yaml"
+(cd "$W/notoken" && sha256sum scaling-manager-*.yaml > SHA256SUMS)
+rm -rf "$W/dryn"
+smt_in "$DEVDIR" install -n team-a --prometheus-url http://p:9090 --allow-http --files "$W/notoken" --dry-run --out "$W/dryn"
+rc=$?
+if [ "$rc" = 0 ] && [ "$(tokf "$W/notoken/scaling-manager-namespaced.yaml")" = '[]' ] && [ "$(tokf "$W/dryn/50-controller.yaml")" = '[]' ]; then
+    ok "a Deployment with no PROMETHEUS_TOKEN_PATH entry: --allow-http renders it as it is, adding none"
+else
+    bad "no token path entry: exit $rc, files $(tokf "$W/notoken/scaling-manager-namespaced.yaml"), rendered $(tokf "$W/dryn/50-controller.yaml" 2>/dev/null): $(tail -1 "$W/out")"
+fi
+# The Job variable smt sets is the one the preflight reads.
+goenv="$(sed -n 's/^const TokenPathEmptiedEnv = "\([A-Z_]*\)"$/\1/p' "$ROOT/internal/preflight/settings.go" | tr -d '\r')"
+shenv="$(sed -n 's/^SMT_TOKEN_EMPTIED_ENV=\([A-Z_]*\)$/\1/p' "$ROOT/deploy/lib/release_install.sh")"
+if [ -n "$goenv" ] && [ "$goenv" = "$shenv" ] && [ "$goenv" = "$TOKEN_EMPTIED_ENV" ]; then
+    ok "release_install.sh sets the Job variable the preflight reads: $goenv"
+else
+    bad "the Job variable: Go '$goenv', release_install.sh '$shenv', this check '$TOKEN_EMPTIED_ENV'"
+fi
+restore
+smt admin-setup -n team-a --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'an http:// Prometheus: add --allow-http' "$W/out"; then ok "admin-setup ends with the install line and the --allow-http hint"; else bad "admin-setup closing line: exit $rc: $(tail -1 "$W/out")"; fi
+
+reset m1
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url http://p:9090 --allow-http --model-namespace m1
+rc=$?
+g1="$(gen scaling-manager-system)"
+st="$(obj configmap scaling-manager-system scaling-manager-settings | jq -r '.data.prometheusURL + "|" + .data.prometheusAllowHTTP')"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url http://p:9090 --allow-http --model-namespace m1
+rc2=$?
+if [ "$rc$rc2" = 55 ] && [ "$st" = 'http://p:9090|true' ] && [ "$(tokv scaling-manager-system)" = '[""]' ] && [ -n "$g1" ] && [ "$(gen scaling-manager-system)" = "$g1" ]; then
+    ok "install --scope cluster --allow-http: the settings allow HTTP, the controller has no token path, and a re-run keeps generation $g1"
+else
+    bad "cluster --allow-http: exits $rc $rc2, settings '$st', token $(tokv scaling-manager-system), generation $g1 -> $(gen scaling-manager-system): $(tail -1 "$W/out")"
+fi
+
+# ---------------------------------------------------------------------------
 echo "release-files and llmsm_make_cmd"
 rm -rf "$W/rf"
 smt release-files --out "$W/rf"
@@ -677,7 +1105,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=78
+EXPECT_CASES=122
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

@@ -1966,12 +1966,15 @@ How a reading becomes a crossing:
   less the client's, which r1 put within 4 ms.
 
 **Above the prefill flow-control onset.** Once the router's prefill gate closes,
-requests wait in its queue. The model flags that wait (`AboveFlowControlOnset`) and
-does not price it, in the CLI and the SLO analyzer alike; an experimental switch,
-off by default, takes it as inside the processor-sharing stage (see the TTFT page,
-"As built: the router's wait above the prefill onset"). The second run's onset
-steps are replayed by `TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset` and
-`TestStaircaseR2_TheStepWithARouterWaitReadsShort`. A bucket's `measureAboveOnset` in the spec adds steps at those
+requests wait in its queue. By default the model flags that wait
+(`AboveFlowControlOnset`) and does not price it, in the CLI and the SLO analyzer
+alike; the opt-in `--price-router-wait` prices it as a stage
+(`FlowControlWaitPriced`) up to 0.9 of the prefill knee (see the TTFT page, "As
+built: the router stage"). The second run's onset steps are replayed by
+`TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset` and
+`TestStaircaseR2_TheStepWithARouterWaitReadsShort`, the Qwen3-32B run's by
+`TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep` and
+`TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient`. A bucket's `measureAboveOnset` in the spec adds steps at those
 multiples of its frozen prefill onset, after its scored steps and held the same way.
 They are never scored: no crossing, knee or falsifier reads them. The report's "Above
 the prefill onset" table lists every flow-control-on step past the onset, with the
@@ -2059,8 +2062,14 @@ tests do. The controller goes into `CONTROLLER_NAMESPACE`, which defaults to
 
 - **Scale to zero.** With `SCALE_TO_ZERO_ENABLED=true`, `install-epp.sh`
   enables the EPP flowControl feature gate, so it exposes
-  `inference_extension_flow_control_queue_size`. The scale-from-zero tests
-  create the `e2e-default` InferenceObjective themselves.
+  `llm_d_epp_flow_control_queue_size`. The scale-from-zero tests
+  create the `e2e-default` InferenceObjective themselves, in the first form
+  the cluster serves: `llm-d.ai/v1`, `llm-d.ai/v1alpha2` (both read by router
+  v1.0.0), then `inference.networking.x-k8s.io`, which only older routers
+  read. The kind setup installs only the x-k8s CRD (GAIE), so there the
+  object is the x-k8s one and v1.0.0 ignores it. It is optional: its priority is
+  0, the default an unclassified request gets anyway, so with neither API the
+  tests run the same and do not skip.
 - **Kueue.** Two specs, see [Kueue specs](#kueue-specs): the quota spec in
   the full tier, the borrowing spec in a CI job of its own.
 - **Monitoring images.** Prometheus comes from kube-prometheus-stack

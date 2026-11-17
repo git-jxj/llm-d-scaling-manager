@@ -141,12 +141,14 @@ const (
 	// place.
 	AboveFlowControlOnset Flag = "AboveFlowControlOnset"
 	// FlowControlWaitPriced is a rate at or above the prefill gate's onset
-	// with flow control on, priced with the experimental
-	// TTFTFleet.PriceRouterWait: the router holds the excess, and its wait is
-	// taken as inside the processor-sharing prefill stage's figure. That is
-	// argued and simulated, not measured: no staircase step with a real
-	// router wait validates it, and at the one step where the router held,
-	// the figure read about 20 times short.
+	// with flow control on, priced with the opt-in TTFTFleet.PriceRouterWait:
+	// the gate is a stage of the figure, its wait at the router and behind
+	// the burst it releases (TTFTParts.RouterWait, TTFTParts.BurstWait;
+	// ttft_gate.go). Validated at one staircase step that held (the
+	// Qwen3-32B staircase's C at 3.24 r/s), where it reads at or above 0.9 of
+	// the client. The stage's parameters are derived, not fitted; its waits'
+	// shape (exponential, not the uniform a fixed cycle gives) is chosen to
+	// cover the measured tail, and the fit there may be partly coincidence.
 	FlowControlWaitPriced Flag = "FlowControlWaitPriced"
 	// HeldByDecodeAdmission is a TTFT rate the prefill side alone would
 	// set higher: decode admission's wait holds it down.
@@ -313,6 +315,12 @@ type TTFTParts struct {
 	// RouterHop is the fixed part of R, the hop between the router and the
 	// engines; 0 with no DecodeTerm.
 	RouterHop float64
+	// RouterWait is W_router, the mean time a request waits at a closed
+	// flow-control gate, and BurstWait W_burst, the mean time it waits behind
+	// the rest of the burst the gate released to its prefill pod
+	// (ttft_gate.go). Both are 0 unless TTFTFleet.PriceRouterWait prices the
+	// gate, past the prefill onset (FlowControlWaitPriced).
+	RouterWait, BurstWait float64
 }
 
 // Onsets are the rates, in requests per second over the fleet, at which EPP

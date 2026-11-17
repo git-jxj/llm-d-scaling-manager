@@ -151,7 +151,7 @@ E2E_GO_TIMEOUT              ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),130m
 # which reads as eight product failures rather than a suite that was cut off.
 DEPLOY_ALERTING_RULES       ?= false
 SCALER_BACKEND              ?= keda  # keda (ScaledObject) or none (skip, use pre-installed backend)
-LLM_D_ROUTER_VERSION        ?= v0.9.0
+LLM_D_ROUTER_VERSION        ?= v1.0.0
 GAIE_VERSION                ?= v1.5.0
 SCALE_UP_THRESHOLD          ?=
 SCALE_DOWN_BOUNDARY         ?=
@@ -949,7 +949,14 @@ weights: ## Download WEIGHTS_MODEL=<hf id> under WEIGHTS_PATH=<node dir> on ever
 	@test -n "$(WEIGHTS_IMAGE)" || { echo "weights: set WEIGHTS_IMAGE=<an image with huggingface_hub; the engine image>" >&2; exit 1; }
 	@test -n "$(prepull_namespace_given)" || { echo "weights: set NAMESPACE=<ns> (the Makefile default is not taken here)" >&2; exit 1; }
 	@bash deploy/weights.sh apply -n "$(NAMESPACE)" --model "$(WEIGHTS_MODEL)" --path "$(WEIGHTS_PATH)" --image "$(WEIGHTS_IMAGE)" \
-		$(if $(WEIGHTS_HF_TOKEN_SECRET),--hf-token-secret "$(WEIGHTS_HF_TOKEN_SECRET)",) $(if $(WEIGHTS_CAPACITY),--capacity "$(WEIGHTS_CAPACITY)",) $(if $(WEIGHTS_MEMORY),--memory "$(WEIGHTS_MEMORY)",) $(WEIGHTS_ARGS)
+		$(if $(WEIGHTS_HF_TOKEN_SECRET),--hf-token-secret "$(WEIGHTS_HF_TOKEN_SECRET)",) $(if $(WEIGHTS_CAPACITY),--capacity "$(WEIGHTS_CAPACITY)",) $(if $(WEIGHTS_MEMORY),--memory "$(WEIGHTS_MEMORY)",) $(if $(WEIGHTS_NODE_LABEL),--node-label "$(WEIGHTS_NODE_LABEL)",) $(WEIGHTS_ARGS)
+
+# The node label each node whose copy verifies gets; empty is llm-d.ai/<model name>-cache.
+WEIGHTS_NODE_LABEL ?=
+.PHONY: weights-label
+weights-label: ## Cluster admin: label each node whose copy verifies <key>=ready, unlabel the rest, once. NAMESPACE=<ns>[,<ns>]. In the cluster, continuously: deploy/weights.sh labeller.
+	@test -n "$(prepull_namespace_given)" || { echo "weights-label: set NAMESPACE=<ns>[,<ns>] (the Makefile default is not taken here)" >&2; exit 1; }
+	@bash deploy/weights.sh label -n "$(NAMESPACE)"
 
 weights-status: ## Per accelerator node: does it hold the weights, or is the download still running. NAMESPACE=<ns> [WEIGHTS_MODEL=<hf id>]
 	@test -n "$(prepull_namespace_given)" || { echo "weights-status: set NAMESPACE=<ns> (the Makefile default is not taken here)" >&2; exit 1; }
@@ -3266,6 +3273,9 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/benchmark/file_capture.sh
 	@bash -n hack/benchmark/staircase.sh
 	@bash -n hack/check-staircase.sh
+	@# The flow-control gate replay (docs/proposals/slo-capacity-planner-ttft.md,
+	@# "As built: the router stage"); the cache prefix keeps .pyc out of the tree.
+	@PYTHONPYCACHEPREFIX=$${TMPDIR:-/tmp}/llmsm-pycache python3 -m py_compile hack/benchmark/replay_fc_gate.py
 	@bash -n hack/check-install-flow.sh
 	@bash -n hack/check-cluster-namespace-checks.sh
 	@bash -n hack/check-watch-namespace-list.sh
@@ -3288,6 +3298,7 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/compare-baked-release-files.sh
 	@bash -n hack/testdata/release-install/kubectl
 	@bash -n test/tools-install/e2e.sh
+	@bash -n test/tools-install/rv_snapshot.sh
 	@bash -n hack/check-controller-ready.sh
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
@@ -3322,6 +3333,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# the apply left a window where a new pod started active, and a
 	@# passive: false read through the yq alternative operator came back empty.
 	@bash hack/check-passive-keep.sh
+	@echo "Checking the tools-install e2e snapshot ignores a KEDA status write..."
+	@# Executes rv_snapshot against a stub kubectl. KEDA patches the status of a
+	@# ClusterTriggerAuthentication when it finalizes a ScaledObject, and the
+	@# second-install check failed on that write, which no install made.
+	@bash -n hack/check-tools-install-rv-snapshot.sh
+	@bash hack/check-tools-install-rv-snapshot.sh
 	@echo "Checking the controller readiness check..."
 	@# Executes it against a stub kubectl. `rollout status` passes at once for
 	@# a Deployment at 0 replicas, so an install over a controller at 0/0
@@ -3334,6 +3351,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# preStop hooks pod-wide, or reporting an unreadable workload as healthy all
 	@# parse perfectly and are all wrong about a running cluster.
 	@bash hack/check-workload-gaps.sh
+	@echo "Checking DisaggregatedSet discovery and the role report..."
+	@bash hack/check-disaggregatedset.sh
 	@echo "Checking the benchmark capture helpers..."
 	@# Executes them against a stub kubectl. A capture that replaces the run
 	@# already on disk, or that watches a cluster nobody named, parses perfectly
@@ -3391,6 +3410,10 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# a revoke under the wrong names, a Forbidden delete read as removed, or
 	@# an uninstall that leaves the grant all parse, and all exit 0.
 	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-keda-hpa-repair.sh
+	@echo "Checking the DisaggregatedSet role writer grant..."
+	@# The same handling for DSET_ROLE_WRITER, and what the install renders with
+	@# and without it: the grant, its binding and the switch on the Deployment.
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-dset-role-writer.sh
 	@echo "Checking the EPP /metrics authentication grant..."
 	@# Runs epp-metrics-auth against a stubbed kubectl. A grant that binds the
 	@# wrong ServiceAccount, reads a Forbidden list as no pools, or binds twice
@@ -3433,6 +3456,11 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash hack/check-prepull-manifests.sh
 	@echo "Checking what weights.sh and model_hostpath.sh actually emit..."
 	@bash hack/check-weights-manifests.sh
+	@echo "Checking the weights node gate (the verifier, label, the labeller, the workload-patch gate)..."
+	@# A probe that passes on a marker over a truncated file, a labeller that
+	@# removes a label another tool set, a required affinity that replaces the
+	@# GPU term it should be ANDed with: all parse, all wrong.
+	@bash hack/check-weights-node-gate.sh
 	@echo "Checking what enginecache.sh and engine_cache_claim.sh actually emit..."
 	@bash hack/check-enginecache-manifests.sh
 	@echo "Checking the tools entry point (the release's tools image runs it)..."
@@ -3480,6 +3508,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# pays a model load into the pool on the first burst and reports it as the
 	@# pool's cost. All of them are 26 minutes of GPU each.
 	@bash hack/check-two-model-scenario.sh
+	@echo "Checking the EPP installer refuses a router older than its values..."
+	@bash hack/check-epp-router-version.sh
+	@echo "Checking the router pins the harness patch writes..."
+	@bash hack/check-harness-router-pins.sh
+	@echo "Checking the benchmark EPP-scrape parsers under both metric namings..."
+	@bash hack/check-epp-metrics-parsers.sh
 	@echo "Checking the TTFT staircase's exit paths and arithmetic..."
 	@# Executes it against a stub kubectl. What protects a shared cluster for a
 	@# multi-day run is its exit paths, and bash -n sees none of them.
@@ -3569,6 +3603,10 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# Runs the release workflow step against a scratch repository. A backport
 	@# tagged after a newer release used to move latest back to the old line.
 	@bash hack/check-release-latest.sh
+	@echo "Checking no tracked file names a personal registry namespace..."
+	@# The warm-pool proxy shipped from a personal GHCR namespace long after the
+	@# project moved. Allowed references are listed, with reasons, in the script.
+	@bash hack/check-personal-namespace.sh
 	@echo "Checking the release files: digest, names, labels, placeholders..."
 	@# Renders what a GitHub Release attaches and asserts the rules of
 	@# docs/proposals/install-from-release.md, then breaks a copy one rule at a
@@ -3739,8 +3777,10 @@ PROMTOOL ?= $(LOCALBIN)/promtool-$(PROMTOOL_VERSION)
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.17.2
-#ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
-ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
+#ENVTEST_VERSION is the tag of the setup-envtest module to install: the controller-runtime version in go.mod (i.e. v0.24.1).
+# setup-envtest is its own module, tagged with each controller-runtime release. A release branch (release-0.24) no longer
+# resolves: go finds the root module at the branch head, which does not contain the setup-envtest package.
+ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime)
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.9.0
@@ -3773,8 +3813,9 @@ $(PROMTOOL): $(LOCALBIN)
 	@bash hack/install-promtool.sh $(PROMTOOL) $(PROMTOOL_VERSION)
 
 .PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
+envtest: $(LOCALBIN) ## Download setup-envtest locally if necessary.
+	@# Run the install every time: it is a no-op when setup-envtest-$(ENVTEST_VERSION) exists, and otherwise
+	@# installs it and repoints $(ENVTEST), which a target on the unversioned link alone would leave stale.
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint

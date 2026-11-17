@@ -107,7 +107,7 @@ v0.11.0 and newer split the two: `defaultRequestTTL` for the saturated case,
 enqueue time and the last regime change, so a regime change restarts the
 budget. **v0.9.0 does not**: it has `DefaultRequestTTL` and no empty-pool
 budget, so one number serves both and the only safe choice is the longer one.
-That is why this repo's scenarios pin v0.11.0.
+That is why this repo pins v0.11.0 or newer; it pins v1.0.0 today.
 
 ### Which router version you need
 
@@ -115,13 +115,13 @@ The two-budget split decides whether a scale-to-zero deployment works or
 sheds its own cold starts, so it decides the version. From the shipped binaries,
 not release notes:
 
-| flow-control feature | v0.9.0 | v0.11.0 |
-|---|---|---|
-| `noEndpointRequestTTL` — the scale-from-zero waiting room | **absent** | present |
-| `enableEviction` — in-flight eviction | absent | present |
-| `priority-holdback-policy`, `soft-reflective-ceiling-policy` | absent | present |
-| `sheddable-eviction-filter` | absent | present |
-| `slo-deadline`, `edf-ordering`, round-robin and program-aware fairness | present | present |
+| flow-control feature | v0.9.0 | v0.11.0 | v1.0.0 |
+|---|---|---|---|
+| `noEndpointRequestTTL` — the scale-from-zero waiting room | **absent** | present | present |
+| `enableEviction` — in-flight eviction | absent | present | present |
+| `priority-holdback-policy`, `soft-reflective-ceiling-policy` | absent | present | present |
+| `sheddable-eviction-filter` | absent | present | present |
+| `slo-deadline`, `edf-ordering`, round-robin and program-aware fairness | present | present | present |
 
 **On v0.9.0 no `defaultRequestTTL` serves a scale-to-zero deployment.** Short
 enough for a time-to-first-token objective kills cold starts. Long enough for a
@@ -204,6 +204,145 @@ Measured here after the migration: completions in 27-120 ms (v0.9.0 was
 unpinned router can change how requests spread and how the queue is bounded
 between runs, with nothing in the output saying so.
 
+#### Migrating to v1.0.0
+
+A v0.11.0 config loads on v1.0.0 unless it uses one of the removed plugins
+or fields below. From v0.9.0, apply
+[Migrating to v0.11.0](#migrating-to-v0110-three-changes) first.
+
+**In this order**, so that nothing goes blank and no router pod is left on a
+config it cannot load:
+
+1. **Dashboards and alerts.** Move every query to the `llm_d_epp_*` names in
+   the [table below](#metric-names-old-to-new). Routers before v1.0.0 already
+   export the `llm_d_epp_*` names, so move dashboards and alerts first;
+   nothing goes blank in between.
+2. **InferenceObjectives.** Recreate any you keep in
+   `inference.networking.x-k8s.io` in `llm-d.ai`; see
+   [InferenceObjectives](#inferenceobjectives). Write them as
+   `llm-d.ai/v1alpha2` with `spec.poolRef` while routers before v1.0.0 still
+   run: those read only that version. Move them to `llm-d.ai/v1` after step 5.
+3. **Removed plugins and fields.** Replace anything from the
+   [table below](#removed-plugins-and-fields), then bump the router image to
+   v1.0.0. Keep the apiVersion at `llm-d.ai/v1alpha1` for now: v1.0.0 still
+   reads it, with a deprecation line in the log.
+4. **The apiVersion.** Once every router pod runs v1.0.0, change the
+   `EndpointPickerConfig` apiVersion to `llm-d.ai/v1`. Not before: a pod of an
+   older router that restarts on a `llm-d.ai/v1` config crash-loops (see
+   [troubleshooting](troubleshooting.md)). `inference.networking.x-k8s.io/v1alpha1`
+   is rejected by v1.0.0 outright.
+5. **Verify** what the router loaded, not the ConfigMap:
+
+   ```bash
+   # The apiVersion the router parsed, and any deprecation it logged
+   kubectl -n <ns> logs deploy/<release>-epp -c epp \
+     | grep -o -E '"apiVersion":"[^"]*"|DEPRECATION[^"]*' | sort | uniq -c
+   ```
+
+Two more changes that need no step:
+
+- `--pool-group inference.networking.x-k8s.io` is rejected at startup.
+- `llm-d.ai/role: both` no longer matches the role filters; use
+  `prefill-decode`.
+
+##### Metric names, old to new
+
+v1.0.0 exports only the `llm_d_epp_*` names. Routers v0.9.0 to v0.11.x export
+both columns side by side. The scaling manager reads the new name first and
+the old one only as a fallback, so it needs no change; this table is for
+dashboards, alerts and scripts of your own. Labels not listed are the same.
+
+| Old (gone in v1.0.0) | New | Label changes |
+|---|---|---|
+| `inference_objective_request_total` | `llm_d_epp_request_total` | adds `fairness_id` |
+| `inference_objective_request_error_total` | `llm_d_epp_request_error_total` | adds `fairness_id`, `priority` |
+| `inference_objective_request_duration_seconds` | `llm_d_epp_request_duration_seconds` | adds `fairness_id`, `priority` |
+| `inference_objective_request_sizes` | `llm_d_epp_request_size_bytes` | adds `fairness_id`, `priority` |
+| `inference_objective_response_sizes` | `llm_d_epp_response_size_bytes` | adds `fairness_id`, `priority` |
+| `inference_objective_input_tokens` | `llm_d_epp_request_input_tokens` | adds `fairness_id`, `priority` |
+| `inference_objective_output_tokens` | `llm_d_epp_request_output_tokens` | adds `fairness_id`, `priority` |
+| `inference_objective_prompt_cached_tokens` | `llm_d_epp_request_cached_tokens` | adds `fairness_id`, `priority` |
+| `inference_objective_running_requests` | `llm_d_epp_request_running` | was `model_name` only; adds `target_model_name`, `fairness_id`, `priority` |
+| `inference_objective_normalized_time_per_output_token_seconds` | `llm_d_epp_request_ntpot_seconds` | adds `fairness_id`, `priority` |
+| `inference_pool_average_kv_cache_utilization` | `llm_d_epp_average_kv_cache_utilization` | none (`name`) |
+| `inference_pool_average_queue_size` | `llm_d_epp_average_queue_size` | none (`name`) |
+| `inference_pool_average_running_requests` | `llm_d_epp_average_running_requests` | none (`name`) |
+| `inference_pool_ready_pods` | `llm_d_epp_ready_endpoints` | none (`name`) |
+| `inference_pool_per_pod_queue_size` | `llm_d_epp_per_endpoint_queue_size` | `model_server_pod` becomes `model_server_endpoint` |
+| `inference_extension_scheduler_attempts_total` | `llm_d_epp_scheduler_attempts_total` | `pod_name` becomes `endpoint_name` |
+| `inference_extension_scheduler_e2e_duration_seconds` | `llm_d_epp_scheduler_e2e_duration_seconds` | none |
+| `inference_extension_plugin_duration_seconds` | `llm_d_epp_plugin_duration_seconds` | none |
+| `inference_extension_info` | `llm_d_epp_info` | none |
+| `inference_extension_model_rewrite_decisions_total` | `llm_d_epp_model_rewrite_decisions_total` | none |
+| `inference_extension_flow_control_queue_size`, `_queue_bytes` | `llm_d_epp_flow_control_queue_size`, `_queue_bytes` | none |
+| `inference_extension_flow_control_pool_saturation` | `llm_d_epp_flow_control_pool_saturation` | none in v0.9.0; v1.0.0 adds `stage` |
+| `inference_extension_flow_control_request_queue_duration_seconds`, `_request_enqueue_duration_seconds`, `_dispatch_cycle_duration_seconds` | the same names under `llm_d_epp_` | none |
+| `llm_d_inference_scheduler_datalayer_poll_errors_total`, `_extract_errors_total` | `llm_d_epp_datalayer_poll_errors_total`, `_extract_errors_total` | none |
+
+Checked against the metric declarations of llm-d-router v0.9.0, which
+registers every row's old and new series together, and v1.0.0, which
+registers only the new ones.
+
+##### Removed plugins and fields
+
+These fail the load on v1.0.0:
+
+| Removed | Replacement |
+|---|---|
+| `by-label`, `by-label-selector` | `prefill-filter` / `decode-filter` / `encode-filter` for roles, `label-selector-filter` otherwise |
+| `precise-prefix-cache-scorer` | `precise-prefix-cache-producer` plus `prefix-cache-scorer` with `prefixMatchInfoProducerName` |
+| `tokenizer` | `token-producer` |
+| `pd-profile-handler` | `disagg-profile-handler` (nested `profiles`/`deciders`) |
+| `data-parallel-profile-handler` | `single-profile-handler` |
+| top-level `saturationDetector` | `flowControl.saturationDetector` |
+| top-level `parser` | `requestHandler.parsers` |
+
+##### InferenceObjectives
+
+v1.0.0 reads `InferenceObjective` only from `llm-d.ai`: `v1` first, `v1alpha2`
+as a deprecated second. **An objective left in `inference.networking.x-k8s.io`
+is ignored without an error**, and its requests run at the default priority 0.
+Routers before v1.0.0 read `llm-d.ai/v1alpha2` and fall back to the x-k8s
+group.
+
+The `llm-d.ai` CRD comes from the llm-d-router repository, not from the
+router chart, and GAIE ships only the x-k8s one. `deploy/install-epp.sh`
+installs the Gateway API and GAIE CRDs only, so install it yourself:
+
+```bash
+# Install the llm-d.ai InferenceObjective (and InferenceModelRewrite) CRDs
+kubectl apply -k "https://github.com/llm-d/llm-d-router/config/crd?ref=v1.0.0"
+```
+
+`v1` targets pools with a list; `v1alpha2` and the x-k8s group with one
+reference:
+
+```yaml
+# x-k8s / llm-d.ai v1alpha2           # llm-d.ai/v1
+spec:                                 spec:
+  priority: 10                          priority: 10
+  poolRef:                              poolRefs:
+    group: inference.networking.k8s.io    - group: inference.networking.k8s.io
+    name: my-pool                           name: my-pool
+```
+
+Check what the router can see:
+
+```bash
+# Objectives in the group v1.0.0 reads, and any left behind in the old one
+kubectl get inferenceobjectives.llm-d.ai -A
+kubectl get inferenceobjectives.inference.networking.x-k8s.io -A
+```
+
+##### P/D routing sidecar
+
+The disaggregation sidecar is released with the router
+(`ghcr.io/llm-d/llm-d-router-disagg-sidecar`). v1.0.0 drops `--vllm-port` and
+`--connector`; use `--model-server-port` and `--kv-connector`. The
+llm-d-modelservice chart renders these flags: v0.4.16 renders the new ones,
+v0.4.15 the old ones. Move the chart and the sidecar image together, or every
+decode pod crash-loops on `unknown flag: --vllm-port` (or `--connector`).
+
 ### What to set
 
 ```yaml
@@ -248,7 +387,7 @@ loop), saturation pins high, dispatch stalls, and queued requests leave at their
 TTL, or with no TTL, never.
 
 Keep the metrics refresh interval well inside the staleness threshold. Watch
-`inference_extension_flow_control_pool_saturation` next to queue size. On the run
+`llm_d_epp_flow_control_pool_saturation` next to queue size. On the run
 above it peaked at 28.8 with the queue 4,772 deep: saturation was reported, but
 the queue had no bound to act on it.
 
@@ -381,8 +520,10 @@ kubectl -n <ns> logs deploy/<model>-router-epp -c epp \
 Expect the weights you set, as floats:
 
 ```
-prefill:{Filters: [prefill-filter/by-label], Scorers: [prefix-cache-scorer: 3.000000, queue-scorer: 2.000000, ...]
+prefill:{Filters: [prefill-filter/prefill-filter], Scorers: [prefix-cache-scorer: 3.000000, queue-scorer: 2.000000, ...]
 ```
+
+Routers before v1.0.0 print the filter as `prefill-filter/by-label`.
 
 ## See also
 

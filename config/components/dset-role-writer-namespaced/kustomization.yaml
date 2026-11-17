@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# The DisaggregatedSet role writer, namespace scope (internal/dsetwriter,
+# DSET_ROLE_WRITER). The same grant as components/dset-role-writer as a Role
+# and RoleBinding in the controller's namespace. When the controller manages
+# other namespaces (LLMSM_WATCH_NS), the installer copies both into each of
+# them, as it does the manager Role (llmsm_apply_watch_namespace_rbac).
+#
+# Opt-in, and NOT listed in any overlay: the installer adds it to the render
+# only with DSET_ROLE_WRITER=true (llmsm_append_dset_role_writer_component).
+# Applied above the overlay's namePrefix, so the names here are final.
+resources:
+- dset-role-writer-role.yaml
+- dset-role-writer-rolebinding.yaml
+
+patches:
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/env/-
+      value:
+        name: DSET_ROLE_WRITER
+        value: "true"
+  target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: scaling-manager-controller-manager

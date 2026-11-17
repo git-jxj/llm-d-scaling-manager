@@ -70,8 +70,12 @@ data:
 
       # ── Engine-agnostic analyzer: one body (no `engines:` map), used for any engine.
       # Suitable for signals built on EPP/GIE metrics that do not vary by engine.
+      # The router's mean model-server queue over the InferencePool. The series is
+      # labelled by the pool's `name`, not by model, so this reads every pool in the
+      # namespace: right for one pool per namespace. (Before router v1.0.0 the same
+      # gauge was also exported as inference_pool_average_queue_size.)
       pool-queue:
-        query: sum(max_over_time(inference_pool_average_queue_size{namespace="{{.namespace}}",model_name="{{.modelID}}"}[1m]))
+        query: sum(max_over_time(llm_d_epp_average_queue_size{namespace="{{.namespace}}"}[1m]))
         threshold: "5"
 
   # A policy tier SELECTS and weights them by name. It cannot define one.

@@ -23,7 +23,8 @@ func TestPrometheusReachable(t *testing.T) {
 	}{
 		{"unset", func(f *fixture) { f.settings[keyPrometheusURL] = "" }, Fail, "not set", "prometheusURL"},
 		{"unset on OpenShift", func(f *fixture) { f.settings[keyPrometheusURL] = ""; f.openshift = true }, Fail, "not set", thanosURL},
-		{"plain HTTP", func(f *fixture) { f.settings[keyPrometheusURL] = "http://prometheus.monitoring.svc:9090" }, Fail, "plain HTTP", "https://prometheus.monitoring.svc:9090"},
+		{"plain HTTP", func(f *fixture) { f.settings[keyPrometheusURL] = plainURL }, Fail, "plain HTTP", "https://prometheus.monitoring.svc:9090"},
+		{"plain HTTP names the flag", func(f *fixture) { f.settings[keyPrometheusURL] = plainURL }, Fail, "unless prometheusAllowHTTP is true", "--allow-http"},
 		{"refused", func(f *fixture) {
 			f.prom.reachErr = &PromError{Kind: PromUnreachable, Err: errors.New("dial tcp 10.0.0.1:9090: connect: connection refused")}
 		}, Fail, "connection refused", "NetworkPolicy"},

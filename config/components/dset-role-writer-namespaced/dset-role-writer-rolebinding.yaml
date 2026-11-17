@@ -1,0 +1,13 @@
+# The subject has no namespace on purpose: the install's top-level
+# `namespace:` sets it to the controller's.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: scaling-manager-dset-role-writer-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: scaling-manager-dset-role-writer-role
+subjects:
+- kind: ServiceAccount
+  name: scaling-manager-controller-manager

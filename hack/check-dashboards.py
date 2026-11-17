@@ -272,6 +272,27 @@ def check_slo_sources(name, dashboard, fail):
                      f"and mapped to {text!r}")
 
 
+def check_router_panels(name, dashboard, fail):
+    """The per-replica router queue panel plots the legacy per-pod series only
+    where the current per-endpoint one is absent. Routers before v1.0.0 export
+    both, and without the guard each replica is drawn twice."""
+    found = False
+    for panel, _ in panels_of(dashboard):
+        if panel.get("title") != "Waiting per replica (EPP per-endpoint queue)":
+            continue
+        found = True
+        legacy = [t.get("expr") or "" for t in panel.get("targets") or []
+                  if "inference_pool_per_pod_queue_size" in (t.get("expr") or "")]
+        if not legacy:
+            fail(f"ROUTER PANEL  {name}: {panel['title']}: no legacy per-pod target")
+        for expr in legacy:
+            if "unless on (namespace) llm_d_epp_per_endpoint_queue_size" not in expr:
+                fail(f"ROUTER PANEL  {name}: {panel['title']}: the legacy per-pod target is not "
+                     f"guarded with `unless on (namespace) llm_d_epp_per_endpoint_queue_size`")
+    if not found:
+        fail(f"ROUTER PANEL  {name}: no 'Waiting per replica (EPP per-endpoint queue)' panel to check")
+
+
 def check_format(name, text, dashboard, fail):
     """Both files are exactly json.dumps(indent=2). Keeping them that way is what
     makes a one-line change show up as a one-line diff -- a Grafana export or a
@@ -296,6 +317,8 @@ def main():
         check_row_scope(name, dashboard, failures.append)
         check_metric_names(name, dashboard, failures.append)
         check_slo_sources(name, dashboard, failures.append)
+        if name == "operational-dashboard.json":
+            check_router_panels(name, dashboard, failures.append)
 
     for line in failures:
         print(line)
