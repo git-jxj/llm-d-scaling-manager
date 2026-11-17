@@ -31,6 +31,7 @@ import (
 
 	accel "github.com/llm-d-incubation/llm-d-scaling-manager/internal/accelerator"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/datastore"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/decision"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
@@ -689,14 +690,34 @@ func (e *Engine) placementBasisChanged(namespace, summary string) bool {
 // prefill is enough: the setting states a time-to-first-token requirement, and a
 // decode-only wake is the thing it forbids. A variant that names no tier
 // follows the ones that do (config.ModelTiers).
+//
+// A model served by a DisaggregatedSet requires prefill unless its policy says
+// requirePrefill: false: its roles are one set, rolled out together and woken
+// together (docs/proposals/disaggregatedset.md). Absent the setting, the
+// default for every other model stays false.
 func (e *Engine) requirePrefill(group modelGroup) bool {
-	if e.config == nil {
-		return false
+	explicitOff := false
+	if e.config != nil {
+		entries := e.config.ScalingPolicyConfigForNamespace(group.namespace)
+		for _, tier := range group.tiers() {
+			resolved := config.ResolveScalingPolicyForTier(entries, group.modelID, group.namespace, tier)
+			if resolved.ScaleFromZero == nil || resolved.ScaleFromZero.RequirePrefill == nil {
+				continue
+			}
+			if *resolved.ScaleFromZero.RequirePrefill {
+				return true
+			}
+			explicitOff = true
+		}
 	}
-	entries := e.config.ScalingPolicyConfigForNamespace(group.namespace)
-	for _, tier := range group.tiers() {
-		resolved := config.ResolveScalingPolicyForTier(entries, group.modelID, group.namespace, tier)
-		if resolved.RequirePrefillOnScaleFromZero() {
+	return !explicitOff && group.servedByDisaggregatedSet()
+}
+
+// servedByDisaggregatedSet reports whether any variant of the group scales a
+// DisaggregatedSet role.
+func (g modelGroup) servedByDisaggregatedSet() bool {
+	for i := range g.variants {
+		if g.variants[i].Spec.ScaleTargetRef.Kind == constants.DisaggregatedSetRoleScalerKind {
 			return true
 		}
 	}

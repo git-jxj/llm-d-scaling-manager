@@ -148,6 +148,8 @@ func scaleTargetOf(ctx context.Context, c client.Client, ref allocation.ScaleTar
 			return nil, err
 		}
 		return scaletarget.NewLWSAccessor(&lws), nil
+	case constants.DisaggregatedSetRoleScalerKind:
+		return scaletarget.FetchScaleTarget(ctx, c, "", ref.Kind, ref.Name, namespace)
 	default:
 		var d appsv1.Deployment
 		if err := c.Get(ctx, key, &d); err != nil {

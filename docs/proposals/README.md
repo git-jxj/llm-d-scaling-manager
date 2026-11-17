@@ -54,6 +54,17 @@ Read the review first; the implementation design says what was built.
   container. Measured 19.9 s to 10.0 s of weight load on a 32B model; estimated
   60-90 s on a GLM-class node with one disk and ~0 with striped NVMe. Reads
   every file, because vLLM does. Off by default.
+- **[Keeping replicas off nodes whose weights are not there yet](weights-node-gate.md)**
+  — built, not yet run on a cluster. The downloader verifies its files, a
+  labeller run by the cluster admin sets and removes `llm-d.ai/<model>-cache=ready`
+  from them, and the workload patch adds a preferred node affinity and an init
+  container that waits for the copy. Why preferred and not required for
+  scaling, and the failure modes.
+- **[Workloads that bring their own JIT cache](external-jit-cache.md)** —
+  proposed, depends on PR #146. When an external cache manager owns the
+  engine's compile caches, an annotation tells `make workload-patch` to leave
+  them alone and report what it left, instead of warning "COMPILES FROM
+  NOTHING" and patching them away.
 
 ## Scaling and actuation
 
@@ -94,6 +105,11 @@ Read the review first; the implementation design says what was built.
   model. Holds the live count when our trigger is alone; stays inert beside
   KEDA's own triggers so KEDA scales and we observe. Records the audit of what
   compares against the controller's own previous output.
+- **[Scaling a DisaggregatedSet](disaggregatedset.md)** — built. How the LWS
+  project's prefill/decode object scales (independent roles, one `/scale` per
+  role through `DisaggregatedSetRoleScaler`), what that means for us, the role
+  writer for Static roles (LWS v0.9.0), and the follow-ups: release-gated pods
+  as supply, group keys during a rollout.
 
 ## Install and release
 
