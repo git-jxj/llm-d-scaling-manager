@@ -60,6 +60,11 @@ Read the review first; the implementation design says what was built.
   from them, and the workload patch adds a preferred node affinity and an init
   container that waits for the copy. Why preferred and not required for
   scaling, and the failure modes.
+- **[Workloads that bring their own JIT cache](external-jit-cache.md)** —
+  proposed, depends on PR #146. When an external cache manager owns the
+  engine's compile caches, an annotation tells `make workload-patch` to leave
+  them alone and report what it left, instead of warning "COMPILES FROM
+  NOTHING" and patching them away.
 
 ## Scaling and actuation
 
