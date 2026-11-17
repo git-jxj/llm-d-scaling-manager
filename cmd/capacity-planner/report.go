@@ -152,7 +152,7 @@ func (r *reporter) shapeReport(ctx context.Context, np, nd int) (whatifapi.Repor
 	rs := whatifapi.ReportShape{Label: r.sh.Label, InputTokens: r.pv.shape.AvgInputTokens, OutputTokens: r.pv.shape.AvgOutputTokens,
 		PrefixHitRate: r.pv.shape.PrefixHitRate, Source: measuredText(r.pv), Flags: []string{}, Assumed: []string{}}
 	if !r.sh.Measured {
-		rs.Source = "asked"
+		rs.Source = sourceAsked
 		if why := r.extrapolated(); why != "" {
 			rs.Extrapolated, rs.ExtrapolatedWhy = true, why
 			r.results = append(r.results, whatif.Answer{Flags: []whatif.Flag{extrapolatedShape}})
@@ -204,7 +204,7 @@ func (r *reporter) extrapolated() string {
 // from names where a count came from: 0 is the recording's.
 func from(asked int) string {
 	if asked > 0 {
-		return "asked"
+		return sourceAsked
 	}
 	return "recording"
 }
@@ -215,18 +215,18 @@ func (r *reporter) resolveTargets() {
 	p := r.st.Policy
 	switch {
 	case r.q.Headroom > 0:
-		r.headroom, r.headroomSource = r.q.Headroom, "asked"
+		r.headroom, r.headroomSource = r.q.Headroom, sourceAsked
 	case p != nil && p.ScaleUpThreshold > 0:
 		r.headroom, r.headroomSource = p.ScaleUpThreshold, "scaleUpThreshold"
 	default:
 		r.headroom, r.headroomSource = config.DefaultScaleUpThreshold, "default"
 	}
-	r.ttft, r.ttftSource = r.q.TTFT, "asked"
+	r.ttft, r.ttftSource = r.q.TTFT, sourceAsked
 	if r.ttft == nil && p != nil && p.SLO != nil && p.SLO.TTFT != nil {
 		r.ttft = &whatifapi.ReportTarget{Seconds: p.SLO.TTFT.Target.Seconds(), Percentile: float64(p.SLO.TTFTPercentile()) / 100}
 		r.ttftSource = "policy"
 	}
-	r.tpot, r.tpotSource = r.q.TPOT, "asked"
+	r.tpot, r.tpotSource = r.q.TPOT, sourceAsked
 	if r.tpot == nil && p != nil && p.SLO != nil && p.SLO.TPOT != nil {
 		r.tpot = &whatifapi.ReportTarget{Seconds: p.SLO.TPOT.Target.Seconds()}
 		r.tpotSource = "policy"
@@ -329,7 +329,7 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 	var seen float64
 	switch {
 	case r.q.LoadSeen > 0:
-		seen, l.Source = r.q.LoadSeen, "asked"
+		seen, l.Source = r.q.LoadSeen, sourceAsked
 	case l.CyclesWithTraffic > 0:
 		seen, l.Source = sum/float64(l.CyclesWithTraffic), "observed mean"
 	default:
@@ -922,3 +922,6 @@ func measuredText(pv pricedVariant) string {
 	}
 	return fmt.Sprintf("measured, cycles %d-%d", m.FromCycle, m.ToCycle)
 }
+
+// sourceAsked is a figure the question stated rather than the source read.
+const sourceAsked = "asked"

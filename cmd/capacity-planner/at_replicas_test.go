@@ -214,7 +214,7 @@ func TestAtReplicas_KneeRowIsTheKnee(t *testing.T) {
 			sf, err := s.fleetAt(whatifapi.Knobs{Prefill: c.np, Decode: 2, TTFTPercentile: 0.9, Headroom: 0.85,
 				Assume: stairQuery(0, 0, 0).Assume})
 			require.NoError(t, err)
-			var knee whatif.Result = whatif.KneeRate(sf.pv.decode)
+			knee := whatif.KneeRate(sf.pv.decode)
 			if c.binds == rolePrefill {
 				knee = whatif.PrefillKnee(sf.pf.fleet.Prefill)
 			}

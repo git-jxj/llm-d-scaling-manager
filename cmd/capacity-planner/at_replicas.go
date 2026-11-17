@@ -312,7 +312,8 @@ func reportText(r *whatifapi.ReportResponse) string {
 	fmt.Fprintf(&b, "%-16s%s\n", "SLO", sloText(r.SLO))
 
 	b.WriteString(summaryText(r))
-	verdicts := [][]string{{"verdicts"}}
+	verdicts := make([][]string, 1, 1+len(r.Shapes))
+	verdicts[0] = []string{"verdicts"}
 	for _, s := range r.Shapes {
 		verdicts = append(verdicts, []string{"  " + shapeName(s), s.Verdict.Verdict})
 	}
@@ -337,7 +338,7 @@ func loadText(l whatifapi.ReportLoad) string {
 	switch l.Source {
 	case "observed mean":
 		s += fmt.Sprintf(", the mean of the %d of %d cycles with traffic", l.CyclesWithTraffic, l.Cycles)
-	case "asked":
+	case sourceAsked:
 		s += " (--load-seen)"
 	}
 	if l.Peak != nil {
@@ -353,9 +354,10 @@ func summaryText(r *whatifapi.ReportResponse) string {
 	if len(r.Shapes) > 0 && len(r.Shapes[0].Table) > 0 {
 		tpot = "TPOT " + r.Shapes[0].Table[0].Cell.TPOT.Statistic
 	}
-	head := []string{"summary"}
+	head := append(make([]string, 0, 1+len(r.Loads)), "summary")
 	head = append(head, r.Loads...)
-	cells := [][]string{head}
+	cells := make([][]string, 1, 1+len(r.Shapes))
+	cells[0] = head
 	for _, s := range r.Shapes {
 		row := []string{"  " + shapeName(s)}
 		for _, l := range r.Loads {
