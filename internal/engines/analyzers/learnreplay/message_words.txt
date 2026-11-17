@@ -2187,6 +2187,7 @@ production
 products
 projectedBacklog
 prometheus
+prometheusAllowHTTP
 prometheusCACertPath
 prometheusInsecureSkipVerify
 prometheusServerName

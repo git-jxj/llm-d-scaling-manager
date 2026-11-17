@@ -1,14 +1,19 @@
-# InferenceObjective for GIE queuing (scale-from-zero flow control).
-# Applied by e2e test setup (test/e2e/fixtures) when scale-from-zero tests run.
-# poolRef.name is templated to match the deployed InferencePool.
-apiVersion: inference.networking.x-k8s.io/v1alpha2
+# InferenceObjective for router flow-control queuing (scale-from-zero).
+# The e2e fixtures (test/e2e/fixtures/inference_objective.go) create the same
+# object in code; this file is the manifest form, for applying by hand.
+# poolRefs[0].name is templated to match the deployed InferencePool.
+#
+# llm-d.ai/v1 is the group and version router v1.0.0 reads; it no longer reads
+# inference.networking.x-k8s.io objectives. The object is optional: priority 0
+# is also what a request with no objective gets.
+apiVersion: llm-d.ai/v1
 kind: InferenceObjective
 metadata:
   name: e2e-default
   namespace: NAMESPACE_PLACEHOLDER
 spec:
   priority: 0
-  poolRef:
-    name: POOL_NAME_PLACEHOLDER
-    kind: InferencePool
-    group: inference.networking.x-k8s.io
+  poolRefs:
+    - name: POOL_NAME_PLACEHOLDER
+      kind: InferencePool
+      group: inference.networking.k8s.io

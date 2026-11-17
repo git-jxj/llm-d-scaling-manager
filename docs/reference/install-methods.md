@@ -132,7 +132,7 @@ each one; never create an HPA yourself.
 ```bash
 ./deploy/install.sh -e kubernetes
 # EPP (llm-d-router-standalone chart + RBAC):
-LLM_D_ROUTER_VERSION=v0.9.0 GAIE_VERSION=v1.5.0 NAMESPACE=llm-d-optimized-baseline \
+LLM_D_ROUTER_VERSION=v1.0.0 GAIE_VERSION=v1.5.0 NAMESPACE=llm-d-optimized-baseline \
   ./deploy/install-epp.sh
 # Model server: follow llm-d/llm-d guides/optimized-baseline
 ```

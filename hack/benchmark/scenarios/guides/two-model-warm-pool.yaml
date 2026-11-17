@@ -336,7 +336,7 @@ shared:
         pluginsConfigFile: "optimized-baseline-plugins.yaml"
         pluginsCustomConfig:
           optimized-baseline-plugins.yaml: |
-            apiVersion: llm-d.ai/v1alpha1
+            apiVersion: llm-d.ai/v1
             kind: EndpointPickerConfig
             # the scaling manager's arrival-rate and throughput analysis is driven by EPP
             # QUEUE DEPTH, and the flowControl gate is what emits it. It is

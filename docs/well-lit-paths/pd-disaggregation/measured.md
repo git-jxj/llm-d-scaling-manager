@@ -35,11 +35,15 @@ substitute `MODEL_ID` (Qwen3-0.6B by default) and `BENCHMARK_DECODE_REPLICAS`
 auto-detected.
 
 Two pins in that file must move together. `patch_harness.sh` pins the
-modelservice chart to v0.4.15, which renders the routing sidecar's flags as
-`--vllm-port/--connector`. The scenario pins the sidecar to v0.9.0, the build
-that takes those flags. Let either float and every decode pod crash-loops on
-`unknown flag: --connector` at the next standup. It happened once, and the
+modelservice chart to v0.4.16, which renders the routing sidecar's flags as
+`--model-server-port/--kv-connector`. The scenario pins the sidecar to v1.0.0,
+the build that takes those flags. Let either float and every decode pod
+crash-loops on an unknown flag at the next standup. It happened once, and the
 file says so.
+
+The numbers on this page were measured with router v0.11.0 and sidecar v0.9.0
+(chart v0.4.15), before the scenario moved both to v1.0.0. They have not been
+re-measured on v1.0.0.
 
 ## Reproducing it
 

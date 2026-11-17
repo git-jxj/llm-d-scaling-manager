@@ -194,9 +194,10 @@ const (
 const (
 	// EPPFlowControlQueueSize is the number of requests queued in the inference
 	// scheduler's flow control layer. This is the current name for the family
-	// below: llm-d's EPP exports both and marks the inference_extension_ one
-	// "[Deprecated: Use llm_d_epp_flow_control_queue_size]". Prefer this one and
-	// keep the deprecated name only as a fallback.
+	// below: llm-d's EPP before v1.0.0 exports both and marks the
+	// inference_extension_ one "[Deprecated: Use
+	// llm_d_epp_flow_control_queue_size]"; v1.0.0 exports only this one. Prefer
+	// this one and keep the deprecated name only as a fallback.
 	// Labels: fairness_id, priority, inference_pool, model_name, target_model_name
 	// Note: namespace is added at scrape time (the EPP pod's), not exported — see above.
 	EPPFlowControlQueueSize = "llm_d_epp_flow_control_queue_size"

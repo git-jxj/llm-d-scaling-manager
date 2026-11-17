@@ -99,11 +99,7 @@ var _ = Describe("Scale-To-Zero Feature - park and wake the same model", Serial,
 		if poolRefName == "" {
 			poolRefName = strings.TrimSuffix(cfg.EPPServiceName, "-epp")
 		}
-		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRefName)
-		Expect(errIO).NotTo(HaveOccurred())
-		if !ioApplied {
-			Skip("InferenceObjective API not available on cluster; the wake half cannot run")
-		}
+		Expect(fixtures.EnsureInferenceObjectiveOptional(ctx, crClient, cfg.LLMDNamespace, poolRefName, GinkgoWriter.Printf)).To(Succeed())
 		DeferCleanup(func() {
 			_ = fixtures.DeleteInferenceObjective(context.Background(), crClient, cfg.LLMDNamespace)
 		})
