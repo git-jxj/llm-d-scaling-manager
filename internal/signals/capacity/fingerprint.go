@@ -101,6 +101,13 @@ const fingerprintLength = 16
 // value it produces would split a key on a distinction the engine has already
 // collapsed.
 func (p *EngineParams) Fingerprint() string {
+	return p.fingerprintAt(FingerprintVersion)
+}
+
+// fingerprintAt is Fingerprint as FingerprintVersion version computed it, for
+// the same values: what an earlier controller stored for this configuration,
+// so a test can stand in for its snapshot.
+func (p *EngineParams) fingerprintAt(version int) string {
 	if p == nil {
 		return ""
 	}
@@ -116,7 +123,7 @@ func (p *EngineParams) Fingerprint() string {
 	// digest. The pairing that must hold is between FingerprintFields and
 	// FingerprintValues, which is what labels the metric, and a test pins it.
 	fields := []string{
-		"v=" + strconv.Itoa(FingerprintVersion),
+		"v=" + strconv.Itoa(version),
 		"engine=" + string(p.Engine),
 		"weight_dtype=" + p.WeightDtype,
 		"quantization=" + p.Quantization,
