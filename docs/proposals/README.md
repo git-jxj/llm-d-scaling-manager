@@ -54,6 +54,11 @@ Read the review first; the implementation design says what was built.
   container. Measured 19.9 s to 10.0 s of weight load on a 32B model; estimated
   60-90 s on a GLM-class node with one disk and ~0 with striped NVMe. Reads
   every file, because vLLM does. Off by default.
+- **[Workloads that bring their own JIT cache](external-jit-cache.md)** —
+  proposed, depends on PR #146. When an external cache manager owns the
+  engine's compile caches, an annotation tells `make workload-patch` to leave
+  them alone and report what it left, instead of warning "COMPILES FROM
+  NOTHING" and patching them away.
 
 ## Scaling and actuation
 
