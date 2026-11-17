@@ -226,6 +226,35 @@ func variantSelecting(warmPool string) policy.VariantDemand {
 	}
 }
 
+func TestAPoolsOwnGPUUtilisationReachesItsWarmCopies(t *testing.T) {
+	// warmPoolGPUMemoryUtilization was read into PoolSpec and then never used:
+	// every pool ran at the controller-wide value whatever its trigger said.
+	const flag = "--gpu-memory-utilization"
+	in := policy.VariantDemand{
+		Model: pool.ModelRef{Namespace: "workload", Variant: "qwen",
+			EngineOptions: "--model m " + flag + " 0.9"},
+	}
+	pools := []PoolSpec{{Name: "small", GPUMemoryUtilization: 0.6}, {Name: "plain"}}
+
+	in.WarmPool = "small"
+	got := VariantsFor([]policy.VariantDemand{in}, pools[0], pools)
+	if len(got) != 1 {
+		t.Fatalf("want the variant in its pool, got %+v", got)
+	}
+	if want := "--model m " + flag + " 0.6"; got[0].Model.EngineOptions != want {
+		t.Errorf("pool value not applied: %q, want %q", got[0].Model.EngineOptions, want)
+	}
+	if in.Model.EngineOptions != "--model m "+flag+" 0.9" {
+		t.Errorf("the caller's variant was modified: %q", in.Model.EngineOptions)
+	}
+
+	in.WarmPool = "plain"
+	got = VariantsFor([]policy.VariantDemand{in}, pools[1], pools)
+	if len(got) != 1 || got[0].Model.EngineOptions != "--model m "+flag+" 0.9" {
+		t.Errorf("a pool with no value of its own must keep the controller's: %+v", got)
+	}
+}
+
 func TestOnePoolNeedsNoSelection(t *testing.T) {
 	// The common case by a wide margin, and the reason the metadata key is not
 	// boilerplate: with one pool there is nothing to disambiguate, so a

@@ -490,6 +490,10 @@ var warmableFlags = map[string]bool{
 // Never left to vLLM: from v0.34 its default is 1.0 (the extensible KV cache
 // takes every byte free after warmup), which leaves no room for the sleepers
 // beside the awake engine. 0.9 is the controller flag's own default.
+//
+// The cost, on any vLLM: the value is part of the torch.compile cache key, so a
+// warm copy of a workload that names none no longer shares its compile cache
+// (on v0.26 that workload runs at 0.92). One extra compile per model.
 const defaultGPUMemoryUtilization = 0.9
 
 // withGPUMemoryUtilization applies the pool's own value, if it has one, and

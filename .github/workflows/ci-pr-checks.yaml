@@ -149,6 +149,8 @@ jobs:
               - 'warmpool/supervisor/**'
               - 'Dockerfile.warmpool-launcher'
               - 'Dockerfile.warmpool-launcher.dockerignore'
+              # make test-warmpool-launcher, which the job runs.
+              - 'Makefile'
               - '.github/workflows/ci-pr-checks.yaml'
 
       - name: Set output
@@ -170,9 +172,12 @@ jobs:
             echo "release_install=true" >> $GITHUB_OUTPUT
           fi
           # The launcher image pulls a ~10 GB vLLM base, so it is built on a PR
-          # that touches it (an empty filter result builds it, failing closed),
-          # nightly and on dispatch, and not on every push: the release builds
-          # the same Dockerfile, with the same import check, before it pushes.
+          # that touches it (an empty filter result builds it, failing closed)
+          # and on dispatch. Not nightly: the base is pinned by digest, so a
+          # rebuild of an unchanged tree checks nothing new. Not on every push:
+          # the release builds the same Dockerfile, with the same import check,
+          # for both platforms (ci-warmpool-launcher.yaml, which can also be
+          # dispatched alone as a dry run).
           case "${{ github.event_name }}" in
             pull_request)
               if [ -n "${{ steps.launcher-filter.outputs.warmpool_launcher }}" ]; then
@@ -180,7 +185,7 @@ jobs:
               else
                 echo "warmpool_launcher=true" >> $GITHUB_OUTPUT
               fi ;;
-            schedule|workflow_dispatch)
+            workflow_dispatch)
               echo "warmpool_launcher=true" >> $GITHUB_OUTPUT ;;
             *)
               echo "warmpool_launcher=false" >> $GITHUB_OUTPUT ;;

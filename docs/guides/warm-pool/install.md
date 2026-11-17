@@ -54,17 +54,31 @@ ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher:<release>
 - It runs **vLLM v0.34.0**. The FMA images above run v0.26.0.
 - It is signed with cosign, like the controller image.
 
-To use it, pass it to `create`, pinned by digest:
+**Use it only for workloads that run vLLM v0.34.0.** A warm copy runs in the
+launcher's image, not the workload's, so its vLLM is the launcher's. A copy on
+another vLLM is a different engine: different defaults, a different KV cache
+size, and a compile cache the workload's replicas never filled.
+
+To use it, look up the release's digest, verify its signature (cosign 3.0 or
+later), and pass it to `create` pinned by digest:
 
 ```bash
-deploy/warmpool.sh create ... --launcher-image ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher@sha256:<digest>
+V=<release, v0.12.0 or later>
+IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher
+docker buildx imagetools inspect "$IMAGE:$V" --format '{{json .Manifest}}' | jq -r .digest
+cosign verify "$IMAGE:$V" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/$V"
+deploy/warmpool.sh create ... --launcher-image "$IMAGE@sha256:<digest>"
 ```
 
 It has not run on a GPU yet; the default stays on FMA's images until it has.
-On vLLM v0.34, every warm copy carries `--gpu-memory-utilization`: when neither
-the pool nor the workload sets one, the controller passes 0.9, because vLLM's
-own default is now 1.0 and would leave no room for sleepers. What the image is
-and how it is built: [`warmpool/README.md`](../../../warmpool/README.md#the-image-built-from-it).
+Every warm copy carries `--gpu-memory-utilization`. When the controller flag
+`--warm-pool-gpu-memory-utilization` is 0 and the workload sets none, the
+controller passes 0.9, because vLLM v0.34's own default is 1.0 and would leave
+no room for sleepers. A pool's `warmPoolGPUMemoryUtilization` overrides the
+flag for that pool. What the image is and how it is built:
+[`warmpool/README.md`](../../../warmpool/README.md#the-image-built-from-it).
 
 ## Turning it on during installation
 

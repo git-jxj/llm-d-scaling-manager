@@ -54,10 +54,15 @@ instead.
 7. **The warm-pool launcher image**, under the same tag:
    `ghcr.io/<repository owner>/llm-d-scaling-manager/warmpool-launcher:<tag>`
    (`Dockerfile.warmpool-launcher`: the launcher in `warmpool/supervisor/` on
-   the vLLM base). Jobs `release-warmpool-launcher-build`, one per platform on
-   its own runner, and `release-warmpool-launcher`, which joins them into one
-   index and signs it. Nothing installs it by default yet, so the release
-   files do not wait for it ([warmpool/README.md](../../warmpool/README.md#the-image-built-from-it)).
+   the vLLM base). Jobs `release-warmpool-launcher-build` (the reusable
+   `ci-warmpool-launcher.yaml`, one leg per platform on its own runner) and
+   `release-warmpool-launcher`, which joins them into one index and signs it.
+   Nothing installs it by default yet, so the release files do not wait for it
+   ([warmpool/README.md](../../warmpool/README.md#the-image-built-from-it)).
+   Before the first release that carries these jobs, dispatch
+   `ci-warmpool-launcher.yaml` by hand on `main` (Actions, Run workflow) as a
+   dry run: both platforms must build. Check **push** to also push each
+   platform by digest, untagged.
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line
@@ -312,6 +317,9 @@ its image: `docker run --rm ghcr.io/sigstore/cosign/cosign:v3.0.6 verify ...`.
 
 Record the index digest in the release notes, so users can deploy by digest:
 `docker buildx imagetools inspect "$IMAGE:vX.Y.Z"` prints it as `Digest:`.
+Do the same for the warm-pool launcher image (`$IMAGE/warmpool-launcher`):
+the `release-warmpool-launcher` job summary prints its digest and its
+`cosign verify` command, which takes the same identity as below.
 
 ```bash
 IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager

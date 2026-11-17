@@ -721,8 +721,10 @@ func TestAWarmCopyAlwaysNamesItsGPUUtilisation(t *testing.T) {
 	if err != nil || len(got) != 1 {
 		t.Fatalf("Variants = %+v, %v", got, err)
 	}
-	if !strings.Contains(got[0].Model.EngineOptions, "--gpu-memory-utilization 0.9") {
-		t.Errorf("a warm copy must name its utilisation: %q", got[0].Model.EngineOptions)
+	// The last field, exactly: Contains would also match 0.95 or 0.99.
+	if fields := strings.Fields(got[0].Model.EngineOptions); len(fields) < 2 ||
+		fields[len(fields)-2] != "--gpu-memory-utilization" || fields[len(fields)-1] != "0.9" {
+		t.Errorf("a warm copy must name its utilisation, 0.9: %q", got[0].Model.EngineOptions)
 	}
 }
 

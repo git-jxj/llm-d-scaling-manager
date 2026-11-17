@@ -9,6 +9,11 @@
 # ai.vllm.image.tag says so), without going through Docker Hub. The tag is
 # the vLLM commit of v0.34.0. To move vLLM, change BASE_IMAGE and VLLM_VERSION
 # together: the build fails when they disagree.
+#
+# The digest fixes the content, not its availability: vLLM does not document
+# how long this registry keeps a release. If it drops this tag, the same
+# digest is vllm/vllm-openai:v0.34.0 on Docker Hub; mirror it to a registry
+# this project may use (not docker.io) and point BASE_IMAGE there.
 ARG BASE_IMAGE=public.ecr.aws/q9t5s3a7/vllm-release-repo:62d4bc3c7e33b1b6c906e233e6af2d3506c482ca@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
 FROM ${BASE_IMAGE}
 ARG VLLM_VERSION=0.34.0
@@ -25,7 +30,10 @@ WORKDIR /app
 ENV USER=vllm
 
 # gputranslator.py needs both; vLLM ships neither. uv, as vLLM's own image
-# installs, so the image's pins (/etc/uv-overrides.txt) still apply.
+# installs, so the image's pins (/etc/uv-overrides.txt) still apply. Only
+# these two are pinned: their own dependencies (urllib3, google-auth, ...)
+# resolve at build time, so two builds of one tag can differ in those. The
+# released image is pinned by its digest.
 RUN uv pip install --system --no-cache nvidia-ml-py==13.615.71 kubernetes==34.1.0
 
 COPY warmpool/supervisor/launcher.py warmpool/supervisor/gputranslator.py /app/

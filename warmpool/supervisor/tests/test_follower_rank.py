@@ -52,6 +52,7 @@ def _kickoff(parsed_args, node_rank):
         engine_args_cls=MagicMock(),
         run_server=MagicMock(),
         uvloop_run=MagicMock(),
+        propagate=MagicMock(),
         engine_config=engine_config,
     )
     m.engine_args_cls.from_cli_args.return_value = engine_args
@@ -81,6 +82,9 @@ def _kickoff(parsed_args, node_rank):
             patch.object(launcher, "MultiprocExecutor", m.executor_cls)
         )
         stack.enter_context(patch.object(launcher, "run_server", m.run_server))
+        stack.enter_context(
+            patch.object(launcher, "propagate_flash_late_interaction", m.propagate)
+        )
         stack.enter_context(patch.object(launcher.uvloop, "run", m.uvloop_run))
         vllm_kickoff(
             VllmConfig(options="--model m --headless"), "/dev/null", False
@@ -98,6 +102,10 @@ def test_follower_rank_runs_the_headless_executor_inline():
     assert kwargs["headless"] is True
     m.run_server.assert_not_called()
     m.uvloop_run.assert_not_called()
+    # As vLLM's run_headless does (order not checked here).
+    m.propagate.assert_called_once_with(
+        SimpleNamespace(headless=True), m.engine_args_cls.from_cli_args.return_value
+    )
 
 
 @pytest.mark.parametrize(

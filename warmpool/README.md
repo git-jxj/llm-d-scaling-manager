@@ -86,6 +86,10 @@ copy:
   they stub vLLM.
 - **Released** with every scaling-manager release, under the same tag, for
   `linux/amd64` and `linux/arm64`, signed with cosign.
+- **One vLLM only.** A pool's engines run the launcher image's vLLM, not the
+  workload's, so this image is for workloads on vLLM v0.34.0. This copy also
+  imports the v0.34 module layout only; it does not run on v0.26 to v0.33. For
+  workloads on older vLLM, use FMA's images.
 
 Build it locally with `make docker-build-warmpool-launcher` (it pulls about
 10 GB). Run the unit tests with `make test-warmpool-launcher`; CI runs both on

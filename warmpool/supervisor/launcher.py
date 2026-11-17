@@ -58,7 +58,11 @@ from pydantic import BaseModel
 # this file, so a further move fails the build, not a Pod.
 from vllm.entrypoints.launchers.api_server.entry import run_server
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.entrypoints.common.cli_args import make_arg_parser, validate_parsed_serve_args
+from vllm.entrypoints.common.cli_args import (
+    make_arg_parser,
+    propagate_flash_late_interaction,
+    validate_parsed_serve_args,
+)
 from vllm.usage.usage_lib import UsageContext
 from vllm.v1.executor.multiproc_executor import MultiprocExecutor
 from vllm.entrypoints.common.startup import cli_env_setup
@@ -1368,6 +1372,9 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str, debug_gpu_memory: 
     # waking in 0.36 s.
     if getattr(args, "headless", False):
         engine_args = AsyncEngineArgs.from_cli_args(args)
+        # As vLLM's run_headless does since v0.34, so a follower's workers score
+        # late-interaction models on the same path as the leader's.
+        propagate_flash_late_interaction(args, engine_args)
         engine_config = engine_args.create_engine_config(
             usage_context=UsageContext.OPENAI_API_SERVER, headless=True
         )

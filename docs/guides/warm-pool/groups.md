@@ -34,7 +34,9 @@ digest to keep the image fixed, or build your own from the
 From v0.12.0 on there is a second choice, built and released by this repo:
 `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher:<release>`.
 It carries the same follower fix on FMA's newer launcher (v0.8.0) and runs
-vLLM v0.34.0, and it is signed. It has **not** run a group on a GPU yet, so the
+vLLM v0.34.0, and it is signed. **Use it only for workloads that run vLLM
+v0.34.0:** the pool's engines run the launcher's vLLM, not the workload's, and
+the fork image above runs v0.26.0. It has **not** run a group on a GPU yet, so the
 fork image above stays the one to use until it has. The copy in
 `warmpool/supervisor/` is the source of this new image, not of the fork image.
 See [our own launcher image](install.md#our-own-launcher-image-optional-not-yet-the-default).
