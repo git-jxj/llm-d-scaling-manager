@@ -262,13 +262,15 @@
     </div>
     <p id="rstatus" class="hint" aria-live="polite"></p>
     <div id="rresult" hidden>
-      <div id="rverdicts"></div>
+      <ul id="rverdicts" class="rverdicts"></ul>
       <p class="hint" id="rlegend"><span class="rmark met">ok</span> every target met
         <span class="rmark missed">MISS</span> a target missed <span class="rmark saturated">SAT</span> saturated
-        <span class="rmark unknown">?</span> not judged. Each cell is TTFT p90 / TPOT ms at the load's rate; - is refused (the reason is in the shape's detail).</p>
+        <span class="rmark unknown">?</span> not judged <span class="rmark notarget">no SLO</span> no target set.
+        <span id="rlegendstats"></span></p>
       <table id="rmatrix" aria-label="SLO by request shape and load"></table>
+      <h3 class="rsub">Each shape</h3>
       <div id="rdetail"></div>
-      <p class="hint" id="rnotes"></p>
+      <details class="rnotes"><summary>How accurate is this?</summary><ul id="rnotes"></ul></details>
     </div>
   </section>
 

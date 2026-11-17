@@ -367,19 +367,24 @@ func TestPageJudgesTheFleet(t *testing.T) {
 	html, js, scen := pageText(t, "index.html"), pageText(t, "planner.js"), pageText(t, "scenario.js")
 	for _, want := range []string{`id="rshapes"`, `id="rshapeadd"`, `id="rloads"`, `id="rgrowth"`, `id="rrun"`, `id="rmatrix"`,
 		`id="rstatus" class="hint" aria-live="polite"`, `id="rlegend"`, `<span class="rmark met">ok</span>`, `<span class="rmark missed">MISS</span>`,
-		`<span class="rmark saturated">SAT</span>`, `<span class="rmark unknown">?</span>`} {
+		`<span class="rmark saturated">SAT</span>`, `<span class="rmark unknown">?</span>`, `<span class="rmark notarget">no SLO</span>`,
+		`<summary>How accurate is this?</summary>`} {
 		assert.Contains(t, html, want)
 	}
 	for _, want := range []string{`api("POST", "v1/report", asked.body)`,
 		`reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),`,
-		`loads: el("rloads").value, growth: el("rgrowth").value, slo: plan.slo, assume: plan.assume})`,
+		`loads: el("rloads").value, growth: el("rgrowth").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume})`,
+		"function schedule(ms) {\n  reportStale();", `reportCurrent(askedFor, state.inputs.inputsId)`, `(next ? next.querySelector("input") : el("rshapeadd")).focus();`,
 		`reportMissing(status, e.message)`, "This server has no fleet report (POST /v1/report)", `" EXTRAPOLATED"`} {
 		assert.Contains(t, js, want)
 	}
-	for _, want := range []string{"function reportRequest(o)", "function reportMatrix(r)", "function reportMissing(status, error)"} {
+	for _, want := range []string{"function reportRequest(o)", "function reportView(r)", "function reportMissing(status, error)"} {
 		assert.Contains(t, scen, want)
 	}
-	start := strings.Index(js, "function renderReport(r)")
-	require.GreaterOrEqual(t, start, 0)
-	assert.NotContains(t, js[start:], "innerHTML", "the report is drawn as text nodes")
+	// The whole report section, its helpers included, draws text nodes only.
+	start := strings.Index(js, "// ---- The fleet report (POST /v1/report) ----")
+	end := strings.Index(js, `document.addEventListener("DOMContentLoaded", start);`)
+	require.True(t, start >= 0 && end > start, "the report section is found")
+	assert.NotContains(t, js[start:end], "innerHTML", "the report is drawn as text nodes")
+	assert.NotContains(t, js[start:end], "insertAdjacentHTML")
 }

@@ -206,4 +206,15 @@ td:first-child, th:first-child { text-align: left; }
 .rmark.saturated, td.saturated { background: color-mix(in srgb, var(--warning) 25%, transparent); }
 .rmark.unknown, td.unknown { background: color-mix(in srgb, var(--muted) 18%, transparent); }
 .rextra { color: var(--warning); font-weight: 600; }
-.rverdict { font-weight: 600; }
+
+.rmark.notarget, td.notarget { background: color-mix(in srgb, var(--muted) 10%, transparent); }
+td.none { color: var(--muted); font-style: italic; }
+#rmatrix td .rmark { margin-left: 6px; }
+#rloads { width: 28ch; }
+.rverdicts { list-style: none; padding: 0; margin: 8px 0; }
+.rverdicts li { margin: 4px 0; font-size: 14px; }
+.rverdicts .rverdict { font-weight: normal; }
+.rsub { font-size: 13px; margin: 12px 0 4px; color: var(--text-secondary); }
+#rdetail details { margin: 4px 0; }
+#rdetail details p { margin: 4px 0 4px 16px; }
+.rmore { display: inline-block; margin-left: 8px; }

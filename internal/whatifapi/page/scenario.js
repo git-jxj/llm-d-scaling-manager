@@ -1,9 +1,4 @@
-// reportMissing reports whether an answer says the server has no
-// POST /v1/report: a server of an earlier release answers 404 "no such
-// endpoint". A 404 for an inputsId the server dropped is not that.
-function reportMissing(status, error) {
-  return status === 405 || (status === 404 && String(error || "").includes("no such endpoint"));
-}// The capacity planner page's saved scenarios, as pure functions: escaping,
+// The capacity planner page's saved scenarios, as pure functions: escaping,
 // the checks on a scenario read back from a file or the store, the store's
 // edits, and the compare table's changes. No DOM and no browser API, so
 // hack/check-planner-scenarios.sh runs them under node on fixtures. The page
@@ -408,6 +403,10 @@ function fleetDelta(a, b) {
 }
 
 // ---- The fleet report (POST /v1/report) ----
+//
+// Everything the report card shows is built here as plain strings, so that
+// the node check reads exactly what the page draws; planner.js only puts the
+// strings into text nodes.
 
 // REPORT_SHAPE is a request shape as the report reads one: "measured", or
 // IL/OL[/hit] in tokens with an optional k (1024 tokens), hit in [0, 1).
@@ -439,6 +438,18 @@ function shapeText(row) {
   return hit ? `${il}/${ol}/${hit}` : `${il}/${ol}`;
 }
 
+// reportShapes is the rows' shapes, each once, in order: a blank row is the
+// measured shape, and the same shape typed twice is asked once.
+function reportShapes(rows) {
+  const out = [];
+  for (const row of rows || []) {
+    const s = shapeText(row);
+    if (!out.includes(s)) out.push(s);
+  }
+  if (out.length === 0) out.push("measured");
+  return out;
+}
+
 // parseReportLoads reads the loads box: comma separated, each 80%, 5r/s or
 // seen. Empty is the server's default (50%, 80%, 100% and seen).
 function parseReportLoads(text) {
@@ -456,11 +467,12 @@ function parseReportLoads(text) {
 
 // reportRequest is the body of POST /v1/report from the page's controls:
 // the inputs, the fleet when it differs from the recorded one, the shapes,
-// the loads, the growth of the load seen, the SLO and the assumed terms.
-// problem says what is asked wrongly, and then body is null.
+// the loads, the growth of the load seen, the headroom, the SLO and the
+// assumed terms. The tables are asked at the SLO's own statistics, so that a
+// cell's figures are the ones its mark is judged at. problem says what is
+// asked wrongly, and then body is null.
 function reportRequest(o) {
-  const shapes = (o.shapes || []).map(shapeText);
-  if (shapes.length === 0) shapes.push("measured");
+  const shapes = reportShapes(o.shapes);
   if (shapes.length > MAX_REPORT_SHAPES) return {body: null, problem: `at most ${MAX_REPORT_SHAPES} shapes`};
   for (const s of shapes) {
     const p = reportShapeProblem(s);
@@ -477,7 +489,13 @@ function reportRequest(o) {
     if (!(x > 0) || !Number.isFinite(x)) return {body: null, problem: "growth is a factor above 0 (1.5 is 50% more traffic)"};
     if (x !== 1) body.loadSeenX = x;
   }
-  if (o.slo) body.slo = o.slo;
+  // The report judges below the knee: a headroom of 1 is left to the policy.
+  if (o.headroom > 0 && o.headroom < 1) body.headroom = o.headroom;
+  if (o.slo) {
+    body.slo = o.slo;
+    if (o.slo.ttft && o.slo.ttft.statistic) body.ttftStatistics = [o.slo.ttft.statistic];
+    if (o.slo.tpot && o.slo.tpot.statistic) body.tpotStatistic = o.slo.tpot.statistic;
+  }
   if (o.assume && Object.keys(o.assume).length) body.assume = Object.assign({}, o.assume);
   return {body, problem: ""};
 }
@@ -485,24 +503,160 @@ function reportRequest(o) {
 // REPORT_MARKS are a summary cell's marks: its class, and the word that says
 // it without colour.
 const REPORT_MARKS = {met: ["met", "ok"], missed: ["missed", "MISS"], saturated: ["saturated", "SAT"],
-  unknown: ["unknown", "?"], "no target": ["notarget", ""]};
+  unknown: ["unknown", "?"], "no target": ["notarget", "no SLO"]};
 
-// reportMatrix is the shape-by-load summary of a report: one row per shape
-// (its label, EXTRAPOLATED where it is, and its verdict) and one cell per
-// load in the report's order, each TTFT p90 and the TPOT figure in ms at its
-// rate, a class and a word. A load a shape has no row at is "-".
-function reportMatrix(r) {
-  const ms = f => (f && f.value != null ? (1000 * f.value).toFixed(1) : "-");
+// REFUSAL_WORDS are the refusals a report shows most, in words.
+const REFUSAL_WORDS = {
+  Saturated: "saturated: no steady state at this load",
+  AboveDecodeOnset: "past the decode flow-control onset: not priced",
+  NoPrefillCapacity: "no prefill speed learned (assume V_P to price it)",
+  NoFixedLatency: "no prefill fixed latency learned (assume a to price it)",
+  NoTPOTHistogram: "no TPOT histogram to read a percentile from",
+  TPOTBucketTooWide: "the TPOT histogram is too coarse for a percentile",
+  PinnedDefaultB: "the decode line rests on a default, not a measurement",
+  NoLine: "no decode line learned",
+  NoTraffic: "no traffic to judge",
+};
+
+// refusalText is a refused figure in words.
+function refusalText(f) {
+  const reason = f && f.refused ? f.refused.reason : "";
+  return REFUSAL_WORDS[reason] || (reason ? `not priced (${reason})` : "not priced");
+}
+
+// REPORT_FLAG_WORDS are the flags a report carries most, in a short phrase.
+// The rest are counted, and their codes kept for a tooltip.
+const REPORT_FLAG_WORDS = {
+  UnvalidatedTTFT: "TTFT is not validated",
+  AssumedVP: "assumes the prefill speed you typed",
+  AssumedA: "assumes the prefill fixed latency you typed",
+  AssumedPromptSpread: "assumes the prompt spread",
+  AssumedPoissonArrivals: "assumes Poisson arrivals",
+  AssumedShape: "a shape you typed, not the measured one",
+  ExtrapolatedShape: "a shape outside what the source saw",
+  ExtrapolatedFill: "decode past the fill it was measured at",
+  BelowFittedBand: "below the fitted band",
+  KVBoundSlots: "KV memory, not the batch cap, sets the slots",
+  RouterHopAssumed: "assumes the router hop",
+  CoarseTPOTBucket: "TPOT percentile from coarse buckets",
+  HeldLine: "a decode line held from earlier",
+  VPLowerBound: "the prefill speed is a lower bound",
+};
+
+// flagSummary is a shape's flags as short phrases, and the rest counted:
+// {phrases, more, codes}, codes every flag's code, for a tooltip.
+function flagSummary(flags) {
+  const phrases = [], rest = [];
+  for (const f of flags || []) (REPORT_FLAG_WORDS[f] ? phrases : rest).push(REPORT_FLAG_WORDS[f] || f);
+  return {phrases, more: rest.length, rest, codes: (flags || []).join(", ")};
+}
+
+// roundMs is seconds as whole milliseconds, one decimal under 10 ms.
+function roundMs(s) {
+  const ms = 1000 * s;
+  return ms < 10 ? ms.toFixed(1) : String(Math.round(ms));
+}
+
+// roundRate is a rate in r/s, to three significant figures at most.
+function roundRate(r) {
+  return r >= 100 ? String(Math.round(r)) : r >= 10 ? r.toFixed(1).replace(/\.0$/, "") : r.toFixed(2).replace(/\.?0+$/, "");
+}
+
+// msText is a latency figure in words: "637 ms", or its refusal, short.
+function msText(f) {
+  if (f && f.value != null) return roundMs(f.value) + " ms";
+  const reason = f && f.refused ? f.refused.reason : "";
+  return reason === "Saturated" ? "saturated" : reason === "AboveDecodeOnset" ? "past onset" : "-";
+}
+
+// rowFigures is a row's two latencies at the SLO's statistics: the TTFT at
+// the TTFT target's, and the TPOT percentile where the SLO judges one, else
+// the mean.
+function rowFigures(row, slo) {
+  const tStat = slo && slo.ttft ? slo.ttft.statistic : "p90";
+  const pStat = slo && slo.tpot ? slo.tpot.statistic : "mean";
+  const ttft = (row.ttft || []).find(s => s.statistic === tStat) || (row.ttft || [])[0] || {statistic: tStat};
+  let tpot = {statistic: "mean", value: row.tpotMean ? row.tpotMean.value : undefined, refused: row.tpotMean ? row.tpotMean.refused : undefined};
+  if (pStat !== "mean" && row.tpotPercentile) tpot = row.tpotPercentile;
+  return {ttft, tpot};
+}
+
+// verdictText is a shape's verdict in plain words, with its numbers.
+function verdictText(s, load) {
+  const v = s.verdict || {}, c = s.capacity || {};
+  const knee = c.fleetKnee && c.fleetKnee.value, h = c.headroom;
+  const binds = String((c.fleetKnee && c.fleetKnee.binds) || "").split(" ")[0];
+  const at = load != null ? `at ${roundRate(load)} r/s` : "at the load seen";
+  switch (v.verdict) {
+  case "UNDER-PROVISIONED":
+    if (knee != null && load != null && load > h * knee) {
+      return `UNDER-PROVISIONED: ${at} the fleet is past ${Math.round(100 * h)}% of its ${roundRate(knee)} r/s knee, set by ${binds}; add ${binds} replicas.`;
+    }
+    return `UNDER-PROVISIONED: ${at} a latency target is missed; add ${binds || "more"} replicas.`;
+  case "OVER-PROVISIONED":
+    return `OVER-PROVISIONED: ${at} one ${(v.shrink || []).join(" or one ")} replica fewer still meets every target with headroom.`;
+  case "RIGHT-SIZED":
+    return `RIGHT-SIZED: ${at} every target is met with headroom, and one replica fewer of either role would not be.`;
+  }
+  return `NOT JUDGED: ${v.reason || "no knee or no load to judge at"}.`;
+}
+
+// sloLine says what a cell's mark is judged against.
+function sloLine(slo) {
+  const parts = [];
+  if (slo && slo.ttft) parts.push(`TTFT ${slo.ttft.statistic} ${roundMs(slo.ttft.target)} ms`);
+  if (slo && slo.tpot) parts.push(`TPOT ${slo.tpot.statistic} ${roundMs(slo.tpot.target)} ms`);
+  return parts.length ? "Marks are judged against " + parts.join(" and ") + "." : "No SLO target is set: no cell is judged.";
+}
+
+// reportView is a report as the page shows it, all of it strings: each
+// shape's verdict line, the matrix (a header per load with its rate where
+// one shape fixes it, and per cell the two latencies, a class and a word),
+// each shape's detail lines and flags, and the notes on accuracy.
+function reportView(r) {
+  const slo = r.slo || {};
+  const load = r.load && r.load.rate ? r.load.rate.value : null;
+  const shapes = r.shapes || [];
   const loads = r.loads || [];
-  return {loads, rows: (r.shapes || []).map(s => ({
-    label: s.label, extrapolated: !!s.extrapolated, why: s.extrapolatedWhy || "", verdict: s.verdict ? s.verdict.verdict : "",
-    cells: loads.map(l => {
+  const tStat = slo.ttft ? slo.ttft.statistic : "p90", pStat = slo.tpot ? slo.tpot.statistic : "mean";
+  const header = loads.map(l => {
+    const rates = shapes.map(s => (s.table || []).find(t => t.load === l)).filter(t => t).map(t => roundRate(t.rate));
+    const one = rates.length && rates.every(x => x === rates[0]);
+    return one ? `${l} (${rates[0]} r/s)` : l;
+  });
+  const sameRate = loads.map((l, i) => header[i] !== l);
+  const rows = shapes.map(s => ({
+    label: s.label, extrapolated: !!s.extrapolated, why: s.extrapolatedWhy || "",
+    cells: loads.map((l, i) => {
       const row = (s.table || []).find(t => t.load === l);
-      if (!row) return {text: "-", cls: "none", word: "", rate: null};
+      if (!row) return {text: "not priced", cls: "none", word: ""};
+      const f = rowFigures(row, slo);
       const m = REPORT_MARKS[row.cell.mark] || ["unknown", "?"];
-      return {text: `${ms(row.cell.ttft)} / ${ms(row.cell.tpot)}`, cls: m[0], word: m[1], rate: row.rate};
+      const rate = sameRate[i] ? "" : ` @ ${roundRate(row.rate)} r/s`;
+      return {text: `TTFT ${msText(f.ttft)} · TPOT ${msText(f.tpot)}${rate}`, cls: m[0], word: m[1]};
     }),
-  }))};
+  }));
+  const verdicts = shapes.map(s => ({label: s.label, extrapolated: !!s.extrapolated, verdict: (s.verdict || {}).verdict || "",
+    text: verdictText(s, load)}));
+  const details = shapes.map(s => {
+    const c = s.capacity || {}, u = s.utilization || {decode: {}, prefill: {}};
+    const rate = f => (f && f.value != null ? roundRate(f.value) + " r/s" : refusalText(f));
+    const share = f => (f && f.value != null ? f.value.toFixed(2) : refusalText(f));
+    return {
+      summary: `${s.label}: IL ${Math.round(s.inputTokens)}, OL ${Math.round(s.outputTokens)}, prefix hit ${Number(s.prefixHitRate).toFixed(2)} (${s.source})`,
+      lines: [
+        s.extrapolated ? `Extrapolated: ${s.extrapolatedWhy}.` : "",
+        `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
+          `Operating point ${rate(c.operating)}; the most that meets every target ${rate(c.maxAtSLO)}.`,
+        `At the load: decode KV fill ${share(u.decode.kvFill)} (band top ${u.decode.bandTop}), waiting for a slot ${share(u.decode.waitProbability)}; ` +
+          `prefill busy ${share(u.prefill.pooled)} pooled, ${share(u.prefill.worstPod)} on the busiest pod.`,
+        `Why: ${(s.verdict || {}).reason || ""}`,
+      ].filter(x => x),
+      flags: flagSummary(s.flags),
+    };
+  });
+  return {verdicts, header, rows, details, notes: r.notValidated || [],
+    legendStats: `Each cell is TTFT ${tStat} · TPOT ${pStat}. ${sloLine(slo)}`};
 }
 
 // reportMissing reports whether an answer says the server has no
@@ -510,4 +664,10 @@ function reportMatrix(r) {
 // endpoint". A 404 for an inputsId the server dropped is not that.
 function reportMissing(status, error) {
   return status === 405 || (status === 404 && String(error || "").includes("no such endpoint"));
+}
+
+// reportCurrent reports whether an answer is for the inputs on the page:
+// one asked for inputs since replaced is dropped.
+function reportCurrent(askedFor, current) {
+  return !!askedFor && askedFor === current;
 }
