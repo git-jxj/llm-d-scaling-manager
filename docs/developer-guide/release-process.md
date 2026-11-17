@@ -88,9 +88,9 @@ The workflow checks where a tag is, not who reviewed it. Review on `main` and
    `deploy/warmpool.sh`; the PR checks fail if it was not run). The release
    fails before it builds anything if either is not the tag.
 2. **Bump dependency pins**, if the release moves one (for example
-   [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)): the
-   [Makefile](../../Makefile), `test/e2e/fixtures/model_service_builder.go` and
-   `test/utils/resources/llmdsim.go`. Same PR.
+   [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)), in
+   every file `hack/upstream-versions.sh` lists for it. Same PR. See
+   [Upstream dependencies](upstream-dependencies.md).
 3. **Draft the release notes** for the GitHub Release: user-facing and notable
    changes, and the upgrade steps. You paste them when you publish.
 4. **Merge the PR, then tag right away.** From the merge until the release run
