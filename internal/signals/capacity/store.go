@@ -94,6 +94,11 @@ type Record struct {
 type Store struct {
 	mu      sync.RWMutex
 	records map[string]*Record
+	// defaultsAccel is the last non-empty accelerator each variant was
+	// loaded on, keyed like records. The vLLM step-budget default depends on
+	// the accelerator, and so does the arguments digest; a reading that is
+	// empty for a cycle must not move the digest and read as new arguments.
+	defaultsAccel map[string]string
 	// rec records the engine's writes (FileScaleTarget, EvictStale); nil
 	// when recording is off (WithRecorder).
 	rec *learnrec.Recorder
@@ -102,7 +107,8 @@ type Store struct {
 // NewStore creates an empty capacity store.
 func NewStore() *Store {
 	return &Store{
-		records: make(map[string]*Record),
+		records:       make(map[string]*Record),
+		defaultsAccel: make(map[string]string),
 	}
 }
 
@@ -205,7 +211,8 @@ func (s *Store) LoadFromScaleTarget(namespace, modelID, variantName, accelerator
 	if scaleTarget == nil {
 		return
 	}
-	params := ParseEngineArgs(inferenceengine.Detect(scaleTarget), scaleTarget)
+	params := ParseEngineArgsOn(inferenceengine.Detect(scaleTarget), scaleTarget,
+		s.defaultsAccelerator(storeKey(namespace, modelID, variantName), accelerator))
 	// Every rollout the scale target reports, read afresh each cycle (see
 	// Record.RollingOut).
 	rolling := scaletarget.RollingOut(scaleTarget)
@@ -355,7 +362,28 @@ func (s *Store) Delete(namespace, modelID, variantName string) bool {
 	key := storeKey(namespace, modelID, variantName)
 	_, ok := s.records[key]
 	delete(s.records, key)
+	delete(s.defaultsAccel, key)
 	return ok
+}
+
+// defaultsAccelerator is the accelerator the engine defaults are resolved on
+// for the variant at key: accelerator when it is resolved, else the last
+// resolved one the variant was loaded on. A reading of "", "unknown" or
+// "unresolved" for a cycle (a stabiliser that has not settled, a pod list that
+// came back empty) then keeps the variant's arguments, rather than resolving
+// the step budget for an unknown device and reading as a rollout. A variant
+// never resolved keeps the reading it has.
+func (s *Store) defaultsAccelerator(key, accelerator string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if constants.IsAcceleratorResolved(accelerator) {
+		s.defaultsAccel[key] = accelerator
+		return accelerator
+	}
+	if last, ok := s.defaultsAccel[key]; ok {
+		return last
+	}
+	return accelerator
 }
 
 // EvictStale removes capacity records that have not been updated within the
@@ -381,6 +409,7 @@ func (s *Store) evictStale(now time.Time, timeout time.Duration) int {
 	for key, rec := range s.records {
 		if now.Sub(rec.LearnedAt) > timeout {
 			delete(s.records, key)
+			delete(s.defaultsAccel, key)
 			evicted++
 		}
 	}

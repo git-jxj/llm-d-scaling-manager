@@ -162,6 +162,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **Capacity planner** — [the HTTP API](guides/capacity-planner/api.md) · [the metrics it needs](guides/capacity-planner/metrics.md) · [troubleshooting](guides/capacity-planner/troubleshooting.md). These pages live with [its guide](guides/capacity-planner/), to keep the planner's pages together
 - **[Router configuration](reference/router-configuration.md)** — the two router settings that decide what the scaling manager sees: flow control bounds the queue it reads as demand, and the scheduling profiles decide whether the replicas it orders get used
 - **[SGLang backend](reference/sglang-backend.md)** — auto-detected per variant; nothing to configure
+- **[vLLM versions](reference/vllm-versions.md)** — the supported versions, the engine defaults that change between them, and how to tell the scaling manager which one a variant runs
 - **[Troubleshooting](reference/troubleshooting.md)**
 - **[Upgrade and uninstall](reference/upgrade-and-uninstall.md)** — pinning a version, what a restart costs, and what an uninstall leaves behind
 

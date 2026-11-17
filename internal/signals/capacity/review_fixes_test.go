@@ -299,7 +299,7 @@ func TestTheValueKeySetMatchesBothApplyFunctions(t *testing.T) {
 
 	handled := []string{
 		// vLLM
-		"gpu_memory_utilization", "block_size", "kv_cache_dtype", "dtype",
+		"gpu_memory_utilization", "device_memory_utilization", "block_size", "kv_cache_dtype", "dtype",
 		"quantization", "tensor_parallel_size", "num_gpu_blocks_override",
 		"max_num_batched_tokens", "max_num_seq", "max_num_seqs", "max_num_active_seqs",
 		"max_model_len", "data_parallel_size", "pipeline_parallel_size",
