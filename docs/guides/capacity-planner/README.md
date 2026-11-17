@@ -301,8 +301,8 @@ rate and the targets as before. The page finds the fewest replicas that serve
 that rate under your targets, and the replica counts become its answer: you
 read them, you do not set them.
 
-- **The answer.** The fewest decode replicas first, then the fewest prefill
-  replicas with them. Beside it: the fleet limit at that fleet, the headroom
+- **The answer.** The fewest replicas in all; of two fleets as few, the one
+  with fewer decode replicas. Beside it: the fleet limit at that fleet, the headroom
   over your rate, and the role and target that bind.
 - **Why not fewer.** One prefill replica fewer, and one decode replica fewer,
   each with the rate it would serve and how far short of yours that is.
@@ -316,9 +316,9 @@ read them, you do not set them.
   or when the fleet must hold the rate even if V_P reads high. If the worst
   corner puts the TTFT target under the floor, the page says so: no replica
   count helps, so raise the target or untick the box.
-- **Decode first.** When decode admission holds the prefill limit down, the
-  page notes it: one more decode and one fewer prefill replica may also work
-  and may be fewer in all. You can try such a fleet in the first mode.
+- **Decode admission.** When decode admission holds the prefill limit down,
+  the page notes it: there, decode replicas lift TTFT more than prefill
+  replicas do, and the answer has weighed the two.
 - **The rest of the page** is the fleet it found, exactly as the first mode
   would show it if you set those counts yourself.
 - **Search up to.** The most replicas of a role the page tries, 32 unless you

@@ -441,15 +441,17 @@ func TestReachesTolerance(t *testing.T) {
 
 // A fleet with one replica fewer that serves the rate is the search's own
 // failure, a 500, never an answer. On this stub the prefill limit dips at
-// one decode replica, and at two with prefill at its bound: the search
-// lands on 2 prefill and 3 decode, though 2 and 2 serve the rate.
+// one decode replica on every count the search gallops through (1, 2, 4,
+// ... 32) but not at 3, and under 3 prefill replicas from two decode up: the
+// search lands on 3 prefill and 2 decode, though 3 and 1 serve the rate.
 func TestSizeOneFewerThatServesIsAnError(t *testing.T) {
-	r := &stubResolver{dip: func(p, d int) bool { return d == 1 || (d == 2 && p == defaultSizeBound) }}
+	galloped := func(p int) bool { return p&(p-1) == 0 }
+	r := &stubResolver{dip: func(p, d int) bool { return (d == 1 && galloped(p)) || (d >= 2 && p < 3) }}
 	h := New(Config{Resolver: r, WhatifSchema: "schema-v3"}).Handler()
 	code, body := post(t, h, "/v1/size", sizeAt(inputsOf(t, h), 6, 0.05))
 	assert.Equal(t, http.StatusInternalServerError, code, "%s", body)
 	assert.Contains(t, string(body), "does not hold")
-	assert.Contains(t, string(body), "2 prefill and 2 decode")
+	assert.Contains(t, string(body), "3 prefill and 1 decode")
 }
 
 // /v1/size sits behind the same authentication as the other endpoints: no

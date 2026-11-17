@@ -447,44 +447,57 @@ func (z *sizer) search(ctx context.Context) (*SizeResponse, error) {
 }
 
 // SmallestFleet is the search POST /v1/size runs, on any test of a fleet:
+// the fleet of the fewest replicas in all that holds, ties going to the one
+// with the fewer decode replicas. Replicas are counted alike: a role's GPUs
+// per replica are not weighed.
 //
-//  1. decode, on decodeHolds, its own limit, which the prefill count does
-//     not move: tried at one prefill replica;
-//  2. prefill, on holds, the fleet's, at that decode count;
-//  3. when no prefill count within the bound joins it, decode once more on
-//     holds with prefill at its bound, since the lower knee and decode
-//     admission hold the prefill limit down, then prefill again.
+//  1. decode's floor, on decodeHolds, its own limit, which the prefill count
+//     does not move: tried at one prefill replica. No fleet with fewer
+//     decode replicas holds, since holds asks decode's limit too.
+//  2. from that floor up, the fewest prefill replicas that hold at each
+//     decode count: never more than at the count before, so each search is
+//     bounded by the last. It stops once a decode count alone reaches the
+//     best total found, or one prefill replica holds.
 //
-// The answer is the fewest decode replicas that hold, then the fewest
-// prefill with them. With none within the bound, unmet names the role that
-// fell short: "decode" for decode's own limit, "fleet" for the two together.
-// The tests are taken to be monotone in each count, as a limit is.
+// Taking decode's floor and then the prefill that joins it is not enough:
+// where decode admission sets most of a TTFT, more prefill replicas buy
+// little of it, and the floor's prefill count can be several times what
+// one more decode replica needs. The fewest in all is also what makes the
+// answer rise with the rate, as the set of fleets that hold shrinks.
+//
+// With none within the bound, unmet names the role that fell short:
+// "decode" for decode's own limit, "fleet" for the two together. The tests
+// are taken to be monotone in each count, as a limit is.
 func SmallestFleet(bound FleetCounts, decodeHolds, holds func(FleetCounts) (bool, error)) (n FleetCounts, unmet string, err error) {
 	maxP, maxD := bound.Prefill, bound.Decode
-	d, ok, err := smallest(1, maxD, func(d int) (bool, error) { return decodeHolds(FleetCounts{Prefill: 1, Decode: d}) })
+	d0, ok, err := smallest(1, maxD, func(d int) (bool, error) { return decodeHolds(FleetCounts{Prefill: 1, Decode: d}) })
 	if err != nil || !ok {
 		return n, roleDecode, err
 	}
-	prefillAt := func(d int) (int, bool, error) {
-		return smallest(1, maxP, func(p int) (bool, error) { return holds(FleetCounts{Prefill: p, Decode: d}) })
-	}
-	p, ok, err := prefillAt(d)
-	if err != nil {
-		return n, "", err
-	}
-	if !ok {
-		if d, ok, err = smallest(d+1, maxD, func(d int) (bool, error) { return holds(FleetCounts{Prefill: maxP, Decode: d}) }); err != nil {
+	best, found, pMax := 0, false, maxP
+	for d := d0; d <= maxD; d++ {
+		if found && d+1 >= best {
+			break
+		}
+		p, ok, err := smallest(1, pMax, func(p int) (bool, error) { return holds(FleetCounts{Prefill: p, Decode: d}) })
+		if err != nil {
 			return n, "", err
 		}
 		if !ok {
-			return n, roleFleet, nil
+			continue
 		}
-		// (maxP, d) holds, and is tried once: a count is found.
-		if p, _, err = prefillAt(d); err != nil {
-			return n, "", err
+		if !found || p+d < best {
+			n, best, found = FleetCounts{Prefill: p, Decode: d}, p+d, true
 		}
+		if p == 1 {
+			break
+		}
+		pMax = p
 	}
-	return FleetCounts{Prefill: p, Decode: d}, "", nil
+	if !found {
+		return n, roleFleet, nil
+	}
+	return n, "", nil
 }
 
 // SmallestCount is the smallest n in [lo, hi] for which ok holds, and

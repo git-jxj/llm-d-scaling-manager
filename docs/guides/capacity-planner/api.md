@@ -206,9 +206,9 @@ The full key list is pinned in
 | `sizeOn` | `point` | What the fleet must reach the rate with: `point`, its limit, or `low`, the low end of the limit's span over V_P and f (about five times the cost). |
 
 The inputs must have a prefill variant; a source with none is a 400. The search
-finds the fewest decode replicas first, then the fewest prefill replicas with
-them, adding decode replicas only when no prefill count within the bound
-reaches the rate.
+finds the fewest replicas in all whose fleet limit reaches the rate; of two as
+few, the one with fewer decode replicas. A role's GPUs per replica are not
+weighed. The report's `needed` fleet is found the same way.
 
 | Key | What it is |
 | --- | --- |

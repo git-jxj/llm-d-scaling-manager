@@ -919,7 +919,7 @@ function renderSize() {
     el("sizetitle").textContent = `The fleet ${rate} needs`;
     el("sizeanswer").innerHTML = `<div class="v">${fleetText(f)}</div>` +
       `<div>The fewest replicas whose fleet limit reaches ${rate}` + (low ? " at the worst corner of V_P and f" : "") +
-      ` (the fewest decode first, then the fewest prefill with them). ` +
+      ` (the fewest in all; of two as few, the one with fewer decode replicas). ` +
       `Fleet limit <b>${figText(a.limit, fmtRate)}</b>, <span class="ok">headroom +${h != null ? fmtRate(h) : "refused"}</span> over the rate` +
       (low ? " at the worst corner" : "") + `; ${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>` +
       lowNote(a.limit, z) + heldNote(a);
@@ -966,13 +966,12 @@ function fewerLine(role, s, low) {
 }
 
 // heldNote says, where decode admission holds the prefill limit down, that
-// the answer is decode first and may not be the fewest replicas in all.
+// decode replicas are what lift it.
 function heldNote(a) {
   const held = (f => f && (f.flags || []).includes("HeldByDecodeAdmission"));
   if (!held(a.limit) && !held(a.plan.limits.prefill)) return "";
-  return `<div class="hint">Decode admission holds the prefill limit down here. The answer is the fewest decode replicas first, ` +
-    `then the fewest prefill: a fleet with more decode and fewer prefill replicas may serve the rate with fewer in all. ` +
-    `Try it in the first mode, though a large fleet at a high rate can take many minutes to price there.</div>`;
+  return `<div class="hint">Decode admission holds the prefill limit down here: more decode replicas lift it more than ` +
+    `more prefill replicas do, and the answer weighs the two.</div>`;
 }
 
 // UNMET_SAID are the refusals unmetAdvice says in the page's own words; the

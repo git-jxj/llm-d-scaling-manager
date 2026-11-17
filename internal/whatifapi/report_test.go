@@ -98,3 +98,24 @@ func TestReportQueryOf_ReadsAGoodQuestion(t *testing.T) {
 	assert.Equal(t, "seen x2", q.Loads[2].Label)
 	assert.False(t, q.Loads[3].Grown())
 }
+
+// SmallestFleet finds the fewest replicas in all, not decode's floor and the
+// prefill that joins it: where decode admission sets most of a TTFT, the
+// floor (5 decode) needs 18 prefill, while 7 decode need 6. Of the fleets of
+// 13, the one with the fewest decode replicas is the answer. Below the
+// floor nothing holds, and with no fleet in the bound the fleet is unmet.
+func TestSmallestFleet_FewestInAll(t *testing.T) {
+	decodeHolds := func(n FleetCounts) (bool, error) { return n.Decode >= 5, nil }
+	holds := func(n FleetCounts) (bool, error) { return n.Decode >= 5 && n.Prefill*(n.Decode-4) >= 18, nil }
+	n, unmet, err := SmallestFleet(FleetCounts{Prefill: 32, Decode: 32}, decodeHolds, holds)
+	require.NoError(t, err)
+	assert.Empty(t, unmet)
+	assert.Equal(t, FleetCounts{Prefill: 6, Decode: 7}, n)
+
+	_, unmet, err = SmallestFleet(FleetCounts{Prefill: 3, Decode: 6}, decodeHolds, holds)
+	require.NoError(t, err)
+	assert.Equal(t, roleFleet, unmet)
+	_, unmet, err = SmallestFleet(FleetCounts{Prefill: 32, Decode: 4}, decodeHolds, holds)
+	require.NoError(t, err)
+	assert.Equal(t, roleDecode, unmet)
+}

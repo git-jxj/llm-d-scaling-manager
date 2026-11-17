@@ -1254,8 +1254,9 @@ func (r *reporter) marginWords(op float64) string {
 }
 
 // needed finds the smallest fleet that holds every target at the load with
-// headroom, by POST /v1/size's search (whatifapi.SmallestFleet) on the
-// report's own check, and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
+// headroom, the fewest replicas in all (ties to fewer decode), by POST
+// /v1/size's search (whatifapi.SmallestFleet) on the report's own check,
+// and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
 // With the prefill side not priced, it is the fewest decode replicas whose
 // own check holds. It fills v.Needed and adds the fleets tried to nothing:
 // the checks list the fleets the verdict rests on. notes are the assumed f
