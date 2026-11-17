@@ -313,16 +313,19 @@ func (g Region) misses(f Figure) []string {
 	return out
 }
 
+// unknownText stands for a class value no input gave.
+const unknownText = "unknown"
+
 func orUnknown(s string) string {
 	if s == "" {
-		return "unknown"
+		return unknownText
 	}
 	return s
 }
 
 func countText(n int) string {
 	if n <= 0 {
-		return "unknown"
+		return unknownText
 	}
 	return strconv.Itoa(n)
 }
@@ -337,7 +340,7 @@ func intsText(xs []int) string {
 
 func amountText(x float64) string {
 	if x <= 0 {
-		return "unknown"
+		return unknownText
 	}
 	return strconv.FormatFloat(math.Round(x), 'f', -1, 64)
 }

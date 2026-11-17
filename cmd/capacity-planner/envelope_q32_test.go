@@ -98,7 +98,7 @@ func readQ32Steps(t *testing.T) []q32Step {
 		require.NoError(t, err, s)
 		return v
 	}
-	var out []q32Step
+	out := make([]q32Step, 0, len(rows)-1)
 	for _, r := range rows[1:] {
 		require.Len(t, r, 15)
 		out = append(out, q32Step{bucket: r[0], fc: r[1], step: whole(r[2]), rate: num(r[3]), windowSeconds: num(r[4]),
@@ -527,8 +527,8 @@ func q32EnvelopeFile(t *testing.T, rows []whatif.EnvelopeRow) []byte {
 	require.NoError(t, err)
 	e, err := whatif.ParseEnvelope(raw)
 	require.NoError(t, err)
-	kept := slices.DeleteFunc(e.Rows, func(r whatif.EnvelopeRow) bool { return r.Source == q32Source })
-	e.Rows = append(kept, rows...)
+	e.Rows = slices.DeleteFunc(e.Rows, func(r whatif.EnvelopeRow) bool { return r.Source == q32Source })
+	e.Rows = append(e.Rows, rows...)
 	body, err := json.MarshalIndent(e, "", "  ")
 	require.NoError(t, err)
 	return append(body, '\n')
