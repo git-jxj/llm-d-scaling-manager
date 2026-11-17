@@ -146,7 +146,7 @@ func newWriter(t *testing.T, obj *unstructured.Unstructured, store *decision.Sto
 	}).Build()
 	rec := record.NewFakeRecorder(10)
 	// No scale-down window: the tests of the window set their own.
-	return &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec, AllNamespaces: true, ScaleDownWindow: -1}, got, rec
+	return &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec, Passive: passiveModels{}, AllNamespaces: true, ScaleDownWindow: -1}, got, rec
 }
 
 func TestPassAppliesDecisionsToStaticRolesOnly(t *testing.T) {

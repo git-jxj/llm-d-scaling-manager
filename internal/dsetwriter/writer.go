@@ -30,6 +30,7 @@ package dsetwriter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -114,6 +115,8 @@ const (
 
 var setGVK = schema.FromAPIVersionAndKind(constants.DisaggregatedSetAPIVersion, constants.DisaggregatedSetKind)
 
+var errNoPassiveResolver = errors.New("dsetwriter: Writer.Passive is nil")
+
 // DecisionReader is the part of the decision store the writer reads.
 type DecisionReader interface {
 	Get(namespace, name string) (decision.Decision, bool)
@@ -138,7 +141,8 @@ type Writer struct {
 	Recorder record.EventRecorder
 	// Passive resolves passive mode. The roles of a passive model are
 	// registered, so the engines publish their would-be counts, but never
-	// written. Nil is every model active.
+	// written. Nil writes nothing at all: without it the writer cannot tell
+	// a passive model, and writing one is the failure passive mode forbids.
 	Passive PassiveResolver
 	// Namespaces to scan. Empty scans none unless AllNamespaces is set.
 	Namespaces []string
@@ -163,6 +167,8 @@ type Writer struct {
 	warned map[types.NamespacedName]string
 	// passive is each set's passive state as last logged.
 	passive map[types.NamespacedName]bool
+	// noResolverLogged is set once the missing Passive has been logged.
+	noResolverLogged bool
 	// listFailed is the last list failure logged for each namespace.
 	listFailed map[string]string
 }
@@ -470,10 +476,19 @@ func (w *Writer) reconcile(ctx context.Context, set *unstructured.Unstructured, 
 }
 
 // passiveModel reports whether model is passive, and logs a change of that
-// for the set once.
+// for the set once. With no resolver every model counts as passive, and that
+// is logged once, as an error: the writer cannot tell which models it may
+// scale, so it scales none.
 func (w *Writer) passiveModel(key types.NamespacedName, model string, logger logr.Logger) bool {
 	if w.Passive == nil {
-		return false
+		w.mu.Lock()
+		logged := w.noResolverLogged
+		w.noResolverLogged = true
+		w.mu.Unlock()
+		if !logged {
+			logger.Error(errNoPassiveResolver, "The role writer writes no replicas: it has no passive resolver, so it cannot tell which models are passive")
+		}
+		return true
 	}
 	p, source := w.Passive.Model(key.Namespace, model)
 	w.mu.Lock()

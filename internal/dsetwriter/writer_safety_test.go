@@ -76,6 +76,76 @@ func TestPassWritesNothingForAPassiveModel(t *testing.T) {
 	assert.Equal(t, 1, got.calls, "passive is per model: an active one is written")
 }
 
+// Without a resolver the writer cannot tell a passive model from an active
+// one, so it writes none: failing open here scaled a passive model. The roles
+// are still registered, and the missing resolver is logged once, at error.
+func TestPassWritesNothingWithoutAPassiveResolver(t *testing.T) {
+	store := decision.NewStore()
+	store.Set(ns, "glm-decode", 5)
+	w, got, _ := newWriter(t, set(optIn("force"), "", 3), store, nil)
+	w.Passive = nil
+	logs := &logLines{}
+	ctx := logr.NewContext(context.Background(), logs.logger())
+	w.Pass(ctx)
+	w.Pass(ctx)
+	assert.Equal(t, 0, got.calls, "no resolver writes nothing")
+	assert.Equal(t, 2, w.Registry.Len(), "but the roles are registered")
+	assert.Equal(t, 1, logs.count("no passive resolver"), "logged once: %v", logs.lines)
+	assert.Equal(t, 1, logs.count(`"error"=`), "at error: %v", logs.lines)
+}
+
+// withCounts sets the replicas of the prefill and decode roles of s.
+func withCounts(t *testing.T, s *unstructured.Unstructured, prefill, decode int64) *unstructured.Unstructured {
+	t.Helper()
+	roles := rolesOf(s.Object)
+	for _, r := range roles {
+		m := r.(map[string]any)
+		switch m["name"] {
+		case "prefill":
+			require.NoError(t, unstructured.SetNestedField(m, prefill, "spec", "replicas"))
+		case "decode":
+			require.NoError(t, unstructured.SetNestedField(m, decode, "spec", "replicas"))
+		}
+	}
+	require.NoError(t, unstructured.SetNestedSlice(s.Object, roles, "spec", "roles"))
+	return s
+}
+
+// A passive model is never woken or healed. Plan lifts a Static role parked
+// alone back to a group, with or without a decision, and a scale-from-zero
+// wake publishes a decision for both roles of a set parked at zero; both are
+// writes, and a passive model gets neither. Each case runs active first, the
+// control that shows the same set and decisions would be written.
+func TestPassNeverWakesOrHealsAPassiveModel(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		prefill, decode int64
+		decided         map[string]int32
+	}{
+		{name: "prefill parked alone, no decision (Plan heals it)", prefill: 0, decode: 3},
+		{name: "prefill parked alone, a decision to wake it", prefill: 0, decode: 3, decided: map[string]int32{"prefill": 2}},
+		{name: "both parked, a scale-from-zero wake for both", prefill: 0, decode: 0, decided: map[string]int32{"prefill": 1, "decode": 1}},
+		{name: "both parked, a wake for one role", prefill: 0, decode: 0, decided: map[string]int32{"decode": 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, passive := range []bool{false, true} {
+				store := decision.NewStore()
+				for role, n := range tc.decided {
+					store.Set(ns, TargetName("glm", role), n)
+				}
+				w, got, _ := newWriter(t, withCounts(t, set(optIn("force"), "", 3), tc.prefill, tc.decode), store, nil)
+				w.Passive = passiveModels{"org/GLM": passive}
+				w.Pass(context.Background())
+				if !passive {
+					require.Equal(t, 1, got.calls, "control: the active model is written")
+					continue
+				}
+				assert.Equal(t, 0, got.calls, "a passive model is written nothing")
+			}
+		})
+	}
+}
+
 // A namespace-scoped install with no readable namespace has nothing to scan.
 // It must not fall back to every namespace: that is a cluster-wide list and
 // patch the install was never granted.

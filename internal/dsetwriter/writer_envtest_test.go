@@ -21,8 +21,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/decision"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/passive"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
 )
 
@@ -51,7 +53,9 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 
 	require.NoError(t, c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: envNS}}))
 
-	run := func(t *testing.T, name, mode string, decided map[string]int32) *record.FakeRecorder {
+	// runWith opts set name in with mode, publishes decided, and runs one
+	// pass of a writer that resolves passive mode with p over reg.
+	runWith := func(t *testing.T, p PassiveResolver, reg *registry.Registry, name, mode string, annotations map[string]string, decided map[string]int32) *record.FakeRecorder {
 		t.Helper()
 		store := decision.NewStore()
 		for role, n := range decided {
@@ -65,11 +69,18 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		}
 		anns[OptInAnnotation] = mode
 		anns[ModelIDAnnotation] = "org/GLM"
+		for k, v := range annotations {
+			anns[k] = v
+		}
 		live.SetAnnotations(anns)
 		require.NoError(t, c.Update(ctx, live, client.FieldOwner("annotator")))
-		w := &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec, Namespaces: []string{envNS}, ScaleDownWindow: -1}
+		w := &Writer{Client: c, Registry: reg, Decisions: store, Recorder: rec, Passive: p, Namespaces: []string{envNS}, ScaleDownWindow: -1}
 		w.Pass(ctx)
 		return rec
+	}
+	run := func(t *testing.T, name, mode string, decided map[string]int32) *record.FakeRecorder {
+		t.Helper()
+		return runWith(t, passiveModels{}, registry.New(0), name, mode, nil, decided)
 	}
 
 	t.Run("an apply that names no replicas leaves them to the writer, which changes nothing else", func(t *testing.T) {
@@ -144,6 +155,71 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		run(t, name, "true", map[string]int32{"prefill": 0, "decode": 0})
 		assert.Equal(t, map[string]int64{"prefill": 0, "decode": 0, "encode": 1}, replicasOf(t, get(ctx, t, c, name)),
 			"every Static role parked together is accepted")
+	})
+
+	// Passive mode, resolved by the controller's own resolver from the
+	// controller-wide flag and the scaling policy, as cmd/main.go wires it.
+	// writesNothing runs two passes with decisions for both Static roles and
+	// checks the set: the first may only add the annotations, the second must
+	// leave the object exactly as it was.
+	writesNothing := func(t *testing.T, p PassiveResolver, reg *registry.Registry, name string, anns map[string]string) {
+		t.Helper()
+		decided := map[string]int32{"prefill": 3, "decode": 5}
+		before := get(ctx, t, c, name)
+		runWith(t, p, reg, name, "force", anns, decided)
+		first := get(ctx, t, c, name)
+		assert.Equal(t, replicasOf(t, before), replicasOf(t, first), "a passive model's replicas are not written")
+		assert.Equal(t, before.GetGeneration(), first.GetGeneration(), "nor anything else in its spec")
+		assert.Empty(t, ownedLeaves(t, first, FieldManager), "the writer owns no field of a passive model's set")
+
+		runWith(t, p, reg, name, "force", anns, decided)
+		second := get(ctx, t, c, name)
+		assert.Equal(t, first.GetResourceVersion(), second.GetResourceVersion(), "a second pass does not touch the set at all")
+		assert.Equal(t, first.GetManagedFields(), second.GetManagedFields())
+	}
+	writes := func(t *testing.T, p PassiveResolver, reg *registry.Registry, name string, anns map[string]string) {
+		t.Helper()
+		runWith(t, p, reg, name, "force", anns, map[string]int32{"prefill": 3, "decode": 5})
+		after := get(ctx, t, c, name)
+		assert.Equal(t, map[string]int64{"prefill": 3, "decode": 5, "encode": 1}, replicasOf(t, after), "an active model is written")
+		assert.NotEmpty(t, ownedLeaves(t, after, FieldManager))
+	}
+
+	t.Run("passive controller-wide writes nothing until a policy tier sets passive: false", func(t *testing.T) {
+		const name = "passive-flag"
+		require.NoError(t, c.Apply(ctx, client.ApplyConfigurationFromUnstructured(envSet(name, nil)), client.FieldOwner("gitops")))
+		cfg := config.NewTestConfig()
+		config.SetPassiveDefaultForTest(cfg, true)
+		reg := registry.New(0)
+		p := &passive.Resolver{Config: cfg, Registry: reg}
+		// A model of its own: the sets of the subtests above serve org/GLM
+		// under no tier, and a model is passive when any variant resolves so.
+		gold := map[string]string{ModelIDAnnotation: "org/flag", ScalingPolicyAnnotation: "gold"}
+
+		writesNothing(t, p, reg, name, gold)
+
+		f := false
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{"gold": {Passive: &f}})
+		writes(t, p, reg, name, gold)
+	})
+
+	t.Run("a per-model passive entry writes nothing; passive: false for the model writes", func(t *testing.T) {
+		const name = "passive-model"
+		require.NoError(t, c.Apply(ctx, client.ApplyConfigurationFromUnstructured(envSet(name, nil)), client.FieldOwner("gitops")))
+		cfg := config.NewTestConfig()
+		reg := registry.New(0)
+		p := &passive.Resolver{Config: cfg, Registry: reg}
+		perModel := func(v bool) map[string]config.ScalingPolicy {
+			return map[string]config.ScalingPolicy{"per-model": {ModelID: "org/per-model", Namespace: envNS, Passive: &v}}
+		}
+		model := map[string]string{ModelIDAnnotation: "org/per-model"}
+
+		cfg.UpdateScalingPolicyConfig(perModel(true))
+		writesNothing(t, p, reg, name, model)
+
+		config.SetPassiveDefaultForTest(cfg, true)
+		cfg.UpdateScalingPolicyConfig(perModel(false))
+		writes(t, p, reg, name, model)
 	})
 }
 
