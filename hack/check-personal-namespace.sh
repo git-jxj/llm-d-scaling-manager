@@ -62,24 +62,24 @@ residue() {
 # --- the filter, on fixtures ------------------------------------------------
 allowed='OWNERS:12:  - ev-shindin
 internal/x.go:3:// PR ev-shindin/llm-scaling-manager#64 moved it, see also pre-ev-shindin/llm-scaling-manager#219.
-docs/a.md:9:[notes](https://github.com/ev-shindin/llm-scaling-manager/releases/tag/v0.10.2) and https://github.com/ev-shindin/llm-scaling-manager/pull/481
-docs/b.md:1:[x](https://github.com/ev-shindin/llm-scaling-manager/blob/bench/keda-recipe-arm/docs/a.md)
+fixture/a.md:9:[notes](https://github.com/ev-shindin/llm-scaling-manager/releases/tag/v0.10.2) and https://github.com/ev-shindin/llm-scaling-manager/pull/481
+fixture/b.md:1:[x](https://github.com/ev-shindin/llm-scaling-manager/blob/bench/keda-recipe-arm/docs/a.md)
 hack/c.sh:5:# (https://github.com/ev-shindin/llm-scaler/pull/87)
-docs/c.md:2:([as built](#rollouts-as-built-ev-shindinllm-scaling-manager481-ev-shindinllm-scaling-manager495))
-docs/d.md:7:`--launcher-image ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` from [the fork](https://github.com/ev-shindin/llm-d-fast-model-actuation)
+fixture/c.md:2:([as built](#rollouts-as-built-ev-shindinllm-scaling-manager481-ev-shindinllm-scaling-manager495))
+fixture/d.md:7:`--launcher-image ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` from [the fork](https://github.com/ev-shindin/llm-d-fast-model-actuation)
 Makefile:3:#     FMA_CONTROLLER_IMAGE=ghcr.io/ev-shindin/dual-pods-controller:aa072ef
-docs/e.md:4:[pd_role.py](https://github.com/ev-shindin/vllm-conf/blob/feat/pd-role-switch/vllm/v1/engine/pd_role.py)
+fixture/e.md:4:[pd_role.py](https://github.com/ev-shindin/vllm-conf/blob/feat/pd-role-switch/vllm/v1/engine/pd_role.py)
 internal/engines/analyzers/learnreplay/message_words.txt:1084:ev-shindin/llm-scaling-manager'
 forbidden='config/warmpool/warmpool-deployment.yaml:394:          image: ghcr.io/ev-shindin/llm-scaler/warmpool-proxy:v11@sha256:9e3e
 deploy/kind-emulator/install.sh:42:WARMPOOL_PROXY_IMAGE=${WARMPOOL_PROXY_IMAGE:-"ghcr.io/ev-shindin/warmpool-proxy:v11"}
-docs/f.md:1:pull from `ghcr.io/ev-shindin`
-docs/g.md:2:see https://github.com/ev-shindin/some-other-repo
+fixture/f.md:1:pull from `ghcr.io/ev-shindin`
+fixture/g.md:2:see https://github.com/ev-shindin/some-other-repo
 internal/y.go:8:// ev-shindin/llm-scaling-manager#12 and ghcr.io/ev-shindin/new-image:v1
-docs/h.md:3:  - ev-shindin
+fixture/h.md:3:  - ev-shindin
 OWNERS:14:  - ev-shindin-bot
-docs/i.md:5:ghcr.io/ev-shindin/fma-launcher-extra:v1
-docs/j.md:6:image: ghcr.io/ev-shindin/llm-d-fast-model-actuation:v1
-docs/k.md:7:https://github.com/ev-shindin/vllm-conf-evil/x'
+fixture/i.md:5:ghcr.io/ev-shindin/fma-launcher-extra:v1
+fixture/j.md:6:image: ghcr.io/ev-shindin/llm-d-fast-model-actuation:v1
+fixture/k.md:7:https://github.com/ev-shindin/vllm-conf-evil/x'
 
 n_allowed="$(printf '%s\n' "$allowed" | grep -c .)"
 leaked="$(printf '%s\n' "$allowed" | residue)"
