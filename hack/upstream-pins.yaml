@@ -159,16 +159,11 @@ components:
     tagPrefix: llm-d-modelservice-
     note: >-
       Pinned by the harness patch to the chart that renders the routing
-      sidecar flags the sidecar pin above accepts. Move both together.
+      sidecar flags the sidecar pin above accepts. A newer chart has not been
+      run against that sidecar yet: try it in the P/D benchmark, then move both.
     pins:
       - file: hack/benchmark/patch_harness.sh
         regex: '^MODELSERVICE_CHART = "(v[0-9][0-9a-z.+-]*)"'
-    hold:
-      version: v0.4.16
-      reason: >-
-        matched with the routing sidecar pin; a newer chart can render flags
-        that sidecar rejects (hack/benchmark/patch_harness.sh)
-      until: "2027-02-01"
 
   # --- model servers --------------------------------------------------------
   - name: vLLM (harness default)
@@ -246,6 +241,9 @@ components:
       Helm chart the installer deploys, the Go module the controller builds
       against, and the chart version the install-flow check mocks. Compared
       with chart releases, so "behind" means a chart you can install exists.
+      The chart and the module release together today; a chart-only patch
+      with no module tag would read "pins disagree" until the module catches
+      up, and is fine to leave.
     pins:
       - file: deploy/install.sh
         regex: '^KEDA_CHART_VERSION=\$\{KEDA_CHART_VERSION:-([0-9][0-9a-z.+-]*)\}'

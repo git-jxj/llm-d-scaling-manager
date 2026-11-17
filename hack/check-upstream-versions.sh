@@ -22,7 +22,7 @@ SCRIPT="${CHECK_UPSTREAM_SCRIPT:-$ROOT/hack/upstream-versions.sh}"
 WORKFLOW="${CHECK_UPSTREAM_WORKFLOW:-$ROOT/.github/workflows/upstream-versions.yaml}"
 # One ok or FAIL per case. A run that stops early otherwise passes having
 # checked less than it says. Change this deliberately with the cases.
-EXPECT_CASES=109
+EXPECT_CASES=119
 PASS=0
 FAIL=0
 
@@ -179,6 +179,23 @@ run --check
 expect_exit "v prefix: 1.2.0 and v1.2.0 agree" 0 "$RC"
 expect_has "v prefix: current" "| current |"
 
+# 5b. A pin on a prerelease sorts below its own release: v1.3.0-rc.1 or
+#     1.3.0rc1 with v1.3.0 out is behind, never "ahead of the latest".
+releases example_foo 1 "$(rel v1.3.0 2026-02-01)" "$(rel v1.2.0 2026-01-01)"
+set_pins v1.3.0-rc.1 v1.3.0-rc.1
+run --check
+expect_exit "rc pin: --check" 1 "$RC"
+expect_has "rc pin: behind its release" "| foo | v1.3.0-rc.1 | v1.3.0 | 2026-02-01 | 1 release | behind |"
+expect_not "rc pin: not ahead" "ahead of the latest release"
+set_pins v1.3.0rc1 v1.3.0rc1
+run --check
+expect_has "PEP 440 rc pin: behind its release" "| foo | v1.3.0rc1 | v1.3.0 | 2026-02-01 | 1 release | behind |"
+set_pins v1.3.0 v1.3.0
+releases example_foo 1 "$(rel v1.3.0.post1 2026-02-10)" "$(rel v1.3.0 2026-02-01)"
+run --check
+expect_has "a .post release is above its base" "| foo | v1.3.0 | v1.3.0.post1 | 2026-02-10 | 1 release, 9 days | behind |"
+releases example_foo 1 "$(rel v1.2.0 2026-01-01)" "$(rel v1.1.0 2025-12-01)"
+
 # 6. Two values in one file disagree too (every matching line is a pin).
 printf 'FOO_VERSION=${FOO_VERSION:-v1.2.0}\nFOO_VERSION=${FOO_VERSION:-v1.1.0}\n' > "$PINS/deploy/a.sh"
 printf 'images:\n  foo:\n    tag: v1.2.0\n' > "$PINS/bench/b.yaml"
@@ -322,15 +339,20 @@ set_pins v1.2.0 v1.2.0
 mkdir -p "$WORK/fakecurl"
 cat > "$WORK/fakecurl/curl" <<'STUB'
 #!/usr/bin/env bash
-out="" prev=""
+out="" hdr="/dev/null" prev=""
 for a in "$@"; do
     [ "$prev" = "-o" ] && out="$a"
+    [ "$prev" = "-D" ] && hdr="$a"
     prev="$a"
 done
 echo "curl $*" >> "$FAKE_CURL_LOG"
 case "$FAKE_CURL_MODE" in
     dns) echo "curl: (6) Could not resolve host: api.github.com" >&2; printf '000'; exit 6 ;;
     403) printf '%s' '{"message":"API rate limit exceeded for 192.0.2.1."}' > "$out"; printf '403' ;;
+    403hdr) printf 'HTTP/2 403\r\nx-ratelimit-remaining: 0\r\n\r\n' > "$hdr"
+        printf '%s' '{"message":"Forbidden"}' > "$out"; printf '403' ;;
+    403access) printf 'HTTP/2 403\r\nx-ratelimit-remaining: 4000\r\n\r\n' > "$hdr"
+        printf '%s' '{"message":"Repository access blocked"}' > "$out"; printf '403' ;;
     429) printf '%s' '{"message":"Too many requests"}' > "$out"; printf '429' ;;
     404) printf '%s' '{"message":"Not Found"}' > "$out"; printf '404' ;;
     ok) printf '%s' '[{"tag_name":"v1.2.0","published_at":"2026-01-01T12:00:00Z","prerelease":false,"draft":false}]' > "$out"; printf '200' ;;
@@ -368,12 +390,26 @@ real dns --check
 expect_exit "network down: --check" 2 "$RC"
 real 403 --check
 expect_exit "rate limit 403: --check" 2 "$RC"
-expect_has "rate limit 403: says so" "HTTP 403: API rate limit exceeded"
+expect_has "rate limit 403: says so" "HTTP 403 (rate limit): API rate limit exceeded"
 expect_has "rate limit 403: says it stopped" "**Stopped asking GitHub**"
 if [ "$CALLS" = 1 ]; then ok "rate limit 403: one request"; else fail "rate limit 403: $CALLS requests"; fi
+real 403hdr --check
+if [ "$RC" = 2 ] && [ "$CALLS" = 1 ] && printf '%s' "$OUT" | grep -qF "HTTP 403 (rate limit): Forbidden"; then
+    ok "rate limit 403 by header (no requests left): stops the run"
+else
+    fail "rate limit 403 by header (exit $RC, $CALLS requests)" "$OUT"
+fi
+real 403access --check
+expect_exit "403, not a rate limit: --check" 2 "$RC"
+expect_has "403, not a rate limit: says so" "HTTP 403 (access): Repository access blocked"
+if [ "$CALLS" = 2 ] && ! printf '%s' "$OUT" | grep -qF "Stopped asking"; then
+    ok "403, not a rate limit: the next component is still asked"
+else
+    fail "403, not a rate limit: $CALLS requests" "$OUT"
+fi
 real 429 --check
 expect_exit "rate limit 429: --check" 2 "$RC"
-expect_has "rate limit 429: says so" "HTTP 429: Too many requests"
+expect_has "rate limit 429: says so" "HTTP 429 (rate limit): Too many requests"
 real 404 --check
 expect_exit "HTTP 404: --check" 2 "$RC"
 expect_has "HTTP 404: says so" "HTTP 404: Not Found"
@@ -473,6 +509,28 @@ n_components="$(tr -d '\r' < "$ROOT/hack/upstream-pins.yaml" | yq '.components |
 expect_not "real inventory: every pin location is found" "pin not found"
 expect_not "real inventory: every hold matches its pin" "hold is stale"
 expect_has "real inventory: every component read, none answered" "**$n_components components:** 0 current, 0 behind, 0 with pins that disagree, $n_components could not be checked"
+
+# 21. The real inventory's upstream pin (vLLM, harness default) against a copy
+#     of the real llm-d-benchmark defaults.yaml: its yq expression reads the
+#     engine tag through the file's anchors. The copy records the ref it was
+#     taken at; once the llm-d-benchmark pin moves, the request names the new
+#     ref, this copy no longer answers, and the case fails until it is
+#     refreshed.
+DEFAULTS="$ROOT/hack/testdata/upstream-versions/llm-d-benchmark-defaults.yaml"
+rm -f "$FIX"/*
+fix_ref="$(tr -d '\r' < "$DEFAULTS" | sed -n 's/^# ref: //p')"
+fix_engine="$(tr -d '\r' < "$DEFAULTS" | sed -n 's/^# engine: //p')"
+tr -d '\r' < "$DEFAULTS" > "$FIX/llm-d_llm-d-benchmark.contents.$fix_ref"
+OUT="$(UPSTREAM_FETCH="$WORK/fetch" UPSTREAM_PINS_FILE="$ROOT/hack/upstream-pins.yaml" UPSTREAM_PINS_ROOT="$ROOT" \
+    bash "$SCRIPT" 2>&1)"
+if [ -n "$fix_ref" ] && [ -n "$fix_engine" ] \
+    && printf '%s' "$OUT" | grep -qF "| vLLM (harness default) | $fix_engine |" \
+    && printf '%s' "$OUT" | grep -qF "\`llm-d/llm-d-benchmark@$fix_ref:config/templates/values/defaults.yaml\`: $fix_engine"; then
+    ok "real inventory: the harness default engine reads $fix_engine from llm-d-benchmark $fix_ref"
+else
+    fail "real inventory: harness default engine (copy ref '$fix_ref', engine '$fix_engine'); refresh $DEFAULTS if the llm-d-benchmark pin moved" \
+        "$(printf '%s' "$OUT" | grep -F -e 'vLLM (harness default)' -e 'llm-d/llm-d-benchmark@')"
+fi
 
 # --- the workflow -----------------------------------------------------------
 tr -d '\r' < "$WORKFLOW" > "$WORK/wf.yaml"

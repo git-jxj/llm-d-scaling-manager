@@ -81,8 +81,9 @@ trap 'rm -rf "$WORK"' EXIT
 
 # fetch prints the body of a GitHub API GET, and fails on any HTTP error, so
 # an error can never read as an empty release list. It exits $STOP_RC on a
-# network failure, a 403 or a 429 (GitHub's rate limits): every later request
-# would fail the same way, slowly.
+# network failure, a 429, or a 403 that is a rate limit (no requests left, or
+# a message that says so): every later request would fail the same way,
+# slowly. Any other 403 (a repository we may not read) fails that request only.
 fetch() {
     if [ -n "${UPSTREAM_FETCH:-}" ]; then
         "$UPSTREAM_FETCH" "$1"
@@ -91,13 +92,14 @@ fetch() {
     local code rc=0 msg
     local args=(-sSL --connect-timeout 10 --max-time 30
         --retry "$CURL_RETRY" --retry-delay 2 --retry-all-errors
-        -o "$WORK/body" -w '%{http_code}'
+        -o "$WORK/body" -D "$WORK/headers" -w '%{http_code}'
         -H "Accept: application/vnd.github+json"
         -H "X-GitHub-Api-Version: 2022-11-28")
     if [ -n "${GITHUB_TOKEN:-}" ]; then
         args+=(-H "Authorization: Bearer $GITHUB_TOKEN")
     fi
     : > "$WORK/body"
+    : > "$WORK/headers"
     code="$(curl "${args[@]}" "$1")" || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "network failure (curl exit $rc)" >&2
@@ -107,10 +109,23 @@ fetch() {
         2??) cat "$WORK/body"; return 0 ;;
     esac
     msg="$({ jq -r '.message? // empty' "$WORK/body" 2>/dev/null || head -c 80 "$WORK/body"; } | tr '\n' ' ' | cut -c1-120)"
-    echo "HTTP $code${msg:+: $msg}" >&2
     case "$code" in
-        403|429) return "$STOP_RC" ;;
+        429)
+            echo "HTTP 429 (rate limit)${msg:+: $msg}" >&2
+            return "$STOP_RC" ;;
+        403)
+            # No pipes into grep -q: under pipefail an early exit can fail
+            # the writer, and the match would read as no match.
+            tr -d '\r' < "$WORK/headers" > "$WORK/headers.lf"
+            if grep -qi '^x-ratelimit-remaining: *0$' "$WORK/headers.lf" \
+                || [[ "${msg,,}" == *"rate limit"* ]]; then
+                echo "HTTP 403 (rate limit)${msg:+: $msg}" >&2
+                return "$STOP_RC"
+            fi
+            echo "HTTP 403 (access)${msg:+: $msg}" >&2
+            return 22 ;;
     esac
+    echo "HTTP $code${msg:+: $msg}" >&2
     return 22
 }
 
@@ -137,9 +152,20 @@ ask() {
     return 1
 }
 
+# vkey prints a version so that sort -V puts a prerelease below its release:
+# 1.0.0-rc.2, 1.0.0rc2 and 1.0.0.dev0 become 1.0.0~rc.2, 1.0.0~rc2 and
+# 1.0.0~dev0, and sort -V sorts ~ before anything, even the end. Plain
+# sort -V puts 1.0.0-rc.2 above 1.0.0, so an rc pin read "ahead" of its own
+# release. A .postN release stays above its base.
+vkey() {
+    printf '%s' "$1" | sed -E 's/^([0-9][0-9.]*[0-9])(-|[.]?(rc|alpha|beta|a|b|dev|pre))/\1~\3/'
+}
+
 # vgt A B: true when version A sorts strictly after version B.
 vgt() {
-    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+    local a b
+    a="$(vkey "$1")" b="$(vkey "$2")"
+    [ "$a" != "$b" ] && [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n 1)" = "$a" ]
 }
 
 # norm strips a tag prefix and a leading v, so 0.8.0 and v0.8.0 compare equal.

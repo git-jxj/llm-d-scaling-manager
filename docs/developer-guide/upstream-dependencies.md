@@ -92,10 +92,15 @@ closes. Add a `hold` to the component in `hack/upstream-pins.yaml`:
 
 ```yaml
     hold:
-      version: v0.4.16          # the pin you are holding
-      reason: matched with the routing sidecar pin
+      version: v0.8.1           # the pin you are holding
+      reason: the newer guide replaces the plugin set, which changes routing
       until: "2027-02-01"       # review date
 ```
+
+Hold only for a reason you can point to, such as a known break or a
+deliberate choice written at the pin. "Not tried yet" is not a reason to
+hold: leave that pin behind, so the issue prompts someone to try the newer
+version.
 
 Until the review date the report shows the component as *held* with the
 reason, and it does not keep the issue open. After the date it is *behind*
