@@ -664,7 +664,7 @@ expect_wf() {
     got="$(yq -r "$3" "$WF" 2>&1)"
     if [ "$got" = "$2" ]; then pass; else fail "ci-release.yaml: $1: got '$got', want '$2'"; fi
 }
-expect_wf "release-files runs after every image is pushed and signed, and the files signed" 'release,release-sign,release-tools,release-capacity-planner' '[.jobs."release-files".needs] | flatten | join(",")'
+expect_wf "release-files runs after every image is pushed and signed, and the files signed" 'release,release-sign,release-tools,release-capacity-planner,release-warmpool-proxy' '[.jobs."release-files".needs] | flatten | join(",")'
 expect_wf "release-files may upload (contents) and pull the tools image (packages: read), and signs nothing" \
     'contents=write,packages=read' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
 expect_wf "release-sign may sign (id-token) and read, and write nothing" \

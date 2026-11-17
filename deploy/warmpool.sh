@@ -630,7 +630,7 @@ Then re-run this command." ;;
 # The proxy image config/warmpool pins, which is what --proxy-image
 # defaults to. Emitted here rather than written out again, so the
 # default and the manifest cannot disagree about which image a pool runs.
-WARMPOOL_DEFAULT_PROXY_IMAGE="ghcr.io/ev-shindin/llm-scaler/warmpool-proxy:v11@sha256:9e3ea1e1785a35bbea0abb87d98c6602f6ea68f3bef2a64ccaac84f16d4f5062"
+WARMPOOL_DEFAULT_PROXY_IMAGE="ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:main"
 
 pool_pod_spec() {
   local memory="$1" indent="$2" role="${3:-leader}"

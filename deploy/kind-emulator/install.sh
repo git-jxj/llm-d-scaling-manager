@@ -39,7 +39,7 @@ SIM_IMAGE=${SIM_IMAGE:-"ghcr.io/llm-d/llm-d-inference-sim:v0.9.0"}
 # env var and default as the suite's own WarmPoolProxyImage (test/e2e/config.go),
 # so overriding one overrides what is pre-loaded.
 WARMPOOL_EMULATOR_IMAGE=${WARMPOOL_EMULATOR_IMAGE:-"registry.access.redhat.com/ubi9/python-311:latest"}
-WARMPOOL_PROXY_IMAGE=${WARMPOOL_PROXY_IMAGE:-"ghcr.io/ev-shindin/warmpool-proxy:v11"}
+WARMPOOL_PROXY_IMAGE=${WARMPOOL_PROXY_IMAGE:-"ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:main"}
 
 # The scaling manager Configuration
 LLMSM_RECONCILE_INTERVAL=${LLMSM_RECONCILE_INTERVAL:-"60s"} # the scaling manager controller reconcile interval - tests set 30s interval
@@ -320,8 +320,21 @@ load_warmpool_images() {
         [ -n "$image" ] || continue
         log_info "Pre-loading warm pool image '$image' into KIND cluster..."
         if ! docker pull --platform "$platform" "$image"; then
-            log_warning "Failed to pull warm pool image '$image' — warm pool tests may be slow on first run"
-            continue
+            # This repository's own proxy, under a tag not published yet (a
+            # branch that predates its first push to main, or a release commit
+            # before its run): build it from this checkout instead.
+            case "$image" in
+                */llm-d-scaling-manager/warmpool-proxy:*)
+                    log_info "Pull failed; building '$image' from Dockerfile.warmpool-proxy"
+                    if ! docker build --platform "$platform" -t "$image" \
+                        -f "$LLMSM_PROJECT/Dockerfile.warmpool-proxy" "$LLMSM_PROJECT"; then
+                        log_warning "Failed to build warm pool image '$image' — warm pool tests may fail to start pool Pods"
+                        continue
+                    fi ;;
+                *)
+                    log_warning "Failed to pull warm pool image '$image' — warm pool tests may be slow on first run"
+                    continue ;;
+            esac
         fi
         if _load_into_kind "$image"; then
             _drop_host_copy "$image"

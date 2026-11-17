@@ -154,6 +154,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **[Install methods](reference/install-methods.md)** — installer, kustomize, and per-platform entry points
 - **[Install commands of the tools image](reference/tools-install.md)** — `smt admin-setup`, `smt install`, `smt admin-finish`: every flag and exit code
 - **[Preflight check](reference/preflight.md)** — the release's preflight Job: each check, what FAIL and UNKNOWN mean, and the fix it prints
+- **[DisaggregatedSet roles](reference/disaggregatedset.md)**: scaling P/D roles of a DisaggregatedSet, by KEDA or by the role writer
 - **[KEDA](reference/keda.md)**: supported versions, a KEDA the cluster already has, and what the installer prints about it
 - **[The GPU limiter](reference/gpu-limiter.md)** and **[the quota limiter](reference/quota-limiter.md)** — bounding the scaling manager by real accelerators, and by declared caps
 - **[Security model](reference/security-model.md)** — identities, every permission by install scope, what it writes, the ports it opens, and what fails open

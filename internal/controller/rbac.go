@@ -24,6 +24,12 @@ package controller
 // +kubebuilder:rbac:groups="apps",resources=replicasets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=leaderworkerset.x-k8s.io,resources=leaderworkersets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=leaderworkerset.x-k8s.io,resources=leaderworkersets/scale,verbs=get
+//
+// A DisaggregatedSet role is scaled through its DisaggregatedSetRoleScaler; the
+// scale target reads the scaler and the set it belongs to, unstructured and
+// uncached, so get is all it needs (scaletarget.fetchDisaggregatedSetRole).
+// +kubebuilder:rbac:groups=disaggregatedset.x-k8s.io,resources=disaggregatedsets;disaggregatedsetrolescalers,verbs=get
+// +kubebuilder:rbac:groups=disaggregatedset.x-k8s.io,resources=disaggregatedsetrolescalers/scale,verbs=get
 
 // Node inventory for accelerator/capacity discovery.
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
