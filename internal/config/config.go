@@ -94,6 +94,10 @@ type infrastructureConfig struct {
 	// again (KEDA_HPA_REPAIR). Off by default: only KEDA 2.19 and older leave
 	// such an HPA behind.
 	kedaHPARepair bool
+	// dsetRoleWriter scales the Static roles of opted-in DisaggregatedSets by
+	// writing spec.roles[].spec.replicas (DSET_ROLE_WRITER, internal/dsetwriter).
+	// Off by default: it needs patch on disaggregatedsets, an admin grant.
+	dsetRoleWriter bool
 }
 
 // tlsConfig holds TLS certificate paths
@@ -405,6 +409,14 @@ func (c *Config) KEDAHPARepairEnabled() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.infrastructure.kedaHPARepair
+}
+
+// DSetRoleWriterEnabled reports whether the controller writes the replicas of
+// Static DisaggregatedSet roles itself (DSET_ROLE_WRITER). Thread-safe.
+func (c *Config) DSetRoleWriterEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.dsetRoleWriter
 }
 
 // ============================================================================

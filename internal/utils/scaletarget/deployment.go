@@ -53,13 +53,17 @@ func OwnedByDeployment(p *corev1.Pod, deployment string) bool {
 
 // Annotations is the scale target's own metadata annotations -- the
 // Deployment's or the LeaderWorkerSet's, not its pod template's, so setting
-// one rolls nothing. Nil for an unknown kind.
+// one rolls nothing. Nil for an unknown kind, and for a DisaggregatedSet
+// role: it has no object of its own to annotate (a role scaler is the set
+// controller's), and the set's annotations speak for every role at once.
 func Annotations(acc ScaleTargetAccessor) map[string]string {
 	switch t := acc.(type) {
 	case *deploymentAccessor:
 		return t.deployment.GetAnnotations()
 	case *lwsAccessor:
 		return t.lws.GetAnnotations()
+	case *dsetRoleAccessor:
+		return nil
 	}
 	return nil
 }

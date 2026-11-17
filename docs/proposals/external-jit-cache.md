@@ -67,7 +67,9 @@ same shape, and a guess must not silence a real warning.
 - **FlashInfer:** if the owner sets `FLASHINFER_WORKSPACE_DIR` and not
   `FLASHINFER_WORKSPACE_BASE`, we do not patch it, but the warning stays,
   addressed to the owner: FlashInfer reads only `FLASHINFER_WORKSPACE_BASE`.
-- The drain and weights patches and the `prepull` check do not change.
+- The drain and weights patches, including the
+  [weights gate](weights-node-gate.md)'s node affinity and wait container,
+  and the `prepull` check do not change.
 - `--apply-engine-cache` applies only the variables we still patch. If there
   are none, it refuses, with a non-zero exit and the reason.
 - `make engine-cache-keys` and `make engine-cache-verify` say the caches are
