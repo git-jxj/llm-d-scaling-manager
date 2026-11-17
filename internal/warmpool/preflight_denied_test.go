@@ -2,6 +2,7 @@ package warmpool
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/go-logr/zapr"
@@ -30,8 +31,8 @@ type denial struct {
 	entries []registry.Entry
 	// noSnapshot passes a nil snapshot func rather than an empty registry.
 	noSnapshot bool
-	// noLWS leaves LeaderWorkerSet out of the scheme, as the controller does
-	// on a cluster without the CRD.
+	// noLWS is a cluster without the LeaderWorkerSet CRD at startup: the type
+	// is left out of the scheme and lwsEnabled is false, as main.go does.
 	noLWS bool
 	// deploymentErr and lwsErr, when set, are what a list of that kind returns.
 	deploymentErr error
@@ -40,8 +41,8 @@ type denial struct {
 }
 
 // report runs ReportBorrowDenied for the scenario, at the shipped verbosity,
-// and returns what it logged.
-func (d denial) report(t *testing.T) *observer.ObservedLogs {
+// and returns what it logged and how many LeaderWorkerSet lists it made.
+func (d denial) report(t *testing.T) (*observer.ObservedLogs, int) {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := appsv1.AddToScheme(scheme); err != nil {
@@ -52,6 +53,7 @@ func (d denial) report(t *testing.T) *observer.ObservedLogs {
 			t.Fatalf("scheme: %v", err)
 		}
 	}
+	lwsLists := 0
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(d.objs...).
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
@@ -61,6 +63,7 @@ func (d denial) report(t *testing.T) *observer.ObservedLogs {
 						return d.deploymentErr
 					}
 				case *lwsv1.LeaderWorkerSetList:
+					lwsLists++
 					if d.lwsErr != nil {
 						return d.lwsErr
 					}
@@ -73,8 +76,8 @@ func (d denial) report(t *testing.T) *observer.ObservedLogs {
 		snapshot = nil
 	}
 	core, logs := observer.New(zapcore.Level(-logging.DEFAULT))
-	ReportBorrowDenied(context.Background(), zapr.NewLogger(zap.New(core)), c, snapshot, "workload")
-	return logs
+	ReportBorrowDenied(context.Background(), zapr.NewLogger(zap.New(core)), c, snapshot, "workload", !d.noLWS)
+	return logs, lwsLists
 }
 
 var poolLabels = map[string]string{pool.ComponentLabel: pool.ComponentValue}
@@ -118,15 +121,31 @@ func TestADenialWithNoPoolDeclaredIsOneInfoLine(t *testing.T) {
 		},
 		// The registry is not wired at all.
 		"no registry": {noSnapshot: true},
-		// No LeaderWorkerSet CRD: the type is not in the scheme...
-		"LWS not in the scheme": {noLWS: true},
-		// ...or the API server has no such kind.
-		"LWS CRD absent": {lwsErr: &meta.NoKindMatchError{
+		// The CRD went away after startup. NoMatch arrives wrapped, and is
+		// still read as "no such kind".
+		"LWS CRD removed after startup, wrapped NoMatch": {lwsErr: fmt.Errorf("listing: %w", &meta.NoKindMatchError{
 			GroupKind: schema.GroupKind{Group: lwsv1.GroupVersion.Group, Kind: "LeaderWorkerSet"},
-		}},
+		})},
 	}
 	for name, d := range cases {
-		t.Run(name, func(t *testing.T) { assertPoolOff(t, d.report(t)) })
+		t.Run(name, func(t *testing.T) {
+			logs, _ := d.report(t)
+			assertPoolOff(t, logs)
+		})
+	}
+}
+
+// No LeaderWorkerSet CRD at startup is decided from what startup found, not by
+// classifying the error a list of an unregistered type returns: that error is
+// matched by a bare type assertion, and a wrapped one would read as a failed
+// check, an ERROR on every cluster without LeaderWorkerSet.
+func TestNoLWSAtStartupIsNeverListed(t *testing.T) {
+	notRegistered := runtime.NewNotRegisteredErrForKind("test", lwsv1.GroupVersion.WithKind("LeaderWorkerSetList"))
+	d := denial{noLWS: true, lwsErr: fmt.Errorf("listing: %w", notRegistered)}
+	logs, lwsLists := d.report(t)
+	assertPoolOff(t, logs)
+	if lwsLists != 0 {
+		t.Errorf("startup found no LeaderWorkerSet CRD, yet LeaderWorkerSets were listed %d times", lwsLists)
 	}
 }
 
@@ -134,8 +153,10 @@ func TestADenialWithNoPoolDeclaredIsOneInfoLine(t *testing.T) {
 // an ERROR with the remediation, whichever way the pool is declared.
 func TestADenialWithAPoolDeclaredIsAnError(t *testing.T) {
 	cases := map[string]denial{
-		"by a pool Deployment":      {objs: []client.Object{poolDeployment("workload")}},
-		"by a pool LeaderWorkerSet": {objs: []client.Object{poolLWS("workload")}},
+		// The registry is empty, as it usually is at startup: only the
+		// workload says a pool exists.
+		"registry empty, pool Deployment present":      {objs: []client.Object{poolDeployment("workload")}},
+		"registry empty, pool LeaderWorkerSet present": {objs: []client.Object{poolLWS("workload")}},
 		"by a ScaledObject trigger": {entries: []registry.Entry{{
 			Namespace: "workload", Name: "pool",
 			Metadata: map[string]string{registry.WarmPoolNameKey: "default"},
@@ -143,7 +164,7 @@ func TestADenialWithAPoolDeclaredIsAnError(t *testing.T) {
 	}
 	for name, d := range cases {
 		t.Run(name, func(t *testing.T) {
-			logs := d.report(t)
+			logs, _ := d.report(t)
 			if n := logs.FilterLevelExact(zapcore.ErrorLevel).FilterMessage(BorrowDenied).Len(); n != 1 {
 				t.Fatalf("want the remediation ERROR once, got %d: %v", n, logs.All())
 			}
@@ -163,7 +184,7 @@ func TestADeclarationThatCannotBeReadIsAnErrorNotInfo(t *testing.T) {
 	}
 	for name, d := range cases {
 		t.Run(name, func(t *testing.T) {
-			logs := d.report(t)
+			logs, _ := d.report(t)
 			if n := logs.FilterMessage(NoPoolDeclared).Len(); n != 0 {
 				t.Fatalf("an unreadable declaration was reported as no pool: %v", logs.All())
 			}

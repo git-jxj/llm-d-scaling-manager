@@ -1260,7 +1260,7 @@ func main() {
 		for _, warmPoolNS := range readableWatched {
 			if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 				return runWarmPool(ctx, mgr, ds, warmPoolNS, warmPoolGPUUtil, warmPoolSleepMinSize,
-					warmPoolMaxHold, warmPoolMinHold, warmPoolPreloadTop, warmPoolMemoryBudget, passiveResolver)
+					warmPoolMaxHold, warmPoolMinHold, warmPoolPreloadTop, warmPoolMemoryBudget, passiveResolver, lwsEnabled)
 			})); err != nil {
 				setupLog.Error(err, "unable to add the warm pool to manager", "namespace", warmPoolNS)
 				os.Exit(1)
@@ -1287,7 +1287,7 @@ func main() {
 				go func() {
 					defer close(done)
 					if err := runWarmPool(nsCtx, mgr, ds, ns, warmPoolGPUUtil, warmPoolSleepMinSize,
-						warmPoolMaxHold, warmPoolMinHold, warmPoolPreloadTop, warmPoolMemoryBudget, passiveResolver); err != nil {
+						warmPoolMaxHold, warmPoolMinHold, warmPoolPreloadTop, warmPoolMemoryBudget, passiveResolver, lwsEnabled); err != nil {
 						setupLog.Error(err, "warm pool stopped", "namespace", ns)
 					}
 				}()
@@ -1635,6 +1635,7 @@ func runWarmPool(
 	warmPoolPreloadTop *int,
 	warmPoolMemoryBudget *int64,
 	passiveResolver *passive.Resolver,
+	lwsEnabled bool,
 ) error {
 	// Its own, because the original sat in main() as a local. Same name so the
 	// lines this function emits are indistinguishable from before the hoist.
@@ -1693,7 +1694,7 @@ func runWarmPool(
 	case !allowed:
 		// An ERROR only where a pool is declared; a namespace that never asked
 		// for one gets one info line saying the pool is off.
-		warmpool.ReportBorrowDenied(ctx, setupLog, mgr.GetAPIReader(), registry.Default.Snapshot, warmPoolNS)
+		warmpool.ReportBorrowDenied(ctx, setupLog, mgr.GetAPIReader(), registry.Default.Snapshot, warmPoolNS, lwsEnabled)
 		return nil
 	}
 

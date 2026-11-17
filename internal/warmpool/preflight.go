@@ -8,7 +8,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
@@ -73,9 +72,11 @@ const NoPoolDeclared = "warm pool off: no warm pool is declared in this namespac
 //
 // r should read the API server directly (a manager's APIReader): a cached
 // client starts an informer, and a denied informer waits instead of failing.
+// lwsEnabled is whether startup found the LeaderWorkerSet CRD and registered
+// the type; without it no LeaderWorkerSet pool can exist and none is listed.
 func ReportBorrowDenied(ctx context.Context, logger logr.Logger, r client.Reader,
-	snapshot func() []registry.Entry, namespace string) {
-	declared, err := poolDeclared(ctx, r, snapshot, namespace)
+	snapshot func() []registry.Entry, namespace string, lwsEnabled bool) {
+	declared, err := poolDeclared(ctx, r, snapshot, namespace, lwsEnabled)
 	switch {
 	case err != nil:
 		logger.Error(err, "could not check whether a warm pool is declared in this namespace; if one is, "+
@@ -92,8 +93,9 @@ func ReportBorrowDenied(ctx context.Context, logger logr.Logger, r client.Reader
 // LeaderWorkerSet for a multi-host pool. The workloads are read as well as the
 // registry because the registry fills as KEDA calls, so at startup it is
 // usually still empty, and an unnamed pool from before named pools has no
-// trigger at all.
-func poolDeclared(ctx context.Context, r client.Reader, snapshot func() []registry.Entry, namespace string) (bool, error) {
+// trigger at all. LeaderWorkerSets are listed only when lwsEnabled.
+func poolDeclared(ctx context.Context, r client.Reader, snapshot func() []registry.Entry,
+	namespace string, lwsEnabled bool) (bool, error) {
 	if snapshot != nil {
 		for _, entry := range snapshot() {
 			if entry.Namespace == namespace && registry.ScalesAWarmPool(entry.Metadata) {
@@ -112,13 +114,18 @@ func poolDeclared(ctx context.Context, r client.Reader, snapshot func() []regist
 		return true, nil
 	}
 
+	if !lwsEnabled {
+		// No LeaderWorkerSet CRD at startup, so the type is not in the scheme
+		// and there is no LWS pool. Decided from what startup found, not from
+		// the shape of the error a list of an unregistered type returns.
+		return false, nil
+	}
 	var sets lwsv1.LeaderWorkerSetList
 	err := r.List(ctx, &sets, inNS, labelled, client.Limit(1))
 	switch {
-	case meta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err):
-		// No LeaderWorkerSet CRD on this cluster (the scheme registers the
-		// type only when the CRD exists), so there is no LWS pool. Anything
-		// else, Forbidden included, is a read that did not answer.
+	case meta.IsNoMatchError(err):
+		// The CRD went away after startup: no LWS pool. Anything else,
+		// Forbidden included, is a read that did not answer.
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("list warm pool leaderworkersets in %s: %w", namespace, err)
