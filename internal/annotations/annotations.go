@@ -59,6 +59,15 @@ const (
 	// nothing resolves. A positive integer; anything else is ignored. A cap
 	// the engine's flags state wins over it.
 	MaxNumSeqs = "llm-d.ai/max-num-seqs"
+
+	// VLLMVersion, set on a variant's scale target (the Deployment or
+	// LeaderWorkerSet itself, not its pod template, so nothing rolls), states
+	// the vLLM release its engine runs, as "0.34" or "v0.34.0". It is read
+	// when the image tag does not name the release -- a digest, a private
+	// build -- and wins over the tag when both do. The release decides the
+	// defaults of flags the engine leaves unset; see
+	// docs/reference/vllm-versions.md. Anything unreadable is ignored.
+	VLLMVersion = "scaling-manager.llmd.ai/vllm-version"
 )
 
 // IsSynthetic reports whether va was synthesized by the scaling manager rather than read from a

@@ -996,7 +996,7 @@ func (p *PrometheusClient) QueryWithRetry(ctx context.Context, query string) (fl
 
 // executeQuery performs a single query attempt using the official Prometheus API
 func (p *PrometheusClient) executeQuery(ctx context.Context, query string) (float64, error) {
-	result, warnings, err := p.client.Query(ctx, query, time.Now())
+	result, warnings, _, err := p.client.Query(ctx, query, time.Now())
 	if err != nil {
 		return 0, fmt.Errorf("prometheus query failed: %w", err)
 	}
@@ -1148,7 +1148,7 @@ func GetQueueMetrics(namespace string) (podQueues map[string]float64, totalQueue
 	// 2. namespace is validated above against RFC 1123 DNS label format (alphanumeric + dashes only)
 	query := fmt.Sprintf(`%s{namespace="%s"}`, constants.VLLMNumRequestsWaiting, namespace)
 
-	result, warnings, err := client.client.Query(ctx, query, time.Now())
+	result, warnings, _, err := client.client.Query(ctx, query, time.Now())
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query queue metrics: %w", err)
 	}

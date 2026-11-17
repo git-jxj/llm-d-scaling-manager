@@ -162,6 +162,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **Capacity planner** — [the HTTP API](guides/capacity-planner/api.md) · [the metrics it needs](guides/capacity-planner/metrics.md) · [troubleshooting](guides/capacity-planner/troubleshooting.md) · [how accurate each figure is](guides/capacity-planner/accuracy.md). These pages live with [its guide](guides/capacity-planner/), to keep the planner's pages together
 - **[Router configuration](reference/router-configuration.md)** — the two router settings that decide what the scaling manager sees: flow control bounds the queue it reads as demand, and the scheduling profiles decide whether the replicas it orders get used
 - **[SGLang backend](reference/sglang-backend.md)** — auto-detected per variant; nothing to configure
+- **[vLLM versions](reference/vllm-versions.md)** — the supported versions, the engine defaults that change between them, and how to tell the scaling manager which one a variant runs
 - **[Troubleshooting](reference/troubleshooting.md)**
 - **[Upgrade and uninstall](reference/upgrade-and-uninstall.md)** — pinning a version, what a restart costs, and what an uninstall leaves behind
 
@@ -190,6 +191,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **[Kueue borrowing internals](developer-guide/kueue-borrowing.md)** — what is read from Kueue, where borrowing is counted, spent and given back, and how it is tested
 - **[Anatomy of a replica start](developer-guide/replica-start-anatomy.md)** — where the seconds of a vLLM start go, the levers ruled out, and the experimental snapshot restore
 - **[Release process](developer-guide/release-process.md)** · **[Contributing](../CONTRIBUTING.md)**
+- **[Upstream dependencies](developer-guide/upstream-dependencies.md)** — the monthly check of our llm-d-router, FMA, vLLM, KEDA and other pins, and what to do when one falls behind
 
 ## What this project is
 

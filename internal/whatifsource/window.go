@@ -120,7 +120,7 @@ func (w *windowAPI) fail(err error) {
 
 // Query answers an instant query at the step setStep set, whatever ts the
 // caller passed (the collector passes the wall clock).
-func (w *windowAPI) Query(ctx context.Context, query string, _ time.Time, _ ...promv1.Option) (model.Value, promv1.Warnings, error) {
+func (w *windowAPI) Query(ctx context.Context, query string, _ time.Time, _ ...promv1.Option) (model.Value, promv1.Warnings, promv1.Infos, error) {
 	w.mu.Lock()
 	a := w.memo[query]
 	if a == nil {
@@ -141,13 +141,13 @@ func (w *windowAPI) Query(ctx context.Context, query string, _ time.Time, _ ...p
 		}
 	})
 	if a.err != nil {
-		return nil, a.warnings, a.err
+		return nil, a.warnings, nil, a.err
 	}
 	vec := a.byTime[model.TimeFromUnixNano(at.UnixNano())]
 	if vec == nil {
 		vec = model.Vector{}
 	}
-	return vec, a.warnings, nil
+	return vec, a.warnings, nil, nil
 }
 
 // fetch asks query over the window, in parts of at most w.points steps,
@@ -161,7 +161,7 @@ func (w *windowAPI) fetch(ctx context.Context, query string) (map[model.Time]mod
 		if to.After(w.end) {
 			to = w.end
 		}
-		val, warn, err := w.prom.QueryRange(ctx, query, promv1.Range{Start: from, End: to, Step: w.step})
+		val, warn, _, err := w.prom.QueryRange(ctx, query, promv1.Range{Start: from, End: to, Step: w.step})
 		warnings = append(warnings, warn...)
 		if err != nil {
 			return nil, warnings, fmt.Errorf("range query %q: %w", query, err)
@@ -225,6 +225,6 @@ func (w *windowAPI) onGrid(ts model.Time) bool {
 var errNotCaptured = errors.New("whatifsource: only instant queries are answered from a capture's window")
 
 // QueryRange is refused: the collector asks instant queries only.
-func (w *windowAPI) QueryRange(context.Context, string, promv1.Range, ...promv1.Option) (model.Value, promv1.Warnings, error) {
-	return nil, nil, errNotCaptured
+func (w *windowAPI) QueryRange(context.Context, string, promv1.Range, ...promv1.Option) (model.Value, promv1.Warnings, promv1.Infos, error) {
+	return nil, nil, nil, errNotCaptured
 }

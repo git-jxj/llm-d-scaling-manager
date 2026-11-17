@@ -88,7 +88,7 @@ func TestClient_TheBearerTokenStaysOnItsHost(t *testing.T) {
 	f := captureFlags{prometheus: prom.URL, tokenFile: token, caFile: caFile(t, prom.Server), timeout: 10 * time.Second}
 	api, err := f.client(&bytes.Buffer{})
 	require.NoError(t, err)
-	_, _, err = api.QueryRange(context.Background(), "up", promv1.Range{Start: cliFrom, End: cliFrom.Add(time.Minute), Step: 15 * time.Second})
+	_, _, _, err = api.QueryRange(context.Background(), "up", promv1.Range{Start: cliFrom, End: cliFrom.Add(time.Minute), Step: 15 * time.Second})
 	require.NoError(t, err)
 	require.NotEmpty(t, prom.headers())
 	for _, h := range prom.headers() {
@@ -137,7 +137,7 @@ func TestClient_ARequestTimesOut(t *testing.T) {
 	api, err := captureFlags{prometheus: slow.URL, timeout: 200 * time.Millisecond}.client(&bytes.Buffer{})
 	require.NoError(t, err)
 	began := time.Now()
-	_, _, err = api.QueryRange(context.Background(), "up", promv1.Range{Start: cliFrom, End: cliFrom, Step: time.Second})
+	_, _, _, err = api.QueryRange(context.Background(), "up", promv1.Range{Start: cliFrom, End: cliFrom, Step: time.Second})
 	require.Error(t, err)
 	assert.Less(t, time.Since(began), 3*time.Second)
 	_, err = runCLI(captureArgs(slow.URL, filepath.Join(t.TempDir(), "c.gz"), "--timeout", "0s")...)
@@ -387,7 +387,7 @@ func TestClient_AnHTTPSRedirectToHTTPDropsTheToken(t *testing.T) {
 	f := captureFlags{prometheus: "https://" + srv.addr, tokenFile: token, caFile: srv.caFile, timeout: 10 * time.Second}
 	api, err := f.client(io.Discard)
 	require.NoError(t, err)
-	_, _, err = api.QueryRange(context.Background(), "up", promv1.Range{Start: cliFrom, End: cliFrom, Step: time.Second})
+	_, _, _, err = api.QueryRange(context.Background(), "up", promv1.Range{Start: cliFrom, End: cliFrom, Step: time.Second})
 	require.NoError(t, err)
 	mu.Lock()
 	defer mu.Unlock()

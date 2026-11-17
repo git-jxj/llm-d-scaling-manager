@@ -62,6 +62,7 @@
 394
 3s
 4
+40g
 5
 50
 5m
@@ -481,6 +482,10 @@ a
 a-zA-Z0-9_
 a0
 a0Samples
+a10
+a100
+a40
+a800
 aClusters
 aCurve
 aExtrapolated
@@ -622,6 +627,9 @@ avgOutputTokens
 awaiting-in-flight
 awaiting-return
 b
+b100
+b200
+b300
 back
 back-pressure-bound
 backlog
@@ -927,6 +935,7 @@ decodeTTFTPrompt
 decodeTermRefused
 decodeVariant
 deduced
+deepep_low_latency
 deeper
 default
 defaultPolicy
@@ -959,6 +968,7 @@ derivedOK
 derivedRate
 desiredReplicas
 detected
+device_memory_utilization
 did
 differ
 differences
@@ -1045,9 +1055,11 @@ empty
 enable
 enable_chunked_prefill
 enable_dp_attention
+enable_elastic_ep
 enable_ep_moe
 enable_eplb
 enable_expert_parallel
+enable_extensible_kv_cache
 enable_hierarchical_cache
 enable_prefix_caching
 enabled
@@ -1226,12 +1238,16 @@ gap
 gaps
 gate
 gates
+gb10
+gb200
+gb300
 generated
 generatingMark
 generatingMarkAt
 generationTokenRate
 get
 gets
+gh200
 givableGPUs
 give
 given
@@ -1272,6 +1288,10 @@ growth
 growthCapped
 guaranteed
 guaranteedGPUs
+h100
+h20
+h200
+h800
 had
 hadShape
 haircut-held
@@ -1568,6 +1588,9 @@ kv_offloading_size
 kv_transfer_config
 kv_transfer_config.kv_connector
 kv_utilization_out_of_range
+l20
+l4
+l40
 label
 label_
 labels
@@ -1747,6 +1770,11 @@ metrics-cert-name
 metrics-cert-path
 metrics-secure
 metricsCount
+mi300a
+mi300x
+mi308x
+mi325
+mi355
 mid-rollout
 mid-run
 milliseconds
@@ -1873,6 +1901,7 @@ newest
 newestGroup
 next
 nil
+nixl_ep
 no
 no-capacity
 no-change
@@ -1909,6 +1938,7 @@ noScaleUp
 no_enable_chunked_prefill
 no_enable_eplb
 no_enable_expert_parallel
+no_enable_extensible_kv_cache
 no_enable_prefix_caching
 no_enforce_eager
 no_replicas
@@ -2812,6 +2842,7 @@ swingWindow
 switch
 system
 t
+t4
 tail
 take
 taken
@@ -3030,6 +3061,8 @@ utilizationShare.stabilization.swingReversals
 utilizationShare.tolerance
 utilizationShare.weightClasses
 v
+v100
+vLLM
 va
 valid
 validated
@@ -3054,6 +3087,8 @@ versions
 via
 victim
 vllm
+vllm-openai
+vllm-openai-rocm
 vllm.entrypoints
 vllm/vllm-openai
 vllm:cache_config_info
