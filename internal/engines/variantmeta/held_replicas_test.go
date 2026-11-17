@@ -8,12 +8,14 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/scaletarget"
 )
 
@@ -99,6 +101,46 @@ func TestHeldReplicasCountsLWSGroups(t *testing.T) {
 	// leader alone holds GPUs; a receiver's fill must not end on it.
 	if filled != 1 {
 		t.Fatalf("filled = %d, want 1: only group 0 has all four pods", filled)
+	}
+}
+
+// A DisaggregatedSet role's pods are listed by the set and role labels: they
+// belong to child LeaderWorkerSets named <set>-<slice>-<revision>-<role>, never
+// to anything named like the role scaler, and the other role's pods are not
+// this role's.
+func TestHeldReplicasCountsDisaggregatedSetRoleGroups(t *testing.T) {
+	scaler := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "glm-decode", "namespace": "ns", "labels": map[string]any{
+			constants.DisaggregatedSetNameLabelKey: "glm", constants.DisaggregatedSetRoleLabelKey: "decode"}},
+		"spec": map[string]any{"replicas": int64(2)},
+	}}
+	set := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "glm", "namespace": "ns"},
+		"spec": map[string]any{"roles": []any{map[string]any{"name": "decode", "spec": map[string]any{
+			"leaderWorkerTemplate": map[string]any{"size": int64(2), "workerTemplate": map[string]any{}}}}}},
+	}}
+	acc, err := scaletarget.NewDisaggregatedSetRoleAccessor(scaler, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := func(role, idx string) map[string]string {
+		return map[string]string{
+			constants.DisaggregatedSetNameLabelKey: "glm",
+			constants.DisaggregatedSetRoleLabelKey: role,
+			lwsv1.SetNameLabelKey:                  "glm-0-abc12345-" + role,
+			lwsv1.GroupIndexLabelKey:               idx,
+		}
+	}
+	c := heldClient(t,
+		heldPod("d-0", pod("decode", "0"), "n1", corev1.PodRunning, false),
+		heldPod("d-0-1", pod("decode", "0"), "n1", corev1.PodRunning, false),
+		heldPod("d-1", pod("decode", "1"), "n2", corev1.PodRunning, false),
+		heldPod("p-0", pod("prefill", "0"), "n3", corev1.PodRunning, false),
+		heldPod("p-0-1", pod("prefill", "0"), "n3", corev1.PodRunning, false),
+	)
+	held, filled, known := heldReplicaCount(context.Background(), c, "ns", acc)
+	if !known || held != 2 || filled != 1 {
+		t.Fatalf("held = %d filled = %d (known %t), want 2 decode groups, 1 filled", held, filled, known)
 	}
 }
 

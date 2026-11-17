@@ -244,6 +244,7 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string, setti
 			v.GetString("LEARNED_STATE_BUCKET_RETENTION"), v.GetDuration("LEARNED_STATE_BUCKET_RETENTION")),
 		learnedStateSnapshot: v.GetBool("LEARNED_STATE_SNAPSHOT"),
 		kedaHPARepair:        v.GetBool("KEDA_HPA_REPAIR"),
+		dsetRoleWriter:       v.GetBool("DSET_ROLE_WRITER"),
 	}
 
 	cfg.tls = tlsConfig{

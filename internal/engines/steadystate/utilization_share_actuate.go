@@ -641,6 +641,9 @@ func (e *Engine) shareTimingInputs(g allocation.ShareGroup,
 			entry, ok = e.Variants.FindByScaleTarget(ns, constants.LeaderWorkerSetKind, acc.GetName())
 		}
 		if !ok {
+			entry, ok = e.Variants.FindByScaleTarget(ns, constants.DisaggregatedSetRoleScalerKind, acc.GetName())
+		}
+		if !ok {
 			continue
 		}
 		if w := entry.Target.ScaleDownWindowSeconds; w != nil {

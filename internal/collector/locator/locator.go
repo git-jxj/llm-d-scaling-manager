@@ -294,10 +294,20 @@ func (l *podLocator) ResolveScaleTarget(ctx context.Context, namespace, podName 
 // resolveScaleTarget walks the pod's ownerReferences and returns the first
 // ancestor that is a Deployment or LWS. Returns the zero chainNode if no
 // such ancestor exists.
+//
+// An LWS controlled by a DisaggregatedSet is not the scale target: it is one
+// role's child for one revision, and replaced on the next rollout. The target
+// is then the role's DisaggregatedSetRoleScaler, <set>-<role>, named from the
+// pod's role label (dsetRoleScaler).
 func (l *podLocator) resolveScaleTarget(ctx context.Context, pod *corev1.Pod, namespace string) (chainNode, error) {
 	chain, err := walkOwnersUp(ctx, l.apiReader, pod, namespace, l.maxDepth)
 	if err != nil {
 		return chainNode{}, err
+	}
+	for _, n := range chain {
+		if n.Kind == constants.DisaggregatedSetKind && n.APIVersion == constants.DisaggregatedSetAPIVersion {
+			return dsetRoleScaler(pod, n), nil
+		}
 	}
 	for _, n := range chain {
 		if scaleTargetKindSupported(n.Kind) {
@@ -305,6 +315,24 @@ func (l *podLocator) resolveScaleTarget(ctx context.Context, pod *corev1.Pod, na
 		}
 	}
 	return chainNode{}, nil
+}
+
+// dsetRoleScaler is the DisaggregatedSetRoleScaler of a pod of DisaggregatedSet
+// set: <set>-<role>, the name the DisaggregatedSet controller gives it. The
+// zero chainNode -- unattributed -- for a pod with no role label, and for a
+// sub-role's pod: the controller assigns a group to a sub-role and can move it,
+// while a pod's resolution is cached for its lifetime.
+func dsetRoleScaler(pod *corev1.Pod, set chainNode) chainNode {
+	role := pod.Labels[constants.DisaggregatedSetRoleLabelKey]
+	if role == "" || pod.Labels[constants.DisaggregatedSetSubRoleLabelKey] != "" {
+		return chainNode{}
+	}
+	return chainNode{
+		Namespace:  set.Namespace,
+		APIVersion: constants.DisaggregatedSetAPIVersion,
+		Kind:       constants.DisaggregatedSetRoleScalerKind,
+		Name:       set.Name + "-" + role,
+	}
 }
 
 // resolveScaler finds the scaler in front of a top-level scale target.

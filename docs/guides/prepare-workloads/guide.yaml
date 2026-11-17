@@ -7,7 +7,7 @@ prerequisites:
   tools:
     note: The tools image of the release you installed. It gets a kubeconfig of the current context only, read-only; files land in this directory.
     run: |
-      V=<release, for example v0.11.1>
+      V=<release, for example v0.11.2>
       export NAMESPACE=<your model namespace>
       TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V
       kubectl config view --minify --flatten > smt.kubeconfig && chmod 600 smt.kubeconfig
@@ -45,6 +45,11 @@ deploy:
       smt prepull status -n $NAMESPACE
       smt weights status -n $NAMESPACE
       smt engine-cache status -n $NAMESPACE
+  gate:
+    note: Cluster admin (it patches nodes). Label each GPU node whose copy of the weights is present at its recorded size, and unlabel it when the copy breaks. --merge keeps the namespaces it already watches; status names the node label and counts the nodes that carry it.
+    run: |
+      smt weights labeller -n $NAMESPACE --image $TOOLS --merge
+      smt weights status -n $NAMESPACE
   patch:
     note: Writes scaling-manager-workload-patch.yaml here. Copy it into your model server's chart values.
     run: smt workload-patch -n $NAMESPACE
@@ -83,3 +88,6 @@ cleanup:
       smt prepull delete -n $NAMESPACE --all
       smt weights delete -n $NAMESPACE --all
       smt engine-cache delete -n $NAMESPACE
+  labeller:
+    note: Takes this namespace off the labeller (patch on Deployments in its namespace, delete on RoleBindings in yours). Its next pass removes the node labels only this namespace's copies held; other namespaces keep theirs.
+    run: smt weights labeller --remove -n $NAMESPACE

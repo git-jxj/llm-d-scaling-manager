@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/dsetwriter"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/scalefromzero"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/steadystate"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/passive"
@@ -22,6 +23,7 @@ func TestWirePassiveReachesEveryComponent(t *testing.T) {
 		Scaler:        &scaler.Server{},
 		Demand:        &warmpool.Demand{},
 		Guard:         &warmpoolpool.PassiveGuard{},
+		RoleWriter:    &dsetwriter.Writer{},
 	}
 	wirePassive(&passive.Resolver{}, c)
 	v := reflect.ValueOf(c)

@@ -310,7 +310,8 @@ What it creates:
   other (the volume carries a `claimRef`);
 - one DaemonSet that downloads the model onto every accelerator node, then
   reports Ready. `weights-status` and the DaemonSet's `numberReady` both mean
-  "the download finished on this node". Placement is the image holder's:
+  "the download finished on this node, and its files are all there"
+  ([Gate replicas on the weights](#gate-replicas-on-the-weights)). Placement is the image holder's:
   `WEIGHTS_NODE_SELECTOR` / `WEIGHTS_TOLERATIONS` default to the `PREPULL_*`
   values.
 
@@ -412,9 +413,11 @@ says so when the cluster has SecurityContextConstraints:
   cannot even see the marker: on OpenShift one directory per project is
   not advice but the only thing that works, unless the disk is mounted
   with `context=` as above.
-- A node that joins later has no copy until the DaemonSet reaches it, and a
-  replica scheduled there meanwhile reads from a directory that is being
-  written. `weights-status` says which nodes are there yet. A cordoned node
+- A node that joins later has no copy until the DaemonSet reaches it. Without
+  the gate below, a replica scheduled there meanwhile reads from a directory
+  that is being written; with it, the replica waits for the copy (or, with a
+  required affinity, is not placed there).
+  `weights-status` says which nodes are there yet. A cordoned node
   or one under `DiskPressure` still counts for the DaemonSet (its controller
   tolerates both) and keeps evicting the downloader; `weights-status` lists
   it as `excluded` and leaves it out of the count, since no engine can start
@@ -428,6 +431,148 @@ measured here.
 The benchmark standup has the same measure under
 `BENCHMARK_MODEL_HOSTPATH=<dir>`; what the harness does with it is in
 [Benchmark the scaling manager](../guides/benchmarking/README.md#replica-start-time-in-the-harness).
+
+### Gate replicas on the weights
+
+Each node holds its own copy, so a replica can land on a node whose copy is
+missing, half-written, or gone (a disk that failed or was remounted empty). The
+gate has three parts:
+
+1. **The downloader verifies the files.** It writes its marker,
+   `.download-complete`, after the last file, and lists every file in it with
+   its size. Its readiness probe checks the marker, a `config.json` (or
+   `params.json`), and every listed file at its size, every 15 s. A copy that
+   stops verifying is downloaded again. A marker written by an earlier version
+   (empty) is upgraded in place when the files look whole, else the model is
+   downloaded again. A downloader applied before v0.12.0 checked only that the
+   marker exists. The labeller skips it and says so. Run `weights apply` for
+   that model again.
+2. **The labeller labels the nodes.** `weights label` sets
+   `llm-d.ai/<name>-cache=ready` on each node where every downloader for that
+   label is Ready, and removes it where one is not, or where its downloader is
+   gone. `weights labeller` runs it in the cluster every 30 s.
+3. **The model server uses the label.** `make workload-patch` writes a node
+   affinity on the label and a `wait-for-weights` init container into each
+   Deployment whose engine mounts a weights claim.
+
+```bash
+# cluster admin: run the labeller in the cluster, for these model namespaces (-A: all)
+smt weights labeller -n <ns>[,<ns>...] --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<release> --merge
+make weights-label NAMESPACE=<ns>[,<ns>]   # or once, from a checkout
+smt weights status -n <ns>                 # each model's node label, and how many nodes carry it
+smt weights labeller --remove -n <ns>      # stop watching one namespace; the others keep their labels
+smt weights labeller --delete && smt weights label --clear   # the whole cluster: remove it, then its labels
+```
+
+`--remove` re-applies the labeller without `<ns>` and deletes its RoleBinding
+there. On its next pass the labeller removes the labels only `<ns>`'s copies
+held. It needs `patch` on Deployments in the labeller's namespace and `delete`
+on RoleBindings in `<ns>`. Use `--delete` and `label --clear` only to remove the
+labeller for every namespace.
+
+**Health.** The labeller writes ConfigMap `weights-labeller-status` in its own
+namespace when its state changes:
+
+```bash
+kubectl get configmap weights-labeller-status -n scaling-manager-weights-labeller -o yaml
+```
+
+`state` is `ok`, `degraded` (a namespace could not be read, or a node could not
+be patched) or `failed` (nothing was changed this pass). `detail` says what, and
+`since` says when this state began. A namespace it cannot read keeps the labels
+it asked for when last read, unchanged; the other namespaces are labelled as
+usual. If the labeller has not read that namespace since it started, no label
+is removed anywhere until it can.
+
+**The label.** `llm-d.ai/<name>-cache=ready`, where `<name>` is the model id
+without its organisation, lower-cased: `Qwen/Qwen3-32B` is
+`llm-d.ai/qwen3-32b-cache`, `meta-llama/Llama-3.1-8B-Instruct` is
+`llm-d.ai/llama-3.1-8b-instruct-cache`. This is the label some clusters'
+node-preparation jobs already set, so a node prepared by either reads the same.
+Characters a label name does not allow become `-`; a name longer than 57
+characters keeps its first 48 and a hash of the whole id. `WEIGHTS_NODE_LABEL`
+(`--node-label` on `deploy/weights.sh apply`) replaces the whole key; it must be
+`<prefix>/<name>-cache`, and the labeller writes only under its
+`--label-prefix` (`llm-d.ai` unless set). The organisation is dropped, so
+`Qwen/Qwen3-8B` and `my-org/Qwen3-8B` share a key: a node holding either is
+labelled for both. `label` warns when that happens; give each its own key.
+
+**Labels it did not set.** The labeller records the labels it set in the node
+annotation `scaling-manager.llmd.ai/weights-node-labels` and removes only
+those. A label another tool set is left alone; if the downloader on that node
+is not Ready, `label` says so and changes nothing.
+
+**Required or preferred.** `LLMSM_WEIGHTS_NODE_AFFINITY` picks what the patch
+writes:
+
+| Value | Effect | Use when |
+| --- | --- | --- |
+| `preferred` (default) | labelled nodes first; a replica may still land on a node without the copy, and waits there until the download finishes | scale-out must not stall: the downloader runs on every GPU node, so the wait is bounded by the download |
+| `required` | replicas only on labelled nodes; with none free, they stay `Pending` | the download takes longer than an acceptable start, or some GPU nodes never get a copy |
+| `none` | no affinity; the init container still waits | something else places the replicas |
+
+The required term is added to every existing `nodeSelectorTerms` entry (terms
+are ORed), so a GPU product term the template already has stays. The patch
+replaces the whole list, so it carries the existing entries.
+
+**How the scaling manager counts those nodes.** With `required` and a declared
+`gpu-inventory`, node fit already counts only labelled nodes for that model:
+it reads the template's required node affinity
+([GPU limiter](gpu-limiter.md)). With `preferred`, a node without the copy
+counts as capacity: a replica placed there starts later, but it starts.
+
+**Rights.** `label` lists and patches nodes, which is cluster-scoped. The
+labeller runs in its own namespace (`scaling-manager-weights-labeller`, Pod
+Security `restricted`), with node `get`/`list`/`patch`, namespace `get` (a deleted namespace it watches is skipped, not an error), and read-only access to
+DaemonSets and pods in the namespaces it watches. In its own namespace it may
+`create` ConfigMaps, and `get` and `patch` its status ConfigMap. It must not run in a model
+namespace: anyone who can create pods there could use its ServiceAccount to
+patch nodes. The namespace owner needs none of this.
+
+The namespaces it watches are trusted. Anyone who can create pods in one can
+set a `<prefix>/<name>-cache` label on a node, or clear one the labeller set
+(never any other label), with a pod that looks like a downloader. So watch
+the model namespaces by name (`-n`), not `-A`, on a cluster whose namespaces
+are not all trusted.
+
+**Where it is installed.** `smt install --scope cluster` applies and updates
+it, watching every `--model-namespace` and every namespace it already watches.
+It applies a new one only when a model namespace has a weights DaemonSet
+(`weights apply`); otherwise it prints the command to add it later. Use
+`--no-weights-labeller` to leave it out, `--weights-labeller-image` for a
+mirror or a digest. The release flow cannot pin the tools image by digest
+for you: the tools image carries the release files, so its digest is known only
+after it is built. To pin it, pass `--weights-labeller-image` with the digest
+from the release notes. With `--dry-run`, `60-weights-labeller.yaml` watches
+exactly the `--model-namespace` list, and applying it replaces a running
+labeller's list. In GitOps, keep the full `-n` list in git and do not use
+`labeller --add`. `smt admin-setup -n <ns>` adds `<ns>` to a running labeller with
+namespaced rights only (a RoleBinding in `<ns>`, the Deployment in the
+labeller's namespace), or prints the command when there is no labeller or it
+lacks the rights; `smt weights labeller --add -n <ns>` does the same on its
+own. Without the cluster-wide install, run `smt weights labeller` as above; it
+refuses to drop a namespace the running labeller watches (`--merge` keeps them).
+
+**What it does not cover.**
+
+- A replica already running when its node's copy breaks keeps running; the
+  label goes, so no new replica lands there.
+- A replica waiting in `wait-for-weights` on a node the downloader never
+  reaches (outside its node selector) gets no copy. After
+  `LLMSM_WEIGHTS_WAIT_TIMEOUT` seconds (3600, `--weights-wait-timeout` on
+  `smt workload-patch`; `WEIGHTS_WAIT_SECONDS` in the emitted container) the
+  init container exits 1 with the reason in its log, and the pod shows
+  `Init:Error`, then `Init:CrashLoopBackOff`: the kubelet restarts the init
+  container on the same node, it does not reschedule the pod. Each restart
+  waits the full timeout again, plus the kubelet's back-off. Delete the pod
+  to place it again; use `required`, or the same node selector on the model
+  server and the downloader, so it does not happen.
+- The init container checks the marker and a config, not the file sizes. A
+  file truncated under its marker passes it. The downloader's probe catches it
+  within 15 s (the label goes), and its re-check removes the marker.
+- A LeaderWorkerSet gets no gate. `make workload-patch` says so for each
+  template that reads a node-local weights claim.
+- The gate is emitted, never applied by `--apply`.
 
 ### Engine caches on the node's disk
 
@@ -1199,6 +1344,28 @@ To patch a live LWS instead, use a JSON patch (`kubectl patch lws <name> -n <ns>
 — a `--type=merge` patch replaces the whole `containers` list. Both are reverted
 by the next `helm upgrade` if a chart owns the object.
 
+### On a DisaggregatedSet
+
+A DisaggregatedSet (`disaggregatedset.x-k8s.io`, LWS v0.10.0 or newer) holds one
+LeaderWorkerSet template per role under `spec.roles[].spec.leaderWorkerTemplate`.
+
+- **`make workload-patch` reports, and writes nothing.** For each serving role it
+  logs the same findings as above (drain, weights, engine caches), naming the
+  role and its index. It never writes or applies a patch: any template change
+  rolls every group of every role. Make the change in the role template, where
+  the set is owned, and roll it out the way you roll out a release.
+- **Drain each role as a LeaderWorkerSet**: a preStop on the leader and on every
+  worker of the role's template, with the worker's grace period at least the
+  leader's. The DisaggregatedSet controller deletes groups directly on
+  scale-down.
+- **To autoscale a role**, set `scaling.mode: External` on it and remove its
+  `spec.replicas`, keeping `spec.slices` at 1. The controller then creates a
+  `DisaggregatedSetRoleScaler` named `<set>-<role>`, seeded with the role's current
+  group count, and `make scaledobjects-plan` targets it. A role in the default
+  `Static` mode is listed with `apply: no` and this reason. See
+  [DisaggregatedSet roles](disaggregatedset.md), which also covers the role writer
+  for a role that must stay Static.
+
 ## Writing the patch: `make workload-patch`
 
 The sections above share one shape: a pod spec that is fine at a fixed replica
@@ -1351,6 +1518,8 @@ objects. Read what it prints first:
 | --- | --- | --- |
 | `LLMSM_WORKLOAD_PATCH_FILE` | `scaling-manager-workload-patch.yaml` | where the patch is written |
 | `LLMSM_WORKLOAD_PATCH_APPLY` | `false` | `true` also applies the drain half to the live workloads |
+| `LLMSM_WEIGHTS_NODE_AFFINITY` | `preferred` | the weights gate's node affinity: `preferred`, `required` or `none` ([Gate replicas on the weights](#gate-replicas-on-the-weights)) |
+| `LLMSM_WEIGHTS_WAIT_TIMEOUT` | `3600` | seconds the `wait-for-weights` init container waits for the node's copy before it exits 1 |
 | `LLMSM_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered |
 | `LLMSM_DRAIN_SLEEP_SECONDS` | `45` | the preStop sleep — the drain window itself |
 | `LLMSM_MODEL_PVC_NAME` | discovered, else `model-pvc` | the claim the emitted weights volume names. Setting it wins over discovery |

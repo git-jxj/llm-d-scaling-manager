@@ -17,7 +17,7 @@ ROOT="${CHECK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 WORKFLOW="$ROOT/.github/workflows/ci-release.yaml"
 # One ok or FAIL per case. A run that stops early otherwise passes having
 # checked less than it says. Change this deliberately with the cases.
-EXPECT_CASES=47
+EXPECT_CASES=55
 PASS=0
 FAIL=0
 
@@ -460,6 +460,89 @@ if pv "$both" sha256:abc && ! pv "$one" sha256:abc && ! pv "$both" ''; then
     ok "the pushed capacity planner index must hold linux/amd64 and linux/arm64, by digest"
 else
     fail "the platform check must pass both platforms and refuse an index without arm64 or with no digest"
+fi
+
+# --- The warm-pool proxy image (release-warmpool-proxy): the capacity planner
+# image's guards, without its serve check. config/warmpool names the proxy by
+# tag, so the release job refuses a commit that does not pin this release.
+W=release-warmpool-proxy
+expect_yq "the warm-pool proxy image is released only after the release job (its tag and pin guards)" \
+    'release' "[.jobs.$W.needs] | flatten | join(\",\")"
+expect_yq "the warm-pool proxy job may sign and push, reads contents, and keeps no credentials" \
+    'contents=read,id-token=write,packages=write|false' \
+    "(.jobs.$W.permissions | to_entries | map(.key + \"=\" + .value) | sort | join(\",\")) + \"|\" + (.jobs.$W.steps[] | select(.uses == \"actions/checkout*\") | .with.\"persist-credentials\" | tostring)"
+expect_yq "every warm-pool proxy build (amd64 scan, push) uses Dockerfile.warmpool-proxy, the push is multi-arch and publishes the tags resolved" \
+    'Dockerfile.warmpool-proxy,Dockerfile.warmpool-proxy|linux/amd64,linux/arm64|${{ steps.proxy-meta.outputs.tags }}' \
+    "([.jobs.$W.steps[] | select(.uses == \"docker/build-push-action*\") | .with.file] | join(\",\")) + \"|\" + (.jobs.$W.steps[] | select(.id == \"proxy-push\") | .with.platforms + \"|\" + .with.tags)"
+wscan_at="$(yq "[.jobs.$W.steps[] | (.with.\"exit-code\" // \"\")] | to_entries | map(select(.value == \"1\")) | .[-1].key // -1" "$R")"
+wscan_n="$(yq "[.jobs.$W.steps[] | select(.with.\"exit-code\" == \"1\")] | length" "$R")"
+wscan_sev="$(yq -r "[.jobs.$W.steps[] | select(.with.\"exit-code\" == \"1\") | .with.severity] | unique | join(\",\")" "$R")"
+wlogin_at="$(yq "[.jobs.$W.steps[] | (.uses // \"\")] | to_entries | map(select(.value == \"docker/login-action*\")) | .[0].key // -1" "$R")"
+if [ "$wscan_n" = 1 ] && [ "$wscan_at" -ge 0 ] && [ "$wlogin_at" -ge 0 ] && [ "$wscan_at" -lt "$wlogin_at" ] && [ "$wscan_sev" = CRITICAL ]; then
+    ok "the warm-pool proxy image: a blocking CRITICAL scan runs before the registry login"
+else
+    fail "the warm-pool proxy image needs one blocking CRITICAL scan before the login ($wscan_n scans at $wscan_at, login at $wlogin_at, severity '$wscan_sev')"
+fi
+
+yq ".jobs.$W.steps[] | select(.id == \"proxy-meta\") | .run" "$R" > "$WORK/proxy-meta.sh"
+proxy_tags() {
+    : > "$WORK/proxy.out"
+    env IMAGE=ghcr.io/owner/repo VERSION="$1" LATEST="$2" GITHUB_OUTPUT="$WORK/proxy.out" bash "$WORK/proxy-meta.sh" >/dev/null 2>&1 || echo "rc=$?"
+    sed -n 's/^tags=//p' "$WORK/proxy.out"
+}
+w1="$(proxy_tags v1.3.0 true)"
+w2="$(proxy_tags v1.2.1 false)"
+if [ "$w1" = "ghcr.io/owner/repo/warmpool-proxy:v1.3.0,ghcr.io/owner/repo/warmpool-proxy:latest" ] && [ "$w2" = "ghcr.io/owner/repo/warmpool-proxy:v1.2.1" ]; then
+    ok "the warm-pool proxy image takes the version, and latest only when the controller moved it"
+else
+    fail "warm-pool proxy tags: latest=true gave [$w1], latest=false gave [$w2]"
+fi
+
+yq ".jobs.$W.steps[] | select(.name == \"Sign the warm-pool proxy image\") | .run" "$R" > "$WORK/wsign.sh"
+rm -f "$WORK/cosign.args"
+PATH="$WORK/bin:$PATH" IMAGE=ghcr.io/o/r/warmpool-proxy DIGEST=sha256:abc bash "$WORK/wsign.sh" >/dev/null 2>&1
+signed="$(cat "$WORK/cosign.args" 2>/dev/null)"
+rm -f "$WORK/cosign.args"
+if [ "$signed" = "sign --yes ghcr.io/o/r/warmpool-proxy@sha256:abc" ] \
+    && ! PATH="$WORK/bin:$PATH" IMAGE=ghcr.io/o/r/warmpool-proxy DIGEST='' bash "$WORK/wsign.sh" >/dev/null 2>&1 \
+    && [ ! -e "$WORK/cosign.args" ]; then
+    ok "the warm-pool proxy image is signed by digest, and not at all without one"
+else
+    fail "the warm-pool proxy sign step must sign IMAGE@DIGEST and refuse an empty digest (signed '$signed')"
+fi
+
+yq ".jobs.$W.steps[] | select(.name == \"Verify the pushed image holds linux/amd64 and linux/arm64\") | .run" "$R" > "$WORK/wverify.sh"
+wv() { PATH="$WORK/pbin:$PATH" STUB_INDEX="$1" IMAGE=ghcr.io/o/r/warmpool-proxy DIGEST="$2" bash "$WORK/wverify.sh" >/dev/null 2>&1; }
+if [ -s "$WORK/wverify.sh" ] && wv "$both" sha256:abc && ! wv "$one" sha256:abc && ! wv "$both" ''; then
+    ok "the pushed warm-pool proxy index must hold linux/amd64 and linux/arm64, by digest"
+else
+    fail "the warm-pool proxy platform check must pass both platforms and refuse an index without arm64 or with no digest"
+fi
+
+# The pin step, run in a scratch tree holding only the manifest: it passes the
+# release's own tag and refuses :main, another tag, a digest, a missing line
+# and a second proxy line. Before any push of the release job, so a forgotten
+# pin publishes nothing.
+yq '.jobs.release.steps[] | select(.name == "Verify the warm-pool proxy image pins this release") | .run' "$R" > "$WORK/wpin.sh"
+wpin() { # wpin <image line(s)> -- rc of the step for VERSION=v1.3.0
+    rm -rf "$WORK/pin"; mkdir -p "$WORK/pin/config/warmpool"
+    printf 'spec:\n  containers:\n  - name: proxy\n%s\n' "$1" > "$WORK/pin/config/warmpool/warmpool-deployment.yaml"
+    (cd "$WORK/pin" && VERSION=v1.3.0 bash "$WORK/wpin.sh" >/dev/null 2>&1)
+}
+pin_bad=""
+wpin '    image: ghcr.io/o/r/warmpool-proxy:v1.3.0' || pin_bad="$pin_bad release-tag-refused"
+wpin '    image: "ghcr.io/o/r/warmpool-proxy:v1.3.0"' || pin_bad="$pin_bad quoted-refused"
+wpin '    image: ghcr.io/o/r/warmpool-proxy:main' && pin_bad="$pin_bad main-accepted"
+wpin '    image: ghcr.io/o/r/warmpool-proxy:v1.3.0-rc1' && pin_bad="$pin_bad other-tag-accepted"
+wpin '    image: ghcr.io/o/r/warmpool-proxy@sha256:abc' && pin_bad="$pin_bad digest-accepted"
+wpin '    image: ghcr.io/o/r/other:v1.3.0' && pin_bad="$pin_bad no-proxy-line-accepted"
+wpin "$(printf '    image: ghcr.io/o/r/warmpool-proxy:v1.3.0\n    image: ghcr.io/o/r/warmpool-proxy:main')" && pin_bad="$pin_bad two-lines-accepted"
+pin_at="$(yq '[.jobs.release.steps[] | (.name // "")] | to_entries | map(select(.value == "Verify the warm-pool proxy image pins this release")) | .[0].key // -1' "$R")"
+push_at="$(yq '[.jobs.release.steps[] | (.id // "")] | to_entries | map(select(.value == "push")) | .[0].key // -1' "$R")"
+if [ -s "$WORK/wpin.sh" ] && [ -z "$pin_bad" ] && [ "$pin_at" -ge 0 ] && [ "$pin_at" -lt "$push_at" ]; then
+    ok "the release refuses, before any push, a commit whose proxy image is not tagged with the release"
+else
+    fail "the proxy pin step must accept only <...>/warmpool-proxy:<version>, once, before the push (failures:${pin_bad:- none}; step $pin_at, push $push_at)"
 fi
 
 echo ""

@@ -266,10 +266,14 @@ func targetPods(ctx context.Context, k8sClient client.Client, namespace, variant
 }
 
 // templateSelected reports whether a pool selects the target's pod template,
-// with the labels its controller adds when it creates a Pod: an LWS leader
-// carries the set name and worker index 0, and a Deployment's
-// pod-template-hash is known only per ReplicaSet, so a selector on it is taken
-// to match.
+// with the labels its controller adds when it creates a Pod: a group's leader
+// carries worker index 0 and the labels that select its group's Pods
+// (scaletarget.GroupPodLabels: an LWS's set name; a DisaggregatedSet role's
+// set and role), and a Deployment's pod-template-hash is known only per
+// ReplicaSet, so a selector on it is taken to match. A DisaggregatedSet role's
+// Pods also carry their child LeaderWorkerSet's name, which changes with every
+// rollout and so cannot be known from the template: a selector on it matches
+// only through the running Pods, and a parked role so selected reads as held.
 func templateSelected(st scaletarget.ScaleTargetAccessor, sels []map[string]string) bool {
 	tpl := st.GetLeaderPodTemplateSpec()
 	labels := map[string]string{}
@@ -278,7 +282,7 @@ func templateSelected(st scaletarget.ScaleTargetAccessor, sels []map[string]stri
 	}
 	lws := scaletarget.IsLeaderWorkerSet(st)
 	if lws {
-		labels[lwsv1.SetNameLabelKey] = st.GetName()
+		maps.Copy(labels, scaletarget.GroupPodLabels(st))
 		labels[lwsv1.WorkerIndexLabelKey] = "0"
 	}
 	for _, sel := range sels {

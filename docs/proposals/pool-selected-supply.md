@@ -121,6 +121,13 @@ is held, as before v0.12.0.
   against the pool selector only, so a role move does not change supply. A
   role the pool does not select is held: a prefill reached through a fixed
   Service instead of the pool does not scale with decode.
+- **DisaggregatedSet roles.** A role is a variant whose replicas are
+  LeaderWorkerSet groups. Its Pods are found by the set and role labels, and
+  counted by their leaders. Its template is matched with those labels and worker
+  index 0 added, so a pool that selects the set by its name label selects a
+  parked role too. A role no pool selects is held like any variant. A selector
+  on the child LeaderWorkerSet's name, which changes with every rollout, matches
+  only through running Pods: a parked role so selected reads as held.
 - **Warm pool.** A lent Pod carries the pool's selector labels by design, so
   it stays selected; it is demand and not supply, as before. A held variant is
   never short, so the pool does not lend to it.

@@ -28,6 +28,7 @@ LOGS="kubectl logs -n $NS -l app.kubernetes.io/name=scaling-manager --tail=-1"
 | one replica full while others idle | `LLMSMLoadImbalanced`; `llmsm_load_imbalanced == 1`; log `WARNING: load imbalanced` | the router's scorer weights (`prefix-cache-scorer` above `queue-scorer`, `active-request-scorer`, `kv-cache-utilization-scorer`), prefix caching off on the engines | [uneven load](#one-replica-is-saturated-while-others-idle) |
 | replicas never move, though `llmsm_desired_replicas` does | `llmsm_passive_mode{mode=~"hold\|observe\|observe-unsafe"} == 1`; `Passive mode entered` in the log; `PassiveRecommendation` Events | the model is passive: `LLMSM_PASSIVE`, or `passive: true` on a scaling-policy entry | [passive](#a-passive-model-does-not-scale) |
 | desired is not current | `llmsm_desired_replicas != llmsm_current_replicas` for many cycles | HPA stabilization window, KEDA not reaching the scaler, Pods Pending (GPUs, ResourceQuota), slow starts | [actuation stuck](#desired-is-not-current-actuation-stuck) |
+| a DisaggregatedSet role never moves | `RoleWriterRefused`, `RoleReplicasConflict` or `RoleReplicasWriteFailed` on the set; no `RoleReplicasWritten` | the role writer off or without its grant, the set refused (no model-id, bad bounds, slices above 1), another field manager owns `replicas`, a passive model, the 5-minute scale-down window | [DisaggregatedSet role](#a-disaggregatedset-role-is-not-scaled) |
 | replicas dropped under Kueue borrowing | fewer replicas with no scale-down asked for; `llmsm_model_scaling_blocked{reason=~"lender-reclaimed\|borrow-unplaced\|released-to-lender"}`; `BorrowedCapacityReleased` Event | Kueue preempted, a borrowed replica did not place and was released, a waiting lender was handed it back (opt-in), demand fell | [replicas dropped](#replicas-dropped-under-kueue-borrowing) |
 | a lender's replica Pending after Kueue preempted | the lender's new pod `Pending` with no node; a borrower's Workload evicted with reason `Preempted`; later `reason="borrow-unplaced"` | Kueue preempts by priority, not by node: the GPUs it freed form no node the replica fits | [replicas dropped](#replicas-dropped-under-kueue-borrowing) |
 | a Kueue-backed quota was never read | `LLMSMKueueNeverRead`; `llmsm_kueue_never_read == 1`; log `external quota source unreadable and never read` | Kueue CRDs absent, the controller may not list ClusterQueues, Kueue down at start | [never read](#a-kueue-backed-quota-was-never-read) |
@@ -1504,6 +1505,35 @@ kubectl logs -n <controller-namespace> deploy/scaling-manager-controller-manager
 | `LLMSMKEDAHPAWiringUnread`, log `Could not read every HPA or ScaledObject` | the controller has no `get` or `list` on `horizontalpodautoscalers` (same causes as the row above), or no `get` on `scaledobjects` in that namespace. The repair does nothing there, and `llmsm_keda_unwired_hpas` keeps its last value | re-run the install (or, split, `make setup-prereqs` as a cluster admin and then `make deploy-scaling-manager`) with `KEDA_HPA_REPAIR=true` and the install's other variables |
 | the HPA is unwired and no Event names it | the repair is off, the HPA is younger than 30 seconds, the ScaledObject is paused, or its trigger names another install's scaler | turn on `KEDA_HPA_REPAIR`, or `make scaledobjects-repoint` for a trigger pointing elsewhere |
 | a GitOps tool shows drift on the HPA, or the HPA keeps a `scaling-manager.llmd.ai/keda-rewire` annotation | the repair's annotation. KEDA removes it only when it rewrites the HPA; while it still cannot reach the scaler, or if the repair is turned off before KEDA rewires, it stays | harmless: KEDA and the controller read nothing from it. `kubectl annotate hpa <hpa> -n <namespace> scaling-manager.llmd.ai/keda-rewire-` removes it. HPAs KEDA owns are rarely in a GitOps source |
+
+## A DisaggregatedSet role is not scaled
+
+For a Static role scaled by the [role writer](disaggregatedset.md). An
+External role is scaled by KEDA: see
+[ScaledObject](#scaledobject-ready-false-or-targets-unknown).
+
+1. Look at the set's events:
+   `kubectl describe disaggregatedset <set> -n <namespace>`.
+   - `RoleWriterRefused`: the message says why. A missing
+     `scaling-manager.llmd.ai/model-id`, `spec.slices` above 1, or a
+     `min-replicas` or `max-replicas` that is not a count (`min` 0 or more,
+     `max` 1 or more, `min` not above `max`).
+   - `RoleReplicasConflict`: another field manager owns `replicas`. See
+     [Ownership](disaggregatedset.md#ownership-of-replicas).
+   - `RoleReplicasWriteFailed`: the set refused the write; the message has the
+     API's answer.
+2. No events at all: check the writer runs. The controller log says
+   `DisaggregatedSet role writer is on` at start. If it says
+   `may not list DisaggregatedSets`, the grant is missing: install with
+   `DSET_ROLE_WRITER=true` rather than setting the variable alone. If it says
+   `no watched namespace is readable`, the writer does not run at all.
+3. The model is passive: the log says `Passive: the role writer registers
+   this set's Static roles but writes no replicas`. See
+   [passive](#a-passive-model-does-not-scale).
+4. A lower count is held for 5 minutes, as the HPA holds a KEDA-scaled one.
+   A count that has not dropped after that is the engines' decision: see
+   [will not scale up](#a-model-will-not-scale-up) and
+   [will not park](#a-model-will-not-park-at-zero).
 
 ## A model misses, or is never judged against, its SLO
 
