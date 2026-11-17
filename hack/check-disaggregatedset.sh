@@ -91,7 +91,8 @@ dset() {
 DSET_OBJ=""
 CRD_RC=0
 LIST_RC=0
-reset() { DSET_OBJ="$(dset 0 External "")"; CRD_RC=0; LIST_RC=0; }
+SO_OBJS=""
+reset() { DSET_OBJ="$(dset 0 External "")"; CRD_RC=0; LIST_RC=0; SO_OBJS=""; }
 
 kubectl() {
     case "${1:-}" in
@@ -104,6 +105,7 @@ kubectl() {
                         -n|-A) printf '%s' "$DSET_OBJ" | jq -c '{ items: [ . ] }' ;;
                         *) printf '%s' "$DSET_OBJ" ;;
                     esac ;;
+                scaledobject) printf '%s' "${SO_OBJS:-{\"items\":[]}}" ;;
                 *) printf '{"items":[]}' ;;
             esac ;;
         *) return 0 ;;
@@ -238,6 +240,77 @@ assert_eq "$(llmsm_model_server_count serving)" "1" "model servers"
 DSET_OBJ="$(printf '%s' "$DSET_OBJ" | jq '.spec.roles[].spec.leaderWorkerTemplate.workerTemplate.metadata.labels = {"app": "other"}')"
 assert_eq "$(so_namespaces_of_dsets)" "" "namespace of a set with no serving role"
 assert_eq "$(llmsm_model_server_count serving)" "0" "model servers of a set with no serving role"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="plan: an External role already on the scaling manager is adopted; one on another scaler is left alone"
+reset
+before=$FAILED
+SO_OBJS="$(jq -n '{ items: [
+    { metadata: { name: "glm-prefill-so" },
+      spec: { scaleTargetRef: { name: "glm-prefill" }, minReplicaCount: 2, maxReplicaCount: 6,
+              triggers: [ { type: "external", metadata: { scalerAddress: "scaling-manager-external-scaler.llmsm.svc:9090", modelID: "org/GLM" } } ] } } ] }')"
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "adopt"'
+assert_contains "$out" "Already targets the scaling manager (ScaledObject glm-prefill-so, min 2, max 6)"
+SO_OBJS="$(jq -n '{ items: [
+    { metadata: { name: "glm-prefill-cpu" },
+      spec: { scaleTargetRef: { name: "glm-prefill" }, minReplicaCount: 1, maxReplicaCount: 4,
+              triggers: [ { type: "cpu", metadata: { value: "80" } } ] } } ] }')"
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "no"'
+assert_contains "$out" "Already scaled by ScaledObject glm-prefill-cpu"
+assert_eq "$(printf '%s\n' "$out" | grep -c 'apply: "no"')" "2" "entries written apply: no"
+SO_OBJS=""
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="plan: a model named by an env reference resolves from the role's env, and is refused without it"
+reset
+before=$FAILED
+with_ref() {
+    printf '%s' "$DSET_OBJ" | jq --argjson env "$1" '
+        .spec.roles[0].spec.leaderWorkerTemplate.workerTemplate.spec.containers[1].args = ["exec vllm serve /m --served-model-name $(MODEL_NAME) --port 8200"]
+        | .spec.roles[0].spec.leaderWorkerTemplate.workerTemplate.spec.containers[1].env = $env'
+}
+DSET_OBJ="$(with_ref '[{"name": "MODEL_NAME", "value": "org/FromEnv"}]')"
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_contains "$out" 'modelID: "org/FromEnv"'
+assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "yes"'
+reset
+DSET_OBJ="$(with_ref '[]')"
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_contains "$out" 'the model is written as $(MODEL_NAME), a reference the engine container env does not answer'
+assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "no"'
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="plan: a role with sub-roles is written apply: no, with the reason"
+reset
+before=$FAILED
+DSET_OBJ="$(printf '%s' "$DSET_OBJ" | jq '.spec.roles[0].subRoles = [{"name": "a"}, {"name": "b"}]')"
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_contains "$(printf '%s\n' "$out" | grep 'apply:' | sed -n 1p)" 'apply: "no"'
+assert_contains "$out" "sub-roles"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="plan: a set with no serving role writes no entries"
+reset
+before=$FAILED
+DSET_OBJ="$(printf '%s' "$DSET_OBJ" | jq '.spec.roles[].spec.leaderWorkerTemplate.workerTemplate.metadata.labels = {"app": "other"}')"
+out="$(so_discover_dsets serving 2>/dev/null)"
+assert_eq "$(printf '%s\n' "$out" | grep -c 'apply:')" "0" "entries"
+assert_not_contains "$out" "glm-"
+[ "$FAILED" -eq "$before" ] && ok
+
+# Pinned as it is: the plan skips a namespace whose sets it cannot list, as it
+# skips one without the CRD, while the workload report, which gates on a clean
+# result, fails (case above).
+CASE="plan: an unreadable listing writes nothing and returns 0"
+reset
+LIST_RC=1
+before=$FAILED
+rc=0
+out="$(so_discover_dsets serving 2>/dev/null)" || rc=$?
+assert_eq "$rc" "0" "return code"
+assert_eq "$out" "" "output"
 [ "$FAILED" -eq "$before" ] && ok
 
 # ----------------------------------------------------------------------------

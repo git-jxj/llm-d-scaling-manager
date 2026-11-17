@@ -171,3 +171,46 @@ func TestRequirePrefillDefaultsOnForDisaggregatedSet(t *testing.T) {
 		t.Fatal("with no config at all, a DisaggregatedSet model must still require prefill")
 	}
 }
+
+// Mixed tiers and mixed kinds: a DisaggregatedSet model whose roles select
+// different tiers requires prefill when any tier says so; one tier that says
+// false and none that says true turns the DisaggregatedSet default off; a
+// model with a Deployment variant beside a role still counts as served by a
+// set.
+func TestRequirePrefillMixedTiersAndKinds(t *testing.T) {
+	const namespace = "tenant"
+	on, off := true, false
+	variant := func(kind, tier string) llmdvariant.Variant {
+		va := llmdvariant.Variant{}
+		va.Spec.ScaleTargetRef.Kind = kind
+		va.Spec.ScalingPolicy = tier
+		return va
+	}
+	role := constants.DisaggregatedSetRoleScalerKind
+	entries := map[string]config.ScalingPolicy{
+		"default": {},
+		"off":     {ScaleFromZero: &config.ScaleFromZeroEnvelope{RequirePrefill: &off}},
+		"on":      {ScaleFromZero: &config.ScaleFromZeroEnvelope{RequirePrefill: &on}},
+		"plain":   {},
+	}
+	for _, tc := range []struct {
+		name     string
+		variants []llmdvariant.Variant
+		want     bool
+	}{
+		{"one tier off, one on", []llmdvariant.Variant{variant(role, "off"), variant(role, "on")}, true},
+		{"one tier off, one silent", []llmdvariant.Variant{variant(role, "off"), variant(role, "plain")}, false},
+		{"both silent", []llmdvariant.Variant{variant(role, "plain"), variant(role, "plain")}, true},
+		{"a Deployment beside a role", []llmdvariant.Variant{variant(constants.DeploymentKind, ""), variant(role, "")}, true},
+		{"Deployments only", []llmdvariant.Variant{variant(constants.DeploymentKind, ""), variant(constants.DeploymentKind, "")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.NewTestConfig()
+			cfg.UpdateScalingPolicyConfigForNamespace(namespace, entries)
+			g := modelGroup{namespace: namespace, modelID: "org/model", variants: tc.variants}
+			if got := (&Engine{config: cfg}).requirePrefill(g); got != tc.want {
+				t.Fatalf("requirePrefill = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
