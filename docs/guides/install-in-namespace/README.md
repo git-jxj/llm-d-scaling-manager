@@ -55,7 +55,7 @@ identity by accident.
 <!-- guide:tools.setup start -->
 ```bash
 # Once per machine. The release's tools image, by the digest the release prints. Each person uses their own kubeconfig.
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:<the release's tools digest>
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
@@ -107,7 +107,7 @@ The same install with `kubectl`: for GitOps, or to see each step.
 <!-- guide:prerequisites.download start -->
 ```bash
 # The release files. Pick the release you install.
-V=<release, for example v0.11.1>
+V=<release, for example v0.11.2>
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
 for f in namespaced settings preflight scaler-tls model-namespace keda-auth; do
   curl -fsSLO $URL/scaling-manager-$f.yaml
