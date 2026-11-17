@@ -94,6 +94,14 @@ type Engine struct {
 	routing         map[string]routingState
 	modelUnselected map[string]bool
 	poolReads       map[string]poolRead
+	// poolFailed is the reason each namespace's last pool listing failed, for
+	// the once-per-change log; modelRouting is each model's last known
+	// selected and held variants; parked is this cycle's variants at zero
+	// replicas, which routing reads so a parked routed variant keeps its
+	// model routed.
+	poolFailed   map[string]string
+	modelRouting map[string]modelRoutingState
+	parked       parkedVariants
 
 	// policies reports which scaling policy tier each model resolved to, and the
 	// two ways that resolution goes wrong silently — an unknown tier name, and one
@@ -865,6 +873,11 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	e.retainLearnerSeries(ctx)
 	// Before anything decides: which variants are only observed this cycle.
 	e.observePassive(logger, activeVAs)
+	// The InferencePools are read once per namespace per cycle, and routing
+	// reads the parked variants too: a model whose routed variant is at zero
+	// is still routed, so its canary stays held and the parked one wakes.
+	e.resetPoolReads()
+	e.parked = e.readParked(ctx)
 
 	if len(activeVAs) == 0 {
 		// A cycle, though it analyzes nothing: the models parked through it
@@ -881,6 +894,9 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		// failed list returns above, so reaching here means there really are no
 		// active models.
 		e.evictAllAnalyzerSeries()
+		// Every model is parked: publish their routing, so scale from zero
+		// wakes a routed variant and never a held one.
+		e.routeParkedModels(ctx, nil, time.Now())
 		// Same argument, sharper consequence: a blocked-reason series asserts that
 		// a named model will never park. With no models left, every such assertion
 		// is about a workload that is gone.
@@ -923,11 +939,18 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 
 	// Initialize vaEventTracker for this optimize cycle
 	e.vaEventTracker = make(map[string]bool)
-	// The InferencePools are read once per namespace per cycle.
-	e.resetPoolReads()
 
 	// Group VAs by model for per-model capacity analysis
 	modelGroups := utils.GroupVariantsByModel(activeVAs)
+	// The models with no running variant are not analyzed; their routing is
+	// published here, for scale from zero.
+	activeModels := make(map[string]bool, len(modelGroups))
+	for _, group := range modelGroups {
+		if len(group) > 0 {
+			activeModels[utils.GetNamespacedKey(group[0].Namespace, group[0].Spec.ModelID)] = true
+		}
+	}
+	e.routeParkedModels(ctx, activeModels, time.Now())
 
 	// Open the collector's cycle so the models grouped above share one execution
 	// of each namespace-scoped query instead of one per model.
@@ -2259,14 +2282,30 @@ func (e *Engine) prepareModelData(
 	// value to expire on Prometheus' staleness clock.
 	metrics.SetUnmeasuredQueue(namespace, modelID, 0)
 
+	data := e.assembleModelData(ctx, modelID, namespace, modelVAs, scaleTargets, variants, replicaMetrics, k8sClient)
+	data.schedulerQueue = e.ReplicaMetricsCollector.CollectSchedulerQueueMetrics(ctx, modelID, namespace)
+	data.arrivalRate = e.ReplicaMetricsCollector.CollectModelArrivalRate(ctx, modelID, namespace)
+	return data, nil
+}
+
+// assembleModelData is the part of prepareModelData after the rows are
+// collected: discovery, routing (the rows of replicas no InferencePool selects
+// are dropped here, and their count taken out of supply after the analyzers
+// by applyRouting), and the analyzers' replica states.
+func (e *Engine) assembleModelData(
+	ctx context.Context,
+	modelID, namespace string,
+	modelVAs []llmdvariant.Variant,
+	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
+	variants map[string]*llmdvariant.Variant,
+	replicaMetrics []domain.ReplicaMetrics,
+	k8sClient client.Client,
+) *modelData {
 	// Discover the authoritative per-variant metadata once, then project it onto
 	// the VariantReplicaState the analyzers consume. The full metadata is also
 	// threaded to the optimizer (via ModelScalingRequest.Variants) as the source
 	// of truth for variant identity/cost/accelerator.
 	variantMetadata := variantmeta.Discover(ctx, modelVAs, scaleTargets, k8sClient, observeAccelerators(e.Config))
-	// Supply is what the router can reach: replicas no InferencePool selects
-	// are marked, their rows dropped here, and their count taken out of supply
-	// after the analyzers (applyRouting). A held variant is not sized.
 	replicaMetrics = e.routeModel(ctx, modelID, namespace, variantMetadata, modelVAs, variants,
 		scaleTargets, replicaMetrics, k8sClient, time.Now())
 	variantStates := make([]domain.VariantReplicaState, 0, len(variantMetadata))
@@ -2274,9 +2313,6 @@ func (e *Engine) prepareModelData(
 		variantStates = append(variantStates, m.ToReplicaState())
 	}
 	e.applyStartSeeds(ctx, namespace, variantStates)
-	schedulerQueue := e.ReplicaMetricsCollector.CollectSchedulerQueueMetrics(ctx, modelID, namespace)
-	arrivalRate := e.ReplicaMetricsCollector.CollectModelArrivalRate(ctx, modelID, namespace)
-
 	return &modelData{
 		modelID:         modelID,
 		namespace:       namespace,
@@ -2285,9 +2321,7 @@ func (e *Engine) prepareModelData(
 		variants:        variants,
 		variantStates:   variantStates,
 		variantMetadata: variantMetadata,
-		schedulerQueue:  schedulerQueue,
-		arrivalRate:     arrivalRate,
-	}, nil
+	}
 }
 
 // applySaturationDecisions updates VA status and emits metrics based on Saturation decisions.

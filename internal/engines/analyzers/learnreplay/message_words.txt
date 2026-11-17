@@ -890,6 +890,7 @@ datastore
 days
 debug
 decay
+decide
 decided
 decides
 decimal
@@ -1358,6 +1359,7 @@ inf
 inference
 inference_extension_flow_control_queue_size
 inferencepool
+inferencepools
 inferred
 infers
 info
@@ -1640,7 +1642,6 @@ linear
 lines
 list
 listed
-listing
 lists
 live
 liveness
@@ -3039,6 +3040,7 @@ variants
 vcs.revision
 vendor
 verdict
+verdicts
 verified
 version
 versions

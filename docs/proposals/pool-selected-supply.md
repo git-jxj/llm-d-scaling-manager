@@ -43,9 +43,18 @@ Supply is `ReplicaCount x PerReplicaCapacity`; anticipated supply adds
    - the scale-to-zero enforcer does not park it, and the minimum-replica
      floor and the keep-the-cheapest-at-1 rule do not count it, so the
      routed variants keep their minimum;
-   - scale from zero neither counts it as the model's running decode nor
-     wakes it, so a model whose routed variants are all at zero still wakes
-     (`decision.DefaultHeld`).
+   - scale from zero counts only a variant a pool selects as covering a
+     routed model, and never wakes a held one, so a model whose routed
+     variants are all at zero still wakes (`decision.DefaultHeld`, keyed by
+     model);
+   - a utilization-share plan does not include a model with a held variant,
+     and a Kueue lender release does not lower a held variant.
+
+   A model counts as routed by its parked variants too, by template: once
+   scale-to-zero parks the routed variant, the canary stays held, and the
+   parked variant is the one scale from zero wakes. The same holds when the
+   controller starts with the routed variant already at zero. A model with
+   every variant parked has its routing published each cycle as well.
 4. **Drops single Pods no pool selects.** In a selected variant, a live Pod
    whose own labels are not selected (a relabelled Pod) has its rows dropped
    before the analyzers run. After them (`applyRouting`) it is taken out of
@@ -67,10 +76,13 @@ verdict lapses and every replica is counted as before, the same as an install
 whose pools were never readable. A lapse is logged once; it is not a release.
 A variant never seen before is counted as before at once.
 
-A failed pool listing is counted in
+A failed pool listing is counted once per namespace per cycle in
 `llmsm_metrics_collection_errors_total{query_type="pool_list"}` (reason
-`forbidden`, `unavailable` or `other`). Forbidden is not absent. A pool kind
-the API server does not serve is no pool, not a failure.
+`forbidden`, `unavailable` or `other`) and logged when the namespace's state
+changes, naming the permission it needs. Forbidden is not absent. A pool kind
+the API server does not serve is no pool, not a failure. If the parked
+variants cannot be listed, a model that looks not routed is unknown rather
+than released.
 
 ## How an operator sees it, and releases a held variant
 

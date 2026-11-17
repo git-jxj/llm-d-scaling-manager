@@ -260,6 +260,7 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string, setti
 		limitedModeEnabled:          v.GetBool("LLMSM_LIMITED_MODE"),
 		stickyScaleDownEnabled:      v.GetBool("LLMSM_STICKY_SCALE_DOWN"),
 		poolSelectedSupply:          v.GetBool("LLMSM_POOL_SELECTED_SUPPLY"),
+		poolGroup:                   v.GetString("POOL_GROUP"),
 		passive:                     v.GetBool("LLMSM_PASSIVE"),
 		scaleFromZeroMaxConcurrency: v.GetInt("SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY"),
 	}

@@ -3,6 +3,7 @@ package variantmeta
 import (
 	"context"
 	"maps"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -12,10 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
 	poolutil "github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/pool"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/scaletarget"
 	llmdvariant "github.com/llm-d-incubation/llm-d-scaling-manager/internal/variant"
@@ -32,11 +31,19 @@ type ModelRouting struct {
 	// Pools is how many InferencePools the namespace has; 0 also when the
 	// kind is not served.
 	Pools int
-	// Routed is true when a pool selects at least one variant of the model.
+	// PoolReadFailed is the reason the pool listing failed (forbidden,
+	// unavailable or other), "" when it was read or the kind is not served.
+	PoolReadFailed string
+	// Routed is true when a pool selects at least one variant of the model,
+	// at any replica count.
 	Routed bool
 	// Known is false when the pools, a scale target or a variant's Pods could
-	// not be read, so whether the model is routed was not established.
+	// not be read, so the verdict for some variant was not established.
 	Known bool
+	// Selected and Held name the variants established as selected and as
+	// held, the parked ones (at zero replicas) included. Both are empty for a
+	// model that is not routed.
+	Selected, Held []string
 }
 
 // Route marks, in place, the replicas of each variant that no InferencePool
@@ -46,33 +53,37 @@ type ModelRouting struct {
 // A variant is selected when a pool selects its pod template, with the labels
 // its controller adds at creation (an LWS leader's set name and worker index;
 // a Deployment's pod-template-hash matches any value), or any of its live
-// Pods. A model counts as routed when some variant is selected. For a routed
-// model:
+// Pods. A model counts as routed when some variant is selected -- the parked
+// ones included, by template: a model whose routed variant scale-to-zero has
+// parked is still routed, so its canary stays held and the parked variant is
+// what wakes. For a routed model:
 //
 //   - a variant that is not selected is HeldUnrouted: the router sends it
 //     nothing, whatever its size, so it is held rather than sized;
 //   - in a selected variant, a live Pod whose own labels no pool selects (a
 //     relabelled Pod) is counted in UnroutedReplicas and named in UnroutedPods.
 //
-// RoutingKnown is set on every variant whose verdict was established,
-// including "nothing to exclude". It stays false when a read failed: the pools
-// (counted, llmsm_metrics_collection_errors_total{query_type="pool_list"}), the
-// variant's scale target, or its Pods where they decide the verdict. The
-// caller decides what an unknown verdict means (the steady-state engine keeps
-// the last known one for a bounded time); Route never turns a failed read into
-// a hold or a release.
+// metas are the running variants; parked are the model's variants at zero
+// replicas, which get no metadata but count towards Routed and are named in
+// Selected or Held. RoutingKnown is set on every running variant whose verdict
+// was established, including "nothing to exclude". It stays false when a read
+// failed: the pools, the variant's scale target, or its Pods where they decide
+// the verdict. The caller counts and logs a failed pool listing and decides
+// what an unknown verdict means (the steady-state engine keeps the last known
+// one for a bounded time); Route never turns a failed read into a hold or a
+// release.
 func Route(
 	ctx context.Context,
 	metas []domain.VariantMetadata,
 	vas []llmdvariant.Variant,
+	parked []llmdvariant.Variant,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	k8sClient client.Client,
 	pools PoolLister,
 ) []ModelRouting {
-	if pools == nil || len(metas) == 0 {
+	if pools == nil || len(metas)+len(parked) == 0 {
 		return nil
 	}
-	logger := ctrl.LoggerFrom(ctx)
 
 	vaByKey := make(map[string]*llmdvariant.Variant, len(vas))
 	for i := range vas {
@@ -83,18 +94,27 @@ func Route(
 	type group struct {
 		namespace, model string
 		idx              []int
+		parked           []*llmdvariant.Variant
 	}
 	var groups []*group
 	byKey := map[string]*group{}
-	for i := range metas {
-		k := metas[i].Namespace + "/" + metas[i].ModelID
+	groupFor := func(namespace, model string) *group {
+		k := namespace + "/" + model
 		g, ok := byKey[k]
 		if !ok {
-			g = &group{namespace: metas[i].Namespace, model: metas[i].ModelID}
+			g = &group{namespace: namespace, model: model}
 			byKey[k] = g
 			groups = append(groups, g)
 		}
+		return g
+	}
+	for i := range metas {
+		g := groupFor(metas[i].Namespace, metas[i].ModelID)
 		g.idx = append(g.idx, i)
+	}
+	for i := range parked {
+		g := groupFor(parked[i].Namespace, parked[i].Spec.ModelID)
+		g.parked = append(g.parked, &parked[i])
 	}
 
 	out := make([]ModelRouting, 0, len(groups))
@@ -108,11 +128,7 @@ func Route(
 			// nothing to check, and nothing failed.
 			sels = nil
 		default:
-			reason := poolListErrorReason(err)
-			metrics.IncMetricsCollectionErrors(constants.QueryTypePoolList, reason)
-			logger.V(logging.DEFAULT).Info(
-				"InferencePool listing failed; this cycle's routing verdict is unknown",
-				"namespace", g.namespace, "model", g.model, "reason", reason, "error", err.Error())
+			res.PoolReadFailed = PoolListErrorReason(err)
 			out = append(out, res)
 			continue
 		}
@@ -127,6 +143,7 @@ func Route(
 		}
 
 		type verdict struct {
+			name     string
 			target   scaletarget.ScaleTargetAccessor
 			pods     []corev1.Pod
 			podsRead bool
@@ -135,6 +152,7 @@ func Route(
 		}
 		vs := make([]verdict, len(g.idx))
 		for j, i := range g.idx {
+			vs[j].name = metas[i].VariantName
 			va := vaByKey[metas[i].Namespace+"/"+metas[i].VariantName]
 			if va == nil {
 				vs[j].unknown = true
@@ -161,8 +179,19 @@ func Route(
 				}
 			}
 		}
+		// A parked variant has no Pods: its template alone says.
+		ps := make([]verdict, len(g.parked))
+		for j, va := range g.parked {
+			ps[j].name = va.Name
+			st, ok := resolveScaleTarget(ctx, va, scaleTargets, k8sClient)
+			if !ok {
+				ps[j].unknown = true
+				continue
+			}
+			ps[j].selected = templateSelected(st, sels)
+		}
 		anyUnknown := false
-		for _, v := range vs {
+		for _, v := range slices.Concat(vs, ps) {
 			res.Routed = res.Routed || v.selected
 			anyUnknown = anyUnknown || v.unknown
 		}
@@ -185,12 +214,25 @@ func Route(
 			case !v.selected:
 				markHeld(&metas[i], v.target, v.pods)
 				metas[i].RoutingKnown = true
+				res.Held = append(res.Held, v.name)
 			case !v.podsRead:
 				// Selected, but which of its Pods the pool reaches is unknown.
 				res.Known = false
+				res.Selected = append(res.Selected, v.name)
 			default:
 				markUnroutedPods(&metas[i], v.target, v.pods, sels)
 				metas[i].RoutingKnown = true
+				res.Selected = append(res.Selected, v.name)
+			}
+		}
+		for _, v := range ps {
+			switch {
+			case v.unknown:
+				res.Known = false
+			case v.selected:
+				res.Selected = append(res.Selected, v.name)
+			default:
+				res.Held = append(res.Held, v.name)
 			}
 		}
 		out = append(out, res)
@@ -215,7 +257,7 @@ func targetPods(ctx context.Context, k8sClient client.Client, namespace, variant
 		items, err = ListVariantPods(ctx, k8sClient, namespace, st)
 	}
 	if err != nil {
-		ctrl.LoggerFrom(ctx).V(logging.DEFAULT).Info(
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info(
 			"Could not list a variant's pods to check which the router can reach",
 			"namespace", namespace, "variant", variant, "error", err.Error())
 		return nil, false
@@ -310,9 +352,9 @@ func countUnrouted(m *domain.VariantMetadata, p *corev1.Pod) {
 	}
 }
 
-// poolListErrorReason names a failed InferencePool listing for the reason label
+// PoolListErrorReason names a failed InferencePool listing for the reason label
 // of llmsm_metrics_collection_errors_total, with the Pod listing's vocabulary.
-func poolListErrorReason(err error) string {
+func PoolListErrorReason(err error) string {
 	switch {
 	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
 		return "forbidden"

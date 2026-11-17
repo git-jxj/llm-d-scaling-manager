@@ -1,44 +1,67 @@
 package scalefromzero
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/stretchr/testify/require"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/decision"
-	llmdvariant "github.com/llm-d-incubation/llm-d-scaling-manager/internal/variant"
+	unittestutil "github.com/llm-d-incubation/llm-d-scaling-manager/test/utils"
 )
 
-// A model whose only running variant is held (no InferencePool selects it) is
-// not covered, so it still wakes, and the held variant is never a wake
-// candidate. A stale publication no longer holds.
-func TestAHeldVariantNeitherCoversNorWakes(t *testing.T) {
+// withRunningCanary adds a second variant of the fixture's model, running 3
+// replicas: the canary a pool does not select.
+func withRunningCanary(t *testing.T, f wakeFixture) string {
+	t.Helper()
+	canaryTarget, canary := f.target+"-canary", f.variant+"-canary"
+	so := managedSO(f.ns, canary, canaryTarget, f.model)
+	require.NoError(t, f.engine.client.Create(context.Background(),
+		unittestutil.MakeDeployment(canaryTarget, f.ns, 3, map[string]string{"app": "canary"})))
+	require.NoError(t, f.engine.client.Create(context.Background(), so))
+	registerSO(f.engine.Variants, so)
+	return canary
+}
+
+// The park-then-wake sequence through optimize(): the routed variant is at
+// zero, the held canary runs 3. With the hold published, the canary does not
+// cover the model and the routed variant wakes. Without it -- the model not
+// routed -- the canary covers decode and nothing wakes, as before.
+func TestARunningHeldCanaryDoesNotStopTheRoutedVariantWaking(t *testing.T) {
 	t.Cleanup(decision.DefaultHeld.Reset)
-	now := time.Now()
-	va := func(name string) llmdvariant.Variant {
-		return llmdvariant.Variant{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
-			Spec:       llmdvariant.Spec{ModelID: "m"},
-		}
-	}
-	active := []llmdvariant.Variant{va("canary")}
-	inactive := []llmdvariant.Variant{va("routed"), va("canary-parked")}
 
-	if !activeRoleCoverage(withoutHeld(active, now), nil)[modelKey("ns", "m")].decode {
-		t.Fatal("precondition: with nothing held, the running canary covers decode")
-	}
+	f := newWakeFixture(t, "heldwake")
+	canary := withRunningCanary(t, f)
+	f.src.values = []source.MetricValue{queueDepth(constants.EPPFlowControlQueueSize, f.model, 3)}
 
-	decision.DefaultHeld.Publish("ns", "m", []string{"canary", "canary-parked"}, now)
-	if activeRoleCoverage(withoutHeld(active, now), nil)[modelKey("ns", "m")].decode {
-		t.Error("a held variant counted as the model's running decode: a model whose routed variants are at zero would never wake")
-	}
-	got := withoutHeld(inactive, now)
-	if len(got) != 1 || got[0].Name != "routed" {
-		t.Errorf("wake candidates = %v, want only routed", got)
-	}
+	require.NoError(t, f.engine.optimize(context.Background()))
+	_, published, _ := f.woken()
+	require.False(t, published, "precondition: with no routing published, the running canary covers the model")
 
-	if len(withoutHeld(active, now.Add(heldMaxAge+time.Minute))) != 1 {
-		t.Error("a publication older than heldMaxAge still holds")
-	}
+	decision.DefaultHeld.Publish(f.ns, f.model, []string{canary}, []string{f.variant}, time.Now())
+	require.NoError(t, f.engine.optimize(context.Background()))
+	replicas, published, _ := f.woken()
+	require.True(t, published, "a held canary counted as the model's running decode: the routed variant never woke")
+	require.Equal(t, int32(1), replicas)
+}
+
+// A held variant at zero is never the one woken.
+func TestAHeldParkedVariantIsNotWoken(t *testing.T) {
+	t.Cleanup(decision.DefaultHeld.Reset)
+
+	f := newWakeFixture(t, "heldparked")
+	f.src.values = []source.MetricValue{queueDepth(constants.EPPFlowControlQueueSize, f.model, 3)}
+	decision.DefaultHeld.Publish(f.ns, f.model, []string{f.variant}, []string{"elsewhere"}, time.Now())
+	require.NoError(t, f.engine.optimize(context.Background()))
+	_, published, _ := f.woken()
+	require.False(t, published, "a held variant was woken: the router cannot reach it")
+
+	// A publication older than heldMaxAge no longer holds.
+	decision.DefaultHeld.Publish(f.ns, f.model, []string{f.variant}, []string{"elsewhere"}, time.Now().Add(-heldMaxAge-time.Minute))
+	require.NoError(t, f.engine.optimize(context.Background()))
+	_, published, _ = f.woken()
+	require.True(t, published, "a stale hold still kept the variant asleep")
 }

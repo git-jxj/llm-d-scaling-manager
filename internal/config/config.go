@@ -116,6 +116,7 @@ type featureFlagsConfig struct {
 	scaleToZeroEnabled          bool
 	stickyScaleDownEnabled      bool
 	poolSelectedSupply          bool
+	poolGroup                   string
 	limitedModeEnabled          bool
 	scaleFromZeroMaxConcurrency int
 	passive                     bool
@@ -441,6 +442,21 @@ func (c *Config) PoolSelectedSupplyEnabled() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.features.poolSelectedSupply
+}
+
+// PoolGroup is the InferencePool API group the controller reads (POOL_GROUP),
+// "" when unset; poolutil.GetPoolGKNN resolves the default. Thread-safe.
+func (c *Config) PoolGroup() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.features.poolGroup
+}
+
+// SetPoolGroupForTest sets POOL_GROUP on a test configuration.
+func SetPoolGroupForTest(c *Config, group string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.features.poolGroup = group
 }
 
 // SetPoolSelectedSupplyForTest sets LLMSM_POOL_SELECTED_SUPPLY on a test

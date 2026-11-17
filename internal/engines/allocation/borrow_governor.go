@@ -1408,13 +1408,14 @@ func heldOf(s domain.VariantReplicaState) int {
 }
 
 // lowerTo caps a decision's target at to, as a scale-down the release owns.
+// A held variant (no InferencePool selects it) is left alone: nothing moves it.
 func lowerTo(decisions []domain.VariantDecision, byVariant map[string]int, key string, to int, reason string) {
 	i, ok := byVariant[key]
 	if !ok {
 		return
 	}
 	d := &decisions[i]
-	if d.TargetReplicas <= to {
+	if d.HeldUnrouted || d.TargetReplicas <= to {
 		return
 	}
 	d.TargetReplicas = to

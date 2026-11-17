@@ -7,7 +7,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -20,9 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/scaletarget"
 	llmdvariant "github.com/llm-d-incubation/llm-d-scaling-manager/internal/variant"
 )
@@ -97,7 +94,7 @@ func runRoute(t *testing.T, c client.Client, deps []*appsv1.Deployment, pools Po
 		vas = append(vas, routeVariant("v"+d.Name, "Deployment", d.Name))
 	}
 	metas := Discover(context.Background(), vas, targets, c, DeclaredOnly)
-	return metas, Route(context.Background(), metas, vas, targets, c, pools)
+	return metas, Route(context.Background(), metas, vas, nil, targets, c, pools)
 }
 
 // The pool states, plus the held variant.
@@ -273,7 +270,7 @@ func TestRouteLWSCountsLeadersOnly(t *testing.T) {
 	va := routeVariant("vpd", "LeaderWorkerSet", "pd")
 	targets := map[string]scaletarget.ScaleTargetAccessor{"ns/pd": scaletarget.NewLWSAccessor(lws)}
 	metas := Discover(context.Background(), []llmdvariant.Variant{va}, targets, c, DeclaredOnly)
-	Route(context.Background(), metas, []llmdvariant.Variant{va}, targets, c, lister(sel, nil))
+	Route(context.Background(), metas, []llmdvariant.Variant{va}, nil, targets, c, lister(sel, nil))
 	got := gotRoute(metas[0])
 	want := routeWant{unrouted: 1, ready: 1, pods: []string{"pd-1"}, known: true}
 	if !routeEqual(got, want) {
@@ -301,50 +298,72 @@ func TestRouteCountsStartingNotStuck(t *testing.T) {
 	}
 }
 
-// A failed InferencePool listing is counted with its reason.
-func TestRouteCountsAFailedPoolListing(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	if err := metrics.InitMetrics(registry); err != nil {
-		t.Fatal(err)
-	}
-	count := func(reason string) float64 {
-		families, err := registry.Gather()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, f := range families {
-			if f.GetName() != constants.LLMSMMetricsCollectionErrorsTotal {
-				continue
-			}
-			for _, m := range f.GetMetric() {
-				labels := map[string]string{}
-				for _, l := range m.GetLabel() {
-					labels[l.GetName()] = l.GetValue()
-				}
-				if labels[constants.LabelQueryType] == constants.QueryTypePoolList && labels[constants.LabelReason] == reason {
-					return m.GetCounter().GetValue()
-				}
-			}
-		}
-		return 0
-	}
+// A failed InferencePool listing is reported with its reason (the engine
+// counts and logs it); a kind that is not served is no pool, not a failure.
+func TestRouteReportsAFailedPoolListing(t *testing.T) {
 	deps := []*appsv1.Deployment{routeDeployment("a", 1, 1, nil)}
-	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "inferencepools"}, "", errors.New("no"))
-	runRoute(t, heldClient(t), deps, lister(nil, forbidden))
-	runRoute(t, heldClient(t), deps, lister(nil, apierrors.NewServiceUnavailable("down")))
-	runRoute(t, heldClient(t), deps, lister(nil, &meta.NoKindMatchError{}))
-	if count("forbidden") != 1 || count("unavailable") != 1 {
-		t.Errorf("forbidden=%v unavailable=%v, want 1 each", count("forbidden"), count("unavailable"))
+	cases := map[string]struct {
+		err  error
+		want string
+	}{
+		"forbidden":   {apierrors.NewForbidden(schema.GroupResource{Resource: "inferencepools"}, "", errors.New("no")), "forbidden"},
+		"unavailable": {apierrors.NewServiceUnavailable("down"), "unavailable"},
+		"not served":  {&meta.NoKindMatchError{}, ""},
 	}
-	if count("other") != 0 {
-		t.Errorf("a pool kind that is not served was counted as a failure")
+	for name, tc := range cases {
+		_, res := runRoute(t, heldClient(t), deps, lister(nil, tc.err))
+		if len(res) != 1 || res[0].PoolReadFailed != tc.want {
+			t.Errorf("%s: %+v, want PoolReadFailed=%q", name, res, tc.want)
+		}
+	}
+}
+
+// A model whose routed variant scale-to-zero has parked is still routed, by
+// that variant's template: the running canary stays held, and the parked
+// variant is named selected, so scale from zero wakes it and not the canary.
+// The same holds on a restart with the routed variant already at zero, which
+// is the same input. Without the parked variant the model reads as not routed
+// and the canary is released.
+func TestRouteAParkedRoutedVariantKeepsTheModelRouted(t *testing.T) {
+	inPool := map[string]string{routeGuide: "g"}
+	routed := routeDeployment("a", 0, 0, inPool)
+	canary := routeDeployment("b", 3, 3, nil)
+	c := heldClient(t, routePod("b-0", "b", true, nil), routePod("b-1", "b", true, nil), routePod("b-2", "b", true, nil))
+	targets := map[string]scaletarget.ScaleTargetAccessor{
+		"ns/a": scaletarget.NewDeploymentAccessor(routed),
+		"ns/b": scaletarget.NewDeploymentAccessor(canary),
+	}
+	running := []llmdvariant.Variant{routeVariant("vb", "Deployment", "b")}
+	parked := []llmdvariant.Variant{routeVariant("va", "Deployment", "a")}
+	pools := lister([]map[string]string{inPool}, nil)
+
+	metas := Discover(context.Background(), running, targets, c, DeclaredOnly)
+	res := Route(context.Background(), metas, running, parked, targets, c, pools)
+	if !metas[0].HeldUnrouted || !metas[0].RoutingKnown {
+		t.Fatalf("canary %+v: not held while the model's routed variant is parked", gotRoute(metas[0]))
+	}
+	if len(res) != 1 || !res[0].Routed || !res[0].Known ||
+		!slices.Equal(res[0].Selected, []string{"va"}) || !slices.Equal(res[0].Held, []string{"vb"}) {
+		t.Fatalf("model routing %+v, want routed, selected [va], held [vb]", res)
+	}
+
+	// Every variant parked: the model's routing is still established.
+	res = Route(context.Background(), nil, nil, append(parked, routeVariant("vb", "Deployment", "b")), targets, c, pools)
+	if len(res) != 1 || !res[0].Routed || !slices.Equal(res[0].Held, []string{"vb"}) {
+		t.Fatalf("all parked: %+v, want routed with vb held", res)
+	}
+
+	metas = Discover(context.Background(), running, targets, c, DeclaredOnly)
+	Route(context.Background(), metas, running, nil, targets, c, pools)
+	if metas[0].HeldUnrouted {
+		t.Fatal("precondition: without the parked variant the model reads as not routed")
 	}
 }
 
 // Route must leave metadata untouched when it is given no lister.
 func TestRouteWithoutListerChangesNothing(t *testing.T) {
 	metas := []domain.VariantMetadata{{VariantName: "v", Namespace: "ns", ModelID: "m", CurrentReplicas: 2}}
-	if res := Route(context.Background(), metas, nil, nil, nil, nil); res != nil {
+	if res := Route(context.Background(), metas, nil, nil, nil, nil, nil); res != nil {
 		t.Fatalf("results without a lister: %+v", res)
 	}
 	if metas[0].HeldUnrouted || metas[0].UnroutedReplicas != 0 || metas[0].RoutingKnown {

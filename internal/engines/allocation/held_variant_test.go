@@ -91,3 +91,52 @@ func TestDecisionCarriesTheHold(t *testing.T) {
 		t.Fatalf("decision %+v, want held at 3", ds)
 	}
 }
+
+// A model with a held variant is planned in no utilization-share group, so a
+// share plan never moves the held variant; the model's other models are
+// planned as before.
+func TestShareGroupsSkipAModelWithAHeldVariant(t *testing.T) {
+	held := shareReq("A", "ns", 4000, 4)
+	for i := range held.Variants {
+		held.Variants[i].HeldUnrouted = true
+	}
+	reqs := []ModelScalingRequest{held, shareReq("B", "ns", 4000, 4)}
+	cons := []*ResourceConstraints{{ProviderName: "q", Pools: map[string]ResourcePool{"A100": {Limit: 16}}}}
+	var unshared []string
+	groups := BuildShareGroups(reqs, cons, ShareGroupOptions{ClusterIsQuota: true,
+		Unshared: func(req ModelScalingRequest, why string) {
+			if why == UnsharedHeldVariant {
+				unshared = append(unshared, req.ModelID)
+			}
+		}})
+	if len(unshared) != 1 || unshared[0] != "A" {
+		t.Fatalf("unshared %v, want only A", unshared)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("groups %+v, want one, for B", groups)
+	}
+	for role, vs := range groups[0].Variants {
+		for _, v := range vs {
+			if v.Name == "A-v" {
+				t.Errorf("the held model's variant is planned in role %s", role)
+			}
+		}
+	}
+}
+
+// A Kueue lender release never lowers a held variant.
+func TestLowerToLeavesAHeldVariant(t *testing.T) {
+	decisions := []domain.VariantDecision{
+		{VariantName: "canary", Namespace: "ns", CurrentReplicas: 3, TargetReplicas: 3, HeldUnrouted: true},
+		{VariantName: "routed", Namespace: "ns", CurrentReplicas: 3, TargetReplicas: 3},
+	}
+	byVariant := map[string]int{"ns/canary": 0, "ns/routed": 1}
+	lowerTo(decisions, byVariant, "ns/canary", 1, "test")
+	lowerTo(decisions, byVariant, "ns/routed", 1, "test")
+	if decisions[0].TargetReplicas != 3 {
+		t.Errorf("held target = %d, want 3", decisions[0].TargetReplicas)
+	}
+	if decisions[1].TargetReplicas != 1 {
+		t.Errorf("routed target = %d, want 1: the release still applies elsewhere", decisions[1].TargetReplicas)
+	}
+}

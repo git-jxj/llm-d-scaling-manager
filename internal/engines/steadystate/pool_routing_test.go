@@ -132,3 +132,18 @@ func TestHeldVariantIsNotSupplyAndIsNotScaled(t *testing.T) {
 		t.Fatalf("routed variant target = %d, want a scale-up above 2", out["routed"])
 	}
 }
+
+// A utilization-share override never moves a held variant.
+func TestShareOverrideLeavesAHeldVariant(t *testing.T) {
+	decisions := []domain.VariantDecision{
+		{VariantName: "canary", Namespace: "ns", CurrentReplicas: 3, TargetReplicas: 3, HeldUnrouted: true},
+		{VariantName: "routed", Namespace: "ns", CurrentReplicas: 3, TargetReplicas: 3},
+	}
+	overrides := map[string]utilizationShareOverride{"ns/canary": {Target: 1}, "ns/routed": {Target: 1}}
+	if n := applyUtilizationShareOverrides(decisions, overrides); n != 1 {
+		t.Errorf("applied %d overrides, want 1", n)
+	}
+	if decisions[0].TargetReplicas != 3 || decisions[1].TargetReplicas != 1 {
+		t.Errorf("targets %d/%d, want the held variant at 3 and the routed one at 1", decisions[0].TargetReplicas, decisions[1].TargetReplicas)
+	}
+}

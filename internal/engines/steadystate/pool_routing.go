@@ -3,12 +3,12 @@ package steadystate
 import (
 	"context"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -39,8 +39,8 @@ const routingVerdictTTL = 5 * time.Minute
 // held state. The repeat keeps it visible past an Event's one-hour expiry.
 const heldEventEvery = 30 * time.Minute
 
-// routingState is what the last cycle that could read the pools established
-// for one variant.
+// routingState is what the last cycle that could establish it found for one
+// running variant.
 type routingState struct {
 	// model is the variant's namespace/model key, for pruning.
 	model    string
@@ -59,22 +59,41 @@ type routingState struct {
 	lapsed bool
 }
 
+// modelRoutingState is the last known model-level verdict: the variants a pool
+// selects and the held ones, parked ones included, for decision.DefaultHeld.
+type modelRoutingState struct {
+	selected, held []string
+	at             time.Time
+}
+
 // poolRead is one namespace's InferencePool listing for the current cycle.
 type poolRead struct {
 	selectors []map[string]string
 	err       error
 }
 
+// heldEvent is a held Event to record once routingMu is released.
+type heldEvent struct {
+	va      *llmdvariant.Variant
+	message string
+}
+
 // poolLister lists InferencePool selectors past the manager's cache, in the
-// group the controller is configured for (POOL_GROUP, as cmd/main.go reads it),
-// once per namespace per cycle: every model of a namespace reads the same
-// result, and resetPoolReads starts the next cycle afresh.
+// group the controller is configured for (POOL_GROUP), once per namespace per
+// cycle: every model of a namespace reads the same result, and resetPoolReads
+// starts the next cycle afresh. A failed listing is counted once per namespace
+// per cycle (llmsm_metrics_collection_errors_total{query_type="pool_list"}) and
+// logged when the namespace's state changes, naming the permission.
 //
 // Uncached for the same reason the collector's Pod listing is: a refused read
 // must come back as an error that can be told from "no pool", and an informer
 // on a kind the controller may not list would never sync.
 func (e *Engine) poolLister() variantmeta.PoolLister {
-	gknn, err := poolutil.GetPoolGKNN(os.Getenv("POOL_GROUP"))
+	group := ""
+	if e.Config != nil {
+		group = e.Config.PoolGroup()
+	}
+	gknn, err := poolutil.GetPoolGKNN(group)
 	if err != nil {
 		return nil
 	}
@@ -85,7 +104,7 @@ func (e *Engine) poolLister() variantmeta.PoolLister {
 	if reader == nil {
 		return nil
 	}
-	group := gknn.Group
+	group = gknn.Group
 	return func(ctx context.Context, namespace string) ([]map[string]string, error) {
 		e.routingMu.Lock()
 		if r, ok := e.poolReads[namespace]; ok {
@@ -94,12 +113,35 @@ func (e *Engine) poolLister() variantmeta.PoolLister {
 		}
 		e.routingMu.Unlock()
 		sels, err := poolutil.ListSelectors(ctx, reader, group, namespace)
+		failed := ""
+		if err != nil && !meta.IsNoMatchError(err) {
+			failed = variantmeta.PoolListErrorReason(err)
+			metrics.IncMetricsCollectionErrors(constants.QueryTypePoolList, failed)
+		}
 		e.routingMu.Lock()
 		if e.poolReads == nil {
 			e.poolReads = map[string]poolRead{}
 		}
 		e.poolReads[namespace] = poolRead{selectors: sels, err: err}
+		if e.poolFailed == nil {
+			e.poolFailed = map[string]string{}
+		}
+		was := e.poolFailed[namespace]
+		if failed == "" {
+			delete(e.poolFailed, namespace)
+		} else {
+			e.poolFailed[namespace] = failed
+		}
 		e.routingMu.Unlock()
+		switch {
+		case failed != "" && failed != was:
+			ctrl.LoggerFrom(ctx).V(logging.DEFAULT).Info(
+				"InferencePools could not be listed; held variants stay held for a while, then every replica is counted as before",
+				"namespace", namespace, "group", group, "reason", failed, "error", err.Error(),
+				"needs", "list on inferencepools."+group+" in this namespace")
+		case failed == "" && was != "":
+			ctrl.LoggerFrom(ctx).V(logging.DEFAULT).Info("InferencePools can be listed again", "namespace", namespace)
+		}
 		return sels, err
 	}
 }
@@ -118,9 +160,37 @@ func (e *Engine) poolSelectedSupply() bool {
 	return e.Config != nil && e.Config.PoolSelectedSupplyEnabled()
 }
 
-// routeModel establishes this cycle's routing verdict for one model's variants
-// and returns the rows the analyzers may read. Off (LLMSM_POOL_SELECTED_SUPPLY
-// false), it clears whatever an earlier cycle published and changes nothing.
+// parkedVariants is this cycle's variants at zero replicas, by namespace/model,
+// with their scale targets, and whether they could be listed.
+type parkedVariants struct {
+	byModel map[string][]llmdvariant.Variant
+	targets map[string]scaletarget.ScaleTargetAccessor
+	known   bool
+}
+
+// readParked lists the variants at zero replicas, for routing: a model whose
+// routed variant is parked is still routed.
+func (e *Engine) readParked(ctx context.Context) parkedVariants {
+	if !e.poolSelectedSupply() || e.Variants == nil {
+		return parkedVariants{}
+	}
+	vas, targets, err := utils.InactiveVariants(ctx, e.client, e.Variants)
+	if err != nil {
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Could not list parked variants; routing verdicts this cycle are unknown where they would decide", "error", err.Error())
+		return parkedVariants{}
+	}
+	out := parkedVariants{byModel: map[string][]llmdvariant.Variant{}, targets: targets, known: true}
+	for _, va := range vas {
+		key := utils.GetNamespacedKey(va.Namespace, va.Spec.ModelID)
+		out.byModel[key] = append(out.byModel[key], va)
+	}
+	return out
+}
+
+// routeModel establishes this cycle's routing verdict for one model's running
+// variants and returns the rows the analyzers may read. Off
+// (LLMSM_POOL_SELECTED_SUPPLY false), it clears whatever an earlier cycle
+// published and changes nothing.
 func (e *Engine) routeModel(
 	ctx context.Context,
 	modelID, namespace string,
@@ -132,20 +202,80 @@ func (e *Engine) routeModel(
 	k8sClient client.Client,
 	now time.Time,
 ) []domain.ReplicaMetrics {
+	modelKey := utils.GetNamespacedKey(namespace, modelID)
 	if !e.poolSelectedSupply() {
-		e.forgetRouting(utils.GetNamespacedKey(namespace, modelID), namespace, modelID)
+		e.forgetRouting(modelKey, namespace, modelID, false)
 		return rows
 	}
-	results := variantmeta.Route(ctx, metas, modelVAs, scaleTargets, k8sClient, e.poolLister())
+	parked := e.parked.byModel[modelKey]
+	targets := scaleTargets
+	if len(parked) > 0 {
+		targets = make(map[string]scaletarget.ScaleTargetAccessor, len(scaleTargets)+len(parked))
+		for k, v := range e.parked.targets {
+			targets[k] = v
+		}
+		for k, v := range scaleTargets {
+			targets[k] = v
+		}
+	}
+	results := variantmeta.Route(ctx, metas, modelVAs, parked, targets, k8sClient, e.poolLister())
+	if !e.parked.known {
+		// The parked variants could not be listed: a model that looks not
+		// routed may be routed through one of them, so nothing is known.
+		for i := range results {
+			if !results[i].Routed {
+				results[i].Known = false
+				for j := range metas {
+					metas[j].RoutingKnown = false
+				}
+			}
+		}
+	}
 	e.resolveRouting(ctx, modelID, namespace, metas, results, variants, now)
 	return dropUnroutedRows(rows, metas)
+}
+
+// routeParkedModels publishes the routing of the models with no running
+// variant, so scale from zero does not wake a held variant of a model that is
+// entirely at zero. active holds the namespace/model keys this cycle analyzes.
+func (e *Engine) routeParkedModels(ctx context.Context, active map[string]bool, now time.Time) {
+	if !e.poolSelectedSupply() || !e.parked.known {
+		return
+	}
+	for key, vas := range e.parked.byModel {
+		if active[key] {
+			continue
+		}
+		for _, r := range variantmeta.Route(ctx, nil, nil, vas, e.parked.targets, e.client, e.poolLister()) {
+			if r.Known {
+				e.publishModelRouting(r.Namespace, r.ModelID, r.Selected, r.Held, now)
+			}
+		}
+	}
+}
+
+// publishModelRouting records and publishes a model's selected and held
+// variants for scale from zero.
+func (e *Engine) publishModelRouting(namespace, modelID string, selected, held []string, now time.Time) {
+	key := utils.GetNamespacedKey(namespace, modelID)
+	e.routingMu.Lock()
+	if e.modelRouting == nil {
+		e.modelRouting = map[string]modelRoutingState{}
+	}
+	if len(selected) == 0 && len(held) == 0 {
+		delete(e.modelRouting, key)
+	} else {
+		e.modelRouting[key] = modelRoutingState{selected: selected, held: held, at: now}
+	}
+	e.routingMu.Unlock()
+	decision.DefaultHeld.Publish(namespace, modelID, held, selected, now)
 }
 
 // resolveRouting turns Route's findings into the verdict this cycle uses:
 // a known verdict is recorded; an unknown one reuses the last known verdict
 // for routingVerdictTTL and lapses to "counted as before" after it. It then
-// logs each change, keeps the held Event, publishes llmsm_unrouted_replicas
-// and the held set scale from zero reads.
+// logs each change, records the held Event, publishes llmsm_unrouted_replicas
+// and the selected and held variants scale from zero reads.
 func (e *Engine) resolveRouting(
 	ctx context.Context,
 	modelID, namespace string,
@@ -156,9 +286,9 @@ func (e *Engine) resolveRouting(
 ) {
 	logger := ctrl.LoggerFrom(ctx)
 	modelKey := utils.GetNamespacedKey(namespace, modelID)
+	var events []heldEvent
 
 	e.routingMu.Lock()
-	defer e.routingMu.Unlock()
 	if e.routing == nil {
 		e.routing = map[string]routingState{}
 	}
@@ -192,7 +322,7 @@ func (e *Engine) resolveRouting(
 	slices.Sort(routed)
 
 	counts := map[string]int{}
-	var held []string
+	var heldRunning []string
 	for i := range metas {
 		m := &metas[i]
 		key := utils.GetNamespacedKey(m.Namespace, m.VariantName)
@@ -231,12 +361,8 @@ func (e *Engine) resolveRouting(
 					"unrouted", m.UnroutedReplicas, "unroutedReady", m.UnroutedReady, "pods", m.UnroutedPods)
 			}
 			if st.held && (!prev.held || st.eventAt.IsZero() || st.at.Sub(prev.eventAt) >= heldEventEvery) {
-				// Straight to the recorder, not recordEvent: that allows one
-				// Event per variant per cycle, and this one is recorded before
-				// the decisions, whose own Event it must not displace.
-				if va := variants[key]; va != nil && e.Recorder != nil {
-					e.Recorder.Event(llmdvariant.EventTarget(va), corev1.EventTypeWarning,
-						constants.K8SEventHeldNotInPool, heldMessage(*m, modelID, routed))
+				if va := variants[key]; va != nil {
+					events = append(events, heldEvent{va: va, message: heldMessage(*m, modelID, routed)})
 				}
 				st.eventAt = st.at
 			}
@@ -249,17 +375,50 @@ func (e *Engine) resolveRouting(
 			counts[m.VariantName] = m.UnroutedReplicas
 		}
 		if m.HeldUnrouted {
-			held = append(held, m.VariantName)
+			heldRunning = append(heldRunning, m.VariantName)
+		}
+	}
+
+	// The model-level verdict for scale from zero: this cycle's when it was
+	// established, else the last one while it is fresh, with the running
+	// variants' kept verdicts folded in.
+	var selected, held []string
+	known := len(results) > 0 && results[0].Known
+	switch prevModel, ok := e.modelRouting[modelKey]; {
+	case known:
+		selected, held = results[0].Selected, results[0].Held
+	case ok && now.Sub(prevModel.at) <= routingVerdictTTL:
+		selected, held = prevModel.selected, prevModel.held
+		for _, v := range heldRunning {
+			if !slices.Contains(held, v) {
+				held = append(held, v)
+			}
+		}
+	}
+	e.routingMu.Unlock()
+
+	// Straight to the recorder, not recordEvent: that allows one Event per
+	// variant per cycle, and this one is recorded before the decisions, whose
+	// own Event it must not displace. Outside the lock: it is I/O.
+	if e.Recorder != nil {
+		for _, ev := range events {
+			e.Recorder.Event(llmdvariant.EventTarget(ev.va), corev1.EventTypeWarning, constants.K8SEventHeldNotInPool, ev.message)
 		}
 	}
 	metrics.SetUnroutedReplicas(namespace, modelID, counts)
-	decision.DefaultHeld.Publish(namespace, modelID, held, now)
+	if known || len(selected)+len(held) > 0 {
+		e.publishModelRouting(namespace, modelID, selected, held, now)
+	} else if len(results) > 0 {
+		// Unknown for longer than the hold keeps it: no routing, as before.
+		e.publishModelRouting(namespace, modelID, nil, nil, now)
+	}
 }
 
-// forgetRouting drops everything published for one model: its verdicts, its
-// gauge series and its held set. For a model gone from the cycle, and for every
-// model while the feature is off.
-func (e *Engine) forgetRouting(modelKey, namespace, modelID string) {
+// forgetRouting drops everything published for one model: its verdicts and
+// its gauge series, and, unless keepPublished, its routing for scale from
+// zero. For a model gone from the cycle, and for every model while the feature
+// is off.
+func (e *Engine) forgetRouting(modelKey, namespace, modelID string, keepPublished bool) {
 	e.routingMu.Lock()
 	for key, st := range e.routing {
 		if st.model == modelKey {
@@ -267,13 +426,20 @@ func (e *Engine) forgetRouting(modelKey, namespace, modelID string) {
 		}
 	}
 	delete(e.modelUnselected, modelKey)
+	if !keepPublished {
+		delete(e.modelRouting, modelKey)
+	}
 	e.routingMu.Unlock()
 	metrics.SetUnroutedReplicas(namespace, modelID, nil)
-	decision.DefaultHeld.Publish(namespace, modelID, nil, time.Time{})
+	if !keepPublished {
+		decision.DefaultHeld.Publish(namespace, modelID, nil, nil, time.Time{})
+	}
 }
 
 // retainRouting forgets the routing of every model not in activeKeys
-// (namespace/model keys), alongside the other per-model series.
+// (namespace/model keys), alongside the other per-model series. A model whose
+// variants are all parked keeps its published routing: routeParkedModels
+// renews it, so scale from zero does not wake its held variant.
 func (e *Engine) retainRouting(activeKeys map[string]bool) {
 	e.routingMu.Lock()
 	gone := map[string]bool{}
@@ -282,10 +448,16 @@ func (e *Engine) retainRouting(activeKeys map[string]bool) {
 			gone[st.model] = true
 		}
 	}
+	for key := range e.modelRouting {
+		if !activeKeys[key] {
+			gone[key] = true
+		}
+	}
 	e.routingMu.Unlock()
 	for key := range gone {
 		namespace, modelID, _ := strings.Cut(key, "/")
-		e.forgetRouting(key, namespace, modelID)
+		_, parked := e.parked.byModel[key]
+		e.forgetRouting(key, namespace, modelID, parked)
 	}
 }
 

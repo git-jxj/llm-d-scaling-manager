@@ -138,22 +138,41 @@ the scaling manager counts only those Pods as supply. In a model that a pool
 selects:
 
 - a Pod no pool selects (a relabelled replica) is no longer counted;
-- a variant whose pod template no pool selects is **held**: it is not
-  counted, and nothing scales it, up or down, scale-to-zero included. It
-  keeps the replica count it had.
+- a variant no pool selects, by its pod template or its running Pods, is
+  **held**: it is not counted, and nothing scales it, up or down, including
+  scale-to-zero, scale from zero, utilization-share plans and Kueue lender
+  releases. It keeps the replica count it had. A model whose routed variant
+  is parked at zero is still routed, so the parked variant is the one that
+  wakes.
 
 **A canary or role served outside the pool stops autoscaling.** If you route
 traffic to a variant some other way (an HTTPRoute to a plain Service), it is
 now held at its replica count.
 
 Before you upgrade, check that every variant you want scaled is selected by a
-pool. List the pools' selectors and compare them with each workload's pod
-template labels:
+pool. List the pools' selectors, in the API group your pools use:
 
 ```bash
-kubectl get inferencepools -n <namespace> -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.selector.matchLabels}{"\n"}{end}'
-kubectl get deployments,leaderworkersets -n <namespace> -o custom-columns=NAME:.metadata.name,LABELS:.spec.template.metadata.labels
+# inference.networking.k8s.io (v1): the selector is under matchLabels
+kubectl get inferencepools.inference.networking.k8s.io -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.selector.matchLabels
+# inference.networking.x-k8s.io (v1alpha2): the selector is a flat map
+kubectl get inferencepools.inference.networking.x-k8s.io -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.selector
 ```
+
+Compare them with each workload's pod template labels:
+
+```bash
+kubectl get deployments -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,LABELS:.spec.template.metadata.labels
+# only if LeaderWorkerSet is installed
+kubectl get leaderworkersets -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,LABELS:.spec.leaderWorkerTemplate.leaderTemplate.metadata.labels
+```
+
+A Pod relabelled after it started can differ from its template. List the
+running Pods' labels with `kubectl get pods -n <namespace> --show-labels`.
 
 After the upgrade, a held variant has a `HeldNotInInferencePool` Warning
 Event, and `llmsm_unrouted_replicas` is non-zero for it.
