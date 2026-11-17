@@ -145,7 +145,8 @@ func newWriter(t *testing.T, obj *unstructured.Unstructured, store *decision.Sto
 		},
 	}).Build()
 	rec := record.NewFakeRecorder(10)
-	return &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec}, got, rec
+	// No scale-down window: the tests of the window set their own.
+	return &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec, AllNamespaces: true, ScaleDownWindow: -1}, got, rec
 }
 
 func TestPassAppliesDecisionsToStaticRolesOnly(t *testing.T) {
@@ -289,7 +290,9 @@ func TestStaticRoleAccessorReadsTheSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "glm-decode", acc.GetName())
 	assert.Equal(t, int32(3), *acc.GetReplicas())
-	assert.True(t, scaletarget.IsStaticDisaggregatedSetRole(acc))
+	_, role, ok := scaletarget.DisaggregatedSetRole(acc)
+	assert.True(t, ok)
+	assert.Equal(t, "decode", role)
 	_, err = scaletarget.NewDisaggregatedSetStaticRoleAccessor(set(nil, "", 3), "encode")
 	assert.ErrorContains(t, err, "External")
 }

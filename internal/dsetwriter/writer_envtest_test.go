@@ -67,7 +67,7 @@ func TestWriterOnAnAPIServer(t *testing.T) {
 		anns[ModelIDAnnotation] = "org/GLM"
 		live.SetAnnotations(anns)
 		require.NoError(t, c.Update(ctx, live, client.FieldOwner("annotator")))
-		w := &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec, Namespaces: []string{envNS}}
+		w := &Writer{Client: c, Registry: registry.New(0), Decisions: store, Recorder: rec, Namespaces: []string{envNS}, ScaleDownWindow: -1}
 		w.Pass(ctx)
 		return rec
 	}
