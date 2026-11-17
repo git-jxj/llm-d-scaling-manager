@@ -12,11 +12,16 @@
 # that names it is reconciled or finalized, which moves the resourceVersion
 # with no install anywhere near it: the smoke suite deletes its namespaces
 # without waiting, and KEDA finalized one of its ScaledObjects between the
-# two snapshots around a second install. For those kinds the line holds "spec:<sha256>" of the object
-# without status, resourceVersion and managedFields, so an install that
-# rewrites the spec, a label, an annotation or a finalizer still shows up.
+# two snapshots around a second install. For those kinds the line holds
+# "spec:<sha256>" of the object without status, resourceVersion and
+# managedFields, so an install that rewrites the spec, a label, an
+# annotation, a finalizer or an owner reference still shows up.
+#
+# If this check flakes on an authentication again, look at
+# metadata.finalizers first: KEDA adds finalizer.keda.sh to it, and the digest
+# keeps the finalizers.
 rv_snapshot() {
-    local kind ns name json value
+    local kind ns name json value canon
     while read -r kind ns name; do
         [ -n "$kind" ] || continue
         if [ "$ns" = - ]; then
@@ -28,9 +33,12 @@ rv_snapshot() {
         if [ -n "$json" ]; then
             case "$kind" in
                 ClusterTriggerAuthentication|TriggerAuthentication)
-                    value="$(printf '%s' "$json" | jq -cS 'del(.status, .metadata.resourceVersion, .metadata.managedFields)' 2>/dev/null | sha256sum | cut -d' ' -f1)"
-                    # An empty jq output hashes to a value too; never compare that.
-                    [ -n "$(printf '%s' "$json" | jq -r '.metadata.name // empty' 2>/dev/null)" ] && value="spec:$value" || value=''
+                    # One jq call that must print the object, name and all:
+                    # an empty or failed run never reaches sha256sum.
+                    if canon="$(printf '%s' "$json" | jq -cSe 'select(.metadata.name) | del(.status, .metadata.resourceVersion, .metadata.managedFields)' 2>/dev/null)" \
+                        && [ -n "$canon" ]; then
+                        value="spec:$(printf '%s' "$canon" | sha256sum | cut -d' ' -f1)"
+                    fi
                     ;;
                 *)
                     value="$(printf '%s' "$json" | jq -r '.metadata.resourceVersion // empty' 2>/dev/null)"

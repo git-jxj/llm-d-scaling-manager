@@ -164,6 +164,11 @@ run_smoke() {
 
 # --- kubeconfigs and inputs --------------------------------------------------
 
+# Without jq or sha256sum every object of the resourceVersion check would read
+# absent on both sides, and absent equals absent.
+for tool in jq sha256sum; do
+    command -v "$tool" >/dev/null 2>&1 || fail setup "$tool is not installed"
+done
 kubectl config view --minify --flatten > "$WORK/admin.kubeconfig" || fail setup "cannot read the current kubeconfig"
 chmod 0600 "$WORK/admin.kubeconfig"
 server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
@@ -295,6 +300,9 @@ gen_after="$(kubectl get deployment "$DEPLOY" -n "$NS" -o jsonpath="{.metadata.g
 changed="$(diff "$WORK/rv-before.txt" "$WORK/rv-after.txt" | grep '^>' || true)"
 [ -z "$changed" ] || fail "second install" "resourceVersion (or TriggerAuthentication spec digest) changed: $(echo $changed)"
 present="$(grep -vc ' absent$' "$WORK/rv-after.txt")"
+listed="$(grep -c . "$WORK/objects.txt")"
+# A read that fails is absent before and after, and passes; most must be readable.
+[ "$present" -gt $((listed / 2)) ] || fail "second install" "only $present of $listed listed objects could be read; the check compared absent with absent"
 digests="$(grep -c ' spec:[0-9a-f]\{64\}$' "$WORK/rv-after.txt")"
 [ "$digests" -gt 0 ] || fail "second install" "no ClusterTriggerAuthentication was compared by its spec digest; the KEDA auth went unchecked"
 pass "a second install changes no resourceVersion ($present objects, $digests TriggerAuthentication by spec digest, the preflight Job aside) and not the controller generation ($gen_after)"
