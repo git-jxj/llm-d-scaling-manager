@@ -356,3 +356,30 @@ func TestSourcesWithoutLister(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"schemaVersion": 1, "prometheus": false, "namespaces": [], "recordings": []}`, rec.Body.String())
 }
+
+// The page judges the fleet: the shape rows, the loads and the growth of the
+// load seen are on the page, a report is posted to v1/report by a relative
+// path with the body reportRequest builds from them (its cases run under node
+// in hack/check-planner-scenarios.sh), a server with no report route is said
+// in words, and the matrix carries a legend whose marks are words, not
+// colour alone. The report's strings reach the page as text.
+func TestPageJudgesTheFleet(t *testing.T) {
+	html, js, scen := pageText(t, "index.html"), pageText(t, "planner.js"), pageText(t, "scenario.js")
+	for _, want := range []string{`id="rshapes"`, `id="rshapeadd"`, `id="rloads"`, `id="rgrowth"`, `id="rrun"`, `id="rmatrix"`,
+		`id="rstatus" class="hint" aria-live="polite"`, `id="rlegend"`, `<span class="rmark met">ok</span>`, `<span class="rmark missed">MISS</span>`,
+		`<span class="rmark saturated">SAT</span>`, `<span class="rmark unknown">?</span>`} {
+		assert.Contains(t, html, want)
+	}
+	for _, want := range []string{`api("POST", "v1/report", asked.body)`,
+		`reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),`,
+		`loads: el("rloads").value, growth: el("rgrowth").value, slo: plan.slo, assume: plan.assume})`,
+		`reportMissing(status, e.message)`, "This server has no fleet report (POST /v1/report)", `" EXTRAPOLATED"`} {
+		assert.Contains(t, js, want)
+	}
+	for _, want := range []string{"function reportRequest(o)", "function reportMatrix(r)", "function reportMissing(status, error)"} {
+		assert.Contains(t, scen, want)
+	}
+	start := strings.Index(js, "function renderReport(r)")
+	require.GreaterOrEqual(t, start, 0)
+	assert.NotContains(t, js[start:], "innerHTML", "the report is drawn as text nodes")
+}

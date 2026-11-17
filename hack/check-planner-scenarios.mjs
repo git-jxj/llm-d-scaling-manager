@@ -440,6 +440,56 @@ check("retryDelay reads an unreadable Retry-After as 1 s", retryDelay(503, "soon
 check("retryDelay waits at most 30 s", retryDelay(503, "3600", 0) === 30000, retryDelay(503, "3600", 0));
 check("retryDelay never retries a 200", retryDelay(200, "1", 0) === -1, retryDelay(200, "1", 0));
 check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDelay(500, "1", 0));
+
+// The fleet report: the body the page posts to v1/report from its controls,
+// the shapes and loads it refuses before asking, the summary it draws, and a
+// server with no report route told apart from a dropped inputsId.
+{
+  const {reportShapeProblem, shapeText, parseReportLoads, reportRequest, reportMatrix, reportMissing} = ctx;
+  check("measured is a shape", reportShapeProblem("measured") === "");
+  check("IL/OL is a shape", reportShapeProblem("8k/200") === "");
+  check("IL/OL/hit is a shape", reportShapeProblem("1k/4k/0.3") === "");
+  check("one length is not a shape", reportShapeProblem("8k") !== "");
+  check("a hit of 1 is not a shape", reportShapeProblem("1k/1k/1") !== "");
+  check("a length past 1024k is refused", reportShapeProblem("2000k/200") !== "");
+  check("blank boxes are the measured shape", shapeText({il: "", ol: " ", hit: ""}) === "measured");
+  check("a row without a hit", shapeText({il: "8k", ol: "200"}) === "8k/200");
+  check("a row with a hit", shapeText({il: "1k", ol: "4k", hit: "0.3"}) === "1k/4k/0.3");
+  check("empty loads are the server's default", parseReportLoads("").loads.length === 0 && parseReportLoads("").problem === "");
+  check("loads are read in order", JSON.stringify(parseReportLoads("50%, 5r/s ,seen").loads) === JSON.stringify(["50%", "5r/s", "seen"]));
+  check("a share past 100% is refused", parseReportLoads("150%").problem !== "");
+  check("a load with no unit is refused", parseReportLoads("5").problem !== "");
+
+  const asked = reportRequest({inputsId: "sha256:x", fleet: {decode: 3}, shapes: [{}, {il: "1k", ol: "1k"}, {il: "16k", ol: "200", hit: "0.3"}],
+    loads: "50%, 80%, 5r/s, seen", growth: "1.2", slo: {ttft: {statistic: "p90", target: 2}}, assume: {vp: 200000}});
+  const want = {inputsId: "sha256:x", shapes: ["measured", "1k/1k", "16k/200/0.3"], fleet: {decode: 3}, loads: ["50%", "80%", "5r/s", "seen"],
+    loadSeenX: 1.2, slo: {ttft: {statistic: "p90", target: 2}}, assume: {vp: 200000}};
+  check("the body carries every control", asked.problem === "" && JSON.stringify(asked.body) === JSON.stringify(want), JSON.stringify(asked));
+  check("no rows asks for the measured shape", JSON.stringify(reportRequest({inputsId: "i"}).body) === JSON.stringify({inputsId: "i", shapes: ["measured"]}));
+  check("a growth of 1 is left out", !("loadSeenX" in reportRequest({inputsId: "i", growth: "1"}).body));
+  check("a bad growth is refused", reportRequest({inputsId: "i", growth: "-2"}).body === null);
+  check("a bad shape is refused before asking", reportRequest({inputsId: "i", shapes: [{il: "8k"}]}).body === null);
+  check("seven shapes are refused", reportRequest({inputsId: "i", shapes: Array(7).fill({il: "1k", ol: "1k"})}).body === null);
+  check("a bad load is refused before asking", reportRequest({inputsId: "i", loads: "fast"}).body === null);
+
+  const m = reportMatrix({loads: ["50%", "seen x1.2"], shapes: [
+    {label: "measured", verdict: {verdict: "RIGHT-SIZED"}, table: [
+      {load: "50%", rate: 19.07, cell: {ttft: {value: 0.6367}, tpot: {value: 0.01641}, mark: "met"}},
+      {load: "seen x1.2", rate: 37.91, cell: {ttft: {refused: {reason: "AboveDecodeOnset"}}, tpot: {value: 0.0636}, mark: "saturated"}}]},
+    {label: "1k/1k", extrapolated: true, extrapolatedWhy: "IL 1024 outside", verdict: {verdict: "UNDER-PROVISIONED"}, table: [
+      {load: "50%", rate: 18.27, cell: {ttft: {value: 0.134}, tpot: {value: 0.0164}, mark: "missed"}}]}]});
+  check("the matrix has a column per load", m.loads.length === 2 && m.rows[0].cells.length === 2);
+  check("a met cell reads ok", m.rows[0].cells[0].cls === "met" && m.rows[0].cells[0].word === "ok" && m.rows[0].cells[0].text === "636.7 / 16.4",
+    JSON.stringify(m.rows[0].cells[0]));
+  check("a refused figure is -", m.rows[0].cells[1].text === "- / 63.6" && m.rows[0].cells[1].word === "SAT");
+  check("a missed cell says MISS", m.rows[1].cells[0].cls === "missed" && m.rows[1].cells[0].word === "MISS");
+  check("a load with no row is -", m.rows[1].cells[1].text === "-" && m.rows[1].cells[1].cls === "none");
+  check("an extrapolated shape is marked", m.rows[1].extrapolated && !m.rows[0].extrapolated && m.rows[1].why === "IL 1024 outside");
+  check("each row carries its verdict", m.rows[1].verdict === "UNDER-PROVISIONED");
+  check("a server with no report route", reportMissing(404, "404: POST /v1/report: no such endpoint; the server serves ..."));
+  check("a dropped inputsId is not a missing route", !reportMissing(404, "404: unknown inputsId: resolve the source"));
+  check("a 400 is not a missing route", !reportMissing(400, "no such endpoint"));
+}
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -451,7 +501,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 217;
+const EXPECTED_CASES = 247;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

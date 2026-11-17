@@ -1,4 +1,9 @@
-// The capacity planner page's saved scenarios, as pure functions: escaping,
+// reportMissing reports whether an answer says the server has no
+// POST /v1/report: a server of an earlier release answers 404 "no such
+// endpoint". A 404 for an inputsId the server dropped is not that.
+function reportMissing(status, error) {
+  return status === 405 || (status === 404 && String(error || "").includes("no such endpoint"));
+}// The capacity planner page's saved scenarios, as pure functions: escaping,
 // the checks on a scenario read back from a file or the store, the store's
 // edits, and the compare table's changes. No DOM and no browser API, so
 // hack/check-planner-scenarios.sh runs them under node on fixtures. The page
@@ -400,4 +405,109 @@ function fleetDelta(a, b) {
     if (d) parts.push(`${d > 0 ? "+" : ""}${d} ${role}`);
   }
   return parts.length ? parts.join(", ") : "same";
+}
+
+// ---- The fleet report (POST /v1/report) ----
+
+// REPORT_SHAPE is a request shape as the report reads one: "measured", or
+// IL/OL[/hit] in tokens with an optional k (1024 tokens), hit in [0, 1).
+const REPORT_SHAPE = /^([0-9]+(\.[0-9]+)?k?)\/([0-9]+(\.[0-9]+)?k?)(\/(0(\.[0-9]+)?))?$/;
+const MAX_REPORT_SHAPES = 6, MAX_REPORT_LOADS = 8, MAX_SHAPE_TOKENS = 1 << 20;
+
+// shapeTokens is a length as a shape writes it, in tokens.
+function shapeTokens(s) {
+  return s.endsWith("k") ? 1024 * Number(s.slice(0, -1)) : Number(s);
+}
+
+// reportShapeProblem is why s is not a shape the report reads, "" when it is.
+function reportShapeProblem(s) {
+  if (s === "measured") return "";
+  const m = REPORT_SHAPE.exec(typeof s === "string" ? s : "");
+  if (!m) return "a shape is measured, or IL/OL[/hit] in tokens (8k/200, 1k/4k/0.3)";
+  for (const t of [m[1], m[3]]) {
+    const n = shapeTokens(t);
+    if (!(n >= 1 && n <= MAX_SHAPE_TOKENS)) return "a length is 1 to 1024k tokens";
+  }
+  return "";
+}
+
+// shapeText writes one shape row's boxes as the report reads it: IL and OL
+// in tokens, and the hit rate when one is typed. Blank boxes are "measured".
+function shapeText(row) {
+  const il = String(row.il || "").trim(), ol = String(row.ol || "").trim(), hit = String(row.hit || "").trim();
+  if (!il && !ol && !hit) return "measured";
+  return hit ? `${il}/${ol}/${hit}` : `${il}/${ol}`;
+}
+
+// parseReportLoads reads the loads box: comma separated, each 80%, 5r/s or
+// seen. Empty is the server's default (50%, 80%, 100% and seen).
+function parseReportLoads(text) {
+  const loads = String(text || "").split(",").map(s => s.trim()).filter(s => s);
+  if (loads.length > MAX_REPORT_LOADS) return {loads: [], problem: `at most ${MAX_REPORT_LOADS} loads`};
+  for (const l of loads) {
+    if (l === "seen") continue;
+    const pct = /^([0-9]+(\.[0-9]+)?)%$/.exec(l), rate = /^([0-9]+(\.[0-9]+)?)r\/s$/.exec(l);
+    if (pct && Number(pct[1]) > 0 && Number(pct[1]) <= 100) continue;
+    if (rate && Number(rate[1]) > 0) continue;
+    return {loads: [], problem: `${l}: a load is a share of the knee (80%), a rate (5r/s) or seen`};
+  }
+  return {loads, problem: ""};
+}
+
+// reportRequest is the body of POST /v1/report from the page's controls:
+// the inputs, the fleet when it differs from the recorded one, the shapes,
+// the loads, the growth of the load seen, the SLO and the assumed terms.
+// problem says what is asked wrongly, and then body is null.
+function reportRequest(o) {
+  const shapes = (o.shapes || []).map(shapeText);
+  if (shapes.length === 0) shapes.push("measured");
+  if (shapes.length > MAX_REPORT_SHAPES) return {body: null, problem: `at most ${MAX_REPORT_SHAPES} shapes`};
+  for (const s of shapes) {
+    const p = reportShapeProblem(s);
+    if (p) return {body: null, problem: `${s}: ${p}`};
+  }
+  const loads = parseReportLoads(o.loads);
+  if (loads.problem) return {body: null, problem: loads.problem};
+  const body = {inputsId: o.inputsId, shapes};
+  if (o.fleet && Object.keys(o.fleet).length) body.fleet = Object.assign({}, o.fleet);
+  if (loads.loads.length) body.loads = loads.loads;
+  const growth = String(o.growth == null ? "" : o.growth).trim();
+  if (growth !== "") {
+    const x = Number(growth);
+    if (!(x > 0) || !Number.isFinite(x)) return {body: null, problem: "growth is a factor above 0 (1.5 is 50% more traffic)"};
+    if (x !== 1) body.loadSeenX = x;
+  }
+  if (o.slo) body.slo = o.slo;
+  if (o.assume && Object.keys(o.assume).length) body.assume = Object.assign({}, o.assume);
+  return {body, problem: ""};
+}
+
+// REPORT_MARKS are a summary cell's marks: its class, and the word that says
+// it without colour.
+const REPORT_MARKS = {met: ["met", "ok"], missed: ["missed", "MISS"], saturated: ["saturated", "SAT"],
+  unknown: ["unknown", "?"], "no target": ["notarget", ""]};
+
+// reportMatrix is the shape-by-load summary of a report: one row per shape
+// (its label, EXTRAPOLATED where it is, and its verdict) and one cell per
+// load in the report's order, each TTFT p90 and the TPOT figure in ms at its
+// rate, a class and a word. A load a shape has no row at is "-".
+function reportMatrix(r) {
+  const ms = f => (f && f.value != null ? (1000 * f.value).toFixed(1) : "-");
+  const loads = r.loads || [];
+  return {loads, rows: (r.shapes || []).map(s => ({
+    label: s.label, extrapolated: !!s.extrapolated, why: s.extrapolatedWhy || "", verdict: s.verdict ? s.verdict.verdict : "",
+    cells: loads.map(l => {
+      const row = (s.table || []).find(t => t.load === l);
+      if (!row) return {text: "-", cls: "none", word: "", rate: null};
+      const m = REPORT_MARKS[row.cell.mark] || ["unknown", "?"];
+      return {text: `${ms(row.cell.ttft)} / ${ms(row.cell.tpot)}`, cls: m[0], word: m[1], rate: row.rate};
+    }),
+  }))};
+}
+
+// reportMissing reports whether an answer says the server has no
+// POST /v1/report: a server of an earlier release answers 404 "no such
+// endpoint". A 404 for an inputsId the server dropped is not that.
+function reportMissing(status, error) {
+  return status === 405 || (status === 404 && String(error || "").includes("no such endpoint"));
 }

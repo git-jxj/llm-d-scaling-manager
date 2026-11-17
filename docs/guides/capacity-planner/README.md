@@ -281,6 +281,26 @@ kill %1
   **Flags** drawer lists each once, in words, with what clears it. The
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
+- **Is this fleet the right size?** Below the graphs, judge the fleet the
+  knobs set at the load the source saw. Add a row per request shape: IL and
+  OL in tokens (`k` for 1024) and, optionally, the prefix hit rate; a blank
+  row is the measured shape. Type the loads, comma separated: `80%` of each
+  shape's fleet knee, `5r/s`, or `seen`. Set **Load seen times** to 1.5 to
+  ask what 50% more traffic does. Press **Judge the fleet**.
+  - First, each shape's verdict: UNDER-PROVISIONED, RIGHT-SIZED, or
+    OVER-PROVISIONED with the role that can lose a replica.
+  - Then the matrix: one row per shape, one column per load. Each cell is
+    TTFT p90 / TPOT in ms at that load's rate, and a word: `ok` every target
+    met, `MISS` a target missed, `SAT` saturated, `?` not judged. The colour
+    repeats the word; the legend says which is which. A refused figure is `-`.
+  - A shape outside the lengths the source saw is marked EXTRAPOLATED.
+  - Open a shape below the matrix for its knees, its utilization at the load
+    and the reason for its verdict, in numbers.
+
+  The targets, headroom and typed terms are the ones the knobs above set. A
+  server from before the report says so under the button; the rest of the
+  page works. The same report is `capacity-planner at-replicas` and
+  `POST /v1/report`.
 
 A refused figure, or an error, is explained in
 [Troubleshooting](troubleshooting.md).

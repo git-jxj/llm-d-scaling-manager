@@ -240,6 +240,38 @@
     </div>
   </section>
 
+  <section class="card report" id="reportcard" aria-labelledby="reporttitle">
+    <h2 id="reporttitle">Is this fleet the right size? <span class="hint">the fleet above, judged at the load the source saw</span></h2>
+    <div class="reportform">
+      <fieldset>
+        <legend>Request shapes</legend>
+        <p class="hint">IL and OL in tokens (k for 1024), hit a rate from 0 to below 1. Leave a row blank for the measured shape.</p>
+        <div id="rshapes"></div>
+        <button type="button" id="rshapeadd">Add a shape</button>
+      </fieldset>
+      <fieldset>
+        <legend>Loads</legend>
+        <label for="rloads">Rates, comma separated</label>
+        <input id="rloads" type="text" value="50%, 80%, 100%, seen" aria-describedby="rloadshint">
+        <p class="hint" id="rloadshint">80% is a share of each shape's fleet knee, 5r/s a rate, seen the load the source saw.</p>
+        <label for="rgrowth">Load seen times</label>
+        <input id="rgrowth" type="number" min="0.1" step="0.1" value="1" aria-describedby="rgrowthhint">
+        <p class="hint" id="rgrowthhint">1.5 asks what 50% more traffic does.</p>
+      </fieldset>
+      <button type="button" id="rrun" disabled>Judge the fleet</button>
+    </div>
+    <p id="rstatus" class="hint" aria-live="polite"></p>
+    <div id="rresult" hidden>
+      <div id="rverdicts"></div>
+      <p class="hint" id="rlegend"><span class="rmark met">ok</span> every target met
+        <span class="rmark missed">MISS</span> a target missed <span class="rmark saturated">SAT</span> saturated
+        <span class="rmark unknown">?</span> not judged. Each cell is TTFT p90 / TPOT ms at the load's rate; - is refused (the reason is in the shape's detail).</p>
+      <table id="rmatrix" aria-label="SLO by request shape and load"></table>
+      <div id="rdetail"></div>
+      <p class="hint" id="rnotes"></p>
+    </div>
+  </section>
+
   <details class="card drawer" id="flagsdrawer">
     <summary>Flags (<span id="flagcount">0</span>): what the figures rest on</summary>
     <ul id="flags"></ul>

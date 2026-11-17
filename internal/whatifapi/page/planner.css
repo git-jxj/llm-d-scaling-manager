@@ -193,3 +193,17 @@ td:first-child, th:first-child { text-align: left; }
 @media (max-width: 1000px) {
   .controls, .charts, .summary { grid-template-columns: 1fr; }
 }
+
+/* The fleet report: a mark carries its word, so no state relies on colour. */
+.reportform { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+.reportform fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+.rshape { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.rshape input { width: 70px; }
+#rmatrix td, #rmatrix th { padding: 4px 8px; border: 1px solid var(--border); text-align: left; }
+.rmark { padding: 1px 6px; border-radius: 6px; font-weight: 600; }
+.rmark.met, td.met { background: color-mix(in srgb, var(--good) 18%, transparent); }
+.rmark.missed, td.missed { background: color-mix(in srgb, var(--critical) 22%, transparent); }
+.rmark.saturated, td.saturated { background: color-mix(in srgb, var(--warning) 25%, transparent); }
+.rmark.unknown, td.unknown { background: color-mix(in srgb, var(--muted) 18%, transparent); }
+.rextra { color: var(--warning); font-weight: 600; }
+.rverdict { font-weight: 600; }

@@ -337,6 +337,9 @@ async function loadInputs() {
 // policy's SLO and headroom, the observed mix. The rate starts at the
 // operating point the first plan returns: the source carries no rate.
 function setInputs(inputs) {
+  el("rrun").disabled = false;
+  el("rresult").hidden = true;
+  el("rstatus").textContent = "";
   state.inputs = inputs;
   state.priceFailed = false;
   state.plan = null;
@@ -1855,9 +1858,150 @@ function wire() {
   el("scenexport").onclick = exportScenario;
   el("scenimport").onchange = () => importScenario(el("scenimport").files[0]);
   el("pina").onclick = pinA;
+  el("rshapeadd").onclick = () => addShapeRow("", "", "");
+  el("rrun").onclick = runReport;
+  addShapeRow("", "", "");
   el("unpin").onclick = unpin;
   el("kprom").onchange = el("krec").onchange = el("lasthour").onchange = showKind;
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
+}
+
+// ---- The fleet report (POST /v1/report) ----
+
+// addShapeRow adds a request-shape row: IL, OL and hit boxes and a remove
+// button. A blank row is the measured shape.
+function addShapeRow(il, ol, hit) {
+  const rows = el("rshapes");
+  if (rows.children.length >= MAX_REPORT_SHAPES) {
+    el("rstatus").textContent = `At most ${MAX_REPORT_SHAPES} shapes.`;
+    return;
+  }
+  const row = document.createElement("div");
+  row.className = "rshape";
+  for (const [name, value, hint] of [["il", il, "IL"], ["ol", ol, "OL"], ["hit", hit, "hit"]]) {
+    const box = document.createElement("input");
+    box.type = "text";
+    box.value = value;
+    box.placeholder = hint;
+    box.dataset.part = name;
+    box.setAttribute("aria-label", hint === "hit" ? "prefix hit rate" : hint + " in tokens");
+    row.appendChild(box);
+  }
+  const drop = document.createElement("button");
+  drop.type = "button";
+  drop.textContent = "Remove";
+  drop.onclick = () => row.remove();
+  row.appendChild(drop);
+  rows.appendChild(row);
+}
+
+// shapeRows is the shape rows as reportRequest reads them.
+function shapeRows() {
+  return Array.from(el("rshapes").children).map(row => {
+    const part = name => row.querySelector(`[data-part="${name}"]`).value;
+    return {il: part("il"), ol: part("ol"), hit: part("hit")};
+  });
+}
+
+// runReport asks the server to judge the fleet the knobs set, at the
+// shapes and loads asked, with the SLO and the assumed terms of the plan.
+async function runReport() {
+  if (!state.inputs || !state.k) {
+    el("rstatus").textContent = "Load a source first.";
+    return;
+  }
+  const plan = planRequest();
+  const asked = reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),
+    loads: el("rloads").value, growth: el("rgrowth").value, slo: plan.slo, assume: plan.assume});
+  if (asked.problem) {
+    el("rstatus").textContent = asked.problem;
+    return;
+  }
+  el("rstatus").textContent = "Judging the fleet...";
+  el("rrun").disabled = true;
+  try {
+    const r = await api("POST", "v1/report", asked.body);
+    renderReport(r);
+    el("rstatus").textContent = "";
+  } catch (e) {
+    const status = Number(String(e.message).split(":")[0]);
+    el("rresult").hidden = true;
+    el("rstatus").textContent = reportMissing(status, e.message)
+      ? "This server has no fleet report (POST /v1/report): it runs a release from before capacity-planner at-replicas. The rest of the page works."
+      : "The report failed: " + e.message;
+  } finally {
+    el("rrun").disabled = false;
+  }
+}
+
+// cellNode is a table cell holding text, with a class.
+function cellNode(tag, text, cls) {
+  const c = document.createElement(tag);
+  c.textContent = text;
+  if (cls) c.className = cls;
+  return c;
+}
+
+// shapeLabel is a shape's name, marked EXTRAPOLATED where it is.
+function shapeLabel(row) {
+  const span = document.createElement("span");
+  span.textContent = row.label;
+  if (row.extrapolated) {
+    const x = cellNode("span", " EXTRAPOLATED", "rextra");
+    x.title = row.why;
+    span.appendChild(x);
+  }
+  return span;
+}
+
+// renderReport draws a report: each shape's verdict first, then the
+// shape-by-load matrix, then each shape's detail. Every string goes into
+// the page as text, never as markup.
+function renderReport(r) {
+  const m = reportMatrix(r);
+  const verdicts = el("rverdicts");
+  verdicts.replaceChildren();
+  for (const row of m.rows) {
+    const p = document.createElement("p");
+    p.appendChild(shapeLabel(row));
+    p.appendChild(cellNode("span", ": " + row.verdict, "rverdict"));
+    verdicts.appendChild(p);
+  }
+  const table = el("rmatrix");
+  table.replaceChildren();
+  const head = document.createElement("tr");
+  head.appendChild(cellNode("th", "shape \\ load"));
+  for (const l of m.loads) head.appendChild(cellNode("th", l));
+  table.appendChild(head);
+  for (const row of m.rows) {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th");
+    th.appendChild(shapeLabel(row));
+    tr.appendChild(th);
+    for (const c of row.cells) {
+      const rate = c.rate == null ? "" : ` @ ${fmtRate(c.rate)}`;
+      tr.appendChild(cellNode("td", `${c.text}${rate} ${c.word}`.trim(), c.cls));
+    }
+    table.appendChild(tr);
+  }
+  const detail = el("rdetail");
+  detail.replaceChildren();
+  for (const s of r.shapes || []) {
+    const box = document.createElement("details");
+    box.appendChild(cellNode("summary", `${s.label}: IL ${Math.round(s.inputTokens)}, OL ${Math.round(s.outputTokens)}, prefix hit ${s.prefixHitRate.toFixed(2)} (${s.source})`));
+    const c = s.capacity, u = s.utilization;
+    const lines = [
+      s.extrapolated ? "EXTRAPOLATED: " + s.extrapolatedWhy : "",
+      `Verdict: ${s.verdict.verdict}. ${s.verdict.reason}`,
+      `Knees: prefill ${figPlain(c.prefillKnee, fmtRate)}, decode ${figPlain(c.decodeKnee, fmtRate)}, fleet ${figPlain(c.fleetKnee, fmtRate)} (${c.fleetKnee.binds || ""}); operating ${figPlain(c.operating, fmtRate)}; max at SLO ${figPlain(c.maxAtSLO, fmtRate)}`,
+      `At the load: decode KV fill ${figPlain(u.decode.kvFill, fmtNum)} of ${u.decode.bandTop}, wait p ${figPlain(u.decode.waitProbability, fmtNum)}; prefill pooled ${figPlain(u.prefill.pooled, fmtNum)}, worst pod ${figPlain(u.prefill.worstPod, fmtNum)}`,
+      s.flags.length ? "Flags: " + s.flags.join(", ") : "",
+    ];
+    for (const line of lines) if (line) box.appendChild(cellNode("p", line));
+    detail.appendChild(box);
+  }
+  el("rnotes").textContent = (r.notValidated || []).join(" ");
+  el("rresult").hidden = false;
 }
 
 document.addEventListener("DOMContentLoaded", start);
