@@ -2606,7 +2606,7 @@ so_workload_patch_doc() {
     case "$(printf '%s %s' "$image" "$argv" | tr '[:upper:]' '[:lower:]')" in
         *vllm*) so_kv_bytes_proposal "$ns" "$name" "$engine" "$argv" ;;
     esac
-    local want_gate=0 gate_model="" gate_key="" gate_claim="" gate_vol="" gate_mount="" gate_sub="" gate_dir="" gate_aff="" gate_wait=""
+    local want_gate=0 gate_model="" gate_key="" gate_claim="" gate_vol="" gate_mount="" gate_sub="" gate_dir="" gate_aff="" gate_wait="" gate_init=1
     so_weights_gate_plan "$ns" "$resource" "$name" "$engine"
 
     [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_gate" -eq 1 ] || return 0
@@ -2699,6 +2699,63 @@ PRESTOP
     if [ "$want_gate" -eq 1 ]; then so_weights_gate_notes; fi
 }
 
+# so_kget_json VAR ARGS... runs kubectl ARGS into variable VAR, and fails
+# when kubectl fails or prints nothing; SO_KGET_ERR then holds the first
+# line kubectl said (kept apart from the JSON, which a warning would break).
+SO_KGET_ERR=""
+so_kget_json() {
+    local __var="$1" __out __errf __rc=0
+    shift
+    __errf="$(mktemp)" || return 1
+    __out="$(kubectl "$@" 2>"$__errf")" || __rc=$?
+    SO_KGET_ERR="$(head -n 1 "$__errf" | tr -d '\r')"
+    rm -f "$__errf"
+    printf -v "$__var" '%s' "$__out"
+    [ "$__rc" -eq 0 ] && [ -n "$__out" ]
+}
+
+# so_weights_claim_of prints, for the pod template at jq path $2 of object
+# $1 (JSON), the node-local weights claim its container $4 mounts, as
+# "model key claim volume mountPath subPath" joined by the unit separator,
+# or nothing when it mounts none. $3 is the namespace's claims (JSON). A
+# node-local weights claim is one weights.sh apply made: storage class
+# node-local-weights, the model in an annotation. Fails when jq does.
+so_weights_claim_of() {
+    printf '%s' "$1" | jq -r --argjson pvcs "$3" --arg engine "$4" "$2"' as $s
+        | ([ $s.containers[]? | select(.name == $engine) ] | first) as $c
+        | [ $pvcs.items[]?
+            | select(.spec.storageClassName == "node-local-weights"
+                     and (.metadata.annotations["scaling-manager.llmd.ai/weights-model"] // "") != "")
+            | {claim: .metadata.name,
+               model: .metadata.annotations["scaling-manager.llmd.ai/weights-model"],
+               key: (.metadata.annotations["scaling-manager.llmd.ai/weights-node-label"] // "")} ] as $wc
+        | [ ($c.volumeMounts // [])[] as $m
+            | ($s.volumes // [])[]
+            | select(.name == $m.name and .persistentVolumeClaim != null)
+            | .persistentVolumeClaim.claimName as $cn
+            | $wc[] | select(.claim == $cn)
+            | . + {vol: $m.name, mount: $m.mountPath, sub: ($m.subPath // "")} ] | first
+        | if . == null then empty
+          else [.model, .key, .claim, .vol, .mount, .sub] | join("\u001f") end' 2>/dev/null
+}
+
+# so_weights_lws_notice warns when the template $3 (leaderTemplate or
+# workerTemplate) of LeaderWorkerSet $2 in $1 (JSON in $5) has its engine
+# container $4 read a node-local weights claim: no weights gate is written
+# for a LeaderWorkerSet, and that is said rather than left out unseen.
+so_weights_lws_notice() {
+    local ns="$1" name="$2" t="$3" engine="$4" obj="$5" pvcs err found model claim
+    if ! so_kget_json pvcs get pvc -n "$ns" -o json; then
+        err="$SO_KGET_ERR"
+        log_warning "  $ns/$name ($t): could not read the PersistentVolumeClaims in $ns (${err:-no output}), so whether it reads node-local weights was not judged."
+        return 0
+    fi
+    found="$(so_weights_claim_of "$obj" ".spec.leaderWorkerTemplate.$t.spec" "$pvcs" "$engine")" || return 0
+    [ -n "$found" ] || return 0
+    IFS=$'\037' read -r model _ claim _ <<< "$found"
+    log_warning "  LeaderWorkerSet $ns/$name ($t) reads $model from the node-local claim $claim, and no weights gate is written for a LeaderWorkerSet: nothing keeps a pod off a node whose copy is missing or still being written. Check every node holds the copy first: weights status -n $ns."
+}
+
 # so_weights_gate_plan decides the weights gate of Deployment $3 in $1, whose
 # engine container is $4: when that container mounts a node-local weights
 # claim (deploy/weights.sh: storage class node-local-weights, the model in an
@@ -2728,26 +2785,21 @@ so_weights_gate_plan() {
         *) log_warning "  LLMSM_WEIGHTS_NODE_AFFINITY='$mode' is not preferred, required or none; the weights gate is left out."
            return 0 ;;
     esac
-    obj="$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null)" || return 0
-    pvcs="$(kubectl get pvc -n "$ns" -o json 2>/dev/null)" || return 0
-    [ -n "$obj" ] && [ -n "$pvcs" ] || return 0
-    found="$(printf '%s' "$obj" | jq -r --argjson pvcs "$pvcs" --arg engine "$engine" '
-        .spec.template.spec as $s
-        | ([ $s.containers[]? | select(.name == $engine) ] | first) as $c
-        | [ $pvcs.items[]?
-            | select(.spec.storageClassName == "node-local-weights"
-                     and (.metadata.annotations["scaling-manager.llmd.ai/weights-model"] // "") != "")
-            | {claim: .metadata.name,
-               model: .metadata.annotations["scaling-manager.llmd.ai/weights-model"],
-               key: (.metadata.annotations["scaling-manager.llmd.ai/weights-node-label"] // "")} ] as $wc
-        | [ ($c.volumeMounts // [])[] as $m
-            | ($s.volumes // [])[]
-            | select(.name == $m.name and .persistentVolumeClaim != null)
-            | .persistentVolumeClaim.claimName as $cn
-            | $wc[] | select(.claim == $cn)
-            | . + {vol: $m.name, mount: $m.mountPath, sub: ($m.subPath // "")} ] | first
-        | if . == null then empty
-          else [.model, .key, .claim, .vol, .mount, .sub] | join("\u001f") end' 2>/dev/null)" || return 0
+    local err
+    if ! so_kget_json obj get "$resource" "$name" -n "$ns" -o json; then
+        err="$SO_KGET_ERR"
+        log_warning "  $ns/$name: could not read $resource/$name (${err:-no output}), so whether it reads a node-local weights claim was not judged; no weights gate is written."
+        return 0
+    fi
+    if ! so_kget_json pvcs get pvc -n "$ns" -o json; then
+        err="$SO_KGET_ERR"
+        log_warning "  $ns/$name: could not read the PersistentVolumeClaims in $ns (${err:-no output}), so whether $name reads a node-local weights claim was not judged; no weights gate is written. Forbidden is not absent: give the reader get/list on persistentvolumeclaims in $ns."
+        return 0
+    fi
+    found="$(so_weights_claim_of "$obj" '.spec.template.spec' "$pvcs" "$engine")" || {
+        log_warning "  $ns/$name: its pod template or the claims in $ns could not be parsed; no weights gate is written."
+        return 0
+    }
     [ -n "$found" ] || return 0
     IFS=$'\037' read -r gate_model gate_key gate_claim gate_vol gate_mount gate_sub <<< "$found"
     # Both come from the claim's annotations, which anyone who can edit the
@@ -2781,8 +2833,8 @@ so_weights_gate_plan() {
     # a strategic merge replaces either list whole, so the emitted list is
     # the existing entries plus the label. A required term is ANDed into
     # every existing term (terms are ORed), so a GPU-product term stays.
-    local merged have
-    read -r have merged <<< "$(printf '%s' "$obj" | jq -c -r --arg key "$gate_key" --arg mode "$mode" '
+    local merged have init
+    read -r have init merged <<< "$(printf '%s' "$obj" | jq -c -r --arg key "$gate_key" --arg mode "$mode" '
         .spec.template.spec as $s
         | ($s.affinity.nodeAffinity // {}) as $na
         | {key: $key, operator: "In", values: ["ready"]} as $e
@@ -2807,15 +2859,28 @@ so_weights_gate_plan() {
                        | map(select(((.preference.matchExpressions | length) + ((.preference.matchFields // []) | length)) > 0)))
                 + [{weight: 100, preference: {matchExpressions: [$e]}}])}}
            else null end) as $aff
-        | "\($hasaff and $init) \($aff | if . == null or $hasaff then "" else tojson end)"' 2>/dev/null)"
-    [ "$have" = false ] || return 0
+        | "\($hasaff and $init) \($init) \($aff | if . == null or $hasaff then "" else tojson end)"' 2>/dev/null)"
+    case "$have" in
+        true) return 0 ;;
+        false) ;;
+        *) log_warning "  $ns/$name: its pod template's affinity could not be read; no weights gate is written."
+           return 0 ;;
+    esac
     gate_wait="${LLMSM_WEIGHTS_WAIT_TIMEOUT:-3600}"
     case "$gate_wait" in
-        ""|*[!0-9]*|0)
-            log_warning "  LLMSM_WEIGHTS_WAIT_TIMEOUT='$gate_wait' is not a number of seconds above 0; the init container waits 3600 s."
-            gate_wait=3600 ;;
+        *[!0-9]*) gate_wait=0 ;;
     esac
+    # 10#: 00 is zero, 010 is ten (not octal).
+    if [ "$((10#$gate_wait))" -le 0 ]; then
+        log_warning "  LLMSM_WEIGHTS_WAIT_TIMEOUT='${LLMSM_WEIGHTS_WAIT_TIMEOUT:-}' is not a number of seconds above 0; the init container waits 3600 s."
+        gate_wait=3600
+    fi
+    gate_wait="$((10#$gate_wait))"
     gate_aff="$merged"
+    # Only the half the template lacks: an init container it already has
+    # is the owner's, not one to overwrite.
+    gate_init=1
+    [ "$init" = false ] || gate_init=0
     want_gate=1
     log_warning "  $ns/$name reads $gate_model from the node-local claim $gate_claim with no weights gate: a replica can land on a node whose copy is missing or still being written."
 }
@@ -2834,6 +2899,7 @@ so_weights_gate_body() {
         printf '%s\n' "      affinity:"
         printf '%s' "$gate_aff" | yq -P -p json -o yaml '.' | sed 's/^/        /'
     fi
+    [ "$gate_init" -eq 1 ] || return 0
     cat <<GATEINIT
       initContainers:
       - name: wait-for-weights
@@ -2962,6 +3028,7 @@ so_workload_patch_doc_lws() {
             log_warning "  $who: the model could not be identified from the command (passed in a variable?), so whether its weights persist was not judged."
         fi
         [ -n "$model_hint" ] || model_hint="$model"
+        so_weights_lws_notice "$ns" "$name" "$t" "$engine" "$obj"
         [ "${prestop:-0}" -eq 1 ] || hooked=0
         case "$t" in leaderTemplate) lgrace="${grace:-30}" ;; workerTemplate) wgrace="${grace:-30}" ;; esac
         [ "$want_cache" -eq 1 ] && [ -z "$first_model" ] && first_model="$model"

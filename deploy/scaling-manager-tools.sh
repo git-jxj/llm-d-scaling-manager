@@ -127,8 +127,10 @@ cmd_workload_patch() {
             --controller-namespace) ctl="$2"; shift 2 ;;
             --out) export LLMSM_WORKLOAD_PATCH_FILE="$2"; shift 2 ;;
             --weights-wait-timeout)
-                case "$2" in *[!0-9]*|0) die "workload-patch: --weights-wait-timeout takes a number of seconds above 0, not '$2'" ;; esac
-                export LLMSM_WEIGHTS_WAIT_TIMEOUT="$2"; shift 2 ;;
+                case "$2" in ""|*[!0-9]*) die "workload-patch: --weights-wait-timeout takes a number of seconds above 0, not '$2'" ;; esac
+                # 10#: 00 is zero, 010 is ten (not octal)
+                [ "$((10#$2))" -gt 0 ] || die "workload-patch: --weights-wait-timeout takes a number of seconds above 0, not '$2'"
+                export LLMSM_WEIGHTS_WAIT_TIMEOUT="$((10#$2))"; shift 2 ;;
             --apply) export LLMSM_WORKLOAD_PATCH_APPLY=true; shift ;;
             --apply-weights) export LLMSM_WORKLOAD_PATCH_APPLY_WEIGHTS=true; shift ;;
             --apply-engine-cache) export LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true; shift ;;

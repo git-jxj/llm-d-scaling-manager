@@ -18,14 +18,21 @@
 #   weights.sh delete -n NS (--model HFID | --all) [--dry-run]                drop the claim, volume and downloader (files stay)
 #   weights.sh label (-n NS[,NS...] | -A) [--watch SECONDS] [--dry-run] [--clear]
 #                                                                             label each node that holds a verified copy, unlabel the rest
-#   weights.sh labeller (-n NS[,NS...] | -A) --image TOOLS_IMAGE [--labeller-namespace LNS] [--watch SECONDS] [--dry-run | --delete]
+#   weights.sh labeller (-n NS[,NS...] | -A) --image TOOLS_IMAGE [--labeller-namespace LNS] [--watch SECONDS] [--dry-run]
 #                                                                             run `label --watch` in the cluster, in a namespace of its own
 #   weights.sh labeller --add -n NS [--labeller-namespace LNS] [--dry-run]
 #                                                                             add NS to a running labeller's watch list, with
 #                                                                             rights in NS and LNS only; else print the command
+#   weights.sh labeller --remove -n NS [--labeller-namespace LNS] [--dry-run]
+#                                                                             take NS off the watch list (one namespace's
+#                                                                             cleanup); the labeller and the other
+#                                                                             namespaces' labels stay
+#   weights.sh labeller --delete [-n NS[,NS...] | -A] [--labeller-namespace LNS] [--dry-run]
+#                                                                             remove the labeller for the whole cluster
 #
-# Exits of labeller --add: 0 NS is watched (or now is), 3 the caller lacks
-# the rights in NS or LNS (the command that does it is printed), 4 there is
+# Exits of labeller --add and --remove: 0 NS is watched (--add) or not
+# (--remove), now or already; 3 the caller lacks the rights in NS or LNS, or
+# the change cannot be made this way (what to run is printed); 4 there is
 # no labeller (how to add one is printed). With --merge, labeller apply keeps
 # every namespace the running labeller already watches (smt install --scope
 # cluster uses it, so a namespace admin-setup added is not dropped).
@@ -93,9 +100,14 @@
 #                               scaling-manager-weights-labeller); never a
 #                               model namespace, whose pod creators could
 #                               borrow its node rights
-#   --delete                    labeller: remove it (the labels stay; run
-#                               label --clear for them)
+#   --delete                    labeller: remove it for the whole cluster
+#                               (the labels stay; run label --clear for
+#                               them). With no -n or -A, its RoleBindings
+#                               are found by their labels in every namespace
 #   --add                       labeller: add -n NS to the running labeller
+#   --remove                    labeller: take -n NS off the running
+#                               labeller; its next pass removes the labels
+#                               only NS's copies held
 #   --merge                     labeller: also watch what it watches now.
 #                               Without it, an apply that would watch
 #                               fewer namespaces than the running labeller
@@ -113,7 +125,10 @@
 # (it records them in the node annotation scaling-manager.llmd.ai/
 # weights-node-labels), so a label another tool set is left alone. It
 # patches nodes, which is cluster-scoped: a cluster-admin piece, like apply.
-# The model servers then prefer (or require) the label, and wait in an init
+# A namespace it cannot read holds the labels it asked for when last read
+# (Forbidden is not absent); the others are labelled as usual. The labeller
+# records its health in ConfigMap weights-labeller-status, in its own
+# namespace. The model servers then prefer (or require) the label, and wait in an init
 # container for the marker; `make workload-patch` writes both. Design and
 # failure modes: docs/proposals/weights-node-gate.md.
 #
@@ -197,6 +212,7 @@ WATCH=""
 CLEAR=false
 DELETE=false
 ADD=false
+REMOVE=false
 MERGE=false
 LABEL_PREFIX="llm-d.ai"
 LABELLER_NS="scaling-manager-weights-labeller"
@@ -721,7 +737,13 @@ cmd_status() {
         fi
         local bound
         bound="$(kubectl get pvc -n "$NAMESPACE" "$name" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
-        echo "${model}  (claim ${name}: ${bound:-missing}; nodes: $(accelerator_selector_text "$selector"))"
+        # The node label the gate waits on: the one apply recorded on the
+        # DaemonSet, else the default for the model.
+        local key
+        key="$(kubectl get daemonset -n "$NAMESPACE" "$name" -o json 2>/dev/null \
+            | jq -r --arg a "$LABEL_ANNOTATION" '.metadata.annotations[$a] // empty' 2>/dev/null || true)"
+        [ -n "$key" ] || key="$(llmsm_weights_node_label_key "$model")"
+        echo "${model}  (claim ${name}: ${bound:-missing}; nodes: $(accelerator_selector_text "$selector"); node label ${key})"
         if [ "$bound" != Bound ]; then
             rc=1
             [ -z "$bound" ] || echo "  the claim is not bound: its volume is cluster-scoped and was not created -- apply needs leave to create PersistentVolumes (ask the cluster admin to run apply)"
@@ -778,6 +800,7 @@ cmd_status() {
             echo "  ${eacces} node(s): the node directory is not writable by the downloader. On Kubernetes the downloader is root and the kubelet creates the directory root-owned, so this is a mount that is read-only or not there; on OpenShift it runs as the project UID (GID 0) under restricted-v2 and the directory is not relabelled -- on each node: mkdir -p DIR && chgrp 0 DIR && chmod 2775 DIR && chcon -t container_file_t DIR, or a MachineConfig mount with context=...:container_file_t:s0 (weights.sh --help)"
         fi
         echo "  ${ready}/${node_count} usable nodes hold it; $((node_count - ready)) do not"
+        echo "  $(printf '%s' "$nodes_json" | jq --arg k "$key" '[.items[] | select(.metadata.labels[$k] == "ready")] | length')/${node_count} usable nodes carry ${key}=ready (set by weights.sh label, or the labeller)"
         [ -n "$selector" ] || printf '%s' "$nodes_json" | accelerator_vendor_warning
         if [ "$holders" -eq 0 ]; then
             local why
@@ -859,13 +882,45 @@ check_label_prefix() {
         || log_error "--label-prefix: not a DNS subdomain: '${LABEL_PREFIX}'"
 }
 
+# UNREAD is what a pass could not read, one "NS (what: why)" per entry;
+# UNREAD_NS the same namespaces, comma-delimited. Set by label_scope,
+# label_sources and label_pods; a namespace in it holds its own labels.
+UNREAD=()
+UNREAD_NS=","
+# UNREAD_KNOWN: the unread namespaces whose DaemonSets were read (their
+# pods were not), so whose labels are known.
+UNREAD_KNOWN=","
+# KEYS_SEEN remembers, one "NS KEY" per line, the node labels each
+# namespace's DaemonSets asked for on the last pass that read it ("NS -"
+# alone: read, and none). A namespace that cannot be read later holds those
+# labels as they are, and only those. --watch keeps it from pass to pass;
+# a single run starts with nothing remembered.
+KEYS_SEEN=""
+# LABEL_ERR is the file a pass keeps kubectl's last complaint in.
+LABEL_ERR=/dev/null
+
+# unread NS WHY records that namespace NS could not be read, and why.
+unread() {
+    case "$UNREAD_NS" in *",$1,"*) return 0 ;; esac
+    UNREAD_NS="${UNREAD_NS}$1,"
+    UNREAD+=("$1 ($2)")
+}
+
+# label_err prints the first line of what kubectl last said.
+label_err() {
+    head -n 1 "$LABEL_ERR" 2>/dev/null | tr -d '\r' || true
+}
+
 # label_sources prints, one JSON object per line, every weights DaemonSet in
-# scope: its namespace, name and node label. The label is the one apply
-# recorded on it, or for a DaemonSet applied before labels were recorded,
-# the default for its model. A DaemonSet whose label is not PREFIX/NAME-cache
-# under --label-prefix is skipped with a warning: a model namespace can edit
-# its DaemonSet, and what it writes there must not steer a node label
-# outside the convention. Fails when a list fails.
+# scope: its namespace, name and node label, the one apply recorded on it.
+# Skipped with a warning: a DaemonSet that records no label, which a
+# weights.sh from before the node gate applied -- its readiness probe checks
+# that the marker exists, not the files, so its Ready says nothing about the
+# copy -- and a DaemonSet whose label is not PREFIX/NAME-cache under
+# --label-prefix: a model namespace can edit its DaemonSet, and what it
+# writes there must not steer a node label outside the convention. With -n,
+# a namespace whose list fails is recorded as unread and the rest go on;
+# with -A, a failed list fails.
 label_sources() {
     local ns lines=() list
     if [ "$ALL_NAMESPACES" = true ]; then
@@ -873,14 +928,20 @@ label_sources() {
         lines+=("$list")
     else
         for ns in "${SCOPE_NS[@]}"; do
-            list="$(kubectl get daemonset -n "$ns" -l "$LABEL_COMPONENT" -o json)" || return 1
-            lines+=("$list")
+            if list="$(kubectl get daemonset -n "$ns" -l "$LABEL_COMPONENT" -o json 2>"$LABEL_ERR")"; then
+                lines+=("$list")
+            else
+                unread "$ns" "DaemonSets: $(label_err)"
+            fi
         done
     fi
     local dsns dsname key model why
     while IFS=$'\x1f' read -r dsns dsname key model; do
         [ -n "$dsname" ] || continue
-        [ -n "$key" ] || key="$(llmsm_weights_node_label_key "$model")"
+        if [ -z "$key" ]; then
+            log_warning "label: DaemonSet ${dsns}/${dsname} records no node label: a weights.sh from before the node gate applied it, and its readiness probe checks the marker, not the files. It is skipped. Apply it again with this release (weights.sh apply -n ${dsns} --model ${model:-<its model>} ...)."
+            continue
+        fi
         why="$(node_label_why "$key")"
         if [ -z "$why" ] && [ "${key%%/*}" != "$LABEL_PREFIX" ]; then
             why="its prefix is not ${LABEL_PREFIX} (--label-prefix)"
@@ -895,7 +956,8 @@ label_sources() {
                       (.metadata.annotations["scaling-manager.llmd.ai/weights-model"] // "")] | join("\u001f")')
 }
 
-# label_pods prints the downloader pods in scope as one JSON list.
+# label_pods prints the downloader pods in scope, one JSON list per
+# namespace. With -n, a namespace whose list fails is recorded as unread.
 label_pods() {
     local ns
     if [ "$ALL_NAMESPACES" = true ]; then
@@ -903,7 +965,10 @@ label_pods() {
         return
     fi
     for ns in "${SCOPE_NS[@]}"; do
-        kubectl get pods -n "$ns" -l "$LABEL_COMPONENT" -o json || return 1
+        case "$UNREAD_NS" in *",${ns},"*) continue ;; esac
+        kubectl get pods -n "$ns" -l "$LABEL_COMPONENT" -o json 2>"$LABEL_ERR" && continue
+        UNREAD_KNOWN="${UNREAD_KNOWN}${ns},"
+        unread "$ns" "pods: $(label_err)"
     done
 }
 
@@ -925,19 +990,46 @@ SCOPE_NS=()
 # labeller's RoleBinding with it, so listing it is Forbidden; failing the
 # pass on that would freeze every node label, for every other namespace,
 # until someone edits the labeller. Its downloaders are gone with it, so
-# leaving it out is the truth: the labels only its downloaders held go. Fails
-# when a namespace cannot be read (Forbidden is not absent).
+# leaving it out is the truth: the labels only its downloaders held go. A
+# namespace that cannot be read is recorded as unread (Forbidden is not
+# absent): it holds its labels, and the others go on.
 label_scope() {
     local ns phase
     SCOPE_NS=()
     for ns in ${NAMESPACE//,/ }; do
-        phase="$(ns_phase "$ns")" || return 1
+        if ! phase="$(ns_phase "$ns" 2>"$LABEL_ERR")"; then
+            unread "$ns" "the namespace: $(label_err)"
+            continue
+        fi
         case "$phase" in
             "") log_warning "label: namespace ${ns} does not exist; it is left out (its downloaders are gone with it)" ;;
             Terminating) log_warning "label: namespace ${ns} is being deleted; it is left out" ;;
             *) SCOPE_NS+=("$ns") ;;
         esac
     done
+}
+
+# label_health records the labeller's health in ConfigMap
+# weights-labeller-status, in its own namespace, for an operator to read with
+# kubectl: state (ok, degraded: a namespace could not be read, or a node not
+# patched; failed: nothing was changed), detail, and since (when this state
+# and detail began). Only in the labeller (WEIGHTS_LABELLER_STATUS_NAMESPACE
+# is set there), and only when something changed: no write every pass.
+LABEL_HEALTH_LAST=""
+label_health() {
+    local state="$1" detail="$2"
+    [ -n "${WEIGHTS_LABELLER_STATUS_NAMESPACE:-}" ] && [ "$DRY_RUN" = false ] && [ "$CLEAR" = false ] || return 0
+    [ "${state}|${detail}" != "$LABEL_HEALTH_LAST" ] || return 0
+    if jq -n --arg ns "$WEIGHTS_LABELLER_STATUS_NAMESPACE" --arg s "$state" --arg d "$detail" \
+        --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+        {apiVersion: "v1", kind: "ConfigMap",
+         metadata: {name: "weights-labeller-status", namespace: $ns,
+                    labels: {"app.kubernetes.io/name": "weights-labeller", "app.kubernetes.io/managed-by": "scaling-manager-weights"}},
+         data: {state: $s, detail: $d, since: $t}}' | kubectl apply -f - >/dev/null; then
+        LABEL_HEALTH_LAST="${state}|${detail}"
+    else
+        log_warning "label: could not write ConfigMap weights-labeller-status in ${WEIGHTS_LABELLER_STATUS_NAMESPACE}; the labels are not affected"
+    fi
 }
 
 # label_once reconciles the node labels once. For each node and each label
@@ -950,27 +1042,66 @@ label_scope() {
 label_once() {
     local tmp rc=0
     tmp="$(mktemp -d)" || return 1
+    LABEL_ERR="$tmp/err"
     label_pass "$tmp/src" "$tmp/pods" "$tmp/nodes" || rc=$?
+    LABEL_ERR=/dev/null
     rm -rf "$tmp"
     return $rc
 }
 
 # label_pass is one pass of label_once, with its three scratch files.
 label_pass() {
-    local src="$1" pods="$2" nodes="$3" plan rc=0
+    local src="$1" pods="$2" nodes="$3" plan rc=0 frozen="[]" hold_all=false
     : > "$src"; : > "$pods"
+    UNREAD=() UNREAD_NS="," UNREAD_KNOWN=","
     if [ "$CLEAR" = false ]; then
-        if [ "$ALL_NAMESPACES" = false ] && ! label_scope; then
-            log_warning "label: cannot read the namespaces in scope; no node was changed"
-            return 1
-        fi
+        [ "$ALL_NAMESPACES" = true ] || label_scope
         if ! label_sources > "$src"; then
             log_warning "label: cannot list the weights DaemonSets in scope; no node was changed"
+            label_health failed "cannot list the weights DaemonSets in scope; no node was changed"
             return 1
         fi
         if ! label_pods > "$pods"; then
             log_warning "label: cannot list the downloader pods in scope; no node was changed"
+            label_health failed "cannot list the downloader pods in scope; no node was changed"
             return 1
+        fi
+        # A namespace that could not be read holds the labels it asked for
+        # when it was last read, as they are: never removed, never set on
+        # what the other namespaces alone say. Never read, its labels are
+        # unknown: no label is removed anywhere this pass (setting one is
+        # still safe -- the init container checks the copy).
+        local ns k keys held=""
+        for ns in ${UNREAD_NS//,/ }; do
+            keys="$(jq -r --arg ns "$ns" 'select(.ns == $ns) | .key' "$src")
+$(printf '%s\n' "$KEYS_SEEN" | awk -v n="$ns" '$1 == n && $2 != "-" { print $2 }')"
+            case "$UNREAD_KNOWN" in
+                *",${ns},"*) ;;
+                *) [ -n "$(printf '%s\n' "$KEYS_SEEN" | awk -v n="$ns" '$1 == n')" ] || hold_all=true ;;
+            esac
+            for k in $keys; do held="${held}${k}"$'\n'; done
+        done
+        if [ "${#UNREAD[@]}" -gt 0 ]; then
+            frozen="$(printf '%s' "$held" | jq -R -s -c 'split("\n") | map(select(. != "")) | unique')"
+            jq -c --arg u "$UNREAD_NS" 'select(.ns as $n | $u | contains("," + $n + ",") | not)' "$src" > "$src.read" && mv "$src.read" "$src"
+            local what
+            if [ "$hold_all" = true ]; then
+                what="one was never read here, so which labels are its is not known: no label is removed on any node this pass"
+            elif [ "$frozen" = "[]" ]; then
+                what="they asked for no node label when last read"
+            else
+                what="the labels they asked for when last read are held as they are: $(jq -r 'join(", ")' <<< "$frozen")"
+            fi
+            log_warning "label: cannot read $(printf '%s; ' "${UNREAD[@]}" | sed 's/; $//'). Forbidden is not absent: ${what}. The other namespaces are labelled as usual."
+        fi
+        # Remember what each namespace read in full asked for.
+        if [ "$ALL_NAMESPACES" = false ]; then
+            for ns in "${SCOPE_NS[@]}"; do
+                case "$UNREAD_NS" in *",${ns},"*) continue ;; esac
+                KEYS_SEEN="$(printf '%s\n' "$KEYS_SEEN" | awk -v n="$ns" 'NF && $1 != n')
+${ns} -
+$(jq -r --arg ns "$ns" 'select(.ns == $ns) | $ns + " " + .key' "$src")"
+            done
         fi
         # The default key drops the organisation, so Qwen/Qwen3-8B and
         # my-org/Qwen3-8B share one: a node that holds either is labelled
@@ -983,6 +1114,7 @@ label_pass() {
     fi
     if ! kubectl get nodes -o json > "$nodes"; then
         log_warning "label: cannot list nodes (this needs cluster-scoped node get, list and patch: a cluster-admin piece); no node was changed"
+        label_health failed "cannot list nodes; no node was changed"
         return 1
     fi
     # One line per node with something to do or say. A node is judged by
@@ -990,7 +1122,8 @@ label_pass() {
     # evicted pod beside its replacement does not count against it), then
     # per key (every DaemonSet with a pod there Ready).
     plan="$(jq -c -n --slurpfile src "$src" --slurpfile pods "$pods" --slurpfile nodes "$nodes" \
-        --arg owned_ann "$OWNED_ANNOTATION" --arg prefix "$LABEL_PREFIX/" --argjson clear "$CLEAR" '
+        --arg owned_ann "$OWNED_ANNOTATION" --arg prefix "$LABEL_PREFIX/" --argjson clear "$CLEAR" \
+        --argjson frozen "$frozen" --argjson hold_all "$hold_all" '
         ($src | map({key: (.ns + "/" + .name), value: .key}) | from_entries) as $keyof
         | [ $pods[].items[]?
             | select(.spec.nodeName != null)
@@ -1009,22 +1142,27 @@ label_pass() {
            | map({key: .[0].key, value: all(.ready)}) | from_entries) as $judged
         | (if $clear then {} else $judged end) as $j
         | ([ $j | to_entries[] | select(.value) | .key ]) as $want
-        | ([ $want[] | select(. as $k | ($l[$k] == null) or (($owned | index($k)) != null and $l[$k] != "ready")) ]) as $set
-        | ([ $owned[] | select(startswith($prefix)) | select(. as $k | ($want | index($k)) == null) ]) as $unset
+        | ([ $want[] | select(. as $k | ($frozen | index($k)) == null)
+             | select(. as $k | ($l[$k] == null) or (($owned | index($k)) != null and $l[$k] != "ready")) ]) as $set
+        | (if $hold_all then [] else
+             [ $owned[] | select(startswith($prefix))
+               | select(. as $k | ($want | index($k)) == null and ($frozen | index($k)) == null) ] end) as $unset
         | ([ $want[] | select(. as $k | $l[$k] != null and ($owned | index($k)) == null) ]) as $foreign
         | ([ $j | to_entries[] | select(.value | not) | .key
              | select(. as $k | $l[$k] != null and ($owned | index($k)) == null) ]) as $conflict
+        | ([ $owned[] | select(startswith($prefix) | not) ]) as $orphan
         | ((($owned - $unset) + $set) | unique) as $now
-        | select(($set | length) + ($unset | length) + ($foreign | length) + ($conflict | length) > 0)
-        | {node: $n, set: $set, unset: $unset, foreign: $foreign, conflict: $conflict,
+        | select(($set | length) + ($unset | length) + ($foreign | length) + ($conflict | length) + ($orphan | length) > 0)
+        | {node: $n, set: $set, unset: $unset, foreign: $foreign, conflict: $conflict, orphan: $orphan,
            change: (($set | length) + ($unset | length) > 0),
            patch: {metadata: {
              labels: (($set | map({key: ., value: "ready"})) + ($unset | map({key: ., value: null})) | from_entries),
              annotations: {($owned_ann): (if ($now | length) == 0 then null else ($now | join(",")) end)}}}}')" || {
         log_warning "label: could not judge the nodes (jq failed); no node was changed"
+        label_health failed "could not judge the nodes (jq failed); no node was changed"
         return 1
     }
-    local line node k
+    local line node k unpatched=""
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         node="$(jq -r '.node' <<< "$line")"
@@ -1032,15 +1170,25 @@ label_pass() {
         while IFS= read -r k; do [ -z "$k" ] || echo "  ${node}: remove ${k} -- $([ "$CLEAR" = true ] && echo "--clear" || echo "no verified copy there now")"; done < <(jq -r '.unset[]' <<< "$line")
         while IFS= read -r k; do [ -z "$k" ] || echo "  ${node}: ${k} kept as it is -- set by something else, and the copy verifies"; done < <(jq -r '.foreign[]' <<< "$line")
         while IFS= read -r k; do [ -z "$k" ] || echo "  ${node}: ${k} is set by something else, but the downloader there is not Ready -- left alone (not this command's label)"; done < <(jq -r '.conflict[]' <<< "$line")
+        while IFS= read -r k; do [ -z "$k" ] || echo "  ${node}: ${k} was set by this command under another --label-prefix; left as it is (label --clear --label-prefix ${k%%/*} removes it)"; done < <(jq -r '.orphan[]' <<< "$line")
         [ "$(jq -r '.change' <<< "$line")" = true ] || continue
         if [ "$DRY_RUN" = true ]; then
             echo "  would run: kubectl patch node ${node} --type=merge -p '$(jq -c '.patch' <<< "$line")'"
         elif ! kubectl patch node "$node" --type=merge -p "$(jq -c '.patch' <<< "$line")" >/dev/null; then
             log_warning "label: could not patch node ${node}"
+            unpatched="${unpatched:+${unpatched}, }${node}"
             rc=1
         fi
     done <<< "$plan"
     [ -n "$plan" ] || echo "  every node already carries the labels its copies call for"
+    local detail=""
+    [ "${#UNREAD[@]}" -eq 0 ] || { detail="cannot read $(printf '%s; ' "${UNREAD[@]}" | sed 's/; $//'); held: $(jq -r 'if length == 0 then "nothing" else join(", ") end' <<< "$frozen")$([ "$hold_all" = false ] || echo ", and no label removed anywhere")"; rc=1; }
+    [ -z "$unpatched" ] || detail="${detail:+${detail}. }could not patch ${unpatched}"
+    if [ -n "$detail" ]; then
+        label_health degraded "$detail"
+    else
+        label_health ok "every namespace in scope read, every node patched"
+    fi
     return $rc
 }
 
@@ -1068,8 +1216,10 @@ cmd_label() {
 # render_labeller prints the labeller: its namespace (Pod Security
 # restricted: it mounts nothing from the node), its ServiceAccount, node
 # get/list/patch for it cluster-wide, read of DaemonSets and pods in the
-# namespaces in scope, and one Deployment running `weights label --watch`
-# from the tools image. Every object carries scaling-manager.llmd.ai/part:
+# namespaces in scope, write of its status ConfigMap in its own namespace,
+# and one Deployment running `weights label --watch` from the tools image
+# (it records its health in ConfigMap weights-labeller-status: see
+# label_health). Every object carries scaling-manager.llmd.ai/part:
 # admin, as the admin objects of the install do: the namespace owner never
 # applies or needs any of it.
 LABELLER_LABELS='    app.kubernetes.io/name: weights-labeller
@@ -1171,6 +1321,40 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+---
+# Its health, in its own namespace: ConfigMap weights-labeller-status.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: weights-labeller-status
+  namespace: ${LABELLER_NS}
+  labels:
+${labels}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["weights-labeller-status"]
+    verbs: ["get", "patch"]
+  # create cannot be narrowed to a name; this namespace holds nothing else.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: weights-labeller-status
+  namespace: ${LABELLER_NS}
+  labels:
+${labels}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: weights-labeller-status
+subjects:
+  - kind: ServiceAccount
+    name: ${LABELLER_NAME}
+    namespace: ${LABELLER_NS}
 EOF
     if [ "$ALL_NAMESPACES" = true ]; then
         cat <<EOF
@@ -1230,6 +1414,12 @@ ${labels//    /        }
           # The tools image entry point; kubectl finds the in-cluster
           # ServiceAccount (the image's /kube/config is not mounted here).
           args: ["weights", "label", ${scope_args}, "--watch", "${WATCH}", "--label-prefix", "${LABEL_PREFIX}"]
+          env:
+            # Where it records its health (ConfigMap weights-labeller-status).
+            - name: WEIGHTS_LABELLER_STATUS_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           resources:
             requests:
               cpu: 10m
@@ -1272,85 +1462,133 @@ labeller_live_scope() {
           else error("no scope") end' 2>/dev/null || return 2
 }
 
-# labeller_add adds NAMESPACE to the running labeller: a RoleBinding in
-# NAMESPACE, and the Deployment re-applied with the namespace in its -n
-# list. Both are namespaced writes, so a namespace admin of NAMESPACE and of
-# the labeller namespace can do it; no cluster-wide right is used.
-labeller_add() {
-    local ns="$NAMESPACE" scope rc=0 list image
-    case "$ns" in *,*) log_error "labeller --add takes one namespace" ;; esac
+# labeller_with_list prints the live labeller Deployment $1 (JSON) with
+# its -n list set to $2, ready to apply: everything else it carries (its
+# image, interval, prefix) stays as it is.
+labeller_with_list() {
+    printf '%s' "$1" | jq --arg list "$2" '
+        del(.status, .metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp,
+            .metadata.generation, .metadata.managedFields, .metadata.annotations["deployment.kubernetes.io/revision"])
+        | .spec.template.spec.containers[0].args |= (index("-n") as $i | .[:$i + 1] + [$list] + .[$i + 2:])' | yq -P
+}
+
+# labeller_edit adds NAMESPACE to the running labeller (add) or takes it
+# off (remove): the Deployment re-applied with the namespace in or out of
+# its -n list, and the RoleBinding in NAMESPACE created or deleted. Both are
+# namespaced writes, so a namespace admin of NAMESPACE and of the labeller
+# namespace can do it; no cluster-wide right is used. Removing a namespace
+# leaves the labeller and every other namespace's labels as they are; its
+# next pass removes the labels only NAMESPACE's copies held.
+labeller_edit() {
+    local op="$1" ns="$NAMESPACE" scope rc=0 list="" n verb
+    case "$ns" in *,*) log_error "labeller --${op} takes one namespace" ;; esac
     check_scope labeller
-    [ "$ns" != "$LABELLER_NS" ] || log_error "labeller --add: ${ns} is the labeller's own namespace, never one it watches"
+    [ "$ns" != "$LABELLER_NS" ] || log_error "labeller --${op}: ${ns} is the labeller's own namespace, never one it watches"
+    [ "$op" = add ] && verb=create || verb=delete
 
     scope="$(labeller_live_scope)" || rc=$?
-
     case "$rc" in
         1) echo "Cannot read the weights labeller in ${LABELLER_NS} (kubectl says why, above)."
-           echo "  To watch ${ns}, someone who can patch deployments in ${LABELLER_NS} and create rolebindings in ${ns} runs:"
-           echo "    smt weights labeller --add -n ${ns}"
+           echo "  Someone who can patch deployments in ${LABELLER_NS} and ${verb} rolebindings in ${ns} runs:"
+           echo "    smt weights labeller --${op} -n ${ns}"
            return 3 ;;
         2) echo "The Deployment ${LABELLER_NAME} in ${LABELLER_NS} does not carry the arguments weights.sh writes; it was not changed."
            return 3 ;;
     esac
     if [ -z "$scope" ]; then
+        if [ "$op" = remove ]; then
+            echo "No weights labeller runs in ${LABELLER_NS}; nothing watches ${ns}."
+            return 0
+        fi
         echo "No weights labeller runs in ${LABELLER_NS}: nothing labels the nodes whose weights copy verifies."
         echo "  The cluster admin adds one with the cluster-wide install (smt install --scope cluster ... --model-namespace ${ns}),"
         echo "  or on its own: smt weights labeller -n ${ns} --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<release>"
         return 4
     fi
     if [ "$scope" = "-A" ]; then
-        echo "The weights labeller in ${LABELLER_NS} watches every namespace, ${ns} included."
-        return 0
-    fi
-    case ",${scope}," in
-        *",${ns},"*) echo "The weights labeller in ${LABELLER_NS} already watches ${ns}."; return 0 ;;
-    esac
-    list="${scope},${ns}"
-    if ! kubectl auth can-i create rolebindings -n "$ns" -q >/dev/null 2>&1 \
-       || ! kubectl auth can-i patch deployments -n "$LABELLER_NS" -q >/dev/null 2>&1; then
-        echo "The weights labeller in ${LABELLER_NS} does not watch ${ns}, and adding it needs create rolebindings in ${ns} and patch deployments in ${LABELLER_NS}."
-        echo "  Someone who has both runs:"
-        echo "    smt weights labeller --add -n ${ns}"
+        if [ "$op" = add ]; then
+            echo "The weights labeller in ${LABELLER_NS} watches every namespace, ${ns} included."
+            return 0
+        fi
+        echo "The weights labeller in ${LABELLER_NS} watches every namespace (-A); --remove cannot leave one out."
+        echo "  The cluster admin applies it again with the namespaces to keep: smt weights labeller -n NS[,NS...] --image <tools image>"
         return 3
     fi
-    local live
+    if [ "$op" = add ]; then
+        case ",${scope}," in
+            *",${ns},"*) echo "The weights labeller in ${LABELLER_NS} already watches ${ns}."; return 0 ;;
+        esac
+        list="${scope},${ns}"
+    else
+        case ",${scope}," in
+            *",${ns},"*) ;;
+            *) echo "The weights labeller in ${LABELLER_NS} does not watch ${ns}."; return 0 ;;
+        esac
+        for n in ${scope//,/ }; do
+            [ "$n" = "$ns" ] || list="${list:+${list},}${n}"
+        done
+        if [ -z "$list" ]; then
+            echo "${ns} is the only namespace the weights labeller in ${LABELLER_NS} watches; --remove does not leave it watching nothing."
+            echo "  To remove it for the whole cluster, the cluster admin runs: smt weights labeller --delete, then smt weights label --clear"
+            return 3
+        fi
+    fi
+    if ! kubectl auth can-i "$verb" rolebindings -n "$ns" -q >/dev/null 2>&1 \
+       || ! kubectl auth can-i patch deployments -n "$LABELLER_NS" -q >/dev/null 2>&1; then
+        echo "The weights labeller in ${LABELLER_NS} $([ "$op" = add ] && echo "does not watch" || echo "watches") ${ns}, and changing that needs ${verb} rolebindings in ${ns} and patch deployments in ${LABELLER_NS}."
+        echo "  Someone who has both runs:"
+        echo "    smt weights labeller --${op} -n ${ns}"
+        return 3
+    fi
+    local live image doc
     live="$(kubectl get deployment "$LABELLER_NAME" -n "$LABELLER_NS" -o json 2>/dev/null)" || {
-        echo "Could not read the weights labeller in ${LABELLER_NS} again; ${ns} was not added. Run: smt weights labeller --add -n ${ns}"
+        echo "Could not read the weights labeller in ${LABELLER_NS} again; nothing was changed. Run: smt weights labeller --${op} -n ${ns}"
         return 3
     }
     image="$(printf '%s' "$live" | jq -r '.spec.template.spec.containers[0].image')"
-    local doc
     doc="$(mktemp)"
     {
-        render_labeller_rolebinding "$ns"
-        echo "---"
-        # The live Deployment with the new list: everything else it carries
-        # (its image, interval, prefix) stays as it is.
-        printf '%s' "$live" | jq --arg list "$list" '
-            del(.status, .metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp,
-                .metadata.generation, .metadata.managedFields, .metadata.annotations["deployment.kubernetes.io/revision"])
-            | .spec.template.spec.containers[0].args |= (index("-n") as $i | .[:$i + 1] + [$list] + .[$i + 2:])' | yq -P
+        if [ "$op" = add ]; then
+            render_labeller_rolebinding "$ns"
+            echo "---"
+        fi
+        labeller_with_list "$live" "$list"
     } > "$doc"
     if [ "$DRY_RUN" = true ]; then
         cat "$doc"
         rm -f "$doc"
+        [ "$op" = add ] || echo "# then: kubectl delete rolebinding -n ${ns} scaling-manager-weights-labeller-reader --ignore-not-found"
         return 0
     fi
     if ! kubectl apply -f "$doc" >/dev/null; then
         rm -f "$doc"
-        echo "The API server refused the change; ${ns} was not added. Run: smt weights labeller --add -n ${ns}"
+        echo "The API server refused the change; nothing was changed. Run: smt weights labeller --${op} -n ${ns}"
         return 3
     fi
     rm -f "$doc"
-    echo "Added ${ns} to the weights labeller in ${LABELLER_NS} (it now watches ${list}; image ${image})."
+    if [ "$op" = add ]; then
+        echo "Added ${ns} to the weights labeller in ${LABELLER_NS} (it now watches ${list}; image ${image})."
+        return 0
+    fi
+    # After the Deployment, so the labeller never reads a namespace it has
+    # lost the right to.
+    if ! kubectl delete rolebinding -n "$ns" scaling-manager-weights-labeller-reader --ignore-not-found >/dev/null; then
+        echo "The weights labeller in ${LABELLER_NS} no longer watches ${ns} (it now watches ${list}), but its RoleBinding in ${ns} was not deleted:"
+        echo "  kubectl delete rolebinding -n ${ns} scaling-manager-weights-labeller-reader"
+        return 3
+    fi
+    echo "Removed ${ns} from the weights labeller in ${LABELLER_NS} (it now watches ${list}). Its next pass removes the node labels only ${ns}'s copies held."
 }
 
 cmd_labeller() {
-    if [ "$ADD" = true ]; then
-        [ "$DELETE" = false ] && [ -z "$IMAGE" ] && [ "$MERGE" = false ] \
-            || log_error "labeller --add takes -n, --labeller-namespace and --dry-run only"
+    if [ "$ADD" = true ] || [ "$REMOVE" = true ]; then
+        local op=add
+        [ "$ADD" = false ] || [ "$REMOVE" = false ] || log_error "labeller: --add and --remove together; one or the other"
+        [ "$REMOVE" = false ] || op=remove
+        [ "$DELETE" = false ] && [ -z "$IMAGE" ] && [ "$MERGE" = false ] && [ "$ALL_NAMESPACES" = false ] && [ -z "$WATCH" ] \
+            || log_error "labeller --${op} takes -n, --labeller-namespace and --dry-run only"
         local rc=0
-        labeller_add || rc=$?
+        labeller_edit "$op" || rc=$?
         exit "$rc"
     fi
     [ "$MERGE" = false ] || [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --merge needs -n NS[,NS...] or -A"
@@ -1401,10 +1639,9 @@ cmd_labeller() {
                 case "$phase" in ""|Terminating) ;; *) dropped="${dropped:+${dropped},}${n}" ;; esac
             done
         fi
-        [ -z "$dropped" ] || log_error "labeller: the running labeller also watches ${dropped}; -n ${NAMESPACE} alone would stop that, and the node labels only those downloaders hold would go. Add --merge to keep them. To stop watching one, run labeller --delete, then apply the namespaces to keep."
+        [ -z "$dropped" ] || log_error "labeller: the running labeller also watches ${dropped}; -n ${NAMESPACE} alone would stop that, and the node labels only those downloaders hold would go. Add --merge to keep them. To stop watching one namespace, run labeller --remove -n NS."
     fi
     if [ "$DELETE" = true ]; then
-        [ "$ALL_NAMESPACES" = true ] || [ -n "$NAMESPACE" ] || log_error "labeller --delete needs the scope it was applied with (-n NS[,NS...] or -A), to find its RoleBindings"
         [ "$ALL_NAMESPACES" = false ] || [ -z "$NAMESPACE" ] || log_error "labeller: -n and -A together; one or the other"
         local ns
         run_delete delete namespace "$LABELLER_NS" --ignore-not-found
@@ -1421,6 +1658,11 @@ cmd_labeller() {
             seen="${seen}${ns},"
             run_delete delete rolebinding -n "$ns" scaling-manager-weights-labeller-reader --ignore-not-found
         done
+        # With no scope given, by their labels in every namespace: one left
+        # from an earlier list, or from a labeller already gone.
+        if [ "$ALL_NAMESPACES" = false ] && [ -z "$NAMESPACE" ]; then
+            run_delete delete rolebinding -A -l app.kubernetes.io/name=weights-labeller,app.kubernetes.io/managed-by=scaling-manager-weights --ignore-not-found
+        fi
         log_info "the labels it set stay on the nodes; weights.sh label --clear removes them"
         return 0
     fi
@@ -1474,6 +1716,7 @@ while [ $# -gt 0 ]; do
         --clear) [ "$CMD" = label ] || log_error "--clear is a label option"; CLEAR=true; shift ;;
         --delete) [ "$CMD" = labeller ] || log_error "--delete is a labeller option"; DELETE=true; shift ;;
         --add) [ "$CMD" = labeller ] || log_error "--add is a labeller option"; ADD=true; shift ;;
+        --remove) [ "$CMD" = labeller ] || log_error "--remove is a labeller option"; REMOVE=true; shift ;;
         --merge) [ "$CMD" = labeller ] || log_error "--merge is a labeller option"; MERGE=true; shift ;;
         --dry-run) [ "$CMD" != status ] || log_error "--dry-run applies to apply, delete, label and labeller, not status"; DRY_RUN=true; shift ;;
         --all) [ "$CMD" = delete ] || log_error "--all is a delete option"; ALL=true; shift ;;
