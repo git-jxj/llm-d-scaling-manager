@@ -10,7 +10,7 @@ import (
 // planner priced its 8000/200 phases: the held line of the warm-up recording
 // (A = 42.50 ms, B = 10.43 ms), C = 764,672 tokens, KVreq = 8114 tokens, OL =
 // 200, batch cap 256, two decode replicas, read below the band as the planner
-// reads it, with no reading below the band to floor it.
+// reads it, on the floor the recording read there.
 func q32jDecode(tier string) Decode {
 	return Decode{
 		Line:           itl.Model{A: 0.04249685049858612, B: 0.010425088112190157},
@@ -21,7 +21,7 @@ func q32jDecode(tier string) Decode {
 		ReplicaCap:     256,
 		Replicas:       2,
 		Tier:           tier,
-		BelowBand:      BelowBand{Read: true},
+		BelowBand:      BelowBand{Read: true, LeastITL: q32jLeastITL},
 	}
 }
 
@@ -47,16 +47,17 @@ var q32jSteps = []q32jStep{
 	{"C-on", 3.340, 0.01268},
 }
 
-// q32jLeastITL is the least mean ITL a q32j decode replica read below the
-// band in the warm-up recording (learnreplay's VariantState.BelowBandITL).
-const q32jLeastITL = 0.010761720
+// q32jLeastITL is the floor below the band of the q32j warm-up recording:
+// the 10th percentile of the decode replicas' mean ITLs read there off a
+// ramp (learnreplay's VariantState.BelowBandITL).
+const q32jLeastITL = 0.010819188
 
-// The mean TPOT at each q32j step, priced at the fill the step runs at, is
-// within 5% of what the client measured, and within 2.5% on average, with
-// and without the recording's floor below the band. Read at the band's
-// bottom, as it was, every step priced 16.80 ms: 29% to 46% high.
+// The mean TPOT at each q32j step, priced at the fill the step runs at, on
+// the recording's floor below the band, is within 5% of what the client
+// measured, and within 2.5% on average. Read at the band's bottom, as it
+// was, every step priced 16.80 ms: 29% to 46% high.
 func TestMeanTPOTAtTheFill_Q32jStaircase(t *testing.T) {
-	for _, least := range []float64{0, q32jLeastITL} {
+	for _, least := range []float64{q32jLeastITL} {
 		d := q32jDecode(TierHeld)
 		d.BelowBand.LeastITL = least
 		var sum float64
@@ -127,6 +128,23 @@ func TestMeanTPOTAtTheFill_TheInterceptsProvenanceSetsTheFloor(t *testing.T) {
 	}
 }
 
+// With no floor read below the band the line is not extrapolated there: a
+// fitted line keeps the band's bottom, 16.80 ms on q32j, and a target under
+// it is refused, as before the line was read below the band.
+func TestMeanTPOTAtTheFill_NoReadingBelowTheBandKeepsTheBandFloor(t *testing.T) {
+	for _, tier := range []string{TierOLS, TierPinnedB, TierHeld, TierAboveBand} {
+		d := q32jDecode(tier)
+		d.BelowBand.LeastITL = 0
+		for _, s := range q32jSteps {
+			mean := mustAnswer(t, SLOAtReplicas(d, ReplicasQuery{Rate: s.rate}).MeanTPOT)
+			near(t, tier+" "+s.phase+" mean TPOT", mean.Value, 0.016800, 0.0000005)
+		}
+		if u, ok := RateForTPOT(d, RateQuery{Target: TPOTTarget{Seconds: 0.0125}, Headroom: 1}).(Unanswerable); !ok || u.Reason != TargetBelowFloor {
+			t.Errorf("%s: a 12.5 ms target under the band's floor of 16.80 ms was not refused: %#v", tier, u)
+		}
+	}
+}
+
 // The least ITL read below the band floors the line there: a fill under the
 // floor's reads the floor, one above it the line, and a floor at or above
 // the band's bottom gives the band's bottom back. A floor under B is B.
@@ -159,13 +177,13 @@ func TestRateForTPOTRoundTripsThroughSLOAtReplicas(t *testing.T) {
 	ratio := TPOTRatio{Value: 1.3, Assumed: true}
 	checked := 0
 	for _, tier := range []string{TierOLS, TierHeld, TierPinnedB, TierBorrowed} {
-		for _, least := range []float64{0, 0.0115} {
+		for _, least := range []float64{0, 0.0108, 0.0115} {
 			d := q32jDecode(tier)
 			d.BelowBand.LeastITL = least
-			// The floor: the least ITL read below the band, or B with none,
-			// for a fitted intercept; the band's bottom for a borrowed one.
+			// The floor: the floor read below the band for a fitted
+			// intercept; the band's bottom with none, or for a borrowed one.
 			lowest := max(d.Line.B, least)
-			if tier == TierBorrowed {
+			if tier == TierBorrowed || least == 0 {
 				lowest = d.Line.ITLAt(d.Band.Lo)
 			}
 			for _, ms := range []float64{10.6, 11.5, 12.2, 13, 16, 16.8, 20, 30} {

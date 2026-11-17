@@ -135,7 +135,7 @@
             "basis": {
               "fill": 0.5191801082329363,
               "kneeRate": 30.87802159050532,
-              "floor": 0.0021741457597431292,
+              "floor": 0.002221892534461583,
               "uncapped": 0,
               "boundBy": [],
               "tier": "pinned-B"
@@ -223,7 +223,7 @@
         },
         "ttft": {
           "answer": {
-            "value": 0.32550813098042497,
+            "value": 0.3255081309897781,
             "unit": "s",
             "basis": {
               "fill": 0,
@@ -246,13 +246,13 @@
               "TransferHeld"
             ],
             "parts": {
-              "independent": 0.27235648438867077,
-              "pooled": 0.2103886192823167,
-              "decodeShare": 0.07438570927149668,
+              "independent": 0.27235648439056637,
+              "pooled": 0.21038861928645006,
+              "decodeShare": 0.07438570927566464,
               "engineWait": 0.05011481736326467,
               "kvPullWait": 0.0024433330422215915,
               "ownPrefill": 0.0715028641853795,
-              "decodeWait": 0.016060119882460727,
+              "decodeWait": 0.016060119883361607,
               "firstStep": 0,
               "decodeEngine": 0,
               "routerHop": 0.02,
@@ -260,13 +260,13 @@
               "vpMarginApplied": 0,
               "waitScale": 0,
               "waitOffset": 0,
-              "decodeWaitProbability": 0.07438570927150893,
+              "decodeWaitProbability": 0.07438570927568154,
               "prefillKnee": 39.98456348157624,
               "decodeKnee": 30.87802159050532
             },
             "sensitivity": {
-              "lo": 0.19554831872628634,
-              "hi": 1.0879237463988352
+              "lo": 0.19554831873055709,
+              "hi": 1.087923746410954
             }
           }
         }

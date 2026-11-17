@@ -155,9 +155,10 @@ type VariantState struct {
 	// LineRows is the variant's rows of its latest cycles that have one, off
 	// a ramp and on one, for the line check (state_line.go).
 	LineRows []whatif.LineRow
-	// BelowBandITL is the least mean ITL, in seconds, any of the variant's
-	// replicas read at a fill under the band's bottom up to the cycle: the
-	// floor below the band (whatif.BelowBand.LeastITL). 0 with none.
+	// BelowBandITL is the floor below the band, in seconds: the 10th
+	// percentile of the variant's latest mean ITLs read off a ramp at a fill
+	// under the band's bottom (whatif.BelowBand.LeastITL). 0 with fewer than
+	// belowBandMinReadings, where the line is not read below the band.
 	BelowBandITL float64
 }
 

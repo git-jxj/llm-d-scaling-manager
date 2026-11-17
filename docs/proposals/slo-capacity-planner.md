@@ -290,20 +290,25 @@ transfer and `ITL(k_low)` alone exceed `T`, `TargetBelowFloor`.
    never beats `ITL(k_low)` (times `R_q`); TTFT never beats
    `a + I_q/V_P + ITL(k_low)`.
 
-**The lowest fill the line is read at, `k_low`** (`whatif.LowestFill`). It
-depends on where the line's intercept `B` came from:
+**The lowest fill the line is read at, `k_low`** (`whatif.LowestFill`). The
+line is read below the band only when two things hold:
 
-- **From a full fit** of the variant's own readings: an `ols` line, or a
-  `pinned-B`, `held` or `above-band` line, which carry the `B` of the key's
-  last full fit. Below the band the line is read at the fill itself, but never
-  below the least mean ITL any replica of the variant read under the band
-  (the readings the fit drops as idle). `k_low` is the fill where the line
-  reaches that ITL, clamped to `[0, band.lo]`; with no such reading it is 0 and
-  the floor is `B`.
-- **Not from a fit**: the default intercept (`itl.DefaultBaselineSec`, 6 ms),
-  a `borrowed` line's donor `B`, or a line of unknown tier. `k_low` is the
-  band's bottom, `analyzerTuning.itlBand.minObservableK`, 0.15 by default. A
+- **Its intercept `B` is not a guess**: an `ols` line's own `B`; a `pinned-B` or
+  `held` line's `B`, which only a full fit of the variant's readings stores; or
+  an `above-band` line's `B`, the least ITL read above the band, which is an
+  upper bound on the engine's floor by construction, so reading below the band
+  from it errs high. The default intercept (`itl.DefaultBaselineSec`, 6 ms), a
+  `borrowed` line's donor `B` and a line of unknown tier are guesses. A
   `pinned-B` or `held` line on the default `B` is refused (`PinnedDefaultB`).
+- **A floor was read below the band**: the 10th percentile of the variant's
+  latest mean ITLs (at most 240) read off a ramp at a fill under the band's
+  bottom, the readings the fit drops as idle, from at least 10 of them.
+
+Then `k_low` is the fill where the line reaches that floor, clamped to
+`[0, band.lo]`: below the band the line is read at the fill itself, never under
+what the engines were seen to do there. Otherwise `k_low` is the band's bottom,
+`analyzerTuning.itlBand.minObservableK`, 0.15 by default: with no evidence below
+the band the line is not extrapolated there.
 
 A fill below the band is flagged `BelowFittedBand` either way. Questions 1 and 2,
 the knee, the admission chain and TTFT's decode step all read the same `k_low`,
@@ -317,12 +322,13 @@ fill of 0.02 to 0.06. Read at 0.15, the held line (A 42.5 ms, B 10.4 ms) priced
 16.8 ms at every step; the clients measured 11.5 to 13.0 ms, so the mean read 29%
 to 46% high. Read at the planner's own closed-form fill, which came within 0.01
 of the measured KV fill, it reads -5% to +1% (31 steps; -4% on a second run, 4
-steps). `TestMeanTPOTAtTheFill_Q32jStaircase` freezes it. The least ITL read under
-the band was 10.76 ms on both runs, a floor at a fill of 0.008 and 0.014, under
-every step: the floor is a margin, not a change to these figures. One model and
+steps). `TestMeanTPOTAtTheFill_Q32jStaircase` freezes it. The floor read under
+the band was 10.82 and 10.83 ms on the two runs, at a fill of 0.009 and 0.016,
+under every step: the floor is a margin, not a change to these figures. One model and
 one engine back this; `throughput-sweep-restart` (below) is a held line that
-still reads 32.6% slow below the band, so the reading is not uniformly accurate
-there.
+would still read 32.6% slow at the fill below the band, so the reading is not
+uniformly accurate there. Its learned window has no floor below the band, so
+the planner keeps reading it at the band's bottom.
 
 **Where the planner and the controller differ.** The controller's own pricing
 keeps the band's bottom as its floor (`whatif.PriceTPOT`,
@@ -531,8 +537,8 @@ Nothing here tunes the model. The error is predicted minus measured, so above 0 
 line reads slow on TPOT and fast on the knee. A figure needs at least 5 rows. The bound
 reads the figure clamped as an answer is: to the band's top, and below the band to
 `k_low`. The unclamped one is the line read at the row's own fill, and "rows clamped" is how
-many rows sit outside the band. For a line with a fitted `B` the two columns coincide below
-the band, unless a row sits under the variant's least below-band ITL.
+many rows sit outside the band. Where the line is read below the band the two columns
+coincide there, unless a row sits under the variant's floor below the band.
 
 | Golden | Tier at the freeze | Mean TPOT error | Unclamped | Rows | Rows clamped | Against ±10% | Knee error | Windows | Against ±15% |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -540,7 +546,7 @@ the band, unless a row sits under the variant's least below-band ITL.
 | `ols-sweep-slo` | held | +10.5% | +10.5% | 33 | 0 | **out** | +70.1% | 7 | **out** |
 | `ols-sweep-slo-restart` | pinned-B | -8.5% | -8.5% | 54 | 3 | in | +103.4% | 5 | **out** |
 | `throughput-sweep` | held | +3.5% | +3.5% | 33 | 0 | in | SKIPPED: none off a ramp | | |
-| `throughput-sweep-restart` | held | +32.6% | +32.6% | 124 | 124, all below, read at the fill | **out** | SKIPPED: none off a ramp | | |
+| `throughput-sweep-restart` | held | +50.1% | +32.6% | 124 | 124, all below | **out** | SKIPPED: none off a ramp | | |
 | `mu-paths` variant-01 (synthetic) | ols | -4.9% | 0.0% | 76 | 38 above | in | +76.3% | 38 | **out** |
 | `mu-paths` variant-02 (synthetic) | ols | -9.8% | 0.0% | 95 | 57 above | in | +44.4% | 19 | **out** |
 | `mu-paths` variant-03 (synthetic) | ols | 0.0% | 0.0% | 57 | 0 | in | SKIPPED: none off a ramp | | |
@@ -564,9 +570,10 @@ are SKIPPED for that refusal, or for no saturated window off a ramp:
 
 - **Mean TPOT:** 6 of the 8 lines the planner answers on are in bound, of 19 lines
   with a figure. Three of the six are synthetic, so the real runs are 3 of 5.
-  `throughput-sweep-restart` reads 32.6% slow on a low-fill tail: all 124 held-out
-  rows sit below the band. It read 50.1% slow while a fill below the band was priced
-  at the band's bottom; its held line is now read at the fill. `e1` model-02 and `e1-tuned` model-02 are in bound only through
+  `throughput-sweep-restart` reads 50.1% slow, and that is a low-fill tail: all 124
+  held-out rows sit below the band, and its learned window read no floor there, so
+  each is priced at the band's bottom. Unclamped it still reads 32.6% slow. `e1`
+  model-02 and `e1-tuned` model-02 are in bound only through
   the clamp: unclamped both read 39.1% fast. Those are lines the planner refuses.
 - **Decode knee:** four figures, all out, from 44.4% to 103.4% high. Two are
   synthetic. The other two are `ols-sweep-slo` runs, recorded before `QueueMin`, so

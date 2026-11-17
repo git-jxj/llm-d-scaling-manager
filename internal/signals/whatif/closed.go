@@ -48,12 +48,14 @@ type Decode struct {
 // BelowBand is how a Decode reads its line at a fill under the band's bottom.
 type BelowBand struct {
 	// Read reads the line at the fill itself, down to the floor LowestFill
-	// sets, when its intercept came from a full fit (MeasuredIntercept). The
-	// planner sets it; the controller does not.
+	// sets, for a line fitted on the variant's own readings
+	// (MeasuredIntercept) with a floor read below the band. The planner sets
+	// it; the controller does not.
 	Read bool
-	// LeastITL is the least mean ITL, in seconds, a replica of the variant
-	// read at a fill under the band's bottom: readings the line's fit drops
-	// as idle. The line is never read below it. 0 when there was none.
+	// LeastITL is the floor below the band, in seconds: a low percentile of
+	// the mean ITLs the variant's replicas read at a fill under the band's
+	// bottom, readings the line's fit drops as idle. The line is never read
+	// below it. 0 when there were too few such readings to trust one.
 	LeastITL float64
 }
 
@@ -112,12 +114,14 @@ func (d Decode) onDefaultB() bool {
 	return false
 }
 
-// MeasuredIntercept reports a line whose intercept B came from a full fit of
-// the variant's own readings: an ols fit, or a pinned-B, held or above-band
-// line, which carry the B of the key's last full fit (whatif's band.go reads
-// it as fit.Baseline), unless that is the default, itl.DefaultBaselineSec,
-// which no fit measured. A borrowed line is another variant's, and a line of
-// unknown tier has no known provenance: neither is measured here.
+// MeasuredIntercept reports a line whose intercept B is not a guess: an ols
+// fit's own B; a pinned-B or held line's B, which only a full fit stores
+// (the tracker's baseline), unless it is the default, itl.DefaultBaselineSec,
+// which no fit measured; or an above-band line's B, the least ITL read above
+// the band, which is an upper bound on the engine's floor by construction,
+// so reading below the band from it errs high, never low. A borrowed line is
+// another variant's, and a line of unknown tier has no known provenance:
+// neither is read below the band.
 func MeasuredIntercept(tier string, line itl.Model) bool {
 	switch tier {
 	case TierOLS:
@@ -131,23 +135,20 @@ func MeasuredIntercept(tier string, line itl.Model) bool {
 // LowestFill is the lowest fill the line is read at, below band, when the
 // reading below the band is asked for (BelowBand.Read):
 //
-//   - band.Lo, the band's bottom, for an intercept no full fit measured
-//     (MeasuredIntercept);
-//   - the fill at which the line reaches leastITL, the least ITL a replica
-//     read below the band, clamped to [0, band.Lo], so that the line is
-//     never read below what an engine was seen to do there;
-//   - 0, where the floor is B itself, when no replica read an ITL below the
-//     band (leastITL 0). Such a fill is still flagged BelowFittedBand.
+//   - band.Lo, the band's bottom, for an intercept that is a guess
+//     (MeasuredIntercept), or when no floor was read below the band
+//     (leastITL 0): with no evidence there, the line is not extrapolated;
+//   - otherwise the fill at which the line reaches leastITL, the floor read
+//     below the band, clamped to [0, band.Lo]: the line is read at the fill
+//     itself, never below what the engines were seen to do there.
 //
-// Measured on the Qwen3-32B P/D staircases at fills of 0.02 to 0.06, a held
-// line read at the fill came within -5% to +1% of the mean TPOT the clients
-// saw; read at the band's bottom, 0.15, it was 29% to 46% high.
+// A fill below the band is flagged BelowFittedBand either way. Measured on
+// the Qwen3-32B P/D staircases at fills of 0.02 to 0.06, a held line read at
+// the fill came within -5% to +1% of the mean TPOT the clients saw; read at
+// the band's bottom, 0.15, it was 29% to 46% high.
 func LowestFill(band FillBand, tier string, line itl.Model, leastITL float64) float64 {
-	if !MeasuredIntercept(tier, line) || !(line.A > 0) {
+	if !MeasuredIntercept(tier, line) || !(line.A > 0) || !(leastITL > 0) || !Finite(leastITL) {
 		return band.Lo
-	}
-	if !(leastITL > 0) || !Finite(leastITL) {
-		return 0
 	}
 	return min(max((leastITL-line.B)/line.A, 0), band.Lo)
 }

@@ -69,7 +69,10 @@ its floor. Two things follow:
   prices up to about 1.6x less capacity a replica than the planner, so it may
   run more replicas than the planner sized.
 
-Both are expected. A figure read below the band carries `BelowFittedBand`.
+Both are expected. They apply only to a line fitted on the variant's own
+readings, in a window whose replicas also ran below the band: a borrowed or
+default line, or one with no readings below the band, is read at the band's
+bottom by both. A figure read below the band carries `BelowFittedBand`.
 
 ## API errors
 
