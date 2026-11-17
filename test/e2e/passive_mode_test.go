@@ -215,12 +215,29 @@ func (m passiveModel) scale(n int32) {
 	GinkgoWriter.Printf("PASSIVE-EVIDENCE %s kubectl scale --replicas=%d at %s\n", m.deployment(), n, time.Now().UTC().Format(time.RFC3339))
 }
 
-// specReplicas reads the Deployment's spec.replicas.
+// specReadAttempts is how many times specReplicas tries a read that fails
+// transiently (an API-server timeout) before failing the spec.
+const specReadAttempts = 5
+
+// specReplicas reads the Deployment's spec.replicas. A transient failure is
+// retried a second apart; any other failure, NotFound included, fails at once.
 func (m passiveModel) specReplicas() int32 {
 	GinkgoHelper()
-	dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, m.deployment(), metav1.GetOptions{})
-	Expect(err).NotTo(HaveOccurred())
-	return ptr.Deref(dep.Spec.Replicas, 1)
+	var err error
+	for attempt := 1; attempt <= specReadAttempts; attempt++ {
+		dep, getErr := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, m.deployment(), metav1.GetOptions{})
+		if getErr == nil {
+			return ptr.Deref(dep.Spec.Replicas, 1)
+		}
+		err = getErr
+		if !utils.IsTransientReadError(err) {
+			break
+		}
+		GinkgoWriter.Printf("PASSIVE-EVIDENCE %s read %d of %d failed, retrying: %v\n", m.deployment(), attempt, specReadAttempts, err)
+		time.Sleep(time.Second)
+	}
+	Expect(err).NotTo(HaveOccurred(), "reading %s spec.replicas", m.deployment())
+	return 0
 }
 
 func (m passiveModel) waitReady(n int32) {
@@ -294,7 +311,8 @@ type replicaSample struct {
 	at                    time.Duration
 	spec, status, updated int32
 	ready                 int32
-	err                   string
+	err                   string // the failed read's message, for the timeline
+	readErr               error  // the failed read, nil when it succeeded
 }
 
 // replicaRecorder samples a Deployment every second until stopped.
@@ -324,7 +342,7 @@ func recordReplicasIn(namespace, deployment string) *replicaRecorder {
 			s := replicaSample{at: time.Since(r.start).Round(time.Second)}
 			dep, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deployment, metav1.GetOptions{})
 			if err != nil {
-				s.err, s.spec = err.Error(), -1
+				s.err, s.readErr, s.spec = err.Error(), err, -1
 			} else {
 				s.spec = ptr.Deref(dep.Spec.Replicas, 1)
 				s.status, s.updated, s.ready = dep.Status.Replicas, dep.Status.UpdatedReplicas, dep.Status.ReadyReplicas
@@ -376,23 +394,16 @@ func specValues(samples []replicaSample) []int32 {
 	return out
 }
 
-// expectSpecHeld fails if any read of spec.replicas saw a value other than
-// want. A read that failed (the API server timing out) is recorded as -1 and
-// says nothing about the Deployment, so it is skipped. A window where most
-// reads failed proves nothing, so fewer than half succeeding fails too.
+// expectSpecHeld fails unless the samples show spec.replicas held at want.
+// A transient read failure (the API server timing out) says nothing about the
+// Deployment and is skipped; utils.CheckReplicasHeld has the rules.
 func expectSpecHeld(label string, samples []replicaSample, want int32) {
 	GinkgoHelper()
-	read := 0
-	for _, s := range samples {
-		if s.err != "" {
-			continue
-		}
-		read++
-		Expect(s.spec).To(Equal(want), "%s: spec.replicas moved to %d at +%s; the timeline is above", label, s.spec, s.at)
+	reads := make([]utils.ReplicaRead, len(samples))
+	for i, s := range samples {
+		reads[i] = utils.ReplicaRead{At: s.at, Spec: s.spec, Err: s.readErr}
 	}
-	Expect(read).To(BeNumerically(">", 0), "%s: no read of spec.replicas succeeded; the timeline is above", label)
-	Expect(2*read).To(BeNumerically(">=", len(samples)),
-		"%s: only %d of %d reads of spec.replicas succeeded; the timeline is above", label, read, len(samples))
+	Expect(utils.CheckReplicasHeld(reads, want)).To(Succeed(), "%s; the timeline is above", label)
 }
 
 // metricSample is one read of the controller's published view of a model.
