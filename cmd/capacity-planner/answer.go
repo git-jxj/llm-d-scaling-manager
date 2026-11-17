@@ -600,13 +600,30 @@ func onRatio(r whatif.Result, ratio whatif.TPOTRatio, flags []whatif.Flag) whati
 func (f *answerFlags) ratioNote(st *learnreplay.State, r whatif.TPOTRatio) string {
 	switch {
 	case f.engineTPOT:
-		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st))
+		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st)) + byFillNote(r)
 	case r.Assumed && len(st.TPOTWindows) == 0:
 		return fmt.Sprintf("R_q %s ASSUMED (no TPOT histogram)", num(r.Value))
 	case r.Assumed:
 		return fmt.Sprintf("R_q %s ASSUMED (the recording's %d TPOT windows not used)", num(r.Value), len(st.TPOTWindows))
 	}
-	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows))
+	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + byFillNote(r)
+}
+
+// byFillNote is R_q by fill for the human output: the ratio at the lowest
+// and the highest fill bucket, and how many buckets held enough windows; ""
+// with one ratio at every fill.
+func byFillNote(r whatif.TPOTRatio) string {
+	b := r.ByFill
+	if len(b) == 0 {
+		return ""
+	}
+	learned := 0
+	for _, fr := range b {
+		if !fr.Thin {
+			learned++
+		}
+	}
+	return fmt.Sprintf(", by fill %.3g to %.3g (%d of %d buckets learned)", b[0].Value, b[len(b)-1].Value, learned, len(b))
 }
 
 // num prints a ratio or fill with no trailing zeros.

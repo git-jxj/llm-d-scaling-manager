@@ -199,8 +199,9 @@ var _ = Describe("EngineTPOTRatio", func() {
 	It("answers, coarse and flagged, up to the line", func() {
 		r, flags, refused := EngineTPOTRatio([]TPOTWindow{window(0.020)}, 0.9)
 		Expect(refused).ToNot(HaveOccurred())
-		Expect(r.Value).To(BeNumerically("~", 2, 1e-9))
-		Expect(flags).To(ConsistOf(CoarseTPOTBucket, EngineTPOTHistogram))
+		// Read inside the coarse bucket: rank 90 is 40 of its 45 above 10 ms.
+		Expect(r.Value).To(BeNumerically("~", (0.010+0.010*40.0/45)/0.010, 1e-9))
+		Expect(flags).To(ConsistOf(CoarseTPOTBucket, InterpolatedTPOTPercentile, EngineTPOTHistogram))
 	})
 
 	It("refuses past it, keeping both flags", func() {

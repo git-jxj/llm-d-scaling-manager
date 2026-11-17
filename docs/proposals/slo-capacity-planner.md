@@ -228,6 +228,71 @@ the case is held on built windows (`TestEngineTPOT_TheOrder`). A refusal priced 
 by default, because no default ratio has been measured; a stated default would
 be read as one.
 
+**R_q by fill, as built.** One `R_q` prices every fill at the same spread, so
+a percentile near the knee reads as tight as one at low load. The tail widens
+with load: on the q32j staircase the client's p90 over mean TPOT rose from 1.02
+at the lowest step to 1.09 near the knee. So each window also carries its
+cycle's fill, the mean over serving decode rows of the `k` the ITL line pairs
+with (`learnreplay.decodeFill`), and `R_q` is learned again per fill bucket
+of 0.2 (`whatif.FillRatioBucketWidth`), by the same rule: the upper edge over
+the mean, the 90th percentile of the bucket's windows, never below 1
+(`TPOTRatio.ByFill`, `whatif.FillRatio`).
+
+- **Confidence.** Each bucket keeps its window count. A bucket with fewer than
+  5 windows (`whatif.MinFillRatioWindows`) is priced at the global `R_q`, and
+  an answer read there is flagged `GlobalTPOTRatio`. With no bucket learned,
+  or windows with no fill, `ByFill` is nil and the answer is the one-ratio
+  answer, unflagged.
+- **Shape.** A bucket is never below the one under it: its own ratio is kept
+  (`learned`), and the value priced is raised to its neighbour. `R_q(k)` is
+  read linearly between bucket centres, flat past the first and the last.
+- **Inversion.** `ITL(k)·R_q(k)` rises strictly in `k` (A, B > 0 and `R_q`
+  never falls), so question 1 finds `k*` by bisection on `[band.Lo, 1]`. Past
+  a full cache `R_q` is flat, and the closed form at the last bucket is exact.
+  A curve that falls, or holds a ratio below 1, is refused `InvalidInput`.
+- **Where it is used.** Question 2 (replicas-to-slo), question 1
+  (slo-to-rate), and the `/v1/plan` curves, which price through the same two
+  calls. The engine histogram's fall-back learns it the same way.
+- **Persistence.** The learned state is replayed from the recording, not
+  stored. The frozen file of a staircase (`freeze`) writes `byFill` beside the
+  global `value`. A file without it reads as the global ratio alone.
+
+**Each percentile its own ratio, as built.** Read at the upper edge, a coarse
+bucket gives every percentile that lands in it the same ratio. On a 14 ms mean
+under the router's 10, 20 and 40 ms edges, p50, p90 and p99 all read 20/14, and
+the planner printed one TPOT for all three. So a `q` bucket wider than a
+quarter of the window's mean (the `CoarseTPOTBucket` line) is now read inside
+the bucket, linearly in its count, as `histogram_quantile` reads it
+(`whatif.readWindow`), and the answer carries `InterpolatedTPOTPercentile`
+beside `CoarseTPOTBucket`. That reading assumes the bucket's requests spread
+evenly, so it can under-state; the flag says so. A bucket at or under the line
+is still read at its upper edge.
+
+**Measured.** Qwen3-32B P/D, 2 + 2 replicas, learned from each run's warm-up
+and set against the client's per-step TPOT. q32j is 45 steps over three
+shapes; q132d is 4 steps at 8000/200. Mean error of the predicted percentile
+over the measured one:
+
+| Run | Percentile | Before | After |
+| --- | --- | --- | --- |
+| q32j | p50 | +139% | +79% |
+| q32j | p90 | +125% | +114% |
+| q32j | p99 | +113% | +112% |
+| q132d | p50 | +147% | +85% |
+| q132d | p90 | +130% | +119% |
+| q132d | p99 | +116% | +114% |
+
+Before, p50, p90 and p99 printed one figure (31.1 ms on every 8000/200 step of
+q32j, 30.3 ms on q132d). After, they separate: 23.3, 29.6 and 31.0 ms on
+q32j. R_q by fill changed little on either run: four of five fill buckets
+were learned, and they read within 2% of each other. The router's 10, 20 and
+40 ms edges set the ratio at every fill, so these runs cannot show the tail
+growing with load; the client saw p90 over mean rise only from 1.02 to 1.09.
+The error that is left has two causes outside R_q: the ITL line prices the
+mean high at low fill (16.8 ms against a measured 11.5 to 13 ms on the
+8000/200 steps), and R_q is the 90th percentile of the per-window ratios.
+Router TPOT edges a few percent apart are what would firm it up.
+
 **Inversion.** Question 1 inverts `ITL(k)·R_q = t`: `k* = (t/R_q − B)/A`, then
 the same clamps and cap as the mean. Question 2 reports TPOT at both the mean
 and percentile `q` (`--tpot-percentile`; else the mean only, since the scaling

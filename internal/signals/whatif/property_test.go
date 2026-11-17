@@ -26,7 +26,7 @@ func rateFor(d Decode, target TPOTTarget, headroom float64) Result {
 func ratioFrom(windows []TPOTWindow, q float64) Result {
 	r, flags, u := TPOTRatioFromWindows(windows, q)
 	if u != nil {
-		if r != (TPOTRatio{}) || flags != nil {
+		if r.Value != 0 || r.Assumed || r.ByFill != nil || flags != nil {
 			panic("a refused ratio came back with a value")
 		}
 		return *u
@@ -566,12 +566,14 @@ func bucketed(samples []float64, edges []float64) TPOTWindow {
 }
 
 // A known per-request TPOT distribution, bucketed on the router's default
-// edges, gives an R_q at or above the true ratio; R_q is never below 1, even
+// edges, gives an R_q at or above the true ratio where the q bucket is read at
+// its edge, and within the bucket's width of it where a coarse one is read
+// inside; R_q is never below 1, even
 // from a window whose bucketed quantile falls below its mean.
 func TestProperty_TPOTRatio(t *testing.T) {
 	r := rand.New(rand.NewPCG(8, 9))
 	const q = 0.9
-	checked := 0
+	checked, interpolated := 0, 0
 	for draw := range 200 {
 		mean := 0.002 + 0.006*r.Float64()
 		sigma := 0.05 + 0.6*r.Float64()
@@ -600,16 +602,29 @@ func TestProperty_TPOTRatio(t *testing.T) {
 		}
 		got := mustAnswer(t, res)
 		checked++
-		if got.Value < trueRatio*(1-1e-12) {
-			t.Fatalf("draw %d (mean %g, sigma %g): R_q %g below the true %g", draw, mean, sigma, got.Value, trueRatio)
+		// A coarse q bucket is read inside it, so each window's reading is
+		// within the bucket's width of its true quantile, and so is the 90th
+		// percentile of the readings. Read at the upper edge, it is at or
+		// above the truth.
+		slack := 0.0
+		if got.HasFlag(InterpolatedTPOTPercentile) {
+			interpolated++
+			for _, w := range windows {
+				if rd, empty, err := readWindow(w, q); err == nil && !empty {
+					slack = max(slack, rd.width)
+				}
+			}
+		}
+		if got.Value < trueRatio*(1-1e-12)-slack {
+			t.Fatalf("draw %d (mean %g, sigma %g): R_q %g below the true %g by more than the bucket's %g", draw, mean, sigma, got.Value, trueRatio, slack)
 		}
 		if got.Value < 1 {
 			t.Fatalf("draw %d: R_q %g below 1", draw, got.Value)
 		}
 	}
 
-	if checked < 190 {
-		t.Fatalf("only %d of 200 draws gave a ratio; the draw is not exercising the property", checked)
+	if checked < 190 || interpolated == 0 || interpolated == checked {
+		t.Fatalf("%d of 200 draws gave a ratio, %d read inside a coarse bucket: the draw is not exercising both readings", checked, interpolated)
 	}
 
 	// A window whose 90th percentile bucket tops out under its mean: nine in
@@ -620,12 +635,13 @@ func TestProperty_TPOTRatio(t *testing.T) {
 		t.Errorf("R_q from a quantile below the mean = %g, want 1", got.Value)
 	}
 
-	// The page's resolution note: at a 3.66 ms mean the p90 lands in (2.05, 5]
-	// and reads 1.37, flagged coarse.
+	// The page's resolution note: at a 3.66 ms mean the p90 lands in (2.05, 5],
+	// a bucket wider than a quarter of the mean: read inside it, 90% of the way
+	// up its count, and flagged coarse and interpolated, not 1.37 at its edge.
 	flat := bucketed(slices.Repeat([]float64{0.00366}, 100), routerEdges)
 	got := mustAnswer(t, ratioFrom([]TPOTWindow{flat}, q))
-	near(t, "R_q on the default edges at 3.66 ms", got.Value, 0.005/0.00366, 1e-12)
-	if !got.HasFlag(CoarseTPOTBucket) {
+	near(t, "R_q on the default edges at 3.66 ms", got.Value, (0.00205+0.9*0.00295)/0.00366, 1e-12)
+	if !got.HasFlag(CoarseTPOTBucket) || !got.HasFlag(InterpolatedTPOTPercentile) {
 		t.Errorf("a (2.05, 5] ms bucket at a 3.66 ms mean is not flagged coarse")
 	}
 	fine := bucketed(slices.Repeat([]float64{0.00366}, 100), []float64{0.0035, 0.00375, 0.004, math.Inf(1)})
@@ -638,11 +654,11 @@ func TestProperty_TPOTRatio(t *testing.T) {
 	// not refused. Here +Inf reads 99.5 under the 5 ms bucket's 100: the
 	// running maximum makes the total 100, so the p99.9 rank is 99.9 and lands
 	// in (2.05, 5] ms. Ranked against the dipped 99.5 it would be 99.4, and
-	// read 2.05 ms, under-stating the tail.
+	// read inside (0, 2.05] ms, under-stating the tail.
 	dip := TPOTWindow{Buckets: []HistogramBucket{
 		{UpperEdge: 0.00205, Count: 99.6}, {UpperEdge: 0.005, Count: 100}, {UpperEdge: math.Inf(1), Count: 99.5},
 	}, Sum: 0.2, Count: 100}
-	near(t, "R_q over a dip", mustAnswer(t, ratioFrom([]TPOTWindow{dip}, 0.999)).Value, 0.005/0.002, 1e-12)
+	near(t, "R_q over a dip", mustAnswer(t, ratioFrom([]TPOTWindow{dip}, 0.999)).Value, (0.00205+0.75*0.00295)/0.002, 1e-12)
 
 	// The rank is against the +Inf bucket's count, the histogram's own total,
 	// not _count, scraped separately: here _count reads 101 against 100 in

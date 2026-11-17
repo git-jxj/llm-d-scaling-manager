@@ -92,12 +92,15 @@ type frozenGate struct {
 	SLOListed  bool `json:"sloListed"`
 }
 
-// frozenRatio is R_q at one percentile.
+// frozenRatio is R_q at one percentile: the global ratio and, when the
+// warm-up's windows carried their fill, R_q by fill. A file written before
+// R_q by fill has no byFill, and reads as one ratio at every fill.
 type frozenRatio struct {
-	Percentile float64       `json:"percentile"`
-	Value      float64       `json:"value,omitempty"`
-	Flags      []whatif.Flag `json:"flags,omitempty"`
-	Refused    string        `json:"refused,omitempty"`
+	Percentile float64            `json:"percentile"`
+	Value      float64            `json:"value,omitempty"`
+	ByFill     []whatif.FillRatio `json:"byFill,omitempty"`
+	Flags      []whatif.Flag      `json:"flags,omitempty"`
+	Refused    string             `json:"refused,omitempty"`
 }
 
 // frozenBucket is one bucket's prediction.
@@ -343,7 +346,7 @@ func frozenRatioOf(st *learnreplay.State, q float64) frozenRatio {
 	if u != nil {
 		return frozenRatio{Percentile: 100 * q, Refused: refusalText(*u)}
 	}
-	return frozenRatio{Percentile: 100 * q, Value: r.Value, Flags: flags}
+	return frozenRatio{Percentile: 100 * q, Value: r.Value, ByFill: r.ByFill, Flags: flags}
 }
 
 // gateOf is S2's gate at the state's cycle: V_P and a from P1, a decode line that

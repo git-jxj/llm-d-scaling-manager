@@ -168,6 +168,7 @@ GPU
 GPU-usage
 GPUs
 Give
+GlobalTPOTRatio
 Go
 Grant
 Greedy-by-score
@@ -1132,6 +1133,7 @@ fall
 fallback
 fallback.replicas
 fallbackSource
+falls
 false
 fell
 fewer
@@ -2408,6 +2410,7 @@ rho
 rhoP
 rhoPull
 rises
+rising
 role
 role-of
 roleRC

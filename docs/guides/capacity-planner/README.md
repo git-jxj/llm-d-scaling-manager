@@ -276,7 +276,13 @@ kill %1
   is flagged `AssumedShape`.
 - **TPOT percentile.** A percentile needs the ratio of that percentile to the
   mean. If the source did not learn it, type an assumed ratio; every figure
-  that rests on it is flagged `AssumedTPOTRatio`.
+  that rests on it is flagged `AssumedTPOTRatio`. A learned ratio is read per
+  KV-fill band of 0.2 where the source saw at least 5 windows in the band, so
+  the tail can widen as load rises. A band with fewer windows uses the ratio
+  read over every fill, and figures priced there are flagged
+  `GlobalTPOTRatio`. Where the router's histogram buckets are too wide to
+  tell p50, p90 and p99 apart, each is read inside its bucket and flagged
+  `InterpolatedTPOTPercentile`: finer buckets give a firmer figure.
 - **Flags and inputs.** Every figure carries the flags it rests on. The
   **Flags** drawer lists each once, in words, with what clears it. The
   **Inputs** drawer shows each term with its source, the terms the source

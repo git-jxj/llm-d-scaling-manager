@@ -54,7 +54,8 @@ and under **Inputs**; the API puts it in `refused`.
 
 A figure flagged `AssumedShape`, `AssumedTPOTRatio` or with an assumed term
 stands, but rests on a value you typed. The **Flags** drawer says what clears
-each flag.
+each flag. A TPOT percentile flagged `GlobalTPOTRatio` is priced at a fill the
+source saw fewer than 5 windows at; record a window with more time at that load.
 
 ## API errors
 

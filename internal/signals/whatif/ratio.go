@@ -22,6 +22,11 @@ type TPOTWindow struct {
 	Buckets []HistogramBucket
 	Sum     float64
 	Count   float64
+	// Fill is the decode replicas' mean KV fill over the window, when
+	// FillKnown: the bucket R_q by fill files the window under (FillRatio).
+	// A window with no fill counts toward the global R_q only.
+	Fill      float64
+	FillKnown bool
 }
 
 // coarseBucketWidth is the width of the q bucket, over the window's mean,
@@ -46,12 +51,20 @@ const MaxEngineBucketWidth = 4 * coarseBucketWidth
 //
 // Per window, the bucket holding the q quantile is read at its UPPER edge and
 // divided by the window's mean, _sum/_count: an upper edge never under-states
-// the quantile, so the ratio is conservative. R_q is the 90th percentile of
+// the quantile, so the ratio is conservative. A bucket wider than a quarter of
+// the mean is read inside, linearly (readWindow), so that each percentile keeps
+// its own ratio; the answer is flagged. R_q is the 90th percentile of
 // those per-window ratios (nearest rank), and never below 1. A window with no
 // observations is skipped.
 //
+// Windows that carry their fill also give R_q by fill (TPOTRatio.ByFill): the
+// same rule inside each FillRatioBucketWidth bucket of fill, the global R_q in
+// a bucket thinner than MinFillRatioWindows, and never falling as the fill
+// rises. With no such bucket ByFill is nil, and R_q is one ratio at every fill.
+//
 // The ratio comes back typed, ready for TPOTTarget.Ratio, with its flags:
-// CoarseTPOTBucket for a q bucket wider than a quarter of its window's mean. A
+// CoarseTPOTBucket and InterpolatedTPOTPercentile for a q bucket wider than a
+// quarter of its window's mean. A
 // refusal comes back as a non-nil *Unanswerable with a zero ratio, which a
 // TPOTTarget reads as "no ratio" (NoTPOTHistogram), so ignoring it cannot
 // price a percentile. The refusals: TPOTQuantileUnbounded when a window's
@@ -104,8 +117,7 @@ func ratioAndWidth(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, float64,
 		if !(w.Sum > 0) {
 			return fail(MalformedHistogram, fmt.Sprintf("window %d: %g observations summing to %g", i, w.Count, w.Sum))
 		}
-		mean := w.Sum / w.Count
-		lower, upper, empty, err := quantileBucket(w.Buckets, q, w.Count)
+		rd, empty, err := readWindow(w, q)
 		if err != nil {
 			var u Unanswerable
 			if !errors.As(err, &u) {
@@ -116,11 +128,9 @@ func ratioAndWidth(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, float64,
 		if empty {
 			continue
 		}
-		ratios = append(ratios, upper/mean)
-		widths = append(widths, (upper-lower)/mean)
-		if (upper-lower)/mean > coarseBucketWidth {
-			coarse = true
-		}
+		ratios = append(ratios, rd.ratio)
+		widths = append(widths, rd.width)
+		coarse = coarse || rd.coarse
 	}
 	if len(ratios) == 0 {
 		return fail(NoTPOTHistogram, "no window holds a TPOT observation")
@@ -130,13 +140,43 @@ func ratioAndWidth(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, float64,
 	rank := int(math.Ceil(ratioPercentile*float64(len(ratios)))) - 1
 	var flags []Flag
 	if coarse {
-		flags = []Flag{CoarseTPOTBucket}
+		flags = []Flag{CoarseTPOTBucket, InterpolatedTPOTPercentile}
 	}
-	return TPOTRatio{Value: max(1, ratios[rank])}, flags, widths[rank], nil
+	global := max(1, ratios[rank])
+	return TPOTRatio{Value: global, ByFill: fillRatios(windows, q, global)}, flags, widths[rank], nil
+}
+
+// windowReading is one window's reading of the q quantile: its ratio to the
+// window's mean, the width of the q bucket over the mean, and whether that
+// bucket is coarse.
+type windowReading struct {
+	ratio, width float64
+	coarse       bool
+}
+
+// readWindow reads the q quantile of one window with observations (Count and
+// Sum above 0). A q bucket no wider than coarseBucketWidth times the mean is
+// read at its upper edge, which never under-states the quantile. A coarser one
+// is read inside the bucket, linearly in its count, as histogram_quantile
+// reads it: its upper edge would give every percentile that lands in the
+// bucket the same ratio, so p50, p90 and p99 would price one TPOT.
+func readWindow(w TPOTWindow, q float64) (windowReading, bool, error) {
+	lower, upper, frac, empty, err := quantileBucket(w.Buckets, q, w.Count)
+	if err != nil || empty {
+		return windowReading{}, empty, err
+	}
+	mean := w.Sum / w.Count
+	rd := windowReading{ratio: upper / mean, width: (upper - lower) / mean}
+	if rd.width > coarseBucketWidth {
+		rd.coarse = true
+		rd.ratio = (lower + frac*(upper-lower)) / mean
+	}
+	return rd, false, nil
 }
 
 // quantileBucket finds the bucket holding the q quantile and returns its lower
-// and upper edges, read the way histogram_quantile reads them:
+// and upper edges, and frac, how far into the bucket's own count the rank
+// falls (0 to 1), read the way histogram_quantile reads them:
 //
 //   - the cumulative counts are made monotone (a running maximum), since
 //     rate() over buckets scraped a moment apart leaves small dips that are
@@ -150,16 +190,16 @@ func ratioAndWidth(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, float64,
 // edge that does not rise from above 0 (a TPOT is positive), or a count that
 // is not finite and non-negative; TPOTQuantileUnbounded for a quantile past
 // the last finite edge.
-func quantileBucket(buckets []HistogramBucket, q, count float64) (lower, upper float64, empty bool, err error) {
+func quantileBucket(buckets []HistogramBucket, q, count float64) (lower, upper, frac float64, empty bool, err error) {
 	if len(buckets) == 0 {
-		return 0, 0, false, refuse(MalformedHistogram, fmt.Sprintf("%g observations and no buckets", count))
+		return 0, 0, 0, false, refuse(MalformedHistogram, fmt.Sprintf("%g observations and no buckets", count))
 	}
 	cum := make([]float64, len(buckets))
 	prevEdge, running := 0.0, 0.0
 	for j, b := range buckets {
 		// NaN fails the comparison and is refused with the rest.
 		if !(b.UpperEdge > prevEdge) || !Finite(b.Count) || b.Count < 0 {
-			return 0, 0, false, refuse(MalformedHistogram, fmt.Sprintf("bucket %d (le %g, count %g) out of order", j, b.UpperEdge, b.Count))
+			return 0, 0, 0, false, refuse(MalformedHistogram, fmt.Sprintf("bucket %d (le %g, count %g) out of order", j, b.UpperEdge, b.Count))
 		}
 		running = max(running, b.Count)
 		cum[j], prevEdge = running, b.UpperEdge
@@ -169,18 +209,23 @@ func quantileBucket(buckets []HistogramBucket, q, count float64) (lower, upper f
 		total = cum[n-1]
 	}
 	if !(total > 0) {
-		return 0, 0, true, nil
+		return 0, 0, 0, true, nil
 	}
 	rank := q * total
 	prevEdge = 0
+	prevCum := 0.0
 	for j, b := range buckets {
 		if cum[j] >= rank {
 			if math.IsInf(b.UpperEdge, 1) {
-				return 0, 0, false, refuse(TPOTQuantileUnbounded, fmt.Sprintf("the quantile is above the last finite edge %g", prevEdge))
+				return 0, 0, 0, false, refuse(TPOTQuantileUnbounded, fmt.Sprintf("the quantile is above the last finite edge %g", prevEdge))
 			}
-			return prevEdge, b.UpperEdge, false, nil
+			frac = 1.0
+			if in := cum[j] - prevCum; in > 0 {
+				frac = (rank - prevCum) / in
+			}
+			return prevEdge, b.UpperEdge, frac, false, nil
 		}
-		prevEdge = b.UpperEdge
+		prevEdge, prevCum = b.UpperEdge, cum[j]
 	}
-	return 0, 0, false, refuse(TPOTQuantileUnbounded, fmt.Sprintf("the quantile is above the last edge %g", prevEdge))
+	return 0, 0, 0, false, refuse(TPOTQuantileUnbounded, fmt.Sprintf("the quantile is above the last edge %g", prevEdge))
 }
