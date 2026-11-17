@@ -256,15 +256,23 @@
         <p class="hint" id="rloadshint">80% is a share of each shape's fleet knee, 5r/s a rate, seen the load the source saw.</p>
         <label for="rgrowth">Load seen times</label>
         <input id="rgrowth" type="number" min="0.1" step="0.1" value="1" aria-describedby="rgrowthhint">
-        <p class="hint" id="rgrowthhint">1.5 asks what 50% more traffic does.</p>
+        <p class="hint" id="rgrowthhint">1.5 adds a column and a line for 50% more traffic; the verdict stays at the load seen.</p>
+        <label for="rloadstat">Judge at the load seen as its</label>
+        <select id="rloadstat" aria-describedby="rloadstathint">
+          <option value="p95" selected>p95 (its busy spells)</option>
+          <option value="mean">mean</option>
+          <option value="peak">peak</option>
+        </select>
+        <p class="hint" id="rloadstathint">The p95 of the per-cycle load: the fleet must carry its busy spells, not only the average.</p>
       </fieldset>
       <button type="button" id="rrun" disabled>Judge the fleet</button>
     </div>
     <p id="rstatus" class="hint" aria-live="polite"></p>
     <div id="rresult" hidden>
+      <p id="rload" class="hint"></p>
       <ul id="rverdicts" class="rverdicts" tabindex="-1" aria-label="Verdicts"></ul>
       <p class="hint" id="rlegend"><span class="rmark met">ok</span> every target met
-        <span class="rmark missed">MISS</span> a target missed <span class="rmark saturated">SAT</span> saturated
+        <span class="rmark missed">MISS</span> a target missed (<span class="rmark missed">MISS at onset</span> at the flow-control onset) <span class="rmark saturated">SAT</span> saturated
         <span class="rmark unknown">?</span> not judged <span class="rmark notarget">no SLO</span> no target set.
         <span id="rlegendstats"></span></p>
       <table id="rmatrix" aria-label="SLO by request shape and load"></table>

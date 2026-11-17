@@ -1863,7 +1863,7 @@ function wire() {
   el("rshapeadd").onclick = () => { addShapeRow("", "", ""); const last = el("rshapes").lastElementChild; if (last) last.querySelector("input").focus(); reportStale(); };
   // Editing what the report asks hides an answer to something else.
   el("rshapes").addEventListener("input", reportStale);
-  el("rloads").oninput = el("rgrowth").oninput = reportStale;
+  el("rloads").oninput = el("rgrowth").oninput = el("rloadstat").onchange = reportStale;
   el("rrun").onclick = runReport;
   addShapeRow("", "", "");
   el("unpin").onclick = unpin;
@@ -1968,7 +1968,7 @@ async function runReport() {
   }
   const plan = planRequest();
   const asked = reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),
-    loads: el("rloads").value, growth: el("rgrowth").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume});
+    loads: el("rloads").value, growth: el("rgrowth").value, loadStatistic: el("rloadstat").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume});
   if (asked.problem) {
     el("rstatus").textContent = asked.problem;
     return;
@@ -2039,11 +2039,22 @@ function renderReport(r) {
   const v = reportView(r);
   const verdicts = el("rverdicts");
   verdicts.replaceChildren();
+  el("rload").textContent = v.load;
   for (const s of v.verdicts) {
     const li = document.createElement("li");
     li.appendChild(shapeLabel(s));
+    if (s.whatIf) li.appendChild(textNode("span", " if all traffic were this shape", "rwhatif"));
+    if (s.decodeOnly) li.appendChild(textNode("span", "decode only", "rmark unknown rscope"));
     li.appendChild(textNode("b", " " + s.verdict + ": "));
     li.appendChild(textNode("span", s.rest, "rverdict"));
+    // Growth sits under the verdict it grows from, never in its place.
+    for (const g of s.growth) {
+      const p = textNode("div", "", "rgrowthline");
+      p.appendChild(textNode("span", g.lead + ": "));
+      p.appendChild(textNode("b", g.verdict + ": "));
+      p.appendChild(textNode("span", g.rest));
+      li.appendChild(p);
+    }
     verdicts.appendChild(li);
   }
   el("rlegendstats").textContent = v.legendStats;

@@ -466,14 +466,14 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
 
   const slo = {ttft: {statistic: "p95", target: 2}, tpot: {statistic: "mean", target: 0.03}};
   const asked = reportRequest({inputsId: "sha256:x", fleet: {decode: 3}, shapes: [{}, {il: "1k", ol: "1k"}, {il: "16k", ol: "200", hit: "0.3"}, {}],
-    loads: "50%, 80%, 5r/s, seen", growth: "1.2", headroom: 0.8, slo, assume: {vp: 200000}});
-  const want = {inputsId: "sha256:x", shapes: ["measured", "1k/1k", "16k/200/0.3"], fleet: {decode: 3}, loads: ["50%", "80%", "5r/s", "seen"],
-    loadSeenX: 1.2, headroom: 0.8, slo, ttftStatistics: ["p95"], tpotStatistic: "mean", assume: {vp: 200000}};
+    loads: "50%, 80%, 5r/s, seen", growth: "1.2", loadStatistic: "p95", headroom: 0.8, slo, assume: {vp: 200000}});
+  const want = {inputsId: "sha256:x", shapes: ["measured", "1k/1k", "16k/200/0.3"], fleet: {decode: 3}, loads: ["50%", "80%", "5r/s", "seen", "seen x1.2"],
+    loadStatistic: "p95", headroom: 0.8, slo, ttftStatistics: ["p95"], tpotStatistic: "mean", assume: {vp: 200000}};
   check("the body carries every control", asked.problem === "" && JSON.stringify(asked.body) === JSON.stringify(want), JSON.stringify(asked));
   check("the headroom knob is sent", reportRequest({inputsId: "i", headroom: 0.7}).body.headroom === 0.7);
   check("a headroom of 1 is left to the policy", !("headroom" in reportRequest({inputsId: "i", headroom: 1}).body));
   check("no rows asks for the measured shape", JSON.stringify(reportRequest({inputsId: "i"}).body) === JSON.stringify({inputsId: "i", shapes: ["measured"]}));
-  check("a growth of 1 is left out", !("loadSeenX" in reportRequest({inputsId: "i", growth: "1"}).body));
+  check("a growth of 1 is left out", !("loads" in reportRequest({inputsId: "i", growth: "1"}).body));
   check("a bad growth is refused", reportRequest({inputsId: "i", growth: "-2"}).body === null);
   check("a bad shape is refused before asking", reportRequest({inputsId: "i", shapes: [{il: "8k"}]}).body === null);
   check("seven shapes are refused", reportRequest({inputsId: "i", shapes: [1, 2, 3, 4, 5, 6, 7].map(n => ({il: n + "k", ol: "1k"}))}).body === null);
@@ -541,6 +541,29 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("a floor TPOT reads at most", vf.rows[0].cells[0].text.includes("TPOT ≤7.0 ms"), vf.rows[0].cells[0].text);
   check("the legend explains the floor mark", vf.legendStats.includes("≤ marks a TPOT at the decode line's floor"), vf.legendStats);
   check("no floor, no floor note", !v.legendStats.includes("floor"));
+  // Growth is a load of its own, and the verdict stays at the load seen.
+  check("growth with no loads adds to the default loads", JSON.stringify(reportRequest({inputsId: "i", growth: "1.5"}).body.loads) ===
+    JSON.stringify(["50%", "80%", "100%", "seen", "seen x1.5"]));
+  check("growth never sends loadSeenX", !("loadSeenX" in reportRequest({inputsId: "i", growth: "1.5"}).body));
+  check("growth past the most loads is refused", reportRequest({inputsId: "i", loads: "10%, 20%, 30%, 40%, 50%, 60%, 70%, 80%", growth: "2"}).body === null);
+  check("a grown load may be typed", parseReportLoads("seen x1.5, seen×2, seen*3").problem === "");
+  check("the load statistic is sent", reportRequest({inputsId: "i", loadStatistic: "peak"}).body.loadStatistic === "peak");
+  const vg = reportView({slo, load: {rate: {value: 41.7}, statistic: "p95", mean: 31.59, p95: 41.7, peak: 43.24, cyclesWithTraffic: 282},
+    loads: ["seen", "seen x1.5"], shapes: [
+      {label: "measured", capacity: knees(38.14, "decode"), utilization: {decode: {}, prefill: {}}, table: [],
+        verdict: {verdict: "UNDER-PROVISIONED", scope: "fleet", summary: "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates."},
+        growth: [{load: "seen x1.5", x: 1.5, rate: 62.55, verdict: {verdict: "UNDER-PROVISIONED", summary: "UNDER-PROVISIONED: at 1.5 x the p95 load (62.6 r/s), the fleet saturates."}}]},
+      {label: "8k/200", source: "asked", capacity: knees(38.14, "decode"), utilization: {decode: {}, prefill: {}}, table: [],
+        verdict: {verdict: "RIGHT-SIZED", scope: "decode only", summary: "RIGHT-SIZED: at the p95 load of 41.7 r/s every target holds."}}]});
+  check("the verdict is the server's summary", vg.verdicts[0].rest === "at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates.",
+    vg.verdicts[0].rest);
+  check("growth is its own line beside the verdict", vg.verdicts[0].growth.length === 1 && vg.verdicts[0].growth[0].lead === "with 1.5× traffic" &&
+    vg.verdicts[0].growth[0].verdict === "UNDER-PROVISIONED" && vg.verdicts[0].verdict === "UNDER-PROVISIONED", JSON.stringify(vg.verdicts[0].growth));
+  check("a decode-only verdict says so", vg.verdicts[1].decodeOnly && !vg.verdicts[0].decodeOnly);
+  check("a typed shape's verdict is a what-if", vg.verdicts[1].whatIf && !vg.verdicts[0].whatIf);
+  check("the load line names the statistic and the others", vg.load ===
+    "Judged at the p95 load of 41.7 r/s; the source saw mean 31.6, p95 41.7, peak 43.2 r/s over 282 busy cycles.", vg.load);
+  check("a missed-at-onset cell says so", S("REPORT_MARKS")["missed at onset"][1] === "MISS at onset");
   check("a TTFT is never marked as a floor", ctx.reportView({slo, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "m", capacity: knees(38.14, "decode"), verdict: {},
     utilization: {decode: {}, prefill: {}}, table: [Object.assign(row("10r/s", 10, {value: 0.5, flags: ["BelowFittedBand"]}, {value: 0.007}, "met"))]}]}).rows[0].cells[0].parts[0] === "TTFT 500 ms");
   check("decode use reads in words", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8, slotsOccupied: {value: 48.2}, slots: 228, waitProbability: {value: 0.004}}) ===
@@ -570,7 +593,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 278;
+const EXPECTED_CASES = 289;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

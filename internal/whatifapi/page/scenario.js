@@ -412,6 +412,7 @@ function fleetDelta(a, b) {
 // IL/OL[/hit] in tokens with an optional k (1024 tokens), hit in [0, 1).
 const REPORT_SHAPE = /^([0-9]+(\.[0-9]+)?k?)\/([0-9]+(\.[0-9]+)?k?)(\/(0(\.[0-9]+)?))?$/;
 const MAX_REPORT_SHAPES = 6, MAX_REPORT_LOADS = 8, MAX_SHAPE_TOKENS = 1 << 20;
+const DEFAULT_REPORT_LOADS = ["50%", "80%", "100%", "seen"];
 
 // shapeTokens is a length as a shape writes it, in tokens.
 function shapeTokens(s) {
@@ -456,7 +457,7 @@ function parseReportLoads(text) {
   const loads = String(text || "").split(",").map(s => s.trim()).filter(s => s);
   if (loads.length > MAX_REPORT_LOADS) return {loads: [], problem: `at most ${MAX_REPORT_LOADS} loads`};
   for (const l of loads) {
-    if (l === "seen") continue;
+    if (l === "seen" || /^seen *[x×*] *[0-9]+(\.[0-9]+)?$/.test(l)) continue;
     const pct = /^([0-9]+(\.[0-9]+)?)%$/.exec(l), rate = /^([0-9]+(\.[0-9]+)?)r\/s$/.exec(l);
     if (pct && Number(pct[1]) > 0 && Number(pct[1]) <= 100) continue;
     if (rate && Number(rate[1]) > 0) continue;
@@ -487,8 +488,16 @@ function reportRequest(o) {
   if (growth !== "") {
     const x = Number(growth);
     if (!(x > 0) || !Number.isFinite(x)) return {body: null, problem: "growth is a factor above 0 (1.5 is 50% more traffic)"};
-    if (x !== 1) body.loadSeenX = x;
+    // Growth is a load of its own, "seen xN": it adds a column and a line, and
+    // never moves the load the fleet is judged at.
+    const grown = `seen x${x}`;
+    if (x !== 1) {
+      body.loads = body.loads || DEFAULT_REPORT_LOADS.slice();
+      if (!body.loads.includes(grown)) body.loads.push(grown);
+      if (body.loads.length > MAX_REPORT_LOADS) return {body: null, problem: `at most ${MAX_REPORT_LOADS} loads, the grown load seen among them`};
+    }
   }
+  if (o.loadStatistic) body.loadStatistic = o.loadStatistic;
   // The report judges below the knee: a headroom of 1 is left to the policy.
   if (o.headroom > 0 && o.headroom < 1) body.headroom = o.headroom;
   if (o.slo) {
@@ -502,7 +511,7 @@ function reportRequest(o) {
 
 // REPORT_MARKS are a summary cell's marks: its class, and the word that says
 // it without colour.
-const REPORT_MARKS = {met: ["met", "ok"], missed: ["missed", "MISS"], saturated: ["saturated", "SAT"],
+const REPORT_MARKS = {met: ["met", "ok"], missed: ["missed", "MISS"], "missed at onset": ["missed", "MISS at onset"], saturated: ["saturated", "SAT"],
   unknown: ["unknown", "?"], "no target": ["notarget", "no SLO"]};
 
 // REFUSAL_WORDS are the refusals a report shows most, in words.
@@ -540,6 +549,7 @@ const REPORT_FLAG_WORDS = {
   RouterHopAssumed: "assumes the router hop",
   CoarseTPOTBucket: "TPOT percentile from coarse buckets",
   HeldLine: "a decode line held from earlier",
+  DecodeOnly: "decode only: prefill is not priced",
   VPLowerBound: "the prefill speed is a lower bound",
 };
 
@@ -666,10 +676,12 @@ function reportView(r) {
     }),
   }));
   const verdicts = shapes.map(s => {
-    const word = (s.verdict || {}).verdict || "NOT JUDGED", text = verdictText(s, load);
-    // rest is the sentence after its verdict, which the page sets in bold.
-    const rest = text.startsWith(word + ": ") ? text.slice(word.length + 2) : text;
-    return {label: s.label, extrapolated: !!s.extrapolated, verdict: word, text, rest};
+    const v = verdictLine(s.verdict, verdictText(s, load));
+    // Growth is its own line beside the verdict, never in its place.
+    const growth = (s.growth || []).map(g => Object.assign(verdictLine(g.verdict, ""),
+      {lead: `with ${g.x}× traffic`, rate: g.rate}));
+    return Object.assign(v, {label: s.label, extrapolated: !!s.extrapolated, whatIf: s.source === "asked",
+      decodeOnly: (s.verdict || {}).scope === "decode only", growth});
   });
   const details = shapes.map(s => {
     const c = s.capacity || {}, u = s.utilization || {decode: {}, prefill: {}};
@@ -687,7 +699,7 @@ function reportView(r) {
       flags: flagSummary(s.flags),
     };
   });
-  return {verdicts, header, rows, details, notes: r.notValidated || [],
+  return {verdicts, header, rows, details, notes: r.notValidated || [], load: loadLine(r.load),
     legendStats: `Each cell is TTFT ${tStat} · TPOT ${pStat}. ${sloLine(slo)}` +
       (floors ? " ≤ marks a TPOT at the decode line's floor: below the fill it was fitted over, so at most that." : "")};
 }
@@ -739,4 +751,28 @@ function plainReason(s) {
 // bottom of the band it was fitted over (BelowFittedBand).
 function isFloor(f) {
   return !!(f && f.value != null && (f.flags || []).includes("BelowFittedBand"));
+}
+
+// verdictLine is one verdict as a line: its word, the sentence after it
+// (the server's summary, else the page's own words from fallback), and both
+// whole.
+function verdictLine(v, fallback) {
+  const word = (v && v.verdict) || "NOT JUDGED";
+  const text = (v && v.summary) || fallback || word;
+  // rest is the sentence after its verdict, which the page sets in bold.
+  const rest = text.startsWith(word + ": ") ? text.slice(word.length + 2) : text;
+  return {verdict: word, text, rest};
+}
+
+// LOAD_STATISTICS are the load statistics a report judges at.
+const LOAD_STATISTICS = ["p95", "mean", "peak"];
+
+// loadLine is the load the source saw, in words: the statistic judged at,
+// and the mean, p95 and peak beside it.
+function loadLine(l) {
+  if (!l || !l.rate || l.rate.value == null) return "No load recorded: " + refusalText(l && l.rate) + ".";
+  const at = l.statistic === "stated" ? `the stated load of ${roundRate(l.rate.value)} r/s`
+    : `the ${l.statistic || "observed"} load of ${roundRate(l.rate.value)} r/s`;
+  const seen = [["mean", l.mean], ["p95", l.p95], ["peak", l.peak]].filter(([, x]) => x != null).map(([k, x]) => `${k} ${roundRate(x)}`);
+  return `Judged at ${at}` + (seen.length ? `; the source saw ${seen.join(", ")} r/s over ${l.cyclesWithTraffic} busy cycles.` : ".");
 }

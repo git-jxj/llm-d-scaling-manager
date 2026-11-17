@@ -286,17 +286,24 @@ kill %1
   1. Add a row per request shape: IL and OL in tokens (`k` for 1024) and,
      optionally, the prefix hit rate. A blank row is the measured shape.
   2. Type the loads, comma separated: `80%` of each shape's knee, `5r/s`, or
-     `seen`. Set **Load seen times** to 1.5 to ask what 50% more traffic does.
-  3. Press **Judge the fleet**.
+     `seen`. Set **Load seen times** to 1.5 to add a column and a line for 50%
+     more traffic; the verdict stays at the load seen.
+  3. Pick the load seen to judge at: its p95 over the window (the default,
+     the busy spells), its mean, or its peak.
+  4. Press **Judge the fleet**.
 
   The answer reads top down:
-  - **Verdicts**, one sentence per shape: UNDER-PROVISIONED (and which role
-    to add), RIGHT-SIZED, or OVER-PROVISIONED (and which role can lose a
-    replica). A typed shape is a what-if: its verdict reads "if all 31.6 r/s
-    were 16k/200 requests".
+  - **The load judged**, and the mean, p95 and peak the source saw.
+  - **Verdicts**, one sentence per shape at that load: UNDER-PROVISIONED
+    (and which role to add), RIGHT-SIZED, or OVER-PROVISIONED (and which
+    role can lose a replica). With a growth set, a second line under each
+    says what the grown traffic does. A typed shape is a what-if, marked "if
+    all traffic were this shape". "decode only" marks a verdict the prefill
+    side could not price.
   - **The matrix**, one row per shape and one column per load. A cell is the
     TTFT and TPOT at your SLO's statistics, at that load's rate, and a word:
-    `ok` every target met, `MISS` a target missed, `SAT` saturated, `?` not
+    `ok` every target met, `MISS` a target missed (`MISS at onset` at the
+    flow-control onset), `SAT` saturated, `?` not
     judged, `no SLO` no target set. The colour repeats the word. A TPOT
     marked `≤` is the decode line's floor: the load sits below the fill
     the line was fitted over, so the TPOT is at most that. A shape

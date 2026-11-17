@@ -367,15 +367,16 @@ func TestPageJudgesTheFleet(t *testing.T) {
 	html, js, scen := pageText(t, "index.html"), pageText(t, "planner.js"), pageText(t, "scenario.js")
 	for _, want := range []string{`id="rshapes"`, `id="rshapeadd"`, `id="rloads"`, `id="rgrowth"`, `id="rrun"`, `id="rmatrix"`,
 		`id="rstatus" class="hint" aria-live="polite"`, `id="rlegend"`, `<span class="rmark met">ok</span>`, `<span class="rmark missed">MISS</span>`,
-		`<span class="rmark saturated">SAT</span>`, `<span class="rmark unknown">?</span>`, `<span class="rmark notarget">no SLO</span>`,
+		`<span class="rmark saturated">SAT</span>`, `<span class="rmark unknown">?</span>`, `<span class="rmark notarget">no SLO</span>`, `<select id="rloadstat"`, `<option value="p95" selected>`,
 		`<summary>How accurate is this?</summary>`} {
 		assert.Contains(t, html, want)
 	}
 	for _, want := range []string{`api("POST", "v1/report", asked.body)`,
 		`reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),`,
-		`loads: el("rloads").value, growth: el("rgrowth").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume})`,
+		`loads: el("rloads").value, growth: el("rgrowth").value, loadStatistic: el("rloadstat").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume})`,
+		`el("rload").textContent = v.load;`, `for (const g of s.growth) {`,
 		"function schedule(ms) {\n  reportStale();", `reportCurrent(token, reportToken())`, `el("rshapes").addEventListener("input", reportStale);`,
-		`el("rloads").oninput = el("rgrowth").oninput = reportStale;`, `el("rverdicts").focus();`, `el("rrun").setAttribute("aria-disabled", "true");`, `(next ? next.querySelector("input") : el("rshapeadd")).focus();`,
+		`el("rloads").oninput = el("rgrowth").oninput = el("rloadstat").onchange = reportStale;`, `el("rverdicts").focus();`, `el("rrun").setAttribute("aria-disabled", "true");`, `(next ? next.querySelector("input") : el("rshapeadd")).focus();`,
 		`reportMissing(status, e.message)`, "This server has no fleet report (POST /v1/report)", `" EXTRAPOLATED"`} {
 		assert.Contains(t, js, want)
 	}
