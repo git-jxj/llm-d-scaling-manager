@@ -17,8 +17,18 @@ import (
 // ParseEngineArgs parses a scale target's container args using the parser
 // appropriate for the given inference engine, returning the shared
 // EngineParams. It dispatches to ParseSGLangArgs for SGLang and ParseVLLMArgs
-// otherwise (the default), so existing vLLM behavior is unchanged.
+// otherwise (the default), so existing vLLM behavior is unchanged. The
+// accelerator is not known here, so the step budget keeps the default for an
+// unsized accelerator; ParseEngineArgsOn takes one.
 func ParseEngineArgs(engine inferenceengine.Engine, scaleTarget scaletarget.ScaleTargetAccessor) EngineParams {
+	return ParseEngineArgsOn(engine, scaleTarget, "")
+}
+
+// ParseEngineArgsOn is ParseEngineArgs for an engine running on accelerator
+// (as nodes name it, e.g. NVIDIA-H100-80GB-HBM3; "" when unknown). For vLLM
+// it reads the release (VLLMVersion) and fills the flags the engine leaves
+// unset with that release's defaults on that accelerator (applyVLLMDefaults).
+func ParseEngineArgsOn(engine inferenceengine.Engine, scaleTarget scaletarget.ScaleTargetAccessor, accelerator string) EngineParams {
 	var params EngineParams
 	if engine == inferenceengine.EngineSGLang {
 		params = ParseSGLangArgs(scaleTarget)
@@ -26,7 +36,12 @@ func ParseEngineArgs(engine inferenceengine.Engine, scaleTarget scaletarget.Scal
 		params = ParseVLLMArgs(scaleTarget)
 	}
 	params.Image = engineImage(engine, scaleTarget)
-	params.DeclaredBatchCap = declaredBatchCap(scaletarget.Annotations(scaleTarget))
+	annots := scaletarget.Annotations(scaleTarget)
+	params.DeclaredBatchCap = declaredBatchCap(annots)
+	if params.Engine == inferenceengine.EngineVLLM {
+		params.VLLMVersion = vllmVersionOf(annots, params.Image)
+		applyVLLMDefaults(&params, accelerator)
+	}
 	return params
 }
 
@@ -102,8 +117,8 @@ type EngineParams struct {
 	WeightDtype  string // default: "auto"
 	Quantization string // default: "" (none)
 
-	GpuMemoryUtilization  float64 // default: 0.9
-	BlockSize             int64   // default: 16 (vLLM block size / SGLang page size)
+	GpuMemoryUtilization  float64 // default: the vLLM release's (vllm_version.go), 0.9 when unknown
+	BlockSize             int64   // default: the vLLM release's (vllm_version.go), 16 when unknown; SGLang page size
 	KvCacheDtype          string  // default: "auto"
 	TensorParallelSize    int     // default: 1
 	NumGpuBlocksOverride  int64   // default: 0 (not set) — vLLM only
@@ -235,6 +250,21 @@ type EngineParams struct {
 	// compared for capacity, where a tag that changes on every rebuild would
 	// refuse every record across a routine rollout.
 	Image string
+
+	// VLLMVersion is the vLLM release the engine runs, from the
+	// llm-d.ai/vllm-version annotation or the image tag (vllmVersionOf); the
+	// zero value is unknown. Set by ParseEngineArgsOn. It is not hashed or
+	// compared itself: what it changes is the defaults of the flags the
+	// engine leaves unset (applyVLLMDefaults), and those are.
+	VLLMVersion VLLMVersion
+
+	// GpuMemoryUtilizationSet and BlockSizeSet are true when the flag was
+	// read, so a release's default never replaces a stated value.
+	// ExtensibleKVCache is vLLM's --enable-extensible-kv-cache: 1 on, -1
+	// off (--no-enable-extensible-kv-cache), 0 not stated.
+	GpuMemoryUtilizationSet bool
+	BlockSizeSet            bool
+	ExtensibleKVCache       int8
 
 	// The layout and features that decide what one replica of a wide-EP or
 	// P/D engine holds and how fast it runs, and that no field above
@@ -503,9 +533,11 @@ var maxNumSeqsKeys = []string{"max_num_seq", "max_num_seqs", "max_running_reques
 // maxNumActiveSeqsKey is the normalised vLLM flag read into MaxNumActiveSeqs.
 const maxNumActiveSeqsKey = "max_num_active_seqs"
 
-// defaultEngineParams returns EngineParams with vLLM defaults
-// as of vLLM v0.8+. If vLLM changes its defaults in a future version,
-// these values should be updated accordingly.
+// defaultEngineParams returns EngineParams with the defaults used for a vLLM
+// release that is not known. The memory share, the block size and the step
+// budget are replaced with the release's own by applyVLLMDefaults, which
+// ParseEngineArgsOn calls once the image and the accelerator are known; see
+// vllm_version.go.
 func defaultEngineParams() EngineParams {
 	return EngineParams{
 		Engine:                inferenceengine.EngineVLLM,
@@ -1045,12 +1077,18 @@ func applyParam(key, value string, params *EngineParams) applyResult {
 			return applyUnusable
 		}
 		params.GpuMemoryUtilization = v
+		params.GpuMemoryUtilizationSet = true
 	case "block_size":
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return applyUnusable
 		}
 		params.BlockSize = v
+		params.BlockSizeSet = true
+	case "enable_extensible_kv_cache":
+		params.ExtensibleKVCache = 1
+	case "no_enable_extensible_kv_cache":
+		params.ExtensibleKVCache = -1
 	case "kv_cache_dtype":
 		if !usableWord(value) {
 			return applyUnusable
@@ -1544,7 +1582,9 @@ func (p *EngineParams) IsCapacityClampCompatible(other *EngineParams) bool {
 //
 // Priority:
 //  1. Explicitly set --max-num-batched-tokens → use that
-//  2. V1 engine with chunked prefill → 8192 (vLLM V1 default since v0.8)
+//  2. V1 engine with chunked prefill → 8192, the default for an accelerator
+//     of 70 GiB or more; applyVLLMDefaults replaces it with the release's
+//     default for the accelerator once both are known
 //  3. V0 engine with chunked prefill → 2048 (vLLM V0 default since v0.6.5)
 //  4. Unchunked prefill → max(MaxModelLen, 2048)
 //  5. Fallback → 2048

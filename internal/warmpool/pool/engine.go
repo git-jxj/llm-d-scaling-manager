@@ -91,10 +91,33 @@ func (e *Engine) Sleep(ctx context.Context, tier Tier) error {
 // 8 ms later -- and a caller that puts a Pod into service on the strength of the
 // call alone has built the race it was trying to avoid.
 func (e *Engine) Wake(ctx context.Context) error {
-	if _, err := e.do(ctx, http.MethodPost, "/wake_up"); err != nil {
+	body, err := e.do(ctx, http.MethodPost, "/wake_up")
+	if err != nil {
 		return err
 	}
+	if err := checkWakeBody(body); err != nil {
+		return fmt.Errorf("engine at %s: %w", e.baseURL, err)
+	}
 	return e.WaitServing(ctx)
+}
+
+// checkWakeBody reads what /wake_up answered. Before vLLM v0.32 the body is
+// empty and a 200 is the whole answer. From v0.32 it is JSON with a status,
+// and a 200 can say "sleeping": part of the engine stayed asleep. /health
+// answers either way, so a wake that left the engine asleep would otherwise
+// go into service and answer 503. A body that is not JSON, or has no status,
+// is the older answer.
+func checkWakeBody(body []byte) error {
+	var answer struct {
+		Status string `json:"status"`
+	}
+	if len(body) == 0 || json.Unmarshal(body, &answer) != nil || answer.Status == "" {
+		return nil
+	}
+	if answer.Status != "awake" {
+		return fmt.Errorf("wake_up answered status %q, not awake", answer.Status)
+	}
+	return nil
 }
 
 // WaitServing blocks until the engine answers /health or ctx ends.

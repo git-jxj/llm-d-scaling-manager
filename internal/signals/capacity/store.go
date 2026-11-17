@@ -205,7 +205,7 @@ func (s *Store) LoadFromScaleTarget(namespace, modelID, variantName, accelerator
 	if scaleTarget == nil {
 		return
 	}
-	params := ParseEngineArgs(inferenceengine.Detect(scaleTarget), scaleTarget)
+	params := ParseEngineArgsOn(inferenceengine.Detect(scaleTarget), scaleTarget, accelerator)
 	// Every rollout the scale target reports, read afresh each cycle (see
 	// Record.RollingOut).
 	rolling := scaletarget.RollingOut(scaleTarget)
