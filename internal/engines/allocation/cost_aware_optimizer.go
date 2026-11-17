@@ -116,6 +116,12 @@ func scaleDownVariantSet(
 	onRemove func(vc variantRecord, n int),
 ) {
 	logger := ctrl.LoggerFrom(ctx)
+	// The cheapest variant the router can reach: a held variant (no
+	// InferencePool selects it) is never the one protected at 1.
+	cheapest := len(sortedVariants) - 1
+	for cheapest >= 0 && sortedVariants[cheapest].HeldUnrouted {
+		cheapest--
+	}
 	for i, vc := range sortedVariants {
 		if vc.PerReplicaCapacity <= 0 {
 			continue
@@ -137,7 +143,7 @@ func scaleDownVariantSet(
 		}
 		// cheapest-at-1: the last (cheapest) variant is protected at 1 only when no
 		// more-expensive variant still holds replicas (llm-d/llm-d-workload-variant-autoscaler#1237's positional rule).
-		if i == len(sortedVariants)-1 && current-n < 1 && !anyHasReplicas(sortedVariants[:i], targets) {
+		if i == cheapest && current-n < 1 && !anyHasReplicas(sortedVariants[:i], targets) {
 			n = current - 1
 		}
 		if n <= 0 {
@@ -176,8 +182,14 @@ func sortVariantsForScaleDown(e NamedAnalyzerResult, roleVCs []variantRecord) []
 }
 
 // anyHasReplicas reports whether any of the given variants has a positive target.
+//
+// A held variant (VariantMetadata.HeldUnrouted) does not count: the router
+// cannot reach it, so its replicas serve none of the model's routed traffic.
 func anyHasReplicas(variants []variantRecord, targets map[string]int) bool {
 	for _, vc := range variants {
+		if vc.HeldUnrouted {
+			continue
+		}
 		if targets[vc.VariantName] > 0 {
 			return true
 		}
@@ -296,6 +308,7 @@ func buildDecisionsWithOptimizer(
 			GPUsAllocated:   target * gpusPerReplica,
 			MinReplicas:     state.MinReplicas,
 			MaxReplicas:     state.MaxReplicas,
+			HeldUnrouted:    vc.HeldUnrouted,
 		}
 		// SetDecisionReason is the single place that sets d.Action (avoids a
 		// redundant Action assignment in the struct literal above).

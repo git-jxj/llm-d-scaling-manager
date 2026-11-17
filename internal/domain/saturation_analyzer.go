@@ -96,6 +96,10 @@ type VariantDecision struct {
 	TargetReplicas         int // Current target (modified by pipeline stages)
 	OriginalTargetReplicas int // Original target before resource limiting (for logging)
 	DesiredReplicas        int // Original desired replicas from optimizer (from CRD status)
+	// HeldUnrouted marks a variant no InferencePool selects in a model a pool
+	// routes (VariantMetadata.HeldUnrouted). Nothing moves it -- not the
+	// scale-to-zero enforcer -- and it never counts as covering the model.
+	HeldUnrouted bool `learnrec:"omitzero"`
 
 	// --- Resource requirements (for resource limiting) ---
 	GPUsPerReplica int // GPUs required per replica

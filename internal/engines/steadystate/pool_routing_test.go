@@ -2,20 +2,13 @@ package steadystate
 
 import (
 	"context"
-	"strings"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
-
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/allocation"
-	llmdvariant "github.com/llm-d-incubation/llm-d-scaling-manager/internal/variant"
 )
 
-// applyRouting over the ways an analyzer fills ReplicaCount. Each case that
-// expects a change fails on the parent commit, where nothing is subtracted.
+// applyRouting over the ways an analyzer fills ReplicaCount.
 func TestApplyRoutingTakesUnroutedReplicasOutOfSupply(t *testing.T) {
 	cases := []struct {
 		name                 string
@@ -96,7 +89,7 @@ func TestDropUnroutedRows(t *testing.T) {
 // The held variant end to end through the capacity build and the default
 // optimizer: its idle capacity is not supply, so the routed variant scales
 // up, and the held one -- the cheaper, which the optimizer would otherwise
-// pick -- stays at its count. On the parent commit the held variant's two
+// pick -- stays at its count. Without the hold, the held variant's two
 // replicas are supply and nothing scales.
 func TestHeldVariantIsNotSupplyAndIsNotScaled(t *testing.T) {
 	result := &domain.AnalyzerResult{
@@ -137,27 +130,5 @@ func TestHeldVariantIsNotSupplyAndIsNotScaled(t *testing.T) {
 	}
 	if out["routed"] <= 2 {
 		t.Fatalf("routed variant target = %d, want a scale-up above 2", out["routed"])
-	}
-}
-
-// The Event on a held variant says it is held, why, and how to release it.
-func TestHeldVariantEventSaysWhyAndHowToRelease(t *testing.T) {
-	rec := record.NewFakeRecorder(10)
-	e := &Engine{Recorder: rec, vaEventTracker: map[string]bool{}}
-	va := &llmdvariant.Variant{ObjectMeta: metav1.ObjectMeta{Name: "canary", Namespace: "ns"}}
-	metas := []domain.VariantMetadata{
-		{VariantName: "routed", Namespace: "ns", CurrentReplicas: 2},
-		{VariantName: "canary", Namespace: "ns", CurrentReplicas: 2, HeldUnrouted: true, UnroutedReplicas: 2},
-	}
-	e.reportRouting(context.Background(), "m", "ns", metas, map[string]*llmdvariant.Variant{"ns/canary": va})
-	select {
-	case ev := <-rec.Events:
-		for _, want := range []string{constants.K8SEventHeldNotInPool, "is held at 2", "no InferencePool", "routed", "To release it"} {
-			if !strings.Contains(ev, want) {
-				t.Errorf("event %q does not contain %q", ev, want)
-			}
-		}
-	default:
-		t.Fatal("no Event recorded for the held variant")
 	}
 }

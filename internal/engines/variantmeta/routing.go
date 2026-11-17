@@ -2,7 +2,9 @@ package variantmeta
 
 import (
 	"context"
+	"maps"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -24,25 +26,41 @@ import (
 // a read that failed.
 type PoolLister func(ctx context.Context, namespace string) ([]map[string]string, error)
 
+// ModelRouting is what Route found for one model in one namespace.
+type ModelRouting struct {
+	Namespace, ModelID string
+	// Pools is how many InferencePools the namespace has; 0 also when the
+	// kind is not served.
+	Pools int
+	// Routed is true when a pool selects at least one variant of the model.
+	Routed bool
+	// Known is false when the pools, a scale target or a variant's Pods could
+	// not be read, so whether the model is routed was not established.
+	Known bool
+}
+
 // Route marks, in place, the replicas of each variant that no InferencePool
-// selects (docs/proposals/pool-selected-supply.md).
+// selects (docs/proposals/pool-selected-supply.md), and reports per model what
+// it found.
 //
-// A model counts as routed in a namespace when some pool there selects the pod
-// template of at least one of its variants. For a routed model:
+// A variant is selected when a pool selects its pod template, with the labels
+// its controller adds at creation (an LWS leader's set name and worker index;
+// a Deployment's pod-template-hash matches any value), or any of its live
+// Pods. A model counts as routed when some variant is selected. For a routed
+// model:
 //
-//   - a variant whose template no pool selects is HeldUnrouted: the router
-//     sends it nothing, whatever its size, so it is held rather than sized;
-//   - in a variant whose template is selected, a live Pod whose own labels are
-//     not (a relabelled Pod) is counted in UnroutedReplicas and named in
-//     UnroutedPods.
+//   - a variant that is not selected is HeldUnrouted: the router sends it
+//     nothing, whatever its size, so it is held rather than sized;
+//   - in a selected variant, a live Pod whose own labels no pool selects (a
+//     relabelled Pod) is counted in UnroutedReplicas and named in UnroutedPods.
 //
-// Everything else is left as Discover set it -- which is supply counted as
-// before -- in three cases: the namespace has no pool (or the kind is not
-// served), no pool selects any variant of the model (it is served some other
-// way), or the pools could not be read. The last is counted
-// (llmsm_metrics_collection_errors_total, query_type=pool_list) and logged:
-// a refused read is not an absent pool, and treating it as one would hold
-// every variant, while treating it as "nothing selected" would zero supply.
+// RoutingKnown is set on every variant whose verdict was established,
+// including "nothing to exclude". It stays false when a read failed: the pools
+// (counted, llmsm_metrics_collection_errors_total{query_type="pool_list"}), the
+// variant's scale target, or its Pods where they decide the verdict. The
+// caller decides what an unknown verdict means (the steady-state engine keeps
+// the last known one for a bounded time); Route never turns a failed read into
+// a hold or a release.
 func Route(
 	ctx context.Context,
 	metas []domain.VariantMetadata,
@@ -50,9 +68,9 @@ func Route(
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	k8sClient client.Client,
 	pools PoolLister,
-) {
+) []ModelRouting {
 	if pools == nil || len(metas) == 0 {
-		return
+		return nil
 	}
 	logger := ctrl.LoggerFrom(ctx)
 
@@ -79,124 +97,216 @@ func Route(
 		g.idx = append(g.idx, i)
 	}
 
-	selectorsByNS := map[string][]map[string]string{}
-	readByNS := map[string]bool{}
+	out := make([]ModelRouting, 0, len(groups))
 	for _, g := range groups {
-		if _, done := readByNS[g.namespace]; !done {
-			sels, err := pools(ctx, g.namespace)
-			switch {
-			case err == nil:
-				readByNS[g.namespace] = true
-				selectorsByNS[g.namespace] = sels
-			case meta.IsNoMatchError(err):
-				// The kind is not served, so no pool can exist: no router,
-				// nothing to check, and nothing failed.
-				readByNS[g.namespace] = true
-			default:
-				readByNS[g.namespace] = false
-				reason := poolListErrorReason(err)
-				metrics.IncMetricsCollectionErrors(constants.QueryTypePoolList, reason)
-				logger.V(logging.DEFAULT).Info(
-					"InferencePool listing failed; supply is counted without checking which replicas the router can reach",
-					"namespace", g.namespace, "reason", reason, "error", err.Error())
-			}
+		res := ModelRouting{Namespace: g.namespace, ModelID: g.model}
+		sels, err := pools(ctx, g.namespace)
+		switch {
+		case err == nil:
+		case meta.IsNoMatchError(err):
+			// The kind is not served, so no pool can exist: no router,
+			// nothing to check, and nothing failed.
+			sels = nil
+		default:
+			reason := poolListErrorReason(err)
+			metrics.IncMetricsCollectionErrors(constants.QueryTypePoolList, reason)
+			logger.V(logging.DEFAULT).Info(
+				"InferencePool listing failed; this cycle's routing verdict is unknown",
+				"namespace", g.namespace, "model", g.model, "reason", reason, "error", err.Error())
+			out = append(out, res)
+			continue
 		}
-		sels := selectorsByNS[g.namespace]
-		if !readByNS[g.namespace] || len(sels) == 0 {
+		res.Pools = len(sels)
+		if len(sels) == 0 {
+			res.Known = true
+			for _, i := range g.idx {
+				metas[i].RoutingKnown = true
+			}
+			out = append(out, res)
 			continue
 		}
 
-		selected := make([]bool, len(g.idx))
-		templates := make([]scaletarget.ScaleTargetAccessor, len(g.idx))
-		routed := false
+		type verdict struct {
+			target   scaletarget.ScaleTargetAccessor
+			pods     []corev1.Pod
+			podsRead bool
+			selected bool
+			unknown  bool // whether it is selected could not be established
+		}
+		vs := make([]verdict, len(g.idx))
 		for j, i := range g.idx {
 			va := vaByKey[metas[i].Namespace+"/"+metas[i].VariantName]
 			if va == nil {
+				vs[j].unknown = true
 				continue
 			}
 			st, ok := resolveScaleTarget(ctx, va, scaleTargets, k8sClient)
 			if !ok {
+				vs[j].unknown = true
 				continue
 			}
-			templates[j] = st
-			if tpl := st.GetLeaderPodTemplateSpec(); tpl != nil && poolutil.AnySelects(sels, tpl.Labels) {
-				selected[j] = true
-				routed = true
+			vs[j].target = st
+			vs[j].pods, vs[j].podsRead = targetPods(ctx, k8sClient, metas[i].Namespace, metas[i].VariantName, st)
+			switch {
+			case templateSelected(st, sels):
+				vs[j].selected = true
+			case !vs[j].podsRead:
+				vs[j].unknown = true
+			default:
+				for p := range leaderPods(st, vs[j].pods) {
+					if poolutil.AnySelects(sels, p.Labels) {
+						vs[j].selected = true
+						break
+					}
+				}
 			}
 		}
-		if !routed {
-			logger.V(logging.DEBUG).Info(
-				"no InferencePool selects any variant of this model; supply is counted as before",
-				"namespace", g.namespace, "model", g.model)
+		anyUnknown := false
+		for _, v := range vs {
+			res.Routed = res.Routed || v.selected
+			anyUnknown = anyUnknown || v.unknown
+		}
+		if !res.Routed {
+			// Not routed -- unless a variant that could not be read is the
+			// one a pool selects, in which case nothing is known.
+			res.Known = !anyUnknown
+			for _, i := range g.idx {
+				metas[i].RoutingKnown = res.Known
+			}
+			out = append(out, res)
 			continue
 		}
+		res.Known = true
 		for j, i := range g.idx {
-			st := templates[j]
-			if st == nil {
+			v := vs[j]
+			switch {
+			case v.unknown:
+				res.Known = false
+			case !v.selected:
+				markHeld(&metas[i], v.target, v.pods)
+				metas[i].RoutingKnown = true
+			case !v.podsRead:
+				// Selected, but which of its Pods the pool reaches is unknown.
+				res.Known = false
+			default:
+				markUnroutedPods(&metas[i], v.target, v.pods, sels)
+				metas[i].RoutingKnown = true
+			}
+		}
+		out = append(out, res)
+	}
+	return out
+}
+
+// targetPods lists the scale target's own Pods, by ownership and not by its
+// template's labels: a Pod relabelled out of the pool no longer carries them
+// all, and two variants of one model routinely share the rest. The cached
+// client serves it, as it serves Discover's lists.
+func targetPods(ctx context.Context, k8sClient client.Client, namespace, variant string,
+	st scaletarget.ScaleTargetAccessor) ([]corev1.Pod, bool) {
+	if k8sClient == nil {
+		return nil, false
+	}
+	var items []corev1.Pod
+	var err error
+	if sel := scaletarget.LabelSelector(st); sel != nil {
+		items, err = ListDeploymentPods(ctx, k8sClient, namespace, st.GetName(), sel)
+	} else {
+		items, err = ListVariantPods(ctx, k8sClient, namespace, st)
+	}
+	if err != nil {
+		ctrl.LoggerFrom(ctx).V(logging.DEFAULT).Info(
+			"Could not list a variant's pods to check which the router can reach",
+			"namespace", namespace, "variant", variant, "error", err.Error())
+		return nil, false
+	}
+	return items, true
+}
+
+// templateSelected reports whether a pool selects the target's pod template,
+// with the labels its controller adds when it creates a Pod: an LWS leader
+// carries the set name and worker index 0, and a Deployment's
+// pod-template-hash is known only per ReplicaSet, so a selector on it is taken
+// to match.
+func templateSelected(st scaletarget.ScaleTargetAccessor, sels []map[string]string) bool {
+	tpl := st.GetLeaderPodTemplateSpec()
+	labels := map[string]string{}
+	if tpl != nil {
+		maps.Copy(labels, tpl.Labels)
+	}
+	lws := scaletarget.IsLeaderWorkerSet(st)
+	if lws {
+		labels[lwsv1.SetNameLabelKey] = st.GetName()
+		labels[lwsv1.WorkerIndexLabelKey] = "0"
+	}
+	for _, sel := range sels {
+		match := true
+		for k, v := range sel {
+			if !lws && k == appsv1.DefaultDeploymentUniqueLabelKey {
 				continue
 			}
-			if !selected[j] {
-				metas[i].HeldUnrouted = true
-				metas[i].UnroutedReplicas = metas[i].CurrentReplicas
-				metas[i].UnroutedReady = metas[i].ReadyReplicas
+			if labels[k] != v {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// leaderPods yields the live Pods that stand for a replica: every Pod of a
+// Deployment, and the leader (worker index 0) of each LWS group, through which
+// the router reaches the group.
+func leaderPods(st scaletarget.ScaleTargetAccessor, pods []corev1.Pod) func(func(*corev1.Pod) bool) {
+	multiPod := st.GetGroupSize() > 1
+	return func(yield func(*corev1.Pod) bool) {
+		for i := range pods {
+			p := &pods[i]
+			if p.DeletionTimestamp != nil {
 				continue
 			}
-			markUnroutedPods(ctx, &metas[i], st, k8sClient, sels)
+			if multiPod && p.Labels[lwsv1.WorkerIndexLabelKey] != "0" {
+				continue
+			}
+			if !yield(p) {
+				return
+			}
 		}
 	}
 }
 
-// markUnroutedPods counts the live Pods of a selected variant that no pool
-// selects. A listing that fails leaves the variant as it was.
-func markUnroutedPods(
-	ctx context.Context,
-	m *domain.VariantMetadata,
-	st scaletarget.ScaleTargetAccessor,
-	k8sClient client.Client,
-	sels []map[string]string,
-) {
-	if k8sClient == nil {
-		return
+// markHeld marks a variant no pool selects, counting its replicas the way a
+// selected variant's unselected ones are counted: live leaders that are Ready
+// or starting, stuck ones left to StuckReplicas.
+func markHeld(m *domain.VariantMetadata, st scaletarget.ScaleTargetAccessor, pods []corev1.Pod) {
+	m.HeldUnrouted = true
+	for p := range leaderPods(st, pods) {
+		countUnrouted(m, p)
 	}
-	// The scale target's own Pods, by ownership and not by the template's
-	// labels: a Pod relabelled out of the pool no longer carries them all, and
-	// two variants of one model routinely share the rest.
-	var items []corev1.Pod
-	var err error
-	if sel := scaletarget.LabelSelector(st); sel != nil {
-		items, err = ListDeploymentPods(ctx, k8sClient, m.Namespace, st.GetName(), sel)
-	} else {
-		items, err = ListVariantPods(ctx, k8sClient, m.Namespace, st)
-	}
-	if err != nil {
-		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info(
-			"Could not list a variant's pods to check which the router can reach",
-			"namespace", m.Namespace, "variant", m.VariantName, "error", err.Error())
-		return
-	}
+}
 
-	multiPod := st.GetGroupSize() > 1
-	for i := range items {
-		p := &items[i]
-		if p.DeletionTimestamp != nil {
-			continue
-		}
-		// One replica of a LeaderWorkerSet is one group, counted by its
-		// leader; the router reaches the group through it.
-		if multiPod && p.Labels[lwsv1.WorkerIndexLabelKey] != "0" {
-			continue
-		}
+// markUnroutedPods counts the live Pods of a selected variant that no pool
+// selects.
+func markUnroutedPods(m *domain.VariantMetadata, st scaletarget.ScaleTargetAccessor, pods []corev1.Pod, sels []map[string]string) {
+	for p := range leaderPods(st, pods) {
 		if poolutil.AnySelects(sels, p.Labels) {
 			continue
 		}
-		m.UnroutedPods = append(m.UnroutedPods, p.Name)
-		switch {
-		case PodReady(p):
-			m.UnroutedReady++
-			m.UnroutedReplicas++
-		case podStarting(p):
-			m.UnroutedReplicas++
-		}
+		countUnrouted(m, p)
+	}
+}
+
+func countUnrouted(m *domain.VariantMetadata, p *corev1.Pod) {
+	m.UnroutedPods = append(m.UnroutedPods, p.Name)
+	switch {
+	case PodReady(p):
+		m.UnroutedReady++
+		m.UnroutedReplicas++
+	case podStarting(p):
+		m.UnroutedReplicas++
 	}
 }
 

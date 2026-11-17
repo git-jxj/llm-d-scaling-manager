@@ -85,11 +85,15 @@ type Engine struct {
 	// Key is namespace/name from utils.GetNamespacedKey.
 	vaEventTracker map[string]bool
 
-	// routing is what each variant last reported about the replicas no
-	// InferencePool selects (pool_routing.go), keyed namespace/variant, so a
-	// change is logged once.
-	routingMu sync.Mutex
-	routing   map[string]routingState
+	// routing is each variant's last known routing verdict (pool_routing.go),
+	// keyed namespace/variant: kept for routingVerdictTTL across a failed read,
+	// and compared so a change is logged once. modelUnselected marks models a
+	// namespace's pools do not select, for the same once-per-change log.
+	// poolReads is the cycle's InferencePool listing per namespace.
+	routingMu       sync.Mutex
+	routing         map[string]routingState
+	modelUnselected map[string]bool
+	poolReads       map[string]poolRead
 
 	// policies reports which scaling policy tier each model resolved to, and the
 	// two ways that resolution goes wrong silently — an unknown tier name, and one
@@ -919,6 +923,8 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 
 	// Initialize vaEventTracker for this optimize cycle
 	e.vaEventTracker = make(map[string]bool)
+	// The InferencePools are read once per namespace per cycle.
+	e.resetPoolReads()
 
 	// Group VAs by model for per-model capacity analysis
 	modelGroups := utils.GroupVariantsByModel(activeVAs)
@@ -2261,9 +2267,8 @@ func (e *Engine) prepareModelData(
 	// Supply is what the router can reach: replicas no InferencePool selects
 	// are marked, their rows dropped here, and their count taken out of supply
 	// after the analyzers (applyRouting). A held variant is not sized.
-	variantmeta.Route(ctx, variantMetadata, modelVAs, scaleTargets, k8sClient, e.poolLister())
-	replicaMetrics = dropUnroutedRows(replicaMetrics, variantMetadata)
-	e.reportRouting(ctx, modelID, namespace, variantMetadata, variants)
+	replicaMetrics = e.routeModel(ctx, modelID, namespace, variantMetadata, modelVAs, variants,
+		scaleTargets, replicaMetrics, k8sClient, time.Now())
 	variantStates := make([]domain.VariantReplicaState, 0, len(variantMetadata))
 	for _, m := range variantMetadata {
 		variantStates = append(variantStates, m.ToReplicaState())

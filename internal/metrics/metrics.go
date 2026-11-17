@@ -1170,18 +1170,23 @@ func SetUnmeasuredQueue(namespace, modelName string, queued int) {
 	unmeasuredQueue.With(labels).Set(float64(queued))
 }
 
+// unroutedPublished is, per namespace/model, the variants llmsm_unrouted_replicas
+// last published a series for, so SetUnroutedReplicas deletes only the series
+// that went away rather than every one before setting them again.
+var (
+	unroutedMu        sync.Mutex
+	unroutedPublished = map[string]map[string]bool{}
+)
+
 // SetUnroutedReplicas replaces a model's llmsm_unrouted_replicas series with
 // the given per-variant counts. Variants absent from counts lose their series,
-// so a variant that left the model or became selected does not linger.
+// so a variant that left the model or became selected does not linger; the
+// others are set in place, so a scrape never sees them missing.
 func SetUnroutedReplicas(namespace, modelName string, counts map[string]int) {
 	if unroutedReplicas == nil {
 		return
 	}
-	unroutedReplicas.DeletePartialMatch(prometheus.Labels{
-		constants.LabelNamespace: namespace,
-		constants.LabelModelName: modelName,
-	})
-	for variant, n := range counts {
+	labelsFor := func(variant string) prometheus.Labels {
 		labels := prometheus.Labels{
 			constants.LabelNamespace:   namespace,
 			constants.LabelModelName:   modelName,
@@ -1190,8 +1195,26 @@ func SetUnroutedReplicas(namespace, modelName string, counts map[string]int) {
 		if controllerInstance != "" {
 			labels[constants.LabelControllerInstance] = controllerInstance
 		}
-		unroutedReplicas.With(labels).Set(float64(n))
+		return labels
 	}
+	key := namespace + "/" + modelName
+	unroutedMu.Lock()
+	defer unroutedMu.Unlock()
+	for variant := range unroutedPublished[key] {
+		if _, keep := counts[variant]; !keep {
+			unroutedReplicas.Delete(labelsFor(variant))
+		}
+	}
+	if len(counts) == 0 {
+		delete(unroutedPublished, key)
+		return
+	}
+	published := make(map[string]bool, len(counts))
+	for variant, n := range counts {
+		unroutedReplicas.With(labelsFor(variant)).Set(float64(n))
+		published[variant] = true
+	}
+	unroutedPublished[key] = published
 }
 
 // SetVariantAtMaxReplicas records whether a variant's target is sitting on its

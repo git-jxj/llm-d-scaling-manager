@@ -146,6 +146,10 @@ type VariantMetadata struct {
 	// is out of the router's reach, so it contributes no supply and no demand
 	// and is held at its current replica count until a pool selects it.
 	HeldUnrouted bool `learnrec:"omitzero"`
+	// RoutingKnown is set when the fields above were established this cycle,
+	// "nothing to exclude" included. False when a read they depend on failed;
+	// the steady-state engine then keeps its last verdict for a bounded time.
+	RoutingKnown bool `learnrec:"omitzero"`
 }
 
 // ToReplicaState projects the metadata onto the VariantReplicaState the analyzers

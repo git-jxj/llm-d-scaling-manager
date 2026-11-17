@@ -129,6 +129,43 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.11.2 to v0.12.0
+
+#### Supply counts only replicas an InferencePool selects
+
+The router sends traffic only to Pods its InferencePool selects. From v0.12.0
+the scaling manager counts only those Pods as supply. In a model that a pool
+selects:
+
+- a Pod no pool selects (a relabelled replica) is no longer counted;
+- a variant whose pod template no pool selects is **held**: it is not
+  counted, and nothing scales it, up or down, scale-to-zero included. It
+  keeps the replica count it had.
+
+**A canary or role served outside the pool stops autoscaling.** If you route
+traffic to a variant some other way (an HTTPRoute to a plain Service), it is
+now held at its replica count.
+
+Before you upgrade, check that every variant you want scaled is selected by a
+pool. List the pools' selectors and compare them with each workload's pod
+template labels:
+
+```bash
+kubectl get inferencepools -n <namespace> -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.selector.matchLabels}{"\n"}{end}'
+kubectl get deployments,leaderworkersets -n <namespace> -o custom-columns=NAME:.metadata.name,LABELS:.spec.template.metadata.labels
+```
+
+After the upgrade, a held variant has a `HeldNotInInferencePool` Warning
+Event, and `llmsm_unrouted_replicas` is non-zero for it.
+
+To release a held variant, add labels to its pod template that a pool
+selects, or create a pool that selects it.
+
+To keep the counting from before v0.12.0 for every model, set
+`LLMSM_POOL_SELECTED_SUPPLY=false` on the controller, or
+`LLMSM_POOL_SELECTED_SUPPLY: "false"` in the settings ConfigMap, and restart
+the controller ([configuration](configuration-advanced.md)).
+
 ### Upgrading from v0.11.1 to v0.11.2
 
 The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.

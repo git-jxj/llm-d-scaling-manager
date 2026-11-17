@@ -1,7 +1,8 @@
 # Count only the replicas the router can reach
 
 **Status:** built. The decision on a variant outside every pool is final:
-it is excluded and held.
+it is excluded and held. Hold means the controller never moves the variant
+and never counts it.
 
 The router sends traffic only to Pods its InferencePool selects. The scaling
 manager used to count supply from the scale target and from every Pod that
@@ -24,84 +25,115 @@ Supply is `ReplicaCount x PerReplicaCapacity`; anticipated supply adds
 
 ## What the scaling manager does now
 
-1. **Reads the pools each cycle.** One uncached `List` of InferencePools per
-   namespace, in the configured group (`POOL_GROUP`), from
-   `variantmeta.Route` (`internal/engines/variantmeta/routing.go`). Not the
-   datastore: its informer cannot tell "no pool" from "could not read".
-2. **Decides per model whether it is routed.** A model is routed when some
-   pool in its namespace selects the pod template of at least one of its
-   variants.
-3. **Holds a variant no pool selects.** In a routed model, a variant whose pod
-   template no pool selects (a canary with its own ScaledObject, a role whose
-   labels are wrong) gets no router traffic at any size. Its rows are dropped,
-   so it adds no demand and no supply, and its per-replica capacity is set to
-   0, which every optimizer reads as "do not size this variant": it stays at
-   its current replica count. Sizing it instead would add replicas the router
-   never reaches, without end if it is the cheapest variant.
-4. **Drops single Pods no pool selects.** In a variant whose template is
-   selected, a live Pod whose own labels are not (a relabelled Pod) is found
-   among the scale target's own Pods (by ownership, not by label). Its rows
-   are dropped before the analyzers run, and after them
-   (`applyRouting`, `internal/engines/steadystate/pool_routing.go`) it is
-   taken out of `ReplicaCount` when that came from status, and out of
-   `PendingReplicas`, where it would otherwise come back through
-   `CurrentReplicas - ownReplicas`. A stuck Pod is already subtracted as stuck
-   and is not subtracted again.
+1. **Reads the pools once per namespace per cycle.** An uncached `List` of
+   InferencePools in the configured group (`POOL_GROUP`), shared by every
+   model of the namespace (`Engine.poolLister`). Not the datastore: its
+   informer cannot tell "no pool" from "could not read".
+2. **Decides which variants are selected.** A variant is selected when a pool
+   selects its pod template, with the labels its controller adds at creation
+   (an LWS leader's set name and worker index 0; a selector on a Deployment's
+   `pod-template-hash` is taken to match), or any of its live Pods (labels an
+   FMA or other controller adds). Its Pods are the scale target's own, found
+   by ownership. A model is routed when some variant is selected.
+3. **Holds a variant no pool selects.** In a routed model, a variant that is
+   not selected (a canary with its own ScaledObject, a role whose labels are
+   wrong) gets no router traffic at any size. It is held:
+   - its rows are dropped, so it adds no demand and no supply;
+   - its per-replica capacity is 0, so the optimizers leave it at its count;
+   - the scale-to-zero enforcer does not park it, and the minimum-replica
+     floor and the keep-the-cheapest-at-1 rule do not count it, so the
+     routed variants keep their minimum;
+   - scale from zero neither counts it as the model's running decode nor
+     wakes it, so a model whose routed variants are all at zero still wakes
+     (`decision.DefaultHeld`).
+4. **Drops single Pods no pool selects.** In a selected variant, a live Pod
+   whose own labels are not selected (a relabelled Pod) has its rows dropped
+   before the analyzers run. After them (`applyRouting`) it is taken out of
+   `ReplicaCount` when that came from status, and out of `PendingReplicas`,
+   where it would otherwise come back through `CurrentReplicas -
+   ownReplicas`. A stuck Pod is already subtracted as stuck and is not
+   subtracted again. An LWS group counts once, by its leader.
 5. **Keeps targets in scale-target units.** `CurrentReplicas` is not changed,
    so a scale-up of one still adds one Pod, and that Pod is selected.
 
+## A read that fails
+
+If the pools, a variant's scale target or its Pods cannot be read, Route
+establishes no verdict for the variants that read decides. The engine keeps
+each variant's last verdict for **5 minutes** (`routingVerdictTTL`, ten cycles
+at the default interval): a held variant stays held and is not sized, and
+unselected Pods stay excluded. After 5 minutes without a good read, the
+verdict lapses and every replica is counted as before, the same as an install
+whose pools were never readable. A lapse is logged once; it is not a release.
+A variant never seen before is counted as before at once.
+
+A failed pool listing is counted in
+`llmsm_metrics_collection_errors_total{query_type="pool_list"}` (reason
+`forbidden`, `unavailable` or `other`). Forbidden is not absent. A pool kind
+the API server does not serve is no pool, not a failure.
+
 ## How an operator sees it, and releases a held variant
 
-- `llmsm_unrouted_replicas{namespace, model_name, variant_name}`: replicas
-  not counted as supply. For a held variant, all of them.
-- A `HeldNotInInferencePool` Warning Event on the held variant, every cycle it
-  is held: it is held at N replicas, no InferencePool selects its pod template
-  while the named variants are routed, so the router sends it nothing.
-- One log line when a variant becomes held (`variant held: no InferencePool
-  selects its pod template`), one when it is released, and one whenever the
-  number of unselected Pods changes.
+- `llmsm_unrouted_replicas{namespace, model_name, variant_name}`: replicas not
+  counted as supply. For a held variant, all its live, Ready or starting
+  replicas, counted as for a selected variant's unselected Pods.
+- A `HeldNotInInferencePool` Warning Event on the held variant: recorded when
+  it becomes held and every 30 minutes after, outside the one-Event-per-cycle
+  budget the scaling Events use. It says the variant is held, why, and how to
+  release it.
+- One log line when a variant becomes held, when it is released, when the
+  number of unselected Pods changes, and when a namespace has pools but none
+  selects a model (the router may have no endpoint for it).
 
 **To release a held variant**, add labels to its pod template that an
 InferencePool in the namespace selects, or create an InferencePool that
 selects it. The next cycle counts it and sizes it again.
 
+**To turn the feature off** for every model, set
+`LLMSM_POOL_SELECTED_SUPPLY=false` (environment, or the settings ConfigMap
+key of the same name; read at start). Off, every replica counts and nothing
+is held, as before v0.12.0.
+
 ## Edge cases
 
-- **Pools cannot be read** (Forbidden, API error). Supply is counted as before,
-  never as zero, and nothing is held. The failure is counted in
-  `llmsm_metrics_collection_errors_total{query_type="pool_list"}` (reason
-  `forbidden`, `unavailable` or `other`) and logged. Forbidden is not absent.
-- **The pool kind is not served, or the namespace has no pool.** As before:
-  no router, nothing to check, nothing counted as an error.
-- **A model no pool selects.** As before: it is served without a router, or
-  every variant is mislabelled, and the two cannot be told apart.
+- **The namespace has no pool, or the pool kind is not served.** As before.
+- **A model no pool selects.** As before, with the log line above: it is
+  served without a router, or every variant is mislabelled.
 - **A Pod the pool selects that the target does not own.** Unchanged: it
   resolves to no scale target and is skipped as a mapping miss. Pool
   membership never adds supply.
 - **P/D roles.** llm-d selects both roles with one pool (on `llm-d.ai/guide`)
   and splits them by `llm-d.ai/role` in the picker. Membership is checked
-  against the pool selector only, so a role move does not change supply.
-- **LeaderWorkerSet.** A group counts once, by its leader Pod.
+  against the pool selector only, so a role move does not change supply. A
+  role the pool does not select is held: a prefill reached through a fixed
+  Service instead of the pool does not scale with decode.
 - **Warm pool.** A lent Pod carries the pool's selector labels by design, so
-  it stays selected; it is demand and not supply, as before. Bridges lent to a
-  held variant are dropped with its rows.
-- **Not covered yet.** Scale from zero still reads the scale target's ready
-  count (`internal/engines/scalefromzero/wake_signal.go:251`), the warm pool's
-  return rule reads rows before they are filtered, and an external analyzer
-  sums its own PromQL series, which never pass through this filter. Each is a
-  follow-up.
+  it stays selected; it is demand and not supply, as before. A held variant is
+  never short, so the pool does not lend to it.
+- **Not covered yet.** The warm pool's return rule reads rows before they are
+  filtered, and an external analyzer sums its own PromQL series, which never
+  pass through this filter. Both are follow-ups.
 
 ## Tests
 
-- `internal/engines/variantmeta/routing_test.go`: the pool selects every Pod,
-  a subset, none of a variant (held), cannot be read, does not exist, the kind
-  is not served, and selects another model only; plus starting and stuck Pods.
-- `internal/engines/steadystate/pool_routing_test.go`: the supply arithmetic,
-  the dropped rows, a held variant through the capacity build and the default
-  optimizer (it stays at its count while the routed variant scales up), and the
-  Event text.
+- `internal/engines/variantmeta/routing_test.go`: pools select every Pod, a
+  subset, none of a variant (held); unreadable, absent, not served, another
+  model's pool; a selector on a Deployment-added label; selection by live
+  Pods; a failed Pod list (unknown, not held); LWS leaders only; starting and
+  stuck Pods; the `pool_list` counter by reason.
+- `internal/engines/steadystate/pool_routing_test.go` and
+  `pool_routing_cycles_test.go`: the supply arithmetic, the dropped rows, a
+  held variant through the capacity build and the optimizer, hold across a
+  failed read and its lapse, the Event cadence, one pool listing per
+  namespace per cycle, and the feature off.
+- `internal/engines/allocation/held_variant_test.go`: scale-to-zero leaves a
+  held variant at its count; the minimum-replica floor and cheapest-at-1 rule
+  skip it.
+- `internal/engines/scalefromzero/held_test.go`: a held variant neither covers
+  its model nor wakes.
+- `internal/utils/pool/selectors_test.go`: both pool API groups, an unknown
+  group, and the selector match (an empty selector matches every Pod).
 
-With the new logic switched off, 4 of 10 variantmeta results and 8 of 9
-steadystate results fail; the ones that pass are the cases that must not
-change. The steady-state envtest suite installs no InferencePool CRD, so unit
-tests carry this path.
+The negative control turns each new rule back into what it replaced, with the
+tests left as they are, and runs them. The PR lists the exact changes and the
+tests that fail.

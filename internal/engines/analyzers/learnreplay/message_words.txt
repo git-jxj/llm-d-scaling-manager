@@ -190,6 +190,7 @@ ImagePullBackOff
 ImbalanceNotSustained
 Inf
 InferencePool
+InferencePools
 Inferencepool
 Intel
 Invalid
@@ -218,6 +219,7 @@ LEARNED_STATE_VARIANT_TIMEOUT
 LLMSM_LIMITED_MODE
 LLMSM_LIMITER
 LLMSM_PASSIVE
+LLMSM_POOL_SELECTED_SUPPLY
 LLMSM_QUOTAS
 LLMSM_QUOTA_KUEUE
 LLMSM_QUOTA_KUEUE_BORROW
@@ -1102,6 +1104,7 @@ exceeds
 exclude
 excluded
 exclusive
+exist
 exists
 expect
 expected
@@ -1498,6 +1501,7 @@ keep
 keeping
 keeps
 kept
+keptFor
 keptTokens
 key
 keyOutputTokens
@@ -1570,6 +1574,7 @@ large
 larger
 last
 lastAccelerator
+lastKnown
 later
 latest
 launcher
@@ -2430,6 +2435,7 @@ routed
 routedVariants
 router
 routerMeasured
+routing
 row
 rows
 rows-instant-kv
@@ -2938,6 +2944,7 @@ ttft.target
 ttftExcluded
 ttftRefused
 turn
+turns
 twice
 two
 type
@@ -2957,7 +2964,6 @@ undispatched
 undone
 uneven-ranks
 unexported
-unhold
 unit
 unknown
 unknownPeaks
@@ -3032,6 +3038,7 @@ variantTimeout
 variants
 vcs.revision
 vendor
+verdict
 verified
 version
 versions
