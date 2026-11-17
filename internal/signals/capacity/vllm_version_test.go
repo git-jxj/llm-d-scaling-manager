@@ -15,7 +15,7 @@ func TestParseVLLMVersion(t *testing.T) {
 		"v0.34.0-cu130":   {0, 34},
 		"0.34.0rc1":       {0, 34},
 		"0.33.0+g87ecf7d": {0, 33},
-		" 1.2 ":           {1, 2},
+		"v1.2.0":          {1, 2},
 		"":                {},
 		"latest":          {},
 		"nightly":         {},

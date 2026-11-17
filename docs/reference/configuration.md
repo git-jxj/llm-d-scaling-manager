@@ -315,7 +315,7 @@ first measurement, so a figure of the right order is enough.
 | `defaultOutputTokens` | Trigger | built in: 512 | Tokens one request generates, until a replica has completed one. Set it for long generations | live |
 | `variantCost` | Trigger | `10.0` | Relative cost of one replica. Only the ratio between one model's variants matters | live |
 | `llm-d.ai/max-num-seqs` | Annotation, Deployment or LeaderWorkerSet | none | A batch cap the controller cannot read from the engine's arguments ([batch cap](scaling-policy.md#the-batch-cap-llm-daimax-num-seqs-and-enablebatchcaplearning)) | live |
-| `llm-d.ai/vllm-version` | Annotation, Deployment or LeaderWorkerSet | read from a `vllm-openai` image tag, else unknown | The vLLM release the engine runs, for an image whose tag does not say. It decides the defaults of the sizing flags the engine is not given ([vLLM versions](vllm-versions.md)) | live |
+| `scaling-manager.llmd.ai/vllm-version` | Annotation, Deployment or LeaderWorkerSet | read from a `vllm-openai` image tag, else unknown | The vLLM release the engine runs, for an image whose tag does not say. It decides the defaults of the sizing flags the engine is not given ([vLLM versions](vllm-versions.md)) | live |
 | `llm-d.ai/forget-learned-state` | Annotation, Deployment or LeaderWorkerSet | none | Drop what was learned for this variant, for example after a model change. Acted on once per value; change the value to ask again | live |
 
 ### Warm pool

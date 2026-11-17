@@ -252,7 +252,7 @@ type EngineParams struct {
 	Image string
 
 	// VLLMVersion is the vLLM release the engine runs, from the
-	// llm-d.ai/vllm-version annotation or the image tag (vllmVersionOf); the
+	// scaling-manager.llmd.ai/vllm-version annotation or the image tag (vllmVersionOf); the
 	// zero value is unknown. Set by ParseEngineArgsOn. It is not hashed or
 	// compared itself: what it changes is the defaults of the flags the
 	// engine leaves unset (applyVLLMDefaults), and those are.

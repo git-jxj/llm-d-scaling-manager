@@ -67,7 +67,7 @@ const (
 	// build -- and wins over the tag when both do. The release decides the
 	// defaults of flags the engine leaves unset; see
 	// docs/reference/vllm-versions.md. Anything unreadable is ignored.
-	VLLMVersion = "llm-d.ai/vllm-version"
+	VLLMVersion = "scaling-manager.llmd.ai/vllm-version"
 )
 
 // IsSynthetic reports whether va was synthesized by the scaling manager rather than read from a

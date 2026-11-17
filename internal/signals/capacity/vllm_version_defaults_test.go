@@ -17,7 +17,7 @@ import (
 
 // versionAnnotation is annotations.VLLMVersion, spelled out so this file
 // builds where the constant does not exist.
-const versionAnnotation = "llm-d.ai/vllm-version"
+const versionAnnotation = "scaling-manager.llmd.ai/vllm-version"
 
 // The images each supported release is pulled as, and one no tag describes.
 const (
@@ -100,6 +100,28 @@ func TestUnsetFlagsTakeTheReleasesDefault(t *testing.T) {
 				t.Errorf("block_size = %d, want %d", p.BlockSize, tc.wantBlock)
 			}
 		})
+	}
+}
+
+// A build cut between releases, or a fork, is named by no single version.
+// docs/reference/vllm-versions.md says to pass the three sizing flags on it.
+// This pins that the flags then decide, unannotated or annotated with the
+// nearest release, and shows what goes wrong without them: annotated with the
+// nearest release, the block size is that release's, not the build's.
+func TestBuildBetweenReleasesPassesTheFlags(t *testing.T) {
+	flags := []string{"--gpu-memory-utilization", "0.9", "--block-size", "16", "--max-num-batched-tokens", "8192"}
+	for _, annots := range []map[string]string{nil, {versionAnnotation: "0.34"}, {versionAnnotation: "0.33"}} {
+		p := filedParams(t, acceleratorGB, versionedDeployment(imageUnknown, annots, flags...))
+		if p.GpuMemoryUtilization != 0.9 || p.BlockSize != 16 || p.EffectiveMaxBatchedTokens != 8192 {
+			t.Errorf("annotations %v: got gmu %v, block %d, budget %d; want the flags' 0.9, 16, 8192",
+				annots, p.GpuMemoryUtilization, p.BlockSize, p.EffectiveMaxBatchedTokens)
+		}
+	}
+	// Without the block-size flag, the nearest release's default applies:
+	// a build that kept 16 is read as 64. This is why the doc says to pass it.
+	p := filedParams(t, acceleratorGB, versionedDeployment(imageUnknown, map[string]string{versionAnnotation: "0.34"}))
+	if p.BlockSize != 64 {
+		t.Errorf("annotated 0.34 without --block-size: block %d, want the v0.34 default 64", p.BlockSize)
 	}
 }
 

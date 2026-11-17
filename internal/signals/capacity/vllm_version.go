@@ -20,7 +20,7 @@ import (
 //	--max-num-batched-tokens  2048 below 70 GiB or on an A100; 8192 at 70 GiB
 //	                          or more; from v0.28, 16384 at 160 GiB or more
 //
-// The version comes from the llm-d.ai/vllm-version annotation, else from the
+// The version comes from the scaling-manager.llmd.ai/vllm-version annotation, else from the
 // image tag. vLLM exports no version metric, so a running engine cannot be
 // asked. An unknown version never gets the newest defaults: it keeps the
 // values used before releases were read. The memory share (0.9) and block size
@@ -125,7 +125,7 @@ func vllmVersionOfRef(ref string) VLLMVersion {
 }
 
 // vllmVersionOf is the release a scale target states with the
-// llm-d.ai/vllm-version annotation, else the one its image tag names.
+// scaling-manager.llmd.ai/vllm-version annotation, else the one its image tag names.
 func vllmVersionOf(annots map[string]string, image string) VLLMVersion {
 	if v := ParseVLLMVersion(annots[annotations.VLLMVersion]); v.Known() {
 		return v

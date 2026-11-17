@@ -91,7 +91,7 @@ func (e *Engine) Sleep(ctx context.Context, tier Tier) error {
 // 8 ms later -- and a caller that puts a Pod into service on the strength of the
 // call alone has built the race it was trying to avoid.
 func (e *Engine) Wake(ctx context.Context) error {
-	body, err := e.do(ctx, http.MethodPost, "/wake_up")
+	body, err := e.do(ctx, http.MethodPost, wakeUpPath)
 	if err != nil {
 		return err
 	}
@@ -100,6 +100,9 @@ func (e *Engine) Wake(ctx context.Context) error {
 	}
 	return e.WaitServing(ctx)
 }
+
+// wakeUpPath is vLLM's wake endpoint.
+const wakeUpPath = "/wake_up"
 
 // checkWakeBody reads what /wake_up answered. Before vLLM v0.32 the body is
 // empty and a 200 is the whole answer. From v0.32 it is JSON with a status,

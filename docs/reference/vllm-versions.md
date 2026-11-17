@@ -16,10 +16,12 @@ Each variant is read on its own.
    LeaderWorkerSet itself, not its pod template, so nothing restarts:
 
    ```bash
-   kubectl annotate deployment <name> -n <namespace> llm-d.ai/vllm-version=0.34
+   kubectl annotate deployment <name> -n <namespace> scaling-manager.llmd.ai/vllm-version=0.34
    ```
 
    The annotation wins over the tag. A value that is not a version is ignored.
+   For a build cut from vLLM main between releases, see
+   [Builds between releases](#builds-between-releases): pass the flags.
 3. **Do nothing, and the version is unknown.** The scaling manager then uses
    the defaults below marked *unknown*. It never assumes the newest release.
 
@@ -45,14 +47,30 @@ source at each release tag:
 - **v0.34 with a KV connector.** v0.34 keeps 0.92 when a connector such as
   NIXL runs without an IMEX channel. A pod spec does not show the IMEX
   channel, so any connector counts as 0.92.
-- **Builds from vLLM main** take whichever defaults they were cut with. A main
-  build from early November 2026 has the v0.34 memory default but still uses
-  block size 16. Annotate such a build with the release it is closest to, or
-  better, pass the flags.
+- **Builds from vLLM main** take whichever defaults they were cut with; see
+  [Builds between releases](#builds-between-releases).
 
 These defaults matter before a replica reports. That covers a variant at
 zero replicas, and the first estimate after a rollout. Once a replica runs,
 the KV cache size comes from the engine itself (below).
+
+## Builds between releases
+
+A build cut from vLLM main between two releases, or a fork of one, can mix
+the defaults of both. A main build from early November 2026 already has the
+v0.34 memory default but still uses block size 16. No single version names
+it, and no annotation can say which half it took.
+
+**Pass the three sizing flags on such a build**, with the values you want:
+
+```bash
+vllm serve <model> --gpu-memory-utilization 0.9 --block-size 16 --max-num-batched-tokens 8192
+```
+
+The scaling manager reads the flags and uses no default at all, whatever the
+image or annotation says. Do not annotate the build with the nearest
+release: if that release's default differs from the build's, the estimate
+is wrong in a way nothing reports.
 
 ## What a running engine reports
 
