@@ -339,6 +339,75 @@ Each plan has a time limit, 5 minutes unless the server was started with
 another `--plan-budget`. A plan past it is refused with `PlanBudgetExceeded`
 ([the plan budget](api.md#the-plan-budget)).
 
+## Check a fleet at N replicas
+
+To ask "is this fleet the right size for the traffic it saw?", run
+`capacity-planner at-replicas` on a recording or a Prometheus window
+(`--prometheus` and the capture flags, as for `replicas-to-slo`). Set the fleet
+with `--prefill` and `--decode`; without them it judges the recorded counts.
+
+<!-- guide:fleet.check start -->
+```bash
+# From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw and
+# at that load grown by a fifth, for its own shape and two it never saw. The sample learned no prefill
+# speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at 50%, 80% and 100%
+# of the knee and the load seen.
+bin/capacity-planner at-replicas \
+  --recording internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz \
+  --assume-vp 200000 --assume-a 20ms --ttft 2s@p90 --tpot 30ms \
+  --shape measured --shape 1k/1k --shape 16k/200/0.3 \
+  --load 50% --load 80% --load 5r/s --load seen --load-seen-x 1.2
+```
+<!-- guide:fleet.check end -->
+
+It replays the recording once and answers, for each shape and load:
+
+- **Load judged.** The mean arrival rate over the window's cycles with
+  traffic, times `--load-seen-x` (1.5 asks what 50% more traffic does).
+  `--load-seen` sets it instead.
+- **Summary.** One row per shape (`--shape`, repeatable: `measured`, or
+  `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
+  repeatable: `80%` of that shape's fleet knee, `5r/s`, or `seen`). Each cell
+  is TTFT p90 / TPOT p90 in ms at that rate, and a word: `ok` every target
+  met, `MISS` a target missed, `SAT` saturated, `?` not judged. A shape
+  outside the lengths the recording saw is marked EXTRAPOLATED.
+- **Verdict per shape.** UNDER-PROVISIONED when the load is above headroom
+  times the fleet knee, or a target is missed there. OVER-PROVISIONED when
+  one replica fewer of a role still holds every target with headroom; it
+  names the role. RIGHT-SIZED otherwise. The reason gives the numbers.
+- **Per shape:** utilization at the load (decode KV fill, batch slots, wait
+  probability; prefill utilization pooled and on the busiest pod), the
+  prefill, decode and fleet knees in req/s and output tok/s with what binds
+  each, the operating point, the highest rate that holds the targets, and
+  the SLO against each load. `e2e mean (sum)` is TTFT mean + (OL - 1) x TPOT
+  mean, not a percentile.
+
+The targets are the policy's unless `--ttft` and `--tpot` set them. A role
+the recording cannot price is answered without it: with no prefill speed
+learned, decode alone, and the exit code is 3. `-o json` prints the same
+report as [`POST /v1/report`](api.md#the-report).
+
+The sample above prints (the start of it):
+
+```text
+ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-06 02:18-03:30Z, cycle 289 of 289
+load judged     37.91 r/s = 1.2 x 31.59 r/s, the mean of the 282 of 289 cycles with traffic; peak 43.24 r/s
+SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
+cells: TTFT p90 / TPOT p90 ms @ r/s, - refused (the reason is in the shape's table); ok every target met, MISS a target missed, SAT saturated, ? not judged
+summary                     50%                 80%                    5r/s               seen x1.2
+  measured                  637/16.4 @19.07 ok  2490/16.4 @30.51 MISS  388/16.4 @5.00 ok  -/63.6 @37.91 SAT
+  1k/1k EXTRAPOLATED        134/16.4 @18.27 ok  152/16.4 @29.24 ok     124/16.4 @5.00 ok  -/- @37.91 SAT
+  16k/200/0.3 EXTRAPOLATED  898/16.4 @13.36 ok  3673/16.4 @21.37 MISS  567/16.4 @5.00 ok  -/- @37.91 SAT
+verdicts
+  measured                  UNDER-PROVISIONED
+  1k/1k EXTRAPOLATED        UNDER-PROVISIONED
+  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED
+
+```
+
+Read the not-validated lines at the end: the decode knee read 44% to 103%
+high on the goldens, and TTFT is not validated.
+
 ## Set your own prompt buckets
 
 The "if all traffic were bucket b" view draws five buckets by default: 1k,

@@ -172,11 +172,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/inputs", s.handleInputs)
 	mux.HandleFunc("POST /v1/plan", s.handlePlan)
 	mux.HandleFunc("POST /v1/size", s.handleSize)
+	mux.HandleFunc("POST /v1/report", s.handleReport)
 	mux.HandleFunc("GET /v1/sources", s.handleSources)
 	mux.HandleFunc("GET /{$}", servePage)
 	mux.HandleFunc("GET /page/", servePage)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, fmt.Errorf("%s %s: no such endpoint; the server serves POST /v1/inputs, POST /v1/plan, POST /v1/size, GET /v1/sources and the page at /",
+		writeError(w, http.StatusNotFound, fmt.Errorf("%s %s: no such endpoint; the server serves POST /v1/inputs, POST /v1/plan, POST /v1/size, POST /v1/report, GET /v1/sources and the page at /",
 			r.Method, r.URL.Path))
 	})
 	return mux

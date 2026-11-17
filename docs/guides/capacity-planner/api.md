@@ -74,6 +74,7 @@ point (headroom times the lower knee).
 | `POST /v1/inputs` | Resolves a source for one model: a recording replayed to a cycle, or a Prometheus window captured in memory (seconds). Returns `inputsId` and every term with its source. |
 | `POST /v1/plan` | Prices a scenario against an `inputsId`. |
 | `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
+| `POST /v1/report` | One fleet judged at the load the source saw, for each request shape and load asked: utilization, knees, the SLO against load, a shape-by-load summary and a verdict per shape. The same report as `capacity-planner at-replicas -o json`. |
 | `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. |
 | `GET /` | The page, with its files under `/page/`. |
 
@@ -223,6 +224,51 @@ reaches the rate.
 
 A size with no fleet within the bound is a 200 with `unmet`, not an error.
 [What to do about each reason](troubleshooting.md#refused-figures).
+
+## The report
+
+`POST /v1/report` judges one fleet: is it under-provisioned, right-sized or
+over-provisioned at the load the source saw? Resolve the source first, then:
+
+```bash
+curl -s localhost:8080/v1/report -H 'Content-Type: application/json' -d '{"inputsId": "sha256:...",
+  "fleet": {"prefill": 2, "decode": 3},
+  "shapes": ["measured", "1k/1k", "16k/200/0.3"],
+  "loads": ["50%", "80%", "5r/s", "seen"], "loadSeenX": 1.2,
+  "slo": {"ttft": {"statistic": "p90", "target": 2}, "tpot": {"statistic": "mean", "target": 0.03}},
+  "assume": {"vp": 200000, "a": 0.02}}'
+```
+
+Every field but `inputsId` has a default.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `fleet.prefill`, `fleet.decode` | the recorded counts | The fleet to judge. |
+| `shapes` | `["measured"]` | Request shapes, at most 6: `measured`, or `IL/OL[/hit]` in tokens, `k` for 1024 (`8k/200`, `1k/4k/0.3`). |
+| `loads` | `["50%", "80%", "100%", "seen"]` | The tables' rates, at most 8: a share of each shape's fleet knee (`80%`), a rate (`5r/s`), or `seen`. |
+| `loadSeen` | the source's mean arrival rate | The load to judge at, requests per second. |
+| `loadSeenX` | 1 | Multiplies the load seen: `1.5` asks what 50% more traffic does. |
+| `headroom` | the policy's `scaleUpThreshold` | The operating point, a fraction of the fleet knee in (0, 1). |
+| `slo.ttft`, `slo.tpot` | the policy's targets | `statistic` (`mean` or `pNN`) and `target` in seconds. |
+| `ttftStatistics` | `["p50", "p90"]` | The TTFT statistics the tables print, at most 4. |
+| `tpotStatistic` | `p90` | The TPOT percentile printed beside the mean; `mean` for the mean alone. |
+| `assume` | none | As for a plan: `vp`, `a`, `promptCV`, `routerHop`, `tpotRatio`. |
+
+The answer:
+
+| Field | Holds |
+| --- | --- |
+| `load` | The load judged at (`rate`), the load seen and its source (`observed mean`, `asked` or `none`), the growth `x`, and the cycles it was read over. |
+| `loads` | The tables' rates, in order: the summary's columns. |
+| `shapes[]` | One per shape asked, in order. `extrapolated` is true when IL or OL lies outside the per-cycle means the source saw, with `extrapolatedWhy`. |
+| `shapes[].utilization` | At the load judged: decode's KV fill, batch slots occupied of the fleet's slots, and wait probability; prefill's utilization pooled and on the busiest pod. |
+| `shapes[].capacity` | The prefill, decode and fleet knees, the operating point and the highest rate that holds every target (`maxAtSLO`), each with output tokens a second and what binds it. |
+| `shapes[].table[]` | One row per load: TTFT at each statistic, TPOT mean and percentile, and `e2eMeanSum`, TTFT mean + (OL - 1) x TPOT mean, a sum of means and not a percentile. `cell` is the row in the summary: TTFT p90, the TPOT percentile, and `mark` (`met`, `missed`, `saturated`, `unknown`, `no target`). |
+| `shapes[].verdict` | `UNDER-PROVISIONED` when the load judged is past headroom times the fleet knee or a target is missed there; `OVER-PROVISIONED` when one replica fewer of a role still holds every target with headroom (`shrink` names the role); `RIGHT-SIZED` otherwise; `NOT JUDGED` with no knee or no load. `reason` gives the numbers, and `checks` each fleet tried. |
+| `notValidated` | What no run has validated: the decode knee read 44% to 103% high on the goldens, and TTFT is unvalidated. |
+
+Each shape and load is priced from the one replay the inputs resolved: a
+report replays nothing.
 
 ## Errors
 

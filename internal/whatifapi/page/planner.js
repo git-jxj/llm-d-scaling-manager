@@ -46,6 +46,8 @@ const FLAG_WORDS = {
   LineNearGate: ["The ITL line sits near the tracker's gate; the answer does not care which side (informational).", "nothing"],
   ExtrapolatedFill: ["The fill is above the highest fill the ITL line was read at: extrapolated.", "readings at higher load"],
   AssumedShape: ["Priced at a prompt or output length you set, not the measured one.", "price at the current mix"],
+  ExtrapolatedShape: ["The request shape is outside the prompt and output lengths the source saw: the figures extrapolate the learned lines past the traffic they were fitted on.", "a source that served this shape"],
+  TailPastPromptHistogram: ["A TTFT percentile above p95 on a prompt spread no histogram measured: the tail rests on the assumed spread.", "a source with a computed-prompt histogram"],
   EdgeBeyondContext: ["A bucket's edge is past the engines' context window (--max-model-len): they refuse prompts that long, and this \"if all traffic were\" line prices traffic they would not serve.", "an edge within the context window"],
   PullUnseen: ["The prefill load is past the pull table's highest bucket: the pull reads low.", "readings at higher prefill load"],
   OverheadMeasured: ["The fixed overhead comes from the prefill pods' histograms.", "nothing (informational)"],

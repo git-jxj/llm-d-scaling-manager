@@ -1,0 +1,82 @@
+ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-06 02:18-03:30Z, cycle 289 of 289
+load judged     37.91 r/s = 1.2 x 31.59 r/s, the mean of the 282 of 289 cycles with traffic; peak 43.24 r/s
+SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
+cells: TTFT p90 / TPOT p90 ms @ r/s, - refused (the reason is in the shape's table); ok every target met, MISS a target missed, SAT saturated, ? not judged
+summary                     50%                 80%                    5r/s               seen x1.2
+  measured                  637/16.4 @19.07 ok  2490/16.4 @30.51 MISS  388/16.4 @5.00 ok  -/63.6 @37.91 SAT
+  1k/1k EXTRAPOLATED        134/16.4 @18.27 ok  152/16.4 @29.24 ok     124/16.4 @5.00 ok  -/- @37.91 SAT
+  16k/200/0.3 EXTRAPOLATED  898/16.4 @13.36 ok  3673/16.4 @21.37 MISS  567/16.4 @5.00 ok  -/- @37.91 SAT
+verdicts
+  measured                  UNDER-PROVISIONED
+  1k/1k EXTRAPOLATED        UNDER-PROVISIONED
+  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED
+
+shape measured: IL 8003 OL 200, prefix hit 0.00 (measured, cycles 269-288)
+utilization at the load judged
+  decode        KV fill 0.717 (band top 0.8), slots 206 of 228, wait p 0.753
+  prefill       utilization pooled 0.76, worst pod 0.76 (f 1)
+  verdict       UNDER-PROVISIONED: 2 prefill + 2 decode: 37.91 r/s is above 0.85 x the fleet knee 38.14 r/s = 32.42 r/s; TTFT p90 AboveDecodeOnset misses 2000.0 ms; TPOT mean 27.1 ms meets 30.0 ms
+capacity            req/s     out tok/s   bound by
+  prefill knee      49.83     9966        prefill compute: N_p 2 x V_P / (f 1 x 8001 tokens)
+  decode knee       38.14     7627        decode band top at fill 0.795
+  fleet knee        38.14     7627        decode
+  operating (0.85)  32.42     6483        0.85 x fleet knee (scaleUpThreshold)
+  max at SLO        29.72     5943        TTFT p90, end to end
+SLO vs load             r/s    TTFT p50/90 ms    TPOT mean/p90 ms  e2e mean (sum)
+  50% of knee           19.07  114.7/636.7       6.99/16.41        1.64 s
+  80% of knee           30.51  226.0/2489.5      6.99/16.41        2.31 s
+  5r/s                  5.00   65.8/388.4        6.99/16.41        1.55 s
+  load seen x1.2 (99%)  37.91  AboveDecodeOnset  27.13/63.65       AboveDecodeOnset
+checks
+  2 prefill + 2 decode  does not hold: 37.91 r/s is above 0.85 x the fleet knee 38.14 r/s = 32.42 r/s; TTFT p90 AboveDecodeOnset misses 2000.0 ms; TPOT mean 27.1 ms meets 30.0 ms
+assumed: V_P 200000 tok/s (--assume-vp); a 20ms (--assume-a); prompt cv 2 (no computed-prompt histogram); router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow-control thresholds 5 and 0.8 (upstream defaults); Poisson arrivals
+flags: UnvalidatedTTFT; AssumedVP; AssumedPromptSpread; ExtrapolatedFill; RouterHopAssumed; SpreadBeyondProcessorSharing; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; AssumedA; PromptSpreadAbovePeak; CoarseTPOTBucket
+
+shape 1k/1k: IL 1024 OL 1024, prefix hit 0.00 (asked)
+  EXTRAPOLATED: IL 1024 outside the 7989-8014 seen; OL 1024 outside the 200-201 seen
+utilization at the load judged
+  decode        KV fill saturated (band top 0.8), slots saturated of 512, wait p saturated
+  prefill       utilization pooled 0.10, worst pod 0.10 (f 1)
+  verdict       UNDER-PROVISIONED: 2 prefill + 2 decode: 37.91 r/s is above 0.85 x the fleet knee 36.55 r/s = 31.06 r/s; TTFT p90 AboveDecodeOnset misses 2000.0 ms; TPOT mean saturated misses 30.0 ms
+capacity            req/s     out tok/s   bound by
+  prefill knee      389.39    398734      prefill compute: N_p 2 x V_P / (f 1 x 1024 tokens)
+  decode knee       36.55     37423       decode batch cap at fill 0.338
+  fleet knee        36.55     37423       decode
+  operating (0.85)  31.06     31809       0.85 x fleet knee (scaleUpThreshold)
+  max at SLO        35.47     36319       TTFT p90, end to end
+SLO vs load              r/s    TTFT p50/90 ms    TPOT mean/p90 ms  e2e mean (sum)
+  50% of knee            18.27  94.7/133.5        6.99/16.41        7.26 s
+  80% of knee            29.24  112.0/152.1       6.99/16.41        7.28 s
+  5r/s                   5.00   87.5/124.5        6.99/16.41        7.25 s
+  load seen x1.2 (104%)  37.91  AboveDecodeOnset  saturated         AboveDecodeOnset
+checks
+  2 prefill + 2 decode  does not hold: 37.91 r/s is above 0.85 x the fleet knee 36.55 r/s = 31.06 r/s; TTFT p90 AboveDecodeOnset misses 2000.0 ms; TPOT mean saturated misses 30.0 ms
+assumed: V_P 200000 tok/s (--assume-vp); a 20ms (--assume-a); prompt 1024 tokens (--shape); prompt cv 2 (no computed-prompt histogram); router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow-control thresholds 5 and 0.8 (upstream defaults); Poisson arrivals
+flags: ExtrapolatedShape; UnvalidatedTTFT; AssumedVP; AssumedPromptSpread; AssumedShape; RouterHopAssumed; SpreadBeyondProcessorSharing; AssumedPoissonArrivals; AssumedA; BelowFittedBand; PromptSpreadAbovePeak; CoarseTPOTBucket
+
+shape 16k/200/0.3: IL 16384 OL 200, prefix hit 0.30 (asked)
+  EXTRAPOLATED: IL 16384 outside the 7989-8014 seen
+utilization at the load judged
+  decode        KV fill saturated (band top 0.8), slots saturated of 160, wait p saturated
+  prefill       utilization pooled 1.09, worst pod 1.09 (f 1)
+  verdict       UNDER-PROVISIONED: 2 prefill + 2 decode: 37.91 r/s is above 0.85 x the fleet knee 26.71 r/s = 22.70 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms
+capacity            req/s     out tok/s   bound by
+  prefill knee      34.77     6953        prefill compute: N_p 2 x V_P / (f 1 x 11469 tokens)
+  decode knee       26.71     5342        decode band top at fill 0.796
+  fleet knee        26.71     5342        decode
+  operating (0.85)  22.70     4541        0.85 x fleet knee (scaleUpThreshold)
+  max at SLO        19.48     3895        TTFT p90, end to end
+SLO vs load              r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
+  50% of knee            13.36  146.3/898.0     6.99/16.41        1.73 s
+  80% of knee            21.37  289.7/3673.4    6.99/16.41        2.72 s
+  5r/s                   5.00   83.7/566.9      6.99/16.41        1.61 s
+  load seen x1.2 (142%)  37.91  saturated       saturated         saturated
+checks
+  2 prefill + 2 decode  does not hold: 37.91 r/s is above 0.85 x the fleet knee 26.71 r/s = 22.70 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms
+assumed: V_P 200000 tok/s (--assume-vp); a 20ms (--assume-a); prompt 11469 tokens (--shape); prompt cv 2 (no computed-prompt histogram); router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow-control thresholds 5 and 0.8 (upstream defaults); Poisson arrivals
+flags: ExtrapolatedShape; UnvalidatedTTFT; AssumedVP; AssumedPromptSpread; AssumedShape; ExtrapolatedFill; RouterHopAssumed; SpreadBeyondProcessorSharing; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; AssumedA; PromptSpreadAbovePeak; CoarseTPOTBucket
+
+not validated:
+  - decode knee: not validated; it read 44% to 103% high on the goldens (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
+  - TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.
+  - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile
