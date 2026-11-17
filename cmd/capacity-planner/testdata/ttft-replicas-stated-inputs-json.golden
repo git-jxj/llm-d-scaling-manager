@@ -137,7 +137,7 @@
             "basis": {
               "fill": 0.4740967917873882,
               "kneeRate": 13.313632625239457,
-              "floor": 0.002222528576045067,
+              "floor": 0.0015568837184686396,
               "uncapped": 0,
               "boundBy": [],
               "tier": "ols"
@@ -221,12 +221,12 @@
         },
         "ttft": {
           "answer": {
-            "value": 0.21870478437206117,
+            "value": 0.21870470354394703,
             "unit": "s",
             "basis": {
               "fill": 0,
               "kneeRate": 30,
-              "floor": 0.11001086917414836,
+              "floor": 0.10934522431657194,
               "uncapped": 0,
               "boundBy": [],
               "tier": "ols"
@@ -246,13 +246,13 @@
               "OutputSpreadUnread"
             ],
             "parts": {
-              "independent": 0.2073821886170056,
-              "pooled": 0.21870478437206117,
-              "decodeShare": 0.031774930977097736,
+              "independent": 0.2073821391285984,
+              "pooled": 0.21870470354394703,
+              "decodeShare": 0.03177486985024605,
               "engineWait": 0.025237600178869675,
               "kvPullWait": 0,
               "ownPrefill": 0.044368837498301734,
-              "decodeWait": 0.01591097479879894,
+              "decodeWait": 0.015910944190147127,
               "firstStep": 0.0036607509947803553,
               "decodeEngine": 0,
               "routerHop": 0.02,
@@ -260,13 +260,13 @@
               "vpMarginApplied": 0,
               "waitScale": 0,
               "waitOffset": 0,
-              "decodeWaitProbability": 0.03177493097709786,
+              "decodeWaitProbability": 0.03177486985024605,
               "prefillKnee": 30,
               "decodeKnee": 13.313632625239457
             },
             "sensitivity": {
-              "lo": 0.17798500240601547,
-              "hi": 0.28749906898418315
+              "lo": 0.17798493967503412,
+              "hi": 0.2874989576227839
             }
           }
         }

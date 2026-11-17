@@ -36,7 +36,7 @@ start-seed-restart-2 ns-01/model-01 freeze 20 of 33 variant-01 held; tpot +101.5
 start-seed-restart-2 ns-01/model-01 freeze 20 of 33 variant-02 held; tpot +99.4% over 23 rows, OUT of +-10%, unclamped +147.7%, 0 below the band, 18 above it, on a line the planner refuses; knee SKIPPED the knee refused on all 12 saturated windows: PinnedDefaultB
 throughput-sweep ns-01/model-02 freeze 50 of 83 variant-01 held; tpot +3.5% over 33 rows, in of +-10%, unclamped +3.5%, 0 below the band, 0 above it; knee SKIPPED no saturated window off a ramp held out
 throughput-sweep ns-01/model-02 freeze 50 of 83 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity
-throughput-sweep-restart ns-01/model-02 freeze 190 of 316 variant-01 held; tpot +50.1% over 124 rows, OUT of +-10%, unclamped +32.6%, 124 below the band, 0 above it; knee SKIPPED no saturated window off a ramp held out
+throughput-sweep-restart ns-01/model-02 freeze 190 of 316 variant-01 held; tpot +32.6% over 124 rows, OUT of +-10%, unclamped +32.6%, 124 below the band, 0 above it; knee SKIPPED no saturated window off a ramp held out
 throughput-sweep-restart ns-01/model-02 freeze 190 of 316 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity
 ttft-open-loop-long ns-01/model-02 freeze 56 of 93 variant-01 no-line; tpot SKIPPED no line at the freeze; knee SKIPPED no line at the freeze
 ttft-open-loop-long ns-01/model-02 freeze 56 of 93 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity

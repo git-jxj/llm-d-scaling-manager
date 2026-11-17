@@ -137,7 +137,7 @@
             "basis": {
               "fill": 0.4740967917873882,
               "kneeRate": 13.313632625239457,
-              "floor": 0.002222528576045067,
+              "floor": 0.0015568837184686396,
               "uncapped": 0,
               "boundBy": [],
               "tier": "ols"
@@ -219,12 +219,12 @@
         },
         "ttft": {
           "answer": {
-            "value": 0.37340232418569225,
+            "value": 0.3734021781471479,
             "unit": "s",
             "basis": {
               "fill": 0,
               "kneeRate": 30,
-              "floor": 0.1333104157059246,
+              "floor": 0.1326447708483482,
               "uncapped": 0,
               "boundBy": [],
               "tier": "ols"
@@ -243,13 +243,13 @@
               "OutputSpreadUnread"
             ],
             "parts": {
-              "independent": 0.3434393200155779,
-              "pooled": 0.33143853287278646,
-              "decodeShare": 0.031774930977097736,
+              "independent": 0.3434392538840077,
+              "pooled": 0.3314384079362959,
+              "decodeShare": 0.03177486985024605,
               "engineWait": 0.05047520035773935,
               "kvPullWait": 0,
               "ownPrefill": 0.044368837498301734,
-              "decodeWait": 0.01591097479879894,
+              "decodeWait": 0.015910944190147127,
               "firstStep": 0.0036607509947803553,
               "decodeEngine": 0,
               "routerHop": 0.02,
@@ -257,13 +257,13 @@
               "vpMarginApplied": 0,
               "waitScale": 0.1615335863923104,
               "waitOffset": 0,
-              "decodeWaitProbability": 0.03177493097709786,
+              "decodeWaitProbability": 0.03177486985024605,
               "prefillKnee": 30,
               "decodeKnee": 13.313632625239457
             },
             "sensitivity": {
-              "lo": 0.3025852532584969,
-              "hi": 0.4891439530276733
+              "lo": 0.30258513307087703,
+              "hi": 0.48914376616223393
             }
           }
         }

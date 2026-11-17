@@ -59,7 +59,8 @@ func TestArrivalCV2_ReachesThePrefillQueue(t *testing.T) {
 }
 
 // The fleet that showed a burstier arrival priced better than Poisson at the
-// default cv: 300 ms at p95 read 5.26 r/s at Poisson and 5.53 at Ca^2 1.0001, and
+// default cv: 300 ms at p95 read 5.26 r/s at Poisson and 5.53 at Ca^2 1.0001 (5.27 at
+// Poisson once the ols line was read below the band), and
 // p95 at 10 r/s read 396.0 ms and 361.5 ms. Kingman's decay outran Poisson's root.
 // The figures are the first-come model's, where that was; the property holds
 // on processor sharing too.
@@ -97,7 +98,7 @@ func TestArrivalCV2_TheWorkedFleetPricesNoBetterThanPoisson(t *testing.T) {
 	}
 	monotone("processor sharing")
 	firstCome(t)
-	near(t, "the Poisson rate", rate(), 5.26, 0.005)
+	near(t, "the Poisson rate", rate(), 5.27, 0.005)
 	near(t, "the Poisson p95", p95(), 0.3960, 0.00005)
 	monotone("first come")
 }
@@ -245,9 +246,9 @@ func TestInputs_TheWorkedExampleAtTheStatedInputs(t *testing.T) {
 		flags []string
 		want  string
 	}{
-		{nil, "fleet    0.25 r/s"},
+		{nil, "fleet    0.28 r/s"},
 		{[]string{"--assume-prompt-cv", "1"}, "fleet    9.64 r/s"},
-		{[]string{"--assume-prompt-cv", "1", "--arrival-cv2", "4"}, "fleet    4.21 r/s"},
+		{[]string{"--assume-prompt-cv", "1", "--arrival-cv2", "4"}, "fleet    4.22 r/s"},
 	} {
 		text, code := runCmd(t, slices.Concat(asked, c.flags)...)
 		assert.Equal(t, 0, code, text)

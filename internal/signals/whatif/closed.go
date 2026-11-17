@@ -98,6 +98,32 @@ func (d Decode) onDefaultB() bool {
 	return false
 }
 
+// LowestFill is the lowest fill a line of the given tier is read at, below
+// band: 0 for a line whose intercept B was fitted on the variant's own
+// readings, where the floor is B itself, and band.Lo otherwise.
+//
+// A measured intercept is an ols fit, or a line the tracker held (it keeps
+// the last fit's B; a held line on the default intercept is refused,
+// PinnedDefaultB). Such a line runs down to B at zero fill, the engine's step
+// with nothing to contend with. A pinned-B, above-band or borrowed line, or
+// one whose tier is not known, rests on an intercept the variant did not
+// measure, and keeps the band's bottom as its floor.
+//
+// Measured on the Qwen3-32B P/D staircases at fills of 0.02 to 0.06, a held
+// line read at the fill came within -5% to +1% of the mean TPOT the clients
+// saw; read at the band's bottom, 0.15, it was 29% to 46% high.
+func LowestFill(band FillBand, tier string) float64 {
+	if tier == TierOLS || tier == TierHeld {
+		return 0
+	}
+	return band.Lo
+}
+
+// lowestFill is LowestFill for d's band and tier.
+func (d Decode) lowestFill() float64 {
+	return LowestFill(d.Band, d.Tier)
+}
+
 // fullPoint is where a replica saturates: the sequences it runs there, the
 // fill those occupy, and the fill the line is read at.
 type fullPoint struct {
@@ -109,12 +135,13 @@ type fullPoint struct {
 	// slotFill is the fill the slots occupy, c*KVreq/C: never above band.Hi.
 	slotFill float64
 	// fill is k_full, the fill the line is read at: slotFill, raised to
-	// band.Lo when the slots fill less than the band's bottom, where the line
-	// was not fitted (the higher, safer ITL, as ReachableFill reads it).
+	// lowestFill when the slots fill less than that (a line without a
+	// measured intercept is read no lower than the band's bottom).
 	fill float64
 	// by is what set the slots.
 	by Bound
-	// belowBand is slotFill < band.Lo: the knee is read at the band's bottom.
+	// belowBand is slotFill < band.Lo: the knee sits below the band the line
+	// was fitted over.
 	belowBand bool
 }
 
@@ -129,12 +156,12 @@ func (d Decode) full() fullPoint {
 	p.slotFill = p.slots * d.KVPerRequest / d.CapacityTokens
 	p.fill = min(p.slotFill, d.Band.Hi) // a rounding above Hi reads Hi, as chainMu does
 	if p.slotFill < d.Band.Lo {
-		p.fill, p.belowBand = d.Band.Lo, true
+		p.fill, p.belowBand = max(p.slotFill, d.lowestFill()), true
 	}
 	return p
 }
 
-// flags is BelowFittedBand when the knee is read at the band's bottom.
+// flags is BelowFittedBand when the knee sits below the band.
 func (p fullPoint) flags() []Flag {
 	if p.belowBand {
 		return []Flag{BelowFittedBand}
@@ -155,12 +182,13 @@ func (d Decode) replicaRate(k float64) float64 {
 }
 
 // chainMu is the rate a replica holding m sequences completes them:
-// m / (OL * ITL(k_m)), with k_m = m*KVreq/C clamped to the band (a fill below
-// it reads the band's bottom). The admission chain's state m completes at
-// chainMu(min(m, c)), and the knee is N_d * chainMu(c): one formula, so the
-// chain and the knee saturate at the same rate by construction.
+// m / (OL * ITL(k_m)), with k_m = m*KVreq/C clamped to [lowestFill, band.Hi]
+// (below the band only a measured intercept is read at the fill itself). The
+// admission chain's state m completes at chainMu(min(m, c)), and the knee is
+// N_d * chainMu(c): one formula, so the chain and the knee saturate at the
+// same rate by construction.
 func (d Decode) chainMu(m float64) float64 {
-	k := min(max(m*d.KVPerRequest/d.CapacityTokens, d.Band.Lo), d.Band.Hi)
+	k := min(max(m*d.KVPerRequest/d.CapacityTokens, d.lowestFill()), d.Band.Hi)
 	return m / (d.OutputTokens * d.Line.ITLAt(k))
 }
 
@@ -310,8 +338,9 @@ type RateQuery struct {
 // (docs/proposals/slo-capacity-planner.md, "Question 1").
 //
 // It inverts ITL(k)*R_q = t at k* = (t/R_q - B)/A (R_q = 1 for the mean),
-// refuses with TargetBelowFloor when ITL(band.Lo)*R_q already reaches t,
-// clamps k* to k_full, and prices N_d * lambda_rep(k*). The rate is then capped
+// refuses with TargetBelowFloor when the floor, ITL(lowestFill)*R_q (B*R_q
+// for a measured intercept), already reaches t, flags BelowFittedBand when k*
+// is below the band, clamps k* to k_full, and prices N_d * lambda_rep(k*). The rate is then capped
 // at the operating point, headroom times the knee, because past it the
 // admission wait is no longer small; a headroom of 1 lifts the cap.
 //
@@ -332,16 +361,19 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	if !(q.Headroom > 0 && q.Headroom <= 1) {
 		return refuse(InvalidInput, fmt.Sprintf("headroom %g, want 0 < headroom <= 1 for question 1", q.Headroom))
 	}
-	floor := d.Line.ITLAt(d.Band.Lo) * r
+	floor := d.Line.ITLAt(d.lowestFill()) * r
 	if floor >= t.Seconds {
 		return refuse(TargetBelowFloor, fmt.Sprintf("target %.4g ms at or below the floor %.4g ms", 1000*t.Seconds, 1000*floor))
 	}
 	p := d.full()
 	k := (t.Seconds/r - d.Line.B) / d.Line.A
 	by := []Bound{BoundTPOT}
+	if k < d.Band.Lo {
+		flags = append(flags, BelowFittedBand)
+	}
 	if k > p.fill {
 		k, by = p.fill, []Bound{p.by}
-		flags = append(flags, p.flags()...)
+		flags = append(slices.DeleteFunc(flags, func(f Flag) bool { return f == BelowFittedBand }), p.flags()...)
 	}
 	knee := d.kneeRate()
 	uncapped := float64(d.Replicas) * d.replicaRate(k)
@@ -411,9 +443,9 @@ type DecodeSLO struct {
 // SLOAtReplicas answers question 2 for decode: the knee, the operating rate
 // below it, and the TPOT held there (docs/proposals/slo-capacity-planner.md,
 // "Question 2"). The TPOT is the line at the closed-form fill, as the mean and,
-// when asked, times R_q; it never beats the floor, ITL(band.Lo) (times R_q),
-// and a fill below the band is read at the band's bottom and flagged
-// BelowFittedBand.
+// when asked, times R_q; it never beats the floor, ITL(lowestFill) (times
+// R_q). A fill below the band is flagged BelowFittedBand and read at the fill
+// itself for a measured intercept, at the band's bottom otherwise.
 func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 	// every refuses each asked-for field with u.
 	every := func(out DecodeSLO, u Unanswerable) DecodeSLO {
@@ -470,10 +502,10 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 
 // tpotAt is the TPOT at fill k, times r, never below the floor.
 func (d Decode) tpotAt(k, knee, r float64, flags []Flag) Answer {
-	floor := d.Line.ITLAt(d.Band.Lo) * r
-	at := k
+	lowest := d.lowestFill()
+	floor := d.Line.ITLAt(lowest) * r
+	at := max(k, lowest)
 	if k < d.Band.Lo {
-		at = d.Band.Lo
 		flags = append(flags, BelowFittedBand)
 	}
 	return Answer{Value: d.Line.ITLAt(at) * r, Flags: flags, Basis: Basis{Fill: k, KneeRate: knee, Floor: floor, Tier: d.Tier}}
