@@ -73,7 +73,7 @@ controller manages:
 - It reads the count the engines decided for each role. A positive decision
   older than 3 minutes is ignored, as the external scaler ignores it; a
   decision to park at zero does not expire.
-- It writes the Static roles whose count changed, all in one server-side
+- When a count changes, it writes every Static role in one server-side
   apply, as field manager `scaling-manager-role-writer`, naming only
   `spec.roles[name].spec.replicas`. External roles are never written.
 
