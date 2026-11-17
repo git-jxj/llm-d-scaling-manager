@@ -424,7 +424,7 @@ func TestTTFT_VPOrder(t *testing.T) {
 		require.NotNil(t, pf.in.VPLearned)
 		assert.Equal(t, 100000.0, *pf.in.VPLearned)
 		assert.Contains(t, pf.inputsText, "V_P 130000 ASSUMED, learned 100000")
-		assert.Equal(t, "OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED", pf.verdict(pf.kneeValidation(pf.knee())))
+		assert.Regexp(t, `^OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED$`, pf.verdict(pf.kneeValidation(pf.knee())))
 	})
 	refusedVP := func() *learnreplay.State {
 		st := learnedState()
@@ -439,7 +439,7 @@ func TestTTFT_VPOrder(t *testing.T) {
 		assert.Zero(t, pf.fleet.Prefill.VPMargin)
 		assert.Nil(t, pf.in.VPLearned, "P1 learned none")
 		assert.Contains(t, pf.inputsText, "V_P 5000 ASSUMED;")
-		assert.Equal(t, "OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED", pf.verdict(pf.kneeValidation(pf.knee())))
+		assert.Regexp(t, `^OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED$`, pf.verdict(pf.kneeValidation(pf.knee())))
 	})
 	t.Run("refused with neither", func(t *testing.T) {
 		pf := fleetOf(t, refusedVP(), answerFlags{})
@@ -750,7 +750,7 @@ func TestTTFT_ThePrefillKneeBindsTheOperatingRate(t *testing.T) {
 	assert.NotContains(t, w.Roles[0].Results.Knee.Answer.Flags, string(whatif.UnvalidatedTTFT), "decode's own knee rests on no V_P")
 
 	text, _ := runCmd(t, low...)
-	assert.Contains(t, text, "0.85 x prefill knee (scaleUpThreshold); prefill knee OUTSIDE VALIDATED REGION (V_P assumed, not learned); V_P ASSUMED")
+	assert.Regexp(t, `0\.85 x prefill knee \(scaleUpThreshold\); prefill knee OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED`, text)
 	var tpotRows int
 	for line := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(line, "mean TPOT") || strings.HasPrefix(line, "TPOT p90") {

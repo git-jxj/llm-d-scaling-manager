@@ -67,7 +67,7 @@ const (
 	ttftNoteAssumed  = "at the assumed prompt cv %s it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33%% under it."
 	ttftNoteMeasured = "at the sent spread (cv 0.06) it read up to 33% under the router's percentile on the P2 recordings."
 	// ttftNoteArrivals stands for both: the P2 table was read at Poisson arrivals.
-	ttftNoteArrivals = "no recording has checked it at a stated Ca^2."
+	ttftNoteArrivals = "the P2 recordings never checked it at a stated Ca^2; the measured envelope did only where a figure reads validated."
 	// ttftNoteBurst follows it at a stated Ca^2 above 1: the burst rule reads
 	// high at light load (whatif's ttft_ps.go; one pod, Ca^2 4, cv 0.058).
 	ttftNoteBurst = " Above Ca^2 1 it reads high at light load: on one pod at Ca^2 4 its p95 read +118% at utilization 0.3 and +10% at 0.85 against a simulation."
@@ -243,7 +243,13 @@ type pricedFleet struct {
 	// inputsText is where the fleet's inputs came from, for the human
 	// output; in the same for the JSON. in.Assumed names each assumed input.
 	inputsText string
-	in         wireTTFT
+	// model is the model served, stated the pricing flags set that put every
+	// figure outside the envelope, and prefillTP the prefill variant's tensor
+	// parallelism.
+	model     string
+	stated    []string
+	prefillTP int
+	in        wireTTFT
 }
 
 // label names a fleet's rows, when more than one decode variant is priced.
@@ -362,7 +368,7 @@ var processorSharing = true
 
 // readFleet is fleetFor before a refusal names the stated inputs.
 func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillState, q ttftQuestion, pv *pricedVariant) *pricedFleet {
-	pf := &pricedFleet{pv: pv, q: q.q, flags: []whatif.Flag{assumedPoisson},
+	pf := &pricedFleet{pv: pv, q: q.q, flags: []whatif.Flag{assumedPoisson}, model: st.ModelID, stated: f.statedOutside(),
 		in: wireTTFT{Percentile: q.q, TargetSeconds: q.seconds, Assumed: []string{}}}
 	if pv != nil {
 		pf.in.DecodeVariant = pv.state.Variant
@@ -376,6 +382,11 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		return pf
 	}
 	pf.variant = ps.Variant
+	for _, vs := range st.Variants {
+		if vs.Variant == ps.Variant {
+			pf.prefillTP = vs.TensorParallel
+		}
+	}
 	p, refused := f.prefillInputs(pf, ps, st.Cycle)
 	if refused != nil {
 		pf.refused = refused
@@ -1060,6 +1071,8 @@ func (pf *pricedFleet) atOperatingPoint(q ttftQuestion, query whatif.ReplicasQue
 	price := func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, o.rate, q.q) }
 	o.ttft = withSpan(pf.priced(price), pf.corners(price))
 	pf.noteAssumedTerm(o.ttft, price)
+	o.knee = settled(o.knee, pf.kneeValidation(o.knee))
+	o.ttft = settled(o.ttft, pf.ttftValidation(q.q, o.rate, o.ttft))
 	return o, query
 }
 

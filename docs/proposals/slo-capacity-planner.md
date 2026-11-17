@@ -582,7 +582,21 @@ input that shapes the figure as the run priced it:
 - the flow-control state, known, not inferred from a missing series;
 - the topology, accelerator, prefill and decode counts, and prompt and output
   lengths;
-- the statistic, and the band of knee shares measured, ends included.
+- the statistic, and the band of knee shares measured, ends included;
+- the model, the tensor parallelism of each role, and the prefix hit rate.
+
+Every pricing input is held by an allow-list, so anything new reads outside
+until a run prices it:
+
+- **Flags.** A figure may carry only the flags the run's own figures carried
+  (`allowedFlags`, by source, written by the test). Any other flag puts it
+  outside.
+- **CLI flags.** Each flag of the two questions is either one the run's
+  pricing allows (it picks the source, the question or the output, or states
+  an input the class then holds to the run's), or one that types a term in
+  (`--batch-cap`, `--assume-vp`, `--assume-router-hop` and the rest). The
+  latter put every figure outside. `TestEnvelope_EveryFlagIsClassified` fails
+  on a flag in neither list.
 
 A row also says what kind of range its error is, and over how many independent
 readings:
@@ -639,22 +653,43 @@ How the rows are drawn:
   not held. A step held when its completions came within 3% of those due and
   none failed; a void step counts, since the noise floor voids its percentiles,
   not its count. Knees are read with flow control off, where every phase held to
-  the predicted knee (one-sided, at most +0%). With flow control on, the router
-  stopped buckets B and C near the prefill onset; those crossings are the
-  flow-control-onset rows.
+  the predicted knee: one-sided, at most +3%, since the 3% hold rule cannot see
+  a fleet short by less. A knee row is bounded to flow control off: with it on,
+  the router stopped buckets B and C near the prefill onset, 5% to 25% under
+  the knee; those crossings are the flow-control-onset rows.
 - **Rates.** A rate reading is where the client's percentile crossed the frozen
   target over valid steps.
 
 At the ladder's rates, the golden shows the planner at this commit reproducing
 the run's frozen curve.
 
-| Figure | A: 1000 in, 1000 out, Poisson | B: 8000 in, 200 out, Poisson | C: 8000 in, 200 out, Ca² 4 |
-| --- | --- | --- | --- |
-| TTFT mean / p90 / p95, p10-p90 | -4..+18 / +0..+14 / -3..+12% (12) | +29..+95 / +18..+108 / +18..+102% (12) | +30..+93 / +45..+131 / +44..+145% (9) |
-| Mean TPOT, p10-p90 | +5..+18% (12) | +36..+45% (12) | +34..+43% (10) |
-| Knee, flow control off | at most +0% (1) | at most +0% (1) | at most +0% (1) |
-| Flow-control onset | not reached | -4..+2% (1, bracket) | -7..-4% (1, bracket) |
-| Rate at the p90 / p95 target | at most -6 / -6% (1) | at most -6 / -6% (1) | at most +0 / +2% (2) |
+<!-- envelope-table: begin (go test ./cmd/capacity-planner -run TestStaircaseQ32 -update) -->
+| Figure | Shape | Error | Range | Readings | Knee share | Flow control |
+| --- | --- | --- | --- | --- | --- | --- |
+| decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
+| flow-control-onset | 8000-token prompts, 200 out, Ca^2 1 | -4..+2% | bracket | 1 |  | on |
+| flow-control-onset | 8000-token prompts, 200 out, Ca^2 4 | -7..-4% | bracket | 1 |  | on |
+| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +5..+18% | p10-p90, min-max +3..+19% | 12 at 6 load levels | 0.400 to 0.900 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | +36..+45% | p10-p90, min-max +33..+46% | 12 at 6 load levels | 0.096 to 0.215 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | +34..+43% | p10-p90, min-max +32..+43% | 10 at 6 load levels | 0.096 to 0.203 | any |
+| prefill-knee | 8000-token prompts, 200 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
+| prefill-knee | 8000-token prompts, 200 out, Ca^2 4 | at most +3% | one-sided | 1 |  | off |
+| rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | at most +0% | one-sided | 2 | 0.740 to 0.875 | off, on |
+| rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | at most +2% | one-sided | 2 | 0.740 to 0.875 | off, on |
+| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -4..+18% | p10-p90, min-max -5..+18% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | +0..+14% | p10-p90, min-max -2..+16% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -3..+12% | p10-p90, min-max -4..+14% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft mean | 8000-token prompts, 200 out, Ca^2 1 | +29..+95% | p10-p90, min-max +27..+149% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | +18..+108% | p10-p90, min-max +15..+156% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | +18..+102% | p10-p90, min-max +5..+174% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft mean | 8000-token prompts, 200 out, Ca^2 4 | +30..+93% | p10-p90, min-max +22..+127% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+| ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | +45..+131% | p10-p90, min-max +33..+167% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +44..+145% | p10-p90, min-max +37..+186% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+<!-- envelope-table: end -->
 
 The TTFT readings are 6 load levels, each with flow control off and on (C on: 3
 levels, below its onset). The two phases share the model's figure, so the error

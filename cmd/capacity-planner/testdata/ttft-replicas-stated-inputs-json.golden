@@ -102,8 +102,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)",
-              "outside": "accelerator resource-01, measured H200"
+              "label": "OUTSIDE VALIDATED REGION (arrivals Ca^2 1.5, measured 0.8 to 1.25)",
+              "outside": "arrivals Ca^2 1.5, measured 0.8 to 1.25"
             }
           }
         },
@@ -153,8 +153,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (accelerator resource-01, measured H200)",
-              "outside": "accelerator resource-01, measured H200"
+              "label": "OUTSIDE VALIDATED REGION (arrivals Ca^2 1.5, measured 0.8 to 1.25)",
+              "outside": "arrivals Ca^2 1.5, measured 0.8 to 1.25"
             }
           }
         }
@@ -229,8 +229,8 @@
             },
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (V_P assumed, not learned)",
-              "outside": "V_P assumed, not learned"
+              "label": "OUTSIDE VALIDATED REGION (arrivals Ca^2 1.5, measured 0.8 to 1.25)",
+              "outside": "arrivals Ca^2 1.5, measured 0.8 to 1.25"
             }
           }
         },
@@ -294,5 +294,5 @@
     }
   ],
   "exitCode": 0,
-  "note": "estimate from 15 readings (cycles 197-220) of a 226-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: no recording has checked it at a stated Ca^2. Above Ca^2 1 it reads high at light load: on one pod at Ca^2 4 its p95 read +118% at utilization 0.3 and +10% at 0.85 against a simulation. V_P ASSUMED."
+  "note": "estimate from 15 readings (cycles 197-220) of a 226-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: the P2 recordings never checked it at a stated Ca^2; the measured envelope did only where a figure reads validated. Above Ca^2 1 it reads high at light load: on one pod at Ca^2 4 its p95 read +118% at utilization 0.3 and +10% at 0.85 against a simulation. V_P ASSUMED."
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
@@ -112,11 +113,13 @@ func readQ32Steps(t *testing.T) []q32Step {
 
 // q32Bucket is one bucket as the planner prices it at this commit.
 type q32Bucket struct {
-	spec   freezeBucket
-	now    frozenBucket
-	run    frozenBucket
-	off    whatif.TTFTFleet
-	class  whatif.FigureClass
+	spec  freezeBucket
+	now   frozenBucket
+	run   frozenBucket
+	off   whatif.TTFTFleet
+	class whatif.FigureClass
+	// flags are the CLI's flags on the bucket's figures (q32Buckets).
+	flags  []whatif.Flag
 	priced bool
 }
 
@@ -172,13 +175,20 @@ func q32Buckets(t *testing.T) map[string]q32Bucket {
 	require.Equal(t, q32SpecSHA, run.SpecSHA256)
 	st, err := q32State()
 	require.NoError(t, err)
-	accelerator := ""
+	accelerator, decodeTP, prefillTP := "", 0, 0
 	for _, vs := range st.Variants {
 		if vs.Accelerator != "" {
 			accelerator = vs.Accelerator
 		}
+		if domain.CanonicalRole(vs.Role) == domain.RolePrefill {
+			prefillTP = vs.TensorParallel
+		} else {
+			decodeTP = vs.TensorParallel
+		}
 	}
 	require.NotEmpty(t, accelerator, "the recording names its accelerator")
+	require.Positive(t, decodeTP, "the recording names decode's tensor parallelism")
+	require.Positive(t, prefillTP, "the recording names prefill's tensor parallelism")
 	out := map[string]q32Bucket{}
 	for _, b := range spec.Buckets {
 		f := freezeFlags{ca2: ca2Overrides{}}
@@ -195,7 +205,22 @@ func q32Buckets(t *testing.T) map[string]q32Bucket {
 		}
 		require.Equal(t, b.Name, qb.run.Name, "the run froze bucket %s", b.Name)
 		qb.class = whatif.FleetClass(off)
-		qb.class.Accelerator = accelerator
+		qb.class.Accelerator, qb.class.Model = accelerator, st.ModelID
+		qb.class.TensorParallel, qb.class.PrefillTensorParallel = decodeTP, prefillTP
+		// The flags the CLI's own figures carry here: the fleet's, settled
+		// as the freeze settles them, and the decode variant's.
+		qb.flags = slices.Clone(now.Flags)
+		a := answerFlags{question: "freeze", cycle: "last", decode: b.Decode, prefill: b.Prefill,
+			inputTokens: b.Prompt, outputTokens: b.Output, seed: 1,
+			set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
+		variants, err := a.decodeVariants(st)
+		require.NoError(t, err)
+		for _, pv := range variants {
+			qb.flags = append(qb.flags, pv.flags...)
+			if pv.assumed() {
+				qb.flags = append(qb.flags, whatif.AssumedShape)
+			}
+		}
 		out[b.Name] = qb
 	}
 	return out
@@ -228,6 +253,8 @@ type q32Group struct {
 type q32Analysis struct {
 	lines []string
 	rows  []whatif.EnvelopeRow
+	// allowed is the flags a validated figure may carry.
+	allowed []whatif.Flag
 }
 
 // percentileOf is the q-th quantile of sorted xs, linear between ranks.
@@ -270,6 +297,21 @@ func analyzeQ32(t *testing.T) q32Analysis {
 	add("# The model is the planner at this commit on the run's warm-up, frozen as the run froze it; the client is what")
 	add("# the run measured. Error is the model over the client, less 1: + reads slow (a TTFT, a TPOT) or promises")
 	add("# more than was held (a rate, a knee). go test ./cmd/capacity-planner -run TestStaircaseQ32 -update rewrites it.")
+	// allowed is every flag the run's own figures carry, as the CLI prices
+	// them: what a validated figure may carry (whatif.Envelope.AllowedFlags).
+	// The run stated its spread and its arrivals, which the CLI flags.
+	allowed := map[whatif.Flag]bool{whatif.AssumedPromptSpread: true, assumedArrivalCV2: true, assumedPoisson: true}
+	allow := func(fl ...whatif.Flag) {
+		for _, f := range fl {
+			allowed[f] = true
+		}
+	}
+	for _, b := range buckets {
+		allow(b.flags...)
+		if k, ok := whatif.PrefillKnee(b.off.Prefill).(whatif.Answer); ok {
+			allow(k.Flags...)
+		}
+	}
 	groups := map[string]*q32Group{}
 	group := func(kind whatif.FigureKind, bucket string, q float64) *q32Group {
 		k := fmt.Sprintf("%s|%s|%g", kind, bucket, q)
@@ -320,6 +362,7 @@ func analyzeQ32(t *testing.T) q32Analysis {
 			e := relErr(v.Seconds, client)
 			parts = append(parts, fmt.Sprintf("%s %s / %.1f ms %s", statText(q), model, 1000*client, pctText(&e)))
 			if s.void == "" && !v.HasFlag(whatif.AboveFlowControlOnset) {
+				allow(v.Flags...)
 				g := group(whatif.FigureTTFT, s.bucket, q)
 				g.readings = append(g.readings, q32Reading{lo: fptr(e), hi: fptr(e), share: share, fc: s.fc})
 			}
@@ -329,6 +372,7 @@ func analyzeQ32(t *testing.T) q32Analysis {
 				e := relErr(m.Value, s.tpotMean)
 				parts = append(parts, fmt.Sprintf("mean TPOT %.2f / %.2f ms %s", 1000*m.Value, 1000*s.tpotMean, pctText(&e)))
 				if s.void == "" {
+					allow(m.Flags...)
 					g := group(whatif.FigureMeanTPOT, s.bucket, 0)
 					g.readings = append(g.readings, q32Reading{lo: fptr(e), hi: fptr(e), share: s.rate / b.now.DecodeKnee, fc: s.fc})
 				}
@@ -369,8 +413,11 @@ func analyzeQ32(t *testing.T) q32Analysis {
 		case firstNot == nil && kind == whatif.FigureFlowControlOnset:
 			add("%s, held to %.3f, every step held: the ladder stopped under it", head, lastHeld.rate)
 		case firstNot == nil:
-			hi := relErr(predicted, lastHeld.rate)
-			add("%s, held to %.3f, every step held: error at most %s", head, lastHeld.rate, pctText(&hi))
+			// The hold rule cannot see a fleet short of its rate by less
+			// than the 3% it allows: the knee may lie that far under the
+			// last step held.
+			hi := relErr(predicted, q32HeldShare*lastHeld.rate)
+			add("%s, held to %.3f, every step held: not exceeded within the steps run, error at most %s", head, lastHeld.rate, pctText(&hi))
 			g := group(kind, phase[0].bucket, 0)
 			g.brackets, g.shareless = true, true
 			g.readings = append(g.readings, q32Reading{hi: fptr(hi), fc: phase[0].fc, target: predicted})
@@ -443,6 +490,7 @@ func analyzeQ32(t *testing.T) q32Analysis {
 		add("envelope %s, %s, flow control %s%s: %s", what, row.Shape, strings.Join(g.flowControl(), " and "), share,
 			whatif.Validation{Row: &row}.String())
 	}
+	a.allowed = slices.Sorted(maps.Keys(allowed))
 	return a
 }
 
@@ -458,6 +506,14 @@ func q32Phases(steps []q32Step) [][]q32Step {
 	}
 	return out
 }
+
+// q32Model is the run's model by its public name; the committed recording
+// names it by its pseudonym, which a region holds beside it.
+const q32Model = "Qwen/Qwen3-32B"
+
+// q32PrefixHitSlack is the most prefix-cache hit rate a region holds: the
+// run's prompts shared no prefix (the freeze prices 0), a stated tolerance.
+const q32PrefixHitSlack = 0.05
 
 // q32RateSlack is how far either side of a measured target's knee share a
 // rate row reaches: half the ladder's spacing there (0.05 of the knee).
@@ -475,20 +531,22 @@ func q32Row(b q32Bucket, g *q32Group) whatif.EnvelopeRow {
 	region := whatif.Region{Topology: b.class.Topology, Accelerators: []string{b.class.Accelerator},
 		PrefillReplicas: []int{b.spec.Prefill}, DecodeReplicas: []int{b.spec.Decode},
 		PromptTokens: sent(b.spec.Prompt), OutputTokens: sent(b.spec.Output),
-		PromptCV: sent(b.off.Prefill.PromptCV), ArrivalCV2: sent(b.spec.Ca2)}
+		PromptCV: sent(b.off.Prefill.PromptCV), ArrivalCV2: sent(b.spec.Ca2),
+		Models: []string{q32Model, b.class.Model}, TensorParallel: []int{b.class.TensorParallel},
+		PrefillTensorParallel: []int{b.class.PrefillTensorParallel}, PrefixHitRate: &whatif.Span{Lo: 0, Hi: q32PrefixHitSlack}}
 	switch g.kind {
 	case whatif.FigureTTFT, whatif.FigureRateAtTTFT:
 		region.Percentiles = []float64{g.q}
 	case whatif.FigureMeanTPOT:
-		// Decode's TPOT reads neither the prefill pods, nor the prompts'
-		// spread, nor the arrivals, nor the router's gate.
-		region.PrefillReplicas, region.PromptCV, region.ArrivalCV2 = nil, nil, nil
+		// Decode's TPOT reads neither the prefill pods nor the prompts'
+		// spread. The arrivals stay, as the run sent them.
+		region.PrefillReplicas, region.PrefillTensorParallel, region.PromptCV = nil, nil, nil
 	case whatif.FigurePrefillKnee:
-		// A knee is a capacity: no spread or arrivals move it.
-		region.PromptCV, region.ArrivalCV2 = nil, nil
+		// A knee is a capacity: no spread moves it.
+		region.PromptCV = nil
 	case whatif.FigureDecodeKnee:
 		// Nor do the prefill pods move decode's.
-		region.PrefillReplicas, region.PromptCV, region.ArrivalCV2 = nil, nil, nil
+		region.PrefillReplicas, region.PrefillTensorParallel, region.PromptCV = nil, nil, nil
 	}
 	errs := make([]float64, 0, len(g.readings))
 	row := whatif.EnvelopeRow{Figure: g.kind, Source: q32Source,
@@ -528,7 +586,7 @@ func q32Row(b q32Bucket, g *q32Group) whatif.EnvelopeRow {
 	}
 	region.FlowControl = g.flowControl()
 	// A knee is a capacity, and decode's TPOT does not read the router's gate.
-	if g.kind == whatif.FigureMeanTPOT || g.kind == whatif.FigurePrefillKnee || g.kind == whatif.FigureDecodeKnee {
+	if g.kind == whatif.FigureMeanTPOT {
 		region.FlowControl = nil
 	}
 	switch {
@@ -546,6 +604,13 @@ func q32Row(b q32Bucket, g *q32Group) whatif.EnvelopeRow {
 	default:
 		slices.Sort(errs)
 		row.Readings = len(errs)
+		var levels []float64
+		for _, r := range g.readings {
+			if l := share3(r.share); !slices.Contains(levels, l) {
+				levels = append(levels, l)
+			}
+		}
+		row.Levels = len(levels)
 		row.ErrorMin, row.ErrorMax = fptr(errs[0]), fptr(errs[len(errs)-1])
 		row.ErrorLo, row.ErrorHi, row.Spread = row.ErrorMin, row.ErrorMax, whatif.SpreadMinMax
 		if len(errs) >= 5 {
@@ -577,15 +642,20 @@ func statText(q float64) string {
 	return "p" + strconv.FormatFloat(100*q, 'f', -1, 64)
 }
 
-// q32EnvelopeFile is envelope.json with this run's rows replaced by rows.
-func q32EnvelopeFile(t *testing.T, rows []whatif.EnvelopeRow) []byte {
+// q32EnvelopeFile is envelope.json with this run's rows and allowed flags
+// replaced by a's.
+func q32EnvelopeFile(t *testing.T, a q32Analysis) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(q32Envelope)
 	require.NoError(t, err)
 	e, err := whatif.ParseEnvelope(raw)
 	require.NoError(t, err)
 	e.Rows = slices.DeleteFunc(e.Rows, func(r whatif.EnvelopeRow) bool { return r.Source == q32Source })
-	e.Rows = append(e.Rows, rows...)
+	e.Rows = append(e.Rows, a.rows...)
+	if e.AllowedFlags == nil {
+		e.AllowedFlags = map[string][]whatif.Flag{}
+	}
+	e.AllowedFlags[q32Source] = a.allowed
 	body, err := json.MarshalIndent(e, "", "  ")
 	require.NoError(t, err)
 	return append(body, '\n')
@@ -596,7 +666,7 @@ func q32EnvelopeFile(t *testing.T, rows []whatif.EnvelopeRow) []byte {
 func TestStaircaseQ32_TheErrorsAreFrozen(t *testing.T) {
 	a := analyzeQ32(t)
 	got := strings.Join(a.lines, "\n") + "\n"
-	env := q32EnvelopeFile(t, a.rows)
+	env := q32EnvelopeFile(t, a)
 	if *update {
 		require.NoError(t, os.WriteFile(q32Table, []byte(got), 0o644))
 		require.NoError(t, os.WriteFile(q32Envelope, env, 0o644))
@@ -687,4 +757,85 @@ func TestStaircaseQ32_TheAssumedSpreadIsOutside(t *testing.T) {
 		blind.Rows[i].Region.PromptCV = nil
 	}
 	assert.True(t, blind.Judge(assumed).Validated(), "without the spread in the region the assumed figure would pass: the region is what holds it out")
+}
+
+// The docs' envelope tables are rendered from the rows, between markers, so
+// that they cannot go stale when a row moves: accuracy.md for the operator,
+// the proposal's "as built" for the record. -update rewrites them.
+var q32TableDocs = []string{"../../docs/guides/capacity-planner/accuracy.md", "../../docs/proposals/slo-capacity-planner.md"}
+
+const (
+	q32TableBegin = "<!-- envelope-table: begin (go test ./cmd/capacity-planner -run TestStaircaseQ32 -update) -->"
+	q32TableEnd   = "<!-- envelope-table: end -->"
+)
+
+// q32TableText is the rows as a markdown table.
+func q32TableText(rows []whatif.EnvelopeRow) string {
+	var b strings.Builder
+	b.WriteString("| Figure | Shape | Error | Range | Readings | Knee share | Flow control |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, r := range rows {
+		parts := make([]string, 0, 1+len(r.Region.Percentiles))
+		parts = append(parts, string(r.Figure))
+		for _, q := range r.Region.Percentiles {
+			parts = append(parts, statText(q))
+		}
+		what := strings.Join(parts, " ")
+		if r.Figure == whatif.FigureMeanTPOT {
+			what = "mean TPOT"
+		}
+		rng := r.Spread
+		if r.Spread == whatif.SpreadPercentiles {
+			rng += ", min-max " + whatif.ErrorText(r.ErrorMin, r.ErrorMax)
+		}
+		n := strconv.Itoa(r.Readings)
+		if r.Levels > 0 && r.Levels != r.Readings {
+			n += fmt.Sprintf(" at %d load levels", r.Levels)
+		}
+		share := ""
+		if r.Region.MaxKneeShare > 0 {
+			share = fmt.Sprintf("%.3f to %.3f", r.Region.MinKneeShare, r.Region.MaxKneeShare)
+		}
+		fc := strings.Join(r.Region.FlowControl, ", ")
+		if fc == "" {
+			fc = "any"
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n", what, r.Shape, whatif.ErrorText(r.ErrorLo, r.ErrorHi), rng, n, share, fc)
+	}
+	return b.String()
+}
+
+// The docs carry the rows the planner ships.
+func TestStaircaseQ32_TheDocsTablesAreTheRows(t *testing.T) {
+	var rows []whatif.EnvelopeRow
+	for _, r := range whatif.DefaultEnvelope().Rows {
+		if r.Source == q32Source {
+			rows = append(rows, r)
+		}
+	}
+	if *update {
+		// -update has just rewritten envelope.json; read it, not the
+		// embedded copy this binary was built with.
+		raw, err := os.ReadFile(q32Envelope)
+		require.NoError(t, err)
+		e, err := whatif.ParseEnvelope(raw)
+		require.NoError(t, err)
+		rows = slices.DeleteFunc(e.Rows, func(r whatif.EnvelopeRow) bool { return r.Source != q32Source })
+	}
+	require.NotEmpty(t, rows)
+	want := q32TableText(rows)
+	for _, path := range q32TableDocs {
+		raw, err := os.ReadFile(path)
+		require.NoError(t, err)
+		text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		start, end := strings.Index(text, q32TableBegin), strings.Index(text, q32TableEnd)
+		require.True(t, start >= 0 && end > start, "%s: no envelope-table markers", path)
+		got := text[start+len(q32TableBegin)+1 : end]
+		if *update {
+			text = text[:start+len(q32TableBegin)+1] + want + text[end:]
+			require.NoError(t, os.WriteFile(path, []byte(text), 0o644))
+			continue
+		}
+		assert.Equal(t, want, got, "%s: the envelope table is stale: -update", path)
+	}
 }

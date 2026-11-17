@@ -141,7 +141,7 @@ func replicasToSLO(ctx context.Context, args []string, out, warn io.Writer) erro
 				in.TPOT = f.tpotInputs(st, 0, q, a.ratio)
 			}
 			w.Roles = append(w.Roles, wireRole{Role: "decode", Variant: a.pv.state.Variant, Inputs: in, Results: wireResults{
-				Knee: validated(toWire(a.slo.KneeRate, unitRate), a.pv.kneeValidation(a.slo.KneeRate)), OperatingRate: toWire(a.slo.Rate, unitRate),
+				Knee: validated(toWire(a.slo.KneeRate, unitRate), decodeKneeValidation(a.class(), a.slo.KneeRate)), OperatingRate: toWire(a.slo.Rate, unitRate),
 				MeanTPOT:       validated(toWire(a.slo.MeanTPOT, unitSeconds), a.tpotValidation(0, a.slo.MeanTPOT)),
 				PercentileTPOT: validated(toWire(a.slo.PercentileTPOT, unitSeconds), a.tpotValidation(q, a.slo.PercentileTPOT)),
 			}})
@@ -271,7 +271,7 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 		}
 		knee := a.slo.KneeRate.(whatif.Answer)
 		row(&b, "knee", rateText(knee.Value), "", fmt.Sprintf("decode, %s binds at fill %.3f; %s", boundText(knee.Basis.BoundBy), knee.Basis.Fill,
-			a.pv.kneeValidation(knee)))
+			decodeKneeValidation(a.class(), knee)))
 		switch r := a.slo.Rate.(type) {
 		case whatif.Answer:
 			why := "--rate"
@@ -361,5 +361,15 @@ func (a replicasAnswer) tpotValidation(q float64, r whatif.Result) whatif.Valida
 	if v, ok := a.slo.Rate.(whatif.Answer); ok {
 		rate = v.Value
 	}
-	return a.pv.tpotValidation(q, rate, a.slo.KneeRate, r)
+	return tpotValidation(a.class(), q, rate, a.slo.KneeRate, r)
+}
+
+// class is the class the answer's decode figures are judged in: the fleet's
+// where a TTFT was asked, which says the arrivals, the prefill pods and flow
+// control, else the variant's own.
+func (a replicasAnswer) class() whatif.FigureClass {
+	if a.ttft != nil {
+		return a.ttft.fleet.class()
+	}
+	return a.pv.class()
 }

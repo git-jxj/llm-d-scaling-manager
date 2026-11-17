@@ -142,8 +142,8 @@
             },
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (V_P assumed, not learned)",
-              "outside": "V_P assumed, not learned"
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
             }
           }
         },

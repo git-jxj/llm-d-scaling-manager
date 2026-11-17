@@ -1327,6 +1327,7 @@ history
 historyAgeSeconds
 historyKey
 historyWindowLen
+hit
 hold
 hold-only
 holdCap
@@ -1388,6 +1389,7 @@ infers
 info
 infrastructure
 inline
+input
 input-invalid
 inputTokensNow
 inputTokensWas
@@ -1638,6 +1640,7 @@ length
 lengthen
 lent
 let
+levels
 liftReason
 lifted
 likely
@@ -2072,6 +2075,7 @@ p10-p90
 page_size
 panic
 panicked
+parallelism
 parameter
 parameters
 parked
@@ -2786,6 +2790,7 @@ starts
 stashed
 stashedWindows
 state
+stated
 static
 stationary
 statistic
@@ -2856,6 +2861,7 @@ targets
 tell
 template
 tenants
+tensor
 tensor_parallel_size
 term
 terminating

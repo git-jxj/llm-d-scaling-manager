@@ -53,11 +53,11 @@ step C on 2: 2.429 r/s, 0.60 of the knee: mean 2565.0 / 1834.7 ms +39.8%; p90 55
 step C on 3: 3.036 r/s, 0.75 of the knee: mean 4523.8 / 3008.3 ms +50.4%; p90 10105.8 / 6131.1 ms +64.8%; p95 12844.8 / 7396.5 ms +73.7%; mean TPOT 16.80 / 12.43 ms +35.2%; used
 step C on 4: 3.238 r/s, 0.80 of the knee: mean 5755.7 / 7228.4 ms -20.4%; p90 12952.5 / 15397.8 ms -15.9%; p95 16541.1 / 28839.6 ms -42.6%; mean TPOT 16.80 / 12.70 ms +32.3%; past the onset
 step C on 5: 3.339 r/s, 0.82 of the knee: mean 6634.9 / 11743.4 ms -43.5%; p90 14982.6 / 42302.6 ms -64.6%; p95 19179.4 / 49545.1 ms -61.3%; mean TPOT 16.80 / 12.68 ms +32.5%; void: failed
-knee A off: predicted 15.625 r/s, held to 15.625, every step held: error at most +0.0%
+knee A off: predicted 15.625 r/s, held to 15.625, every step held: not exceeded within the steps run, error at most +3.1%
 onset A on: predicted 29.663 r/s, held to 15.625, every step held: the ladder stopped under it
-knee B off: predicted 4.048 r/s, held to 4.048, every step held: error at most +0.0%
+knee B off: predicted 4.048 r/s, held to 4.048, every step held: not exceeded within the steps run, error at most +3.1%
 onset B on: predicted 3.707 r/s, held to 3.643, first not held 3.845: error -3.6% to +1.8%
-knee C off: predicted 4.048 r/s, held to 4.048, every step held: error at most +0.0%
+knee C off: predicted 4.048 r/s, held to 4.048, every step held: not exceeded within the steps run, error at most +3.1%
 onset C on: predicted 3.098 r/s, held to 3.238, first not held 3.339: error -7.2% to -4.3%
 rate A off p90 348.8 ms: predicted 13.281 r/s, 0.850 of the knee, measured at least 14.062: error at most -5.6%
 rate A off p95 380.0 ms: predicted 13.281 r/s, 0.850 of the knee, measured at least 14.062: error at most -5.6%
@@ -71,26 +71,26 @@ rate C off p90 17700.8 ms: predicted 3.440 r/s, 0.850 of the knee, measured at l
 rate C off p95 22713.7 ms: predicted 3.440 r/s, 0.850 of the knee, measured at least 3.440: error at most +0.0%
 rate C on p90 17700.8 ms: predicted 3.098 r/s, 0.765 of the knee, measured at least 3.238: error at most -4.3%
 rate C on p95 22713.7 ms: predicted 3.098 r/s, 0.765 of the knee, measured 3.036 to 3.238: error -4.3% to +2.0%
-envelope decode-knee, 1000-token prompts, 1000 out, Ca^2 1, flow control off: validated: one-sided, error at most +0% (n=1, the run stopped short; q32 staircase)
+envelope decode-knee, 1000-token prompts, 1000 out, Ca^2 1, flow control off: validated: one-sided, error at most +3% (n=1, not crossed within the steps run; q32 staircase)
 envelope flow-control-onset, 8000-token prompts, 200 out, Ca^2 1, flow control on: validated: error -4..+2% (n=1, single reading, between two ladder steps; q32 staircase)
 envelope flow-control-onset, 8000-token prompts, 200 out, Ca^2 4, flow control on: validated: error -7..-4% (n=1, single reading, between two ladder steps; q32 staircase)
-envelope mean-tpot mean, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +5..+18% (p10-p90, min-max +3..+19%, n=12; q32 staircase)
-envelope mean-tpot mean, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.096 to 0.215 of the knee: validated: error +36..+45% (p10-p90, min-max +33..+46%, n=12; q32 staircase)
-envelope mean-tpot mean, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.096 to 0.203 of the knee: validated: error +34..+43% (p10-p90, min-max +32..+43%, n=10; q32 staircase)
-envelope prefill-knee, 8000-token prompts, 200 out, Ca^2 1, flow control off: validated: one-sided, error at most +0% (n=1, the run stopped short; q32 staircase)
-envelope prefill-knee, 8000-token prompts, 200 out, Ca^2 4, flow control off: validated: one-sided, error at most +0% (n=1, the run stopped short; q32 staircase)
-envelope rate-at-ttft p90, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.825 to 0.875 of the knee: validated: one-sided, error at most -6% (n=1, the run stopped short; q32 staircase)
-envelope rate-at-ttft p95, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.825 to 0.875 of the knee: validated: one-sided, error at most -6% (n=1, the run stopped short; q32 staircase)
-envelope rate-at-ttft p90, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.825 to 0.875 of the knee: validated: one-sided, error at most -6% (n=1, the run stopped short; q32 staircase)
-envelope rate-at-ttft p95, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.825 to 0.875 of the knee: validated: one-sided, error at most -6% (n=1, the run stopped short; q32 staircase)
-envelope rate-at-ttft p90, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.740 to 0.875 of the knee: validated: one-sided, error at most +0% (n=2, the run stopped short; q32 staircase)
-envelope rate-at-ttft p95, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.740 to 0.875 of the knee: validated: one-sided, error at most +2% (n=2, the run stopped short; q32 staircase)
-envelope ttft mean, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error -4..+18% (p10-p90, min-max -5..+18%, n=12; q32 staircase)
-envelope ttft p90, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +0..+14% (p10-p90, min-max -2..+16%, n=12; q32 staircase)
-envelope ttft p95, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error -3..+12% (p10-p90, min-max -4..+14%, n=12; q32 staircase)
-envelope ttft mean, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +29..+95% (p10-p90, min-max +27..+149%, n=12; q32 staircase)
-envelope ttft p90, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +18..+108% (p10-p90, min-max +15..+156%, n=12; q32 staircase)
-envelope ttft p95, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +18..+102% (p10-p90, min-max +5..+174%, n=12; q32 staircase)
-envelope ttft mean, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.400 to 0.850 of the knee: validated: error +30..+93% (p10-p90, min-max +22..+127%, n=9; q32 staircase)
-envelope ttft p90, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.400 to 0.850 of the knee: validated: error +45..+131% (p10-p90, min-max +33..+167%, n=9; q32 staircase)
-envelope ttft p95, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.400 to 0.850 of the knee: validated: error +44..+145% (p10-p90, min-max +37..+186%, n=9; q32 staircase)
+envelope mean-tpot mean, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +5..+18% (p10-p90, min-max +3..+19%, n=12 at 6 load levels; q32 staircase)
+envelope mean-tpot mean, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.096 to 0.215 of the knee: validated: error +36..+45% (p10-p90, min-max +33..+46%, n=12 at 6 load levels; q32 staircase)
+envelope mean-tpot mean, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.096 to 0.203 of the knee: validated: error +34..+43% (p10-p90, min-max +32..+43%, n=10 at 6 load levels; q32 staircase)
+envelope prefill-knee, 8000-token prompts, 200 out, Ca^2 1, flow control off: validated: one-sided, error at most +3% (n=1, not crossed within the steps run; q32 staircase)
+envelope prefill-knee, 8000-token prompts, 200 out, Ca^2 4, flow control off: validated: one-sided, error at most +3% (n=1, not crossed within the steps run; q32 staircase)
+envelope rate-at-ttft p90, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.825 to 0.875 of the knee: validated: one-sided, error at most -6% (n=1, not crossed within the steps run; q32 staircase)
+envelope rate-at-ttft p95, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.825 to 0.875 of the knee: validated: one-sided, error at most -6% (n=1, not crossed within the steps run; q32 staircase)
+envelope rate-at-ttft p90, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.825 to 0.875 of the knee: validated: one-sided, error at most -6% (n=1, not crossed within the steps run; q32 staircase)
+envelope rate-at-ttft p95, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.825 to 0.875 of the knee: validated: one-sided, error at most -6% (n=1, not crossed within the steps run; q32 staircase)
+envelope rate-at-ttft p90, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.740 to 0.875 of the knee: validated: one-sided, error at most +0% (n=2, not crossed within the steps run; q32 staircase)
+envelope rate-at-ttft p95, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.740 to 0.875 of the knee: validated: one-sided, error at most +2% (n=2, not crossed within the steps run; q32 staircase)
+envelope ttft mean, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error -4..+18% (p10-p90, min-max -5..+18%, n=12 at 6 load levels; q32 staircase)
+envelope ttft p90, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +0..+14% (p10-p90, min-max -2..+16%, n=12 at 6 load levels; q32 staircase)
+envelope ttft p95, 1000-token prompts, 1000 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error -3..+12% (p10-p90, min-max -4..+14%, n=12 at 6 load levels; q32 staircase)
+envelope ttft mean, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +29..+95% (p10-p90, min-max +27..+149%, n=12 at 6 load levels; q32 staircase)
+envelope ttft p90, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +18..+108% (p10-p90, min-max +15..+156%, n=12 at 6 load levels; q32 staircase)
+envelope ttft p95, 8000-token prompts, 200 out, Ca^2 1, flow control off and on, 0.400 to 0.900 of the knee: validated: error +18..+102% (p10-p90, min-max +5..+174%, n=12 at 6 load levels; q32 staircase)
+envelope ttft mean, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.400 to 0.850 of the knee: validated: error +30..+93% (p10-p90, min-max +22..+127%, n=9 at 6 load levels; q32 staircase)
+envelope ttft p90, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.400 to 0.850 of the knee: validated: error +45..+131% (p10-p90, min-max +33..+167%, n=9 at 6 load levels; q32 staircase)
+envelope ttft p95, 8000-token prompts, 200 out, Ca^2 4, flow control off and on, 0.400 to 0.850 of the knee: validated: error +44..+145% (p10-p90, min-max +37..+186%, n=9 at 6 load levels; q32 staircase)

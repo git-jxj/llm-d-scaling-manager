@@ -162,6 +162,8 @@ func decodeRate(pv pricedVariant, query whatif.RateQuery, r resolvedRatio) whati
 func (a *rateAnswer) priceTTFT(t ttftQuestion, headroom float64) {
 	corners := a.priceTTFTRate(t)
 	a.fleetRate = a.fleetAt(t, headroom, a.result, corners)
+	a.fleetRate = settled(a.fleetRate, a.fleet.rateValidation(t.q, a.fleetRate, a.ttft))
+	a.ttft = settled(a.ttft, a.fleet.rateValidation(t.q, a.ttft, a.ttft))
 }
 
 // priceTTFTRate prices the prefill role's rate at the target, with its span,

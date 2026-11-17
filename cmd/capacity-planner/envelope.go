@@ -32,11 +32,44 @@ func resultFlags(r whatif.Result) []whatif.Flag {
 	return nil
 }
 
-// class is the class of a decode variant's own figures: its accelerator,
-// replicas and shape. Flow control and the prefill pods are not read.
+// The flags of replicas-to-slo and slo-to-rate, as the envelope reads them.
+// A flag in flagsInside picks the source, the question or the output, or
+// states an input the run priced at (the lengths, the spread, the arrivals,
+// the flow-control state, the pod counts), which the class then holds to the
+// run's. A flag in flagsOutside states an input no run priced at: setting
+// it puts every figure outside. A flag in neither fails
+// TestEnvelope_EveryFlagIsClassified, so a new flag is decided, not missed.
+var (
+	flagsInside = []string{"recording", "cycle", "model", "namespace", "variant", "decode", "prefill", "prefill-variant",
+		"assume-input-tokens", "assume-output-tokens", "assume-prompt-cv", "arrival-cv2", "flow-control", "headroom", "rate",
+		"seed", "o", "output", "ttft", "ttft-percentile", "tpot", "tpot-percentile",
+		"prometheus", "bearer-token-file", "ca-file", "insecure-skip-verify", "timeout", "kube-state-metrics", "role-of",
+		"from", "to", "step", "force"}
+	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
+		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "gpus-per-replica",
+		"accelerator", "policy"}
+)
+
+// statedOutside is the flags in flagsOutside that were set, as --name.
+func (f *answerFlags) statedOutside() []string {
+	var out []string
+	for _, name := range flagsOutside {
+		if f.set[name] {
+			out = append(out, "--"+name)
+		}
+	}
+	return out
+}
+
+// class is the class of a decode variant's own figures: its model,
+// accelerator, tensor parallelism, replicas and shape. The prefill pods,
+// the arrivals and flow control are not read: a figure a row bounds by them
+// is outside unless the fleet's class is asked (TTFT asked).
 func (pv pricedVariant) class() whatif.FigureClass {
 	c := whatif.FigureClass{Topology: whatif.TopologyPD, Accelerator: pv.state.Accelerator, DecodeReplicas: pv.decode.Replicas,
-		PromptTokens: pv.shape.AvgInputTokens, OutputTokens: pv.shape.AvgOutputTokens}
+		PromptTokens: pv.shape.AvgInputTokens, OutputTokens: pv.shape.AvgOutputTokens, Model: pv.model,
+		TensorParallel: pv.state.TensorParallel, PrefixHitRate: pv.shape.PrefixHitRate, ArrivalsUnknown: true,
+		Stated: pv.stated}
 	if domain.CanonicalRole(pv.state.Role) == domain.RoleBoth {
 		c.Topology = whatif.TopologyAggregated
 	}
@@ -49,8 +82,9 @@ func (pf *pricedFleet) class() whatif.FigureClass {
 	c := whatif.FleetClass(pf.fleet)
 	c.PromptCVUnknown = pf.fleet.Prefill.PromptCVAssumed && !pf.statedCV
 	c.ArrivalsUnknown = slices.Contains(pf.flags, assumedPoisson) && !slices.Contains(pf.flags, assumedArrivalCV2)
+	c.Model, c.PrefillTensorParallel, c.Stated = pf.model, pf.prefillTP, pf.stated
 	if pf.pv != nil {
-		c.Accelerator = pf.pv.state.Accelerator
+		c.Accelerator, c.TensorParallel, c.PrefixHitRate = pf.pv.state.Accelerator, pf.pv.state.TensorParallel, pf.pv.shape.PrefixHitRate
 		if pf.fleet.Decode == nil {
 			c.DecodeReplicas, c.OutputTokens = pf.pv.decode.Replicas, pf.pv.shape.AvgOutputTokens
 		}
@@ -112,13 +146,15 @@ func (pf *pricedFleet) rateValidation(q float64, r, role whatif.Result) whatif.V
 	return whatif.DefaultEnvelope().Judge(whatif.RateFigure(a.Value, by, q, pf.class(), knee, a.Flags))
 }
 
-// kneeValidation judges decode's knee.
-func (pv pricedVariant) kneeValidation(r whatif.Result) whatif.Validation {
-	return judge(whatif.FigureDecodeKnee, 0, pv.class(), 0, r)
+// decodeKneeValidation judges decode's knee in class c: the fleet's where a
+// TTFT was asked, else the variant's own.
+func decodeKneeValidation(c whatif.FigureClass, r whatif.Result) whatif.Validation {
+	return judge(whatif.FigureDecodeKnee, 0, c, 0, r)
 }
 
-// tpotValidation judges a TPOT at rate: the mean (q 0) or a percentile.
-func (pv pricedVariant) tpotValidation(q float64, rate float64, knee, r whatif.Result) whatif.Validation {
+// tpotValidation judges a TPOT at rate in class c: the mean (q 0) or a
+// percentile.
+func tpotValidation(c whatif.FigureClass, q float64, rate float64, knee, r whatif.Result) whatif.Validation {
 	kind := whatif.FigureMeanTPOT
 	if q != 0 {
 		kind = whatif.FigurePercentileTPOT
@@ -127,7 +163,7 @@ func (pv pricedVariant) tpotValidation(q float64, rate float64, knee, r whatif.R
 	if k, ok := knee.(whatif.Answer); ok {
 		s = share(rate, k.Value)
 	}
-	return judge(kind, q, pv.class(), s, r)
+	return judge(kind, q, c, s, r)
 }
 
 // rateValidation judges decode's rate at a TPOT target.
@@ -150,4 +186,25 @@ func validatedTTFT(w *wireTTFTResult, v whatif.Validation) *wireTTFTResult {
 		w.Answer.Validation = whatifapi.ValidationOf(v)
 	}
 	return w
+}
+
+// settled is r less UnvalidatedTTFT where the envelope validates it: a
+// figure the measured run covered is not printed as unvalidated beside its
+// own "validated" label. The API's figures drop it the same way.
+func settled(r whatif.Result, v whatif.Validation) whatif.Result {
+	if !v.Validated() {
+		return r
+	}
+	drop := func(flags []whatif.Flag) []whatif.Flag {
+		return slices.DeleteFunc(slices.Clone(flags), func(f whatif.Flag) bool { return f == whatif.UnvalidatedTTFT })
+	}
+	switch a := r.(type) {
+	case whatif.Answer:
+		a.Flags = drop(a.Flags)
+		return a
+	case whatif.TTFT:
+		a.Flags = drop(a.Flags)
+		return a
+	}
+	return r
 }

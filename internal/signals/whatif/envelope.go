@@ -93,6 +93,16 @@ type FigureClass struct {
 	ArrivalCV2      float64
 	ArrivalsUnknown bool
 	FlowControl     string
+	// Model is the model served, and TensorParallel and
+	// PrefillTensorParallel decode's and prefill's tensor parallelism.
+	Model                 string
+	TensorParallel        int
+	PrefillTensorParallel int
+	// PrefixHitRate is the prompts' prefix-cache hit rate priced.
+	PrefixHitRate float64
+	// Stated are the pricing inputs typed in that the run did not price at
+	// (a flag such as --batch-cap): each puts the figure outside.
+	Stated []string
 }
 
 // FleetClass is the class of a P/D fleet's figures, less the accelerator,
@@ -185,6 +195,13 @@ type Region struct {
 	ArrivalCV2      *Span     `json:"arrivalCV2,omitempty"`
 	FlowControl     []string  `json:"flowControl,omitempty"`
 	Percentiles     []float64 `json:"percentiles,omitempty"`
+	// Models are the model's names, TensorParallel and PrefillTensorParallel
+	// the decode and prefill tensor parallelism, and PrefixHitRate the
+	// prefix-cache hit rate, as the run priced them.
+	Models                []string `json:"models,omitempty"`
+	TensorParallel        []int    `json:"tensorParallel,omitempty"`
+	PrefillTensorParallel []int    `json:"prefillTensorParallel,omitempty"`
+	PrefixHitRate         *Span    `json:"prefixHitRate,omitempty"`
 	// MinKneeShare and MaxKneeShare are the lowest and highest knee share
 	// measured, ends included; 0 bounds nothing.
 	MinKneeShare float64 `json:"minKneeShare,omitempty"`
@@ -224,15 +241,21 @@ type EnvelopeRow struct {
 	ErrorMax *float64 `json:"errorMax,omitempty"`
 	// Spread is the kind of range ErrorLo and ErrorHi are.
 	Spread string `json:"spread"`
-	// Readings is how many independent readings the error rests on.
+	// Readings is how many readings the error rests on, and Levels how many
+	// load levels they were taken at (0 where each reading is its own).
 	Readings int `json:"readings"`
+	Levels   int `json:"levels,omitempty"`
 }
 
 // Envelope is the planner's measured accuracy.
 type Envelope struct {
 	Rows []EnvelopeRow `json:"rows"`
-	// OutsideFlags are the flags that put a figure outside every region,
-	// with what each says: the runs never priced them.
+	// AllowedFlags are, by source, the flags a figure a row of that source
+	// validates may carry: those the run's own figures carried. Any other
+	// flag puts a figure outside, so a new flag is outside until a run
+	// prices it.
+	AllowedFlags map[string][]Flag `json:"allowedFlags"`
+	// OutsideFlags say, for some flags outside AllowedFlags, why in words.
 	OutsideFlags map[Flag]string `json:"outsideFlags"`
 	// Never says, by kind, why a kind no row names has none.
 	Never map[FigureKind]string `json:"never"`
@@ -300,6 +323,9 @@ func (v Validation) String() string {
 		return "OUTSIDE VALIDATED REGION (" + v.Outside + ")"
 	}
 	n := fmt.Sprintf("n=%d", r.Readings)
+	if r.Levels > 0 && r.Levels != r.Readings {
+		n += fmt.Sprintf(" at %d load levels", r.Levels)
+	}
 	switch r.Spread {
 	case SpreadPercentiles:
 		return fmt.Sprintf("validated: error %s (p10-p90, min-max %s, %s; %s)", ErrorText(r.ErrorLo, r.ErrorHi),
@@ -313,7 +339,7 @@ func (v Validation) String() string {
 		}
 		return fmt.Sprintf("validated: error %s (%s, %s; %s)", ErrorText(r.ErrorLo, r.ErrorHi), n, what, r.Source)
 	}
-	return fmt.Sprintf("validated: one-sided, error %s (%s, the run stopped short; %s)", ErrorText(r.ErrorLo, r.ErrorHi), n, r.Source)
+	return fmt.Sprintf("validated: one-sided, error %s (%s, not crossed within the steps run; %s)", ErrorText(r.ErrorLo, r.ErrorHi), n, r.Source)
 }
 
 // ErrorText prints a signed error range in percent: "-2..+16%", or one side
@@ -343,13 +369,28 @@ func (e Envelope) Judge(f Figure) Validation {
 	if f.Class.Topology == TopologyAggregated {
 		return Validation{Outside: "aggregated variants: never measured"}
 	}
+	// A statistic no row of the kind measured is named against all of them.
+	var stats []float64
+	for _, r := range e.Rows {
+		if r.Figure == f.Kind {
+			for _, q := range r.Region.Percentiles {
+				if !slices.Contains(stats, q) {
+					stats = append(stats, q)
+				}
+			}
+		}
+	}
+	if len(stats) > 0 && !slices.Contains(stats, f.Percentile) {
+		slices.Sort(stats)
+		return Validation{Outside: fmt.Sprintf("%s, measured %s", statisticText(f.Percentile), statisticsText(stats))}
+	}
 	best, bestMisses := "", math.MaxInt
 	for i := range e.Rows {
 		r := &e.Rows[i]
 		if r.Figure != f.Kind {
 			continue
 		}
-		misses := r.Region.misses(f, e.OutsideFlags)
+		misses := r.Region.misses(f, e, r.Source)
 		if len(misses) == 0 {
 			return Validation{Row: r}
 		}
@@ -369,7 +410,7 @@ func (e Envelope) Judge(f Figure) Validation {
 // misses is what of f the region does not hold, in words: the inputs that
 // shape a figure first (the prompt's spread, the arrivals, an assumed
 // term), then the fleet, the shape and the load.
-func (g Region) misses(f Figure, outside map[Flag]string) []string {
+func (g Region) misses(f Figure, e Envelope, source string) []string {
 	var out []string
 	c := f.Class
 	if c.Topology != g.Topology {
@@ -398,13 +439,33 @@ func (g Region) misses(f Figure, outside map[Flag]string) []string {
 			out = append(out, fmt.Sprintf("arrivals Ca^2 %s, measured %s", ratioText(ca2), spanText(*s, ratioText)))
 		}
 	}
+	for _, s := range c.Stated {
+		out = append(out, s+" stated, which the run did not price")
+	}
 	for _, fl := range f.Flags {
-		if why, ok := outside[fl]; ok {
-			out = append(out, why)
+		if slices.Contains(e.AllowedFlags[source], fl) {
+			continue
 		}
+		why, ok := e.OutsideFlags[fl]
+		if !ok {
+			why = string(fl) + ": an input the run did not price"
+		}
+		out = append(out, why)
 	}
 	if len(g.FlowControl) > 0 && !slices.Contains(g.FlowControl, c.FlowControl) {
 		out = append(out, fmt.Sprintf("flow control %s, measured %s", orUnknown(c.FlowControl), strings.Join(g.FlowControl, ", ")))
+	}
+	if len(g.Models) > 0 && !slices.Contains(g.Models, c.Model) {
+		out = append(out, fmt.Sprintf("model %s, measured %s", orUnknown(c.Model), strings.Join(g.Models, ", ")))
+	}
+	if len(g.TensorParallel) > 0 && !slices.Contains(g.TensorParallel, c.TensorParallel) {
+		out = append(out, fmt.Sprintf("decode tensor parallelism %s, measured %s", countText(c.TensorParallel), intsText(g.TensorParallel)))
+	}
+	if len(g.PrefillTensorParallel) > 0 && !slices.Contains(g.PrefillTensorParallel, c.PrefillTensorParallel) {
+		out = append(out, fmt.Sprintf("prefill tensor parallelism %s, measured %s", countText(c.PrefillTensorParallel), intsText(g.PrefillTensorParallel)))
+	}
+	if s := g.PrefixHitRate; s != nil && !s.holds(c.PrefixHitRate) {
+		out = append(out, fmt.Sprintf("prefix hit rate %s, measured %s", ratioText(c.PrefixHitRate), spanText(*s, ratioText)))
 	}
 	if len(g.Accelerators) > 0 && !slices.Contains(g.Accelerators, c.Accelerator) {
 		out = append(out, fmt.Sprintf("accelerator %s, measured %s", orUnknown(c.Accelerator), strings.Join(g.Accelerators, ", ")))

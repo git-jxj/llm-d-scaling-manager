@@ -99,6 +99,10 @@ type VariantState struct {
 	// Accelerator is the variant's accelerator as the cycle's input named
 	// it, "" where it named none.
 	Accelerator string
+	// GPUsPerReplica is the GPUs a replica requests, and TensorParallel the
+	// engine's tensor parallelism as its arguments set it; 0 where the cycle
+	// named none.
+	GPUsPerReplica, TensorParallel int
 	// Line is the ITL line the variant was priced on, zero with none; Tier
 	// is where it came from (whatif.TierOLS and the rest, "" with no line)
 	// and BorrowedFrom the donor of a borrowed one (namespace/variant).
@@ -498,7 +502,7 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 		vs := VariantState{Variant: vc.VariantName, Role: vc.Role, Replicas: vc.ReplicaCount, MinSettled: minSettled}
 		for _, rs := range in.VariantStates {
 			if rs.VariantName == vc.VariantName {
-				vs.Accelerator = rs.AcceleratorName
+				vs.Accelerator, vs.GPUsPerReplica = rs.AcceleratorName, rs.GPUsPerReplica
 			}
 		}
 		if sr := vc.ServiceRate; sr != nil && sr.HasLine {
@@ -542,6 +546,7 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 		vs.Shape = shapeOf(shapes[vc.VariantName])
 		vs.CapacityTokens = whatif.CapacityTokens(params, vs.Ranks, live)
 		if params != nil {
+			vs.TensorParallel = params.TensorParallelSize
 			if params.MaxModelLen > 0 {
 				vs.MaxModelLen = params.MaxModelLen
 			}

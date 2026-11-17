@@ -101,8 +101,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (1 decode pods, measured 2)",
-              "outside": "1 decode pods, measured 2"
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
             }
           }
         },
@@ -150,8 +150,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (1 decode pods, measured 2)",
-              "outside": "1 decode pods, measured 2"
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
             }
           }
         }

@@ -163,7 +163,16 @@ func judged(f Figure, wf whatif.Figure) Figure {
 	for i, name := range f.Flags {
 		wf.Flags[i] = whatif.Flag(name)
 	}
-	f.Validation = ValidationOf(whatif.DefaultEnvelope().Judge(wf))
+	v := whatif.DefaultEnvelope().Judge(wf)
+	f.Validation = ValidationOf(v)
+	if v.Validated() {
+		// A figure the measured run covered is not flagged unvalidated beside
+		// its own label, as the CLI's (settled).
+		f.Flags = slices.DeleteFunc(slices.Clone(f.Flags), func(name string) bool { return name == string(whatif.UnvalidatedTTFT) })
+		if len(f.Flags) == 0 {
+			f.Flags = nil
+		}
+	}
 	return f
 }
 

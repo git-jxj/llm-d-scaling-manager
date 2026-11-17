@@ -96,8 +96,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt 8000 tokens, measured 800 to 1250)",
-              "outside": "prompt 8000 tokens, measured 800 to 1250"
+              "label": "OUTSIDE VALIDATED REGION (flow control unknown, measured off)",
+              "outside": "flow control unknown, measured off"
             }
           }
         },
@@ -150,7 +150,7 @@
             ],
             "validation": {
               "validated": true,
-              "label": "validated: error +36..+45% (p10-p90, min-max +33..+46%, n=12; q32 staircase)",
+              "label": "validated: error +36..+45% (p10-p90, min-max +33..+46%, n=12 at 6 load levels; q32 staircase)",
               "source": "q32 staircase",
               "shape": "8000-token prompts, 200 out, Ca^2 1",
               "errorLo": 0.3567485077591815,
@@ -230,12 +230,9 @@
               "hi": 4.654750970847196
             },
             "validation": {
-              "validated": true,
-              "label": "validated: one-sided, error at most +0% (n=1, the run stopped short; q32 staircase)",
-              "source": "q32 staircase",
-              "shape": "8000-token prompts, 200 out, Ca^2 1",
-              "errorHi": -0.00009645754270570794,
-              "readings": 1
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (flow control unknown, measured off)",
+              "outside": "flow control unknown, measured off"
             }
           }
         },
@@ -291,8 +288,8 @@
             },
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (flow control unknown, measured off, on)",
-              "outside": "flow control unknown, measured off, on"
+              "label": "OUTSIDE VALIDATED REGION (FlowControlInferredOff: an input the run did not price)",
+              "outside": "FlowControlInferredOff: an input the run did not price"
             }
           }
         }
@@ -300,5 +297,5 @@
     }
   ],
   "exitCode": 0,
-  "note": "estimate from no readings of the line's own of a 580-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: no recording has checked it at a stated Ca^2."
+  "note": "estimate from no readings of the line's own of a 580-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: the P2 recordings never checked it at a stated Ca^2; the measured envelope did only where a figure reads validated."
 }

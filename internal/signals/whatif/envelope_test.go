@@ -13,7 +13,8 @@ import (
 // off.
 func envelopeH200() FigureClass {
 	return FigureClass{Topology: TopologyPD, Accelerator: "H200", PrefillReplicas: 2, DecodeReplicas: 2,
-		PromptTokens: 8000, OutputTokens: 200, PromptCV: 0.0577, ArrivalCV2: 1, FlowControl: FlowControlNameOff}
+		PromptTokens: 8000, OutputTokens: 200, PromptCV: 0.0577, ArrivalCV2: 1, FlowControl: FlowControlNameOff,
+		Model: "model-02", TensorParallel: 2, PrefillTensorParallel: 2}
 }
 
 // The shipped envelope parses, holds the staircase's rows, and validates a
@@ -25,7 +26,7 @@ func TestEnvelope_TheShippedFileValidatesTheMeasuredRegion(t *testing.T) {
 	for _, q := range []float64{0, 0.9, 0.95} {
 		v := e.Judge(Figure{Kind: FigureTTFT, Percentile: q, Class: envelopeH200(), KneeShare: 0.8})
 		require.True(t, v.Validated(), "q %g: %s", q, v)
-		assert.Regexp(t, `^validated: error [+-]\d+\.\.[+-]\d+% \(p10-p90, min-max [+-]\d+\.\.[+-]\d+%, n=\d+; q32 staircase\)$`, v.String())
+		assert.Regexp(t, `^validated: error [+-]\d+\.\.[+-]\d+% \(p10-p90, min-max [+-]\d+\.\.[+-]\d+%, n=\d+ at \d+ load levels; q32 staircase\)$`, v.String())
 	}
 	tpot := e.Judge(Figure{Kind: FigureMeanTPOT, Class: envelopeH200(), KneeShare: 0.1})
 	assert.True(t, tpot.Validated(), tpot.String())
@@ -55,7 +56,7 @@ func TestEnvelope_UnvalidatedCategoriesSaySo(t *testing.T) {
 		{"flow control not known", func(f *Figure) { f.Class.FlowControl = "" }, "flow control unknown, measured off, on"},
 		{"aggregated", func(f *Figure) { f.Class.Topology = TopologyAggregated }, "aggregated variants: never measured"},
 		{"prefill's own latency", func(f *Figure) { f.Kind = FigurePrefillLatency }, "prefill's own latency: a client measures TTFT end to end only"},
-		{"p99", func(f *Figure) { f.Percentile = 0.99 }, "p99, measured "},
+		{"p99", func(f *Figure) { f.Percentile = 0.99 }, "p99, measured mean, p90, p95)"},
 		{"more than 2 prefill pods", func(f *Figure) { f.Class.PrefillReplicas = 4 }, "4 prefill pods, measured 2"},
 		{"another accelerator", func(f *Figure) { f.Class.Accelerator = "A100" }, "accelerator A100, measured H200"},
 		{"an unknown accelerator", func(f *Figure) { f.Class.Accelerator = "" }, "accelerator unknown, measured H200"},
@@ -133,7 +134,7 @@ func TestEnvelope_TheLabelSaysTheCountAndTheRange(t *testing.T) {
 	assert.Equal(t, "validated: error -5..+15% (min-max, n=3; r)", row(SpreadMinMax, 3, x(-0.05), x(0.15)).String())
 	assert.Equal(t, "validated: error +5..+11% (n=1, single reading, between two ladder steps; r)", row(SpreadBracket, 1, x(0.05), x(0.11)).String())
 	assert.Equal(t, "validated: error -4..+2% (n=2, between ladder steps; r)", row(SpreadBracket, 2, x(-0.04), x(0.02)).String())
-	assert.Equal(t, "validated: one-sided, error at most -6% (n=1, the run stopped short; r)", row(SpreadOneSided, 1, nil, x(-0.06)).String())
+	assert.Equal(t, "validated: one-sided, error at most -6% (n=1, not crossed within the steps run; r)", row(SpreadOneSided, 1, nil, x(-0.06)).String())
 }
 
 // The error prints both sides, or the one a bounded reading gives, and

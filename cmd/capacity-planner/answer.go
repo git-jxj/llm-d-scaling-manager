@@ -344,6 +344,10 @@ type pricedVariant struct {
 	assumedIL, assumedOL bool
 	flags                []whatif.Flag
 	lines                whatif.LineResamples
+	// model is the model served, and stated the pricing flags set that put
+	// every figure outside the envelope (statedOutside).
+	model  string
+	stated []string
 }
 
 // assumed reports a shape the flags assumed, in part or whole.
@@ -363,7 +367,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.variant != "" && vs.Variant != f.variant {
 			continue
 		}
-		pv := pricedVariant{state: vs, cycle: st.Cycle}
+		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside()}
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
 			il, pv.assumedIL = f.inputTokens, true
