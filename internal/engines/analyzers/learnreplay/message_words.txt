@@ -127,6 +127,7 @@ CrashLoopBackOff
 CreateContainerConfigError
 CreateContainerError
 D
+DSET_ROLE_WRITER
 DataParallelRanks
 Datastore
 DecodeEngineMeasured
@@ -139,6 +140,7 @@ DecodeTermOmitted
 DecodeTermPrefixHits
 Deleted
 Deployment
+DisaggregatedSet
 Discarding
 E1-const
 ENABLE_SCALE_TO_ZERO
@@ -2186,6 +2188,7 @@ production
 products
 projectedBacklog
 prometheus
+prometheusAllowHTTP
 prometheusCACertPath
 prometheusInsecureSkipVerify
 prometheusServerName

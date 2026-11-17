@@ -59,16 +59,16 @@ const SwitchTTFTDecodeTerm = "slo-ttft-decode-term"
 // built: processor sharing").
 const SwitchTTFTProcessorSharing = "slo-ttft-processor-sharing"
 
-// SwitchTTFTRouterWait is the switch for the experimental
-// whatif.TTFTFleet.PriceRouterWait: on, a TTFT above the prefill flow-control
-// onset takes the router's wait as inside the processor-sharing prefill
-// stage, flagged FlowControlWaitPriced and read by its figure
-// (whatif.TTFTMeets); off, as before, it is flagged AboveFlowControlOnset and
-// is a miss however low the figure. Off from the constructor, at
-// whatif.DefaultPriceRouterWait, the CLI's --price-router-wait default, so
-// the analyzer and the CLI answer the same; a replay turns it on. No figure
-// moves (docs/proposals/slo-capacity-planner-ttft.md, "As built: the
-// router's wait above the prefill onset").
+// SwitchTTFTRouterWait is the switch for whatif.TTFTFleet.PriceRouterWait:
+// on, a TTFT above the prefill flow-control onset carries the gate as a stage
+// (its wait at the router and behind the burst it releases), flagged
+// FlowControlWaitPriced and read by its figure (whatif.TTFTMeets); off, as
+// before, it is flagged AboveFlowControlOnset and is a miss however low the
+// figure. Off from the constructor, at whatif.DefaultPriceRouterWait, the
+// CLI's --price-router-wait default, so the analyzer and the CLI answer the
+// same; a replay turns it on. It moves figures only above the prefill
+// onset (docs/proposals/slo-capacity-planner-ttft.md, "As built: the router
+// stage").
 const SwitchTTFTRouterWait = "slo-ttft-router-wait"
 
 // SwitchTTFTPSOnsets is the replay switch for whatif.TTFTFleet.PSOnsets: on,

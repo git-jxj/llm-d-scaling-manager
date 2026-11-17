@@ -224,6 +224,7 @@ roles[].results.ttft.answer.basis.uncapped number
 roles[].results.ttft.answer.flags array
 roles[].results.ttft.answer.flags[] string
 roles[].results.ttft.answer.parts object
+roles[].results.ttft.answer.parts.burstWait number
 roles[].results.ttft.answer.parts.decodeEngine number
 roles[].results.ttft.answer.parts.decodeKnee number
 roles[].results.ttft.answer.parts.decodeShare number
@@ -241,6 +242,7 @@ roles[].results.ttft.answer.parts.pooled number
 roles[].results.ttft.answer.parts.prefillKnee number
 roles[].results.ttft.answer.parts.prefillUtilization number
 roles[].results.ttft.answer.parts.routerHop number
+roles[].results.ttft.answer.parts.routerWait number
 roles[].results.ttft.answer.parts.vpMarginApplied number
 roles[].results.ttft.answer.parts.waitOffset number
 roles[].results.ttft.answer.parts.waitScale number

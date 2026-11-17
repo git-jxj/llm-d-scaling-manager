@@ -11,10 +11,10 @@ instead.
 
 | Step | Where | What |
 |------|--------|------|
-| 1. Release PR | PR to `main` | `newTag: vX.Y.Z`; merge it |
+| 1. Release PR | PR to `main` | `newTag: vX.Y.Z` and the proxy image `:vX.Y.Z`; merge it |
 | 2. Tag | Your clone | Tag the merge commit of the release PR, check it, push the tag |
 | 3. Wait | GitHub Actions | The release run must succeed |
-| 4. Reset PR | PR to `main` | `newTag: main` again, only after the run succeeded |
+| 4. Reset PR | PR to `main` | `newTag: main` and the proxy image `:main` again, only after the run succeeded |
 | 5. Publish | GitHub | Publish the draft GitHub Release the run made, with the release notes; verify the signatures |
 | 6. Docs PR | PR to `main` | Point the install, upgrade and benchmark docs at the release and its digest |
 
@@ -38,12 +38,30 @@ instead.
    `deploy/prepull.sh`, `deploy/weights.sh`, `deploy/enginecache.sh`,
    `deploy/utilization-share.sh`, the workload-patch report and the
    ScaledObject plan, with kubectl, jq and yq, from `Dockerfile.tools`.
+   It carries the release files (item 4, the same bytes and bundles, without
+   the tools tarball) and installs from them: `smt admin-setup`, `smt
+   install`, `smt admin-finish` ([install commands](../reference/tools-install.md)).
    Operators prepare and register their model servers with it and no checkout
    ([Prepare model servers](../guides/prepare-workloads/)).
+6. **The capacity planner**, under the same tag: an image at
+   `ghcr.io/<repository owner>/llm-d-scaling-manager/capacity-planner:<tag>`
+   (`Dockerfile.capacity-planner`, entry point the `capacity-planner`
+   binary), and the release files `capacity-planner-<tag>-<os>-<arch>` for
+   linux and darwin, amd64 and arm64, in `SHA256SUMS` and signed like the
+   others. The planner replays recordings with the controller's learners, so
+   it is never released apart from the controller
+   ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
+7. **The warm-pool proxy image** at
+   `ghcr.io/<repository owner>/llm-d-scaling-manager/warmpool-proxy:<tag>`
+   (`Dockerfile.warmpool-proxy`), the sidecar in every warm-pool Pod.
+   `config/warmpool` and `deploy/warmpool.sh` name it by tag, like the
+   controller's `newTag`: `:main` between releases (published by
+   `ci-main-image.yaml`), the release's tag on a release commit.
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line
-has a tag on `main`, and only when `newTag` on the tagged commit equals the tag. See [Patch releases](#patch-releases).
+has a tag on `main`, and only when `newTag` and the proxy image tag on the
+tagged commit equal the tag. See [Patch releases](#patch-releases).
 
 ---
 
@@ -63,8 +81,12 @@ The workflow checks where a tag is, not who reviewed it. Review on `main` and
 ## Pre-release checklist
 
 1. **Open the release PR to `main`.** It sets `newTag: vX.Y.Z` in
-   `config/base/manager/kustomization.yaml`. The release fails before it builds
-   anything if `newTag` is not the tag.
+   `config/base/manager/kustomization.yaml`, and the proxy image in
+   `config/warmpool/warmpool-deployment.yaml` to
+   `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:vX.Y.Z`,
+   then runs `make warmpool-render` (it copies the image into
+   `deploy/warmpool.sh`; the PR checks fail if it was not run). The release
+   fails before it builds anything if either is not the tag.
 2. **Bump dependency pins**, if the release moves one (for example
    [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)): the
    [Makefile](../../Makefile), `test/e2e/fixtures/model_service_builder.go` and
@@ -93,6 +115,7 @@ REMOTE=<remote for llm-d-incubation/llm-d-scaling-manager>
 git fetch "$REMOTE"
 git tag -m "llm-d-scaling-manager vX.Y.Z" vX.Y.Z <merge commit of the release PR>
 git show vX.Y.Z:config/base/manager/kustomization.yaml | grep -x '  newTag: vX.Y.Z' \
+  && git show vX.Y.Z:config/warmpool/warmpool-deployment.yaml | grep -E 'image: .*/warmpool-proxy:vX\.Y\.Z$' \
   && git merge-base --is-ancestor vX.Y.Z "$REMOTE/main" && git push "$REMOTE" vX.Y.Z
 ```
 
@@ -113,7 +136,8 @@ Do not merge anything that changes `newTag` yet. If the run fails, see
 ### 3. Set `newTag` back to `main`
 
 Once the run has succeeded, open a second PR to `main` that sets `newTag: main`
-again, and merge it. Until it merges, an install from `main` deploys the release
+and the proxy image back to `warmpool-proxy:main` (then `make warmpool-render`),
+and merge it. Until it merges, an install from `main` deploys the release
 image instead of `:main`. Merged earlier, a re-tag after a failed run would fail
 the pin check.
 
@@ -125,16 +149,19 @@ draft release for the tag existed before the run, it attached the files to
 that one instead. A release that is already **published** is never changed: a
 run whose files differ from the attached ones fails, and one whose files are
 identical uploads nothing. In **Releases**, open the draft, check that the
-files are there (each `.yaml`, `scaling-manager-tools-<tag>.tar.gz`,
-`SHA256SUMS`, and a `.sigstore.json` for each), paste the release notes, and
-publish.
+files are there (each `.yaml`, `scaling-manager-tools-<tag>.tar.gz`, the four
+`capacity-planner-<tag>-<os>-<arch>` binaries, `SHA256SUMS`, and a
+`.sigstore.json` for each), paste the release notes, and publish.
 
 Before publishing, check the tools image too: the `release-tools` job
 succeeded (the draft exists only if it did), and the package
 `llm-d-scaling-manager/tools` is **Public**. From a machine not logged in to
 GHCR, `docker pull ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<tag>`
 must succeed; a `401` or `denied` means the package is still private
-([first release](#the-first-release-to-a-new-package)). Keep the draft's first line: it names
+([first release](#the-first-release-to-a-new-package)). The same holds for
+the capacity planner image (`release-capacity-planner`, package
+`llm-d-scaling-manager/capacity-planner`) and the warm-pool proxy image
+(`release-warmpool-proxy`, package `llm-d-scaling-manager/warmpool-proxy`). Keep the draft's first line: it names
 the two supported installs, the attached files and `make deploy-scaling-manager`.
 
 ### 5. Point the docs at the release
@@ -168,10 +195,18 @@ be public under that tag. Do not move or delete the tag.
 - The fix needs a change to the code or the workflow: release `vX.Y.(Z+1)`
   instead.
 
-**It failed in the `release-files` job.** The image is published and signed;
-only the files are missing or incomplete. Use **Re-run failed jobs**: the job
-renders, signs and uploads again, replacing whatever an earlier attempt
-attached. Do not publish the release until it has succeeded.
+**It failed in the `release-files` job.** Both images are published and
+signed; only the files are missing or incomplete. Use **Re-run failed jobs**:
+the job uploads the same signed files again (the `release-sign` artifact),
+replacing whatever an earlier attempt attached. Do not publish the release
+until it has succeeded.
+
+**It failed in `release-sign` or `release-tools`.** Use **Re-run failed jobs**
+from the first failed job. A re-run of `release-sign` signs again, and new
+bundles are new bytes, so `release-tools` must rebuild and push the tools
+image in the same run: re-run both, never `release-sign` alone. The
+`release-files` job refuses to upload files the pushed tools image does not
+carry.
 
 ---
 
@@ -204,7 +239,8 @@ branch's tags are refused.
    bug, open the fix against the release branch alone and say why in the PR.
    PRs to `release-*` run the same checks as PRs to `main`.
 2. **Release PR to `release-0.10`**, not to `main`. It sets
-   `newTag: v0.10.2` and moves every version reference on the branch to
+   `newTag: v0.10.2` and the proxy image `:v0.10.2` (a line released before
+   the proxy job existed has no proxy pin to set), and moves every version reference on the branch to
    `v0.10.2`; list them with
    `git grep -n 'v0\.10\.[0-9]' -- docs deploy hack/benchmark`. It adds
    "Upgrading from v0.10.1 to v0.10.2" to
@@ -267,6 +303,17 @@ first release that carries the `release-tools` job creates. It starts
 **private**: set it to **Public** after that run, and check that this
 repository has **Write** on it, as above. Until then `docker pull` of the
 tools image fails with `401 Unauthorized` (or `denied`) for every operator.
+The capacity planner image is a third, `llm-d-scaling-manager/capacity-planner`,
+created by the first release that carries the `release-capacity-planner` job:
+the same two settings apply.
+
+The warm-pool proxy image is a fourth, `llm-d-scaling-manager/warmpool-proxy`.
+It is created by the first push to `main` after `ci-main-image.yaml` gained
+the proxy build, or by the first release with the `release-warmpool-proxy`
+job, whichever runs first. **After that first push, make the package Public**
+and give this repository **Write**, as above. Until then every warm-pool Pod
+fails with `ImagePullBackOff`, because `config/warmpool` and
+`deploy/warmpool.sh` name this package by default.
 
 ---
 
@@ -335,8 +382,8 @@ re-run from the **Actions** tab.
 
 1. **Gate.** Calls [`ci-pr-checks.yaml`](../../.github/workflows/ci-pr-checks.yaml)
    on the tagged commit: `golangci-lint`, `make build`, `make test`,
-   `make lint-deploy-scripts`, the tools image build and check, the docs
-   checks and the kustomize builds.
+   `make lint-deploy-scripts`, the tools and capacity planner image builds
+   and checks, the docs checks and the kustomize builds.
 2. **Validate.** Refuses a tag whose commit is on neither `main` nor the tag's
    `release-MAJOR.MINOR` branch, a tag that is not
    `vMAJOR.MINOR.PATCH[-PRERELEASE]`, and a commit whose `newTag` is not the tag.
@@ -354,24 +401,71 @@ re-run from the **Actions** tab.
 6. **Sign.** Keyless `cosign sign` of the pushed digest, with the workflow's
    OIDC identity as the signer. The run summary prints the digest and the
    verify command.
-7. **Release files** (job `release-files`, after the image and tools jobs). Runs
+7. **Sign the release files** (job `release-sign`, after the image job). Runs
    `make release-manifests` with the pushed digest (it also packages
-   `scaling-manager-tools-<tag>.tar.gz`), signs each file and
-   `SHA256SUMS` with keyless `cosign sign-blob --bundle`, and uploads them all
-   with `gh release upload --clobber`, creating a draft release when the tag has
-   none, and refusing to change a published one. It is the only job with
-   `contents: write`, and it builds no image. Its yq is pinned by sha256 and
-   its Go (for `make kustomize`) comes from `go.mod`.
-   `hack/check-release-manifests.sh` checks the job's shape and runs its sign
-   step against a stub cosign.
-8. **Tools image** (job `release-tools`, after the image job). Builds
-   `Dockerfile.tools`, scans it like the controller image, pushes
+   `scaling-manager-tools-<tag>.tar.gz`), then `make capacity-planner-dist`
+   for the planner binaries (it fails on a missing one, or one that does not
+   print the tag and commit, and adds them to `SHA256SUMS`), signs each file
+   and `SHA256SUMS` with keyless `cosign sign-blob --bundle`, and uploads
+   `dist/` as the workflow artifact `release-dist`. It is the only place
+   bundles are made: the tools image and the GitHub Release both take this
+   artifact. It has `id-token: write` and writes nothing. Its yq is pinned by
+   sha256. Its Go, for `make kustomize` and the planner binaries, is the
+   latest patch of the `go.mod` Go line (`check-latest`), as the image's
+   `golang:1.26` builder is, and the binaries are built only after
+   `govulncheck` (pinned) finds no known vulnerability in code the planner
+   calls. A re-run on the same Go patch builds the same bytes; after a new Go
+   patch it does not, and a published release then refuses to be signed
+   again: release a new version instead. `hack/check-release-manifests.sh`
+   checks the job's shape and runs its binary and sign steps against a stub
+   make and cosign.
+8. **Tools image** (job `release-tools`, after the image and signing jobs).
+   Downloads `release-dist` and runs `cosign verify-blob` on every file, the
+   planner binaries included, then builds `Dockerfile.tools` with
+   `--build-context release=dist` (the amd64 and arm64 scan builds and the
+   pushed build alike, so the scans cover what ships). The image bakes the
+   manifests, their bundles and `SHA256SUMS`; not the tools tarball nor the
+   planner binaries, which `SHA256SUMS` still lists (the image checks with
+   `--ignore-missing`). It scans it like the controller image, pushes
    `linux/amd64,linux/arm64` to `<image>/tools:<version>` (and `:latest` only
-   when the controller's `latest` moved), and signs the digest.
+   when the controller's `latest` moved), and signs the digest. The summary
+   prints the `cosign verify` command with the digest.
    `hack/check-release-latest.sh` checks the job's shape and runs its tag and
-   sign steps. The PR checks' `tools-image` job builds both platforms on every
-   code change and runs `hack/check-tools-image.sh` against the amd64 image.
-   Verify it as the controller image, with `$IMAGE/tools`.
+   sign steps. The PR checks' `tools-image` job renders the files, builds both
+   platforms with them on every code change, and runs
+   `hack/check-tools-image.sh` against the amd64 image.
+9. **Capacity planner image** (job `release-capacity-planner`, after the image
+   job). Builds `Dockerfile.capacity-planner` for `linux/amd64`, runs
+   `hack/check-capacity-planner-image.sh` against it (it must serve a plan
+   from a committed recording and print the tag), scans it, pushes
+   `linux/amd64,linux/arm64` to `<image>/capacity-planner:<version>` (and
+   `:latest` as for the tools image), fails if the pushed index lacks a
+   platform, and signs the digest. `hack/check-release-latest.sh` checks the
+   job's shape and runs its tag, platform and sign steps. The PR checks'
+   `capacity-planner-image` job runs the same script on every code change.
+   Verify it as the controller image, with `$IMAGE/capacity-planner`.
+10. **Warm-pool proxy image** (job `release-warmpool-proxy`, after the image
+   job, which already refused a commit whose proxy image tag is not the
+   release's). Builds `Dockerfile.warmpool-proxy` for `linux/amd64`, scans it,
+   pushes `linux/amd64,linux/arm64` to `<image>/warmpool-proxy:<version>` (and
+   `:latest` as for the tools image), fails if the pushed index lacks a
+   platform, and signs the digest. `hack/check-release-latest.sh` checks the
+   job's shape and runs its pin, tag, platform and sign steps. Verify it as
+   the controller image, with `$IMAGE/warmpool-proxy`.
+11. **Release files** (job `release-files`, after the image, signing, tools,
+   capacity planner and warm-pool proxy jobs). Downloads `release-dist`, pulls the pushed
+   tools image by digest, and refuses the upload unless its baked `SHA256SUMS`
+   and every bundle of what it bakes equal the artifact's, in both platforms
+   (`hack/compare-baked-release-files.sh`). Then uploads them all, the planner
+   binaries included, with `gh release upload --clobber`, creating a draft
+   release when the tag has none, and refusing to change a published one. It
+   is the only job with `contents: write`; it builds and signs nothing.
+   `hack/check-release-manifests.sh` runs its attach step against a stub gh;
+   `hack/check-release-install.sh` runs the baked-files comparison on
+   fixtures. The images are pushed before it runs: when it fails, they are out
+   under the tag with no files beside them. Fix the cause and **Re-run failed
+   jobs**; the images stay, and the files are attached to the same draft. A
+   cause the tagged commit holds needs a new tag.
 
 ### The release files
 
@@ -396,8 +490,10 @@ Design and rules: [install-from-release.md](../proposals/install-from-release.md
 
 `make test-e2e-release-manifests` installs the namespaced files on kind with
 `kubectl` only and checks them, and `RELEASE_E2E_SCOPE=cluster` does the same
-for the cluster-wide files. CI runs both on PRs that touch what the files are
-made from; run them before a release too
+for the cluster-wide files. `make test-e2e-tools-install` installs them with
+the tools image (`smt admin-setup`, `install`, `admin-finish`), in the same two
+scopes. CI runs all four on PRs that touch what the files are made from; run
+them before a release too
 ([Testing](testing.md#install-from-the-release-files)). The OpenShift files
 are not tested end to end and say so in their header.
 

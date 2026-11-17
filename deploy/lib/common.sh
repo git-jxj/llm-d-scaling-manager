@@ -158,9 +158,21 @@ llmsm_check_so_name() {
 #   namespace scope, self-managed   NAMESPACE=<ns> make <target>
 #   namespace scope, out of reach   NAMESPACE=<managed> make <target> LLMSM_NS=<ctl> LLMSM_WATCH_NS=<managed>
 #   cluster scope                   make <target> SCOPE=cluster LLMSM_NS=<ctl>
+#
+# From the tools image (LLMSM_TOOLS_MODE=true) there is no make: the command
+# that repeats the check is a re-run of smt admin-finish, which writes KEDA's
+# side and runs the stale-connection check.
 llmsm_make_cmd() {
     local target="$1" pre="" kv
     shift
+    if [ "${LLMSM_TOOLS_MODE:-false}" = true ]; then
+        if [ "$(llmsm_install_scope)" = cluster ]; then
+            printf 'smt install --scope cluster (the same flags again)\n'
+        else
+            printf 'smt admin-finish -n %s\n' "$LLMSM_NS"
+        fi
+        return 0
+    fi
     for kv in "$@"; do pre="$pre$kv "; done
     if [ "$(llmsm_install_scope)" = cluster ]; then
         printf '%smake %s SCOPE=cluster LLMSM_NS=%s\n' "$pre" "$target" "$LLMSM_NS"
@@ -781,6 +793,8 @@ LLMSM_SHARED_CLUSTER_ROLE_BINDINGS=(
     scaling-manager-policy-namespace-reader-rolebinding
     # The opt-in KEDA HPA repair grant (KEDA_HPA_REPAIR=true, cluster scope).
     scaling-manager-keda-hpa-repair-rolebinding
+    # The opt-in role writer grant (DSET_ROLE_WRITER=true, cluster scope).
+    scaling-manager-dset-role-writer-rolebinding
 )
 
 # LLMSM_OWNED_CLUSTER_ROLES are the ClusterRoles this project defines, mapped to the
@@ -812,6 +826,8 @@ LLMSM_OWNED_CLUSTER_ROLES=(
     "scaling-manager-policy-namespace-reader-role:scaling-manager-policy-namespace-reader-rolebinding"
     # Rendered only with KEDA_HPA_REPAIR=true (and by the undeploy).
     "scaling-manager-keda-hpa-repair-role:scaling-manager-keda-hpa-repair-rolebinding"
+    # Rendered only with DSET_ROLE_WRITER=true (and by the undeploy).
+    "scaling-manager-dset-role-writer-role:scaling-manager-dset-role-writer-rolebinding"
 )
 
 # llmsm_keda_hpa_repair_on reports whether KEDA_HPA_REPAIR asks for the KEDA
@@ -934,6 +950,78 @@ llmsm_revoke_keda_hpa_repair() {
     return 0
 }
 
+# llmsm_dset_role_writer_on reports whether DSET_ROLE_WRITER asks for the
+# DisaggregatedSet role writer (internal/dsetwriter): true. Unset and false do
+# not; anything else is refused, as KEDA_HPA_REPAIR is.
+llmsm_dset_role_writer_on() {
+    case "${DSET_ROLE_WRITER:-false}" in
+        true) return 0 ;;
+        false) return 1 ;;
+        *) log_error "DSET_ROLE_WRITER must be true or false (got '${DSET_ROLE_WRITER}')" ;;
+    esac
+}
+
+# llmsm_dset_role_writer_component echoes the component that carries the role
+# writer's grant for this install's scope: a ClusterRole for cluster scope, a
+# Role in the controller's namespace for namespace scope.
+llmsm_dset_role_writer_component() {
+    if [ "$(llmsm_install_scope)" = "namespace" ]; then
+        echo dset-role-writer-namespaced
+    else
+        echo dset-role-writer
+    fi
+}
+
+# llmsm_append_dset_role_writer_component links the role writer component into
+# overlay directory $1, as llmsm_append_keda_hpa_repair_component does its
+# own: added with DSET_ROLE_WRITER=true, and by the undeploy always.
+llmsm_append_dset_role_writer_component() {
+    local dir="$1" c
+    c="$(llmsm_dset_role_writer_component)"
+    ln -sfn "$LLMSM_PROJECT/config/components/$c" "$dir/$c"
+    if grep -q '^components:' "$dir/kustomization.yaml"; then
+        printf -- '- ./%s\n' "$c" >> "$dir/kustomization.yaml"
+    else
+        printf 'components:\n- ./%s\n' "$c" >> "$dir/kustomization.yaml"
+    fi
+}
+
+# llmsm_revoke_dset_role_writer deletes the role writer grant an earlier
+# install made, for an install without DSET_ROLE_WRITER=true, as
+# llmsm_revoke_keda_hpa_repair does the HPA grant. The writer leaves the
+# replicas it wrote: a model it parked stays at zero (docs/reference/
+# disaggregatedset.md, "Turn it off").
+llmsm_revoke_dset_role_writer() {
+    local suffix state specs=()
+    suffix="$(llmsm_ns_suffix "$LLMSM_NS")"
+    if [ "$(llmsm_install_scope)" = "namespace" ]; then
+        specs=("rolebinding scaling-manager-dset-role-writer-rolebinding $LLMSM_NS"
+               "role scaling-manager-dset-role-writer-role $LLMSM_NS")
+    else
+        specs=("clusterrolebinding scaling-manager-dset-role-writer-rolebinding-$suffix"
+               "clusterrole scaling-manager-dset-role-writer-role-$suffix")
+    fi
+    state="$(llmsm_delete_hpa_repair_grant "${specs[@]}")"
+    case "${state%%|*}" in
+        forbidden)
+            log_warning "DSET_ROLE_WRITER is not true, so the DisaggregatedSet grant (get, list, patch on disaggregatedsets) an earlier install may have made should go, and you may not delete it (Forbidden). A cluster admin runs:  $(llmsm_hpa_repair_delete_cmd "${specs[@]}")"
+            ;;
+        failed)
+            log_warning "DSET_ROLE_WRITER is not true, and the DisaggregatedSet grant an earlier install may have made could not be deleted (${state#*|}). Delete it with:  $(llmsm_hpa_repair_delete_cmd "${specs[@]}")"
+            ;;
+        deleted)
+            if llmsm_render_active; then
+                log_info "DSET_ROLE_WRITER is not true: admin.sh deletes the DisaggregatedSet grant (get, list, patch on disaggregatedsets) an earlier install made."
+            else
+                log_info "DSET_ROLE_WRITER is not true: removed the DisaggregatedSet grant (get, list, patch on disaggregatedsets) an earlier install made."
+            fi
+            log_info "  A split install: re-run the controller phase without it too ($(llmsm_make_cmd deploy-scaling-manager INSTALL_PHASE=scaling-manager)), which turns the writer off in the Deployment."
+            log_info "  The writer leaves the replicas it wrote. A model it parked stays at zero: set each Static role's replicas back by hand."
+            ;;
+    esac
+    return 0
+}
+
 # llmsm_ns_suffix echoes the per-namespace suffix appended to those names.
 # sha256sum is GNU; macOS ships shasum. The suffix must be IDENTICAL on whatever
 # host installs and whatever host uninstalls — a different suffix means the
@@ -945,6 +1033,24 @@ llmsm_ns_suffix() {
     else
         printf '%s' "$1" | shasum -a 256 | cut -c1-8
     fi
+}
+
+# llmsm_weights_node_label_key echoes the node label that says a node holds a
+# verified copy of model $1 (a Hugging Face id): llm-d.ai/<name>-cache, the
+# key some clusters' node-preparation jobs already set, so a node prepared
+# either way carries the same label. <name> is the model's name without its
+# organisation, lower-cased (meta-llama/Llama-3.1-8B-Instruct -> llama-3.1-8b-instruct), with any
+# character a label name does not allow replaced by '-' and the ends trimmed
+# to a letter or digit. A name too long for the 63-character label name keeps
+# its first 48 characters and a hash of the whole id, so two long ids do not
+# fold onto one key. deploy/weights.sh --node-label replaces the whole key.
+llmsm_weights_node_label_key() {
+    local name="${1##*/}"
+    name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g; s/-\{2,\}/-/g; s/^[^a-z0-9]*//; s/[^a-z0-9]*$//')"
+    if [ "${#name}" -gt 57 ]; then
+        name="$(printf '%s' "${name:0:48}" | sed 's/[^a-z0-9]*$//')-$(llmsm_ns_suffix "$1")"
+    fi
+    printf 'llm-d.ai/%s-cache' "${name:-model}"
 }
 
 # llmsm_kueue_reader_names sets LLMSM_KUEUE_READER_NAMES to the Namespaces, space
@@ -1436,6 +1542,9 @@ llmsm_render_manifests() {
         printf 'namespace: %s\nresources:\n- ./base\n' "$ns" > "$tmp/kustomization.yaml"
         if llmsm_keda_hpa_repair_on 2>/dev/null; then
             llmsm_append_keda_hpa_repair_component "$tmp"
+        fi
+        if llmsm_dset_role_writer_on 2>/dev/null; then
+            llmsm_append_dset_role_writer_component "$tmp"
         fi
         llmsm_append_crb_name_patches "$tmp/kustomization.yaml" "$ns"
         # The same per-install decisions deploy_scaling_manager_controller applies, so the

@@ -217,13 +217,19 @@ func (m stageMix) quantile(alpha float64) float64 {
 }
 
 // withWait is the mixture with wait in front of every part, taken
-// independent of it.
-func (m stageMix) withWait(wait waitTail) stageMix {
+// independent of it and of the wait a part already has (the flow-control
+// gate's, ttft_gate.go): the two sum (waitTail.sum). ok is false where they
+// do not.
+func (m stageMix) withWait(wait waitTail) (_ stageMix, ok bool) {
 	out := stageMix{w: m.w, b: make([]block, len(m.b))}
 	for i, b := range m.b {
-		out.b[i] = block{wait: wait, own: b.own}
+		w, summed := b.wait.sum(wait)
+		if !summed {
+			return stageMix{}, false
+		}
+		out.b[i] = block{wait: w, own: b.own}
 	}
-	return out
+	return out, true
 }
 
 // psParts are the PS stages' mean stretches, in seconds: the prefill pods',

@@ -136,6 +136,11 @@ Kueue cohort](guides/kueue-borrowing/) · [warm
 pool](guides/warm-pool/) · [test against a full llm-d
 stack](guides/testing-with-llm-d/) · [benchmark the scaling manager](guides/benchmarking/)
 
+**[Capacity planner](guides/capacity-planner/)** — a web page on your machine
+that prices a P/D fleet from what it did: the TTFT and TPOT it gives, the most
+it serves under the SLO, and the fleet a rate needs. Getting it, recording a
+window, the API, the metrics it reads and troubleshooting are all there.
+
 ## Reference — what you set and read
 
 - **[Configuration](reference/configuration.md)** — every setting: what to set for your setup, what to tune per workload, and whether a change needs a restart. The rest: [advanced settings](reference/configuration-advanced.md) and [installer options](reference/install-options.md)
@@ -147,12 +152,14 @@ stack](guides/testing-with-llm-d/) · [benchmark the scaling manager](guides/ben
 - **[Replica start time](reference/start-time.md)** — every measured start time, what each preparation step and the warm pool buy, and what each costs
 - **[ScaledObject trigger metadata](reference/scaledobject-trigger.md)** — every key the trigger carries (`modelID`, `variantCost`, `scalingPolicy`, `defaultOutputTokens`, warm-pool keys), its default and validation, and the recommended HPA behavior
 - **[Install methods](reference/install-methods.md)** — installer, kustomize, and per-platform entry points
+- **[Install commands of the tools image](reference/tools-install.md)** — `smt admin-setup`, `smt install`, `smt admin-finish`: every flag and exit code
 - **[Preflight check](reference/preflight.md)** — the release's preflight Job: each check, what FAIL and UNKNOWN mean, and the fix it prints
+- **[DisaggregatedSet roles](reference/disaggregatedset.md)**: scaling P/D roles of a DisaggregatedSet, by KEDA or by the role writer
 - **[KEDA](reference/keda.md)**: supported versions, a KEDA the cluster already has, and what the installer prints about it
 - **[The GPU limiter](reference/gpu-limiter.md)** and **[the quota limiter](reference/quota-limiter.md)** — bounding the scaling manager by real accelerators, and by declared caps
 - **[Security model](reference/security-model.md)** — identities, every permission by install scope, what it writes, the ports it opens, and what fails open
 - **[Metrics and health](reference/metrics.md)** · **[Prometheus integration](reference/prometheus.md)**
-- **[Metrics the capacity planner needs](reference/capacity-planner-metrics.md)** — every series the capacity planner reads, what it feeds, and which you can do without ([recording a window](guides/record-for-capacity-planner/))
+- **Capacity planner** — [the HTTP API](guides/capacity-planner/api.md) · [the metrics it needs](guides/capacity-planner/metrics.md) · [troubleshooting](guides/capacity-planner/troubleshooting.md). These pages live with [its guide](guides/capacity-planner/), to keep the planner's pages together
 - **[Router configuration](reference/router-configuration.md)** — the two router settings that decide what the scaling manager sees: flow control bounds the queue it reads as demand, and the scheduling profiles decide whether the replicas it orders get used
 - **[SGLang backend](reference/sglang-backend.md)** — auto-detected per variant; nothing to configure
 - **[Troubleshooting](reference/troubleshooting.md)**
@@ -174,8 +181,8 @@ stack](guides/testing-with-llm-d/) · [benchmark the scaling manager](guides/ben
 - **[Which component owns which number](developer-guide/signal-dataflow.md)** — the chain from a metric scrape to a replica count, and where every parameter in the arithmetic comes from
 - **[Throughput analyzer](developer-guide/throughput-analyzer.md)** · **[saturation demand floor](developer-guide/saturation-demand-floor.md)** · **[pod scraping source](developer-guide/pod-scraping-source.md)**
 - **[slo analyzer and the ITL tracker](developer-guide/slo-analyzer.md)** — one cycle of the observe-only SLO analyzer, its engine hooks, and the line fit it shares with saturation
-- **[Capacity planner capture and Generate](developer-guide/capacity-planner-capture.md)** — a past window in Prometheus made into a learner recording: which query fills which input, and the engine's call order Generate keeps
-- **[Capacity planner serve](developer-guide/capacity-planner-serve.md)** — the capacity planner's HTTP API on your machine: resolve a recording or a Prometheus window, then price plans against it
+- **[Capacity planner capture and Generate](developer-guide/capacity-planner-capture.md)** — internals: which query fills which input, and the engine's call order Generate keeps
+- **[Capacity planner serve](developer-guide/capacity-planner-serve.md)** — internals: the page's scripts, the size search, shared calls, the plan budget, the caches and the tests
 - **[Analyzer checklists](developer-guide/analyzer-checklists.md)** — what a new analyzer must show before it graduates
 - **[Analyzer evidence](developer-guide/analyzer-evidence.md)** — what each scaling signal was measured to do, and on which run
 - **[Benchmark internals](developer-guide/benchmark-guide.md)** · **[two-variant benchmark](developer-guide/two-variant-scaling-manager-benchmark.md)** · **[recorded results](developer-guide/benchmark-results.md)** · **[an example k2 decision report](developer-guide/benchmark-k2-decisions-example.md)**

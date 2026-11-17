@@ -128,12 +128,18 @@ first-sample/start-time/seed-bounds
 known-truth/batch-cap/declared-engine-queue-0
 known-truth/batch-cap/seq-bound-flow-control
 known-truth/borrowed-k2/lower-only
+known-truth/floor/flow-control-unlearned-mu-aggregated
+known-truth/floor/flow-control-unlearned-mu-decode
+known-truth/floor/flow-control-unlearned-mu-dp8
+known-truth/floor/flow-control-unlearned-mu-pd-decode
+known-truth/floor/flow-control-unlearned-mu-pd-prefill-bound
 known-truth/floor/prefill-without-mu-keeps-router-prompts
 known-truth/floor/standing-queue-priced-at-drain
 known-truth/floor/steady-order
 known-truth/itl/line-at-kprice
 known-truth/itl/line-at-kprice-timebase
 known-truth/itl/speculative-accepted-tokens
+known-truth/k2/above-k1-leaves-capacity
 known-truth/k2/output-spread
 known-truth/k2/priced-per-replica
 known-truth/mu/choice-priced
@@ -182,7 +188,6 @@ liveness/floor/prefill-below-the-knee-dp2
 liveness/floor/prefill-below-the-knee-shared-steps
 liveness/itl/line-within-steady-for-plus-1-min
 liveness/k2/dp8-whole-node
-liveness/k2/flow-control-on
 liveness/k2/n2-aggregated
 liveness/k2/n2-timebase
 liveness/k2/pd-decode

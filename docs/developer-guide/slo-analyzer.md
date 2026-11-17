@@ -32,9 +32,15 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   `MaxPSPromptCV` (0.25) a price is the larger of that and first come
   (`ttftPlan.price`, flagged `SpreadBeyondProcessorSharing`). Off, a
   first-come wait on the busiest pod (`prefillPlan.engineWait`).
-- `PriceRouterWait` (`slo-ttft-router-wait`, experimental, off, the CLI's
-  `--price-router-wait` default): trades `AboveFlowControlOnset` for
-  `FlowControlWaitPriced` above the prefill onset.
+- `PriceRouterWait` (`slo-ttft-router-wait`, opt-in, off, the CLI's
+  `--price-router-wait` default): above the prefill onset, up to
+  `MaxRouterWaitKneeShare` of the knee, prices the flow-control gate as a
+  stage (`whatif.newGateStage`; `TTFTParts.RouterWait` and `BurstWait`) and
+  trades `AboveFlowControlOnset` for `FlowControlWaitPriced`, so the verdict
+  there is read from the figure. Validated at one held staircase step; it
+  stays off until a cluster staircase with several held steps past the onset
+  passes
+  ([the router stage](../proposals/slo-capacity-planner-ttft.md#as-built-the-router-stage)).
 - `PSOnsets` (`slo-ttft-ps-onsets`, off, the CLI's `--ps-onsets` default):
   places the prefill onset on the processor-sharing stage
   (`prefillPlan.psMeanScore`, `ttftPlan.placement`) at `Prefill.RunningCap`.

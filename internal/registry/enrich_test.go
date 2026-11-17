@@ -76,6 +76,25 @@ func newTestEnricher(t *testing.T, now *time.Time, reg *Registry, objs ...client
 	return e, reader
 }
 
+// A role-writer entry has no ScaledObject: the enricher must not forget it for
+// that, while an ordinary entry whose ScaledObject is gone is forgotten.
+func TestRefreshKeepsRoleWriterEntries(t *testing.T) {
+	now := time.Now()
+	reg := newTestRegistry(&now)
+	reg.Observe(testNamespace, "glm-decode-llmsm", map[string]string{ModelIDKey: testModel, SourceKey: SourceRoleWriter})
+	reg.Observe(testNamespace, "gone-so", map[string]string{ModelIDKey: testModel})
+	e, _ := newTestEnricher(t, &now, reg)
+
+	e.Refresh(context.Background())
+
+	if _, ok := reg.Get(testNamespace, "glm-decode-llmsm"); !ok {
+		t.Error("the role-writer entry was forgotten for having no ScaledObject")
+	}
+	if _, ok := reg.Get(testNamespace, "gone-so"); ok {
+		t.Error("an entry whose ScaledObject is gone should be forgotten")
+	}
+}
+
 // TestRefreshResolvesTheTarget: the KEDA call names the ScaledObject but carries
 // neither the workload to scale nor the envelope KEDA will hold it within.
 func TestRefreshResolvesTheTarget(t *testing.T) {

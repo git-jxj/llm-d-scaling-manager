@@ -358,44 +358,12 @@ keeping as a Prometheus snapshot first, and capture it from the snapshot
 later. The `ols-sweep-slo` run is the first such window: flow control off,
 the slo analyzer listed, streamed load, router TTFT recorded.
 
-1. Snapshot Prometheus while it still holds the run. The snapshot API needs
-   Prometheus started with `--web.enable-admin-api`; the snapshot is written
-   under its data directory:
+1. Snapshot Prometheus while it still holds the run, and serve the snapshot
+   with a local Prometheus on `127.0.0.1:9091`, as
+   [Record a window: From a Prometheus snapshot](../guides/record-for-capacity-planner/README.md#from-a-prometheus-snapshot)
+   shows (steps 1 and 2 there).
 
-   ```bash
-   kubectl -n "$PROM_NS" port-forward "svc/$PROM_SVC" 9090:9090 &
-   # The answer is {"status":"success","data":{"name":"20261101T120000Z-..."}}.
-   NAME=$(curl -s -XPOST http://localhost:9090/api/v1/admin/tsdb/snapshot | jq -r .data.name)
-   test -n "$NAME" && test "$NAME" != null || echo "no snapshot: is the admin API on?"
-   kubectl -n "$PROM_NS" cp -c prometheus "$PROM_POD:/prometheus/snapshots/$NAME" ./ols-sweep-slo-snapshot
-   ```
-
-   `kubectl cp` runs `tar` inside the container, so it needs `tar` in the
-   Prometheus image. A distroless image has none, and the copy fails with
-   `executable file not found`. Then copy from a helper Pod that mounts the
-   same volume and has `tar`: a Pod with an image that has `tar` (from a
-   registry you trust), the Prometheus data volume's claim mounted
-   read-only at `/prometheus`, then
-   `kubectl -n "$PROM_NS" cp "$HELPER_POD:/prometheus/snapshots/$NAME" ./ols-sweep-slo-snapshot`.
-   A ReadWriteOnce claim mounts only on Prometheus' own node, so schedule
-   the helper there. An ephemeral container works as well where the
-   cluster allows them:
-   `kubectl debug -n "$PROM_NS" "$PROM_POD" --target=prometheus --image=IMAGE-WITH-TAR -c snap -- sleep 3600`,
-   then `kubectl cp -c snap "$PROM_POD:/proc/1/root/prometheus/snapshots/$NAME" ./ols-sweep-slo-snapshot`.
-
-   Without the admin API, save the raw series through the query API with
-   curl and load them into a local Prometheus:
-   [Record a window for the capacity planner, Path 2](../guides/record-for-capacity-planner/#path-2-record-with-curl-and-jq).
-
-2. Serve the snapshot with a local Prometheus. Give it a retention longer
-   than the snapshot's age, or it deletes the old blocks on start:
-
-   ```bash
-   prometheus --storage.tsdb.path=./ols-sweep-slo-snapshot --storage.tsdb.retention.time=10y \
-     --web.listen-address=:9091 --config.file=/dev/null
-   ```
-
-3. Capture the run's window, with the policy it ran under and the engine
+2. Capture the run's window, with the policy it ran under and the engine
    arguments its Deployments had. With kube-state-metrics in the snapshot,
    `--kube-state-metrics` reads Pods, readiness, GPUs and nodes; without its
    role labels (`--metric-labels-allowlist=pods=[llm-d.ai/role]`), add a
@@ -403,7 +371,7 @@ the slo analyzer listed, streamed load, router TTFT recorded.
 
    ```bash
    make capacity-planner
-   bin/capacity-planner capture --prometheus http://localhost:9091 --namespace "$RUN_NS" \
+   bin/capacity-planner capture --prometheus http://127.0.0.1:9091 --namespace "$RUN_NS" \
      --kube-state-metrics --role-of decode=app=ols-decode --role-of prefill=app=ols-prefill \
      --from 2026-11-01T12:00:00Z --to 2026-11-01T13:00:00Z --step 15s \
      --policy ols-sweep-slo-policy.yaml --engine-args "--max-num-seqs=256" \
@@ -423,10 +391,10 @@ the slo analyzer listed, streamed load, router TTFT recorded.
    capture with kube-state-metrics registers (12,500 steps, a little over
    two days at 15 s), which bounds the load; and `whatifsource.MaxSamples`,
    20 million samples held in memory, which grows with the Pods as well.
-   [Capacity planner capture](capacity-planner-capture.md#load-on-prometheus) gives the load
+   [Record a window: Load on Prometheus](../guides/record-for-capacity-planner/README.md#load-on-prometheus) gives the load
    a window puts on Prometheus.
 
-4. Generate the recording, and add it as a golden like any recording
+3. Generate the recording, and add it as a golden like any recording
    (below):
 
    ```bash
@@ -1998,12 +1966,15 @@ How a reading becomes a crossing:
   less the client's, which r1 put within 4 ms.
 
 **Above the prefill flow-control onset.** Once the router's prefill gate closes,
-requests wait in its queue. The model flags that wait (`AboveFlowControlOnset`) and
-does not price it, in the CLI and the SLO analyzer alike; an experimental switch,
-off by default, takes it as inside the processor-sharing stage (see the TTFT page,
-"As built: the router's wait above the prefill onset"). The second run's onset
-steps are replayed by `TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset` and
-`TestStaircaseR2_TheStepWithARouterWaitReadsShort`. A bucket's `measureAboveOnset` in the spec adds steps at those
+requests wait in its queue. By default the model flags that wait
+(`AboveFlowControlOnset`) and does not price it, in the CLI and the SLO analyzer
+alike; the opt-in `--price-router-wait` prices it as a stage
+(`FlowControlWaitPriced`) up to 0.9 of the prefill knee (see the TTFT page, "As
+built: the router stage"). The second run's onset steps are replayed by
+`TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset` and
+`TestStaircaseR2_TheStepWithARouterWaitReadsShort`, the Qwen3-32B run's by
+`TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep` and
+`TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient`. A bucket's `measureAboveOnset` in the spec adds steps at those
 multiples of its frozen prefill onset, after its scored steps and held the same way.
 They are never scored: no crossing, knee or falsifier reads them. The report's "Above
 the prefill onset" table lists every flow-control-on step past the onset, with the
@@ -2091,8 +2062,14 @@ tests do. The controller goes into `CONTROLLER_NAMESPACE`, which defaults to
 
 - **Scale to zero.** With `SCALE_TO_ZERO_ENABLED=true`, `install-epp.sh`
   enables the EPP flowControl feature gate, so it exposes
-  `inference_extension_flow_control_queue_size`. The scale-from-zero tests
-  create the `e2e-default` InferenceObjective themselves.
+  `llm_d_epp_flow_control_queue_size`. The scale-from-zero tests
+  create the `e2e-default` InferenceObjective themselves, in the first form
+  the cluster serves: `llm-d.ai/v1`, `llm-d.ai/v1alpha2` (both read by router
+  v1.0.0), then `inference.networking.x-k8s.io`, which only older routers
+  read. The kind setup installs only the x-k8s CRD (GAIE), so there the
+  object is the x-k8s one and v1.0.0 ignores it. It is optional: its priority is
+  0, the default an unclassified request gets anyway, so with neither API the
+  tests run the same and do not skip.
 - **Kueue.** Two specs, see [Kueue specs](#kueue-specs): the quota spec in
   the full tier, the borrowing spec in a CI job of its own.
 - **Monitoring images.** Prometheus comes from kube-prometheus-stack
@@ -2476,9 +2453,80 @@ works there. In order, and a step that fails stops the run:
   `release-e2e-logs-<scope>`.
 
 Not covered yet: the OpenShift files, the Kueue and metrics-reader files, the
-passive non-move of a running model, an upgrade from the previous release's
-files, and the path equivalence with `make deploy-scaling-manager`
+passive non-move of a running model, and the path equivalence with `make
+deploy-scaling-manager`
 ([the proposal's Testing section](../proposals/install-from-release.md#testing)).
+The upgrade from the previous release's files is covered by the tools-image
+e2e below.
+
+### Install with the tools image
+
+`make test-e2e-tools-install` installs with `smt admin-setup`, `smt install`
+and `smt admin-finish` ([install commands](../reference/tools-install.md)),
+run in the tools image built with the release files baked in, on the same
+prerequisites as the release-files e2e
+([two-command install](../proposals/two-command-install.md#testing)):
+
+```bash
+CREATE_CLUSTER=true make test-e2e-tools-install-with-setup
+# or, on a cluster you keep (after make test-e2e-release-manifests-setup):
+make test-e2e-tools-install                              # namespace scope
+make test-e2e-tools-install RELEASE_E2E_SCOPE=cluster    # on a fresh cluster
+```
+
+The target renders the files with the digest the kind nodes hold
+(`release-e2e-dist`, shared with the release-files e2e), builds
+`scaling-manager-tools:e2e` (`TOOLS_E2E_IMG`) with `--build-context
+release=<the files>`, and runs `test/tools-install/e2e.sh`. Each `smt` call is
+`docker run --network host`: kind's kubeconfig names the API server at
+`127.0.0.1:<port>`, which a container reaches only on the host network.
+
+Namespace scope (`llm-d-sim`), in order:
+
+1. Makes the owner: ServiceAccount `smt-owner` bound to the stock `admin`
+   ClusterRole in the namespace, and a token kubeconfig for it. `kubectl auth
+   can-i create clusterrolebindings` as the owner must say `no`.
+2. `install` as the owner before `admin-setup`: exit 3, no settings created.
+3. `admin-setup` as the cluster admin, without `--keda-namespace`: it must
+   find `keda-system` and write it into the scaler NetworkPolicy.
+4. The stamp edited to another hash: `install` exits 3; `admin-setup` again.
+5. `install` as the owner, then `admin-finish` as the admin: no `FAIL` in
+   either preflight, `scalerTLS` is `mutual TLS`, and ClusterRoleBinding
+   `scaling-manager-preflight-llm-d-sim` is gone.
+6. The smoke suite (`ginkgo -v`, more than zero specs), with
+   `RELEASE_E2E_SMOKE_SKIP` as in the release-files e2e.
+7. A second `install` changes no `resourceVersion` of any object of the
+   release files, the settings, the scaler Secrets, the CA Secret, KEDA's
+   side or the stamp (the preflight Job aside); a second `admin-finish`
+   restarts nothing (the controller pod is the same).
+8. `install` with another `--prometheus-url`: the settings keep their
+   `resourceVersion` and value, and the output prints the `kubectl patch`.
+9. Negative control in a fresh namespace (`smt-negative`): a wrong
+   `--prometheus-url` exits 1, names `prometheus.reachable`, and creates no
+   controller.
+10. Upgrade (`smt-upgrade`): the `TOOLS_E2E_PREVIOUS` (default `v0.11.1`)
+    files, downloaded from its GitHub release and checked against its
+    `SHA256SUMS`, installed by hand; `install` exits 3; `admin-setup`; `install`
+    upgrades the controller, and the settings keep their `resourceVersion`.
+
+Cluster scope: `admin-setup --scope cluster` is refused (exit 2); one `install
+--scope cluster` as the admin, with the models in `llm-d-sim`; then steps 5 to
+9 above, the re-run being `install --scope cluster` again. No upgrade case: the
+stamp is a namespace-scope step.
+
+- The summary and every `smt` output are in `dist/tools-e2e-logs`
+  (`TOOLS_E2E_LOGS`).
+- In CI: `e2e-tests-tools-install` in `ci-pr-checks.yaml`, one leg per scope,
+  on the same trigger as `e2e-tests-release-manifests` (plus
+  `test/tools-install/` and `Dockerfile.tools`). On failure it uploads the logs
+  as `tools-e2e-logs-<scope>`.
+- Without a cluster, `make lint-deploy-scripts` runs
+  `hack/check-release-install.sh`: the same commands against a stub kubectl
+  (the exit codes, `--dry-run` equal to the `sed`-substituted files, files
+  refused on a bad `SHA256SUMS` or another version, KEDA's side equal to the
+  release keda-auth file, the release workflow's baked-files check). The PR
+  job `tools-image` builds the image with freshly rendered files and runs
+  `hack/check-tools-image.sh`, which fails when the image carries none.
 
 ### Controller state between runs
 
@@ -2580,6 +2628,7 @@ test, lint or e2e, so retarget it to `main` before review.
 | `ci-pr-checks.yaml` / `lint-and-test` | golangci-lint v2.9.0, `make build`, `make test` | `make lint build test` |
 | `ci-pr-checks.yaml` / `deploy-scripts-check` | `make lint-deploy-scripts`, with yq pinned to v4.54.1 | `make lint-deploy-scripts`, with yq v4.54.1 on `PATH` |
 | `ci-pr-checks.yaml` / `tools-image` | builds `Dockerfile.tools` for `linux/arm64` and `linux/amd64`, runs `hack/check-tools-image.sh` against the amd64 image, then the release's blocking Trivy scan; skipped step by step when a PR changes only docs or metadata | `make tools-image-check` (needs docker with BuildKit) |
+| `ci-pr-checks.yaml` / `capacity-planner-image` | builds `Dockerfile.capacity-planner` for `linux/arm64` and `linux/amd64`, runs `hack/check-capacity-planner-image.sh` against the amd64 image (start it as the guide does, `POST /v1/inputs` on a committed recording and `POST /v1/plan`, 200 and a TTFT curve; a foreign Host is 403; `0.0.0.0` without `--listen-all-in-container` exits 2), then the blocking Trivy scan, then `hack/check-capacity-planner-dist.sh` (the four release binaries, `-trimpath` and ldflags, `version` on the host one); skipped step by step when a PR changes only docs or metadata | `make capacity-planner-image-check` (needs docker with BuildKit, curl and jq), `bash hack/check-capacity-planner-dist.sh` |
 | `ci-pr-checks.yaml` / `docs-check` | `make guides-check` (guide blocks vs `guide.yaml`, plus `hack/check-doc-links.py`), `make warmpool-check`, `make dashboards-check` | the same three targets (needs Python with PyYAML) |
 | `ci-pr-checks.yaml` / `kustomize-build` | `kustomize build` of the cluster-scoped kubernetes, namespace-scoped kubernetes and namespace-scoped openshift overlays | `make kustomize`, then `bin/kustomize build config/overlays/<scope>/<env> > /dev/null` |
 | `ci-pr-checks.yaml` / `e2e-tests-smoke` | `make test-e2e-smoke-with-setup` on a fresh Kind cluster, then the release's blocking Trivy scan (fixable CRITICAL) of the image it built; skipped when a PR changes only docs or metadata | `CREATE_CLUSTER=true make test-e2e-smoke-with-setup` |
@@ -2588,7 +2637,7 @@ test, lint or e2e, so retarget it to `main` before review.
 | `ci-signed-commits.yaml` / `signed-commits` | fails if any commit in the PR lacks a verified signature; in the merge queue a job of the same name reports, since the PR's commits were checked already | `git log --show-signature origin/main..HEAD` |
 
 On a push to `main`, only `lint-and-test`, `deploy-scripts-check`,
-`tools-image`, `docs-check` and `kustomize-build` run; the e2e jobs are PR-only.
+`tools-image`, `capacity-planner-image`, `docs-check` and `kustomize-build` run; the e2e jobs are PR-only.
 
 `ci-e2e-openshift.yaml` (the GPU OpenShift run) is manual
 (`workflow_dispatch` only); its PR and `/ok-to-test` triggers are disabled.

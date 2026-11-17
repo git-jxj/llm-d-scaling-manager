@@ -1,10 +1,24 @@
 name: install-cluster-wide
 
+tools:
+  setup:
+    note: Once per machine. The release's tools image, by the digest the release prints.
+    run: |
+      TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
+      mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+      smt() { docker run --rm --user "$(id -u):$(id -g)" \
+        -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+  install:
+    note: Cluster admin. Repeat --model-namespace for each namespace with model servers; add one later by running this again with it.
+    run: |
+      smt install --scope cluster --keda-namespace <the namespace KEDA runs in> \
+        --prometheus-url https://<prometheus>:9090 --model-namespace <model namespace>
+
 prerequisites:
   download:
     note: The release files. Pick the release you install.
     run: |
-      V=<release, for example v0.11.1>
+      V=<release, for example v0.11.2>
       URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
       for f in cluster settings preflight-cluster scaler-tls model-namespace keda-auth; do
         curl -fsSLO $URL/scaling-manager-$f.yaml
@@ -93,5 +107,10 @@ cleanup:
       kubectl delete secret scaling-manager-external-scaler-scaling-manager-system -n $KEDA_NS --ignore-not-found
       kubectl delete configmap,secret -n scaling-manager-system \
         -l 'app.kubernetes.io/part-of=scaling-manager,scaling-manager.llmd.ai/scaler-tls!=ca'
+  labeller:
+    note: Only if the install applied the weights labeller (it said so). Removes it, then the node labels it set; a label another tool set stays.
+    run: |
+      smt weights labeller --delete
+      smt weights label --clear
   model:
     run: make benchmark-teardown BENCHMARK_NAMESPACE=<the model namespace>

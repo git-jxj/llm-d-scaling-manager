@@ -33,6 +33,20 @@
   finding: "Under assumed stress noise on the output length (4 %, phi 0.9; E1 measures 0.5-0.9 %, where the main case passes) the shape tracker, which moves its anchor and the key on one reading past 20 % and anchors on that reading, is moved a second time by one tail reading and back by the next."
   measured: "5/1000 seeds (64, 247, 407, 901, 926); seed 64, down to 775: 1000 -> 792 at cycle 91 -> 630 at 171 -> 765 at 185"
   owner: "ev-shindin/llm-scaling-manager#495"
+- id: known-truth/floor/flow-control-unlearned-mu-aggregated
+  class: known-truth
+  learner: floor
+  expect: over-priced
+  finding: "Issue llm-d-incubation/llm-d-scaling-manager#51. Under flow control the engines' queues read empty, so no k2 and no mu are learned. Decode and DP=8 then price the floor from the mu their ITL line derives at the target fill, and pass (known-truth/floor/flow-control-unlearned-mu-decode, -dp8). An aggregated variant cannot: its derived mu is report-only until lifted, so the floor has no mu at all, and the router's queue is charged as KV held at once (estimateSchedulerQueueDemand) with nothing priced to drain it. The order grows with the queue, on the cost side. k2 itself is beside the point: the fleet fills past k1 before it queues, so a learned k2 cannot move capacity (known-truth/k2/above-k1-leaves-capacity)."
+  measured: "20/20 seeds; seed 1 (0.877 of KV, arrivals 1.34x served, ITL slope 0.031, router queue 2194): never learned 15.43 replicas, learned 6.18, truth 5.65; over seeds 1-100 never/learned 1.22-2.68, never/truth 1.39-2.89"
+  owner: "ev-shindin/llm-scaling-manager#275"
+- id: known-truth/floor/flow-control-unlearned-mu-pd-decode
+  class: known-truth
+  learner: floor
+  expect: wrong-side
+  finding: "Decode-bound P/D under flow control (issue llm-d-incubation/llm-d-scaling-manager#51). The floor charges the router's queue to prefill alone (applyThroughputFloor, queueOwner), so decode is ordered only on the target-fill headroom over the arrivals (1.01-1.20 lambda), and the router backlog drains slowly. Every queued request reaches decode once prefill takes it: decode owes the queue over the floor's horizon, up to what the prefill the analyzer orders completes beyond the arrivals (here prefill is ordered to 2 replicas, each 1.5-3x the decode fleet). The learned mu does not help: learned and never-learned orders both sit under the truth, so this is the floor's queue ownership, not the missing mu. The floor's comment that decode cannot drain the queue within drainSeconds holds only when prefill binds: the prefill-bound twin, known-truth/floor/flow-control-unlearned-mu-pd-prefill-bound, passes."
+  measured: "20/20 seeds; seed 1 (0.877 of KV, arrivals 1.34x served, ITL slope 0.031, router queue 2194, prefill ordered 2 at 50.6 req/s each): never learned 3.02 replicas, learned 3.15, truth 5.65; over seeds 1-100 never/truth 0.45-0.85, learned/truth 0.50-0.85, never learned 1.01-1.20 and learned 1.08-1.20 times lambda over the true mu at the target fill"
+  owner: "llm-d-incubation/llm-d-scaling-manager#51"
 - id: liveness/floor/closed-loop-decode-step-start-463s-jsq
   class: liveness
   learner: floor
@@ -54,10 +68,3 @@
   finding: "At a 463 s start the decode step through a restored snapshot overshoots to 31 replicas and is at 23 at the backlog allowance (44m15s), the same trace as with no restart. At the shortest-queue limit (a bound on the EPP, not the observed router) each replica that joins a queued fleet fills to the fleet's queue at once, and occupancy reads every replica full while the queue drains (ev-shindin/llm-scaling-manager#520)."
   measured: "1/1 seed; shortest-queue limit: peak 31 at 23.25 min (ceiling 26.5), 23 from 42.25 min, final 23 at 44m15s against the 20.5 bound, never under need"
   owner: "ev-shindin/llm-scaling-manager#520"
-- id: liveness/k2/flow-control-on
-  class: liveness
-  learner: k2
-  expect: not-learned
-  finding: "k2 is learned only from an engine queue at or over the threshold, and here the engines' own queues read empty while 40 requests wait at the scheduler, so P1-obs never fires and the variant prices from k1. That is not specific to flow control. On a P/D run (a TTFT staircase, flow control on and off alike) no k2 was learned below the knee in either mode, and the router queue was empty at every step before the runaway: prefill admits every prompt it holds (its queue read 0) and decode's waiting count was all deferred KV pulls. Prefill was then priced at k1 with no throughput floor, which under-provisioned TTFT by 1-2 replicas and more. Since issue #51 a prefill with no mu keeps the router queue's prompts as demand (known-truth/floor/prefill-without-mu-keeps-router-prompts), and since issue #97 it is priced at the floor on its busy-share bound with its own queue and the router's empty (liveness/floor/prefill-below-the-knee, its prefill twin, passes). What is left is this decode-only case: no k2 is learned, and here the true capacity is above k1, so a learned k2 could not move capacity. Gating k2 on the router queue is unsound: one loaded pod holds the pool, and a simulated gate learned k2 at 0.59 of k1."
-  measured: "20/20 seeds; two decode replicas full for 3 min with 40 requests at the scheduler: no k2"
-  owner: "#51"

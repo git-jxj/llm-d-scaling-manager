@@ -159,8 +159,9 @@ func boundWait(p, c, g float64) waitTail {
 // moves the figure by about as much: the hypoexponential's coefficients are
 // r2/(r2-r1) and -r1/(r2-r1).
 //
-// ok is false for shapes it does not sum: anything but a single-piece wait
-// and an unshifted single-piece one (or an empty one).
+// A single-piece wait and an unshifted single-piece one (or an empty one) sum
+// as below; two waits of unshifted pieces of any number sum by
+// sumUnshifted. ok is false for any other shape.
 func (a waitTail) sum(b waitTail) (_ waitTail, ok bool) {
 	if len(a.w) == 0 {
 		return b, true
@@ -169,7 +170,7 @@ func (a waitTail) sum(b waitTail) (_ waitTail, ok bool) {
 		return a, true
 	}
 	if len(a.w) != 1 || len(b.w) != 1 || b.s[0] != 0 {
-		return waitTail{}, false
+		return a.sumUnshifted(b)
 	}
 	p1, r1, s1, p2, r2 := a.w[0], a.r[0], a.s[0], b.w[0], b.r[0]
 	if math.Abs(r2-r1) <= 1e-6*max(r1, r2) {
@@ -183,6 +184,48 @@ func (a waitTail) sum(b waitTail) (_ waitTail, ok bool) {
 		r: []float64{r1, r2, r2},
 		s: []float64{s1, s1, 0},
 	}, true
+}
+
+// sumUnshifted is sum for two waits of any number of unshifted pieces: each is
+// an atom at 0 and a signed mixture of exponentials, so their convolution is
+// bilinear in the pieces. A piece of a alone keeps its weight times b's atom,
+// and likewise for b; each pair of pieces that both wait is a hypoexponential,
+// parted as in sum. ok is false if any piece is shifted.
+func (a waitTail) sumUnshifted(b waitTail) (_ waitTail, ok bool) {
+	var pa, pb float64
+	for i, w := range a.w {
+		if a.s[i] != 0 {
+			return waitTail{}, false
+		}
+		pa += w
+	}
+	for j, w := range b.w {
+		if b.s[j] != 0 {
+			return waitTail{}, false
+		}
+		pb += w
+	}
+	var out waitTail
+	add := func(w, r float64) {
+		out.w, out.r, out.s = append(out.w, w), append(out.r, r), append(out.s, 0)
+	}
+	for i, w := range a.w {
+		add(w*(1-pb), a.r[i])
+	}
+	for j, w := range b.w {
+		add(w*(1-pa), b.r[j])
+	}
+	for i, wa := range a.w {
+		for j, wb := range b.w {
+			r1, r2 := a.r[i], b.r[j]
+			if math.Abs(r2-r1) <= 1e-6*max(r1, r2) {
+				r2 = r1 * (1 + 1e-6)
+			}
+			add(wa*wb*r2/(r2-r1), r1)
+			add(-wa*wb*r1/(r2-r1), r2)
+		}
+	}
+	return out, true
 }
 
 // mean is E[W].

@@ -40,7 +40,7 @@ jobs:
       packages: write
       # Keyless cosign signing: the workflow's OIDC identity is the signer.
       id-token: write
-    # For the release-files job, which renders the manifests by this digest.
+    # For the release-sign job, which renders the manifests by this digest.
     outputs:
       image: ${{ steps.meta.outputs.image }}
       version: ${{ steps.meta.outputs.version }}
@@ -171,6 +171,32 @@ jobs:
           fi
           echo "kustomization newTag: ${have}"
 
+      # The same rule for the warm-pool proxy: config/warmpool names its image
+      # by tag, :main between releases, and a release PR pins it to the
+      # release's tag (deploy/warmpool.sh carries the same reference, kept in
+      # step by make warmpool-check in the checks job). The tag alone is
+      # compared, as for newTag: the repository part names the owner. Exactly
+      # one proxy image line, so a second container cannot hide a stale one.
+      - name: Verify the warm-pool proxy image pins this release
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          f=config/warmpool/warmpool-deployment.yaml
+          refs="$(awk '$1 == "image:" && $2 ~ /\/warmpool-proxy[:@]/ {print $2}' "$f" | tr -d '"\r')"
+          n="$(printf '%s' "$refs" | grep -c . || true)"
+          if [ "$n" != 1 ]; then
+            echo "::error file=$f::found $n warm-pool proxy image lines, want exactly 1"
+            exit 1
+          fi
+          case "$refs" in
+            */warmpool-proxy:"$VERSION") ;;
+            *)
+              echo "::error file=$f::the proxy image is '${refs}', expected tag '${VERSION}'. Pin it on the tagged commit with make warmpool-render (release-process.md, pre-release checklist step 1)."
+              exit 1 ;;
+          esac
+          echo "warm-pool proxy image: ${refs}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
@@ -294,18 +320,57 @@ jobs:
   # its guard on main or a release branch before anything here is pushed.
   # PR checks build it and run hack/check-tools-image.sh on every code change
   # (ci-pr-checks.yaml, tools-image); the checks job above ran those too.
+  #
+  # It carries the release files (smt install installs them;
+  # docs/proposals/two-command-install.md): the artifact release-sign made,
+  # checked with cosign verify-blob, baked in by every build here with
+  # --build-context release=dist, so the scans cover what ships. A re-run that
+  # signs again must rebuild this image in the same run; the upload checks.
   release-tools:
-    needs: release
+    needs: [release, release-sign]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
       id-token: write
+    outputs:
+      image: ${{ steps.tools-meta.outputs.image }}
+      digest: ${{ steps.tools-push.outputs.digest }}
     steps:
       - name: Checkout source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+
+      - name: Download the signed release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Every file against its bundle, as an operator verifies it, before any
+      # of them is baked into an image.
+      - name: Verify the release files
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          n=0
+          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/SHA256SUMS; do
+            [ -f "$f" ] && [ -f "$f.sigstore.json" ] || { echo "::error::$f or its bundle is missing from the artifact"; exit 1; }
+            cosign verify-blob "$f" --bundle "$f.sigstore.json" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity "https://github.com/$WORKFLOW_REF" >/dev/null
+            n=$((n + 1))
+          done
+          [ "$n" -gt 2 ] || { echo "::error::only $n files verified"; exit 1; }
+          (cd dist && sha256sum -c SHA256SUMS)
+          echo "verified $n files"
+          # Dockerfile.tools requires the baked SHA256SUMS to be this one.
+          echo "RELEASE_SHA256SUMS=$(sha256sum dist/SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_ENV"
 
       - name: Resolve the tools image and tags
         id: tools-meta
@@ -344,8 +409,11 @@ jobs:
           provenance: false
           sbom: false
           tags: release-tools-scan:${{ needs.release.outputs.version }}
+          build-contexts: |
+            release=dist
           build-args: |
             VERSION=${{ needs.release.outputs.version }}
+            RELEASE_SHA256SUMS=${{ env.RELEASE_SHA256SUMS }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
 
       - name: Scan the tools image for fixable CRITICAL vulnerabilities (blocking)
@@ -374,8 +442,11 @@ jobs:
           provenance: false
           sbom: false
           tags: release-tools-scan-arm64:${{ needs.release.outputs.version }}
+          build-contexts: |
+            release=dist
           build-args: |
             VERSION=${{ needs.release.outputs.version }}
+            RELEASE_SHA256SUMS=${{ env.RELEASE_SHA256SUMS }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
 
       - name: Scan the arm64 tools image for fixable CRITICAL vulnerabilities (blocking)
@@ -402,8 +473,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tools-meta.outputs.tags }}
+          build-contexts: |
+            release=dist
           build-args: |
             VERSION=${{ needs.release.outputs.version }}
+            RELEASE_SHA256SUMS=${{ env.RELEASE_SHA256SUMS }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
           sbom: true
           provenance: mode=max
@@ -411,11 +485,8 @@ jobs:
             index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             index:org.opencontainers.image.revision=${{ github.sha }}
             index:org.opencontainers.image.version=${{ needs.release.outputs.version }}
-            index:org.opencontainers.image.description=llm-d-scaling-manager tools - prepare model servers for scaling
+            index:org.opencontainers.image.description=llm-d-scaling-manager tools - install the scaling manager and prepare model servers for scaling
             index:org.opencontainers.image.licenses=Apache-2.0
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign the tools image
         env:
@@ -431,6 +502,300 @@ jobs:
           IMAGE: ${{ steps.tools-meta.outputs.image }}
           VERSION: ${{ needs.release.outputs.version }}
           DIGEST: ${{ steps.tools-push.outputs.digest }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          {
+            echo "Pushed \`$IMAGE:$VERSION\`, with the release files baked in"
+            echo ""
+            echo "Digest: \`$DIGEST\`"
+            echo ""
+            echo "Verify the signature (smt install trusts the files this image carries):"
+            echo '```'
+            echo "cosign verify $IMAGE@$DIGEST \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  --certificate-identity https://github.com/$WORKFLOW_REF"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The capacity planner image (Dockerfile.capacity-planner): the planner's
+  # API for an operator with no checkout (docs/guides/capacity-planner). The
+  # planner replays recordings with the controller's learners, so it is
+  # released under the controller's tag, to <controller image>/capacity-planner,
+  # moving `latest` only when the controller's did. Built, scanned, pushed and
+  # signed as release-tools does; one scan, as for the controller, since both
+  # platforms carry the same pure-Go binary. Before anything is pushed, the
+  # amd64 build is run by hack/check-capacity-planner-image.sh, which needs it
+  # to serve a plan and print this version. PR checks run the same script
+  # (ci-pr-checks.yaml, capacity-planner-image); the checks job above ran it.
+  release-capacity-planner:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Resolve the capacity planner image and tags
+        id: planner-meta
+        env:
+          IMAGE: ${{ needs.release.outputs.image }}
+          VERSION: ${{ needs.release.outputs.version }}
+          LATEST: ${{ needs.release.outputs.latest }}
+        run: |
+          set -euo pipefail
+          [ -n "$IMAGE" ] && [ -n "$VERSION" ] || { echo "::error::the release job reported no image or version"; exit 1; }
+          PLANNER="$IMAGE/capacity-planner"
+          TAGS="$PLANNER:$VERSION"
+          if [ "$LATEST" = true ]; then
+            TAGS="$TAGS,$PLANNER:latest"
+          fi
+          {
+            echo "image=$PLANNER"
+            echo "tags=$TAGS"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $PLANNER:$VERSION; tags: $TAGS"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the amd64 capacity planner image for checking and scanning (not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.capacity-planner
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: release-planner-scan:${{ needs.release.outputs.version }}
+          build-args: |
+            VERSION=${{ needs.release.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+            IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Check the capacity planner image serves a plan and prints this release
+        env:
+          PLANNER_IMG: release-planner-scan:${{ needs.release.outputs.version }}
+          PLANNER_VERSION: ${{ needs.release.outputs.version }}
+        run: bash hack/check-capacity-planner-image.sh
+
+      - name: Scan the capacity planner image for fixable CRITICAL vulnerabilities (blocking)
+        uses: ./.github/actions/trivy-scan
+        with:
+          image: release-planner-scan:${{ needs.release.outputs.version }}
+          severity: CRITICAL
+          ignore-unfixed: 'true'
+          exit-code: '1'
+
+      - name: Report HIGH and CRITICAL vulnerabilities in the capacity planner image (non-blocking)
+        uses: ./.github/actions/trivy-scan
+        with:
+          image: release-planner-scan:${{ needs.release.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the multi-arch capacity planner image
+        id: planner-push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.capacity-planner
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.planner-meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ needs.release.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+            IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
+          sbom: true
+          provenance: mode=max
+          annotations: |
+            index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+            index:org.opencontainers.image.version=${{ needs.release.outputs.version }}
+            index:org.opencontainers.image.description=llm-d-scaling-manager capacity planner - price a fleet from a learner recording
+            index:org.opencontainers.image.licenses=Apache-2.0
+
+      # The pushed index, by digest, must hold both release platforms: a
+      # release whose arm64 image is missing fails here, not on a laptop.
+      - name: Verify the pushed image holds linux/amd64 and linux/arm64
+        env:
+          IMAGE: ${{ steps.planner-meta.outputs.image }}
+          DIGEST: ${{ steps.planner-push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [ -n "$DIGEST" ] || { echo "::error::the push step reported no digest"; exit 1; }
+          have="$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Manifest}}' \
+            | jq -r '[.manifests[].platform | select(.os != "unknown") | .os + "/" + .architecture] | sort | unique | join(",")')"
+          if [ "$have" != "linux/amd64,linux/arm64" ]; then
+            echo "::error::$IMAGE@$DIGEST holds [$have], want linux/amd64,linux/arm64"
+            exit 1
+          fi
+          echo "$IMAGE@$DIGEST: $have"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the capacity planner image
+        env:
+          IMAGE: ${{ steps.planner-meta.outputs.image }}
+          DIGEST: ${{ steps.planner-push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [ -n "$DIGEST" ] || { echo "::error::the push step reported no digest"; exit 1; }
+          cosign sign --yes "$IMAGE@$DIGEST"
+
+      - name: Summarise
+        env:
+          IMAGE: ${{ steps.planner-meta.outputs.image }}
+          VERSION: ${{ needs.release.outputs.version }}
+          DIGEST: ${{ steps.planner-push.outputs.digest }}
+        run: |
+          {
+            echo "Pushed \`$IMAGE:$VERSION\`"
+            echo ""
+            echo "Digest: \`$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The warm-pool proxy image (Dockerfile.warmpool-proxy): the sidecar in every
+  # warm-pool Pod. config/warmpool and deploy/warmpool.sh name it by the
+  # release's tag on the tagged commit (the release job checked that), so it is
+  # released under the controller's tag, to <controller image>/warmpool-proxy,
+  # moving `latest` only when the controller's did. Built, scanned, pushed and
+  # signed as release-capacity-planner does. QEMU, because the builder stage
+  # of Dockerfile.warmpool-proxy runs on the target platform.
+  release-warmpool-proxy:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Resolve the warm-pool proxy image and tags
+        id: proxy-meta
+        env:
+          IMAGE: ${{ needs.release.outputs.image }}
+          VERSION: ${{ needs.release.outputs.version }}
+          LATEST: ${{ needs.release.outputs.latest }}
+        run: |
+          set -euo pipefail
+          [ -n "$IMAGE" ] && [ -n "$VERSION" ] || { echo "::error::the release job reported no image or version"; exit 1; }
+          PROXY="$IMAGE/warmpool-proxy"
+          TAGS="$PROXY:$VERSION"
+          if [ "$LATEST" = true ]; then
+            TAGS="$TAGS,$PROXY:latest"
+          fi
+          {
+            echo "image=$PROXY"
+            echo "tags=$TAGS"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $PROXY:$VERSION; tags: $TAGS"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the amd64 warm-pool proxy image for scanning (not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.warmpool-proxy
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: release-proxy-scan:${{ needs.release.outputs.version }}
+
+      - name: Scan the warm-pool proxy image for fixable CRITICAL vulnerabilities (blocking)
+        uses: ./.github/actions/trivy-scan
+        with:
+          image: release-proxy-scan:${{ needs.release.outputs.version }}
+          severity: CRITICAL
+          ignore-unfixed: 'true'
+          exit-code: '1'
+
+      - name: Report HIGH and CRITICAL vulnerabilities in the warm-pool proxy image (non-blocking)
+        uses: ./.github/actions/trivy-scan
+        with:
+          image: release-proxy-scan:${{ needs.release.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the multi-arch warm-pool proxy image
+        id: proxy-push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.warmpool-proxy
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.proxy-meta.outputs.tags }}
+          sbom: true
+          provenance: mode=max
+          annotations: |
+            index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+            index:org.opencontainers.image.version=${{ needs.release.outputs.version }}
+            index:org.opencontainers.image.description=llm-d-scaling-manager warm-pool proxy - forwards the serving port of a pool Pod to the model awake in it
+            index:org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Verify the pushed image holds linux/amd64 and linux/arm64
+        env:
+          IMAGE: ${{ steps.proxy-meta.outputs.image }}
+          DIGEST: ${{ steps.proxy-push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [ -n "$DIGEST" ] || { echo "::error::the push step reported no digest"; exit 1; }
+          have="$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Manifest}}' \
+            | jq -r '[.manifests[].platform | select(.os != "unknown") | .os + "/" + .architecture] | sort | unique | join(",")')"
+          if [ "$have" != "linux/amd64,linux/arm64" ]; then
+            echo "::error::$IMAGE@$DIGEST holds [$have], want linux/amd64,linux/arm64"
+            exit 1
+          fi
+          echo "$IMAGE@$DIGEST: $have"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the warm-pool proxy image
+        env:
+          IMAGE: ${{ steps.proxy-meta.outputs.image }}
+          DIGEST: ${{ steps.proxy-push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [ -n "$DIGEST" ] || { echo "::error::the push step reported no digest"; exit 1; }
+          cosign sign --yes "$IMAGE@$DIGEST"
+
+      - name: Summarise
+        env:
+          IMAGE: ${{ steps.proxy-meta.outputs.image }}
+          VERSION: ${{ needs.release.outputs.version }}
+          DIGEST: ${{ steps.proxy-push.outputs.digest }}
         run: |
           {
             echo "Pushed \`$IMAGE:$VERSION\`"
@@ -439,21 +804,25 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The files an operator installs from: the manifests rendered by the digest
-  # just pushed, each signed like the image, attached to the GitHub Release
-  # (docs/proposals/install-from-release.md). Its own job, so the only job that
-  # may write the repository's releases builds no image, and the one that
-  # pushes the image cannot touch the release. A re-run renders, signs and
-  # uploads again, replacing what an earlier attempt attached.
-  release-files:
-    # After release-tools too: a draft release whose notes and guides point at
-    # a tools image that failed to push would install half a release.
-    needs: [release, release-tools]
+  # just pushed, each signed like the image (docs/proposals/install-from-release.md).
+  # The only place bundles are made: cosign sign-blob makes a new bundle on
+  # every run, so the tools image (release-tools) and the GitHub Release
+  # (release-files) both take this job's artifact, never a render of their own
+  # (docs/proposals/two-command-install.md). It also builds the capacity
+  # planner binaries and adds them to SHA256SUMS before it is signed, so
+  # every file of the release is signed here, once. It may sign, and write
+  # nothing.
+  release-sign:
+    needs: release
     runs-on: ubuntu-latest
     permissions:
-      # Upload to the GitHub Release, creating a draft when none exists.
-      contents: write
+      contents: read
       # Keyless cosign signing, the same identity that signed the image.
       id-token: write
+    env:
+      # The capacity planner binaries the release attaches, one per platform
+      # (make capacity-planner-dist). A missing one fails the job.
+      CAPACITY_PLANNER_PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
     steps:
       - name: Checkout source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -476,14 +845,19 @@ jobs:
           yq --version
 
       # kustomize is installed by `make kustomize` (KUSTOMIZE_VERSION in the
-      # Makefile), which is `go install`: the Go of go.mod, not the runner's.
-      - name: Read the Go version from go.mod
-        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
+      # Makefile), which is `go install`, and the capacity planner binaries
+      # are built here. The Go line of go.mod (1.26 for go 1.26.0), at its
+      # latest patch (check-latest), as the image's golang:1.26 builder is:
+      # go.mod's own 1.26.0 would ship that release's standard library and
+      # every fix since missing from it.
+      - name: Read the Go line from go.mod
+        run: sed -En 's/^go ([0-9]+\.[0-9]+)(\..*)?$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "${{ env.GO_VERSION }}"
+          check-latest: true
           cache: false
 
       - name: Install kustomize
@@ -502,18 +876,140 @@ jobs:
           [ -n "$DIGEST" ] || { echo "::error::the release job reported no digest"; exit 1; }
           make release-manifests IMG="$IMAGE@$DIGEST" RELEASE_VERSION="$VERSION" DIST=dist
 
+      # Signing again makes new bundles, so a re-run for a release already
+      # published would push a tools image whose bundles differ from the ones
+      # attached: refuse before signing. Read-only; any error reading the
+      # release is a refusal, never "no release".
+      - name: Refuse a release that is already published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"
+          rc=0
+          draft="$(gh release view "$VERSION" --json isDraft --jq .isDraft 2>"$T/view.err")" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            if grep -qi 'release not found' "$T/view.err"; then
+              echo "no release $VERSION yet"
+              exit 0
+            fi
+            echo "::error::cannot read release $VERSION: $(head -1 "$T/view.err")"
+            exit 1
+          fi
+          if [ "$draft" != true ]; then
+            echo "::error::release $VERSION is already published; signing again would bake other bundles into the tools image. Release a new version instead."
+            exit 1
+          fi
+          echo "release $VERSION is a draft"
+
+      # The planner binaries, with the ldflags of `make capacity-planner` and
+      # this release, -trimpath so a re-run builds the same bytes. Each must
+      # exist, the linux/amd64 one must print this release and commit, and all
+      # are added to the SHA256SUMS the render wrote, before it is signed.
+      # Blocking: a known vulnerability in code the planner calls, in the
+      # standard library of this Go or in a module, stops the release.
+      # Source mode, so a finding in code never called is listed but does not
+      # block. Pinned by version; the Go checksum database verifies the module.
+      - name: Scan the capacity planner for called vulnerabilities (blocking)
+        run: |
+          set -euo pipefail
+          go version
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/capacity-planner/...
+
+      - name: Build the capacity planner binaries
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          make capacity-planner-dist RELEASE_VERSION="$VERSION" DIST=dist GIT_COMMIT="$GITHUB_SHA" \
+            CAPACITY_PLANNER_PLATFORMS="$CAPACITY_PLANNER_PLATFORMS"
+          names=()
+          for p in $CAPACITY_PLANNER_PLATFORMS; do
+            f="capacity-planner-$VERSION-$(printf '%s' "$p" | tr / -)"
+            [ -s "dist/$f" ] || { echo "::error::dist/$f was not built"; exit 1; }
+            names+=("$f")
+          done
+          got="$(dist/capacity-planner-"$VERSION"-linux-amd64 version)"
+          want="capacity-planner $VERSION (commit $GITHUB_SHA)"
+          [ "$got" = "$want" ] || { echo "::error::the linux/amd64 binary prints '$got', want '$want'"; exit 1; }
+          (cd dist && sha256sum "${names[@]}" >> SHA256SUMS)
+          echo "added ${#names[@]} binaries to SHA256SUMS: ${names[*]}"
+
       # One bundle per file, SHA256SUMS included: <file>.sigstore.json. Signed
       # by content, so a file changed after signing fails verification.
       - name: Sign the release files
         run: |
           set -euo pipefail
           n=0
-          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/SHA256SUMS; do
+          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/SHA256SUMS; do
             [ -f "$f" ] || { echo "::error::$f was not rendered"; exit 1; }
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
             n=$((n + 1))
           done
           echo "signed $n files"
+
+      - name: Upload the signed release files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+          # A re-run of this job replaces the artifact of the earlier attempt.
+          overwrite: true
+
+  # Attaches release-sign's artifact to the GitHub Release: the same bytes the
+  # tools image carries, never rendered or signed again. Its own job, so the
+  # only job that may write the repository's releases builds no image and
+  # signs nothing, and the one that pushes the image cannot touch the release.
+  # Re-running it alone reuses the artifact.
+  release-files:
+    # After release-tools, release-capacity-planner and release-warmpool-proxy
+    # too: a draft release whose notes and guides point at an image that failed
+    # to push would install half a release.
+    needs: [release, release-sign, release-tools, release-capacity-planner, release-warmpool-proxy]
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload to the GitHub Release, creating a draft when none exists.
+      contents: write
+      # Pull the tools image just pushed, to compare its files.
+      packages: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the signed release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tools image, by digest, must carry exactly these files: its baked
+      # SHA256SUMS and every bundle equal to the artifact's, in both variants
+      # it publishes. A re-run of the signing job without a rebuild of the
+      # image fails here.
+      - name: Check the tools image carries these files
+        env:
+          IMAGE: ${{ needs.release-tools.outputs.image }}
+          DIGEST: ${{ needs.release-tools.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [ -n "$IMAGE" ] && [ -n "$DIGEST" ] || { echo "::error::the release-tools job reported no image or digest"; exit 1; }
+          for platform in linux/amd64 linux/arm64; do
+            docker pull -q --platform "$platform" "$IMAGE@$DIGEST" >/dev/null
+            bash hack/compare-baked-release-files.sh --platform "$platform" --image "$IMAGE@$DIGEST" dist
+          done
 
       # A draft is created when the tag has no release, and a draft is
       # replaced freely. A PUBLISHED release is not changed: operators may
@@ -560,7 +1056,8 @@ jobs:
             echo "release $VERSION is published with these exact files; nothing to upload"
             exit 0
           fi
-          gh release upload "$VERSION" --clobber dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/SHA256SUMS dist/*.sigstore.json
+          gh release upload "$VERSION" --clobber dist/*.yaml dist/scaling-manager-tools-*.tar.gz \
+            dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/SHA256SUMS dist/*.sigstore.json
           gh release view "$VERSION" --json assets --jq '.assets[].name'
 
       - name: Summarise

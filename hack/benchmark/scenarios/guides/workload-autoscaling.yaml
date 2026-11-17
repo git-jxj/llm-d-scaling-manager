@@ -172,8 +172,11 @@ scenario:
         # of its own, so the disaggregation plugin migration v0.11.0 required
         # does not apply to it -- see pd-disaggregation.yaml for that, and
         # docs/reference/router-configuration.md for the migration itself.
+        #
+        # v1.0.0 since then, for the same budget; its config below uses the
+        # llm-d.ai/v1 EndpointPickerConfig apiVersion that v1.0.0 introduced.
         routerEndpointPicker:
-          tag: v0.11.0
+          tag: v1.0.0
     # =========================================================================
     # KUSTOMIZE DEPLOY METHOD   (scope: the ENTIRE stack)
     # -------------------------------------------------------------------------
@@ -267,7 +270,7 @@ scenario:
           pluginsConfigFile: "scaling-manager-plugins.yaml"
           pluginsCustomConfig:
             scaling-manager-plugins.yaml: |
-              apiVersion: llm-d.ai/v1alpha1
+              apiVersion: llm-d.ai/v1
               kind: EndpointPickerConfig
               featureGates:
                 - flowControl
@@ -499,13 +502,13 @@ scenario:
       #   curl -sL "https://ghcr.io/token?scope=repository:llm-d-incubation/llm-d-scaling-manager:pull" \
       #     | jq -r .token | xargs -I{} curl -sH "Authorization: Bearer {}" \
       #       https://ghcr.io/v2/llm-d-incubation/llm-d-scaling-manager/tags/list
-      # Pinned to the latest release, v0.11.1. `make benchmark-standup`
+      # Pinned to the latest release, v0.11.2. `make benchmark-standup`
       # turns this install off (wva.enabled=false) and installs the controller
       # from deploy/ with IMG instead, so to measure the release there, check
-      # out v0.11.1 and pass IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.11.1.
+      # out v0.11.2 and pass IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.11.2.
       image:
         repository: ghcr.io/llm-d-incubation/llm-d-scaling-manager
-        tag: v0.11.1
+        tag: v0.11.2
       replicaCount: 1 # the scaling manager controller pod replicas (1 is the chart default)
       # Disable to skip installing the controller but still render the VA
       # + HPA (rare; useful when you reuse a cluster-wide controller

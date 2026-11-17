@@ -48,8 +48,14 @@ CACHE_CFG_ALT = re.compile(
     r'^vllm:cache_config_info\{[^}]*block_size="(?P<bs>\d+)"[^}]*'
     r'num_gpu_blocks="(?P<blk>\d+)"[^}]*\}\s+'
 )
+# llm_d_epp_ is the current name; routers before v1.0.0 also export the
+# inference_extension_ alias, and v1.0.0 exports only llm_d_epp_. parse_epp_log
+# returns the FIRST matching line and stops: one series (one model, priority and
+# fairness id), under whichever name comes first in the scrape -- not a sum over
+# the scrape. On a router queueing for one model at one priority that is the
+# queue; with several it is only one of them.
 EPP_QUEUE_SIZE = re.compile(
-    r"^inference_extension_flow_control_queue_size\{[^}]*\}\s+([0-9.eE+-]+)"
+    r"^(?:llm_d_epp|inference_extension)_flow_control_queue_size\{[^}]*\}\s+([0-9.eE+-]+)"
 )
 
 FILE_RE = re.compile(r"^(?P<pod>.+?)_(?P<ts>\d{10})_metrics\.log$")

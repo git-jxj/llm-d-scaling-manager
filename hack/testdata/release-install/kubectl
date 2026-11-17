@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+# A stateful stand-in for kubectl, for hack/check-release-install.sh. Objects
+# live as JSON in $STUB_DIR/obj/<resource>/<namespace or _>/<name>.json; every
+# call is appended to $STUB_DIR/calls.log. Answers only what the smt commands
+# and the scaler_tls.sh functions they call ask; anything else fails loudly.
+#
+# Knobs, files in $STUB_DIR: unreachable (every call fails as an unreachable
+# API server), openshift (discovery serves security.openshift.io), apiservice
+# ("<namespace> <service>" behind the external-metrics APIService),
+# preflight.log (the log of the Job), preflight.end (Complete, Failed, or
+# none: the Job never ends), job-vanishes (the preflight Job is gone when read),
+# controller.log (the controller log the stale-connection check reads),
+# rollout-timeout (rollout status times out), can-i-no ("<verb> <resource>
+# <namespace>" lines auth can-i answers no), forbid-namespaces (reading a
+# Namespace is Forbidden, as for a namespace owner), forbid-daemonsets
+# (reading DaemonSets is Forbidden), apply-fails (a
+# server-side apply is refused by the API server).
+D="${STUB_DIR:?}"
+printf '%s\n' "$*" >> "$D/calls.log"
+ALL="$*"
+if [ -f "$D/unreachable" ]; then
+    echo "The connection to the server 127.0.0.1:1 was refused - did you specify the right host or port?" >&2
+    exit 1
+fi
+
+verb="${1:-}"
+[ $# -eq 0 ] || shift
+ns="" out="" sel="" file="" raw="" pos=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -n|--namespace) ns="$2"; shift 2 ;;
+        -n=*|--namespace=*) ns="${1#*=}"; shift ;;
+        -o) out="$2"; shift 2 ;;
+        -o=*|--output=*) out="${1#*=}"; shift ;;
+        -o*) out="${1#-o}"; shift ;;
+        -l|--selector) sel="$2"; shift 2 ;;
+        -f|--filename) file="$2"; shift 2 ;;
+        -c|--since|--tail|--max-log-requests|--timeout|--field-manager|--type|-p|--as|--duration) shift 2 ;;
+        --raw) raw="$2"; shift 2 ;;
+        -A|--all-namespaces) ns="*"; shift ;;
+        ---) echo "error: bad flag syntax: ---" >&2; exit 1 ;;
+        --*) shift ;;
+        *) pos+=("$1"); shift ;;
+    esac
+done
+
+# res <name>: the resource, singular and lower case.
+res() {
+    local r="${1%%.*}"
+    r="$(printf '%s' "$r" | tr 'A-Z' 'a-z')"
+    case "$r" in
+        cm|configmaps) r=configmap ;;
+        secrets) r=secret ;;
+        deployments|deploy) r=deployment ;;
+        jobs) r=job ;;
+        namespaces|ns) r=namespace ;;
+        networkpolicies|netpol) r=networkpolicy ;;
+        clusterrolebindings) r=clusterrolebinding ;;
+        clustertriggerauthentications) r=clustertriggerauthentication ;;
+        pods) r=pod ;;
+        scaledobjects) r=scaledobject ;;
+        apiservices) r=apiservice ;;
+    esac
+    printf '%s' "$r"
+}
+cluster_scoped() {
+    case "$1" in namespace|clusterrole|clusterrolebinding|clustertriggerauthentication|apiservice) return 0 ;; esac
+    return 1
+}
+path() {
+    local r="$1" n="$2" s="$3"
+    cluster_scoped "$r" && s=_
+    printf '%s/obj/%s/%s/%s.json' "$D" "$r" "${s:-default}" "$n"
+}
+not_found() {
+    echo "Error from server (NotFound): $1 \"$2\" not found" >&2
+    exit 1
+}
+
+# docs <file or ->: one compact JSON object per line.
+docs() {
+    local src="$1"
+    [ "$src" = - ] && { src="$D/stdin.$$"; cat > "$src"; }
+    yq -o json -I 0 '.' "$src" | grep -v '^null$'
+}
+
+# store <json>: write the object; prints <resource>/<name>. metadata.generation
+# goes up when .spec changes, as on the API server, so a check can tell a
+# re-apply that changed the controller from one that did not.
+store() {
+    local o="$1" r n s p gen=1
+    r="$(res "$(printf '%s' "$o" | jq -r .kind)")"
+    n="$(printf '%s' "$o" | jq -r .metadata.name)"
+    s="$(printf '%s' "$o" | jq -r '.metadata.namespace // empty')"
+    s="${s:-$ns}"
+    p="$(path "$r" "$n" "$s")"
+    mkdir -p "$(dirname "$p")"
+    if [ -f "$p" ]; then
+        gen="$(jq -r '.metadata.generation // 1' "$p")"
+        [ "$(jq -c -S '.spec // null' "$p")" = "$(printf '%s' "$o" | jq -c -S '.spec // null')" ] || gen=$((gen + 1))
+    fi
+    printf '%s' "$o" | jq --arg rv "$RANDOM$RANDOM" --argjson g "$gen" '.metadata.resourceVersion = $rv | .metadata.generation = $g' > "$p"
+    printf '%s/%s' "$r" "$n"
+}
+
+selected() {
+    [ -z "$sel" ] && return 0
+    printf '%s' "$1" | jq -e --arg k "${sel%%=*}" --arg v "${sel#*=}" '.metadata.labels[$k] == $v' >/dev/null
+}
+
+case "$verb" in
+    api-versions)
+        printf 'v1\napps/v1\nbatch/v1\nnetworking.k8s.io/v1\n'
+        [ -f "$D/openshift" ] && echo security.openshift.io/v1
+        exit 0 ;;
+    version) echo '{"clientVersion":{"gitVersion":"v0.0.0-stub"}}'; exit 0 ;;
+    auth)
+        # can-i-no: "<verb> <resource> <namespace>" lines the caller may not do
+        if [ -f "$D/can-i-no" ] && grep -qxF "${pos[1]:-} ${pos[2]:-} ${ns}" "$D/can-i-no"; then echo no; exit 1; fi
+        echo yes; exit 0 ;;
+    label|annotate|patch) echo "${pos[0]}/${pos[1]:-} labeled"; exit 0 ;;
+    get)
+        if [ -n "$raw" ]; then
+            case "$raw" in
+                /apis/keda.sh/v1alpha1) echo '{"kind":"APIResourceList","resources":[{"name":"clustertriggerauthentications"},{"name":"scaledobjects"}]}'; exit 0 ;;
+            esac
+            echo "Error from server (NotFound): the server could not find the requested resource" >&2; exit 1
+        fi
+        r="$(res "${pos[0]}")"
+        n="${pos[1]:-}"
+        if [ "$r" = daemonset ] && [ -f "$D/forbid-daemonsets" ]; then
+            echo "Error from server (Forbidden): daemonsets.apps is forbidden: User \"admin\" cannot list resource \"daemonsets\" in API group \"apps\" in the namespace \"$ns\"" >&2
+            exit 1
+        fi
+        if [ -z "$n" ]; then
+            # A list: what is stored of that resource in that namespace.
+            items="$(cat "$D"/obj/"$r"/"${ns:-default}"/*.json 2>/dev/null | jq -s -c '.')"
+            [ "$ns" = "*" ] && items="$(cat "$D"/obj/"$r"/*/*.json 2>/dev/null | jq -s -c '.')"
+            printf '{"items":%s}\n' "${items:-[]}"
+            exit 0
+        fi
+        if [ "$r" = namespace ] && [ -f "$D/forbid-namespaces" ]; then
+            echo "Error from server (Forbidden): namespaces \"$n\" is forbidden: User \"owner\" cannot get resource \"namespaces\" at the cluster scope" >&2
+            exit 1
+        fi
+        if [ "$r" = networkpolicy ] && [ -f "$D/forbid-networkpolicies" ]; then
+            echo "Error from server (Forbidden): networkpolicies.networking.k8s.io \"$n\" is forbidden: User \"admin\" cannot get resource \"networkpolicies\"" >&2
+            exit 1
+        fi
+        if [ "$r" = serviceaccount ] && [ "$n" = default ]; then
+            # Every namespace has one.
+            [ -f "$D/obj/namespace/_/$ns.json" ] || not_found serviceaccounts default
+            echo "serviceaccount/default"
+            exit 0
+        fi
+        if [ "$r" = apiservice ]; then
+            [ -f "$D/apiservice" ] || not_found apiservices.apiregistration.k8s.io "$n"
+            cat "$D/apiservice"
+            exit 0
+        fi
+        p="$(path "$r" "$n" "$ns")"
+        if [ ! -f "$p" ]; then
+            case " $ALL " in *" --ignore-not-found "*) exit 0 ;; esac
+            not_found "$r" "$n"
+        fi
+        case "$out" in
+            name) echo "$r/$n" ;;
+            json)
+                if [ "$r" = job ]; then
+                    [ ! -f "$D/job-vanishes" ] || not_found jobs.batch "$n"
+                    jq --arg e "$(cat "$D/preflight.end" 2>/dev/null || echo Complete)" \
+                        'if $e == "none" then .status = {} else .status.conditions = [{type: $e, status: "True"}] end' "$p"
+                else
+                    cat "$p"
+                fi ;;
+            jsonpath=*)
+                # The scaler NetworkPolicy read of llmsm_scaler_np_keda_ns.
+                [ "$r" = networkpolicy ] || { echo "stub kubectl: no jsonpath for $r" >&2; exit 1; }
+                jq -r '.spec.ingress[] | ([.ports[]?.port | tostring] | join(" ")) + " |" + ([.from[]?.namespaceSelector.matchLabels["kubernetes.io/metadata.name"] // empty] | join(" ")) + " "' "$p" ;;
+            *) echo "stub kubectl: no output $out" >&2; exit 1 ;;
+        esac
+        exit 0 ;;
+    apply)
+        [ -n "$file" ] || { echo "stub kubectl: apply without -f" >&2; exit 1; }
+        case "$ALL" in *--server-side*) [ ! -f "$D/apply-fails" ] || { echo "Error from server (InternalError): the server refused the apply" >&2; exit 1; } ;; esac
+        while IFS= read -r o; do
+            selected "$o" || continue
+            echo "$(store "$o") configured"
+        done < <(docs "$file")
+        exit 0 ;;
+    create)
+        if [ "${pos[0]:-}" = namespace ]; then
+            store "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"name\":\"${pos[1]}\"}}" >/dev/null
+            echo "namespace/${pos[1]} created"; exit 0
+        fi
+        rc=0
+        while IFS= read -r o; do
+            r="$(res "$(printf '%s' "$o" | jq -r .kind)")"
+            n="$(printf '%s' "$o" | jq -r .metadata.name)"
+            s="$(printf '%s' "$o" | jq -r '.metadata.namespace // empty')"
+            if [ -f "$(path "$r" "$n" "${s:-$ns}")" ]; then
+                echo "Error from server (AlreadyExists): $r \"$n\" already exists" >&2; rc=1; continue
+            fi
+            echo "$(store "$o") created"
+        done < <(docs "$file")
+        exit "$rc" ;;
+    delete)
+        r="$(res "${pos[0]}")"
+        rm -f "$(path "$r" "${pos[1]}" "$ns")"
+        echo "$r \"${pos[1]}\" deleted"
+        exit 0 ;;
+    logs)
+        case "${pos[0]:-}" in
+            job/*) cat "$D/preflight.log" 2>/dev/null; exit 0 ;;
+        esac
+        # The controller log the stale-connection check reads.
+        cat "$D/controller.log" 2>/dev/null
+        exit 0 ;;
+    rollout)
+        case "${pos[0]}" in
+            status)
+                if [ -f "$D/rollout-timeout" ]; then echo "error: timed out waiting for the condition" >&2; exit 1; fi
+                echo "deployment \"${pos[1]#*/}\" successfully rolled out"; exit 0 ;;
+            restart) echo "${pos[1]} restarted"; exit 0 ;;
+        esac ;;
+esac
+echo "stub kubectl: no answer for: $verb ${pos[*]}" >&2
+exit 1

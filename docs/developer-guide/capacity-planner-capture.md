@@ -1,229 +1,54 @@
-# Capacity planner capture and Generate
+# Capacity planner capture and Generate: internals
 
 `capacity-planner capture` turns a past window in Prometheus into the inputs the
 analyzers would have read, and `capacity-planner generate` plays them through the
 analyzers as a controller's cycles would have. The output is an ordinary
 learner recording. The design is R2 in
 [the learner proposal, 2.9](../proposals/analyzer-learner.md#29-recorder-fields-for-ttft-and-capture).
-How to run it on a real window is in
-[Testing: Capture a past window](testing.md#capture-a-past-window). For
-operators, [Record a window for the capacity planner](../guides/record-for-capacity-planner/)
-covers recording, with `capacity-planner` or with only curl and jq, and
-[Metrics the capacity planner needs](../reference/capacity-planner-metrics.md)
-lists every raw series the queries below read.
 
-```
-capacity-planner capture  --prometheus URL --namespace NS (--kube-state-metrics | --role-of ROLE=SELECTOR ...)
-                          --from T0 --to T1 -o run.capture.jsonl.gz
-                          [--step 15s] [--policy FILE]
-                          [--engine vllm|sglang] [--engine-args "ARGS"] [--batch-cap N]
-                          [--gpus-per-replica 1] [--accelerator NAME]
-                          [--bearer-token-file FILE] [--ca-file FILE] [--insecure-skip-verify]
-                          [--timeout 2m30s] [--force]
-capacity-planner generate -in run.capture.jsonl.gz -o run.jsonl
-```
+This page is how it is built. How to run it, its flags, its load on
+Prometheus and how to read the answers are in the guide:
+[Record a window](../guides/record-for-capacity-planner/), part of
+[the capacity planner guide](../guides/capacity-planner/).
+[The metrics it needs](../guides/capacity-planner/metrics.md) lists every raw
+series the queries below read. Capturing from a snapshot is in
+[Testing: Capture a past window](testing.md#capture-a-past-window).
 
-| Flag | What it does |
-| --- | --- |
-| `--prometheus` | The Prometheus base URL, http or https. Required. An error message never quotes its userinfo, path, query or fragment: they are replaced by `REDACTED` ([the rules](../proposals/slo-capacity-planner.md#prometheus-mode-as-built-d4)). |
-| `--namespace` | The namespace whose models to capture. Required. |
-| `--kube-state-metrics` | Read Pods, owners, readiness, GPUs and nodes from kube-state-metrics in the same Prometheus. |
-| `--role-of ROLE=SELECTOR` | The Pods a label selector picks serve ROLE (`prefill`, `decode`, `both`), as one variant. Repeat per variant. |
-| `--from`, `--to` | The window, RFC 3339 or Unix seconds, truncated to the millisecond. Required. |
-| `--step` | The interval between cycles, taken as the run's optimize interval. Whole milliseconds. Default 15s. |
-| `--policy` | A scaling-policy entry (YAML), applied as the default entry. Default: the defaults. |
-| `--engine` | The inference engine the variants run, `vllm` or `sglang`. Default `vllm`. |
-| `--engine-args` | The engine's arguments, space-separated, parsed for its parameters (kube-state-metrics has none). |
-| `--batch-cap` | The engine's batch cap (`--max-num-seqs`, or `--max-running-requests`). Warned about when `--engine-args` sets it too. |
-| `--gpus-per-replica`, `--accelerator` | Stand-ins where kube-state-metrics gives no GPU request or node label. |
-| `--bearer-token-file` | A file holding a bearer token. Sent over https only, to Prometheus' own host only (compared without case), never on a redirect elsewhere. Refused with an http URL, or when the file is empty. |
-| `--ca-file` | A PEM file of the CAs that sign an https Prometheus' certificate, trusted in place of the system's: for a Prometheus behind a private CA (an OpenShift service CA, say). Refused with an http URL. |
-| `--insecure-skip-verify` | Do not verify the certificate. Warned about on stderr. Refused with an http URL. |
-| `--timeout` | How long one HTTP request may take. Default 2m30s, a little over Prometheus' own 2-minute query timeout. |
-| `--force` | Capture past the load and memory bounds below. |
-| `-o` | Where to write the capture. Written beside it and renamed over it when whole, so a failed run leaves the file that was there. |
+`replicas-to-slo` and `slo-to-rate`, given the capture flags in place of
+`--recording`, capture and generate in memory along this same path, and answer
+as `--recording` would on the files
+([Prometheus mode](../proposals/slo-capacity-planner.md#prometheus-mode-as-built-d4)).
+So does `serve` for a `prometheus` source.
 
-`capacity-planner generate` takes `-in` (the capture, gzipped or not) and `-o` (the
-recording; a name ending in `.gz` is gzipped). Both commands write their
-file with mode 0600, through a temporary file renamed over it.
+Exit codes: 2 for the caller's input (`whatifsource.IsInputError`: a bad
+flag, invalid options, overlapping `--role-of` selectors, no Pod the role map
+attributes with a KV-cache series, a window too large without `--force`, a
+capture `generate` cannot read); 1 for anything else
+(`whatifsource.ErrQueryFailed`, or a `generate` that fails inside the
+analyzers).
 
-`make capacity-planner` builds `bin/capacity-planner`, with the commit in the build. The command
-is not in the manager image.
+## Load and bounds
 
-To answer the planner's questions from a window without writing either
-file, give the same flags to `capacity-planner replicas-to-slo` or `capacity-planner
-slo-to-rate` in place of `--recording`: they capture and generate in memory
-along this same path, and answer as `--recording` would on the files.
-[Prometheus mode](../proposals/slo-capacity-planner.md#prometheus-mode-as-built-d4)
-in the planner's CLI reference has the details.
+A window of more than 10,000 steps is asked in range queries of at most 10,000
+steps, one part after another (`Options.RangeQueryPoints` in tests). The
+collector asks a cycle's queries together, so different queries run at the
+same time, as many as a controller's cycle asks at once. A capture registers
+about 80 queries with kube-state-metrics (67 without).
 
-Exit codes: 0 done; 2 the caller's input (a bad flag, invalid options,
-overlapping `--role-of` selectors, no Pod the role map attributes with a
-KV-cache series, a window too large without `--force`, a capture `generate`
-cannot read; `whatifsource.IsInputError`); 1 anything else (a failed
-Prometheus query, `whatifsource.ErrQueryFailed`, or a `generate` that fails
-inside the analyzers).
+`whatifsource.MaxStepQueries` (1,000,000) steps times registered queries is
+checked before any query: about 12,500 steps with the 80 queries.
+`whatifsource.MaxSamples` (20 million, at about 60 bytes each) bounds the
+samples held, counted as the answers arrive. Past either, exit 2 unless
+`--force`.
 
-## Asking for TTFT
-
-The answer commands price a P/D fleet's TTFT when a TTFT flag is given:
-
-```
-capacity-planner replicas-to-slo --recording run.jsonl --ttft-percentile 90 [--assume-vp TOKENS] [--assume-a D] [--prefill N]
-capacity-planner slo-to-rate     --recording run.jsonl --tpot 4ms --ttft 200ms@p95 [--assume-vp TOKENS] [--assume-a D] [--prefill N]
-```
-
-`--prometheus` takes the same flags, and gives the same answer.
-
-- **Treat every TTFT figure as unvalidated.** Each prints `UNVALIDATED`, and it
-  is not a bound. At the assumed prompt `cv` 2, which is what the CLI prints
-  for rows with no computed-token histogram, it read 1.1x to 4.1x the router's
-  percentile on the P2 recordings; at the spread the load generator sent
-  (`cv` 0.06) up to 33% under it. Do not size from it yet.
-- **Read the `assumed` row first.** It names each input the recording did not
-  give. `V_P ASSUMED` means `--assume-vp` supplied `V_P`, and `a ASSUMED` that
-  `--assume-a` supplied `a`.
-- **An assumed term can decide the answer.** The `assumed` row says so when one
-  alone refuses a target, or moves the answer by 25%. `--assume-router-hop 8ms`
-  supplies the hop between the router and the engines.
-- **`--assume-vp` overrides,** as every `--assume-*` flag does. Give it when
-  `NoPrefillCapacity` is refused, because the pods never queued long enough for
-  `V_P` to be learned, or to ask what another `V_P` would do. A learned figure
-  is printed beside it: `V_P 130000 ASSUMED, learned 115621`.
-- **A decode row can rest on `V_P` too.** Where the prefill knee is the lower,
-  it sets the operating rate, and the rate and TPOT rows say so and carry the
-  verdict.
-- **`NoFixedLatency` is a fleet of one prompt length.** `a` is learned from
-  low-load minutes at more than one length. Give `--assume-a 11ms` for a flagged
-  answer: the learned figure, if any, prints beside it.
-- **Read the band as a sweep.** The knee, each TTFT and each TTFT rate print the
-  figure at `V_P` and `f` 15% either way. It is not a confidence interval. A
-  `Saturated` in it means the rate has no 15% to spare.
-- **`Saturated` means the rate is at or above the knee.** It is a refusal, exit
-  `3`, not a figure.
-- **Aggregated fleets and per-bucket answers are refused:** the planner's M1.
-
-Exit codes are `0`, `3` for a refusal, `2` for a usage error and `1` for an
-internal one. The inputs, the rows and the JSON are in
-[TTFT, as built](../proposals/slo-capacity-planner.md#ttft-as-built).
-
-## The joint TTFT model
-
-```bash
-capacity-planner joint-ttft --recording run.jsonl [--cycle N|last] [--model M] [--prefill N] [--decode N] [--rate R] [--prompt I] [--hop D] [-o json]
-```
-
-Prices the joint prefill and decode model's mean TTFT at a fleet, from what
-the recording's rows taught it by the cycle asked for. Each of `--prefill`,
-`--decode` and `--rate` defaults to 0, which means the cycle's own: the fleet
-and the rate that ran. `--prompt 0` prices at the prompt the work was read at.
-`--hop 0`, the default, assumes a router hop of 20 ms and flags it
-`RouterHopAssumed`; give `--hop` in seconds to state it.
-
-At bucket B of the staircase, its 120th cycle, with a third decode pod:
-
-```console
-$ capacity-planner joint-ttft --recording ttft-staircase-b-off.jsonl.gz --cycle 120 --decode 3
-joint TTFT, ns-01/model-02 at cycle 120: 2 prefill + 3 decode at 29.80 req/s (ran 2 + 2 at 29.80)
-  mean TTFT 145.0 ms (engines 125.0 ms, hop 20.0 ms)
-    overhead a(rho_p) 23.6 ms, prefill T_P 39.5 ms at rho_p 0.371
-    KV pull T_X 33.0 ms, unshared 24.8 ms at 0.247 of the decode pod
-    decode m_d*ITL(k) + d 28.9 ms, batch k 7.2, ITL 3.6 ms
-    flags: [OverheadMeasured RouterHopAssumed]
-  inputs: S 24.9 ms at 8001 tokens (232 readings); a0 14.8 ms (232); pull table 3 buckets
-          ITL(k) 1.944 ms + 0.2322 ms*k (232); decode own 5.03*ITL + 10.7 ms (232); n_out 200
-  note: UNVALIDATED beyond the staircase's 2+2 phases; ...
-```
-
-Exit codes: `0` with a mean; `3` with a refusal, which is printed
-(`no-prefill-capacity` until a prefill pod has read an empty engine queue,
-`saturated` at a prefill or pull knee, `batch-unheld` where the decode batch
-cannot hold the rate, and the rest of `llmsm_slo_ttft_joint_reason`); `2` for a
-usage error; `1` for anything else. With `-o json` the answer is
-`schemaVersion` 1, its keys lowerCamel.
-
-It reads the rows as the slo analyzer does: only for a model with one prefill
-and one decode variant; a new accelerator or new engine arguments start the
-inputs over; on SGLang the prompt is the prompt length. One thing differs. The
-analyzer leaves out a replica's first two minutes after it starts or comes
-back from idle, while it settles; this command reads them, so its inputs can
-lean on a warm-up the analyzer never saw. See
-[As built (J1)](../proposals/slo-capacity-planner-ttft.md#as-built-j1).
-
-## Reading the line check
-
-Every answer on an ITL line prints a `line check` row: the token rate the line
-predicts against the rate the recording's decode rows reported, off a ramp.
-
-- **`MISMATCH`** is a median error above 15%, flagged `LineMismatch` on every
-  answer on that line. Do not size from it: the line or the shape is wrong, and
-  the check cannot say which.
-- **`at another shape`** is a verdict on rows whose KV a request is more than 20%
-  from the one priced. Both figures print. It says nothing of the traffic you asked
-  about.
-- **`not run`** is under 5 rows to compare. The row counts where the others went:
-  on a ramp, above the band, or older than 30 minutes. Rows below fill 0.30 are not
-  counted. It is not a pass.
-
-[The rules and the figures on the goldens](../proposals/slo-capacity-planner.md#the-line-check-as-built).
-
-## Load on Prometheus
-
-A capture turns every query the controller asks into one range query over
-the whole window, at the step. A window of more than 10,000 steps is asked
-in parts of at most 10,000 steps, one part after another. The collector
-asks a cycle's queries together, so different queries run at the same time,
-as many as a controller's cycle asks at once; each is asked once for the
-whole capture, and every later step reads its answer from memory.
-
-A capture registers about 80 queries with kube-state-metrics (67 without);
-one namespace with a single vLLM model asks about 56 of them. For a fleet
-of 10 engine Pods, each per-Pod query returns 10 series, and each histogram
-about 10 to 20 per Pod (one per bucket), roughly 1,000 series in all. Rough
-figures, to be read as orders of magnitude:
-
-| Window at 15 s | Steps | Range requests | Samples returned and held |
-| --- | --- | --- | --- |
-| 1 hour | 241 | about 56 | about 240,000 |
-| 1 day | 5,761 | about 56 | about 5.8 million |
-| 3 days | 17,281 | about 112 (two parts each) | about 17 million; past `MaxStepQueries`, so it needs `--force` |
-
-Prometheus reads far more raw samples than it returns: each `rate(...[1m])`
-reads every scrape in its minute at every step.
-
-- **Capture off-peak**, or better, **from a snapshot** served by a local
-  Prometheus ([Testing](testing.md#capture-a-past-window)), never by loading
-  a production server with a long window.
-- **The usual failure is `query.max-samples`**: a histogram over many steps
-  loads more samples than the server allows in one query. It stops the
-  capture with exit 1 and names the query; shorten the window or lengthen
-  the step.
-- **Bounds.** `whatifsource.MaxStepQueries` (1,000,000) steps times
-  registered queries is checked before any query: about 12,500 steps with
-  the 80 queries, a little over two days at 15 s. `whatifsource.MaxSamples`
-  (20 million, a little over a gigabyte at about 60 bytes each) bounds the
-  samples held, counted as the answers arrive. Past either, the capture
-  stops with exit 2 unless `--force`.
-
-## Talking to Prometheus
-
-- Every HTTP request has a timeout, `--timeout`.
-- **Port-forwarding to an authenticated Prometheus:** `kubectl port-forward`
-  gives a plain-http local URL, and the token is never sent over http, so
-  the capture is refused. Forward to Prometheus' https port and capture
-  from `https://localhost:PORT` with `--ca-file` (the certificate must name
-  `localhost`, or use `--insecure-skip-verify` knowing what it gives up), or
-  capture from a local snapshot, which needs no token.
-- Every sample must be on the step grid, `--from` plus a whole number of
-  steps. A query frontend that aligns start to step (Thanos, Mimir) answers
-  off it, and the capture fails, naming the cause.
-
-**Every query is required.** One that fails stops the capture at once and
-names the query; the collector's retries do not sleep through their
-backoff on an answer that cannot change. A failed query would leave its
-field absent at every step, which a capture cannot tell from a field the
-window did not have, so the generated run would read inputs no controller
-read.
+Every query is required. One that fails cancels the capture's context at
+once and names the query; the collector's retries do not sleep through their
+backoff on an answer that cannot change. A failed query would leave its field
+absent at every step, which a capture cannot tell from a field the window did
+not have, so the generated run would read inputs no controller read. Every
+sample must be on the step grid, `--from` plus a whole number of steps; a
+query frontend that aligns start to step answers off it, and the capture
+fails naming the cause.
 
 ## The pieces
 

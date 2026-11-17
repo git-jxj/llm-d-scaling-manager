@@ -383,6 +383,8 @@ main() {
     # false stops every path here, the check included, naming the variable.
     # The undeploy ignores it: it always removes the grant.
     [ "$UNDEPLOY" = "true" ] || llmsm_keda_hpa_repair_on || true
+    # DSET_ROLE_WRITER likewise.
+    [ "$UNDEPLOY" = "true" ] || llmsm_dset_role_writer_on || true
 
     # RENDER=<dir>: the cluster-admin phase, written to <dir> for an admin to
     # run instead of applied (deploy/lib/common.sh, "Render mode"). First, so

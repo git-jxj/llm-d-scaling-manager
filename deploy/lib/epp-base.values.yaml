@@ -1,7 +1,9 @@
 ## Base values shared by both standalone and llm-d Router charts.
 ## Layer chart-specific or guide-specific overrides on top with additional -f flags.
 ##
-## Vendored from llm-d/llm-d@v0.8.1 guides/recipes/router/base.values.yaml.
+## Vendored from llm-d/llm-d@v1.0.0 guides/recipes/router/base.values.yaml
+## (the llm-d release that ships router v1.0.0). Unchanged from v0.8.1 except
+## the explicit proxyType.
 ## Update alongside LLM_D_ROUTER_VERSION when the chart schema changes.
 
 router:
@@ -24,6 +26,7 @@ router:
     protocol: http # http, grpc
 
   proxy:
+    proxyType: envoy # envoy, agentgateway
     # CLI args for the Envoy sidecar. Override the chart's defaults of
     # `--log-level trace` (very expensive under load) and no `--concurrency`
     # (Envoy spawns ~hardware_concurrency() worker threads, oversubscribing

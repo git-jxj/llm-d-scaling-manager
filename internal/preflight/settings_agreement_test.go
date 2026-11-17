@@ -64,6 +64,8 @@ func TestSettingsAgreeWithController(t *testing.T) {
 		{"insecure 1", "-", map[string]string{keyPrometheusInsecure: "1"}},
 		{"insecure yes", "-", map[string]string{keyPrometheusInsecure: "yes"}},
 		{"scaleToZero yes", "-", map[string]string{keyScaleToZero: "yes"}},
+		{"allowHTTP true", "-", map[string]string{keyAllowHTTP: "true"}},
+		{"allowHTTP maybe", "-", map[string]string{keyAllowHTTP: "maybe"}},
 		{"CA path relative", "-", map[string]string{"prometheusCACertPath": "ca.crt"}},
 		{"server name with a port", "-", map[string]string{"prometheusServerName": "prometheus:9090"}},
 		{"advanced duration", "-", map[string]string{"GLOBAL_OPT_INTERVAL": "30s"}},

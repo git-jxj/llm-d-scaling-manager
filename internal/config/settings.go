@@ -36,6 +36,7 @@ const (
 	SettingPrometheusInsecureSkipVerify = "prometheusInsecureSkipVerify"
 	SettingPrometheusCACertPath         = "prometheusCACertPath"
 	SettingPrometheusServerName         = "prometheusServerName"
+	SettingPrometheusAllowHTTP          = "prometheusAllowHTTP"
 	SettingPassive                      = "passive"
 	SettingUtilizationShare             = "utilizationShare"
 	SettingLimiter                      = "limiter"
@@ -69,6 +70,7 @@ var restartSettingKeys = map[string]string{
 	SettingPrometheusInsecureSkipVerify: "PROMETHEUS_TLS_INSECURE_SKIP_VERIFY",
 	SettingPrometheusCACertPath:         "PROMETHEUS_CA_CERT_PATH",
 	SettingPrometheusServerName:         "PROMETHEUS_SERVER_NAME",
+	SettingPrometheusAllowHTTP:          "PROMETHEUS_ALLOW_HTTP",
 	SettingScaleToZero:                  "LLMSM_SCALE_TO_ZERO",
 	SettingWatchNamespaces:              "WATCH_NAMESPACE",
 	SettingLogVerbosity:                 "V",
@@ -107,11 +109,12 @@ var advancedSettingKeys = []string{
 	"LEARNED_STATE_BUCKET_RETENTION",
 	"LEARNED_STATE_SNAPSHOT",
 	"KEDA_HPA_REPAIR",
+	"DSET_ROLE_WRITER",
 }
 
 // advancedBoolSettingKeys are the advanced keys that take true or false
 // rather than a duration.
-var advancedBoolSettingKeys = []string{"LEARNED_STATE_SNAPSHOT", "KEDA_HPA_REPAIR"}
+var advancedBoolSettingKeys = []string{"LEARNED_STATE_SNAPSHOT", "KEDA_HPA_REPAIR", "DSET_ROLE_WRITER"}
 
 // Values of the utilizationShare setting.
 const (
@@ -175,6 +178,7 @@ var legacySettingNames = map[string]string{
 	"PROMETHEUS_TLS_INSECURE_SKIP_VERIFY": SettingPrometheusInsecureSkipVerify,
 	"PROMETHEUS_CA_CERT_PATH":             SettingPrometheusCACertPath,
 	"PROMETHEUS_SERVER_NAME":              SettingPrometheusServerName,
+	"PROMETHEUS_ALLOW_HTTP":               SettingPrometheusAllowHTTP,
 	"LLMSM_PASSIVE":                       SettingPassive,
 	"LLMSM_SCALE_TO_ZERO":                 SettingScaleToZero,
 	"ENABLE_SCALE_TO_ZERO":                SettingScaleToZero,
@@ -302,7 +306,7 @@ func validateRestartSetting(key, v string) error {
 		if strings.ContainsAny(v, " \t/:") {
 			return fmt.Errorf("%q is not a host name", v)
 		}
-	case SettingPrometheusInsecureSkipVerify, SettingScaleToZero:
+	case SettingPrometheusInsecureSkipVerify, SettingPrometheusAllowHTTP, SettingScaleToZero:
 		if _, err := strconv.ParseBool(v); err != nil {
 			return fmt.Errorf("%q is not true or false", v)
 		}

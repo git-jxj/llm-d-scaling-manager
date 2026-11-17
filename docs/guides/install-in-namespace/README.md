@@ -3,7 +3,9 @@
 ## Overview
 
 This guide installs the scaling manager (llm-d-scaling-manager) into one namespace,
-from the files attached to a release, with `kubectl`. It sizes the llm-d model
+from a release: with the release's tools image in three commands
+([Install with the tools image](#install-with-the-tools-image)), or by hand
+with `kubectl` and the files attached to the release. It sizes the llm-d model
 servers in that namespace and nothing else. It decides how many replicas each
 variant needs and hands that number to KEDA, which does the scaling.
 
@@ -15,9 +17,11 @@ A cluster admin applies the `part=admin` objects once
 ([step 4](#4-cluster-admin-give-keda-its-client-certificate)). The namespace
 owner does the rest, and upgrades the controller.
 
-Tested: the namespaced and the cluster-wide files on Kubernetes (kind, `make
-test-e2e-release-manifests`, in CI and before each release). The OpenShift
-files are not yet tested end to end.
+Tested: the namespaced and the cluster-wide files on Kubernetes, by hand (kind,
+`make test-e2e-release-manifests`) and with the tools image (`make
+test-e2e-tools-install`), in CI on each pull request that changes what
+the files are made from or installed by. The OpenShift files
+are not yet tested end to end.
 
 Prefer a checkout and `make`? See [From a checkout instead](#from-a-checkout-instead).
 
@@ -38,10 +42,72 @@ Prefer a checkout and `make`? See [From a checkout instead](#from-a-checkout-ins
   use `scaling-manager-namespaced-openshift.yaml`; it is not yet tested end to
   end.
 
+## Install with the tools image
+
+Three commands. The release's tools image carries the release files, signed
+with it, and runs the steps of this page for you, each with its check. Needs
+docker; no download, no `sed`. The namespace owner needs the stock `admin`
+ClusterRole bound in the namespace, nothing more; the cluster admin runs
+`admin-setup` and `admin-finish`. Each uses their own token kubeconfig:
+`SMT_KUBECONFIG` names the snapshot to use, so the two are never the same
+identity by accident.
+
+<!-- guide:tools.setup start -->
+```bash
+# Once per machine. The release's tools image, by the digest the release prints. Each person uses their own kubeconfig.
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
+mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+smt() { docker run --rm --user "$(id -u):$(id -g)" \
+  -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+export NAMESPACE=<your-namespace>
+```
+<!-- guide:tools.setup end -->
+
+<!-- guide:tools.adminsetup start -->
+```bash
+# Cluster admin, once per namespace. Add --keda-namespace <namespace> if it cannot find KEDA.
+smt admin-setup -n $NAMESPACE
+```
+<!-- guide:tools.adminsetup end -->
+
+<!-- guide:tools.install start -->
+```bash
+# Namespace owner. A private CA for Prometheus? Add --prometheus-ca <file in this directory>.
+smt install -n $NAMESPACE --prometheus-url https://<prometheus>:9090
+```
+<!-- guide:tools.install end -->
+
+Prometheus serves plain HTTP only? Give its `http://` URL and add
+`--allow-http`, on every `smt install` run (not `admin-setup` or
+`admin-finish`): the controller then reads it unencrypted and sends it no
+token. Without the flag, `install` refuses an `http://` URL.
+
+```bash
+smt install -n $NAMESPACE --prometheus-url http://<prometheus>:9090 --allow-http
+```
+
+<!-- guide:tools.adminfinish start -->
+```bash
+# Cluster admin, after the install. KEDA's client certificate, then the preflight's cluster reads are removed.
+smt admin-finish -n $NAMESPACE
+```
+<!-- guide:tools.adminfinish end -->
+
+`install` runs the preflight, stops on a `FAIL` and prints its fix, and ends
+with the `admin-finish` line. It creates the settings once: a later run never
+changes them, and prints the `kubectl patch` for a flag that differs. Each
+command can be run again. Every flag and exit code:
+[install commands](../../reference/tools-install.md). Then go on at
+[step 5](#5-register-the-workloads-then-let-it-scale).
+
+## Install by hand from the release files
+
+The same install with `kubectl`: for GitOps, or to see each step.
+
 <!-- guide:prerequisites.download start -->
 ```bash
 # The release files. Pick the release you install.
-V=<release, for example v0.11.1>
+V=<release, for example v0.11.2>
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
 for f in namespaced settings preflight scaler-tls model-namespace keda-auth; do
   curl -fsSLO $URL/scaling-manager-$f.yaml
@@ -87,6 +153,22 @@ controller's Role. Names carry the namespace, so two installs never share one. T
 needs an admin: [Cluster-admin setup](../admin-cluster-setup/).
 
 ### 2. Settings and the preflight check
+
+If Prometheus serves plain HTTP only, set `prometheusURL` to its `http://`
+URL and `prometheusAllowHTTP` to `"true"` in `scaling-manager-settings.yaml`
+before you create it, and empty the token path the controller would
+otherwise send over it:
+
+```bash
+# Only for a plain HTTP Prometheus. Unencrypted, and the controller sends no token.
+sed -i 's#value: /var/run/secrets/kubernetes.io/serviceaccount/token$#value: ""#' scaling-manager-namespaced.yaml
+```
+
+Repeat this `sed` on every release's file you apply (an upgrade too), or the
+controller gets its token back and crash-loops. Until the controller is
+applied, the preflight's `prometheus.reachable` WARN about
+`PROMETHEUS_TOKEN_PATH` is expected, even after the `sed`: it reads the
+cluster, not the file.
 
 Open `scaling-manager-settings.yaml` and set `prometheusURL`, the https URL of
 the Prometheus (or Thanos Querier) that scrapes your model servers. Every

@@ -54,72 +54,59 @@ the scaler answers with the current replica count, so nothing moves.
   engine, in operator terms.
 - **[Other scenarios](docs/well-lit-paths/)**: scale on saturation, scale to
   zero, warm pool, P/D, Kueue quotas and more.
+- **[Capacity planner](docs/guides/capacity-planner/)**: a web page on your
+  machine that prices a P/D fleet from what it did, and the fleet a rate needs.
 - **[Why use it](docs/why.md)**: what it was measured to do, what it costs,
   and how mature each part is.
 
 ## Install
 
-From a release, with `kubectl`, `curl` and docker; no checkout. You need llm-d
-model servers in a namespace, KEDA and a Prometheus Operator. A cluster admin
-runs the lines marked `# admin`. This installs it passive with a GPU quota, so
-it decides and changes nothing. `<gpu product>` is the `GPU.PRODUCT` column of
+From a release, with docker; no checkout. You need llm-d model servers in a
+namespace, KEDA and a Prometheus Operator. A cluster admin runs the lines
+marked `# admin`, the namespace owner the rest, each with their own
+kubeconfig. This installs it passive with a GPU quota, so it decides and
+changes nothing. `<gpu product>` is the `GPU.PRODUCT` column of
 `kubectl get nodes -L nvidia.com/gpu.product`.
 
-The release files are pinned to the release's image by digest and signed.
-The block checks their checksums right after the download, before the `sed`
-lines change them; to check the signatures too, see
-[verify the release files](docs/reference/install-methods.md#verify-the-release-files).
+Once per machine: the release's tools image, by the digest the release
+prints. The image carries the release files, signed with it
+([verify it](docs/reference/tools-install.md#set-up-smt)). Use a token
+kubeconfig (the container runs no cloud CLI), and for an API server at
+`127.0.0.1` (kind) add `--network host` to the `docker run`. The namespace
+owner needs the stock `admin` ClusterRole bound in the namespace, nothing
+more. Admin and owner each use their own kubeconfig snapshot: set
+`SMT_KUBECONFIG` to the one to use.
 
 ```bash
-V=<release, for example v0.11.1>
-export NAMESPACE=<the namespace running llm-d>
-URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
-for f in namespaced settings preflight scaler-tls model-namespace keda-auth activate; do
-  curl -fsSLO $URL/scaling-manager-$f.yaml
-  curl -fsSLO $URL/scaling-manager-$f.yaml.sigstore.json
-done
-curl -fsSLO $URL/SHA256SUMS && sha256sum -c SHA256SUMS --ignore-missing   # macOS: shasum -a 256 -c
-sed -i.bak -e "s/__NAMESPACE__/$NAMESPACE/g" -e "s/__MODEL_NAMESPACE__/$NAMESPACE/g" scaling-manager-*.yaml && rm -f scaling-manager-*.yaml.bak
-export KEDA_NS=<the namespace KEDA runs in>
-# The scaler NetworkPolicy admits KEDA from namespace keda; name yours.
-sed -i.bak "s#kubernetes.io/metadata.name: keda\$#kubernetes.io/metadata.name: $KEDA_NS#" scaling-manager-namespaced.yaml && rm -f scaling-manager-namespaced.yaml.bak
-kubectl apply -f scaling-manager-namespaced.yaml -l scaling-manager.llmd.ai/part=admin   # admin
-kubectl apply -f scaling-manager-preflight.yaml -l scaling-manager.llmd.ai/part=admin   # admin
-kubectl apply -f scaling-manager-model-namespace.yaml                                   # admin
-# In scaling-manager-settings.yaml set prometheusURL, limiter: "quota" and
-# quotas: "<gpu product>=<gpus>"; passive is already "true".
-kubectl create -f scaling-manager-settings.yaml
-# Read-only preflight: fix every FAIL it prints, then run this step again.
-kubectl delete job scaling-manager-preflight -n $NAMESPACE --ignore-not-found
-kubectl apply -f scaling-manager-preflight.yaml -l scaling-manager.llmd.ai/part=controller &&
-until kubectl get job scaling-manager-preflight -n $NAMESPACE \
-    -o jsonpath='{.status.conditions[?(@.status=="True")].type}' | grep -qE 'Complete|Failed'; do sleep 3; done
-kubectl logs -n $NAMESPACE job/scaling-manager-preflight
-kubectl create -f scaling-manager-scaler-tls.yaml
-kubectl apply -f scaling-manager-namespaced.yaml -l scaling-manager.llmd.ai/part=controller
-# admin: give KEDA its client certificate. This prints the commands to run.
-kubectl get configmap scaling-manager-controller-status -n $NAMESPACE -o jsonpath='{.data.scalerTLSAction}{"\n"}'
-# Run the preflight step again: no check should FAIL now. Then:
-kubectl delete clusterrolebinding scaling-manager-preflight-$NAMESPACE --ignore-not-found   # admin
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
+mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+smt() { docker run --rm --user "$(id -u):$(id -g)" \
+  -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 ```
 
-The preflight prints a fix for every `FAIL`. `UNKNOWN` means a check was not
-made: before the controller is in, some are UNKNOWN, and the scaler chain
-stays UNKNOWN because the NetworkPolicy keeps the Job out. KEDA's client
-certificate is a WARN until the admin runs the printed commands
-([preflight](docs/reference/preflight.md)). The last line removes the
-preflight's cluster-wide reads, which it needs only while it runs.
+Then:
 
-Then register the model servers and turn sharing on in shadow, with the
-release's tools image. The model servers must drain on termination, because
-sharing scales a donor down; `workload-patch` writes what each one needs
+```bash
+export NAMESPACE=<the namespace running llm-d>
+smt admin-setup -n $NAMESPACE      # admin, once per namespace
+smt install -n $NAMESPACE --prometheus-url https://<prometheus>:9090 --quota "<gpu product>=<gpus>"
+smt admin-finish -n $NAMESPACE     # admin: KEDA's client certificate, then drop the preflight's cluster reads
+```
+
+`install` runs the read-only preflight, stops on a `FAIL` and prints its fix,
+and ends with the `admin-finish` line. Each command can be run again. A
+private CA for Prometheus: add `--prometheus-ca <file in this directory>`.
+KEDA not found: add `--keda-namespace <namespace>` to `admin-setup`. Flags and
+exit codes: [install commands](docs/reference/tools-install.md). The full
+guide, with the install by hand from the release files:
+[install in a namespace](docs/guides/install-in-namespace/).
+
+Then register the model servers and turn sharing on in shadow. The model
+servers must drain on termination, because sharing scales a donor down;
+`workload-patch` writes what each one needs
 ([prepare model servers](docs/guides/prepare-workloads/)):
 
 ```bash
-kubectl config view --minify --flatten > smt.kubeconfig && chmod 600 smt.kubeconfig
-touch smt.env   # LLMSM_* settings for the tools, one NAME=value per line
-smt() { docker run --rm --user "$(id -u):$(id -g)" --env-file "$PWD/smt.env" \
-  -v "$PWD/smt.kubeconfig:/kube/config:ro" -v "$PWD:/work" ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V "$@"; }
 smt workload-patch -n $NAMESPACE                         # what each model server still needs
 smt scaledobjects-plan -n $NAMESPACE --out plan.yaml     # lists your model servers; edit it
 smt scaledobjects-apply -n $NAMESPACE --plan plan.yaml   # registers them with KEDA
@@ -134,7 +121,9 @@ Leave it through each model's busy period and read what it would have done
 Then go active:
 
 ```bash
-kubectl apply -f scaling-manager-activate.yaml           # admin: the one grant of patch on pods
+smt release-files --out release                          # the release files the image carries
+sed -e "s/__NAMESPACE__/$NAMESPACE/g" -e "s/__MODEL_NAMESPACE__/$NAMESPACE/g" \
+  release/scaling-manager-activate.yaml | kubectl apply -f -   # admin: the one grant of patch on pods
 kubectl patch configmap scaling-manager-settings -n $NAMESPACE --type merge \
   -p '{"data":{"passive":"false","utilizationShare":"active"}}'
 ```

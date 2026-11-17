@@ -22,6 +22,8 @@ WARMPOOL_PROXY_IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager/warmpool-proxy:$(I
 # workload-patch, the ScaledObject plan and utilization share without a
 # checkout. The release publishes it.
 TOOLS_IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager/tools:$(IMG_TAG)
+# The capacity planner image (Dockerfile.capacity-planner), released under the same tag.
+PLANNER_IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager/capacity-planner:$(IMG_TAG)
 KIND_ARGS ?= -t mix -n 3 -g 2   # Default: 3 nodes, 2 GPUs per node, mixed vendors
 # The kind cluster create-kind-cluster and destroy-kind-cluster act on: the
 # variable deploy/kind-emulator/install.sh already reads. Both targets ignored
@@ -149,7 +151,7 @@ E2E_GO_TIMEOUT              ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),130m
 # which reads as eight product failures rather than a suite that was cut off.
 DEPLOY_ALERTING_RULES       ?= false
 SCALER_BACKEND              ?= keda  # keda (ScaledObject) or none (skip, use pre-installed backend)
-LLM_D_ROUTER_VERSION        ?= v0.9.0
+LLM_D_ROUTER_VERSION        ?= v1.0.0
 GAIE_VERSION                ?= v1.5.0
 SCALE_UP_THRESHOLD          ?=
 SCALE_DOWN_BOUNDARY         ?=
@@ -494,6 +496,23 @@ capacity-planner: ## Build the capacity planner command line (bin/capacity-plann
 	go build -ldflags "$(LEARNREC_LDFLAGS)" -o bin/capacity-planner ./cmd/capacity-planner
 	@# The old name until v0.12.0: run as whatif, it prints a deprecation note.
 	ln -sf capacity-planner bin/whatif
+
+# The capacity planner binaries a release attaches, one per platform, named
+# capacity-planner-<version>-<os>-<arch>: the ldflags of capacity-planner, the
+# release as `capacity-planner version` prints it, and -trimpath, so a re-run
+# of the release builds the same bytes. ci-release.yaml (release-files) runs
+# it after release-manifests and adds the binaries to SHA256SUMS.
+CAPACITY_PLANNER_PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+.PHONY: capacity-planner-dist
+capacity-planner-dist: ## Build the release's capacity planner binaries: make capacity-planner-dist RELEASE_VERSION=vX.Y.Z [DIST=dist]
+	@test -n "$(RELEASE_VERSION)" || { echo "set RELEASE_VERSION=vX.Y.Z"; exit 1; }
+	@mkdir -p "$(DIST)"
+	@set -e; for p in $(CAPACITY_PLANNER_PLATFORMS); do \
+		os="$${p%/*}"; arch="$${p#*/}"; out="$(DIST)/capacity-planner-$(RELEASE_VERSION)-$$os-$$arch"; \
+		CGO_ENABLED=0 GOOS="$$os" GOARCH="$$arch" go build -trimpath -buildvcs=false \
+			-ldflags "$(LEARNREC_LDFLAGS) -X main.version=$(RELEASE_VERSION)" -o "$$out" ./cmd/capacity-planner; \
+		echo "built $$out"; \
+	done
 
 .PHONY: whatif
 whatif: capacity-planner ## Deprecated alias of capacity-planner; whatif will be removed in v0.12.0
@@ -930,7 +949,14 @@ weights: ## Download WEIGHTS_MODEL=<hf id> under WEIGHTS_PATH=<node dir> on ever
 	@test -n "$(WEIGHTS_IMAGE)" || { echo "weights: set WEIGHTS_IMAGE=<an image with huggingface_hub; the engine image>" >&2; exit 1; }
 	@test -n "$(prepull_namespace_given)" || { echo "weights: set NAMESPACE=<ns> (the Makefile default is not taken here)" >&2; exit 1; }
 	@bash deploy/weights.sh apply -n "$(NAMESPACE)" --model "$(WEIGHTS_MODEL)" --path "$(WEIGHTS_PATH)" --image "$(WEIGHTS_IMAGE)" \
-		$(if $(WEIGHTS_HF_TOKEN_SECRET),--hf-token-secret "$(WEIGHTS_HF_TOKEN_SECRET)",) $(if $(WEIGHTS_CAPACITY),--capacity "$(WEIGHTS_CAPACITY)",) $(if $(WEIGHTS_MEMORY),--memory "$(WEIGHTS_MEMORY)",) $(WEIGHTS_ARGS)
+		$(if $(WEIGHTS_HF_TOKEN_SECRET),--hf-token-secret "$(WEIGHTS_HF_TOKEN_SECRET)",) $(if $(WEIGHTS_CAPACITY),--capacity "$(WEIGHTS_CAPACITY)",) $(if $(WEIGHTS_MEMORY),--memory "$(WEIGHTS_MEMORY)",) $(if $(WEIGHTS_NODE_LABEL),--node-label "$(WEIGHTS_NODE_LABEL)",) $(WEIGHTS_ARGS)
+
+# The node label each node whose copy verifies gets; empty is llm-d.ai/<model name>-cache.
+WEIGHTS_NODE_LABEL ?=
+.PHONY: weights-label
+weights-label: ## Cluster admin: label each node whose copy verifies <key>=ready, unlabel the rest, once. NAMESPACE=<ns>[,<ns>]. In the cluster, continuously: deploy/weights.sh labeller.
+	@test -n "$(prepull_namespace_given)" || { echo "weights-label: set NAMESPACE=<ns>[,<ns>] (the Makefile default is not taken here)" >&2; exit 1; }
+	@bash deploy/weights.sh label -n "$(NAMESPACE)"
 
 weights-status: ## Per accelerator node: does it hold the weights, or is the download still running. NAMESPACE=<ns> [WEIGHTS_MODEL=<hf id>]
 	@test -n "$(prepull_namespace_given)" || { echo "weights-status: set NAMESPACE=<ns> (the Makefile default is not taken here)" >&2; exit 1; }
@@ -1575,13 +1601,29 @@ RELEASE_E2E_CONTROLLER_NS = $(if $(filter cluster,$(RELEASE_E2E_SCOPE)),scaling-
 RELEASE_E2E_SMOKE_SKIP ?= $(if $(filter cluster,$(RELEASE_E2E_SCOPE)),,KEDA Smoke Tests - Basic Autoscaling)
 .PHONY: test-e2e-release-manifests
 test-e2e-release-manifests: kustomize ## Install from the rendered release files with kubectl only, and check it (kind, after test-e2e-release-manifests-setup)
+	@set -e; \
+	case "$(RELEASE_E2E_SCOPE)" in namespace|cluster) ;; *) echo "RELEASE_E2E_SCOPE must be namespace or cluster, not '$(RELEASE_E2E_SCOPE)'"; exit 1 ;; esac; \
+	$(MAKE) --no-print-directory release-e2e-dist; \
+	rm -rf "$(RELEASE_E2E_LOGS)"; \
+	smoke=""; \
+	if [ "$(RELEASE_E2E_SMOKE)" = true ]; then \
+		smoke="E2E_EXPECT_SCALER_TLS=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=$(RELEASE_E2E_CONTROLLER_NS) KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=true SKIP='$(RELEASE_E2E_SMOKE_SKIP)'"; \
+	fi; \
+	KUBECONFIG=$(KUBECONFIG) RELEASE_E2E_SCOPE=$(RELEASE_E2E_SCOPE) NS=$(RELEASE_E2E_CONTROLLER_NS) \
+		MODEL_NS=$(E2E_EMULATED_LLMD_NAMESPACE) KEDA_NS=$(E2E_KEDA_NAMESPACE) \
+		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(RELEASE_E2E_LOGS)" SMOKE_CMD="$$smoke" \
+		bash test/release-manifests/e2e.sh "$(RELEASE_E2E_DIST)"
+
+# The release files for the kind e2e, in RELEASE_E2E_DIST, rendered with the
+# digest the kind nodes hold for RELEASE_E2E_IMG, as a release pins it.
+.PHONY: release-e2e-dist
+release-e2e-dist: kustomize
 	@# The release files name the image by digest. The kind nodes hold the
 	@# local build under its tag, and under a digest reference named for the
 	@# import (docker.io/library/import-<date>@sha256:...), not for the
 	@# repository, so a pod naming <repo>@sha256:<digest> would try to pull it.
 	@# Tag that reference on each node, as a registry would serve it.
 	@set -e; \
-	case "$(RELEASE_E2E_SCOPE)" in namespace|cluster) ;; *) echo "RELEASE_E2E_SCOPE must be namespace or cluster, not '$(RELEASE_E2E_SCOPE)'"; exit 1 ;; esac; \
 	nodes="$$($(KIND) get nodes --name $(CLUSTER_NAME))"; \
 	[ -n "$$nodes" ] || { echo "no kind cluster $(CLUSTER_NAME)"; exit 1; }; \
 	repo="$(RELEASE_E2E_IMG)"; repo="$${repo%:*}"; \
@@ -1594,16 +1636,45 @@ test-e2e-release-manifests: kustomize ## Install from the rendered release files
 		docker exec "$$n" crictl inspecti "$$digest" >/dev/null || { echo "kind node $$n cannot resolve $$digest"; exit 1; }; \
 	done; \
 	echo "Rendering the release files with $$digest"; \
-	rm -rf "$(RELEASE_E2E_DIST)" "$(RELEASE_E2E_LOGS)"; \
-	$(MAKE) --no-print-directory release-manifests IMG="$$digest" RELEASE_VERSION=v0.0.0-e2e DIST="$(RELEASE_E2E_DIST)"; \
+	rm -rf "$(RELEASE_E2E_DIST)"; \
+	$(MAKE) --no-print-directory release-manifests IMG="$$digest" RELEASE_VERSION=$(RELEASE_E2E_VERSION) DIST="$(RELEASE_E2E_DIST)"
+RELEASE_E2E_VERSION ?= v0.0.0-e2e
+
+# The install from the tools image (test/tools-install/e2e.sh): smt
+# admin-setup, install and admin-finish, run in the tools image built with the
+# release files baked in (--build-context release=<the rendered files>), on
+# the same kind prerequisites as test-e2e-release-manifests. Namespace scope
+# runs install as a ServiceAccount bound to the stock admin ClusterRole in the
+# namespace and nothing else; cluster scope runs install --scope cluster.
+# docs/proposals/two-command-install.md, "Testing"; CI runs both scopes
+# (e2e-tests-tools-install in ci-pr-checks.yaml).
+TOOLS_E2E_IMG      ?= scaling-manager-tools:e2e
+TOOLS_E2E_LOGS     ?= $(CURDIR)/dist/tools-e2e-logs
+# The release whose files the upgrade case installs by hand first.
+TOOLS_E2E_PREVIOUS ?= v0.11.1
+.PHONY: test-e2e-tools-install
+test-e2e-tools-install: kustomize ## Install with smt admin-setup, install and admin-finish from the tools image, and check it (kind, after test-e2e-release-manifests-setup)
+	@set -e; \
+	case "$(RELEASE_E2E_SCOPE)" in namespace|cluster) ;; *) echo "RELEASE_E2E_SCOPE must be namespace or cluster, not '$(RELEASE_E2E_SCOPE)'"; exit 1 ;; esac; \
+	$(MAKE) --no-print-directory release-e2e-dist; \
+	rm -rf "$(TOOLS_E2E_LOGS)"; \
+	echo "Building $(TOOLS_E2E_IMG) with the release files baked in"; \
+	docker build -q -f Dockerfile.tools --build-context release="$(RELEASE_E2E_DIST)" \
+		--build-arg VERSION=$(RELEASE_E2E_VERSION) \
+		--build-arg RELEASE_SHA256SUMS="$$(sha256sum "$(RELEASE_E2E_DIST)/SHA256SUMS" | cut -d' ' -f1)" \
+		-t $(TOOLS_E2E_IMG) .; \
 	smoke=""; \
 	if [ "$(RELEASE_E2E_SMOKE)" = true ]; then \
-		smoke="E2E_EXPECT_SCALER_TLS=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=$(RELEASE_E2E_CONTROLLER_NS) KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=true SKIP='$(RELEASE_E2E_SMOKE_SKIP)'"; \
+		smoke="E2E_EXPECT_SCALER_TLS=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=$(RELEASE_E2E_CONTROLLER_NS) KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=false SKIP='$(RELEASE_E2E_SMOKE_SKIP)'"; \
 	fi; \
-	KUBECONFIG=$(KUBECONFIG) RELEASE_E2E_SCOPE=$(RELEASE_E2E_SCOPE) NS=$(RELEASE_E2E_CONTROLLER_NS) \
+	KUBECONFIG=$(KUBECONFIG) TOOLS_IMG=$(TOOLS_E2E_IMG) TOOLS_E2E_SCOPE=$(RELEASE_E2E_SCOPE) NS=$(RELEASE_E2E_CONTROLLER_NS) \
 		MODEL_NS=$(E2E_EMULATED_LLMD_NAMESPACE) KEDA_NS=$(E2E_KEDA_NAMESPACE) \
-		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(RELEASE_E2E_LOGS)" SMOKE_CMD="$$smoke" \
-		bash test/release-manifests/e2e.sh "$(RELEASE_E2E_DIST)"
+		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(TOOLS_E2E_LOGS)" SMOKE_CMD="$$smoke" \
+		PREVIOUS_RELEASE=$(TOOLS_E2E_PREVIOUS) \
+		bash test/tools-install/e2e.sh "$(RELEASE_E2E_DIST)"
+
+.PHONY: test-e2e-tools-install-with-setup
+test-e2e-tools-install-with-setup: test-e2e-release-manifests-setup test-e2e-tools-install ## Prerequisites, then the tools-image install e2e (never deletes the cluster)
 
 # The prerequisites only: kind with emulated GPUs, Prometheus, KEDA, the llm-d
 # CRDs and EPP, and the image loaded into the nodes. DEPLOY_SCALING_MANAGER=false
@@ -3189,6 +3260,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n deploy/enginecache.sh
 	@bash -n deploy/scaling-manager-tools.sh
 	@bash -n hack/check-tools-image.sh
+	@bash -n hack/check-capacity-planner-image.sh
+	@bash -n hack/check-capacity-planner-dist.sh
 	@bash -n hack/benchmark/engine_cache_claim.sh
 	@bash -n hack/benchmark/scenario_overrides.sh
 	@bash -n hack/check-harness-teardown.sh
@@ -3200,6 +3273,9 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/benchmark/file_capture.sh
 	@bash -n hack/benchmark/staircase.sh
 	@bash -n hack/check-staircase.sh
+	@# The flow-control gate replay (docs/proposals/slo-capacity-planner-ttft.md,
+	@# "As built: the router stage"); the cache prefix keeps .pyc out of the tree.
+	@PYTHONPYCACHEPREFIX=$${TMPDIR:-/tmp}/llmsm-pycache python3 -m py_compile hack/benchmark/replay_fc_gate.py
 	@bash -n hack/check-install-flow.sh
 	@bash -n hack/check-cluster-namespace-checks.sh
 	@bash -n hack/check-watch-namespace-list.sh
@@ -3218,6 +3294,11 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/check-release-latest.sh
 	@bash -n deploy/release-manifests.sh
 	@bash -n hack/check-release-manifests.sh
+	@bash -n hack/check-release-install.sh
+	@bash -n hack/compare-baked-release-files.sh
+	@bash -n hack/testdata/release-install/kubectl
+	@bash -n test/tools-install/e2e.sh
+	@bash -n test/tools-install/rv_snapshot.sh
 	@bash -n hack/check-controller-ready.sh
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
@@ -3252,6 +3333,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# the apply left a window where a new pod started active, and a
 	@# passive: false read through the yq alternative operator came back empty.
 	@bash hack/check-passive-keep.sh
+	@echo "Checking the tools-install e2e snapshot ignores a KEDA status write..."
+	@# Executes rv_snapshot against a stub kubectl. KEDA patches the status of a
+	@# ClusterTriggerAuthentication when it finalizes a ScaledObject, and the
+	@# second-install check failed on that write, which no install made.
+	@bash -n hack/check-tools-install-rv-snapshot.sh
+	@bash hack/check-tools-install-rv-snapshot.sh
 	@echo "Checking the controller readiness check..."
 	@# Executes it against a stub kubectl. `rollout status` passes at once for
 	@# a Deployment at 0 replicas, so an install over a controller at 0/0
@@ -3264,6 +3351,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# preStop hooks pod-wide, or reporting an unreadable workload as healthy all
 	@# parse perfectly and are all wrong about a running cluster.
 	@bash hack/check-workload-gaps.sh
+	@echo "Checking DisaggregatedSet discovery and the role report..."
+	@bash hack/check-disaggregatedset.sh
 	@echo "Checking the benchmark capture helpers..."
 	@# Executes them against a stub kubectl. A capture that replaces the run
 	@# already on disk, or that watches a cluster nobody named, parses perfectly
@@ -3321,6 +3410,10 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# a revoke under the wrong names, a Forbidden delete read as removed, or
 	@# an uninstall that leaves the grant all parse, and all exit 0.
 	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-keda-hpa-repair.sh
+	@echo "Checking the DisaggregatedSet role writer grant..."
+	@# The same handling for DSET_ROLE_WRITER, and what the install renders with
+	@# and without it: the grant, its binding and the switch on the Deployment.
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-dset-role-writer.sh
 	@echo "Checking the EPP /metrics authentication grant..."
 	@# Runs epp-metrics-auth against a stubbed kubectl. A grant that binds the
 	@# wrong ServiceAccount, reads a Forbidden list as no pools, or binds twice
@@ -3363,6 +3456,11 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash hack/check-prepull-manifests.sh
 	@echo "Checking what weights.sh and model_hostpath.sh actually emit..."
 	@bash hack/check-weights-manifests.sh
+	@echo "Checking the weights node gate (the verifier, label, the labeller, the workload-patch gate)..."
+	@# A probe that passes on a marker over a truncated file, a labeller that
+	@# removes a label another tool set, a required affinity that replaces the
+	@# GPU term it should be ANDed with: all parse, all wrong.
+	@bash hack/check-weights-node-gate.sh
 	@echo "Checking what enginecache.sh and engine_cache_claim.sh actually emit..."
 	@bash hack/check-enginecache-manifests.sh
 	@echo "Checking the tools entry point (the release's tools image runs it)..."
@@ -3410,6 +3508,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# pays a model load into the pool on the first burst and reports it as the
 	@# pool's cost. All of them are 26 minutes of GPU each.
 	@bash hack/check-two-model-scenario.sh
+	@echo "Checking the EPP installer refuses a router older than its values..."
+	@bash hack/check-epp-router-version.sh
+	@echo "Checking the router pins the harness patch writes..."
+	@bash hack/check-harness-router-pins.sh
+	@echo "Checking the benchmark EPP-scrape parsers under both metric namings..."
+	@bash hack/check-epp-metrics-parsers.sh
 	@echo "Checking the TTFT staircase's exit paths and arithmetic..."
 	@# Executes it against a stub kubectl. What protects a shared cluster for a
 	@# multi-day run is its exit paths, and bash -n sees none of them.
@@ -3499,12 +3603,23 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# Runs the release workflow step against a scratch repository. A backport
 	@# tagged after a newer release used to move latest back to the old line.
 	@bash hack/check-release-latest.sh
+	@echo "Checking no tracked file names a personal registry namespace..."
+	@# The warm-pool proxy shipped from a personal GHCR namespace long after the
+	@# project moved. Allowed references are listed, with reasons, in the script.
+	@bash hack/check-personal-namespace.sh
 	@echo "Checking the release files: digest, names, labels, placeholders..."
 	@# Renders what a GitHub Release attaches and asserts the rules of
 	@# docs/proposals/install-from-release.md, then breaks a copy one rule at a
 	@# time and requires each break to be caught. An image by tag, a Namespace
 	@# in the file, or a hashed ClusterRole name all render and parse cleanly.
 	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-release-manifests.sh
+	@echo "Checking smt admin-setup, install and admin-finish against the release files..."
+	@# docs/proposals/two-command-install.md: the exit codes, --dry-run equal to
+	@# the sed-substituted files, files refused on a bad SHA256SUMS or another
+	@# version before anything is applied, a FAIL stopping the install before
+	@# the controller, existing settings never written, KEDA's side equal to the
+	@# release keda-auth file, and the release workflow's baked-files check.
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-release-install.sh
 	@echo "Checking the tenant Role still covers the generated ClusterRole..."
 	@# The ClusterRole is GENERATED from kubebuilder markers; the namespaced Role
 	@# the tenant overlay installs is maintained by hand, so it does not move when
@@ -3591,6 +3706,16 @@ docker-push-tools: ## Push the operator tools image.
 tools-image-check: docker-build-tools ## Build the tools image and check it renders what this checkout renders (hack/check-tools-image.sh).
 	TOOLS_IMG=${TOOLS_IMG} bash hack/check-tools-image.sh
 
+# BuildKit reads Dockerfile.capacity-planner.dockerignore: the command and
+# internal/, no tests.
+.PHONY: docker-build-capacity-planner
+docker-build-capacity-planner: ## Build the capacity planner image. PLANNER_IMG=<ref>
+	DOCKER_BUILDKIT=1 $(CONTAINER_TOOL) build --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg VERSION=$(IMG_TAG) -t ${PLANNER_IMG} -f Dockerfile.capacity-planner .
+
+.PHONY: capacity-planner-image-check
+capacity-planner-image-check: docker-build-capacity-planner ## Build the capacity planner image and check it serves a recording (hack/check-capacity-planner-image.sh).
+	PLANNER_IMG=${PLANNER_IMG} PLANNER_VERSION=$(IMG_TAG) bash hack/check-capacity-planner-image.sh
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
@@ -3652,8 +3777,10 @@ PROMTOOL ?= $(LOCALBIN)/promtool-$(PROMTOOL_VERSION)
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.17.2
-#ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
-ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
+#ENVTEST_VERSION is the tag of the setup-envtest module to install: the controller-runtime version in go.mod (i.e. v0.24.1).
+# setup-envtest is its own module, tagged with each controller-runtime release. A release branch (release-0.24) no longer
+# resolves: go finds the root module at the branch head, which does not contain the setup-envtest package.
+ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime)
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.9.0
@@ -3686,8 +3813,9 @@ $(PROMTOOL): $(LOCALBIN)
 	@bash hack/install-promtool.sh $(PROMTOOL) $(PROMTOOL_VERSION)
 
 .PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
+envtest: $(LOCALBIN) ## Download setup-envtest locally if necessary.
+	@# Run the install every time: it is a no-op when setup-envtest-$(ENVTEST_VERSION) exists, and otherwise
+	@# installs it and repoints $(ENVTEST), which a target on the unversioned link alone would leave stale.
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint

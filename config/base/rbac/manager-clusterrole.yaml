@@ -70,6 +70,14 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - disaggregatedset.x-k8s.io
+  resources:
+  - disaggregatedsetrolescalers
+  - disaggregatedsetrolescalers/scale
+  - disaggregatedsets
+  verbs:
+  - get
+- apiGroups:
   - inference.networking.k8s.io
   - inference.networking.x-k8s.io
   resources:

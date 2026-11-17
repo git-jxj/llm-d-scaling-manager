@@ -452,12 +452,24 @@ func TestSpecialFunctionsRefuseWithNaN(t *testing.T) {
 	}
 	// And a sum of shapes it does not take is refused, not a panic.
 	two, _ := expWait(0.3, 2).sum(expWait(0.2, 3))
-	if _, ok := two.sum(expWait(0.1, 4)); ok {
-		t.Error("summed a three-piece wait")
+	if _, ok := two.sum(boundWait(0.2, 0.5, 3)); ok {
+		t.Error("summed a shifted wait onto a three-piece one")
 	}
 	if _, ok := expWait(0.3, 2).sum(boundWait(0.2, 0.5, 3)); ok {
 		t.Error("summed a shifted second wait")
 	}
+	// Unshifted pieces of any number sum (sumUnshifted): the means add, and
+	// the wait is 0 only when all three are.
+	three, ok := two.sum(expWait(0.1, 4))
+	if !ok {
+		t.Fatal("a three-piece unshifted wait did not sum")
+	}
+	relNear(t, "three-piece mean", three.mean(), 0.3/2+0.2/3+0.1/4, 1e-5)
+	var p0 float64
+	for _, w := range three.w {
+		p0 += w
+	}
+	relNear(t, "three-piece P(W > 0)", p0, 1-0.7*0.8*0.9, 1e-9)
 }
 
 // Away from Poisson arrivals the wait is the Poisson tail stretched by Kingman's

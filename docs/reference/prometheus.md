@@ -309,12 +309,19 @@ the service CA.
   export PROMETHEUS_TLS_INSECURE_SKIP_VERIFY=true
   ```
 - If your Prometheus is reachable only over plain HTTP (e.g. `kube-prometheus-stack`'s
-  default in-cluster service), set `PROMETHEUS_ALLOW_HTTP=true` and use an
-  `http://` `PROMETHEUS_BASE_URL`. The controller refuses to start if
-  `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY`, `PROMETHEUS_SERVER_NAME`, any
-  `PROMETHEUS_CA_CERT_PATH`/client cert setting, or bearer token auth is set
-  alongside it. Everything travels in cleartext, so use it only on a trusted
-  network (dev/test or a secured in-cluster path).
+  default in-cluster service), install with
+  `smt install --prometheus-url http://<prometheus>:9090 --allow-http`, on
+  every `smt install` run. It sets the `prometheusAllowHTTP` setting and
+  applies the controller without `PROMETHEUS_TOKEN_PATH`, which the release
+  files set and the controller refuses to send over HTTP; it also repairs a
+  controller already crash-looping on it. By hand: [Install in one
+  namespace](../guides/install-in-namespace/README.md#2-settings-and-the-preflight-check).
+  The controller also refuses `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY`,
+  `PROMETHEUS_SERVER_NAME`, a CA or client certificate beside an http URL; the
+  preflight FAILs each with the command that removes it. Where each value is
+  read from: [advanced configuration](configuration-advanced.md). Everything
+  travels in cleartext, so use it only on a trusted network (dev/test or a
+  secured in-cluster path).
 
 ### EPP metrics token
 
@@ -1283,7 +1290,7 @@ reads higher than what clients saw over a whole run.
 | `llmsm_slo_predicted_itl_seconds` | gauge | `namespace`, `model_name`, `variant_name` | The mean inter-token latency the variant's fitted line predicts at the fill it would actually run at, once `scaleUpThreshold` headroom is applied, never below the bottom of the fitted range. | It is the latency margin an SLO tier would really have. It differs per accelerator for the same `scaleUpThreshold`. |
 | `llmsm_slo_source` | gauge | `namespace`, `model_name`, `variant_name`, `source` | `1` for where the variant's SLO pricing came from, `0` for the others. See the source values below. Absent for a variant not priced for TPOT (a prefill variant). | See the source values below. |
 | `llmsm_slo_predicted_ttft_seconds` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | Shadow, prefill variants of a P/D model only. The TTFT predicted at the variant's current rate, at the objective's percentile. **It is an estimate, not a bound:** at the assumed prompt spread it reads high, and at the spread actually sent it reads low. Absent when the model refuses the rate, or when `llmsm_slo_ttft_reason` is a refusal. | Against `llmsm_slo_observed_seconds{objective="ttft"}`, with the query below. Nothing sizes from it. See [reading the TTFT prediction](#reading-the-ttft-prediction). |
-| `llmsm_slo_ttft_unmet` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | `1` when the current rate misses the target: the prediction is above it, or the rate is at or over the prefill knee or the decode flow-control onset, or above the prefill flow-control onset, or `llmsm_slo_ttft_reason` is `target-below-floor`, which is `1` at any rate unless only an assumed decode term puts the floor over the target. `0` only with a prediction, when it meets the target. Absent otherwise, which includes that assumed case. | `1` with no prediction: read `llmsm_slo_ttft_refused`, or the reason for `target-below-floor`. |
+| `llmsm_slo_ttft_unmet` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | `1` when the current rate misses the target: the prediction is above it, or the rate is at or over the prefill knee or the decode flow-control onset, or above the prefill flow-control onset where the gate's wait is not priced (by default; with the opt-in `slo-ttft-router-wait` on, only past 0.9 of the prefill knee), or `llmsm_slo_ttft_reason` is `target-below-floor`, which is `1` at any rate unless only an assumed decode term puts the floor over the target. `0` only with a prediction, when it meets the target. Absent otherwise, which includes that assumed case. | `1` with no prediction: read `llmsm_slo_ttft_refused`, or the reason for `target-below-floor`. |
 | `llmsm_slo_ttft_replica_requests_per_second` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | The requests per second per prefill replica at which the TTFT meets the target, at the current replica count and imbalance. Absent unless the reason is `priced`. Carries the prediction's error: see below. | Below `rate(vllm:request_success_total[1m])` on the variant's prefill pods, per pod: the model says the target needs more prefill replicas. With several prefill variants the rate is the model's whole rate over all their replicas. |
 | `llmsm_slo_ttft_vp_source` | gauge | `namespace`, `model_name`, `variant_name`, `statistic`, `vp_source` | `1` for where the variant's prefill capacity `V_P` came from, `0` for the others: `busy-minutes`, `peak-under-queue`, `back-pressure-bound`, `inverted`, `none`. `inverted` is read from prefill pods whose engine queue stayed empty, and stands only where the three sources that need a queue have none. | `peak-under-queue` and `back-pressure-bound` are lower bounds: the rate reads low, the safe side. `inverted` is no bound: within 5% over a fourfold load on the staircase, and 7 to 19% low under bursty arrivals, which asks for more prefill, the cost side. |
 | `llmsm_slo_ttft_reason` | gauge | `namespace`, `model_name`, `variant_name`, `statistic`, `reason` | `1` for the reason of the pricing, `0` for the others. See the reasons below. A refusal is a reason here, never a number. | Anything but `priced` means no per-replica rate this cycle. |
@@ -1469,8 +1476,8 @@ model reads all of them `0`, including the two marked "on every answer":
 | `DecodeSideOmitted`, `DecodeTTFTUnmeasured` | No decode line and no measured TTFT: decode's part is left out, so TTFT reads low. They always come together. |
 | `FlowControlInferredOff` | `slo.flowControl` is unset and the flow-control queue series does not exist. A scrape gap looks the same: declare it. |
 | `FlowControlMismatch` | The declared `slo.flowControl` contradicts the series. Priced as declared; the log says so. |
-| `AboveFlowControlOnset` | Past the prefill gate's onset: the router is holding requests whose wait the model does not price, so a target read at that rate is counted as missed. The published rate is capped under the onset (bound `prefill flow-control onset`), so it never carries this flag: it shows only when the rate is refused and the flags published are the TTFT priced at the current rate's. |
-| `FlowControlWaitPriced` | Always 0 unless the experimental replay switch `slo-ttft-router-wait` is on (it is off by default, as is the CLI's `--price-router-wait`). With it on: past the prefill gate's onset and up to 0.9 of the prefill knee, the router's wait is taken as inside the processor-sharing prefill stage, the target is judged by the figure, and the published rate may stand there. No measured step with a real router wait validates this. |
+| `AboveFlowControlOnset` | Past the prefill gate's onset where its wait is not priced: always by default, and past 0.9 of the prefill knee with the opt-in replay switch `slo-ttft-router-wait` on. A target read at that rate is counted as missed. The published rate is capped under it (bound `prefill flow-control onset`), so it never carries this flag: it shows only when the rate is refused and the flags published are the TTFT priced at the current rate's. |
+| `FlowControlWaitPriced` | Always 0 unless the opt-in replay switch `slo-ttft-router-wait` is on (off by default, as is the CLI's `--price-router-wait`). With it on, past the prefill gate's onset and up to 0.9 of the prefill knee: the gate's wait, at the router and behind the burst it sends to one prefill pod, is priced into the figure, the target is judged by the figure, and the published rate may stand there. Validated at one measured step that held, where it read at or above 0.9 of the client; it errs long. |
 | `HeldByDecodeAdmission` | The decode wait lowers the rate a little. Informational below `decode-bound`. |
 | `SpreadBeyondProcessorSharing` | The prompt spread is wider than cv 0.25, where processor sharing has not been checked against a run: TTFT is the higher of processor sharing and the first-come queue. The assumed spread of 2 always raises it. |
 | `PromptSpreadClamped` | The measured spread was above 3 or ran past the histogram: priced at 3. |

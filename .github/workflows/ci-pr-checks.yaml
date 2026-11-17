@@ -123,6 +123,9 @@ jobs:
               - 'internal/**'
               - 'cmd/**'
               - 'test/release-manifests/**'
+              # The tools-image install (e2e-tests-tools-install).
+              - 'test/tools-install/**'
+              - 'Dockerfile.tools'
               # The job runs the smoke suite against the install.
               - 'test/e2e/**'
               - 'test/utils/**'
@@ -315,6 +318,37 @@ jobs:
           sudo install -m 0755 /tmp/yq /usr/local/bin/yq
           yq --version
 
+      # The release files the image bakes in (smt install installs them), from
+      # a fresh render, as the release builds it with --build-context
+      # release=dist. Built without them the image carries none, and
+      # hack/check-tools-image.sh fails rather than check an empty directory.
+      # The digest is a placeholder: nothing here pulls the controller.
+      - name: Read the Go version from go.mod
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
+
+      - name: Set up Go
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache: false
+
+      - name: Render the release files to bake in
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: |
+          set -euo pipefail
+          make kustomize
+          make release-manifests RELEASE_VERSION=v0.0.0-pr-check DIST=dist/tools-release \
+            IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          # The release signs each file; the check compares bytes, so any
+          # bundle stands in here.
+          for f in dist/tools-release/*.yaml dist/tools-release/*.tar.gz dist/tools-release/SHA256SUMS; do
+            printf '{"pr-check":"%s"}\n' "${f##*/}" > "$f.sigstore.json"
+          done
+          # Dockerfile.tools requires the baked SHA256SUMS to be this one.
+          echo "RELEASE_SHA256SUMS=$(sha256sum dist/tools-release/SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
       - name: Set up QEMU
         if: needs.check-code-changes.outputs.has_code_changes != 'false'
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -336,8 +370,11 @@ jobs:
           push: false
           provenance: false
           sbom: false
+          build-contexts: |
+            release=dist/tools-release
           build-args: |
-            VERSION=pr-check
+            VERSION=v0.0.0-pr-check
+            RELEASE_SHA256SUMS=${{ env.RELEASE_SHA256SUMS }}
 
       - name: Build the amd64 tools image
         id: build-tools
@@ -352,12 +389,15 @@ jobs:
           provenance: false
           sbom: false
           tags: scaling-manager-tools:pr-check
+          build-contexts: |
+            release=dist/tools-release
           build-args: |
-            VERSION=pr-check
+            VERSION=v0.0.0-pr-check
+            RELEASE_SHA256SUMS=${{ env.RELEASE_SHA256SUMS }}
 
       - name: Run hack/check-tools-image.sh against the image
         if: needs.check-code-changes.outputs.has_code_changes != 'false'
-        run: TOOLS_IMG=scaling-manager-tools:pr-check bash hack/check-tools-image.sh
+        run: TOOLS_IMG=scaling-manager-tools:pr-check TOOLS_RELEASE_DIST=dist/tools-release bash hack/check-tools-image.sh
 
       - name: Scan the tools image for fixable CRITICAL vulnerabilities (blocking)
         if: ${{ !cancelled() && steps.build-tools.outcome == 'success' }}
@@ -373,6 +413,92 @@ jobs:
         uses: ./.github/actions/trivy-scan
         with:
           image: scaling-manager-tools:pr-check-arm64
+          severity: CRITICAL
+          ignore-unfixed: 'true'
+          exit-code: '1'
+
+  # The capacity planner image the release publishes beside the controller
+  # (Dockerfile.capacity-planner; release-capacity-planner in ci-release.yaml).
+  # Built for both release platforms (a cross-compile, so arm64 is cheap), then
+  # the amd64 build is run by hack/check-capacity-planner-image.sh, which
+  # starts it as the guide does, POSTs /v1/inputs on a committed recording and
+  # /v1/plan on the result, and requires a 200 and a TTFT curve; then the
+  # release's blocking scan. Skipped step by step on a docs-only PR, like
+  # tools-image.
+  capacity-planner-image:
+    runs-on: ubuntu-latest
+    needs: check-code-changes
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Checkout source
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the arm64 capacity planner image
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.capacity-planner
+          platforms: linux/arm64
+          push: false
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=pr-check
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Build the amd64 capacity planner image
+        id: build-planner
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.capacity-planner
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: capacity-planner:pr-check
+          build-args: |
+            VERSION=pr-check
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Run hack/check-capacity-planner-image.sh against the image
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: PLANNER_IMG=capacity-planner:pr-check PLANNER_VERSION=pr-check bash hack/check-capacity-planner-image.sh
+
+      # The release binaries, built as release-files builds them (the go.mod
+      # Go line at its latest patch, make capacity-planner-dist), so a broken
+      # platform, ldflag or -trimpath fails here rather than on a tag.
+      - name: Read the Go line from go.mod
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: sed -En 's/^go ([0-9]+\.[0-9]+)(\..*)?$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
+
+      - name: Set up Go
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          check-latest: true
+          cache: false
+
+      - name: Run hack/check-capacity-planner-dist.sh
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: bash hack/check-capacity-planner-dist.sh
+
+      - name: Scan the capacity planner image for fixable CRITICAL vulnerabilities (blocking)
+        if: ${{ !cancelled() && steps.build-planner.outcome == 'success' }}
+        uses: ./.github/actions/trivy-scan
+        with:
+          image: capacity-planner:pr-check
           severity: CRITICAL
           ignore-unfixed: 'true'
           exit-code: '1'
@@ -511,7 +637,7 @@ jobs:
           SCALE_TO_ZERO_ENABLED: "false"
           CREATE_CLUSTER: "true"
           SCALER_BACKEND: keda
-          LLM_D_ROUTER_VERSION: "v0.9.0"
+          LLM_D_ROUTER_VERSION: "v1.0.0"
           # The install turns the scaler's mutual TLS on by default; fail, not
           # skip, if it fell back to plaintext.
           E2E_EXPECT_SCALER_TLS: "true"
@@ -670,7 +796,7 @@ jobs:
           SCALE_TO_ZERO_ENABLED: "true"
           CREATE_CLUSTER: "true"
           SCALER_BACKEND: keda
-          LLM_D_ROUTER_VERSION: "v0.9.0"
+          LLM_D_ROUTER_VERSION: "v1.0.0"
           # The install turns the scaler's mutual TLS on by default; fail, not
           # skip, if it fell back to plaintext.
           E2E_EXPECT_SCALER_TLS: "true"
@@ -804,7 +930,7 @@ jobs:
           SCALE_TO_ZERO_ENABLED: "true"
           CREATE_CLUSTER: "true"
           SCALER_BACKEND: keda
-          LLM_D_ROUTER_VERSION: "v0.9.0"
+          LLM_D_ROUTER_VERSION: "v1.0.0"
           E2E_EXPECT_SCALER_TLS: "true"
           IMG: ${{ steps.build-image.outputs.image }}
           SKIP_BUILD: "true"
@@ -936,7 +1062,7 @@ jobs:
           SCALE_TO_ZERO_ENABLED: "false"
           CREATE_CLUSTER: "true"
           SCALER_BACKEND: keda
-          LLM_D_ROUTER_VERSION: "v0.9.0"
+          LLM_D_ROUTER_VERSION: "v1.0.0"
           RELEASE_E2E_IMG: ${{ steps.build-image.outputs.image }}
           RELEASE_E2E_SCOPE: ${{ matrix.scope }}
           SKIP_BUILD: "true"
@@ -964,6 +1090,148 @@ jobs:
           name: release-e2e-logs-${{ matrix.scope }}
           path: |
             dist/release-e2e-logs
+            dist/release-e2e
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Disk usage after the e2e run
+        if: ${{ always() && steps.decide.outputs.run == 'true' }}
+        run: deploy/ci-pr-checks/disk-report.sh
+
+  # The install from the tools image (make test-e2e-tools-install,
+  # test/tools-install/e2e.sh): smt admin-setup, install and admin-finish from
+  # the tools image built with the release files baked in, the gate of
+  # docs/proposals/two-command-install.md. Beside e2e-tests-release-manifests,
+  # one leg per scope, each on a fresh kind cluster: namespace runs install as
+  # a ServiceAccount bound to the stock admin ClusterRole in the namespace and
+  # nothing else; cluster runs one install --scope cluster as the cluster admin.
+  # Same trigger and the same in-job decision as e2e-tests-release-manifests.
+  #
+  # Budget: the release-files job's setup and smoke suite, plus a negative
+  # control, an upgrade from the previous release's files (namespace leg) and
+  # re-runs, each bounded by its own wait in the script: 80m.
+  e2e-tests-tools-install:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, check-code-changes]
+    if: >-
+      !cancelled() && needs.lint-and-test.result == 'success'
+      && (github.event_name == 'pull_request'
+      || (github.event_name == 'workflow_dispatch' && inputs.run_full_tests))
+    strategy:
+      fail-fast: false
+      matrix:
+        scope: [namespace, cluster]
+    timeout-minutes: 80
+    permissions:
+      contents: read
+    steps:
+      - name: Decide whether the tools-install e2e is needed
+        id: decide
+        env:
+          RELEASE_INSTALL: ${{ needs.check-code-changes.outputs.release_install }}
+        run: |
+          if [ "${{ github.event_name }}" != 'pull_request' ]; then
+            echo 'Manual dispatch asked for the full suite.'
+            echo 'run=true' >> $GITHUB_OUTPUT
+          elif [ "$RELEASE_INSTALL" = 'false' ]; then
+            echo 'Nothing the release files are made from or installed by changed; skipping.'
+            echo 'run=false' >> $GITHUB_OUTPUT
+          else
+            echo "release_install='$RELEASE_INSTALL': running the tools-install e2e."
+            echo 'run=true' >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout source
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Free runner disk
+        if: steps.decide.outputs.run == 'true'
+        run: deploy/ci-pr-checks/free-disk.sh
+
+      - name: Extract Go version from go.mod
+        if: steps.decide.outputs.run == 'true'
+        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> $GITHUB_ENV
+
+      - name: Set up Go with cache
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache-dependency-path: ./go.sum
+
+      - name: Install dependencies
+        if: steps.decide.outputs.run == 'true'
+        run: go mod download
+
+      - name: Install yq
+        if: steps.decide.outputs.run == 'true'
+        env:
+          YQ_VERSION: v4.54.1
+          YQ_SHA256: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+          yq --version
+
+      - name: Install Kind
+        if: steps.decide.outputs.run == 'true'
+        run: deploy/ci-pr-checks/install-kind.sh
+
+      - name: Set up Docker Buildx
+        if: steps.decide.outputs.run == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the scaling manager image locally
+        if: steps.decide.outputs.run == 'true'
+        id: build-image
+        env:
+          CHECKOUT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: deploy/ci-pr-checks/build-scaling-manager-image-local.sh
+
+      # Prerequisites without the scaling manager; then the release files
+      # rendered with the digest the kind nodes hold, the tools image built
+      # with them baked in, and the install with it. The target fails on a
+      # 0-spec smoke run, and on any step of the script.
+      - name: Run the tools-install e2e (${{ matrix.scope }})
+        if: steps.decide.outputs.run == 'true'
+        shell: bash
+        env:
+          ENVIRONMENT: kind-emulator
+          KIND_PRUNE_HOST_IMAGES: "true"
+          USE_SIMULATOR: "true"
+          SCALE_TO_ZERO_ENABLED: "false"
+          CREATE_CLUSTER: "true"
+          SCALER_BACKEND: keda
+          LLM_D_ROUTER_VERSION: "v1.0.0"
+          RELEASE_E2E_IMG: ${{ steps.build-image.outputs.image }}
+          RELEASE_E2E_SCOPE: ${{ matrix.scope }}
+          SKIP_BUILD: "true"
+        run: |
+          make test-e2e-tools-install-with-setup
+
+      - name: Collect cluster state on failure
+        if: ${{ (failure() || cancelled()) && steps.decide.outputs.run == 'true' }}
+        run: |
+          d=dist/tools-e2e-logs/cluster
+          mkdir -p "$d"
+          kubectl get pods,deployments,jobs,configmaps,scaledobjects,hpa -A -o wide > "$d/objects.txt" 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > "$d/events.txt" 2>&1 || true
+          for ns in llm-d-sim scaling-manager-system smt-negative smt-upgrade; do
+            kubectl logs -n "$ns" deployment/scaling-manager-controller-manager --tail=2000 > "$d/controller-$ns.log" 2>&1 || true
+          done
+          kubectl logs -n keda-system deployment/keda-operator --tail=2000 > "$d/keda-operator.log" 2>&1 || true
+
+      - name: Upload the tools-install e2e logs
+        if: ${{ (failure() || cancelled()) && steps.decide.outputs.run == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tools-e2e-logs-${{ matrix.scope }}
+          path: |
+            dist/tools-e2e-logs
             dist/release-e2e
           if-no-files-found: warn
           retention-days: 14
@@ -1081,7 +1349,7 @@ jobs:
           SCALE_TO_ZERO_ENABLED: "false"
           CREATE_CLUSTER: "true"
           SCALER_BACKEND: keda
-          LLM_D_ROUTER_VERSION: "v0.9.0"
+          LLM_D_ROUTER_VERSION: "v1.0.0"
           IMG: ${{ steps.build-image.outputs.image }}
           SKIP_BUILD: "true"
           DELETE_CLUSTER: "false"

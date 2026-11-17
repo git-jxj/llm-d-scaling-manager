@@ -6,14 +6,14 @@
 # deploy/lib/epp-optimized-baseline.values.yaml — no network fetch required.
 #
 # Usage:
-#   LLM_D_ROUTER_VERSION=v0.9.0 GAIE_VERSION=v1.5.0 NAMESPACE=llm-d-sim ./deploy/install-epp.sh
+#   LLM_D_ROUTER_VERSION=v1.0.0 GAIE_VERSION=v1.5.0 NAMESPACE=llm-d-sim ./deploy/install-epp.sh
 #
 
 set -e
 set -o pipefail
 
 LLMSM_PROJECT=${LLMSM_PROJECT:-$PWD}
-LLM_D_ROUTER_VERSION=${LLM_D_ROUTER_VERSION:-v0.9.0}
+LLM_D_ROUTER_VERSION=${LLM_D_ROUTER_VERSION:-v1.0.0}
 GAIE_VERSION=${GAIE_VERSION:-v1.5.0}
 NAMESPACE=${NAMESPACE:-llm-d-sim}
 ENVIRONMENT=${ENVIRONMENT:-kind-emulator}
