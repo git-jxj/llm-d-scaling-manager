@@ -3585,6 +3585,10 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# Runs the release workflow step against a scratch repository. A backport
 	@# tagged after a newer release used to move latest back to the old line.
 	@bash hack/check-release-latest.sh
+	@echo "Checking no tracked file names a personal registry namespace..."
+	@# The warm-pool proxy shipped from a personal GHCR namespace long after the
+	@# project moved. Allowed references are listed, with reasons, in the script.
+	@bash hack/check-personal-namespace.sh
 	@echo "Checking the release files: digest, names, labels, placeholders..."
 	@# Renders what a GitHub Release attaches and asserts the rules of
 	@# docs/proposals/install-from-release.md, then breaks a copy one rule at a
