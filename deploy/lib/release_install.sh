@@ -952,9 +952,13 @@ smt_finish() {
 # The labeller (deploy/weights.sh labeller; docs/proposals/weights-node-gate.md)
 # patches nodes, so it is a cluster-wide piece: the cluster-wide install
 # applies and updates it, watching every --model-namespace and every namespace
-# it already watches. A namespaced admin-setup only checks it is there, adds
-# its own namespace to its watch list with namespaced rights, and otherwise
-# prints the command.
+# it already watches -- but only where it has work: a model namespace with a
+# weights DaemonSet (weights.sh apply), or a labeller already running. Else it
+# says how to add it later. A namespaced admin-setup only checks it is there,
+# adds its own namespace to its watch list with namespaced rights, and
+# otherwise prints the command.
+SMT_WL_NS=scaling-manager-weights-labeller
+SMT_WL_DS_SELECTOR=app.kubernetes.io/component=node-local-weights,app.kubernetes.io/managed-by=scaling-manager-weights
 
 # smt_wl_image echoes the image the labeller runs: --weights-labeller-image,
 # else the tools image of this release. Returns 1 when there is none to name:
@@ -980,9 +984,12 @@ smt_wl_list() {
 
 # smt_weights_labeller: the cluster-wide install applies or updates the
 # labeller. Skipped, and said so, with --no-weights-labeller, with no
-# --model-namespace, or with no image to run.
+# --model-namespace, with no image to run, and when no model namespace keeps
+# weights on the node and no labeller runs yet. A read that fails skips it
+# too, naming what could not be read (Forbidden is not absent); the install
+# goes on.
 smt_weights_labeller() {
-    local img
+    local img m n have="" running=false
     if [ "$SMT_WL_OFF" = true ]; then
         echo "Weights labeller: not applied (--no-weights-labeller)."
         return 0
@@ -995,7 +1002,27 @@ smt_weights_labeller() {
         echo "Weights labeller: not applied: no tools image to run it with (a development image, or --image-repo). Give --weights-labeller-image <tools image>."
         return 0
     fi
-    echo "Weights labeller (labels the GPU nodes whose weights copy verifies; it patches nodes):"
+    if ! kc_capture get deployment weights-labeller -n "$SMT_WL_NS" --ignore-not-found -o json; then
+        echo "Weights labeller: not applied: could not read Deployment weights-labeller in $SMT_WL_NS ($(printf '%s' "$KC_ERR" | head -n 1))."
+        return 0
+    fi
+    [ -z "$KC_OUT" ] || running=true
+    if [ "$running" = false ]; then
+        for m in "${SMT_MODEL_NS[@]}"; do
+            if ! kc_capture get daemonset -n "$m" -l "$SMT_WL_DS_SELECTOR" -o json; then
+                echo "Weights labeller: not applied: could not read the DaemonSets in $m ($(printf '%s' "$KC_ERR" | head -n 1)), so whether it keeps weights on the node is not known."
+                return 0
+            fi
+            n="$(printf '%s' "$KC_OUT" | jq '.items | length' 2>/dev/null)" || n=0
+            [ "${n:-0}" -eq 0 ] || have="${have:+$have, }$m"
+        done
+        if [ -z "$have" ]; then
+            echo "Weights labeller: not applied: no model namespace keeps weights on the node (no weights.sh apply DaemonSet in $(smt_wl_list | sed 's/,/, /g'))."
+            echo "  After weights apply, run this install again, or: smt weights labeller -n <model namespace> --image $img --merge"
+            return 0
+        fi
+    fi
+    echo "Weights labeller (labels the GPU nodes whose weights copy verifies; it patches nodes$([ "$running" = true ] && echo "; updating the one running" || echo "; weights on the node in $have")):"
     bash "$HERE/weights.sh" labeller -n "$(smt_wl_list)" --image "$img" --merge \
         || smt_exit 7 "the weights labeller was not applied (weights.sh labeller exited non-zero, above)"
 }
@@ -1008,7 +1035,7 @@ smt_weights_labeller_dry() {
     img="$(smt_wl_image)" || { echo "  (weights labeller not rendered: give --weights-labeller-image)"; return 0; }
     bash "$HERE/weights.sh" labeller -n "$(smt_wl_list)" --image "$img" --dry-run > "$SMT_OUT/60-weights-labeller.yaml" \
         || smt_exit 2 "the weights labeller did not render"
-    echo "  $SMT_OUT/60-weights-labeller.yaml (applied, it keeps every namespace the running labeller already watches)"
+    echo "  $SMT_OUT/60-weights-labeller.yaml (only where a model namespace keeps weights on the node; it watches exactly --model-namespace and, applied, replaces a running labeller's list: keep the full list in git, and do not use labeller --add)"
 }
 
 # smt_admin_setup_labeller: admin-setup checks the labeller is there and adds

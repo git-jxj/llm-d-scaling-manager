@@ -12,7 +12,8 @@
 # controller.log (the controller log the stale-connection check reads),
 # rollout-timeout (rollout status times out), can-i-no ("<verb> <resource>
 # <namespace>" lines auth can-i answers no), forbid-namespaces (reading a
-# Namespace is Forbidden, as for a namespace owner), apply-fails (a
+# Namespace is Forbidden, as for a namespace owner), forbid-daemonsets
+# (reading DaemonSets is Forbidden), apply-fails (a
 # server-side apply is refused by the API server).
 D="${STUB_DIR:?}"
 printf '%s\n' "$*" >> "$D/calls.log"
@@ -127,6 +128,10 @@ case "$verb" in
         fi
         r="$(res "${pos[0]}")"
         n="${pos[1]:-}"
+        if [ "$r" = daemonset ] && [ -f "$D/forbid-daemonsets" ]; then
+            echo "Error from server (Forbidden): daemonsets.apps is forbidden: User \"admin\" cannot list resource \"daemonsets\" in API group \"apps\" in the namespace \"$ns\"" >&2
+            exit 1
+        fi
         if [ -z "$n" ]; then
             # A list: what is stored of that resource in that namespace.
             items="$(cat "$D"/obj/"$r"/"${ns:-default}"/*.json 2>/dev/null | jq -s -c '.')"

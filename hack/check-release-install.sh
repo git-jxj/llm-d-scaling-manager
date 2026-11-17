@@ -636,7 +636,33 @@ creset() {
     mkdir -p "$STUB_DIR/obj/configmap/scaling-manager-system"
     cp "$W/status.json" "$STUB_DIR/obj/configmap/scaling-manager-system/scaling-manager-controller-status.json"
 }
+# wds NS: a weights DaemonSet in NS, as weights.sh apply leaves one.
+wds() {
+    mkdir -p "$STUB_DIR/obj/daemonset/$1"
+    jq -n --arg ns "$1" '{apiVersion: "apps/v1", kind: "DaemonSet", metadata: {name: "weights-x", namespace: $ns,
+        labels: {"app.kubernetes.io/component": "node-local-weights", "app.kubernetes.io/managed-by": "scaling-manager-weights"}}}' \
+        > "$STUB_DIR/obj/daemonset/$1/weights-x.json"
+}
 creset m1 m2 team-b
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --model-namespace m2
+if ! has_obj deployment "$LNS" weights-labeller && ! has_obj clusterrole _ scaling-manager-weights-labeller \
+    && grep -q 'Weights labeller: not applied: no model namespace keeps weights on the node (no weights.sh apply DaemonSet in m1, m2)' "$W/out" \
+    && grep -q "After weights apply, run this install again, or: smt weights labeller -n <model namespace> --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V --merge" "$W/out" \
+    && grep -q "KEDA's client certificate" "$W/out"; then
+    ok "install --scope cluster with no weights DaemonSet in any model namespace applies no labeller, and says how to add it"
+else
+    bad "no weights, no labeller: $(grep -A1 -i 'labeller' "$W/out" | head -3 | tr '\n' ' ')"
+fi
+touch "$STUB_DIR/forbid-daemonsets"
+wds m1
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+rm -f "$STUB_DIR/forbid-daemonsets"
+if ! has_obj deployment "$LNS" weights-labeller && grep -q 'Weights labeller: not applied: could not read the DaemonSets in m1 (Error from server (Forbidden)' "$W/out" \
+    && grep -q "KEDA's client certificate" "$W/out"; then
+    ok "DaemonSets that cannot be read: no labeller, the namespace and kubectl's reason named, and the install goes on (Forbidden is not absent)"
+else
+    bad "Forbidden DaemonSets: $(grep -i 'labeller' "$W/out" | head -2 | tr '\n' ' ')"
+fi
 SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
 if [ "$(largs)" = '["weights","label","-n","m1","--watch","30","--label-prefix","llm-d.ai"]' ] \
     && [ "$(limg)" = "ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V" ] \
@@ -698,6 +724,7 @@ wl labeller --add -n "$LNS"
 rc=$?
 [ "$rc" -ne 0 ] && grep -q "is the labeller's own namespace" "$W/out" && ok "labeller --add refuses the labeller's own namespace" || bad "labeller --add of its own namespace: exit $rc: $(tail -1 "$W/out")"
 creset m1 team-c
+wds m1
 smt admin-setup -n team-c --keda-namespace keda-system
 rc=$?
 if [ "$rc" = 0 ] && grep -q 'No weights labeller runs in' "$W/out" && grep -q 'smt install --scope cluster' "$W/out" && ! has_obj deployment "$LNS" weights-labeller; then
@@ -717,6 +744,7 @@ else
 fi
 rm -f "$STUB_DIR/can-i-no"
 creset m1
+wds m1
 SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --no-weights-labeller
 if ! has_obj deployment "$LNS" weights-labeller && grep -q 'Weights labeller: not applied (--no-weights-labeller)' "$W/out"; then
     ok "--no-weights-labeller applies no labeller, and says so"
@@ -725,9 +753,32 @@ else
 fi
 SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --weights-labeller-image mirror.example.com/tools:v1
 [ "$(limg)" = mirror.example.com/tools:v1 ] && ok "--weights-labeller-image sets its image" || bad "--weights-labeller-image: $(limg)"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --image-repo mirror.example.com/sm
+if grep -q 'Weights labeller: not applied: no tools image to run it with (a development image, or --image-repo)' "$W/out" && [ "$(limg)" = mirror.example.com/tools:v1 ]; then
+    ok "--image-repo without --weights-labeller-image: the labeller is left as it is, and why is said"
+else
+    bad "--image-repo labeller: image $(limg): $(grep -i 'labeller' "$W/out" | head -2 | tr '\n' ' ')"
+fi
+smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --weights-labeller-image 'bad image'
+rc=$?
+[ "$rc" = 2 ] && grep -q "is not an image reference" "$W/out" && ok "a malformed --weights-labeller-image is refused (usage)" || bad "bad labeller image: exit $rc: $(tail -1 "$W/out")"
+# A labeller Deployment this script did not write: weights.sh refuses to merge
+# into it, and the install says so and exits 7.
+jq '.spec.template.spec.containers[0].args = ["sh", "-c", "sleep 1d"]' "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json" > "$W/foreign.json"
+cp "$W/foreign.json" "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1
+rc=$?
+if [ "$rc" = 7 ] && grep -q 'the weights labeller was not applied (weights.sh labeller exited non-zero, above)' "$W/out" \
+    && grep -q 'does not carry the arguments weights.sh writes' "$W/out" && [ "$(largs)" = '["sh","-c","sleep 1d"]' ]; then
+    ok "a labeller Deployment weights.sh did not write is not merged into: the install exits 7 and names it"
+else
+    bad "foreign labeller: exit $rc, args $(largs): $(grep -i 'labeller' "$W/out" | head -2 | tr '\n' ' ')"
+fi
 rm -rf "$W/drywl"
 smt install --scope cluster --keda-namespace kk --prometheus-url https://prom.example:9090 --model-namespace m1 --dry-run --out "$W/drywl"
-if [ "$(yq ea -o json -I 0 '[select(.kind == "Deployment") | .spec.template.spec.containers[0].args[3]]' "$W/drywl/60-weights-labeller.yaml" 2>/dev/null)" = '["m1"]' ]; then
+if [ "$(yq ea -o json -I 0 '[select(.kind == "Deployment") | .spec.template.spec.containers[0].args[3]]' "$W/drywl/60-weights-labeller.yaml" 2>/dev/null)" = '["m1"]' ] \
+    && grep -q 'it watches exactly --model-namespace and, applied, replaces a running labeller.s list: keep the full list in git, and do not use labeller --add' "$W/out" \
+    && ! grep -q 'keeps every namespace the running labeller already watches' "$W/out"; then
     ok "install --scope cluster --dry-run renders the labeller as 60-weights-labeller.yaml"
 else
     bad "dry-run labeller: $(ls "$W/drywl" | tr '\n' ' ')"
@@ -1054,7 +1105,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=117
+EXPECT_CASES=122
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
