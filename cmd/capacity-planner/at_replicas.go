@@ -263,10 +263,8 @@ func figureValue(f whatifapi.Figure) (float64, string, error) {
 	switch {
 	case f.Value != nil:
 		return *f.Value, "", nil
-	case f.Refused != nil && f.Refused.Reason == string(whatif.Saturated):
-		return 0, "saturated", nil
 	case f.Refused != nil:
-		return 0, f.Refused.Reason, nil
+		return 0, plainReason(f.Refused.Reason), nil
 	}
 	return 0, "", errNoFigure
 }
@@ -355,7 +353,11 @@ func loadText(l whatifapi.ReportLoad) string {
 		s += " (--load-seen)"
 	}
 	if l.Mean != nil {
-		s += fmt.Sprintf("\n%-16sper cycle: mean %.2f, p95 %.2f, peak %.2f r/s", "load seen", *l.Mean, *l.P95, *l.Peak)
+		p95 := fmt.Sprintf("%.2f", *l.P95)
+		if l.P95IsPeak {
+			p95 += " (= peak: fewer than 20 cycles)"
+		}
+		s += fmt.Sprintf("\n%-16sper cycle (1-minute rates): mean %.2f, p95 %s, peak %.2f r/s", "load seen", *l.Mean, p95, *l.Peak)
 		if l.Rolling != nil {
 			s += fmt.Sprintf("; busiest %s (%d cycles): %.2f r/s", time.Duration(l.Rolling.WindowSeconds*float64(time.Second)).Round(time.Second),
 				l.Rolling.Cycles, l.Rolling.Peak)
@@ -475,7 +477,7 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 		default:
 			state = "not judged"
 		}
-		fmt.Fprintf(b, "  %-22s%s: %s\n", fleetText(ch.Prefill, ch.Decode), state, ch.Reason)
+		fmt.Fprintf(b, "  %-22s%s: %s\n", fleetText(ch.Prefill, ch.Decode), state, plainText(ch.Reason))
 	}
 	if len(s.Assumed) > 0 {
 		fmt.Fprintf(b, "assumed: %s\n", strings.Join(s.Assumed, "; "))
@@ -487,7 +489,7 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 
 // growthText is a growth what-if's verdict line.
 func growthText(g whatifapi.ReportGrowth) string {
-	return fmt.Sprintf("with %sx traffic (%s): %s", num(g.X), g.Load, g.Verdict.Summary)
+	return fmt.Sprintf("x%s (%s): %s", num(g.X), rateWords(g.Rate), g.Verdict.Summary)
 }
 
 // refusedDetail is a refused figure's detail, "" otherwise.
@@ -495,7 +497,7 @@ func refusedDetail(f whatifapi.Figure) string {
 	if f.Refused == nil {
 		return ""
 	}
-	return f.Refused.Detail
+	return plainText(f.Refused.Detail)
 }
 
 // sloText names the targets judged by.

@@ -37,6 +37,8 @@ func TestAtReplicas_JudgedAtTheBusyLoad(t *testing.T) {
 		rep := atReplicasJSON(t, args...)
 		require.NotNil(t, rep.Load.Rate.Value)
 		assert.InDelta(t, 41.70, *rep.Load.Rate.Value, 0.005, "the default load is the p95, not the mean")
+		assert.Equal(t, whatifapi.VerdictOver, rep.Shapes[0].Verdict.Verdict, "decode has one to spare even at the peak: %s",
+			rep.Shapes[0].Verdict.Summary)
 
 		peak := atReplicasJSON(t, append(args, "--load-statistic", "peak")...)
 		require.NotNil(t, peak.Load.Peak)
@@ -48,6 +50,8 @@ func TestAtReplicas_JudgedAtTheBusyLoad(t *testing.T) {
 	t.Run("throughput sweep, decode only", func(t *testing.T) {
 		args := []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}
 		rep := atReplicasJSON(t, args...)
+		require.NotNil(t, rep.Load.P95)
+		assert.InDelta(t, 26.90, *rep.Load.P95, 0.005, "the sweep's p95")
 		assert.Equal(t, whatifapi.VerdictUnder, rep.Shapes[0].Verdict.Verdict, "at the default load: %s", rep.Shapes[0].Verdict.Reason)
 
 		peak := atReplicasJSON(t, append(args, "--load-statistic", "peak")...)

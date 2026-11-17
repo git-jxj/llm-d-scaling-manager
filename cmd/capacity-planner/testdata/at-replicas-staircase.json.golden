@@ -113,7 +113,7 @@
             "AssumedPromptSpread"
           ],
           "outputTokensPerSecond": 9965.768139324824,
-          "binds": "prefill compute: N_p 2 x V_P / (f 1 x 8001 tokens)"
+          "binds": "prefill compute: N_p 2 x V_P / (f 1.003 x 8001 tokens)"
         },
         "decodeKnee": {
           "value": 38.13925805407484,
@@ -535,32 +535,27 @@
       ],
       "verdict": {
         "verdict": "UNDER-PROVISIONED",
-        "summary": "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates; add decode replicas (decode sets the knee): one more is not enough.",
+        "summary": "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).",
         "scope": "fleet",
-        "reason": "2 prefill + 2 decode: 41.70 r/s is 1.1x the fleet knee of 38.14 r/s; TTFT p90 AboveDecodeOnset misses 2000.0 ms; TPOT mean saturated misses 30.0 ms",
+        "reason": "2 prefill + 2 decode: 41.70 r/s is 1.1x the fleet knee of 38.14 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms. Add decode: decode sets the knee",
+        "needed": {
+          "prefill": 3,
+          "decode": 3,
+          "maxReplicas": 32
+        },
+        "roles": [],
         "shrink": [],
-        "grow": [],
+        "grow": [
+          "prefill",
+          "decode"
+        ],
         "checks": [
           {
             "prefill": 2,
             "decode": 2,
             "holds": false,
             "known": true,
-            "reason": "41.70 r/s is 1.1x the fleet knee of 38.14 r/s; TTFT p90 AboveDecodeOnset misses 2000.0 ms; TPOT mean saturated misses 30.0 ms"
-          },
-          {
-            "prefill": 3,
-            "decode": 2,
-            "holds": false,
-            "known": true,
-            "reason": "41.70 r/s is 1.1x the fleet knee of 38.14 r/s; TTFT p90 AboveDecodeOnset misses 2000.0 ms; TPOT mean saturated misses 30.0 ms"
-          },
-          {
-            "prefill": 2,
-            "decode": 3,
-            "holds": false,
-            "known": true,
-            "reason": "41.70 r/s within 0.85 x the fleet knee 49.83 r/s = 42.36 r/s; TTFT p90 1874.4 ms is within 2000.0 ms but misses: the rate is above the prefill flow-control onset, where the router queues; TPOT mean 7.0 ms meets 30.0 ms"
+            "reason": "41.70 r/s is 1.1x the fleet knee of 38.14 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms"
           }
         ]
       },
@@ -594,5 +589,5 @@
     "TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.",
     "e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile"
   ],
-  "exitCode": 3
+  "exitCode": 0
 }

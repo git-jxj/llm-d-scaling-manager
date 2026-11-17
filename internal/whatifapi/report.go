@@ -237,8 +237,11 @@ type ReportFleet struct {
 }
 
 // ReportLoad is the load the fleet is judged at, and the load the source saw.
+// Each cycle's rate is the router's 1-minute arrival rate as the collector
+// read it.
 type ReportLoad struct {
-	// Rate is the load judged at: Seen times X.
+	// Rate is the load judged at: Seen as a figure, which carries the
+	// refusal (NoTraffic) when the source saw no load.
 	Rate Figure `json:"rate"`
 	// Seen is the load the source saw at Statistic, or the one asked in its
 	// place, and Source which ("observed", "asked" or "none"). The verdict
@@ -254,8 +257,12 @@ type ReportLoad struct {
 	Mean              *float64 `json:"mean,omitempty"`
 	P95               *float64 `json:"p95,omitempty"`
 	Peak              *float64 `json:"peak,omitempty"`
+	// P95IsPeak says the window has too few cycles (under 20) for its p95
+	// to be anything but its peak.
+	P95IsPeak bool `json:"p95IsPeak,omitempty"`
 	// Rolling is the busiest stretch of the window: the highest mean rate over
-	// consecutive cycles spanning RollingWindow; nil with fewer cycles.
+	// consecutive cycles spanning RollingWindow, idle and failed reads
+	// counting as 0; nil with fewer cycles.
 	Rolling *ReportRolling `json:"rolling,omitempty"`
 }
 
@@ -370,13 +377,46 @@ type ReportStat struct {
 // fleet checked. Scope is ScopeDecodeOnly when the prefill side does not
 // price: such a verdict is never OVER-PROVISIONED.
 type ReportVerdict struct {
-	Verdict string        `json:"verdict"`
-	Summary string        `json:"summary"`
-	Scope   string        `json:"scope"`
-	Reason  string        `json:"reason"`
-	Shrink  []string      `json:"shrink"`
-	Grow    []string      `json:"grow"`
-	Checks  []ReportCheck `json:"checks"`
+	Verdict string `json:"verdict"`
+	Summary string `json:"summary"`
+	Scope   string `json:"scope"`
+	Reason  string `json:"reason"`
+	// Needed is the smallest fleet that holds every target at the load with
+	// headroom, on an UNDER-PROVISIONED or OVER-PROVISIONED verdict; nil on
+	// the others.
+	Needed *ReportNeeded `json:"needed,omitempty"`
+	// Roles is each role's own standing at the load: whether it has a
+	// replica to spare, and why.
+	Roles  []ReportRole  `json:"roles"`
+	Shrink []string      `json:"shrink"`
+	Grow   []string      `json:"grow"`
+	Checks []ReportCheck `json:"checks"`
+}
+
+// ReportNeeded is the smallest fleet that holds every target at the load
+// with headroom, found by POST /v1/size's search (SmallestFleet) on the
+// report's own check. DecodeOnly is a prefill side that does not price:
+// Decode is then the fewest decode replicas, and Prefill is 0. Alternatives
+// are the other mixes of the same total that also hold. Unmet says no fleet
+// within MaxReplicas of each role holds, and which role fell short; the
+// counts are then 0.
+type ReportNeeded struct {
+	Prefill      int           `json:"prefill"`
+	Decode       int           `json:"decode"`
+	DecodeOnly   bool          `json:"decodeOnly,omitempty"`
+	Alternatives []FleetCounts `json:"alternatives,omitempty"`
+	Unmet        string        `json:"unmet,omitempty"`
+	MaxReplicas  int           `json:"maxReplicas"`
+}
+
+// ReportRole is one role's standing at the load: Spare says one replica
+// fewer of it still holds (decode's knee and TPOT, or the prefill knee and
+// TTFT, at the peak; the whole fleet at the load judged), and Detail says
+// why or how close the role is to its edge.
+type ReportRole struct {
+	Role   string `json:"role"`
+	Spare  bool   `json:"spare"`
+	Detail string `json:"detail"`
 }
 
 // ReportGrowth is the fleet judged at the load seen grown by X: Load is the

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -42,9 +43,10 @@ func atStair(args ...string) []string {
 const reportDeadline = 2 * time.Minute
 
 // The report's golden outputs: a P/D fleet at the window's p95 load
-// (under-provisioned, and exit 0: the report answered), the same as JSON, one
-// over-provisioned by a decode replica at a stated load, and a decode-only
-// answer where the prefill side does not price. The JSON golden is named
+// (under-provisioned and saturated, and exit 0: the report answered; exit 3
+// is NOT JUDGED alone), the same as JSON, one over-provisioned by a decode
+// replica at a stated load, and a decode-only answer where the prefill side
+// does not price. The JSON golden is named
 // .json, not -json: TestServeParity covers the plan's JSON goldens, and the
 // report's parity with the API is TestAtReplicas_APIIsTheCommand.
 func TestAtReplicasGolden(t *testing.T) {
@@ -53,18 +55,18 @@ func TestAtReplicasGolden(t *testing.T) {
 		args []string
 		code int
 	}{
-		{"at-replicas-staircase", atStair(), 3},
-		{"at-replicas-staircase.json", atStair("-o", "json"), 3},
+		{"at-replicas-staircase", atStair(), 0},
+		{"at-replicas-staircase.json", atStair("-o", "json"), 0},
 		{"at-replicas-over", atStair("--decode", "3", "--load-seen", "20"), 0},
 		// V_P is refused on the sweep: the report answers for decode alone,
-		// and exits 3 for the role that refused.
-		{"at-replicas-decode-only", []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}, 3},
+		// which is under-provisioned at the p95: an answer, exit 0.
+		{"at-replicas-decode-only", []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}, 0},
 		// Three shapes by four loads: the measured one, a short and a long
 		// prompt the recording never saw (EXTRAPOLATED), at two shares of each
 		// shape's knee, a stated rate and the load seen grown by a fifth. Past
-		// the knee at that load the TTFT is refused, and so exit 3.
+		// the knee the TTFT saturates: an answer, exit 0.
 		{"at-replicas-shapes", atStair("--shape", "measured", "--shape", "1k/1k", "--shape", "16k/200/0.3",
-			"--load", "50%", "--load", "80%", "--load", "5r/s", "--load", "seen", "--load-seen-x", "1.2"), 3},
+			"--load", "50%", "--load", "80%", "--load", "5r/s", "--load", "seen", "--load-seen-x", "1.2"), 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { checkGolden(t, c.name, c.code, c.args) })
@@ -176,7 +178,7 @@ func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
 	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Reason)
 	assert.Equal(t, []string{roleDecode}, v.Shrink)
 	assert.Equal(t, whatifapi.ScopeFleet, v.Scope)
-	assert.Contains(t, v.Summary, "decode knee this rests on is not validated")
+	assert.Contains(t, v.Summary, "decode knee unvalidated")
 	require.Len(t, v.Checks, 3)
 	for _, c := range v.Checks {
 		assert.True(t, strings.HasPrefix(c.Reason, "20.00 r/s "), "each fleet is checked at the load: %s", c.Reason)
@@ -201,7 +203,9 @@ func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
 	v = rep.Shapes[0].Verdict
 	assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Reason)
 	assert.Equal(t, []string{roleDecode}, v.Grow, v.Summary)
-	assert.Contains(t, v.Summary, "add decode replicas (decode sets the knee): one more makes it hold")
+	require.NotNil(t, v.Needed)
+	assert.Equal(t, whatifapi.ReportNeeded{Prefill: 2, Decode: 2, MaxReplicas: whatifapi.DefaultSizeBound}, *v.Needed)
+	assert.Contains(t, v.Summary, "needs 2 prefill + 2 decode (has 2 + 1)")
 }
 
 // The verdict's sentence is one plain sentence: it starts with the verdict,
@@ -209,10 +213,11 @@ func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
 func TestAtReplicas_VerdictIsOnePlainSentence(t *testing.T) {
 	sweep := sweepReplay.state(t)
 	cases := map[string]whatifapi.ReportVerdict{}
-	for _, q := range []whatifapi.ReportQuery{stairQuery(2, 1, 20), stairQuery(2, 2, 20), stairQuery(2, 3, 20), stairQuery(3, 4, 0)} {
+	for _, q := range []whatifapi.ReportQuery{stairQuery(2, 1, 20), stairQuery(2, 2, 20), stairQuery(2, 3, 20), stairQuery(3, 4, 0), stairQuery(2, 2, 0)} {
 		v := stairReport(t, q).Shapes[0].Verdict
-		cases[v.Verdict+" staircase"] = v
+		cases[fmt.Sprintf("staircase %d+%d at %g", q.Prefill, q.Decode, q.LoadSeen)] = v
 	}
+	require.Len(t, cases, 5)
 	nj := sweepQuery()
 	nj.TTFT = &whatifapi.ReportTarget{Seconds: 2, Percentile: 0.9}
 	cases["sweep TTFT"] = priceReport(t, sweep, nj).Shapes[0].Verdict
@@ -349,7 +354,9 @@ func TestAtReplicas_GrowthIsAWhatIf(t *testing.T) {
 	assert.InDelta(t, 2, g.X, 0)
 	assert.InDelta(t, 40, g.Rate, 1e-9)
 	assert.NotEqual(t, whatifapi.VerdictOver, g.Verdict.Verdict, g.Verdict.Summary)
-	assert.Contains(t, g.Verdict.Summary, "2 x the stated load")
+	assert.NotContains(t, g.Verdict.Summary, "load", "a growth line is short: the column names its load")
+	require.NotNil(t, g.Verdict.Needed, g.Verdict.Summary)
+	assert.Contains(t, g.Verdict.Summary, "needs ")
 
 	sh, err := whatifapi.ParseReportLoad("seen\u00d72")
 	require.NoError(t, err)
@@ -520,4 +527,66 @@ func TestAtReplicas_FarShapesAreExtrapolated(t *testing.T) {
 	assert.False(t, rep.Shapes[3].Extrapolated, rep.Shapes[3].ExtrapolatedWhy)
 	assert.True(t, rep.Shapes[4].Extrapolated)
 	assert.Contains(t, rep.Shapes[4].ExtrapolatedWhy, "prefix hit 0.30")
+}
+
+// The fleet a verdict says is needed holds every target at the load with
+// headroom, and one replica fewer of either role does not: on an
+// under-provisioned staircase (2 + 2 at its p95), one under by a decode
+// replica (2 + 1 at 20 r/s), and one over-provisioned (3 + 4 at its p95).
+func TestAtReplicas_NeededFleetHolds(t *testing.T) {
+	for _, c := range []struct {
+		np, nd int
+		load   float64
+	}{{2, 2, 0}, {2, 1, 20}, {3, 4, 0}} {
+		t.Run(fmt.Sprintf("%d+%d", c.np, c.nd), func(t *testing.T) {
+			rep := stairReport(t, stairQuery(c.np, c.nd, c.load))
+			v := rep.Shapes[0].Verdict
+			require.Contains(t, []string{whatifapi.VerdictUnder, whatifapi.VerdictOver}, v.Verdict, v.Summary)
+			require.NotNil(t, v.Needed, v.Summary)
+			n := *v.Needed
+			require.Empty(t, n.Unmet)
+			load := *rep.Load.Rate.Value
+			holds := func(np, nd int) bool {
+				t.Helper()
+				return stairReport(t, stairQuery(np, nd, load)).Shapes[0].Verdict.Checks[0].Holds
+			}
+			assert.True(t, holds(n.Prefill, n.Decode), "%d + %d at %.2f r/s", n.Prefill, n.Decode, load)
+			if n.Prefill > 1 {
+				assert.False(t, holds(n.Prefill-1, n.Decode), "%d + %d at %.2f r/s", n.Prefill-1, n.Decode, load)
+			}
+			if n.Decode > 1 {
+				assert.False(t, holds(n.Prefill, n.Decode-1), "%d + %d at %.2f r/s", n.Prefill, n.Decode-1, load)
+			}
+			assert.Contains(t, v.Summary, fmt.Sprintf("needs %d prefill + %d decode (has %d + %d)", n.Prefill, n.Decode, c.np, c.nd))
+		})
+	}
+}
+
+// The verdict judges each role on its own: three prefill and four decode
+// replicas at the staircase's p95 have a decode replica to spare even at the
+// peak, and no prefill to spare, prefill being 1.9% under its operating
+// point; the sentence says both, and the f the third prefill pod is priced
+// with, which no run learned.
+func TestAtReplicas_ShrinkIsPerRole(t *testing.T) {
+	v := stairReport(t, stairQuery(3, 4, 0)).Shapes[0].Verdict
+	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
+	assert.Equal(t, []string{roleDecode}, v.Shrink)
+	require.Len(t, v.Roles, 2)
+	byRole := map[string]whatifapi.ReportRole{}
+	for _, r := range v.Roles {
+		byRole[r.Role] = r
+	}
+	assert.True(t, byRole[roleDecode].Spare)
+	assert.Contains(t, byRole[roleDecode].Detail, "even at the peak 43.2 r/s")
+	assert.False(t, byRole[rolePrefill].Spare)
+	assert.Contains(t, byRole[rolePrefill].Detail, "1.9% under its operating point")
+	assert.Contains(t, v.Summary, "prefill f 1.5 assumed at 3 pods")
+
+	// Stated at the peak, decode still has one to spare and prefill is past
+	// its edge: the fleet is under-provisioned, and the fleet it needs has
+	// one decode replica fewer than it runs.
+	v = stairReport(t, stairQuery(3, 4, 43.24)).Shapes[0].Verdict
+	assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Summary)
+	require.NotNil(t, v.Needed)
+	assert.Less(t, v.Needed.Decode, 4, v.Summary)
 }

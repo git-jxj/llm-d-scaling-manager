@@ -79,7 +79,11 @@ type reporter struct {
 	loadWords string
 	// loadStat is the statistic the load was read at ("p95", "stated").
 	loadStat string
-	fleets   map[fleetKey]*servedFleet
+	// peak is the window's peak a shrink must also hold at, 0 with a stated
+	// load; brief shortens the verdict's sentence, for a growth line.
+	peak   float64
+	brief  bool
+	fleets map[fleetKey]*servedFleet
 	// shape is the index of the shape priced, sh the shape.
 	shape int
 	sh    whatifapi.ReportShapeAsk
@@ -207,9 +211,11 @@ func (r *reporter) shapeReport(ctx context.Context, np, nd int) (whatifapi.Repor
 	if rs.Assumed == nil {
 		rs.Assumed = []string{}
 	}
-	code := whatif.ExitCode(ev.prefillKnee, ev.decodeKnee, ev.ttftAt, ev.tpotAt)
-	if code == whatif.ExitInternal {
-		code = whatif.ExitAnswered
+	// The report answered unless the verdict could not be given: a
+	// saturated figure is an answer (the fleet saturates), not a refusal.
+	code := whatif.ExitAnswered
+	if rs.Verdict.Verdict == whatifapi.VerdictNotJudged {
+		code = whatif.ExitRefused
 	}
 	return rs, code, base.pf.refused == nil, nil
 }
@@ -243,13 +249,14 @@ func (r *reporter) growth(np, nd int) ([]whatifapi.ReportGrowth, error) {
 	if !(r.load > 0) {
 		return out, nil
 	}
-	seen, words := r.load, r.loadWords
-	defer func() { r.load, r.loadWords = seen, words }()
+	seen, words, peak := r.load, r.loadWords, r.peak
+	defer func() { r.load, r.loadWords, r.peak, r.brief = seen, words, peak, false }()
+	r.brief = true
 	for _, l := range r.q.Loads {
 		if !l.Grown() {
 			continue
 		}
-		r.load = l.X * seen
+		r.load, r.peak = l.X*seen, l.X*peak
 		r.loadWords = fmt.Sprintf("%s x the %s load (%s)", num(l.X), r.loadStat, rateWords(r.load))
 		ev, err := r.evaluate(np, nd)
 		if err != nil {
@@ -396,6 +403,7 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 		stats = loadStats(rates)
 		mean, p95, peak := stats[whatifapi.LoadMean], stats[whatifapi.LoadP95], stats[whatifapi.LoadPeak]
 		l.Mean, l.P95, l.Peak = &mean, &p95, &peak
+		l.P95IsPeak = len(rates) < minP95Cycles
 		l.Rolling = rollingPeak(r.st.ArrivalRates, cycleSeconds(r.st), whatifapi.RollingWindow.Seconds())
 	}
 	var seen float64
@@ -404,6 +412,7 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 		seen, l.Source, l.Statistic = r.q.LoadSeen, sourceAsked, loadStated
 	case len(rates) > 0:
 		seen, l.Source = stats[l.Statistic], "observed"
+		r.peak = stats[whatifapi.LoadPeak]
 	default:
 		l.Source = "none"
 		l.Rate = whatifapi.FigureOf(whatif.Unanswerable{Reason: whatif.NoTraffic,
@@ -414,7 +423,13 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 	r.load, r.loadStat = seen, l.Statistic
 	l.Rate = whatifapi.FigureOf(whatif.Answer{Value: r.load}, unitRate, false)
 	r.loadWords = fmt.Sprintf("the %s load of %s", l.Statistic, rateWords(r.load))
+	if l.P95IsPeak && l.Statistic == whatifapi.LoadP95 {
+		r.loadWords = "the p95 load (= peak, few cycles) of " + rateWords(r.load)
+	}
 }
+
+// minP95Cycles is the fewest cycles whose nearest-rank p95 is not their peak.
+const minP95Cycles = 20
 
 // loadStated is the load's statistic when the question stated the load.
 const loadStated = "stated"
@@ -507,6 +522,14 @@ type fleetEval struct {
 	op            float64
 	slo           sloAt
 	reason        string
+	// decodeOK and prefillOK are each role's own check at the rate: its knee
+	// with headroom (dOp, pOp) and its own target (TPOT for decode, TTFT
+	// for prefill).
+	decodeOK, prefillOK bool
+	dOp, pOp            float64
+	// fAssumed names an f the prefill side was priced with that no run
+	// learned at its count, "" with none.
+	fAssumed string
 }
 
 // sloAt is the targets judged at rate on sf: each target's figure, whether
@@ -581,10 +604,19 @@ func (r *reporter) sloAtRate(sf *servedFleet, rate float64, words bool) sloAt {
 // evaluate prices the fleet at np prefill and nd decode replicas at the load.
 // An error is a fleet that could not be priced at all, not a refused figure.
 func (r *reporter) evaluate(np, nd int) (fleetEval, error) {
+	return r.evaluateAt(np, nd, r.load, true)
+}
+
+// evaluateAt prices the fleet at np prefill and nd decode replicas at rate;
+// words adds what an assumed term does there to the shape's assumed list.
+func (r *reporter) evaluateAt(np, nd int, rate float64, words bool) (fleetEval, error) {
 	e := fleetEval{np: np, nd: nd}
 	sf, err := r.fleet(np, nd, r.sloTTFTQ(), r.sloTPOTQ())
 	if err != nil {
 		return e, fmt.Errorf("pricing %s: %w", fleetText(np, nd), err)
+	}
+	if sf.pf.refused == nil && sf.pf.fleet.Prefill.ImbalanceAssumed {
+		e.fAssumed = fmt.Sprintf("prefill f %s assumed at %d pods", num(sf.pf.fleet.Prefill.Imbalance), sf.pf.fleet.Prefill.Replicas)
 	}
 	e.prefillKnee, e.decodeKnee = sf.PrefillKnee(), sf.DecodeKnee()
 	pk, pok := e.prefillKnee.(whatif.Answer)
@@ -600,27 +632,27 @@ func (r *reporter) evaluate(np, nd int) (fleetEval, error) {
 		e.reason = "the decode knee is not priced: " + refusedText(e.decodeKnee.(whatif.Unanswerable))
 		return e, nil
 	}
-	if !(r.load > 0) {
+	if !(rate > 0) {
 		e.reason = "no load to judge at"
 		return e, nil
 	}
 	var parts []string
 	e.known, e.holds = true, true
 	e.op = r.headroom * e.knee
-	if r.load > e.op {
+	if rate > e.op {
 		e.holds, e.under, e.pastOperating = false, true, true
-		if r.load >= e.knee {
-			parts = append(parts, fmt.Sprintf("%.2f r/s is %.1fx the fleet knee of %.2f r/s", r.load, r.load/e.knee, e.knee))
+		if rate >= e.knee {
+			parts = append(parts, fmt.Sprintf("%.2f r/s is %.1fx the fleet knee of %.2f r/s", rate, rate/e.knee, e.knee))
 		} else {
-			parts = append(parts, fmt.Sprintf("%.2f r/s is above %s x the fleet knee %.2f r/s = %.2f r/s", r.load, num(r.headroom), e.knee, e.op))
+			parts = append(parts, fmt.Sprintf("%.2f r/s is above %s x the fleet knee %.2f r/s = %.2f r/s", rate, num(r.headroom), e.knee, e.op))
 		}
 	} else {
-		parts = append(parts, fmt.Sprintf("%.2f r/s within %s x the fleet knee %.2f r/s = %.2f r/s", r.load, num(r.headroom), e.knee, e.op))
+		parts = append(parts, fmt.Sprintf("%.2f r/s within %s x the fleet knee %.2f r/s = %.2f r/s", rate, num(r.headroom), e.knee, e.op))
 	}
 	if !e.prefillPriced {
 		parts = append(parts, "prefill not priced ("+reasonOf(e.prefillKnee)+")")
 	}
-	s := r.sloAtRate(sf, r.load, true)
+	s := r.sloAtRate(sf, rate, words)
 	e.ttftAt, e.tpotAt, e.slo = s.ttft, s.tpot, s
 	parts = append(parts, s.parts...)
 	switch {
@@ -634,6 +666,21 @@ func (r *reporter) evaluate(np, nd int) (fleetEval, error) {
 	// A known miss decides the check whatever else was not judged.
 	e.known = e.known || e.under
 	e.reason = strings.Join(parts, "; ")
+
+	e.dOp = r.headroom * dk.Value
+	e.decodeOK = rate <= e.dOp
+	if r.tpot != nil {
+		met, known := tpotMeets(s.tpot, r.tpot.Seconds)
+		e.decodeOK = e.decodeOK && met && known
+	}
+	if pok {
+		e.pOp = r.headroom * pk.Value
+		e.prefillOK = rate <= e.pOp
+		if r.ttft != nil {
+			met, known := whatif.TTFTMeets(s.ttft, whatif.TTFTTarget{Seconds: r.ttft.Seconds, Percentile: r.ttft.Percentile})
+			e.prefillOK = e.prefillOK && met && known
+		}
+	}
 	return e, nil
 }
 
@@ -687,17 +734,55 @@ func valueOf(r whatif.Result) (float64, bool) {
 	return 0, false
 }
 
-// reasonOf is a refusal's reason, "saturated" for saturation, "" on an
-// answer.
+// reasonOf is a refusal's reason in plain words (plainReason), "" on an
+// answer: the codes are the JSON's.
 func reasonOf(r whatif.Result) string {
 	u, ok := r.(whatif.Unanswerable)
-	switch {
-	case !ok:
+	if !ok {
 		return ""
-	case u.Reason == whatif.Saturated:
-		return "saturated"
 	}
-	return string(u.Reason)
+	return plainReason(string(u.Reason))
+}
+
+// plainReasons are the reasons a report's text names, in words.
+var plainReasons = map[string]string{
+	string(whatif.Saturated):             "saturated",
+	string(whatif.AboveDecodeOnset):      "saturated",
+	string(whatif.NoPrefillCapacity):     "no prefill speed learned",
+	string(whatif.NoFixedLatency):        "no fixed prefill latency learned",
+	string(whatif.NoImbalance):           "no prefill imbalance learned",
+	string(whatif.NoPrefillReplicas):     "no prefill replica",
+	string(whatif.FlowControlUnknown):    "flow-control thresholds unknown",
+	string(whatif.TPOTBucketTooWide):     "TPOT bucket too wide",
+	string(whatif.NoTPOTHistogram):       "no TPOT histogram",
+	string(whatif.TPOTQuantileUnbounded): "TPOT past the histogram",
+	string(whatif.TokenGapPercentile):    "not a per-request percentile",
+	string(whatif.NoTraffic):             "no traffic",
+	string(whatif.NoLine):                "no decode line",
+	string(whatif.PinnedDefaultB):        "no decode line",
+	string(whatif.NoCapacity):            "no KV capacity",
+	string(whatif.NoBatchCap):            "no batch cap",
+	string(whatif.TargetBelowFloor):      "target below the floor",
+	string(whatif.NoDecodeReplicas):      "no decode replica",
+	string(whatif.MalformedHistogram):    "unreadable histogram",
+	string(whatif.TooManySlots):          "too many slots",
+	string(whatif.InvalidInput):          "invalid input",
+}
+
+// plainReason is a reason code in words; an unknown code is "refused".
+func plainReason(code string) string {
+	if w, ok := plainReasons[code]; ok {
+		return w
+	}
+	return "refused"
+}
+
+// plainText is s with every reason code it names put in words.
+func plainText(s string) string {
+	for code, w := range plainReasons {
+		s = strings.ReplaceAll(s, code, w)
+	}
+	return s
 }
 
 // capacity fills the capacity rows.
@@ -740,7 +825,11 @@ func prefillBinds(sf *servedFleet) string {
 		return ""
 	}
 	p := sf.pf.fleet.Prefill
-	return fmt.Sprintf("prefill compute: N_p %d x V_P / (f %.3g x %s tokens)", p.Replicas, sf.pf.in.Imbalance, num(round(p.PromptTokens)))
+	margin := ""
+	if p.VPMargin > 0 {
+		margin = fmt.Sprintf(" x (1 - %.2f margin)", p.VPMargin)
+	}
+	return fmt.Sprintf("prefill compute: N_p %d x V_P%s / (f %.3f x %s tokens)", p.Replicas, margin, sf.pf.in.Imbalance, num(round(p.PromptTokens)))
 }
 
 // decodeBinds says what sets the decode knee.
@@ -991,19 +1080,31 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 	return whatif.Answer{Value: t + max(ol-1, 0)*p}
 }
 
-// verdict judges the fleet at the load: under-provisioned on a known miss;
-// not judged when its own check is not, or when the prefill side does not
-// price and so decode alone was judged; over-provisioned when one replica
-// fewer of a role still holds every target with headroom at the same load;
-// right-sized otherwise. Summary says it in one plain sentence.
+// verdict judges the fleet at the load:
+//   - UNDER-PROVISIONED on a known miss at the load judged;
+//   - NOT JUDGED when its own check is not judged, or when the prefill side
+//     does not price and decode alone holds;
+//   - OVER-PROVISIONED when a role has a replica to spare: one fewer of it
+//     holds the whole fleet at the load judged, and the role's own check
+//     (knee and target) at the peak too, since removing capacity is the
+//     costly mistake;
+//   - RIGHT-SIZED otherwise.
+//
+// Each role's standing is reported (Roles), and on UNDER and OVER the
+// smallest fleet that holds (Needed). Summary says it in one plain sentence.
 func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict, error) {
-	v := whatifapi.ReportVerdict{Scope: whatifapi.ScopeFleet, Shrink: []string{}, Grow: []string{},
+	v := whatifapi.ReportVerdict{Scope: whatifapi.ScopeFleet, Roles: []whatifapi.ReportRole{}, Shrink: []string{}, Grow: []string{},
 		Checks: []whatifapi.ReportCheck{check(base)}}
+	scope := ""
 	if base.kneeOK && !base.prefillPriced {
-		v.Scope = whatifapi.ScopeDecodeOnly
+		v.Scope, scope = whatifapi.ScopeDecodeOnly, " (decode only)"
 	}
 	r.results = append(r.results, base.ttftAt, base.tpotAt)
 	v.Reason = fleetText(np, nd) + ": " + base.reason
+	lead := ""
+	if !r.brief {
+		lead = "at " + r.loadWords + ", "
+	}
 	switch {
 	case !base.kneeOK:
 		v.Verdict = whatifapi.VerdictNotJudged
@@ -1015,85 +1116,218 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		return v, nil
 	case base.under:
 		v.Verdict = whatifapi.VerdictUnder
-		grow, err := r.grow(np, nd, base, &v)
+		cause, role, why := r.underWords(base)
+		v.Reason += ". Add " + role + ": " + why
+		need, notes, err := r.needed(np, nd, base, &v)
 		if err != nil {
 			return v, err
 		}
-		cause, _, _ := r.underWords(base)
-		v.Summary = fmt.Sprintf("%s: %s; %s.", v.Verdict, cause, grow)
+		v.Summary = fmt.Sprintf("%s%s: %s%s; %s%s.", v.Verdict, scope, lead, cause, need, noteText(notes))
 		return v, nil
 	case !base.known:
 		v.Verdict = whatifapi.VerdictNotJudged
-		v.Summary = fmt.Sprintf("%s: at %s, %s cannot be priced (%s).", v.Verdict, r.loadWords, base.slo.unknown,
+		v.Summary = fmt.Sprintf("%s: %s%s cannot be priced (%s).", v.Verdict, lead, base.slo.unknown,
 			refusalWords(base.slo.unknownFig))
 		return v, nil
 	case !base.prefillPriced:
 		v.Verdict = whatifapi.VerdictNotJudged
 		v.Reason += ". The prefill side is not priced: decode alone cannot show the fleet right-sized or over-provisioned"
-		v.Summary = fmt.Sprintf("%s: the prefill side is not priced (%s); decode alone holds %s at %s.", v.Verdict,
-			refusalWords(base.prefillKnee), r.targetWords(), r.loadWords)
+		v.Summary = fmt.Sprintf("%s: the prefill side is not priced (%s); decode alone holds %s%s.", v.Verdict,
+			refusalWords(base.prefillKnee), r.targetWords(), strings.TrimSuffix(" "+lead, ", "))
 		return v, nil
 	}
-	var fewer []fleetEval
-	if np > 1 {
-		e, err := r.evaluate(np-1, nd)
-		if err != nil {
-			return v, err
-		}
-		fewer = append(fewer, e)
-	}
-	if nd > 1 {
-		e, err := r.evaluate(np, nd-1)
-		if err != nil {
-			return v, err
-		}
-		fewer = append(fewer, e)
-	}
-	var held, failed []string
-	restsOnDecode := false
-	for _, e := range fewer {
-		v.Checks = append(v.Checks, check(e))
-		role := roleDecodeWord
-		if e.np < np {
-			role = rolePrefill
-		}
-		if e.holds {
-			v.Shrink = append(v.Shrink, role)
-			held = append(held, fleetText(e.np, e.nd)+" holds: "+e.reason)
-			restsOnDecode = restsOnDecode || role == roleDecodeWord || e.binds == roleDecodeWord
-			continue
-		}
-		failed = append(failed, fleetText(e.np, e.nd)+" does not: "+e.reason)
+	roles, restsOnDecode, notes, err := r.roles(np, nd, base, &v)
+	if err != nil {
+		return v, err
 	}
 	if len(v.Shrink) > 0 {
 		v.Verdict = whatifapi.VerdictOver
-		v.Reason = fmt.Sprintf("one %s replica fewer still holds every target at %.2f r/s with headroom. %s",
-			strings.Join(v.Shrink, " or one "), r.load, strings.Join(held, ". "))
-		v.Summary = fmt.Sprintf("%s: at %s, one %s replica fewer still holds %s with headroom", v.Verdict, r.loadWords,
-			strings.Join(v.Shrink, " or one "), r.targetWords())
+		need, more, err := r.needed(np, nd, base, &v)
+		if err != nil {
+			return v, err
+		}
+		for _, n := range more {
+			if !slices.Contains(notes, n) {
+				notes = append(notes, n)
+			}
+		}
 		if restsOnDecode {
 			// The decode knee reads high on the goldens: a decode replica
 			// removed on it is the step most exposed to that.
 			v.Reason += ". " + decodeKneeNotValidated
-			v.Summary += ", but the decode knee this rests on is not validated and has read 44% to 103% high"
+			notes = append([]string{"decode knee unvalidated"}, notes...)
 		}
-		v.Summary += "."
+		v.Summary = fmt.Sprintf("%s: %s%s; %s%s.", v.Verdict, lead, roles, need, noteText(notes))
 		return v, nil
 	}
 	v.Verdict = whatifapi.VerdictRight
-	if len(failed) > 0 {
-		v.Reason += ". " + strings.Join(failed, ". ")
-		v.Summary = fmt.Sprintf("%s: at %s the fleet holds %s with headroom, and one replica fewer of any role would not.",
-			v.Verdict, r.loadWords, r.targetWords())
+	if r.brief {
+		v.Summary = v.Verdict + ": holds, no replica to spare."
 	} else {
-		v.Reason += ". No role has a replica to spare"
-		v.Summary = fmt.Sprintf("%s: at %s the fleet holds %s with headroom, and no role has a replica to spare.",
-			v.Verdict, r.loadWords, r.targetWords())
+		v.Summary = fmt.Sprintf("%s: %sthe fleet holds %s with headroom; %s%s.", v.Verdict, lead, r.targetWords(), roles, noteText(notes))
 	}
 	if r.ttft == nil && r.tpot == nil {
 		v.Reason += ". " + noSLONote
 	}
 	return v, nil
+}
+
+// noteText is notes in parentheses, "" with none.
+func noteText(notes []string) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(notes, "; ") + ")"
+}
+
+// roles judges each role's own standing at the load: a role has a replica
+// to spare when one fewer of it holds the whole fleet at the load judged,
+// and its own check (knee and target) at the peak as well. It fills
+// v.Roles, v.Shrink and v.Checks, and says the roles in words, whether a
+// spare rests on the decode knee, and the assumed f any of it rests on.
+func (r *reporter) roles(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) (string, bool, []string, error) {
+	shrinkAt := max(r.load, r.peak)
+	var words, notes []string
+	note := func(e fleetEval) {
+		if e.fAssumed != "" && !slices.Contains(notes, e.fAssumed) {
+			notes = append(notes, e.fAssumed)
+		}
+	}
+	note(base)
+	restsOnDecode := false
+	for _, role := range []string{roleDecodeWord, rolePrefill} {
+		n, fp, fd, op := nd, np, nd-1, base.dOp
+		if role == rolePrefill {
+			n, fp, fd, op = np, np-1, nd, base.pOp
+		}
+		rr := whatifapi.ReportRole{Role: role}
+		switch {
+		case n <= 1:
+			rr.Detail = "no spare (one replica)"
+		default:
+			e, err := r.evaluateAt(fp, fd, r.load, false)
+			if err != nil {
+				return "", false, nil, err
+			}
+			v.Checks = append(v.Checks, check(e))
+			rr.Spare = e.holds
+			peak := ""
+			if rr.Spare && shrinkAt > r.load {
+				ep, err := r.evaluateAt(fp, fd, shrinkAt, false)
+				if err != nil {
+					return "", false, nil, err
+				}
+				rr.Spare = (role == roleDecodeWord && ep.decodeOK) || (role == rolePrefill && ep.prefillOK)
+				peak = " even at the peak " + rateWords(shrinkAt)
+				if !rr.Spare {
+					rr.Detail = "no spare: one fewer misses at the peak " + rateWords(shrinkAt)
+				}
+			}
+			switch {
+			case rr.Spare:
+				rr.Detail = "one fewer holds" + peak
+				v.Shrink = append(v.Shrink, role)
+				restsOnDecode = restsOnDecode || role == roleDecodeWord || e.binds == roleDecodeWord
+				note(e)
+			case rr.Detail == "":
+				rr.Detail = "no spare" + r.marginWords(op)
+			}
+		}
+		if r.brief {
+			rr.Detail, _, _ = strings.Cut(rr.Detail, " (")
+		}
+		v.Roles = append(v.Roles, rr)
+		words = append(words, role+": "+rr.Detail)
+	}
+	return strings.Join(words, "; "), restsOnDecode, notes, nil
+}
+
+// marginWords is how close the load is to a role's operating point op.
+func (r *reporter) marginWords(op float64) string {
+	switch {
+	case !(op > 0):
+		return ""
+	case r.load <= op:
+		return fmt.Sprintf(" (%.1f%% under its operating point)", 100*(op-r.load)/op)
+	}
+	return " (past its operating point)"
+}
+
+// needed finds the smallest fleet that holds every target at the load with
+// headroom, by POST /v1/size's search (whatifapi.SmallestFleet) on the
+// report's own check, and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
+// With the prefill side not priced, it is the fewest decode replicas whose
+// own check holds. It fills v.Needed and adds the fleets tried to nothing:
+// the checks list the fleets the verdict rests on. notes are the assumed f
+// the answer rests on.
+func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) (string, []string, error) {
+	bound := whatifapi.DefaultSizeBound
+	out := &whatifapi.ReportNeeded{MaxReplicas: bound}
+	v.Needed = out
+	at := func(n whatifapi.FleetCounts) (fleetEval, error) {
+		return r.evaluateAt(n.Prefill, n.Decode, r.load, false)
+	}
+	decodeHolds := func(n whatifapi.FleetCounts) (bool, error) {
+		e, err := at(n)
+		return err == nil && e.decodeOK, err
+	}
+	if !base.prefillPriced {
+		d, ok, err := whatifapi.SmallestCount(1, bound, func(d int) (bool, error) {
+			return decodeHolds(whatifapi.FleetCounts{Prefill: max(np, 1), Decode: d})
+		})
+		switch {
+		case err != nil:
+			return "", nil, err
+		case !ok:
+			out.Unmet = roleDecodeWord
+			return fmt.Sprintf("no count up to %d decode replicas holds", bound), nil, nil
+		}
+		out.Decode, out.DecodeOnly = d, true
+		if d > nd {
+			v.Grow = append(v.Grow, roleDecodeWord)
+		}
+		return fmt.Sprintf("needs at least %d decode (has %d)", d, nd), nil, nil
+	}
+	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, decodeHolds,
+		func(n whatifapi.FleetCounts) (bool, error) {
+			e, err := at(n)
+			return err == nil && e.holds, err
+		})
+	switch {
+	case err != nil:
+		return "", nil, err
+	case unmet != "":
+		out.Unmet = unmet
+		return fmt.Sprintf("no fleet up to %d replicas of each role holds", bound), nil, nil
+	}
+	out.Prefill, out.Decode = n.Prefill, n.Decode
+	if n.Prefill > np {
+		v.Grow = append(v.Grow, rolePrefill)
+	}
+	if n.Decode > nd {
+		v.Grow = append(v.Grow, roleDecodeWord)
+	}
+	var notes []string
+	if e, err := at(n); err != nil {
+		return "", nil, err
+	} else if e.fAssumed != "" {
+		notes = append(notes, e.fAssumed)
+	}
+	words := []string{fmt.Sprintf("needs %d prefill + %d decode (has %d + %d)", n.Prefill, n.Decode, np, nd)}
+	for _, alt := range []whatifapi.FleetCounts{{Prefill: n.Prefill - 1, Decode: n.Decode + 1}, {Prefill: n.Prefill + 1, Decode: n.Decode - 1}} {
+		if alt.Prefill < 1 || alt.Decode < 1 || alt.Prefill > bound || alt.Decode > bound {
+			continue
+		}
+		e, err := at(alt)
+		if err != nil {
+			return "", nil, err
+		}
+		if e.holds {
+			out.Alternatives = append(out.Alternatives, alt)
+			words = append(words, fmt.Sprintf("or %d + %d", alt.Prefill, alt.Decode))
+		}
+	}
+	return strings.Join(words, ", "), notes, nil
 }
 
 // targetWords names what a holding fleet holds: every target, or its
@@ -1108,27 +1342,29 @@ func (r *reporter) targetWords() string {
 // underWords is why an under-provisioned fleet misses, in words, the role
 // to add replicas of, and why that role: the knee's role when the miss is
 // saturation, decode for TPOT, and for TTFT the role whose wait is the larger
-// part of it at the load.
+// part of it at the load. Brief, the cause leaves out the load it is at.
 func (r *reporter) underWords(e fleetEval) (cause, role, why string) {
 	s := e.slo
 	knee := e.binds + " sets the knee"
 	switch {
 	case e.pastOperating && r.load >= e.knee:
-		return fmt.Sprintf("at %s, %.1fx the fleet knee of %s, the fleet saturates", r.loadWords, r.load/e.knee, rateWords(e.knee)),
-			e.binds, knee
+		if r.brief {
+			return fmt.Sprintf("%.1fx the fleet knee (%s)", r.load/e.knee, rateWords(e.knee)), e.binds, knee
+		}
+		return fmt.Sprintf("%.1fx the fleet knee of %s, the fleet saturates", r.load/e.knee, rateWords(e.knee)), e.binds, knee
 	case e.pastOperating:
-		return fmt.Sprintf("at %s the fleet runs past its operating point of %s (%s of its %s knee)", r.loadWords,
+		return fmt.Sprintf("the fleet runs past its operating point of %s (%s of its %s knee)",
 			rateWords(e.op), num(r.headroom), rateWords(e.knee)), e.binds, knee
 	case s.ttftMissed && s.onset:
-		return fmt.Sprintf("at %s TTFT %s misses", r.loadWords, whatifapi.ReportStatisticName(r.ttft.Percentile)),
+		return fmt.Sprintf("TTFT %s misses, past the prefill flow-control onset", whatifapi.ReportStatisticName(r.ttft.Percentile)),
 			rolePrefill, "the rate is past the prefill flow-control onset, where the router queues"
 	case s.ttftMissed:
 		role, why := ttftRole(s.ttft, e)
-		return r.missWords("TTFT", r.ttft, s.ttft), role, why
+		return missWords("TTFT", r.ttft, s.ttft), role, why
 	case s.tpotMissed:
-		return r.missWords("TPOT", r.tpot, s.tpot), roleDecodeWord, "decode sets TPOT"
+		return missWords("TPOT", r.tpot, s.tpot), roleDecodeWord, "decode sets TPOT"
 	}
-	return "at " + r.loadWords + " a target is missed", e.binds, knee
+	return "a target is missed", e.binds, knee
 }
 
 // ttftRole is the role that sets a missed TTFT at the load, and why: the
@@ -1148,41 +1384,12 @@ func ttftRole(t whatif.Result, e fleetEval) (role, why string) {
 }
 
 // missWords is one missed target in words.
-func (r *reporter) missWords(name string, t *whatifapi.ReportTarget, fig whatif.Result) string {
+func missWords(name string, t *whatifapi.ReportTarget, fig whatif.Result) string {
 	label := name + " " + whatifapi.ReportStatisticName(t.Percentile)
 	if v, ok := valueOf(fig); ok {
-		return fmt.Sprintf("at %s %s is %s against a %s target", r.loadWords, label, secondsWords(v), secondsWords(t.Seconds))
+		return fmt.Sprintf("%s is %s against a %s target", label, secondsWords(v), secondsWords(t.Seconds))
 	}
-	return fmt.Sprintf("at %s %s is saturated", r.loadWords, label)
-}
-
-// grow checks one more replica of each role that prices at the load, adds
-// the fleets tried to v's checks and the roles whose one more replica holds
-// to v.Grow, and says what to add.
-func (r *reporter) grow(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) (string, error) {
-	type try struct {
-		role   string
-		np, nd int
-	}
-	tries := []try{{roleDecodeWord, np, nd + 1}}
-	if base.prefillPriced {
-		tries = []try{{rolePrefill, np + 1, nd}, {roleDecodeWord, np, nd + 1}}
-	}
-	for _, t := range tries {
-		e, err := r.evaluate(t.np, t.nd)
-		if err != nil {
-			return "", err
-		}
-		v.Checks = append(v.Checks, check(e))
-		if e.holds {
-			v.Grow = append(v.Grow, t.role)
-		}
-	}
-	_, role, why := r.underWords(base)
-	if slices.Contains(v.Grow, role) {
-		return fmt.Sprintf("add %s replicas (%s): one more makes it hold", role, why), nil
-	}
-	return fmt.Sprintf("add %s replicas (%s): one more is not enough", role, why), nil
+	return label + " is saturated"
 }
 
 // refusalWords is why a figure is refused, in words a reader acts on and

@@ -1,33 +1,32 @@
 ns-01/model-02  P/D 1 prefill (variant-02) + 1 decode (variant-01)  window 2026-11-05 21:16-21:36Z, cycle 83 of 83
 load judged     26.90 r/s, the p95 of the 80 of 83 cycles with traffic
-load seen       per cycle: mean 6.91, p95 26.90, peak 30.04 r/s; busiest 2m0s (8 cycles): 25.94 r/s
+load seen       per cycle (1-minute rates): mean 6.91, p95 26.90, peak 30.04 r/s; busiest 2m0s (8 cycles): 25.94 r/s
 SLO             TPOT mean 5.0 ms (asked)
 cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
 mark = the SLO (TPOT mean 5.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
 summary     50%               80%               100%            seen
   measured  -/2.5m @15.44 ok  -/3.0m @24.70 ok  -/- @30.88 SAT  -/3.1m @26.90 ok
 verdicts
-  measured  UNDER-PROVISIONED: at the p95 load of 26.9 r/s the fleet runs past its operating point of 26.2 r/s (0.85 of its 30.9 r/s knee); add decode replicas (decode sets the knee): one more makes it hold.
+  measured  UNDER-PROVISIONED (decode only): at the p95 load of 26.9 r/s, the fleet runs past its operating point of 26.2 r/s (0.85 of its 30.9 r/s knee); needs at least 2 decode (has 1).
 
 shape measured: IL 1000 OL 602, prefix hit 0.00 (measured, cycles 64-83)
 utilization at the load judged
   decode        KV fill 0.540 (band top 0.7), slots 51 of 64, wait p 0.119
-  prefill       utilization pooled NoPrefillCapacity, worst pod NoPrefillCapacity
-  verdict       UNDER-PROVISIONED: at the p95 load of 26.9 r/s the fleet runs past its operating point of 26.2 r/s (0.85 of its 30.9 r/s knee); add decode replicas (decode sets the knee): one more makes it hold.
+  prefill       utilization pooled no prefill speed learned, worst pod no prefill speed learned
+  verdict       UNDER-PROVISIONED (decode only): at the p95 load of 26.9 r/s, the fleet runs past its operating point of 26.2 r/s (0.85 of its 30.9 r/s knee); needs at least 2 decode (has 1).
 capacity            req/s     out tok/s   bound by
-  prefill knee      NoPrefillCapacity            P1 refused V_P of variant-02: NoPrefillCapacity; pass --assume-vp for a flagged answer
+  prefill knee      no prefill speed learned            P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
   decode knee       30.88     18589       decode batch cap at fill 0.680
   fleet knee        30.88     18589       decode (prefill not priced)
   operating (0.85)  26.25     15801       0.85 x fleet knee (scaleUpThreshold)
-  max at SLO        NoPrefillCapacity            no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused V_P of variant-02: NoPrefillCapacity; pass --assume-vp for a flagged answer
-SLO vs load        r/s    TTFT p50/90 ms     TPOT mean/p90 ms             e2e mean (sum)
-  50% of knee      15.44  NoPrefillCapacity  2.50/TPOTBucketTooWide       NoPrefillCapacity
-  80% of knee      24.70  NoPrefillCapacity  2.99/TPOTBucketTooWide       NoPrefillCapacity
-  100% of knee     30.88  NoPrefillCapacity  saturated/TPOTBucketTooWide  NoPrefillCapacity
-  load seen (87%)  26.90  NoPrefillCapacity  3.14/TPOTBucketTooWide       NoPrefillCapacity
+  max at SLO        no prefill speed learned            no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
+SLO vs load        r/s    TTFT p50/90 ms            TPOT mean/p90 ms                e2e mean (sum)
+  50% of knee      15.44  no prefill speed learned  2.50/TPOT bucket too wide       no prefill speed learned
+  80% of knee      24.70  no prefill speed learned  2.99/TPOT bucket too wide       no prefill speed learned
+  100% of knee     30.88  no prefill speed learned  saturated/TPOT bucket too wide  no prefill speed learned
+  load seen (87%)  26.90  no prefill speed learned  3.14/TPOT bucket too wide       no prefill speed learned
 checks
-  1 prefill + 1 decode  does not hold: 26.90 r/s is above 0.85 x the fleet knee 30.88 r/s = 26.25 r/s; prefill not priced (NoPrefillCapacity); TPOT mean 3.1 ms meets 5.0 ms
-  1 prefill + 2 decode  holds: 26.90 r/s within 0.85 x the fleet knee 61.76 r/s = 52.49 r/s; prefill not priced (NoPrefillCapacity); TPOT mean 2.4 ms meets 5.0 ms
+  1 prefill + 1 decode  does not hold: 26.90 r/s is above 0.85 x the fleet knee 30.88 r/s = 26.25 r/s; prefill not priced (no prefill speed learned); TPOT mean 3.1 ms meets 5.0 ms
 flags: DecodeOnly; ExtrapolatedFill; CoarseTPOTBucket; EngineTPOTHistogram
 
 not validated:
