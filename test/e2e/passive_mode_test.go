@@ -376,6 +376,25 @@ func specValues(samples []replicaSample) []int32 {
 	return out
 }
 
+// expectSpecHeld fails if any read of spec.replicas saw a value other than
+// want. A read that failed (the API server timing out) is recorded as -1 and
+// says nothing about the Deployment, so it is skipped. A window where most
+// reads failed proves nothing, so fewer than half succeeding fails too.
+func expectSpecHeld(label string, samples []replicaSample, want int32) {
+	GinkgoHelper()
+	read := 0
+	for _, s := range samples {
+		if s.err != "" {
+			continue
+		}
+		read++
+		Expect(s.spec).To(Equal(want), "%s: spec.replicas moved to %d at +%s; the timeline is above", label, s.spec, s.at)
+	}
+	Expect(read).To(BeNumerically(">", 0), "%s: no read of spec.replicas succeeded; the timeline is above", label)
+	Expect(2*read).To(BeNumerically(">=", len(samples)),
+		"%s: only %d of %d reads of spec.replicas succeeded; the timeline is above", label, read, len(samples))
+}
+
 // metricSample is one read of the controller's published view of a model.
 type metricSample struct {
 	at                   time.Duration
@@ -446,9 +465,7 @@ func (m passiveModel) expectHeld(pc *utils.PrometheusClient, label string, held 
 			label, s.at, s.desired, s.current, s.mode, s.on, d, s.wantsAway, s.hpa)
 		wanted = wanted || s.wantsAway
 	}
-	for _, s := range samples {
-		Expect(s.spec).To(Equal(held), "%s: spec.replicas moved to %d at +%s; the timeline is above", label, s.spec, s.at)
-	}
+	expectSpecHeld(label, samples, held)
 	Expect(wanted).To(BeTrue(), "%s: the controller never wanted to scale %s from %d during the window, so the hold proved nothing", label, d, held)
 	Expect(metrics[len(metrics)-1].on).To(Equal(1.0), "%s: llmsm_passive_mode{mode=%q} was not 1 at the end of the window", label, mode)
 }
@@ -851,10 +868,7 @@ var _ = Describe("Passive mode: hold at zero", Serial, Label("full", "passive"),
 		sendQueuedRequests(fmt.Sprintf("passive-zero-trigger-%d", time.Now().Unix()), m.modelID())
 		rec := recordReplicas(m.deployment())
 		time.Sleep(passiveHoldWindow)
-		samples := rec.Stop("case3-zero")
-		for _, s := range samples {
-			Expect(s.spec).To(Equal(int32(0)), "a passive model at zero was woken at +%s", s.at)
-		}
+		expectSpecHeld("case3-zero: a passive model at zero was woken", rec.Stop("case3-zero"), 0)
 		expectNoWake(since, m.modelID(), m.scaledObject())
 		_, _, on := m.metricsOf(pc, "hold")
 		GinkgoWriter.Printf("PASSIVE-METRICS case3 llmsm_passive_mode{mode=\"hold\"}=%v\n", on)
@@ -865,10 +879,7 @@ var _ = Describe("Passive mode: hold at zero", Serial, Label("full", "passive"),
 		m.scale(2)
 		rec := recordReplicas(m.deployment())
 		time.Sleep(passiveHoldWindow)
-		samples := rec.Stop("case3-scale-0-to-2")
-		for _, s := range samples {
-			Expect(s.spec).To(Equal(int32(2)), "the count set by hand did not stick: %d at +%s", s.spec, s.at)
-		}
+		expectSpecHeld("case3-scale-0-to-2: the count set by hand did not stick", rec.Stop("case3-scale-0-to-2"), 2)
 		d, cur, on := m.metricsOf(pc, "hold")
 		GinkgoWriter.Printf("PASSIVE-METRICS case3-after-scale llmsm_desired_replicas=%v llmsm_current_replicas=%v llmsm_passive_mode{mode=\"hold\"}=%v\n", d, cur, on)
 	})
@@ -927,9 +938,7 @@ var _ = Describe("Passive mode: observe beside a foreign trigger", Serial, Label
 		sendQueuedRequests(fmt.Sprintf("passive-obs-trigger-%d", time.Now().Unix()), m.modelID())
 		rec := recordReplicas(m.deployment())
 		time.Sleep(passiveHoldWindow)
-		for _, s := range rec.Stop("case5-observe-zero") {
-			Expect(s.spec).To(Equal(int32(0)), "an observed model at zero was woken at +%s", s.at)
-		}
+		expectSpecHeld("case5-observe-zero: an observed model at zero was woken", rec.Stop("case5-observe-zero"), 0)
 		expectNoWake(since, m.modelID(), m.scaledObject())
 	})
 
