@@ -4,6 +4,7 @@
 --engine-image
 --force
 --from
+--gpus-per-replica
 --kube-state-metrics
 --max-num-seqs
 --max-running-requests
@@ -1607,6 +1608,7 @@ l4
 l40
 label
 label_
+labelled
 labels
 lagFraction
 landed
