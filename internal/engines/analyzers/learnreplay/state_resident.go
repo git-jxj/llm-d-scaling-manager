@@ -81,11 +81,10 @@ func noteResident(resident map[string][]residentSample, in domain.AnalyzerInput,
 		s.running += rm.RunningRequests
 	}
 	for v, s := range now {
-		kept := append(resident[v], *s)
-		if len(kept) > shapeCycles {
-			kept = slices.Clone(kept[len(kept)-shapeCycles:])
+		resident[v] = append(resident[v], *s)
+		if n := len(resident[v]); n > shapeCycles {
+			resident[v] = slices.Clone(resident[v][n-shapeCycles:])
 		}
-		resident[v] = kept
 	}
 }
 
