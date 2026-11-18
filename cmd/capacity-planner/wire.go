@@ -182,14 +182,18 @@ type wireInputs struct {
 	FillBand       wireInterval `json:"fillBand"`
 	CapacityTokens float64      `json:"capacityTokens"`
 	KVPerRequest   float64      `json:"kvPerRequest"`
-	Shape          wireShape    `json:"shape"`
-	BatchCap       int64        `json:"batchCap"`
-	BatchCapSource string       `json:"batchCapSource"`
-	Ranks          int          `json:"ranks"`
-	Replicas       int          `json:"replicas"`
-	ReplicasFrom   string       `json:"replicasFrom"`
-	Headroom       *float64     `json:"headroom,omitempty"`
-	Rate           *float64     `json:"rate,omitempty"`
+	// KVPerRequestSource says where KVPerRequest came from: measured on the
+	// decode rows, that reading scaled to a stated shape, or the whole
+	// context with no reading (pricedVariant.residentKV).
+	KVPerRequestSource string    `json:"kvPerRequestSource"`
+	Shape              wireShape `json:"shape"`
+	BatchCap           int64     `json:"batchCap"`
+	BatchCapSource     string    `json:"batchCapSource"`
+	Ranks              int       `json:"ranks"`
+	Replicas           int       `json:"replicas"`
+	ReplicasFrom       string    `json:"replicasFrom"`
+	Headroom           *float64  `json:"headroom,omitempty"`
+	Rate               *float64  `json:"rate,omitempty"`
 	// RateSource says what set Rate where a flag did not: the prefill knee.
 	RateSource string    `json:"rateSource,omitempty"`
 	TPOT       *wireTPOT `json:"tpot,omitempty"`
@@ -550,7 +554,7 @@ func inputsOf(f *answerFlags, pv pricedVariant) *wireInputs {
 			Resamples: pv.lines.Drawn, TierChanges: pv.lines.TierChanges(),
 			FromCycle: pv.state.ReadingsFrom, ToCycle: pv.state.ReadingsTo, Check: wireCheck(pv)},
 		FillBand:       wireInterval{Lo: pv.decode.Band.Lo, Hi: pv.decode.Band.Hi},
-		CapacityTokens: pv.decode.CapacityTokens, KVPerRequest: pv.decode.KVPerRequest,
+		CapacityTokens: pv.decode.CapacityTokens, KVPerRequest: pv.decode.KVPerRequest, KVPerRequestSource: pv.kvSource,
 		Shape: wireShape{InputTokens: pv.shape.AvgInputTokens, InputSource: shapeMeasured,
 			OutputTokens: pv.shape.AvgOutputTokens, OutputSource: shapeMeasured, PrefixHitRate: pv.shape.PrefixHitRate,
 			FromCycle: pv.state.Shape.FromCycle, ToCycle: pv.state.Shape.ToCycle, Cycles: pv.state.Shape.Cycles,
