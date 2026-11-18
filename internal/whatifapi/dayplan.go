@@ -88,10 +88,10 @@ const (
 // A bucket's or an hour's verdict: the fleet it had against the one it
 // needed.
 const (
-	VerdictUnder   = "under"
-	VerdictOver    = "over"
-	VerdictMatch   = "match"
-	VerdictRefused = "refused"
+	DayVerdictUnder   = "under"
+	DayVerdictOver    = "over"
+	DayVerdictMatch   = "match"
+	DayVerdictRefused = "refused"
 )
 
 // The flags a day plan adds to a bucket, beside the planner's own.
@@ -209,8 +209,8 @@ type DayShape struct {
 	Source        string   `json:"source"`
 }
 
-// DayNeeded is the fewest replicas that serve a bucket's rate, decode's
-// fewest first, then prefill's with them: one fleet that serves it, and
+// DayNeeded is the fewest replicas in all that serve a bucket's rate, ties
+// going to fewer decode (SmallestFleet): one fleet that serves it, and
 // another mix may serve it too. Prefill is absent where the source cannot
 // price it (Refused); Decode is then sized on decode's own limit alone, a
 // lower bound (AtLeast): the fleet's limit, which decode admission can hold
@@ -742,7 +742,7 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 	db.Flags = appendNew(db.Flags, g.flags...)
 	switch {
 	case g.refused:
-		db.Status, db.Verdict = BucketRefused, VerdictRefused
+		db.Status, db.Verdict = BucketRefused, DayVerdictRefused
 		return nil
 	case g.decodeOnly:
 		d, ok, err := smallest(1, q.bound.Decode, func(d int) (bool, error) {
@@ -758,7 +758,7 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 				return err
 			}
 			x, _ := valueOf(r)
-			db.Status, db.UnmetRole, db.Verdict = BucketUnmet, roleDecode, VerdictUnder
+			db.Status, db.UnmetRole, db.Verdict = BucketUnmet, roleDecode, DayVerdictUnder
 			db.Unmet = &Refusal{Reason: ReasonReplicaBound, Detail: fmt.Sprintf("At %d decode replicas, the bound, decode's limit is %.4g r/s, short of %.4g r/s",
 				q.bound.Decode, x, rate)}
 			return nil
@@ -782,11 +782,11 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 			addRefusal(refused, DayRefusal{Role: u.Role, Term: termFleet, Reason: u.Refused.Reason, Detail: u.Refused.Detail,
 				Hint:   refusalHint(termFleet, whatif.Reason(u.Refused.Reason)),
 				Effect: "These buckets are not sized: the source refuses the fleet's limit at more replicas than one."})
-			db.Status, db.Verdict = BucketRefused, VerdictRefused
+			db.Status, db.Verdict = BucketRefused, DayVerdictRefused
 			db.Flags = appendNew(db.Flags, FlagFleetRefused)
 			return nil
 		}
-		db.Status, db.Unmet, db.UnmetRole, db.Verdict = BucketUnmet, &u.Refused, u.Role, VerdictUnder
+		db.Status, db.Unmet, db.UnmetRole, db.Verdict = BucketUnmet, &u.Refused, u.Role, DayVerdictUnder
 		db.Flags = appendNew(db.Flags, u.AtBound.Limit.Flags...)
 		return nil
 	}
@@ -802,7 +802,7 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 // rate: under when its limit does not reach the rate; over when it does and
 // a fleet of one replica fewer of either role does too (as at-replicas
 // judges over); else match. The fewest replicas found (Needed) are one fleet
-// that serves the rate, decode first: another mix may serve it as well,
+// that serves the rate, the fewest in all: another mix may serve it as well,
 // and the fleet it had is judged on its own mix, never role by role against
 // Needed. With prefill not priced, decode is judged alone.
 func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket, rate float64) error {
@@ -831,7 +831,7 @@ func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket
 		db.HadLimit = &f
 	}
 	if !ok {
-		db.Verdict = VerdictUnder
+		db.Verdict = DayVerdictUnder
 		return nil
 	}
 	fewer := []FleetCounts{{Prefill: a.Prefill, Decode: a.Decode - 1}}
@@ -844,11 +844,11 @@ func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket
 			return err
 		}
 		if ok {
-			db.Verdict = VerdictOver
+			db.Verdict = DayVerdictOver
 			return nil
 		}
 	}
-	db.Verdict = VerdictMatch
+	db.Verdict = DayVerdictMatch
 	return nil
 }
 
@@ -966,8 +966,8 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		"Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
 		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates. A p95 needs %d cycles in the bucket; with fewer the bucket is sized for its mean, "+
 			"which is less conservative (FewCyclesForP95).", q.sizeFor, MinPercentileCycles),
-		fmt.Sprintf("Needed is the fewest replicas whose fleet limit, at the SLO and headroom %.2f, reaches the rate: decode's fewest first, then prefill's "+
-			"(POST /v1/size's search). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: "+
+		fmt.Sprintf("Needed is the fewest replicas whose fleet limit, at the SLO and headroom %.2f, reaches the rate: the fewest in all, ties to fewer decode "+
+			"(POST /v1/size's search, whatifapi.SmallestFleet). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: "+
 			"under when its limit falls short, over when one replica fewer of either role would still serve it.", q.sc.Headroom),
 		fmt.Sprintf("A bucket with fewer than %.0f requests is not sized (too little data); a bucket no cycle fell in has no data.", q.minRequests),
 		"Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. "+
@@ -1070,11 +1070,11 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 		}
 		hr.Sized++
 		switch b.Verdict {
-		case VerdictUnder:
+		case DayVerdictUnder:
 			c.under++
-		case VerdictOver:
+		case DayVerdictOver:
 			c.over++
-		case VerdictMatch:
+		case DayVerdictMatch:
 			c.match++
 		}
 		if peakBucket(*b, c.peak, false) {
@@ -1089,13 +1089,13 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 		}
 		switch {
 		case c.under > 0:
-			out[i].Verdict = VerdictUnder
+			out[i].Verdict = DayVerdictUnder
 		case c.refused > 0 && c.refused == c.withData:
-			out[i].Verdict = VerdictRefused
+			out[i].Verdict = DayVerdictRefused
 		case c.over > 0 && c.match == 0:
-			out[i].Verdict = VerdictOver
+			out[i].Verdict = DayVerdictOver
 		case c.match > 0 || c.over > 0:
-			out[i].Verdict = VerdictMatch
+			out[i].Verdict = DayVerdictMatch
 		}
 	}
 	return out
@@ -1141,11 +1141,11 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 			s.Counts.SizedForMax++
 		}
 		switch b.Verdict {
-		case VerdictUnder:
+		case DayVerdictUnder:
 			s.Counts.Under++
-		case VerdictOver:
+		case DayVerdictOver:
 			s.Counts.Over++
-		case VerdictMatch:
+		case DayVerdictMatch:
 			s.Counts.Match++
 		}
 		if peakBucket(*b, peak, false) {
@@ -1187,11 +1187,11 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 	}
 	for _, hr := range hours {
 		switch hr.Verdict {
-		case VerdictUnder:
+		case DayVerdictUnder:
 			s.UnderHours = append(s.UnderHours, hr.Start)
-		case VerdictOver:
+		case DayVerdictOver:
 			s.OverHours = append(s.OverHours, hr.Start)
-		case VerdictRefused:
+		case DayVerdictRefused:
 			s.RefusedHours = append(s.RefusedHours, hr.Start)
 		}
 	}

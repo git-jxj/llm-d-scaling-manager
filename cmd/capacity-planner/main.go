@@ -20,6 +20,10 @@
 //	                                 [--rate R] [--prompt I] [--hop D] [-o json]
 //	capacity-planner replicas-to-slo|slo-to-rate --prometheus URL --namespace NS (--kube-state-metrics | --role-of ROLE=SELECTOR ...)
 //	                                 --from T0 --to T1 [capture's flags] [the question's flags]
+//	capacity-planner at-replicas     --recording FILE [--cycle N|last] [--model M] [--prefill N] [--decode N]
+//	                                 [--shape S ...] [--load L ...] [--load-statistic mean|p95|peak | --load-seen R] [--load-seen-x X]
+//	                                 [--ttft 2s@p90] [--tpot 30ms] [--headroom H] [--ttft-percentile 50,90] [--tpot-percentile 90]
+//	                                 [--arrival-cv2 C] [the --assume-* flags] [-o json]
 //	capacity-planner day-plan        (--recording FILE | --prometheus URL capture's flags --namespace NS [--from T0 --to T1])
 //	                                 [--bucket 5m] [--size-for mean|p95|max] [--ttft 500ms@p95] [--tpot 4ms] [-o json]
 //	capacity-planner serve           [--recordings DIR] [--prometheus URL capture's flags --namespace NS [--allowed-namespaces NS,...]]
@@ -40,6 +44,10 @@
 // alone. It prices a P/D fleet (ttft.go), and prints UNVALIDATED. joint-ttft
 // prices the joint prefill and decode model's mean at a fleet (joint.go). Aggregated
 // TTFT and per-bucket answers are not built (the planner's M1).
+//
+// at-replicas judges one fleet at the load the window saw: the utilization
+// there, the knees, the SLO against load and a verdict (report.go); POST
+// /v1/report answers the same.
 //
 // serve runs the capacity planner's HTTP API on the same code paths
 // (serve.go, internal/whatifapi; docs/developer-guide/capacity-planner-serve.md).
@@ -67,6 +75,9 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/go-logr/logr"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // progName is the command's name in its usage, errors and warnings.
@@ -103,6 +114,9 @@ func warnIfDeprecated(argv0 string, stderr io.Writer) {
 
 func main() {
 	warnIfDeprecated(os.Args[0], os.Stderr)
+	// The analyzers the replay runs log through controller-runtime: with no
+	// logger set it prints a stack trace on a run of 30 s or more.
+	ctrllog.SetLogger(logr.Discard())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
@@ -144,7 +158,7 @@ func exitCode(err error) int {
 	return 1
 }
 
-const usage = "usage: capacity-planner capture|day-plan|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
+const usage = "usage: capacity-planner at-replicas|capture|day-plan|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
 
 // command is one subcommand: it parses its own flags from args and writes
 // what it reports to out, and its warnings to warn (stderr).
@@ -152,6 +166,7 @@ type command func(ctx context.Context, args []string, out, warn io.Writer) error
 
 // commands is every subcommand, by name.
 var commands = map[string]command{
+	"at-replicas":     runAtReplicas,
 	"capture":         runCapture,
 	"day-plan":        runDayPlan,
 	"freeze":          runFreeze,

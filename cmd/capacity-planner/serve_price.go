@@ -303,6 +303,16 @@ func seconds(x float64) time.Duration { return time.Duration(math.Round(x * floa
 // Fleet reads the fleet at k: the flags k stands for, checked as the CLI
 // checks them, and the fleet slo-to-rate would read with them.
 func (s *servedState) Fleet(k whatifapi.Knobs) (whatifapi.Fleet, error) {
+	sf, err := s.fleetAt(k)
+	if err != nil {
+		return nil, err
+	}
+	return sf, nil
+}
+
+// fleetAt is Fleet as the fleet itself, for the report, which reads the
+// variant and the prefill inputs it was priced from.
+func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
 	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{"ttft": true, "headroom": true}, warn: io.Discard,
 		decode: k.Decode, prefill: k.Prefill, headroom: k.Headroom, priceRouterWait: whatif.DefaultPriceRouterWait,
@@ -312,6 +322,7 @@ func (s *servedState) Fleet(k whatifapi.Knobs) (whatifapi.Fleet, error) {
 		f.inputTokens = k.PromptTokens
 		set("assume-input-tokens")
 	}
+	f.prefixHit = k.PrefixHit
 	if k.OutputTokens > 0 {
 		f.outputTokens = k.OutputTokens
 		set("assume-output-tokens")

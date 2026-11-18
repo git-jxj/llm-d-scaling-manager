@@ -54,6 +54,9 @@ type answerFlags struct {
 	assumeRouterHop                                   time.Duration
 	prefill                                           int
 	set                                               map[string]bool
+	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
+	// report shape, at-replicas --shape).
+	prefixHit *float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
 	// priceRouterWait is --price-router-wait, a TTFT flag (ttft.go): opt-in,
@@ -338,12 +341,14 @@ type pricedVariant struct {
 	check whatif.LineCheck
 	// assumedIL and assumedOL say which lengths the flags assumed.
 	assumedIL, assumedOL bool
-	flags                []whatif.Flag
-	lines                whatif.LineResamples
+	// assumedHit says the prefix-hit rate was stated.
+	assumedHit bool
+	flags      []whatif.Flag
+	lines      whatif.LineResamples
 }
 
 // assumed reports a shape the flags assumed, in part or whole.
-func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL }
+func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL || pv.assumedHit }
 
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
@@ -369,7 +374,11 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		// A spread is a figure of the traffic the histogram counted, whatever
 		// length is asked: as the prompt's cv (prefillShape).
-		pv.shape = shape.New(il, ol, vs.Shape.PrefixHitRate).WithOutputDispersion(vs.Shape.OutputDispersion)
+		hit := vs.Shape.PrefixHitRate
+		if f.prefixHit != nil {
+			hit, pv.assumedHit = *f.prefixHit, true
+		}
+		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(vs.Shape.OutputDispersion)
 		replicas := vs.Replicas
 		if f.decode > 0 {
 			replicas = f.decode
@@ -383,6 +392,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
 			KVPerRequest: pv.shape.KVreq, OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
+			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL},
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)

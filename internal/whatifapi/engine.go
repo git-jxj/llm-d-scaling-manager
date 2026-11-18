@@ -56,6 +56,9 @@ type Knobs struct {
 	// of the observed ones (the CLI's --assume-input-tokens and
 	// --assume-output-tokens, flagged AssumedShape); 0 is the observed one.
 	PromptTokens, OutputTokens float64
+	// PrefixHit is a stated prefix-cache hit rate in [0, 1), nil the
+	// observed one (flagged AssumedShape).
+	PrefixHit *float64
 	// TTFTPercentile and TPOTPercentile are q in (0, 1); 0 is the mean.
 	TTFTPercentile, TPOTPercentile float64
 	Assume                         Assume

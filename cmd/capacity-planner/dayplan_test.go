@@ -73,9 +73,9 @@ const stairDir = "../../internal/engines/analyzers/learnreplay/testdata/goldens/
 // stair is a staircase recording's path.
 func stair(name string) string { return stairDir + name + "/recording.jsonl.gz" }
 
-// stairAssumed are the terms the b-on staircase did not learn, assumed, and
+// dayStairAssumed are the terms the b-on staircase did not learn, assumed, and
 // targets it can meet.
-var stairAssumed = []string{"--assume-vp", "200000", "--assume-a", "20ms", "--ttft", "2s@p90", "--tpot", "30ms"}
+var dayStairAssumed = []string{"--assume-vp", "200000", "--assume-a", "20ms", "--ttft", "2s@p90", "--tpot", "30ms"}
 
 // The day plan's goldens, text and JSON. On the sample recording its
 // 4k-token buckets put the 500 ms TTFT under the zero-load floor: prefill
@@ -93,7 +93,7 @@ func TestDayPlanGolden(t *testing.T) {
 	}{
 		{"day-plan-ols-sweep", dayArgs, 3},
 		{"day-plan-ols-sweep-json", append(slices.Clone(dayArgs), "-o", "json"), 3},
-		{"day-plan-staircase-b-on-assumed", slices.Concat([]string{"day-plan", "--recording", stair("ttft-staircase-b-on")}, stairAssumed), 0},
+		{"day-plan-staircase-b-on-assumed", slices.Concat([]string{"day-plan", "--recording", stair("ttft-staircase-b-on")}, dayStairAssumed), 0},
 		{"day-plan-staircase-b-on", []string{"day-plan", "--recording", stair("ttft-staircase-b-on")}, 3},
 		{"day-plan-staircase-b-on-json", []string{"day-plan", "-o", "json", "--recording", stair("ttft-staircase-b-on")}, 3},
 		{"day-plan-staircase-b-off", []string{"day-plan", "--recording", stair("ttft-staircase-b-off")}, 3},
@@ -150,7 +150,7 @@ func TestDayPlanStaircaseRefusals(t *testing.T) {
 	}
 	assert.Equal(t, []string{"ttft:NoFixedLatency", "decodeKnee:PinnedDefaultB"}, reasons)
 
-	full, code := dayJSON(t, slices.Concat([]string{"--recording", stair("ttft-staircase-b-on")}, stairAssumed)...)
+	full, code := dayJSON(t, slices.Concat([]string{"--recording", stair("ttft-staircase-b-on")}, dayStairAssumed)...)
 	assert.Equal(t, 0, code)
 	assert.Empty(t, full.Refused)
 	assert.Equal(t, len(full.Buckets), full.Summary.Counts.Sized)
@@ -163,7 +163,7 @@ func TestDayPlanStaircaseRefusals(t *testing.T) {
 // A plan that sizes no bucket exits 3, even with nothing refused and no rate
 // beyond the bound: every bucket has too little data.
 func TestDayPlanNothingSizedExits3(t *testing.T) {
-	p, code := dayJSON(t, slices.Concat([]string{"--recording", stair("ttft-staircase-b-on"), "--min-requests", "1e12"}, stairAssumed)...)
+	p, code := dayJSON(t, slices.Concat([]string{"--recording", stair("ttft-staircase-b-on"), "--min-requests", "1e12"}, dayStairAssumed)...)
 	assert.Empty(t, p.Refused)
 	assert.Zero(t, p.Summary.Counts.Unmet)
 	assert.Zero(t, p.Summary.Counts.Sized)
@@ -303,13 +303,43 @@ func TestDayPlan24hGolden(t *testing.T) {
 	assert.Equal(t, strings.ReplaceAll(string(want), "\r\n", "\n"), b.String())
 }
 
+// neededTotalRises asserts that the replicas a bucket needs, in all, never
+// fall as its sized rate rises, among the sized buckets of one shape (the
+// search is the fewest in all, SmallestFleet). A role alone may: one more
+// decode replica can take a prefill replica's place.
+func neededTotalRises(t *testing.T, buckets []whatifapi.DayBucket) int {
+	t.Helper()
+	byShape := map[[2]float64][]whatifapi.DayBucket{}
+	for _, b := range buckets {
+		if b.Status != whatifapi.BucketSized || b.Needed.Prefill == nil {
+			continue
+		}
+		var k [2]float64
+		if b.Shape.PromptTokens != nil && b.Shape.OutputTokens != nil {
+			// The shape grid the plan prices on: 5% steps.
+			k = [2]float64{math.Round(math.Log(*b.Shape.PromptTokens) / math.Log(1.05)), math.Round(math.Log(*b.Shape.OutputTokens) / math.Log(1.05))}
+		}
+		byShape[k] = append(byShape[k], b)
+	}
+	n := 0
+	for _, bs := range byShape {
+		sort.SliceStable(bs, func(i, j int) bool { return *bs[i].SizedRate < *bs[j].SizedRate })
+		for i := 1; i < len(bs); i++ {
+			lo, hi := bs[i-1], bs[i]
+			n++
+			assert.GreaterOrEqual(t, *hi.Needed.Prefill+hi.Needed.Decode, *lo.Needed.Prefill+lo.Needed.Decode,
+				"%d+%d at %.4g r/s (%s), fewer than %d+%d at %.4g r/s (%s)", *hi.Needed.Prefill, hi.Needed.Decode, *hi.SizedRate,
+				hi.Start.Format("15:04"), *lo.Needed.Prefill, lo.Needed.Decode, *lo.SizedRate, lo.Start.Format("15:04"))
+		}
+	}
+	return n
+}
+
 // The replicas a bucket needs follow its own rate: the fleet's limit at the
-// replicas found reaches the bucket's own p95, every bucket sized, and
-// decode, sized first, never needs fewer replicas at a higher rate. Sizing
-// every bucket at one rate, the window's mean, fails both: a bucket over the
-// mean is short of it. Prefill need not rise with the rate (decode first:
-// one more decode replica can take prefill's place), so nothing is asserted
-// of it.
+// replicas found reaches the bucket's own p95, every bucket sized, and the
+// replicas needed in all never fall as the rate rises. Sizing every bucket
+// at one rate, the window's mean, fails the first: a bucket over the mean is
+// short of it.
 func TestDayPlanNeededFollowsRate(t *testing.T) {
 	p := dayPlan24h(t)
 	assert.Equal(t, whatifapi.SizeForP95, p.SizeFor)
@@ -323,46 +353,58 @@ func TestDayPlanNeededFollowsRate(t *testing.T) {
 		assert.GreaterOrEqual(t, *b.Limit.Value, b.Rate.P95*(1-1e-9), "%s: the fleet needed does not serve the bucket's p95", b.Start)
 	}
 	require.Len(t, sized, 282)
-	sort.SliceStable(sized, func(i, j int) bool { return sized[i].Rate.P95 < sized[j].Rate.P95 })
-	for i := 1; i < len(sized); i++ {
-		assert.GreaterOrEqual(t, sized[i].Needed.Decode, sized[i-1].Needed.Decode,
-			"decode needs fewer replicas at %.3g r/s (%s) than at %.3g r/s (%s)", sized[i].Rate.P95, sized[i].Start,
-			sized[i-1].Rate.P95, sized[i-1].Start)
-	}
+	assert.Equal(t, 281, neededTotalRises(t, p.Buckets), "every neighbouring pair of one shape compared")
 	peak, low := p.Summary.PeakNeeded, p.Summary.MinNeeded
 	assert.Greater(t, peak.Decode+*peak.Prefill, low.Decode+*low.Prefill, "a day from 2 to 16 r/s needs the same fleet all day")
 	assert.NotEmpty(t, p.Summary.UnderHours, "the peak needs more than 2 prefill and 3 decode")
 	assert.NotEmpty(t, p.Summary.OverHours, "the night needs fewer")
 }
 
-// The fleet a bucket had is judged whole at the bucket's rate. At 10:15 of
-// the day the fewest replicas, decode first, are 3 prefill and 1 decode
-// for 10.9 r/s; the fleet that ran, 2 prefill and 3 decode, serves some 18
-// r/s, so the bucket is no SLO risk, though prefill alone (2 against 3)
-// reads short. Every verdict is the had fleet's limit against the rate.
+// On a real P/D staircase too, the replicas needed in all never fall as a
+// bucket's rate rises (b-on with V_P and a assumed: every bucket sized).
+func TestDayPlanStaircaseNeededTotalRises(t *testing.T) {
+	p, _ := dayJSON(t, slices.Concat([]string{"--recording", stair("ttft-staircase-b-on")}, dayStairAssumed)...)
+	assert.Positive(t, neededTotalRises(t, p.Buckets))
+}
+
+// The fleet a bucket had is judged whole at the bucket's rate. At 14:55 of
+// the day the fewest replicas in all are 3 prefill and 2 decode for 18.07
+// r/s; the fleet that ran, 2 prefill and 3 decode, as many in all, serves it
+// too, so the bucket is no SLO risk, though prefill alone (2 against 3) reads
+// short. At 10:15 the fewest in all are 1 prefill and 2 decode, where a
+// search fixing decode at its own floor first found 3 + 1. Every verdict is
+// the had fleet's limit against the rate.
 func TestDayPlanVerdictIsTheFleetItHad(t *testing.T) {
 	p := dayPlan24h(t)
-	var b *whatifapi.DayBucket
-	for i := range p.Buckets {
-		if p.Buckets[i].Start.Format("15:04") == "10:15" {
-			b = &p.Buckets[i]
+	at := func(hhmm string) *whatifapi.DayBucket {
+		for i := range p.Buckets {
+			if p.Buckets[i].Start.Format("15:04") == hhmm {
+				return &p.Buckets[i]
+			}
 		}
+		t.Fatalf("no bucket at %s", hhmm)
+		return nil
 	}
-	require.NotNil(t, b)
+	b := at("14:55")
 	require.NotNil(t, b.Needed.Prefill)
+	assert.Equal(t, whatifapi.DayNeeded{Prefill: ptrInt(3), Decode: 2}, *b.Needed)
 	assert.Greater(t, *b.Needed.Prefill, b.Actual.Prefill, "the case: prefill alone reads short")
 	require.NotNil(t, b.HadLimit.Value)
 	assert.GreaterOrEqual(t, *b.HadLimit.Value, *b.SizedRate, "the fleet it had serves the rate")
-	assert.NotEqual(t, whatifapi.VerdictUnder, b.Verdict)
+	assert.NotEqual(t, whatifapi.DayVerdictUnder, b.Verdict)
+	assert.Equal(t, whatifapi.DayNeeded{Prefill: ptrInt(1), Decode: 2}, *at("10:15").Needed, "the fewest in all, not 3 + 1")
 	for _, x := range p.Buckets {
 		if x.Status != whatifapi.BucketSized {
 			continue
 		}
 		short := *x.HadLimit.Value < *x.SizedRate*(1-1e-9)
-		assert.Equal(t, short, x.Verdict == whatifapi.VerdictUnder, "%s: had %g r/s at %g r/s, verdict %s",
+		assert.Equal(t, short, x.Verdict == whatifapi.DayVerdictUnder, "%s: had %g r/s at %g r/s, verdict %s",
 			x.Start.Format("15:04"), *x.HadLimit.Value, *x.SizedRate, x.Verdict)
 	}
 }
+
+// ptrInt is a pointer to n.
+func ptrInt(n int) *int { return &n }
 
 // jsonStrict decodes b into v, refusing a field v does not name.
 func jsonStrict(b []byte, v any) error {

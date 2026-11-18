@@ -74,6 +74,7 @@ point (headroom times the lower knee).
 | `POST /v1/inputs` | Resolves a source for one model: a recording replayed to a cycle, or a Prometheus window captured in memory (seconds). Returns `inputsId` and every term with its source. |
 | `POST /v1/plan` | Prices a scenario against an `inputsId`. |
 | `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
+| `POST /v1/report` | One fleet judged at the load the source saw, for each request shape and load asked: utilization, knees, the SLO against load, a shape-by-load summary and a verdict per shape. The same report as `capacity-planner at-replicas -o json`. |
 | `POST /v1/dayplan` | The prefill and decode replicas each bucket of the source's window needed, against the replicas it had: [the day plan](#the-day-plan). |
 | `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. |
 | `GET /` | The page, with its files under `/page/`. |
@@ -206,9 +207,9 @@ The full key list is pinned in
 | `sizeOn` | `point` | What the fleet must reach the rate with: `point`, its limit, or `low`, the low end of the limit's span over V_P and f (about five times the cost). |
 
 The inputs must have a prefill variant; a source with none is a 400. The search
-finds the fewest decode replicas first, then the fewest prefill replicas with
-them, adding decode replicas only when no prefill count within the bound
-reaches the rate.
+finds the fewest replicas in all whose fleet limit reaches the rate; of two as
+few, the one with fewer decode replicas. A role's GPUs per replica are not
+weighed. The report's `needed` fleet is found the same way.
 
 | Key | What it is |
 | --- | --- |
@@ -224,6 +225,56 @@ reaches the rate.
 
 A size with no fleet within the bound is a 200 with `unmet`, not an error.
 [What to do about each reason](troubleshooting.md#refused-figures).
+
+## The report
+
+`POST /v1/report` judges one fleet: is it under-provisioned, right-sized or
+over-provisioned at the load the source saw (its p95 by default)? Resolve
+the source first, then:
+
+```bash
+curl -s localhost:8080/v1/report -H 'Content-Type: application/json' -d '{"inputsId": "sha256:...",
+  "fleet": {"prefill": 2, "decode": 3},
+  "shapes": ["measured", "1k/1k", "16k/200/0.3"],
+  "loads": ["50%", "80%", "5r/s", "seen"], "loadSeenX": 1.2,
+  "slo": {"ttft": {"statistic": "p90", "target": 2}, "tpot": {"statistic": "mean", "target": 0.03}},
+  "assume": {"vp": 200000, "a": 0.02}}'
+```
+
+Every field but `inputsId` has a default.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `fleet.prefill`, `fleet.decode` | the recorded counts | The fleet to judge. |
+| `shapes` | `["measured"]` | Request shapes, at most 6: `measured`, or `IL/OL[/hit]` in tokens, `k` for 1024 (`8k/200`, `1k/4k/0.3`). |
+| `loads` | `["50%", "80%", "100%", "seen"]` | The tables' rates, at most 8: a share of each shape's fleet knee (`80%`), a rate (`5r/s`), `seen`, or the load seen grown (`seen x1.5`, also `seen×1.5` or `seen*1.5`): a what-if with its own column and its own verdict in `shapes[].growth`. |
+| `loadStatistic` | `p95` | Which statistic of the source's per-cycle arrival rate to judge at: `mean`, `p95` or `peak`. Not with `loadSeen`. |
+| `loadSeen` | the source's rate at `loadStatistic` | The load to judge at, requests per second. |
+| `loadSeenX` | none | An alias that adds `seen xN` to `loads`. It never changes the load judged at. |
+| `arrivalCV2` | 1 (Poisson) | The arrivals' Ca^2, as a plan's `traffic.arrivalCV2`. |
+| `headroom` | the policy's `scaleUpThreshold` | The operating point, a fraction of the fleet knee in (0, 1). Unlike a plan's (0, 1], 1 is refused: the verdict judges at the operating point, and at the knee itself a fleet saturates. |
+| `slo.ttft`, `slo.tpot` | the policy's targets | `statistic` (`mean` or `pNN`) and `target` in seconds. |
+| `ttftStatistics` | `["p50", "p90"]` | The TTFT statistics the tables print, at most 4. |
+| `tpotStatistic` | `p90` | The TPOT percentile printed beside the mean; `mean` for the mean alone. |
+| `assume` | none | As for a plan: `vp`, `a`, `promptCV`, `routerHop`, `tpotRatio`. |
+
+The answer:
+
+| Field | Holds |
+| --- | --- |
+| `fleet` | The fleet judged: `prefill`, `decode`, their variants, and `prefillFrom`/`decodeFrom` (`recording` or `asked`). |
+| `load` | The load judged at (`rate`, the same as `seen`, as a figure that carries the refusal when there is none), the load seen and its `source` (`observed`, `asked` or `none`), the `statistic` judged (`mean`, `p95`, `peak`, or `stated`), `cycles` read and `cyclesWithTraffic`, the per-cycle `mean`, `p95` and `peak` (each a 1-minute rate), `p95IsPeak` below 20 cycles, and `rolling`, the busiest 2 minutes' mean, idle and failed reads counted as 0. |
+| `loads` | The tables' rates, in order: the summary's columns. |
+| `shapes[]` | One per shape asked, in order. `extrapolated` is true when IL, OL or the prefix-hit rate lies outside the per-cycle means the source saw, with `extrapolatedWhy`. |
+| `shapes[].utilization` | At the load judged: decode's KV fill, batch slots occupied of the fleet's slots, and wait probability; prefill's utilization pooled and on the busiest pod. |
+| `shapes[].capacity` | The prefill, decode and fleet knees, the operating point and the highest rate that holds every target (`maxAtSLO`), each with output tokens a second and what binds it. |
+| `shapes[].table[]` | One row per load: TTFT at each statistic, TPOT mean and percentile, and `e2eMeanSum`, TTFT mean + (OL - 1) x TPOT mean, a sum of means and not a percentile. `cell` is the row in the summary: TTFT p90, the TPOT percentile (the mean where it is refused; `tpot.statistic` says which), and `mark`, the SLO judged at its own statistics (`met`, `missed`, `missed at onset` for a TTFT past the prefill flow-control onset, `saturated`, `unknown`, `no target`). |
+| `shapes[].verdict` | `UNDER-PROVISIONED` when the load judged is past headroom times the fleet knee or a target is missed there; `OVER-PROVISIONED` when a role has a replica to spare: one fewer of it holds every target at the load judged, and the role's own knee and target at the peak (`shrink` names the roles); `RIGHT-SIZED` otherwise; `roles[]` is each role's `spare` and `detail`; `needed` (on UNDER and OVER) is the smallest fleet that holds, `{prefill, decode, decodeOnly, alternatives, unmet, maxReplicas}`, by the search `/v1/size` runs, and `grow` the roles it adds to; `NOT JUDGED` with no knee, no load, a target its own check cannot price, or a prefill side that does not price (`scope` `decode only`: never right-sized or over-provisioned, and no `maxAtSLO`). `summary` is one plain sentence, `reason` gives the numbers, and `checks` each fleet tried. |
+| `shapes[].growth[]` | One per growth load asked, in order: `load` (`seen x1.5`), `x`, the `rate` judged at, and a `verdict` of the same form. A what-if beside `verdict`, never in its place. |
+| `notValidated` | What no run has validated: the decode knee read 44% to 103% high on the goldens, and TTFT is unvalidated. |
+
+Each shape and load is priced from the one replay the inputs resolved: a
+report replays nothing.
 
 ## The day plan
 
@@ -261,7 +312,7 @@ bucket when the stated length lies outside what the buckets observed.
 | Key | What it is |
 | --- | --- |
 | `from`, `to`, `step`, `sizeFor`, `sizeForSource`, `minRequests`, `ttft`, `tpot`, `headroom`, `maxReplicas` | What was planned. |
-| `buckets[]` | `start`, `samples` (cycles), `requests`, `rate` (`mean`, `p95`, `max` of its cycle rates), `sizedFor` and `sizedRate`, `shape`, `status`, `needed` and `limit` (sized: the fewest replicas, decode first, and another mix may serve too; `needed.prefill` absent and `needed.atLeast` true when prefill is not priced, decode then a lower bound), `unmet` and `unmetRole` (beyond the bound), `actual` (the median serving pods of the priced prefill and decode variants), `hadLimit` (the limit of the fleet it had, priced whole), `verdict` (`under` when `hadLimit` falls short of the rate, `over` when one replica fewer of either role still serves it, `match`, `refused`) and `flags`. |
+| `buckets[]` | `start`, `samples` (cycles), `requests`, `rate` (`mean`, `p95`, `max` of its cycle rates), `sizedFor` and `sizedRate`, `shape`, `status`, `needed` and `limit` (sized: the fewest replicas in all, ties to fewer decode, and another mix may serve too; `needed.prefill` absent and `needed.atLeast` true when prefill is not priced, decode then a lower bound), `unmet` and `unmetRole` (beyond the bound), `actual` (the median serving pods of the priced prefill and decode variants), `hadLimit` (the limit of the fleet it had, priced whole), `verdict` (`under` when `hadLimit` falls short of the rate, `over` when one replica fewer of either role still serves it, `match`, `refused`) and `flags`. |
 | `hours[]` | Per UTC hour: the rate over its cycles, the need of its busiest sized bucket (the one of the highest sized rate), the fewest pods it had, `unmet` (buckets beyond the bound), and the verdict: `under` when any bucket was under or beyond the bound, `refused` when every bucket with data was refused, `over` when every sized bucket was over. |
 | `summary` | `peakNeeded` and `minNeeded` (the needs of the busiest and the quietest sized buckets), replica-hours and GPU-hours needed and had over the sized buckets (absent when none was sized; prefill's hours and the GPU-hours also when any sized bucket did not price prefill, `counts.prefillNotPriced`), `hadReplicaHoursAll` and `hadGpuHoursAll` over every bucket with data, `underHours`, `overHours`, `refusedHours`, and the counts, including how many buckets were sized for each statistic. |
 | `searched` | How many fleets the plan priced. |

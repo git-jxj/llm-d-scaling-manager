@@ -46,6 +46,9 @@ const FLAG_WORDS = {
   LineNearGate: ["The ITL line sits near the tracker's gate; the answer does not care which side (informational).", "nothing"],
   ExtrapolatedFill: ["The fill is above the highest fill the ITL line was read at: extrapolated.", "readings at higher load"],
   AssumedShape: ["Priced at a prompt or output length you set, not the measured one.", "price at the current mix"],
+  ExtrapolatedShape: ["The request shape is outside the prompt and output lengths the source saw: the figures extrapolate the learned lines past the traffic they were fitted on.", "a source that served this shape"],
+  DecodeOnly: ["The prefill side is not priced: the report judged decode alone, gives no fleet rate at the SLO, and never calls the fleet over-provisioned.", "a learned or assumed prefill speed (--assume-vp)"],
+  TailPastPromptHistogram: ["A TTFT percentile above p95 on a prompt spread no histogram measured: the tail rests on the assumed spread.", "a source with a computed-prompt histogram"],
   EdgeBeyondContext: ["A bucket's edge is past the engines' context window (--max-model-len): they refuse prompts that long, and this \"if all traffic were\" line prices traffic they would not serve.", "an edge within the context window"],
   PullUnseen: ["The prefill load is past the pull table's highest bucket: the pull reads low.", "readings at higher prefill load"],
   OverheadMeasured: ["The fixed overhead comes from the prefill pods' histograms.", "nothing (informational)"],
@@ -920,7 +923,7 @@ function renderSize() {
     el("sizetitle").textContent = `The fleet ${rate} needs`;
     el("sizeanswer").innerHTML = `<div class="v">${fleetText(f)}</div>` +
       `<div>The fewest replicas whose fleet limit reaches ${rate}` + (low ? " at the worst corner of V_P and f" : "") +
-      ` (the fewest decode first, then the fewest prefill with them). ` +
+      ` (the fewest in all; of two as few, the one with fewer decode replicas). ` +
       `Fleet limit <b>${figText(a.limit, fmtRate)}</b>, <span class="ok">headroom +${h != null ? fmtRate(h) : "refused"}</span> over the rate` +
       (low ? " at the worst corner" : "") + `; ${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>` +
       lowNote(a.limit, z) + heldNote(a);
@@ -967,13 +970,12 @@ function fewerLine(role, s, low) {
 }
 
 // heldNote says, where decode admission holds the prefill limit down, that
-// the answer is decode first and may not be the fewest replicas in all.
+// decode replicas are what lift it.
 function heldNote(a) {
   const held = (f => f && (f.flags || []).includes("HeldByDecodeAdmission"));
   if (!held(a.limit) && !held(a.plan.limits.prefill)) return "";
-  return `<div class="hint">Decode admission holds the prefill limit down here. The answer is the fewest decode replicas first, ` +
-    `then the fewest prefill: a fleet with more decode and fewer prefill replicas may serve the rate with fewer in all. ` +
-    `Try it in the first mode, though a large fleet at a high rate can take many minutes to price there.</div>`;
+  return `<div class="hint">Decode admission holds the prefill limit down here: more decode replicas lift it more than ` +
+    `more prefill replicas do, and the answer weighs the two.</div>`;
 }
 
 // UNMET_SAID are the refusals unmetAdvice says in the page's own words; the

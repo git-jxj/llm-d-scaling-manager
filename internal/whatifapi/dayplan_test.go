@@ -105,7 +105,7 @@ func stubDay(t *testing.T, r *stubResolver, n int, rate float64, had FleetCounts
 // The fleet a bucket had is judged whole, at the bucket's rate, never role
 // by role against the fewest replicas found. Here decode admission cuts the
 // prefill knee a hundredfold below 3 prefill and 3 decode replicas, so the
-// search, decode first, finds 3 prefill and 1 decode for 6 r/s; the fleet
+// search, the fewest in all, finds 3 prefill and 1 decode for 6 r/s; the fleet
 // had, 2 prefill and 3 decode, serves 6 r/s too (its limit 10 r/s), and
 // neither 1+3 (5 r/s) nor 2+2 (cut) does: it matches. Role by role it would
 // read under, prefill 2 against 3.
@@ -120,19 +120,19 @@ func TestDayPlanJudgesTheFleetItHadWhole(t *testing.T) {
 	require.NotNil(t, b.HadLimit)
 	require.NotNil(t, b.HadLimit.Value)
 	assert.GreaterOrEqual(t, *b.HadLimit.Value, 6.0, "the fleet it had serves the rate")
-	assert.Equal(t, VerdictMatch, b.Verdict, "judged whole, 2+3 serves 6 r/s and one replica fewer does not")
+	assert.Equal(t, DayVerdictMatch, b.Verdict, "judged whole, 2+3 serves 6 r/s and one replica fewer does not")
 	assert.Empty(t, p.Summary.UnderHours)
 
 	// More than enough: 4+4 serves, and so does 3+4: over.
 	over := stubDay(t, r, 20, 6, FleetCounts{Prefill: 4, Decode: 4})
-	assert.Equal(t, VerdictOver, over.Buckets[0].Verdict)
+	assert.Equal(t, DayVerdictOver, over.Buckets[0].Verdict)
 	// Too few: 1+1 serves 0.1 r/s: under.
 	under := stubDay(t, r, 20, 6, FleetCounts{Prefill: 1, Decode: 1})
-	assert.Equal(t, VerdictUnder, under.Buckets[0].Verdict)
+	assert.Equal(t, DayVerdictUnder, under.Buckets[0].Verdict)
 	assert.Len(t, under.Summary.UnderHours, 1)
 	// No decode pod serves nothing: under, with no figure to price.
 	none := stubDay(t, r, 20, 6, FleetCounts{Prefill: 2, Decode: 0})
-	assert.Equal(t, VerdictUnder, none.Buckets[0].Verdict)
+	assert.Equal(t, DayVerdictUnder, none.Buckets[0].Verdict)
 }
 
 // ptrInt is a pointer to n.
@@ -150,7 +150,7 @@ func TestDayPlanDecodeAloneIsALowerBound(t *testing.T) {
 	require.NotNil(t, b.Needed)
 	assert.Equal(t, DayNeeded{Decode: 1, AtLeast: true}, *b.Needed)
 	assert.Contains(t, b.Flags, FlagPrefillNotPriced)
-	assert.Equal(t, VerdictMatch, b.Verdict)
+	assert.Equal(t, DayVerdictMatch, b.Verdict)
 	assert.Equal(t, 1, p.Summary.Counts.PrefillNotPriced)
 	assert.Nil(t, p.Summary.NeededGPUHours)
 	assert.Nil(t, p.Summary.NeededReplicaHours.Prefill)
@@ -216,10 +216,10 @@ func TestHourVerdicts(t *testing.T) {
 		buckets []DayBucket
 		want    string
 	}{
-		"over":           {[]DayBucket{b(0, BucketSized, VerdictOver), b(1, BucketSized, VerdictOver)}, VerdictOver},
-		"over and unmet": {[]DayBucket{b(0, BucketSized, VerdictOver), b(1, BucketUnmet, "")}, VerdictUnder},
-		"all refused":    {[]DayBucket{b(0, BucketRefused, VerdictRefused), b(1, BucketRefused, VerdictRefused)}, VerdictRefused},
-		"over and match": {[]DayBucket{b(0, BucketSized, VerdictOver), b(1, BucketSized, VerdictMatch)}, VerdictMatch},
+		"over":           {[]DayBucket{b(0, BucketSized, DayVerdictOver), b(1, BucketSized, DayVerdictOver)}, DayVerdictOver},
+		"over and unmet": {[]DayBucket{b(0, BucketSized, DayVerdictOver), b(1, BucketUnmet, "")}, DayVerdictUnder},
+		"all refused":    {[]DayBucket{b(0, BucketRefused, DayVerdictRefused), b(1, BucketRefused, DayVerdictRefused)}, DayVerdictRefused},
+		"over and match": {[]DayBucket{b(0, BucketSized, DayVerdictOver), b(1, BucketSized, DayVerdictMatch)}, DayVerdictMatch},
 		"too little":     {[]DayBucket{b(0, BucketTooLittleData, "")}, ""},
 	} {
 		h := hoursOf(nil, c.buckets)

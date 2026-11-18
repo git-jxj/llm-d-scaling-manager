@@ -31,12 +31,47 @@ type fillAt struct {
 type lineSamples struct {
 	steady, ramps, above map[string][]whatif.LineRow
 	fills                map[string][]fillAt
+	// below is each variant's latest mean ITLs read below the band, off a
+	// ramp, at most belowBandWindow of them: the readings the line's fit
+	// drops as idle, and the floor below the band is read from
+	// (whatif.BelowBand.LeastITL, belowBandFloor).
+	below map[string][]float64
+}
+
+const (
+	// belowBandWindow is how many of a variant's latest readings below the
+	// band its floor is read from: an hour of one replica at the 15 s cycle,
+	// so a floor read under an older engine ages out.
+	belowBandWindow = 240
+	// belowBandMinReadings is the fewest readings a floor is read from;
+	// fewer is no floor, and the line is not read below the band.
+	belowBandMinReadings = 10
+	// belowBandQuantile is the floor's quantile: a low one, not the least,
+	// so one window that read low does not set it.
+	belowBandQuantile = 0.10
+)
+
+// belowBandFloor is the floor below the band read from xs: their
+// belowBandQuantile quantile, the element at floor(q*n) of the sorted
+// readings, so that with ten readings the least is passed over. 0 with fewer
+// than belowBandMinReadings.
+func belowBandFloor(xs []float64) float64 {
+	if len(xs) < belowBandMinReadings {
+		return 0
+	}
+	s := slices.Clone(xs)
+	slices.Sort(s)
+	return s[int(belowBandQuantile*float64(len(s)))]
 }
 
 func newLineSamples() *lineSamples {
 	return &lineSamples{steady: map[string][]whatif.LineRow{}, ramps: map[string][]whatif.LineRow{},
-		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}}
+		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}, below: map[string][]float64{}}
 }
+
+// leastBelowBand is the variant's floor below the band, in seconds
+// (belowBandFloor); 0 with too few readings.
+func (l *lineSamples) leastBelowBand(variant string) float64 { return belowBandFloor(l.below[variant]) }
 
 // rows is the variant's rows, of all three.
 func (l *lineSamples) rows(variant string) []whatif.LineRow {
@@ -50,7 +85,7 @@ func (l *lineSamples) rows(variant string) []whatif.LineRow {
 func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 	policy, _ := in.Config.(*config.ScalingPolicy)
 	steady := policy.ITLSteadiness()
-	_, top := policy.ITLBand()
+	bottom, top := policy.ITLBand()
 	roles := rolesOf(in)
 	for _, rm := range in.ReplicaMetrics {
 		if !prefill.Serving(rm) || domain.CanonicalRole(roles[rm.VariantName]) == domain.RolePrefill {
@@ -62,6 +97,14 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 			s = s.WithOutputDispersion(shape.Dispersion(rm.AvgOutputTokens, rm.AvgOutputTokensSquared))
 		}
 		ramp := l.onRamp(rm.PodName, fillAt{k: k, kvReq: s.KVreq, at: at}, steady)
+		if !ramp && k > 0 && k < bottom && rm.ITLState() == domain.ITLFinite && rm.AvgITL > 0 && !math.IsInf(rm.AvgITL, 0) {
+			b := l.below[rm.VariantName]
+			b = append(b, rm.AvgITL)
+			if len(b) > belowBandWindow {
+				b = b[len(b)-belowBandWindow:]
+			}
+			l.below[rm.VariantName] = b
+		}
 		if !rm.GenerationTokenRateKnown || !(rm.GenerationTokenRate > 0) || !(k >= itl.DefaultGPSMinKForVerification) {
 			continue
 		}

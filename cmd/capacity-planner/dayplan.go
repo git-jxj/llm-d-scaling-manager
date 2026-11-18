@@ -223,6 +223,9 @@ func (f *dayPlanFlags) request() (whatifapi.DayPlanRequest, error) {
 	return req, nil
 }
 
+// statNone is a TPOT target of none, and a list of nothing.
+const statNone = "none"
+
 // ptrTo is a pointer to x.
 func ptrTo(x float64) *float64 { return &x }
 
@@ -232,8 +235,8 @@ func objectiveOf(name, s string) (*whatifapi.Objective, error) {
 	if s == "" {
 		return nil, nil
 	}
-	if s == "none" && name == "tpot" {
-		return &whatifapi.Objective{Statistic: "none"}, nil
+	if s == statNone && name == "tpot" {
+		return &whatifapi.Objective{Statistic: statNone}, nil
 	}
 	value, stat, hasStat := strings.Cut(s, "@")
 	d, err := time.ParseDuration(value)
@@ -293,8 +296,8 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		if h.Actual != nil {
 			ap, ad = strconv.Itoa(h.Actual.Prefill), strconv.Itoa(h.Actual.Decode)
 		}
-		verdict := map[string]string{whatifapi.VerdictUnder: "UNDER (SLO risk)", whatifapi.VerdictOver: "over (waste)",
-			whatifapi.VerdictMatch: "ok", whatifapi.VerdictRefused: "REFUSED (see above)", "": "not sized"}[h.Verdict]
+		verdict := map[string]string{whatifapi.DayVerdictUnder: "UNDER (SLO risk)", whatifapi.DayVerdictOver: "over (waste)",
+			whatifapi.DayVerdictMatch: "ok", whatifapi.DayVerdictRefused: "REFUSED (see above)", "": "not sized"}[h.Verdict]
 		if h.Unmet > 0 {
 			verdict += fmt.Sprintf(", %d bucket(s) beyond %d replicas", h.Unmet, max(p.MaxReplicas.Prefill, p.MaxReplicas.Decode))
 		}
@@ -312,7 +315,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		return fmt.Sprintf("%.2f prefill + %.2f decode", *r.Prefill, r.Decode)
 	}
 	if s.PeakNeeded != nil {
-		fmt.Fprintf(&b, "needed: at the busiest bucket %s, at the quietest %s (the fewest replicas, decode first; another mix may serve too)\n",
+		fmt.Fprintf(&b, "needed: at the busiest bucket %s, at the quietest %s (the fewest replicas in all; another mix may serve too)\n",
 			neededText(s.PeakNeeded), neededText(s.MinNeeded))
 		fmt.Fprintf(&b, "replica-hours over the %d sized buckets: needed %s, had %s\n",
 			c.Sized, hours(s.NeededReplicaHours), hours(s.HadReplicaHours))
@@ -367,7 +370,7 @@ func fmtSeconds(x float64) string { return fmt.Sprintf("%gms", x*1000) }
 // hourList is hours as at writes them, or none.
 func hourList(hs []time.Time, at func(time.Time) string) string {
 	if len(hs) == 0 {
-		return "none"
+		return statNone
 	}
 	s := make([]string, len(hs))
 	for i, h := range hs {
