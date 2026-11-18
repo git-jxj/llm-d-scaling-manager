@@ -106,10 +106,10 @@ smt_parse() {
     shift
     SMT_NS="" SMT_KEDA_NS="" SMT_PROM_URL="" SMT_PROM_CA="" SMT_QUOTA="" SMT_SETS=() SMT_FILES=""
     SMT_DRY_RUN=false SMT_OUT="" SMT_SCOPE=namespace SMT_MODEL_NS=() SMT_PLATFORM="" SMT_STRICT=false
-    SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_WL_IMAGE="" SMT_WL_OFF=false SMT_ALLOW_HTTP=false
+    SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_WL_IMAGE="" SMT_WL_OFF=false SMT_ALLOW_HTTP=false SMT_DSETW=false
     case "$cmd" in
-        admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope " ;;
-        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller " ;;
+        admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope --dset-role-writer " ;;
+        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller --dset-role-writer " ;;
         admin-finish) allowed=" -n --keda-namespace --files --platform --strict --restart-keda --scope " ;;
         release-files) allowed=" --out " ;;
     esac
@@ -121,7 +121,7 @@ smt_parse() {
             *) smt_usage "$cmd: unknown option $1 (see $cmd --help)" ;;
         esac
         case "$flag" in
-            --dry-run|--strict|--restart-keda|--no-weights-labeller|--allow-http) ;;
+            --dry-run|--strict|--restart-keda|--no-weights-labeller|--allow-http|--dset-role-writer) ;;
             *) [ $# -ge 2 ] && [ -n "$2" ] || smt_usage "$cmd: $1 needs a value" ;;
         esac
         case "$flag" in
@@ -143,6 +143,7 @@ smt_parse() {
             --strict) SMT_STRICT=true; shift ;;
             --restart-keda) SMT_RESTART_KEDA=true; shift ;;
             --allow-http) SMT_ALLOW_HTTP=true; shift ;;
+            --dset-role-writer) SMT_DSETW=true; shift ;;
         esac
     done
     case "$SMT_SCOPE" in
@@ -289,10 +290,12 @@ smt_files_for() {
         SMT_MAIN="scaling-manager-cluster$suffix.yaml"
         SMT_PREFLIGHT=scaling-manager-preflight-cluster.yaml
         SMT_PREFLIGHT_CRB=scaling-manager-preflight
+        SMT_DSETW_FILE=scaling-manager-dset-role-writer-cluster.yaml
     else
         SMT_MAIN="scaling-manager-namespaced$suffix.yaml"
         SMT_PREFLIGHT=scaling-manager-preflight.yaml
         SMT_PREFLIGHT_CRB="scaling-manager-preflight-$SMT_NS"
+        SMT_DSETW_FILE=scaling-manager-dset-role-writer.yaml
     fi
 }
 
@@ -342,6 +345,13 @@ smt_render() {
         # not held against the install that removes it.
         J="$SMT_PREFLIGHT_JOB" E="$SMT_TOKEN_EMPTIED_ENV" yq -i '(select(.kind == "Job" and .metadata.name == strenv(J)) | .spec.template.spec.containers[] | select(.name == "preflight") | .env) += [{"name": strenv(E), "value": "true"}]' \
             "$SMT_DIR/$SMT_PREFLIGHT" || smt_exit 2 "cannot set $SMT_TOKEN_EMPTIED_ENV in $SMT_PREFLIGHT"
+    fi
+    if [ "${SMT_DSETW:-false}" = true ]; then
+        # The role writer's switch, on the Deployment as the make install sets
+        # it (config/components/dset-role-writer*). Rendered, so a re-run
+        # without --dset-role-writer applies the controller without it.
+        D="$SMT_DEPLOY" yq -i '(select(.kind == "Deployment" and .metadata.name == strenv(D)) | .spec.template.spec.containers[] | select(.name == "manager") | .env) |= ((. // []) | map(select(.name != "DSET_ROLE_WRITER")) + [{"name": "DSET_ROLE_WRITER", "value": "true"}])' \
+            "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot set DSET_ROLE_WRITER in $SMT_MAIN"
     fi
     if [ -n "$SMT_IMAGE_REPO" ]; then
         for f in "$SMT_MAIN" "$SMT_PREFLIGHT"; do
@@ -452,15 +462,41 @@ smt_apply() {
 smt_stamp_yaml() {
     jq -n --arg ns "$SMT_NS" --arg name "$SMT_STAMP" --arg part "$SMT_PART_LABEL" \
         --arg v "$(smt_version)" --arg keda "$SMT_KEDA_NS" --arg hash "$(smt_admin_hash)" --arg p "$SMT_PLATFORM" \
+        --arg dw "$SMT_DSETW" \
         '{apiVersion: "v1", kind: "ConfigMap",
           metadata: {name: $name, namespace: $ns,
                      labels: {"app.kubernetes.io/part-of": "scaling-manager", ($part): "admin"}},
-          data: {release: $v, kedaNamespace: $keda, adminObjectsSha256: $hash, platform: $p}}' | yq -P
+          data: {release: $v, kedaNamespace: $keda, adminObjectsSha256: $hash, platform: $p, dsetRoleWriter: $dw}}' | yq -P
 }
 
-# smt_admin_line echoes the admin-setup command for this namespace.
+# smt_admin_line [keda ns] [dset role writer: true]: the admin-setup command
+# for this namespace.
 smt_admin_line() {
-    printf 'smt admin-setup -n %s --keda-namespace %s\n' "$SMT_NS" "${1:-<the namespace KEDA runs in>}"
+    printf 'smt admin-setup -n %s --keda-namespace %s%s\n' "$SMT_NS" "${1:-<the namespace KEDA runs in>}" \
+        "$([ "${2:-false}" = true ] && printf ' --dset-role-writer')"
+}
+
+# smt_dset_role_writer_grant: with --dset-role-writer, applies the grant
+# of the role writer (get, list and patch on disaggregatedsets; SMT_DSETW_FILE).
+# Without it, deletes a grant an earlier run made, as a make install without
+# DSET_ROLE_WRITER=true does: the grant is there only while asked for.
+smt_dset_role_writer_grant() {
+    local k n r nsarg
+    if [ "$SMT_DSETW" = true ]; then
+        echo "DisaggregatedSet role writer grant (--dset-role-writer: get, list and patch on disaggregatedsets):"
+        smt_apply "$SMT_DIR/$SMT_DSETW_FILE"
+        return 0
+    fi
+    # The bindings first (reverse order), then the roles.
+    while read -r k n; do
+        [ -n "$k" ] || continue
+        r="$(printf '%s' "$k" | tr 'A-Z' 'a-z')"
+        nsarg=()
+        case "$k" in Cluster*) ;; *) nsarg=(-n "$SMT_NS") ;; esac
+        smt_get "$r" "$n" "${nsarg[@]}" || continue
+        smt_kc delete "$r" "$n" "${nsarg[@]}" --ignore-not-found
+        echo "Removed $k/$n: the DisaggregatedSet role writer grant an earlier run made, and this run has no --dset-role-writer. A writer still on now logs that it may not list DisaggregatedSets, and scales nothing."
+    done < <(yq ea -N 'select(.kind != null) | .kind + " " + .metadata.name' "$SMT_DIR/$SMT_DSETW_FILE" | sort -r)
 }
 
 # --- Settings ----------------------------------------------------------------
@@ -480,6 +516,7 @@ smt_settings_pairs() {
     for kv in "${SMT_SETS[@]}"; do
         key="${kv%%=*}"
         [ "$key" != "$kv" ] || smt_usage "--set $kv: give KEY=VALUE"
+        [ "$key" != DSET_ROLE_WRITER ] || smt_usage "--set DSET_ROLE_WRITER: give --dset-role-writer; it turns the role writer on in the controller, and needs its grant (smt admin-setup --dset-role-writer, or install --scope cluster --dset-role-writer)"
         printf '%s\n' "$known" | grep -qxF -- "$key" || smt_usage "--set $key: not a key of scaling-manager-settings ($(printf '%s' "$known" | tr '\n' ' '))"
         [ "$key" != passive ] || smt_usage "--set passive: the install is passive. After smt admin-finish, turn it off with:  $(smt_patch_cmd passive "${kv#*=}")"
         case "$key" in
@@ -726,18 +763,24 @@ smt_summary_lines() {
 # smt_check_stamp: the admin stamp exists and names these admin objects, or
 # exit 3 with the admin-setup line.
 smt_check_stamp() {
-    local have want keda
+    local have want keda dw
     want="$(smt_admin_hash)"
     if ! smt_get configmap "$SMT_STAMP" -n "$SMT_NS"; then
         echo "The cluster admin has not run admin-setup for $SMT_NS (no ConfigMap $SMT_STAMP). Ask them to run, with this tools image:" >&2
-        echo "  $(smt_admin_line)" >&2
+        echo "  $(smt_admin_line "" "$SMT_DSETW")" >&2
         exit 3
     fi
     have="$(printf '%s' "$KC_OUT" | jq -r '.data.adminObjectsSha256 // ""')"
     keda="$(printf '%s' "$KC_OUT" | jq -r '.data.kedaNamespace // ""')"
+    dw="$(printf '%s' "$KC_OUT" | jq -r '.data.dsetRoleWriter // "false"')"
     if [ "$have" != "$want" ]; then
         echo "The admin objects in $SMT_NS are from another release ($(printf '%s' "$KC_OUT" | jq -r '.data.release // "unknown"')): this release changes them, and only a cluster admin may apply them. Ask them to run, with this tools image ($(smt_version)):" >&2
-        echo "  $(smt_admin_line "$keda")" >&2
+        echo "  $(smt_admin_line "$keda" "$([ "$dw" = true ] || [ "$SMT_DSETW" = true ] && echo true)")" >&2
+        exit 3
+    fi
+    if [ "$SMT_DSETW" = true ] && [ "$dw" != true ]; then
+        echo "--dset-role-writer turns the DisaggregatedSet role writer on, and the cluster admin has not granted it in $SMT_NS (ConfigMap $SMT_STAMP has no dsetRoleWriter: \"true\"). Ask them to run, with this tools image:" >&2
+        echo "  $(smt_admin_line "$keda" true)" >&2
         exit 3
     fi
     SMT_STAMP_KEDA="$keda"
@@ -1076,6 +1119,7 @@ smt_dry_admin() {
     else
         smt_dry_write 12-model-namespace.yaml "" "$SMT_DIR/scaling-manager-model-namespace.yaml"
     fi
+    [ "$SMT_DSETW" != true ] || smt_dry_write 13-dset-role-writer.yaml "" "$SMT_DIR/$SMT_DSETW_FILE"
 }
 
 smt_dry_install() {
@@ -1125,7 +1169,7 @@ smt_admin_setup() {
     smt_load_files
     smt_detect_platform
     smt_files_for
-    smt_need "$SMT_MAIN" "$SMT_PREFLIGHT" scaling-manager-model-namespace.yaml
+    smt_need "$SMT_MAIN" "$SMT_PREFLIGHT" scaling-manager-model-namespace.yaml "$SMT_DSETW_FILE"
     if [ "$SMT_DRY_RUN" = true ]; then
         smt_resolve_keda_ns admin-setup
         smt_render
@@ -1136,6 +1180,7 @@ smt_admin_setup() {
         [ "$SMT_PLATFORM" != openshift ] || echo "  then: kubectl label namespace $SMT_NS openshift.io/user-monitoring=true --overwrite"
         echo "KEDA's namespace in the scaler NetworkPolicy: $SMT_KEDA_NS ($SMT_KEDA_FROM)."
         echo "Weights labeller: admin-setup adds $SMT_NS to its watch list when one runs (smt weights labeller --add -n $SMT_NS)."
+        [ "$SMT_DSETW" = true ] || echo "DisaggregatedSet role writer: not granted (no --dset-role-writer); applied, admin-setup removes a grant an earlier run made."
         return 0
     fi
     smt_header admin-setup
@@ -1153,13 +1198,14 @@ smt_admin_setup() {
         smt_kc label namespace "$SMT_NS" openshift.io/user-monitoring=true --overwrite
         echo "Labelled namespace $SMT_NS openshift.io/user-monitoring=true."
     fi
+    smt_dset_role_writer_grant
     smt_stamp_yaml > "$SMT_TMP/stamp.yaml"
     smt_kc apply -f "$SMT_TMP/stamp.yaml"
-    echo "Stamp: ConfigMap $SMT_STAMP ($(smt_version), KEDA in $SMT_KEDA_NS)."
+    echo "Stamp: ConfigMap $SMT_STAMP ($(smt_version), KEDA in $SMT_KEDA_NS$([ "$SMT_DSETW" = true ] && printf ', role writer granted'))."
     smt_admin_setup_labeller
     echo
     echo "Done. The namespace owner runs next, with their own kubeconfig:"
-    echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>   (an http:// Prometheus: add --allow-http)"
+    echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>$([ "$SMT_DSETW" = true ] && printf ' --dset-role-writer')   (an http:// Prometheus: add --allow-http)"
 }
 
 # smt_install: the part of the namespace owner, or with --scope cluster everything.
@@ -1169,7 +1215,7 @@ smt_install() {
     smt_load_files
     smt_detect_platform
     smt_files_for
-    smt_need "$SMT_MAIN" "$SMT_PREFLIGHT" scaling-manager-settings.yaml scaling-manager-scaler-tls.yaml scaling-manager-model-namespace.yaml
+    smt_need "$SMT_MAIN" "$SMT_PREFLIGHT" scaling-manager-settings.yaml scaling-manager-scaler-tls.yaml scaling-manager-model-namespace.yaml "$SMT_DSETW_FILE"
     if [ "$SMT_DRY_RUN" = true ]; then
         [ "$SMT_SCOPE" = namespace ] || smt_resolve_keda_ns install
         smt_render
@@ -1203,7 +1249,7 @@ smt_install() {
     smt_preflight after-install
     smt_preflight_gate "the controller is installed"
     echo
-    echo "Installed in $SMT_NS, passive."
+    echo "Installed in $SMT_NS, passive$([ "$SMT_DSETW" = true ] && printf '; the DisaggregatedSet role writer is on and writes no replicas while a model is passive')."
     smt_summary_lines
     echo
     echo "Left for the cluster admin (KEDA's client certificate, then drop the preflight's cluster reads):"
@@ -1243,6 +1289,7 @@ smt_install_cluster() {
             smt_kc label namespace "$m" openshift.io/user-monitoring=true --overwrite
         fi
     done
+    smt_dset_role_writer_grant
     smt_settings
     smt_prometheus_ca
     smt_preflight_first
@@ -1252,7 +1299,7 @@ smt_install_cluster() {
     smt_weights_labeller
     smt_finish
     echo
-    echo "Installed in $SMT_NS for the cluster, passive, serving the scaler over mutual TLS."
+    echo "Installed in $SMT_NS for the cluster, passive, serving the scaler over mutual TLS$([ "$SMT_DSETW" = true ] && printf '; the DisaggregatedSet role writer is on and writes no replicas while a model is passive')."
     smt_summary_lines
 }
 

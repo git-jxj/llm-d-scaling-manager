@@ -52,7 +52,7 @@ you can compare before turning passive off.
    For a split install, the cluster admin runs `make setup-prereqs` with
    `DSET_ROLE_WRITER=true` (the grant), then the namespace owner runs
    `make deploy-scaling-manager INSTALL_PHASE=scaling-manager` with it (the
-   switch). Installed from the release files, see
+   switch). Installed with `smt` or the release files, see
    [below](#installed-from-the-release-files).
 
 2. Annotate each set the writer should scale:
@@ -167,47 +167,55 @@ pass that went right.
 3. Re-install without `DSET_ROLE_WRITER=true`. That removes the grant and the
    switch; for a split install, run `make setup-prereqs` and then
    `make deploy-scaling-manager INSTALL_PHASE=scaling-manager`, both without it.
-   The uninstall removes the grant always.
+   With `smt`, run `smt install` and `smt admin-setup` without
+   `--dset-role-writer`. The uninstall removes the grant always.
 
 The writer's field ownership stays in the set's `managedFields` until another
 manager writes the field; it does nothing on its own.
 
 ## Installed from the release files
 
-The release files (`kubectl apply`, `smt install`) carry neither the grant
-nor the switch. Grant both by hand, named after the controller's namespace so
-two installs never share a binding. `<ctl>` is the controller's namespace.
-
-Cluster-scoped install:
+With the tools image, add `--dset-role-writer`
+([flags](tools-install.md#flags)). Namespace-scoped install: the cluster
+admin grants it, then the namespace owner turns it on:
 
 ```bash
-kubectl create clusterrole scaling-manager-dset-role-writer-role-<ctl> \
-  --verb=get,list,patch --resource=disaggregatedsets.disaggregatedset.x-k8s.io
-kubectl create clusterrolebinding scaling-manager-dset-role-writer-rolebinding-<ctl> \
-  --clusterrole=scaling-manager-dset-role-writer-role-<ctl> \
-  --serviceaccount=<ctl>:scaling-manager-controller-manager
+smt admin-setup -n <namespace> --dset-role-writer
+smt install -n <namespace> --prometheus-url <url> --dset-role-writer
+```
+
+`install` stops with exit 3 until `admin-setup` has granted it. Cluster-wide
+install, one command:
+
+```bash
+smt install --scope cluster --keda-namespace <keda> --prometheus-url <url> --model-namespace <ns> --dset-role-writer
+```
+
+Give the flag on every run. A run without it removes the grant
+(`admin-setup`, `install --scope cluster`) or the switch (`install`).
+
+With the release files and `kubectl` only, apply the grant file and set the
+switch. `<ctl>` is the controller's namespace:
+
+```bash
+# Namespace-scoped install: a Role in <ctl>.
+sed "s/__NAMESPACE__/<ctl>/g" scaling-manager-dset-role-writer.yaml | kubectl apply -f -
+# Cluster-wide install, in scaling-manager-system: a ClusterRole.
+kubectl apply -f scaling-manager-dset-role-writer-cluster.yaml
+
 kubectl set env deployment/scaling-manager-controller-manager -n <ctl> DSET_ROLE_WRITER=true
 ```
 
-Namespace-scoped install, for each namespace the controller manages,
-`<namespace>`:
-
-```bash
-kubectl create role scaling-manager-dset-role-writer-role -n <namespace> \
-  --verb=get,list,patch --resource=disaggregatedsets.disaggregatedset.x-k8s.io
-kubectl create rolebinding scaling-manager-dset-role-writer-rolebinding-<ctl> -n <namespace> \
-  --role=scaling-manager-dset-role-writer-role \
-  --serviceaccount=<ctl>:scaling-manager-controller-manager
-```
-
-then the same `kubectl set env`.
+A namespaced controller that manages other namespaces needs the same Role and
+a RoleBinding in each of them.
 
 To remove it, turn it off as above, then:
 
 ```bash
 kubectl set env deployment/scaling-manager-controller-manager -n <ctl> DSET_ROLE_WRITER-
-kubectl delete clusterrolebinding scaling-manager-dset-role-writer-rolebinding-<ctl>   # cluster scope
-kubectl delete clusterrole scaling-manager-dset-role-writer-role-<ctl>
-kubectl delete rolebinding scaling-manager-dset-role-writer-rolebinding-<ctl> -n <namespace>   # namespace scope
-kubectl delete role scaling-manager-dset-role-writer-role -n <namespace>
+sed "s/__NAMESPACE__/<ctl>/g" scaling-manager-dset-role-writer.yaml | kubectl delete -f -   # namespace scope
+kubectl delete -f scaling-manager-dset-role-writer-cluster.yaml                              # cluster scope
 ```
+
+Passive mode holds either way: the writer writes no replicas for a passive
+model, grant or not ([Passive mode](#passive-mode)).

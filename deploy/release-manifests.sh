@@ -63,6 +63,8 @@ RELEASE_FILES=(
     scaling-manager-metrics-reader.yaml
     scaling-manager-preflight.yaml
     scaling-manager-preflight-cluster.yaml
+    scaling-manager-dset-role-writer.yaml
+    scaling-manager-dset-role-writer-cluster.yaml
 )
 
 # The files no end-to-end test installs yet. Each says so in its header;
@@ -386,6 +388,33 @@ preflight_sources preflight-serviceaccount preflight-role preflight-rolebinding 
   | yq '(select(.kind == "Job") | .spec.template.spec.containers[0].args) += ["--scope=cluster"]' \
   | label "$CLUSTER_NS" \
   | write scaling-manager-preflight-cluster.yaml "$PREFLIGHT_WHAT (Cluster-wide install, in $CLUSTER_NS; applies as is.)" ""
+
+# The DisaggregatedSet role writer's grant (DSET_ROLE_WRITER), opt-in: get,
+# list and patch on disaggregatedsets, which the main files never grant (they
+# get them only). Copied from the components make applies with
+# DSET_ROLE_WRITER=true, so the two cannot drift: a Role in the controller's
+# namespace for the namespaced install, a ClusterRole for the cluster-wide one.
+# smt admin-setup --dset-role-writer and smt install --scope cluster
+# --dset-role-writer apply it, and the switch on the Deployment with it.
+# dset_role_writer_grant <component> <namespace>: the component's RBAC, in and
+# bound to <namespace>.
+dset_role_writer_grant() {
+    local c="$ROOT/config/components/$1" f first=true
+    for f in "$c"/*.yaml; do
+        [ "${f##*/}" = kustomization.yaml ] && continue
+        [ "$first" = true ] || echo '---'
+        first=false
+        cat "$f"
+    done | NS="$2" yq '
+        (select(.kind == "Role" or .kind == "RoleBinding") | .metadata.namespace) = strenv(NS)
+        | (select(.kind == "RoleBinding" or .kind == "ClusterRoleBinding") | .subjects[].namespace) = strenv(NS)
+        | ... comments = ""'
+}
+DSETW_WHAT="Optional: the DisaggregatedSet role writer's grant, get, list and patch on disaggregatedsets (docs/reference/disaggregatedset.md). Apply it only to turn the writer on, with DSET_ROLE_WRITER=true on the controller; passive mode still writes no replicas. patch reaches every field of every set in scope."
+dset_role_writer_grant dset-role-writer-namespaced "$PLACEHOLDER" | label "$PLACEHOLDER" \
+  | write scaling-manager-dset-role-writer.yaml "$DSETW_WHAT (Namespaced install: a Role in the controller's namespace.)" "$SED_HOW"
+dset_role_writer_grant dset-role-writer "$CLUSTER_NS" | label "$CLUSTER_NS" \
+  | write scaling-manager-dset-role-writer-cluster.yaml "$DSETW_WHAT (Cluster-wide install, in $CLUSTER_NS: a ClusterRole; applies as is.)" ""
 
 # Every file holds at least one object, or the render went wrong somewhere.
 for f in "${RELEASE_FILES[@]}"; do

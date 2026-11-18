@@ -5,11 +5,11 @@
 # scripts the make targets run, so an operator needs no checkout of the
 # repository: only docker or podman, and a kubeconfig.
 #
-#   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS]
+#   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS] [--dset-role-writer]
 #                                                                cluster admin, once per namespace: the admin objects, the stamp, and its namespace on the weights labeller
-#   scaling-manager-tools install -n NS --prometheus-url URL [--quota "GPU=N"] [--prometheus-ca FILE] [--allow-http] [--set KEY=VALUE]
+#   scaling-manager-tools install -n NS --prometheus-url URL [--quota "GPU=N"] [--prometheus-ca FILE] [--allow-http] [--set KEY=VALUE] [--dset-role-writer]
 #                                                                namespace owner: settings, preflight, the controller
-#   scaling-manager-tools install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS ... [--weights-labeller-image IMG | --no-weights-labeller]
+#   scaling-manager-tools install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS ... [--weights-labeller-image IMG | --no-weights-labeller] [--dset-role-writer]
 #                                                                cluster admin: the cluster-wide install, all steps, and the weights labeller
 #   scaling-manager-tools admin-finish -n NS [--restart-keda]   cluster admin, after the install: KEDA's client certificate, then drop the preflight's cluster reads
 #   scaling-manager-tools release-files --out DIR               write the release files this image carries

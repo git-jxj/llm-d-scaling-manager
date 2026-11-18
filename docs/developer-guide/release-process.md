@@ -487,6 +487,7 @@ Design and rules: [install-from-release.md](../proposals/install-from-release.md
 | `scaling-manager-metrics-reader.yaml` | optional, Kubernetes: binds the scraping Prometheus account to the metrics-reader ClusterRole |
 | `scaling-manager-preflight.yaml` | the preflight Job (`manager preflight check`, image by digest), its ServiceAccount, and its read-only Role and ClusterRole; reads pods and PodMonitors in the controller's namespace only, and no Secret ([preflight.md](../reference/preflight.md)) |
 | `scaling-manager-preflight-cluster.yaml` | the same for the cluster-wide install in `scaling-manager-system` (`--scope=cluster`): lists pods, Deployments and PodMonitors in every namespace. Applies as is |
+| `scaling-manager-dset-role-writer.yaml`, `-dset-role-writer-cluster.yaml` | optional: the DisaggregatedSet role writer's grant, `get`, `list` and `patch` on `disaggregatedsets` (a Role in `__NAMESPACE__`, or a ClusterRole for `scaling-manager-system`), copied from `config/components/dset-role-writer*`. The only files that grant more than `get` on them; `smt --dset-role-writer` applies them |
 
 `make test-e2e-release-manifests` installs the namespaced files on kind with
 `kubectl` only and checks them, and `RELEASE_E2E_SCOPE=cluster` does the same
