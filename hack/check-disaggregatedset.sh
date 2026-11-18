@@ -366,7 +366,7 @@ RAW_ERR="Error from server (Forbidden): forbidden"
 before=$FAILED
 out="$(llmsm_report_lws_dset 2>&1)"
 assert_contains "$out" "was not checked"
-assert_not_contains "$out" "KEDA can scale"
+assert_not_contains "$out" "[INFO]"
 [ "$FAILED" -eq "$before" ] && ok
 
 # ----------------------------------------------------------------------------
