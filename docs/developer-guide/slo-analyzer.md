@@ -53,6 +53,20 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
 - The last two are replay-only in the analyzer: `SetSwitchesForReplay` is
   the only way on, and no policy key sets them.
 
+One more switch sets an input, not a `TTFTFleet` field:
+`slo-ttft-imbalance-across-counts` (off, the CLI's `--imbalance-across-counts`
+default, `whatif.DefaultImbalanceAcrossCounts`). It sets `f` at a prefill pod
+count P1 has not learned (`ttftInputs.imbalanceAcross`,
+`whatif.ImbalanceAcrossCounts`). Off, `min(N, max(1.5, f))`. On, a count P1
+learned keeps its own `f` (`prefill.Estimate.FByPods`). Any other count reads
+`f(n) = 1 + c·g(n)`, where `g(n)` is the expected max of `n` standard normals
+(`prefill.NormalMaxMean`) and `c` is fitted through `f = 1` to every count
+learned. With no count learned, `f` is `whatif.FreshImbalance` (1.15). At the
+current count, the raw share wins when it reads higher. `routing()` reads the
+raw share as before. Every `f` not learned is flagged `AssumedImbalance`, and
+the log's `fSource` says `learned`, `fitted from counts {2}`, `default` or
+`raw share`. It is replay-only too.
+
 The analyzer's met/unmet is `whatif.TTFTMeets`. `RateForTTFT`, which the
 CLI's and the planner API's rates and the analyzer's published rate come
 from, is capped under the prefill onset (`BoundPrefillOnset`), so it answers

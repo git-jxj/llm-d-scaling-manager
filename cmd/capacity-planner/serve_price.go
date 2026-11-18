@@ -61,7 +61,7 @@ func apiError(err error) error {
 func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest) (*whatifapi.Resolved, error) {
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
-		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate}
+		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
 		src = *req.Source
@@ -285,7 +285,8 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 	return &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
-		Pricer:  &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource()},
+		Pricer: &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
+			imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts},
 	}, nil
 }
 
@@ -296,6 +297,9 @@ type servedState struct {
 	decodeVariant, prefillVariant string
 	// hint is the words a refusal names a calm cycle in: the source's.
 	hint hintSource
+	// imbalanceAcrossCounts is --imbalance-across-counts on at-replicas;
+	// the server prices at the shared default.
+	imbalanceAcrossCounts bool
 }
 
 // seconds is x seconds as a duration, to the nanosecond.
@@ -317,7 +321,7 @@ func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
 	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant, hint: s.hint, hintSet: true,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{"ttft": true, "headroom": true}, warn: io.Discard,
 		decode: k.Decode, prefill: k.Prefill, headroom: k.Headroom, priceRouterWait: whatif.DefaultPriceRouterWait,
-		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate}
+		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: s.imbalanceAcrossCounts}
 	set := func(name string) { f.set[name] = true }
 	if k.PromptTokens > 0 {
 		f.inputTokens = k.PromptTokens

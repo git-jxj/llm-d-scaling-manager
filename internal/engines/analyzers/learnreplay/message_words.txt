@@ -2690,6 +2690,7 @@ slo-model
 slo-transient
 slo-ttft-decode-gate-charge
 slo-ttft-decode-term
+slo-ttft-imbalance-across-counts
 slo-ttft-joint
 slo-ttft-joint-inputs
 slo-ttft-measured-spread

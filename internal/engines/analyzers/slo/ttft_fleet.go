@@ -96,8 +96,11 @@ type ttftInputs struct {
 	// psOnsets is SwitchTTFTPSOnsets, decodeGateCharge
 	// SwitchTTFTDecodeGateCharge.
 	psOnsets, decodeGateCharge bool
-	flow                       whatif.FlowControl
-	mismatch                   bool
+	// acrossCounts is SwitchTTFTImbalanceAcrossCounts: f at an unlearned
+	// count read across counts (imbalanceAcross).
+	acrossCounts bool
+	flow         whatif.FlowControl
+	mismatch     bool
 }
 
 // imbalance is f at pods, whether it is assumed, and where it came from.
@@ -106,8 +109,11 @@ type ttftInputs struct {
 // with one pod, none (the model prices one pod as 1 exactly); otherwise
 // assumed, min(N_p, max(1.5, f_raw)). At another count: min(N', max(1.5, f)),
 // so a learned f is never carried unchanged to a new count, and one pod's
-// exact 1 never reaches two.
+// exact 1 never reaches two. With acrossCounts on, imbalanceAcross instead.
 func (in ttftInputs) imbalance(pods int) (f float64, assumed bool, source string) {
+	if in.acrossCounts {
+		return in.imbalanceAcross(pods)
+	}
 	f, assumed, source = in.imbalanceNow()
 	if pods == in.pods {
 		return f, assumed, source
@@ -126,6 +132,23 @@ func (in ttftInputs) imbalanceNow() (float64, bool, string) {
 		return 0, false, fSourceOnePod
 	}
 	return min(float64(in.pods), max(whatif.ImbalanceFloor, in.shares.largest)), true, fSourceAssumed
+}
+
+// imbalanceAcross is f at pods read across counts
+// (SwitchTTFTImbalanceAcrossCounts, whatif.ImbalanceAcrossCounts): P1's f at
+// that count; none on one pod; else the curve fitted to the counts P1
+// learned, or whatif.FreshImbalance with none, assumed. At the current count
+// an unlearned f is raised to the raw share when that reads higher: a
+// reading of this count, the side that asks for more.
+func (in ttftInputs) imbalanceAcross(pods int) (float64, bool, string) {
+	if pods <= 1 {
+		return 0, false, fSourceOnePod
+	}
+	r := whatif.ImbalanceAcrossCounts(in.est.FByPods, pods)
+	if pods == in.pods {
+		r = r.WithRawShare(in.shares.largest, pods)
+	}
+	return r.F, r.Assumed, r.Source
 }
 
 // routing reads f at the current count against whatif.RoutingBoundShare of the pods:

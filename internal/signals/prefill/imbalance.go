@@ -44,12 +44,12 @@ const MinImbalanceMinutes = 5
 // uses the normal approximation instead of the exact sum.
 const GaussianMaxMean = 1e4
 
-// normalMaxMean is the expected max of n standard normals: the integral over
+// NormalMaxMean is the expected max of n standard normals: the integral over
 // x > 0 of 1 - Phi(x)^n less the integral over x < 0 of Phi(x)^n, folded
 // onto x > 0 as 1 - Phi(x)^n - Phi(-x)^n, which is smooth, and summed by
 // Simpson's rule over [0, 10] at a step of 0.01. Beyond 10 the integrand is
 // below float64's resolution for any n a variant has.
-func normalMaxMean(n int) float64 {
+func NormalMaxMean(n int) float64 {
 	const lim, steps = 10.0, 1000
 	h := lim / steps
 	f := func(x float64) float64 {
@@ -193,7 +193,7 @@ func poissonMaxExcess(n int, m float64) float64 {
 		return 0
 	}
 	if m > GaussianMaxMean {
-		return normalMaxMean(n) / math.Sqrt(m)
+		return NormalMaxMean(n) / math.Sqrt(m)
 	}
 	sd := math.Sqrt(m)
 	lo := math.Max(0, math.Floor(m-12*sd))

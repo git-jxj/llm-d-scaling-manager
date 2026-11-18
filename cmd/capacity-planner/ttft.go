@@ -562,12 +562,36 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		p.Replicas, pf.in.ReplicasFrom = f.prefill, "--prefill"
 		pf.in.Replicas = f.prefill
 	}
-	p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAt(ps, p.Replicas)
-	pf.in.Imbalance = max(p.Imbalance, 1)
-	if p.ImbalanceAssumed {
-		pf.assume("f %s on %d pods (none learned at that count)", num(p.Imbalance), p.Replicas)
+	if f.imbalanceAcrossCounts {
+		p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAcross(ps, p.Replicas)
+		if p.ImbalanceAssumed {
+			pf.assume("f %s on %d pods (%s)", num(p.Imbalance), p.Replicas, pf.in.ImbalanceSource)
+		}
+	} else {
+		p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAt(ps, p.Replicas)
+		if p.ImbalanceAssumed {
+			pf.assume("f %s on %d pods (none learned at that count)", num(p.Imbalance), p.Replicas)
+		}
 	}
+	pf.in.Imbalance = max(p.Imbalance, 1)
 	return p, nil
+}
+
+// imbalanceAcross is f at pods read across counts
+// (--imbalance-across-counts, whatif.ImbalanceAcrossCounts), as the SLO
+// analyzer reads it with slo.SwitchTTFTImbalanceAcrossCounts on: P1's own at
+// that count, else nothing on one pod, else the curve fitted to the counts P1
+// learned, or whatif.FreshImbalance with none, assumed. At the recorded
+// count an unlearned f is raised to the raw share when that reads higher.
+func imbalanceAcross(ps *learnreplay.PrefillState, pods int) (f float64, assumed bool, source string) {
+	if pods == 1 {
+		return 0, false, "one pod"
+	}
+	r := whatif.ImbalanceAcrossCounts(ps.Estimate.FByPods, pods)
+	if pods == ps.Pods {
+		r = r.WithRawShare(ps.RawShare, pods)
+	}
+	return r.F, r.Assumed, r.Source
 }
 
 // imbalanceAt is f at pods, by S1's decision 1: P1's own at that count, else
