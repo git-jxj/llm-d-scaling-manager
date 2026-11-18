@@ -404,8 +404,8 @@ func gateOf(st *learnreplay.State) frozenGate {
 // is a question this command cannot ask.
 func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b freezeBucket,
 	held map[string]map[float64]float64) (frozenBucket, error) {
-	out, off, priced, err := f.bucketFleet(st, spec, b)
-	if err != nil || !priced {
+	out, off, pf, err := f.bucketFleet(st, spec, b)
+	if err != nil || pf == nil {
 		return out, err
 	}
 	on := off
@@ -452,8 +452,9 @@ func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b fre
 
 // bucketFleet is one bucket's fleet as the freeze prices it, flow control
 // off: the spec's counts, shape, spread and arrivals on the recording's
-// terms. priced is false where the fleet refused, with out saying why.
-func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b freezeBucket) (frozenBucket, whatif.TTFTFleet, bool, error) {
+// terms, and the priced fleet it came from; pf is nil where the fleet
+// refused, with out saying why.
+func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b freezeBucket) (frozenBucket, whatif.TTFTFleet, *pricedFleet, error) {
 	out := frozenBucket{freezeBucket: b, Flags: []whatif.Flag{}, Assumed: []string{}, Targets: []frozenTarget{}, Curve: []frozenPoint{}}
 	if v, ok := f.ca2[b.Name]; ok {
 		out.Ca2 = v
@@ -466,20 +467,20 @@ func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b fre
 	}
 	variants, err := a.decodeVariants(st)
 	if err != nil {
-		return out, whatif.TTFTFleet{}, false, err
+		return out, whatif.TTFTFleet{}, nil, err
 	}
 	if len(variants) != 1 {
-		return out, whatif.TTFTFleet{}, false, usagef("the recording holds %d decode variants, want 1: a staircase prices one fleet", len(variants))
+		return out, whatif.TTFTFleet{}, nil, usagef("the recording holds %d decode variants, want 1: a staircase prices one fleet", len(variants))
 	}
 	ps, err := a.prefillState(st)
 	if err != nil {
-		return out, whatif.TTFTFleet{}, false, err
+		return out, whatif.TTFTFleet{}, nil, err
 	}
 	pf := a.fleetFor(st, ps, ttftQuestion{q: 0.9}, &variants[0])
 	out.Flags, out.Assumed = settledFlags(pf.flags, out.Ca2), settledAssumed(pf.in.Assumed)
 	if pf.refused != nil {
 		out.Refused = refusalText(*pf.refused)
-		return out, whatif.TTFTFleet{}, false, nil
+		return out, whatif.TTFTFleet{}, nil, nil
 	}
 	off := pf.fleet
 	off.Prefill.PromptCV, off.Prefill.PromptCVAssumed = spec.PromptCV, false
@@ -491,7 +492,7 @@ func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b fre
 		off.Prefill.ArrivalCV2 = out.Ca2
 	}
 	off.FlowControl = whatif.FlowControl{State: whatif.FlowControlOff}
-	return out, off, true, nil
+	return out, off, pf, nil
 }
 
 // settledAssumed is the fleet's assumptions, less those the spec settles: what the

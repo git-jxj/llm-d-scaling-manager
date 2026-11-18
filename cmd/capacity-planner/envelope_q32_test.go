@@ -195,7 +195,8 @@ func q32Buckets(t *testing.T) map[string]q32Bucket {
 		now, err := f.priceBucket(st, spec, b, nil)
 		require.NoError(t, err)
 		require.Empty(t, now.Refused, "bucket %s", b.Name)
-		_, off, priced, err := f.bucketFleet(st, spec, b)
+		_, off, pf, err := f.bucketFleet(st, spec, b)
+		priced := pf != nil
 		require.NoError(t, err)
 		qb := q32Bucket{spec: b, now: now, off: off, priced: priced}
 		for _, r := range run.Buckets {
