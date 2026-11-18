@@ -10,7 +10,7 @@ most installs need are on that page.
 Manager ConfigMap keys can also be set as environment variables of the same
 name on the controller Deployment. All of these need a restart.
 `GLOBAL_OPT_INTERVAL`, the `PROMETHEUS_METRICS_CACHE_*` keys, the
-`LEARNED_STATE_*` keys, `KEDA_HPA_REPAIR` and `DSET_ROLE_WRITER` can also be set, under the same names, in the
+`LEARNED_STATE_*` keys, `KEDA_HPA_REPAIR`, `DSET_ROLE_WRITER` and `LLMSM_POOL_SELECTED_SUPPLY` can also be set, under the same names, in the
 [settings ConfigMap](configuration.md#the-settings-configmap), which wins.
 
 | Name | Where set | Default | Change it when |
@@ -23,6 +23,7 @@ name on the controller Deployment. All of these need a restart.
 | `PROMETHEUS_SERVER_NAME`; setting `prometheusServerName` | Environment or settings | empty | Prometheus' certificate names a different host than its URL |
 | `PROMETHEUS_METRICS_CACHE_TTL`, `_CLEANUP_INTERVAL`, `_FETCH_INTERVAL` | Manager ConfigMap | `30s`, `1m`, `30s` | your scrape interval is longer than 30 s |
 | `PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD`, `_STALE_THRESHOLD`, `_UNAVAILABLE_THRESHOLD` | Manager ConfigMap | `1m`, `2m`, `5m` | the same |
+| `LLMSM_POOL_SELECTED_SUPPLY` | Environment or settings (same name), read at start | `true` | you need the counting from before v0.12.0: every replica of a variant counts as supply, and nothing is held, whether or not an InferencePool selects it. Off, a canary served outside the pool autoscales again ([what it does](../concepts/steady-state-engine.md#3-the-scaling-signal)) |
 | `LLMSM_STICKY_SCALE_DOWN` | Environment | `true` | you are comparing behaviour: off, a model idling near the boundary flips N and N-1 |
 | `LLMSM_LIMITED_MODE` | Environment | `false` | the controller may not read Nodes |
 | `SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY` | Environment | `10` | many models wake from zero at once |

@@ -88,6 +88,11 @@ type State struct {
 	Joint                             prefill.JointEstimate
 	JointPrefillPods, JointDecodePods int
 	JointRate                         float64
+	// ArrivalRates is the model's request arrival rate, in requests per
+	// second, at every cycle up to Cycle, oldest first, as the collector read
+	// it (QueryModelArrivalRate): 0 where it read none, which a failed query
+	// and an idle cycle both read as.
+	ArrivalRates []float64
 }
 
 // VariantState is one variant's learned state at the cycle: everything the
@@ -153,6 +158,10 @@ type VariantState struct {
 	MaxModelLenUnresolved bool
 	// Shape is the traffic the variant served (shapeOf).
 	Shape MeasuredShape
+	// ShapeRange is the range of the per-cycle mean lengths over every cycle
+	// with traffic up to the one asked: what the recording saw, and what a
+	// stated shape is extrapolated past.
+	ShapeRange ShapeRange
 	// ReadingsFrom and ReadingsTo are the first and the last cycle of the
 	// LineReadings, 0 with none.
 	ReadingsFrom, ReadingsTo int
@@ -162,6 +171,11 @@ type VariantState struct {
 	// LineRows is the variant's rows of its latest cycles that have one, off
 	// a ramp and on one, for the line check (state_line.go).
 	LineRows []whatif.LineRow
+	// BelowBandITL is the floor below the band, in seconds: the 10th
+	// percentile of the variant's latest mean ITLs read off a ramp at a fill
+	// under the band's bottom (whatif.BelowBand.LeastITL). 0 with fewer than
+	// belowBandMinReadings, where the line is not read below the band.
+	BelowBandITL float64
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -228,6 +242,8 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		ttft     = newTTFTSamples()
 		lines    = newLineSamples()
 		cycleAt  = map[time.Time]int{}
+		arrivals []float64
+		ranges   = map[string]ShapeRange{}
 	)
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
@@ -251,6 +267,7 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 			firstAt = ev.Now
 		}
 		cycleAt[ev.Now] = n
+		arrivals = append(arrivals, in.ArrivalRate)
 		if w, ok := tpotWindow(in.RouterLatency); ok {
 			windows = append(windows, w)
 		}
@@ -258,6 +275,7 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 			engine = append(engine, w)
 		}
 		noteShapes(shapes, in.ReplicaMetrics, n)
+		noteRanges(ranges, shapes, n)
 		ttft.note(in, n, ev.Now)
 		args := func(variant string) string {
 			if rec := r.store.Get(in.Namespace, in.ModelID, variant); rec != nil {
@@ -274,6 +292,9 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		ttft.noteTerm(in, ev.Now, args)
 		if n == cycle {
 			st = r.stateOf(in, n, ev.Now, shapes)
+			for i := range st.Variants {
+				st.Variants[i].ShapeRange = ranges[st.Variants[i].Variant]
+			}
 			r.fillTTFT(st, in, ttft)
 			return true
 		}
@@ -289,9 +310,11 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		return nil, fmt.Errorf("learnreplay: the replay ended after %d of the %d cycles of %s/%s", n, cycle, ns, model)
 	}
 	st.FirstAt, st.TPOTWindows, st.EngineTPOTWindows, st.Cycles = firstAt, windows, engine, total
+	st.ArrivalRates = arrivals
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
+		st.Variants[i].BelowBandITL = lines.leastBelowBand(st.Variants[i].Variant)
 	}
 	return st, nil
 }
@@ -592,5 +615,32 @@ func (vs *VariantState) refit() {
 	}
 	if got := itl.RefitAboveBand(vs.Readings.Above, vs.Readings.AboveSteady, vs.MinSettled); got.Tier != "" && sameLine(got.Model, vs.Line) {
 		vs.Tier, vs.LineReadings, vs.Refitted = whatif.TierAboveBand, got.Read, true
+	}
+}
+
+// ShapeRange is the range of a variant's per-cycle mean lengths and prefix-hit
+// rate, over the cycles with traffic; Cycles is how many, 0 with none.
+type ShapeRange struct {
+	ILMin, ILMax, OLMin, OLMax float64
+	HitMin, HitMax             float64
+	Cycles                     int
+}
+
+// noteRanges widens each variant's range by its sample of cycle n, if it has
+// one: the latest of its shape window.
+func noteRanges(ranges map[string]ShapeRange, shapes map[string][]shapeSample, n int) {
+	for v, s := range shapes {
+		if len(s) == 0 || s[len(s)-1].cycle != n {
+			continue
+		}
+		x, r := s[len(s)-1], ranges[v]
+		if r.Cycles == 0 {
+			r = ShapeRange{ILMin: x.il, ILMax: x.il, OLMin: x.ol, OLMax: x.ol, HitMin: x.hit, HitMax: x.hit}
+		}
+		r.ILMin, r.ILMax = min(r.ILMin, x.il), max(r.ILMax, x.il)
+		r.OLMin, r.OLMax = min(r.OLMin, x.ol), max(r.OLMax, x.ol)
+		r.HitMin, r.HitMax = min(r.HitMin, x.hit), max(r.HitMax, x.hit)
+		r.Cycles++
+		ranges[v] = r
 	}
 }
