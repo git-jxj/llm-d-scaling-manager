@@ -118,6 +118,10 @@ type ReplicaMetricsCollector struct {
 	// cycleRecord.
 	cycleTTFTNamespaces map[string]bool
 	cycleMu             sync.Mutex
+	// warnedLWSGroups is the namespace/group keys warnLWSRanks has warned
+	// about, so it says so once per group, not every cycle. Guarded by
+	// cycleMu.
+	warnedLWSGroups map[string]bool
 	// clock is what collectedAt is read from: the instant the rows are
 	// stamped with, their freshness is judged at and a Pod's uptime is
 	// measured to. Nil reads the wall clock (now).
@@ -445,6 +449,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 
 	// Build replica metrics from pod data
 	replicaMetrics := make([]domain.ReplicaMetrics, 0, len(podData))
+	places := make(map[string]lwsPlace, len(podData))
 	collectedAt := c.now()
 
 	// Pods attributed through the FMA pairing rather than their own owner chain,
@@ -452,7 +457,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	pairedAttributions := 0
 	pairedExample := ""
 	for instanceKey, data := range podData {
-		metric, pairedAs, ok := c.attributeInstance(ctx, modelID, namespace, instanceKey, data, collectedAt, scaleTargets, vaMetricsFreshnessStatus)
+		metric, pairedAs, place, ok := c.attributeInstance(ctx, modelID, namespace, instanceKey, data, collectedAt, scaleTargets, vaMetricsFreshnessStatus)
 		if pairedAs != "" {
 			pairedAttributions++
 			if pairedExample == "" {
@@ -463,6 +468,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			continue
 		}
 		replicaMetrics = append(replicaMetrics, metric)
+		places[metric.PodName] = place
 	}
 
 	// One line per cycle when the FMA pairing hop carried anything, because the
@@ -489,6 +495,16 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	// replicas. See collapseToPods.
 	instanceCount := len(replicaMetrics)
 	replicaMetrics = collapseToPods(replicaMetrics)
+	// Then each LWS group's Pods into one replica, where its workers run
+	// engines of their own. See collapseToGroups.
+	placed := make([]placedRow, len(replicaMetrics))
+	for i, m := range replicaMetrics {
+		placed[i] = placedRow{row: m, place: places[m.PodName]}
+	}
+	c.warnLWSRanks(ctx, namespace, placed)
+	replicaMetrics = collapseToGroups(placed, func(pod string) bool {
+		return c.lwsGroupImpaired(ctx, namespace, pod)
+	})
 
 	// Only set this after all pods have been processed, making sure not to include pods without metrics (which attributeInstance skips).
 	// This ensures that the discovered pod count reflects only those pods that produced replica metrics.

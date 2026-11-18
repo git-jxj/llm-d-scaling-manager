@@ -180,6 +180,8 @@ Without the first every variant reads as both roles; without the second, give
 | `kube_pod_container_resource_requests` | gauge | `resource="nvidia_com_gpu"` | GPUs per replica | optional |
 | `kube_node_labels` | gauge | `node`, `label_nvidia_com_gpu_product` (no `namespace`, no `pod`) | the accelerator; needs kube-state-metrics' `--metric-labels-allowlist=nodes=[nvidia.com/gpu.product]` | optional |
 | `kube_deployment_spec_replicas` | gauge | `deployment` (no `pod`) | desired replicas; variants parked at zero | optional |
+| `kube_pod_container_info` | gauge | `container`, `image_spec`, `image` | the vLLM release a `vllm-openai` image tag names | optional |
+| `kube_deployment_annotations` | gauge | `deployment`, `annotation_scaling_manager_llmd_ai_vllm_version` (no `pod`) | the vLLM release the annotation states; needs kube-state-metrics' `--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]` | optional |
 
 ## Counts
 
@@ -188,7 +190,7 @@ Without the first every variant reads as both roles; without the second, give
 | vLLM | 34 | 1 | 8 | 4 | 21 |
 | SGLang | 23 | 1 | 8 | 0 | 14 |
 | Router (EPP) | 17 | 0 | 1 | 2 | 14 |
-| kube-state-metrics | 13 | 0 | 0 | 0 | 13 |
-| All | 87 | 2 | 17 | 6 | 62 |
+| kube-state-metrics | 15 | 0 | 0 | 0 | 15 |
+| All | 89 | 2 | 17 | 6 | 64 |
 
 A capture reads one engine's series, vLLM's or SGLang's, never both.

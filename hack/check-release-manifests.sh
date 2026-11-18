@@ -115,6 +115,16 @@ for scope in namespace cluster; do
         [ -s "$WORK/names/$scope-$platform" ] || { echo "FAIL: could not render config/overlays/$scope-scoped/$platform: $(head -2 "$WORK/names/err")"; exit 1; }
     done
 done
+# The rules of the Role make copies into each namespace a namespaced
+# controller manages from outside (llmsm_apply_watch_namespace_rbac, the
+# LLMSM_WATCH_NS setup): the overlay's manager Role, selected the way make
+# selects it. scaling-manager-model-namespace.yaml, which smt admin-setup
+# --model-namespace applies for the same setup, must grant exactly these,
+# less patch on pods, which only scaling-manager-activate.yaml grants.
+MAKE_WATCH_RULES="$(kustomize_build "$ROOT/config/overlays/namespace-scoped/kubernetes" \
+    | yq ea -o=json -I=0 '[.] | map(select(.kind == "Role" and (.metadata.name | test("manager-role$"))))' \
+    | jq -S -c 'if length == 1 then .[0].rules | map(if (.resources | index("pods")) then .verbs |= map(select(. != "patch")) else . end) else empty end')"
+[ -n "$MAKE_WATCH_RULES" ] || { echo "FAIL: config/overlays/namespace-scoped/kubernetes renders not exactly one manager Role for make to copy"; exit 1; }
 expected_file() {
     case "$1" in
         scaling-manager-namespaced.yaml) echo namespace-kubernetes ;;
@@ -393,6 +403,9 @@ check_dir() {
         n="$(q "$f" '.[] | select(.metadata.namespace != "__MODEL_NAMESPACE__") | .kind + "/" + .metadata.name')"
         [ -z "$n" ] || say "$f: objects outside __MODEL_NAMESPACE__: $(echo $n)"
     done
+    # The same grant in a model namespace as make's LLMSM_WATCH_NS setup.
+    n="$(q scaling-manager-model-namespace.yaml '[.[] | select(.kind == "Role")] | if length == 1 then .[0].rules else null end' | jq -S -c '.')"
+    [ "$n" = "$MAKE_WATCH_RULES" ] || say "scaling-manager-model-namespace.yaml: the Role differs from the Role make copies into a managed namespace (LLMSM_WATCH_NS): $(diff <(printf '%s\n' "$MAKE_WATCH_RULES" | jq -c '.[]') <(printf '%s\n' "$n" | jq -c '.[]?') | grep '^[<>]' | head -2 | tr '\n' ' ')"
     n="$(q scaling-manager-activate.yaml '[.[] | select(.kind == "Role") | .rules] | tojson')"
     [ "$n" = '[[{"apiGroups":[""],"resources":["pods"],"verbs":["patch"]}]]' ] || say "the activation Role grants $n, not patch on pods"
     # The manager Roles keep reading pods: dropping patch must not drop the rule.
@@ -589,6 +602,10 @@ mutate manager-role-pod-patch "patch on pods" scaling-manager-namespaced.yaml \
     '(select(.kind == "Role" and .metadata.name == "scaling-manager-manager-role") | .rules[] | select(.resources | contains(["pods"])) | .verbs) += ["patch"]'
 mutate model-role-pod-patch "patch on pods" scaling-manager-model-namespace.yaml \
     '(select(.kind == "Role") | .rules[] | select(.resources | contains(["pods"])) | .verbs) += ["patch"]'
+mutate model-role-drift "differs from the Role make copies" scaling-manager-model-namespace.yaml \
+    '(select(.kind == "Role") | .rules) += [{"apiGroups": ["apps"], "resources": ["daemonsets"], "verbs": ["get"]}]'
+mutate model-role-dropped-rule "differs from the Role make copies" scaling-manager-model-namespace.yaml \
+    '(select(.kind == "Role") | .rules) |= map(select(.resources | contains(["scaledobjects"]) | not))'
 mutate manager-role-no-pod-read "pod verbs" scaling-manager-namespaced-openshift.yaml \
     '(select(.kind == "Role" and .metadata.name == "scaling-manager-manager-role") | .rules) |= map(select(.resources | contains(["pods"]) | not))'
 mutate kueue-pod-write "patch on pods" scaling-manager-kueue.yaml \

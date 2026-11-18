@@ -64,6 +64,9 @@ type answerFlags struct {
 	prefixHit *float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
+	// flowControl is --flow-control, a TTFT flag (ttft.go): the router's flow
+	// control stated, on or off, in place of its inference from the queue series.
+	flowControl string
 	// priceRouterWait is --price-router-wait, a TTFT flag (ttft.go): opt-in,
 	// off by default.
 	priceRouterWait bool
@@ -113,6 +116,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.ttftPercentile, "ttft-percentile", "", "the TTFT percentile, in percent (90); on replicas-to-slo, default the policy's, else 90")
 	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, in place of the learned one (flagged)")
 	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, 0 to 3, in place of the measured one or the default 2 (flagged)")
+	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the queue series (flagged as stated)")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "Ca^2, the arrivals' squared coefficient of variation at the prefill queue, in place of Poisson's 1 (flagged)")
 	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the hop between the router and the engines (8ms), in place of the learned or default one (flagged)")
 	fs.IntVar(&f.prefill, "prefill", 0, "prefill replicas to price; 0 takes the recorded count")
@@ -362,6 +366,10 @@ type pricedVariant struct {
 	assumedHit bool
 	flags      []whatif.Flag
 	lines      whatif.LineResamples
+	// model is the model served, and stated the pricing flags set that put
+	// every figure outside the envelope (statedOutside).
+	model  string
+	stated []string
 }
 
 // assumed reports a shape the flags assumed, in part or whole.
@@ -381,7 +389,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.variant != "" && vs.Variant != f.variant {
 			continue
 		}
-		pv := pricedVariant{state: vs, cycle: st.Cycle}
+		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside()}
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
 			il, pv.assumedIL = f.inputTokens, true

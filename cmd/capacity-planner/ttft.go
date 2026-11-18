@@ -68,11 +68,11 @@ const outputSpreadUnreadWords = "no output-length histogram: KVreq is ILeff + OL
 // The closing note's measured halves. The figures are the frozen P2 table's
 // (TestTTFTFrozen_TheNotesFigures, learnreplay).
 const (
-	ttftNoteOpen     = "TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: "
+	ttftNoteOpen     = "TTFT is not a bound, and is validated only where its figure says so: "
 	ttftNoteAssumed  = "at the assumed prompt cv %s it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33%% under it."
 	ttftNoteMeasured = "at the sent spread (cv 0.06) it read up to 33% under the router's percentile on the P2 recordings."
 	// ttftNoteArrivals stands for both: the P2 table was read at Poisson arrivals.
-	ttftNoteArrivals = "no recording has checked it at a stated Ca^2."
+	ttftNoteArrivals = "the P2 recordings never checked it at a stated Ca^2; the measured envelope did only where a figure reads validated."
 	// ttftNoteBurst follows it at a stated Ca^2 above 1: the burst rule reads
 	// high at light load (whatif's ttft_ps.go; one pod, Ca^2 4, cv 0.058).
 	ttftNoteBurst = " Above Ca^2 1 it reads high at light load: on one pod at Ca^2 4 its p95 read +118% at utilization 0.3 and +10% at 0.85 against a simulation."
@@ -113,6 +113,8 @@ func (f *answerFlags) checkTTFT() error {
 		return usagef("--arrival-cv2 %g, want a finite value above 0: P3 reads 0 as Poisson, not as evenly spaced arrivals", f.arrivalCV2)
 	case f.set["assume-router-hop"] && f.assumeRouterHop < 0:
 		return usagef("--assume-router-hop %s, want a duration of 0 or more", f.assumeRouterHop)
+	case f.set["flow-control"] && f.flowControl != flowControlOn && f.flowControl != flowControlOff:
+		return usagef("--flow-control %q, want on or off", f.flowControl)
 	case f.set["assume-a"] && f.assumeA <= 0:
 		return usagef("--assume-a %s, want a duration above 0", f.assumeA)
 	case f.prefill < 0:
@@ -248,7 +250,13 @@ type pricedFleet struct {
 	// inputsText is where the fleet's inputs came from, for the human
 	// output; in the same for the JSON. in.Assumed names each assumed input.
 	inputsText string
-	in         wireTTFT
+	// model is the model served, stated the pricing flags set that put every
+	// figure outside the envelope, and prefillTP the prefill variant's tensor
+	// parallelism.
+	model     string
+	stated    []string
+	prefillTP int
+	in        wireTTFT
 }
 
 // label names a fleet's rows, when more than one decode variant is priced.
@@ -367,7 +375,7 @@ var processorSharing = true
 
 // readFleet is fleetFor before a refusal names the stated inputs.
 func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillState, q ttftQuestion, pv *pricedVariant) *pricedFleet {
-	pf := &pricedFleet{pv: pv, q: q.q, flags: []whatif.Flag{assumedPoisson},
+	pf := &pricedFleet{pv: pv, q: q.q, flags: []whatif.Flag{assumedPoisson}, model: st.ModelID, stated: f.statedOutside(),
 		in: wireTTFT{Percentile: q.q, TargetSeconds: q.seconds, Assumed: []string{}}}
 	if pv != nil {
 		pf.in.DecodeVariant = pv.state.Variant
@@ -381,6 +389,12 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		return pf
 	}
 	pf.variant = ps.Variant
+	for _, vs := range st.Variants {
+		if vs.Variant == ps.Variant {
+			pf.prefillTP = vs.TensorParallel
+		}
+	}
+	pf.in.PrefillEngine = variantEngine(st, ps.Variant)
 	p, refused := f.prefillInputs(pf, ps, st.Cycle)
 	if refused != nil {
 		pf.refused = refused
@@ -407,7 +421,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	if pf.fleet.Decode != nil && pf.pv.state.Shape.OutputDispersion == 0 {
 		pf.assume("%s", outputSpreadUnreadWords)
 	}
-	pf.flowControl(st)
+	pf.flowControl(st, f.flowControl)
 	f.arrivals(pf)
 	f.onsetNotes(pf)
 	if f.prefillVariant != "" && len(st.Prefill) > 1 {
@@ -819,22 +833,39 @@ func (pf *pricedFleet) noteAssumedTerm(r whatif.Result, price func(whatif.TTFTFl
 	}
 }
 
-// flowControl is flow control inferred from its series: S1's rule with
-// slo.flowControl unset. The CLI does not read that field, so a tier that
-// declares the state is still inferred here. On carries the upstream
-// thresholds.
-func (pf *pricedFleet) flowControl(st *learnreplay.State) {
-	if st.FlowControlSeries {
+// flowControl is flow control as --flow-control states it, else inferred from
+// its series: S1's rule with slo.flowControl unset. The CLI does not read that
+// field, so a tier that declares the state is still inferred here. On carries
+// the upstream thresholds.
+func (pf *pricedFleet) flowControl(st *learnreplay.State, stated string) {
+	on := st.FlowControlSeries
+	switch stated {
+	case flowControlOn, flowControlOff:
+		on = stated == flowControlOn
+		pf.assume("flow control %s (--flow-control)", stated)
+	}
+	if on {
 		pf.fleet.FlowControl = whatif.FlowControl{State: whatif.FlowControlOn,
 			QueueThreshold: whatif.FlowControlQueueThreshold, KVThreshold: whatif.FlowControlKVThreshold}
 		pf.in.FlowControl = "on"
 		pf.assume("flow-control thresholds %s and %s (upstream defaults)", num(whatif.FlowControlQueueThreshold), num(whatif.FlowControlKVThreshold))
 		return
 	}
+	if stated == flowControlOff {
+		pf.fleet.FlowControl = whatif.FlowControl{State: whatif.FlowControlOff}
+		pf.in.FlowControl = "off"
+		return
+	}
 	pf.fleet.FlowControl = whatif.FlowControl{State: whatif.FlowControlNoSeries}
 	pf.in.FlowControl = "off, inferred"
 	pf.assume("flow control off (no queue series)")
 }
+
+// The states --flow-control takes.
+const (
+	flowControlOn  = "on"
+	flowControlOff = "off"
+)
 
 // describe is the fleet's inputs, in a line.
 func (pf *pricedFleet) describe() {
@@ -882,9 +913,10 @@ func (pf *pricedFleet) aText() string {
 	return a + " learned"
 }
 
-// verdict is the words every TTFT figure prints beside it.
-func (pf *pricedFleet) verdict() string {
-	v := "UNVALIDATED"
+// verdict is the words every TTFT figure prints beside it: the envelope's
+// verdict on the figure, and each input the figure assumed.
+func (pf *pricedFleet) verdict(on whatif.Validation) string {
+	v := on.String()
 	if pf.assumedVP {
 		v += "; V_P ASSUMED"
 	}
@@ -1100,6 +1132,8 @@ func (pf *pricedFleet) atOperatingPoint(q ttftQuestion, query whatif.ReplicasQue
 	price := func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, o.rate, q.q) }
 	o.ttft = withSpan(pf.priced(price), pf.corners(price))
 	pf.noteAssumedTerm(o.ttft, price)
+	o.knee = settled(o.knee, pf.kneeValidation(o.knee))
+	o.ttft = settled(o.ttft, pf.ttftValidation(q.q, o.rate, o.ttft))
 	return o, query
 }
 
@@ -1131,7 +1165,7 @@ func (o *operatingTTFT) decodeNote() string {
 	if o == nil || !o.prefillBinds {
 		return ""
 	}
-	return "; at the prefill knee's rate; " + o.fleet.verdict()
+	return "; at the prefill knee's rate"
 }
 
 // fleetRate is question 1's fleet row: the smaller of the roles' rates and
@@ -1210,7 +1244,7 @@ func (pf *pricedFleet) kneeBasis(knee float64) string {
 		margin = fmt.Sprintf(" x (1 - %s margin)", num(p.VPMargin))
 	}
 	return fmt.Sprintf("N_p %d x V_P %s%s / (f %.4g x %s tokens); %s", p.Replicas, num(round(vp)), margin,
-		pf.in.Imbalance, num(round(p.PromptTokens)), pf.verdict())
+		pf.in.Imbalance, num(round(p.PromptTokens)), pf.verdict(pf.kneeValidation(pf.knee())))
 }
 
 // writeRows prints question 2's TTFT rows.
@@ -1221,7 +1255,7 @@ func (o operatingTTFT) writeRows(b *strings.Builder) {
 	}
 	switch v := o.ttft.(type) {
 	case whatif.TTFT:
-		row(b, o.q.label(), msText(v.Seconds), spanText(v.Sensitivity, "%.1f", 1000, true), "end to end; "+pf.verdict())
+		row(b, o.q.label(), msText(v.Seconds), spanText(v.Sensitivity, "%.1f", 1000, true), "end to end; "+pf.verdict(pf.ttftValidation(o.q.q, o.rate, o.ttft)))
 		fmt.Fprintf(b, "%-16s(bands: %s, a sweep, not a confidence interval)\n", "", pf.sweptText())
 		if msText(v.Independent) != msText(v.Seconds) {
 			fmt.Fprintf(b, "%-16s(%s if prefill and decode waits were independent)\n", "", msText(v.Independent))
@@ -1239,7 +1273,7 @@ func writeRateRows(b *strings.Builder, layout string, pf *pricedFleet, fleets in
 	role := pf.label(rolePrefill, fleets)
 	switch r := ttft.(type) {
 	case whatif.Answer:
-		fmt.Fprintf(b, layout, role, rateText(r.Value), ttftBoundText(q, r.Basis.BoundBy), pf.sweptBasis(r))
+		fmt.Fprintf(b, layout, role, rateText(r.Value), ttftBoundText(q, r.Basis.BoundBy), pf.sweptBasis(q.q, r, ttft))
 	case whatif.Unanswerable:
 		fmt.Fprintf(b, "%-9s%s\n", role, refusedText(r))
 	}
@@ -1247,13 +1281,13 @@ func writeRateRows(b *strings.Builder, layout string, pf *pricedFleet, fleets in
 	role = pf.label("fleet", fleets)
 	switch r := fleet.(type) {
 	case whatif.Answer:
-		fmt.Fprintf(b, layout, role, rateText(r.Value), boundText(r.Basis.BoundBy), pf.sweptBasis(r))
+		fmt.Fprintf(b, layout, role, rateText(r.Value), boundText(r.Basis.BoundBy), pf.sweptBasis(q.q, r, ttft))
 	case whatif.Unanswerable:
 		fmt.Fprintf(b, "%-9s%s\n", role, refusedText(r))
 	}
 }
 
 // sweptBasis is a rate's basis on question 1: the verdict and the rate's span.
-func (pf *pricedFleet) sweptBasis(a whatif.Answer) string {
-	return fmt.Sprintf("%s %s at %s", pf.verdict(), spanText(a.Sensitivity, "%.2f", 1, false), pf.sweptText())
+func (pf *pricedFleet) sweptBasis(q float64, a whatif.Answer, role whatif.Result) string {
+	return fmt.Sprintf("%s %s at %s", pf.verdict(pf.rateValidation(q, a, role)), spanText(a.Sensitivity, "%.2f", 1, false), pf.sweptText())
 }

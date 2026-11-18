@@ -167,8 +167,8 @@ pass that went right.
 3. Re-install without `DSET_ROLE_WRITER=true`. That removes the grant and the
    switch; for a split install, run `make setup-prereqs` and then
    `make deploy-scaling-manager INSTALL_PHASE=scaling-manager`, both without it.
-   With `smt`, run `smt install` and `smt admin-setup` without
-   `--dset-role-writer`. The uninstall removes the grant always.
+   With `smt`, run `smt install` and then `smt admin-setup` with
+   `--no-dset-role-writer`. The uninstall removes the grant always.
 
 The writer's field ownership stays in the set's `managedFields` until another
 manager writes the field; it does nothing on its own.
@@ -184,15 +184,16 @@ smt admin-setup -n <namespace> --dset-role-writer
 smt install -n <namespace> --prometheus-url <url> --dset-role-writer
 ```
 
-`install` stops with exit 3 until `admin-setup` has granted it. Cluster-wide
-install, one command:
+With `--model-namespace`, `admin-setup` puts the grant in each model
+namespace, where the controller lists the sets. `install` stops with exit 3
+until `admin-setup` has granted it. Cluster-wide install, one command:
 
 ```bash
 smt install --scope cluster --keda-namespace <keda> --prometheus-url <url> --model-namespace <ns> --dset-role-writer
 ```
 
-Give the flag on every run. A run without it removes the grant
-(`admin-setup`, `install --scope cluster`) or the switch (`install`).
+A re-run without the flag keeps the grant and the switch, as it keeps the
+model namespaces. `--no-dset-role-writer` removes them.
 
 With the release files and `kubectl` only, apply the grant file and set the
 switch. `<ctl>` is the controller's namespace:

@@ -75,7 +75,16 @@
         "ranks": 1,
         "replicas": 1,
         "replicasFrom": "recording",
-        "headroom": 0.85
+        "headroom": 0.85,
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        }
       },
       "results": {
         "knee": {
@@ -98,7 +107,12 @@
             },
             "flags": [
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+            }
           }
         },
         "operatingRate": {
@@ -142,7 +156,12 @@
             },
             "flags": [
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+            }
           }
         }
       }
@@ -152,6 +171,15 @@
       "variant": "variant-02",
       "ttft": {
         "decodeVariant": "variant-01",
+        "prefillEngine": {
+          "engine": "vllm",
+          "stepBudget": 65536,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        },
         "percentile": 0.9,
         "rate": 26.24631835192952,
         "rateSource": "headroom x decode knee",
@@ -218,6 +246,11 @@
             "sensitivity": {
               "lo": 29.553807790730264,
               "hi": 54.09676235742668
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
             }
           }
         },
@@ -267,6 +300,11 @@
             "sensitivity": {
               "lo": 0.19554831873055709,
               "hi": 1.087923746410954
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
             }
           }
         }
@@ -274,5 +312,5 @@
     }
   ],
   "exitCode": 0,
-  "note": "estimate from 14 readings (cycles 64-77) of a 83-cycle recording, not a guarantee; see basis (-o json); TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the sent spread (cv 0.06) it read up to 33% under the router's percentile on the P2 recordings. V_P ASSUMED. a ASSUMED."
+  "note": "estimate from 14 readings (cycles 64-77) of a 83-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: at the sent spread (cv 0.06) it read up to 33% under the router's percentile on the P2 recordings. V_P ASSUMED. a ASSUMED."
 }

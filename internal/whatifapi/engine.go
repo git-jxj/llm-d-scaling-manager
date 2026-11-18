@@ -34,6 +34,9 @@ type Resolved struct {
 	// the model and the variants): the server hashes it into the inputsId.
 	Content string
 	Pricer  Pricer
+	// Series is every cycle of the source, oldest first, for a day plan
+	// (POST /v1/dayplan); nil where the source carries none.
+	Series []SeriesSample
 }
 
 // Pricer builds the fleet a scenario prices. It must be safe to call from
@@ -96,6 +99,9 @@ type Fleet interface {
 	// Assumed is every assumed input of the fleet as read, in words, as the
 	// CLI's assumed row names them.
 	Assumed() []string
+	// Class is the class the envelope judges the fleet's figures by
+	// (whatif.FigureClass): its pods, accelerator, shape and flow control.
+	Class() whatif.FigureClass
 }
 
 // LimitSet is slo-to-rate's rates at one set of targets. Notes is what the

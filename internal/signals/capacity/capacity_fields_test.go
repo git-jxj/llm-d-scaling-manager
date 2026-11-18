@@ -83,6 +83,7 @@ var (
 		// (applyVLLMDefaults), so two releases whose defaults differ already
 		// compare unequal, and two whose defaults agree are the same engine.
 		"VLLMVersion":             "resolved into the compared memory share, block size and budget",
+		"VLLMVersionFrom":         "provenance of VLLMVersion",
 		"GpuMemoryUtilizationSet": "provenance of the compared GpuMemoryUtilization",
 		"BlockSizeSet":            "provenance of the compared BlockSize",
 		"ExtensibleKVCache":       "resolved into the compared GpuMemoryUtilization",
