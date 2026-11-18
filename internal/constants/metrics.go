@@ -616,6 +616,14 @@ const (
 	// Labels: namespace, model_name
 	LLMSMUnmeasuredQueue = "llmsm_unmeasured_queue"
 
+	// LLMSMUnroutedReplicas is a gauge carrying how many of a variant's replicas
+	// no InferencePool selects, in a model some pool does select. They are not
+	// counted as supply. For a variant held because its pod template matches no
+	// pool, it is every replica the variant runs.
+	//
+	// Labels: namespace, model_name, variant_name
+	LLMSMUnroutedReplicas = "llmsm_unrouted_replicas"
+
 	// LLMSMVariantAtMaxReplicas is a gauge, 1 while a variant's target sits on its
 	// own maxReplicas ceiling and 0 otherwise.
 	//
@@ -1308,6 +1316,12 @@ const (
 	// is a Kubernetes API error (reason forbidden, unavailable or other), and
 	// the collector then treats every Pod as Ready and present for the cycle.
 	QueryTypePodList = "pod_list"
+	// QueryTypePoolList is the per-namespace InferencePool listing that decides
+	// which replicas the router can reach. A failure is a Kubernetes API error
+	// (reason forbidden, unavailable or other), and supply is then counted as
+	// if no pool were checked. A kind the API server does not serve is not a
+	// failure: no pool can exist.
+	QueryTypePoolList = "pool_list"
 	// QueryTypeRouterLatency is the router TTFT/TPOT read by the slo analyzer.
 	QueryTypeRouterLatency = "router_latency"
 	// QueryTypeLearnerRecording is every query only a learner recording

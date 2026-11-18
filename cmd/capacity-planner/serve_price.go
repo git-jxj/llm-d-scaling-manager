@@ -67,7 +67,10 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		src = *req.Source
 	}
 	info := whatifapi.SourceInfo{Kind: src.Kind}
-	f.apiSource = src.Kind
+	f.hint, f.hintSet = hintAPIPrometheus, true
+	if src.Kind == whatifapi.SourceRecording {
+		f.hint = hintAPIRecording
+	}
 	var hide string
 	switch src.Kind {
 	case whatifapi.SourceRecording:
@@ -282,7 +285,7 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 	return &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
-		Pricer:  &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, apiSource: f.apiSource},
+		Pricer:  &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource()},
 	}, nil
 }
 
@@ -291,8 +294,8 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 type servedState struct {
 	st                            *learnreplay.State
 	decodeVariant, prefillVariant string
-	// apiSource is the source's kind, for the words of a refusal's hint.
-	apiSource string
+	// hint is the words a refusal names a calm cycle in: the source's.
+	hint hintSource
 }
 
 // seconds is x seconds as a duration, to the nanosecond.
@@ -301,7 +304,17 @@ func seconds(x float64) time.Duration { return time.Duration(math.Round(x * floa
 // Fleet reads the fleet at k: the flags k stands for, checked as the CLI
 // checks them, and the fleet slo-to-rate would read with them.
 func (s *servedState) Fleet(k whatifapi.Knobs) (whatifapi.Fleet, error) {
-	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant, apiSource: s.apiSource,
+	sf, err := s.fleetAt(k)
+	if err != nil {
+		return nil, err
+	}
+	return sf, nil
+}
+
+// fleetAt is Fleet as the fleet itself, for the report, which reads the
+// variant and the prefill inputs it was priced from.
+func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
+	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant, hint: s.hint, hintSet: true,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{"ttft": true, "headroom": true}, warn: io.Discard,
 		decode: k.Decode, prefill: k.Prefill, headroom: k.Headroom, priceRouterWait: whatif.DefaultPriceRouterWait,
 		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate}
@@ -310,6 +323,7 @@ func (s *servedState) Fleet(k whatifapi.Knobs) (whatifapi.Fleet, error) {
 		f.inputTokens = k.PromptTokens
 		set("assume-input-tokens")
 	}
+	f.prefixHit = k.PrefixHit
 	if k.OutputTokens > 0 {
 		f.outputTokens = k.OutputTokens
 		set("assume-output-tokens")

@@ -22,7 +22,6 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource"
 )
 
@@ -42,10 +41,11 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
-	// apiSource is the API's source kind (whatifapi.SourceRecording or
-	// SourcePrometheus) when the server asks, "" from the CLI: it picks the
-	// words a refusal names a calm cycle in (hintSource).
-	apiSource                 string
+	// hint, when hintSet, is the words a refusal names a calm cycle in, set
+	// by a caller that prices for another source (the server, the report);
+	// else they follow the CLI's own source (hintSource).
+	hint                      hintSource
+	hintSet                   bool
 	decode                    int
 	batchCap                  int64
 	inputTokens, outputTokens float64
@@ -59,6 +59,9 @@ type answerFlags struct {
 	assumeRouterHop                                   time.Duration
 	prefill                                           int
 	set                                               map[string]bool
+	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
+	// report shape, at-replicas --shape).
+	prefixHit *float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
 	// priceRouterWait is --price-router-wait, a TTFT flag (ttft.go): opt-in,
@@ -327,14 +330,12 @@ func (f *answerFlags) sourceLine(st *learnreplay.State) string {
 // rather than from a recording.
 func (f *answerFlags) prometheus() bool { return f.window.prometheus != "" }
 
-// hintSource is the words a calm cycle is named in: the API's source field
-// when the server asks, else the CLI's flag for the source it read.
+// hintSource is the words a calm cycle is named in: the caller's, when set,
+// else the CLI's flag for the source it read.
 func (f *answerFlags) hintSource() hintSource {
 	switch {
-	case f.apiSource == whatifapi.SourceRecording:
-		return hintAPIRecording
-	case f.apiSource != "":
-		return hintAPIPrometheus
+	case f.hintSet:
+		return f.hint
 	case f.prometheus():
 		return hintCLIPrometheus
 	}
@@ -357,12 +358,14 @@ type pricedVariant struct {
 	check whatif.LineCheck
 	// assumedIL and assumedOL say which lengths the flags assumed.
 	assumedIL, assumedOL bool
-	flags                []whatif.Flag
-	lines                whatif.LineResamples
+	// assumedHit says the prefix-hit rate was stated.
+	assumedHit bool
+	flags      []whatif.Flag
+	lines      whatif.LineResamples
 }
 
 // assumed reports a shape the flags assumed, in part or whole.
-func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL }
+func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL || pv.assumedHit }
 
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
@@ -388,7 +391,11 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		// A spread is a figure of the traffic the histogram counted, whatever
 		// length is asked: as the prompt's cv (prefillShape).
-		pv.shape = shape.New(il, ol, vs.Shape.PrefixHitRate).WithOutputDispersion(vs.Shape.OutputDispersion)
+		hit := vs.Shape.PrefixHitRate
+		if f.prefixHit != nil {
+			hit, pv.assumedHit = *f.prefixHit, true
+		}
+		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(vs.Shape.OutputDispersion)
 		replicas := vs.Replicas
 		if f.decode > 0 {
 			replicas = f.decode
@@ -402,6 +409,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
 			KVPerRequest: pv.shape.KVreq, OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
+			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL},
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)

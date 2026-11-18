@@ -613,7 +613,7 @@ func describeShare(lines []shareLine, limit int) string {
 // blockedReasons is the scaling-blocked reasons Prometheus holds now for
 // model modelID in namespace ns.
 func blockedReasons(pc *utils.PrometheusClient, ns, modelID string) ([]string, error) {
-	v, _, err := pc.API().Query(ctx, fmt.Sprintf(`%s{exported_namespace=%q,model_name=%q}`,
+	v, _, _, err := pc.API().Query(ctx, fmt.Sprintf(`%s{exported_namespace=%q,model_name=%q}`,
 		constants.LLMSMModelScalingBlocked, ns, modelID), time.Now())
 	if err != nil {
 		return nil, err
@@ -670,7 +670,7 @@ func lastStartMeasured(logs, ns, ms string) (startMeasuredLine, bool) {
 }
 
 func shareGauge(pc *utils.PrometheusClient, query string) (float64, bool) {
-	v, _, err := pc.API().Query(ctx, query, time.Now())
+	v, _, _, err := pc.API().Query(ctx, query, time.Now())
 	if err != nil {
 		return 0, false
 	}

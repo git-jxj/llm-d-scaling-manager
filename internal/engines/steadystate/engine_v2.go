@@ -808,6 +808,7 @@ func (e *Engine) pruneAnalyzerSeries(activeKeys map[string]bool) {
 	// apart from lastAnalyzerSeries.
 	e.retainLoadBalance(activeKeys)
 	e.retainSettle(activeKeys)
+	e.retainRouting(activeKeys)
 }
 
 // evictAllAnalyzerSeries removes every analyzer series the engine has published,
@@ -831,6 +832,7 @@ func (e *Engine) evictAllAnalyzerSeries() {
 	}
 	e.retainLoadBalance(nil)
 	e.retainSettle(nil)
+	e.retainRouting(nil)
 }
 
 // livenessThreshold is how long an analyzer stays live after its last
@@ -1578,6 +1580,7 @@ func buildCapacities(ctx context.Context, nr *allocation.NamedAnalyzerResult, me
 			if m, ok := metaByVariant[result.VariantCapacities[i].VariantName]; ok {
 				result.VariantCapacities[i].Role = m.Role
 				clampReplicaCountToScaleTarget(&result.VariantCapacities[i], m)
+				applyRouting(&result.VariantCapacities[i], m)
 			}
 		}
 	}

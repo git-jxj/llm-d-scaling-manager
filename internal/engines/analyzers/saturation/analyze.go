@@ -58,7 +58,7 @@ func (a *SaturationAnalyzer) analyze(ctx context.Context, input domain.AnalyzerI
 		case RestoredArgs:
 			msg = "learned state restored without the ITL baseline: the engine image changed, the arguments did not"
 		case RestoredPrior:
-			msg = "learned state restored as lower-only figures: the variant's engine arguments changed, so its k2 windows become previous figures (P2-prior) for the buckets they were measured in"
+			msg = "learned state restored as lower-only figures: the variant's engine arguments, or the vLLM defaults they resolve to, changed, so its k2 windows become previous figures (P2-prior) for the buckets they were measured in"
 		case RestoredIncomplete:
 			msg = "learned state restored under the unread configuration: the variant's engine configuration could not be read completely; its windows are its own only if it runs the same unread configuration, and lower-only figures otherwise"
 		case RestoredDiffers:

@@ -1221,10 +1221,11 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		}
 		fill := k
 		if k < d.Band.Lo {
-			k = d.Band.Lo
 			out.Flags = addFlags(out.Flags, BelowFittedBand)
 		}
-		first, floorStep = d.Line.ITLAt(k), d.Line.ITLAt(d.Band.Lo)
+		lowest := d.lowestFill()
+		k = max(k, lowest)
+		first, floorStep = d.Line.ITLAt(k), d.Line.ITLAt(lowest)
 		oldFirst, oldFloorStep = first, floorStep
 		if t := pl.term; t != nil {
 			// The term reads the line at the actual fill: D is several steps,

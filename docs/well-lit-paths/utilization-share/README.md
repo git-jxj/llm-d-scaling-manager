@@ -169,6 +169,12 @@ llm-d itself leaves sharing a GPU budget to Kueue; how the two compare is in
   is never planned and stays on the default optimizer. Add a `scope: cluster`
   quota for its accelerator type, or, on a cluster-scoped controller, set
   `physicalGroups: true` beside a `gpu-inventory` limiter.
+- **A model with a held variant.** A variant no InferencePool selects, while
+  another variant of its model is routed, is held, and a share plan would move
+  it. The whole model is never planned while the held variant runs; it stays on
+  the default optimizer. Add labels to the held variant's pod template that a
+  pool selects, remove it, or set `LLMSM_POOL_SELECTED_SUPPLY=false`
+  ([what held means](../../concepts/steady-state-engine.md#3-the-scaling-signal)).
 
 ### What it needs
 
