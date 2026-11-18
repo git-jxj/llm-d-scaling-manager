@@ -8,6 +8,7 @@ TTFT p90        7599.1 ms   [3830.2 .. Saturated] end to end; validated: error +
 ttft inputs     V_P 17046 learned (peak-under-queue, at 7984 tokens); a 9.01 ms learned; f 1 (learned); N_p 2 (--prefill); prompt 8000 tokens (assumed); decode by its line, term measured, hop measured
 assumed         prompt 8000 tokens (--assume-input-tokens); prompt cv 0.0577 (--assume-prompt-cv); flow control off (--flow-control); arrivals Ca^2 1 (--arrival-cv2); Poisson arrivals at decode admission (--arrival-cv2 does not reach it)
 shape           IL 8000 OL 200 (assumed), output spread D 1.141 (measured)
+engine          vLLM release not recorded
 line check      not run: 0 rows to compare at fill 0.30 to 0.80, want 5 (0 on a ramp, 0 above the band, 65 older than 30m0s)
 flags: AssumedShape (IL 8000, OL 200); HeldLine; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; TransferHeld; AssumedArrivalCV2
 estimate from no readings of the line's own of a 580-cycle recording, not a guarantee; see basis (-o json)
