@@ -156,8 +156,9 @@ func (f *captureFlags) registerWindow(fs *flag.FlagSet) {
 	fs.StringVar(&f.engine, "engine", "vllm", "the inference engine the variants run: vllm or sglang")
 	fs.StringVar(&f.engineArgs, "engine-args", "", "the engine's arguments, space-separated, for its parameters (kube-state-metrics has none); "+
 		"the decode role's, and every role's without --prefill-engine-args")
-	fs.Var(&f.prefillEngineArgs, "prefill-engine-args", "the prefill role's engine arguments, space-separated, in place of --engine-args "+
-		"and --batch-cap, which are then the decode role's only")
+	fs.Var(&f.prefillEngineArgs, "prefill-engine-args", "the prefill role's engine arguments, space-separated, in place of --engine-args; "+
+		"given, even empty (the engine's defaults, not the decode role's arguments), --engine-args and --batch-cap are the decode role's only "+
+		"and --batch-cap never applies to prefill")
 	f.gpus = gpusFlag{n: 1}
 	fs.Var(&f.gpus, "gpus-per-replica", "GPUs per replica: the whole group's for a LeaderWorkerSet (32 for 4 Pods x 8), not one Pod's; 1 where kube-state-metrics gives none, and given, it replaces what kube-state-metrics gives")
 	fs.StringVar(&f.accelerator, "accelerator", "", "the accelerator, where kube-state-metrics gives none")
@@ -365,8 +366,6 @@ func (b bearer) RoundTrip(req *http.Request) (*http.Response, error) {
 	return b.base.RoundTrip(req)
 }
 
-// gpusFlag is --gpus-per-replica: its count, and whether it was given, which
-// makes it replace what kube-state-metrics reads.
 // argsFlag is a string flag that says whether it was given: an empty
 // --prefill-engine-args is a role run with no arguments, not one that
 // takes --engine-args.
@@ -387,6 +386,8 @@ func (a *argsFlag) Set(s string) error {
 	return nil
 }
 
+// gpusFlag is --gpus-per-replica: its count, and whether it was given, which
+// makes it replace what kube-state-metrics reads.
 type gpusFlag struct {
 	n   int
 	set bool

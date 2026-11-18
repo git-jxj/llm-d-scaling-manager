@@ -170,7 +170,7 @@ manual:
           echo "CAPTURE_FROM=$(( FROM + 300 ))"
           echo "ENGINE=${ENGINE}"
           echo "DECODE_ARGS=${decode_args}"
-          echo "PREFILL_ARGS=${prefill_args}"
+          if [ -n "${PREFILL_WORKLOAD}" ]; then echo "PREFILL_ARGS=${prefill_args}"; fi
         } > planner-export/window.txt
       ) && cat planner-export/window.txt || echo "window.txt NOT written: fix the above, then run this step again"
       if grep -E '^[A-Z]+_ARGS=.*([$]|sh -c)' planner-export/window.txt 2>/dev/null; then
@@ -223,13 +223,14 @@ load:
     run: |
       tar xzf planner-export.tgz --no-same-owner
       python3 hack/promjson-to-openmetrics.py -o planner-export.om planner-export/*.json
+      unset PREFILL_ARGS
       while IFS='=' read -r k v; do
         case "${k}" in NAMESPACE|FROM|TO|FROM_ISO|TO_ISO|CAPTURE_FROM|ENGINE|DECODE_ARGS|PREFILL_ARGS) export "${k}=${v}" ;; esac
       done < planner-export/window.txt
       case "${FROM}:${TO}:${CAPTURE_FROM}" in *[!0-9:]*|:*|*::*|*:) echo "STOP: FROM, TO and CAPTURE_FROM in window.txt must be Unix seconds" ;; esac
       case "${ENGINE}" in vllm|sglang) ;; *) echo "STOP: ENGINE in window.txt must be vllm or sglang" ;; esac
       echo "namespace ${NAMESPACE}, engine ${ENGINE}, decode arguments: ${DECODE_ARGS}"
-      echo "prefill arguments: ${PREFILL_ARGS:-none, prefill takes the decode arguments}"
+      echo "prefill arguments: ${PREFILL_ARGS-none in window.txt, prefill takes the decode arguments}"
   backfill:
     note: Writes TSDB blocks.
     run: |
@@ -249,9 +250,10 @@ load:
   capture:
     note: |
       Then capture as in the first path, against the local copy, from 5 minutes into the export.
-      Each role is priced with its own engine arguments: DECODE_ARGS, and PREFILL_ARGS when the export has them.
+      Each role is priced with its own engine arguments: DECODE_ARGS, and PREFILL_ARGS when window.txt has that line.
+      An empty PREFILL_ARGS line means the prefill engine runs its defaults; with no line, prefill takes DECODE_ARGS.
     run: |
       bin/capacity-planner capture --prometheus http://127.0.0.1:9091 --namespace "${NAMESPACE}" --kube-state-metrics \
         --from "${CAPTURE_FROM}" --to "${TO}" --engine "${ENGINE}" --engine-args "${DECODE_ARGS}" \
-        ${PREFILL_ARGS:+--prefill-engine-args "${PREFILL_ARGS}"} \
+        ${PREFILL_ARGS+--prefill-engine-args "${PREFILL_ARGS}"} \
         -o run.capture.jsonl.gz
