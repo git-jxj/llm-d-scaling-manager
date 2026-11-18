@@ -292,41 +292,38 @@ read, one rule kept: an `R_q` never reads below the truth.
 **Measured.** Qwen3-32B P/D, 2 + 2 replicas, learned from each run's warm-up
 recording, against the client's per-step TPOT: q32j is 45 steps over three
 shapes, q132d 2 steps at 8000/200 (its other 2 steps are void: the fleet was
-short). Mean error of the prediction over the measurement, before (main) and
-after:
+short). The line is read at the real fill below the band (#167), on both
+sides. Mean error of the prediction over the measurement, before (main) and
+after, and the smallest margin over all steps after:
 
-| Run | Reading | Steps | Before | After |
-| --- | --- | --- | --- | --- |
-| q32j | mean | 45 | +29% | +29% |
-| q32j | p50 | 45 | +139% | +41% |
-| q32j | p90 | 45 | +125% | +106% |
-| q32j | p99 | 45 | +113% | +111% |
-| q132d | mean | 2 | +35% | +35% |
-| q132d | p50 | 2 | +151% | +48% |
-| q132d | p90 | 2 | +135% | +116% |
-| q132d | p99 | 2 | +121% | +119% |
+| Run | Reading | Steps | Before | After | Smallest margin after |
+| --- | --- | --- | --- | --- | --- |
+| q32j | mean | 45 | +2% | +2% | -5.1% |
+| q32j | p50 | 45 | +89% | +12% | +3.4% |
+| q32j | p90 | 45 | +78% | +63% | +51.1% |
+| q32j | p99 | 45 | +69% | +66% | +48.3% |
+| q132d | mean | 2 | -4% | -4% | -4.1% |
+| q132d | p50 | 2 | +79% | +5% | +4.9% |
+| q132d | p90 | 2 | +67% | +54% | +53.1% |
+| q132d | p99 | 2 | +57% | +56% | +55.8% |
 
-No step reads below its measurement, before or after. The percentiles now
-separate: on the q32j 8000/200 steps p50, p90 and p99 read 18.3, 28.5 and
-30.8 ms, where before all three read 31.1 ms; q132d reads 17.8, 27.9 and 30.1
-ms, where before it read 30.3. The gain is p50's, and it comes from the
-coarse-bucket bound and the median rank, not from R_q by fill.
+No percentile step reads below its measurement. The mean, which this change
+does not touch, reads up to 5.1% low on 23 of the 45 q32j steps and on both
+q132d steps: that is the line's reading below the band, not R_q. The
+percentiles now separate: on the first q32j 8000/200 step p50, p90 and p99 read
+12.2, 19.1 and 20.6 ms, where before all three read 20.8; q132d's first step
+reads 12.7, 19.8 and 21.4, where before all three read 21.5. The gain is p50's,
+from the coarse-bucket bound and the median rank, not from R_q by fill.
 
-**p90 and p99 are still about 2.1 times the measurement** (+106% and +111% on
-q32j). Two causes, in order of size:
-
-- **R_q itself, about 1.6 times.** It prices p90 over the mean at 1.70
-  (28.5 / 16.8 ms), against 1.02 to 1.10 measured by the client. The router's
-  10, 20 and 40 ms edges cannot place a percentile inside a 10 ms bucket around
-  a 12 to 30 ms mean: the bound proves little above the median, so p90 and p99
-  sit near the bucket's edge.
-- **The ITL line, about 1.3 times** (the mean column, +29%): it prices the mean
-  at 16.8 ms on the 8000/200 steps against 11.5 to 13 ms measured.
-
-R_q by fill moved these runs little: the A steps show p50's ratio rising from
-1.09 at the lowest fill to 1.25 near the knee, and p90's barely, because the
-same coarse edges set every fill's reading. It is built and tested, and not
-validated by these runs. Router TPOT edges a few percent apart around the
+**p90 and p99 are still about 1.6 times the measurement** (+63% and +66% on
+q32j), and that is R_q: it prices p90 over the mean at about 1.70, against
+1.02 to 1.10 measured by the client. The router's 10, 20 and 40 ms edges cannot
+place a percentile inside a 10 ms bucket around a 12 to 30 ms mean, and the
+bound proves little above the median, so p90 and p99 sit near the bucket's
+edge. R_q by fill moved these runs little: the A steps show p50's ratio rising
+from 1.09 at the lowest fill to 1.25 near the knee, and p90's barely, because
+the same coarse edges set every fill's reading. It is built and tested, and
+not validated by these runs. Router TPOT edges a few percent apart around the
 target are what would firm up R_q; until then a percentile TPOT from the router
 histogram is a safe upper figure, not an estimate.
 
