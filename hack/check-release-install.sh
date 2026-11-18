@@ -710,8 +710,8 @@ else
 fi
 smt admin-setup -n ctl --keda-namespace keda-system
 rc=$?
-if [ "$rc" = 0 ] && [ "$(stamp_models)" = m1 ] && [ "$(grants m1)" = "$want_grants" ] && grep -q 'kept from ConfigMap scaling-manager-admin-setup' "$W/out"; then
-    ok "admin-setup again without --model-namespace keeps the stamp's list (an upgrade re-run revokes nothing)"
+if [ "$rc" = 0 ] && [ "$(stamp_models)" = m1 ] && [ "$(grants m1)" = "$want_grants" ] && grep -q 'kept: this controller is granted in them' "$W/out"; then
+    ok "admin-setup again without --model-namespace keeps the namespaces it is granted in (an upgrade re-run revokes nothing)"
 else
     bad "re-run without the list: exit $rc, stamp '$(stamp_models)', m1 [$(grants m1)]"
 fi
@@ -735,22 +735,135 @@ smt install -n ctl --prometheus-url https://p:9090 --model-namespace m1 --model-
 rc=$?
 dw="$(yq ea -o json -I 0 'select(.kind == "Deployment")' "$W/drym/50-controller.yaml" | jq -r '.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "LLMSM_WATCH_NAMESPACE") | .value')"
 if [ "$rc" = 0 ] && [ "$dw" = m1,m2 ]; then ok "install --dry-run --model-namespace renders LLMSM_WATCH_NAMESPACE"; else bad "dry-run install: exit $rc, '$dw'"; fi
+rm -rf "$W/drym"
+smt admin-setup -n ctl --keda-namespace keda-system --dry-run --out "$W/drym"
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'Rendered for a controller that manages ctl only' "$W/out"; then ok "admin-setup --dry-run without a list says it renders the controller namespace only (it reads no cluster)"; else bad "dry-run without a list: exit $rc: $(tail -1 "$W/out")"; fi
+smt admin-setup -n ctl --keda-namespace keda-system --single-namespace --model-namespace m1; expect_rc "--single-namespace with --model-namespace is usage" 2 $?
+smt admin-setup -n ctl --keda-namespace keda-system --single-namespace
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(grants m1)" ] && [ "$(stamp_models)" = "(none)" ] && has_obj role ctl scaling-manager-manager-role-ctl \
+    && [ "$(reader_names)" = ctl,scaling-manager-policy ]; then
+    ok "admin-setup --single-namespace revokes every model namespace and goes back to the controller namespace alone"
+else
+    bad "--single-namespace: exit $rc, m1 [$(grants m1)], stamp '$(stamp_models)', reader '$(reader_names)': $(tail -1 "$W/out")"
+fi
+smt install -n ctl --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 0 ] && [ "$(watch_env)" = '$(POD_NAMESPACE)' ]; then ok "install after --single-namespace manages its own namespace again"; else bad "install after --single-namespace: exit $rc, '$(watch_env)'"; fi
+
 
 # The default single-namespace install is the one it was: no list in the
-# stamp, no cluster-wide RoleBinding read, the controller's own namespace.
+# stamp, nothing revoked, the controller's own namespace.
 reset
 smt admin-setup -n team-a --keda-namespace keda-system
 rc1=$?
-lists="$(grep -c 'rolebindings -A' "$STUB_DIR/calls.log")"
+deletes="$(grep -c '^delete' "$STUB_DIR/calls.log")"
 smt install -n team-a --prometheus-url https://p:9090
 rc2=$?
 w="$(obj deployment team-a scaling-manager-controller-manager | jq -r '.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "LLMSM_WATCH_NAMESPACE") | .value')"
 if [ "$rc1" = 0 ] && [ "$rc2" = 0 ] && [ "$(obj configmap team-a scaling-manager-admin-setup | jq -r '.data | has("modelNamespaces")')" = false ] \
-    && [ "$lists" = 0 ] && [ "$w" = '$(POD_NAMESPACE)' ] && has_obj role team-a scaling-manager-manager-role-team-a; then
-    ok "the single-namespace install is unchanged: no list in the stamp, no RoleBinding list, LLMSM_WATCH_NAMESPACE \$(POD_NAMESPACE), the model-namespace file in team-a"
+    && [ "$deletes" = 0 ] && [ "$w" = '$(POD_NAMESPACE)' ] && has_obj role team-a scaling-manager-manager-role-team-a; then
+    ok "the single-namespace install is unchanged: no list in the stamp, nothing revoked, LLMSM_WATCH_NAMESPACE \$(POD_NAMESPACE), the model-namespace file in team-a"
 else
-    bad "single-namespace install: exits $rc1/$rc2, $lists RoleBinding lists, LLMSM_WATCH_NAMESPACE '$w'"
+    bad "single-namespace install: exits $rc1/$rc2, $deletes deletes, LLMSM_WATCH_NAMESPACE '$w'"
 fi
+
+# What only a cluster admin may grant is read from the grants, never from the
+# stamp, which the namespace owner can edit.
+reset ctl m1 victim
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1
+jq '.data.modelNamespaces = "m1,victim"' "$STUB_DIR/obj/configmap/ctl/scaling-manager-admin-setup.json" > "$W/s.json" \
+    && mv "$W/s.json" "$STUB_DIR/obj/configmap/ctl/scaling-manager-admin-setup.json"
+smt admin-setup -n ctl --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(grants victim)" ] && [ "$(stamp_models)" = m1 ]; then
+    ok "a stamp the owner edited to add a namespace grants nothing there on the admin re-run; the stamp is rewritten to the grants"
+else
+    bad "edited stamp: exit $rc, victim [$(grants victim)], stamp '$(stamp_models)'"
+fi
+# A listed namespace that was deleted: the re-run without flags drops it; with
+# it named, exit 4 and the command without it.
+reset ctl m1 m2
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m2
+rm -f "$STUB_DIR/obj/namespace/_/m2.json"; rm -rf "$STUB_DIR"/obj/*/m2
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m2
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'Run again without it: smt admin-setup -n ctl --model-namespace m1' "$W/out"; then ok "a listed namespace that is gone: exit 4 with the command without it"; else bad "gone namespace named: exit $rc: $(tail -1 "$W/out")"; fi
+smt admin-setup -n ctl --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && [ "$(stamp_models)" = m1 ]; then ok "a listed namespace that is gone drops out of a re-run without flags"; else bad "gone namespace, no flags: exit $rc, stamp '$(stamp_models)': $(tail -1 "$W/out")"; fi
+
+# Two controllers for one namespace: refused.
+reset ctl ctl2 m1 m2
+smt admin-setup -n m1 --keda-namespace keda-system
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m2
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'namespace m1 is managed by another scaling manager already' "$W/out" && [ -z "$(grants m2)" ] && ! has_obj role m1 scaling-manager-manager-role-ctl; then
+    ok "a model namespace with its own install is refused (exit 4) before anything is written"
+else
+    bad "overlap with a namespaced install: exit $rc, m1 role-ctl $(has_obj role m1 scaling-manager-manager-role-ctl && echo yes || echo no): $(tail -1 "$W/out")"
+fi
+smt admin-setup -n ctl2 --keda-namespace keda-system --model-namespace m2
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m2
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'namespace m2 is managed by another scaling manager already (RoleBinding scaling-manager-manager-rolebinding-ctl2' "$W/out"; then
+    ok "a model namespace another list holds is refused (exit 4)"
+else
+    bad "overlap with another list: exit $rc: $(tail -1 "$W/out")"
+fi
+
+# Shared objects stay with the controller that still uses them. ctl manages m1
+# and m2 and is active in m1; then a second controller appears in m1 (as an
+# install made before this check, by make or by hand, could).
+reset ctl ctl2 m1 m2
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m2
+for c in ctl ctl2; do
+    sed -e "s/__NAMESPACE__/$c/g" -e 's/__MODEL_NAMESPACE__/m1/g' "$W/dist/scaling-manager-activate.yaml" > "$W/act.yaml"
+    PATH="$W/bin:$PATH" kubectl apply -f "$W/act.yaml" >/dev/null
+done
+sed -e 's/__NAMESPACE__/ctl2/g' -e 's/__MODEL_NAMESPACE__/m1/g' "$W/dist/scaling-manager-model-namespace.yaml" > "$W/mn2.yaml"
+PATH="$W/bin:$PATH" kubectl apply -f "$W/mn2.yaml" >/dev/null
+for o in podmonitor/scaling-manager-modelserver-metrics role/scaling-manager-pod-writer; do
+    jq '.metadata.labels["app.kubernetes.io/instance"] = "ctl"' "$STUB_DIR/obj/${o%%/*}/m1/${o#*/}.json" > "$W/o.json" && mv "$W/o.json" "$STUB_DIR/obj/${o%%/*}/m1/${o#*/}.json"
+done
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m2
+rc=$?
+if [ "$rc" = 0 ] && has_obj podmonitor m1 scaling-manager-modelserver-metrics && has_obj role m1 scaling-manager-pod-writer \
+    && has_obj rolebinding m1 scaling-manager-pod-writer-ctl2 && has_obj role m1 scaling-manager-manager-role-ctl2 \
+    && ! has_obj role m1 scaling-manager-manager-role-ctl && ! has_obj rolebinding m1 scaling-manager-pod-writer-ctl; then
+    ok "dropping m1 keeps the PodMonitor and the pod writer Role another controller there uses, and removes only what is ctl's"
+else
+    bad "shared objects: exit $rc, m1 [$(grants m1)]"
+fi
+# Without the other controller, the shared objects go too (scenario above, ctl alone).
+rm -f "$STUB_DIR"/obj/rolebinding/m1/*ctl2.json "$STUB_DIR"/obj/role/m1/*ctl2.json
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m2
+sed -e 's/__NAMESPACE__/ctl/g' -e 's/__MODEL_NAMESPACE__/m1/g' "$W/dist/scaling-manager-activate.yaml" > "$W/act.yaml"
+PATH="$W/bin:$PATH" kubectl apply -f "$W/act.yaml" >/dev/null
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m2
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(grants m1)" ]; then
+    ok "with no other controller left, nothing labelled for ctl stays in m1 (Role, RoleBinding, PodMonitor, preflight reads, pod writer)"
+else
+    bad "revoke alone: exit $rc, m1 [$(grants m1)]"
+fi
+
+# A cluster-wide install: a namespaced admin-setup that would overlap it is refused.
+reset m1 m3
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m3
+before="$(grants m3)"
+smt admin-setup -n scaling-manager-system --keda-namespace keda-system --model-namespace m1
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'a cluster-wide scaling manager is installed' "$W/out" && [ -n "$before" ] && [ "$(grants m3)" = "$before" ]; then
+    ok "a namespaced admin-setup in the namespace of a cluster-wide install is refused (exit 4); its grants in m3 stay"
+else
+    bad "cluster overlap: exit $rc, m3 before [$before] after [$(grants m3)]: $(tail -1 "$W/out")"
+fi
+PATH="$W/bin:$PATH" kubectl create namespace ctl >/dev/null
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1
+expect_rc "model namespaces beside a cluster-wide install are refused" 4 $?
 
 # ---------------------------------------------------------------------------
 echo "install --scope cluster"
@@ -1271,7 +1384,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=142
+EXPECT_CASES=155
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

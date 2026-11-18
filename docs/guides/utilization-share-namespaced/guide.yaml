@@ -23,29 +23,76 @@ steps:
     run: |
       kubectl get nodes -L nvidia.com/gpu.product
   smt:
-    note: Once per machine. The release's tools image, by the digest the release prints. Each person uses their own kubeconfig.
+    note: Once per machine. The release's tools image, by the digest the release prints. Each person keeps their own kubeconfig; SMT_KUBECONFIG picks one.
     run: |
       TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
-      mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+      mkdir -p ~/.smt && chmod 700 ~/.smt
       smt() { docker run --rm --user "$(id -u):$(id -g)" \
         -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+  smtkube:
+    note: One kubeconfig per role. Run each line while kubectl is logged in as that role.
+    run: |
+      kubectl config view --minify --flatten > ~/.smt/admin.kubeconfig && chmod 600 ~/.smt/admin.kubeconfig   # as the cluster admin
+      kubectl config view --minify --flatten > ~/.smt/owner.kubeconfig && chmod 600 ~/.smt/owner.kubeconfig   # as the owner of scaling-manager-system
   smtadmin:
     note: Cluster admin. The scaling manager's namespace, then a Role in each llm-d namespace and nothing cluster-wide on workloads. Run it again with the full list to add or remove a namespace.
     run: |
       kubectl create namespace scaling-manager-system
-      smt admin-setup -n scaling-manager-system --model-namespace team-a --model-namespace team-b
+      SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-setup -n scaling-manager-system \
+        --model-namespace team-a --model-namespace team-b
   smtinstall:
-    note: The owner of scaling-manager-system. It manages the namespaces the admin named, under one GPU budget. A private CA for Prometheus? Add --prometheus-ca <file in this directory>.
+    note: The owner of scaling-manager-system. One budget of 4 GPUs of the step 5 product, shared by the namespaces the admin named. A private CA for Prometheus? Add --prometheus-ca <file in this directory>.
     run: |
-      smt install -n scaling-manager-system --prometheus-url https://<prometheus>:9090 \
-        --quota "<gpu product>=<gpus>" --set quotaScope=cluster
+      SMT_KUBECONFIG=~/.smt/owner.kubeconfig smt install -n scaling-manager-system \
+        --prometheus-url https://<prometheus>:9090 --quota "NVIDIA-A100-PCIE-80GB=4" --set quotaScope=cluster
   smtfinish:
     note: Cluster admin, after the install. KEDA's client certificate, then the preflight's cluster reads are removed.
-    run: smt admin-finish -n scaling-manager-system
-  smtnext:
-    note: For steps 11 to 20, from a checkout of this repository.
+    run: SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-finish -n scaling-manager-system
+  smtplan:
+    note: Cluster admin (it reads each model namespace and the scaling manager's). Read-only. One plan per namespace; edit it if you like.
     run: |
-      export CONTROLLER_NAMESPACE=scaling-manager-system LLMSM_WATCH_NS=team-a,team-b
+      for ns in team-a team-b; do
+        SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt scaledobjects-plan -n $ns \
+          --controller-namespace scaling-manager-system --out plan-$ns.yaml
+      done
+  smtregister:
+    note: Applies each plan. One ScaledObject for each model server.
+    run: |
+      for ns in team-a team-b; do
+        SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt scaledobjects-apply -n $ns \
+          --controller-namespace scaling-manager-system --plan plan-$ns.yaml
+      done
+  smtshadow:
+    note: "The owner. Shadow: it reports what it would move, and moves nothing. Live, no restart."
+    run: |
+      kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
+        -p '{"data":{"utilizationShare":"shadow"}}'
+  smtstatus:
+    note: Read-only. The limiter and the utilization-share mode in force.
+    run: |
+      kubectl get configmap scaling-manager-controller-status -n scaling-manager-system \
+        -o jsonpath='{.data.limiter} {.data.utilizationShare}{"\n"}'
+  smtgrant:
+    note: Cluster admin. The one grant of patch on pods, in each model namespace. Sharing moves no GPU without it.
+    run: |
+      SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt release-files --out files
+      for ns in team-a team-b; do
+        sed -e "s/__NAMESPACE__/scaling-manager-system/g" -e "s/__MODEL_NAMESPACE__/$ns/g" \
+          files/scaling-manager-activate.yaml | kubectl apply -f -
+      done
+  smtactivate:
+    note: The owner. Sharing acts, and the controller leaves passive mode. Live, no restart.
+    run: |
+      kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
+        -p '{"data":{"utilizationShare":"active","passive":"false"}}'
+  smtoff:
+    note: The owner. Sharing off; the budget stays. Wait until the status no longer says draining.
+    run: |
+      kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
+        -p '{"data":{"utilizationShare":"off"}}'
+  smtrevoke:
+    note: Cluster admin. Takes every model namespace back from the scaling manager, Roles and pod writers included. Then the owner runs smt install again.
+    run: SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-setup -n scaling-manager-system --single-namespace
   names:
     note: Manage every namespace that runs llm-d, from the scaling manager's own namespace. Every later step reads both.
     run: |

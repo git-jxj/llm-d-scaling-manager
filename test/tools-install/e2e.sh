@@ -70,10 +70,16 @@ pass() { printf 'PASS  %s\n' "$1" | tee -a "$SUMMARY"; }
 notrun() { printf 'NOT RUN  %s: %s\n' "$1" "$2" | tee -a "$SUMMARY"; }
 fail() {
     printf 'FAIL  %s: %s\n' "$1" "$2" | tee -a "$SUMMARY"
-    echo "=== diagnostics ==="
-    kubectl get pods,jobs -n "$NS" -o wide 2>&1 | head -30
-    kubectl get configmap "$STATUS_CM" -n "$NS" -o jsonpath='{.data.scalerTLS}{"\n"}{.data.scalerTLSAction}{"\n"}' 2>&1 | head -20
-    kubectl logs -n "$NS" "deployment/$DEPLOY" --tail=60 2>&1 | tail -60
+    echo "=== diagnostics (controller in ${DIAG_NS:-$NS}) ==="
+    kubectl get pods,jobs -n "${DIAG_NS:-$NS}" -o wide 2>&1 | head -30
+    kubectl get configmap "$STATUS_CM" -n "${DIAG_NS:-$NS}" -o jsonpath='{.data.scalerTLS}{"\n"}{.data.scalerTLSAction}{"\n"}' 2>&1 | head -20
+    kubectl logs -n "${DIAG_NS:-$NS}" "deployment/$DEPLOY" --tail=60 2>&1 | tail -60
+    local m
+    for m in ${DIAG_MODEL_NS:-}; do
+        echo "--- $m: roles, rolebindings, PodMonitors, ScaledObjects, HPAs"
+        kubectl get roles,rolebindings,podmonitors.monitoring.coreos.com,scaledobjects,hpa -n "$m" -o wide 2>&1 | head -30
+        kubectl get scaledobjects -n "$m" -o jsonpath='{range .items[*]}{.metadata.name}{": "}{range .status.conditions[*]}{.type}={.status} {.reason} {.message}; {end}{"\n"}{end}' 2>&1 | head -10
+    done
     echo "=== summary ==="; cat "$SUMMARY"
     echo "Logs: $LOGS"
     exit 1
@@ -364,8 +370,11 @@ drop_cluster_objects "$NEG_NS"
 
 # --- one controller, two model namespaces, nothing cluster-wide on workloads ----
 # The setup docs/guides/utilization-share-namespaced installs: the controller in
-# a namespace of its own, a Role in each model namespace. Then one namespace
-# is taken out of the list, and its Role must go.
+# a namespace of its own, a Role in each model namespace. KEDA reaches it from
+# a model namespace; a second admin-setup and install change nothing; one
+# namespace taken out of the list is reported unreadable until the owner runs
+# install again, and keeps nothing of this controller; --single-namespace goes
+# back to one namespace.
 
 # can_ctl <verb> <resource> <namespace or -A>: what the controller's account may do.
 can_ctl() {
@@ -377,7 +386,57 @@ watch_env() {
     kubectl get deployment "$DEPLOY" -n "$MULTI_NS" \
         -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env[?(@.name=="LLMSM_WATCH_NAMESPACE")].value}'
 }
+# not_found <what> <kubectl get args...>: the object is gone, read as NotFound;
+# any other failure (Forbidden, unreachable) is not absence.
+not_found() {
+    local what="$1" out
+    shift
+    if out="$(kubectl get "$@" -o name 2>&1)"; then
+        fail "$what" "still there: $out"
+    fi
+    printf '%s' "$out" | grep -q '(NotFound)' || fail "$what" "the read failed, which is not absence: $out"
+}
+# watching: the fields of the last "Watching namespaces" line of the running
+# controller, as compact JSON {"namespaces": [...], "unreadable": {...}}; empty
+# when there is none yet.
+watching() {
+    kubectl logs -n "$MULTI_NS" "deployment/$DEPLOY" --tail=-1 2>/dev/null | grep 'Watching namespaces' | tail -1 \
+        | sed -n 's/^[^{]*\({.*}\)[[:space:]]*$/\1/p' | jq -c '{namespaces: (.namespaces // []), unreadable: (.unreadable // {})}' 2>/dev/null
+}
+watching_is() { [ "$(watching)" = "$1" ]; }
+ctl_ready() { [ "$(ctl_pod | awk '{print $3}')" = True ]; }
+ctl_pod() {
+    kubectl get pods -n "$MULTI_NS" -l control-plane=controller-manager -o json \
+        | jq -r '[.items[] | select(.metadata.deletionTimestamp == null)] | if length == 1 then .[0] | .metadata.name + " " + ([.status.containerStatuses[]? | select(.name == "manager") | .restartCount] | first | tostring) + " " + ([.status.conditions[]? | select(.type == "Ready") | .status] | first // "") else "pods:" + (length | tostring) end'
+}
+# multi_objects: what admin-setup, install and admin-finish wrote for the
+# controller in MULTI_NS managing MULTI_A and MULTI_B, but the preflight
+# ClusterRoleBinding (admin-setup writes it again; admin-finish removes it).
+multi_objects() {
+    local f m
+    for f in namespaced preflight settings scaler-tls keda-auth; do
+        sed -e "s/__NAMESPACE__/$MULTI_NS/g" -e "s/__KEDA_NAMESPACE__/$KEDA_NS/g" "$DIST/scaling-manager-$f.yaml" > "$WORK/multi-$f.yaml"
+    done
+    objects_of "$WORK"/multi-namespaced.yaml "$WORK"/multi-preflight.yaml "$WORK"/multi-settings.yaml "$WORK"/multi-scaler-tls.yaml "$WORK"/multi-keda-auth.yaml \
+        | grep -vx "ClusterRoleBinding - scaling-manager-preflight-$MULTI_NS"
+    for m in "$MULTI_A" "$MULTI_B"; do
+        sed -e "s/__NAMESPACE__/$MULTI_NS/g" -e "s/__MODEL_NAMESPACE__/$m/g" "$DIST/scaling-manager-model-namespace.yaml" > "$WORK/multi-model-$m.yaml"
+        objects_of "$WORK/multi-model-$m.yaml"
+        printf 'Role %s scaling-manager-preflight-%s\nRoleBinding %s scaling-manager-preflight-%s\n' "$m" "$MULTI_NS" "$m" "$MULTI_NS"
+    done
+    printf 'ConfigMap %s scaling-manager-admin-setup\nSecret %s scaling-manager-prometheus-ca\nSecret %s scaling-manager-external-scaler-%s\n' "$MULTI_NS" "$MULTI_NS" "$KEDA_NS" "$MULTI_NS"
+}
+# hpa_wired <namespace> <deployment>: the HPA KEDA made for the deployment
+# carries the scaling manager's external metric (KEDA got the metric spec from
+# the scaler) and is ScalingActive (the metrics adapter got a value from it).
+hpa_wired() {
+    kubectl get hpa -n "$1" -o json | jq -e --arg d "$2" '[.items[] | select(.spec.scaleTargetRef.name == $d)] | length == 1 and
+        (.[0].spec.metrics // [] | any(.type == "External" and (.external.metric.name | contains("scaling-manager-desired-replicas")))) and
+        (.[0].status.conditions // [] | any(.type == "ScalingActive" and .status == "True"))' >/dev/null
+}
+
 if [ "$SCOPE" = namespace ]; then
+    DIAG_NS="$MULTI_NS" DIAG_MODEL_NS="$MULTI_A $MULTI_B"
     for n in "$MULTI_NS" "$MULTI_A" "$MULTI_B"; do
         kubectl create namespace "$n" --dry-run=client -o yaml | kubectl apply -f - >/dev/null || fail multi "cannot create namespace $n"
     done
@@ -388,8 +447,8 @@ if [ "$SCOPE" = namespace ]; then
     rc=$?
     [ "$rc" = 3 ] || fail multi "install with a list the stamp does not hold: exit $rc, want 3"
     grep -q "smt admin-setup -n $MULTI_NS --keda-namespace $KEDA_NS --model-namespace $MULTI_A" "$LOGS/multi-install-mismatch.log" || fail multi "the refusal prints no admin-setup line for the list given"
-    kubectl get deployment "$DEPLOY" -n "$MULTI_NS" >/dev/null 2>&1 && fail multi "the refused install created the controller"
-    pass "several namespaces: admin-setup for $MULTI_A and $MULTI_B; install as the owner with another list exits 3 and prints the admin-setup line"
+    not_found "multi: the refused install" deployment "$DEPLOY" -n "$MULTI_NS"
+    pass "several namespaces: admin-setup for $MULTI_A and $MULTI_B; install as the owner with another list exits 3, prints the admin-setup line, creates no controller"
 
     smt_as owner-multi multi-install install -n "$MULTI_NS" "${INSTALL_FLAGS[@]}" \
         || { rc=$?; tail -30 "$LOGS/multi-install.log"; fail multi "install as the owner of $MULTI_NS: exit $rc"; }
@@ -397,23 +456,104 @@ if [ "$SCOPE" = namespace ]; then
     [ "$(watch_env)" = "$MULTI_A,$MULTI_B" ] || fail multi "LLMSM_WATCH_NAMESPACE is '$(watch_env)', not $MULTI_A,$MULTI_B"
     got="$(can_ctl list pods "$MULTI_A") $(can_ctl list pods "$MULTI_B") $(can_ctl list pods "$MODEL_NS") $(can_ctl list pods -A) $(can_ctl list deployments.apps -A) $(can_ctl get configmaps -A)"
     [ "$got" = "yes yes no no no no" ] || fail multi "the controller may list pods in $MULTI_A, $MULTI_B, $MODEL_NS, every namespace; list Deployments and get ConfigMaps in every namespace: '$got', want 'yes yes no no no no'"
-    kubectl logs -n "$MULTI_NS" "deployment/$DEPLOY" --tail=-1 2>/dev/null > "$LOGS/multi-controller.log"
-    grep 'Watching namespaces' "$LOGS/multi-controller.log" | tail -1 | grep "$MULTI_A" | grep -q "$MULTI_B" \
-        || fail multi "the controller log does not say it watches $MULTI_A and $MULTI_B"
-    pass "several namespaces: install as the owner manages $(watch_env); the controller may list pods there and nowhere else ($got); preflight without FAIL"
+    want="{\"namespaces\":[\"$MULTI_A\",\"$MULTI_B\"],\"unreadable\":{}}"
+    wait_for 60 "the controller logs it watches $MULTI_A and $MULTI_B, none unreadable" watching_is "$want" \
+        || fail multi "the controller watches '$(watching)', want $want"
+    pass "several namespaces: install as the owner manages $(watch_env); the controller may list pods there and nowhere else ($got); it logs $(watching); preflight without FAIL"
 
+    smt_as admin multi-admin-finish admin-finish -n "$MULTI_NS" \
+        || { rc=$?; tail -30 "$LOGS/multi-admin-finish.log"; fail multi "admin-finish: exit $rc"; }
+    case "$(kubectl get configmap "$STATUS_CM" -n "$MULTI_NS" -o jsonpath='{.data.scalerTLS}')" in "mutual TLS"*) ;; *) fail multi "scalerTLS of $MULTI_NS is not mutual TLS" ;; esac
+    # KEDA, from a model namespace, through the scaler NetworkPolicy of
+    # MULTI_NS, over mutual TLS with the ClusterTriggerAuthentication admin-finish wrote.
+    kubectl create deployment smt-probe -n "$MULTI_A" --image=registry.k8s.io/pause:3.10 --replicas=1 >/dev/null || fail multi "cannot create the probe Deployment"
+    probe_so() {
+        jq -n --arg ns "$MULTI_A" --arg ctl "$MULTI_NS" '{apiVersion: "keda.sh/v1alpha1", kind: "ScaledObject",
+            metadata: {name: "smt-probe", namespace: $ns},
+            spec: {scaleTargetRef: {name: "smt-probe"}, minReplicaCount: 1, maxReplicaCount: 2, pollingInterval: 5,
+                   triggers: [{type: "external-push", name: "scaling-manager-external-scaler", metricType: "AverageValue",
+                               metadata: {scalerAddress: ("scaling-manager-external-scaler." + $ctl + ".svc:9090"), modelID: "smt-probe/model", variantCost: "1"},
+                               authenticationRef: {kind: "ClusterTriggerAuthentication", name: ("scaling-manager-external-scaler-" + $ctl)}}]}}' \
+            | kubectl apply -f - >/dev/null
+    }
+    probe_so || fail multi "cannot create the probe ScaledObject"
+    if ! wait_for 90 "KEDA wired the scaler metric onto the HPA of $MULTI_A/smt-probe" hpa_wired "$MULTI_A" smt-probe; then
+        log "recreating the probe ScaledObject once, so KEDA asks the scaler again"
+        kubectl delete scaledobject smt-probe -n "$MULTI_A" --wait=true >/dev/null 2>&1
+        probe_so || fail multi "cannot create the probe ScaledObject again"
+        wait_for 120 "KEDA wired the scaler metric onto the HPA of $MULTI_A/smt-probe" hpa_wired "$MULTI_A" smt-probe \
+            || fail multi "the HPA of $MULTI_A/smt-probe has no ScalingActive scaling-manager-desired-replicas metric: $(kubectl get hpa -n "$MULTI_A" -o json | jq -c '[.items[] | {m: .spec.metrics, c: [.status.conditions[]? | .type + "=" + .status + " " + .reason]}]')"
+    fi
+    pass "several namespaces: admin-finish gives $MULTI_NS mutual TLS; a ScaledObject in $MULTI_A reaches the scaler in $MULTI_NS through its NetworkPolicy, and its HPA is ScalingActive on scaling-manager-desired-replicas"
+
+    # A second admin-setup and install with the same list change nothing.
+    multi_objects > "$WORK/multi-objects.txt"
+    [ "$(grep -c . "$WORK/multi-objects.txt")" -gt 30 ] || fail multi "only $(grep -c . "$WORK/multi-objects.txt") objects listed for the resourceVersion check"
+    rv_snapshot "$WORK/multi-rv-before.txt" "$WORK/multi-objects.txt" "$LOGS/multi-rv-before"
+    gen_before="$(kubectl get deployment "$DEPLOY" -n "$MULTI_NS" -o jsonpath='{.metadata.generation}')"
+    pod_before="$(ctl_pod)"
+    smt_as admin multi-admin-setup-again admin-setup -n "$MULTI_NS" --keda-namespace "$KEDA_NS" --model-namespace "$MULTI_A" --model-namespace "$MULTI_B" \
+        || fail multi "the second admin-setup: exit $?"
+    smt_as owner-multi multi-install-again install -n "$MULTI_NS" "${INSTALL_FLAGS[@]}" || fail multi "the second install: exit $?"
+    smt_as admin multi-admin-finish-again admin-finish -n "$MULTI_NS" || fail multi "the second admin-finish: exit $?"
+    rv_snapshot "$WORK/multi-rv-after.txt" "$WORK/multi-objects.txt" "$LOGS/multi-rv-after"
+    cp "$WORK/multi-rv-before.txt" "$WORK/multi-rv-after.txt" "$WORK/multi-objects.txt" "$LOGS/"
+    grep -q ' absent$' "$WORK/multi-rv-after.txt" && fail multi "objects absent after the re-runs: $(grep ' absent$' "$WORK/multi-rv-after.txt" | paste -sd, -)"
+    changed="$(diff "$WORK/multi-rv-before.txt" "$WORK/multi-rv-after.txt" | grep '^>' || true)"
+    [ -z "$changed" ] || fail multi "the re-runs changed: $(echo $changed)"
+    gen_after="$(kubectl get deployment "$DEPLOY" -n "$MULTI_NS" -o jsonpath='{.metadata.generation}')"
+    [ -n "$gen_before" ] && [ "$gen_before" = "$gen_after" ] || fail multi "the controller Deployment generation moved from $gen_before to $gen_after"
+    [ "$(ctl_pod)" = "$pod_before" ] || fail multi "the controller pod changed from '$pod_before' to '$(ctl_pod)'"
+    pass "several namespaces: a second admin-setup, install and admin-finish with the same list change no resourceVersion ($(grep -c . "$WORK/multi-rv-after.txt") objects), not the generation ($gen_after), not the pod"
+
+    # B leaves the list. Until the owner runs install, the controller still
+    # names B: it must report B unreadable, keep A, stay Ready, and restart
+    # once at most (the prober rebuilds the cache), not in a loop.
+    restarts_before="$(ctl_pod | awk '{print $2}')"
     smt_as admin multi-admin-setup-shrink admin-setup -n "$MULTI_NS" --keda-namespace "$KEDA_NS" --model-namespace "$MULTI_A" \
         || { rc=$?; tail -20 "$LOGS/multi-admin-setup-shrink.log"; fail multi "admin-setup without $MULTI_B: exit $rc"; }
     [ "$(can_ctl list pods "$MULTI_B")" = no ] || fail multi "the controller may still list pods in $MULTI_B after it left the list"
-    kubectl get role "scaling-manager-manager-role-$MULTI_NS" -n "$MULTI_B" >/dev/null 2>&1 && fail multi "the controller's Role is still in $MULTI_B"
     [ "$(can_ctl list pods "$MULTI_A")" = yes ] || fail multi "the controller lost its rights in $MULTI_A"
+    left="$(kubectl get roles,rolebindings,podmonitors.monitoring.coreos.com -n "$MULTI_B" -l "app.kubernetes.io/instance=$MULTI_NS" -o name 2>&1)" \
+        || fail multi "cannot list what is left in $MULTI_B: $left"
+    [ -z "$left" ] || fail multi "objects labelled for $MULTI_NS are left in $MULTI_B: $(echo $left)"
+    not_found "multi: the Role in $MULTI_B" role "scaling-manager-manager-role-$MULTI_NS" -n "$MULTI_B"
+    want="{\"namespaces\":[\"$MULTI_A\"],\"unreadable\":{\"$MULTI_B\":\"forbidden\"}}"
+    wait_for 180 "the controller reports $MULTI_B unreadable and keeps $MULTI_A" watching_is "$want" \
+        || fail multi "the controller watches '$(watching)', want $want"
+    wait_for 120 "the controller is Ready" ctl_ready || fail multi "the controller is not Ready after $MULTI_B left: $(ctl_pod)"
+    first="$(ctl_pod)"
+    sleep 75
+    second="$(ctl_pod)"
+    r1="$(printf '%s' "$first" | awk '{print $2}')" r2="$(printf '%s' "$second" | awk '{print $2}')"
+    [ "$first" = "$second" ] && [ "$(printf '%s' "$second" | awk '{print $3}')" = True ] && [ "$r2" -le $((restarts_before + 1)) ] \
+        || fail multi "after $MULTI_B left: pod '$first', 75 s later '$second' (restarts before $restarts_before): not Ready, or restarting"
+    pass "several namespaces: admin-setup without $MULTI_B leaves nothing labelled for $MULTI_NS there; before install the controller logs $(watching), stays Ready and restarted $((r2 - restarts_before)) time(s), none in the 75 s after"
+
     smt_as owner-multi multi-install-shrink install -n "$MULTI_NS" "${INSTALL_FLAGS[@]}" \
         || { rc=$?; tail -30 "$LOGS/multi-install-shrink.log"; fail multi "install after the list shrank: exit $rc"; }
     [ "$(watch_env)" = "$MULTI_A" ] || fail multi "after the list shrank LLMSM_WATCH_NAMESPACE is '$(watch_env)', not $MULTI_A"
-    pass "several namespaces: admin-setup without $MULTI_B revokes the controller's Role there; install again manages $(watch_env) only"
+    want="{\"namespaces\":[\"$MULTI_A\"],\"unreadable\":{}}"
+    wait_for 60 "the controller watches $MULTI_A alone" watching_is "$want" || fail multi "the controller watches '$(watching)', want $want"
+    pass "several namespaces: install again manages $(watch_env) alone, Ready, nothing unreadable"
+
+    # Back to one namespace. Between admin-setup and install the controller
+    # names one namespace it may no longer read: recorded, not asserted (the
+    # prober runs only for two or more); install then ends it.
+    smt_as admin multi-admin-setup-single admin-setup -n "$MULTI_NS" --keda-namespace "$KEDA_NS" --single-namespace \
+        || { rc=$?; tail -20 "$LOGS/multi-admin-setup-single.log"; fail multi "admin-setup --single-namespace: exit $rc"; }
+    [ "$(can_ctl list pods "$MULTI_A")" = no ] || fail multi "the controller may still list pods in $MULTI_A after --single-namespace"
+    [ "$(kubectl get configmap scaling-manager-admin-setup -n "$MULTI_NS" -o json | jq -r '.data | has("modelNamespaces")')" = false ] || fail multi "the stamp still lists model namespaces"
+    sleep 30
+    log "between --single-namespace and install: pod $(ctl_pod); $(watching)"
+    smt_as owner-multi multi-install-single install -n "$MULTI_NS" "${INSTALL_FLAGS[@]}" \
+        || { rc=$?; tail -30 "$LOGS/multi-install-single.log"; fail multi "install after --single-namespace: exit $rc"; }
+    [ "$(watch_env)" = '$(POD_NAMESPACE)' ] || fail multi "after --single-namespace LLMSM_WATCH_NAMESPACE is '$(watch_env)'"
+    pass "several namespaces: --single-namespace revokes $MULTI_A; install again manages $MULTI_NS alone, Ready (pod $(ctl_pod))"
 
     kubectl delete namespace "$MULTI_NS" "$MULTI_A" "$MULTI_B" --wait=false >/dev/null 2>&1
     drop_cluster_objects "$MULTI_NS"
+    DIAG_NS="" DIAG_MODEL_NS=""
 else
     notrun "several namespaces" "namespace scope only: --scope cluster already manages every namespace"
 fi

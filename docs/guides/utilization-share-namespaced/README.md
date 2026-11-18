@@ -164,59 +164,162 @@ Write down the product of the nodes the models run on. Step 8 needs it.
 ### With the tools image
 
 The release's tools image installs option A (step 8) with no checkout and no
-`make`. You need `docker` (or `podman`), and the namespaces from step 3. The
-examples use `team-a` and `team-b`; the GPU product comes from step 5.
+`make`. You need `docker` (or `podman`) and the namespaces from step 3; the
+examples use `team-a` and `team-b`. Before you start, know what it does not
+do that steps 6 to 10 do:
+
+- It adds no EPP ServiceMonitor. The arrival rate, the flow-control queue,
+  scale from zero and the SLO checks read the EPP's metrics from Prometheus,
+  so something must scrape each EPP: llm-d's router monitoring
+  (`guides/recipes/router/features/monitoring.values.yaml` in llm-d), or
+  `make setup-prereqs` from a checkout.
+- It installs no KEDA and finds no namespaces for you.
+- Options B and C need `make`.
+
+Whoever owns `scaling-manager-system` acts as the scaling manager in every
+model namespace, and once sharing is active may patch pods there. Give that
+namespace to someone the model teams trust.
+
+**Install.**
 
 <!-- guide:steps.smt start -->
 ```bash
-# Once per machine. The release's tools image, by the digest the release prints. Each person uses their own kubeconfig.
+# Once per machine. The release's tools image, by the digest the release prints. Each person keeps their own kubeconfig; SMT_KUBECONFIG picks one.
 TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
-mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+mkdir -p ~/.smt && chmod 700 ~/.smt
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
 ```
 <!-- guide:steps.smt end -->
 
+<!-- guide:steps.smtkube start -->
+```bash
+# One kubeconfig per role. Run each line while kubectl is logged in as that role.
+kubectl config view --minify --flatten > ~/.smt/admin.kubeconfig && chmod 600 ~/.smt/admin.kubeconfig   # as the cluster admin
+kubectl config view --minify --flatten > ~/.smt/owner.kubeconfig && chmod 600 ~/.smt/owner.kubeconfig   # as the owner of scaling-manager-system
+```
+<!-- guide:steps.smtkube end -->
+
 <!-- guide:steps.smtadmin start -->
 ```bash
 # Cluster admin. The scaling manager's namespace, then a Role in each llm-d namespace and nothing cluster-wide on workloads. Run it again with the full list to add or remove a namespace.
 kubectl create namespace scaling-manager-system
-smt admin-setup -n scaling-manager-system --model-namespace team-a --model-namespace team-b
+SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-setup -n scaling-manager-system \
+  --model-namespace team-a --model-namespace team-b
 ```
 <!-- guide:steps.smtadmin end -->
 
+Put your GPU product from step 5, and your number of GPUs, in `--quota`:
+
 <!-- guide:steps.smtinstall start -->
 ```bash
-# The owner of scaling-manager-system. It manages the namespaces the admin named, under one GPU budget. A private CA for Prometheus? Add --prometheus-ca <file in this directory>.
-smt install -n scaling-manager-system --prometheus-url https://<prometheus>:9090 \
-  --quota "<gpu product>=<gpus>" --set quotaScope=cluster
+# The owner of scaling-manager-system. One budget of 4 GPUs of the step 5 product, shared by the namespaces the admin named. A private CA for Prometheus? Add --prometheus-ca <file in this directory>.
+SMT_KUBECONFIG=~/.smt/owner.kubeconfig smt install -n scaling-manager-system \
+  --prometheus-url https://<prometheus>:9090 --quota "NVIDIA-A100-PCIE-80GB=4" --set quotaScope=cluster
 ```
 <!-- guide:steps.smtinstall end -->
 
 <!-- guide:steps.smtfinish start -->
 ```bash
 # Cluster admin, after the install. KEDA's client certificate, then the preflight's cluster reads are removed.
-smt admin-finish -n scaling-manager-system
+SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-finish -n scaling-manager-system
 ```
 <!-- guide:steps.smtfinish end -->
 
-`smt install` should end with `Installed in scaling-manager-system, passive.`,
-after `Manages team-a, team-b`, and `smt admin-finish` with `serves the scaler
-over mutual TLS`. Every flag and exit code:
-[install commands of the tools image](../../reference/tools-install.md).
+`smt install` should print `Manages team-a, team-b` and end with `Installed
+in scaling-manager-system, passive.`; `smt admin-finish` ends with `serves the
+scaler over mutual TLS`. Every flag and exit code: [install commands of the
+tools image](../../reference/tools-install.md).
 
-Then go to step 11. Steps 11 to 20 run from a checkout; set the two names they
-read first:
+**Register the models.** Steps 11 to 13, with the tools image. Read
+step 11 for what a plan holds.
 
-<!-- guide:steps.smtnext start -->
+<!-- guide:steps.smtplan start -->
 ```bash
-# For steps 11 to 20, from a checkout of this repository.
-export CONTROLLER_NAMESPACE=scaling-manager-system LLMSM_WATCH_NS=team-a,team-b
+# Cluster admin (it reads each model namespace and the scaling manager's). Read-only. One plan per namespace; edit it if you like.
+for ns in team-a team-b; do
+  SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt scaledobjects-plan -n $ns \
+    --controller-namespace scaling-manager-system --out plan-$ns.yaml
+done
 ```
-<!-- guide:steps.smtnext end -->
+<!-- guide:steps.smtplan end -->
 
-Steps 6 to 10 below are the same install with `make`. Use them for options B
-and C, or to let the installer find the namespaces and add KEDA.
+<!-- guide:steps.smtregister start -->
+```bash
+# Applies each plan. One ScaledObject for each model server.
+for ns in team-a team-b; do
+  SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt scaledobjects-apply -n $ns \
+    --controller-namespace scaling-manager-system --plan plan-$ns.yaml
+done
+```
+<!-- guide:steps.smtregister end -->
+
+**Turn on sharing.** On this install the settings ConfigMap holds the mode,
+so the `make` targets of steps 15, 17 and 19 refuse to change it. Use these
+instead, and read steps 14 to 18 for what to look for.
+
+<!-- guide:steps.smtshadow start -->
+```bash
+# The owner. Shadow: it reports what it would move, and moves nothing. Live, no restart.
+kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
+  -p '{"data":{"utilizationShare":"shadow"}}'
+```
+<!-- guide:steps.smtshadow end -->
+
+<!-- guide:steps.smtstatus start -->
+```bash
+# Read-only. The limiter and the utilization-share mode in force.
+kubectl get configmap scaling-manager-controller-status -n scaling-manager-system \
+  -o jsonpath='{.data.limiter} {.data.utilizationShare}{"\n"}'
+```
+<!-- guide:steps.smtstatus end -->
+
+It should name the quota limiter and `shadow`. After a busy period, activate: the admin grants
+patch on pods in each model namespace, then the owner switches.
+
+<!-- guide:steps.smtgrant start -->
+```bash
+# Cluster admin. The one grant of patch on pods, in each model namespace. Sharing moves no GPU without it.
+SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt release-files --out files
+for ns in team-a team-b; do
+  sed -e "s/__NAMESPACE__/scaling-manager-system/g" -e "s/__MODEL_NAMESPACE__/$ns/g" \
+    files/scaling-manager-activate.yaml | kubectl apply -f -
+done
+```
+<!-- guide:steps.smtgrant end -->
+
+<!-- guide:steps.smtactivate start -->
+```bash
+# The owner. Sharing acts, and the controller leaves passive mode. Live, no restart.
+kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
+  -p '{"data":{"utilizationShare":"active","passive":"false"}}'
+```
+<!-- guide:steps.smtactivate end -->
+
+Step 18 works as written, with
+`CONTROLLER_NAMESPACE=scaling-manager-system`.
+
+**Undo.**
+
+<!-- guide:steps.smtoff start -->
+```bash
+# The owner. Sharing off; the budget stays. Wait until the status no longer says draining.
+kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
+  -p '{"data":{"utilizationShare":"off"}}'
+```
+<!-- guide:steps.smtoff end -->
+
+<!-- guide:steps.smtrevoke start -->
+```bash
+# Cluster admin. Takes every model namespace back from the scaling manager, Roles and pod writers included. Then the owner runs smt install again.
+SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-setup -n scaling-manager-system --single-namespace
+```
+<!-- guide:steps.smtrevoke end -->
+
+Then remove the rest as in [install in a namespace](../install-in-namespace/#cleanup),
+with `scaling-manager-system` as the namespace.
+
+Steps 6 to 20 below are the same with `make` from a checkout.
 
 ### Step 6: Say which namespaces it manages
 
@@ -822,7 +925,7 @@ make utilization-share-activate CONTROLLER_NAMESPACE=${CONTROLLER_NAMESPACE} GRA
 ```
 <!-- guide:steps.activate end -->
 
-You should see `active`:
+With `make`, you should see `active`:
 
 ```text
   the controller in scaling-manager-system manages team-a, team-b
@@ -962,11 +1065,14 @@ before step 13. KEDA and Prometheus stay. To remove them too, add
   namespace is, the scaling manager keeps managing the others. It logs the
   namespace, reports it as `llmsm_watch_namespace_unreadable{namespace,reason}`,
   and asks again every minute; once it may read it again, it restarts to
-  manage it. Run step 9 again to restore the RoleBinding.
+  manage it. Run step 9 again (with the tools image: `smt admin-setup` with the
+  same list) to restore the RoleBinding.
 - **Taking a namespace out of the list.** Run steps 9 and 10 again with the
   shorter `LLMSM_WATCH_NS`. They remove the Role, RoleBinding and monitors this
   install added in the namespace you left out, found by their labels, and
-  nothing else there.
+  nothing else there. With the tools image, run `smt admin-setup` with the
+  shorter list, then `smt install`; objects another scaling manager in that
+  namespace still uses stay.
 - **`LLMSM_WATCH_NS=auto` is read once.** A namespace that starts running llm-d
   later is not managed until you run steps 9 and 10 again. The scaling manager
   never widens its own rights.
@@ -999,13 +1105,13 @@ before step 13. KEDA and Prometheus stay. To remove them too, add
   is refused here and `physicalGroups` is ignored. Option B keeps the quota
   as the budget and uses the nodes only for placement. Use [the cluster-wide
   install](../utilization-share-cluster-wide/) for the free GPUs alone.
-- **Where the policy lives.** In `scaling-manager-scaling-policy-config` in the scaling
+- **Where the policy lives (make).** In `scaling-manager-scaling-policy-config` in the scaling
   manager's own namespace, which only the cluster admin who ran step 9 can
   edit. The teams in the managed namespaces cannot change the budget.
-- **What the preflight checks in each namespace.** That llm-d runs there, that
+- **What the preflight checks in each namespace (make).** That llm-d runs there, that
   something scrapes the model servers and the EPP, and whether the EPP has
   flow control on.
-- **The monitors step 9 adds.** A PodMonitor for the model servers, and a
+- **The monitors step 9 adds (make).** A PodMonitor for the model servers, and a
   ServiceMonitor for the EPP. Only where nothing scrapes them yet. Each is
   labelled `llm-d.ai/applied-by=scaling-manager-setup-prereqs`; step 20 removes exactly
   those.
@@ -1013,7 +1119,7 @@ before step 13. KEDA and Prometheus stay. To remove them too, add
   it, a model at zero replicas never wakes, and the arrival rate reads low
   while a model is saturated. To turn it on, add `featureGates: [flowControl]`
   to the EPP's `EndpointPickerConfig` and re-run your llm-d router install.
-- **Upgrading.** Re-running step 10 keeps the optimizer block, in the mode
+- **Upgrading (make).** Re-running step 10 keeps the optimizer block, in the mode
   it was in, unless `LLMSM_LIMITER=none` removes the limiters: the controller then rejects the block and nothing is shared.
 - **OpenShift.** Install the Custom Metrics Autoscaler operator instead of
   KEDA, and drop `KEDA_HELM_INSTALL=true`.
