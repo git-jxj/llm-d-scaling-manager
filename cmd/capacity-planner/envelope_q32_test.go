@@ -637,7 +637,7 @@ func (g *q32Group) flowControl() []string {
 // statText names a statistic as the table prints it.
 func statText(q float64) string {
 	if q == 0 {
-		return "mean"
+		return statMean
 	}
 	return "p" + strconv.FormatFloat(100*q, 'f', -1, 64)
 }
