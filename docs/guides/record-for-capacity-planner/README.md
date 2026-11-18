@@ -334,6 +334,7 @@ done < planner-export/window.txt
 case "${FROM}:${TO}:${CAPTURE_FROM}" in *[!0-9:]*|:*|*::*|*:) echo "STOP: FROM, TO and CAPTURE_FROM in window.txt must be Unix seconds" ;; esac
 case "${ENGINE}" in vllm|sglang) ;; *) echo "STOP: ENGINE in window.txt must be vllm or sglang" ;; esac
 echo "namespace ${NAMESPACE}, engine ${ENGINE}, decode arguments: ${DECODE_ARGS}"
+echo "prefill arguments: ${PREFILL_ARGS:-none, prefill takes the decode arguments}"
 
 # Writes TSDB blocks.
 ${PROMTOOL} tsdb create-blocks-from openmetrics planner-export.om planner-tsdb
@@ -349,9 +350,10 @@ prometheus --config.file=empty.yml --storage.tsdb.path=planner-tsdb \
 until curl -sf http://127.0.0.1:9091/-/ready >/dev/null; do sleep 1; done
 
 # Then capture as in the first path, against the local copy, from 5 minutes into the export.
-# capacity-planner takes one set of engine arguments: the decode workload's. PREFILL_ARGS is there to read.
+# Each role is priced with its own engine arguments: DECODE_ARGS, and PREFILL_ARGS when the export has them.
 bin/capacity-planner capture --prometheus http://127.0.0.1:9091 --namespace "${NAMESPACE}" --kube-state-metrics \
   --from "${CAPTURE_FROM}" --to "${TO}" --engine "${ENGINE}" --engine-args "${DECODE_ARGS}" \
+  ${PREFILL_ARGS:+--prefill-engine-args "${PREFILL_ARGS}"} \
   -o run.capture.jsonl.gz
 ```
 <!-- guide:load end -->

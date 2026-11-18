@@ -132,9 +132,15 @@ type Options struct {
 	// engine's arguments, parsed as the engine parses a container's
 	// (capacity.ParseEngineArgs). BatchCap, when positive, adds
 	// --max-num-seqs (vLLM) or --max-running-requests (SGLang).
-	Engine     inferenceengine.Engine
-	EngineArgs []string
-	BatchCap   int
+	//
+	// PrefillEngineArgs, when not nil, is the prefill variants' arguments
+	// in place of EngineArgs and BatchCap, which are then the decode and
+	// aggregated variants' only: a P/D fleet runs each role with arguments
+	// of its own (a step budget, a batch cap, parallelism).
+	Engine            inferenceengine.Engine
+	EngineArgs        []string
+	PrefillEngineArgs []string
+	BatchCap          int
 	// GPUsPerReplica and Accelerator stand in for what kube-state-metrics
 	// does not give. GPUsPerReplicaSet says GPUsPerReplica was stated, and
 	// then it replaces what kube-state-metrics gives too (FlagGPUsOverride).
@@ -669,7 +675,7 @@ func windowVariants(scan *windowScan, opts Options) ([]learnreplay.CaptureVarian
 		}
 		rel, relFlags := releaseOf(name, info, opts)
 		flags = append(flags, relFlags...)
-		st := scaleTargetOf(opts, name, info.model, gpus, accel, rel)
+		st := scaleTargetOf(opts, name, info.model, info.role, gpus, accel, rel)
 		params := capacity.ParseEngineArgsOn(inferenceengine.Detect(st), st, accel)
 		if params.VLLMVersion.Known() {
 			params.VLLMVersionFrom = rel.from
@@ -880,11 +886,22 @@ func compareReleases(a, b capacity.VLLMVersion) int {
 	return b.Minor - a.Minor
 }
 
+// argsFor is the engine arguments a variant of role runs where they are
+// the role's own (Options.PrefillEngineArgs), ok false where the role takes
+// EngineArgs and BatchCap.
+func (o Options) argsFor(role string) ([]string, bool) {
+	if domain.CanonicalRole(role) == domain.RolePrefill && o.PrefillEngineArgs != nil {
+		return o.PrefillEngineArgs, true
+	}
+	return nil, false
+}
+
 // scaleTargetOf is a Deployment that stands for a variant's workload: the
-// engine and its arguments, the GPUs, the accelerator and the release. The
+// engine and its arguments (the role's, Options.argsFor), the GPUs, the
+// accelerator and the release. The
 // engine parameters are parsed from it as the engine parses a real one, and
 // the collector detects the engine from it.
-func scaleTargetOf(opts Options, variant, modelID string, gpus int, accel string, rel release) scaletarget.ScaleTargetAccessor {
+func scaleTargetOf(opts Options, variant, modelID, role string, gpus int, accel string, rel release) scaletarget.ScaleTargetAccessor {
 	// The image is never pulled: this Deployment is never applied. The
 	// engine is detected from the launch command and the release read from
 	// the image tag or the annotation, as from a real one. With no image
@@ -896,9 +913,13 @@ func scaleTargetOf(opts Options, variant, modelID string, gpus int, accel string
 			Command: []string{"python3", "-m", "sglang.launch_server", "--model-path", modelID}}
 		batchFlag = "--max-running-requests"
 	}
-	c.Args = slices.Clone(opts.EngineArgs)
-	if opts.BatchCap > 0 {
-		c.Args = append(c.Args, batchFlag+"="+strconv.Itoa(opts.BatchCap))
+	if args, ok := opts.argsFor(role); ok {
+		c.Args = slices.Clone(args)
+	} else {
+		c.Args = slices.Clone(opts.EngineArgs)
+		if opts.BatchCap > 0 {
+			c.Args = append(c.Args, batchFlag+"="+strconv.Itoa(opts.BatchCap))
+		}
 	}
 	if gpus > 0 {
 		c.Resources.Requests = corev1.ResourceList{"nvidia.com/gpu": resource.MustParse(strconv.Itoa(gpus))}
@@ -1031,7 +1052,7 @@ func collectModel(ctx context.Context, c *collector.ReplicaMetricsCollector, f *
 		v := variants[name]
 		// The collector reads only the engine off a stand-in
 		// (inferenceengine.Detect), which the image can decide.
-		targets[utils.GetNamespacedKey(opts.Namespace, name)] = scaleTargetOf(opts, name, modelID, v.GpuCount, v.Accelerator,
+		targets[utils.GetNamespacedKey(opts.Namespace, name)] = scaleTargetOf(opts, name, modelID, v.Role, v.GpuCount, v.Accelerator,
 			release{image: v.Params.Image})
 	}
 	rows, err := c.CollectReplicaMetrics(ctx, modelID, opts.Namespace, targets, nil, nil)
