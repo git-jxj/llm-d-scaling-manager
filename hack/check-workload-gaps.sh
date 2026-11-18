@@ -2488,11 +2488,12 @@ for sh_ in $GUARD_SHELLS; do
         continue
     fi
     # Now another user's. A runner cannot own a file as another user, so the
-    # vLLM root's marker is a link to a file this user can write and does not
-    # own (/dev/null: a marker made 666), and the bytecode key directory is
-    # 555 (another user made it 755).
-    rm -f "$C/ec/vllm/.writable"
+    # markers are links to a file this user can write and does not own
+    # (/dev/null: a marker made 666), and the bytecode key directory is 555
+    # (another user made it 755).
+    rm -f "$C/ec/vllm/.writable" "$C/ec/pycache/k/.writable"
     ln -s /dev/null "$C/ec/vllm/.writable"
+    ln -s /dev/null "$C/ec/pycache/k/.writable"
     chmod 555 "$C/ec/pycache/k"
     out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm" PYTHONPYCACHEPREFIX="$C/ec/pycache/k")"
     assert_contains "$out" "VLLM=$C/ec/vllm.uid-$me PYC=$C/ec/pycache/k.uid-$me"
@@ -2500,7 +2501,7 @@ for sh_ in $GUARD_SHELLS; do
     assert_contains "$out" "engine cache PYTHONPYCACHEPREFIX=$C/ec/pycache/k is another user's; using $C/ec/pycache/k.uid-$me, user $me's own"
     assert_not_contains "$out" "not writable"
     assert_eq "$(ls -A "$C/ec/vllm" | tr '\n' ' ')" ".writable " "$sh_: the first user's vLLM root, after the second user"
-    assert_eq "$(ls -A "$C/ec/pycache/k" | tr '\n' ' ')" "" "$sh_: the first user's bytecode, after the second user"
+    assert_eq "$(ls -A "$C/ec/pycache/k" | tr '\n' ' ')" ".writable " "$sh_: the first user's bytecode, after the second user"
     # Its second start finds what its first one left.
     : > "$C/ec/pycache/k.uid-$me/compiled"
     out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm" PYTHONPYCACHEPREFIX="$C/ec/pycache/k")"
