@@ -383,6 +383,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
 			KVPerRequest: pv.shape.KVreq, OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
+			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL},
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)

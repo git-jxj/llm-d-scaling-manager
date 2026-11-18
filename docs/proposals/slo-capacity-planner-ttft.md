@@ -265,7 +265,8 @@ A decode pod holding `n` requests completes them at
     μ_n = m / ( OL · ITL(m·KVreq/C) ),   m = min(n, c),   c = batchCap·ranks
 
 a birth-death chain using the line at each state's own fill, clamped to the
-fitted band (a fill below it reads the band's bottom). Above `c` the chain
+band's top, and below the band's bottom read no lower than `k_low`, as
+question 2 reads it. Above `c` the chain
 is geometric, so the wait of a request that waits is exactly
 `Exp(μ_c − λ_rep)`, and the wait probability is the chain's mass at `n ≥ c`. A
 constant ITL (Erlang C at the mean fill) under-states the wait near the knee: in
@@ -535,7 +536,7 @@ roles' rates.
     block 1 = W_engine + own        (convolved exactly, closed form via the incomplete gamma)
     TTFT_q = min over β of  Q_{1−(1−q−β)}(block 1) + Q_{1−β}(W_decode) + ITL(k_d)
     mean  = ρ_w·θ + a + E[I]·(1/V_P + κ/BW) + E[W_decode] + ITL(k_d)
-    floor = a + I_q·(1/V_P + κ/BW) + ITL(band.lo)
+    floor = a + I_q·(1/V_P + κ/BW) + ITL(k_low)
 
     with a decode line, the term replaces κ/BW and ITL(k_d) (after M2):
     κ/BW     → perToken_D + perToken_R          in the own latency, so at I_q
@@ -565,8 +566,9 @@ roles' rates.
 - A prompt cv below 1e-4 is priced as constant: the gamma's shape is then
   above 1e8, where the incomplete gamma cancels (cv 1e-7 read 8% high).
 - `W_decode` is D2's admission chain (`DecodeAdmission`), bounded at 1e6
-  slots. `ITL(k_d)` is the line at the closed-form decode fill, read at the
-  band's bottom below it.
+  slots. `ITL(k_d)` is the line at the closed-form decode fill, read no lower
+  than `k_low` (the fill of the floor read below the band, for a line whose
+  `B` is not a guess; the band's bottom otherwise).
 - The search over `β` is a log grid on `(0, min(P_wait, 1 − q)]` followed by
   a golden-section refinement. The even split is a candidate as well, so the
   answer is never above it.
