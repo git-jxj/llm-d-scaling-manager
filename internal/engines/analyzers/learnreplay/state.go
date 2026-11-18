@@ -157,6 +157,12 @@ type VariantState struct {
 	// parser could not read: the window is then unknown, not unset.
 	MaxModelLen           int64
 	MaxModelLenUnresolved bool
+	// Params is the engine parameters the capacity store holds for the
+	// variant, as the analyzers priced it: the vLLM release and where it was
+	// read from, and the step budget, memory share and block size that
+	// release's defaults resolve to where the arguments set none. Nil where
+	// the store holds none.
+	Params *capacity.EngineParams
 	// Shape is the traffic the variant served (shapeOf).
 	Shape MeasuredShape
 	// ShapeRange is the range of the per-cycle mean lengths over every cycle
@@ -570,6 +576,7 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 		}
 		vs.Shape = shapeOf(shapes[vc.VariantName])
 		vs.CapacityTokens = whatif.CapacityTokens(params, vs.Ranks, live)
+		vs.Params = params
 		if params != nil {
 			vs.TensorParallel = params.TensorParallelSize
 			if params.MaxModelLen > 0 {

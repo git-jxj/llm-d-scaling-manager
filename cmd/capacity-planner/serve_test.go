@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -277,14 +278,25 @@ func parityCases() []parityCase {
 	}
 }
 
-// Every JSON golden in testdata has its parity case.
+// Every JSON golden in testdata has its parity case: a day plan's in
+// dayPlanParity (TestDayPlanAPIParity), every other in parityCases.
 func TestServeParityCoversEveryJSONGolden(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("testdata", "*-json.golden"))
 	require.NoError(t, err)
 	names := make([]string, 0, len(paths))
+	var days []string
 	for _, p := range paths {
-		names = append(names, strings.TrimSuffix(filepath.Base(p), ".golden"))
+		name := strings.TrimSuffix(filepath.Base(p), ".golden")
+		if strings.HasPrefix(name, "day-plan-") {
+			days = append(days, name)
+			continue
+		}
+		names = append(names, name)
 	}
+	dayCovered := slices.Collect(maps.Keys(dayPlanParity()))
+	slices.Sort(dayCovered)
+	require.Len(t, days, 2, "the day plan's JSON goldens")
+	assert.Equal(t, days, dayCovered)
 	cases := parityCases()
 	covered := make([]string, 0, len(cases))
 	for _, c := range cases {

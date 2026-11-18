@@ -282,10 +282,15 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 	}
 	content := strings.Join([]string{hex.EncodeToString(sum[:]), st.Namespace, st.ModelID, strconv.Itoa(st.Cycle), prefill,
 		variants[0].state.Variant, f.prefillVariant, f.variant}, "\x00")
+	series, err := seriesOf(data, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
+	if err != nil {
+		return nil, apiError(err)
+	}
 	return &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
 		Pricer:  &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource()},
+		Series:  series,
 	}, nil
 }
 

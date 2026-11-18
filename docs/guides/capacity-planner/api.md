@@ -75,6 +75,7 @@ point (headroom times the lower knee).
 | `POST /v1/plan` | Prices a scenario against an `inputsId`. |
 | `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
 | `POST /v1/report` | One fleet judged at the load the source saw, for each request shape and load asked: utilization, knees, the SLO against load, a shape-by-load summary and a verdict per shape. The same report as `capacity-planner at-replicas -o json`. |
+| `POST /v1/dayplan` | The prefill and decode replicas each bucket of the source's window needed, against the replicas it had: [the day plan](#the-day-plan). |
 | `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. |
 | `GET /` | The page, with its files under `/page/`. |
 
@@ -277,6 +278,56 @@ The answer:
 
 Each shape and load is priced from the one replay the inputs resolved: a
 report replays nothing.
+
+## The day plan
+
+`POST /v1/dayplan` sizes every bucket of the source's window for its own
+rate, as `POST /v1/size` sizes one rate, and sets the replicas the fleet had
+beside it. It reads the cycles of the source the `inputsId` was resolved
+from: the whole recording, or the whole Prometheus window. For a day, resolve
+a 24-hour window. It takes the size's `slo`, `assume`, `headroom` and
+`maxReplicas`, and `traffic` with `mix` and `arrivalCV2` only (a rate is a
+400: each bucket's rate is its own), and three more:
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `step` | `5m` | A bucket's length, a Go duration from `15s` to `24h`. Buckets start on the step in UTC. |
+| `sizeFor` | `p95` | The rate of a bucket's cycles to size for: `mean`, `p95` or `max`. A bucket of fewer than 20 cycles asked for its `p95` is sized for its `mean` and flagged `FewCyclesForP95`; each bucket's `sizedFor` says which. |
+| `minRequests` | 30 | A bucket with fewer requests is `tooLittleData`, not sized. |
+
+A term the source cannot price at any rate is not a bucket's refusal. The plan
+probes each shape once at one replica a role: a TPOT it cannot price
+(`PinnedDefaultB`, `NoLine`) is dropped and decode is sized on the fleet
+limit; a TTFT it cannot price (`NoPrefillCapacity`, `NoFixedLatency`, a
+target under the zero-load floor) leaves prefill unsized and decode sized
+alone, on its knee times headroom (and its TPOT, where that prices); when
+decode's knee is refused too, nothing is sized. Each lands in `refused`. Only a
+rate no fleet within `maxReplicas` serves is a bucket's own `unmet`. The CLI
+exits 3 when `refused` is not empty, a bucket is unmet, or no bucket was
+sized, and prints the plan either way.
+
+Each bucket is priced at its own observed prompt and output length (rounded
+to a 5% grid, so buckets of nearly one shape share their priced fleets), or
+at the inputs' shape with `WindowShape` where its cycles read none, or at
+`traffic.mix` where the request states it: then `Extrapolated` on every
+bucket when the stated length lies outside what the buckets observed.
+
+| Key | What it is |
+| --- | --- |
+| `from`, `to`, `step`, `sizeFor`, `sizeForSource`, `minRequests`, `ttft`, `tpot`, `headroom`, `maxReplicas` | What was planned. |
+| `buckets[]` | `start`, `samples` (cycles), `requests`, `rate` (`mean`, `p95`, `max` of its cycle rates), `sizedFor` and `sizedRate`, `shape`, `status`, `needed` and `limit` (sized: the fewest replicas in all, ties to fewer decode, and another mix may serve too; `needed.prefill` absent and `needed.atLeast` true when prefill is not priced, decode then a lower bound), `unmet` and `unmetRole` (beyond the bound), `actual` (the median serving pods of the priced prefill and decode variants), `hadLimit` (the limit of the fleet it had, priced whole), `verdict` (`under` when `hadLimit` falls short of the rate, `over` when one replica fewer of either role still serves it, `match`, `refused`) and `flags`. |
+| `hours[]` | Per UTC hour: the rate over its cycles, the need of its busiest sized bucket (the one of the highest sized rate), the fewest pods it had, `unmet` (buckets beyond the bound), and the verdict: `under` when any bucket was under or beyond the bound, `refused` when every bucket with data was refused, `over` when every sized bucket was over. |
+| `summary` | `peakNeeded` and `minNeeded` (the needs of the busiest and the quietest sized buckets), replica-hours and GPU-hours needed and had over the sized buckets (absent when none was sized; prefill's hours and the GPU-hours also when any sized bucket did not price prefill, `counts.prefillNotPriced`), `hadReplicaHoursAll` and `hadGpuHoursAll` over every bucket with data, `underHours`, `overHours`, `refusedHours`, and the counts, including how many buckets were sized for each statistic. |
+| `searched` | How many fleets the plan priced. |
+| `refused[]` | Every term the source cannot price at any rate, with `role`, `term` (`ttft`, `tpot`, `decodeKnee`), `reason`, `detail`, `hint` (what to do), `effect` (what the plan did instead) and `buckets`. Empty when every term priced. |
+| `notes` | What it does not price: scale-up lag (it sizes steady state), and the prefix hit rate. |
+
+```bash
+curl -s http://127.0.0.1:8080/v1/dayplan -H 'Content-Type: application/json' -d '{
+  "inputsId": "'"$ID"'", "step": "5m",
+  "slo": {"ttft": {"statistic": "p95", "target": 0.5}, "tpot": {"statistic": "mean", "target": 0.004}},
+  "assume": {"vp": 30000}}' | jq '.summary'
+```
 
 ## Errors
 

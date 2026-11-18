@@ -37,6 +37,10 @@ type stubResolver struct {
 	ttftDelay time.Duration
 	// fleetErr, when set, is the error of every fleet it returns one for.
 	fleetErr func(k Knobs) error
+	// refuseFrom2, when set, refuses the prefill limit, and the fleet's,
+	// with this reason from 2 prefill replicas on: a refusal that holds at
+	// more replicas than one, as NoImbalance would with f unlearned.
+	refuseFrom2 whatif.Reason
 }
 
 func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved, error) {
@@ -171,9 +175,12 @@ func (f *stubFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (dec
 		f.r.onPlainLimits(n)
 	}
 	knee := min(f.prefillKnee(), f.decodeKnee())
-	if f.refusePrefill {
+	switch {
+	case f.refusePrefill:
 		prefill = noVP
-	} else {
+	case f.r.refuseFrom2 != "" && f.k.Prefill > 1:
+		prefill = whatif.Unanswerable{Reason: f.r.refuseFrom2, Detail: "stub: refused from 2 prefill replicas on"}
+	default:
 		prefill = whatif.Answer{Value: knee * (1 - 0.1/ttftSeconds), Basis: whatif.Basis{BoundBy: []whatif.Bound{whatif.BoundTTFT}}}
 	}
 	if tpotSeconds > 0 {

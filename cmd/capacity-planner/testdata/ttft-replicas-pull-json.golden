@@ -75,7 +75,16 @@
         "ranks": 1,
         "replicas": 1,
         "replicasFrom": "recording",
-        "headroom": 0.85
+        "headroom": 0.85,
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        }
       },
       "results": {
         "knee": {
@@ -162,6 +171,15 @@
       "variant": "variant-02",
       "ttft": {
         "decodeVariant": "variant-01",
+        "prefillEngine": {
+          "engine": "vllm",
+          "stepBudget": 65536,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        },
         "percentile": 0.9,
         "rate": 26.24631835192952,
         "rateSource": "headroom x decode knee",

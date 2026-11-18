@@ -34,6 +34,9 @@ type Resolved struct {
 	// the model and the variants): the server hashes it into the inputsId.
 	Content string
 	Pricer  Pricer
+	// Series is every cycle of the source, oldest first, for a day plan
+	// (POST /v1/dayplan); nil where the source carries none.
+	Series []SeriesSample
 }
 
 // Pricer builds the fleet a scenario prices. It must be safe to call from

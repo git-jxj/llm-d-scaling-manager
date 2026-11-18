@@ -78,6 +78,15 @@
         "tpot": {
           "targetSeconds": 0.004,
           "windows": 0
+        },
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
         }
       },
       "results": {
@@ -117,6 +126,15 @@
       "variant": "variant-02",
       "ttft": {
         "decodeVariant": "variant-01",
+        "prefillEngine": {
+          "engine": "vllm",
+          "stepBudget": 65536,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        },
         "percentile": 0.95,
         "targetSeconds": 0.2,
         "replicas": 1,

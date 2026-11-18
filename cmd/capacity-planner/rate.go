@@ -257,6 +257,7 @@ func writeRateText(out io.Writer, st *learnreplay.State, variants []pricedVarian
 			fmt.Fprintf(&b, "%-9s%s\n", role, refusedText(r))
 		}
 		fmt.Fprintf(&b, "%-9sshape %s\n", "", a.pv.shapeText())
+		fmt.Fprintf(&b, "%-9sengine %s\n", "", engineRowText(a.pv.state.Params))
 		checkRow(&b, "%-9sline check %s\n", "", a.pv)
 		if a.fleet != nil {
 			writeRateRows(&b, layout, a.fleet, len(fleets), *ttft, a.ttft, a.fleetRate)
