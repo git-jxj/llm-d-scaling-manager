@@ -33,12 +33,18 @@ is the reference for both.
   checkout of that release and Go 1.26 or later (`make capacity-planner`).
   Record with the binary, not the image: the image is for serving.
 - [ ] For Path 2: bash, `jq`, and `curl` 7.76 or later (for `--fail-with-body`;
-  `curl --version` says which), plus `kubectl get` on the model Deployments.
+  `curl --version` says which), plus `kubectl get` on the model workloads
+  (Deployments, LeaderWorkerSets, or their Pods).
 - [ ] kube-state-metrics in the same Prometheus, for readiness and roles,
   with `--metric-labels-allowlist=pods=[llm-d.ai/role],nodes=[nvidia.com/gpu.product]`
   so it exports each Pod's role and each node's accelerator, and, optionally,
   `--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]`
   so it exports the [vLLM release](#the-vllm-release) annotation.
+  For a LeaderWorkerSet or DisaggregatedSet fleet, add
+  `leaderworkerset.sigs.k8s.io/name`, `leaderworkerset.sigs.k8s.io/group-index`,
+  `leaderworkerset.sigs.k8s.io/worker-index`, `disaggregatedset.x-k8s.io/name`
+  and `disaggregatedset.x-k8s.io/role` to the `pods=[...]` list: they say which
+  Pods form one replica, and which role each serves.
   Without it, see [Without kube-state-metrics](#without-kube-state-metrics).
 
 <!-- guide:prerequisites start -->
@@ -127,7 +133,7 @@ returns millions of samples, and the usual failure is Prometheus'
 
 This saves the raw samples of every series the planner reads, nothing else,
 for one namespace. It needs read access to Prometheus' query API, and to read
-the model Deployments; no checkout of this repository, no Go.
+the model workloads; no checkout of this repository, no Go.
 
 <!-- guide:manual start -->
 ```bash
@@ -203,28 +209,31 @@ done
 echo "failed=${failed}"
 
 # What loading the export needs and Prometheus does not hold: the window, the engine, and the engine
-# arguments of the decode and prefill Deployments (leave PREFILL_DEPLOYMENT empty without one).
+# arguments of the decode and prefill workloads (leave PREFILL_WORKLOAD empty without one).
+# A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet; for a DisaggregatedSet, the role's), or pod/NAME (a leader Pod).
 # ENGINE is vllm or sglang; ENGINE_CONTAINER is the engine's container name.
-# It stops, and writes no window.txt, when a Deployment or its container is not found.
+# It stops, and writes no window.txt, when a workload or its container is not found.
 export ENGINE=vllm
 export ENGINE_CONTAINER=vllm
-export DECODE_DEPLOYMENT=<decode deployment>
-export PREFILL_DEPLOYMENT=
+export DECODE_WORKLOAD=deploy/<decode deployment>
+export PREFILL_WORKLOAD=
 engine_args() {
-  out=$(kubectl -n "${NAMESPACE}" get deploy "$1" -o json | jq -r --arg c "${ENGINE_CONTAINER}" '
-    [.spec.template.spec.containers[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
+  out=$(kubectl -n "${NAMESPACE}" get "$1" -o json | jq -r --arg c "${ENGINE_CONTAINER}" '
+    [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
+      // .spec.leaderWorkerTemplate.workerTemplate.spec // .spec)
+     | .containers[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
      | gsub("\n"; " ")
      | if test("^[[{]") then (try (fromjson | tojson) catch .) else . end]
     | join(" ")')
-  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in Deployment $1" >&2; return 1; }
+  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" >&2; return 1; }
   echo "${out}"
 }
 rm -f planner-export/window.txt
 (
-  [ -n "${DECODE_DEPLOYMENT}" ] || { echo "set DECODE_DEPLOYMENT" >&2; exit 1; }
-  decode_args=$(engine_args "${DECODE_DEPLOYMENT}") || exit 1
+  [ -n "${DECODE_WORKLOAD}" ] || { echo "set DECODE_WORKLOAD" >&2; exit 1; }
+  decode_args=$(engine_args "${DECODE_WORKLOAD}") || exit 1
   prefill_args=
-  if [ -n "${PREFILL_DEPLOYMENT}" ]; then prefill_args=$(engine_args "${PREFILL_DEPLOYMENT}") || exit 1; fi
+  if [ -n "${PREFILL_WORKLOAD}" ]; then prefill_args=$(engine_args "${PREFILL_WORKLOAD}") || exit 1; fi
   {
     echo "NAMESPACE=${NAMESPACE}"
     echo "FROM=${FROM}"
@@ -258,7 +267,8 @@ for f in planner-export/*.json; do
 done | awk '{n[$2] += $1} END {for (m in n) print n[m], m}' | sort -n
 
 # One file to send. It holds your metric labels (Pod, node, model names) and engine arguments, no request content.
-tar czf planner-export.tgz planner-export
+# COPYFILE_DISABLE=1 keeps macOS tar from adding a ._ file beside each answer.
+COPYFILE_DISABLE=1 tar czf planner-export.tgz planner-export
 ```
 <!-- guide:manual end -->
 
@@ -279,8 +289,18 @@ example `DECODE_ARGS=--max-num-seqs 256 --tensor-parallel-size 2`. `capacity-pla
 splits these on whitespace: a JSON value is written compact (no spaces between
 its tokens), but a space inside one of its strings still splits it.
 
+**A LeaderWorkerSet or DisaggregatedSet fleet.** Set `DECODE_WORKLOAD` (and
+`PREFILL_WORKLOAD`) to the role's LeaderWorkerSet, `lws/<name>`, which reads
+its leader template, or to a leader Pod, `pod/<name>`, which reads the
+arguments that Pod ran with. A DisaggregatedSet runs one LeaderWorkerSet per
+role and revision: `kubectl -n <namespace> get lws` lists them. Where the
+arguments are built at start, in a script or from environment variables,
+neither shows them: copy them from the engine's startup log instead (vLLM
+prints them on its `non-default args` line) into `window.txt`. Each Pod's
+own rank flags, such as `--data-parallel-rank`, can stay as the leader's.
+
 Send `planner-export.tgz`. It holds metric labels (Pod, node and model names)
-and `window.txt`: the window, the engine and the Deployments' engine
+and `window.txt`: the window, the engine and the workloads' engine
 arguments, which loading it needs and Prometheus does not hold. No request
 content.
 
@@ -305,7 +325,7 @@ ${PROMTOOL} --version | head -1
 tar tzvf planner-export.tgz | awk '$1 !~ /^[-d]/ || $NF !~ /^planner-export\/[A-Za-z0-9_.:-]*$/'
 
 # Merges the answers into one OpenMetrics file, and prints the lookback to serve them with.
-# It reads only the *.json answers. window.txt is read as data, never sourced, and checked.
+# It reads only the *.json answers, and skips macOS ._ files. window.txt is read as data, never sourced, and checked.
 tar xzf planner-export.tgz --no-same-owner
 python3 hack/promjson-to-openmetrics.py -o planner-export.om planner-export/*.json
 while IFS='=' read -r k v; do
@@ -319,8 +339,9 @@ echo "namespace ${NAMESPACE}, engine ${ENGINE}, decode arguments: ${DECODE_ARGS}
 ${PROMTOOL} tsdb create-blocks-from openmetrics planner-export.om planner-tsdb
 
 # Serve the blocks. A retention longer than their age, or Prometheus deletes them on start.
-# LOOKBACK is the one the converter printed, four scrape intervals: it ends a series about when the original did (see Limits).
-export LOOKBACK=<the lookback the converter printed, e.g. 60s>
+# LOOKBACK is the one the converter printed: four scrape intervals of the slowest metric, often kube-state-metrics'.
+# It ends a series about when the original did (see Limits).
+export LOOKBACK=<the lookback the converter printed, e.g. 240s>
 touch empty.yml
 prometheus --config.file=empty.yml --storage.tsdb.path=planner-tsdb \
   --storage.tsdb.retention.time=10y --query.lookback-delta="${LOOKBACK}" \
@@ -328,7 +349,7 @@ prometheus --config.file=empty.yml --storage.tsdb.path=planner-tsdb \
 until curl -sf http://127.0.0.1:9091/-/ready >/dev/null; do sleep 1; done
 
 # Then capture as in the first path, against the local copy, from 5 minutes into the export.
-# capacity-planner takes one set of engine arguments: the decode Deployment's. PREFILL_ARGS is there to read.
+# capacity-planner takes one set of engine arguments: the decode workload's. PREFILL_ARGS is there to read.
 bin/capacity-planner capture --prometheus http://127.0.0.1:9091 --namespace "${NAMESPACE}" --kube-state-metrics \
   --from "${CAPTURE_FROM}" --to "${TO}" --engine "${ENGINE}" --engine-args "${DECODE_ARGS}" \
   -o run.capture.jsonl.gz
@@ -345,7 +366,10 @@ sample at all, so a broken export is not read as a window with less load.
   stale when its target goes away; the query API does not return those marks.
   The local copy instead holds the last value for `--query.lookback-delta`, so
   keep it short: four scrape intervals, which the converter prints from the
-  samples (`60s` at 15 s, `120s` at 30 s). In a test of
+  samples (`60s` at 15 s, `120s` at 30 s). It takes the slowest metric's
+  interval: kube-state-metrics is often scraped every 60 s beside engines
+  at 5 s, and a lookback sized for the engines (`20s`) loses
+  kube-state-metrics at three steps in four. In a test of
   this path, the copy's capture matched the original's on every step but the
   three, 45 s, after a Pod left, where the copy still listed it; with the
   default `5m` lookback, 19 steps differed.
