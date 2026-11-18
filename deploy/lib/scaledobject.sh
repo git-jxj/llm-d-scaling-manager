@@ -2439,14 +2439,33 @@ ENGINENEED
 #   be writable: vLLM fails hard on a read-only cache directory unless the
 #   variable is unset first, and a storage hiccup must cost one compile, not
 #   the replica. PYTHONPYCACHEPREFIX too: with it set, Python reads bytecode
-#   only from it, so one it cannot write is slower than none. In the
-#   container command, before the engine starts (the command belongs to the
-#   chart, so it is not patched here):
+#   only from it, so one it cannot write is slower than none. A cache that
+#   another user's engine started first on the node is that user's: an
+#   engine of a second user keeps its own directory beside it, so it is
+#   warm from its own second start and neither user writes the other's
+#   compiled code. In the container command, before the engine starts (the
+#   command belongs to the chart, so it is not patched here):
 #
 #     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
 #       eval "d=\${$v:-}"
 #       [ -n "$d" ] || continue
-#       if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
+#       # The first user to start an engine here wrote the marker and owns
+#       # the directory: what that engine made under it is that user's.
+#       mkdir -p "$d" 2>/dev/null && touch "$d/.writable" 2>/dev/null && [ -O "$d/.writable" ] && continue
+#       # Another user's: a directory of this user's own, beside it, else
+#       # inside it -- one this user made (-O), never one another user made.
+#       ecu=$(id -u)
+#       ecp=
+#       for p in "$d.uid-$ecu" "$d/.uid-$ecu"; do
+#         if mkdir -p "$p" 2>/dev/null && [ -O "$p" ] && touch "$p/.writable" 2>/dev/null; then
+#           ecp=$p
+#           break
+#         fi
+#       done
+#       if [ -n "$ecp" ]; then
+#         echo "engine cache $v=$d is another user's; using $ecp, user $ecu's own"
+#         eval "$v=\$ecp"
+#       else
 #         echo "engine cache $v=$d is not writable; using the engine default instead"
 #         unset $v
 #       fi

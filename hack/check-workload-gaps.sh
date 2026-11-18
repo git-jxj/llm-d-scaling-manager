@@ -2453,6 +2453,80 @@ run_guard() {
     env -u VLLM_USE_MEGA_AOT_ARTIFACT -u PYTHONPYCACHEPREFIX -u VLLM_CACHE_ROOT \
         PYTHONPATH="$sp" "$@" "$shell" -c ". \"$g\"; echo \"AOT=\${VLLM_USE_MEGA_AOT_ARTIFACT-unset} PYC=\${PYTHONPYCACHEPREFIX-unset}\"" 2>&1
 }
+# run_loop <shell> <guard loop> [VAR=value ...]: the loop alone, then where two caches landed
+run_loop() {
+    local shell="$1" g="$2"
+    shift 2
+    env -u VLLM_CACHE_ROOT -u FLASHINFER_WORKSPACE_DIR -u TRITON_CACHE_DIR -u PYTHONPYCACHEPREFIX \
+        "$@" "$shell" -c ". \"$g\"; echo \"VLLM=\${VLLM_CACHE_ROOT-unset} PYC=\${PYTHONPYCACHEPREFIX-unset}\"" 2>&1
+}
+
+# A node cache is shared by every engine on the node, and the first one to
+# start under a directory makes what is under it as its own user (its marker,
+# a bytecode key directory 755). An engine of a second user used to fail the
+# check and lose every cache, on every start. It now keeps a directory of its
+# own beside that one (else inside it), and never writes the first user's.
+CASE="guard: a cache another user started first is left to it; a second user gets its own, warm from its second start"
+reset; f_engine_cache_only_gap
+before=$FAILED
+G="$(mktemp -d)"
+guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
+grep -q 'PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+me="$(id -u)"
+for sh_ in $GUARD_SHELLS; do
+    C="$G/$sh_"
+    mkdir -p "$C/ec/vllm" "$C/ec/pycache"
+    # The first user: kept where it is, silently, and nothing made beside it.
+    out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm" PYTHONPYCACHEPREFIX="$C/ec/pycache/k")"
+    assert_contains "$out" "VLLM=$C/ec/vllm PYC=$C/ec/pycache/k"
+    assert_not_contains "$out" "engine cache"
+    assert_eq "$(ls -A "$C/ec" | tr '\n' ' ')" "pycache vllm " "$sh_: entries beside the first user's caches"
+    assert_eq "$(ls -A "$C/ec/vllm" | tr '\n' ' ')" ".writable " "$sh_: entries in the first user's vLLM root"
+    if [ "$me" = 0 ]; then
+        ok_note="(the second-user half needs a non-root check runner)"
+        assert_contains "$ok_note" "non-root"
+        continue
+    fi
+    # Now another user's. A runner cannot own a file as another user, so the
+    # vLLM root's marker is a link to a file this user can write and does not
+    # own (/dev/null: a marker made 666), and the bytecode key directory is
+    # 555 (another user made it 755).
+    rm -f "$C/ec/vllm/.writable"
+    ln -s /dev/null "$C/ec/vllm/.writable"
+    chmod 555 "$C/ec/pycache/k"
+    out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm" PYTHONPYCACHEPREFIX="$C/ec/pycache/k")"
+    assert_contains "$out" "VLLM=$C/ec/vllm.uid-$me PYC=$C/ec/pycache/k.uid-$me"
+    assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$C/ec/vllm is another user's; using $C/ec/vllm.uid-$me, user $me's own"
+    assert_contains "$out" "engine cache PYTHONPYCACHEPREFIX=$C/ec/pycache/k is another user's; using $C/ec/pycache/k.uid-$me, user $me's own"
+    assert_not_contains "$out" "not writable"
+    assert_eq "$(ls -A "$C/ec/vllm" | tr '\n' ' ')" ".writable " "$sh_: the first user's vLLM root, after the second user"
+    assert_eq "$(ls -A "$C/ec/pycache/k" | tr '\n' ' ')" "" "$sh_: the first user's bytecode, after the second user"
+    # Its second start finds what its first one left.
+    : > "$C/ec/pycache/k.uid-$me/compiled"
+    out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm" PYTHONPYCACHEPREFIX="$C/ec/pycache/k")"
+    assert_contains "$out" "VLLM=$C/ec/vllm.uid-$me PYC=$C/ec/pycache/k.uid-$me"
+    [ -f "$C/ec/pycache/k.uid-$me/compiled" ] || fail "$sh_: the second user's own bytecode is gone on its second start"
+    # No room beside it (the parent is the node directory, root's 755): inside it.
+    mkdir -p "$C/ec/vllm2"
+    ln -s /dev/null "$C/ec/vllm2/.writable"
+    chmod 555 "$C/ec"
+    out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm2")"
+    chmod 755 "$C/ec"
+    assert_contains "$out" "VLLM=$C/ec/vllm2/.uid-$me PYC=unset"
+    assert_contains "$out" "using $C/ec/vllm2/.uid-$me, user $me's own"
+    # Never a directory another user made under this user's name: a link to
+    # / stands in for it (owned by root). With no other place, the default.
+    ln -s / "$C/ec/pycache/j.uid-$me"
+    mkdir -p "$C/ec/pycache/j"
+    chmod 555 "$C/ec/pycache/j"
+    out="$(run_loop "$sh_" "$G/guard.sh" PYTHONPYCACHEPREFIX="$C/ec/pycache/j")"
+    assert_contains "$out" "VLLM=unset PYC=unset"
+    assert_contains "$out" "engine cache PYTHONPYCACHEPREFIX=$C/ec/pycache/j is not writable; using the engine default instead"
+    assert_eq "$(printf '%s\n' "$out" | grep -c 'engine cache')" "1" "$sh_: log lines"
+    chmod 755 "$C/ec/pycache/k" "$C/ec/pycache/j"
+done
+rm -rf "$G"
+[ "$FAILED" -eq "$before" ] && ok
 
 CASE="guard: VLLM_USE_MEGA_AOT_ARTIFACT=1 on an installed vLLM 0.26 only, never over a user value"
 reset; f_engine_cache_only_gap

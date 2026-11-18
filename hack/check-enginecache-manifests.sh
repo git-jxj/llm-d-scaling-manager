@@ -1331,6 +1331,17 @@ PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns pd-decode-0 pd-pre
 PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns fell-back > "$T/keys3.out" 2> "$T/keys3.err"; rc=$?
 [ "$(cat "$T/keys3.out")" = "$K1@rank_0_0" ] && grep -q 'compiled under /root/.cache/vllm, not VLLM_CACHE_ROOT=/engine-cache/vllm' "$T/keys3.err" \
     && ok "keys: an engine that fell back off the cache root still names its key, and says the start did not fill the node cache" || fail "keys fell back: out=$(cat "$T/keys3.out") err=$(tr '\n' ' ' < "$T/keys3.err")"
+# an engine of a second user on the node: the guard gives it its own
+# directory beside the root (else inside it), which is not a fall-back
+cat > "$T/engine-logs/second-user" <<'EOF'
+engine cache VLLM_CACHE_ROOT=/engine-cache/vllm is another user's; using /engine-cache/vllm/.uid-1000, user 1000's own
+INFO 10-14 [backends.py:550] Using cache directory: /engine-cache/vllm/.uid-1000/torch_compile_cache/3f2a9c1d0e/rank_0_0/backbone for vLLM's torch.compile
+EOF
+printf /engine-cache/vllm > "$T/engine-root/second-user"
+PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns second-user > "$T/keys-uid.out" 2> "$T/keys-uid.err"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$T/keys-uid.out")" = "$K1@rank_0_0" ] \
+    && grep -q 'compiled under /engine-cache/vllm/.uid-1000, its user.s own directory beside VLLM_CACHE_ROOT=/engine-cache/vllm' "$T/keys-uid.err" && ! grep -q 'fell back' "$T/keys-uid.err" \
+    && ok "keys: an engine of a second user names its key under its own directory, and is not called a fall-back" || fail "keys second user: rc=$rc out=$(cat "$T/keys-uid.out") err=$(tr '\n' ' ' < "$T/keys-uid.err")"
 PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns aot > "$T/keys-aot.out" 2> "$T/keys-aot.err"; rc=$?
 [ "$rc" = 0 ] && [ "$(cat "$T/keys-aot.out")" = "$AOT@rank_0_0+rank_1_0" ] && ! grep -q WARNING "$T/keys-aot.err" \
     && ok "keys: an AOT compile names its key under the cache root (torch_compile_cache/torch_aot_compile/<hash>), with its ranks" || fail "keys AOT: rc=$rc out=$(cat "$T/keys-aot.out") err=$(tr '\n' ' ' < "$T/keys-aot.err")"

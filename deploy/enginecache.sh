@@ -1159,7 +1159,14 @@ cmd_keys() {
                 # a relative root is resolved against the engine working directory, which the log does not show
                 log_warning "${pod}: VLLM_CACHE_ROOT=${root} is a relative path, so whether this start filled the node cache cannot be told; set it to the absolute mount path"
             elif [ "$base" != "$root" ]; then
-                log_warning "${pod}: compiled under ${base}, not VLLM_CACHE_ROOT=${root} -- the cache root was not writable and the engine fell back; this start did not fill the node cache"
+                case "$base" in
+                    # The guard's own directory for a second user: another
+                    # user's engine started on the node first.
+                    "$root".uid-[0-9]*|"$root"/.uid-[0-9]*)
+                        log_warning "${pod}: compiled under ${base}, its user's own directory beside VLLM_CACHE_ROOT=${root} -- an engine of another user started on this node first; verify reads ${root} and will not find this key there" ;;
+                    *)
+                        log_warning "${pod}: compiled under ${base}, not VLLM_CACHE_ROOT=${root} -- the cache root was not writable and the engine fell back; this start did not fill the node cache" ;;
+                esac
             fi
         done
     done

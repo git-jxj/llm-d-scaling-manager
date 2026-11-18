@@ -827,9 +827,14 @@ its first CUDA context from 4.6 s to 2.3 s. The first start writes about 150 MB
   image that already ships its bytecode compiled (vLLM 0.32 does). The guard
   does the second by itself: it unsets the variable when every top-level
   module of the engine package has its `.pyc`.
-- **One user per image.** The first engine to start an image creates its key
-  directory as its own user, mode `755`. An engine of that image under another
-  user cannot write there; the guard then unsets the variable.
+- **A second user gets its own copy.** The first engine to start on a node
+  owns what it creates there (its key directory is `755`). An engine of the
+  same image under another user cannot write there, so the guard gives it a
+  directory of its own beside it (`<dir>.uid-<uid>`, else `<dir>/.uid-<uid>`)
+  and logs `... is another user's; using ...`. That user compiles once on each
+  node and is warm from its second start. No user writes another's files. The
+  same holds for `vllm/` and `triton/`. `make engine-cache-verify` checks the
+  first user's directory only.
 - **It is code, like the other caches.** The key comes from the public image
   name and `pycache/` is `1777`, so anyone who can run a pod that mounts the
   same node directory can create a key directory first and put bytecode in it
@@ -865,7 +870,23 @@ LeaderWorkerSet, the leader's and the worker's):
 for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
   eval "d=\${$v:-}"
   [ -n "$d" ] || continue
-  if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
+  # The first user to start an engine here wrote the marker and owns
+  # the directory: what that engine made under it is that user's.
+  mkdir -p "$d" 2>/dev/null && touch "$d/.writable" 2>/dev/null && [ -O "$d/.writable" ] && continue
+  # Another user's: a directory of this user's own, beside it, else
+  # inside it -- one this user made (-O), never one another user made.
+  ecu=$(id -u)
+  ecp=
+  for p in "$d.uid-$ecu" "$d/.uid-$ecu"; do
+    if mkdir -p "$p" 2>/dev/null && [ -O "$p" ] && touch "$p/.writable" 2>/dev/null; then
+      ecp=$p
+      break
+    fi
+  done
+  if [ -n "$ecp" ]; then
+    echo "engine cache $v=$d is another user's; using $ecp, user $ecu's own"
+    eval "$v=\$ecp"
+  else
     echo "engine cache $v=$d is not writable; using the engine default instead"
     unset $v
   fi
