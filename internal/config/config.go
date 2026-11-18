@@ -119,6 +119,8 @@ type tlsConfig struct {
 type featureFlagsConfig struct {
 	scaleToZeroEnabled          bool
 	stickyScaleDownEnabled      bool
+	poolSelectedSupply          bool
+	poolGroup                   string
 	limitedModeEnabled          bool
 	scaleFromZeroMaxConcurrency int
 	passive                     bool
@@ -443,6 +445,40 @@ func (c *Config) StickyScaleDownEnabled() bool {
 	return c.features.stickyScaleDownEnabled
 }
 
+// PoolSelectedSupplyEnabled reports whether supply counts only the replicas
+// an InferencePool selects, and holds a variant no pool selects in a model a
+// pool routes (LLMSM_POOL_SELECTED_SUPPLY, default on; also a settings
+// ConfigMap key of the same name, read at start). Off, every replica is
+// counted and nothing is held, as before the feature. Thread-safe.
+func (c *Config) PoolSelectedSupplyEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.features.poolSelectedSupply
+}
+
+// PoolGroup is the InferencePool API group the controller reads (POOL_GROUP),
+// "" when unset; poolutil.GetPoolGKNN resolves the default. Thread-safe.
+func (c *Config) PoolGroup() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.features.poolGroup
+}
+
+// SetPoolGroupForTest sets POOL_GROUP on a test configuration.
+func SetPoolGroupForTest(c *Config, group string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.features.poolGroup = group
+}
+
+// SetPoolSelectedSupplyForTest sets LLMSM_POOL_SELECTED_SUPPLY on a test
+// configuration.
+func SetPoolSelectedSupplyForTest(c *Config, on bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.features.poolSelectedSupply = on
+}
+
 // PassiveDefault reports the controller-wide passive switch: the value a
 // model's passive mode takes when no scaling-policy entry sets `passive`
 // (ResolvePassive). It is the settings ConfigMap's passive key when that is
@@ -696,6 +732,7 @@ func NewTestConfig() *Config {
 			limitedModeEnabled:          false,
 			scaleFromZeroMaxConcurrency: 10,
 			stickyScaleDownEnabled:      true,
+			poolSelectedSupply:          true,
 		},
 		saturation: scalingPolicyConfig{
 			global:           make(ScalingPolicySet),

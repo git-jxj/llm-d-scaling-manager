@@ -325,6 +325,9 @@ func (a *Analyzer) ttftDecode(input domain.AnalyzerInput, fleet fleetReading, li
 		Line: line, Band: d.band, CapacityTokens: fleet.capacityTokens(v, params),
 		KVPerRequest: fleet.shape.KVreq, OutputTokens: fleet.shape.AvgOutputTokens,
 		ReplicaCap: batchCap * fleet.engineRanks(v), Replicas: fleet.ready[v], Tier: d.line.Tier,
+		// BelowBand is left unset on purpose: the controller prices a fill
+		// below the band at the band's bottom; only the planner reads the
+		// line there (TestTTFTDecode_OnlyAMeasuredLinePrices holds it).
 	}
 }
 

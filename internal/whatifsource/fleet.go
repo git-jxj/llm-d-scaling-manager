@@ -147,7 +147,7 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 		if err != nil {
 			return nil
 		}
-		v, _, qerr := api.Query(ctx, q, time.Time{})
+		v, _, _, qerr := api.Query(ctx, q, time.Time{})
 		if qerr != nil {
 			err = fmt.Errorf("kube-state-metrics: %w", qerr)
 			return nil

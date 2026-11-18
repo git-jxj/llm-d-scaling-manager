@@ -146,8 +146,8 @@ type shifted struct {
 	by time.Duration
 }
 
-func (s shifted) QueryRange(ctx context.Context, q string, r promv1.Range, opts ...promv1.Option) (model.Value, promv1.Warnings, error) {
-	v, w, err := s.API.QueryRange(ctx, q, r, opts...)
+func (s shifted) QueryRange(ctx context.Context, q string, r promv1.Range, opts ...promv1.Option) (model.Value, promv1.Warnings, promv1.Infos, error) {
+	v, w, i, err := s.API.QueryRange(ctx, q, r, opts...)
 	if m, ok := v.(model.Matrix); ok {
 		for _, stream := range m {
 			for i := range stream.Values {
@@ -155,7 +155,7 @@ func (s shifted) QueryRange(ctx context.Context, q string, r promv1.Range, opts 
 			}
 		}
 	}
-	return v, w, err
+	return v, w, i, err
 }
 
 // Samples off the step grid fail the capture, naming the cause; a start
