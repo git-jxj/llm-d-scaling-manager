@@ -2612,13 +2612,20 @@ if [ "$AS_ROOT" != none ] && [ -n "$R" ]; then
     assert_not_contains "$out" "engine cache"
     assert_not_contains "$out" "WRITE FAILED"
     assert_eq "$(find "$R/n/vllm" "$R/n/pycache/k" -path "$R/n/vllm/.uid-*" -prune -o ! -user 4242 ! -path "$R/n/vllm" -print | wc -l | tr -d ' ')" "0" "entries in the first user's tree owned by another user"
-    # a link planted where a user's own directory goes, to a directory that
-    # user owns: refused, and nothing written through it
+    # A link planted where a user's own directory goes, to a directory that
+    # user owns: refused, and nothing written through it. In a sticky
+    # directory Linux already refuses to follow another user's link
+    # (fs.protected_symlinks), so the link goes where that does not hold: a
+    # node directory every engine can write and that is not sticky, as
+    # OpenShift's 2775 group-0 one is (777 here, for a shared group).
+    $AS_ROOT sh -c 'mkdir -p "$1/o/vllm" && chmod 777 "$1/o" && chmod 1777 "$1/o/vllm"' sh "$R"
+    $AS_ROOT setpriv --reuid=4242 --regid=4242 --clear-groups touch "$R/o/vllm/.writable"
     $AS_ROOT setpriv --reuid=4245 --regid=4245 --clear-groups mkdir "$R/n/pycache/mine"
-    $AS_ROOT setpriv --reuid=4244 --regid=4244 --clear-groups ln -s "$R/n/pycache/mine" "$R/n/vllm/.uid-4245"
-    out="$(eng 4245)"
-    assert_contains "$out" "VLLM=unset PYC=$R/n/pycache/k.uid-4245"
-    assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$R/n/vllm is not writable; using the engine default instead"
+    $AS_ROOT setpriv --reuid=4244 --regid=4244 --clear-groups ln -s "$R/n/pycache/mine" "$R/o/vllm.uid-4245"
+    out="$($AS_ROOT setpriv --reuid=4245 --regid=4245 --clear-groups env -i PATH=/usr/bin:/bin VLLM_CACHE_ROOT="$R/o/vllm" \
+        sh -c ". \"$R/guard.sh\"; echo \"VLLM=\${VLLM_CACHE_ROOT-unset}\"" 2>&1)"
+    assert_contains "$out" "VLLM=$R/o/vllm/.uid-4245"
+    assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$R/o/vllm is another user's; using $R/o/vllm/.uid-4245, user 4245's own"
     assert_eq "$(ls -A "$R/n/pycache/mine" | tr '\n' ' ')" "" "the directory the planted link points at"
     $AS_ROOT rm -rf "$R"
 fi
