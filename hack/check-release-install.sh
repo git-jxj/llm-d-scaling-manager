@@ -710,7 +710,7 @@ else
 fi
 smt admin-setup -n ctl --keda-namespace keda-system
 rc=$?
-if [ "$rc" = 0 ] && [ "$(stamp_models)" = m1 ] && [ "$(grants m1)" = "$want_grants" ] && grep -q 'kept: this controller is granted in them' "$W/out"; then
+if [ "$rc" = 0 ] && [ "$(stamp_models)" = m1 ] && [ "$(grants m1)" = "$want_grants" ] && grep -q 'kept: the last admin-setup named them' "$W/out"; then
     ok "admin-setup again without --model-namespace keeps the namespaces it is granted in (an upgrade re-run revokes nothing)"
 else
     bad "re-run without the list: exit $rc, stamp '$(stamp_models)', m1 [$(grants m1)]"
@@ -743,7 +743,7 @@ smt admin-setup -n ctl --keda-namespace keda-system --single-namespace --model-n
 smt admin-setup -n ctl --keda-namespace keda-system --single-namespace
 rc=$?
 if [ "$rc" = 0 ] && [ -z "$(grants m1)" ] && [ "$(stamp_models)" = "(none)" ] && has_obj role ctl scaling-manager-manager-role-ctl \
-    && [ "$(reader_names)" = ctl,scaling-manager-policy ]; then
+    && [ "$(reader_names)" = ctl,scaling-manager-policy ] && grep -q "the owner runs it again, right away" "$W/out"; then
     ok "admin-setup --single-namespace revokes every model namespace and goes back to the controller namespace alone"
 else
     bad "--single-namespace: exit $rc, m1 [$(grants m1)], stamp '$(stamp_models)', reader '$(reader_names)': $(tail -1 "$W/out")"
@@ -847,6 +847,36 @@ if [ "$rc" = 0 ] && [ -z "$(grants m1)" ]; then
     ok "with no other controller left, nothing labelled for ctl stays in m1 (Role, RoleBinding, PodMonitor, preflight reads, pod writer)"
 else
     bad "revoke alone: exit $rc, m1 [$(grants m1)]"
+fi
+
+# The owner of any namespace may create a RoleBinding named for ctl there:
+# a re-run without flags must not enroll that namespace.
+reset ctl m1 x
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1
+printf '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"scaling-manager-manager-rolebinding-ctl","namespace":"x","labels":{"app.kubernetes.io/instance":"ctl"}},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"scaling-manager-manager-role-ctl"},"subjects":[{"kind":"ServiceAccount","name":"scaling-manager-controller-manager","namespace":"ctl"}]}' > "$W/plant.json"
+PATH="$W/bin:$PATH" kubectl apply -f "$W/plant.json" >/dev/null
+smt admin-setup -n ctl --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && ! has_obj role x scaling-manager-manager-role-ctl && [ "$(stamp_models)" = m1 ] && [ "$(grants m1)" = "$want_grants" ] \
+    && [ "$(reader_names)" = ctl,m1,scaling-manager-policy ]; then
+    ok "a RoleBinding planted for ctl in another namespace enrolls nothing on a re-run without flags: the kept list is the one the last admin-setup recorded"
+else
+    bad "planted RoleBinding: exit $rc, x [$(grants x)], stamp '$(stamp_models)', reader '$(reader_names)'"
+fi
+# A ClusterRole left over from a removed cluster-wide install is not one; with
+# its binding, the guard refuses and names both and how to delete them.
+reset ctl m1
+mkdir -p "$STUB_DIR/obj/clusterrole/_" "$STUB_DIR/obj/clusterrolebinding/_"
+echo '{"kind":"ClusterRole","metadata":{"name":"scaling-manager-manager-role"}}' > "$STUB_DIR/obj/clusterrole/_/scaling-manager-manager-role.json"
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1
+expect_rc "a leftover ClusterRole scaling-manager-manager-role alone does not trip the cluster-wide guard" 0 $?
+echo '{"kind":"ClusterRoleBinding","metadata":{"name":"scaling-manager-manager-rolebinding"}}' > "$STUB_DIR/obj/clusterrolebinding/_/scaling-manager-manager-rolebinding.json"
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'kubectl delete clusterrolebinding scaling-manager-manager-rolebinding; kubectl delete clusterrole scaling-manager-manager-role' "$W/out"; then
+    ok "the grant of the cluster-wide files trips the guard (exit 4), naming both objects and how to delete them if left over"
+else
+    bad "cluster grant without a controller: exit $rc: $(tail -1 "$W/out")"
 fi
 
 # A cluster-wide install: a namespaced admin-setup that would overlap it is refused.
@@ -1384,7 +1414,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=155
+EXPECT_CASES=158
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

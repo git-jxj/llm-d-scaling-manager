@@ -52,7 +52,7 @@ them against their `SHA256SUMS` before it uses them.
 | --- | --- | --- |
 | `smt admin-setup -n NS [--keda-namespace KNS]` | cluster admin, once per namespace | the `part=admin` objects, the preflight's RBAC, the model-namespace file, KEDA's namespace in the scaler NetworkPolicy, and a stamp (ConfigMap `scaling-manager-admin-setup`). Then adds NS to the [weights labeller](workload-preparation.md#gate-replicas-on-the-weights)'s watch list, with rights in NS and the labeller's namespace only; with no labeller, or without those rights, it prints the command instead and still succeeds |
 | `smt install -n NS --prometheus-url URL` | namespace owner | the settings (created once), the preflight, the scaler TLS Secrets (created once), the controller, the preflight again |
-| `smt admin-setup -n CTRL --model-namespace A --model-namespace B` | cluster admin | for one controller in its own namespace CTRL that manages A and B, with nothing cluster-wide on workloads. As above, except that the model-namespace file goes to A and B, not CTRL, with the preflight's read of pods and PodMonitors there; the Namespace reader names A and B; the stamp lists them. It takes the full list: a namespace left out loses this controller's Role, RoleBinding and pod writer there, and the PodMonitor and pod writer Role unless another controller there still uses them. Without `--model-namespace`, a re-run keeps the namespaces the controller is granted in (read from their RoleBindings, not from the stamp, which the owner may edit). `--single-namespace` revokes them all. Refused (exit 4): a namespace another scaling manager manages, and any list beside a cluster-wide install |
+| `smt admin-setup -n CTRL --model-namespace A --model-namespace B` | cluster admin | for one controller in its own namespace CTRL that manages A and B, with nothing cluster-wide on workloads. As above, except that the model-namespace file goes to A and B, not CTRL, with the preflight's read of pods and PodMonitors there; the Namespace reader names A and B; the stamp lists them. It takes the full list: a namespace left out loses this controller's Role, RoleBinding and pod writer there, and the PodMonitor and pod writer Role unless another controller there still uses them. Without `--model-namespace`, a re-run keeps the namespaces the last `admin-setup` named (recorded on the controller's Namespace reader ClusterRole, which only a cluster admin writes) and that still hold its RoleBinding; never the stamp, which the owner may edit. `--single-namespace` revokes them all. Refused (exit 4): a namespace another scaling manager manages, and any list beside a cluster-wide install |
 | `smt install -n CTRL --prometheus-url URL` | owner of CTRL | as above, managing the namespaces the stamp lists. Run it again after the admin changes them |
 | `smt admin-finish -n NS` | cluster admin, after `install` | KEDA's client certificate, a controller restart when it changed, waits for `mutual TLS`, the preflight, then removes the preflight's cluster reads |
 | `smt install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS` | cluster admin | all three, for one controller in `scaling-manager-system`, and the [weights labeller](workload-preparation.md#gate-replicas-on-the-weights) (it patches nodes), watching every `--model-namespace` and every namespace it already watches. A new labeller only when a model namespace has a weights DaemonSet; otherwise it prints how to add it |
@@ -68,8 +68,10 @@ namespace first (`kubectl create namespace CTRL`); `admin-setup` never
 creates it. `admin-finish -n CTRL` is the same as for one namespace. For one
 GPU budget shared by the namespaces, install with, for example,
 `--quota "NVIDIA-H100-80GB-HBM3=8" --set quotaScope=cluster`. After the admin
-changes the list, the owner runs `install` again; until then the controller
-reports a namespace it lost as unreadable and manages the others.
+changes the list, the owner runs `install` again, right away. Until then the
+controller still names a namespace it lost. With two or more named, it
+reports that one unreadable and manages the others. With one named and that
+one revoked (`--single-namespace` from a list of one), it cannot read it.
 
 Whoever owns CTRL acts as the scaling manager in every model namespace: once
 sharing is active (the pod writer of `scaling-manager-activate.yaml`), that
@@ -94,7 +96,7 @@ need `make`.
 | `--quota "GPU=N[,GPU=N]"` | `install` | sets `limiter: quota` and `quotas` |
 | `--set KEY=VALUE` | `install` | any other settings key, on a first install. Not a key a flag sets (`prometheusURL`, `prometheusCACertPath`, `prometheusAllowHTTP`, `quotas`; `limiter` with `--quota`). Not `passive`: the install is passive, and the refusal prints the `kubectl patch` to run after `admin-finish` |
 | `--model-namespace NS` | `install --scope cluster`, `admin-setup`, `install` | a namespace with model servers; repeat it. With `--scope cluster`, add one later by running again with it. Namespaced: not `-n` itself; `admin-setup` takes the full list, and `install` takes it only to check it against the stamp (exit 3 when they differ) |
-| `--single-namespace` | `admin-setup` | back to a controller that manages CTRL alone: revokes every model namespace. Then the owner runs `install` again |
+| `--single-namespace` | `admin-setup` | back to a controller that manages CTRL alone: revokes every model namespace. The owner then runs `install` again at once |
 | `--platform kubernetes\|openshift` | all | overrides the detection (API discovery of `security.openshift.io`) |
 | `--files DIR` | `admin-setup`, `install`, `admin-finish` | install from release files in DIR instead of the image's. They must match their `SHA256SUMS` and be this image's release |
 | `--image-repo REGISTRY/PATH` | `install` | for a mirror: the controller and preflight images from there, same digest. With `--scope cluster`, give `--weights-labeller-image` too, or no labeller is applied |

@@ -503,6 +503,16 @@ smt_model_list() {
 # controller in another namespace gets (smt: -<namespace>, make: -<hash>).
 SMT_MGR_RB_RE='^scaling-manager-manager-rolebinding(-.*)?$'
 SMT_POD_WRITER_ROLE=scaling-manager-pod-writer
+SMT_MODELS_ANNOTATION=scaling-manager.llmd.ai/model-namespaces
+
+# smt_admin_recorded_models echoes the model namespaces the last admin-setup
+# recorded on the Namespace reader of this controller, comma-separated. A
+# cluster-scoped object, so only a cluster admin can have written it. Empty
+# when there is none. Forbidden is not absent: exit 7.
+smt_admin_recorded_models() {
+    smt_get clusterrole "scaling-manager-policy-namespace-reader-role-$SMT_NS" || return 0
+    printf '%s' "$KC_OUT" | jq -r --arg a "$SMT_MODELS_ANNOTATION" '.metadata.annotations[$a] // ""'
+}
 
 # smt_granted_models echoes the namespaces, other than SMT_NS, holding the
 # model-namespace RoleBinding of this controller, one per line, sorted. Those
@@ -530,13 +540,15 @@ smt_other_controllers() {
 smt_cluster_guard() {
     local why=""
     [ ${#SMT_MODEL_NS[@]} -gt 0 ] || [ "$SMT_NS" = "$SMT_CLUSTER_NS" ] || return 0
-    if smt_get clusterrole scaling-manager-manager-role; then
-        why="ClusterRole scaling-manager-manager-role (the cluster-wide files) exists"
-    elif smt_get deployment "$SMT_DEPLOY" -n "$SMT_CLUSTER_NS" \
+    if smt_get deployment "$SMT_DEPLOY" -n "$SMT_CLUSTER_NS" \
         && ! printf '%s' "$KC_OUT" | jq -e '[.spec.template.spec.containers[]? | select(.name == "manager") | .args[]? | select(startswith("--watch-namespace"))] | length > 0' >/dev/null; then
-        why="the controller in $SMT_CLUSTER_NS manages every namespace"
+        why="Deployment $SMT_DEPLOY in $SMT_CLUSTER_NS, with no --watch-namespace"
+    elif smt_get clusterrole scaling-manager-manager-role && smt_get clusterrolebinding scaling-manager-manager-rolebinding; then
+        # The grant of the cluster-wide files without their controller: an
+        # install under way, or one removed in part.
+        why="ClusterRole scaling-manager-manager-role and ClusterRoleBinding scaling-manager-manager-rolebinding, the grant of the cluster-wide files. If they are left over from a removed install: kubectl delete clusterrolebinding scaling-manager-manager-rolebinding; kubectl delete clusterrole scaling-manager-manager-role"
     fi
-    [ -z "$why" ] || smt_exit 4 "a cluster-wide scaling manager is installed ($why): it already manages every namespace, and a second controller for the same models is an overlap the preflight FAILs on. Remove it first, or manage these namespaces from it (smt install --scope cluster --model-namespace <ns>)"
+    [ -z "$why" ] || smt_exit 4 "a cluster-wide scaling manager is installed ($why). It manages every namespace already, and a second controller for the same models is an overlap the preflight FAILs on. Remove it first, or manage these namespaces from it (smt install --scope cluster --model-namespace <ns>)"
 }
 
 # smt_admin_models: the model namespaces admin-setup applies, before any
@@ -552,8 +564,18 @@ smt_admin_models() {
     if [ "$SMT_SINGLE" = true ]; then
         SMT_MODEL_NS=()
     elif [ ${#SMT_MODEL_NS[@]} -eq 0 ] && [ -n "${SMT_PREV_MODELS// /}" ]; then
-        read -r -a SMT_MODEL_NS <<< "$SMT_PREV_MODELS"
-        echo "Model namespaces: $(smt_model_list | sed 's/,/, /g') (kept: this controller is granted in them; give --model-namespace to change them, --single-namespace to drop them all)."
+        # Kept: granted here AND named by the last admin-setup on the
+        # Namespace reader, a ClusterRole only a cluster admin writes. A
+        # RoleBinding alone does not count: the owner of any namespace may
+        # create one of this name there.
+        smt_call smt_admin_recorded_models
+        found=""
+        for m in $SMT_PREV_MODELS; do
+            printf '%s\n' "$SMT_CALL_OUT" | tr ',' '\n' | grep -qxF -- "$m" && found="$found $m"
+        done
+        read -r -a SMT_MODEL_NS <<< "$found"
+        [ ${#SMT_MODEL_NS[@]} -eq 0 ] \
+            || echo "Model namespaces: $(smt_model_list | sed 's/,/, /g') (kept: the last admin-setup named them, and this controller is granted in them; give --model-namespace to change them, --single-namespace to drop them all)."
     fi
     smt_cluster_guard
     [ ${#SMT_MODEL_NS[@]} -gt 0 ] || return 0
@@ -579,6 +601,12 @@ smt_admin_models() {
 smt_render_readers() {
     local names n
     [ ${#SMT_MODEL_NS[@]} -gt 0 ] || return 0
+    # The list this admin-setup grants, recorded on the reader for the next
+    # re-run without flags (smt_admin_recorded_models). Without a list the
+    # file carries none, and kubectl apply removes the one applied before.
+    R="scaling-manager-policy-namespace-reader-role-$SMT_NS" A="$SMT_MODELS_ANNOTATION" W="$(smt_model_list)" yq -i \
+        '(select(.kind == "ClusterRole" and .metadata.name == strenv(R)) | .metadata.annotations[strenv(A)]) = strenv(W)' \
+        "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot record the model namespaces on the Namespace reader of $SMT_MAIN"
     names="$(printf '%s\n' "$SMT_NS" "${SMT_MODEL_NS[@]}" scaling-manager-policy $SMT_POLICY_NAMES | awk 'NF && !seen[$0]++' | paste -sd, -)"
     R="scaling-manager-policy-namespace-reader-role-$SMT_NS" N="$names" yq -i \
         '(select(.kind == "ClusterRole" and .metadata.name == strenv(R)) | .rules[] | select(.resources[0] == "namespaces") | .resourceNames) = (strenv(N) | split(","))' \
@@ -1427,8 +1455,8 @@ smt_admin_setup() {
     echo
     echo "Done. The namespace owner runs next, with their own kubeconfig:"
     echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>   (an http:// Prometheus: add --allow-http)"
-    if [ ${#SMT_MODEL_NS[@]} -gt 0 ]; then
-        echo "  It reads the model namespaces from the stamp. After a change to them, the owner runs it again: until then the controller reports a namespace it lost as unreadable."
+    if [ ${#SMT_MODEL_NS[@]} -gt 0 ] || [ -n "${SMT_PREV_MODELS// /}" ]; then
+        echo "  It reads the model namespaces from the stamp. After a change to them, the owner runs it again, right away: until then the controller still names a namespace it lost. With two or more named it reports that one unreadable and manages the others; with one named, it cannot read it."
     fi
 }
 
