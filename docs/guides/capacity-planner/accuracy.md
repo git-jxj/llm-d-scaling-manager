@@ -64,9 +64,9 @@ This table is generated from the rows the planner ships:
 | decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 1 | -4..+2% | bracket | 1 |  | on |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 4 | -7..-4% | bracket | 1 |  | on |
-| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +5..+18% | p10-p90, min-max +3..+19% | 12 at 6 load levels | 0.400 to 0.900 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | +36..+45% | p10-p90, min-max +33..+46% | 12 at 6 load levels | 0.096 to 0.215 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | +34..+43% | p10-p90, min-max +32..+43% | 10 at 6 load levels | 0.096 to 0.203 | any |
+| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +2..+15% | p10-p90, min-max +1..+18% | 12 at 6 load levels | 0.400 to 0.900 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -2..+1% | p10-p90, min-max -3..+1% | 12 at 6 load levels | 0.096 to 0.215 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -4..-2% | p10-p90, min-max -5..-1% | 10 at 6 load levels | 0.096 to 0.203 | any |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 4 | at most +3% | one-sided | 1 |  | off |
 | rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
@@ -88,7 +88,9 @@ This table is generated from the rows the planner ships:
 
 What this says:
 
-- **Short prompts:** the planner is close. TTFT reads up to about 18% slow.
+- **Short prompts:** the planner is close. TTFT reads up to about 18% slow,
+  mean TPOT up to 18% slow.
+- **Mean TPOT on long prompts:** within a few percent, from 5% fast to 1% slow.
 - **Long prompts:** TTFT reads 15% to 190% slow, more so near the knee.
   Sizing for TTFT therefore errs on the side of more Pods than needed.
 - **Knees, flow control off:** every phase held at the knee the planner

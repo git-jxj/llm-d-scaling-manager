@@ -1,6 +1,6 @@
 knee            16.95 r/s   decode, band top binds at fill 0.796; OUTSIDE VALIDATED REGION (prompt 8000 tokens, measured 800 to 1250)
 operating rate  3.44 r/s    [2.54 .. 3.96]   0.85 x prefill knee (scaleUpThreshold); prefill knee validated: one-sided, error at most +3% (n=1, not crossed within the steps run; q32 staircase)
-mean TPOT       16.80 ms                     line held; at the prefill knee's rate; validated: error +36..+45% (p10-p90, min-max +33..+46%, n=12 at 6 load levels; q32 staircase)
+mean TPOT       12.34 ms                     line held; at the prefill knee's rate; validated: error -2..+1% (p10-p90, min-max -3..+1%, n=12 at 6 load levels; q32 staircase)
 prefill knee    4.05 r/s    [2.99 .. 4.65]   N_p 2 x V_P 17043 x (1 - 0.05 margin) / (f 1 x 8000 tokens); validated: one-sided, error at most +3% (n=1, not crossed within the steps run; q32 staircase)
 TTFT p90        7599.1 ms   [3830.2 .. Saturated] end to end; validated: error +18..+108% (p10-p90, min-max +15..+156%, n=12 at 6 load levels; q32 staircase)
                 (bands: V_P and f +-15%, a sweep, not a confidence interval)

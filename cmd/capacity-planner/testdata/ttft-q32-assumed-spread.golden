@@ -1,6 +1,6 @@
 knee            16.95 r/s   decode, band top binds at fill 0.796; OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
 operating rate  3.44 r/s    [2.54 .. 3.96]   0.85 x prefill knee (scaleUpThreshold); prefill knee OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
-mean TPOT       16.80 ms                     line held; at the prefill knee's rate; OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+mean TPOT       12.34 ms                     line held; at the prefill knee's rate; OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
 prefill knee    4.05 r/s    [2.99 .. 4.65]   N_p 2 x V_P 17043 x (1 - 0.05 margin) / (f 1 x 8000 tokens); OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
 TTFT p90        19228.0 ms  [9872.3 .. Saturated] end to end; OUTSIDE VALIDATED REGION (prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721)
                 (bands: V_P and f +-15%, a sweep, not a confidence interval)
