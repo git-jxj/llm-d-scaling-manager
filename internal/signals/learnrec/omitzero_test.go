@@ -60,7 +60,7 @@ func TestCodec_R1FieldsAreLeftOutWhileZero(t *testing.T) {
 		reflect.TypeFor[domain.ReplicaMetrics](): {"QueueLengthKnown", "AvgServiceTimeKnown", "AvgTTFTKnown",
 			"PromptTokensBuckets", "ComputedTokensBuckets", "OutputTokensBuckets", "TTFTBuckets", "AvgQueueTime", "AvgQueueTimeKnown",
 			"QueueTimeBuckets", "AvgPrefillTime", "AvgPrefillTimeKnown", "AvgKVTransferTime",
-			"AvgKVTransferTimeKnown", "TPOTBuckets", "QueueMin", "QueueMinKnown"},
+			"AvgKVTransferTimeKnown", "TPOTBuckets", "QueueMin", "QueueMinKnown", "GroupEngines", "EngineOf"},
 		reflect.TypeFor[domain.RouterLatency](): {"TTFTSumRate", "TTFTCountRate", "TPOTBuckets", "FlowControlWaitBuckets"},
 		reflect.TypeFor[Input]():                {"RouterLatency", "FlowControlPools"},
 	}

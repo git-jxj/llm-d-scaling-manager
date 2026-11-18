@@ -78,14 +78,16 @@ const (
 	// exports them, the group's GPUs are summed and nothing is flagged. A
 	// format: how many variants.
 	FlagMultiPodGroups = "multi-Pod groups in %d variants: GPUs per replica read from one Pod's request, not the group's"
-	// NoteITLAbsentRanks: replicas of several engine ranks (a LeaderWorkerSet
-	// group whose Pods each run an engine, or data-parallel ranks) whose ITL
-	// was unread because one rank reported none, so the decode line learns
-	// nothing from them; with too few such readings the planner prices no
-	// decode knee. A format: the variant, how many replica-cycles, of how
+	// NoteITLAbsentRanks: readings of the decode line of several
+	// data-parallel ranks (a Pod's, or a replica's) whose ITL was unread
+	// because one rank reported none, so the line learns nothing from them;
+	// with too few readings the planner prices no decode knee. A
+	// LeaderWorkerSet group whose Pods each run an engine is read engine by
+	// engine (domain.EngineRows), so an engine that reported none costs its
+	// own reading only. A format: the variant, how many readings, of how
 	// many cycles.
-	NoteITLAbsentRanks = "variant %s: ITL unread on %d replica-cycles of %d: a rank of the replica reported no ITL " +
-		"(an engine of a group, or a data-parallel rank), so the decode line learned nothing from them"
+	NoteITLAbsentRanks = "variant %s: ITL unread on %d readings over %d cycles: a data-parallel rank reported no ITL, " +
+		"so the decode line learned nothing from them"
 	// FlagGPUsOverride: --gpus-per-replica was given and replaces what
 	// kube-state-metrics reads for a variant. A format: the variant, the
 	// flag's count and kube-state-metrics'.
@@ -464,8 +466,9 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 		models[v.ModelID] = append(models[v.ModelID], v.Name)
 	}
 	clk := &stepClock{}
-	// absentITL counts, per variant, the cycles a replica of several ranks
-	// read no ITL because one of its ranks had none (itlAbsentRank).
+	// absentITL counts, per variant, the readings of the decode line, a
+	// row as the line reads it (domain.EngineRows), that read no ITL because
+	// one of their ranks had none (itlAbsentRank).
 	absentITL := map[string]int{}
 	for _, at := range steps {
 		if ctx.Err() != nil {
@@ -486,7 +489,7 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 			rec.Record(learnreplay.KindCaptureCycle, at, c)
 			sum.Cycles++
 			sum.Rows += len(c.Input.ReplicaMetrics)
-			for _, r := range c.Input.ReplicaMetrics {
+			for _, r := range domain.EngineRows(c.Input.ReplicaMetrics) {
 				if itlAbsentRank(r) {
 					absentITL[r.VariantName]++
 				}

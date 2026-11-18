@@ -2,6 +2,7 @@ package domain
 
 import (
 	"math"
+	"slices"
 	"time"
 )
 
@@ -594,6 +595,48 @@ type ReplicaMetrics struct {
 	// known.
 	QueueMin      float64 `learnrec:"omitzero"`
 	QueueMinKnown bool    `learnrec:"omitzero"`
+	// GroupEngines is the rows of a LeaderWorkerSet group whose Pods each
+	// run an engine, one per Pod, as collected before the collector merged
+	// them into this row; nil for any other row. The merged row is the
+	// replica, and capacity and replica counts read it. The ITL line reads
+	// the engines instead (EngineRows): a mean over the group's engines
+	// hides the spread of fill the line is fitted from.
+	GroupEngines []ReplicaMetrics `learnrec:"omitzero"`
+	// EngineOf is the group row's PodName for a row EngineRows expanded
+	// from GroupEngines, "" on every other row. A settle is the replica's,
+	// so such a row settles as its group does (settlerow.Key). Never
+	// collected or recorded.
+	EngineOf string `learnrec:"omitzero"`
+}
+
+// EngineRows is rows with the row of each LeaderWorkerSet group whose Pods
+// each run an engine replaced by its engines' rows (GroupEngines), for the
+// ITL line; every other row as it is. An engine's row takes its group's
+// identity where the group decides it: its variant, its readiness (a group
+// is Ready only when all its Pods are), whether it came from a warm pool,
+// and its settle (EngineOf). Rows are copied; the input is not modified,
+// and is returned as it is when no row has engines.
+func EngineRows(rows []ReplicaMetrics) []ReplicaMetrics {
+	if !slices.ContainsFunc(rows, func(rm ReplicaMetrics) bool { return len(rm.GroupEngines) > 0 }) {
+		return rows
+	}
+	n := 0
+	for _, rm := range rows {
+		n += max(len(rm.GroupEngines), 1)
+	}
+	out := make([]ReplicaMetrics, 0, n)
+	for _, rm := range rows {
+		if len(rm.GroupEngines) == 0 {
+			out = append(out, rm)
+			continue
+		}
+		for _, e := range rm.GroupEngines {
+			e.VariantName, e.Ready, e.FromWarmPool = rm.VariantName, rm.Ready, rm.FromWarmPool
+			e.EngineOf, e.GroupEngines = rm.PodName, nil
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // ITLState is which of three readings a replica's AvgITL is.

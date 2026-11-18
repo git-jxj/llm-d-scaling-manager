@@ -2416,7 +2416,6 @@ replica-capacity-decision
 replica-capacity-skipped
 replica-capacity-store-fallback
 replica-capacity-summary
-replica-cycles
 replica-start-change-confirmed
 replica-start-measured
 replica-start-outlier-rejected

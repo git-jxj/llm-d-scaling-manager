@@ -536,7 +536,10 @@ func (c *cycle) fitLines() {
 			params = rec.EngineParams
 		}
 		c.a.itlUnderArgs(variantKey, windowArgs(params))
-		rows, withheld := c.a.itlRows(c.input.ReplicaMetrics, variant, params)
+		// A LeaderWorkerSet group whose Pods each run an engine is read
+		// engine by engine (domain.EngineRows): its merged row's mean fill
+		// and mean ITL hide the spread the line is fitted from.
+		rows, withheld := c.a.itlRows(domain.EngineRows(c.input.ReplicaMetrics), variant, params)
 		rollingOut := rec.InRollout() || mixed[variant]
 		if rollingOut {
 			rows = nil
