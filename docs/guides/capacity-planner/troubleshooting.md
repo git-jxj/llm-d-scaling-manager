@@ -29,7 +29,7 @@ Find the message you see; the sections follow the order you meet them.
 | A scenario, link or import is refused | It names a recording or namespace this server does not read, or fails the page's checks; the status line gives the reason. Start the server on the same source. |
 | The **Bucket edges** box is marked red | Give 1 to 8 edges, smallest first, each at most 1024k. The reason is under the box. |
 | A bucket line is dimmed and dotted (`EdgeBeyondContext`) | Its edge plus the output length passes the engines' `--max-model-len`. Lower the edge, or read the line as a request the engine would refuse. |
-| Nothing flagged past the context window, but you expect it | The source does not know the window (`maxModelLen` refused under **Inputs**). Pass the engine arguments (`--engine-args`) when you record or serve, or check your edges by hand. |
+| Nothing flagged past the context window, but you expect it | The source does not know the window (`maxModelLen` refused under **Inputs**). Pass the engine arguments (`--engine-args`, and `--prefill-engine-args` for a P/D fleet) when you record or serve, or check your edges by hand. |
 
 ## Refused figures
 
@@ -42,7 +42,7 @@ and under **Inputs**; the API puts it in `refused`.
 | `NoFixedLatency` | No fixed latency a: it is learned from low-load minutes at more than one prompt length. | Record a window with quiet minutes and mixed prompts, or assume a (`assume.a`). |
 | `NoImbalance` | More than one prefill Pod and no f, the busiest Pod's share of the work. f = 1 is never assumed silently. | Record a window in which every prefill Pod carried load. |
 | `NoLine` | No inter-token latency line to price TPOT from. | Record a window in which KV-cache use spans 0.30 or more ([what the line needs](metrics.md#what-your-prometheus-must-keep)). |
-| `NoCapacity`, `NoBatchCap` | No KV capacity, or no batch cap, for the replica. | Make sure Prometheus keeps `vllm:cache_config_info`; pass the engine arguments (`--engine-args`) or `--batch-cap` when you record or serve. |
+| `NoCapacity`, `NoBatchCap` | No KV capacity, or no batch cap, for the replica. | Make sure Prometheus keeps `vllm:cache_config_info`; pass the engine arguments (`--engine-args`, and `--prefill-engine-args` for a P/D fleet) or `--batch-cap` when you record or serve. |
 | `NoTPOTHistogram` | A TPOT percentile asked with no ratio R_q of percentile to mean. | Type an assumed ratio (**TPOT percentile**, API `assume.tpotRatio`), or ask for the mean. |
 | `TargetBelowFloor` | The target is under what any number of replicas reaches. | Raise the target. More replicas do not help. |
 | `DecodeTTFTUnderLoad` | Decode has no ITL line, so TTFT uses the decode engine's measured TTFT. That TTFT was measured while requests waited on decode capacity, so it is a queue, not a floor. | For a recording, answer at the cycle the message names: the **Cycle** box (API `source.cycle`). For a Prometheus window, end the window at the time the message names (API `source.to`). On the CLI these are `--cycle` and `--to`. |

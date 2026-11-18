@@ -43,6 +43,11 @@ type lwsRole struct {
 	// ITL its engine reads there is lineITL's; nil reads 0.25 by the
 	// utilization query alone, and 20 ms.
 	fill func(group, worker int) float64
+	// ranks is how many data-parallel ranks a reporting Pod runs, each its
+	// own scrape target (Pod:port); 0 reads as one. rankITL, when not nil,
+	// says whether a rank of a Pod that has an ITL mean (itl) reads one.
+	ranks   int
+	rankITL func(group, worker, rank int) bool
 }
 
 // lineITL is the ITL an engine reads at KV fill k: 6 ms at no load and
@@ -100,36 +105,38 @@ func (r lwsRole) add(t *testing.T, srv *promtest.Server) {
 			if !r.reporting(g, w) {
 				continue
 			}
-			series := func(kv ...string) map[string]string {
-				return podLabels(name, append([]string{"instance", fmt.Sprintf("10.%d.%d.1:8000", g, w)}, kv...)...)
-			}
-			kv, itl := 0.25, 0.02
-			if r.fill != nil {
-				kv = r.fill(g, w)
-				itl = lineITL(kv)
-				for _, q := range []string{registration.QueryKvUsageInstant, registration.QueryKvUsageMean,
-					registration.QueryMaxRankKvCacheUsage} {
-					srv.Add(promQL(t, q), promtest.Const(series(), kv))
+			for rank := range max(r.ranks, 1) {
+				series := func(kv ...string) map[string]string {
+					return podLabels(name, append([]string{"instance", fmt.Sprintf("10.%d.%d.1:%d", g, w, 8000+rank)}, kv...)...)
 				}
-				running := math.Round(kv * 64)
-				srv.Add(promQL(t, registration.QueryRunningRequests), promtest.Const(series(), running))
-				srv.Add(promQL(t, registration.QueryGenerationTokenRate), promtest.Const(series(), running/itl))
-				srv.Add(promQL(t, registration.QueryRequestRate), promtest.Const(series(), running/itl/1000))
-				for _, q := range []string{registration.QueryAvgOutputTokens, registration.QueryAvgOutputTokensRecent,
-					registration.QueryAvgInputTokens, registration.QueryAvgInputTokensRecent} {
-					srv.Add(promQL(t, q), promtest.Const(series(), 1000))
+				kv, itl := 0.25, 0.02
+				if r.fill != nil {
+					kv = r.fill(g, w)
+					itl = lineITL(kv)
+					for _, q := range []string{registration.QueryKvUsageInstant, registration.QueryKvUsageMean,
+						registration.QueryMaxRankKvCacheUsage} {
+						srv.Add(promQL(t, q), promtest.Const(series(), kv))
+					}
+					running := math.Round(kv * 64)
+					srv.Add(promQL(t, registration.QueryRunningRequests), promtest.Const(series(), running))
+					srv.Add(promQL(t, registration.QueryGenerationTokenRate), promtest.Const(series(), running/itl))
+					srv.Add(promQL(t, registration.QueryRequestRate), promtest.Const(series(), running/itl/1000))
+					for _, q := range []string{registration.QueryAvgOutputTokens, registration.QueryAvgOutputTokensRecent,
+						registration.QueryAvgInputTokens, registration.QueryAvgInputTokensRecent} {
+						srv.Add(promQL(t, q), promtest.Const(series(), 1000))
+					}
 				}
-			}
-			srv.Add(promQL(t, registration.QueryKvCacheUsage), promtest.Const(series(), kv))
-			srv.Add(promQL(t, registration.QueryQueueLength), promtest.Const(series(), 0))
-			if r.itl != nil && r.itl(g, w) {
-				srv.Add(promQL(t, registration.QueryAvgITL), promtest.Const(series(), itl))
-			}
-			srv.Add(promQL(t, registration.QueryCacheConfigInfo), promtest.Const(series(
-				"num_gpu_blocks", strconv.Itoa(r.blocks), "block_size", "64"), 1))
-			if q, ok := registeredPromQL(t, "cache_config_sizes"); ok {
-				srv.Add(q, promtest.Const(series(
-					"kv_cache_size_tokens", strconv.Itoa(r.kvTokens)), 1))
+				srv.Add(promQL(t, registration.QueryKvCacheUsage), promtest.Const(series(), kv))
+				srv.Add(promQL(t, registration.QueryQueueLength), promtest.Const(series(), 0))
+				if r.itl != nil && r.itl(g, w) && (r.rankITL == nil || r.rankITL(g, w, rank)) {
+					srv.Add(promQL(t, registration.QueryAvgITL), promtest.Const(series(), itl))
+				}
+				srv.Add(promQL(t, registration.QueryCacheConfigInfo), promtest.Const(series(
+					"num_gpu_blocks", strconv.Itoa(r.blocks), "block_size", "64"), 1))
+				if q, ok := registeredPromQL(t, "cache_config_sizes"); ok {
+					srv.Add(q, promtest.Const(series(
+						"kv_cache_size_tokens", strconv.Itoa(r.kvTokens)), 1))
+				}
 			}
 		}
 	}

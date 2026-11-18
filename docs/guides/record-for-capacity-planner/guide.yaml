@@ -35,16 +35,20 @@ record:
       export FROM=2026-11-01T12:00:00Z
       export TO=2026-11-01T13:00:00Z
   engineargs:
-    note: The engine arguments the Deployment ran with. kube-state-metrics does not export them.
+    note: |
+      The engine arguments the Deployments ran with. kube-state-metrics does not export them.
+      For a P/D fleet, set PREFILL_ENGINE_ARGS to the prefill Deployment's; leave it unset and prefill takes ENGINE_ARGS.
     run: |
       kubectl -n ${NAMESPACE} get deploy <decode deployment> \
         -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
       export ENGINE_ARGS="<those arguments, space-separated>"
+      # P/D only: export PREFILL_ENGINE_ARGS="<the prefill Deployment's arguments, space-separated>"
   capture:
     note: Replays the window through the controller's own queries. Exit 0 done, 2 your input (a flag, nothing found), 1 a failed query.
     run: |
       bin/capacity-planner capture --prometheus ${PROM_URL} --namespace ${NAMESPACE} --kube-state-metrics \
         --from ${FROM} --to ${TO} --engine vllm --engine-args "${ENGINE_ARGS}" \
+        ${PREFILL_ENGINE_ARGS+--prefill-engine-args "${PREFILL_ENGINE_ARGS}"} \
         -o run.capture.jsonl.gz
   generate:
     note: Plays the capture through the analyzers. The result is an ordinary learner recording.
