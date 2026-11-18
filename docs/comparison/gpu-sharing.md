@@ -42,7 +42,7 @@ Why the recipe alone falls short:
 
 | What the business needs | llm-d Kueue recipe | Scaling manager |
 | --- | --- | --- |
-| Models in different namespaces share one GPU budget | Not covered. Written for one namespace. | Yes. One budget across namespaces. Covered by unit tests only, not yet measured. |
+| Models in different namespaces share one GPU budget | Not covered. Written for one namespace. | Yes. One budget across namespaces. Run several times on GPU clusters, including a user's own run; not yet enough runs to call it production-ready. |
 | GPUs follow the load when the budget is full | No. A busy model gets only idle GPUs once every model has its floor. | Yes. GPUs move from the model with the most to spare to the model that needs them, by load and by each model's weight. |
 | A guaranteed minimum per model | Yes. A model takes its floor back at once. | Yes. A model's floor is never taken. Getting GPUs back takes minutes. |
 | The budget is never exceeded | Yes, enforced. A pod over budget never gets a GPU, batch jobs on the same queues included. | Not on its own. It plans inside the budget, but needs a quota or Kueue underneath to enforce it. |
@@ -133,7 +133,8 @@ large (the busier model at 0.9 or more of its scale-up threshold, a donor at
 0.6 or less after giving), the move skips every extra wait of its own; a
 smaller imbalance first waits two confirmation cycles. The evidence is one or
 two runs per configuration, on 1-GPU pods of 8B models. Sharing across
-namespaces with a cluster-wide quota is unit tested and not yet measured. See
+namespaces has been run several times on GPU clusters, including a user's own
+run; that is not yet enough to call it production-ready. See
 [what it costs](../well-lit-paths/utilization-share/README.md#what-it-costs)
 and the [evidence](../well-lit-paths/utilization-share/README.md#evidence).
 
@@ -200,14 +201,14 @@ with another's.
 | GPUs moved from a quieter model to a busier one when the budget is full | No with the recipe's floors. With fair sharing, from the model furthest over its weighted share, not by load. | Yes, by each model's demand against its share. |
 | Who decides a model shrinks | Its own HPA, on its own load. Kueue preempts a borrowed pod when a lender reclaims its floor (or, with fair sharing, by share). | The optimizer picks the donor and how many GPUs it gives. |
 | How GPUs move | The HPA deletes pods, or Kueue preempts one; a waiting pod is then admitted. | A planned move: the donor gives first, and the receiver grows once those GPUs are free. The donor gives through an ordinary scale-down, choosing which pod goes first; it drains as any deleted pod does. |
-| Namespaces | One ([README:33][r33]). | Several, with a cluster-scope budget (cluster-wide or namespace-scoped install). Unit tested; not yet measured. |
+| Namespaces | One ([README:33][r33]). | Several, with a cluster-scope budget (cluster-wide or namespace-scoped install). Run several times on GPU clusters, including a user's own run; not yet enough runs to call it production-ready. |
 | Placement | GPUs counted against each ClusterQueue's quota; node placement is left to the scheduler. | Node-aware on a cluster-scoped install: the receiver's replica must fit in the holes the donors open, node by node, and multi-pod replicas are funded whole. Tested on kind only. A namespace-scoped install counts GPUs only. |
 | P/D | Not covered; one Workload per pod. | One model, held whole when either role cannot be sized. |
 | Signal | The pods each HPA requests. | Each model's demand against its share, with confirmation cycles, a tolerance band and a reversal hold. |
 | Enforcement | Hard: an over-budget pod is gated. | Advisory: back it with a GPU `ResourceQuota` or Kueue. |
 | Time until the busier model serves more | With floors, until the quieter model's own HPA scales down (its scale-down window), then the new pod's start (image pull, weights load, engine ready), which is minutes for a large model. Preemption skips the scale-down window: with floors only for a model returning to its floor; with fair sharing for any model under its weighted share. A preempted pod drains for its `terminationGracePeriodSeconds` ([README:398-399][r395]). | The donor's scale-down window and the new pod's start; there is no preemption shortcut. With a large imbalance (on by default: the busier model at 0.9 or more of its scale-up threshold, the donor at 0.6 or less after giving) nothing else is added. A smaller imbalance first waits two confirmation cycles, and a model that just gave GPUs waits out the reversal hold (about 12 minutes with a 300 s scale-down window). Headroom held ahead of need serves the model that rises first at once: in the latest aggregated run, median TTFT 0.07 s against 25.6 s with the same fleet planned but not moved. |
 | Rollout | Opting in a serving model restarts it; enforced at once. | Passive, shadow, active; one model can go first. |
-| Cost and maturity | Experimental. Holds no headroom: idle GPUs stay unused until a model's HPA asks for them. | Experimental. Headroom held ahead of need (36% to 43% more GPU-seconds in the P/D runs). A group freezes for about three minutes when it starts acting, after every restart or upgrade. One or two runs per configuration, 1-GPU pods of 8B models; whole-node, multi-GPU pods and a cluster-wide quota not measured. |
+| Cost and maturity | Experimental. Holds no headroom: idle GPUs stay unused until a model's HPA asks for them. | Experimental. Headroom held ahead of need (36% to 43% more GPU-seconds in the P/D runs). A group freezes for about three minutes when it starts acting, after every restart or upgrade. One or two runs per configuration, 1-GPU pods of 8B models; whole-node and multi-GPU pods not measured. Sharing across namespaces run several times on GPU clusters; not yet enough runs to call it production-ready. |
 
 ### Running both on one cluster
 
@@ -278,7 +279,9 @@ What does not work, or is not shown yet:
   rely on Kueue lending a donor's idle floor through the cohort, so
   `lendingLimit: 0` stops them. The optimizer itself starts no borrowing
   beyond the budget.
-- **Measurement.** A cluster-wide quota has not been measured yet.
+- **Evidence.** Sharing across namespaces has been run several times on GPU
+  clusters, including a user's own run; not yet enough runs to call it
+  production-ready.
 
 [recipe]: https://github.com/llm-d/llm-d/blob/fbc9d5c78bb25d9410f9587bc7e55ddc3db5ad03/guides/workload-autoscaling/kueue-rebalancing/README.md
 [cqs]: https://github.com/llm-d/llm-d/blob/fbc9d5c78bb25d9410f9587bc7e55ddc3db5ad03/guides/workload-autoscaling/kueue-rebalancing/optimized-baseline/base/clusterqueues.yaml
