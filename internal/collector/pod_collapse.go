@@ -1,7 +1,9 @@
 package collector
 
 import (
+	"cmp"
 	"math"
+	"slices"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 )
@@ -26,8 +28,8 @@ import (
 // instance capacity. Collapsing here keeps that arithmetic in one unit without
 // every consumer having to know a DP factor the cluster never reports.
 //
-// LWS needs no special handling: worker pods are dropped upstream, so a group's
-// leader is already its single row.
+// An LWS group whose Pods each run an engine is merged one step further, by
+// collapseToGroups, with the same rules.
 //
 // Merging is keyed by pod AND MODEL, not by pod alone -- see podModel. A warm
 // pool Pod holds several models at once, and summing their capacity into one
@@ -232,8 +234,8 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 	pod.AvgITLKnown = len(itlFinite) > 0 && itlNoneAbsent
 	pod.AvgITLEmpty = itlAllEmpty && !itlEmptyGenerated
 
-	// BlockSize is a per-instance config value, uniform across a pod's ranks;
-	// keeping the first preserves NumGpuBlocks × BlockSize == TotalKvCapacityTokens.
+	// BlockSize is a per-instance config value, uniform across a pod's ranks,
+	// so the first is kept; the capacity is the sum of the ranks' own.
 	capacity := float64(pod.TotalKvCapacityTokens)
 	if capacity > 0 {
 		pod.KvCacheUsage = weightedKvUsage / capacity
@@ -355,6 +357,81 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 
 	pod.Metadata = mergeMetadata(group)
 	return pod
+}
+
+// lwsMembership says which LeaderWorkerSet group a Pod belongs to and its
+// worker index (0 for the leader); ok is false for a Pod outside any LWS.
+type lwsMembership func(pod string) (group string, worker int, ok bool)
+
+// collapseToGroups merges the rows of one LeaderWorkerSet group into one row,
+// so a group whose Pods each run an engine is one replica, as the scale
+// target counts it.
+//
+// Two layouts put an LWS group on several Pods. Under Ray (or vLLM's
+// headless multi-node mode) the leader's engine spans the group and only the
+// leader reports, so the group already arrives as the leader's one row and
+// is passed through unchanged. Where every Pod runs an engine of its own --
+// data parallelism across nodes, each with its own API server -- every Pod
+// reports its own KV cache, batch and traffic, and the leader's row alone
+// is one Pod's share of the replica: a 4-Pod group read as a quarter of its
+// capacity. Those rows are merged by mergePodInstances, the rules that merge
+// one Pod's ranks, since a Pod's engine is one rank of the group's.
+//
+// The merged row is the leader's identity (the lowest worker index present
+// when the leader did not report), with Ready only when every reporting Pod
+// is Ready: a Pod still starting holds part of the group's queue and traffic,
+// and a reading that includes it is not one the analyzers trust from a
+// serving replica. ReadySince is already the group's (replicaReadySince).
+//
+// Keyed by group AND model, as collapseToPods is. Rows outside any group pass
+// through. Input order is preserved by first appearance; the input slice is
+// not modified.
+func collapseToGroups(rows []domain.ReplicaMetrics, memberOf lwsMembership) []domain.ReplicaMetrics {
+	if len(rows) < 2 || memberOf == nil {
+		return rows
+	}
+	type member struct {
+		row    domain.ReplicaMetrics
+		worker int
+	}
+	order := make([]podModel, 0, len(rows))
+	byGroup := make(map[podModel][]member, len(rows))
+	for _, m := range rows {
+		// A Pod outside any group keys by its own name, which no group key
+		// can equal: a group key holds a "/".
+		k := podModel{pod: m.PodName, model: m.ModelID}
+		worker := 0
+		if group, w, ok := memberOf(m.PodName); ok {
+			k.pod, worker = group, w
+		}
+		if _, seen := byGroup[k]; !seen {
+			order = append(order, k)
+		}
+		byGroup[k] = append(byGroup[k], member{row: m, worker: worker})
+	}
+	if len(order) == len(rows) {
+		return rows // one row per group: nothing to merge
+	}
+
+	out := make([]domain.ReplicaMetrics, 0, len(order))
+	for _, k := range order {
+		members := byGroup[k]
+		if len(members) == 1 {
+			out = append(out, members[0].row)
+			continue
+		}
+		slices.SortStableFunc(members, func(a, b member) int { return cmp.Compare(a.worker, b.worker) })
+		group := make([]domain.ReplicaMetrics, len(members))
+		ready := true
+		for i, m := range members {
+			group[i] = m.row
+			ready = ready && m.row.Ready
+		}
+		merged := mergePodInstances(group)
+		merged.Ready = ready
+		out = append(out, merged)
+	}
+	return out
 }
 
 // weightedByRequestRate averages field across the group weighted by each

@@ -13,13 +13,14 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/locator"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 )
 
 // Where an LWS group's Ready time comes from (analyzer-learner.md 4.3 and
 // section 7, PR 2; the group restart ev-shindin/llm-scaling-manager#361's workload patch issues: the
 // leader and its workers recreated, their names kept, their Ready times
-// apart). The collector reports one row per group, the leader's: a worker's
-// instance is dropped before its row is built (isLWSWorker). The row's
+// apart). The collector reports one row per group, named for the leader
+// (collapseToGroups merges the rows of workers that report). The row's
 // Ready time is the latest over the leader and its live, Ready workers
 // (groupReadyTimes), matched by the LWS set-name and group-index labels, so
 // k2 ages the group from the later of it and the controller's first sight
@@ -84,13 +85,17 @@ func TestLWSGroupReadyTimeIsTheLatestOfItsPods(t *testing.T) {
 		}
 		reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 		c := NewReplicaMetricsCollector(nil, nil, reader, nil, loc)
-		out := map[string]time.Time{}
+		var built []domain.ReplicaMetrics
 		for _, p := range pods {
 			data := &podMetricData{podName: p.Name, vaName: "lws", hasKv: true, kvUsage: 0.5}
 			if m, _, ok := c.attributeInstance(ctx, "m", "ns", p.Name+":8000", data, t0.Add(time.Hour), nil,
 				map[string]map[string]int{}); ok {
-				out[m.PodName] = m.ReadySince
+				built = append(built, m)
 			}
+		}
+		out := map[string]time.Time{}
+		for _, m := range collapseToGroups(built, func(pod string) (string, int, bool) { return c.lwsMember(ctx, "ns", pod) }) {
+			out[m.PodName] = m.ReadySince
 		}
 		return out
 	}
@@ -99,7 +104,7 @@ func TestLWSGroupReadyTimeIsTheLatestOfItsPods(t *testing.T) {
 	// with the latest of the three.
 	before := rows(pod("lws-0", t0), pod("lws-0-1", t0.Add(-time.Minute)), pod("lws-0-2", t0.Add(time.Minute)))
 	if len(before) != 1 {
-		t.Fatalf("rows %v: want one, the leader's (a worker's instance is no row)", before)
+		t.Fatalf("rows %v: want one, the group's, named for its leader", before)
 	}
 	if got, want := before["lws-0"], t0.Add(time.Minute); !got.Equal(want) {
 		t.Errorf("the group's Ready time is %v, want its latest Pod's %v", got, want)

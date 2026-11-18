@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,6 +104,18 @@ func (c *ReplicaMetricsCollector) buildInstanceKey(ctx context.Context, namespac
 	return instanceKey, podName, vaName
 }
 
+// lwsMember is the LeaderWorkerSet group a Pod belongs to and its worker
+// index (0 for the leader), from the labels the LWS controller stamps on the
+// leader and every worker. ok is false for a Pod outside any LWS, or one whose
+// labels cannot be read. The labels come from the locator's cache, which the
+// attribution walk has already populated, so this costs a map lookup.
+func (c *ReplicaMetricsCollector) lwsMember(ctx context.Context, namespace, podName string) (group string, worker int, ok bool) {
+	if podName == "" || c.locator == nil {
+		return "", 0, false
+	}
+	return lwsMemberOf(c.locator.GetPodLabels(ctx, namespace, podName))
+}
+
 // isLWSWorker checks if a pod is part of an LWS and is a worker (non-leader).
 // Returns true if the pod has the leaderworkerset.sigs.k8s.io/worker-index label
 // with a value other than "0" (leader pods have worker-index="0").
@@ -128,19 +141,39 @@ func (c *ReplicaMetricsCollector) isLWSWorker(ctx context.Context, namespace, po
 	return workerIndex != "0"
 }
 
+// lwsMemberOf is lwsMember read from a Pod's labels. A worker index that is
+// not a number sorts after every worker that has one.
+func lwsMemberOf(labels map[string]string) (group string, worker int, ok bool) {
+	group = lwsGroupKeyOf(labels)
+	if group == "" {
+		return "", 0, false
+	}
+	worker, err := strconv.Atoi(labels[lwsv1.WorkerIndexLabelKey])
+	if err != nil || worker < 0 {
+		worker = math.MaxInt
+	}
+	return group, worker, true
+}
+
 // attributeInstance turns one engine instance's scraped data into the
 // ReplicaMetrics row the analyzers read, or says why it is not one: an
-// instance with neither of the two saturation series, one nothing this
-// optimizer drives could be resolved for, or an LWS worker (its leader
-// reports for the replica). Attribution is the ownerReference walk
-// buildInstanceKey did, overridden for a warm-pool bridge by the variant it
-// is lent to; the FMA pairing hop is reported through pairedAs ("pod ->
+// instance with neither of the two saturation series, or one nothing this
+// optimizer drives could be resolved for. Attribution is the ownerReference
+// walk buildInstanceKey did, overridden for a warm-pool bridge by the variant
+// it is lent to; the FMA pairing hop is reported through pairedAs ("pod ->
 // variant", empty otherwise) so the caller can say once per cycle that the
-// hop carried something -- set even when the row is then dropped as a
-// worker, as it was counted before. Per-request timings are dropped for a
-// Pod that is not Ready or that reports a request older than itself; the
-// rest is taken as scraped. Each series' freshness is folded into
-// freshness (per variant) and the worst of them into the row's metadata.
+// hop carried something. Per-request timings are dropped for a Pod that is
+// not Ready or that reports a request older than itself; the rest is taken
+// as scraped. Each series' freshness is folded into freshness (per variant)
+// and the worst of them into the row's metadata.
+//
+// An LWS worker that reports engine series runs an engine of its own, and
+// the group's replica is all of them: its row is built, and collapseToGroups
+// merges the group's rows into one. A worker that reports none, as under Ray
+// where the leader reports for the whole group, never reaches here. A worker
+// whose group cannot be named (no set-name or group-index label) is no row,
+// as before: nothing could merge it, and a row of its own would count one
+// replica per Pod.
 func (c *ReplicaMetricsCollector) attributeInstance(
 	ctx context.Context,
 	modelID string,
@@ -246,12 +279,10 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 		pairedAs = podName + " -> " + vaName
 	}
 
-	// Skip LWS worker pods (non-leaders). Only LWS leader pods (worker-index="0")
-	// should be included in ReplicaMetrics, as they represent the LWS replica.
-	// For LWS, each leader pod emits vLLM metrics representing the entire replica
-	// (leader + workers), so including worker pods would double-count metrics.
-	if c.isLWSWorker(ctx, namespace, podName) {
-		logger.V(logging.DEBUG).Info("Skipping LWS worker pod (non-leader)",
+	// A worker is a row only where its group can be named, so that
+	// collapseToGroups can fold it into the group's replica.
+	if _, _, grouped := c.lwsMember(ctx, namespace, podName); !grouped && c.isLWSWorker(ctx, namespace, podName) {
+		logger.V(logging.DEBUG).Info("Skipping an LWS worker pod whose group is not labelled",
 			"pod", podName,
 			"instance", instanceKey,
 			"namespace", namespace)
@@ -262,12 +293,7 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 	var totalKvCapacityTokens int64
 	var tokensInUse int64
 	if data.hasCacheConfig {
-		// Overflow-safe multiplication: check before computing
-		if data.numGpuBlocks > 0 && data.blockSize > math.MaxInt64/data.numGpuBlocks {
-			totalKvCapacityTokens = math.MaxInt64
-		} else {
-			totalKvCapacityTokens = data.numGpuBlocks * data.blockSize
-		}
+		totalKvCapacityTokens = kvCapacityTokens(data)
 		// Use math.Round for accurate float-to-int conversion and clamp to valid range
 		rounded := math.Round(kvUsage * float64(totalKvCapacityTokens))
 		if rounded < 0 {
@@ -430,7 +456,7 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 		KvCacheUsage:             kvUsage,
 		QueueLength:              queueLen,
 		NumGpuBlocks:             data.numGpuBlocks,
-		BlockSize:                data.blockSize,
+		BlockSize:                tokensPerBlock(data),
 		TotalKvCapacityTokens:    totalKvCapacityTokens,
 		EngineRanks:              data.engineRanks,
 		MaxRankQueueLength:       maxRankQueue,
@@ -507,6 +533,39 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 	}
 
 	return metric, pairedAs, true
+}
+
+// kvCapacityTokens is the tokens an instance's KV cache holds, from its
+// cache_config_info series: the engine's own count (kv_cache_size_tokens)
+// where it reports one, else its blocks times the tokens a block holds
+// (tokensPerBlock). Saturates at math.MaxInt64.
+//
+// The engine's own count comes first because the product is not always
+// right. A build that compresses attention reports block_size as configured
+// and effective_attention_block_size as what one block holds: measured on
+// a prefill engine with block_size 64 and an effective size of 512, the
+// product read 300,480 tokens against the 2,403,840 the engine reported, and
+// its utilization read 8x high. A hybrid model's count is not a product of
+// any one block size at all.
+func kvCapacityTokens(data *podMetricData) int64 {
+	if data.kvCacheSizeTokens > 0 {
+		return data.kvCacheSizeTokens
+	}
+	blocks, size := data.numGpuBlocks, tokensPerBlock(data)
+	if blocks > 0 && size > math.MaxInt64/blocks {
+		return math.MaxInt64
+	}
+	return blocks * size
+}
+
+// tokensPerBlock is the tokens one KV-cache block holds: the
+// effective_attention_block_size label where the engine reports one, else
+// block_size.
+func tokensPerBlock(data *podMetricData) int64 {
+	if data.effectiveBlockSize > 0 {
+		return data.effectiveBlockSize
+	}
+	return data.blockSize
 }
 
 // isFMALauncher reports whether a pod is a Fast Model Actuation server-providing

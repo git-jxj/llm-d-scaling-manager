@@ -525,7 +525,7 @@ tests:
           - labels: '{model_name="glm",instance="10.0.0.2:8000",pod="dup-2"}'
             value: 2
       # cache_config_info: the value counts the ranks; num_gpu_blocks is already the total and is kept as is; a second scrape (solo-0, dup-2) counts no rank twice
-      - expr: 'count by (instance, pod, num_gpu_blocks, block_size) (max by (instance, pod, num_gpu_blocks, block_size, engine) (vllm:cache_config_info{namespace="llm"}))'
+      - expr: 'count by (instance, pod, num_gpu_blocks, block_size, kv_cache_size_tokens, effective_attention_block_size) (max by (instance, pod, num_gpu_blocks, block_size, kv_cache_size_tokens, effective_attention_block_size, engine) (vllm:cache_config_info{namespace="llm"}))'
         eval_time: 10m
         exp_samples:
           - labels: '{instance="10.0.0.8:8000",pod="dp8-0",num_gpu_blocks="80000",block_size="64"}'

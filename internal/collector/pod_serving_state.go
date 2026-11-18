@@ -138,7 +138,12 @@ func podStates(ctx context.Context, reader client.Reader, namespace string) name
 // set-name and group-index labels the LWS controller stamps on the leader and
 // every worker; "" for a Pod outside any LWS.
 func lwsGroupKey(p *corev1.Pod) string {
-	set, idx := p.Labels[lwsv1.SetNameLabelKey], p.Labels[lwsv1.GroupIndexLabelKey]
+	return lwsGroupKeyOf(p.Labels)
+}
+
+// lwsGroupKeyOf is lwsGroupKey read from a Pod's labels.
+func lwsGroupKeyOf(labels map[string]string) string {
+	set, idx := labels[lwsv1.SetNameLabelKey], labels[lwsv1.GroupIndexLabelKey]
 	if set == "" || idx == "" {
 		return ""
 	}
@@ -148,8 +153,8 @@ func lwsGroupKey(p *corev1.Pod) string {
 // groupReadyTimes is, per LWS group, the latest Ready time over its leader and
 // workers.
 //
-// The collector reports one row per group, the leader's (isLWSWorker drops a
-// worker's instance), and the group serves only while all its Pods do. So a
+// The collector reports one row per group (collapseToGroups), named for the
+// leader, and the group serves only while all its Pods do. So a
 // worker that became Ready after the leader -- a worker alone recreated under
 // restartPolicy None, which leaves the leader Ready -- is when the group last
 // came back, and its row must carry that time for k2's settle to wait on it.

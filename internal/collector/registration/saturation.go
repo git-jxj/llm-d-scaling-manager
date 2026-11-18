@@ -237,7 +237,7 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryCacheConfigInfo,
 		Type:        source.QueryTypePromQL,
-		Template:    `count by (instance, pod, num_gpu_blocks, block_size) (max by (instance, pod, num_gpu_blocks, block_size, engine) (vllm:cache_config_info{namespace="{{.namespace}}"}))`,
+		Template:    `count by (instance, pod, num_gpu_blocks, block_size, kv_cache_size_tokens, effective_attention_block_size) (max by (instance, pod, num_gpu_blocks, block_size, kv_cache_size_tokens, effective_attention_block_size, engine) (vllm:cache_config_info{namespace="{{.namespace}}"}))`,
 		Params:      []string{source.ParamNamespace},
 		Description: "KV cache configuration info per instance (num_gpu_blocks and block_size as labels; the value counts the instance's engine ranks)",
 	})

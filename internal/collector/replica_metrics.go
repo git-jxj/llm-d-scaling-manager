@@ -489,6 +489,11 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	// replicas. See collapseToPods.
 	instanceCount := len(replicaMetrics)
 	replicaMetrics = collapseToPods(replicaMetrics)
+	// Then each LWS group's Pods into one replica, where its workers run
+	// engines of their own. See collapseToGroups.
+	replicaMetrics = collapseToGroups(replicaMetrics, func(pod string) (string, int, bool) {
+		return c.lwsMember(ctx, namespace, pod)
+	})
 
 	// Only set this after all pods have been processed, making sure not to include pods without metrics (which attributeInstance skips).
 	// This ensures that the discovered pod count reflects only those pods that produced replica metrics.
