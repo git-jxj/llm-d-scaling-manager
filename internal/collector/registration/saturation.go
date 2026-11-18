@@ -31,7 +31,10 @@ const (
 
 	// V2 queries (token-based capacity analysis)
 	QueryCacheConfigInfo = "cache_config_info"
-	QueryAvgOutputTokens = "avg_output_tokens"
+	// QueryCacheConfigSizes is the KV cache size the engine reports beside
+	// its blocks (vLLM only).
+	QueryCacheConfigSizes = "cache_config_sizes"
+	QueryAvgOutputTokens  = "avg_output_tokens"
 	// QueryAvgOutputTokensRecent is QueryAvgOutputTokens over a short window.
 	// See domain.ReplicaMetrics.AvgOutputTokensRecent for why both exist.
 	QueryAvgOutputTokensRecent = "avg_output_tokens_recent"
@@ -240,6 +243,26 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 		Template:    `count by (instance, pod, num_gpu_blocks, block_size) (max by (instance, pod, num_gpu_blocks, block_size, engine) (vllm:cache_config_info{namespace="{{.namespace}}"}))`,
 		Params:      []string{source.ParamNamespace},
 		Description: "KV cache configuration info per instance (num_gpu_blocks and block_size as labels; the value counts the instance's engine ranks)",
+	})
+
+	// The KV cache size the engine reports itself, beside the blocks above:
+	// kv_cache_size_tokens and effective_attention_block_size, each row
+	// counting the ranks that report that pair.
+	//
+	// A query of its own, so that QueryCacheConfigInfo's rank count does not
+	// depend on them. Upstream vLLM documents kv_cache_size_tokens as
+	// "Per-DP-engine KV cache capacity in tokens (group-aware)"
+	// (vllm/config/cache.py, CacheConfig), where num_gpu_blocks is the API
+	// server's sum over its engines. Grouped by it, an instance whose ranks
+	// report different sizes would split into rows of one rank each and lose
+	// its rank count. The collector reads these only as far as they cannot
+	// disagree with the blocks (collector.kvCapacityTokens).
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QueryCacheConfigSizes,
+		Type:        source.QueryTypePromQL,
+		Template:    `count by (instance, pod, kv_cache_size_tokens, effective_attention_block_size) (max by (instance, pod, kv_cache_size_tokens, effective_attention_block_size, engine) (vllm:cache_config_info{namespace="{{.namespace}}"}))`,
+		Params:      []string{source.ParamNamespace},
+		Description: "KV cache size per instance as the engine reports it (kv_cache_size_tokens and effective_attention_block_size as labels; the value counts the ranks that report them)",
 	})
 
 	// Average output (generation) tokens per completed request

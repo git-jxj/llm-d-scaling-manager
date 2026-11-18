@@ -117,16 +117,18 @@ func TestTTFT_TheRouterWaitSwitch(t *testing.T) {
 // which SLOTTFTJointFlags lists. Listed when this test was written; a new
 // whatif flag must go on constants.SLOTTFTFlags or here, with its reason.
 var notOnTheTTFTPath = map[string]string{
-	"AssumedShape":        "decode question: the shape assumed",
-	"AssumedTPOTRatio":    "TPOT",
-	"BorrowedLine":        "decode line",
-	"CoarseTPOTBucket":    "TPOT",
-	"EngineTPOTHistogram": "TPOT",
-	"ExtrapolatedFill":    "decode line",
-	"HeldLine":            "decode line",
-	"LineNearGate":        "decode line",
-	"TierUnstable":        "decode line",
-	"TransferHeld":        "joint model",
+	"AssumedShape":              "decode question: the shape assumed",
+	"AssumedTPOTRatio":          "TPOT",
+	"BorrowedLine":              "decode line",
+	"CoarseTPOTBucket":          "TPOT",
+	"EngineTPOTHistogram":       "TPOT",
+	"ExtrapolatedFill":          "decode line",
+	"GlobalTPOTRatio":           "TPOT",
+	"MeanBoundedTPOTPercentile": "TPOT",
+	"HeldLine":                  "decode line",
+	"LineNearGate":              "decode line",
+	"TierUnstable":              "decode line",
+	"TransferHeld":              "joint model",
 }
 
 // Every flag the whatif package declares is on the TTFT series' list, the

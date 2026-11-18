@@ -162,7 +162,7 @@ func TestEngineTPOT_ThePathThatAnswers(t *testing.T) {
 	in := f.tpotInputs(st, 0, 0.9, ratio)
 	assert.Equal(t, "engine histogram", in.RatioSource)
 	assert.Equal(t, 3, in.Windows)
-	assert.Regexp(t, `^R_q 1\.2\d* from 3 engine TPOT windows, not the router's$`, f.ratioNote(st, ratio))
+	assert.Regexp(t, `^R_q 1\.2\d* from 3 engine TPOT windows, not the router's \(the worst of 3\)$`, f.ratioNote(st, ratio))
 
 	pv := variants[0]
 	query := whatif.ReplicasQuery{Headroom: 0.85, PercentileTarget: &whatif.TPOTTarget{Percentile: 0.9, Ratio: ratio}}

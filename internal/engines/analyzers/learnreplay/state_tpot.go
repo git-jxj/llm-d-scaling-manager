@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -16,8 +17,10 @@ import (
 // The collector reads the histogram's buckets and not its _sum, so the
 // window's mean is each row's own ITL, weighted by its requests: the assumption
 // a mean TPOT target already makes, that a request-weighted mean and a step-time
-// mean agree. A row with no finite ITL, or edges another row does not share,
-// is left out. ok is false with no row left.
+// mean agree. That sum is not the histogram's, so SumMeasured stays false and
+// a coarse bucket is read at its upper edge: the mean bound needs the sum of
+// the very requests the buckets count. A row with no finite ITL, or edges
+// another row does not share, is left out. ok is false with no row left.
 func engineTPOTWindow(rows []domain.ReplicaMetrics, roles map[string]string) (whatif.TPOTWindow, bool) {
 	var w whatif.TPOTWindow
 	for _, rm := range rows {
@@ -44,4 +47,36 @@ func engineTPOTWindow(rows []domain.ReplicaMetrics, roles map[string]string) (wh
 		w.Sum += count * rm.AvgITL
 	}
 	return w, w.Buckets != nil
+}
+
+// decodeFill is the decode replicas' mean KV fill in one cycle, the fill a
+// TPOT window of the cycle is filed under for R_q by fill
+// (whatif.TPOTWindow.Fill). Each serving decode row reads the k its ITL pairs
+// with (domain.ReplicaMetrics.KvUsageForITL); a row with no fill read, a
+// prefill row, and a row that serves nothing yet (prefill.Serving) are left
+// out. ok is false with no row left.
+func decodeFill(rows []domain.ReplicaMetrics, roles map[string]string) (float64, bool) {
+	sum, n := 0.0, 0
+	for _, rm := range rows {
+		if !rm.KvUsageMeanKnown && !rm.KvUsageInstantKnown || !prefill.Serving(rm) ||
+			domain.CanonicalRole(roles[rm.VariantName]) == domain.RolePrefill {
+			continue
+		}
+		k := rm.KvUsageForITL()
+		if !whatif.Finite(k) || k < 0 {
+			continue
+		}
+		sum += k
+		n++
+	}
+	if n == 0 {
+		return 0, false
+	}
+	return sum / float64(n), true
+}
+
+// withFill is w filed under the cycle's decode fill, when it has one.
+func withFill(w whatif.TPOTWindow, fill float64, ok bool) whatif.TPOTWindow {
+	w.Fill, w.FillKnown = fill, ok
+	return w
 }

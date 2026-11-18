@@ -34,7 +34,7 @@ spec_load = importlib.util.spec_from_file_location("staircase_load", os.path.joi
 load = importlib.util.module_from_spec(spec_load)
 spec_load.loader.exec_module(load)
 
-EXPECTED = 200
+EXPECTED = 202
 checks = fails = 0
 
 
@@ -404,6 +404,16 @@ with tempfile.TemporaryDirectory() as run:
     ok("its repeat is missing, so no pass", "repeat 2 missing" in GOT["B", "off", "ttft", 90], GOT)
     ok("the report names it", "B-off-r2" in TEXT.getvalue())
     ok("the report carries the frozen flags", "RouterHopAssumed" in TEXT.getvalue())
+    # A percentile TPOT is scored against the planner's own figure at the operating fill
+    # where freeze wrote one, and against the mean times R_q in a file from before it.
+    SPEC_B = dict(promptCV=0.0577, repeats=2, buckets=[dict(name="B", fc=["off"], gate=True)])
+    RATIO = [dict(percentile=90, value=2.0)]
+    TEXT = io.StringIO()
+    analyze.report(run, dict(buckets=[dict(BUCKET, percentileTPOT=[dict(percentile=90, seconds=0.031)])], tpotRatio=RATIO), SPEC_B, None, TEXT)
+    ok("a frozen percentile TPOT is the target", "| B | off | p90 | 31.0 ms |" in TEXT.getvalue(), TEXT.getvalue())
+    TEXT = io.StringIO()
+    analyze.report(run, dict(buckets=[BUCKET], tpotRatio=RATIO), SPEC_B, None, TEXT)
+    ok("without one, the mean times R_q", "| B | off | p90 | 40.0 ms |" in TEXT.getvalue(), TEXT.getvalue())
 
     open(os.path.join(run, "phases", "B-off-r2", "done"), "w", encoding="utf8").close()
     GATE_SPEC = dict(promptCV=0.0577, repeats=1, buckets=[dict(name="B", fc=["off"], gate=True)])

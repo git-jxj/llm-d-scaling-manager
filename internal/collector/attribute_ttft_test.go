@@ -77,7 +77,7 @@ func TestAttributeInstance_TTFTGuards(t *testing.T) {
 
 	ttftOf := func(t *testing.T, c *ReplicaMetricsCollector, ttft float64) float64 {
 		t.Helper()
-		m, _, ok := c.attributeInstance(ctx, "m", "ns", "pod-abc:8000", data(ttft), now, nil, freshness)
+		m, _, _, ok := c.attributeInstance(ctx, "m", "ns", "pod-abc:8000", data(ttft), now, nil, freshness)
 		if !ok {
 			t.Fatalf("expected a row for pod-abc")
 		}

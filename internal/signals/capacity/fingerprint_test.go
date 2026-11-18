@@ -86,6 +86,7 @@ var fingerprintExcluded = []string{
 	// BlockSize and EffectiveMaxBatchedTokens they resolve, which are
 	// hashed; the same value from a flag or a default is the same engine.
 	"VLLMVersion",
+	"VLLMVersionFrom",
 	"GpuMemoryUtilizationSet",
 	"BlockSizeSet",
 	"ExtensibleKVCache",
@@ -234,6 +235,8 @@ func TestFingerprintIgnoresTheResolvedInputs(t *testing.T) {
 			p.DataParallelSizeLocal = 8
 		case "VLLMVersion":
 			p.VLLMVersion = VLLMVersion{Major: 0, Minor: 34}
+		case "VLLMVersionFrom":
+			p.VLLMVersionFrom = VLLMVersionFromImageTag
 		case "GpuMemoryUtilizationSet":
 			p.GpuMemoryUtilizationSet = !p.GpuMemoryUtilizationSet
 		case "BlockSizeSet":

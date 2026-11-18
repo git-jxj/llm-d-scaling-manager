@@ -167,7 +167,11 @@ that is what its Deployment names, read the way the controller reads it: the
 `scaling-manager-manager-config`. Before the install there is no Deployment,
 and the checks read what the install files name: the controller's own
 namespace for the namespaced file, every namespace for the cluster-wide one.
-Either way, `watchNamespaces` may only narrow it.
+Either way, `watchNamespaces` may only narrow it. `smt install` sets
+`LLMSM_PREFLIGHT_WATCH_NAMESPACE` on the Job to the namespaces it is about to
+apply, when it has a list or the live Deployment names others; the checks then
+read those, so a namespace the admin just took out of the list does not stop
+the install that drops it.
 
 ## Not yet
 

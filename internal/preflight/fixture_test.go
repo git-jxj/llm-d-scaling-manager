@@ -67,6 +67,8 @@ type fixture struct {
 	// lwsDiscovery is what discovery serves for disaggregatedset.x-k8s.io/v1;
 	// nil: the group is not served.
 	lwsDiscovery []string
+	// watchNamespace is Env.WatchNamespace: smt install about to apply a new list.
+	watchNamespace string
 }
 
 type reaction struct {
@@ -423,6 +425,7 @@ func (f *fixture) env(t *testing.T) *Env {
 		DialTLS:          f.dialer(),
 		CheckTimeout:     5 * time.Second,
 		TokenPathEmptied: f.tokenPathEmptied,
+		WatchNamespace:   f.watchNamespace,
 		Now: func() time.Time {
 			if !f.now.IsZero() {
 				return f.now

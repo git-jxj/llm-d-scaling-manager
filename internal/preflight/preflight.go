@@ -116,7 +116,11 @@ type Env struct {
 	// TokenPathEmptied: the controller is about to be applied with
 	// PROMETHEUS_TOKEN_PATH empty (TokenPathEmptiedEnv on the Job).
 	TokenPathEmptied bool
-	Now              func() time.Time
+	// WatchNamespace: the namespaces the controller is about to be applied
+	// to manage (WatchNamespaceEnv on the Job); empty, what its Deployment
+	// names. Namespace scope only.
+	WatchNamespace string
+	Now            func() time.Time
 }
 
 // Report is a whole run.

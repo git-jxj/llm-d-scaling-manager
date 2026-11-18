@@ -39,6 +39,8 @@ const FLAG_WORDS = {
   AssumedTPOTRatio: ["The TPOT percentile is the mean times a ratio R_q you assumed.", "the router's per-request TPOT histogram (recorder R1)"],
   CoarseTPOTBucket: ["R_q was read off a histogram bucket wider than a quarter of the mean: the bucket grid sets it.", "finer TPOT histogram buckets"],
   EngineTPOTHistogram: ["R_q comes from the engine's TPOT histogram, not the router's.", "the router's per-request TPOT histogram"],
+  MeanBoundedTPOTPercentile: ["R_q was read below its coarse histogram bucket's edge, at the most the window's mean allows: never below the true percentile, but still wide.", "finer TPOT histogram buckets"],
+  GlobalTPOTRatio: ["Too few windows were read at this fill: R_q is the one read over every fill.", "readings at this load"],
   BelowFittedBand: ["The fill is below the band the ITL line was fitted over: TPOT is read at the band's bottom, a safe floor.", "readings at lower fill"],
   KVBoundSlots: ["Decode slots are set by KV capacity, an approximation.", "nothing: a property of the fleet"],
   BorrowedLine: ["The ITL line was borrowed from another variant with the same engine configuration.", "this variant's own readings"],
@@ -346,6 +348,10 @@ function setInputs(inputs) {
   el("rresult").hidden = true;
   el("rstatus").textContent = "";
   state.inputs = inputs;
+  state.day = null;
+  el("dayout").hidden = true;
+  el("dayrun").disabled = !inputs.fleet.prefill;
+  el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.priceFailed = false;
   state.plan = null;
   state.size = null;
@@ -1872,6 +1878,84 @@ function wire() {
   el("unpin").onclick = unpin;
   el("kprom").onchange = el("krec").onchange = el("lasthour").onchange = showKind;
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
+  el("dayrun").onclick = runDay;
+}
+
+// ---- The day plan ----
+
+// dayRequest is the day plan the knobs ask: the plan's SLO, headroom,
+// assumptions and stated lengths, and no fleet or rate, which are each
+// bucket's own.
+function dayRequest() {
+  const req = planRequest();
+  delete req.fleet;
+  delete req.views;
+  delete req.bucketEdges;
+  if (req.traffic) {
+    delete req.traffic.classes;
+    if (!Object.keys(req.traffic).length) delete req.traffic;
+  }
+  req.step = el("daystep").value;
+  if (el("daysize").value) req.sizeFor = el("daysize").value;
+  return req;
+}
+
+// runDay asks the day plan and draws it.
+async function runDay() {
+  if (!state.inputs || !state.k) return;
+  const inputsId = state.inputs.inputsId, t0 = performance.now();
+  el("dayrun").disabled = true;
+  el("dayout").classList.add("stale");
+  setStatus("Planning the day: each bucket sized on its own (seconds)...");
+  try {
+    const out = await api("POST", "v1/dayplan", dayRequest());
+    if (!state.inputs || inputsId !== state.inputs.inputsId) return;
+    state.day = out;
+    renderDay();
+    setStatus(`Planned ${out.buckets.length} buckets in ${((performance.now() - t0) / 1000).toFixed(1)} s; ${out.searched} fleets priced.`);
+  } catch (e) {
+    setStatus("Could not plan the day: " + e.message, true);
+  } finally {
+    el("dayrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+    el("dayout").classList.remove("stale");
+  }
+}
+
+// renderDay draws the day plan: the summary, the three charts on one time
+// axis, the legend, the table view and the notes.
+function renderDay() {
+  const d = state.day;
+  el("dayout").hidden = false;
+  el("daysum").innerHTML = daySummaryText(d).map(t => `<li>${esc(t)}</li>`).join("");
+  const g = dayPlanSVG(d), svg = el("daychart");
+  svg.setAttribute("viewBox", g.viewBox);
+  svg.innerHTML = g.markup;
+  el("daylegend").innerHTML = dayLegend();
+  el("dayrefused").innerHTML = dayRefusedHTML(d);
+  el("dayrefused").hidden = !(d.refused && d.refused.length);
+  el("daydesc").textContent = daySummaryText(d).join(" ");
+  el("daytable").innerHTML = dayHoursTable(d);
+  el("daybuckets").innerHTML = dayBucketsTable(d);
+  el("daynotes").innerHTML = d.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(d.banner)}</li>`;
+  dayHover(svg, g);
+}
+
+// dayHover is the crosshair across the three charts and the tooltip of the
+// bucket under it.
+function dayHover(svg, g) {
+  const xh = svg.querySelector(".xh"), tip = el("tip");
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) * g.W / r.width;
+    if (vx < g.L || vx > g.L + g.pw) { svg.onmouseleave(); return; }
+    const b = dayBucketAt(state.day, g.x0 + (vx - g.L) / g.pw * (g.x1 - g.x0));
+    if (!b) { svg.onmouseleave(); return; }
+    xh.setAttribute("x1", vx); xh.setAttribute("x2", vx); xh.setAttribute("visibility", "visible");
+    tip.innerHTML = dayTipHTML(state.day, b);
+    tip.hidden = false;
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 360) + "px";
+    tip.style.top = (e.clientY + 14) + "px";
+  };
+  svg.onmouseleave = () => { xh.setAttribute("visibility", "hidden"); tip.hidden = true; };
 }
 
 // ---- The fleet report (POST /v1/report) ----

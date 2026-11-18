@@ -163,6 +163,7 @@ func TestCapture_UsageErrors(t *testing.T) {
 		{"a bad step", captureArgs(srv.URL, out, "--step", "soon"), "invalid value"},
 		{"a bad engine", captureArgs(srv.URL, out, "--engine", "tgi"), "not vllm or sglang"},
 		{"no GPUs", captureArgs(srv.URL, out, "--gpus-per-replica", "0"), "at least 1"},
+		{"a GPU count that is no number", captureArgs(srv.URL, out, "--gpus-per-replica", "eight"), "invalid value"},
 		{"a bad URL", captureArgs("ftp://prom", out), "not an http or https URL"},
 		{"a missing policy", captureArgs(srv.URL, out, "--policy", filepath.Join(dir, "none.yaml")), "none.yaml"},
 		{"an unknown policy key", captureArgs(srv.URL, out, "--policy", badPolicy), "scaleUpThreshhold"},

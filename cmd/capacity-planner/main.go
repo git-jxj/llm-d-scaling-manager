@@ -11,11 +11,11 @@
 //	capacity-planner replicas-to-slo --recording FILE [--cycle N|last] [--model M] [--decode N]
 //	                                 [--headroom H | --rate R] [--tpot-percentile P [--assume-tpot-ratio R]]
 //	                                 [--ttft-percentile P] [--prefill N] [--prefill-variant V] [--assume-vp TOKENS]
-//	                                 [--assume-a D] [--assume-prompt-cv CV] [--arrival-cv2 C] [--assume-router-hop D] [-o json]
+//	                                 [--assume-a D] [--assume-prompt-cv CV] [--arrival-cv2 C] [--flow-control on|off] [--assume-router-hop D] [-o json]
 //	capacity-planner slo-to-rate     --recording FILE [--cycle N|last] [--model M] [--decode N]
 //	                                 --tpot 4ms[@p90] [--assume-tpot-ratio R] [--headroom H]
 //	                                 [--ttft 200ms[@p95]] [--prefill N] [--prefill-variant V] [--assume-vp TOKENS]
-//	                                 [--assume-a D] [--assume-prompt-cv CV] [--arrival-cv2 C] [--assume-router-hop D] [-o json]
+//	                                 [--assume-a D] [--assume-prompt-cv CV] [--arrival-cv2 C] [--flow-control on|off] [--assume-router-hop D] [-o json]
 //	capacity-planner joint-ttft      --recording FILE [--cycle N|last] [--model M] [--prefill N] [--decode N]
 //	                                 [--rate R] [--prompt I] [--hop D] [-o json]
 //	capacity-planner replicas-to-slo|slo-to-rate --prometheus URL --namespace NS (--kube-state-metrics | --role-of ROLE=SELECTOR ...)
@@ -24,6 +24,8 @@
 //	                                 [--shape S ...] [--load L ...] [--load-statistic mean|p95|peak | --load-seen R] [--load-seen-x X]
 //	                                 [--ttft 2s@p90] [--tpot 30ms] [--headroom H] [--ttft-percentile 50,90] [--tpot-percentile 90]
 //	                                 [--arrival-cv2 C] [the --assume-* flags] [-o json]
+//	capacity-planner day-plan        (--recording FILE | --prometheus URL capture's flags --namespace NS [--from T0 --to T1])
+//	                                 [--bucket 5m] [--size-for mean|p95|max] [--ttft 500ms@p95] [--tpot 4ms] [-o json]
 //	capacity-planner serve           [--recordings DIR] [--prometheus URL capture's flags --namespace NS [--allowed-namespaces NS,...]]
 //	                                 [--listen 127.0.0.1:8080] [--auth none|kubernetes --tls-cert-file F --tls-key-file F [--token-audiences A,...]]
 //	                                 [--listen-all-in-container (in a container: --listen 0.0.0.0:PORT, no auth)]
@@ -156,7 +158,7 @@ func exitCode(err error) int {
 	return 1
 }
 
-const usage = "usage: capacity-planner at-replicas|capture|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
+const usage = "usage: capacity-planner at-replicas|capture|day-plan|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
 
 // command is one subcommand: it parses its own flags from args and writes
 // what it reports to out, and its warnings to warn (stderr).
@@ -166,6 +168,7 @@ type command func(ctx context.Context, args []string, out, warn io.Writer) error
 var commands = map[string]command{
 	"at-replicas":     runAtReplicas,
 	"capture":         runCapture,
+	"day-plan":        runDayPlan,
 	"freeze":          runFreeze,
 	"generate":        runGenerate,
 	"joint-ttft":      runJointTTFT,
@@ -175,8 +178,11 @@ var commands = map[string]command{
 	"version":         runVersion,
 }
 
-// run runs one command. Asking for help is not an error.
+// run runs one command. Asking for help is not an error. The analyzers a
+// replay runs log through controller-runtime, which the CLI never shows; a
+// replay past 30 s with no logger set says so on stderr, with a stack.
 func run(ctx context.Context, args []string, out, warn io.Writer) error {
+	ctrllog.SetLogger(logr.Discard())
 	if len(args) == 0 {
 		return usageError{errors.New(usage)}
 	}

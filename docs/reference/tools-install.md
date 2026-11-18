@@ -52,6 +52,8 @@ them against their `SHA256SUMS` before it uses them.
 | --- | --- | --- |
 | `smt admin-setup -n NS [--keda-namespace KNS]` | cluster admin, once per namespace | the `part=admin` objects, the preflight's RBAC, the model-namespace file, KEDA's namespace in the scaler NetworkPolicy, and a stamp (ConfigMap `scaling-manager-admin-setup`). Then adds NS to the [weights labeller](workload-preparation.md#gate-replicas-on-the-weights)'s watch list, with rights in NS and the labeller's namespace only; with no labeller, or without those rights, it prints the command instead and still succeeds |
 | `smt install -n NS --prometheus-url URL` | namespace owner | the settings (created once), the preflight, the scaler TLS Secrets (created once), the controller, the preflight again |
+| `smt admin-setup -n CTRL --model-namespace A --model-namespace B` | cluster admin | for one controller in its own namespace CTRL that manages A and B, with nothing cluster-wide on workloads. As above, except that the model-namespace file goes to A and B, not CTRL, with the preflight's read of pods and PodMonitors there; the Namespace reader names A and B; the stamp lists them. It takes the full list: a namespace left out loses this controller's Role, RoleBinding and pod writer there, and the PodMonitor and pod writer Role unless another controller there still uses them. Without `--model-namespace`, a re-run keeps the namespaces the last `admin-setup` named (recorded on the controller's Namespace reader ClusterRole, which only a cluster admin writes) and that still hold its RoleBinding; never the stamp, which the owner may edit. `--single-namespace` revokes them all. Refused (exit 4): a namespace another scaling manager manages, and any list beside a cluster-wide install |
+| `smt install -n CTRL --prometheus-url URL` | owner of CTRL | as above, managing the namespaces the stamp lists. Run it again after the admin changes them |
 | `smt admin-finish -n NS` | cluster admin, after `install` | KEDA's client certificate, a controller restart when it changed, waits for `mutual TLS`, the preflight, then removes the preflight's cluster reads |
 | `smt install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS` | cluster admin | all three, for one controller in `scaling-manager-system`, and the [weights labeller](workload-preparation.md#gate-replicas-on-the-weights) (it patches nodes), watching every `--model-namespace` and every namespace it already watches. A new labeller only when a model namespace has a weights DaemonSet; otherwise it prints how to add it |
 | `smt release-files --out DIR` | anyone | writes the release files the image carries, to verify with cosign or apply by hand |
@@ -61,18 +63,40 @@ re-run changes nothing that is already right: the settings and the scaler TLS
 Secrets are never written over, and `admin-finish` restarts the controller
 only when KEDA's side changed.
 
+**One controller for several namespaces.** The admin creates the controller's
+namespace first (`kubectl create namespace CTRL`); `admin-setup` never
+creates it. `admin-finish -n CTRL` is the same as for one namespace. For one
+GPU budget shared by the namespaces, install with, for example,
+`--quota "NVIDIA-H100-80GB-HBM3=8" --set quotaScope=cluster`. After the admin
+changes the list, the owner runs `install` again, right away. Until then the
+controller still names a namespace it lost. With two or more named, it
+reports that one unreadable and manages the others. With one named and that
+one revoked (`--single-namespace` from a list of one), it cannot read it.
+
+Whoever owns CTRL acts as the scaling manager in every model namespace: once
+sharing is active (the pod writer of `scaling-manager-activate.yaml`), that
+includes patching pods there. Give CTRL to someone the model teams trust.
+
+What `make` adds and this does not: an EPP ServiceMonitor where nothing
+scrapes the EPP (the arrival rate, the flow-control queue, scale from zero and
+the SLO checks read the EPP's metrics; enable llm-d's router monitoring
+instead), KEDA, the Kueue reads and the cluster-wide Pod list, so the Kueue
+and GPU-inventory budgets of [the guide](../guides/utilization-share-namespaced/)
+need `make`.
+
 ## Flags
 
 | flag | commands | meaning |
 | --- | --- | --- |
-| `-n NS` | all but `release-files` | the namespace the model servers and the controller run in |
+| `-n NS` | all but `release-files` | the namespace the controller runs in, and the model servers too unless `admin-setup` named `--model-namespace` |
 | `--keda-namespace KNS` | `admin-setup`, `install --scope cluster`, `admin-finish` | where KEDA runs. `admin-setup` default: the live scaler NetworkPolicy, else the namespace serving the external-metrics APIService, else (OpenShift) `openshift-keda`. `admin-finish` default: the namespace `admin-setup` wrote in its stamp, which must agree with the live NetworkPolicy, else the APIService |
 | `--prometheus-url URL` | `install` | sets `prometheusURL` when the settings are created. Required then, except on OpenShift (Thanos Querier) |
 | `--prometheus-ca FILE` | `install` | a CA file under the mounted `/work`: creates or updates Secret `scaling-manager-prometheus-ca`, sets `prometheusCACertPath` on a first install, restarts the controller when it changed |
 | `--allow-http` | `install` | for a Prometheus that serves plain HTTP only: sets `prometheusAllowHTTP: "true"` on a first install, and applies the controller with `PROMETHEUS_TOKEN_PATH` empty, since the controller refuses to send its token over HTTP. Give it on every run: `install` refuses an `http://` URL (the flag's, or the live settings') without it, and an `https://` one with it. Not with `--prometheus-ca` |
 | `--quota "GPU=N[,GPU=N]"` | `install` | sets `limiter: quota` and `quotas` |
 | `--set KEY=VALUE` | `install` | any other settings key, on a first install. Not a key a flag sets (`prometheusURL`, `prometheusCACertPath`, `prometheusAllowHTTP`, `quotas`; `limiter` with `--quota`). Not `passive`: the install is passive, and the refusal prints the `kubectl patch` to run after `admin-finish` |
-| `--model-namespace NS` | `install --scope cluster` | a namespace with model servers; repeat it. Add one later by running again with it |
+| `--model-namespace NS` | `install --scope cluster`, `admin-setup`, `install` | a namespace with model servers; repeat it. With `--scope cluster`, add one later by running again with it. Namespaced: not `-n` itself; `admin-setup` takes the full list, and `install` takes it only to check it against the stamp (exit 3 when they differ) |
+| `--single-namespace` | `admin-setup` | back to a controller that manages CTRL alone: revokes every model namespace. The owner then runs `install` again at once |
 | `--platform kubernetes\|openshift` | all | overrides the detection (API discovery of `security.openshift.io`) |
 | `--files DIR` | `admin-setup`, `install`, `admin-finish` | install from release files in DIR instead of the image's. They must match their `SHA256SUMS` and be this image's release |
 | `--image-repo REGISTRY/PATH` | `install` | for a mirror: the controller and preflight images from there, same digest. With `--scope cluster`, give `--weights-labeller-image` too, or no labeller is applied |
@@ -105,8 +129,8 @@ The same for every command.
 | 0 | done; `WARN` and `UNKNOWN` lines, if any, are in the summary | |
 | 1 | the preflight has a `FAIL`: `install` stopped before the controller, or `admin-finish` kept the preflight binding | apply the fix printed under each `FAIL`, run again |
 | 2 | usage: an unknown flag, a missing value, a bad namespace name; or release files that fail their `SHA256SUMS` or are another release; or an image without files and no `--files`; or live settings that `--prometheus-url` or `--allow-http` disagree with (a scheme switch, or `--allow-http` while `prometheusAllowHTTP` is not `"true"`) | fix the command; for the settings, run the printed `kubectl patch`, then the same command |
-| 3 | needs the cluster admin: no stamp, or a stamp from other admin objects (an upgrade that changes them) | the admin runs the `smt admin-setup` line printed |
-| 4 | the cluster is not ready, or needs a person: the namespace does not exist (or you may not read it), KEDA's namespace cannot be found or disagrees with the stamp, KEDA's side was refused (an object of its name this tool did not write, or one it cannot read; the line prints the `kubectl delete` and the command to run again), the controller was installed with `make`, or `admin-finish` ran before `install` | the line says which |
+| 3 | needs the cluster admin: no stamp, a stamp from other admin objects (an upgrade that changes them), or `--model-namespace` naming other namespaces than the stamp | the admin runs the `smt admin-setup` line printed |
+| 4 | the cluster is not ready, or needs a person: the namespace does not exist (or you may not read it), KEDA's namespace cannot be found or disagrees with the stamp, KEDA's side was refused (an object of its name this tool did not write, or one it cannot read; the line prints the `kubectl delete` and the command to run again), the controller was installed with `make`, `admin-finish` ran before `install`, a `--model-namespace` that does not exist (the line prints the command without it) or that another scaling manager manages, or model namespaces beside a cluster-wide install | the line says which |
 | 5 | timed out: the controller rollout, the client certificate, the preflight Job, or `scalerTLS: mutual TLS` | the line names the command that shows why |
 | 6 | `--strict`: an `UNKNOWN` outside the checks that need the controller | make the check possible, or run without `--strict` |
 | 7 | a `kubectl` call failed (refused, or the API server unreachable) | the line names the call |
@@ -144,7 +168,11 @@ deploy-scaling-manager` is not adopted yet (exit 4).
 `--dry-run --out DIR` writes the release files with the substitutions made
 (`10-admin.yaml`, `20-settings.yaml`, ...), in apply order. It reads no
 cluster, so it renders a fresh install. KEDA's side of mutual TLS is not
-rendered: it copies the client certificate the controller makes.
+rendered: it copies the client certificate the controller makes. Nor are the
+model namespaces an earlier `admin-setup` granted: give the same
+`--model-namespace` list, or the files render a controller that manages its
+own namespace alone; and the Namespace reader leaves out a policy namespace a
+model namespace names by label.
 
 Air-gapped: mirror the controller image (`skopeo copy --all` keeps the
 digest) and the tools image, and pass `--image-repo`. Verify both with `cosign

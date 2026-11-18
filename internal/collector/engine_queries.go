@@ -75,6 +75,10 @@ var agnosticReplicaQueries = []string{
 	// publishes no such stage.
 	registration.QueryLandedQueueLength,
 	registration.QueryMaxRankLandedQueueLength,
+	// vLLM's own KV cache size, beside cache_config_info's blocks; SGLang
+	// reports its capacity directly. No model_name label, so it is not cut
+	// down to the model: it is attached by instance, as cache_config_info is.
+	registration.QueryCacheConfigSizes,
 	// vLLM's prefill time, NIXL transfer time, per-request TPOT histogram and
 	// computed-token histogram, for the TTFT model; SGLang publishes none of
 	// them (registration/ttft_inputs.go).

@@ -30,7 +30,10 @@ import (
 // and the prefix hit rate is 0, since the driver's prompts share no prefix.
 // The file holds no clock, path, namespace or pod name.
 
-// frozenVersion is the frozen file's format.
+// frozenVersion is the frozen file's format. R_q by fill (tpotRatio[].byFill)
+// and each bucket's percentileTPOT were added without a bump: both are
+// optional, and a file without them reads as before, a percentile at the mean
+// times the global ratio.
 const frozenVersion = 1
 
 // freezeSpec is the part of a staircase spec the prediction reads. The rest of
@@ -92,12 +95,15 @@ type frozenGate struct {
 	SLOListed  bool `json:"sloListed"`
 }
 
-// frozenRatio is R_q at one percentile.
+// frozenRatio is R_q at one percentile: the global ratio and, when the
+// warm-up's windows carried their fill, R_q by fill. A file written before
+// R_q by fill has no byFill, and reads as one ratio at every fill.
 type frozenRatio struct {
-	Percentile float64       `json:"percentile"`
-	Value      float64       `json:"value,omitempty"`
-	Flags      []whatif.Flag `json:"flags,omitempty"`
-	Refused    string        `json:"refused,omitempty"`
+	Percentile float64            `json:"percentile"`
+	Value      float64            `json:"value,omitempty"`
+	ByFill     []whatif.FillRatio `json:"byFill,omitempty"`
+	Flags      []whatif.Flag      `json:"flags,omitempty"`
+	Refused    string             `json:"refused,omitempty"`
 }
 
 // frozenBucket is one bucket's prediction.
@@ -109,6 +115,11 @@ type frozenBucket struct {
 	OperatingRate float64 `json:"operatingRate"`
 	// MeanTPOT is decode's mean TPOT at the operating rate.
 	MeanTPOT float64 `json:"meanTPOT"`
+	// PercentileTPOT is decode's TPOT at each spec percentile at the operating
+	// rate, priced with R_q at the operating fill (R_q by fill where it was
+	// learned): what the staircase scores a percentile against. A percentile
+	// whose R_q was refused is absent.
+	PercentileTPOT []frozenPercentileTPOT `json:"percentileTPOT,omitempty"`
 	// Onsets are the flow-control onsets, in requests per second.
 	Onsets whatif.Onsets `json:"onsets"`
 	// VP, A and Imbalance are the inputs priced; Flags and Assumed the fleet's own.
@@ -337,13 +348,38 @@ func (f *freezeFlags) heldTargets() (map[string]map[float64]float64, error) {
 	return held, nil
 }
 
+// frozenPercentileTPOT is decode's TPOT at one percentile.
+type frozenPercentileTPOT struct {
+	Percentile float64       `json:"percentile"`
+	Seconds    float64       `json:"seconds"`
+	Fill       float64       `json:"fill"`
+	Flags      []whatif.Flag `json:"flags,omitempty"`
+}
+
+// percentileTPOTs is decode's TPOT at each percentile at rate, priced on R_q
+// as the warm-up learned it, at the fill the rate runs at.
+func percentileTPOTs(st *learnreplay.State, d whatif.Decode, rate float64, percentiles []float64) []frozenPercentileTPOT {
+	out := make([]frozenPercentileTPOT, 0, len(percentiles))
+	for _, p := range percentiles {
+		r, flags, u := whatif.TPOTRatioFromWindows(st.TPOTWindows, p/100)
+		if u != nil {
+			continue
+		}
+		q := whatif.ReplicasQuery{Rate: rate, PercentileTarget: &whatif.TPOTTarget{Percentile: p / 100, Ratio: r}}
+		if a, ok := whatif.SLOAtReplicas(d, q).PercentileTPOT.(whatif.Answer); ok {
+			out = append(out, frozenPercentileTPOT{Percentile: p, Seconds: a.Value, Fill: a.Basis.Fill, Flags: append(flags, a.Flags...)})
+		}
+	}
+	return out
+}
+
 // frozenRatioOf is R_q as the warm-up learned it.
 func frozenRatioOf(st *learnreplay.State, q float64) frozenRatio {
 	r, flags, u := whatif.TPOTRatioFromWindows(st.TPOTWindows, q)
 	if u != nil {
 		return frozenRatio{Percentile: 100 * q, Refused: refusalText(*u)}
 	}
-	return frozenRatio{Percentile: 100 * q, Value: r.Value, Flags: flags}
+	return frozenRatio{Percentile: 100 * q, Value: r.Value, ByFill: r.ByFill, Flags: flags}
 }
 
 // gateOf is S2's gate at the state's cycle: V_P and a from P1, a decode line that
@@ -368,43 +404,10 @@ func gateOf(st *learnreplay.State) frozenGate {
 // is a question this command cannot ask.
 func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b freezeBucket,
 	held map[string]map[float64]float64) (frozenBucket, error) {
-	out := frozenBucket{freezeBucket: b, Flags: []whatif.Flag{}, Assumed: []string{}, Targets: []frozenTarget{}, Curve: []frozenPoint{}}
-	if v, ok := f.ca2[b.Name]; ok {
-		out.Ca2 = v
-	}
-	a := answerFlags{question: "freeze", cycle: "last", decode: b.Decode, prefill: b.Prefill,
-		inputTokens: b.Prompt, outputTokens: b.Output, assumeVP: f.assumeVP, seed: 1,
-		set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
-	if f.assumeVP > 0 {
-		a.set["assume-vp"] = true
-	}
-	variants, err := a.decodeVariants(st)
-	if err != nil {
+	out, off, pf, err := f.bucketFleet(st, spec, b)
+	if err != nil || pf == nil {
 		return out, err
 	}
-	if len(variants) != 1 {
-		return out, usagef("the recording holds %d decode variants, want 1: a staircase prices one fleet", len(variants))
-	}
-	ps, err := a.prefillState(st)
-	if err != nil {
-		return out, err
-	}
-	pf := a.fleetFor(st, ps, ttftQuestion{q: 0.9}, &variants[0])
-	out.Flags, out.Assumed = settledFlags(pf.flags, out.Ca2), settledAssumed(pf.in.Assumed)
-	if pf.refused != nil {
-		out.Refused = refusalText(*pf.refused)
-		return out, nil
-	}
-	off := pf.fleet
-	off.Prefill.PromptCV, off.Prefill.PromptCVAssumed = spec.PromptCV, false
-	out.TransferSecondsPerToken = off.Prefill.TransferSecondsPerToken
-	out.AllRowsTransferSeconds = variants[0].state.DecodeTTFT.AllRowsTransferSeconds
-	// ArrivalCV2 reads 0 as Poisson, and a Poisson bucket flags no burst.
-	off.Prefill.ArrivalCV2 = 0
-	if out.Ca2 != 1 {
-		off.Prefill.ArrivalCV2 = out.Ca2
-	}
-	off.FlowControl = whatif.FlowControl{State: whatif.FlowControlOff}
 	on := off
 	on.FlowControl = whatif.FlowControl{State: whatif.FlowControlOn,
 		QueueThreshold: whatif.FlowControlQueueThreshold, KVThreshold: whatif.FlowControlKVThreshold}
@@ -428,6 +431,7 @@ func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b fre
 		if m, ok := whatif.SLOAtReplicas(*off.Decode, whatif.ReplicasQuery{Rate: out.OperatingRate}).MeanTPOT.(whatif.Answer); ok {
 			out.MeanTPOT = m.Value
 		}
+		out.PercentileTPOT = percentileTPOTs(st, *off.Decode, out.OperatingRate, spec.Percentiles)
 	}
 	for _, p := range spec.Percentiles {
 		t, why := pricedTarget(off, on, out.OperatingRate, p, spec.TargetFloorMargin, held[b.Name])
@@ -444,6 +448,51 @@ func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b fre
 		out.Curve = append(out.Curve, modelPoint(off, rate))
 	}
 	return out, nil
+}
+
+// bucketFleet is one bucket's fleet as the freeze prices it, flow control
+// off: the spec's counts, shape, spread and arrivals on the recording's
+// terms, and the priced fleet it came from; pf is nil where the fleet
+// refused, with out saying why.
+func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b freezeBucket) (frozenBucket, whatif.TTFTFleet, *pricedFleet, error) {
+	out := frozenBucket{freezeBucket: b, Flags: []whatif.Flag{}, Assumed: []string{}, Targets: []frozenTarget{}, Curve: []frozenPoint{}}
+	if v, ok := f.ca2[b.Name]; ok {
+		out.Ca2 = v
+	}
+	a := answerFlags{question: "freeze", cycle: "last", decode: b.Decode, prefill: b.Prefill,
+		inputTokens: b.Prompt, outputTokens: b.Output, assumeVP: f.assumeVP, seed: 1,
+		set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
+	if f.assumeVP > 0 {
+		a.set["assume-vp"] = true
+	}
+	variants, err := a.decodeVariants(st)
+	if err != nil {
+		return out, whatif.TTFTFleet{}, nil, err
+	}
+	if len(variants) != 1 {
+		return out, whatif.TTFTFleet{}, nil, usagef("the recording holds %d decode variants, want 1: a staircase prices one fleet", len(variants))
+	}
+	ps, err := a.prefillState(st)
+	if err != nil {
+		return out, whatif.TTFTFleet{}, nil, err
+	}
+	pf := a.fleetFor(st, ps, ttftQuestion{q: 0.9}, &variants[0])
+	out.Flags, out.Assumed = settledFlags(pf.flags, out.Ca2), settledAssumed(pf.in.Assumed)
+	if pf.refused != nil {
+		out.Refused = refusalText(*pf.refused)
+		return out, whatif.TTFTFleet{}, nil, nil
+	}
+	off := pf.fleet
+	off.Prefill.PromptCV, off.Prefill.PromptCVAssumed = spec.PromptCV, false
+	out.TransferSecondsPerToken = off.Prefill.TransferSecondsPerToken
+	out.AllRowsTransferSeconds = variants[0].state.DecodeTTFT.AllRowsTransferSeconds
+	// ArrivalCV2 reads 0 as Poisson, and a Poisson bucket flags no burst.
+	off.Prefill.ArrivalCV2 = 0
+	if out.Ca2 != 1 {
+		off.Prefill.ArrivalCV2 = out.Ca2
+	}
+	off.FlowControl = whatif.FlowControl{State: whatif.FlowControlOff}
+	return out, off, pf, nil
 }
 
 // settledAssumed is the fleet's assumptions, less those the spec settles: what the

@@ -102,6 +102,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "preflight: %v\n", err)
 		return 2
 	}
+	env.WatchNamespace = strings.TrimSpace(os.Getenv(WatchNamespaceEnv))
 	return Execute(ctx, env, *writeResult, stdout, stderr)
 }
 

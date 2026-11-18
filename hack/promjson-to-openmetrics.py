@@ -22,8 +22,11 @@ Refused, because each would read as a window with less load than it had:
 - answers with no sample at all.
 Files with an empty result are fine: a metric the fleet does not export.
 
-It prints the median interval between samples, the scrape interval, and the
-lookback a local Prometheus should serve the blocks with: four times it.
+It prints the scrape interval of the fastest and of the slowest metric family
+(the median interval between samples of each), and the lookback a local
+Prometheus should serve the blocks with: four times the slowest, so that
+kube-state-metrics, scraped less often than the engines, is read at every
+step.
 
 Usage:
     promjson-to-openmetrics.py [-o OUT] FILE.json...
@@ -103,13 +106,35 @@ def write(series, out):
     return n
 
 
-def scrape_interval(series):
-    """The median interval between consecutive samples of a series, or None."""
-    gaps = []
-    for samples in series.values():
+def family(name):
+    """The metric family a series name belongs to: a histogram's _bucket,
+    _sum and _count series are one family, scraped together."""
+    for suffix in ("_bucket", "_sum", "_count"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def scrape_intervals(series):
+    """Each metric family's scrape interval: the median interval between
+    consecutive samples over its series. Families with no two samples in a
+    series are left out."""
+    gaps = {}
+    for (name, _), samples in series.items():
         ts = sorted(samples)
-        gaps += [float(b - a) for a, b in zip(ts, ts[1:])]
-    return statistics.median(gaps) if gaps else None
+        gaps.setdefault(family(name), []).extend(float(b - a) for a, b in zip(ts, ts[1:]))
+    return {f: statistics.median(g) for f, g in gaps.items() if g}
+
+
+def lookback(intervals):
+    """The lookback a local Prometheus should serve the blocks with: four
+    times the SLOWEST family's interval, so that every family has a sample
+    at every step. A median over every sample is the fast families'
+    interval: kube-state-metrics scraped every 60 s beside an engine every
+    5 s read as 20 s, and at a 20 s lookback kube-state-metrics was missing
+    at three steps in four."""
+    slowest = max(intervals, key=lambda f: (intervals[f], f))
+    return slowest, 4 * max(1, round(intervals[slowest]))
 
 
 def main(argv):
@@ -117,16 +142,22 @@ def main(argv):
     p.add_argument("-o", "--output", help="the OpenMetrics file to write (default: stdout)")
     p.add_argument("files", nargs="+", help="saved /api/v1/query answers")
     args = p.parse_args(argv)
+    # macOS tar packs an AppleDouble ._NAME beside each file unless told not
+    # to (COPYFILE_DISABLE=1). It holds file attributes, not an answer.
+    skipped = [f for f in args.files if os.path.basename(f).startswith("._")]
+    files = [f for f in args.files if f not in skipped]
+    if skipped:
+        print(f"promjson-to-openmetrics: skipped {len(skipped)} macOS ._ files", file=sys.stderr)
     series = {}
     try:
-        check_chunks(args.files)
-        for path in args.files:
+        check_chunks(files)
+        for path in files:
             load(path, series)
     except (OSError, ValueError) as e:
         print(f"promjson-to-openmetrics: {e}", file=sys.stderr)
         return 1
     if not any(series.values()):
-        print(f"promjson-to-openmetrics: no sample in {len(args.files)} files", file=sys.stderr)
+        print(f"promjson-to-openmetrics: no sample in {len(files)} files", file=sys.stderr)
         return 1
     if args.output:
         with open(args.output, "w", encoding="utf-8", newline="\n") as out:
@@ -135,11 +166,14 @@ def main(argv):
         n = write(series, sys.stdout)
     names = len({name for name, _ in series})
     print(f"promjson-to-openmetrics: {n} samples, {len(series)} series, {names} metrics "
-          f"from {len(args.files)} files", file=sys.stderr)
-    interval = scrape_interval(series)
-    if interval:
-        print(f"promjson-to-openmetrics: scrape interval about {interval:g}s; "
-              f"serve with --query.lookback-delta={4 * max(1, round(interval))}s", file=sys.stderr)
+          f"from {len(files)} files", file=sys.stderr)
+    intervals = scrape_intervals(series)
+    if intervals:
+        fastest = min(intervals, key=lambda f: (intervals[f], f))
+        slowest, delta = lookback(intervals)
+        print(f"promjson-to-openmetrics: scrape interval about {intervals[fastest]:g}s at the fastest "
+              f"({fastest}), {intervals[slowest]:g}s at the slowest ({slowest}); "
+              f"serve with --query.lookback-delta={delta}s", file=sys.stderr)
     return 0
 
 

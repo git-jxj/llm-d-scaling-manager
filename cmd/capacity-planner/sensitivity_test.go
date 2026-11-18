@@ -55,7 +55,7 @@ func TestSensitivity_TheRateRows(t *testing.T) {
 	assert.Equal(t, 2, seen, out)
 
 	text, _ := runCmd(t, workedTTFT("slo-to-rate", "--ttft", "400ms@p95")...)
-	assert.Regexp(t, `UNVALIDATED; V_P ASSUMED \[\d+\.\d\d \.\. \d+\.\d\d\] at V_P \+-15%`, text)
+	assert.Regexp(t, `OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED \[\d+\.\d\d \.\. \d+\.\d\d\] at V_P \+-15%`, text)
 }
 
 // Where the prefill knee sets the operating rate the rate rests on V_P: it
