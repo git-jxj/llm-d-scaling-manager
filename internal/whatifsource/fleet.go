@@ -115,6 +115,26 @@ type pod struct {
 	node                     string
 }
 
+// group is the LeaderWorkerSet group p runs in, "<set>/<index>" as the
+// collector keys it, or "" outside one or where kube-state-metrics does not
+// export the set-name and group-index labels.
+func (p *pod) group() string {
+	set, idx := p.labels[ksmLabelName(lwsv1.SetNameLabelKey)], p.labels[ksmLabelName(lwsv1.GroupIndexLabelKey)]
+	if set == "" || idx == "" {
+		return ""
+	}
+	return set + "/" + idx
+}
+
+// replicaKey is the replica p is part of: its LeaderWorkerSet group, else
+// the Pod itself.
+func (p *pod) replicaKey() string {
+	if g := p.group(); g != "" {
+		return g
+	}
+	return p.name
+}
+
 // fleet is the fleet at one step.
 type fleet struct {
 	namespace string
@@ -131,13 +151,27 @@ type fleet struct {
 	// vllmVersion is the scaling-manager.llmd.ai/vllm-version annotation of
 	// each Deployment that kube-state-metrics exports it for.
 	vllmVersion map[string]string
+	// groupGPUs is the GPUs every Pod of each LeaderWorkerSet group
+	// requests, summed (pod.group).
+	groupGPUs map[string]int
+}
+
+// replicaGPUs is the GPUs of the replica p is part of: its group's, summed
+// over every Pod kube-state-metrics lists in it, else its own. Summed over
+// every Pod, not the engine Pods only: under Ray the workers report nothing
+// and still hold the group's GPUs.
+func (f *fleet) replicaGPUs(p *pod) int {
+	if g := p.group(); g != "" {
+		return f.groupGPUs[g]
+	}
+	return p.gpus
 }
 
 // fleetAt reads the fleet at the step api is set to.
 func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, roleOf []RoleOf) (*fleet, error) {
 	f := &fleet{namespace: namespace, ksm: ksm, roleOf: roleOf, pods: map[string]*pod{},
 		named: map[string]*pod{}, replicas: map[string]int{}, nodeAccel: map[string]string{},
-		vllmVersion: map[string]string{}}
+		vllmVersion: map[string]string{}, groupGPUs: map[string]int{}}
 	if !ksm {
 		return f, nil
 	}
@@ -231,6 +265,11 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 	each(startedV, func(p *pod, v float64) { p.started = unixTime(v) })
 	each(deletedV, func(p *pod, v float64) { p.deleting = v > 0 })
 	each(gpusV, func(p *pod, v float64) { p.gpus = int(math.Round(v)) })
+	for _, p := range f.pods {
+		if g := p.group(); g != "" && !p.deleting {
+			f.groupGPUs[g] += p.gpus
+		}
+	}
 	gpuLabel := model.LabelName(ksmLabelName(acceleratorNodeLabel))
 	for _, s := range nodeLabelsV {
 		if accel := string(s.Metric[gpuLabel]); accel != "" {
@@ -305,8 +344,8 @@ func unixTime(v float64) time.Time {
 }
 
 // attribute sets p's variant and role: the --role-of that picks it, else
-// the Deployment kube-state-metrics says owns it, with the role its
-// llm-d.ai/role label names. Every --role-of that picks it is noted in
+// the workload kube-state-metrics shows it in, named as the controller names
+// the scale target (workloadOf). Every --role-of that picks it is noted in
 // p.overlap; more than one is refused by the caller.
 func (f *fleet) attribute(p *pod, deployment string) {
 	for _, r := range f.roleOf {
@@ -317,11 +356,39 @@ func (f *fleet) attribute(p *pod, deployment string) {
 			p.overlap = append(p.overlap, r.String())
 		}
 	}
-	if len(f.roleOf) > 0 || deployment == "" {
+	if len(f.roleOf) > 0 {
 		return
 	}
-	p.variant = deployment
-	p.role = p.labels[ksmLabelName(variantmeta.RoleLabel)]
+	p.variant, p.role = workloadOf(p, deployment)
+}
+
+// workloadOf is the variant and role of a Pod kube-state-metrics shows, as
+// the controller resolves its scale target (locator.resolveScaleTarget):
+//
+//   - a Deployment's Pod is the Deployment;
+//   - a DisaggregatedSet's Pod is the role's scaler, <set>-<role>, named
+//     from its disaggregatedset.x-k8s.io/name and /role labels (not for a
+//     subrole, which the controller does not resolve either);
+//   - a LeaderWorkerSet's Pod is the LWS, from its
+//     leaderworkerset.sigs.k8s.io/name label.
+//
+// The role is the llm-d.ai/role label, else the DisaggregatedSet's role.
+// Variant "" for a Pod in none of them.
+func workloadOf(p *pod, deployment string) (variant, role string) {
+	role = p.labels[ksmLabelName(variantmeta.RoleLabel)]
+	dsRole := p.labels[ksmLabelName(constants.DisaggregatedSetRoleLabelKey)]
+	if role == "" {
+		role = dsRole
+	}
+	switch set := p.labels[ksmLabelName(constants.DisaggregatedSetNameLabelKey)]; {
+	case deployment != "":
+		return deployment, role
+	case set != "" && dsRole != "" && p.labels[ksmLabelName(constants.DisaggregatedSetSubRoleLabelKey)] == "":
+		return set + "-" + dsRole, role
+	case p.labels[ksmLabelName(lwsv1.SetNameLabelKey)] != "":
+		return p.labels[ksmLabelName(lwsv1.SetNameLabelKey)], role
+	}
+	return "", role
 }
 
 // lookup is the Pod named name: kube-state-metrics' when it listed it, else
@@ -364,9 +431,10 @@ func (f *fleet) ResolveScaleTarget(context.Context, string, string) (autoscaling
 }
 
 // readLabels are the Pod labels the collector reads (GetPodLabels): the LWS
-// worker index and the FMA component and pairing.
-var readLabels = []string{lwsv1.WorkerIndexLabelKey, constants.ComponentLabelKey, constants.DualPodsPairLabelKey,
-	variantmeta.RoleLabel}
+// set, group and worker index it merges a group's engines by, and the FMA
+// component and pairing.
+var readLabels = []string{lwsv1.SetNameLabelKey, lwsv1.GroupIndexLabelKey, lwsv1.WorkerIndexLabelKey,
+	constants.ComponentLabelKey, constants.DualPodsPairLabelKey, variantmeta.RoleLabel}
 
 // GetPodLabels implements locator.PodLocator: the labels the collector reads,
 // where kube-state-metrics exports them; nil otherwise.
@@ -418,6 +486,16 @@ func (p *pod) object(namespace string) corev1.Pod {
 	o := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: p.name, Namespace: namespace}}
 	if p.revision != "" {
 		o.Labels = map[string]string{"pod-template-hash": p.revision}
+	}
+	// Its LeaderWorkerSet group, which the collector reads a group's Ready
+	// time over.
+	for _, k := range []string{lwsv1.SetNameLabelKey, lwsv1.GroupIndexLabelKey} {
+		if v := p.labels[ksmLabelName(k)]; v != "" {
+			if o.Labels == nil {
+				o.Labels = map[string]string{}
+			}
+			o.Labels[k] = v
+		}
 	}
 	if !p.created.IsZero() {
 		o.CreationTimestamp = metav1.NewTime(p.created)

@@ -1,0 +1,3 @@
+{"status":"success","data":{"resultType":"matrix","result":[
+{"metric":{"__name__":"kube_pod_info","namespace":"demo","pod":"p-1","node":"n1"},"values":[[1700000060,"1"]]}
+]}}
