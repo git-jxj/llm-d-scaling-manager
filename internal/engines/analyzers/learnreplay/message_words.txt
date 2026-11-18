@@ -1463,6 +1463,7 @@ itl-reads-the-settle-tracker
 itl-restart-under-its-name-settles
 itl-waits-after-controller-restart
 itl-window
+itl-window-cleared
 itl-withheld
 itl-withheld-ended
 itlA
@@ -1485,6 +1486,7 @@ itlLogged
 itlModel
 itlOneSidedLast
 itlOtherUnit
+itlReadsEngines
 itlRefused
 itlResidualPct
 itlSamples

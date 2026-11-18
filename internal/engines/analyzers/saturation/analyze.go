@@ -538,7 +538,11 @@ func (c *cycle) fitLines() {
 		c.a.itlUnderArgs(variantKey, windowArgs(params))
 		// A LeaderWorkerSet group whose Pods each run an engine is read
 		// engine by engine (domain.EngineRows): its merged row's mean fill
-		// and mean ITL hide the spread the line is fitted from.
+		// and mean ITL hide the spread the line is fitted from. A window that
+		// held the merged rows starts over the first cycle it reads the
+		// engines (itl_group_engines.go).
+		c.a.itlReadsEnginesFirst(variantKey, variant, readsEngines(c.input.ReplicaMetrics, variant),
+			c.logger.WithValues("namespace", c.input.Namespace))
 		rows, withheld := c.a.itlRows(domain.EngineRows(c.input.ReplicaMetrics), variant, params)
 		rollingOut := rec.InRollout() || mixed[variant]
 		if rollingOut {
@@ -570,6 +574,11 @@ func (c *cycle) fitLines() {
 		// When each replica's settle began: the engine's settle tracker
 		// (itl_settle.go).
 		c.a.itlSettleAdmission(&adm, c.input.Namespace, c.input.ModelID)
+		if adm.Settle != nil {
+			// An engine of a group settles as its group, the row the
+			// settle tracker observes.
+			adm.Settle.Groups = domain.EngineGroups(c.input.ReplicaMetrics)
+		}
 		// Readings at the cap sit above kSat, where a pinned fit through the
 		// default B prices under the truth: priced one-sided at the line's
 		// pricing k until B is learned, against a prior on B read within the
