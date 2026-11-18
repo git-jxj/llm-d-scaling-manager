@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -52,6 +53,14 @@ type podServingState struct {
 	// outside a LeaderWorkerSet, and for an LWS Pod the latest readySince over
 	// its group (groupReadyTimes). Zero when this Pod itself is not Ready.
 	groupReadySince time.Time
+	// groupImpaired is, for a Pod of a LeaderWorkerSet group, whether the
+	// group lacks a serving Pod: one of its live Pods is not Ready, or it
+	// has fewer live Pods than its size annotation states
+	// (lwsGroupsImpaired). False outside a group.
+	groupImpaired bool
+	// groupSize is the group's size annotation, 0 outside a group or
+	// without one.
+	groupSize int
 	// revision is the pod template revision the Pod was created from
 	// (podRevision), "" when it carries none.
 	revision string
@@ -120,9 +129,12 @@ func podStates(ctx context.Context, reader client.Reader, namespace string) name
 		out[p.Name] = state
 	}
 	groups := groupReadyTimes(pods.Items)
+	impaired, sizes := lwsGroupsImpaired(pods.Items)
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		state := out[p.Name]
+		state.groupImpaired = impaired[lwsGroupKey(p)]
+		state.groupSize = sizes[lwsGroupKey(p)]
 		state.groupReadySince = state.readySince
 		if g := lwsGroupKey(p); g != "" && !state.readySince.IsZero() {
 			if latest := groups[g]; latest.After(state.readySince) {
@@ -138,7 +150,12 @@ func podStates(ctx context.Context, reader client.Reader, namespace string) name
 // set-name and group-index labels the LWS controller stamps on the leader and
 // every worker; "" for a Pod outside any LWS.
 func lwsGroupKey(p *corev1.Pod) string {
-	set, idx := p.Labels[lwsv1.SetNameLabelKey], p.Labels[lwsv1.GroupIndexLabelKey]
+	return lwsGroupKeyOf(p.Labels)
+}
+
+// lwsGroupKeyOf is lwsGroupKey read from a Pod's labels.
+func lwsGroupKeyOf(labels map[string]string) string {
+	set, idx := labels[lwsv1.SetNameLabelKey], labels[lwsv1.GroupIndexLabelKey]
 	if set == "" || idx == "" {
 		return ""
 	}
@@ -148,8 +165,8 @@ func lwsGroupKey(p *corev1.Pod) string {
 // groupReadyTimes is, per LWS group, the latest Ready time over its leader and
 // workers.
 //
-// The collector reports one row per group, the leader's (isLWSWorker drops a
-// worker's instance), and the group serves only while all its Pods do. So a
+// The collector reports one row per group (collapseToGroups), named for the
+// leader, and the group serves only while all its Pods do. So a
 // worker that became Ready after the leader -- a worker alone recreated under
 // restartPolicy None, which leaves the leader Ready -- is when the group last
 // came back, and its row must carry that time for k2's settle to wait on it.
@@ -175,6 +192,57 @@ func groupReadyTimes(pods []corev1.Pod) map[string]time.Time {
 		}
 	}
 	return out
+}
+
+// lwsGroupsImpaired is, per LWS group, whether it lacks a serving Pod: a
+// live Pod of it not Ready, or fewer live Pods than the size annotation the
+// LWS controller stamps on each (leaderworkerset.sigs.k8s.io/size). A Pod
+// being deleted is not live. Without the annotation only the first test
+// applies.
+func lwsGroupsImpaired(pods []corev1.Pod) (impaired map[string]bool, size map[string]int) {
+	live := map[string]int{}
+	size = map[string]int{}
+	impaired = map[string]bool{}
+	for i := range pods {
+		p := &pods[i]
+		g := lwsGroupKey(p)
+		if g == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(p.Annotations[lwsv1.SizeAnnotationKey]); err == nil && n > size[g] {
+			size[g] = n
+		}
+		if p.DeletionTimestamp != nil {
+			continue
+		}
+		live[g]++
+		if !podIsReady(p) {
+			impaired[g] = true
+		}
+	}
+	for g, n := range size {
+		if live[g] < n {
+			impaired[g] = true
+		}
+	}
+	return impaired, size
+}
+
+// lwsGroupImpaired reports whether the LWS group of the Pod lacks a serving
+// Pod (podServingState.groupImpaired). False when the listing cannot be read
+// or does not hold the Pod: it fails open, as readiness does.
+func (c *ReplicaMetricsCollector) lwsGroupImpaired(ctx context.Context, namespace, podName string) bool {
+	state, found, listed := c.servingState(ctx, namespace, podName)
+	return listed && found && state.groupImpaired
+}
+
+// lwsGroupSize is the size annotation of the Pod's LWS group, 0 when unknown.
+func (c *ReplicaMetricsCollector) lwsGroupSize(ctx context.Context, namespace, podName string) int {
+	state, found, listed := c.servingState(ctx, namespace, podName)
+	if !listed || !found {
+		return 0
+	}
+	return state.groupSize
 }
 
 // podRevisionLabels are the labels a workload controller stamps a Pod's

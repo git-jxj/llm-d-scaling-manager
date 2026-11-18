@@ -102,6 +102,13 @@ type VariantState struct {
 	Variant, Role string
 	// Replicas is the variant's replica count as the cycle priced it.
 	Replicas int
+	// Accelerator is the variant's accelerator as the cycle's input named
+	// it, "" where it named none.
+	Accelerator string
+	// GPUsPerReplica is the GPUs a replica requests, and TensorParallel the
+	// engine's tensor parallelism as its arguments set it; 0 where the cycle
+	// named none.
+	GPUsPerReplica, TensorParallel int
 	// Line is the ITL line the variant was priced on, zero with none; Tier
 	// is where it came from (whatif.TierOLS and the rest, "" with no line)
 	// and BorrowedFrom the donor of a borrowed one (namespace/variant).
@@ -150,6 +157,12 @@ type VariantState struct {
 	// parser could not read: the window is then unknown, not unset.
 	MaxModelLen           int64
 	MaxModelLenUnresolved bool
+	// Params is the engine parameters the capacity store holds for the
+	// variant, as the analyzers priced it: the vLLM release and where it was
+	// read from, and the step budget, memory share and block size that
+	// release's defaults resolve to where the arguments set none. Nil where
+	// the store holds none.
+	Params *capacity.EngineParams
 	// Shape is the traffic the variant served (shapeOf).
 	Shape MeasuredShape
 	// ShapeRange is the range of the per-cycle mean lengths over every cycle
@@ -518,6 +531,11 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 	minSettled := st.Policy.ITLSteadiness().MinSettledSamples
 	for _, vc := range res.VariantCapacities {
 		vs := VariantState{Variant: vc.VariantName, Role: vc.Role, Replicas: vc.ReplicaCount, MinSettled: minSettled}
+		for _, rs := range in.VariantStates {
+			if rs.VariantName == vc.VariantName {
+				vs.Accelerator, vs.GPUsPerReplica = rs.AcceleratorName, rs.GPUsPerReplica
+			}
+		}
 		if sr := vc.ServiceRate; sr != nil && sr.HasLine {
 			vs.Line = itl.Model{A: sr.LineSlope, B: sr.LineIntercept}
 		}
@@ -558,7 +576,9 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 		}
 		vs.Shape = shapeOf(shapes[vc.VariantName])
 		vs.CapacityTokens = whatif.CapacityTokens(params, vs.Ranks, live)
+		vs.Params = params
 		if params != nil {
+			vs.TensorParallel = params.TensorParallelSize
 			if params.MaxModelLen > 0 {
 				vs.MaxModelLen = params.MaxModelLen
 			}

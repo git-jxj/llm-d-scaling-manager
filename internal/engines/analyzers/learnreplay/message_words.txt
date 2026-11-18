@@ -1,17 +1,21 @@
 -
 --
 --data-parallel-size
+--engine-image
 --force
 --from
+--gpus-per-replica
 --kube-state-metrics
 --max-num-seqs
 --max-running-requests
+--metric-annotations-allowlist
 --metric-labels-allowlist
 --model-path
 --pipeline-parallel-size
 --role-of
 --step
 --tensor-parallel-size
+--vllm-version
 -1
 -1000
 -Inf
@@ -42,6 +46,7 @@
 /tmp/
 0
 0-9
+0.34
 0.95
 1
 1/muChoice.maxRatio
@@ -142,6 +147,7 @@ DecodeTermOmitted
 DecodeTermPrefixHits
 Deleted
 Deployment
+Deployments
 DisaggregatedSet
 Discarding
 E1-const
@@ -299,6 +305,7 @@ NonPositiveStepSlope
 NotTriggerScaleUp
 Nothing
 OLS
+OUTSIDE
 OnePod
 Optimization
 Optimizer
@@ -358,6 +365,7 @@ PromptSpreadAbovePeak
 PromptSpreadClamped
 Published
 PullUnseen
+REGION
 REST_CLIENT_TIMEOUT
 ROLE
 R_q
@@ -457,6 +465,7 @@ Utilization
 V
 V2
 VA
+VALIDATED
 VAs
 VLLM_ALL2ALL_BACKEND
 VLLM_USE_V1
@@ -551,6 +560,7 @@ against
 age
 ageSeconds
 aged
+aggregated
 ago
 agree
 agreeCycles
@@ -584,6 +594,7 @@ analyzerTuning
 analyzers
 and
 annotation
+annotation_
 another
 answer
 answered
@@ -713,6 +724,7 @@ bounded
 boundedBy
 bounds
 bound|
+bracket
 bridge
 bridgePerReplica
 bridges
@@ -897,6 +909,7 @@ cycles
 cyclesSinceAnalyzed
 d
 data
+data-parallel
 data_parallel_size
 data_parallel_size_local
 datastore
@@ -916,6 +929,7 @@ declared
 declares
 declined
 decode
+decode-knee
 decode-only
 decode-queue-unknown
 decode-style
@@ -1048,6 +1062,7 @@ effectiveClusterQuotas
 effectiveInputTokens
 effectiveNamespaceQuotas
 effective_max_batched_tokens
+either
 election
 elsewhere
 emit
@@ -1089,6 +1104,7 @@ entries
 entry
 env
 env.VLLM_ALL2ALL_BACKEND
+envelope
 environment
 ep
 ep_size
@@ -1129,6 +1145,7 @@ expected
 expects
 expert_parallel
 expert_parallel_size
+export
 exported
 exports
 external
@@ -1207,6 +1224,7 @@ flooredTo
 floors
 flow
 flow-control
+flow-control-onset
 flowControl
 folded
 for
@@ -1329,6 +1347,7 @@ history
 historyAgeSeconds
 historyKey
 historyWindowLen
+hit
 hold
 hold-only
 holdCap
@@ -1368,6 +1387,7 @@ if
 ignored
 ignoring
 image
+image_spec
 imbalanced
 immutable
 implausible
@@ -1391,6 +1411,7 @@ infers
 info
 infrastructure
 inline
+input
 input-invalid
 inputTokensNow
 inputTokensWas
@@ -1541,8 +1562,10 @@ known
 known-failures
 known-truth
 kube-state-metrics
+kube_deployment_annotations
 kube_deployment_spec_replicas
 kube_node_labels
+kube_pod_container_info
 kube_pod_container_resource_requests
 kube_pod_created
 kube_pod_deletion_timestamp
@@ -1597,7 +1620,9 @@ l4
 l40
 label
 label_
+labelled
 labels
+ladder
 lagFraction
 landed
 lands
@@ -1642,6 +1667,7 @@ length
 lengthen
 lent
 let
+levels
 liftReason
 lifted
 likely
@@ -1679,7 +1705,6 @@ llm-d.ai/utilization-share-transfer
 llm_d_epp_flow_control_queue_size
 llmsm_unattributed_gpus
 llmsm_utilization_share_floor_excess_gpus
-lmsysorg/sglang
 lo
 load
 loadImbalance
@@ -1747,6 +1772,7 @@ maximum
 may
 mayOrder
 mean
+mean-tpot
 meanNeedGPUs
 meanRemaining
 means
@@ -1781,6 +1807,7 @@ mi355
 mid-rollout
 mid-run
 milliseconds
+min-max
 minKSpread
 minReplicas
 minSamples
@@ -1816,6 +1843,7 @@ moe_a2a_backend
 monotonicity
 more
 most
+mostly
 mount
 move
 moved
@@ -1862,6 +1890,7 @@ multi-Pod
 multiple
 must
 mutually
+n
 n-dependence
 n-dependent
 n/a
@@ -2004,6 +2033,7 @@ once
 one
 one-minute
 one-pod
+one-sided
 ones
 only
 onset
@@ -2013,6 +2043,7 @@ onto
 open
 operating
 operating-point
+operating-point-cap
 operation
 operator
 optimization
@@ -2068,9 +2099,11 @@ owner_kind
 owner_name
 owning
 p
+p10-p90
 page_size
 panic
 panicked
+parallelism
 parameter
 parameters
 parked
@@ -2088,6 +2121,7 @@ past
 path
 paused
 paused-replicas
+pd
 pd-pair-borrows-whole
 peak-under-queue
 peakClaimGPUs
@@ -2112,6 +2146,7 @@ perReplicaRate
 perReplicaTokensPerSec
 percent
 percentile
+percentile-tpot
 percentiles
 period
 persist
@@ -2180,6 +2215,8 @@ prefill-capacity-observe
 prefill-capacity-observed
 prefill-catchup
 prefill-demand-held
+prefill-knee
+prefill-latency
 prefill-required
 prefill-throughput-bound-reading
 prefillBoundHeld
@@ -2291,6 +2328,8 @@ ran
 range
 rank
 rate
+rate-at-tpot
+rate-at-ttft
 rateRefused
 rates
 rather
@@ -2377,6 +2416,7 @@ replica-capacity-decision
 replica-capacity-skipped
 replica-capacity-store-fallback
 replica-capacity-summary
+replica-cycles
 replica-start-change-confirmed
 replica-start-measured
 replica-start-outlier-rejected
@@ -2784,6 +2824,8 @@ starts
 stashed
 stashedWindows
 state
+stated
+states
 static
 stationary
 statistic
@@ -2841,6 +2883,7 @@ switch
 system
 t
 t4
+tag
 tail
 take
 taken
@@ -2854,6 +2897,7 @@ targets
 tell
 template
 tenants
+tensor
 tensor_parallel_size
 term
 terminating
@@ -2948,6 +2992,7 @@ too
 too-few-readings
 took
 top
+topology
 totalAvail
 totalDecisions
 totalDemand
@@ -3092,8 +3137,8 @@ victim
 vllm
 vllm-openai
 vllm-openai-rocm
+vllm-version
 vllm.entrypoints
-vllm/vllm-openai
 vllm:cache_config_info
 vllm:num_requests_running
 vllm:request_generation_tokens_count

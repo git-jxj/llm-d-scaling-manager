@@ -152,10 +152,19 @@ Each of these is either flagged in the capture or fixed by what it writes:
   no Ready time (`FlagNoReadiness`). A step at which kube-state-metrics
   lists no Pod is read the same way, its Pods attributed by `--role-of`
   alone, and the capture says at how many steps (`FlagKSMGaps`).
-- **LeaderWorkerSets.** kube-state-metrics has no owner for them. Use
-  `--role-of`. A replica spans several Pods, but GPUs per replica are read
-  from one Pod's request; a variant whose Pods a StatefulSet owns, or that
-  carry the LeaderWorkerSet labels, is flagged (`FlagMultiPodGroups`).
+- **LeaderWorkerSets.** kube-state-metrics has no owner for them: a Pod
+  is read from its labels instead (`workloadOf`). A DisaggregatedSet's Pod
+  is variant `<set>-<role>`, as the controller names the role's scaler; a
+  LeaderWorkerSet's is the LWS name; `--role-of` overrides both. One
+  replica is one group, keyed by the LWS name and group-index labels: its
+  GPUs are summed over the group's Pods (`fleet.replicaGPUs`), it counts
+  once in the variant's replicas and is pending while any of its Pods is
+  not Ready (`pod.replicaKey`), and the collector merges the rows of a
+  group whose every Pod runs an engine (`collector.collapseToGroups`).
+  Without those labels in kube-state-metrics a variant whose Pods a
+  StatefulSet owns is flagged (`FlagMultiPodGroups`). A given
+  `--gpus-per-replica` replaces what kube-state-metrics reads
+  (`FlagGPUsOverride`).
 
 ## Tests
 

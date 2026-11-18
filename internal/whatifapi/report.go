@@ -234,6 +234,10 @@ type ReportFleet struct {
 	// or "asked".
 	PrefillFrom string `json:"prefillFrom"`
 	DecodeFrom  string `json:"decodeFrom"`
+	// PrefillEngine and DecodeEngine are the engine each variant runs, for
+	// reference (EngineInfo); absent where the source holds none.
+	PrefillEngine *EngineInfo `json:"prefillEngine,omitempty"`
+	DecodeEngine  *EngineInfo `json:"decodeEngine,omitempty"`
 }
 
 // ReportLoad is the load the fleet is judged at, and the load the source saw.

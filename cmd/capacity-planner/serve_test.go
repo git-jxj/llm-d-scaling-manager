@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,7 @@ var servedRecordings = map[string]string{
 	"throughput-sweep.jsonl.gz": outputSpreadRun,
 	"short.jsonl.gz":            shortRun,
 	"saturated.jsonl.gz":        saturatedRun,
+	"q32.jsonl.gz":              q32Recording,
 }
 
 // servedAPI is the API on a directory holding the goldens' recordings, and
@@ -108,7 +110,8 @@ func wantOf(r *wireResult) whatifapi.Figure {
 		return whatifapi.Figure{Refused: refusalWant(r.Refused)}
 	}
 	a := r.Answer
-	f := whatifapi.Figure{Value: fp(a.Value), BoundBy: a.Basis.BoundBy, Flags: a.Flags, Sensitivity: spanWant(a.Sensitivity, a.Unit == unitSeconds)}
+	f := whatifapi.Figure{Value: fp(a.Value), BoundBy: a.Basis.BoundBy, Flags: a.Flags, Sensitivity: spanWant(a.Sensitivity, a.Unit == unitSeconds),
+		Validation: a.Validation}
 	if a.Band != nil {
 		f.Band = &whatifapi.Band{Lo: a.Band.Lo, Hi: a.Band.Hi}
 	}
@@ -130,7 +133,7 @@ func wantTTFT(r *wireTTFTResult) whatifapi.Figure {
 		return whatifapi.Figure{Refused: refusalWant(r.Refused)}
 	}
 	a := r.Answer
-	f := whatifapi.Figure{Value: fp(a.Value), Flags: a.Flags, Sensitivity: spanWant(a.Sensitivity, true)}
+	f := whatifapi.Figure{Value: fp(a.Value), Flags: a.Flags, Sensitivity: spanWant(a.Sensitivity, true), Validation: a.Validation}
 	if a.Basis.Floor > 0 {
 		f.Floor = fp(a.Basis.Floor)
 	}
@@ -262,6 +265,12 @@ func parityCases() []parityCase {
 				Assume: &whatifapi.Assume{VP: fp(30000), A: fp(0.009), PromptCV: fp(0.06)},
 				SLO:    &whatifapi.SLORequest{TTFT: obj("p90", 1), TPOT: obj(statMean, 0.01)}}
 		}, replicasQuestion},
+		{"ttft-q32-as-priced-json", "q32.jsonl.gz", "", func(r float64) whatifapi.PlanRequest {
+			sent := &whatifapi.Traffic{Mix: &whatifapi.Mix{PromptTokens: 8000, OutputTokens: 200}, ArrivalCV2: fp(1)}
+			return whatifapi.PlanRequest{Fleet: &whatifapi.FleetKnob{Prefill: ip(2), Decode: ip(2)}, Traffic: at(r, sent),
+				Assume: &whatifapi.Assume{PromptCV: fp(0.0577)},
+				SLO:    &whatifapi.SLORequest{TTFT: obj("p90", 1), TPOT: obj(statMean, 0.01)}}
+		}, replicasQuestion},
 		{"ttft-assume-a-json", "saturated.jsonl.gz", "", func(r float64) whatifapi.PlanRequest {
 			return whatifapi.PlanRequest{Traffic: at(r, nil), Assume: &whatifapi.Assume{A: fp(0.011)},
 				SLO: &whatifapi.SLORequest{TTFT: obj("p95", 1), TPOT: obj(statMean, 0.01)}}
@@ -269,14 +278,25 @@ func parityCases() []parityCase {
 	}
 }
 
-// Every JSON golden in testdata has its parity case.
+// Every JSON golden in testdata has its parity case: a day plan's in
+// dayPlanParity (TestDayPlanAPIParity), every other in parityCases.
 func TestServeParityCoversEveryJSONGolden(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("testdata", "*-json.golden"))
 	require.NoError(t, err)
 	names := make([]string, 0, len(paths))
+	var days []string
 	for _, p := range paths {
-		names = append(names, strings.TrimSuffix(filepath.Base(p), ".golden"))
+		name := strings.TrimSuffix(filepath.Base(p), ".golden")
+		if strings.HasPrefix(name, "day-plan-") {
+			days = append(days, name)
+			continue
+		}
+		names = append(names, name)
 	}
+	dayCovered := slices.Collect(maps.Keys(dayPlanParity()))
+	slices.Sort(dayCovered)
+	require.Len(t, days, 2, "the day plan's JSON goldens")
+	assert.Equal(t, days, dayCovered)
 	cases := parityCases()
 	covered := make([]string, 0, len(cases))
 	for _, c := range cases {
@@ -284,7 +304,7 @@ func TestServeParityCoversEveryJSONGolden(t *testing.T) {
 	}
 	slices.Sort(names)
 	slices.Sort(covered)
-	require.Len(t, names, 10, "the JSON goldens")
+	require.Len(t, names, 11, "the JSON goldens")
 	assert.Equal(t, names, covered)
 }
 

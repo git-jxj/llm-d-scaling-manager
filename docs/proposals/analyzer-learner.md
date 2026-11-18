@@ -41,8 +41,9 @@
   readiness, so ReadySince does not change on a re-lend, and a re-lend to
   the same variant keeps the key.
 - **PR 2's decisions.** Where an LWS group's Ready time comes from (4.3):
-  the collector builds one row per group, the leader's; a worker's instance
-  is dropped before its row is built (`isLWSWorker`), and the row carries
+  the collector builds one row per group, named for the leader; workers
+  that run engines of their own are merged into it (`collapseToGroups`),
+  and the row carries
   the latest Ready time over the leader and its live, Ready workers,
   matched by the LWS set-name and group-index labels (`groupReadyTimes`,
   `replicaReadySince`; `TestLWSGroupReadyTimeIsTheLatestOfItsPods`). Under
