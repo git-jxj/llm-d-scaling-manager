@@ -1516,8 +1516,10 @@ External role is scaled by KEDA: see
 (`lws.disaggregatedset`, or `make check-prereqs`) and the controller log, once,
 say `serves DisaggregatedSet but not DisaggregatedSetRoleScaler`. That is
 LeaderWorkerSet v0.9.x: a role has no `/scale` for KEDA, and only the role
-writer can scale it. Upgrade LeaderWorkerSet to v0.10.0 or later. Helm does
-not upgrade CRDs, so apply them first:
+writer can scale it. Upgrade LeaderWorkerSet to v0.10.0 or later, the way it
+was installed (on OpenShift, through its operator). If it was installed with
+the upstream Helm chart, apply the new CRDs first, because `helm upgrade`
+never updates them:
 
 ```bash
 helm pull oci://registry.k8s.io/lws/charts/lws --version 0.10.0 --untar
@@ -1525,8 +1527,8 @@ kubectl apply --server-side --force-conflicts -f lws/crds
 helm upgrade lws oci://registry.k8s.io/lws/charts/lws --version 0.10.0 -n lws-system
 ```
 
-Then set `scaling.mode: External` on each role and run `make scaledobjects-plan`
-again. The install deploys `LWS_CHART_VERSION` (default `0.10.0`) only where
+Upgrade the controller too: new CRDs alone create no role scalers. Then set
+`scaling.mode: External` on each role and run `make scaledobjects-plan` again. The install deploys `LWS_CHART_VERSION` (default `0.10.0`) only where
 no LeaderWorkerSet is installed; it never upgrades one.
 
 1. Look at the set's events:

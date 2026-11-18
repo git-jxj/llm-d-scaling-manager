@@ -46,7 +46,7 @@ func TestFetchScaleTarget_WarnsOnceWhenRoleScalerUnserved(t *testing.T) {
 		assert.Equal(t, []string{"glm", "decode"}, []string{set, role})
 	}
 	require.Len(t, lines, 1, "%q", lines)
-	for _, want := range []string{"WARNING", "v0.10.0 or later", "LWS_CHART_VERSION", "DSET_ROLE_WRITER", "glm-decode"} {
+	for _, want := range []string{"WARNING", "v0.10.0 or later", "LWS_CHART_VERSION", "DSET_ROLE_WRITER", "the way it was installed", "through its operator", "glm-decode"} {
 		assert.True(t, strings.Contains(lines[0], want), "warning lacks %q: %s", want, lines[0])
 	}
 }

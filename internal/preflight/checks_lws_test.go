@@ -35,13 +35,18 @@ func TestLWSDisaggregatedSet(t *testing.T) {
 			if r.Status != tc.want {
 				t.Fatalf("got %s %q", r.Status, r.Detail)
 			}
+			// Discovery sees CRDs, not the controller: a PASS says what it saw
+			// and that the controller must match.
+			if tc.want == Pass && (!strings.HasPrefix(r.Detail, "the API serves ") || !strings.Contains(r.Detail, "controller is v0.10.0 or later")) {
+				t.Errorf("pass detail claims more than discovery read: %s", r.Detail)
+			}
 			if tc.want == Warn {
 				for _, want := range []string{"DisaggregatedSetRoleScaler", "KEDA"} {
 					if !strings.Contains(r.Detail, want) {
 						t.Errorf("detail lacks %q: %s", want, r.Detail)
 					}
 				}
-				for _, want := range []string{"v0.10.0 or later", "LWS_CHART_VERSION", "scaling.mode: External"} {
+				for _, want := range []string{"v0.10.0 or later", "through its operator", "If it was installed with the upstream Helm chart", "LWS_CHART_VERSION", "scaling.mode: External"} {
 					if !strings.Contains(r.Fix, want) {
 						t.Errorf("fix lacks %q: %s", want, r.Fix)
 					}

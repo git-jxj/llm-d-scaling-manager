@@ -21,7 +21,8 @@ import (
 // A DisaggregatedSet's pods met on an LWS that does not serve
 // DisaggregatedSetRoleScaler (before v0.10.0) warn once, naming the release
 // to upgrade to; on one that serves it, nothing is said. A read that answers
-// neither (Forbidden) says nothing and is asked again.
+// neither (Forbidden) says nothing, and is not asked again within the
+// retry interval, however many pods arrive.
 func TestResolveScaleTarget_WarnsOnceWhenRoleScalerUnserved(t *testing.T) {
 	roleScalerGR := schema.GroupResource{Group: "disaggregatedset.x-k8s.io", Resource: "disaggregatedsetrolescalers"}
 	for name, tc := range map[string]struct {
@@ -34,7 +35,7 @@ func TestResolveScaleTarget_WarnsOnceWhenRoleScalerUnserved(t *testing.T) {
 			wantWarns: 1, wantReads: 1,
 		},
 		"LWS v0.10.0 or later": {answer: apierrors.NewNotFound(roleScalerGR, "glm"), wantWarns: 0, wantReads: 1},
-		"read refused":         {answer: apierrors.NewForbidden(roleScalerGR, "glm", nil), wantWarns: 0, wantReads: 3},
+		"read refused":         {answer: apierrors.NewForbidden(roleScalerGR, "glm", nil), wantWarns: 0, wantReads: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ns := testNamespace
@@ -69,7 +70,7 @@ func TestResolveScaleTarget_WarnsOnceWhenRoleScalerUnserved(t *testing.T) {
 				t.Errorf("role scaler reads = %d, want %d", reads, tc.wantReads)
 			}
 			if tc.wantWarns == 1 {
-				for _, want := range []string{"WARNING", "DisaggregatedSetRoleScaler", "v0.10.0 or later", "LWS_CHART_VERSION", "DisaggregatedSet/glm"} {
+				for _, want := range []string{"WARNING", "DisaggregatedSetRoleScaler", "v0.10.0 or later", "LWS_CHART_VERSION", "through its operator", "DisaggregatedSet/glm"} {
 					if !strings.Contains(lines[0], want) {
 						t.Errorf("warning lacks %q: %s", want, lines[0])
 					}

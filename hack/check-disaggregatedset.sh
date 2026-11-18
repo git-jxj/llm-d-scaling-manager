@@ -340,6 +340,8 @@ assert_contains "$out" "v0.10.0 or later"
 assert_contains "$out" "kubectl apply --server-side --force-conflicts -f lws/crds"
 assert_contains "$out" "--version 0.10.0"
 assert_contains "$out" "LWS_CHART_VERSION"
+assert_contains "$out" "the way it was installed (on OpenShift, through its operator)"
+assert_contains "$out" "If it was installed with the upstream Helm chart"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="lws: v0.10.0 serves the role scaler /scale: no warning"
@@ -348,6 +350,8 @@ before=$FAILED
 out="$(llmsm_report_lws_dset 2>&1)"
 assert_not_contains "$out" "[WARNING]"
 assert_contains "$out" "KEDA can scale DisaggregatedSet roles"
+assert_contains "$out" "The API serves"
+assert_contains "$out" "controller is v0.10.0 or later"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="lws: no DisaggregatedSet API (LWS before v0.9.0, or none): nothing said"

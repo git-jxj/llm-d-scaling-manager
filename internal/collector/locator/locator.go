@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
@@ -129,11 +130,18 @@ type podLocator struct {
 	maxDepth  int
 	cache     *resolutionCache
 	// roleScalers warns, once, that DisaggregatedSetRoleScaler is not
-	// served; roleScalerKnown is set once a read has said whether it is.
-	roleScalers     *scaletarget.RoleScalerWarner
-	roleScalerKnown atomic.Bool
-	log             logr.Logger
+	// served; roleScalerKnown is set once a read has said whether it is,
+	// and roleScalerRetryAt (Unix nanoseconds) is when a read that answered
+	// nothing may be made again.
+	roleScalers       *scaletarget.RoleScalerWarner
+	roleScalerKnown   atomic.Bool
+	roleScalerRetryAt atomic.Int64
+	log               logr.Logger
 }
+
+// roleScalerProbeRetry is how long a role-scaler probe that answered nothing
+// (Forbidden, a timeout) waits before it reads again.
+const roleScalerProbeRetry = time.Minute
 
 // registry returns the current variant registry, or nil when none is wired.
 func (l *podLocator) registry() *registry.Registry {
@@ -346,11 +354,17 @@ func (l *podLocator) resolveScaleTarget(ctx context.Context, pod *corev1.Pod, na
 // DisaggregatedSetRoleScaler, the kind KEDA scales a role of set through. A
 // NoMatch means a LeaderWorkerSet older than v0.10.0, and warns once; a found
 // or NotFound scaler means it is served. Any other error (Forbidden, a
-// timeout) answers nothing, and the next DisaggregatedSet pod reads again.
-// Pod resolutions are cached, so this costs one read per new pod at most, and
-// none once answered.
+// timeout) answers nothing, and no read is made again for
+// roleScalerProbeRetry. So an unanswered probe costs at most one read a
+// minute, and an answered one none.
 func (l *podLocator) probeRoleScaler(ctx context.Context, set chainNode) {
 	if l.roleScalerKnown.Load() {
+		return
+	}
+	now := time.Now().UnixNano()
+	retryAt := l.roleScalerRetryAt.Load()
+	if now < retryAt || !l.roleScalerRetryAt.CompareAndSwap(retryAt, now+int64(roleScalerProbeRetry)) {
+		// Not yet due, or another resolution has just taken this read.
 		return
 	}
 	scaler := &unstructured.Unstructured{}

@@ -42,5 +42,8 @@ func checkLWSDisaggregatedSet(_ context.Context, s *state) ([]Result, string) {
 		return []Result{{Status: Warn, Detail: scaletarget.RoleScalerUnservedMessage,
 			Fix: scaletarget.RoleScalerUnservedFix}}, ""
 	}
-	return []Result{{Status: Pass, Detail: constants.DisaggregatedSetRoleScalerKind + " serves /scale: KEDA can scale DisaggregatedSet roles in scaling.mode External"}}, ""
+	// Discovery reads the CRDs, not the controller: CRDs applied ahead of a
+	// controller upgrade read the same, so the detail says what it saw.
+	return []Result{{Status: Pass, Detail: "the API serves " + dsetRoleScalerScale + ": KEDA can scale DisaggregatedSet roles in scaling.mode External, " +
+		"provided the LeaderWorkerSet controller is " + scaletarget.LWSRoleScalerRelease + " or later too (new CRDs alone create no role scalers)"}}, ""
 }

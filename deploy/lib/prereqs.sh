@@ -604,11 +604,11 @@ llmsm_report_lws_dset() {
     case "$names" in *" disaggregatedsets "*) : ;; *) return 0 ;; esac
     case "$names" in
         *" disaggregatedsetrolescalers/scale "*)
-            log_info "LeaderWorkerSet serves DisaggregatedSetRoleScaler /scale: KEDA can scale DisaggregatedSet roles in scaling.mode External."
+            log_info "The API serves DisaggregatedSetRoleScaler /scale: KEDA can scale DisaggregatedSet roles in scaling.mode External, provided the LeaderWorkerSet controller is $rel or later too (new CRDs alone create no role scalers)."
             return 0 ;;
     esac
     log_warning "LeaderWorkerSet in this cluster serves DisaggregatedSet but not DisaggregatedSetRoleScaler (LeaderWorkerSet older than $rel), so KEDA cannot scale DisaggregatedSet roles: they have nothing with a /scale subresource for the HPA to drive. Until it is upgraded, only the role writer (DSET_ROLE_WRITER=true) scales them."
-    log_warning "  Fix: upgrade LeaderWorkerSet to $rel or later. Helm does not upgrade CRDs, so apply them first:  helm pull oci://registry.k8s.io/lws/charts/lws --version $chart --untar && kubectl apply --server-side --force-conflicts -f lws/crds && helm upgrade lws oci://registry.k8s.io/lws/charts/lws --version $chart -n ${LWS_NAMESPACE:-lws-system}  Then set scaling.mode: External on each role and re-run make scaledobjects-plan. (The install deploys LWS_CHART_VERSION only where no LeaderWorkerSet is installed.)"
+    log_warning "  Fix: upgrade LeaderWorkerSet to $rel or later, the way it was installed (on OpenShift, through its operator). If it was installed with the upstream Helm chart, apply the new CRDs first, because helm upgrade never updates them:  helm pull oci://registry.k8s.io/lws/charts/lws --version $chart --untar && kubectl apply --server-side --force-conflicts -f lws/crds && helm upgrade lws oci://registry.k8s.io/lws/charts/lws --version $chart -n ${LWS_NAMESPACE:-lws-system}  (the release and namespace this install uses). Then set scaling.mode: External on each role and re-run make scaledobjects-plan. (The install deploys LWS_CHART_VERSION only where no LeaderWorkerSet is installed.)"
     return 0
 }
 
