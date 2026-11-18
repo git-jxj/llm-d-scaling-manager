@@ -120,3 +120,9 @@ var ksmInvalid = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 func ksmLabelName(key string) string {
 	return "label_" + ksmInvalid.ReplaceAllString(key, "_")
 }
+
+// ksmAnnotationName is the label kube-state-metrics exports an annotation
+// key as, on its *_annotations series.
+func ksmAnnotationName(key string) string {
+	return "annotation_" + ksmInvalid.ReplaceAllString(key, "_")
+}

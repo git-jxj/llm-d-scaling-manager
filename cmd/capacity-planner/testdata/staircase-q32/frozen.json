@@ -1,0 +1,592 @@
+{
+  "version": 1,
+  "recordingSha256": "4693f3bbbd8322c77af2a1fbcddeaa4cf3ce92f7d6eb66e8437ec2e3900ff291",
+  "specSha256": "d8ba7c0881161d17160fb14983856e08a930ef5d5640678af836a1ed1b517955",
+  "cycle": 580,
+  "cycles": 580,
+  "gate": {
+    "vp": true,
+    "a": true,
+    "decodeLine": true,
+    "sloListed": true
+  },
+  "tpotRatio": [
+    {
+      "percentile": 90,
+      "value": 1.8526921989632361,
+      "flags": [
+        "CoarseTPOTBucket"
+      ]
+    },
+    {
+      "percentile": 95,
+      "value": 1.852692854091967,
+      "flags": [
+        "CoarseTPOTBucket"
+      ]
+    }
+  ],
+  "buckets": [
+    {
+      "name": "A",
+      "prompt": 1000,
+      "output": 1000,
+      "ca2": 1,
+      "prefill": 2,
+      "decode": 2,
+      "prefillKnee": 32.388312,
+      "decodeKnee": 15.624547841347066,
+      "knee": 15.624547841347066,
+      "operatingRate": 13.280865665145006,
+      "meanTPOT": 0.024796938890139918,
+      "onsets": {
+        "Prefill": 29.662633714077412,
+        "Decode": 15.015745336684898
+      },
+      "vp": 17046.48,
+      "a": 0.009011691426531434,
+      "imbalance": 1,
+      "transferSecondsPerToken": 0.0000028114833006122766,
+      "allRowsTransferSeconds": 0.02251145823734736,
+      "recordedPrefixHitRate": 0,
+      "flags": [
+        "AssumedPoissonArrivals",
+        "TransferHeld"
+      ],
+      "assumed": [
+        "prompt 1000 tokens (--assume-input-tokens)"
+      ],
+      "targets": [
+        {
+          "percentile": 90,
+          "seconds": 0.3487750422148388,
+          "floor": 0.11398359203870875,
+          "source": "operating rate",
+          "predictedOff": 13.280865665143587,
+          "predictedOn": 13.280865665144347
+        },
+        {
+          "percentile": 95,
+          "seconds": 0.3800132111178878,
+          "floor": 0.11612170296839094,
+          "source": "operating rate",
+          "predictedOff": 13.280865665143587,
+          "predictedOn": 13.280865665144347
+        }
+      ],
+      "curve": [
+        {
+          "rate": 6.249819136538827,
+          "mean": 0.15370187732083007,
+          "p90": 0.19630903620215967,
+          "p95": 0.21640273832293822,
+          "parts": {
+            "EngineWait": 0.013167839113654623,
+            "KVPullWait": 0.000024919589348891862,
+            "OwnPrefill": 0.1055793916557731,
+            "DecodeWait": 6.269603323739964e-61,
+            "FirstStep": 0,
+            "DecodeEngine": 0.034929726962053445,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 9.37472870480824,
+          "mean": 0.19133880078784749,
+          "p90": 0.2497066007257941,
+          "p95": 0.27332023572329844,
+          "parts": {
+            "EngineWait": 0.02224880058753624,
+            "KVPullWait": 0.00003754577757058741,
+            "OwnPrefill": 0.1055793916557731,
+            "DecodeWait": 4.49313488093294e-27,
+            "FirstStep": 0,
+            "DecodeEngine": 0.06347306276696757,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 11.7184108810103,
+          "mean": 0.2316873472261619,
+          "p90": 0.3026845223229556,
+          "p95": 0.33040602488243465,
+          "parts": {
+            "EngineWait": 0.030724138620550196,
+            "KVPullWait": 0.000047089435191143724,
+            "OwnPrefill": 0.1055793916557731,
+            "DecodeWait": 8.282990861537587e-12,
+            "FirstStep": 0,
+            "DecodeEngine": 0.09533672750636449,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 12.499638273077654,
+          "mean": 0.24873255352456322,
+          "p90": 0.32434463663129637,
+          "p95": 0.3537340180346452,
+          "parts": {
+            "EngineWait": 0.03395809166792191,
+            "KVPullWait": 0.000050284878848695304,
+            "OwnPrefill": 0.1055793916557731,
+            "DecodeWait": 3.1909578150761194e-8,
+            "FirstStep": 0,
+            "DecodeEngine": 0.10914475341244137,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 13.280865665145006,
+          "mean": 0.268285989159319,
+          "p90": 0.3487750422148388,
+          "p95": 0.3800132111178878,
+          "parts": {
+            "EngineWait": 0.037434831689503636,
+            "KVPullWait": 0.00005348747452794058,
+            "OwnPrefill": 0.1055793916557731,
+            "DecodeWait": 0.000026027043571150086,
+            "FirstStep": 0,
+            "DecodeEngine": 0.1251922512959432,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 14.06209305721236,
+          "mean": 0.2958867726733284,
+          "p90": 0.3786191496894526,
+          "p95": 0.41352743002440506,
+          "parts": {
+            "EngineWait": 0.04118276561873942,
+            "KVPullWait": 0.00005669724626719508,
+            "OwnPrefill": 0.1055793916557731,
+            "DecodeWait": 0.004995799752984855,
+            "FirstStep": 0,
+            "DecodeEngine": 0.14407211839956385,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 14.843320449279712,
+          "mean": 0.6111862407372645,
+          "p90": 0.982935141392341,
+          "p95": 2.7836744769082906,
+          "parts": {
+            "EngineWait": 0.045234911857142096,
+            "KVPullWait": 0.00005991421821262041,
+            "OwnPrefill": 0.1055793916557731,
+            "DecodeWait": 0.2937052217345485,
+            "FirstStep": 0,
+            "DecodeEngine": 0.1666068012715882,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 15.624547841347066,
+          "parts": {
+            "EngineWait": 0,
+            "KVPullWait": 0,
+            "OwnPrefill": 0,
+            "DecodeWait": 0,
+            "FirstStep": 0,
+            "DecodeEngine": 0,
+            "RouterHop": 0
+          },
+          "refused": "Saturated: 15.624547841347066 r/s at or above the knee 15.624547841347066 r/s"
+        }
+      ]
+    },
+    {
+      "name": "B",
+      "prompt": 8000,
+      "output": 200,
+      "ca2": 1,
+      "prefill": 2,
+      "decode": 2,
+      "prefillKnee": 4.0476095398671275,
+      "decodeKnee": 16.95075000755562,
+      "knee": 4.0476095398671275,
+      "operatingRate": 3.440468108887058,
+      "meanTPOT": 0.016799615686978076,
+      "onsets": {
+        "Prefill": 3.7069779739890127,
+        "Decode": 16.034853935193098
+      },
+      "vp": 17046.48,
+      "a": 0.009011691426531434,
+      "imbalance": 1,
+      "transferSecondsPerToken": 0.0000028114833006122766,
+      "allRowsTransferSeconds": 0.02251145823734736,
+      "recordedPrefixHitRate": 0,
+      "flags": [
+        "AssumedPoissonArrivals",
+        "TransferHeld"
+      ],
+      "assumed": [
+        "prompt 8000 tokens (--assume-input-tokens)"
+      ],
+      "targets": [
+        {
+          "percentile": 90,
+          "seconds": 7.599109523510692,
+          "floor": 0.8405156392690134,
+          "source": "operating rate",
+          "predictedOff": 3.44046810888669,
+          "predictedOn": 3.440468108885246
+        },
+        {
+          "percentile": 95,
+          "seconds": 9.477950303237389,
+          "floor": 0.8576229127907211,
+          "source": "operating rate",
+          "predictedOff": 3.44046810888669,
+          "predictedOn": 3.440468108885246
+        }
+      ],
+      "curve": [
+        {
+          "rate": 1.619043815946851,
+          "mean": 1.0780649072697188,
+          "p90": 1.7056258644758506,
+          "p95": 1.9492001429837196,
+          "parts": {
+            "EngineWait": 0.2877046606305028,
+            "KVPullWait": 0.0004171189849883602,
+            "OwnPrefill": 0.7816610606664484,
+            "DecodeWait": 1.653615504176794e-64,
+            "FirstStep": 0,
+            "DecodeEngine": 0.008282066987779307,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 2.4285657239202765,
+          "mean": 1.5135263584030256,
+          "p90": 2.7104347775926816,
+          "p95": 3.1981094729613715,
+          "parts": {
+            "EngineWait": 0.7019488014333772,
+            "KVPullWait": 0.0006315344837854312,
+            "OwnPrefill": 0.798686397824021,
+            "DecodeWait": 7.616755128814987e-52,
+            "FirstStep": 0,
+            "DecodeEngine": 0.01225962466184198,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.0357071549003454,
+          "mean": 2.304982017172731,
+          "p90": 4.5419753726478955,
+          "p95": 5.532454173225515,
+          "parts": {
+            "EngineWait": 1.482356423193172,
+            "KVPullWait": 0.0007949986673220504,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 5.548055944961054e-45,
+            "FirstStep": 0,
+            "DecodeEngine": 0.015463594259235713,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.238087631893702,
+          "mean": 2.8002694706544924,
+          "p90": 5.68990013696846,
+          "p95": 7.010228855487775,
+          "parts": {
+            "EngineWait": 1.9764752309242297,
+            "KVPullWait": 0.00085000152498626,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 5.144672373394899e-43,
+            "FirstStep": 0,
+            "DecodeEngine": 0.016577237152275437,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.440468108887058,
+          "mean": 3.624993782455079,
+          "p90": 7.599109523510692,
+          "p95": 9.477950303237389,
+          "parts": {
+            "EngineWait": 2.800006577142657,
+            "KVPullWait": 0.0009052648279237142,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 3.558562253683682e-41,
+            "FirstStep": 0,
+            "DecodeEngine": 0.017714939431497434,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.6428485858804147,
+          "mean": 5.273274550350335,
+          "p90": 11.409593807675499,
+          "p95": 14.419681319288916,
+          "parts": {
+            "EngineWait": 4.447069269579514,
+            "KVPullWait": 0.0009607904303849063,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 1.898785443066127e-39,
+            "FirstStep": 0,
+            "DecodeEngine": 0.018877489287434712,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.845229062873771,
+          "mean": 10.215706637866445,
+          "p90": 22.81984585535476,
+          "p95": 29.25444764090113,
+          "parts": {
+            "EngineWait": 9.388257346890066,
+            "KVPullWait": 0.0010165802042640805,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 8.038549871222869e-38,
+            "FirstStep": 0,
+            "DecodeEngine": 0.020065709719114116,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 4.0476095398671275,
+          "parts": {
+            "EngineWait": 0,
+            "KVPullWait": 0,
+            "OwnPrefill": 0,
+            "DecodeWait": 0,
+            "FirstStep": 0,
+            "DecodeEngine": 0,
+            "RouterHop": 0
+          },
+          "refused": "Saturated: 4.0476095398671275 r/s at or above the prefill knee 4.0476095398671275 r/s"
+        }
+      ]
+    },
+    {
+      "name": "C",
+      "prompt": 8000,
+      "output": 200,
+      "ca2": 4,
+      "prefill": 2,
+      "decode": 2,
+      "steps": [
+        0.4,
+        0.6,
+        0.75,
+        0.8,
+        0.825,
+        0.85,
+        0.875,
+        0.9,
+        0.925,
+        0.95,
+        1
+      ],
+      "prefillKnee": 4.0476095398671275,
+      "decodeKnee": 16.95075000755562,
+      "knee": 4.0476095398671275,
+      "operatingRate": 3.440468108887058,
+      "meanTPOT": 0.016799615686978076,
+      "onsets": {
+        "Prefill": 3.098216249639791,
+        "Decode": 16.034853935193098
+      },
+      "vp": 17046.48,
+      "a": 0.009011691426531434,
+      "imbalance": 1,
+      "transferSecondsPerToken": 0.0000028114833006122766,
+      "allRowsTransferSeconds": 0.02251145823734736,
+      "recordedPrefixHitRate": 0,
+      "flags": [
+        "TransferHeld"
+      ],
+      "assumed": [
+        "prompt 8000 tokens (--assume-input-tokens)"
+      ],
+      "targets": [
+        {
+          "percentile": 90,
+          "seconds": 17.700823769319424,
+          "floor": 0.8405156392690134,
+          "source": "operating rate",
+          "predictedOff": 3.44046810888669,
+          "predictedOn": 3.098216249636693
+        },
+        {
+          "percentile": 95,
+          "seconds": 22.71371427515482,
+          "floor": 0.8576229127907211,
+          "source": "operating rate",
+          "predictedOff": 3.44046810888669,
+          "predictedOn": 3.098216249636693
+        }
+      ],
+      "curve": [
+        {
+          "rate": 1.619043815946851,
+          "mean": 1.508813489744807,
+          "p90": 3.0774791498824525,
+          "p95": 3.798450415278519,
+          "parts": {
+            "EngineWait": 0.7178296407810915,
+            "KVPullWait": 0.0010407213094879672,
+            "OwnPrefill": 0.7816610606664484,
+            "DecodeWait": 1.653615504176794e-64,
+            "FirstStep": 0,
+            "DecodeEngine": 0.008282066987779307,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 2.4285657239202765,
+          "mean": 2.5638998642694237,
+          "p90": 5.563298107859503,
+          "p95": 6.968725024393109,
+          "parts": {
+            "EngineWait": 1.7513781489510458,
+            "KVPullWait": 0.0015756928325147367,
+            "OwnPrefill": 0.798686397824021,
+            "DecodeWait": 7.616755128814987e-52,
+            "FirstStep": 0,
+            "DecodeEngine": 0.01225962466184198,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.0357071549003454,
+          "mean": 4.522326965600122,
+          "p90": 10.102519918021411,
+          "p95": 12.840557197577244,
+          "parts": {
+            "EngineWait": 3.6985128306172568,
+            "KVPullWait": 0.001983539670628229,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 5.548055944961054e-45,
+            "FirstStep": 0,
+            "DecodeEngine": 0.015463594259235713,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.238087631893702,
+          "mean": 5.756415452073837,
+          "p90": 12.954067517566163,
+          "p95": 16.543123941994388,
+          "parts": {
+            "EngineWait": 4.93135044082301,
+            "KVPullWait": 0.0021207730455499525,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 5.144672373394899e-43,
+            "FirstStep": 0,
+            "DecodeEngine": 0.016577237152275437,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.33927787039038,
+          "mean": 6.637648400406939,
+          "p90": 14.988989867359779,
+          "p95": 19.187698547244437,
+          "parts": {
+            "EngineWait": 5.811948733827116,
+            "KVPullWait": 0.002189633126206238,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 4.428482306943642e-42,
+            "FirstStep": 0,
+            "DecodeEngine": 0.01714303240061621,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.440468108887058,
+          "mean": 7.812420387887749,
+          "p90": 17.700823769319424,
+          "p95": 22.71371427515482,
+          "parts": {
+            "EngineWait": 6.986079791165927,
+            "KVPullWait": 0.002258656237323884,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 3.558562253683682e-41,
+            "FirstStep": 0,
+            "DecodeEngine": 0.017714939431497434,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.5416583473837364,
+          "mean": 9.456851173264745,
+          "p90": 21.495773388809997,
+          "p95": 27.65002770408531,
+          "parts": {
+            "EngineWait": 8.629863271440264,
+            "KVPullWait": 0.0023278429585659966,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 2.680106359557205e-40,
+            "FirstStep": 0,
+            "DecodeEngine": 0.018293057812912766,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.6428485858804147,
+          "mean": 11.923180176064552,
+          "p90": 27.186235467208466,
+          "p95": 35.05434083954437,
+          "parts": {
+            "EngineWait": 11.095538491851768,
+            "KVPullWait": 0.0023971938723469756,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 1.898785443066127e-39,
+            "FirstStep": 0,
+            "DecodeEngine": 0.018877489287434712,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.744038824377093,
+          "mean": 16.033299240986363,
+          "p90": 36.66778974481739,
+          "p95": 47.39461273427086,
+          "parts": {
+            "EngineWait": 15.204997192537606,
+            "KVPullWait": 0.00246670956384885,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 1.2697086309744446e-38,
+            "FirstStep": 0,
+            "DecodeEngine": 0.01946833783190706,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 3.845229062873771,
+          "mean": 24.252883695302387,
+          "p90": 55.62716005931466,
+          "p95": 72.07470549222411,
+          "parts": {
+            "EngineWait": 23.423914593909235,
+            "KVPullWait": 0.002536390621037741,
+            "OwnPrefill": 0.8063670010530012,
+            "DecodeWait": 8.038549871222869e-38,
+            "FirstStep": 0,
+            "DecodeEngine": 0.020065709719114116,
+            "RouterHop": 0
+          }
+        },
+        {
+          "rate": 4.0476095398671275,
+          "parts": {
+            "EngineWait": 0,
+            "KVPullWait": 0,
+            "OwnPrefill": 0,
+            "DecodeWait": 0,
+            "FirstStep": 0,
+            "DecodeEngine": 0,
+            "RouterHop": 0
+          },
+          "refused": "Saturated: 4.0476095398671275 r/s at or above the prefill knee 4.0476095398671275 r/s"
+        }
+      ]
+    }
+  ]
+}

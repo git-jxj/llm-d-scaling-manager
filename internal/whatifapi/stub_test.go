@@ -217,3 +217,8 @@ func (f *stubFleet) TPOTRatio() Ratio {
 }
 
 func (f *stubFleet) Assumed() []string { return []string{"Poisson arrivals"} }
+
+// Class is a P/D fleet the envelope knows nothing else of.
+func (f *stubFleet) Class() whatif.FigureClass {
+	return whatif.FigureClass{Topology: whatif.TopologyPD}
+}

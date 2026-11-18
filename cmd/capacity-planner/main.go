@@ -11,11 +11,11 @@
 //	capacity-planner replicas-to-slo --recording FILE [--cycle N|last] [--model M] [--decode N]
 //	                                 [--headroom H | --rate R] [--tpot-percentile P [--assume-tpot-ratio R]]
 //	                                 [--ttft-percentile P] [--prefill N] [--prefill-variant V] [--assume-vp TOKENS]
-//	                                 [--assume-a D] [--assume-prompt-cv CV] [--arrival-cv2 C] [--assume-router-hop D] [-o json]
+//	                                 [--assume-a D] [--assume-prompt-cv CV] [--arrival-cv2 C] [--flow-control on|off] [--assume-router-hop D] [-o json]
 //	capacity-planner slo-to-rate     --recording FILE [--cycle N|last] [--model M] [--decode N]
 //	                                 --tpot 4ms[@p90] [--assume-tpot-ratio R] [--headroom H]
 //	                                 [--ttft 200ms[@p95]] [--prefill N] [--prefill-variant V] [--assume-vp TOKENS]
-//	                                 [--assume-a D] [--assume-prompt-cv CV] [--arrival-cv2 C] [--assume-router-hop D] [-o json]
+//	                                 [--assume-a D] [--assume-prompt-cv CV] [--arrival-cv2 C] [--flow-control on|off] [--assume-router-hop D] [-o json]
 //	capacity-planner joint-ttft      --recording FILE [--cycle N|last] [--model M] [--prefill N] [--decode N]
 //	                                 [--rate R] [--prompt I] [--hop D] [-o json]
 //	capacity-planner replicas-to-slo|slo-to-rate --prometheus URL --namespace NS (--kube-state-metrics | --role-of ROLE=SELECTOR ...)
@@ -178,8 +178,11 @@ var commands = map[string]command{
 	"version":         runVersion,
 }
 
-// run runs one command. Asking for help is not an error.
+// run runs one command. Asking for help is not an error. The analyzers a
+// replay runs log through controller-runtime, which the CLI never shows; a
+// replay past 30 s with no logger set says so on stderr, with a stack.
 func run(ctx context.Context, args []string, out, warn io.Writer) error {
+	ctrllog.SetLogger(logr.Discard())
 	if len(args) == 0 {
 		return usageError{errors.New(usage)}
 	}

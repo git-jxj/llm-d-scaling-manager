@@ -1,4 +1,6 @@
 ns-01/model-02  P/D 1 prefill (variant-02) + 1 decode (variant-01)  window 2026-11-05 21:16-21:36Z, cycle 83 of 83
+decode engine   vLLM release not recorded
+prefill engine  vLLM release not recorded
 load judged     26.90 r/s, the p95 of the 80 of 83 cycles with traffic
 load seen       per cycle (1-minute rates): mean 6.91, p95 26.90, peak 30.04 r/s; busiest 2m0s (8 cycles): 25.94 r/s
 SLO             TPOT mean 5.0 ms (asked)
