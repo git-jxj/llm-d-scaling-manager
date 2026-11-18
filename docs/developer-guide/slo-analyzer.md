@@ -57,15 +57,37 @@ One more switch sets an input, not a `TTFTFleet` field:
 `slo-ttft-imbalance-across-counts` (off, the CLI's `--imbalance-across-counts`
 default, `whatif.DefaultImbalanceAcrossCounts`). It sets `f` at a prefill pod
 count P1 has not learned (`ttftInputs.imbalanceAcross`,
-`whatif.ImbalanceAcrossCounts`). Off, `min(N, max(1.5, f))`. On, a count P1
-learned keeps its own `f` (`prefill.Estimate.FByPods`). Any other count reads
-`f(n) = 1 + c·g(n)`, where `g(n)` is the expected max of `n` standard normals
-(`prefill.NormalMaxMean`) and `c` is fitted through `f = 1` to every count
-learned. With no count learned, `f` is `whatif.FreshImbalance` (1.15). At the
-current count, the raw share wins when it reads higher. `routing()` reads the
-raw share as before. Every `f` not learned is flagged `AssumedImbalance`, and
-the log's `fSource` says `learned`, `fitted from counts {2}`, `default` or
-`raw share`. It is replay-only too.
+`whatif.ImbalanceReadings.At`). Off, `min(N, max(1.5, f))`. On:
+
+- A count P1 learned keeps its own `f` (`prefill.Estimate.FByPods`), as P1
+  gave it.
+- Any other count reads `f(n) = 1 + c·g(n)`. `g(n)` is the expected max of
+  `n` standard normals (`prefill.NormalMaxMean`). `c` is the population
+  spread of the pods' shares, with no `sqrt(n/(n-1))` correction. It is
+  fitted through `f = 1` by least squares, each count weighted by its minutes
+  (`FSamplesByPods`).
+- The current count's raw share, when P1 has not learned that count, is one
+  more point of 5 minutes. It only raises `c`, so a hot pod now reaches
+  `N+1`. At the current count, `f` is at least the raw share.
+- With no count learned, `f` is at least `whatif.FreshImbalance` (1.15).
+- `routing()` reads the raw share as before.
+- Every `f` not learned is flagged `AssumedImbalance`. The log's `fSource`
+  says `learned`, `fitted from counts {2}` (with `and the raw share at 3`),
+  `fitted from the raw share at 3`, `default`, `raw share` or `one pod`.
+
+Known gaps (the first blocks flipping the default):
+
+- P1's minutes live in memory for 6 h and are not in the learned state. Right
+  after a restart, nothing is learned, and the switch prices 1.15 (or the raw
+  share's curve) where off prices at least 1.5.
+- P1 reads one share per row. A data-parallel pod, or an LWS group whose
+  every Pod runs an engine, is one row of `k` engines, and the spread inside
+  it is not seen: about `c/sqrt(k)` per row, so `f` reads low (about 1.05
+  for a true 1.20 at `k = 4`). Such an `f` stays flagged `AssumedImbalance`
+  (`prefill.Estimate.FMultiRank`). A per-engine fit, `g(N·k)`, is a
+  follow-up.
+
+It is replay-only too.
 
 The analyzer's met/unmet is `whatif.TTFTMeets`. `RateForTTFT`, which the
 CLI's and the planner API's rates and the analyzer's published rate come

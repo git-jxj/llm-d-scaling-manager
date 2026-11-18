@@ -2,6 +2,7 @@ package prefill
 
 import (
 	"math"
+	"slices"
 	"time"
 )
 
@@ -75,6 +76,8 @@ type share struct {
 	rateOK     bool
 	requests   float64
 	requestsOK bool
+	// multiRank is a row of more than one engine rank (domain.ReplicaMetrics.Ranks).
+	multiRank bool
 }
 
 // minuteImbalance is the de-biased imbalance of one cycle's shares, and
@@ -113,10 +116,10 @@ func (ks *keyState) noteImbalance(shares []share, allAdmitted bool, now time.Tim
 		return
 	}
 	if n := len(ks.f); n > 0 && now.Sub(ks.f[n-1].at) < SampleSpacing {
-		ks.f[n-1].f, ks.f[n-1].pods = f, len(shares)
+		ks.f[n-1].f, ks.f[n-1].pods, ks.f[n-1].multiRank = f, len(shares), multiRank(shares)
 		return
 	}
-	ks.f = append(ks.f, fSample{at: now, f: f, pods: len(shares)})
+	ks.f = append(ks.f, fSample{at: now, f: f, pods: len(shares), multiRank: multiRank(shares)})
 	if len(ks.f) > maxSamples {
 		ks.f = ks.f[len(ks.f)-maxSamples:]
 	}
@@ -130,6 +133,7 @@ func (est *Estimate) imbalance(ks *keyState, shares []share, serving int) {
 	est.FPodsLast = serving
 	est.FSamples = len(ks.f)
 	est.FByPods, est.FSamplesByPods = imbalanceByPods(ks.f)
+	est.FMultiRank = slices.ContainsFunc(ks.f, func(s fSample) bool { return s.multiRank })
 	if len(ks.f) >= MinImbalanceMinutes {
 		fs := make([]float64, len(ks.f))
 		for i, s := range ks.f {
@@ -212,4 +216,9 @@ func poissonMaxExcess(n int, m float64) float64 {
 		expMax += 1 - math.Pow(cdf, float64(n))
 	}
 	return expMax/m - 1
+}
+
+// multiRank reports whether any share is a row of more than one engine rank.
+func multiRank(shares []share) bool {
+	return slices.ContainsFunc(shares, func(s share) bool { return s.multiRank })
 }

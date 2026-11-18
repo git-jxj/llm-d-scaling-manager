@@ -35,10 +35,11 @@ func TestTTFT_ImbalanceAcrossCountsFlag(t *testing.T) {
 
 // f at a count read across counts: the learned count's own, one pod's none,
 // else the curve or the default, and the raw share at the recorded count
-// where it reads higher.
+// where it reads higher, and through the curve at the others.
 func TestTTFT_ImbalanceAcross(t *testing.T) {
 	two := prefill.Estimate{FByPods: map[int]float64{2: 1.0691}}
-	curve := whatif.ImbalanceAcrossCounts(two.FByPods, 3)
+	curve := whatif.ImbalanceReadings{ByPods: two.FByPods}.At(3)
+	hot := whatif.ImbalanceReadings{Pods: 3, RawShare: 1.4}.At(4)
 	for _, c := range []struct {
 		name    string
 		ps      learnreplay.PrefillState
@@ -53,7 +54,7 @@ func TestTTFT_ImbalanceAcross(t *testing.T) {
 		{"no count learned is the default", learnreplay.PrefillState{Pods: 3}, 3, whatif.FreshImbalance, true, whatif.ImbalanceDefault},
 		{"the raw share at the recorded count", learnreplay.PrefillState{Pods: 3, RawShare: 1.4}, 3, 1.4, true, whatif.ImbalanceRawShare},
 		{"the raw share capped at the pods", learnreplay.PrefillState{Pods: 2, RawShare: 2.5}, 2, 2, true, whatif.ImbalanceRawShare},
-		{"the raw share is not read at another count", learnreplay.PrefillState{Pods: 3, RawShare: 1.4}, 4, whatif.FreshImbalance, true, whatif.ImbalanceDefault},
+		{"the raw share reaches another count", learnreplay.PrefillState{Pods: 3, RawShare: 1.4}, 4, hot.F, true, "fitted from the raw share at 3"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, assumed, source := imbalanceAcross(&c.ps, c.pods)
@@ -109,7 +110,7 @@ func TestTTFT_ImbalanceAcrossCountsOnTheStaircase(t *testing.T) {
 	require.Len(t, st.Prefill, 1)
 	require.Equal(t, 2, st.Prefill[0].Pods)
 	require.Contains(t, st.Prefill[0].Estimate.FByPods, 2, "precondition: P1 learned f at two pods")
-	learned := whatif.ImbalanceAcrossCounts(st.Prefill[0].Estimate.FByPods, 3)
+	learned := whatif.ImbalanceReadingsOf(st.Prefill[0].Estimate, st.Prefill[0].Pods, st.Prefill[0].RawShare).At(3)
 
 	off, offRate := read()
 	on, onRate := read("--imbalance-across-counts")
@@ -132,7 +133,7 @@ func TestTTFT_ImbalanceAcrossCountsReachesAtReplicas(t *testing.T) {
 	on, code := runCmd(t, append(args, "--imbalance-across-counts")...)
 	require.Equal(t, 0, code, on)
 	assert.NotContains(t, on, "prefill f 1.5 assumed")
-	assert.Contains(t, on, "prefill f "+num(whatif.ImbalanceAcrossCounts(map[int]float64{2: stairF2(t)}, 3).F)+" assumed at 3 pods")
+	assert.Contains(t, on, "prefill f "+num(whatif.ImbalanceReadings{ByPods: map[int]float64{2: stairF2(t)}}.At(3).F)+" assumed at 3 pods")
 }
 
 // stairF2 is the f P1 learned at two pods on the staircase.

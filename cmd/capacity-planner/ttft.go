@@ -592,19 +592,14 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 }
 
 // imbalanceAcross is f at pods read across counts
-// (--imbalance-across-counts, whatif.ImbalanceAcrossCounts), as the SLO
-// analyzer reads it with slo.SwitchTTFTImbalanceAcrossCounts on: P1's own at
-// that count, else nothing on one pod, else the curve fitted to the counts P1
-// learned, or whatif.FreshImbalance with none, assumed. At the recorded
-// count an unlearned f is raised to the raw share when that reads higher.
+// (--imbalance-across-counts, whatif.ImbalanceReadings.At), as the SLO
+// analyzer reads it with slo.SwitchTTFTImbalanceAcrossCounts on: none on one
+// pod; P1's own at a count it learned; else the curve fitted to the counts P1
+// learned and the recorded count's raw share, at least
+// whatif.FreshImbalance with no count learned, and at the recorded count at
+// least the raw share.
 func imbalanceAcross(ps *learnreplay.PrefillState, pods int) (f float64, assumed bool, source string) {
-	if pods == 1 {
-		return 0, false, "one pod"
-	}
-	r := whatif.ImbalanceAcrossCounts(ps.Estimate.FByPods, pods)
-	if pods == ps.Pods {
-		r = r.WithRawShare(ps.RawShare, pods)
-	}
+	r := whatif.ImbalanceReadingsOf(ps.Estimate, ps.Pods, ps.RawShare).At(pods)
 	return r.F, r.Assumed, r.Source
 }
 

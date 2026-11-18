@@ -54,11 +54,12 @@ func TestTTFT_TheImbalanceAcrossCountsSwitch(t *testing.T) {
 	f, assumed, source := in.imbalance(1)
 	assert.Zero(t, f)
 	assert.False(t, assumed)
-	assert.Equal(t, fSourceOnePod, source)
+	assert.Equal(t, whatif.ImbalanceOnePod, source)
 }
 
 // With no count learned the switch prices FreshImbalance, at the current
-// count raised to the raw share where that reads higher; routing() still
+// count raised to the raw share where that reads higher, and the other counts
+// read the curve through it; routing() still
 // reads the raw share as before.
 func TestTTFT_TheImbalanceAcrossCountsDefault(t *testing.T) {
 	in := ttftInputsAt(3, 0)
@@ -77,7 +78,7 @@ func TestTTFT_TheImbalanceAcrossCountsDefault(t *testing.T) {
 	assert.True(t, assumed)
 	assert.Equal(t, whatif.ImbalanceRawShare, source)
 	f, _, _ = in.imbalance(4)
-	assert.Equal(t, whatif.FreshImbalance, f, "the raw share is not read at another count")
+	assert.Greater(t, f, 1.3, "the raw share reaches the next count through the curve")
 
 	in.shares = shareWindow{largest: 2.9, least: 2.9, full: true}
 	bound, _ := in.routing()
@@ -85,4 +86,20 @@ func TestTTFT_TheImbalanceAcrossCountsDefault(t *testing.T) {
 	in.acrossCounts = false
 	boundOff, _ := in.routing()
 	assert.Equal(t, boundOff, bound)
+}
+
+// A hot pod at the current count reaches N+1 (review of #177): three pods,
+// nothing learned, a raw share of 2.5. Before, f at four pods was
+// whatif.FreshImbalance, and N+1 was priced cooler than N.
+func TestTTFT_AHotPodReachesNPlusOne(t *testing.T) {
+	in := ttftInputsAt(3, 0)
+	in.acrossCounts = true
+	in.shares = shareWindow{largest: 2.5}
+	now, _ := ttftFleet(in, 3)
+	next, _ := ttftFleet(in, 4)
+	assert.Equal(t, 2.5, now.Prefill.Imbalance)
+	assert.GreaterOrEqual(t, next.Prefill.Imbalance, now.Prefill.Imbalance, "N+1 is not priced cooler than N")
+	assert.True(t, next.Prefill.ImbalanceAssumed)
+	_, _, source := in.imbalance(4)
+	assert.Equal(t, "fitted from the raw share at 3", source)
 }

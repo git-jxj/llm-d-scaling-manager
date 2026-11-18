@@ -135,19 +135,12 @@ func (in ttftInputs) imbalanceNow() (float64, bool, string) {
 }
 
 // imbalanceAcross is f at pods read across counts
-// (SwitchTTFTImbalanceAcrossCounts, whatif.ImbalanceAcrossCounts): P1's f at
-// that count; none on one pod; else the curve fitted to the counts P1
-// learned, or whatif.FreshImbalance with none, assumed. At the current count
-// an unlearned f is raised to the raw share when that reads higher: a
-// reading of this count, the side that asks for more.
+// (SwitchTTFTImbalanceAcrossCounts, whatif.ImbalanceReadings.At): none on one
+// pod; P1's f at a count it learned; else the curve fitted to the counts P1
+// learned and the current count's raw share, at least whatif.FreshImbalance
+// with no count learned, and at the current count at least the raw share.
 func (in ttftInputs) imbalanceAcross(pods int) (float64, bool, string) {
-	if pods <= 1 {
-		return 0, false, fSourceOnePod
-	}
-	r := whatif.ImbalanceAcrossCounts(in.est.FByPods, pods)
-	if pods == in.pods {
-		r = r.WithRawShare(in.shares.largest, pods)
-	}
+	r := whatif.ImbalanceReadingsOf(in.est, in.pods, in.shares.largest).At(pods)
 	return r.F, r.Assumed, r.Source
 }
 
