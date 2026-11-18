@@ -38,3 +38,19 @@ func TestCollapseToGroups_KeepsTheEnginesOfAGroup(t *testing.T) {
 	assert.Nil(t, got[1].GroupEngines, "a leader-only group: its leader is its engine")
 	assert.Nil(t, got[2].GroupEngines, "a row outside any group")
 }
+
+// A group with a Pod not Ready is one replica not Ready, and keeps its
+// engines: the line reads them as its group's, not Ready.
+func TestCollapseToGroups_AGroupNotReadyKeepsItsEngines(t *testing.T) {
+	rows := []placedRow{
+		{row: domain.ReplicaMetrics{PodName: "s-0", ModelID: "m", Ready: true, AvgITL: 0.01, AvgITLKnown: true}, place: lwsPlace{group: "s/0"}},
+		{row: domain.ReplicaMetrics{PodName: "s-0-1", ModelID: "m", Ready: false}, place: lwsPlace{group: "s/0", worker: 1}},
+	}
+	got := collapseToGroups(rows, nil)
+	require.Len(t, got, 1)
+	assert.False(t, got[0].Ready)
+	require.Len(t, got[0].GroupEngines, 2)
+	for _, e := range domain.EngineRows(got) {
+		assert.False(t, e.Ready, e.PodName)
+	}
+}

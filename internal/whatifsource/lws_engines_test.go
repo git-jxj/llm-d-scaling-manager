@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource/promtest"
 )
 
 // A group whose Pods each run an engine keeps every engine's row beside the
@@ -39,4 +40,21 @@ func TestCapture_AGroupKeepsItsEnginesForTheLine(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 7, finite, "seven of the eight engines read an ITL")
+}
+
+// An engine of a group whose own data-parallel ranks did not all read an
+// ITL is unread: the line learns nothing from it, and the capture says so,
+// counting the line's readings, an engine each, over the cycles.
+func TestCapture_NotesAnEngineWhoseRankReadNoITL(t *testing.T) {
+	srv := promtest.New()
+	t.Cleanup(srv.Close)
+	dec := decodeRole(everyPod)
+	dec.itl, dec.ranks = everyPod, 2
+	dec.rankITL = func(g, w, rank int) bool { return g != 1 || w != 2 || rank != 1 }
+	dec.add(t, srv)
+	prefillRole(everyPod).add(t, srv)
+	_, sum := capture(t, Options{Prometheus: apiFor(t, srv), Namespace: testNS, From: t0, To: t0, Step: 15e9,
+		KubeStateMetrics: true})
+	assert.Equal(t, []string{"variant m-decode: ITL unread on 1 readings over 1 cycles: a data-parallel rank reported no ITL, " +
+		"so the decode line learned nothing from them"}, sum.Notes)
 }
