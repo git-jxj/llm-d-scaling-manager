@@ -941,6 +941,10 @@ func ttftReasonCases(t *testing.T) map[Reason]Result {
 		AboveDecodeOnset: ttftAt(t, with(func(fl *TTFTFleet) {
 			fl.FlowControl = FlowControl{State: FlowControlOn, QueueThreshold: 5, KVThreshold: 0.8}
 		}), 12.6, 0.9),
+		DecodeTTFTUnderLoad: ttftAt(t, with(func(fl *TTFTFleet) {
+			fl.Decode = nil
+			fl.DecodeTTFT = DecodeTTFT{Seconds: 16.6, PromptTokens: 8000, Waiting: 283}
+		}), 1, 0.9),
 	}
 }
 

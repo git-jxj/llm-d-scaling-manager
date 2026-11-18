@@ -135,6 +135,7 @@ DecodeEngineMeasured
 DecodeOnsetUnchecked
 DecodeSideOmitted
 DecodeStepSlopeAssumed
+DecodeTTFTUnderLoad
 DecodeTTFTUnmeasured
 DecodeTermFloored
 DecodeTermOmitted
