@@ -99,6 +99,9 @@ func runCapture(ctx context.Context, args []string, out, warn io.Writer) error {
 	for _, flag := range sum.Flags {
 		fmt.Fprintf(out, "  flag: %s\n", flag)
 	}
+	for _, note := range sum.Notes {
+		fmt.Fprintf(out, "  note: %s\n", note)
+	}
 	fmt.Fprintf(out, "wrote %s\n", f.out)
 	return nil
 }
@@ -152,7 +155,7 @@ func (f *captureFlags) registerWindow(fs *flag.FlagSet) {
 	fs.StringVar(&f.engine, "engine", "vllm", "the inference engine the variants run: vllm or sglang")
 	fs.StringVar(&f.engineArgs, "engine-args", "", "the engine's arguments, space-separated, for its parameters (kube-state-metrics has none)")
 	f.gpus = gpusFlag{n: 1}
-	fs.Var(&f.gpus, "gpus-per-replica", "GPUs per replica (every Pod of a LeaderWorkerSet group): 1 where kube-state-metrics gives none; given, it replaces what kube-state-metrics gives")
+	fs.Var(&f.gpus, "gpus-per-replica", "GPUs per replica: the whole group's for a LeaderWorkerSet (32 for 4 Pods x 8), not one Pod's; 1 where kube-state-metrics gives none, and given, it replaces what kube-state-metrics gives")
 	fs.StringVar(&f.accelerator, "accelerator", "", "the accelerator, where kube-state-metrics gives none")
 	fs.StringVar(&f.vllmVersion, "vllm-version", "", "the vLLM release the engines run (0.34), where kube-state-metrics shows none; it sets the defaults of the flags the engine is not given")
 	fs.StringVar(&f.engineImage, "engine-image", "", "the engine container's image, where kube-state-metrics shows none; a vllm-openai tag names the vLLM release")

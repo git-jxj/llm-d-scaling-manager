@@ -237,7 +237,7 @@ load:
     note: |
       Serve the blocks. A retention longer than their age, or Prometheus deletes them on start.
       LOOKBACK is the one the converter printed: four scrape intervals of the slowest metric, often kube-state-metrics'.
-      It ends a series about when the original did (see Limits).
+      A deleted Pod stays visible that long (see Limits).
     run: |
       export LOOKBACK=<the lookback the converter printed, e.g. 240s>
       touch empty.yml

@@ -78,6 +78,14 @@ const (
 	// exports them, the group's GPUs are summed and nothing is flagged. A
 	// format: how many variants.
 	FlagMultiPodGroups = "multi-Pod groups in %d variants: GPUs per replica read from one Pod's request, not the group's"
+	// NoteITLAbsentRanks: replicas of several engine ranks (a LeaderWorkerSet
+	// group whose Pods each run an engine, or data-parallel ranks) whose ITL
+	// was unread because one rank reported none, so the decode line learns
+	// nothing from them; with too few such readings the planner prices no
+	// decode knee. A format: the variant, how many replica-cycles, of how
+	// many cycles.
+	NoteITLAbsentRanks = "variant %s: ITL unread on %d replica-cycles of %d: a rank of the replica reported no ITL " +
+		"(an engine of a group, or a data-parallel rank), so the decode line learned nothing from them"
 	// FlagGPUsOverride: --gpus-per-replica was given and replaces what
 	// kube-state-metrics reads for a variant. A format: the variant, the
 	// flag's count and kube-state-metrics'.
@@ -214,6 +222,9 @@ type Summary struct {
 	// Variants is the window line's variants, and Flags its caveats.
 	Variants []learnreplay.CaptureVariant
 	Flags    []string
+	// Notes is what the cycles showed that the window line, written before
+	// them, could not say (NoteITLAbsentRanks).
+	Notes []string
 	// RangeQueries is how many range queries were asked, and Samples how
 	// many samples their answers held.
 	RangeQueries, Samples int
@@ -447,6 +458,9 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 		models[v.ModelID] = append(models[v.ModelID], v.Name)
 	}
 	clk := &stepClock{}
+	// absentITL counts, per variant, the cycles a replica of several ranks
+	// read no ITL because one of its ranks had none (itlAbsentRank).
+	absentITL := map[string]int{}
 	for _, at := range steps {
 		if ctx.Err() != nil {
 			return nil, captureErr(api, context.Cause(ctx))
@@ -466,7 +480,15 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 			rec.Record(learnreplay.KindCaptureCycle, at, c)
 			sum.Cycles++
 			sum.Rows += len(c.Input.ReplicaMetrics)
+			for _, r := range c.Input.ReplicaMetrics {
+				if itlAbsentRank(r) {
+					absentITL[r.VariantName]++
+				}
+			}
 		}
+	}
+	for _, v := range slices.Sorted(maps.Keys(absentITL)) {
+		sum.Notes = append(sum.Notes, fmt.Sprintf(NoteITLAbsentRanks, v, absentITL[v], sum.Cycles))
 	}
 	if err := rec.Err(); err != nil {
 		return nil, err
@@ -1090,4 +1112,13 @@ func variantStates(f *fleet, opts Options, engines map[string]bool, active []str
 		out = append(out, vs)
 	}
 	return out
+}
+
+// itlAbsentRank reports a replica of several ranks whose ITL reads Absent
+// while some rank measured one: the merge keeps the measuring ranks' mean in
+// AvgITL but marks the replica unread, because a missing rank would hide its
+// own (collector mergePodInstances), and the decode line takes no reading
+// from it.
+func itlAbsentRank(r domain.ReplicaMetrics) bool {
+	return r.Ranks() > 1 && r.ITLState() == domain.ITLAbsent && r.AvgITL > 0
 }

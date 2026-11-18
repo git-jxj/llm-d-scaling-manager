@@ -340,7 +340,7 @@ ${PROMTOOL} tsdb create-blocks-from openmetrics planner-export.om planner-tsdb
 
 # Serve the blocks. A retention longer than their age, or Prometheus deletes them on start.
 # LOOKBACK is the one the converter printed: four scrape intervals of the slowest metric, often kube-state-metrics'.
-# It ends a series about when the original did (see Limits).
+# A deleted Pod stays visible that long (see Limits).
 export LOOKBACK=<the lookback the converter printed, e.g. 240s>
 touch empty.yml
 prometheus --config.file=empty.yml --storage.tsdb.path=planner-tsdb \
@@ -364,15 +364,13 @@ sample at all, so a broken export is not read as a window with less load.
 
 - **A series' end is blurred by up to the lookback.** Prometheus marks a series
   stale when its target goes away; the query API does not return those marks.
-  The local copy instead holds the last value for `--query.lookback-delta`, so
-  keep it short: four scrape intervals, which the converter prints from the
-  samples (`60s` at 15 s, `120s` at 30 s). It takes the slowest metric's
-  interval: kube-state-metrics is often scraped every 60 s beside engines
-  at 5 s, and a lookback sized for the engines (`20s`) loses
-  kube-state-metrics at three steps in four. In a test of
-  this path, the copy's capture matched the original's on every step but the
-  three, 45 s, after a Pod left, where the copy still listed it; with the
-  default `5m` lookback, 19 steps differed.
+  The local copy instead holds the last value for `--query.lookback-delta`:
+  four times the slowest metric's scrape interval, which the converter prints
+  (`240s` with kube-state-metrics at 60 s). The slowest, because a lookback
+  sized for engines at 5 s (`20s`) loses kube-state-metrics, scraped every
+  60 s, at three steps in four. The cost: a deleted Pod's series stays
+  visible for that long, so a fleet that scales down shows phantom replicas
+  for up to the lookback the converter printed.
 - **The window must start 5 minutes before the one you want answered.** Some
   inputs are 5-minute rates.
 

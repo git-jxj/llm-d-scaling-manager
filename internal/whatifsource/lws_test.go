@@ -35,6 +35,8 @@ type lwsRole struct {
 	// labels says whether kube-state-metrics exports the LWS and
 	// DisaggregatedSet labels; the llm-d.ai/role label is always exported.
 	noGroupLabels bool
+	// itl says whether a reporting Pod has an ITL mean; nil for none.
+	itl func(group, worker int) bool
 }
 
 func (r lwsRole) lws() string { return "m-abc-" + r.role }
@@ -93,8 +95,12 @@ func (r lwsRole) add(t *testing.T, srv *promtest.Server) {
 			}
 			srv.Add(promQL(t, registration.QueryKvCacheUsage), promtest.Const(series(), 0.25))
 			srv.Add(promQL(t, registration.QueryQueueLength), promtest.Const(series(), 0))
+			if r.itl != nil && r.itl(g, w) {
+				srv.Add(promQL(t, registration.QueryAvgITL), promtest.Const(series(), 0.02))
+			}
 			srv.Add(promQL(t, registration.QueryCacheConfigInfo), promtest.Const(series(
-				"num_gpu_blocks", strconv.Itoa(r.blocks), "block_size", "64",
+				"num_gpu_blocks", strconv.Itoa(r.blocks), "block_size", "64"), 1))
+			srv.Add(promQL(t, registration.QueryCacheConfigSizes), promtest.Const(series(
 				"kv_cache_size_tokens", strconv.Itoa(r.kvTokens)), 1))
 		}
 	}
@@ -244,4 +250,28 @@ func TestCapture_NothingAttributedNamesTheRoleOfToPass(t *testing.T) {
 	assert.Contains(t, err.Error(), "8 Pods with one have no variant, m-abc-decode-0 among them, owned by a StatefulSet")
 	assert.Contains(t, err.Error(), "labelled llm-d.ai/role=decode")
 	assert.Contains(t, err.Error(), "pass --role-of decode=llm-d.ai/role=decode")
+}
+
+// A group whose engines all read an ITL but one gives the line no reading
+// that cycle, and the capture says so, so a decode knee the planner then
+// cannot price has a reason beside it.
+func TestCapture_NotesAGroupWhoseITLAnEngineDidNotReport(t *testing.T) {
+	run := func(itl func(int, int) bool) *Summary {
+		t.Helper()
+		srv := promtest.New()
+		t.Cleanup(srv.Close)
+		dec := decodeRole(everyPod)
+		dec.itl = itl
+		dec.add(t, srv)
+		prefillRole(everyPod).add(t, srv)
+		opts := Options{Prometheus: apiFor(t, srv), Namespace: testNS, From: t0, To: t0, Step: 15e9,
+			KubeStateMetrics: true}
+		_, sum := capture(t, opts)
+		return sum
+	}
+
+	sum := run(func(g, w int) bool { return g != 1 || w != 2 })
+	assert.Equal(t, []string{fmt.Sprintf(NoteITLAbsentRanks, "m-decode", 1, 1)}, sum.Notes)
+
+	assert.Empty(t, run(everyPod).Notes, "every engine read an ITL")
 }
