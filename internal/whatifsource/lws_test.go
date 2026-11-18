@@ -12,6 +12,7 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/registration"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource/promtest"
@@ -100,8 +101,10 @@ func (r lwsRole) add(t *testing.T, srv *promtest.Server) {
 			}
 			srv.Add(promQL(t, registration.QueryCacheConfigInfo), promtest.Const(series(
 				"num_gpu_blocks", strconv.Itoa(r.blocks), "block_size", "64"), 1))
-			srv.Add(promQL(t, registration.QueryCacheConfigSizes), promtest.Const(series(
-				"kv_cache_size_tokens", strconv.Itoa(r.kvTokens)), 1))
+			if q, ok := registeredPromQL(t, "cache_config_sizes"); ok {
+				srv.Add(q, promtest.Const(series(
+					"kv_cache_size_tokens", strconv.Itoa(r.kvTokens)), 1))
+			}
 		}
 	}
 	addKSMNode(srv, "n1", "NVIDIA-H100-80GB-HBM3")
@@ -274,4 +277,17 @@ func TestCapture_NotesAGroupWhoseITLAnEngineDidNotReport(t *testing.T) {
 	assert.Equal(t, []string{fmt.Sprintf(NoteITLAbsentRanks, "m-decode", 1, 1)}, sum.Notes)
 
 	assert.Empty(t, run(everyPod).Notes, "every engine read an ITL")
+}
+
+// registeredPromQL is promQL for a query the registry may not hold: false
+// when it does not, so a fixture built for a newer tree still builds here.
+func registeredPromQL(t testing.TB, name string) (string, bool) {
+	t.Helper()
+	reg := source.NewSourceRegistry()
+	require.NoError(t, reg.Register("prometheus", source.NewNoOpSource()))
+	registration.RegisterSaturationQueries(reg)
+	if reg.Get("prometheus").QueryList().Get(name) == nil {
+		return "", false
+	}
+	return promQL(t, name), true
 }

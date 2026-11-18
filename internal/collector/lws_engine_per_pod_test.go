@@ -262,7 +262,9 @@ func TestCollectReplicaMetrics_ReadsTheEngineKVCacheSize(t *testing.T) {
 					// Two ranks behind one API server: 9390 blocks is their sum.
 					blocks("p4", "9390", 2), blocks("p5", "9390", 2),
 				}},
-				registration.QueryCacheConfigSizes: {Values: []source.MetricValue{
+				// Named as registration.QueryCacheConfigSizes registers it, spelled
+				// out so the test builds on a tree without the query.
+				"cache_config_sizes": {Values: []source.MetricValue{
 					sizes("p1", "512", "2403840", 1),
 					sizes("p2", "512", "None", 1),
 					sizes("p3", "None", "None", 1),
