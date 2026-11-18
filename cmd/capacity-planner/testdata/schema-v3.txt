@@ -31,6 +31,7 @@ roles[].inputs.fillBand.hi number
 roles[].inputs.fillBand.lo number
 roles[].inputs.headroom number
 roles[].inputs.kvPerRequest number
+roles[].inputs.kvPerRequestSource string
 roles[].inputs.line object
 roles[].inputs.line.a number
 roles[].inputs.line.b number
