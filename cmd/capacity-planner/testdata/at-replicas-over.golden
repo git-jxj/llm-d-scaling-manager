@@ -1,0 +1,38 @@
+ns-01/model-02  P/D 2 prefill (variant-02) + 3 decode (variant-01)  window 2026-11-06 02:18-03:30Z, cycle 289 of 289
+load judged     20.00 r/s (--load-seen)
+load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/s; busiest 2m0s (8 cycles): 42.13 r/s
+SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
+cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
+mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
+summary     50%                80%                     100%               seen
+  measured  618/7.2 @24.92 ok  1535/11.4 @39.87 MISS*  -/22.0 @49.83 SAT  540/7.2 @20.00 ok
+verdicts
+  measured  OVER-PROVISIONED: at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.8% under its operating point); needs 2 prefill + 2 decode (has 2 + 3) (decode knee unvalidated).
+
+shape measured: IL 8003 OL 200, prefix hit 0.00 (measured, cycles 269-288)
+utilization at the load judged
+  decode        KV fill 0.023 (band top 0.8), slots 10 of 342, wait p 0.000
+  prefill       utilization pooled 0.40, worst pod 0.40 (f 1)
+  verdict       OVER-PROVISIONED: at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.8% under its operating point); needs 2 prefill + 2 decode (has 2 + 3) (decode knee unvalidated).
+capacity            req/s     out tok/s   bound by
+  prefill knee      49.83     9966        prefill compute: N_p 2 x V_P / (f 1.003 x 8001 tokens)
+  decode knee       57.21     11440       decode band top at fill 0.795
+  fleet knee        49.83     9966        prefill
+  operating (0.85)  42.36     8471        0.85 x fleet knee (scaleUpThreshold)
+  max at SLO        36.60     7318        TTFT p90, end to end
+SLO vs load        r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
+  50% of knee      24.92  150.0/618.0     3.07/7.21         0.85 s
+  80% of knee      39.87  404.7/1535.0    4.87/11.42        1.52 s
+  100% of knee     49.83  saturated       9.38/22.01        saturated
+  load seen (40%)  20.00  118.7/539.6     3.07/7.21         0.82 s
+checks
+  2 prefill + 3 decode  holds: 20.00 r/s within 0.85 x the fleet knee 49.83 r/s = 42.36 r/s; TTFT p90 539.6 ms meets 2000.0 ms; TPOT mean 3.1 ms meets 30.0 ms
+  2 prefill + 2 decode  holds: 20.00 r/s within 0.85 x the fleet knee 38.14 r/s = 32.42 r/s; TTFT p90 673.5 ms meets 2000.0 ms; TPOT mean 3.3 ms meets 30.0 ms
+  1 prefill + 3 decode  does not hold: 20.00 r/s within 0.85 x the fleet knee 25.00 r/s = 21.25 r/s; TTFT p90 1284.3 ms is within 2000.0 ms but misses: the rate is above the prefill flow-control onset, where the router queues; TPOT mean 3.1 ms meets 30.0 ms
+assumed: V_P 200000 tok/s (--assume-vp); a 20ms (--assume-a); prompt cv 2 (no computed-prompt histogram); router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow-control thresholds 5 and 0.8 (upstream defaults); Poisson arrivals
+flags: UnvalidatedTTFT; AssumedVP; AssumedPromptSpread; ExtrapolatedFill; RouterHopAssumed; SpreadBeyondProcessorSharing; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; AssumedA; PromptSpreadAbovePeak; CoarseTPOTBucket; AboveFlowControlOnset
+
+not validated:
+  - decode knee: not validated; it read 44% to 103% high on the goldens (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
+  - TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.
+  - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile
