@@ -279,9 +279,10 @@ What does not work, or is not shown yet:
   rely on Kueue lending a donor's idle floor through the cohort, so
   `lendingLimit: 0` stops them. The optimizer itself starts no borrowing
   beyond the budget.
-- **Evidence.** Sharing across namespaces has been run several times on GPU
-  clusters, including a user's own run; not yet enough runs to call it
-  production-ready.
+- **Measurement.** A cluster-wide Kueue quota has not been measured yet.
+  Sharing across namespaces has been run several times on GPU clusters, but
+  taking that budget from a Kueue ClusterQueue has not been measured on its
+  own.
 
 [recipe]: https://github.com/llm-d/llm-d/blob/fbc9d5c78bb25d9410f9587bc7e55ddc3db5ad03/guides/workload-autoscaling/kueue-rebalancing/README.md
 [cqs]: https://github.com/llm-d/llm-d/blob/fbc9d5c78bb25d9410f9587bc7e55ddc3db5ad03/guides/workload-autoscaling/kueue-rebalancing/optimized-baseline/base/clusterqueues.yaml
