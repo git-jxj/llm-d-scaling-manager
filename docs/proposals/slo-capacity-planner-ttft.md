@@ -601,7 +601,8 @@ roles' rates.
   these.
 - **Refusals**: `NoPrefillCapacity`, `NoFixedLatency`, `NoImbalance` (more
   than one pod with no `f`; `f` = 1 is never assumed silently),
-  `NoPrefillReplicas`, `FlowControlUnknown` and `AboveDecodeOnset`, plus
+  `NoPrefillReplicas`, `FlowControlUnknown`, `AboveDecodeOnset` and
+  `DecodeTTFTUnderLoad` (a decode engine TTFT read while decode queued), plus
   `Saturated` at the prefill knee, and `NoTraffic`, `TargetBelowFloor` and
   `InvalidInput` as on decode.
 - **Flags**: `UnvalidatedTTFT` (always), `AssumedVP`, `VPLowerBound`,

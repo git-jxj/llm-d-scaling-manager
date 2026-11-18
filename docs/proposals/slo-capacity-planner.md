@@ -811,6 +811,7 @@ Every answer is an `Answer{Value, Band, Basis, Flags}` or an
 | `TargetBelowFloor` | The target is below what any number of replicas reaches |
 | `FlowControlUnknown` | Flow control on and the detector's thresholds unknown |
 | `AboveDecodeOnset` | A TTFT asked at or above the decode gate's onset with flow control on, where the gate is not work conserving and TTFT is not priced |
+| `DecodeTTFTUnderLoad` | No decode line, and the decode engine's TTFT that stands for it was read while requests waited on decode capacity, or within 90 s after (the TTFT is a one-minute mean, so it lags the queue): held at every rate, that queue would be the floor at zero load. The detail names the latest calm cycle in the source's own terms (`--cycle` or `--to` on the CLI, `source.cycle` or `source.to` in the API), and the CLI's JSON carries it as `decodeTTFTCalmCycle` from a recording, `decodeTTFTCalmAt` from a Prometheus window. A calm cycle reads a decode TTFT itself. Without vLLM's capacity series no backlog is read: the answer is flagged `DecodeQueueUnread`, and nothing is refused |
 | `Saturated` | Question 2's operating rate (`--rate`) or the decode admission chain at or above the knee, where no fill or admission wait exists; both saturate at the same rate. A TTFT at or above the prefill knee too |
 | `NoDecodeReplicas` | No decode replica read from the fleet |
 | `MalformedHistogram` | A TPOT histogram whose data cannot be read: a NaN, non-positive or falling edge, a negative or non-finite count, observations with no sum. Counts that dip, as `rate()` leaves them, are made monotone, not refused |
@@ -1581,6 +1582,8 @@ roles[].ttft.decodeHeldPromptTokens number
 roles[].ttft.decodePerStep number
 roles[].ttft.decodePerTokenSeconds number
 roles[].ttft.decodeSide string
+roles[].ttft.decodeTTFTCalmAt string
+roles[].ttft.decodeTTFTCalmCycle number
 roles[].ttft.decodeTTFTPromptTokens number
 roles[].ttft.decodeTTFTSeconds number
 roles[].ttft.decodeTermRefused string

@@ -41,11 +41,16 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
-	decode                                   int
-	batchCap                                 int64
-	inputTokens, outputTokens                float64
-	headroom, tpotRatio                      float64
-	seed                                     uint64
+	// hint, when hintSet, is the words a refusal names a calm cycle in, set
+	// by a caller that prices for another source (the server, the report);
+	// else they follow the CLI's own source (hintSource).
+	hint                      hintSource
+	hintSet                   bool
+	decode                    int
+	batchCap                  int64
+	inputTokens, outputTokens float64
+	headroom, tpotRatio       float64
+	seed                      uint64
 	// ttft, ttftPercentile, assumeVP, assumePromptCV, arrivalCV2, prefill and
 	// prefillVariant are the TTFT half's flags (ttft.go); inputBucket only
 	// refuses per-bucket answers.
@@ -324,6 +329,18 @@ func (f *answerFlags) sourceLine(st *learnreplay.State) string {
 // prometheus reports whether the flags ask to answer from Prometheus
 // rather than from a recording.
 func (f *answerFlags) prometheus() bool { return f.window.prometheus != "" }
+
+// hintSource is the words a calm cycle is named in: the caller's, when set,
+// else the CLI's flag for the source it read.
+func (f *answerFlags) hintSource() hintSource {
+	switch {
+	case f.hintSet:
+		return f.hint
+	case f.prometheus():
+		return hintCLIPrometheus
+	}
+	return hintCLIRecording
+}
 
 // pricedVariant is one decode variant as a question prices it: the state
 // read from the recording, the Decode built from it, and the flags every
