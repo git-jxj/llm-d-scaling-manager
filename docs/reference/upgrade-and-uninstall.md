@@ -129,7 +129,7 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
-### Upgrading from v0.11.x to v0.12.0
+### Upgrading from v0.11.2 to v0.12.0
 
 #### The weights labeller
 
@@ -155,6 +155,101 @@ Only if you keep model weights on the nodes' disks (`smt weights apply`).
   ```bash
   kubectl get configmap weights-labeller-status -n scaling-manager-weights-labeller -o yaml
   ```
+
+#### Learned state after the vLLM-version change
+
+The scaling manager now reads which vLLM release each variant runs, and fills
+the flags an engine leaves unset with that release's defaults (see
+[vLLM versions](vllm-versions.md)).
+
+**Most variants keep their learned state.** A variant whose resolved values did
+not change restores as its own: one that passes the sizing flags, and an
+unknown image on an H100 or H200, for example.
+
+**These variants relearn**, each because a flag it leaves unset now resolves
+to a different value:
+
+- any engine on an A100 or on a GPU below 70 GiB without
+  `--max-num-batched-tokens`: 8192 becomes 2048. This includes private,
+  unknown and simulator images, since the rule is the same in every vLLM
+  release. This one also changes its estimate;
+- a `vllm-openai` tag v0.28 or later on a GPU of 160 GiB or more without
+  `--max-num-batched-tokens`: 8192 becomes 16384;
+- a wide-EP engine (expert parallel, DP above 1, `--all2all-backend`
+  `deepep_low_latency` or `nixl_ep`) without `--max-num-batched-tokens`: 256;
+- a `vllm-openai` tag v0.20 or later without `--gpu-memory-utilization`
+  (0.9 becomes 0.92), and a v0.34 tag without it (1.0) or without
+  `--block-size` (64).
+
+What you see for those:
+
+- **On the first restart, the restore logs "the variant's engine arguments,
+  or the vLLM defaults they resolve to, changed".** Their arguments did not
+  change on the cluster.
+- **They may run more replicas than before for up to about six and a half
+  hours.** The old k2 is kept as a lower-only previous figure (`P2-prior` in
+  the k2-decision log). Where it is below what the new arguments derive, the
+  variant is priced at the old figure: held 30 minutes, then relaxed over 6
+  hours of serving, or replaced once the variant saturates twice under the new
+  arguments. That is the safe direction, but it costs replicas.
+- **Their latency, SLO and throughput windows start again**, and their
+  `llmsm_engine_config` series get new label values.
+- **Nothing to do.** To keep a figure from changing, pass the flag on the
+  engine with the value you want.
+
+#### Supply counts only replicas an InferencePool selects
+
+The router sends traffic only to Pods its InferencePool selects. From v0.12.0
+the scaling manager counts only those Pods as supply. In a model that a pool
+selects:
+
+- a Pod no pool selects (a relabelled replica) is no longer counted;
+- a variant no pool selects, by its pod template or its running Pods, is
+  **held**: it is not counted, and nothing scales it, up or down, including
+  scale-to-zero, scale from zero, utilization-share plans and Kueue lender
+  releases. It keeps the replica count it had. A model whose routed variant
+  is parked at zero is still routed, so the parked variant is the one that
+  wakes.
+
+**A canary or role served outside the pool stops autoscaling.** If you route
+traffic to a variant some other way (an HTTPRoute to a plain Service), it is
+now held at its replica count.
+
+Before you upgrade, check that every variant you want scaled is selected by a
+pool. List the pools' selectors, in the API group your pools use:
+
+```bash
+# inference.networking.k8s.io (v1): the selector is under matchLabels
+kubectl get inferencepools.inference.networking.k8s.io -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.selector.matchLabels
+# inference.networking.x-k8s.io (v1alpha2): the selector is a flat map
+kubectl get inferencepools.inference.networking.x-k8s.io -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.selector
+```
+
+Compare them with each workload's pod template labels:
+
+```bash
+kubectl get deployments -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,LABELS:.spec.template.metadata.labels
+# only if LeaderWorkerSet is installed
+kubectl get leaderworkersets -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,LABELS:.spec.leaderWorkerTemplate.leaderTemplate.metadata.labels
+```
+
+A Pod relabelled after it started can differ from its template. List the
+running Pods' labels with `kubectl get pods -n <namespace> --show-labels`.
+
+After the upgrade, a held variant has a `HeldNotInInferencePool` Warning
+Event, and `llmsm_unrouted_replicas` is non-zero for it.
+
+To release a held variant, add labels to its pod template that a pool
+selects, or create a pool that selects it.
+
+To keep the counting from before v0.12.0 for every model, set
+`LLMSM_POOL_SELECTED_SUPPLY=false` on the controller, or
+`LLMSM_POOL_SELECTED_SUPPLY: "false"` in the settings ConfigMap, and restart
+the controller ([configuration](configuration-advanced.md)).
 
 ### Upgrading from v0.11.1 to v0.11.2
 

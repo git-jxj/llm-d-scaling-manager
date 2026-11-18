@@ -1,0 +1,135 @@
+name: Upstream versions
+
+# Once a month, compares the upstream components we pin (llm-d-router, FMA,
+# vLLM, KEDA, ... -- hack/upstream-pins.yaml lists them and where each pin
+# lives) with their latest stable GitHub release.
+#
+# One issue, found by its label, carries the report: opened the first time
+# something is behind, its body replaced on every later run, and closed by the
+# first run that finds everything current. A run that could not check a
+# component (an API error, or a pin the inventory no longer finds) updates the
+# issue but never closes it, and the job fails: an unanswered question is not
+# a current pin. A pin held on purpose (`hold` in the inventory) does not keep
+# the issue open until its review date passes.
+#
+# docs/developer-guide/upstream-dependencies.md says what to do with the issue.
+# hack/check-upstream-versions.sh, run by `make lint-deploy-scripts`, runs the
+# issue step below against a stubbed gh and holds this file to its permissions
+# and pinned actions.
+on:
+  schedule:
+    # 06:17 UTC on the 1st of every month.
+    - cron: '17 6 1 * *'
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-versions
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  upstream-versions:
+    # A fork runs it only when someone asks; its schedule would open issues in
+    # the fork about our pins.
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'llm-d-incubation/llm-d-scaling-manager'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # The inventory is YAML and yq is not preinstalled on ubuntu-latest.
+      # Same pin and checksum as ci-pr-checks.yaml.
+      - name: Install yq
+        env:
+          YQ_VERSION: v4.54.1
+          YQ_SHA256: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
+        run: |
+          set -euo pipefail
+          curl -fsSL --connect-timeout 10 --max-time 60 --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+          yq --version
+
+      # Exit 0: all current. 1: something behind or pins disagree. 2: a
+      # component could not be checked. Anything else is the script failing,
+      # and fails the step before the issue is touched.
+      - name: Compare our pins with upstream releases
+        id: report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPORT_FILE: ${{ runner.temp }}/upstream-versions.md
+        run: |
+          set +e
+          bash hack/upstream-versions.sh --check >"$REPORT_FILE"
+          status=$?
+          set -e
+          cat "$REPORT_FILE" >>"$GITHUB_STEP_SUMMARY"
+          echo "status=$status" >>"$GITHUB_OUTPUT"
+          if [ "$status" -gt 2 ]; then
+            echo "::error::hack/upstream-versions.sh failed with exit $status"
+            exit "$status"
+          fi
+
+      - name: Open, update or close the tracking issue
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.report.outputs.status }}
+          REPORT_FILE: ${{ runner.temp }}/upstream-versions.md
+          ISSUE_LABEL: upstream-versions
+          ISSUE_TITLE: Upstream components behind our pins
+        run: |
+          set -euo pipefail
+          case "$STATUS" in
+            0|1|2) ;;
+            *) echo "::error::unexpected report status: $STATUS"; exit 1 ;;
+          esac
+          if [ "$STATUS" != 0 ] && [ ! -s "$REPORT_FILE" ]; then
+            echo "::error::the report is empty; refusing to write it to the issue"
+            exit 1
+          fi
+          # A failed list fails the step: it must not read as "no issue open".
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$ISSUE_LABEL" \
+            --state open --limit 1 --json number --jq '.[0].number // empty')"
+          today="$(date -u +%Y-%m-%d)"
+          if [ "$STATUS" = 0 ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
+                --comment "Every pinned upstream component is current, or held on purpose, as of $today."
+              echo "closed #$number"
+            else
+              echo "every pin is current; no issue open"
+            fi
+            exit 0
+          fi
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file "$REPORT_FILE"
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" \
+              --body "Report refreshed on $today by the monthly upstream versions check."
+            echo "updated #$number"
+          else
+            # The label may not exist yet, and the create below needs it.
+            # "already exists" is the only failure tolerated.
+            if ! out="$(gh label create "$ISSUE_LABEL" --repo "$GITHUB_REPOSITORY" --color ededed \
+                --description "Monthly report of upstream components behind our pins" 2>&1)"; then
+              case "$out" in
+                *"already exists"*) ;;
+                *) echo "::error::cannot create label $ISSUE_LABEL: $out"; exit 1 ;;
+              esac
+            fi
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
+              --label "$ISSUE_LABEL" --body-file "$REPORT_FILE"
+          fi
+
+      - name: Fail when a component could not be checked
+        if: steps.report.outputs.status == '2'
+        run: |
+          echo "::error::some components could not be checked; see the report in the job summary"
+          exit 1

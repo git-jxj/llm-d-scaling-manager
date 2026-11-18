@@ -21,13 +21,20 @@ import (
 // commit as any change to the field list, and treat "every fingerprint starts
 // cold once" as the expected cost.
 //
-// AND IT COVERS MORE THAN THE FIELD LIST. Changing how a hashed value is
-// DERIVED changes every digest just as surely as adding a field. The rule is
-// that the version tracks the field list and the values' derivation together.
-// It matters more now than when version 2 was cut: the learned-state snapshot
-// stores a digest per variant across a restart, so a change that moves
-// digests without a bump makes a restart reject what it should have
-// restored, with nothing to say why.
+// THE RULE, PRECISELY: bump when the same resolved values would hash
+// differently -- a field added, removed, renamed or reordered, or a value
+// rendered differently (canonicalFloat, a join). Do NOT bump when only the
+// derivation of a value changes, such as which default an unset flag resolves
+// to. The resolved value is what is hashed, so a variant whose value moved
+// gets a new digest by itself and restores as after a change of arguments,
+// and a variant whose value did not move is the same engine and keeps its
+// digest and its learned state. A bump there would turn every variant into a
+// lower-only prior at the first restart, for no difference in any engine.
+//
+// The vLLM-version defaults (vllm_version.go) are such a derivation change:
+// version 4 stays, and only the variants whose resolved memory share, block
+// size or step budget moved relearn (docs/reference/upgrade-and-uninstall.md).
+// TestVLLMDefaultsMoveOnlyTheVariantsTheyChange pins that.
 //
 // Version 2 adds the unresolved-flag set. Measured on a cluster: an
 // llm-d/llmdbench Deployment passes `--block-size $VLLM_BLOCK_SIZE`, the

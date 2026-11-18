@@ -62,6 +62,7 @@
 394
 3s
 4
+40g
 5
 50
 5m
@@ -192,6 +193,7 @@ ImagePullBackOff
 ImbalanceNotSustained
 Inf
 InferencePool
+InferencePools
 Inferencepool
 Intel
 Invalid
@@ -220,6 +222,7 @@ LEARNED_STATE_VARIANT_TIMEOUT
 LLMSM_LIMITED_MODE
 LLMSM_LIMITER
 LLMSM_PASSIVE
+LLMSM_POOL_SELECTED_SUPPLY
 LLMSM_QUOTAS
 LLMSM_QUOTA_KUEUE
 LLMSM_QUOTA_KUEUE_BORROW
@@ -314,6 +317,7 @@ P2-prior
 P3-k2
 P4-k1
 POD_NAMESPACE
+POOL_GROUP
 PR
 PROMETHEUS_ALLOW_HTTP
 PROMETHEUS_BASE_URL
@@ -423,6 +427,7 @@ Thanos
 The
 This
 TierUnstable
+To
 TokenGapPercentile
 TooFewDecodeMinutes
 TooFewHopWindows
@@ -478,6 +483,10 @@ a
 a-zA-Z0-9_
 a0
 a0Samples
+a10
+a100
+a40
+a800
 aClusters
 aCurve
 aExtrapolated
@@ -618,6 +627,9 @@ avgOutputTokens
 awaiting-in-flight
 awaiting-return
 b
+b100
+b200
+b300
 back
 back-pressure-bound
 backlog
@@ -864,6 +876,7 @@ counter
 counting
 counts
 covers
+create
 creation
 crept
 critical
@@ -887,6 +900,7 @@ datastore
 days
 debug
 decay
+decide
 decided
 decides
 decimal
@@ -921,6 +935,7 @@ decodeTTFTPrompt
 decodeTermRefused
 decodeVariant
 deduced
+deepep_low_latency
 deeper
 default
 defaultPolicy
@@ -953,6 +968,7 @@ derivedOK
 derivedRate
 desiredReplicas
 detected
+device_memory_utilization
 did
 differ
 differences
@@ -1038,9 +1054,11 @@ empty
 enable
 enable_chunked_prefill
 enable_dp_attention
+enable_elastic_ep
 enable_ep_moe
 enable_eplb
 enable_expert_parallel
+enable_extensible_kv_cache
 enable_hierarchical_cache
 enable_prefix_caching
 enabled
@@ -1101,6 +1119,7 @@ exceeds
 exclude
 excluded
 exclusive
+exist
 exists
 expect
 expected
@@ -1217,12 +1236,16 @@ gap
 gaps
 gate
 gates
+gb10
+gb200
+gb300
 generated
 generatingMark
 generatingMarkAt
 generationTokenRate
 get
 gets
+gh200
 givableGPUs
 give
 given
@@ -1263,6 +1286,10 @@ growth
 growthCapped
 guaranteed
 guaranteedGPUs
+h100
+h20
+h200
+h800
 had
 hadShape
 haircut-held
@@ -1354,6 +1381,7 @@ inf
 inference
 inference_extension_flow_control_queue_size
 inferencepool
+inferencepools
 inferred
 infers
 info
@@ -1497,6 +1525,7 @@ keep
 keeping
 keeps
 kept
+keptFor
 keptTokens
 key
 keyOutputTokens
@@ -1559,6 +1588,9 @@ kv_offloading_size
 kv_transfer_config
 kv_transfer_config.kv_connector
 kv_utilization_out_of_range
+l20
+l4
+l40
 label
 label_
 labels
@@ -1569,6 +1601,7 @@ large
 larger
 last
 lastAccelerator
+lastKnown
 later
 latest
 launcher
@@ -1736,6 +1769,11 @@ metrics-cert-name
 metrics-cert-path
 metrics-secure
 metricsCount
+mi300a
+mi300x
+mi308x
+mi325
+mi355
 mid-rollout
 mid-run
 milliseconds
@@ -1777,6 +1815,7 @@ most
 mount
 move
 moved
+moves
 ms
 mu
 mu-exact-repeat-is-use
@@ -1860,6 +1899,7 @@ newest
 newestGroup
 next
 nil
+nixl_ep
 no
 no-capacity
 no-change
@@ -1896,6 +1936,7 @@ noScaleUp
 no_enable_chunked_prefill
 no_enable_eplb
 no_enable_expert_parallel
+no_enable_extensible_kv_cache
 no_enable_prefix_caching
 no_enforce_eager
 no_replicas
@@ -2310,6 +2351,7 @@ rejoined
 relaxed
 release
 release-taken
+releaseTo
 releaseToNonReclaimingLenders
 released
 released-to-lender
@@ -2425,8 +2467,10 @@ room
 rose
 round
 routed
+routedVariants
 router
 routerMeasured
+routing
 row
 rows
 rows-instant-kv
@@ -2538,6 +2582,7 @@ selected
 selector
 selectors
 selects
+sends
 seq
 seqs
 sequence
@@ -2790,6 +2835,7 @@ swingWindow
 switch
 system
 t
+t4
 tail
 take
 taken
@@ -2934,6 +2980,7 @@ ttft.target
 ttftExcluded
 ttftRefused
 turn
+turns
 twice
 two
 type
@@ -2966,6 +3013,8 @@ unreadAt
 unreadReplicas
 unreadable
 unresolved
+unrouted
+unroutedReady
 unservable
 unsigned
 unsizable
@@ -3007,6 +3056,8 @@ utilizationShare.stabilization.swingReversals
 utilizationShare.tolerance
 utilizationShare.weightClasses
 v
+v100
+vLLM
 va
 valid
 validated
@@ -3025,12 +3076,16 @@ variantTimeout
 variants
 vcs.revision
 vendor
+verdict
+verdicts
 verified
 version
 versions
 via
 victim
 vllm
+vllm-openai
+vllm-openai-rocm
 vllm.entrypoints
 vllm/vllm-openai
 vllm:cache_config_info

@@ -81,6 +81,14 @@ var fingerprintExcluded = []string{
 	// variant at zero replicas runs. Compared for capacity instead, and
 	// hashing it would move every stored digest.
 	"DataParallelSizeLocal",
+	// Not hashed: the vLLM release, and where the memory share and block
+	// size came from. They count only through the GpuMemoryUtilization,
+	// BlockSize and EffectiveMaxBatchedTokens they resolve, which are
+	// hashed; the same value from a flag or a default is the same engine.
+	"VLLMVersion",
+	"GpuMemoryUtilizationSet",
+	"BlockSizeSet",
+	"ExtensibleKVCache",
 }
 
 func TestFingerprintCoversEveryEngineParamsField(t *testing.T) {
@@ -224,6 +232,14 @@ func TestFingerprintIgnoresTheResolvedInputs(t *testing.T) {
 			p.DeclaredBatchCap = 128
 		case "DataParallelSizeLocal":
 			p.DataParallelSizeLocal = 8
+		case "VLLMVersion":
+			p.VLLMVersion = VLLMVersion{Major: 0, Minor: 34}
+		case "GpuMemoryUtilizationSet":
+			p.GpuMemoryUtilizationSet = !p.GpuMemoryUtilizationSet
+		case "BlockSizeSet":
+			p.BlockSizeSet = !p.BlockSizeSet
+		case "ExtensibleKVCache":
+			p.ExtensibleKVCache = 1
 		default:
 			t.Fatalf("no case for excluded field %s", name)
 		}
