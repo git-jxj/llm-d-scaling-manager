@@ -194,6 +194,7 @@ ImagePullBackOff
 ImbalanceNotSustained
 Inf
 InferencePool
+InferencePools
 Inferencepool
 Intel
 Invalid
@@ -222,6 +223,7 @@ LEARNED_STATE_VARIANT_TIMEOUT
 LLMSM_LIMITED_MODE
 LLMSM_LIMITER
 LLMSM_PASSIVE
+LLMSM_POOL_SELECTED_SUPPLY
 LLMSM_QUOTAS
 LLMSM_QUOTA_KUEUE
 LLMSM_QUOTA_KUEUE_BORROW
@@ -317,6 +319,7 @@ P2-prior
 P3-k2
 P4-k1
 POD_NAMESPACE
+POOL_GROUP
 PR
 PROMETHEUS_ALLOW_HTTP
 PROMETHEUS_BASE_URL
@@ -426,6 +429,7 @@ Thanos
 The
 This
 TierUnstable
+To
 TokenGapPercentile
 TooFewDecodeMinutes
 TooFewHopWindows
@@ -874,6 +878,7 @@ counter
 counting
 counts
 covers
+create
 creation
 crept
 critical
@@ -897,6 +902,7 @@ datastore
 days
 debug
 decay
+decide
 decided
 decides
 decimal
@@ -1115,6 +1121,7 @@ exceeds
 exclude
 excluded
 exclusive
+exist
 exists
 expect
 expected
@@ -1377,6 +1384,7 @@ inf
 inference
 inference_extension_flow_control_queue_size
 inferencepool
+inferencepools
 inferred
 infers
 info
@@ -1520,6 +1528,7 @@ keep
 keeping
 keeps
 kept
+keptFor
 keptTokens
 key
 keyOutputTokens
@@ -1595,6 +1604,7 @@ large
 larger
 last
 lastAccelerator
+lastKnown
 later
 latest
 launcher
@@ -1808,6 +1818,7 @@ most
 mount
 move
 moved
+moves
 ms
 mu
 mu-exact-repeat-is-use
@@ -2343,6 +2354,7 @@ rejoined
 relaxed
 release
 release-taken
+releaseTo
 releaseToNonReclaimingLenders
 released
 released-to-lender
@@ -2458,8 +2470,10 @@ room
 rose
 round
 routed
+routedVariants
 router
 routerMeasured
+routing
 row
 rows
 rows-instant-kv
@@ -2571,6 +2585,7 @@ selected
 selector
 selectors
 selects
+sends
 seq
 seqs
 sequence
@@ -2969,6 +2984,7 @@ ttft.target
 ttftExcluded
 ttftRefused
 turn
+turns
 twice
 two
 type
@@ -3001,6 +3017,8 @@ unreadAt
 unreadReplicas
 unreadable
 unresolved
+unrouted
+unroutedReady
 unservable
 unsigned
 unsizable
@@ -3062,6 +3080,8 @@ variantTimeout
 variants
 vcs.revision
 vendor
+verdict
+verdicts
 verified
 version
 versions

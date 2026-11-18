@@ -459,7 +459,7 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 		if err != nil {
 			return nil, err
 		}
-		val, _, err := api.Query(ctx, q, at)
+		val, _, _, err := api.Query(ctx, q, at)
 		if err != nil {
 			return nil, err
 		}

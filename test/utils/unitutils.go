@@ -221,7 +221,7 @@ type MockPromAPI struct {
 	mu              sync.RWMutex
 }
 
-func (m *MockPromAPI) Query(ctx context.Context, query string, ts time.Time, opts ...promv1.Option) (model.Value, promv1.Warnings, error) {
+func (m *MockPromAPI) Query(ctx context.Context, query string, ts time.Time, opts ...promv1.Option) (model.Value, promv1.Warnings, promv1.Infos, error) {
 	m.mu.Lock()
 	// Initialize call count if not exists
 	if m.QueryCallCounts == nil {
@@ -260,15 +260,15 @@ func (m *MockPromAPI) Query(ctx context.Context, query string, ts time.Time, opt
 	m.mu.Unlock()
 
 	if shouldFail {
-		return nil, nil, fmt.Errorf("transient error (attempt %d/%d)", callCount, failCount+1)
+		return nil, nil, nil, fmt.Errorf("transient error (attempt %d/%d)", callCount, failCount+1)
 	}
 
 	if permErr != nil {
-		return nil, nil, permErr
+		return nil, nil, nil, permErr
 	}
 
 	if hasResult {
-		return result, nil, nil
+		return result, nil, nil, nil
 	}
 
 	// Default return vector with one sample (to pass metrics validation)
@@ -279,11 +279,11 @@ func (m *MockPromAPI) Query(ctx context.Context, query string, ts time.Time, opt
 			Value:     0,
 			Timestamp: model.TimeFromUnix(ts.Unix()),
 		},
-	}, nil, nil
+	}, nil, nil, nil
 }
 
-func (m *MockPromAPI) QueryRange(ctx context.Context, query string, r promv1.Range, opts ...promv1.Option) (model.Value, promv1.Warnings, error) {
-	return nil, nil, nil
+func (m *MockPromAPI) QueryRange(ctx context.Context, query string, r promv1.Range, opts ...promv1.Option) (model.Value, promv1.Warnings, promv1.Infos, error) {
+	return nil, nil, nil, nil
 }
 
 func (m *MockPromAPI) QueryExemplars(ctx context.Context, query string, startTime, endTime time.Time) ([]promv1.ExemplarQueryResult, error) {
@@ -302,16 +302,16 @@ func (m *MockPromAPI) Flags(ctx context.Context) (promv1.FlagsResult, error) {
 	return promv1.FlagsResult{}, nil
 }
 
-func (m *MockPromAPI) LabelNames(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...promv1.Option) (model.LabelNames, promv1.Warnings, error) {
-	return nil, nil, nil
+func (m *MockPromAPI) LabelNames(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...promv1.Option) (model.LabelNames, promv1.Warnings, promv1.Infos, error) {
+	return nil, nil, nil, nil
 }
 
-func (m *MockPromAPI) LabelValues(ctx context.Context, label string, matches []string, startTime, endTime time.Time, opts ...promv1.Option) (model.LabelValues, promv1.Warnings, error) {
-	return nil, nil, nil
+func (m *MockPromAPI) LabelValues(ctx context.Context, label string, matches []string, startTime, endTime time.Time, opts ...promv1.Option) (model.LabelValues, promv1.Warnings, promv1.Infos, error) {
+	return nil, nil, nil, nil
 }
 
-func (m *MockPromAPI) Series(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...promv1.Option) ([]model.LabelSet, promv1.Warnings, error) {
-	return nil, nil, nil
+func (m *MockPromAPI) Series(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...promv1.Option) ([]model.LabelSet, promv1.Warnings, promv1.Infos, error) {
+	return nil, nil, nil, nil
 }
 
 func (m *MockPromAPI) GetValue(ctx context.Context, timestamp time.Time, opts ...promv1.Option) (model.Value, promv1.Warnings, error) {
