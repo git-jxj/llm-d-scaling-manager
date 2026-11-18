@@ -33,6 +33,9 @@ SMT_PREFLIGHT_JOB=scaling-manager-preflight
 # On the preflight Job with --allow-http: the controller is applied with
 # PROMETHEUS_TOKEN_PATH empty (internal/preflight TokenPathEmptiedEnv).
 SMT_TOKEN_EMPTIED_ENV=LLMSM_PREFLIGHT_TOKEN_PATH_EMPTIED
+# On the preflight Job: the namespaces the controller is about to manage
+# (internal/preflight WatchNamespaceEnv), when they differ from the live ones.
+SMT_PREFLIGHT_WATCH_ENV=LLMSM_PREFLIGHT_WATCH_NAMESPACE
 SMT_CLUSTER_NS=scaling-manager-system
 SMT_THANOS_URL=https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
 # The checks the preflight cannot make before the controller runs: UNKNOWN in
@@ -626,6 +629,29 @@ smt_render_watch() {
         "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot set $SMT_WATCH_ENV in $SMT_MAIN"
     n="$(D="$SMT_DEPLOY" E="$SMT_WATCH_ENV" yq ea '[select(.kind == "Deployment" and .metadata.name == strenv(D)) | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == strenv(E)) | .value] | .[]' "$SMT_DIR/$SMT_MAIN")"
     [ "$n" = "$(smt_model_list)" ] || smt_exit 2 "$SMT_MAIN: the controller has no $SMT_WATCH_ENV to set the model namespaces on"
+}
+
+# smt_render_preflight_watch: the preflight Job checks the namespaces this
+# install applies (SMT_PREFLIGHT_WATCH_ENV), not those of the live
+# Deployment, when there is a list or the live one names others: after an
+# admin shrank the list, the live Deployment still names a namespace the
+# controller may no longer read, and the install that drops it must not be
+# stopped by it. A single-namespace install over the same is left as it was.
+smt_render_preflight_watch() {
+    local want live=""
+    want="$(smt_model_list)"
+    [ -n "$want" ] || want="$SMT_NS"
+    if [ "$SMT_DRY_RUN" != true ] && smt_get deployment "$SMT_DEPLOY" -n "$SMT_NS"; then
+        live="$(printf '%s' "$KC_OUT" | jq -r --arg e "$SMT_WATCH_ENV" \
+            '[.spec.template.spec.containers[]? | select(.name == "manager") | .env[]? | select(.name == $e) | .value // ""][0] // ""')"
+    fi
+    [ "$live" != '$(POD_NAMESPACE)' ] || live="$SMT_NS"
+    if [ ${#SMT_MODEL_NS[@]} -eq 0 ] && { [ -z "$live" ] || [ "$live" = "$want" ]; }; then
+        return 0
+    fi
+    J="$SMT_PREFLIGHT_JOB" E="$SMT_PREFLIGHT_WATCH_ENV" W="$want" yq -i \
+        '(select(.kind == "Job" and .metadata.name == strenv(J)) | .spec.template.spec.containers[] | select(.name == "preflight") | .env) += [{"name": strenv(E), "value": strenv(W)}]' \
+        "$SMT_DIR/$SMT_PREFLIGHT" || smt_exit 2 "cannot set $SMT_PREFLIGHT_WATCH_ENV in $SMT_PREFLIGHT"
 }
 
 # smt_preflight_reads_file <model namespace>: the reads of pods by the preflight
@@ -1471,7 +1497,7 @@ smt_install() {
     if [ "$SMT_DRY_RUN" = true ]; then
         [ "$SMT_SCOPE" = namespace ] || smt_resolve_keda_ns install
         smt_render
-        [ "$SMT_SCOPE" = cluster ] || smt_render_watch
+        [ "$SMT_SCOPE" = cluster ] || { smt_render_watch; smt_render_preflight_watch; }
         smt_dry_begin
         if [ "$SMT_SCOPE" = cluster ]; then
             jq -n --arg n "$SMT_NS" '{apiVersion: "v1", kind: "Namespace", metadata: {name: $n}}' | yq -P > "$SMT_OUT/05-namespace.yaml"
@@ -1495,6 +1521,7 @@ smt_install() {
     smt_require_namespace
     smt_check_stamp
     smt_render_watch
+    smt_render_preflight_watch
     [ ${#SMT_MODEL_NS[@]} -eq 0 ] || echo "Manages $(smt_model_list | sed 's/,/, /g') (ConfigMap $SMT_STAMP); runs in $SMT_NS."
     smt_check_adoptable
     smt_settings_preconditions

@@ -601,6 +601,7 @@ grants() { # grants <ns>: the objects admin-setup wrote there for ctl, sorted
 stamp_models() { obj configmap ctl scaling-manager-admin-setup | jq -r '.data.modelNamespaces // "(none)"'; }
 reader_names() { obj clusterrole _ scaling-manager-policy-namespace-reader-role-ctl | jq -r '[.rules[] | select(.resources[0] == "namespaces") | .resourceNames[]] | sort | join(",")'; }
 watch_env() { obj deployment ctl scaling-manager-controller-manager | jq -r '.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "LLMSM_WATCH_NAMESPACE") | .value'; }
+job_watch() { obj job "${1:-ctl}" scaling-manager-preflight | jq -r '[.spec.template.spec.containers[] | select(.name == "preflight") | .env[]? | select(.name == "LLMSM_PREFLIGHT_WATCH_NAMESPACE") | .value][0] // ""'; }
 want_grants="podmonitor/scaling-manager-modelserver-metrics role/scaling-manager-manager-role-ctl role/scaling-manager-preflight-ctl rolebinding/scaling-manager-manager-rolebinding-ctl rolebinding/scaling-manager-preflight-ctl"
 
 smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace ctl
@@ -717,7 +718,7 @@ else
 fi
 smt install -n ctl --prometheus-url https://p:9090
 rc=$?
-if [ "$rc" = 0 ] && [ "$(watch_env)" = m1 ]; then ok "install after the list shrank sets LLMSM_WATCH_NAMESPACE to m1"; else bad "install after shrink: exit $rc, '$(watch_env)'"; fi
+if [ "$rc" = 0 ] && [ "$(watch_env)" = m1 ] && [ "$(job_watch)" = m1 ]; then ok "install after the list shrank sets LLMSM_WATCH_NAMESPACE to m1, and its preflight checks m1, not the list of the live Deployment"; else bad "install after shrink: exit $rc, '$(watch_env)', preflight '$(job_watch)'"; fi
 smt admin-finish -n ctl --model-namespace m1; expect_rc "admin-finish takes no --model-namespace" 2 $?
 
 rm -rf "$W/drym"
@@ -750,7 +751,7 @@ else
 fi
 smt install -n ctl --prometheus-url https://p:9090
 rc=$?
-if [ "$rc" = 0 ] && [ "$(watch_env)" = '$(POD_NAMESPACE)' ]; then ok "install after --single-namespace manages its own namespace again"; else bad "install after --single-namespace: exit $rc, '$(watch_env)'"; fi
+if [ "$rc" = 0 ] && [ "$(watch_env)" = '$(POD_NAMESPACE)' ] && [ "$(job_watch)" = ctl ]; then ok "install after --single-namespace manages its own namespace again, and its preflight checks ctl alone"; else bad "install after --single-namespace: exit $rc, '$(watch_env)', preflight '$(job_watch)'"; fi
 
 
 # The default single-namespace install is the one it was: no list in the
@@ -763,7 +764,7 @@ smt install -n team-a --prometheus-url https://p:9090
 rc2=$?
 w="$(obj deployment team-a scaling-manager-controller-manager | jq -r '.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "LLMSM_WATCH_NAMESPACE") | .value')"
 if [ "$rc1" = 0 ] && [ "$rc2" = 0 ] && [ "$(obj configmap team-a scaling-manager-admin-setup | jq -r '.data | has("modelNamespaces")')" = false ] \
-    && [ "$deletes" = 0 ] && [ "$w" = '$(POD_NAMESPACE)' ] && has_obj role team-a scaling-manager-manager-role-team-a; then
+    && [ "$deletes" = 0 ] && [ "$w" = '$(POD_NAMESPACE)' ] && has_obj role team-a scaling-manager-manager-role-team-a && [ -z "$(job_watch team-a)" ]; then
     ok "the single-namespace install is unchanged: no list in the stamp, nothing revoked, LLMSM_WATCH_NAMESPACE \$(POD_NAMESPACE), the model-namespace file in team-a"
 else
     bad "single-namespace install: exits $rc1/$rc2, $deletes deletes, LLMSM_WATCH_NAMESPACE '$w'"
@@ -1342,6 +1343,13 @@ if [ -n "$goenv" ] && [ "$goenv" = "$shenv" ] && [ "$goenv" = "$TOKEN_EMPTIED_EN
 else
     bad "the Job variable: Go '$goenv', release_install.sh '$shenv', this check '$TOKEN_EMPTIED_ENV'"
 fi
+goenv="$(tr -d '\r' < "$ROOT/internal/preflight/settings.go" | sed -n 's/^const WatchNamespaceEnv = "\([A-Z_]*\)"$/\1/p')"
+shenv="$(sed -n 's/^SMT_PREFLIGHT_WATCH_ENV=\([A-Z_]*\)$/\1/p' "$ROOT/deploy/lib/release_install.sh")"
+if [ -n "$goenv" ] && [ "$goenv" = "$shenv" ] && [ "$goenv" = LLMSM_PREFLIGHT_WATCH_NAMESPACE ]; then
+    ok "release_install.sh sets the watch-list variable the preflight reads: $goenv"
+else
+    bad "the watch-list Job variable: Go '$goenv', release_install.sh '$shenv'"
+fi
 restore
 smt admin-setup -n team-a --keda-namespace keda-system
 rc=$?
@@ -1414,7 +1422,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=158
+EXPECT_CASES=159
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
