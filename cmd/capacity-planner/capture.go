@@ -20,6 +20,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource"
 )
 
@@ -54,6 +55,7 @@ type captureFlags struct {
 	engine, engineArgs            string
 	batchCap, gpus                int
 	accelerator                   string
+	vllmVersion, engineImage      string
 	force                         bool
 	out                           string
 }
@@ -91,7 +93,7 @@ func runCapture(ctx context.Context, args []string, out, warn io.Writer) error {
 		if role == "" {
 			role = "both"
 		}
-		fmt.Fprintf(out, "  %s/%s  %s  %d GPU %s\n", v.ModelID, v.Name, role, v.GpuCount, v.Accelerator)
+		fmt.Fprintf(out, "  %s/%s  %s  %d GPU %s  %s\n", v.ModelID, v.Name, role, v.GpuCount, v.Accelerator, engineText(&v.Params))
 	}
 	for _, flag := range sum.Flags {
 		fmt.Fprintf(out, "  flag: %s\n", flag)
@@ -150,6 +152,8 @@ func (f *captureFlags) registerWindow(fs *flag.FlagSet) {
 	fs.StringVar(&f.engineArgs, "engine-args", "", "the engine's arguments, space-separated, for its parameters (kube-state-metrics has none)")
 	fs.IntVar(&f.gpus, "gpus-per-replica", 1, "GPUs per replica, where kube-state-metrics gives none")
 	fs.StringVar(&f.accelerator, "accelerator", "", "the accelerator, where kube-state-metrics gives none")
+	fs.StringVar(&f.vllmVersion, "vllm-version", "", "the vLLM release the engines run (0.34), where kube-state-metrics shows none; it sets the defaults of the flags the engine is not given")
+	fs.StringVar(&f.engineImage, "engine-image", "", "the engine container's image, where kube-state-metrics shows none; a vllm-openai tag names the vLLM release")
 	fs.BoolVar(&f.force, "force", false, fmt.Sprintf("capture past %d steps times queries, or %d samples held in memory", whatifsource.MaxStepQueries, whatifsource.MaxSamples))
 }
 
@@ -208,6 +212,9 @@ func (f captureFlags) options(cmd string, warn io.Writer) (whatifsource.Options,
 	if f.batchCap < 0 || f.gpus < 1 {
 		return opts, usagef("--batch-cap must not be negative and --gpus-per-replica must be at least 1")
 	}
+	if f.vllmVersion != "" && !capacity.ParseVLLMVersion(f.vllmVersion).Known() {
+		return opts, usagef("--vllm-version %q is not a vLLM release such as 0.34", f.vllmVersion)
+	}
 	opts.EngineArgs = strings.Fields(f.engineArgs)
 	if f.batchCap > 0 && hasFlag(opts.EngineArgs, batchFlag) {
 		fmt.Fprintf(warn, "capacity-planner: warning: --batch-cap %d and %s in --engine-args both set the batch cap, "+
@@ -236,6 +243,7 @@ func (f captureFlags) options(cmd string, warn io.Writer) (whatifsource.Options,
 	opts.From, opts.To, opts.Step = from, to, f.step
 	opts.KubeStateMetrics = f.ksm
 	opts.BatchCap, opts.GPUsPerReplica, opts.Accelerator = f.batchCap, f.gpus, f.accelerator
+	opts.VLLMVersion, opts.EngineImage = f.vllmVersion, f.engineImage
 	opts.Force = f.force
 	return opts, nil
 }

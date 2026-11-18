@@ -16,7 +16,27 @@
     "prefillVariant": "variant-02",
     "decodeVariant": "variant-01",
     "prefillFrom": "recording",
-    "decodeFrom": "recording"
+    "decodeFrom": "recording",
+    "prefillEngine": {
+      "engine": "vllm",
+      "summary": "vLLM release not recorded",
+      "stepBudget": 65536,
+      "stepBudgetSource": "not recorded",
+      "gpuMemoryUtilization": 0.9,
+      "gpuMemoryUtilizationSource": "not recorded",
+      "blockSize": 128,
+      "blockSizeSource": "not recorded"
+    },
+    "decodeEngine": {
+      "engine": "vllm",
+      "summary": "vLLM release not recorded",
+      "stepBudget": 8192,
+      "stepBudgetSource": "not recorded",
+      "gpuMemoryUtilization": 0.9,
+      "gpuMemoryUtilizationSource": "not recorded",
+      "blockSize": 128,
+      "blockSizeSource": "not recorded"
+    }
   },
   "load": {
     "rate": {

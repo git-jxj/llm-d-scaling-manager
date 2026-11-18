@@ -381,6 +381,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		return pf
 	}
 	pf.variant = ps.Variant
+	pf.in.PrefillEngine = variantEngine(st, ps.Variant)
 	p, refused := f.prefillInputs(pf, ps, st.Cycle)
 	if refused != nil {
 		pf.refused = refused

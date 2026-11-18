@@ -258,6 +258,7 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 		if u, ok := a.slo.KneeRate.(whatif.Unanswerable); ok {
 			fmt.Fprintf(&b, "%-16s%s\n", "decode", refusedText(u))
 			fmt.Fprintf(&b, "%-16s%s\n", "shape", a.pv.shapeText())
+			fmt.Fprintf(&b, "%-16s%s\n", "engine", engineRowText(a.pv.state.Params))
 			checkRow(&b, "%-16s%s\n", "line check", a.pv)
 			if a.ttft != nil {
 				a.ttft.writeRows(&b)
@@ -296,6 +297,7 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 			a.ttft.writeRows(&b)
 		}
 		fmt.Fprintf(&b, "%-16s%s\n", "shape", a.pv.shapeText())
+		fmt.Fprintf(&b, "%-16s%s\n", "engine", engineRowText(a.pv.state.Params))
 		checkRow(&b, "%-16s%s\n", "line check", a.pv)
 		results := []whatif.Result{a.slo.KneeRate, a.slo.Rate, a.slo.MeanTPOT, a.slo.PercentileTPOT}
 		if a.ttft != nil {

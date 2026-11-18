@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/annotations"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/registration"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source"
@@ -71,6 +72,25 @@ const (
 	// per replica are read from one Pod's request, not the group's. A format:
 	// how many variants.
 	FlagMultiPodGroups = "multi-Pod groups in %d variants: GPUs per replica read from one Pod's request, not the group's"
+	// FlagVLLMVersionUnknown: no annotation, image tag or flag named the vLLM
+	// release of some variants, which are read with an unknown release's
+	// defaults. A format: how many variants, of how many.
+	FlagVLLMVersionUnknown = "vLLM release unknown for %d of %d variants: give --vllm-version, or let kube-state-metrics " +
+		"export the vllm-version annotation of Deployments (--metric-annotations-allowlist)"
+	// FlagVLLMVersionMixed: a variant's Pods ran more than one release in
+	// the window; the one most of them ran is used. A format: the variant,
+	// that release, the others.
+	FlagVLLMVersionMixed = "variant %s ran more than one vLLM release in the window: mostly %s, also %s; read as %s"
+	// FlagVLLMVersionFlagIgnored: a flag names another release than the
+	// workload shows, and the workload's is used, as the controller would. A
+	// format: the variant, its release and where it was read, the flag's
+	// release and the flag.
+	FlagVLLMVersionFlagIgnored = "variant %s runs vLLM %s (from %s), not %s as %s states: the workload's is used"
+	// FlagVLLMVersionFlagsDisagree: with no release from the workload,
+	// --vllm-version and --engine-image's tag name different releases;
+	// --vllm-version is used. A format: the variant, the two releases, the
+	// one used.
+	FlagVLLMVersionFlagsDisagree = "variant %s: --vllm-version %s and --engine-image (%s) disagree; read as %s, from --vllm-version"
 )
 
 // Options configure a capture.
@@ -101,6 +121,15 @@ type Options struct {
 	// does not give.
 	GPUsPerReplica int
 	Accelerator    string
+	// VLLMVersion and EngineImage stand in for the vLLM release where
+	// kube-state-metrics gives none: VLLMVersion as the
+	// scaling-manager.llmd.ai/vllm-version annotation would state it ("0.34"),
+	// EngineImage as the engine container's image. The release decides the
+	// defaults of the flags the engine leaves unset (see
+	// docs/reference/vllm-versions.md); without either, and without
+	// kube-state-metrics, it is unknown.
+	VLLMVersion string
+	EngineImage string
 	// Force captures a window of more than MaxStepQueries steps times
 	// queries, or more than MaxSamples samples.
 	Force bool
@@ -209,6 +238,8 @@ func (o *Options) check() error {
 		return fmt.Errorf("batch cap %d is negative", o.BatchCap)
 	case o.GPUsPerReplica < 0:
 		return fmt.Errorf("GPUs per replica %d is negative", o.GPUsPerReplica)
+	case o.VLLMVersion != "" && !capacity.ParseVLLMVersion(o.VLLMVersion).Known():
+		return fmt.Errorf("vLLM version %q is not a release such as 0.34", o.VLLMVersion)
 	}
 	return CheckRoleOf(o.RoleOf)
 }
@@ -244,6 +275,11 @@ type variantInfo struct {
 	// Pods' accelerators; empty without kube-state-metrics.
 	gpus   map[int]int
 	accels map[string]int
+	// images counts its Pods' images whose tag names a vLLM release
+	// (capacity.VLLMVersionFromImage), and versions its Deployments'
+	// scaling-manager.llmd.ai/vllm-version annotations; both empty without
+	// kube-state-metrics.
+	images, versions map[string]int
 	// multiPod is whether kube-state-metrics shows its Pods in multi-Pod
 	// groups (FlagMultiPodGroups).
 	multiPod bool
@@ -482,7 +518,8 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 			scan.engines[name] = true
 			v := scan.variants[p.variant]
 			if v == nil {
-				v = &variantInfo{model: modelID, role: p.role, gpus: map[int]int{}, accels: map[string]int{}}
+				v = &variantInfo{model: modelID, role: p.role, gpus: map[int]int{}, accels: map[string]int{},
+					images: map[string]int{}, versions: map[string]int{}}
 				scan.variants[p.variant] = v
 			}
 			scan.inferred = scan.inferred || p.inferred
@@ -493,6 +530,12 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 				}
 				if a := f.nodeAccel[p.node]; a != "" {
 					v.accels[a]++
+				}
+				if image := engineImageOf(p.images); image != "" {
+					v.images[image]++
+				}
+				if a := f.vllmVersion[p.deployment]; capacity.ParseVLLMVersion(a).Known() {
+					v.versions[a]++
 				}
 			}
 			if _, ok := p.labels[ksmLabelName("llm-d.ai/role")]; ok {
@@ -524,7 +567,7 @@ func mostCommon[K int | string](counts map[K]int) (best K, ok bool) {
 func windowVariants(scan *windowScan, opts Options) ([]learnreplay.CaptureVariant, []string) {
 	var flags []string
 	gpusFromFlags, accelFromFlags := false, false
-	multiPod := 0
+	multiPod, unknownRelease := 0, 0
 	out := make([]learnreplay.CaptureVariant, 0, len(scan.variants))
 	for _, name := range slices.Sorted(maps.Keys(scan.variants)) {
 		info := scan.variants[name]
@@ -539,10 +582,18 @@ func windowVariants(scan *windowScan, opts Options) ([]learnreplay.CaptureVarian
 		if !ok {
 			accel, accelFromFlags = opts.Accelerator, opts.KubeStateMetrics
 		}
-		st := scaleTargetOf(opts, name, info.model, gpus, accel)
+		rel, relFlags := releaseOf(name, info, opts)
+		flags = append(flags, relFlags...)
+		st := scaleTargetOf(opts, name, info.model, gpus, accel, rel)
+		params := capacity.ParseEngineArgsOn(inferenceengine.Detect(st), st, accel)
+		if params.VLLMVersion.Known() {
+			params.VLLMVersionFrom = rel.from
+		} else if params.Engine == inferenceengine.EngineVLLM {
+			unknownRelease++
+		}
 		out = append(out, learnreplay.CaptureVariant{
 			ModelID: info.model, Name: name, Role: info.role, Accelerator: accel, GpuCount: gpus,
-			Params: capacity.ParseEngineArgsOn(inferenceengine.Detect(st), st, accel),
+			Params: params,
 		})
 	}
 	if scan.inferred {
@@ -567,21 +618,196 @@ func windowVariants(scan *windowScan, opts Options) ([]learnreplay.CaptureVarian
 	if multiPod > 0 {
 		flags = append(flags, fmt.Sprintf(FlagMultiPodGroups, multiPod))
 	}
+	if unknownRelease > 0 {
+		flags = append(flags, fmt.Sprintf(FlagVLLMVersionUnknown, unknownRelease, len(out)))
+	}
 	flags = append(flags, FlagNoRollouts)
 	return out, flags
 }
 
+// Where a capture's flags gave a variant's vLLM release
+// (capacity.EngineParams.VLLMVersionFrom); a release kube-state-metrics gave
+// is capacity.VLLMVersionFromAnnotation or capacity.VLLMVersionFromImageTag.
+const (
+	VLLMVersionFromFlag        = "--vllm-version"
+	VLLMVersionFromEngineImage = "--engine-image"
+)
+
+// release is the image and the vllm-version annotation a variant's stand-in
+// Deployment carries, and where the release they name came from ("" when
+// they name none).
+type release struct {
+	image, annotation, from string
+}
+
+// releaseOf is the release of a variant's engine: what kube-state-metrics
+// shows its workload running, read as the controller reads it (the
+// annotation, then the image tag), else what the flags state
+// (--vllm-version, then --engine-image's tag). Where the window's Pods ran
+// more than one, the one most of them did. SGLang has no release to read.
+//
+// The flags it returns say what was passed over in silence otherwise: a
+// variant that ran more than one release in the window
+// (FlagVLLMVersionMixed), and a flag that names another release than the
+// workload shows (FlagVLLMVersionFlagIgnored).
+func releaseOf(name string, info *variantInfo, opts Options) (release, []string) {
+	image := opts.EngineImage
+	if opts.Engine == inferenceengine.EngineSGLang {
+		// No release to read, but the image is the engine's, fingerprinted
+		// as the controller fingerprints it.
+		if live, ok := mostCommon(info.images); ok {
+			image = live
+		}
+		return release{image: image}, nil
+	}
+	versions := releasesOf(info.versions, capacity.ParseVLLMVersion)
+	tagged := releasesOf(info.images, capacity.VLLMVersionFromImage)
+	var rel release
+	var seen map[capacity.VLLMVersion]int
+	var used capacity.VLLMVersion
+	switch {
+	case len(versions) > 0:
+		used, seen = mostCommonRelease(versions), versions
+		rel = release{annotation: used.String(), from: capacity.VLLMVersionFromAnnotation}
+		if live, ok := mostCommon(info.images); ok {
+			image = live
+		}
+		rel.image = image
+	case len(tagged) > 0:
+		used, seen = mostCommonRelease(tagged), tagged
+		// The image most Pods ran of the release most Pods ran.
+		rel = release{image: mostCommonNaming(info.images, used), from: capacity.VLLMVersionFromImageTag}
+	default:
+		if live, ok := mostCommon(info.images); ok {
+			image = live
+		}
+		return flagsRelease(name, image, opts)
+	}
+	var flags []string
+	if len(seen) > 1 {
+		var also []string
+		for _, v := range slices.SortedFunc(maps.Keys(seen), compareReleases) {
+			if v != used {
+				also = append(also, v.String())
+			}
+		}
+		flags = append(flags, fmt.Sprintf(FlagVLLMVersionMixed, name, used.String(), strings.Join(also, ", "), used.String()))
+	}
+	for _, f := range []struct {
+		flag    string
+		release capacity.VLLMVersion
+	}{
+		{VLLMVersionFromFlag, capacity.ParseVLLMVersion(opts.VLLMVersion)},
+		{VLLMVersionFromEngineImage, capacity.VLLMVersionFromImage(opts.EngineImage)},
+	} {
+		if f.release.Known() && f.release != used {
+			flags = append(flags, fmt.Sprintf(FlagVLLMVersionFlagIgnored, name, used.String(), rel.from,
+				f.release.String(), f.flag))
+		}
+	}
+	return rel, flags
+}
+
+// engineImageOf is the image of a Pod's engine container, as far as
+// kube-state-metrics, which exports no launch command, can tell: the one
+// image whose vllm-openai tag names a release, else the Pod's only image;
+// "" when neither picks one. So a single-container Pod on an llm-d image is
+// fingerprinted by that image, as the controller fingerprints it, and a Pod
+// whose sidecars hide the engine is read as naming no image.
+func engineImageOf(images []string) string {
+	var tagged []string
+	for _, image := range images {
+		if capacity.VLLMVersionFromImage(image).Known() {
+			tagged = append(tagged, image)
+		}
+	}
+	switch {
+	case len(tagged) == 1:
+		return tagged[0]
+	case len(tagged) == 0 && len(images) == 1:
+		return images[0]
+	}
+	return ""
+}
+
+// flagsRelease is the release the flags state where the workload shows none:
+// --vllm-version, else --engine-image's tag. Two flags that name different
+// releases are flagged (FlagVLLMVersionFlagsDisagree): --vllm-version wins,
+// as the annotation it stands for wins over a tag.
+func flagsRelease(name, image string, opts Options) (release, []string) {
+	stated := capacity.ParseVLLMVersion(opts.VLLMVersion)
+	tag := capacity.VLLMVersionFromImage(opts.EngineImage)
+	switch {
+	case stated.Known():
+		rel := release{image: image, annotation: opts.VLLMVersion, from: VLLMVersionFromFlag}
+		if tag.Known() && tag != stated {
+			return rel, []string{fmt.Sprintf(FlagVLLMVersionFlagsDisagree, name, stated.String(), tag.String(), stated.String())}
+		}
+		return rel, nil
+	case capacity.VLLMVersionFromImage(image).Known():
+		return release{image: image, from: VLLMVersionFromEngineImage}, nil
+	}
+	return release{image: image}, nil
+}
+
+// mostCommonRelease is the release counts holds most often, the newest on
+// a tie.
+func mostCommonRelease(counts map[capacity.VLLMVersion]int) capacity.VLLMVersion {
+	var best capacity.VLLMVersion
+	for _, v := range slices.SortedFunc(maps.Keys(counts), compareReleases) {
+		if !best.Known() || counts[v] > counts[best] {
+			best = v
+		}
+	}
+	return best
+}
+
+// mostCommonNaming is the image counts holds most often among those whose
+// tag names release v, the first in order on a tie.
+func mostCommonNaming(counts map[string]int, v capacity.VLLMVersion) string {
+	naming := map[string]int{}
+	for image, n := range counts {
+		if capacity.VLLMVersionFromImage(image) == v {
+			naming[image] = n
+		}
+	}
+	image, _ := mostCommon(naming)
+	return image
+}
+
+// releasesOf is how many of counts' entries name each release, as read reads
+// it; an entry that names none is left out.
+func releasesOf(counts map[string]int, read func(string) capacity.VLLMVersion) map[capacity.VLLMVersion]int {
+	out := map[capacity.VLLMVersion]int{}
+	for s, n := range counts {
+		if v := read(s); v.Known() {
+			out[v] += n
+		}
+	}
+	return out
+}
+
+// compareReleases orders releases newest first.
+func compareReleases(a, b capacity.VLLMVersion) int {
+	if a.Major != b.Major {
+		return b.Major - a.Major
+	}
+	return b.Minor - a.Minor
+}
+
 // scaleTargetOf is a Deployment that stands for a variant's workload: the
-// engine and its arguments, the GPUs and the accelerator. The engine
-// parameters are parsed from it as the engine parses a real one, and the
-// collector detects the engine from it.
-func scaleTargetOf(opts Options, variant, modelID string, gpus int, accel string) scaletarget.ScaleTargetAccessor {
-	// The image names are never pulled: this Deployment is never applied.
-	// They are only what inferenceengine.Detect reads the engine from.
-	c := corev1.Container{Name: "vllm", Image: "vllm/vllm-openai", Command: []string{"vllm", "serve", modelID}}
+// engine and its arguments, the GPUs, the accelerator and the release. The
+// engine parameters are parsed from it as the engine parses a real one, and
+// the collector detects the engine from it.
+func scaleTargetOf(opts Options, variant, modelID string, gpus int, accel string, rel release) scaletarget.ScaleTargetAccessor {
+	// The image is never pulled: this Deployment is never applied. The
+	// engine is detected from the launch command and the release read from
+	// the image tag or the annotation, as from a real one. With no image
+	// known the stand-in names none rather than invent one.
+	c := corev1.Container{Name: "vllm", Image: rel.image, Command: []string{"vllm", "serve", modelID}}
 	batchFlag := "--max-num-seqs"
 	if opts.Engine == inferenceengine.EngineSGLang {
-		c = corev1.Container{Name: "sglang", Image: "lmsysorg/sglang",
+		c = corev1.Container{Name: "sglang", Image: rel.image,
 			Command: []string{"python3", "-m", "sglang.launch_server", "--model-path", modelID}}
 		batchFlag = "--max-running-requests"
 	}
@@ -600,6 +826,9 @@ func scaleTargetOf(opts Options, variant, modelID string, gpus int, accel string
 	}
 	if accel != "" {
 		d.Spec.Template.Spec.NodeSelector = map[string]string{acceleratorNodeLabel: accel}
+	}
+	if rel.annotation != "" {
+		d.Annotations = map[string]string{annotations.VLLMVersion: rel.annotation}
 	}
 	return scaletarget.NewDeploymentAccessor(d)
 }
@@ -715,7 +944,10 @@ func collectModel(ctx context.Context, c *collector.ReplicaMetricsCollector, f *
 	targets := make(map[string]scaletarget.ScaleTargetAccessor, len(active))
 	for _, name := range active {
 		v := variants[name]
-		targets[utils.GetNamespacedKey(opts.Namespace, name)] = scaleTargetOf(opts, name, modelID, v.GpuCount, v.Accelerator)
+		// The collector reads only the engine off a stand-in
+		// (inferenceengine.Detect), which the image can decide.
+		targets[utils.GetNamespacedKey(opts.Namespace, name)] = scaleTargetOf(opts, name, modelID, v.GpuCount, v.Accelerator,
+			release{image: v.Params.Image})
 	}
 	rows, err := c.CollectReplicaMetrics(ctx, modelID, opts.Namespace, targets, nil, nil)
 	if err != nil {

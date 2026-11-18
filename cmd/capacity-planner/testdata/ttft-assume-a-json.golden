@@ -58,7 +58,16 @@
         "replicasFrom": "recording",
         "headroom": 0.85,
         "rate": 2.944062013228457,
-        "rateSource": "headroom x prefill knee"
+        "rateSource": "headroom x prefill knee",
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        }
       },
       "results": {
         "knee": {
@@ -86,6 +95,15 @@
       "variant": "variant-02",
       "ttft": {
         "decodeVariant": "variant-01",
+        "prefillEngine": {
+          "engine": "vllm",
+          "stepBudget": 65536,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        },
         "percentile": 0.95,
         "rate": 2.944062013228457,
         "rateSource": "headroom x prefill knee",

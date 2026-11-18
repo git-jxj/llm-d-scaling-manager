@@ -32,10 +32,11 @@ const sideLine = "line"
 func inputsDoc(f *answerFlags, st *learnreplay.State, pv *pricedVariant, ps *learnreplay.PrefillState, pf *pricedFleet,
 	info whatifapi.SourceInfo) whatifapi.InputsResponse {
 	doc := whatifapi.InputsResponse{Model: st.ModelID, Namespace: st.Namespace, Source: info,
-		Fleet:   whatifapi.FleetInfo{Decode: whatifapi.RoleInfo{Variant: pv.state.Variant, Replicas: pv.decode.Replicas}},
+		Fleet: whatifapi.FleetInfo{Decode: whatifapi.RoleInfo{Variant: pv.state.Variant, Replicas: pv.decode.Replicas,
+			Engine: engineInfo(pv.state.Params)}},
 		Assumed: append([]string{}, pf.in.Assumed...)}
 	if ps != nil {
-		doc.Fleet.Prefill = &whatifapi.RoleInfo{Variant: ps.Variant, Replicas: ps.Pods}
+		doc.Fleet.Prefill = &whatifapi.RoleInfo{Variant: ps.Variant, Replicas: ps.Pods, Engine: engineInfo(variantParams(st, ps.Variant))}
 	}
 	doc.Observed = observedOf(pv, pf)
 	doc.Policy = policyOf(f, st, pf)

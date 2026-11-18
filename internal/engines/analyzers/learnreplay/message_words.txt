@@ -1,17 +1,20 @@
 -
 --
 --data-parallel-size
+--engine-image
 --force
 --from
 --kube-state-metrics
 --max-num-seqs
 --max-running-requests
+--metric-annotations-allowlist
 --metric-labels-allowlist
 --model-path
 --pipeline-parallel-size
 --role-of
 --step
 --tensor-parallel-size
+--vllm-version
 -1
 -1000
 -Inf
@@ -42,6 +45,7 @@
 /tmp/
 0
 0-9
+0.34
 0.95
 1
 1/muChoice.maxRatio
@@ -142,6 +146,7 @@ DecodeTermOmitted
 DecodeTermPrefixHits
 Deleted
 Deployment
+Deployments
 DisaggregatedSet
 Discarding
 E1-const
@@ -584,6 +589,7 @@ analyzerTuning
 analyzers
 and
 annotation
+annotation_
 another
 answer
 answered
@@ -1129,6 +1135,7 @@ expected
 expects
 expert_parallel
 expert_parallel_size
+export
 exported
 exports
 external
@@ -1368,6 +1375,7 @@ if
 ignored
 ignoring
 image
+image_spec
 imbalanced
 immutable
 implausible
@@ -1541,8 +1549,10 @@ known
 known-failures
 known-truth
 kube-state-metrics
+kube_deployment_annotations
 kube_deployment_spec_replicas
 kube_node_labels
+kube_pod_container_info
 kube_pod_container_resource_requests
 kube_pod_created
 kube_pod_deletion_timestamp
@@ -1679,7 +1689,6 @@ llm-d.ai/utilization-share-transfer
 llm_d_epp_flow_control_queue_size
 llmsm_unattributed_gpus
 llmsm_utilization_share_floor_excess_gpus
-lmsysorg/sglang
 lo
 load
 loadImbalance
@@ -1816,6 +1825,7 @@ moe_a2a_backend
 monotonicity
 more
 most
+mostly
 mount
 move
 moved
@@ -2783,6 +2793,7 @@ starts
 stashed
 stashedWindows
 state
+states
 static
 stationary
 statistic
@@ -2840,6 +2851,7 @@ switch
 system
 t
 t4
+tag
 tail
 take
 taken
@@ -3091,8 +3103,8 @@ victim
 vllm
 vllm-openai
 vllm-openai-rocm
+vllm-version
 vllm.entrypoints
-vllm/vllm-openai
 vllm:cache_config_info
 vllm:num_requests_running
 vllm:request_generation_tokens_count

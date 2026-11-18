@@ -36,7 +36,9 @@ is the reference for both.
   `curl --version` says which), plus `kubectl get` on the model Deployments.
 - [ ] kube-state-metrics in the same Prometheus, for readiness and roles,
   with `--metric-labels-allowlist=pods=[llm-d.ai/role],nodes=[nvidia.com/gpu.product]`
-  so it exports each Pod's role and each node's accelerator.
+  so it exports each Pod's role and each node's accelerator, and, optionally,
+  `--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]`
+  so it exports the [vLLM release](#the-vllm-release) annotation.
   Without it, see [Without kube-state-metrics](#without-kube-state-metrics).
 
 <!-- guide:prerequisites start -->
@@ -180,7 +182,7 @@ llm_d_epp_flow_control_requests_total
 kube_pod_info kube_pod_owner kube_replicaset_owner kube_pod_labels kube_pod_status_phase
 kube_pod_status_ready kube_pod_status_ready_time kube_pod_created kube_pod_start_time
 kube_pod_deletion_timestamp kube_pod_container_resource_requests kube_node_labels
-kube_deployment_spec_replicas
+kube_deployment_spec_replicas kube_pod_container_info kube_deployment_annotations
 "
 rm -rf planner-export
 mkdir -p planner-export
@@ -436,6 +438,7 @@ capacity-planner capture  --prometheus URL --namespace NS (--kube-state-metrics 
                           [--step 15s] [--policy FILE]
                           [--engine vllm|sglang] [--engine-args "ARGS"] [--batch-cap N]
                           [--gpus-per-replica 1] [--accelerator NAME]
+                          [--vllm-version 0.34] [--engine-image IMAGE]
                           [--bearer-token-file FILE] [--ca-file FILE] [--insecure-skip-verify]
                           [--timeout 2m30s] [--force]
 capacity-planner generate -in run.capture.jsonl.gz -o run.jsonl.gz
@@ -454,6 +457,7 @@ capacity-planner generate -in run.capture.jsonl.gz -o run.jsonl.gz
 | `--engine-args` | The engine's arguments, space-separated, parsed for its parameters (kube-state-metrics has none). |
 | `--batch-cap` | The engine's batch cap (`--max-num-seqs`, or `--max-running-requests`). Warned about when `--engine-args` sets it too. |
 | `--gpus-per-replica`, `--accelerator` | Stand-ins where kube-state-metrics gives no GPU request or node label. |
+| `--vllm-version`, `--engine-image` | The vLLM release the engines run, as `0.34`, or their image, whose `vllm-openai` tag names it. Stand-ins where kube-state-metrics shows neither; see [The vLLM release](#the-vllm-release). |
 | `--bearer-token-file` | A file holding a bearer token. Sent over https only, to Prometheus' own host only, never on a redirect elsewhere. Refused with an http URL, or when the file is empty. |
 | `--ca-file` | A PEM file of the CAs that sign an https Prometheus' certificate, trusted in place of the system's. Refused with an http URL. |
 | `--insecure-skip-verify` | Do not verify the certificate. Warned about on stderr. Refused with an http URL. |
@@ -468,6 +472,51 @@ its owner only (mode 0600).
 What a capture cannot know, and flags: engine parameters (always from flags),
 rollouts (never seen), readiness without kube-state-metrics (every Pod reads as
 Ready), and LeaderWorkerSets (use `--role-of`). The `flag:` lines name each.
+
+## The vLLM release
+
+vLLM changes the defaults of `--max-num-batched-tokens`,
+`--gpu-memory-utilization` and `--block-size` between releases. The planner
+records which release each variant runs and shows the values those defaults
+resolve to, the ones the controller uses. They key the learned state, and
+the answers report them for reference: no figure of an answer reads them
+yet. See [vLLM versions](../../reference/vllm-versions.md) for the values.
+
+With `--kube-state-metrics` the capture reads the release from what the
+workload ran: the Deployment's `scaling-manager.llmd.ai/vllm-version`
+annotation, else a `vllm-openai` image tag. kube-state-metrics exports the
+image by default; the annotation needs
+`--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]`.
+kube-state-metrics exports no LeaderWorkerSet annotations, so an annotated
+LeaderWorkerSet reads as unknown.
+
+Where neither is there (llm-d's own images, a digest, no kube-state-metrics),
+give the release yourself:
+
+```bash
+bin/capacity-planner capture ... --vllm-version 0.34
+```
+
+What the workload shows wins over the flags, as in the controller. The
+capture prints the release and where it came from on each variant's line,
+and every answer repeats it:
+
+```
+engine          vLLM 0.34 (from image tag); for reference, not priced yet: step budget 8192 (default), GPU memory 1 (default), block size 64 (default)
+```
+
+The capture adds a `flag:` line when:
+
+- a flag names another release than the workload shows (the workload's is used);
+- a variant ran more than one release in the window (the one most Pods ran is used);
+- no annotation, tag or flag names the release (`vLLM release unknown`): give
+  `--vllm-version`, or allowlist the annotation.
+
+A recording made before the planner read releases says `vLLM release not recorded`.
+
+A capture now keys learned state by the engine's real image, as the
+controller does (for SGLang too, though SGLang has no release to read). Learned
+state from a capture made before this release is not reused.
 
 ## Load on Prometheus
 

@@ -75,7 +75,16 @@
         "ranks": 1,
         "replicas": 1,
         "replicasFrom": "recording",
-        "headroom": 0.85
+        "headroom": 0.85,
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        }
       },
       "results": {
         "knee": {

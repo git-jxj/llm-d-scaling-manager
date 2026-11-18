@@ -13,7 +13,8 @@ import (
 // (internal/signals/whatif); these types are the one place the planner's
 // answers are given names on the wire, and schemaVersion says which names.
 // Removing, renaming or retyping a key, or changing its meaning, bumps
-// schemaVersion; a key absent unless a new flag asks for it does not. Either
+// schemaVersion; adding a key does not, whether a new flag asks for it or it
+// is always there: a reader that knows the old keys reads them unchanged. Either
 // way the pinned key list in testdata/schema-v<N>.txt changes
 // (TestJSONSchemaIsPinned).
 
@@ -100,6 +101,9 @@ type wireRole struct {
 // the text prints. An input not reached before a refusal is absent.
 type wireTTFT struct {
 	DecodeVariant string `json:"decodeVariant,omitempty"`
+	// PrefillEngine is the engine the prefill variant runs, for reference
+	// (engineOf); absent where the recording holds none.
+	PrefillEngine *wireEngine `json:"prefillEngine,omitempty"`
 	// Percentile is q in (0, 1), absent for the mean; TargetSeconds is
 	// question 1's target. Rate is the rate question 2 was priced at, and
 	// RateSource what set it.
@@ -188,6 +192,8 @@ type wireInputs struct {
 	// RateSource says what set Rate where a flag did not: the prefill knee.
 	RateSource string    `json:"rateSource,omitempty"`
 	TPOT       *wireTPOT `json:"tpot,omitempty"`
+	// Engine is the engine the variant runs, for reference (engineOf).
+	Engine *wireEngine `json:"engine,omitempty"`
 }
 
 // wireShape is the traffic shape a variant was priced at: each length
@@ -545,6 +551,7 @@ func inputsOf(f *answerFlags, pv pricedVariant) *wireInputs {
 			OutputDispersion: pv.state.Shape.OutputDispersion},
 		BatchCap: pv.perRank, BatchCapSource: pv.state.BatchCapSource,
 		Ranks: max(pv.state.Ranks, 1), Replicas: pv.decode.Replicas, ReplicasFrom: "recording",
+		Engine: engineOf(pv.state.Params),
 	}
 	if pv.assumedIL {
 		in.Shape.InputSource = shapeAssumed
