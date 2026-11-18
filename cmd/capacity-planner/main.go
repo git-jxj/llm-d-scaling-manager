@@ -61,7 +61,7 @@
 // The command was named whatif before. Run under that name (make
 // capacity-planner also builds bin/whatif), it works the same and first
 // prints a one-line deprecation note to stderr. whatif will be removed in
-// v0.12.0.
+// v0.13.0.
 package main
 
 import (
@@ -83,11 +83,11 @@ import (
 // progName is the command's name in its usage, errors and warnings.
 const progName = "capacity-planner"
 
-// deprecatedName is the command's old name, still accepted for one release.
+// deprecatedName is the command's old name, still accepted until deprecatedNameRemovedIn.
 const deprecatedName = "whatif"
 
 // deprecatedNameRemovedIn is the release that drops deprecatedName.
-const deprecatedNameRemovedIn = "v0.12.0"
+const deprecatedNameRemovedIn = "v0.13.0"
 
 // deprecationNote is printed to stderr when the command runs as
 // deprecatedName.
