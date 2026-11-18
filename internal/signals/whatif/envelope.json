@@ -1,0 +1,1339 @@
+{
+  "rows": [
+    {
+      "figure": "decode-knee",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off"
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        }
+      },
+      "errorHi": 0.0308980019033116,
+      "spread": "one-sided",
+      "readings": 1
+    },
+    {
+      "figure": "flow-control-onset",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "on"
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        }
+      },
+      "errorLo": -0.035896495711570164,
+      "errorHi": 0.0175618923933607,
+      "spread": "bracket",
+      "readings": 1
+    },
+    {
+      "figure": "flow-control-onset",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "on"
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        }
+      },
+      "errorLo": -0.07211253380060167,
+      "errorHi": -0.04316978084008927,
+      "spread": "bracket",
+      "readings": 1
+    },
+    {
+      "figure": "mean-tpot",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
+      },
+      "errorLo": 0.01937956897345683,
+      "errorHi": 0.1500795711476635,
+      "errorMin": 0.01117245818605217,
+      "errorMax": 0.18285613387036004,
+      "spread": "p10-p90",
+      "readings": 12,
+      "levels": 6
+    },
+    {
+      "figure": "mean-tpot",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.096,
+        "maxKneeShare": 0.215
+      },
+      "errorLo": -0.022639057179420663,
+      "errorHi": 0.005997936162890238,
+      "errorMin": -0.0265944871629753,
+      "errorMax": 0.006849223516752545,
+      "spread": "p10-p90",
+      "readings": 12,
+      "levels": 6
+    },
+    {
+      "figure": "mean-tpot",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.096,
+        "maxKneeShare": 0.203
+      },
+      "errorLo": -0.04034253903555983,
+      "errorHi": -0.01919403571184507,
+      "errorMin": -0.04603155096266953,
+      "errorMax": -0.01344015520763131,
+      "spread": "p10-p90",
+      "readings": 10,
+      "levels": 6
+    },
+    {
+      "figure": "prefill-knee",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off"
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        }
+      },
+      "errorHi": 0.030828394285870475,
+      "spread": "one-sided",
+      "readings": 1
+    },
+    {
+      "figure": "prefill-knee",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off"
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        }
+      },
+      "errorHi": 0.030828394285870475,
+      "spread": "one-sided",
+      "readings": 1
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.825,
+        "maxKneeShare": 0.875
+      },
+      "errorHi": -0.05554930556504423,
+      "spread": "one-sided",
+      "readings": 1
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.825,
+        "maxKneeShare": 0.875
+      },
+      "errorHi": -0.05554930556504423,
+      "spread": "one-sided",
+      "readings": 1
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.825,
+        "maxKneeShare": 0.875
+      },
+      "errorHi": -0.05559480952877016,
+      "spread": "one-sided",
+      "readings": 1
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.825,
+        "maxKneeShare": 0.875
+      },
+      "errorHi": -0.05559480952877016,
+      "spread": "one-sided",
+      "readings": 1
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.74,
+        "maxKneeShare": 0.875
+      },
+      "errorHi": 0.00013607816473548695,
+      "spread": "one-sided",
+      "readings": 2
+    },
+    {
+      "figure": "rate-at-ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.74,
+        "maxKneeShare": 0.875
+      },
+      "errorHi": 0.020492835848713087,
+      "spread": "one-sided",
+      "readings": 2
+    },
+    {
+      "figure": "ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
+      },
+      "errorLo": -0.035704607952240786,
+      "errorHi": 0.17708330513519988,
+      "errorMin": -0.047117945531881866,
+      "errorMax": 0.18349318201274034,
+      "spread": "p10-p90",
+      "readings": 12,
+      "levels": 6
+    },
+    {
+      "figure": "ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
+      },
+      "errorLo": -0.0031686417060293563,
+      "errorHi": 0.14038369691279728,
+      "errorMin": -0.024295264666893912,
+      "errorMax": 0.16221102053842684,
+      "spread": "p10-p90",
+      "readings": 12,
+      "levels": 6
+    },
+    {
+      "figure": "ttft",
+      "shape": "1000-token prompts, 1000 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 800,
+          "hi": 1250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
+      },
+      "errorLo": -0.025180533509062283,
+      "errorHi": 0.11868427243975517,
+      "errorMin": -0.039051401224804994,
+      "errorMax": 0.14463264690048216,
+      "spread": "p10-p90",
+      "readings": 12,
+      "levels": 6
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
+      },
+      "errorLo": 0.29110810447187335,
+      "errorHi": 0.9477453954515686,
+      "errorMin": 0.2693569109842153,
+      "errorMax": 1.486565592670619,
+      "spread": "p10-p90",
+      "readings": 12,
+      "levels": 6
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
+      },
+      "errorLo": 0.18155186244861887,
+      "errorHi": 1.0792975325275418,
+      "errorMin": 0.1534425180325436,
+      "errorMax": 1.561173147263153,
+      "spread": "p10-p90",
+      "readings": 12,
+      "levels": 6
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 1",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 0.8,
+          "hi": 1.25
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
+      },
+      "errorLo": 0.18163413114669424,
+      "errorHi": 1.0200383921476248,
+      "errorMin": 0.05422850378021993,
+      "errorMax": 1.7383267089432048,
+      "spread": "p10-p90",
+      "readings": 12,
+      "levels": 6
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.85
+      },
+      "errorLo": 0.30088085623245236,
+      "errorHi": 0.9285281735301888,
+      "errorMin": 0.22372696292809846,
+      "errorMax": 1.2677408152481973,
+      "spread": "p10-p90",
+      "readings": 9,
+      "levels": 6
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.9
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.85
+      },
+      "errorLo": 0.4538122908523821,
+      "errorHi": 1.3066435260412201,
+      "errorMin": 0.33353665994757353,
+      "errorMax": 1.6707845432105413,
+      "spread": "p10-p90",
+      "readings": 9,
+      "levels": 6
+    },
+    {
+      "figure": "ttft",
+      "shape": "8000-token prompts, 200 out, Ca^2 4",
+      "source": "q32 staircase",
+      "region": {
+        "topology": "pd",
+        "accelerators": [
+          "H200"
+        ],
+        "prefillReplicas": [
+          2
+        ],
+        "decodeReplicas": [
+          2
+        ],
+        "promptTokens": {
+          "lo": 6400,
+          "hi": 10000
+        },
+        "promptCV": {
+          "lo": 0.04616,
+          "hi": 0.072125
+        },
+        "outputTokens": {
+          "lo": 160,
+          "hi": 250
+        },
+        "arrivalCV2": {
+          "lo": 3.2,
+          "hi": 5
+        },
+        "flowControl": [
+          "off",
+          "on"
+        ],
+        "percentiles": [
+          0.95
+        ],
+        "models": [
+          "Qwen/Qwen3-32B",
+          "model-02"
+        ],
+        "tensorParallel": [
+          2
+        ],
+        "prefillTensorParallel": [
+          2
+        ],
+        "prefixHitRate": {
+          "lo": 0,
+          "hi": 0.05
+        },
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.85
+      },
+      "errorLo": 0.4352480473757116,
+      "errorHi": 1.448125450208511,
+      "errorMin": 0.37223788543537983,
+      "errorMax": 1.8601115469016247,
+      "spread": "p10-p90",
+      "readings": 9,
+      "levels": 6
+    }
+  ],
+  "allowedFlags": {
+    "q32 staircase": [
+      "AssumedArrivalCV2",
+      "AssumedPoissonArrivals",
+      "AssumedPromptSpread",
+      "AssumedShape",
+      "BelowFittedBand",
+      "HeldLine",
+      "KVBoundSlots",
+      "TransferHeld",
+      "UnvalidatedTTFT",
+      "VPLowerBound",
+      "VPScaledToPrompt"
+    ]
+  },
+  "outsideFlags": {
+    "AboveFlowControlOnset": "past the flow-control onset, where the router's wait is not priced",
+    "AssumedA": "a assumed, not learned",
+    "AssumedVP": "V_P assumed, not learned",
+    "RouterHopAssumed": "router hop assumed, not learned"
+  },
+  "never": {
+    "operating-point-cap": "the operating-point cap is headroom times the knee: read the knee's verdict",
+    "percentile-tpot": "TPOT percentiles: never scored against a client",
+    "prefill-latency": "prefill's own latency: a client measures TTFT end to end only",
+    "rate-at-tpot": "rate at a TPOT target: never measured"
+  }
+}

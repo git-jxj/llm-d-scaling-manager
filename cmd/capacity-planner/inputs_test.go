@@ -189,7 +189,7 @@ func TestPromptCV_TheNoteQuotesTheTableAtItsOwnCV(t *testing.T) {
 	note := footerNote([]*pricedFleet{bursty})
 	assert.NotContains(t, note, "4.1x")
 	assert.NotContains(t, note, "33%")
-	assert.Contains(t, note, "no recording has checked it at a stated Ca^2")
+	assert.Contains(t, note, "the P2 recordings never checked it at a stated Ca^2")
 	// Above Ca^2 1 the burst rule reads high at light load, and says so;
 	// below it there is no such rule.
 	assert.Contains(t, note, "Above Ca^2 1 it reads high at light load")
@@ -212,7 +212,7 @@ func TestInputs_ARefusedFleetKeepsTheStatedInputs(t *testing.T) {
 	out, code = runCmd(t, "replicas-to-slo", "--recording", shortRun, "--arrival-cv2", "4", "-o", "json")
 	require.Equal(t, 3, code, out)
 	w = decodeOutput(t, out)
-	assert.Contains(t, w.Note, "no recording has checked it at a stated Ca^2")
+	assert.Contains(t, w.Note, "the P2 recordings never checked it at a stated Ca^2")
 	assert.Contains(t, out, "arrivals Ca^2 4 (--arrival-cv2)")
 	assert.Contains(t, out, string(assumedArrivalCV2))
 }

@@ -111,7 +111,12 @@
             "flags": [
               "AssumedShape",
               "OutputSpreadUnread"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (rate at a TPOT target: never measured)",
+              "outside": "rate at a TPOT target: never measured"
+            }
           }
         }
       }

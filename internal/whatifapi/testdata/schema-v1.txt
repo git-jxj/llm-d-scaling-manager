@@ -16,6 +16,15 @@ Figure.sensitivity.lo number
 Figure.sensitivity.loRefused string
 Figure.uncapped number
 Figure.unit string
+Figure.validation object
+Figure.validation.errorHi number
+Figure.validation.errorLo number
+Figure.validation.label string
+Figure.validation.outside string
+Figure.validation.readings number
+Figure.validation.shape string
+Figure.validation.source string
+Figure.validation.validated boolean
 Figure.value number
 Line object
 Line.atRate object

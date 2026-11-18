@@ -606,7 +606,7 @@
   ],
   "notValidated": [
     "decode knee: not validated; it read 44% to 103% high on the goldens (docs/proposals/slo-capacity-planner.md, Measured on the goldens)",
-    "TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.",
+    "TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.",
     "e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile"
   ],
   "exitCode": 0

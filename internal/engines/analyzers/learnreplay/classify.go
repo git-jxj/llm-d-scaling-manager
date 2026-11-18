@@ -322,7 +322,7 @@ func withWords(words []string, set map[string]bool) map[string]bool {
 // model's included.
 func ttftWords() []string {
 	return slices.Concat(constants.SLOTTFTReasons, constants.SLOTTFTVPSources, constants.SLOTTFTFlags,
-		constants.SLOTTFTJointInputs, constants.SLOTTFTJointReasons)
+		constants.SLOTTFTJointInputs, constants.SLOTTFTJointReasons, constants.SLOTTFTJointFlags)
 }
 
 func setOf(names ...string) map[string]bool {
