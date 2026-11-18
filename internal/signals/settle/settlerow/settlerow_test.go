@@ -86,16 +86,3 @@ func TestObserveOwnSinceBackdatesPastTheTolerance(t *testing.T) {
 		t.Errorf("ObserveOwn past the tolerance: settle %s at %v, want rejoined at %v", r.Reason, r.Since, at)
 	}
 }
-
-// An engine's row of a group is keyed by its group's: the tracker observes
-// the replica, and the engine settles with it.
-func TestKeyOfAGroupsEngineIsItsGroups(t *testing.T) {
-	e := domain.ReplicaMetrics{PodName: "g-0-1", VariantName: "dec", EngineOf: "g-0"}
-	if got, want := Key(e), (settle.Key{Pod: "g-0", Variant: "dec"}); got != want {
-		t.Fatalf("Key = %+v, want %+v", got, want)
-	}
-	e.EngineOf = ""
-	if got := Key(e); got.Pod != "g-0-1" {
-		t.Fatalf("Key = %+v, want the row's own Pod", got)
-	}
-}

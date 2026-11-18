@@ -603,11 +603,6 @@ type ReplicaMetrics struct {
 	// of fill the line is fitted from. Each keeps only what the line and its
 	// admission read (EngineReading), so a recording grows by little.
 	GroupEngines []EngineReading `learnrec:"omitzero"`
-	// EngineOf is the group row's PodName for a row EngineRows expanded
-	// from GroupEngines, "" on every other row. A settle is the replica's,
-	// so such a row settles as its group does (settlerow.Key). Never
-	// collected or recorded.
-	EngineOf string `learnrec:"omitzero"`
 }
 
 // EngineReading is one engine of a LeaderWorkerSet group, as the ITL line
@@ -655,11 +650,11 @@ func EngineReadingOf(rm ReplicaMetrics) EngineReading {
 
 // rowOf is e as a row of its group: the group's identity (namespace, model,
 // variant, readiness, warm-pool mark, revision, ready time) with the
-// engine's readings, and the group's settle (EngineOf).
+// engine's readings.
 func (e EngineReading) rowOf(group ReplicaMetrics) ReplicaMetrics {
 	return ReplicaMetrics{PodName: e.PodName, VariantName: group.VariantName, Namespace: group.Namespace,
 		ModelID: group.ModelID, Ready: group.Ready, ReadySince: group.ReadySince, FromWarmPool: group.FromWarmPool,
-		Revision: group.Revision, EngineOf: group.PodName, EngineRanks: e.EngineRanks,
+		Revision: group.Revision, EngineRanks: e.EngineRanks,
 		KvUsageMean: e.KvUsageMean, KvUsageMeanKnown: e.KvUsageMeanKnown,
 		KvUsageInstant: e.KvUsageInstant, KvUsageInstantKnown: e.KvUsageInstantKnown,
 		AvgITL: e.AvgITL, AvgITLKnown: e.AvgITLKnown, AvgITLEmpty: e.AvgITLEmpty,
@@ -676,7 +671,7 @@ func (e EngineReading) rowOf(group ReplicaMetrics) ReplicaMetrics {
 // ITL line; every other row as it is. An engine's row takes its group's
 // identity where the group decides it: its variant, its readiness (a group
 // is Ready only when all its Pods are), whether it came from a warm pool,
-// and its settle (EngineOf). The input is not modified, and is returned as
+// and its settle (EngineGroups). The input is not modified, and is returned as
 // it is when no row has engines.
 func EngineRows(rows []ReplicaMetrics) []ReplicaMetrics {
 	if !slices.ContainsFunc(rows, func(rm ReplicaMetrics) bool { return len(rm.GroupEngines) > 0 }) {
@@ -694,6 +689,24 @@ func EngineRows(rows []ReplicaMetrics) []ReplicaMetrics {
 		}
 		for _, e := range rm.GroupEngines {
 			out = append(out, e.rowOf(rm))
+		}
+	}
+	return out
+}
+
+// EngineGroups is, for each engine's row EngineRows puts in place of a
+// group's, the PodName of its group's row; nil when rows hold no group with
+// engines. A settle is the replica's: the settle tracker observes the group
+// rows, and an engine settles as its group does. It is derived here and
+// never recorded.
+func EngineGroups(rows []ReplicaMetrics) map[string]string {
+	var out map[string]string
+	for _, rm := range rows {
+		for _, e := range rm.GroupEngines {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[e.PodName] = rm.PodName
 		}
 	}
 	return out

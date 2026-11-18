@@ -31,6 +31,21 @@ import (
 type Settle struct {
 	View  settle.View
 	Model string
+	// Groups is, for a row that is one engine of a LeaderWorkerSet group
+	// (domain.EngineRows), the Pod name the tracker knows its replica by
+	// (domain.EngineGroups): the tracker observes the group's row, and the
+	// engine settles as its group does. Nil reads every row by its own Pod.
+	Groups map[string]string
+}
+
+// key is the settle tracker's key of rm: its own, or its group's for an
+// engine of a group (Groups).
+func (s *Settle) key(rm domain.ReplicaMetrics) settle.Key {
+	key := settlerow.Key(rm)
+	if group, ok := s.Groups[rm.PodName]; ok {
+		key.Pod = group
+	}
+	return key
 }
 
 // start is when the replica of rm last began to settle, as the tracker read
@@ -50,7 +65,7 @@ type Settle struct {
 // the second, load returning is the key's own count instead (idleReturn: a
 // run of rows with neither an ITL nor a k).
 func (s *Settle) start(rm domain.ReplicaMetrics, adm Admission, idleRows int, idleReturn time.Time) time.Time {
-	key := settlerow.Key(rm)
+	key := s.key(rm)
 	r, ok := s.View.Replica(s.Model, key)
 	if !ok {
 		return time.Time{}

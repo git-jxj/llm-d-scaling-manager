@@ -50,15 +50,9 @@ func Row(rm domain.ReplicaMetrics, prefill bool) settle.Row {
 	}
 }
 
-// Key is the settle tracker's key of rm. An engine's row of a group
-// (domain.EngineRows) is keyed by its group's row: the tracker observes
-// replicas, and an engine settles as its replica does.
+// Key is the settle tracker's key of rm.
 func Key(rm domain.ReplicaMetrics) settle.Key {
-	pod := rm.PodName
-	if rm.EngineOf != "" {
-		pod = rm.EngineOf
-	}
-	return settle.Key{Pod: pod, Variant: rm.VariantName, Bridge: rm.FromWarmPool}
+	return settle.Key{Pod: rm.PodName, Variant: rm.VariantName, Bridge: rm.FromWarmPool}
 }
 
 // ReadyAgain is the first Ready row after the last row of trace that was not

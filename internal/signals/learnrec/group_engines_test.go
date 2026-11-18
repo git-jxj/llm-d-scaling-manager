@@ -29,7 +29,6 @@ func TestCodec_GroupEnginesReadBack(t *testing.T) {
 	again, err := Marshal(out)
 	require.NoError(t, err)
 	assert.Equal(t, string(b), string(again))
-	assert.NotContains(t, string(b), `"EngineOf"`)
 	assert.Contains(t, string(b), `{"PodName":"g-0-1","EngineRanks":1,"KvUsageMean":0.4,"KvUsageMeanKnown":true,"AvgITL":`,
 		"an engine writes its readings and nothing else")
 
