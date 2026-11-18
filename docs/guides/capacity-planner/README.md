@@ -277,11 +277,60 @@ kill %1
   is flagged `AssumedShape`.
 - **TPOT percentile.** A percentile needs the ratio of that percentile to the
   mean. If the source did not learn it, type an assumed ratio; every figure
-  that rests on it is flagged `AssumedTPOTRatio`.
+  that rests on it is flagged `AssumedTPOTRatio`. A learned ratio is read per
+  KV-fill band of 0.2 where the source saw at least 5 windows in the band, so
+  the tail can widen as load rises. A band with fewer windows uses the ratio
+  read over every fill, and figures priced there are flagged
+  `GlobalTPOTRatio`. No window is read below its true percentile. Where
+  the router's histogram buckets are wide, it is read at the bucket's top, or
+  lower where the measured mean proves it, flagged
+  `MeanBoundedTPOTPercentile`; p90 and p99 in one wide bucket read the same.
+  The ratio is the median window's plus a margin; from 6 windows or fewer, in
+  all or in one fill band, it is the worst window, and the CLI says so.
+  Finer router TPOT buckets give a firmer figure.
 - **Flags and inputs.** Every figure carries the flags it rests on. The
   **Flags** drawer lists each once, in words, with what clears it. The
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
+- **Is this fleet the right size?** Below the graphs, judge the fleet the
+  knobs set at the load the source saw.
+  1. Add a row per request shape: IL and OL in tokens (`k` for 1024) and,
+     optionally, the prefix hit rate. A blank row is the measured shape.
+  2. Type the loads, comma separated: `80%` of each shape's knee, `5r/s`, or
+     `seen`. Set **Load seen times** to 1.5 to add a column and a line for 50%
+     more traffic; the verdict stays at the load seen.
+  3. Pick the load seen to judge at: its p95 over the window (the default,
+     the busy spells), its mean, or its peak.
+  4. Press **Judge the fleet**.
+
+  The answer reads top down:
+  - **The load judged**, and the mean, p95 and peak the source saw.
+  - **Verdicts**, one sentence per shape at that load: UNDER-PROVISIONED
+    (and which role to add), RIGHT-SIZED, or OVER-PROVISIONED (and which
+    role can lose a replica), with the fleet it needs in a box: "needs 3
+    prefill + 4 decode (has 2 + 2)", other fleets that also serve as "or 4 +
+    3", "at least" when prefill is not priced, or "no fleet up to 32
+    replicas serves this". With a growth set, a second line under each
+    says what the grown traffic does. A typed shape is a what-if, marked "if
+    all traffic were this shape". "decode only" marks a verdict the prefill
+    side could not price.
+  - **The matrix**, one row per shape and one column per load. A cell is the
+    TTFT and TPOT at your SLO's statistics, at that load's rate, and a word:
+    `ok` every target met, `MISS` a target missed (`MISS at onset` at the
+    flow-control onset), `SAT` saturated, `?` not
+    judged, `no SLO` no target set. The colour repeats the word. A TPOT
+    marked `≤` is the decode line's floor: the load sits below the fill
+    the line was fitted over, so the TPOT is at most that. A shape
+    outside the lengths the source saw is marked EXTRAPOLATED.
+  - **Each shape**, closed until you open it: the knees, how busy decode and
+    prefill are at the load, the numbers behind the verdict, and what the
+    figures rest on.
+  - **How accurate is this?** What no run has validated yet.
+
+  The report uses the knobs above: fleet, targets, headroom and typed terms.
+  Change a knob and the page asks you to judge again. A server from before
+  the report says so under the button; the rest of the page works. The same
+  report is `capacity-planner at-replicas` and `POST /v1/report`.
 
 A refused figure, or an error, is explained in
 [Troubleshooting](troubleshooting.md).

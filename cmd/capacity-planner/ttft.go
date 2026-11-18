@@ -54,6 +54,11 @@ const (
 const (
 	// assumedArrivalCV2 is a Ca^2 --arrival-cv2 supplied.
 	assumedArrivalCV2 whatif.Flag = "AssumedArrivalCV2"
+	// decodeQueueUnread is a decode side priced from the decode engine's
+	// measured TTFT whose rows do not say why requests wait (no capacity
+	// series): a figure read while decode queued is not caught there, and
+	// held at every rate it is the floor (whatif.DecodeTTFTUnderLoad).
+	decodeQueueUnread whatif.Flag = "DecodeQueueUnread"
 )
 
 // outputSpreadUnreadWords is whatif.OutputSpreadUnread in words, on the assumed
@@ -227,6 +232,8 @@ type pricedFleet struct {
 	// variant names the prefill variant, and q is the percentile asked.
 	variant string
 	q       float64
+	// hint is the words a calm cycle is named in (calmCycleHint).
+	hint hintSource
 	// assumedHop is the hop --assume-router-hop supplied, nil with none.
 	assumedHop *time.Duration
 	// assumedA is an a --assume-a supplied.
@@ -408,6 +415,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		pf.assumedHop = &f.assumeRouterHop
 	}
 	pf.promptAssumed = f.set["assume-input-tokens"]
+	pf.hint = f.hintSource()
 	pf.decodeSide()
 	if pf.fleet.Decode != nil && pf.pv.state.Shape.OutputDispersion == 0 {
 		pf.assume("%s", outputSpreadUnreadWords)
@@ -686,9 +694,61 @@ func (pf *pricedFleet) decodeSide() {
 		pf.in.DecodeSide = sideDecodeEngine
 		pf.in.DecodeTTFTSeconds = pf.fleet.DecodeTTFT.Seconds
 		pf.in.DecodeTTFTPromptTokens = pf.fleet.DecodeTTFT.PromptTokens
+		if pf.pv != nil && pf.pv.state.DecodeTTFT.BacklogUnread {
+			pf.flags = append(pf.flags, decodeQueueUnread)
+			pf.assume("%s", backlogUnreadWords)
+		}
 		return
 	}
 	pf.in.DecodeSide = sideOmitted
+}
+
+// backlogUnreadWords is the note on a decode engine TTFT whose rows do not
+// say why requests wait: a figure read under load is not caught there.
+const backlogUnreadWords = "decode queue unread: the decode engine reports no capacity wait " +
+	"(vllm:num_requests_waiting_by_reason), so a decode TTFT read while decode queued is not caught"
+
+// hintSource is where the question's source is set, which words a calm
+// cycle is named in: the CLI's flags, or the API's source fields.
+type hintSource int
+
+const (
+	hintCLIRecording hintSource = iota
+	hintCLIPrometheus
+	hintAPIRecording
+	hintAPIPrometheus
+)
+
+// calmCycleHint is a DecodeTTFTUnderLoad refusal with the latest calm cycle
+// to answer at, in the words of the source's own setting, and that cycle on
+// the wire (DecodeTTFTCalmCycle); any other result as it is.
+func (pf *pricedFleet) calmCycleHint(r whatif.Result) whatif.Result {
+	u, ok := r.(whatif.Unanswerable)
+	if !ok || u.Reason != whatif.DecodeTTFTUnderLoad || pf.pv == nil {
+		return r
+	}
+	d := pf.pv.state.DecodeTTFT
+	if d.CalmCycle == 0 {
+		u.Detail += "; no cycle of the source read decode without a queue"
+		return u
+	}
+	at := d.CalmAt.UTC().Format(time.RFC3339)
+	if pf.hint == hintCLIPrometheus || pf.hint == hintAPIPrometheus {
+		pf.in.DecodeTTFTCalmAt = at
+	} else {
+		pf.in.DecodeTTFTCalmCycle = d.CalmCycle
+	}
+	switch pf.hint {
+	case hintCLIPrometheus:
+		u.Detail += fmt.Sprintf("; end the window before decode queued: --to %s, the latest cycle with no decode queue", at)
+	case hintAPIRecording:
+		u.Detail += fmt.Sprintf("; answer at a calmer cycle: source.cycle %d, the latest with no decode queue", d.CalmCycle)
+	case hintAPIPrometheus:
+		u.Detail += fmt.Sprintf("; end the window before decode queued: source.to %s, the latest cycle with no decode queue", at)
+	default:
+		u.Detail += fmt.Sprintf("; answer at a calmer cycle: --cycle %d, the latest with no decode queue", d.CalmCycle)
+	}
+	return u
 }
 
 // decodeTerm is the term on the decode line: what the recording's cycles
@@ -902,7 +962,7 @@ func (pf *pricedFleet) priced(price func(whatif.TTFTFleet) whatif.Result) whatif
 	if pf.refused != nil {
 		return *pf.refused
 	}
-	return pf.floorFlags(pf.qualify(price(pf.fleet)))
+	return pf.calmCycleHint(pf.floorFlags(pf.qualify(price(pf.fleet))))
 }
 
 // floorFlags adds to a floor refusal what S1's side says of the floor: above the

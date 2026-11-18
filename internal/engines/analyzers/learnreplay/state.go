@@ -67,7 +67,8 @@ type State struct {
 	// TPOTWindows is the router's per-request TPOT histogram of every cycle
 	// up to Cycle that recorded one, oldest first, as bucket rates: the
 	// input to whatif.TPOTRatioFromWindows. Empty in a recording made before
-	// the recorder carried it.
+	// the recorder carried it. Each window carries the cycle's decode fill
+	// (decodeFill), for R_q by fill.
 	TPOTWindows []whatif.TPOTWindow
 	// EngineTPOTWindows is the decode engines' per-request TPOT histogram of
 	// every cycle up to Cycle that recorded one, pooled over the rows, oldest
@@ -267,12 +268,13 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 			firstAt = ev.Now
 		}
 		cycleAt[ev.Now] = n
+		fill, fillOK := decodeFill(in.ReplicaMetrics, rolesOf(in))
 		arrivals = append(arrivals, in.ArrivalRate)
 		if w, ok := tpotWindow(in.RouterLatency); ok {
-			windows = append(windows, w)
+			windows = append(windows, withFill(w, fill, fillOK))
 		}
 		if w, ok := engineTPOTWindow(in.ReplicaMetrics, rolesOf(in)); ok {
-			engine = append(engine, w)
+			engine = append(engine, withFill(w, fill, fillOK))
 		}
 		noteShapes(shapes, in.ReplicaMetrics, n)
 		noteRanges(ranges, shapes, n)
@@ -496,7 +498,7 @@ func tpotWindow(rl *domain.RouterLatency) (whatif.TPOTWindow, bool) {
 	if rl == nil || len(rl.TPOTBuckets) == 0 {
 		return whatif.TPOTWindow{}, false
 	}
-	w := whatif.TPOTWindow{Sum: rl.TPOTSumRate, Count: rl.TPOTCountRate,
+	w := whatif.TPOTWindow{Sum: rl.TPOTSumRate, Count: rl.TPOTCountRate, SumMeasured: true,
 		Buckets: make([]whatif.HistogramBucket, len(rl.TPOTBuckets))}
 	for i, b := range rl.TPOTBuckets {
 		w.Buckets[i] = whatif.HistogramBucket{UpperEdge: b.UpperBound, Count: b.Rate}
