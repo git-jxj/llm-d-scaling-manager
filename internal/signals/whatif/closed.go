@@ -3,6 +3,7 @@ package whatif
 import (
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 )
@@ -329,35 +330,85 @@ type TPOTTarget struct {
 // TPOTRatio is R_q: learned from a TPOT histogram (TPOTRatioFromWindows), or
 // assumed by the caller. A zero Value is "no ratio".
 type TPOTRatio struct {
+	// Value is the global R_q, read from every window.
 	Value float64
 	// Assumed marks a ratio the caller supplied rather than learned; answers
 	// priced with it carry AssumedTPOTRatio.
 	Assumed bool
+	// ByFill is R_q by KV-fill bucket, rising with the fill; nil prices Value
+	// at every fill. A percentile is priced at the R_q of the fill it is read
+	// at (At).
+	ByFill []FillRatio
 }
+
+// one is the multiplier of the mean: R_q = 1 at every fill.
+func one() TPOTRatio { return TPOTRatio{Value: 1} }
 
 // ratio resolves the multiplier a target applies to the mean ITL: 1 for the
 // mean, R_q for a percentile, with the flags it brings.
-func (t TPOTTarget) ratio() (float64, []Flag, *Unanswerable) {
+func (t TPOTTarget) ratio() (TPOTRatio, []Flag, *Unanswerable) {
 	var u Unanswerable
+	curve := t.Ratio.check()
 	switch {
 	case t.OverTokenGaps:
 		u = refuse(TokenGapPercentile, "percentiles over token gaps are not modelled; use a per-request TPOT percentile")
 	case t.Percentile == 0:
-		return 1, nil, nil
+		return one(), nil, nil
 	case !(t.Percentile > 0 && t.Percentile < 1):
 		u = refuse(InvalidInput, fmt.Sprintf("TPOT percentile %g, want 0 < q < 1", t.Percentile))
 	case t.Ratio.Value == 0:
 		u = refuse(NoTPOTHistogram, fmt.Sprintf("no R_q for the p%g TPOT: no histogram and none assumed", 100*t.Percentile))
 	case !Finite(t.Ratio.Value) || !(t.Ratio.Value >= 1):
 		u = refuse(InvalidInput, fmt.Sprintf("R_q %g, want a finite ratio of at least 1", t.Ratio.Value))
+	case curve != nil:
+		u = *curve
 	default:
 		var flags []Flag
 		if t.Ratio.Assumed {
 			flags = append(flags, AssumedTPOTRatio)
 		}
-		return t.Ratio.Value, flags, nil
+		return t.Ratio, flags, nil
 	}
-	return 0, nil, &u
+	return TPOTRatio{}, nil, &u
+}
+
+// tpotAtFill is ITL(k) times R_q at k, and whether the global R_q stood in
+// for a thin fill bucket there.
+func (d Decode) tpotAtFill(k float64, r TPOTRatio) (float64, bool) {
+	rk, global := r.At(k)
+	return d.Line.ITLAt(k) * rk, global
+}
+
+// fillForTPOT is the fill k* at which ITL(k) times R_q(k) reaches t. With
+// one ratio it is the closed form (t/R_q - B)/A. With R_q by fill the product
+// rises strictly in k (A and B are positive and R_q never falls), so k* is
+// found by bisection on [lo, 1]; past a full cache R_q is flat at its last
+// bucket, and the closed form at that ratio is exact there. R_q steps up at a
+// bucket's edge, where the product can jump past t: the bisection returns the
+// side below t, so the fill answered never prices a TPOT above the target.
+// The flag says the global R_q stood in for a thin bucket at k*.
+func (d Decode) fillForTPOT(t float64, r TPOTRatio, lo float64) (float64, bool) {
+	if len(r.ByFill) == 0 {
+		return (t/r.Value - d.Line.B) / d.Line.A, false
+	}
+	if at, _ := d.tpotAtFill(1, r); at < t {
+		r1, global := r.At(1)
+		return (t/r1 - d.Line.B) / d.Line.A, global
+	}
+	hi := 1.0
+	for range 100 {
+		mid := (lo + hi) / 2
+		if mid == lo || mid == hi {
+			break
+		}
+		if at, _ := d.tpotAtFill(mid, r); at < t {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	_, global := r.At(lo)
+	return lo, global
 }
 
 // RateQuery is question 1's input beyond the fleet.
@@ -375,12 +426,13 @@ type RateQuery struct {
 // second over the fleet, at which the replicas hold the TPOT target
 // (docs/proposals/slo-capacity-planner.md, "Question 1").
 //
-// It inverts ITL(k)*R_q = t at k* = (t/R_q - B)/A (R_q = 1 for the mean),
-// refuses with TargetBelowFloor when the floor, ITL(lowestFill)*R_q, already
-// reaches t, clamps k* to k_full, and prices N_d * lambda_rep(k*). The rate
-// is then capped at the operating point, headroom times the knee, because
-// past it the admission wait is no longer small; a headroom of 1 lifts the
-// cap. A final fill below the band is flagged BelowFittedBand.
+// It inverts ITL(k)*R_q(k) = t (fillForTPOT; k* = (t/R_q - B)/A with one R_q,
+// and R_q = 1 for the mean), refuses with TargetBelowFloor when the floor,
+// ITL(lowestFill)*R_q, already reaches t, clamps k* to k_full, and prices
+// N_d * lambda_rep(k*). The rate is then capped at the operating point,
+// headroom times the knee, because past it the admission wait is no longer
+// small; a headroom of 1 lifts the cap. A final fill below the band is flagged
+// BelowFittedBand.
 //
 // Basis.Uncapped is the rate the target alone allows, Basis.Fill the fill the
 // answer runs at, and Basis.BoundBy what set the rate.
@@ -399,12 +451,12 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	if !(q.Headroom > 0 && q.Headroom <= 1) {
 		return refuse(InvalidInput, fmt.Sprintf("headroom %g, want 0 < headroom <= 1 for question 1", q.Headroom))
 	}
-	floor := d.Line.ITLAt(d.lowestFill()) * r
+	floor, _ := d.tpotAtFill(d.lowestFill(), r)
 	if floor >= t.Seconds {
 		return refuse(TargetBelowFloor, fmt.Sprintf("target %.4g ms at or below the floor %.4g ms", 1000*t.Seconds, 1000*floor))
 	}
 	p := d.full()
-	k := (t.Seconds/r - d.Line.B) / d.Line.A
+	k, global := d.fillForTPOT(t.Seconds, r, d.lowestFill())
 	by := []Bound{BoundTPOT}
 	// below is whether the answer's fill sits under the band: set once per
 	// place k is set, and flagged once, at the end.
@@ -435,6 +487,11 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	}
 	if below {
 		flags = append(flags, BelowFittedBand)
+	}
+	// The thin bucket's stand-in matters only where the target sets the rate:
+	// k* is then the answer's fill.
+	if global && slices.Contains(by, BoundTPOT) {
+		flags = append(flags, GlobalTPOTRatio)
 	}
 	return Answer{Value: rate, Flags: flags, Basis: Basis{
 		Fill: k, KneeRate: knee, Floor: floor, Uncapped: uncapped, BoundBy: by, Tier: d.Tier,
@@ -519,7 +576,7 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 	}
 	k := res.(Answer).Value
 	out.Rate = Answer{Value: rate, Basis: Basis{Fill: k, KneeRate: knee, BoundBy: rateBy, Tier: d.Tier}}
-	out.MeanTPOT = d.tpotAt(k, knee, 1, nil)
+	out.MeanTPOT = d.tpotAt(k, knee, one(), nil)
 	if p := q.PercentileTarget; p != nil {
 		if p.Percentile == 0 && !p.OverTokenGaps {
 			// A percentile asked with no percentile is a caller's mistake,
@@ -537,13 +594,17 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 	return out
 }
 
-// tpotAt is the TPOT at fill k, times r, never below the floor.
-func (d Decode) tpotAt(k, knee, r float64, flags []Flag) Answer {
+// tpotAt is the TPOT at fill k, times R_q at that fill, never below the floor.
+func (d Decode) tpotAt(k, knee float64, r TPOTRatio, flags []Flag) Answer {
 	lowest := d.lowestFill()
-	floor := d.Line.ITLAt(lowest) * r
+	floor, _ := d.tpotAtFill(lowest, r)
 	at := max(k, lowest)
 	if k < d.Band.Lo {
 		flags = append(flags, BelowFittedBand)
 	}
-	return Answer{Value: d.Line.ITLAt(at) * r, Flags: flags, Basis: Basis{Fill: k, KneeRate: knee, Floor: floor, Tier: d.Tier}}
+	v, global := d.tpotAtFill(at, r)
+	if global {
+		flags = append(flags, GlobalTPOTRatio)
+	}
+	return Answer{Value: v, Flags: flags, Basis: Basis{Fill: k, KneeRate: knee, Floor: floor, Tier: d.Tier}}
 }

@@ -138,6 +138,15 @@ const (
 	// EngineTPOTHistogram is an R_q read from the engine's TPOT histogram in
 	// place of the router's, or a refusal of it.
 	EngineTPOTHistogram Flag = "EngineTPOTHistogram"
+	// MeanBoundedTPOTPercentile is an R_q read below its coarse bucket's upper
+	// edge, at the most the window's mean lets the percentile be: never below
+	// the true percentile, and different for percentiles that share the
+	// bucket where the mean allows it. It comes with CoarseTPOTBucket.
+	MeanBoundedTPOTPercentile Flag = "MeanBoundedTPOTPercentile"
+	// GlobalTPOTRatio is a percentile TPOT priced at a fill whose bucket of
+	// R_q by fill held fewer than MinFillRatioWindows windows: the global
+	// R_q stood in for the bucket's own.
+	GlobalTPOTRatio Flag = "GlobalTPOTRatio"
 	// BelowFittedBand is a fill below the band the line was fitted over: the
 	// TPOT is read at the band's bottom, the higher, safer reading, so the
 	// answer's TPOT is a floor rather than the line's extrapolation.
