@@ -108,7 +108,10 @@ func collapseToGroups(rows []placedRow, impaired func(pod string) bool) []domain
 		// Each Pod's engine as it read, for the ITL line (domain.EngineRows):
 		// the merge's mean fill and mean ITL keep none of the spread across
 		// the engines that the line is fitted from.
-		merged.GroupEngines = group
+		merged.GroupEngines = make([]domain.EngineReading, len(group))
+		for i, e := range group {
+			merged.GroupEngines[i] = domain.EngineReadingOf(e)
+		}
 		out = append(out, merged)
 	}
 	return out

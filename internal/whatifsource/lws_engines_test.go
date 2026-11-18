@@ -33,7 +33,6 @@ func TestCapture_AGroupKeepsItsEnginesForTheLine(t *testing.T) {
 		if e.VariantName != "m-decode" {
 			continue
 		}
-		assert.Len(t, e.GroupEngines, 0, e.PodName)
 		assert.True(t, e.Ready, e.PodName)
 		if e.ITLState() == domain.ITLFinite {
 			finite++

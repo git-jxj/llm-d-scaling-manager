@@ -33,6 +33,7 @@ func TestCollapseToGroups_KeepsTheEnginesOfAGroup(t *testing.T) {
 	require.Len(t, group.GroupEngines, 2)
 	assert.Equal(t, []string{"s-0", "s-0-1"}, []string{group.GroupEngines[0].PodName, group.GroupEngines[1].PodName})
 	assert.InDelta(t, 0.4, group.GroupEngines[1].KvUsageMean, 0, "each engine as read")
+	assert.InDelta(t, 0.014, group.GroupEngines[1].AvgITL, 1e-12)
 
 	assert.Nil(t, got[1].GroupEngines, "a leader-only group: its leader is its engine")
 	assert.Nil(t, got[2].GroupEngines, "a row outside any group")

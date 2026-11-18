@@ -10,15 +10,16 @@ import (
 )
 
 // A group's engines ride in its row and read back as written, so a replay
-// fits the ITL line from the engines the controller fitted it from; a row
-// without them writes neither field.
+// fits the ITL line from the engines the controller fitted it from. An
+// engine writes only the readings it has; a row without engines writes
+// neither field.
 func TestCodec_GroupEnginesReadBack(t *testing.T) {
-	engine := func(pod string, k float64) domain.ReplicaMetrics {
-		return domain.ReplicaMetrics{PodName: pod, KvUsageMean: k, KvUsageMeanKnown: true, AvgITL: 0.006 + 0.02*k,
-			AvgITLKnown: true, EngineRanks: 1, Ready: true}
+	engine := func(pod string, k float64) domain.EngineReading {
+		return domain.EngineReading{PodName: pod, KvUsageMean: k, KvUsageMeanKnown: true, AvgITL: 0.006 + 0.02*k,
+			AvgITLKnown: true, EngineRanks: 1}
 	}
 	row := domain.ReplicaMetrics{PodName: "g-0", VariantName: "d", EngineRanks: 2, Ready: true,
-		GroupEngines: []domain.ReplicaMetrics{engine("g-0", 0.2), engine("g-0-1", 0.4)}}
+		GroupEngines: []domain.EngineReading{engine("g-0", 0.2), engine("g-0-1", 0.4)}}
 	in := Input{ModelID: "m", Namespace: "ns", ReplicaMetrics: []domain.ReplicaMetrics{row}}
 	b, err := Marshal(in)
 	require.NoError(t, err)
@@ -29,6 +30,8 @@ func TestCodec_GroupEnginesReadBack(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(b), string(again))
 	assert.NotContains(t, string(b), `"EngineOf"`)
+	assert.Contains(t, string(b), `{"PodName":"g-0-1","EngineRanks":1,"KvUsageMean":0.4,"KvUsageMeanKnown":true,"AvgITL":`,
+		"an engine writes its readings and nothing else")
 
 	in.ReplicaMetrics[0].GroupEngines = nil
 	b, err = Marshal(in)
