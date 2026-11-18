@@ -53,7 +53,8 @@ type captureFlags struct {
 	step                          time.Duration
 	policy                        string
 	engine, engineArgs            string
-	batchCap, gpus                int
+	batchCap                      int
+	gpus                          gpusFlag
 	accelerator                   string
 	vllmVersion, engineImage      string
 	force                         bool
@@ -150,7 +151,8 @@ func (f *captureFlags) registerWindow(fs *flag.FlagSet) {
 	fs.StringVar(&f.policy, "policy", "", "a scaling-policy entry (YAML), applied as the default entry; the defaults when absent")
 	fs.StringVar(&f.engine, "engine", "vllm", "the inference engine the variants run: vllm or sglang")
 	fs.StringVar(&f.engineArgs, "engine-args", "", "the engine's arguments, space-separated, for its parameters (kube-state-metrics has none)")
-	fs.IntVar(&f.gpus, "gpus-per-replica", 1, "GPUs per replica, where kube-state-metrics gives none")
+	f.gpus = gpusFlag{n: 1}
+	fs.Var(&f.gpus, "gpus-per-replica", "GPUs per replica (every Pod of a LeaderWorkerSet group): 1 where kube-state-metrics gives none; given, it replaces what kube-state-metrics gives")
 	fs.StringVar(&f.accelerator, "accelerator", "", "the accelerator, where kube-state-metrics gives none")
 	fs.StringVar(&f.vllmVersion, "vllm-version", "", "the vLLM release the engines run (0.34), where kube-state-metrics shows none; it sets the defaults of the flags the engine is not given")
 	fs.StringVar(&f.engineImage, "engine-image", "", "the engine container's image, where kube-state-metrics shows none; a vllm-openai tag names the vLLM release")
@@ -209,7 +211,7 @@ func (f captureFlags) options(cmd string, warn io.Writer) (whatifsource.Options,
 	default:
 		return opts, usagef("--engine %q is not vllm or sglang", f.engine)
 	}
-	if f.batchCap < 0 || f.gpus < 1 {
+	if f.batchCap < 0 || f.gpus.n < 1 {
 		return opts, usagef("--batch-cap must not be negative and --gpus-per-replica must be at least 1")
 	}
 	if f.vllmVersion != "" && !capacity.ParseVLLMVersion(f.vllmVersion).Known() {
@@ -242,7 +244,8 @@ func (f captureFlags) options(cmd string, warn io.Writer) (whatifsource.Options,
 	opts.Namespace = f.namespace
 	opts.From, opts.To, opts.Step = from, to, f.step
 	opts.KubeStateMetrics = f.ksm
-	opts.BatchCap, opts.GPUsPerReplica, opts.Accelerator = f.batchCap, f.gpus, f.accelerator
+	opts.BatchCap, opts.GPUsPerReplica, opts.Accelerator = f.batchCap, f.gpus.n, f.accelerator
+	opts.GPUsPerReplicaSet = f.gpus.set
 	opts.VLLMVersion, opts.EngineImage = f.vllmVersion, f.engineImage
 	opts.Force = f.force
 	return opts, nil
@@ -348,4 +351,27 @@ func (b bearer) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Header.Set("Authorization", "Bearer "+b.token)
 	}
 	return b.base.RoundTrip(req)
+}
+
+// gpusFlag is --gpus-per-replica: its count, and whether it was given, which
+// makes it replace what kube-state-metrics reads.
+type gpusFlag struct {
+	n   int
+	set bool
+}
+
+func (g *gpusFlag) String() string {
+	if g == nil {
+		return ""
+	}
+	return strconv.Itoa(g.n)
+}
+
+func (g *gpusFlag) Set(s string) error {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return err
+	}
+	g.n, g.set = n, true
+	return nil
 }

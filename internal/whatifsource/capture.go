@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/annotations"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector"
@@ -27,11 +28,13 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source"
 	promsource "github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source/prometheus"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/throughput"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/variantmeta"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
@@ -68,10 +71,17 @@ const (
 	// the window reads as one that was not.
 	FlagNoRollouts = "rollouts not seen: every scale target filed as not rolling out"
 	// FlagMultiPodGroups: a variant runs multi-Pod groups (a LeaderWorkerSet,
-	// or Pods a StatefulSet owns), whose replica spans several Pods; its GPUs
-	// per replica are read from one Pod's request, not the group's. A format:
-	// how many variants.
+	// or Pods a StatefulSet owns), whose replica spans several Pods, and
+	// kube-state-metrics does not export the LeaderWorkerSet name and
+	// group-index labels that say which Pods form a group: its GPUs per
+	// replica are read from one Pod's request, not the group's. Where it
+	// exports them, the group's GPUs are summed and nothing is flagged. A
+	// format: how many variants.
 	FlagMultiPodGroups = "multi-Pod groups in %d variants: GPUs per replica read from one Pod's request, not the group's"
+	// FlagGPUsOverride: --gpus-per-replica was given and replaces what
+	// kube-state-metrics reads for a variant. A format: the variant, the
+	// flag's count and kube-state-metrics'.
+	FlagGPUsOverride = "variant %s: GPUs per replica %d from --gpus-per-replica, over %d from kube-state-metrics"
 	// FlagVLLMVersionUnknown: no annotation, image tag or flag named the vLLM
 	// release of some variants, which are read with an unknown release's
 	// defaults. A format: how many variants, of how many.
@@ -118,9 +128,11 @@ type Options struct {
 	EngineArgs []string
 	BatchCap   int
 	// GPUsPerReplica and Accelerator stand in for what kube-state-metrics
-	// does not give.
-	GPUsPerReplica int
-	Accelerator    string
+	// does not give. GPUsPerReplicaSet says GPUsPerReplica was stated, and
+	// then it replaces what kube-state-metrics gives too (FlagGPUsOverride).
+	GPUsPerReplica    int
+	GPUsPerReplicaSet bool
+	Accelerator       string
 	// VLLMVersion and EngineImage stand in for the vLLM release where
 	// kube-state-metrics gives none: VLLMVersion as the
 	// scaling-manager.llmd.ai/vllm-version annotation would state it ("0.34"),
@@ -281,8 +293,9 @@ type variantInfo struct {
 	// kube-state-metrics.
 	images, versions map[string]int
 	// multiPod is whether kube-state-metrics shows its Pods in multi-Pod
-	// groups (FlagMultiPodGroups).
-	multiPod bool
+	// groups, and ungrouped whether it shows one without the labels that
+	// name its group (FlagMultiPodGroups).
+	multiPod, ungrouped bool
 }
 
 // windowScan is the first pass over the window: every variant whose Pods
@@ -300,6 +313,48 @@ type windowScan struct {
 	// steps at which kube-state-metrics listed no Pod.
 	inferred, noRoleLabel bool
 	ksmGaps               int
+	// unattributed is every Pod with a KV series the role map gave no
+	// variant, by name, for the error that says how to give it one.
+	unattributed map[string]*pod
+}
+
+// roleLabelKeys are the Pod labels a --role-of selector can pick a role by,
+// in the order a hint names them.
+var roleLabelKeys = []string{variantmeta.RoleLabel, constants.DisaggregatedSetRoleLabelKey,
+	constants.DisaggregatedSetNameLabelKey, lwsv1.SetNameLabelKey}
+
+// unattributedHint says what the Pods with a KV series and no variant are,
+// for ErrNothingAttributed: how many, their owner, the role labels
+// kube-state-metrics exports for them, and a --role-of that would pick them.
+func (s *windowScan) unattributedHint() string {
+	if len(s.unattributed) == 0 {
+		return ""
+	}
+	names := slices.Sorted(maps.Keys(s.unattributed))
+	p := s.unattributed[names[0]]
+	hint := fmt.Sprintf("; %d Pods with one have no variant, %s among them", len(names), p.name)
+	if p.ownerKind != "" {
+		hint += ", owned by a " + p.ownerKind
+	}
+	var found []string
+	selector := ""
+	for _, k := range roleLabelKeys {
+		if v, ok := p.labels[ksmLabelName(k)]; ok && v != "" {
+			found = append(found, k+"="+v)
+			if _, err := ParseRoleOf(v + "=" + k + "=" + v); selector == "" && err == nil &&
+				(k == variantmeta.RoleLabel || k == constants.DisaggregatedSetRoleLabelKey) {
+				selector = "--role-of " + v + "=" + k + "=" + v
+			}
+		}
+	}
+	if len(found) == 0 {
+		return hint + ", with no role label in kube-state-metrics: pass --role-of ROLE=SELECTOR for each role " +
+			"(or export the Pods' labels with --metric-labels-allowlist)"
+	}
+	if selector == "" {
+		selector = "--role-of ROLE=SELECTOR"
+	}
+	return hint + ", labelled " + strings.Join(found, ", ") + ": pass " + selector + " and one for each other role"
 }
 
 // Capture captures the window opts names and writes it to w, gzipped: the
@@ -366,8 +421,8 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	}
 	variants, flags := windowVariants(scan, opts)
 	if len(variants) == 0 {
-		return nil, fmt.Errorf("%w, in namespace %s from %s to %s", ErrNothingAttributed,
-			opts.Namespace, opts.From.Format(time.RFC3339), opts.To.Format(time.RFC3339))
+		return nil, fmt.Errorf("%w, in namespace %s from %s to %s%s", ErrNothingAttributed,
+			opts.Namespace, opts.From.Format(time.RFC3339), opts.To.Format(time.RFC3339), scan.unattributedHint())
 	}
 	start, err := captureStart(opts)
 	if err != nil {
@@ -487,7 +542,7 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 		return nil, err
 	}
 	scan := &windowScan{variants: map[string]*variantInfo{}, live: map[time.Time]map[string]bool{},
-		engines: map[string]bool{}}
+		engines: map[string]bool{}, unattributed: map[string]*pod{}}
 	sawRoleLabel := false
 	for _, at := range steps {
 		api.setStep(at)
@@ -511,6 +566,9 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 				return nil, overlapErr(p)
 			}
 			modelID := string(s.Metric["model_name"])
+			if p != nil && p.variant == "" && modelID != "" {
+				scan.unattributed[name] = p
+			}
 			if p == nil || p.variant == "" || modelID == "" {
 				continue
 			}
@@ -525,8 +583,9 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 			scan.inferred = scan.inferred || p.inferred
 			if p.ksm {
 				v.multiPod = v.multiPod || p.inGroup()
-				if p.gpus > 0 {
-					v.gpus[p.gpus]++
+				v.ungrouped = v.ungrouped || (p.inGroup() && p.group() == "")
+				if gpus := f.replicaGPUs(p); gpus > 0 {
+					v.gpus[gpus]++
 				}
 				if a := f.nodeAccel[p.node]; a != "" {
 					v.accels[a]++
@@ -538,7 +597,7 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 					v.versions[a]++
 				}
 			}
-			if _, ok := p.labels[ksmLabelName("llm-d.ai/role")]; ok {
+			if p.role != "" && len(opts.RoleOf) == 0 {
 				sawRoleLabel = true
 			}
 		}
@@ -571,12 +630,16 @@ func windowVariants(scan *windowScan, opts Options) ([]learnreplay.CaptureVarian
 	out := make([]learnreplay.CaptureVariant, 0, len(scan.variants))
 	for _, name := range slices.Sorted(maps.Keys(scan.variants)) {
 		info := scan.variants[name]
-		if info.multiPod {
+		if info.multiPod && info.ungrouped {
 			multiPod++
 		}
 		gpus, ok := mostCommon(info.gpus)
-		if !ok {
+		switch {
+		case !ok:
 			gpus, gpusFromFlags = opts.GPUsPerReplica, opts.KubeStateMetrics
+		case opts.GPUsPerReplicaSet && gpus != opts.GPUsPerReplica:
+			flags = append(flags, fmt.Sprintf(FlagGPUsOverride, name, opts.GPUsPerReplica, gpus))
+			gpus = opts.GPUsPerReplica
 		}
 		accel, ok := mostCommon(info.accels)
 		if !ok {
@@ -979,7 +1042,9 @@ func collectModel(ctx context.Context, c *collector.ReplicaMetricsCollector, f *
 // rows; its GPUs per replica, role and accelerator from the window line.
 // Only engine Pods count as replicas: those with a KV series at some step
 // of the window (windowScan.engines). A Pod that never had one, as the
-// router's Pod a name prefix also picks, is not a replica.
+// router's Pod a name prefix also picks, is not a replica. A
+// LeaderWorkerSet group is one replica however many of its Pods are
+// engines (pod.replicaKey).
 func variantStates(f *fleet, opts Options, engines map[string]bool, active []string,
 	variants map[string]learnreplay.CaptureVariant, rows []domain.ReplicaMetrics) []domain.VariantReplicaState {
 	out := make([]domain.VariantReplicaState, 0, len(active))
@@ -988,12 +1053,26 @@ func variantStates(f *fleet, opts Options, engines map[string]bool, active []str
 		vs := domain.VariantReplicaState{VariantName: name, GPUsPerReplica: v.GpuCount, Role: v.Role,
 			AcceleratorName: v.Accelerator}
 		if opts.KubeStateMetrics && len(f.pods) > 0 {
+			// A replica is a LeaderWorkerSet group, not a Pod: counted once
+			// when any of its Pods is an engine, and pending while any of
+			// its Pods is not Ready, as the group serves only when all do.
+			// Counting Pods read a 4-Pod group as 4 replicas, 3 of them
+			// pending against the one row the collector makes of the group.
+			engine, notReady := map[string]bool{}, map[string]bool{}
 			for _, p := range f.pods {
-				if p.variant != name || p.deleting || !engines[p.name] {
+				if p.variant != name || p.deleting {
+					continue
+				}
+				k := p.replicaKey()
+				engine[k] = engine[k] || engines[p.name]
+				notReady[k] = notReady[k] || !p.ready
+			}
+			for k, isEngine := range engine {
+				if !isEngine {
 					continue
 				}
 				vs.CurrentReplicas++
-				if !p.ready {
+				if notReady[k] {
 					vs.PendingReplicas++
 				}
 			}
