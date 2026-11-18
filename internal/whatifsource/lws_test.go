@@ -181,6 +181,27 @@ func TestCapture_DisaggregatedSetOnLWSWithAnEnginePerPod(t *testing.T) {
 	assert.Zero(t, states["m-prefill"].PendingReplicas)
 }
 
+// The same fleet with the roles from --role-of: the groups are replicas
+// whoever names the variants.
+func TestCapture_LWSGroupsWithRoleOfAreReplicas(t *testing.T) {
+	d := lwsFleetCapture(t, decodeRole(everyPod), prefillRole(everyPod), func(o *Options) {
+		for _, r := range []string{"decode=llm-d.ai/role=decode", "prefill=llm-d.ai/role=prefill"} {
+			parsed, err := ParseRoleOf(r)
+			require.NoError(t, err)
+			o.RoleOf = append(o.RoleOf, parsed)
+		}
+	})
+
+	require.Len(t, d.window.Variants, 2)
+	assert.Equal(t, 32, d.window.Variants[0].GpuCount, "GPUs per replica are the group's")
+	in := d.cycles[0].Input
+	assert.Len(t, in.ReplicaMetrics, 3, "one row per group")
+	states := statesByName(in.VariantStates)
+	assert.Equal(t, 2, states["decode"].CurrentReplicas, "a group is one replica")
+	assert.Zero(t, states["decode"].PendingReplicas)
+	assert.Equal(t, 1, states["prefill"].CurrentReplicas)
+}
+
 // A worker not Ready makes its group pending, once.
 func TestCapture_LWSGroupWithAWorkerNotReadyIsOnePendingReplica(t *testing.T) {
 	dec := decodeRole(everyPod)

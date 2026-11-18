@@ -37,8 +37,8 @@ elif ! grep -q -- "--query.lookback-delta=60s" "$TMP/err"; then
 fi
 
 # 1b. A family scraped every 60 s beside ones at 15 s: the lookback is the
-# slow family's (240 s), not the median over every sample, which the fast
-# families outnumber, and both intervals are printed.
+# slow family's (240 s), not the median over every interval (15 s, as the
+# fast families' 5 intervals outnumber its 2), and both are printed.
 # shellcheck disable=SC2086
 if ! python3 "$CONVERT" -o "$TMP/slow.om" $GOOD "$FIX/slow.1700000000.json" "$FIX/slow.1700000030.json" 2>"$TMP/err"; then
   echo "FAIL: the converter refused good answers with a slow family: $(cat "$TMP/err")" >&2
