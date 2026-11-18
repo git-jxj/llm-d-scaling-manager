@@ -170,6 +170,7 @@ var checks = []check{
 	{"overlap", checkOverlap},
 	{"accelerators", checkAccelerators},
 	{"activation", checkActivation},
+	{"lws.disaggregatedset", checkLWSDisaggregatedSet},
 }
 
 // CheckNames lists the checks `check` mode runs, in order.
