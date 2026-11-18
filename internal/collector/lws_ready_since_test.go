@@ -13,7 +13,6 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/locator"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 )
 
 // Where an LWS group's Ready time comes from (analyzer-learner.md 4.3 and
@@ -85,16 +84,16 @@ func TestLWSGroupReadyTimeIsTheLatestOfItsPods(t *testing.T) {
 		}
 		reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 		c := NewReplicaMetricsCollector(nil, nil, reader, nil, loc)
-		var built []domain.ReplicaMetrics
+		var built []placedRow
 		for _, p := range pods {
 			data := &podMetricData{podName: p.Name, vaName: "lws", hasKv: true, kvUsage: 0.5}
-			if m, _, ok := c.attributeInstance(ctx, "m", "ns", p.Name+":8000", data, t0.Add(time.Hour), nil,
+			if m, _, place, ok := c.attributeInstance(ctx, "m", "ns", p.Name+":8000", data, t0.Add(time.Hour), nil,
 				map[string]map[string]int{}); ok {
-				built = append(built, m)
+				built = append(built, placedRow{row: m, place: place})
 			}
 		}
 		out := map[string]time.Time{}
-		for _, m := range collapseToGroups(built, func(pod string) (string, int, bool) { return c.lwsMember(ctx, "ns", pod) }) {
+		for _, m := range collapseToGroups(built, func(pod string) bool { return c.lwsGroupImpaired(ctx, "ns", pod) }) {
 			out[m.PodName] = m.ReadySince
 		}
 		return out

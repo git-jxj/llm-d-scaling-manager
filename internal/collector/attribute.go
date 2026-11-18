@@ -104,16 +104,43 @@ func (c *ReplicaMetricsCollector) buildInstanceKey(ctx context.Context, namespac
 	return instanceKey, podName, vaName
 }
 
-// lwsMember is the LeaderWorkerSet group a Pod belongs to and its worker
-// index (0 for the leader), from the labels the LWS controller stamps on the
-// leader and every worker. ok is false for a Pod outside any LWS, or one whose
-// labels cannot be read. The labels come from the locator's cache, which the
-// attribution walk has already populated, so this costs a map lookup.
-func (c *ReplicaMetricsCollector) lwsMember(ctx context.Context, namespace, podName string) (group string, worker int, ok bool) {
-	if podName == "" || c.locator == nil {
-		return "", 0, false
+// lwsPlace is where a Pod sits in a LeaderWorkerSet, from the labels the LWS
+// controller stamps on the leader and every worker.
+type lwsPlace struct {
+	// group is "<set>/<group index>" (lwsGroupKeyOf), "" for a Pod outside
+	// any LWS or one whose set or group index is not labelled.
+	group string
+	// worker is the worker index, 0 for the leader; one that is not a
+	// number sorts after every worker that has one.
+	worker int
+	// isWorker is a worker-index label other than "0", as isLWSWorker reads
+	// it, with or without a group.
+	isWorker bool
+}
+
+// lwsPlaceOf is the lwsPlace a Pod's labels give.
+func lwsPlaceOf(labels map[string]string) lwsPlace {
+	idx, hasIdx := labels[lwsv1.WorkerIndexLabelKey]
+	p := lwsPlace{group: lwsGroupKeyOf(labels), isWorker: hasIdx && idx != "0"}
+	if p.group == "" {
+		return p
 	}
-	return lwsMemberOf(c.locator.GetPodLabels(ctx, namespace, podName))
+	worker, err := strconv.Atoi(idx)
+	if err != nil || worker < 0 {
+		worker = math.MaxInt
+	}
+	p.worker = worker
+	return p
+}
+
+// lwsPlace is the lwsPlace of a Pod, read through the locator's labels: one
+// read, which the attribution walk has usually cached already. A Pod whose
+// labels cannot be read is outside any LWS.
+func (c *ReplicaMetricsCollector) lwsPlace(ctx context.Context, namespace, podName string) lwsPlace {
+	if podName == "" || c.locator == nil {
+		return lwsPlace{}
+	}
+	return lwsPlaceOf(c.locator.GetPodLabels(ctx, namespace, podName))
 }
 
 // isLWSWorker checks if a pod is part of an LWS and is a worker (non-leader).
@@ -141,20 +168,6 @@ func (c *ReplicaMetricsCollector) isLWSWorker(ctx context.Context, namespace, po
 	return workerIndex != "0"
 }
 
-// lwsMemberOf is lwsMember read from a Pod's labels. A worker index that is
-// not a number sorts after every worker that has one.
-func lwsMemberOf(labels map[string]string) (group string, worker int, ok bool) {
-	group = lwsGroupKeyOf(labels)
-	if group == "" {
-		return "", 0, false
-	}
-	worker, err := strconv.Atoi(labels[lwsv1.WorkerIndexLabelKey])
-	if err != nil || worker < 0 {
-		worker = math.MaxInt
-	}
-	return group, worker, true
-}
-
 // attributeInstance turns one engine instance's scraped data into the
 // ReplicaMetrics row the analyzers read, or says why it is not one: an
 // instance with neither of the two saturation series, or one nothing this
@@ -162,7 +175,8 @@ func lwsMemberOf(labels map[string]string) (group string, worker int, ok bool) {
 // walk buildInstanceKey did, overridden for a warm-pool bridge by the variant
 // it is lent to; the FMA pairing hop is reported through pairedAs ("pod ->
 // variant", empty otherwise) so the caller can say once per cycle that the
-// hop carried something. Per-request timings are dropped for a Pod that is
+// hop carried something, and the Pod's place in a LeaderWorkerSet with the
+// row, for collapseToGroups. Per-request timings are dropped for a Pod that is
 // not Ready or that reports a request older than itself; the rest is taken
 // as scraped. Each series' freshness is folded into freshness (per variant)
 // and the worst of them into the row's metadata.
@@ -183,7 +197,7 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 	collectedAt time.Time,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	freshness map[string]map[string]int,
-) (domain.ReplicaMetrics, string, bool) {
+) (domain.ReplicaMetrics, string, lwsPlace, bool) {
 	logger := ctrl.LoggerFrom(ctx)
 	pairedAs := ""
 
@@ -202,7 +216,7 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 	// Skip pods that have no metrics at all. This can happen when the query returns pods that
 	// were scaled up then scaled down, i.e. no longer running in the namespace.
 	if !data.hasKv && !data.hasQueue {
-		return domain.ReplicaMetrics{}, "", false
+		return domain.ReplicaMetrics{}, "", lwsPlace{}, false
 	}
 
 	kvUsage := data.kvUsage
@@ -269,7 +283,7 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 			"reason", reason,
 			"detail", why,
 			"scale targets", getScaleTargetNames(scaleTargets))
-		return domain.ReplicaMetrics{}, "", false
+		return domain.ReplicaMetrics{}, "", lwsPlace{}, false
 	}
 	if isFMALauncher(c.locator, ctx, namespace, podName) {
 		// A launcher's owner chain cannot reach a scale target, so if it
@@ -280,13 +294,15 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 	}
 
 	// A worker is a row only where its group can be named, so that
-	// collapseToGroups can fold it into the group's replica.
-	if _, _, grouped := c.lwsMember(ctx, namespace, podName); !grouped && c.isLWSWorker(ctx, namespace, podName) {
+	// collapseToGroups can fold it into the group's replica. The place is
+	// returned with the row, so the merge reads no label again.
+	place := c.lwsPlace(ctx, namespace, podName)
+	if place.group == "" && place.isWorker {
 		logger.V(logging.DEBUG).Info("Skipping an LWS worker pod whose group is not labelled",
 			"pod", podName,
 			"instance", instanceKey,
 			"namespace", namespace)
-		return domain.ReplicaMetrics{}, pairedAs, false
+		return domain.ReplicaMetrics{}, pairedAs, place, false
 	}
 
 	// Compute V2 derived fields (zero-valued when unavailable, backward compatible)
@@ -532,13 +548,13 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 		metric.MaxRankLandedQueueLength = data.maxRankLandedQueue
 	}
 
-	return metric, pairedAs, true
+	return metric, pairedAs, place, true
 }
 
 // kvCapacityTokens is the tokens an instance's KV cache holds, from its
 // cache_config_info series: the engine's own count (kv_cache_size_tokens)
-// where it reports one, else its blocks times the tokens a block holds
-// (tokensPerBlock). Saturates at math.MaxInt64.
+// for an instance of one engine rank, else its blocks times the tokens a
+// block holds (tokensPerBlock). Saturates at math.MaxInt64.
 //
 // The engine's own count comes first because the product is not always
 // right. A build that compresses attention reports block_size as configured
@@ -547,8 +563,16 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 // product read 300,480 tokens against the 2,403,840 the engine reported, and
 // its utilization read 8x high. A hybrid model's count is not a product of
 // any one block size at all.
+//
+// One rank only, because the two labels count different things behind an
+// API server of several ranks: upstream vLLM documents kv_cache_size_tokens
+// as one DP engine's capacity (vllm/config/cache.py), while num_gpu_blocks
+// is the API server's sum over its engines (QueryCacheConfigInfo). Read
+// alone, the count would under-state such an instance by its rank count,
+// and scaling it by that count rests on an assumption no series checks.
+// The blocks are the instance's whole cache, so they price it.
 func kvCapacityTokens(data *podMetricData) int64 {
-	if data.kvCacheSizeTokens > 0 {
+	if data.kvCacheSizeTokens > 0 && data.engineRanks <= 1 {
 		return data.kvCacheSizeTokens
 	}
 	blocks, size := data.numGpuBlocks, tokensPerBlock(data)

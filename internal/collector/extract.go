@@ -49,10 +49,12 @@ type podMetricData struct {
 	blockSize    int64
 	// effectiveBlockSize and kvCacheSizeTokens are the
 	// effective_attention_block_size and kv_cache_size_tokens labels of
-	// cache_config_info, zero where the engine reports neither (see
-	// kvCapacityTokens).
+	// cache_config_info (QueryCacheConfigSizes), each zero where the engine
+	// reports none or its ranks disagree; cacheSizeRows counts the distinct
+	// pairs read (see kvCapacityTokens).
 	effectiveBlockSize int64
 	kvCacheSizeTokens  int64
+	cacheSizeRows      int
 	// engineRanks is the value of the cache_config_info row: how many engine
 	// ranks the instance serves (see QueryCacheConfigInfo). Zero when no row.
 	engineRanks                 int
@@ -325,10 +327,6 @@ func (c *ReplicaMetricsCollector) extractPodMetrics(
 						data.blockSize = size
 					}
 				}
-				// Both are optional: a build that does not report them leaves
-				// the capacity to blocks x block_size, as before.
-				data.effectiveBlockSize = positiveIntLabel(value.Labels, "effective_attention_block_size")
-				data.kvCacheSizeTokens = positiveIntLabel(value.Labels, "kv_cache_size_tokens")
 				if data.numGpuBlocks > 0 && data.blockSize > 0 {
 					data.hasCacheConfig = true
 					data.cacheConfigTimestamp = value.Timestamp
@@ -347,6 +345,37 @@ func (c *ReplicaMetricsCollector) extractPodMetrics(
 					"numGpuBlocks", data.numGpuBlocks,
 					"blockSize", data.blockSize,
 					"engineRanks", data.engineRanks)
+			}
+		}
+	}
+
+	// The KV cache size the engine reports itself (QueryCacheConfigSizes),
+	// attached by instance like cache_config_info. Each row is one
+	// (kv_cache_size_tokens, effective_attention_block_size) pair and the
+	// ranks that report it. A value is kept only where every rank of the
+	// instance reports the same one; kvCapacityTokens decides what it is
+	// used for.
+	if result := results[registration.QueryCacheConfigSizes]; result != nil && !result.HasError() {
+		for _, value := range result.Values {
+			instanceKey, _, _ := c.buildInstanceKey(ctx, namespace, value.Labels)
+			data := podData[instanceKey]
+			if instanceKey == "" || data == nil {
+				continue
+			}
+			data.cacheSizeRows++
+			size := positiveIntLabel(value.Labels, "kv_cache_size_tokens")
+			block := positiveIntLabel(value.Labels, "effective_attention_block_size")
+			if data.cacheSizeRows == 1 {
+				data.kvCacheSizeTokens, data.effectiveBlockSize = size, block
+				continue
+			}
+			// A second row: the ranks disagree on one of the two, and
+			// that one is not used.
+			if size != data.kvCacheSizeTokens {
+				data.kvCacheSizeTokens = 0
+			}
+			if block != data.effectiveBlockSize {
+				data.effectiveBlockSize = 0
 			}
 		}
 	}

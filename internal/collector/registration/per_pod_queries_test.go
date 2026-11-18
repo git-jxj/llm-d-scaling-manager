@@ -37,6 +37,7 @@ var perPodVLLMQueries = []string{
 	QueryLandedQueueLength,
 	QueryMaxRankLandedQueueLength,
 	QueryCacheConfigInfo,
+	QueryCacheConfigSizes,
 	QueryAvgOutputTokens,
 	QueryAvgOutputTokensRecent,
 	QueryAvgInputTokens,
@@ -148,8 +149,11 @@ func TestPerPodQueriesFoldDataParallelRanks(t *testing.T) {
 			"max by (model_name, instance, pod, engine, le) (rate(",
 		QueryMaxRankKvCacheUsage: "max " + perPod + "max_over_time(",
 		QueryMaxRankQueueLength:  "max " + perPod + "max_over_time(",
-		QueryCacheConfigInfo: "count by (instance, pod, num_gpu_blocks, block_size, kv_cache_size_tokens, effective_attention_block_size) " +
-			"(max by (instance, pod, num_gpu_blocks, block_size, kv_cache_size_tokens, effective_attention_block_size, engine) (",
+		QueryCacheConfigInfo: "count by (instance, pod, num_gpu_blocks, block_size) " +
+			"(max by (instance, pod, num_gpu_blocks, block_size, engine) (",
+		// The engine's own size, counted per rank apart from the blocks.
+		QueryCacheConfigSizes: "count by (instance, pod, kv_cache_size_tokens, effective_attention_block_size) " +
+			"(max by (instance, pod, kv_cache_size_tokens, effective_attention_block_size, engine) (",
 		// The waiting count by reason folds as the queue does.
 		QueryCapacityQueueLength:        "sum " + perPod + perRank,
 		QueryMaxRankCapacityQueueLength: "max " + perPod + "max_over_time(",

@@ -38,6 +38,8 @@ type lwsFleet struct {
 	reporting func(group, worker int) bool
 	// notReady names the Pods whose Ready condition is false.
 	notReady map[string]bool
+	// absent names the Pods that do not exist (not yet recreated).
+	absent map[string]bool
 }
 
 func lwsPodName(group, worker int) string {
@@ -74,12 +76,16 @@ func (f lwsFleet) collect(t *testing.T) []domain.ReplicaMetrics {
 		for w := range f.size {
 			name := lwsPodName(g, w)
 			labels[name] = f.labels(g, w)
+			if f.absent[name] {
+				continue
+			}
 			ready := corev1.ConditionTrue
 			if f.notReady[name] {
 				ready = corev1.ConditionFalse
 			}
 			objs = append(objs, &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "models", Labels: labels[name]},
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "models", Labels: labels[name],
+					Annotations: map[string]string{lwsv1.SizeAnnotationKey: strconv.Itoa(f.size)}},
 				Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{
 					Type: corev1.PodReady, Status: ready, LastTransitionTime: metav1.NewTime(ts.Add(-time.Hour)),
 				}}},
@@ -184,6 +190,31 @@ func TestCollectReplicaMetrics_LWSGroupIsReadyOnlyWhenEveryPodIs(t *testing.T) {
 	assert.Equal(t, int64(10000*64), by["m-decode-1"].TotalKvCapacityTokens)
 }
 
+// A worker that is not Ready and reports no series, or one that does not
+// exist yet, leaves the rows that do exist all Ready: the group is still not
+// a Ready replica, from the Pod listing and the LWS size annotation. Under
+// Ray the leader's readiness stands, whatever its workers do.
+func TestCollectReplicaMetrics_LWSGroupMissingAPodIsNotReady(t *testing.T) {
+	silentWorker := func(g, w int) bool { return g != 1 || w != 2 }
+	rows := lwsFleet{groups: 2, size: 4, reporting: silentWorker,
+		notReady: map[string]bool{"m-decode-1-2": true}}.collect(t)
+	by := rowsByPod(rows)
+	require.Len(t, by, 2)
+	assert.True(t, by["m-decode-0"].Ready)
+	assert.False(t, by["m-decode-1"].Ready, "a worker not Ready, with no row of its own, makes its group not Ready")
+
+	rows = lwsFleet{groups: 2, size: 4, reporting: silentWorker,
+		absent: map[string]bool{"m-decode-1-2": true}}.collect(t)
+	by = rowsByPod(rows)
+	assert.True(t, by["m-decode-0"].Ready)
+	assert.False(t, by["m-decode-1"].Ready, "a group with fewer Pods than its size is not Ready")
+
+	rows = lwsFleet{groups: 2, size: 4, reporting: func(_, w int) bool { return w == 0 },
+		notReady: map[string]bool{"m-decode-1-2": true}}.collect(t)
+	by = rowsByPod(rows)
+	assert.True(t, by["m-decode-1"].Ready, "leader-only: the leader's own readiness, as before")
+}
+
 // The leader not reporting leaves its workers' engines, which are still the
 // group's replica: one row, named for the lowest worker that reports.
 func TestCollectReplicaMetrics_LWSLeaderMissingIsStillOneReplica(t *testing.T) {
@@ -194,32 +225,51 @@ func TestCollectReplicaMetrics_LWSLeaderMissingIsStillOneReplica(t *testing.T) {
 	assert.Equal(t, int64(9000*64), rows[0].TotalKvCapacityTokens)
 }
 
-// The labels are read off cache_config_info as the engine writes them, and
-// "None" (vLLM's unset field) is no value.
+// The engine's own KV cache size is read off cache_config_info as the engine
+// writes it, "None" (vLLM's unset field) being no value, and it prices an
+// instance of one rank. Behind an API server of several ranks the blocks,
+// the server's sum over its engines, price it, at the effective block size
+// where the ranks agree on one; the rank count is the blocks query's.
 func TestCollectReplicaMetrics_ReadsTheEngineKVCacheSize(t *testing.T) {
 	require.NoError(t, metrics.InitMetrics(prometheus.NewRegistry()))
 	ts := time.Now()
 	series := func(pod string) map[string]string {
 		return namespaceSeriesLabels("m", pod, "10.0.0."+pod[len(pod)-1:]+":8000")
 	}
-	cfg := func(pod, effective, size string) map[string]string {
+	blocks := func(pod, n string, ranks float64) source.MetricValue {
 		l := series(pod)
-		l["num_gpu_blocks"], l["block_size"] = "4695", "64"
+		delete(l, seriesModelLabel)
+		l["num_gpu_blocks"], l["block_size"] = n, "64"
+		return source.MetricValue{Labels: l, Value: ranks, Timestamp: ts}
+	}
+	sizes := func(pod, effective, size string, ranks float64) source.MetricValue {
+		l := series(pod)
+		delete(l, seriesModelLabel)
 		l["effective_attention_block_size"], l["kv_cache_size_tokens"] = effective, size
-		return l
+		return source.MetricValue{Labels: l, Value: ranks, Timestamp: ts}
+	}
+	pods := []string{"p1", "p2", "p3", "p4", "p5"}
+	kv := make([]source.MetricValue, 0, len(pods))
+	for _, p := range pods {
+		kv = append(kv, source.MetricValue{Labels: series(p), Value: 0.5, Timestamp: ts})
 	}
 	src := &mockMetricsSource{
 		refreshFunc: func(context.Context, source.RefreshSpec) (map[string]*source.MetricResult, error) {
 			return map[string]*source.MetricResult{
-				registration.QueryKvCacheUsage: {Values: []source.MetricValue{
-					{Labels: series("p1"), Value: 0.5, Timestamp: ts},
-					{Labels: series("p2"), Value: 0.5, Timestamp: ts},
-					{Labels: series("p3"), Value: 0.5, Timestamp: ts},
-				}},
+				registration.QueryKvCacheUsage: {Values: kv},
 				registration.QueryCacheConfigInfo: {Values: []source.MetricValue{
-					{Labels: cfg("p1", "512", "2403840"), Value: 1, Timestamp: ts},
-					{Labels: cfg("p2", "512", "None"), Value: 1, Timestamp: ts},
-					{Labels: cfg("p3", "None", "None"), Value: 1, Timestamp: ts},
+					blocks("p1", "4695", 1), blocks("p2", "4695", 1), blocks("p3", "4695", 1),
+					// Two ranks behind one API server: 9390 blocks is their sum.
+					blocks("p4", "9390", 2), blocks("p5", "9390", 2),
+				}},
+				registration.QueryCacheConfigSizes: {Values: []source.MetricValue{
+					sizes("p1", "512", "2403840", 1),
+					sizes("p2", "512", "None", 1),
+					sizes("p3", "None", "None", 1),
+					// The ranks agree on the block and not on the count.
+					sizes("p4", "512", "2403840", 1), sizes("p4", "512", "2400000", 1),
+					// The ranks agree on both: still one engine's count each.
+					sizes("p5", "512", "2403840", 2),
 				}},
 			}, nil
 		},
@@ -229,9 +279,13 @@ func TestCollectReplicaMetrics_ReadsTheEngineKVCacheSize(t *testing.T) {
 		map[string]scaletarget.ScaleTargetAccessor{}, map[string]*llmdvariant.Variant{}, nil)
 	require.NoError(t, err)
 	by := rowsByPod(rows)
-	require.Len(t, by, 3)
-	assert.Equal(t, int64(2403840), by["p1"].TotalKvCapacityTokens)
+	require.Len(t, by, 5)
+	assert.Equal(t, int64(2403840), by["p1"].TotalKvCapacityTokens, "one rank: the engine's own count")
 	assert.Equal(t, int64(1201920), by["p1"].TokensInUse)
-	assert.Equal(t, int64(4695*512), by["p2"].TotalKvCapacityTokens)
-	assert.Equal(t, int64(4695*64), by["p3"].TotalKvCapacityTokens)
+	assert.Equal(t, int64(4695*512), by["p2"].TotalKvCapacityTokens, "no count: blocks at the effective block size")
+	assert.Equal(t, int64(4695*64), by["p3"].TotalKvCapacityTokens, "neither: blocks at block_size")
+	for _, p := range []string{"p4", "p5"} {
+		assert.Equal(t, 2, by[p].EngineRanks, p+": the rank count is the blocks query's")
+		assert.Equal(t, int64(9390*512), by[p].TotalKvCapacityTokens, p+": two ranks: the summed blocks price it")
+	}
 }
