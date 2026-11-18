@@ -101,7 +101,7 @@ const recScaledVariant = "agg-a"
 
 // recMetadata is the discovery metadata of a model's variants in a cycle,
 // from their states. Every field is set, most to filler values: the
-// recording keeps only the three the capacity-build step reads (enginerec.
+// recording keeps only the ones the capacity-build step reads (enginerec.
 // VariantMeta), so a replay that matches proves it reads no other.
 func recMetadata(states []domain.VariantReplicaState, model string, cycle int) []domain.VariantMetadata {
 	out := make([]domain.VariantMetadata, 0, len(states))
@@ -111,6 +111,9 @@ func recMetadata(states []domain.VariantReplicaState, model string, cycle int) [
 		m.VariantName, m.ModelID, m.Namespace, m.Role = vs.VariantName, model, recNS, vs.Role
 		m.Cost, m.AcceleratorName, m.Engine, m.GPUsPerReplica = 10+float64(i), vs.AcceleratorName, "vllm", vs.GPUsPerReplica
 		m.CurrentReplicas, m.DesiredReplicas, m.ReadyReplicas = vs.CurrentReplicas, vs.DesiredReplicas, vs.CurrentReplicas
+		// Read by the capacity build, so recorded, and set to what discovery
+		// reports for a fleet its pools fully select.
+		m.HeldUnrouted, m.UnroutedReplicas, m.UnroutedReady, m.UnroutedPods = false, 0, 0, nil
 		if vs.VariantName == recScaledVariant && cycle >= recScaledDownAt {
 			m.CurrentReplicas, m.DesiredReplicas = vs.CurrentReplicas-2, vs.CurrentReplicas-2
 		}
@@ -160,16 +163,22 @@ func fillNonZero(v reflect.Value) {
 	}
 }
 
-// The capacity-build step reads only the three metadata fields the
+// The capacity-build step reads only the metadata fields the
 // recording keeps: the script sets every field of the metadata, the replay
-// has only those three, and every composite still matches, the clamped
+// has only those, and every composite still matches, the clamped
 // cycles included.
 func TestLearnerRecording_TheCapacityBuildReadsOnlyTheRecordedMetadata(t *testing.T) {
 	states := []domain.VariantReplicaState{{VariantName: recScaledVariant, Role: domain.RoleBoth, CurrentReplicas: 10, DesiredReplicas: 10,
 		AcceleratorName: "NVIDIA-H100-80GB-HBM3", GPUsPerReplica: 1}}
 	m := recMetadata(states, "acme/agg", recScaledDownAt)[0]
 	mv := reflect.ValueOf(m)
+	// The routing fields are recorded and left at a fully selected fleet's
+	// values; every other field is filler.
+	routing := map[string]bool{"HeldUnrouted": true, "UnroutedReplicas": true, "UnroutedReady": true, "UnroutedPods": true}
 	for i := range mv.NumField() {
+		if routing[mv.Type().Field(i).Name] {
+			continue
+		}
 		assert.False(t, mv.Field(i).IsZero(), "precondition: the script sets %s", mv.Type().Field(i).Name)
 	}
 	assert.Less(t, m.CurrentReplicas, m.ReadyReplicas, "precondition: agg-a is scaled below its Ready replicas")

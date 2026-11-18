@@ -200,17 +200,23 @@ cost). Each count is found by galloping up from one replica (1, 2, 4, 8, ...
 up to the bound) and then bisecting back, so the cost grows with the answer,
 not with the bound: a rate one replica of each serves prices one fleet.
 
-1. Decode: the fewest decode replicas whose own limit (TPOT, and the
+The search is `whatifapi.SmallestFleet`, which `at-replicas`' needed fleet
+runs too. Its answer is the fewest replicas in all; of two as few, the one with
+fewer decode replicas.
+
+1. Decode's floor: the fewest decode replicas whose own limit (TPOT, and the
    operating-point cap on decode's knee) reaches the rate, priced at one
    prefill replica, since the prefill count does not move it. With no TPOT
-   asked, one.
-2. Prefill: the fewest whose fleet limit reaches the rate at that decode
-   count.
-3. Only when no prefill count within the bound does: decode again, the
-   fewest above that count whose fleet limit reaches the rate with prefill at
-   its bound, then prefill again. This is the coupling: the lower knee and
-   decode admission hold the prefill limit down, so the fleet may need more
-   decode replicas than TPOT alone asks for.
+   asked, one. No fleet with fewer decode replicas reaches the rate.
+2. From the floor up, the fewest prefill replicas whose fleet limit reaches
+   the rate at each decode count, each search bounded by the count before
+   (more decode never needs more prefill). It stops once a decode count alone
+   reaches the best total found, or one prefill replica serves. This is the
+   coupling: decode admission holds the prefill limit down, and where it sets
+   most of a TTFT, the floor's prefill count can be several times what one
+   more decode replica needs (on the staircase at TTFT p95, 19 prefill + 5
+   decode against 5 + 6). Taking the fewest in all also makes the answer rise
+   with the rate.
 
 A limit reaches the rate when it is no more than a billionth under it: limits
 are bisections' answers, and on the worked recording the fleet limit wanders

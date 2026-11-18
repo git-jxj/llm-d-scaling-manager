@@ -154,6 +154,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **[Install methods](reference/install-methods.md)** — installer, kustomize, and per-platform entry points
 - **[Install commands of the tools image](reference/tools-install.md)** — `smt admin-setup`, `smt install`, `smt admin-finish`: every flag and exit code
 - **[Preflight check](reference/preflight.md)** — the release's preflight Job: each check, what FAIL and UNKNOWN mean, and the fix it prints
+- **[DisaggregatedSet roles](reference/disaggregatedset.md)**: scaling P/D roles of a DisaggregatedSet, by KEDA or by the role writer
 - **[KEDA](reference/keda.md)**: supported versions, a KEDA the cluster already has, and what the installer prints about it
 - **[The GPU limiter](reference/gpu-limiter.md)** and **[the quota limiter](reference/quota-limiter.md)** — bounding the scaling manager by real accelerators, and by declared caps
 - **[Security model](reference/security-model.md)** — identities, every permission by install scope, what it writes, the ports it opens, and what fails open
@@ -161,6 +162,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **Capacity planner** — [the HTTP API](guides/capacity-planner/api.md) · [the metrics it needs](guides/capacity-planner/metrics.md) · [troubleshooting](guides/capacity-planner/troubleshooting.md). These pages live with [its guide](guides/capacity-planner/), to keep the planner's pages together
 - **[Router configuration](reference/router-configuration.md)** — the two router settings that decide what the scaling manager sees: flow control bounds the queue it reads as demand, and the scheduling profiles decide whether the replicas it orders get used
 - **[SGLang backend](reference/sglang-backend.md)** — auto-detected per variant; nothing to configure
+- **[vLLM versions](reference/vllm-versions.md)** — the supported versions, the engine defaults that change between them, and how to tell the scaling manager which one a variant runs
 - **[Troubleshooting](reference/troubleshooting.md)**
 - **[Upgrade and uninstall](reference/upgrade-and-uninstall.md)** — pinning a version, what a restart costs, and what an uninstall leaves behind
 
@@ -189,6 +191,7 @@ window, the API, the metrics it reads and troubleshooting are all there.
 - **[Kueue borrowing internals](developer-guide/kueue-borrowing.md)** — what is read from Kueue, where borrowing is counted, spent and given back, and how it is tested
 - **[Anatomy of a replica start](developer-guide/replica-start-anatomy.md)** — where the seconds of a vLLM start go, the levers ruled out, and the experimental snapshot restore
 - **[Release process](developer-guide/release-process.md)** · **[Contributing](../CONTRIBUTING.md)**
+- **[Upstream dependencies](developer-guide/upstream-dependencies.md)** — the monthly check of our llm-d-router, FMA, vLLM, KEDA and other pins, and what to do when one falls behind
 
 ## What this project is
 

@@ -163,6 +163,12 @@ func UnsharedExcludedNamespace(acc string) string {
 	return fmt.Sprintf("excluded from the namespace quota, and no finite scope: cluster quota covers %s; add one to share it", acc)
 }
 
+// UnsharedHeldVariant is why a model with a held variant (no InferencePool
+// selects it while another of its variants is routed) is planned in no group:
+// a share plan moves its variants' replicas, and nothing may move a held one.
+// Today's optimizer keeps the model, and holds that variant.
+const UnsharedHeldVariant = "a variant no InferencePool selects is held, and a share plan would move it"
+
 // ShareGroupOptions controls which groups BuildShareGroups returns.
 type ShareGroupOptions struct {
 	// ClusterIsQuota reports whether a cluster-scoped quota bounds the cluster
@@ -221,6 +227,17 @@ func PlannedModels(groups []ShareGroup) map[string]bool {
 	return out
 }
 
+// hasHeldVariant reports whether any variant of the request is held
+// (VariantMetadata.HeldUnrouted).
+func hasHeldVariant(req ModelScalingRequest) bool {
+	for _, v := range req.Variants {
+		if v.HeldUnrouted {
+			return true
+		}
+	}
+	return false
+}
+
 // BuildShareGroups turns one cycle's requests and constraints into the groups
 // the utilization-share optimizer evaluates. A model is planned when its
 // composite signal is live and informative and all its variants share one
@@ -266,6 +283,12 @@ func BuildShareGroups(requests []ModelScalingRequest, constraints []*ResourceCon
 	for _, req := range requests {
 		records := recordsForRequest(req)
 		if records == nil {
+			continue
+		}
+		if hasHeldVariant(req) {
+			if opts.Unshared != nil {
+				opts.Unshared(req, UnsharedHeldVariant)
+			}
 			continue
 		}
 		acc, single := singleAccType(records)

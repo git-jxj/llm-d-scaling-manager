@@ -401,3 +401,411 @@ function fleetDelta(a, b) {
   }
   return parts.length ? parts.join(", ") : "same";
 }
+
+// ---- The fleet report (POST /v1/report) ----
+//
+// Everything the report card shows is built here as plain strings, so that
+// the node check reads exactly what the page draws; planner.js only puts the
+// strings into text nodes.
+
+// REPORT_SHAPE is a request shape as the report reads one: "measured", or
+// IL/OL[/hit] in tokens with an optional k (1024 tokens), hit in [0, 1).
+const REPORT_SHAPE = /^([0-9]+(\.[0-9]+)?k?)\/([0-9]+(\.[0-9]+)?k?)(\/(0(\.[0-9]+)?))?$/;
+const MAX_REPORT_SHAPES = 6, MAX_REPORT_LOADS = 8, MAX_SHAPE_TOKENS = 1 << 20;
+const DEFAULT_REPORT_LOADS = ["50%", "80%", "100%", "seen"];
+
+// shapeTokens is a length as a shape writes it, in tokens.
+function shapeTokens(s) {
+  return s.endsWith("k") ? 1024 * Number(s.slice(0, -1)) : Number(s);
+}
+
+// reportShapeProblem is why s is not a shape the report reads, "" when it is.
+function reportShapeProblem(s) {
+  if (s === "measured") return "";
+  const m = REPORT_SHAPE.exec(typeof s === "string" ? s : "");
+  if (!m) return "a shape is measured, or IL/OL[/hit] in tokens (8k/200, 1k/4k/0.3)";
+  for (const t of [m[1], m[3]]) {
+    const n = shapeTokens(t);
+    if (!(n >= 1 && n <= MAX_SHAPE_TOKENS)) return "a length is 1 to 1024k tokens";
+  }
+  return "";
+}
+
+// shapeText writes one shape row's boxes as the report reads it: IL and OL
+// in tokens, and the hit rate when one is typed. Blank boxes are "measured".
+function shapeText(row) {
+  const il = String(row.il || "").trim(), ol = String(row.ol || "").trim(), hit = String(row.hit || "").trim();
+  if (!il && !ol && !hit) return "measured";
+  return hit ? `${il}/${ol}/${hit}` : `${il}/${ol}`;
+}
+
+// reportShapes is the rows' shapes, each once, in order: a blank row is the
+// measured shape, and the same shape typed twice is asked once.
+function reportShapes(rows) {
+  const out = [];
+  for (const row of rows || []) {
+    const s = shapeText(row);
+    if (!out.includes(s)) out.push(s);
+  }
+  if (out.length === 0) out.push("measured");
+  return out;
+}
+
+// parseReportLoads reads the loads box: comma separated, each 80%, 5r/s or
+// seen. Empty is the server's default (50%, 80%, 100% and seen).
+function parseReportLoads(text) {
+  const loads = String(text || "").split(",").map(s => s.trim()).filter(s => s);
+  if (loads.length > MAX_REPORT_LOADS) return {loads: [], problem: `at most ${MAX_REPORT_LOADS} loads`};
+  for (const l of loads) {
+    if (l === "seen" || /^seen *[x×*] *[0-9]+(\.[0-9]+)?$/.test(l)) continue;
+    const pct = /^([0-9]+(\.[0-9]+)?)%$/.exec(l), rate = /^([0-9]+(\.[0-9]+)?)r\/s$/.exec(l);
+    if (pct && Number(pct[1]) > 0 && Number(pct[1]) <= 100) continue;
+    if (rate && Number(rate[1]) > 0) continue;
+    return {loads: [], problem: `${l}: a load is a share of the knee (80%), a rate (5r/s) or seen`};
+  }
+  return {loads, problem: ""};
+}
+
+// reportRequest is the body of POST /v1/report from the page's controls:
+// the inputs, the fleet when it differs from the recorded one, the shapes,
+// the loads, the growth of the load seen, the headroom, the SLO and the
+// assumed terms. The tables are asked at the SLO's own statistics, so that a
+// cell's figures are the ones its mark is judged at. problem says what is
+// asked wrongly, and then body is null.
+function reportRequest(o) {
+  const shapes = reportShapes(o.shapes);
+  if (shapes.length > MAX_REPORT_SHAPES) return {body: null, problem: `at most ${MAX_REPORT_SHAPES} shapes`};
+  for (const s of shapes) {
+    const p = reportShapeProblem(s);
+    if (p) return {body: null, problem: `${s}: ${p}`};
+  }
+  const loads = parseReportLoads(o.loads);
+  if (loads.problem) return {body: null, problem: loads.problem};
+  const body = {inputsId: o.inputsId, shapes};
+  if (o.fleet && Object.keys(o.fleet).length) body.fleet = Object.assign({}, o.fleet);
+  if (loads.loads.length) body.loads = loads.loads;
+  const growth = String(o.growth == null ? "" : o.growth).trim();
+  if (growth !== "") {
+    const x = Number(growth);
+    if (!(x > 0) || !Number.isFinite(x)) return {body: null, problem: "growth is a factor above 0 (1.5 is 50% more traffic)"};
+    // Growth is a load of its own, "seen xN": it adds a column and a line, and
+    // never moves the load the fleet is judged at.
+    const grown = `seen x${x}`;
+    if (x !== 1) {
+      body.loads = body.loads || DEFAULT_REPORT_LOADS.slice();
+      if (!body.loads.includes(grown)) body.loads.push(grown);
+      if (body.loads.length > MAX_REPORT_LOADS) return {body: null, problem: `at most ${MAX_REPORT_LOADS} loads, the grown load seen among them`};
+    }
+  }
+  if (o.loadStatistic) body.loadStatistic = o.loadStatistic;
+  // The report judges below the knee: a headroom of 1 is left to the policy.
+  if (o.headroom > 0 && o.headroom < 1) body.headroom = o.headroom;
+  if (o.slo) {
+    body.slo = o.slo;
+    if (o.slo.ttft && o.slo.ttft.statistic) body.ttftStatistics = [o.slo.ttft.statistic];
+    if (o.slo.tpot && o.slo.tpot.statistic) body.tpotStatistic = o.slo.tpot.statistic;
+  }
+  if (o.assume && Object.keys(o.assume).length) body.assume = Object.assign({}, o.assume);
+  return {body, problem: ""};
+}
+
+// REPORT_MARKS are a summary cell's marks: its class, and the word that says
+// it without colour.
+const REPORT_MARKS = {met: ["met", "ok"], missed: ["missed", "MISS"], "missed at onset": ["missed", "MISS at onset"], saturated: ["saturated", "SAT"],
+  unknown: ["unknown", "?"], "no target": ["notarget", "no SLO"]};
+
+// REFUSAL_WORDS are the refusals a report shows most, in words.
+const REFUSAL_WORDS = {
+  Saturated: "saturated: no steady state at this load",
+  AboveDecodeOnset: "past the decode flow-control onset: not priced",
+  NoPrefillCapacity: "no prefill speed learned (assume V_P to price it)",
+  NoFixedLatency: "no prefill fixed latency learned (assume a to price it)",
+  NoTPOTHistogram: "no TPOT histogram to read a percentile from",
+  TPOTBucketTooWide: "the TPOT histogram is too coarse for a percentile",
+  PinnedDefaultB: "the decode line rests on a default, not a measurement",
+  NoLine: "no decode line learned",
+  NoTraffic: "no traffic to judge",
+};
+
+// refusalText is a refused figure in words.
+function refusalText(f) {
+  const reason = f && f.refused ? f.refused.reason : "";
+  return REFUSAL_WORDS[reason] || (reason ? `not priced (${reason})` : "not priced");
+}
+
+// REPORT_FLAG_WORDS are the flags a report carries most, in a short phrase.
+// The rest are counted, and their codes kept for a tooltip.
+const REPORT_FLAG_WORDS = {
+  UnvalidatedTTFT: "TTFT is not validated",
+  AssumedVP: "assumes the prefill speed you typed",
+  AssumedA: "assumes the prefill fixed latency you typed",
+  AssumedPromptSpread: "assumes the prompt spread",
+  AssumedPoissonArrivals: "assumes Poisson arrivals",
+  AssumedShape: "a shape you typed, not the measured one",
+  ExtrapolatedShape: "a shape outside what the source saw",
+  ExtrapolatedFill: "decode past the fill it was measured at",
+  BelowFittedBand: "below the fitted band",
+  KVBoundSlots: "KV memory, not the batch cap, sets the slots",
+  RouterHopAssumed: "assumes the router hop",
+  CoarseTPOTBucket: "TPOT percentile from coarse buckets",
+  HeldLine: "a decode line held from earlier",
+  DecodeOnly: "decode only: prefill is not priced",
+  VPLowerBound: "the prefill speed is a lower bound",
+};
+
+// flagSummary is a shape's flags as short phrases, and the rest counted:
+// {phrases, more, codes}, codes every flag's code, for a tooltip.
+function flagSummary(flags) {
+  const phrases = [], rest = [];
+  for (const f of flags || []) (REPORT_FLAG_WORDS[f] ? phrases : rest).push(REPORT_FLAG_WORDS[f] || f);
+  return {phrases, more: rest.length, rest, codes: (flags || []).join(", ")};
+}
+
+// roundMs is seconds as whole milliseconds, one decimal under 10 ms.
+function roundMs(s) {
+  const ms = 1000 * s;
+  return ms < 10 ? ms.toFixed(1) : String(Math.round(ms));
+}
+
+// roundRate is a rate in r/s, to three significant figures at most.
+function roundRate(r) {
+  // A hair up, so that a half rounds up as the server's figures do (62.55 is
+  // 62.549999... in binary).
+  r += 1e-9 * Math.max(1, Math.abs(r));
+  return r >= 100 ? String(Math.round(r)) : r >= 10 ? r.toFixed(1).replace(/\.0$/, "") : r.toFixed(2).replace(/\.?0+$/, "");
+}
+
+// msText is a latency figure in words: "637 ms", or its refusal, short. A
+// TPOT (tpot true) read at the decode line's floor is marked as at most that.
+function msText(f, tpot) {
+  // A figure read at the band's bottom is the line's floor: the latency is at most it.
+  if (f && f.value != null) return (tpot && isFloor(f) ? "≤" : "") + roundMs(f.value) + " ms";
+  const reason = f && f.refused ? f.refused.reason : "";
+  return reason === "Saturated" ? "saturated" : reason === "AboveDecodeOnset" ? "router-queued" : "-";
+}
+
+// rowFigures is a row's two latencies at the SLO's statistics: the TTFT at
+// the TTFT target's, and the TPOT percentile where the SLO judges one, else
+// the mean.
+function rowFigures(row, slo) {
+  const tStat = slo && slo.ttft ? slo.ttft.statistic : "p90";
+  const pStat = slo && slo.tpot ? slo.tpot.statistic : "mean";
+  const ttft = (row.ttft || []).find(s => s.statistic === tStat) || (row.ttft || [])[0] || {statistic: tStat};
+  let tpot = Object.assign({statistic: "mean"}, row.tpotMean || {});
+  if (pStat !== "mean" && row.tpotPercentile) tpot = row.tpotPercentile;
+  return {ttft, tpot};
+}
+
+// verdictText is a shape's verdict in plain words, with its numbers.
+function verdictText(s, load) {
+  const v = s.verdict || {}, c = s.capacity || {};
+  const knee = c.fleetKnee && c.fleetKnee.value, h = c.headroom;
+  const binds = String((c.fleetKnee && c.fleetKnee.binds) || "").split(" ")[0];
+  const rate = load != null ? `${roundRate(load)} r/s` : "the load seen";
+  // A shape the question typed is a what-if: all of the load at that shape.
+  const at = s.source === "asked" ? `if all ${rate} were ${s.label} requests,` : `at ${rate}`;
+  switch (v.verdict) {
+  case "UNDER-PROVISIONED": {
+    if (knee != null && load != null && load >= knee) {
+      // Past the knee: every role whose own knee the load passes needs more.
+      const roles = [["prefill", c.prefillKnee], ["decode", c.decodeKnee]].filter(([, k]) => k && k.value != null && load >= k.value).map(([r]) => r);
+      const add = roles.length ? roles.join(" and ") : binds;
+      return `UNDER-PROVISIONED: ${at} the load is ${(load / knee).toFixed(1)}x the fleet's ${roundRate(knee)} r/s knee; add ${add} replicas.`;
+    }
+    if (knee != null && load != null && load > h * knee) {
+      return `UNDER-PROVISIONED: ${at} the fleet is past ${Math.round(100 * h)}% of its ${roundRate(knee)} r/s knee, set by ${binds}; add ${binds} replicas.`;
+    }
+    const missed = missedTarget(v.reason);
+    // Only a missed TPOT says which role: decode sets it.
+    const add = missed.startsWith("TPOT") ? " add decode replicas." : "";
+    return `UNDER-PROVISIONED: ${at} ${missed || "a latency target is missed"};${add}`.replace(/;$/, ".");
+  }
+  case "OVER-PROVISIONED":
+    return `OVER-PROVISIONED: ${at} one ${(v.shrink || []).join(" or one ")} replica fewer still meets every target with headroom.`;
+  case "RIGHT-SIZED":
+    return `RIGHT-SIZED: ${at} every target is met with headroom, and one replica fewer of either role would not be.`;
+  }
+  return `NOT JUDGED: ${v.reason || "no knee or no load to judge at"}.`;
+}
+
+// missedTarget is the first target a verdict's reason says is missed, in
+// words ("TTFT p95 7.6 s misses 2 s"); "" with none.
+function missedTarget(reason) {
+  const m = /(TTFT|TPOT) (\S+) ([0-9.]+) ms misses ([0-9.]+) ms/.exec(String(reason || ""));
+  if (!m) return "";
+  const t = ms => (Number(ms) >= 1000 ? (Number(ms) / 1000).toFixed(1).replace(/\.0$/, "") + " s" : Math.round(Number(ms)) + " ms");
+  return `${m[1]} ${m[2]} ${t(m[3])} misses ${t(m[4])}`;
+}
+
+// sloLine says what a cell's mark is judged against.
+function sloLine(slo) {
+  const parts = [];
+  if (slo && slo.ttft) parts.push(`TTFT ${slo.ttft.statistic} ${roundMs(slo.ttft.target)} ms`);
+  if (slo && slo.tpot) parts.push(`TPOT ${slo.tpot.statistic} ${roundMs(slo.tpot.target)} ms`);
+  return parts.length ? "Marks are judged against " + parts.join(" and ") + "." : "No SLO target is set: no cell is judged.";
+}
+
+// reportView is a report as the page shows it, all of it strings: each
+// shape's verdict line, the matrix (a header per load with its rate where
+// one shape fixes it, and per cell the two latencies, a class and a word),
+// each shape's detail lines and flags, and the notes on accuracy.
+function reportView(r) {
+  const slo = r.slo || {};
+  const load = r.load && r.load.rate ? r.load.rate.value : null;
+  const shapes = r.shapes || [];
+  const loads = r.loads || [];
+  const tStat = slo.ttft ? slo.ttft.statistic : "p90", pStat = slo.tpot ? slo.tpot.statistic : "mean";
+  const header = loads.map(l => {
+    const rates = shapes.map(s => (s.table || []).find(t => t.load === l)).filter(t => t).map(t => roundRate(t.rate));
+    const one = rates.length && rates.every(x => x === rates[0]);
+    if (!one) return l;
+    // A load that is a rate already names it.
+    return l.endsWith("r/s") ? l : `${l} (${rates[0]} r/s)`;
+  });
+  const sameRate = loads.map((l, i) => header[i] !== l || l.endsWith("r/s"));
+  let floors = false;
+  const rows = shapes.map(s => ({
+    label: s.label, extrapolated: !!s.extrapolated, why: s.extrapolatedWhy || "",
+    cells: loads.map((l, i) => {
+      const row = (s.table || []).find(t => t.load === l);
+      if (!row) return {text: "not priced", parts: ["not priced"], cls: "none", word: ""};
+      const f = rowFigures(row, slo);
+      const m = REPORT_MARKS[row.cell.mark] || ["unknown", "?"];
+      const rate = sameRate[i] ? "" : ` @ ${roundRate(row.rate)} r/s`;
+      if (isFloor(f.tpot)) floors = true;
+      const parts = [`TTFT ${msText(f.ttft, false)}`, `TPOT ${msText(f.tpot, true)}`];
+      if (rate) parts.push(rate.trim());
+      return {text: parts.join(" · ").replace(" · @", " @"), parts, cls: m[0], word: m[1]};
+    }),
+  }));
+  const verdicts = shapes.map(s => {
+    const v = verdictLine(s.verdict, verdictText(s, load), r.fleet);
+    // Growth is its own line beside the verdict, never in its place.
+    const growth = (s.growth || []).map(g => Object.assign(verdictLine(g.verdict, "", r.fleet),
+      {lead: `with ${g.x}× traffic (${roundRate(g.rate)} r/s)`, rate: g.rate}));
+    return Object.assign(v, {label: s.label, extrapolated: !!s.extrapolated, whatIf: s.source === "asked",
+      decodeOnly: (s.verdict || {}).scope === "decode only", growth});
+  });
+  const details = shapes.map(s => {
+    const c = s.capacity || {}, u = s.utilization || {decode: {}, prefill: {}};
+    const rate = f => (f && f.value != null ? roundRate(f.value) + " r/s" : refusalText(f));
+    const share = f => (f && f.value != null ? f.value.toFixed(2) : refusalText(f));
+    return {
+      summary: `${s.label}: IL ${Math.round(s.inputTokens)}, OL ${Math.round(s.outputTokens)}, prefix hit ${Number(s.prefixHitRate).toFixed(2)} (${s.source})`,
+      lines: [
+        s.extrapolated ? `Extrapolated: ${s.extrapolatedWhy}.` : "",
+        `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
+          `Operating point ${rate(c.operating)}; the most that meets every target ${rate(c.maxAtSLO)}.`,
+        `At the load: ${decodeUse(u.decode)}; ${prefillUse(u.prefill)}.`,
+        ...roleLines(s.verdict),
+        `The numbers: ${plainReason((s.verdict || {}).reason || "")}`,
+      ].filter(x => x),
+      flags: flagSummary(s.flags),
+    };
+  });
+  return {verdicts, header, rows, details, notes: r.notValidated || [], load: loadLine(r.load),
+    legendStats: `Each cell is TTFT ${tStat} · TPOT ${pStat}. ${sloLine(slo)}` +
+      (floors ? " ≤ marks a TPOT at the decode line's floor: below the fill it was fitted over, so at most that." : "")};
+}
+
+// reportMissing reports whether an answer says the server has no
+// POST /v1/report: a server of an earlier release answers 404 "no such
+// endpoint". A 404 for an inputsId the server dropped is not that.
+function reportMissing(status, error) {
+  return status === 405 || (status === 404 && String(error || "").includes("no such endpoint"));
+}
+
+// reportCurrent reports whether an answer is for the inputs on the page:
+// one asked for inputs since replaced is dropped.
+function reportCurrent(askedFor, current) {
+  return !!askedFor && askedFor === current;
+}
+
+// pct is a share as a whole percent.
+function pct(x) {
+  return Math.round(100 * x) + "%";
+}
+
+// decodeUse is decode's utilization at the load, in words.
+function decodeUse(d) {
+  if (!d || !d.kvFill || d.kvFill.value == null) return "decode " + refusalText(d && d.kvFill);
+  const wait = d.waitProbability && d.waitProbability.value != null ? `, ${pct(d.waitProbability.value)} of requests wait for a slot` : "";
+  const slots = d.slotsOccupied && d.slotsOccupied.value != null ? `, ${Math.round(d.slotsOccupied.value)} of ${d.slots} batch slots busy` : "";
+  return `decode KV ${pct(d.kvFill.value)} full (of ${pct(d.bandTop)} usable)${slots}${wait}`;
+}
+
+// prefillUse is prefill's utilization at the load, in words.
+function prefillUse(p) {
+  if (!p || !p.pooled || p.pooled.value == null) return "prefill " + refusalText(p && p.pooled);
+  return `prefill ${pct(p.pooled.value)} busy pooled, ${pct(p.worstPod.value)} on the busiest pod`;
+}
+
+// REASON_WORDS replace the refusal codes in a verdict's reason.
+const REASON_WORDS = {AboveDecodeOnset: "router-queued", NoPrefillCapacity: "unpriced (no prefill speed)",
+  NoFixedLatency: "unpriced (no prefill latency)", NoTPOTHistogram: "unpriced (no TPOT histogram)"};
+
+// plainReason is a verdict's reason with its refusal codes in words.
+function plainReason(s) {
+  let out = s;
+  for (const [code, words] of Object.entries(REASON_WORDS)) out = out.split(code).join(words);
+  return out;
+}
+
+// isFloor reports whether a figure was read at the decode line's floor, the
+// bottom of the band it was fitted over (BelowFittedBand).
+function isFloor(f) {
+  return !!(f && f.value != null && (f.flags || []).includes("BelowFittedBand"));
+}
+
+// verdictLine is one verdict as a line: its word, the sentence after it
+// (the server's summary, else the page's own words from fallback), and both
+// whole.
+function verdictLine(v, fallback, has) {
+  const word = (v && v.verdict) || "NOT JUDGED";
+  const text = (v && v.summary) || fallback || word;
+  // rest is the sentence after its verdict, which the page sets in bold.
+  let rest = text.startsWith(word + ": ") ? text.slice(word.length + 2) : text;
+  const needs = neededText(v && v.needed, has);
+  // The fleet needed is shown as its own chip, so the sentence does not
+  // repeat it.
+  if (needs) rest = rest.replace(NEEDS_CLAUSE, "").replace(/;\s*\(/, " (").replace(/[;,]\s*\./, ".");
+  return {verdict: word, text, rest, needs, unmet: !!(v && v.needed && v.needed.unmet)};
+}
+
+// NEEDS_CLAUSE is the "needs P prefill + D decode (has p + d), or a + b"
+// clause of a summary.
+const NEEDS_CLAUSE = /;?\s*needs [^;()]*\(has \d+ \+ \d+\)(,? or \d+ \+ \d+)*/;
+
+// neededText is the fleet a verdict needs, in words: "needs 3 prefill +
+// 4 decode (has 2 + 2)", "or 4 + 3" for each alternative, "at least" where
+// the prefill side is not priced, or the bound no fleet within serves.
+function neededText(n, has) {
+  if (!n) return "";
+  if (n.unmet) return `no fleet up to ${n.maxReplicas} replicas serves this (${n.unmet} does not reach the load)`;
+  const now = has ? ` (has ${has.prefill} + ${has.decode})` : "";
+  if (n.decodeOnly) return `needs at least ${n.decode} decode${has ? ` (has ${has.decode})` : ""}; prefill is not priced`;
+  const alt = (n.alternatives || []).map(a => `or ${a.prefill} + ${a.decode}`).join(", ");
+  return `needs ${n.prefill} prefill + ${n.decode} decode${now}` + (alt ? ", " + alt : "");
+}
+
+// roleLines is a verdict's per-role judgment: a line per role, whether it has
+// a replica to spare, and why.
+function roleLines(v) {
+  return ((v && v.roles) || []).map(r => `${r.role[0].toUpperCase() + r.role.slice(1)}: ${r.spare ? "has a replica to spare" : "no replica to spare"}` +
+    (r.detail ? ` (${r.detail})` : "") + ".");
+}
+
+// LOAD_STATISTICS are the load statistics a report judges at.
+const LOAD_STATISTICS = ["p95", "mean", "peak"];
+
+// loadLine is the load the source saw, in words: the statistic judged at,
+// and the mean, p95 and peak beside it.
+function loadLine(l) {
+  if (!l || !l.rate || l.rate.value == null) return "No load recorded: " + refusalText(l && l.rate) + ".";
+  const at = l.statistic === "stated" ? `the stated load of ${roundRate(l.rate.value)} r/s`
+    : `the ${l.statistic || "observed"} load of ${roundRate(l.rate.value)} r/s`;
+  const seen = [["mean", l.mean], ["p95", l.p95], ["peak", l.peak]].filter(([, x]) => x != null).map(([k, x]) => `${k} ${roundRate(x)}`);
+  // Under 20 busy cycles the p95 is the peak: too few to tell them apart.
+  const peakNote = l.p95IsPeak && l.statistic === "p95" ? " (= peak: fewer than 20 cycles)" : "";
+  return `Judged at ${at}${peakNote}` + (seen.length ? `; the source saw ${seen.join(", ")} r/s over ${l.cyclesWithTraffic} busy cycles.` : ".");
+}

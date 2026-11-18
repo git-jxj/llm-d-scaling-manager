@@ -400,24 +400,20 @@ spec:
         # sleeping process keeps its socket, so they cannot take turns binding
         # the port the InferencePool dials. This owns it and follows whichever
         # model is awake; the scaling manager re-points it through the control endpoint.
-        # NOTE ON THE IMAGE BELOW: it still carries the OLD package name,
-        # on purpose. The repository was renamed to llm-d-scaling-manager, but
-        # GHCR does NOT rename packages with the repository -- this digest
-        # exists only under .../llm-scaler/. Pointing it at the new name would
-        # name a package that does not exist and break every pool Pod. It moves
-        # when the proxy is republished, not before. (Kept above this entry:
+        # THE IMAGE BELOW is built from this repository (Dockerfile.warmpool-proxy):
+        # ci-main-image.yaml publishes :main on every push to main, and
+        # ci-release.yaml publishes :<release tag>. It follows the controller's
+        # newTag: :main between releases, the release's tag on a release commit
+        # (the release run refuses a tag whose commit names another), and :main
+        # again after the reset PR (docs/developer-guide/release-process.md).
+        # Run make warmpool-render after changing it. (Kept above this entry:
         # check-warmpool-manifests.sh reads the image with a -A12 window from
         # `name: proxy`, so comments inserted below it break the check.)
         - name: proxy
-          # Published under the PROJECT's namespace and pinned by digest, so the
-          # bytes are fixed and the package belongs to the repository rather than
-          # to a person. Republished from the build proven on this cluster rather
-          # than rebuilt: the digest is unchanged, byte for byte.
-          #
           # Build your own from this tree with `make docker-build-warmpool-proxy
           # docker-push-warmpool-proxy WARMPOOL_PROXY_IMG=<ref>`
           # (Dockerfile.warmpool-proxy) and pass --proxy-image.
-          image: ghcr.io/ev-shindin/llm-scaler/warmpool-proxy:v11@sha256:9e3ea1e1785a35bbea0abb87d98c6602f6ea68f3bef2a64ccaac84f16d4f5062
+          image: ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:v0.12.0-rc1
           imagePullPolicy: IfNotPresent
           args:
             - --port=8000

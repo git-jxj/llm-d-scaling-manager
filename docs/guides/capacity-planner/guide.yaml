@@ -117,3 +117,17 @@ tunnel:
   run: |
     ssh -N -L 8080:127.0.0.1:8080 <user>@<host>
     # then open http://127.0.0.1:8080/ on your laptop
+
+fleet:
+  check:
+    note: |
+      From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw, with
+      what that load grown by a fifth does beside it, for its own shape and two it never saw. The sample learned no prefill
+      speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at 50%, 80% and 100%
+      of the knee and the load seen.
+    run: |
+      bin/capacity-planner at-replicas \
+        --recording internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz \
+        --assume-vp 200000 --assume-a 20ms --ttft 2s@p90 --tpot 30ms \
+        --shape measured --shape 1k/1k --shape 16k/200/0.3 \
+        --load 50% --load 80% --load 5r/s --load seen --load-seen-x 1.2

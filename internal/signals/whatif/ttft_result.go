@@ -33,13 +33,24 @@ const (
 	// price TTFT there (docs/proposals/slo-capacity-planner-ttft.md, "The
 	// router queue").
 	AboveDecodeOnset Reason = "AboveDecodeOnset"
+	// DecodeTTFTUnderLoad is a decode side priced from the decode engine's
+	// measured TTFT (TTFTFleet.DecodeTTFT), with no decode line, where that
+	// TTFT was read while decode was queueing on its own capacity. The
+	// figure is then a queue, and held at every rate it would set the zero
+	// load floor at the queue: on a staircase recording that ends in a
+	// collapse, 9 to 17 s against a client's 0.12 to 0.18 s
+	// (DecodeTTFT.Waiting). It refuses on the backlog, not on the size of
+	// the figure: a queue that has only begun to grow still reads close to
+	// the calm figure, and the next cycles read it higher. The planner names
+	// the latest calm cycle to answer at.
+	DecodeTTFTUnderLoad Reason = "DecodeTTFTUnderLoad"
 )
 
 // ttftReasons are the reasons this file adds, in the order Reasons() lists
 // them.
 func ttftReasons() []Reason {
 	return []Reason{NoPrefillCapacity, NoFixedLatency, NoImbalance, NoPrefillReplicas,
-		FlowControlUnknown, AboveDecodeOnset}
+		FlowControlUnknown, AboveDecodeOnset, DecodeTTFTUnderLoad}
 }
 
 // The flags the TTFT model raises.

@@ -337,8 +337,13 @@ func (e *Engine) optimize(ctx context.Context) error {
 	if activeErr != nil {
 		logger.V(logging.DEBUG).Info("Could not list active variants; treating every role as uncovered", "error", activeErr)
 	}
-	coverage := activeRoleCoverage(activeVAs, activeTargets)
 	observeCompletedWakes(activeVAs, activeTargets)
+	// In a model an InferencePool routes, only a variant a pool selects covers
+	// the model, and a held one (no pool selects it) is never woken: a model
+	// whose routed variants are all at zero must still wake while a held
+	// canary runs, and waking the canary would serve nothing.
+	inactiveVAs, activeVAs = routedPopulation(inactiveVAs, activeVAs, time.Now())
+	coverage := activeRoleCoverage(activeVAs, activeTargets)
 
 	// Wake decisions are made per model, not per variant: a P/D model needs a
 	// decode (optionally with a prefill) chosen together against one GPU budget,

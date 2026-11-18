@@ -20,19 +20,19 @@ Pin a release tag or a digest, and deploy with the manifests from the **same**
 release. An image older than the manifests crash-loops on flags it does not
 know. Releases are listed on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases);
-the current one is `v0.11.1`.
+the current one is `v0.11.2`.
 A checked-out release deploys its own tag, so `IMG_TAG` below only makes that
 explicit. Each release's notes list its image digest; a digest names one build,
 and a tag could in principle be re-pushed.
 
 ```bash
-git checkout v0.11.1
-make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.11.1
-# or by digest (v0.11.1's, from its release notes)
+git checkout v0.11.2
+make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.11.2
+# or by digest (v0.11.2's, from its release notes)
 make deploy-scaling-manager NAMESPACE=<namespace> \
-  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:a1d236e63c37632280d07789e3ba693a7e686dc84d15525ea8d37c090dbd4183
+  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:71a7296d067466d08342216048c026c1f09b5f1fb1bd18c6aa84a2454355990b
 # out-of-reach shape (the cluster admin runs it): the controller runs in llmsm-<namespace>
-NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.11.1
+NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.11.2
 ```
 
 `IMG_TAG` sets the tag of the default `IMG`; `IMG` replaces the whole reference.
@@ -129,11 +129,127 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
-### Upgrading from v0.11.x to v0.12.0
+### Upgrading from v0.11.2 to v0.12.0
 
-Follow [Upgrade](#upgrade) above: back up the policy, check out `v0.12.0`, and
-re-run the `make deploy-scaling-manager` command you installed with, or apply
-the v0.12.0 release files. Then do what the sections below say.
+#### The weights labeller
+
+Only if you keep model weights on the nodes' disks (`smt weights apply`).
+
+- `smt install --scope cluster` now runs the weights labeller. It labels each
+  GPU node whose copy of the weights verifies. It patches nodes; its grants
+  are in the [security model](security-model.md#grants-made-after-install).
+  The install applies it only when a `--model-namespace` has a weights
+  DaemonSet. Otherwise it prints how to add it later. To leave it out, pass
+  `--no-weights-labeller`.
+- Run `smt weights apply` again for each model, with the same flags. Before
+  v0.12.0 the downloader's readiness probe checked only that the marker file
+  exists. The labeller does not trust those downloaders: it skips each one
+  and says so in its log. The new downloader keeps a whole copy already on
+  the node; it downloads again only a copy that is not whole.
+- Then run `smt workload-patch -n <namespace>`. It writes the node affinity and
+  the `wait-for-weights` init container into each model server that reads
+  node-local weights ([Gate replicas on the
+  weights](workload-preparation.md#gate-replicas-on-the-weights)).
+- To check the labeller:
+
+  ```bash
+  kubectl get configmap weights-labeller-status -n scaling-manager-weights-labeller -o yaml
+  ```
+
+#### Learned state after the vLLM-version change
+
+The scaling manager now reads which vLLM release each variant runs, and fills
+the flags an engine leaves unset with that release's defaults (see
+[vLLM versions](vllm-versions.md)).
+
+**Most variants keep their learned state.** A variant whose resolved values did
+not change restores as its own: one that passes the sizing flags, and an
+unknown image on an H100 or H200, for example.
+
+**These variants relearn**, each because a flag it leaves unset now resolves
+to a different value:
+
+- any engine on an A100 or on a GPU below 70 GiB without
+  `--max-num-batched-tokens`: 8192 becomes 2048. This includes private,
+  unknown and simulator images, since the rule is the same in every vLLM
+  release. This one also changes its estimate;
+- a `vllm-openai` tag v0.28 or later on a GPU of 160 GiB or more without
+  `--max-num-batched-tokens`: 8192 becomes 16384;
+- a wide-EP engine (expert parallel, DP above 1, `--all2all-backend`
+  `deepep_low_latency` or `nixl_ep`) without `--max-num-batched-tokens`: 256;
+- a `vllm-openai` tag v0.20 or later without `--gpu-memory-utilization`
+  (0.9 becomes 0.92), and a v0.34 tag without it (1.0) or without
+  `--block-size` (64).
+
+What you see for those:
+
+- **On the first restart, the restore logs "the variant's engine arguments,
+  or the vLLM defaults they resolve to, changed".** Their arguments did not
+  change on the cluster.
+- **They may run more replicas than before for up to about six and a half
+  hours.** The old k2 is kept as a lower-only previous figure (`P2-prior` in
+  the k2-decision log). Where it is below what the new arguments derive, the
+  variant is priced at the old figure: held 30 minutes, then relaxed over 6
+  hours of serving, or replaced once the variant saturates twice under the new
+  arguments. That is the safe direction, but it costs replicas.
+- **Their latency, SLO and throughput windows start again**, and their
+  `llmsm_engine_config` series get new label values.
+- **Nothing to do.** To keep a figure from changing, pass the flag on the
+  engine with the value you want.
+
+#### Supply counts only replicas an InferencePool selects
+
+The router sends traffic only to Pods its InferencePool selects. From v0.12.0
+the scaling manager counts only those Pods as supply. In a model that a pool
+selects:
+
+- a Pod no pool selects (a relabelled replica) is no longer counted;
+- a variant no pool selects, by its pod template or its running Pods, is
+  **held**: it is not counted, and nothing scales it, up or down, including
+  scale-to-zero, scale from zero, utilization-share plans and Kueue lender
+  releases. It keeps the replica count it had. A model whose routed variant
+  is parked at zero is still routed, so the parked variant is the one that
+  wakes.
+
+**A canary or role served outside the pool stops autoscaling.** If you route
+traffic to a variant some other way (an HTTPRoute to a plain Service), it is
+now held at its replica count.
+
+Before you upgrade, check that every variant you want scaled is selected by a
+pool. List the pools' selectors, in the API group your pools use:
+
+```bash
+# inference.networking.k8s.io (v1): the selector is under matchLabels
+kubectl get inferencepools.inference.networking.k8s.io -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.selector.matchLabels
+# inference.networking.x-k8s.io (v1alpha2): the selector is a flat map
+kubectl get inferencepools.inference.networking.x-k8s.io -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.selector
+```
+
+Compare them with each workload's pod template labels:
+
+```bash
+kubectl get deployments -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,LABELS:.spec.template.metadata.labels
+# only if LeaderWorkerSet is installed
+kubectl get leaderworkersets -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,LABELS:.spec.leaderWorkerTemplate.leaderTemplate.metadata.labels
+```
+
+A Pod relabelled after it started can differ from its template. List the
+running Pods' labels with `kubectl get pods -n <namespace> --show-labels`.
+
+After the upgrade, a held variant has a `HeldNotInInferencePool` Warning
+Event, and `llmsm_unrouted_replicas` is non-zero for it.
+
+To release a held variant, add labels to its pod template that a pool
+selects, or create a pool that selects it.
+
+To keep the counting from before v0.12.0 for every model, set
+`LLMSM_POOL_SELECTED_SUPPLY=false` on the controller, or
+`LLMSM_POOL_SELECTED_SUPPLY: "false"` in the settings ConfigMap, and restart
+the controller ([configuration](configuration-advanced.md)).
 
 #### FlashInfer kernels now reach the engine cache
 
@@ -1371,6 +1487,7 @@ make undeploy-scaling-manager NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace>
 | the EPP `/metrics` authentication ClusterRoleBindings this install made (`llm-d.ai/applied-for=$NS`), and ClusterRole `scaling-manager-epp-metrics-auth` with the last of them | cluster-scoped: a namespace owner cannot read them, and the uninstall prints the cluster admin's `kubectl delete` command |
 | RoleBinding `scaling-manager-pod-writer-<suffix>` in every workload namespace, and Role `scaling-manager-pod-writer` where no other controller's binding uses it | made by `deploy/warmpool.sh create`, utilization-share activate, and the upgrade to this release |
 | `scaling-manager-utilization-share-history`, `scaling-manager-controller-status` and `scaling-manager-learned-state` | written by the controller, not rendered, so deleted by name. An uninstall and reinstall therefore starts learned state cold; upgrade in place to keep it |
+| the weights labeller (namespace `scaling-manager-weights-labeller`, ClusterRoles and bindings `scaling-manager-weights-labeller` and `-reader`, the RoleBinding in each watched namespace) and the node labels it set | only for `SCOPE=cluster`, where `smt install --scope cluster` applies it. Needs cluster rights; what fails is printed with its command (`deploy/weights.sh labeller --delete`, then `deploy/weights.sh label --clear`) |
 | the ScaledObjects **this installer created** | KEDA restores each workload to its pre-autoscaling replica count as they go. Keep them with `UNDEPLOY_SCALEDOBJECTS=false` |
 
 ### What it leaves
@@ -1389,6 +1506,7 @@ make undeploy-scaling-manager NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace>
 | Role `scaling-manager-pod-writer` and RoleBinding `scaling-manager-pod-writer-<suffix>` the uninstall could not read or delete | it may not list RoleBindings across the cluster, or delete them there. It lists each one with its `kubectl delete` command, or says it could not look | (cluster admin) see [Leftover pod-write grants](#leftover-pod-write-grants) |
 | Role `scaling-manager-pod-writer` in a namespace another controller also uses | that controller's binding still needs it | nothing; it goes with that controller |
 | Role `scaling-manager-pod-writer` and RoleBinding `scaling-manager-pod-writer-<suffix>` everywhere, when the controller Deployment is still there | the delete failed, or its result could not be read. A running controller still needs the grant | remove the Deployment, then run the uninstall again |
+| the replicas the DisaggregatedSet role writer last wrote (`DSET_ROLE_WRITER=true`) | they are the set's own spec; a model the writer parked stays at zero. The writer's grant itself is removed | remove the `scaling-manager.llmd.ai/role-writer` annotation and set each Static role's `replicas` back ([Turn it off](disaggregatedset.md#turn-it-off)) |
 | utilization-share transfer marks on pods | written while the optimizer acted | [Transfer marks left on pods](troubleshooting.md#transfer-marks-left-on-pods-after-a-downgrade); set `shadow: true` and wait a cycle **before** uninstalling to avoid them |
 
 ### Leftover pod-write grants

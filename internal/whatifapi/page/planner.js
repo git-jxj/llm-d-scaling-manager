@@ -23,6 +23,7 @@ const FLAG_WORDS = {
   TransferHeld: ["The KV transfer time was read on earlier cycles and held.", "a quiet reading of the transfer at this load"],
   DecodeSideOmitted: ["Decode's part of the TTFT (its admission wait and first token) is left out: the TTFT over-promises.", "a decode ITL line or the decode engine's TTFT"],
   DecodeTTFTUnmeasured: ["Decode's TTFT was not measured, so the KV pull and first token are left out (25% to 65% on the recordings).", "the decode engine's TTFT histogram"],
+  DecodeQueueUnread: ["The decode engine does not say why requests wait, so a decode TTFT measured while decode was queueing is not caught: the floor may be a queue.", "vLLM v0.20.0 or later, which reports the capacity wait"],
   DecodeEngineMeasured: ["Decode's part of the TTFT is the decode engine's measured TTFT, in place of the admission wait.", "a decode ITL line"],
   DecodeTermOmitted: ["The decode engine's TTFT has no fit: the older, smaller sum stands for it, and the TTFT over-promises.", "readings of the decode engine's TTFT across load"],
   DecodeStepSlopeAssumed: ["The decode term rises with an assumed slope from where it was measured.", "readings of the decode engine's TTFT across load"],
@@ -46,6 +47,9 @@ const FLAG_WORDS = {
   LineNearGate: ["The ITL line sits near the tracker's gate; the answer does not care which side (informational).", "nothing"],
   ExtrapolatedFill: ["The fill is above the highest fill the ITL line was read at: extrapolated.", "readings at higher load"],
   AssumedShape: ["Priced at a prompt or output length you set, not the measured one.", "price at the current mix"],
+  ExtrapolatedShape: ["The request shape is outside the prompt and output lengths the source saw: the figures extrapolate the learned lines past the traffic they were fitted on.", "a source that served this shape"],
+  DecodeOnly: ["The prefill side is not priced: the report judged decode alone, gives no fleet rate at the SLO, and never calls the fleet over-provisioned.", "a learned or assumed prefill speed (--assume-vp)"],
+  TailPastPromptHistogram: ["A TTFT percentile above p95 on a prompt spread no histogram measured: the tail rests on the assumed spread.", "a source with a computed-prompt histogram"],
   EdgeBeyondContext: ["A bucket's edge is past the engines' context window (--max-model-len): they refuse prompts that long, and this \"if all traffic were\" line prices traffic they would not serve.", "an edge within the context window"],
   PullUnseen: ["The prefill load is past the pull table's highest bucket: the pull reads low.", "readings at higher prefill load"],
   OverheadMeasured: ["The fixed overhead comes from the prefill pods' histograms.", "nothing (informational)"],
@@ -337,6 +341,10 @@ async function loadInputs() {
 // policy's SLO and headroom, the observed mix. The rate starts at the
 // operating point the first plan returns: the source carries no rate.
 function setInputs(inputs) {
+  el("rrun").disabled = false;
+  state.reportGen = (state.reportGen || 0) + 1;
+  el("rresult").hidden = true;
+  el("rstatus").textContent = "";
   state.inputs = inputs;
   state.priceFailed = false;
   state.plan = null;
@@ -685,6 +693,7 @@ function enterPlan() {
 // returns, so the last move always lands.
 let planTimer = null;
 function schedule(ms) {
+  reportStale();
   clearTimeout(planTimer);
   planTimer = setTimeout(plan, ms);
 }
@@ -916,7 +925,7 @@ function renderSize() {
     el("sizetitle").textContent = `The fleet ${rate} needs`;
     el("sizeanswer").innerHTML = `<div class="v">${fleetText(f)}</div>` +
       `<div>The fewest replicas whose fleet limit reaches ${rate}` + (low ? " at the worst corner of V_P and f" : "") +
-      ` (the fewest decode first, then the fewest prefill with them). ` +
+      ` (the fewest in all; of two as few, the one with fewer decode replicas). ` +
       `Fleet limit <b>${figText(a.limit, fmtRate)}</b>, <span class="ok">headroom +${h != null ? fmtRate(h) : "refused"}</span> over the rate` +
       (low ? " at the worst corner" : "") + `; ${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>` +
       lowNote(a.limit, z) + heldNote(a);
@@ -963,13 +972,12 @@ function fewerLine(role, s, low) {
 }
 
 // heldNote says, where decode admission holds the prefill limit down, that
-// the answer is decode first and may not be the fewest replicas in all.
+// decode replicas are what lift it.
 function heldNote(a) {
   const held = (f => f && (f.flags || []).includes("HeldByDecodeAdmission"));
   if (!held(a.limit) && !held(a.plan.limits.prefill)) return "";
-  return `<div class="hint">Decode admission holds the prefill limit down here. The answer is the fewest decode replicas first, ` +
-    `then the fewest prefill: a fleet with more decode and fewer prefill replicas may serve the rate with fewer in all. ` +
-    `Try it in the first mode, though a large fleet at a high rate can take many minutes to price there.</div>`;
+  return `<div class="hint">Decode admission holds the prefill limit down here: more decode replicas lift it more than ` +
+    `more prefill replicas do, and the answer weighs the two.</div>`;
 }
 
 // UNMET_SAID are the refusals unmetAdvice says in the page's own words; the
@@ -1855,9 +1863,243 @@ function wire() {
   el("scenexport").onclick = exportScenario;
   el("scenimport").onchange = () => importScenario(el("scenimport").files[0]);
   el("pina").onclick = pinA;
+  el("rshapeadd").onclick = () => { addShapeRow("", "", ""); const last = el("rshapes").lastElementChild; if (last) last.querySelector("input").focus(); reportStale(); };
+  // Editing what the report asks hides an answer to something else.
+  el("rshapes").addEventListener("input", reportStale);
+  el("rloads").oninput = el("rgrowth").oninput = el("rloadstat").onchange = reportStale;
+  el("rrun").onclick = runReport;
+  addShapeRow("", "", "");
   el("unpin").onclick = unpin;
   el("kprom").onchange = el("krec").onchange = el("lasthour").onchange = showKind;
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
+}
+
+// ---- The fleet report (POST /v1/report) ----
+//
+// Every string the card shows is built in scenario.js (reportView) and put
+// here into text nodes, never into markup.
+
+// renumberShapes labels each shape row by its place, for a screen reader.
+function renumberShapes() {
+  Array.from(el("rshapes").children).forEach((row, i) => {
+    for (const box of row.querySelectorAll("input")) {
+      const part = box.dataset.part;
+      box.setAttribute("aria-label", `shape ${i + 1} ${part === "hit" ? "prefix hit rate" : part.toUpperCase() + " in tokens"}`);
+    }
+    row.querySelector("button").setAttribute("aria-label", `Remove shape ${i + 1}`);
+  });
+}
+
+// addShapeRow adds a request-shape row: IL, OL and hit boxes and a remove
+// button. A blank row is the measured shape.
+function addShapeRow(il, ol, hit) {
+  const rows = el("rshapes");
+  if (rows.children.length >= MAX_REPORT_SHAPES) {
+    el("rstatus").textContent = `At most ${MAX_REPORT_SHAPES} shapes.`;
+    return;
+  }
+  const row = document.createElement("div");
+  row.className = "rshape";
+  for (const [name, value, hint] of [["il", il, "IL"], ["ol", ol, "OL"], ["hit", hit, "hit"]]) {
+    const box = document.createElement("input");
+    box.type = "text";
+    box.value = value;
+    box.placeholder = hint;
+    box.dataset.part = name;
+    row.appendChild(box);
+  }
+  const drop = document.createElement("button");
+  drop.type = "button";
+  drop.textContent = "Remove";
+  drop.onclick = () => {
+    // Focus moves to the next row's IL box, or to "Add a shape".
+    const next = row.nextElementSibling || row.previousElementSibling;
+    row.remove();
+    renumberShapes();
+    reportStale();
+    (next ? next.querySelector("input") : el("rshapeadd")).focus();
+  };
+  row.appendChild(drop);
+  rows.appendChild(row);
+  renumberShapes();
+}
+
+// shapeRows is the shape rows as reportRequest reads them.
+function shapeRows() {
+  return Array.from(el("rshapes").children).map(row => {
+    const part = name => row.querySelector(`[data-part="${name}"]`).value;
+    return {il: part("il"), ol: part("ol"), hit: part("hit")};
+  });
+}
+
+// reportStale says a drawn report no longer matches the knobs: it is hidden
+// until the fleet is judged again.
+function reportStale() {
+  // Any answer still in flight is for the question before this change.
+  state.reportGen = (state.reportGen || 0) + 1;
+  if (el("rresult").hidden && !state.reportBusy) return;
+  el("rresult").hidden = true;
+  el("rstatus").textContent = "The knobs changed: judge the fleet again.";
+}
+
+// reportToken names the question on screen: the inputs and every change
+// since (reportStale). An answer to an older token is dropped.
+function reportToken() {
+  return (state.inputs ? state.inputs.inputsId : "") + "#" + (state.reportGen || 0);
+}
+
+// judgedText says what a report found, for the live region.
+function judgedText(r) {
+  const counts = {};
+  for (const s of r.shapes || []) {
+    const v = (s.verdict || {}).verdict || "NOT JUDGED";
+    counts[v] = (counts[v] || 0) + 1;
+  }
+  const n = (r.shapes || []).length;
+  return `Judged ${n} shape${n === 1 ? "" : "s"}: ` + Object.entries(counts).map(([v, c]) => `${c} ${v.toLowerCase()}`).join(", ") + ".";
+}
+
+// runReport asks the server to judge the fleet the knobs set, at the
+// shapes and loads asked, with the plan's headroom, SLO and assumed terms.
+// The button stays focusable while it runs (aria-disabled), so focus is not
+// lost; on an answer it moves to the verdicts.
+async function runReport() {
+  if (state.reportBusy) return;
+  if (!state.inputs || !state.k) {
+    el("rstatus").textContent = "Load a source first.";
+    return;
+  }
+  const plan = planRequest();
+  const asked = reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),
+    loads: el("rloads").value, growth: el("rgrowth").value, loadStatistic: el("rloadstat").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume});
+  if (asked.problem) {
+    el("rstatus").textContent = asked.problem;
+    return;
+  }
+  const token = reportToken();
+  state.reportBusy = true;
+  el("rrun").setAttribute("aria-disabled", "true");
+  el("rstatus").textContent = "Judging the fleet... (many shapes and loads take up to half a minute)";
+  try {
+    const r = await api("POST", "v1/report", asked.body);
+    // An answer to a question since changed is dropped.
+    if (!reportCurrent(token, reportToken())) return;
+    renderReport(r);
+    el("rstatus").textContent = judgedText(r);
+    el("rverdicts").focus();
+  } catch (e) {
+    if (!reportCurrent(token, reportToken())) return;
+    const status = Number(String(e.message).split(":")[0]);
+    el("rresult").hidden = true;
+    el("rstatus").textContent = reportMissing(status, e.message)
+      ? "This server has no fleet report (POST /v1/report): it runs a release from before capacity-planner at-replicas. The rest of the page works."
+      : "The report failed: " + e.message;
+  } finally {
+    state.reportBusy = false;
+    el("rrun").removeAttribute("aria-disabled");
+    if (!reportCurrent(token, reportToken())) el("rstatus").textContent = "The knobs changed: judge the fleet again.";
+  }
+}
+
+// textNode is an element holding text, with a class.
+function textNode(tag, text, cls) {
+  const c = document.createElement(tag);
+  c.textContent = text;
+  if (cls) c.className = cls;
+  return c;
+}
+
+// shapeLabel is a shape's name, marked EXTRAPOLATED where it is.
+function shapeLabel(row) {
+  const span = textNode("span", row.label);
+  if (row.extrapolated) {
+    const x = textNode("span", " EXTRAPOLATED", "rextra");
+    if (row.why) x.title = row.why;
+    span.appendChild(x);
+  }
+  return span;
+}
+
+// flagsNode is a shape's flags: the common ones as phrases, the rest behind
+// a toggle, and every code in the tooltip.
+function flagsNode(f) {
+  const p = textNode("p", f.phrases.length ? "Rests on: " + f.phrases.join("; ") + "." : "");
+  p.title = f.codes;
+  if (f.more) {
+    const more = document.createElement("details");
+    more.className = "rmore";
+    more.appendChild(textNode("summary", `${f.more} more assumption${f.more === 1 ? "" : "s"}`));
+    more.appendChild(textNode("p", f.rest.join(", ")));
+    p.appendChild(more);
+  }
+  return p;
+}
+
+// renderReport draws a report: each shape's verdict in words first, the
+// shape-by-load matrix, each shape's detail (closed), and the accuracy notes
+// behind a toggle.
+function renderReport(r) {
+  const v = reportView(r);
+  const verdicts = el("rverdicts");
+  verdicts.replaceChildren();
+  el("rload").textContent = v.load;
+  for (const s of v.verdicts) {
+    const li = document.createElement("li");
+    li.appendChild(shapeLabel(s));
+    if (s.whatIf) li.appendChild(textNode("span", " if all traffic were this shape", "rwhatif"));
+    if (s.decodeOnly) li.appendChild(textNode("span", "decode only", "rmark unknown rscope"));
+    li.appendChild(textNode("b", " " + s.verdict + ": "));
+    if (s.needs) li.appendChild(textNode("span", s.needs, s.unmet ? "rneeds unmet" : "rneeds"));
+    li.appendChild(textNode("span", " " + s.rest, "rverdict"));
+    // Growth sits under the verdict it grows from, never in its place.
+    for (const g of s.growth) {
+      const p = textNode("div", "", "rgrowthline");
+      p.appendChild(textNode("span", g.lead + ": "));
+      p.appendChild(textNode("b", g.verdict + ": "));
+      if (g.needs) p.appendChild(textNode("span", g.needs, g.unmet ? "rneeds unmet" : "rneeds"));
+      p.appendChild(textNode("span", " " + g.rest));
+      li.appendChild(p);
+    }
+    verdicts.appendChild(li);
+  }
+  el("rlegendstats").textContent = v.legendStats;
+  const table = el("rmatrix");
+  table.replaceChildren();
+  const head = document.createElement("tr");
+  head.appendChild(textNode("th", "shape \\ load"));
+  for (const h of v.header) head.appendChild(textNode("th", h));
+  table.appendChild(head);
+  for (const row of v.rows) {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th");
+    th.appendChild(shapeLabel(row));
+    tr.appendChild(th);
+    for (const c of row.cells) {
+      // Each figure on its own unbroken line part, so a narrow page wraps between them.
+      const td = document.createElement("td");
+      td.className = c.cls;
+      c.parts.forEach((p, i) => {
+        if (i) td.appendChild(document.createTextNode(i === 2 ? " " : " · "));
+        td.appendChild(textNode("span", p, "rpart"));
+      });
+      if (c.word) td.appendChild(textNode("span", c.word, "rmark " + c.cls));
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  const detail = el("rdetail");
+  detail.replaceChildren();
+  for (const d of v.details) {
+    const box = document.createElement("details");
+    box.appendChild(textNode("summary", d.summary));
+    for (const line of d.lines) box.appendChild(textNode("p", line));
+    box.appendChild(flagsNode(d.flags));
+    detail.appendChild(box);
+  }
+  const notes = el("rnotes");
+  notes.replaceChildren();
+  for (const n of v.notes) notes.appendChild(textNode("li", n));
+  el("rresult").hidden = false;
 }
 
 document.addEventListener("DOMContentLoaded", start);

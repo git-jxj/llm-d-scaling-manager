@@ -412,7 +412,7 @@ func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b fre
 
 	base, ok := whatif.TTFTAt(off, 1, 0.9).(whatif.TTFT)
 	if !ok {
-		out.Refused = refusalOf(whatif.TTFTAt(off, 1, 0.9))
+		out.Refused = refusalOf(pf.calmCycleHint(whatif.TTFTAt(off, 1, 0.9)))
 		return out, nil
 	}
 	out.PrefillKnee, out.DecodeKnee = base.PrefillKnee, base.DecodeKnee

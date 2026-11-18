@@ -1,0 +1,17 @@
+# list finds the opted-in sets; patch is the server-side apply of
+# spec.roles[].spec.replicas, as field manager scaling-manager-role-writer.
+# RBAC cannot narrow patch to one field: this reaches every field of every set
+# in the namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: scaling-manager-dset-role-writer-role
+rules:
+- apiGroups:
+  - disaggregatedset.x-k8s.io
+  resources:
+  - disaggregatedsets
+  verbs:
+  - get
+  - list
+  - patch

@@ -409,7 +409,7 @@ type atClock struct {
 	clk *clocktesting.FakePassiveClock
 }
 
-func (a atClock) Query(ctx context.Context, q string, _ time.Time, opts ...promv1.Option) (model.Value, promv1.Warnings, error) {
+func (a atClock) Query(ctx context.Context, q string, _ time.Time, opts ...promv1.Option) (model.Value, promv1.Warnings, promv1.Infos, error) {
 	return a.API.Query(ctx, q, a.clk.Now(), opts...)
 }
 

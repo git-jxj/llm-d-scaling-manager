@@ -1,0 +1,207 @@
+# Excerpt of llm-d/llm-d-benchmark config/templates/values/defaults.yaml at
+# v0.7.8: its _anchors block and its images block, unchanged. The
+# vLLM (harness default) entry of hack/upstream-pins.yaml reads the engine
+# tag from this file upstream; hack/check-upstream-versions.sh runs that
+# entry against this copy. Refresh it when the llm-d-benchmark pin moves:
+# the check fails until the ref below matches the pin.
+# ref: v0.7.8
+# engine: v0.26.0
+# ============================================================================
+# Common Default Values for LLM-D Deployment
+# These can be completely overridden via scenarios file.
+# ============================================================================
+
+# ============================================================================
+# ANCHORS - Define reusable values here
+# ============================================================================
+_anchors:
+  # Model identifiers
+  model_name: &model_name facebook/opt-125m
+  model_short_name: &model_short_name facebook-opt-125m
+  model_path: &model_path models/facebook/opt-125m
+  model_cache_base: &model_cache_base /model-cache
+
+  # Common ports
+  vllm_port: &vllm_port 8200
+  vllm_service_port: &vllm_service_port 8000
+  ext_proc_port: &ext_proc_port 9002
+  zmq_port: &zmq_port 5557
+  rsync_port: &rsync_port 20873
+
+  # Common resource values
+  cpu_16: &cpu_16 "16"
+  cpu_4: &cpu_4 "4"
+  cpu_32: &cpu_32 "32"
+  memory_64gi: &memory_64gi 64Gi
+  memory_40gi: &memory_40gi 40Gi
+  memory_16gi: &memory_16gi 16Gi
+  memory_4gi: &memory_4gi 4Gi
+  memory_128gi: &memory_128gi 128Gi
+  memory_256gi: &memory_256gi 256Gi
+  shm_16gi: &shm_16gi 16Gi
+  shm_32gi: &shm_32gi 32Gi
+  shm_64gi: &shm_64gi 64Gi
+
+  # GPU configuration.
+  # `gpu_label_value: auto` opts into cluster-side discovery: the resolver
+  # (cluster_resource_resolver.py:_resolve_accelerator_type_labels) reads
+  # actual node labels and overrides BOTH labelKey and labelValue in the
+  # plan, so any GPU model works out of the box. Scenarios that need a
+  # specific SKU can still pin a literal value (e.g. NVIDIA-H100-80GB-HBM3).
+  gpu_label_key: &gpu_label_key nvidia.com/gpu.product
+  gpu_label_value: &gpu_label_value auto
+  gpu_memory_util: &gpu_memory_util 0.95
+
+  # Common vLLM settings
+  block_size: &block_size 64
+  max_model_len: &max_model_len 16384
+  worker_method: &worker_method spawn
+  logging_level: &logging_level INFO
+  container_home: &container_home /tmp
+  hf_home: &hf_home /tmp/huggingface
+
+  # vLLM KV Transfer config
+  kv_connector: &kv_connector NixlConnector
+  kv_role: &kv_role kv_both
+
+  # Common probe settings
+  probe_startup: &probe_startup
+    path: /health
+    failureThreshold: 60
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+
+  probe_liveness: &probe_liveness
+    failureThreshold: 3
+    periodSeconds: 5
+
+  probe_readiness: &probe_readiness
+    path: /health
+    failureThreshold: 3
+    periodSeconds: 5
+
+  # Common parallelism
+  parallelism_single: &parallelism_single
+    data: 1
+    dataLocal: 1
+    tensor: 1
+    workers: 1
+
+  parallelism_4gpu: &parallelism_4gpu
+    data: 1
+    dataLocal: 1
+    tensor: 4
+    workers: 4
+
+  parallelism_8gpu: &parallelism_8gpu
+    data: 1
+    dataLocal: 1
+    tensor: 8
+    workers: 8
+
+  # Storage class: "auto"/"default" = use cluster default; set explicitly to override
+  storage_class: &storage_class auto
+
+  # Image pull policies
+  pull_always: &pull_always Always
+  pull_if_not_present: &pull_if_not_present IfNotPresent
+
+  # General versions
+  istio_version:                     &istio_version                     1.29.2
+  agentgateway_version:              &agentgateway_version              v1.4.1
+  lws_version:                       &lws_version                       v0.10.0
+
+  # GAIE CRDs are still installed from the gateway-api-inference-extension
+  # release (`v1.5.0`). The router chart below replaces the legacy
+  # `inferencepool` / `standalone` charts from that release.
+  gaie_version:                      &gaie_version                      v1.5.0
+  # llm-d-router chart version (migrated off the GAIE-published
+  # `inferencepool` / `standalone` charts onto the llm-d-owned
+  # `llm-d-router-{gateway,standalone}-dev` charts in ghcr.io/llm-d/charts).
+  # Used for both the standalone and gateway router charts.
+  router_chart_version:              &router_chart_version              v0.9.0
+  vllm-openai_version:               &vllm-openai_version               v0.26.0
+  llm-d-router-endpoint-picker_version: &llm-d-router-endpoint-picker_version v0.9.0
+  llm-d-routing-sidecar_version:     &llm-d-routing-sidecar_version     v0.9.0
+  # Just use vllm-openai image for tokenizer
+  llm-d-uds-tokenizer_version:       &llm-d-uds-tokenizer_version       v0.26.0
+  llm-d-cuda_version:                &llm-d-cuda_version                v0.8.1
+  llm-d-inference-sim_version:       &llm-d-inference-sim_version       v0.10.2
+  llm-d-benchmark_version:           &llm-d-benchmark_version           v0.7.0
+
+  # Common labels
+  app_label: &app_label llm-d-benchmark-harness
+  inference_serving_label: &inference_serving_label "true"
+
+  # Preprocessing script (sourced from init container output)
+  preprocess_script: &preprocess_script /bin/true
+
+# ============================================================================
+# RESOURCE PRESETS - For different model sizes (as we get understanding...)
+#
+# Idea:
+#
+# These can be referenced in scenarios via resourcePreset: <name>
+#
+# I kind of have this implemented in the renderer. But I have not extensively
+# tested it.x
+#
+# ============================================================================
+images:
+  benchmark:
+    repository: ghcr.io/llm-d/llm-d-benchmark
+    tag: *llm-d-benchmark_version
+    pullPolicy: *pull_always
+    sourceRepo: https://github.com/llm-d/llm-d-benchmark
+
+  vllm:
+#    repository: ghcr.io/llm-d/llm-d-cuda
+#    tag: *llm-d-cuda_version
+#    pullPolicy: *pull_if_not_present
+#    sourceRepo: https://github.com/llm-d/llm-d
+#    sourcePath: docker/Dockerfile.cuda
+    repository: docker.io/vllm/vllm-openai
+    tag: *vllm-openai_version
+    pullPolicy: *pull_always
+    sourceRepo: https://github.com/vllm-project/vllm
+
+  vllmOpenai:
+    repository: docker.io/vllm/vllm-openai
+    tag: *vllm-openai_version
+    pullPolicy: *pull_always
+    sourceRepo: https://github.com/vllm-project/vllm
+
+  # EPP (Endpoint Picker / Router) image -- llm-d-owned, sourced from the
+  # llm-d-router chart family.
+  routerEndpointPicker:
+    repository: ghcr.io/llm-d/llm-d-router-endpoint-picker
+    tag: *llm-d-router-endpoint-picker_version
+    pullPolicy: *pull_always
+    sourceRepo: https://github.com/llm-d/llm-d-router
+
+  routingSidecar:
+    repository: ghcr.io/llm-d/llm-d-router-disagg-sidecar
+    tag: *llm-d-routing-sidecar_version
+    pullPolicy: *pull_if_not_present
+    sourceRepo: https://github.com/llm-d/llm-d-router
+
+  udsTokenizer:
+    repository: docker.io/vllm/vllm-openai
+    tag: *llm-d-uds-tokenizer_version
+    pullPolicy: *pull_always
+    sourceRepo: https://github.com/vllm-project/vllm
+#    repository: ghcr.io/llm-d/llm-d-uds-tokenizer
+#    tag: *llm-d-uds-tokenizer_version
+#    pullPolicy: *pull_if_not_present
+#    sourceRepo: https://github.com/llm-d/llm-d-kv-cache
+#    sourcePath: services/uds_tokenizer
+
+  python:
+    repository: python
+    tag: "3.10"
+    sourceRepo: https://hub.docker.com/_/python
+
+# ============================================================================
+# HELM REPOSITORY CONFIGURATION
+# ============================================================================

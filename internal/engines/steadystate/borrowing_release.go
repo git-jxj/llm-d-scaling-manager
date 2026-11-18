@@ -716,7 +716,8 @@ func modelOfOwners(requests []allocation.ModelScalingRequest, scaleTargets map[s
 }
 
 // modelOfPod is "namespace/model" of the variant whose scale target owns a
-// pod: a LeaderWorkerSet's pods by their set-name label, a Deployment's by
+// pod: a LeaderWorkerSet's pods by their set-name label (a DisaggregatedSet
+// role's by its set and role labels, scaletarget.OwnsGroupPod), a Deployment's by
 // its ReplicaSet owner, <deployment>-<pod-template-hash> exactly, or, with no
 // such owner, by its name's form (modelByPodName).
 func modelOfPod(requests []allocation.ModelScalingRequest, scaleTargets map[string]scaletarget.ScaleTargetAccessor,
@@ -724,7 +725,7 @@ func modelOfPod(requests []allocation.ModelScalingRequest, scaleTargets map[stri
 	if set := p.Labels[lwsv1.SetNameLabelKey]; set != "" {
 		model := ""
 		forEachTarget(requests, scaleTargets, ns, func(m string, acc scaletarget.ScaleTargetAccessor) {
-			if scaletarget.IsLeaderWorkerSet(acc) && acc.GetName() == set {
+			if scaletarget.IsLeaderWorkerSet(acc) && scaletarget.OwnsGroupPod(acc, p) {
 				model = m
 			}
 		})

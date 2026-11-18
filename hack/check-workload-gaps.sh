@@ -3480,7 +3480,7 @@ assert_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "kind: LeaderWorkerSet"
 assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) COMPILE FROM NOTHING"
 lws_driver true
 assert_eq "$PATCH_CALLS" "0" "kubectl patch calls with APPLY alone"
-assert_contains "$(cat "$DRIVER_LOG")" "ns1/w needs only a volume or a cache variable -- emitted, not applied"
+assert_contains "$(cat "$DRIVER_LOG")" "ns1/w needs only a volume, a cache variable or the weights gate -- emitted, not applied"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="LWS apply: absent lists are created whole, by a JSON patch, at both templates"

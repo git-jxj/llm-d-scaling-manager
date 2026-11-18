@@ -1162,7 +1162,7 @@ so_workload_patch_one() {
         # in-flight requests" about a workload that already had its drain hook.
         # A LeaderWorkerSet has no drain half, so without a storage opt-in it
         # always lands here.
-        log_info "  $ns/$name needs only a volume or a cache variable -- emitted, not applied."
+        log_info "  $ns/$name needs only a volume, a cache variable or the weights gate -- emitted, not applied."
         return 2
     fi
     if [ "$d_resource" = "leaderworkersets" ]; then
@@ -1252,6 +1252,7 @@ so_workload_patch_trim() {
           | del($s.volumes | select(length == 0))
           | del($s.containers[].volumeMounts | select(length == 0))
           | del($s.containers[].env | select(length == 0))
+          | del($s.affinity) | del($s.initContainers)
           | ... comments=\"\""
     yq eval "$prog" "$doc" > "$stripped" 2>/dev/null
     # What remains is worth applying only if it still carries a change. A
@@ -1436,6 +1437,42 @@ so_workload_check_claim_ref() {
 # Returns non-zero when anything could not be read or patched. A caller's
 # `|| echo WARNING` depends on that, so every path that ends without knowing the
 # answer has to say so rather than fall through to the reassuring one.
+# so_workload_report_dsets reports, per serving role of each DisaggregatedSet
+# in $1, what so_discover's notes report for any workload: no drain hook,
+# weights fetched on every start, caches that do not outlive the pod. It
+# writes no patch, and never applies one: the fix belongs in the role
+# template where the set is owned, and ANY template change rolls every group
+# of every role of the set, which is a rollout, not a preparation step.
+#
+# Prints "<roles checked> <roles with a gap>" on stdout, the findings as
+# warnings. Returns 1 when the set listing cannot be read; prints nothing and
+# returns 0 when the CRD is absent.
+so_workload_report_dsets() {
+    local ns="$1" listing set idx role mode slices subroles labels objlabels envs args
+    local pod drain weights caches checked=0 gaps=0
+    kubectl get crd "$SO_DSET_CRD" >/dev/null 2>&1 || return 0
+    if ! listing="$(kubectl get disaggregatedsets -n "$ns" -o json 2>/dev/null)"; then
+        log_warning "  Could not list disaggregatedsets in $ns -- they are not being reported as clean."
+        return 1
+    fi
+    while IFS=$'\037' read -r set idx role mode slices subroles labels objlabels envs args; do
+        [ -n "$set" ] && [ -n "$role" ] || continue
+        so_is_serving "$labels" "$objlabels" || continue
+        checked=$((checked + 1))
+        pod="$(so_dset_role_pod_path "$idx")"
+        drain=$(so_drain_note "$ns" disaggregatedsets "$set" "$pod")
+        weights=$(so_weights_note "$ns" disaggregatedsets "$set" "$pod")
+        caches=$(so_enginecache_note "$ns" disaggregatedsets "$set" "$pod")
+        [ -n "$drain$weights$caches" ] || continue
+        gaps=$((gaps + 1))
+        log_warning "  DisaggregatedSet $ns/$set, role $role (spec.roles[$idx]): not patched -- change the role template where the set is owned; any template change rolls every group of every role."
+        [ -z "$drain" ] || log_warning "    drain: $drain"
+        [ -z "$weights" ] || log_warning "    weights: $weights"
+        [ -z "$caches" ] || log_warning "    caches: $caches"
+    done < <(printf '%s' "$listing" | so_dset_role_rows)
+    echo "$checked $gaps"
+}
+
 llmsm_workload_patch() {
     local out="${LLMSM_WORKLOAD_PATCH_FILE:-scaling-manager-workload-patch.yaml}"
     local apply="${LLMSM_WORKLOAD_PATCH_APPLY:-false}"
@@ -1446,6 +1483,9 @@ llmsm_workload_patch() {
     # preStop on every template, which it cannot fix and the all-clear must
     # not claim.
     local refused=0 lws_undrained=0
+    # dset_gaps: DisaggregatedSet roles so_workload_report_dsets found a gap
+    # in. Reported, never patched, and never part of the all-clear.
+    local dset_gaps=0
     local listing names doc_rc index_lines tool doc_ns doc_name doc_kind write_rc
 
     # The tool check this path never had. `make workload-patch` sources the
@@ -1536,6 +1576,16 @@ llmsm_workload_patch() {
                 esac
             done <<< "$names"
         done
+        # DisaggregatedSet roles: reported, never patched (so_workload_report_dsets).
+        local dset_out dset_rc
+        dset_rc=0
+        dset_out="$(so_workload_report_dsets "$ns")" || dset_rc=$?
+        if [ "$dset_rc" -eq 1 ]; then
+            unreadable=1
+        elif [ -n "$dset_out" ]; then
+            scanned=$((scanned + ${dset_out%% *}))
+            dset_gaps=$((dset_gaps + ${dset_out##* }))
+        fi
     done
 
     found=$(grep -c '^apiVersion:' "$tmp" 2>/dev/null) || found=0
@@ -1556,10 +1606,11 @@ llmsm_workload_patch() {
             log_warning "Nothing was written: all $scanned workload(s) were skipped (see above)."
             return 0
         fi
-        if [ "$((scanned - skipped - lws_undrained))" -gt 0 ]; then
-            log_success "$((scanned - skipped - lws_undrained)) model server(s) already drain on scale-down and keep their weights on a volume; no vLLM among them compiles from nothing, and none recompiles its Python bytecode."
+        if [ "$((scanned - skipped - lws_undrained - dset_gaps))" -gt 0 ]; then
+            log_success "$((scanned - skipped - lws_undrained - dset_gaps)) model server(s) already drain on scale-down and keep their weights on a volume; no vLLM among them compiles from nothing, and none recompiles its Python bytecode."
         fi
         [ "$lws_undrained" -gt 0 ] && log_warning "  $lws_undrained LeaderWorkerSet(s) keep their caches but do not drain on scale-down (see above); that is set by hand."
+        [ "$dset_gaps" -gt 0 ] && log_warning "  $dset_gaps DisaggregatedSet role(s) need changes to their role template (see above); that is set by hand, in the set's owner."
         [ "$skipped" -gt 0 ] && log_warning "  $skipped other workload(s) were skipped and were not checked."
         so_workload_patch_clear_stale "$out"
         return 0
@@ -1679,6 +1730,7 @@ llmsm_workload_patch() {
     rm -f "$tmp"
     trap - RETURN
     log_success "Wrote $out ($found workload(s) need something)."
+    [ "$dset_gaps" -eq 0 ] || log_warning "  $dset_gaps DisaggregatedSet role(s) need changes to their role template too (see above); those are not in $out."
     log_info "  Apply it where the pod spec is owned -- your modelservice values, or the chart that made it."
     [ "$apply" != "true" ] && log_info "  To patch the live objects anyway: LLMSM_WORKLOAD_PATCH_APPLY=true make workload-patch"
     [ "$unreadable" -eq 1 ] && rc=1
@@ -1719,11 +1771,13 @@ so_workload_gaps() {
     [ -n "$out" ] || return 1
     # An LWS with no leaderTemplate builds its leader from workerTemplate, so a
     # question about the leader is answered from that one -- the rule the patch
-    # path follows. Without it the plan notes read {} and said nothing.
+    # path follows. Without it the plan notes read {} and said nothing. Any
+    # path ending in leaderTemplate, so a DisaggregatedSet role
+    # (so_dset_role_pod_path) falls back the same way.
     printf '%s' "$out" | jq -r --argjson p "$pod" --arg emount "${LLMSM_ENGINE_CACHE_PATH:-/engine-cache}" '
         ( getpath($p)
-          // (if $p == ["spec", "leaderWorkerTemplate", "leaderTemplate"]
-              then getpath(["spec", "leaderWorkerTemplate", "workerTemplate"]) else null end)
+          // (if ($p | length) > 0 and ($p | last) == "leaderTemplate"
+              then getpath($p[:-1] + ["workerTemplate"]) else null end)
           // {} ) as $t
         | ([ $t.spec.containers[]?
              | ((.command // []) + (.args // []) | join(" ") | ascii_downcase) as $cmd
@@ -2082,6 +2136,12 @@ so_model_claim() {
           # ROX volume mounts read-only, so every replica would crash on the
           # download rather than merely re-doing it.
           | select((.spec.accessModes // []) | any(. == "ReadWriteMany"))
+          # Not a node-local weights claim (deploy/weights.sh). It is
+          # ReadWriteMany and named weights-..., but each node holds its own
+          # copy under models/<id>: as an HF_HOME download cache every node
+          # would download again into its own directory, and the copy the
+          # downloader made would sit unused.
+          | select(.spec.storageClassName != "node-local-weights")
           # The name test applies here, not only when there are several. A
           # namespace with exactly ONE RWX claim does not thereby have a model
           # cache: in a benchmark namespace that one claim is the RESULTS
@@ -2733,14 +2793,23 @@ so_workload_patch_doc() {
     case "$(printf '%s %s' "$image" "$argv" | tr '[:upper:]' '[:lower:]')" in
         *vllm*) so_kv_bytes_proposal "$ns" "$name" "$engine" "$argv" ;;
     esac
+    local want_gate=0 gate_model="" gate_key="" gate_claim="" gate_vol="" gate_mount="" gate_sub="" gate_dir="" gate_aff="" gate_wait="" gate_init=1
+    so_weights_gate_plan "$ns" "$resource" "$name" "$engine"
 
-    [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ] || return 0
+    [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ] || [ "$want_gate" -eq 1 ] || return 0
     [ -z "$kvsay" ] || log_info "$kvsay"
 
     cat <<HDR
 ---
 # ${resource}/${name} in ${ns}   (engine container: ${engine})
 HDR
+    if [ "$want_gate" -eq 1 ]; then
+        cat <<GATEWHY
+#   weights-gate: ${engine} reads ${gate_model} from the node-local claim ${gate_claim},
+#          and nothing keeps a replica off a node whose copy is missing or still
+#          being written.
+GATEWHY
+    fi
     if [ "$want_drain" -eq 1 ]; then
         # Never LOWER an existing grace period. A long grace with no hook is
         # exactly the configuration not to shorten, and the emitted document used
@@ -2799,6 +2868,7 @@ HEAD
       terminationGracePeriodSeconds: ${grace_want}
 GRACE
     fi
+    if [ "$want_gate" -eq 1 ]; then so_weights_gate_body; fi
     cat <<CONTAINERS
       containers:
       - name: ${engine}
@@ -2819,6 +2889,276 @@ PRESTOP
     so_workload_patch_claims "$want_cache" "$want_evol"
     so_workload_patch_cache_body
     so_workload_patch_notes
+    if [ "$want_gate" -eq 1 ]; then so_weights_gate_notes; fi
+}
+
+# so_kget_json VAR ARGS... runs kubectl ARGS into variable VAR, and fails
+# when kubectl fails or prints nothing; SO_KGET_ERR then holds the first
+# line kubectl said (kept apart from the JSON, which a warning would break).
+SO_KGET_ERR=""
+so_kget_json() {
+    local __var="$1" __out __errf __rc=0
+    shift
+    __errf="$(mktemp)" || return 1
+    __out="$(kubectl "$@" 2>"$__errf")" || __rc=$?
+    SO_KGET_ERR="$(head -n 1 "$__errf" | tr -d '\r')"
+    rm -f "$__errf"
+    printf -v "$__var" '%s' "$__out"
+    [ "$__rc" -eq 0 ] && [ -n "$__out" ]
+}
+
+# so_weights_claim_of prints, for the pod template at jq path $2 of object
+# $1 (JSON), the node-local weights claim its container $4 mounts, as
+# "model key claim volume mountPath subPath" joined by the unit separator,
+# or nothing when it mounts none. $3 is the namespace's claims (JSON). A
+# node-local weights claim is one weights.sh apply made: storage class
+# node-local-weights, the model in an annotation. Fails when jq does.
+so_weights_claim_of() {
+    printf '%s' "$1" | jq -r --argjson pvcs "$3" --arg engine "$4" "$2"' as $s
+        | ([ $s.containers[]? | select(.name == $engine) ] | first) as $c
+        | [ $pvcs.items[]?
+            | select(.spec.storageClassName == "node-local-weights"
+                     and (.metadata.annotations["scaling-manager.llmd.ai/weights-model"] // "") != "")
+            | {claim: .metadata.name,
+               model: .metadata.annotations["scaling-manager.llmd.ai/weights-model"],
+               key: (.metadata.annotations["scaling-manager.llmd.ai/weights-node-label"] // "")} ] as $wc
+        | [ ($c.volumeMounts // [])[] as $m
+            | ($s.volumes // [])[]
+            | select(.name == $m.name and .persistentVolumeClaim != null)
+            | .persistentVolumeClaim.claimName as $cn
+            | $wc[] | select(.claim == $cn)
+            | . + {vol: $m.name, mount: $m.mountPath, sub: ($m.subPath // "")} ] | first
+        | if . == null then empty
+          else [.model, .key, .claim, .vol, .mount, .sub] | join("\u001f") end' 2>/dev/null
+}
+
+# so_weights_lws_notice warns when the template $3 (leaderTemplate or
+# workerTemplate) of LeaderWorkerSet $2 in $1 (JSON in $5) has its engine
+# container $4 read a node-local weights claim: no weights gate is written
+# for a LeaderWorkerSet, and that is said rather than left out unseen.
+so_weights_lws_notice() {
+    local ns="$1" name="$2" t="$3" engine="$4" obj="$5" pvcs err found model claim
+    if ! so_kget_json pvcs get pvc -n "$ns" -o json; then
+        err="$SO_KGET_ERR"
+        log_warning "  $ns/$name ($t): could not read the PersistentVolumeClaims in $ns (${err:-no output}), so whether it reads node-local weights was not judged."
+        return 0
+    fi
+    found="$(so_weights_claim_of "$obj" ".spec.leaderWorkerTemplate.$t.spec" "$pvcs" "$engine")" || return 0
+    [ -n "$found" ] || return 0
+    IFS=$'\037' read -r model _ claim _ <<< "$found"
+    log_warning "  LeaderWorkerSet $ns/$name ($t) reads $model from the node-local claim $claim, and no weights gate is written for a LeaderWorkerSet: nothing keeps a pod off a node whose copy is missing or still being written. Check every node holds the copy first: weights status -n $ns."
+}
+
+# so_weights_gate_plan decides the weights gate of Deployment $3 in $1, whose
+# engine container is $4: when that container mounts a node-local weights
+# claim (deploy/weights.sh: storage class node-local-weights, the model in an
+# annotation), every node holds its own copy, and a replica placed where the
+# copy is missing or still being written reads a partial model. The gate is
+# a node affinity on the label weights.sh label sets from the verified files
+# and an init container that waits for the copy's completion marker. It sets
+# in the caller want_gate and the gate_* fields; want_gate stays 0 when the
+# template already carries both, when a read fails, and when the mount's
+# subPath does not lead to the model directory.
+#
+# LLMSM_WEIGHTS_WAIT_TIMEOUT: how many seconds the init container waits for
+# the copy before it exits 1 (default 3600), so a node that never gets one
+# shows as a failing pod instead of a pod waiting unseen.
+#
+# LLMSM_WEIGHTS_NODE_AFFINITY: preferred (the default) ranks labelled nodes
+# first and still places a replica elsewhere, where it waits for the copy;
+# required places replicas only on labelled nodes and leaves them Pending
+# when none has room; none leaves the affinity out (the init container
+# still waits).
+so_weights_gate_plan() {
+    local ns="$1" resource="$2" name="$3" engine="$4" obj pvcs found mode="${LLMSM_WEIGHTS_NODE_AFFINITY:-preferred}"
+    want_gate=0
+    [ "$resource" = deployments ] || return 0
+    case "$mode" in
+        preferred|required|none) ;;
+        *) log_warning "  LLMSM_WEIGHTS_NODE_AFFINITY='$mode' is not preferred, required or none; the weights gate is left out."
+           return 0 ;;
+    esac
+    local err
+    if ! so_kget_json obj get "$resource" "$name" -n "$ns" -o json; then
+        err="$SO_KGET_ERR"
+        log_warning "  $ns/$name: could not read $resource/$name (${err:-no output}), so whether it reads a node-local weights claim was not judged; no weights gate is written."
+        return 0
+    fi
+    if ! so_kget_json pvcs get pvc -n "$ns" -o json; then
+        err="$SO_KGET_ERR"
+        log_warning "  $ns/$name: could not read the PersistentVolumeClaims in $ns (${err:-no output}), so whether $name reads a node-local weights claim was not judged; no weights gate is written. Forbidden is not absent: give the reader get/list on persistentvolumeclaims in $ns."
+        return 0
+    fi
+    found="$(so_weights_claim_of "$obj" '.spec.template.spec' "$pvcs" "$engine")" || {
+        log_warning "  $ns/$name: its pod template or the claims in $ns could not be parsed; no weights gate is written."
+        return 0
+    }
+    [ -n "$found" ] || return 0
+    IFS=$'\037' read -r gate_model gate_key gate_claim gate_vol gate_mount gate_sub <<< "$found"
+    # Both come from the claim's annotations, which anyone who can edit the
+    # claim writes, and both are written into the emitted document -- the
+    # model into the init container's shell script. Only what weights.sh
+    # apply itself accepts passes.
+    case "$gate_model" in
+        ""|*/*/*|/*|*/|*..*|*[!A-Za-z0-9._/-]*)
+            log_warning "  $ns/$name: the weights claim $gate_claim names model '$gate_model', which is not a Hugging Face id; the weights gate is left out."
+            return 0 ;;
+    esac
+    case "$gate_key" in
+        "") gate_key="$(llmsm_weights_node_label_key "$gate_model")" ;;
+        */*/*|*[!A-Za-z0-9._/-]*|*/) log_warning "  $ns/$name: the weights claim $gate_claim names node label '$gate_key', which is not a label key; the weights gate is left out."
+            return 0 ;;
+    esac
+    # Where the model directory is inside the container: the claim holds it
+    # at models/<id>, and the mount may start part of the way down.
+    local rel="models/${gate_model}" mnt="${gate_mount%/}" sub="${gate_sub%/}"
+    if [ -z "$sub" ]; then
+        gate_dir="${mnt}/${rel}"
+    elif [ "$sub" = "$rel" ]; then
+        gate_dir="$mnt"
+    elif [ "${rel#"$sub"/}" != "$rel" ]; then
+        gate_dir="${mnt}/${rel#"$sub"/}"
+    else
+        log_warning "  $ns/$name mounts the weights claim $gate_claim with subPath $gate_sub, which does not lead to $rel; the weights gate is left out."
+        return 0
+    fi
+    # The affinity this mode asks for, merged into what the template has:
+    # a strategic merge replaces either list whole, so the emitted list is
+    # the existing entries plus the label. A required term is ANDed into
+    # every existing term (terms are ORed), so a GPU-product term stays.
+    local merged have init
+    read -r have init merged <<< "$(printf '%s' "$obj" | jq -c -r --arg key "$gate_key" --arg mode "$mode" '
+        .spec.template.spec as $s
+        | ($s.affinity.nodeAffinity // {}) as $na
+        | {key: $key, operator: "In", values: ["ready"]} as $e
+        | ($na.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms // []) as $terms
+        | ($na.preferredDuringSchedulingIgnoredDuringExecution // []) as $pref
+        | (($s.nodeSelector // {})[$key] == "ready") as $bysel
+        | (($s.initContainers // []) | any(.name == "wait-for-weights")) as $init
+        | (if $mode == "required" then
+             $bysel or (($terms | length) > 0 and ($terms | all((.matchExpressions // []) | any(. == $e))))
+           elif $mode == "preferred" then
+             $bysel or ($pref | any((.preference.matchExpressions // []) | any(. == $e)))
+           else true end) as $hasaff
+        | (if $mode == "required" then
+             {nodeAffinity: {requiredDuringSchedulingIgnoredDuringExecution: {nodeSelectorTerms:
+               (if ($terms | length) == 0 then [{matchExpressions: [$e]}]
+                else $terms | map(.matchExpressions = (((.matchExpressions // []) | map(select(.key != $key))) + [$e])) end)}}}
+           elif $mode == "preferred" then
+             # A term that names the key loses that expression only; the
+             # rest of the term (a zone, a GPU) keeps its weight.
+             {nodeAffinity: {preferredDuringSchedulingIgnoredDuringExecution:
+               (($pref | map(.preference.matchExpressions = ((.preference.matchExpressions // []) | map(select(.key != $key))))
+                       | map(select(((.preference.matchExpressions | length) + ((.preference.matchFields // []) | length)) > 0)))
+                + [{weight: 100, preference: {matchExpressions: [$e]}}])}}
+           else null end) as $aff
+        | "\($hasaff and $init) \($init) \($aff | if . == null or $hasaff then "" else tojson end)"' 2>/dev/null)"
+    case "$have" in
+        true) return 0 ;;
+        false) ;;
+        *) log_warning "  $ns/$name: its pod template's affinity could not be read; no weights gate is written."
+           return 0 ;;
+    esac
+    gate_wait="${LLMSM_WEIGHTS_WAIT_TIMEOUT:-3600}"
+    case "$gate_wait" in
+        *[!0-9]*) gate_wait=0 ;;
+    esac
+    # 10#: 00 is zero, 010 is ten (not octal).
+    if [ "$((10#$gate_wait))" -le 0 ]; then
+        log_warning "  LLMSM_WEIGHTS_WAIT_TIMEOUT='${LLMSM_WEIGHTS_WAIT_TIMEOUT:-}' is not a number of seconds above 0; the init container waits 3600 s."
+        gate_wait=3600
+    fi
+    gate_wait="$((10#$gate_wait))"
+    gate_aff="$merged"
+    # Only the half the template lacks: an init container it already has
+    # is the owner's, not one to overwrite.
+    gate_init=1
+    [ "$init" = false ] || gate_init=0
+    want_gate=1
+    log_warning "  $ns/$name reads $gate_model from the node-local claim $gate_claim with no weights gate: a replica can land on a node whose copy is missing or still being written."
+}
+
+# so_weights_gate_body prints the gate's affinity and init container, at the
+# indentation of a Deployment's pod spec. The init container runs the
+# engine's own image: it is on the node already (and pre-pulled), it carries
+# /bin/sh, and it passes whatever image policy the engine passes -- a
+# separate small image is one more pull and one more admission to clear.
+so_weights_gate_body() {
+    if [ -n "$gate_aff" ]; then
+        printf '%s\n' "      # The node label weights.sh label sets where the copy verifies (and"
+        printf '%s\n' "      # removes where it stops verifying). LLMSM_WEIGHTS_NODE_AFFINITY=required"
+        printf '%s\n' "      # places replicas only there; a strategic merge replaces this list whole,"
+        printf '%s\n' "      # so it carries the entries the template already had."
+        printf '%s\n' "      affinity:"
+        printf '%s' "$gate_aff" | yq -P -p json -o yaml '.' | sed 's/^/        /'
+    fi
+    [ "$gate_init" -eq 1 ] || return 0
+    cat <<GATEINIT
+      initContainers:
+      - name: wait-for-weights
+        image: $(jq -cn --arg v "$image" '$v')
+        imagePullPolicy: IfNotPresent
+        # The marker is written after the last file, so a copy still being
+        # written never passes; a config is checked too, as the probe does.
+        # After WEIGHTS_WAIT_SECONDS it gives up and exits 1: the pod then
+        # shows Init:Error / Init:CrashLoopBackOff, with the reason in this
+        # container's log, rather than waiting unseen. (expr, not shell
+        # arithmetic: Kubernetes rewrites a dollar and parenthesis.)
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          waited=0
+          until [ -f "\$WEIGHTS_DIR/.download-complete" ] && { [ -f "\$WEIGHTS_DIR/config.json" ] || [ -f "\$WEIGHTS_DIR/params.json" ]; }; do
+            if [ "\$waited" -ge "\$WEIGHTS_WAIT_SECONDS" ]; then
+              echo "wait-for-weights: gave up after \${WEIGHTS_WAIT_SECONDS}s: this node has no complete copy of ${gate_model} at \$WEIGHTS_DIR. Its downloader may be failing, or the node may be outside its node selector: weights status -n ${ns}. Exiting 1 so the failure shows." >&2
+              exit 1
+            fi
+            echo "waiting for this node's copy of ${gate_model} at \$WEIGHTS_DIR (\${waited}s of \${WEIGHTS_WAIT_SECONDS}s; weights status -n ${ns} says which nodes hold it)"
+            sleep 10
+            waited=\`expr "\$waited" + 10\`
+          done
+        env:
+        - name: WEIGHTS_DIR
+          value: $(jq -cn --arg v "$gate_dir" '$v')
+        # How long to wait for the copy before failing (LLMSM_WEIGHTS_WAIT_TIMEOUT
+        # when the patch was written; 3600 unless set).
+        - name: WEIGHTS_WAIT_SECONDS
+          value: "${gate_wait}"
+        # Engine images set NVIDIA_VISIBLE_DEVICES=all; this container
+        # requests no GPU and must not be handed one.
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: void
+        volumeMounts:
+        - name: $(jq -cn --arg v "$gate_vol" '$v')
+          mountPath: $(jq -cn --arg v "$gate_mount" '$v')
+GATEINIT
+    [ -z "$gate_sub" ] || echo "          subPath: $(jq -cn --arg v "$gate_sub" '$v')"
+    cat <<GATEINIT2
+          readOnly: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+GATEINIT2
+}
+
+# so_weights_gate_notes prints what the gate depends on, after the document.
+so_weights_gate_notes() {
+    cat <<GATENOTE
+#
+#   The weights gate waits on the node label ${gate_key}=ready, which
+#   only weights.sh label sets -- run by the cluster admin, or in the cluster
+#   as weights.sh labeller (it patches nodes). Without it a preferred affinity
+#   has no preference and a required one leaves every new replica Pending:
+#     kubectl get nodes -L ${gate_key}
+#   The gate is emitted, never applied: placement is the owner's decision.
+GATENOTE
 }
 
 # so_workload_patch_doc_lws writes the cache halves of LeaderWorkerSet $2 in
@@ -2884,6 +3224,7 @@ so_workload_patch_doc_lws() {
             log_warning "  $who: the model could not be identified from the command (passed in a variable?), so whether its weights persist was not judged."
         fi
         [ -n "$model_hint" ] || model_hint="$model"
+        so_weights_lws_notice "$ns" "$name" "$t" "$engine" "$obj"
         [ "${prestop:-0}" -eq 1 ] || hooked=0
         case "$t" in leaderTemplate) lgrace="${grace:-30}" ;; workerTemplate) wgrace="${grace:-30}" ;; esac
         [ "$want_cache" -eq 1 ] && [ -z "$first_model" ] && first_model="$model"
@@ -3064,7 +3405,29 @@ so_target_namespaces() {
 llmsm_namespaces_with_model_servers() {
     { so_namespaces_of deployments "$SO_POD_PATH_DEPLOYMENT"
       so_namespaces_of leaderworkersets "$SO_POD_PATH_LWS"
+      so_namespaces_of_dsets
     } | sort -u
+}
+
+# so_dset_serving_jq is the jq filter, over one DisaggregatedSet, that keeps
+# it when any role's pod template, or the set itself, carries a serving marker
+# ($markers). Shared by the namespace scan and the model-server count.
+readonly SO_DSET_SERVING_JQ='
+    select([ (.metadata.labels // {}),
+             ((.spec.roles // [])[]
+              | (.spec.leaderWorkerTemplate // {})
+              | ((.leaderTemplate // .workerTemplate // {}).metadata.labels // {})) ]
+           | map(to_entries[])
+           | any((.key + "=" + (.value|tostring)) as $kv
+                 | ($markers | index($kv)) != null))'
+
+# so_namespaces_of_dsets echoes the namespace of every DisaggregatedSet with a
+# serving role. Silent, as so_namespaces_of is, when the list is denied or the
+# CRD is absent.
+so_namespaces_of_dsets() {
+    kubectl get disaggregatedsets -A -o json 2>/dev/null \
+        | jq -r --argjson markers "$(so_serving_markers_json)" \
+            ".items[] | $SO_DSET_SERVING_JQ | .metadata.namespace" 2>/dev/null || true
 }
 
 # so_namespaces_of echoes the namespace of every workload of one kind that carries
@@ -3342,6 +3705,166 @@ so_existing_name() {
 # with the reason in its note, rather than dropped — the file you were shown is
 # then the whole truth about what was found, and turning a "no" into a "yes" is a
 # deliberate act rather than an undiscoverable one.
+# DisaggregatedSet (disaggregatedset.x-k8s.io, LWS v0.10.0 and newer) runs a
+# prefill/decode model as ONE object whose spec.roles each carry their own
+# LeaderWorkerSet template and replica count. Roles scale independently: no
+# ratio is enforced. The scale target of a role is its
+# DisaggregatedSetRoleScaler, <set>-<role>, which the set controller creates
+# only for a role in scaling.mode External, and only with spec.slices 1; a
+# Static role has no /scale anywhere, so KEDA cannot target it. The child
+# LeaderWorkerSets are never targets: their names carry the revision, and the
+# set controller owns their replicas. See docs/proposals/disaggregatedset.md.
+readonly SO_DSET_KIND='DisaggregatedSetRoleScaler'
+readonly SO_DSET_API='disaggregatedset.x-k8s.io/v1'
+readonly SO_DSET_CRD='disaggregatedsets.disaggregatedset.x-k8s.io'
+
+# so_api_version echoes the apiVersion of scale-target kind $1.
+so_api_version() {
+    case "$1" in
+        LeaderWorkerSet) echo "leaderworkerset.x-k8s.io/v1" ;;
+        "$SO_DSET_KIND") echo "$SO_DSET_API" ;;
+        *) echo "apps/v1" ;;
+    esac
+}
+
+# so_dset_role_pod_path echoes, as a JSON path, role $1 (its index in
+# spec.roles) of a DisaggregatedSet: its leader template. Readers fall back to
+# the worker template when the role sets no leader template, as the LWS
+# controller does.
+so_dset_role_pod_path() {
+    printf '["spec","roles",%s,"spec","leaderWorkerTemplate","leaderTemplate"]' "$1"
+}
+
+# so_dset_role_rows reads a DisaggregatedSet listing (JSON, stdin) and echoes
+# one record per role, US-separated (\037) for the reason so_plan_rows gives:
+#
+#   set \037 index \037 role \037 mode \037 slices \037 subRoles
+#     \037 podLabels \037 setLabels \037 envs \037 argv
+#
+# mode is the role scaling mode, Static when unset (the API default); slices
+# is spec.slices, 1 when unset; subRoles the number of sub-roles. The pod
+# labels, envs and argv are read the way so_discover reads a workload: the
+# engine container, by image or launch command, and the leader template
+# falling back to the worker template. argv last: it is the field that can
+# hold anything. Values are scrubbed of US, and of newlines and CR, so one
+# record stays one line.
+so_dset_role_rows() {
+    jq -r '
+        def scrub: tostring | gsub("[\u001f\n\r]"; " ");
+        .items[]?
+        | . as $o
+        | ($o.spec.slices // 1) as $slices
+        | ($o.spec.roles // []) | to_entries[]
+        | .key as $i | .value as $r
+        | ($r.spec.leaderWorkerTemplate // {}) as $lwt
+        | ($lwt.leaderTemplate // $lwt.workerTemplate // {}) as $t
+        | ((([ $t.spec.containers[]?
+               | ((.command // []) + (.args // []) | map(tostring)
+                  | join(" ") | ascii_downcase) as $cmd
+               | select(((.image // "") | ascii_downcase | test("vllm|sglang"))
+                        or ($cmd | test("vllm serve|sglang\\.launch_server|sglang serve")))
+             ] | first) // $t.spec.containers[0]) // {}) as $c
+        | [ $o.metadata.name,
+            ($i | tostring),
+            ($r.name // ""),
+            ($r.scaling.mode // "Static"),
+            ($slices | tostring),
+            (($r.subRoles // []) | length | tostring),
+            (($t.metadata.labels // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(" ")),
+            (($o.metadata.labels // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(" ")),
+            (($c.env // []) | map(select(.value != null and (.value | test("\\s") | not)
+                                         and (.value | test("\\|") | not))
+                                  | .name + "=" + .value) | join(" ")),
+            (($c.command // []) + ($c.args // []) | map(scrub) | join(" "))
+          ] | map(scrub) | join("\u001f")'
+}
+
+# so_dset_role_block echoes why role $2 of DisaggregatedSet $1 cannot be
+# targeted yet, or nothing when it can. $3 is its scaling mode, $4 the set's
+# slices, $5 its number of sub-roles.
+so_dset_role_block() {
+    local set="$1" role="$2" mode="$3" slices="$4" subroles="$5"
+    if [ "${subroles:-0}" -gt 0 ]; then
+        printf '%s' "Role $role of DisaggregatedSet $set has sub-roles, which the scaling manager does not scale yet: a group's sub-role can change after it is assigned. Scale it by hand or through the sub-role scalers yourself."
+        return 0
+    fi
+    if [ "$mode" != "External" ]; then
+        printf '%s' "Role $role of DisaggregatedSet $set is in scaling.mode $mode, so its replica count is spec.roles[$role].spec.replicas, which has no /scale subresource for KEDA to drive. Preferred: set scaling.mode: External on the role and remove its spec.replicas (LWS v0.10.0 or newer; the set controller then creates DisaggregatedSetRoleScaler $set-$role, seeded with the current group count, so nothing drains), then re-run this plan. Otherwise (LWS v0.9.0, or the role must stay Static): no ScaledObject; install with DSET_ROLE_WRITER=true, annotate the set scaling-manager.llmd.ai/role-writer=true and scaling-manager.llmd.ai/model-id, and the controller writes the role's replicas itself (docs/reference/disaggregatedset.md)."
+        return 0
+    fi
+    if [ "${slices:-1}" -gt 1 ]; then
+        printf '%s' "DisaggregatedSet $set has spec.slices $slices; External roles need slices: 1 (the LWS webhook rejects the combination), so this role cannot be autoscaled as written."
+        return 0
+    fi
+}
+
+# so_discover_dsets writes the plan entries for the DisaggregatedSets in $1:
+# one per serving role, kind DisaggregatedSetRoleScaler, name <set>-<role>.
+# A role that cannot be targeted yet is written `apply: no` with the reason
+# (so_dset_role_block), so the operator sees it rather than a silent gap.
+# Silent when the CRD is absent or the listing cannot be read: the other kinds
+# report their own readability, and a missing CRD is the common case.
+so_discover_dsets() {
+    local ns="$1" listing set idx role mode slices subroles labels objlabels envs args
+    local name model model_ref apply note block pool existing existing_name existing_min existing_max
+    local existing_cost existing_policy existing_is_scaling_manager existing_model existing_kept
+    local min max cost policy pod drain weights caches rs=$'\036'
+    kubectl get crd "$SO_DSET_CRD" >/dev/null 2>&1 || return 0
+    listing="$(kubectl get disaggregatedsets -n "$ns" -o json 2>/dev/null)" || return 0
+    while IFS=$'\037' read -r set idx role mode slices subroles labels objlabels envs args; do
+        [ -n "$set" ] && [ -n "$role" ] || continue
+        so_is_serving "$labels" "$objlabels" || continue
+        name="$set-$role"
+        apply=yes; note=""; existing_name=""
+        min="${LLMSM_DEFAULT_SO_MIN:-1}"; max="${LLMSM_DEFAULT_SO_MAX:-10}"
+        cost="$SO_DEFAULT_VARIANT_COST"; policy=""
+        model=$(so_model_id "$args")
+        model_ref=""
+        case "$model" in '$'*) model_ref="$model" ;; esac
+        model=$(so_resolve_env_ref "$model" "$envs")
+        if [ -z "$model" ]; then
+            apply=no
+            if [ -n "$model_ref" ]; then
+                note="the model is written as $model_ref, a reference the engine container env does not answer. Fill in modelID with the name the engine actually serves and set apply: yes to include it."
+            else
+                note="no --served-model-name, --model, or 'vllm serve <model>' on the role's engine container, so the model could not be read. Fill in modelID and set apply: yes to include it."
+            fi
+        fi
+        block="$(so_dset_role_block "$set" "$role" "$mode" "$slices" "$subroles")"
+        if [ -n "$block" ]; then
+            apply=no
+            note="${note:+$note$rs}$block"
+        fi
+        existing=$(so_existing_info "$ns" "$name")
+        if [ -n "$existing" ]; then
+            IFS=$'\037' read -r existing_name existing_min existing_max existing_cost existing_policy existing_is_scaling_manager existing_model existing_kept _ <<< "$existing"
+            min="$existing_min"; max="$existing_max"; cost="$existing_cost"
+            policy="$existing_policy"
+            if [ "$existing_is_scaling_manager" = "true" ] && [ -z "$block" ]; then
+                so_prefer_existing_model "$ns" "$name"
+                so_kept_keys_note
+                apply=adopt
+                note="${note:+$note$rs}Already targets the scaling manager (ScaledObject $existing_name, min $existing_min, max $existing_max) — apply: adopt refreshes it in place. Set apply: no to leave it untouched."
+            else
+                apply=no
+                note="${note:+$note$rs}Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at the scaling manager instead of adding a second."
+            fi
+        fi
+        pool=$(so_pool "$ns" "$labels")
+        pod="$(so_dset_role_pod_path "$idx")"
+        drain=$(so_drain_note "$ns" disaggregatedsets "$set" "$pod")
+        [ -n "$drain" ] && note="${note:+$note$rs}$drain"
+        weights=$(so_weights_note "$ns" disaggregatedsets "$set" "$pod")
+        [ -n "$weights" ] && note="${note:+$note$rs}$weights"
+        caches=$(so_enginecache_note "$ns" disaggregatedsets "$set" "$pod")
+        [ -n "$caches" ] && note="${note:+$note$rs}$caches"
+        # Not offered to the warm-pool block: a role's groups belong to child
+        # LeaderWorkerSets the block cannot read by this name.
+        SO_WARMPOOL_ROWS="" so_plan_entry "$apply" "$ns" "$SO_DSET_KIND" "$name" "$model" \
+            "$min" "$max" "$cost" "$policy" "$pool" "$existing_name" "$note"
+    done < <(printf '%s' "$listing" | so_dset_role_rows)
+}
+
 so_discover() {
     local ns name args envs labels objlabels model model_ref pool kind apply note drain weights caches
     local existing existing_name existing_min existing_max existing_cost existing_policy existing_is_scaling_manager existing_model existing_kept
@@ -3556,6 +4079,8 @@ so_discover() {
                             | map(tostring | gsub("[\n\r]"; " ")) | join(" "))
                          ] | join("|"))')
         done
+        # DisaggregatedSet roles: one object, one entry per role.
+        so_discover_dsets "$ns"
         # FMA requesters last, and only where nothing above already covers the
         # model. They carry no serving marker, so the loop above cannot see them.
         so_discover_fma_requesters "$ns"
@@ -4654,7 +5179,7 @@ render_scaledobject() {
     # replica count into this argument — so the check that matters is the one next
     # to the thing being built, where no amount of upstream plumbing can skip it.
     [ -n "$model" ] || log_error "refusing to build a ScaledObject for $ns/$target with an empty modelID"
-    [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
+    api="$(so_api_version "$kind")"
 
     local tmpl="${LLMSM_DEFAULT_SO_TEMPLATE:-}"
     if [ -n "$tmpl" ]; then
@@ -4722,8 +5247,8 @@ render_scaledobject() {
 render_default_scaledobject() {
     local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7" cost="${8:-}"
     local policy="${9:-}"
-    local api="apps/v1"
-    [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
+    local api
+    api="$(so_api_version "$kind")"
 
     # Written only when the entry names a tier — an absent key and an empty one
     # mean the same thing to the scaling manager, and only one of them says so to a reader.

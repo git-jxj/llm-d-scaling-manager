@@ -48,7 +48,7 @@ and define a short function for it:
 <!-- guide:prerequisites.tools start -->
 ```bash
 # The tools image of the release you installed. It gets a kubeconfig of the current context only, read-only; files land in this directory.
-V=<release, for example v0.11.1>
+V=<release, for example v0.11.2>
 export NAMESPACE=<your model namespace>
 TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:$V
 kubectl config view --minify --flatten > smt.kubeconfig && chmod 600 smt.kubeconfig
@@ -142,7 +142,7 @@ smt engine-cache apply -n $NAMESPACE --path $NODE_DIR --image $ENGINE_IMAGE
 modelservice values, `modelArtifacts.uri: pvc://<claim>/models/<hugging face id>`.
 A gated model needs `--hf-token-secret <secret>`.
 
-`engine-cache apply` makes the claim `engine-cache`. The patch in step 4
+`engine-cache apply` makes the claim `engine-cache`. The patch in step 5
 mounts it.
 
 Then wait for every node:
@@ -159,7 +159,42 @@ smt engine-cache status -n $NAMESPACE
 A cordoned node, or one with a taint the DaemonSet does not tolerate, is listed
 as `excluded` and not counted.
 
-### 4. Write the patch, and put it in the chart
+### 4. Cluster admin: keep replicas off nodes without the weights
+
+A node added for scale-out has no copy until its download finishes. A replica
+placed there meanwhile would read a model that is still being written. The
+labeller marks each node whose copy is complete:
+
+<!-- guide:deploy.gate start -->
+```bash
+# Cluster admin (it patches nodes). Label each GPU node whose copy of the weights is present at its recorded size, and unlabel it when the copy breaks. --merge keeps the namespaces it already watches; status names the node label and counts the nodes that carry it.
+smt weights labeller -n $NAMESPACE --image $TOOLS --merge
+smt weights status -n $NAMESPACE
+```
+<!-- guide:deploy.gate end -->
+
+Every 30 s it sets `llm-d.ai/<model name>-cache=ready` on each node whose copy
+verifies (every file present at its recorded size), and removes it from a node
+whose copy breaks. A node prepared by other node-preparation tooling that
+already sets this label counts too; the labeller never removes a label it did
+not set. It runs in a namespace of its own, because it can patch nodes. With
+the cluster-wide install it is already there (`smt install --scope cluster`
+applies it), and `smt admin-setup -n <ns>` adds a namespace to it. Run the
+command above only without either. With `--merge` it keeps the namespaces it
+already watches; without it, it refuses to drop one. `weights status` names
+the model's node label and counts the nodes that carry it.
+
+A LeaderWorkerSet gets no gate: `workload-patch` says so for each one that
+reads node-local weights. Check every node holds the copy (`weights status`)
+before it scales out.
+
+The patch in the next step uses the label: replicas prefer labelled nodes, and
+each replica waits in a small init container until its node's copy is
+complete, for up to 60 minutes; then it fails, so a node that never gets a
+copy shows as a failing pod (`--weights-wait-timeout` on `workload-patch`
+changes the limit). More: [Gate replicas on the weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights).
+
+### 5. Write the patch, and put it in the chart
 
 <!-- guide:deploy.patch start -->
 ```bash
@@ -169,7 +204,9 @@ smt workload-patch -n $NAMESPACE
 <!-- guide:deploy.patch end -->
 
 Per model server, the file holds the drain hook, the `engine-cache` volume, and
-the four variables under it. Copy it into the modelservice values, so the next
+the four variables under it, and for a model server that reads the weights
+claim from step 3, the node affinity and the `wait-for-weights` init container
+of step 4. Copy it into the modelservice values, so the next
 `helm upgrade` keeps it. Also copy the guard written as a comment beside the
 cache half into the container's command: with it, a cache path that is not
 writable costs one compile, not the replica.
@@ -252,6 +289,17 @@ smt weights delete -n $NAMESPACE --all
 smt engine-cache delete -n $NAMESPACE
 ```
 <!-- guide:cleanup.remove end -->
+
+If you ran the labeller in step 4, take this namespace off it. To remove the
+labeller for every namespace, see [Gate replicas on the
+weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights).
+
+<!-- guide:cleanup.labeller start -->
+```bash
+# Takes this namespace off the labeller (patch on Deployments in its namespace, delete on RoleBindings in yours). Its next pass removes the node labels only this namespace's copies held; other namespaces keep theirs.
+smt weights labeller --remove -n $NAMESPACE
+```
+<!-- guide:cleanup.labeller end -->
 
 `smt.kubeconfig` holds your credentials: delete it when you are done.
 

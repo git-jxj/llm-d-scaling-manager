@@ -45,6 +45,7 @@ and under **Inputs**; the API puts it in `refused`.
 | `NoCapacity`, `NoBatchCap` | No KV capacity, or no batch cap, for the replica. | Make sure Prometheus keeps `vllm:cache_config_info`; pass the engine arguments (`--engine-args`) or `--batch-cap` when you record or serve. |
 | `NoTPOTHistogram` | A TPOT percentile asked with no ratio R_q of percentile to mean. | Type an assumed ratio (**TPOT percentile**, API `assume.tpotRatio`), or ask for the mean. |
 | `TargetBelowFloor` | The target is under what any number of replicas reaches. | Raise the target. More replicas do not help. |
+| `DecodeTTFTUnderLoad` | Decode has no ITL line, so TTFT uses the decode engine's measured TTFT. That TTFT was measured while requests waited on decode capacity, so it is a queue, not a floor. | For a recording, answer at the cycle the message names: the **Cycle** box (API `source.cycle`). For a Prometheus window, end the window at the time the message names (API `source.to`). On the CLI these are `--cycle` and `--to`. |
 | `Saturated` | The rate is at or past the lower knee. | Lower the rate, or add replicas of the role whose knee is lower. |
 | `AboveDecodeOnset`, `FlowControlUnknown` | With router flow control on, the rate is at the decode gate's onset, or the onsets cannot be placed. | Lower the rate; record with the router's series ([metrics](metrics.md#router-epp)). |
 | `ReplicaBoundReached` (size) | No fleet within **Search up to** serves the rate. | Raise **Search up to** (API `maxReplicas`, at most 64), lower the rate, or raise the target that binds. |
@@ -52,9 +53,32 @@ and under **Inputs**; the API puts it in `refused`.
 | `NoPerRequestLengths` on the observed rate and bucket shares | Expected: the source carries no per-request lengths. | Nothing; the mix line uses the mean prompt and output. |
 | `NotRecorded`, `UnreadableArgument` on `maxModelLen` | No `--max-model-len` in the recorded arguments, or one the planner cannot read. | Pass the engine arguments as the engine ran them. |
 
+A TTFT flagged `DecodeQueueUnread` uses a decode TTFT the planner cannot check
+for a queue: the engine does not report why requests wait (SGLang, or vLLM
+before v0.20.0). If the floor is seconds where your clients see far less, it
+was measured while decode was saturated. Answer at an earlier cycle or window.
+
 A figure flagged `AssumedShape`, `AssumedTPOTRatio` or with an assumed term
 stands, but rests on a value you typed. The **Flags** drawer says what clears
 each flag.
+
+## The planner and the controller disagree on TPOT
+
+The planner reads the decode line below its fitted band, at the fill a replica
+actually runs at; the controller keeps the band's bottom (0.15 by default) as
+its floor. Two things follow:
+
+- A TPOT target between the line's intercept and its value at the band's bottom
+  gets a rate from the planner, but the controller marks it infeasible and
+  scales the variant on saturation alone.
+- With short requests whose batch cap binds below the band, the controller
+  prices up to about 1.6x less capacity a replica than the planner, so it may
+  run more replicas than the planner sized.
+
+Both are expected. They apply only to a line fitted on the variant's own
+readings, in a window whose replicas also ran below the band: a borrowed or
+default line, or one with no readings below the band, is read at the band's
+bottom by both. A figure read below the band carries `BelowFittedBand`.
 
 ## API errors
 

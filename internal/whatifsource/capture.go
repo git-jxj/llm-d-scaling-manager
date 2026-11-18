@@ -459,7 +459,7 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 		if err != nil {
 			return nil, err
 		}
-		val, _, err := api.Query(ctx, q, at)
+		val, _, _, err := api.Query(ctx, q, at)
 		if err != nil {
 			return nil, err
 		}
@@ -542,7 +542,7 @@ func windowVariants(scan *windowScan, opts Options) ([]learnreplay.CaptureVarian
 		st := scaleTargetOf(opts, name, info.model, gpus, accel)
 		out = append(out, learnreplay.CaptureVariant{
 			ModelID: info.model, Name: name, Role: info.role, Accelerator: accel, GpuCount: gpus,
-			Params: capacity.ParseEngineArgs(inferenceengine.Detect(st), st),
+			Params: capacity.ParseEngineArgsOn(inferenceengine.Detect(st), st, accel),
 		})
 	}
 	if scan.inferred {
