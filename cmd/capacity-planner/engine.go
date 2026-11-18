@@ -124,11 +124,19 @@ func engineText(p *capacity.EngineParams) string {
 // before the release was read gets engineText alone: its figures' sources
 // are not known.
 func engineRowText(p *capacity.EngineParams) string {
-	w := engineOf(p)
-	if w == nil || notRecorded(p) {
-		return engineText(p)
+	if e := engineInfo(p); e != nil {
+		return engineInfoText(e)
 	}
-	return fmt.Sprintf("%s; %s: step budget %d (%s), GPU memory %s (%s), block size %d (%s)", engineText(p),
-		notPricedYetWording, w.StepBudget, w.StepBudgetSource, num(w.GPUMemoryUtilization), w.GPUMemoryUtilizationSource,
-		w.BlockSize, w.BlockSizeSource)
+	return engineText(p)
+}
+
+// engineInfoText is engineRowText from the API's account of an engine, as
+// the at-replicas report prints it.
+func engineInfoText(e *whatifapi.EngineInfo) string {
+	if e.StepBudgetSource == engineNotRecorded {
+		return e.Summary
+	}
+	return fmt.Sprintf("%s; %s: step budget %d (%s), GPU memory %s (%s), block size %d (%s)", e.Summary,
+		notPricedYetWording, e.StepBudget, e.StepBudgetSource, num(e.GPUMemoryUtilization), e.GPUMemoryUtilizationSource,
+		e.BlockSize, e.BlockSizeSource)
 }
