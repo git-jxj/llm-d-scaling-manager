@@ -6,8 +6,8 @@ load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/
 SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
 cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
 mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
-summary     50%                80%                     100%               seen
-  measured  618/7.2 @24.92 ok  1535/11.4 @39.87 MISS*  -/22.0 @49.83 SAT  540/7.2 @20.00 ok
+summary     50%                80%                    100%               seen
+  measured  618/4.9 @24.92 ok  1535/7.7 @39.87 MISS*  -/19.9 @49.83 SAT  540/4.9 @20.00 ok
 verdicts
   measured  OVER-PROVISIONED: at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.8% under its operating point); needs 2 prefill + 2 decode (has 2 + 3) (decode knee unvalidated).
 
@@ -23,10 +23,10 @@ capacity            req/s     out tok/s   bound by
   operating (0.85)  42.36     8471        0.85 x fleet knee (scaleUpThreshold)
   max at SLO        36.60     7318        TTFT p90, end to end
 SLO vs load        r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee      24.92  150.0/618.0     3.07/7.21         0.85 s
-  80% of knee      39.87  404.7/1535.0    4.87/11.42        1.52 s
-  100% of knee     49.83  saturated       9.38/22.01        saturated
-  load seen (40%)  20.00  118.7/539.6     3.07/7.21         0.82 s
+  50% of knee      24.92  150.0/618.0     3.07/4.87         0.85 s
+  80% of knee      39.87  404.7/1535.0    4.87/7.72         1.52 s
+  100% of knee     49.83  saturated       9.38/19.86        saturated
+  load seen (40%)  20.00  118.7/539.6     3.07/4.87         0.82 s
 checks
   2 prefill + 3 decode  holds: 20.00 r/s within 0.85 x the fleet knee 49.83 r/s = 42.36 r/s; TTFT p90 539.6 ms meets 2000.0 ms; TPOT mean 3.1 ms meets 30.0 ms
   2 prefill + 2 decode  holds: 20.00 r/s within 0.85 x the fleet knee 38.14 r/s = 32.42 r/s; TTFT p90 673.5 ms meets 2000.0 ms; TPOT mean 3.3 ms meets 30.0 ms

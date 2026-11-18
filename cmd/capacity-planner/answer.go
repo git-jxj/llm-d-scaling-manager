@@ -41,11 +41,16 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
-	decode                                   int
-	batchCap                                 int64
-	inputTokens, outputTokens                float64
-	headroom, tpotRatio                      float64
-	seed                                     uint64
+	// hint, when hintSet, is the words a refusal names a calm cycle in, set
+	// by a caller that prices for another source (the server, the report);
+	// else they follow the CLI's own source (hintSource).
+	hint                      hintSource
+	hintSet                   bool
+	decode                    int
+	batchCap                  int64
+	inputTokens, outputTokens float64
+	headroom, tpotRatio       float64
+	seed                      uint64
 	// ttft, ttftPercentile, assumeVP, assumePromptCV, arrivalCV2, prefill and
 	// prefillVariant are the TTFT half's flags (ttft.go); inputBucket only
 	// refuses per-bucket answers.
@@ -324,6 +329,18 @@ func (f *answerFlags) sourceLine(st *learnreplay.State) string {
 // prometheus reports whether the flags ask to answer from Prometheus
 // rather than from a recording.
 func (f *answerFlags) prometheus() bool { return f.window.prometheus != "" }
+
+// hintSource is the words a calm cycle is named in: the caller's, when set,
+// else the CLI's flag for the source it read.
+func (f *answerFlags) hintSource() hintSource {
+	switch {
+	case f.hintSet:
+		return f.hint
+	case f.prometheus():
+		return hintCLIPrometheus
+	}
+	return hintCLIRecording
+}
 
 // pricedVariant is one decode variant as a question prices it: the state
 // read from the recording, the Decode built from it, and the flags every
@@ -610,13 +627,51 @@ func onRatio(r whatif.Result, ratio whatif.TPOTRatio, flags []whatif.Flag) whati
 func (f *answerFlags) ratioNote(st *learnreplay.State, r whatif.TPOTRatio) string {
 	switch {
 	case f.engineTPOT:
-		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st))
+		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st)) + worstNote(st.EngineTPOTWindows) + byFillNote(r)
 	case r.Assumed && len(st.TPOTWindows) == 0:
 		return fmt.Sprintf("R_q %s ASSUMED (no TPOT histogram)", num(r.Value))
 	case r.Assumed:
 		return fmt.Sprintf("R_q %s ASSUMED (the recording's %d TPOT windows not used)", num(r.Value), len(st.TPOTWindows))
 	}
-	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows))
+	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + worstNote(st.TPOTWindows) + byFillNote(r)
+}
+
+// worstNote says R_q is the worst window where so few windows held requests
+// that the median's margin reaches the largest (whatif.WorstWindow).
+func worstNote(windows []whatif.TPOTWindow) string {
+	n := 0
+	for _, w := range windows {
+		if w.Count > 0 {
+			n++
+		}
+	}
+	if !whatif.WorstWindow(n) {
+		return ""
+	}
+	return fmt.Sprintf(" (the worst of %d)", n)
+}
+
+// byFillNote is R_q by fill for the human output: each fill bucket's ratio,
+// its own reading where the rise over fill raised it, and the global ratio
+// standing in where the bucket was thin; "" with one ratio at every fill.
+func byFillNote(r whatif.TPOTRatio) string {
+	if len(r.ByFill) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(r.ByFill))
+	for _, fr := range r.ByFill {
+		p := fmt.Sprintf("%.1f-%.1f %.3g", fr.Lo, fr.Hi, fr.Value)
+		switch {
+		case fr.Thin:
+			p += fmt.Sprintf(" (global, %d windows)", fr.Windows)
+		case fr.Learned != fr.Value:
+			p += fmt.Sprintf(" (own %.3g, raised)", fr.Learned)
+		case whatif.WorstWindow(fr.Windows):
+			p += fmt.Sprintf(" (the worst of %d)", fr.Windows)
+		}
+		parts = append(parts, p)
+	}
+	return ", by fill " + strings.Join(parts, ", ")
 }
 
 // num prints a ratio or fill with no trailing zeros.

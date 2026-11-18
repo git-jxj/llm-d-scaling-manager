@@ -356,3 +356,54 @@ func TestSourcesWithoutLister(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"schemaVersion": 1, "prometheus": false, "namespaces": [], "recordings": []}`, rec.Body.String())
 }
+
+// The page judges the fleet: the shape rows, the loads and the growth of the
+// load seen are on the page, a report is posted to v1/report by a relative
+// path with the body reportRequest builds from them (its cases run under node
+// in hack/check-planner-scenarios.sh), a server with no report route is said
+// in words, and the matrix carries a legend whose marks are words, not
+// colour alone. The report's strings reach the page as text.
+func TestPageJudgesTheFleet(t *testing.T) {
+	html, js, scen := pageText(t, "index.html"), pageText(t, "planner.js"), pageText(t, "scenario.js")
+	for _, want := range []string{`id="rshapes"`, `id="rshapeadd"`, `id="rloads"`, `id="rgrowth"`, `id="rrun"`, `id="rmatrix"`,
+		`id="rstatus" class="hint" aria-live="polite"`, `id="rlegend"`, `<span class="rmark met">ok</span>`, `<span class="rmark missed">MISS</span>`,
+		`<span class="rmark saturated">SAT</span>`, `<span class="rmark unknown">?</span>`, `<span class="rmark notarget">no SLO</span>`, `<select id="rloadstat"`, `<option value="p95" selected>`,
+		`<summary>How accurate is this?</summary>`} {
+		assert.Contains(t, html, want)
+	}
+	for _, want := range []string{`api("POST", "v1/report", asked.body)`,
+		`reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),`,
+		`loads: el("rloads").value, growth: el("rgrowth").value, loadStatistic: el("rloadstat").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume})`,
+		`el("rload").textContent = v.load;`, `for (const g of s.growth) {`, `if (s.needs) li.appendChild(textNode("span", s.needs, s.unmet ? "rneeds unmet" : "rneeds"));`,
+		"function schedule(ms) {\n  reportStale();", `reportCurrent(token, reportToken())`, `el("rshapes").addEventListener("input", reportStale);`,
+		`el("rloads").oninput = el("rgrowth").oninput = el("rloadstat").onchange = reportStale;`, `el("rverdicts").focus();`, `el("rrun").setAttribute("aria-disabled", "true");`, `(next ? next.querySelector("input") : el("rshapeadd")).focus();`,
+		`reportMissing(status, e.message)`, "This server has no fleet report (POST /v1/report)", `" EXTRAPOLATED"`} {
+		assert.Contains(t, js, want)
+	}
+	for _, want := range []string{"function reportRequest(o)", "function reportView(r)", "function reportMissing(status, error)"} {
+		assert.Contains(t, scen, want)
+	}
+	// The whole report section, its helpers included, draws text nodes only.
+	start := strings.Index(js, "// ---- The fleet report (POST /v1/report) ----")
+	end := strings.Index(js, `document.addEventListener("DOMContentLoaded", start);`)
+	require.True(t, start >= 0 && end > start, "the report section is found")
+	assert.NotContains(t, js[start:end], "innerHTML", "the report is drawn as text nodes")
+	assert.NotContains(t, js[start:end], "insertAdjacentHTML")
+}
+
+// The page's two scripts share one global scope: a function declared in both
+// is silently the later one's, so scenario.js and planner.js declare each
+// name once (a clash made the report call planner.js's rolesText).
+func TestPageScriptsDeclareEachFunctionOnce(t *testing.T) {
+	decl := regexp.MustCompile(`(?m)^(?:async )?function (\w+)\(`)
+	seen := map[string]string{}
+	for _, file := range []string{"scenario.js", "planner.js"} {
+		for _, m := range decl.FindAllStringSubmatch(pageText(t, file), -1) {
+			if prev, ok := seen[m[1]]; ok {
+				t.Errorf("function %s is declared in %s and in %s", m[1], prev, file)
+			}
+			seen[m[1]] = file
+		}
+	}
+	require.Greater(t, len(seen), 100, "found too few functions")
+}

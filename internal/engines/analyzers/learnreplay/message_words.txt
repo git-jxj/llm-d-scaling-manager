@@ -139,6 +139,7 @@ DecodeEngineMeasured
 DecodeOnsetUnchecked
 DecodeSideOmitted
 DecodeStepSlopeAssumed
+DecodeTTFTUnderLoad
 DecodeTTFTUnmeasured
 DecodeTermFloored
 DecodeTermOmitted
@@ -176,6 +177,7 @@ GPU
 GPU-usage
 GPUs
 Give
+GlobalTPOTRatio
 Go
 Grant
 Greedy-by-score
@@ -253,6 +255,7 @@ METRICS_SECURE
 MalformedHistogram
 MaxDecodeGateClosedShare
 MaxPSPromptCV
+MeanBoundedTPOTPercentile
 MeasuredLowConfirmFor
 Metrics
 Mimir
@@ -1160,6 +1163,7 @@ fall
 fallback
 fallback.replicas
 fallbackSource
+falls
 false
 fell
 fewer
@@ -2929,6 +2933,7 @@ tier-1
 tier-2
 tierHeld
 tiers
+tile
 time
 time-base
 timeBase

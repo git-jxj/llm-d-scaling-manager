@@ -159,9 +159,7 @@ var _ = Describe("Passive mode: a utilization-share group holding a passive mode
 		Expect(marks).To(BeEmpty(), "a share group holding a passive model marked a pod")
 		Expect(lastHold).To(Equal(1.0), "llmsm_passive_mode{mode=\"hold\"} for A")
 		Expect(lowA).To(BeNumerically(">", 0), "the controller never wanted A below 3, so the hold proved nothing")
-		for _, s := range samplesA {
-			Expect(s.spec).To(Equal(int32(3)), "passive A moved to %d at +%s", s.spec, s.at)
-		}
+		expectSpecHeld("case12-share-A: passive A", samplesA, 3)
 		GinkgoWriter.Printf("PASSIVE-EVIDENCE case12-share B spec.replicas values %v\n", specValues(samplesB))
 	})
 
@@ -323,9 +321,7 @@ var _ = Describe("Passive mode: the warm pool lends nothing to a passive model",
 			Expect(st).NotTo(MatchRegexp(`lent=[1-9]`), "the pool lent a Pod to a passive model: %s", st)
 			Expect(st).NotTo(MatchRegexp(`resident=[1-9]`), "the pool warmed a copy of a passive model: %s", st)
 		}
-		for _, s := range samples {
-			Expect(s.spec).To(Equal(int32(1)), "the passive model moved to %d at +%s", s.spec, s.at)
-		}
+		expectSpecHeld("case12-pool-model: the passive model", samples, 1)
 	})
 
 	It("warms and lends once the model is active (the control)", func() {
