@@ -3532,7 +3532,7 @@ lws_driver true true
 assert_eq "$DRIVER_RC" "0" "return code"
 assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
 assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) BUILD THEIR FLASHINFER KERNELS AGAIN"
-assert_contains "$(cat "$DRIVER_LOG")" "ns1/w needs only a volume or a cache variable -- emitted, not applied"
+assert_contains "$(cat "$DRIVER_LOG")" "ns1/w needs only a volume, a cache variable or the weights gate -- emitted, not applied"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="LWS apply: a volume name taken in either template refuses that half for the whole LWS"
