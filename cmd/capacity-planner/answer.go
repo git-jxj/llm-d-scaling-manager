@@ -627,13 +627,51 @@ func onRatio(r whatif.Result, ratio whatif.TPOTRatio, flags []whatif.Flag) whati
 func (f *answerFlags) ratioNote(st *learnreplay.State, r whatif.TPOTRatio) string {
 	switch {
 	case f.engineTPOT:
-		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st))
+		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st)) + worstNote(st.EngineTPOTWindows) + byFillNote(r)
 	case r.Assumed && len(st.TPOTWindows) == 0:
 		return fmt.Sprintf("R_q %s ASSUMED (no TPOT histogram)", num(r.Value))
 	case r.Assumed:
 		return fmt.Sprintf("R_q %s ASSUMED (the recording's %d TPOT windows not used)", num(r.Value), len(st.TPOTWindows))
 	}
-	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows))
+	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + worstNote(st.TPOTWindows) + byFillNote(r)
+}
+
+// worstNote says R_q is the worst window where so few windows held requests
+// that the median's margin reaches the largest (whatif.WorstWindow).
+func worstNote(windows []whatif.TPOTWindow) string {
+	n := 0
+	for _, w := range windows {
+		if w.Count > 0 {
+			n++
+		}
+	}
+	if !whatif.WorstWindow(n) {
+		return ""
+	}
+	return fmt.Sprintf(" (the worst of %d)", n)
+}
+
+// byFillNote is R_q by fill for the human output: each fill bucket's ratio,
+// its own reading where the rise over fill raised it, and the global ratio
+// standing in where the bucket was thin; "" with one ratio at every fill.
+func byFillNote(r whatif.TPOTRatio) string {
+	if len(r.ByFill) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(r.ByFill))
+	for _, fr := range r.ByFill {
+		p := fmt.Sprintf("%.1f-%.1f %.3g", fr.Lo, fr.Hi, fr.Value)
+		switch {
+		case fr.Thin:
+			p += fmt.Sprintf(" (global, %d windows)", fr.Windows)
+		case fr.Learned != fr.Value:
+			p += fmt.Sprintf(" (own %.3g, raised)", fr.Learned)
+		case whatif.WorstWindow(fr.Windows):
+			p += fmt.Sprintf(" (the worst of %d)", fr.Windows)
+		}
+		parts = append(parts, p)
+	}
+	return ", by fill " + strings.Join(parts, ", ")
 }
 
 // num prints a ratio or fill with no trailing zeros.

@@ -166,7 +166,9 @@ percentile to the mean of per-request TPOT. `R_q` is above 1 because:
 
 **Learning `R_q`.** From the router's TPOT histogram, per window: the bucket
 holding the `q` quantile, read at its **upper edge**, over the window's mean
-(`_sum / _count`). `R_q` is the 90th percentile of those per-window ratios, and
+(`_sum / _count`). `R_q` is the 90th percentile of those per-window ratios (as
+built, the median plus a margin, and a coarse bucket bounded by the mean: see
+"R_q, as built" below), and
 never below 1. The histogram is model-wide, so it pools output lengths and
 variants: a per-bucket answer uses the pooled `R_q` and is flagged, unless a
 load generator's per-request log supplies the per-bucket ratio. The window mean
@@ -227,6 +229,103 @@ the case is held on built windows (`TestEngineTPOT_TheOrder`). A refusal priced 
 `--assume-tpot-ratio R` gives a flagged answer instead. Recommendation: refuse
 by default, because no default ratio has been measured; a stated default would
 be read as one.
+
+**R_q, as built.** Three changes to how `R_q` is
+read, one rule kept: an `R_q` never reads below the truth.
+
+- **A coarse bucket, bounded by the window's mean** (`whatif.readWindow`). Read
+  at its upper edge, a bucket gives every percentile inside it the same ratio:
+  on a 14 ms mean under the router's 10, 20 and 40 ms edges, p50, p90 and p99
+  all read 20/14, and the planner printed one TPOT for all three. A `q` bucket
+  wider than a quarter of the mean is now read at the lower of its upper edge
+  and the most the window's sum allows. Every request is at least its bucket's
+  lower edge, and the requests at or above the rank inside the `q` bucket are
+  at least the quantile, so `sum >= floorSum + (cum - rank)*(x - lower)` caps
+  the quantile `x`. That is a bound, not an estimate: it is never below the
+  true quantile. It separates p50 from p90 where the mean allows it, and leaves
+  p90 and p99 on the bucket's edge where it does not; the answer is flagged
+  `MeanBoundedTPOTPercentile` when it read below the edge. The bound needs the
+  sum of exactly the requests the buckets count, so it is skipped, and the
+  bucket's edge read, where that is not shown: the engine fall-back, whose sum
+  is its count times a step-time ITL (`TPOTWindow.SumMeasured` false), and a
+  window whose buckets hold more requests than `_count`, scraped a moment
+  apart. Reading inside the bucket linearly, as `histogram_quantile` does,
+  under-states the truth (8 of 595 readings on the property test's lognormal
+  draws, by up to 7.1%), and is not done.
+- **The median window plus a margin, not the 90th percentile** (`ratioRank`).
+  `R_q` is the lowest order statistic of the per-window ratios that is at or
+  above their median with 90% confidence: `P(Binomial(n, 1/2) <= k) >= 0.9`.
+  With 576 windows that is about the 304th; with 6 or fewer it is the largest,
+  the worst window. Each window's reading is at or above its own quantile, so
+  `R_q` is at or above the median window's true ratio with that confidence.
+  The 90th percentile it replaces priced a p50 at a p90-of-p50 across windows.
+- **R_q by fill** (`TPOTRatio.ByFill`, `whatif.FillRatio`). Each window
+  carries its cycle's fill, the mean over serving decode rows of the `k` the
+  ITL line pairs with (`learnreplay.decodeFill`), and `R_q` is read again per
+  fill bucket of 0.2 by the same reading and rank. A bucket keeps its window
+  count; under 5 windows (`whatif.MinFillRatioWindows`) it is priced at the
+  global `R_q` and an answer read there is flagged `GlobalTPOTRatio` (in
+  slo-to-rate, only where the TPOT target sets the rate). With no bucket
+  learned, `ByFill` is nil and the answer is the one-ratio answer.
+  - **Rising is imposed, not learned.** Each bucket is raised to the one below
+    it, a running maximum over fill; `learned` keeps the bucket's own reading,
+    and the human note prints both. Raising a ratio only prices a percentile
+    higher, so it is safe, and it keeps `ITL(k)·R_q(k)` strictly rising so
+    that slo-to-rate's bisection has one answer. Its cost is that one high
+    bucket lifts every bucket above it.
+  - **A step, not a line.** A fill reads its own bucket's value across
+    `[Lo, Hi)`, never a blend with the bucket below, so no fill reads under the
+    ratio its bucket priced. Where the product jumps past the target at a
+    bucket's edge, slo-to-rate answers on the side below it.
+  - **Small counts.** With 6 windows or fewer, in all or in one bucket, the
+    median's margin reaches the largest: `R_q` is the worst window, and the
+    human note says "(the worst of N)".
+  - **Checked.** A curve that falls, holds a ratio below 1, or does not tile
+    `[0, 1]` edge to edge is refused `InvalidInput`.
+  - **Used** by replicas-to-slo, slo-to-rate and the `/v1/plan` curves. The
+    frozen staircase file writes `byFill` beside the global `value`, and each
+    bucket's `percentileTPOT` at the operating fill, which the staircase
+    analyzer scores against (`staircase_analyze.py`); a file without them is
+    scored, as before, at the mean times the global ratio. The learned state
+    itself is replayed from the recording, not stored.
+
+**Measured.** Qwen3-32B P/D, 2 + 2 replicas, learned from each run's warm-up
+recording, against the client's per-step TPOT: q32j is 45 steps over three
+shapes, q132d 2 steps at 8000/200 (its other 2 steps are void: the fleet was
+short). The line is read at the real fill below the band (#167), on both
+sides. Mean error of the prediction over the measurement, before (main) and
+after, and the smallest margin over all steps after:
+
+| Run | Reading | Steps | Before | After | Smallest margin after |
+| --- | --- | --- | --- | --- | --- |
+| q32j | mean | 45 | +2% | +2% | -5.1% |
+| q32j | p50 | 45 | +89% | +12% | +3.4% |
+| q32j | p90 | 45 | +78% | +63% | +51.1% |
+| q32j | p99 | 45 | +69% | +66% | +48.3% |
+| q132d | mean | 2 | -4% | -4% | -4.1% |
+| q132d | p50 | 2 | +79% | +5% | +4.9% |
+| q132d | p90 | 2 | +67% | +54% | +53.1% |
+| q132d | p99 | 2 | +57% | +56% | +55.8% |
+
+No percentile step reads below its measurement. The mean, which this change
+does not touch, reads up to 5.1% low on 23 of the 45 q32j steps and on both
+q132d steps: that is the line's reading below the band, not R_q. The
+percentiles now separate: on the first q32j 8000/200 step p50, p90 and p99 read
+12.2, 19.1 and 20.6 ms, where before all three read 20.8; q132d's first step
+reads 12.7, 19.8 and 21.4, where before all three read 21.5. The gain is p50's,
+from the coarse-bucket bound and the median rank, not from R_q by fill.
+
+**p90 and p99 are still about 1.6 times the measurement** (+63% and +66% on
+q32j), and that is R_q: it prices p90 over the mean at about 1.70, against
+1.02 to 1.10 measured by the client. The router's 10, 20 and 40 ms edges cannot
+place a percentile inside a 10 ms bucket around a 12 to 30 ms mean, and the
+bound proves little above the median, so p90 and p99 sit near the bucket's
+edge. R_q by fill moved these runs little: the A steps show p50's ratio rising
+from 1.09 at the lowest fill to 1.25 near the knee, and p90's barely, because
+the same coarse edges set every fill's reading. It is built and tested, and
+not validated by these runs. Router TPOT edges a few percent apart around the
+target are what would firm up R_q; until then a percentile TPOT from the router
+histogram is a safe upper figure, not an estimate.
 
 **Inversion.** Question 1 inverts `ITL(k)·R_q = t`: `k* = (t/R_q − B)/A`, then
 the same clamps and cap as the mean. Question 2 reports TPOT at both the mean
