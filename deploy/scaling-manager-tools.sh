@@ -5,8 +5,9 @@
 # scripts the make targets run, so an operator needs no checkout of the
 # repository: only docker or podman, and a kubeconfig.
 #
-#   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS]
-#                                                                cluster admin, once per namespace: the admin objects, the stamp, and its namespace on the weights labeller
+#   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS] [--model-namespace M ...]
+#                                                                cluster admin, once per namespace: the admin objects, the stamp, and its namespace on the weights labeller;
+#                                                                with --model-namespace, a controller in NS that manages those namespaces (the full list; one left out is revoked)
 #   scaling-manager-tools install -n NS --prometheus-url URL [--quota "GPU=N"] [--prometheus-ca FILE] [--allow-http] [--set KEY=VALUE]
 #                                                                namespace owner: settings, preflight, the controller
 #   scaling-manager-tools install --scope cluster --keda-namespace KNS --prometheus-url URL --model-namespace NS ... [--weights-labeller-image IMG | --no-weights-labeller]

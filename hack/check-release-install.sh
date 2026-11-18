@@ -587,6 +587,172 @@ sed -i 's/parameter: tlsClientKey/parameter: tlsClientKeyX/' "$W/keda-auth-broke
 if why="$(keda_auth_same "$W/keda-auth-broken.yaml" "$finished")"; then bad "the keda-auth comparison passed a changed release file"; else ok "the keda-auth comparison fails on a changed release file ($why)"; fi
 
 # ---------------------------------------------------------------------------
+echo "a namespaced controller that manages several model namespaces"
+# The make setup this copies: LLMSM_WATCH_NS (docs/guides/utilization-share-namespaced).
+# ctl runs the controller; m1, m2, m3 run model servers.
+reset ctl m1 m2 m3
+grants() { # grants <ns>: the objects admin-setup wrote there for ctl, sorted
+    local d
+    for d in "$STUB_DIR"/obj/*/"$1"; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*.json; do [ -f "$f" ] && printf '%s/%s\n' "$(basename "$(dirname "$d")")" "$(basename "$f" .json)"; done
+    done | sort | paste -sd' ' -
+}
+stamp_models() { obj configmap ctl scaling-manager-admin-setup | jq -r '.data.modelNamespaces // "(none)"'; }
+reader_names() { obj clusterrole _ scaling-manager-policy-namespace-reader-role-ctl | jq -r '[.rules[] | select(.resources[0] == "namespaces") | .resourceNames[]] | sort | join(",")'; }
+watch_env() { obj deployment ctl scaling-manager-controller-manager | jq -r '.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "LLMSM_WATCH_NAMESPACE") | .value'; }
+want_grants="podmonitor/scaling-manager-modelserver-metrics role/scaling-manager-manager-role-ctl role/scaling-manager-preflight-ctl rolebinding/scaling-manager-manager-rolebinding-ctl rolebinding/scaling-manager-preflight-ctl"
+
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace ctl
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'runs in a namespace of its own' "$W/out" && [ "$(writes)" = 0 ]; then ok "the controller's own namespace as a --model-namespace is usage, as make refuses it in LLMSM_WATCH_NS"; else bad "own namespace as model namespace: exit $rc: $(tail -1 "$W/out")"; fi
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace nosuch
+rc=$?
+if [ "$rc" = 4 ] && grep -q 'model namespace nosuch does not exist' "$W/out" && [ "$(writes)" = 0 ]; then ok "a model namespace that does not exist: exit 4, nothing written"; else bad "missing model namespace: exit $rc, $(writes) writes: $(tail -1 "$W/out")"; fi
+
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m2 --model-namespace m1
+rc=$?
+if [ "$rc" = 0 ] && [ "$(grants m1)" = "$want_grants" ] && [ "$(grants m2)" = "$want_grants" ] && [ "$(stamp_models)" = m1,m2 ] \
+    && ! has_obj role ctl scaling-manager-manager-role-ctl && ! has_obj podmonitor ctl scaling-manager-modelserver-metrics; then
+    ok "admin-setup with two model namespaces: the controller's Role, RoleBinding, PodMonitor and the preflight reads in each, none of the model-namespace file in ctl, the stamp lists m1,m2"
+else
+    bad "two model namespaces: exit $rc, m1 [$(grants m1)], m2 [$(grants m2)], stamp '$(stamp_models)': $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+sub="$(obj rolebinding m1 scaling-manager-manager-rolebinding-ctl | jq -r '.roleRef.name + " " + ([.subjects[] | .kind + ":" + .namespace + "/" + .name] | join(","))')"
+pf="$(obj role m2 scaling-manager-preflight-ctl | jq -c '[.rules[] | {r: .resources, v: .verbs}]')"
+if [ "$sub" = "scaling-manager-manager-role-ctl ServiceAccount:ctl/scaling-manager-controller-manager" ] \
+    && [ "$pf" = '[{"r":["pods"],"v":["list"]},{"r":["podmonitors"],"v":["list"]}]' ] \
+    && [ "$(obj rolebinding m2 scaling-manager-preflight-ctl | jq -r '.subjects[0].namespace + "/" + .subjects[0].name')" = ctl/scaling-manager-preflight ]; then
+    ok "in a model namespace the controller's RoleBinding binds ctl's ServiceAccount, and the preflight reads only list pods and PodMonitors"
+else
+    bad "model-namespace bindings: '$sub', preflight rules $pf"
+fi
+if [ "$(reader_names)" = ctl,m1,m2,scaling-manager-policy ]; then ok "the Namespace reader names ctl, m1, m2 and scaling-manager-policy"; else bad "Namespace reader names '$(reader_names)'"; fi
+# Nothing cluster-wide on workloads: every ClusterRole this controller holds,
+# read from what admin-setup applied. A get by name (the preflight reads
+# two Deployments by name until admin-finish) is not a right on workloads.
+wide="$(cat "$STUB_DIR"/obj/clusterrole/_/*.json | jq -r --arg ns ctl \
+    'select(.metadata.labels["app.kubernetes.io/instance"] == $ns) | .metadata.name as $n | .rules[]? | select(has("resources") and ((.resourceNames // []) | length) == 0)
+     | select([.resources[] | split("/")[0]] | any(. as $r | ["pods","deployments","replicasets","statefulsets","daemonsets","jobs","configmaps","secrets","services","events","scaledobjects","inferencepools","leaderworkersets","disaggregatedsets","disaggregatedsetrolescalers","horizontalpodautoscalers","resourcequotas","*"] | index($r)))
+     | $n + ":" + (.resources | join(","))' | sort -u | paste -sd' ' -)"
+crs="$(cat "$STUB_DIR"/obj/clusterrole/_/*.json | jq -r --arg ns ctl 'select(.metadata.labels["app.kubernetes.io/instance"] == $ns) | .metadata.name' | sort | paste -sd' ' -)"
+if [ -z "$wide" ] && [ -n "$crs" ]; then ok "no ClusterRole of the controller or its preflight grants anything on workloads beyond a get by name ($crs)"; else bad "cluster-wide workload rights: [$wide] in [$crs]"; fi
+cp "$STUB_DIR/obj/clusterrole/_/scaling-manager-node-reader-role-ctl.json" "$W/nr.json"
+jq '.rules += [{"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["list"]}]' "$W/nr.json" > "$STUB_DIR/obj/clusterrole/_/scaling-manager-node-reader-role-ctl.json"
+wide="$(cat "$STUB_DIR"/obj/clusterrole/_/*.json | jq -r --arg ns ctl \
+    'select(.metadata.labels["app.kubernetes.io/instance"] == $ns) | .metadata.name as $n | .rules[]? | select(has("resources") and ((.resourceNames // []) | length) == 0)
+     | select([.resources[] | split("/")[0]] | any(. as $r | ["deployments"] | index($r))) | $n' | paste -sd' ' -)"
+if [ "$wide" = scaling-manager-node-reader-role-ctl ]; then ok "the workload-rights check catches a ClusterRole that lists Deployments (negative control)"; else bad "the workload-rights check missed an added rule: '$wide'"; fi
+cp "$W/nr.json" "$STUB_DIR/obj/clusterrole/_/scaling-manager-node-reader-role-ctl.json"
+# The Namespace reader is the set make narrows it to, for the same list.
+make_names="$(
+    k="$W/make-kustomization.yaml"; : > "$k"
+    # shellcheck source=deploy/lib/common.sh
+    source "$ROOT/deploy/lib/common.sh" >/dev/null 2>&1
+    # shellcheck source=deploy/lib/infra_scaling_manager.sh
+    source "$ROOT/deploy/lib/infra_scaling_manager.sh" >/dev/null 2>&1
+    llmsm_append_policy_namespace_reader_scope_patch "$k" ctl m1 m2 "" >/dev/null 2>&1
+    sed -n 's/^      - "\(.*\)"$/\1/p' "$k" | sort | paste -sd, -)"
+if [ -n "$make_names" ] && [ "$make_names" = "$(reader_names)" ]; then ok "the Namespace reader names what make's llmsm_append_policy_namespace_reader_scope_patch names for ctl managing m1,m2 ($make_names)"; else bad "Namespace reader: smt '$(reader_names)', make '$make_names'"; fi
+
+save_multi="$W/after-multi"
+rm -rf "$save_multi"; cp -R "$STUB_DIR" "$save_multi"
+: > "$STUB_DIR/calls.log"
+smt install -n ctl --prometheus-url https://p:9090 --model-namespace m1 --model-namespace m3
+rc=$?
+if [ "$rc" = 3 ] && grep -q 'not m1,m3 as --model-namespace says' "$W/out" && grep -q 'smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m3' "$W/out" && [ "$(writes)" = 0 ]; then
+    ok "install with a --model-namespace list the stamp does not hold: exit 3, the admin-setup line for that list, nothing written"
+else
+    bad "stamp mismatch: exit $rc, $(writes) writes: $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+smt install -n ctl --prometheus-url https://p:9090 --model-namespace m2 --model-namespace m1
+rc=$?
+args="$(obj deployment ctl scaling-manager-controller-manager | jq -r '.spec.template.spec.containers[] | select(.name == "manager") | .args[]' | grep -c -- '--watch-namespace=$(LLMSM_WATCH_NAMESPACE)')"
+if [ "$rc" = 0 ] && [ "$(watch_env)" = m1,m2 ] && [ "$args" = 1 ] && grep -q 'Manages m1, m2' "$W/out"; then
+    ok "install with the stamp's list: the controller's LLMSM_WATCH_NAMESPACE is m1,m2, which its --watch-namespace reads"
+else
+    bad "install with the list: exit $rc, LLMSM_WATCH_NAMESPACE '$(watch_env)', watch arg $args: $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+rm -rf "$STUB_DIR"; cp -R "$save_multi" "$STUB_DIR"
+smt install -n ctl --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 0 ] && [ "$(watch_env)" = m1,m2 ]; then ok "install without --model-namespace reads the list from the stamp"; else bad "install from the stamp: exit $rc, '$(watch_env)'"; fi
+
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m2 --model-namespace m3
+rc=$?
+if [ "$rc" = 0 ] && [ "$(grants m3)" = "$want_grants" ] && [ "$(stamp_models)" = m1,m2,m3 ] && [ "$(reader_names)" = ctl,m1,m2,m3,scaling-manager-policy ]; then
+    ok "admin-setup again with m3 added: its grants, the stamp and the Namespace reader follow"
+else
+    bad "add m3: exit $rc, m3 [$(grants m3)], stamp '$(stamp_models)', reader '$(reader_names)'"
+fi
+# Utilization share went active in m2: its pod writer goes with m2 too.
+sed -e 's/__NAMESPACE__/ctl/g' -e 's/__MODEL_NAMESPACE__/m2/g' "$W/dist/scaling-manager-activate.yaml" > "$W/activate-m2.yaml"
+PATH="$W/bin:$PATH" kubectl apply -f "$W/activate-m2.yaml" >/dev/null
+has_obj role m2 scaling-manager-pod-writer || bad "the fixture applied no pod writer in m2"
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m3
+rc=$?
+m3_left="$(grants m3)"
+if [ "$rc" = 0 ] && [ -z "$(grants m2)" ] && [ "$(grants m1)" = "$want_grants" ] && [ "$m3_left" = "$want_grants" ] \
+    && [ "$(stamp_models)" = m1,m3 ] && [ "$(reader_names)" = ctl,m1,m3,scaling-manager-policy ] && grep -q 'No longer managed, m2' "$W/out"; then
+    ok "admin-setup without m2 revokes ctl's Role, RoleBinding, PodMonitor, preflight reads and pod writer there; m1 and m3 keep theirs; stamp and reader follow"
+else
+    bad "remove m2: exit $rc, m2 [$(grants m2)], m1 [$(grants m1)], m3 [$m3_left], stamp '$(stamp_models)', reader '$(reader_names)'"
+fi
+# The PodMonitor of another controller is not this one's to revoke.
+jq '.metadata.labels["app.kubernetes.io/instance"] = "other"' "$STUB_DIR/obj/podmonitor/m3/scaling-manager-modelserver-metrics.json" > "$W/pm.json" \
+    && mv "$W/pm.json" "$STUB_DIR/obj/podmonitor/m3/scaling-manager-modelserver-metrics.json"
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1
+rc=$?
+if [ "$rc" = 0 ] && has_obj podmonitor m3 scaling-manager-modelserver-metrics && ! has_obj role m3 scaling-manager-manager-role-ctl && [ "$(stamp_models)" = m1 ]; then
+    ok "revoking m3 leaves an object labelled for another controller there"
+else
+    bad "foreign object: exit $rc, m3 [$(grants m3)]"
+fi
+smt admin-setup -n ctl --keda-namespace keda-system
+rc=$?
+if [ "$rc" = 0 ] && [ "$(stamp_models)" = m1 ] && [ "$(grants m1)" = "$want_grants" ] && grep -q 'kept from ConfigMap scaling-manager-admin-setup' "$W/out"; then
+    ok "admin-setup again without --model-namespace keeps the stamp's list (an upgrade re-run revokes nothing)"
+else
+    bad "re-run without the list: exit $rc, stamp '$(stamp_models)', m1 [$(grants m1)]"
+fi
+smt install -n ctl --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 0 ] && [ "$(watch_env)" = m1 ]; then ok "install after the list shrank sets LLMSM_WATCH_NAMESPACE to m1"; else bad "install after shrink: exit $rc, '$(watch_env)'"; fi
+smt admin-finish -n ctl --model-namespace m1; expect_rc "admin-finish takes no --model-namespace" 2 $?
+
+rm -rf "$W/drym"
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m2 --model-namespace m1 --dry-run --out "$W/drym"
+rc=$?
+dry_models="$(yq '.data.modelNamespaces' "$W/drym/19-admin-setup-stamp.yaml")"
+dry_role="$(yq ea -o json -I 0 'select(.kind == "Role")' "$W/drym/12-model-namespace-m2.yaml" | jq -r '.metadata.namespace + "/" + .metadata.name')"
+if [ "$rc" = 0 ] && [ "$dry_models" = m1,m2 ] && [ "$dry_role" = m2/scaling-manager-manager-role-ctl ] && [ -s "$W/drym/13-preflight-reads-m1.yaml" ] && [ ! -e "$W/drym/12-model-namespace.yaml" ]; then
+    ok "admin-setup --dry-run with model namespaces writes each one's file and the stamp with the list"
+else
+    bad "dry-run admin-setup: exit $rc, stamp '$dry_models', role '$dry_role', files $(ls "$W/drym" | tr '\n' ' ')"
+fi
+rm -rf "$W/drym"
+smt install -n ctl --prometheus-url https://p:9090 --model-namespace m1 --model-namespace m2 --dry-run --out "$W/drym"
+rc=$?
+dw="$(yq ea -o json -I 0 'select(.kind == "Deployment")' "$W/drym/50-controller.yaml" | jq -r '.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "LLMSM_WATCH_NAMESPACE") | .value')"
+if [ "$rc" = 0 ] && [ "$dw" = m1,m2 ]; then ok "install --dry-run --model-namespace renders LLMSM_WATCH_NAMESPACE"; else bad "dry-run install: exit $rc, '$dw'"; fi
+
+# The default single-namespace install is the one it was: no list in the
+# stamp, no cluster-wide RoleBinding read, the controller's own namespace.
+reset
+smt admin-setup -n team-a --keda-namespace keda-system
+rc1=$?
+lists="$(grep -c 'rolebindings -A' "$STUB_DIR/calls.log")"
+smt install -n team-a --prometheus-url https://p:9090
+rc2=$?
+w="$(obj deployment team-a scaling-manager-controller-manager | jq -r '.spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "LLMSM_WATCH_NAMESPACE") | .value')"
+if [ "$rc1" = 0 ] && [ "$rc2" = 0 ] && [ "$(obj configmap team-a scaling-manager-admin-setup | jq -r '.data | has("modelNamespaces")')" = false ] \
+    && [ "$lists" = 0 ] && [ "$w" = '$(POD_NAMESPACE)' ] && has_obj role team-a scaling-manager-manager-role-team-a; then
+    ok "the single-namespace install is unchanged: no list in the stamp, no RoleBinding list, LLMSM_WATCH_NAMESPACE \$(POD_NAMESPACE), the model-namespace file in team-a"
+else
+    bad "single-namespace install: exits $rc1/$rc2, $lists RoleBinding lists, LLMSM_WATCH_NAMESPACE '$w'"
+fi
+
+# ---------------------------------------------------------------------------
 echo "install --scope cluster"
 reset m1
 echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
@@ -1105,7 +1271,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=122
+EXPECT_CASES=142
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then

@@ -108,7 +108,7 @@ smt_parse() {
     SMT_DRY_RUN=false SMT_OUT="" SMT_SCOPE=namespace SMT_MODEL_NS=() SMT_PLATFORM="" SMT_STRICT=false
     SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_WL_IMAGE="" SMT_WL_OFF=false SMT_ALLOW_HTTP=false
     case "$cmd" in
-        admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope " ;;
+        admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope --model-namespace " ;;
         install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller " ;;
         admin-finish) allowed=" -n --keda-namespace --files --platform --strict --restart-keda --scope " ;;
         release-files) allowed=" --out " ;;
@@ -162,13 +162,19 @@ smt_parse() {
             || smt_usage "$cmd --scope cluster installs in $SMT_CLUSTER_NS, which the cluster-wide files name; leave out -n"
         SMT_NS="$SMT_CLUSTER_NS"
     elif [ "$cmd" != release-files ]; then
-        [ ${#SMT_MODEL_NS[@]} -eq 0 ] || smt_usage "$cmd: --model-namespace is for --scope cluster; a namespaced install manages its own namespace"
         [ -n "$SMT_NS" ] || smt_usage "$cmd needs -n <namespace>: the namespace the model servers run in"
     fi
     [ "$cmd" = release-files ] || smt_check_ns "$cmd -n" "$SMT_NS"
     [ -z "$SMT_KEDA_NS" ] || smt_check_ns "$cmd --keda-namespace" "$SMT_KEDA_NS"
     local m
     for m in "${SMT_MODEL_NS[@]}"; do smt_check_ns "$cmd --model-namespace" "$m"; done
+    if [ "$SMT_SCOPE" = namespace ] && [ ${#SMT_MODEL_NS[@]} -gt 0 ]; then
+        # The rule make applies to LLMSM_WATCH_NS (llmsm_resolve_watch_namespaces).
+        for m in "${SMT_MODEL_NS[@]}"; do
+            [ "$m" != "$SMT_NS" ] || smt_usage "$cmd: --model-namespace $m is -n, the namespace the controller runs in. A controller that manages other namespaces runs in a namespace of its own: leave $m out, or run it in another namespace"
+        done
+        mapfile -t SMT_MODEL_NS < <(printf '%s\n' "${SMT_MODEL_NS[@]}" | sort -u)
+    fi
     if [ "$SMT_DRY_RUN" = true ]; then
         [ -n "$SMT_OUT" ] || smt_usage "$cmd --dry-run needs --out <dir>: the rendered objects are written there"
     elif [ "$cmd" != release-files ] && [ -n "$SMT_OUT" ]; then
@@ -452,15 +458,151 @@ smt_apply() {
 smt_stamp_yaml() {
     jq -n --arg ns "$SMT_NS" --arg name "$SMT_STAMP" --arg part "$SMT_PART_LABEL" \
         --arg v "$(smt_version)" --arg keda "$SMT_KEDA_NS" --arg hash "$(smt_admin_hash)" --arg p "$SMT_PLATFORM" \
+        --arg models "$(smt_model_list)" \
         '{apiVersion: "v1", kind: "ConfigMap",
           metadata: {name: $name, namespace: $ns,
                      labels: {"app.kubernetes.io/part-of": "scaling-manager", ($part): "admin"}},
-          data: {release: $v, kedaNamespace: $keda, adminObjectsSha256: $hash, platform: $p}}' | yq -P
+          data: {release: $v, kedaNamespace: $keda, adminObjectsSha256: $hash, platform: $p}}
+         | if $models != "" then .data.modelNamespaces = $models else . end' | yq -P
 }
 
-# smt_admin_line echoes the admin-setup command for this namespace.
+# smt_admin_line [keda namespace] [model namespaces, comma-separated] echoes
+# the admin-setup command for this namespace.
 smt_admin_line() {
-    printf 'smt admin-setup -n %s --keda-namespace %s\n' "$SMT_NS" "${1:-<the namespace KEDA runs in>}"
+    local m line
+    line="smt admin-setup -n $SMT_NS --keda-namespace ${1:-<the namespace KEDA runs in>}"
+    for m in $(printf '%s' "${2:-}" | tr ',' ' '); do line="$line --model-namespace $m"; done
+    printf '%s\n' "$line"
+}
+
+# --- Several model namespaces ------------------------------------------------
+#
+# A namespaced controller that manages other namespaces than its own, the
+# setup make installs with LLMSM_WATCH_NS (docs/guides/utilization-share-namespaced).
+# admin-setup --model-namespace applies, in each, the model-namespace file (the
+# controller's Role, its RoleBinding, the model-server PodMonitor) and the
+# preflight's two reads there; names them in the Namespace reader; and writes
+# the list into the stamp. A namespace left out of the list is revoked. install
+# reads the list from the stamp and sets it on the controller's
+# LLMSM_WATCH_NAMESPACE, as make does. Nothing cluster-wide is added on workloads.
+SMT_WATCH_ENV=LLMSM_WATCH_NAMESPACE
+SMT_INSTANCE_LABEL=app.kubernetes.io/instance
+SMT_POLICY_LABEL=scaling-manager.llmd.ai/policy-namespace
+
+# smt_model_list echoes SMT_MODEL_NS, comma-separated.
+smt_model_list() {
+    local IFS=,
+    printf '%s\n' "${SMT_MODEL_NS[*]}"
+}
+
+# smt_stamp_models: SMT_STAMP_MODELS, the model namespaces the live stamp
+# lists (comma-separated, empty without a stamp or a list).
+smt_stamp_models() {
+    SMT_STAMP_MODELS=""
+    smt_get configmap "$SMT_STAMP" -n "$SMT_NS" || return 0
+    SMT_STAMP_MODELS="$(printf '%s' "$KC_OUT" | jq -r '.data.modelNamespaces // ""')"
+}
+
+# smt_admin_models: the model namespaces admin-setup applies, before any
+# write. The flags; without them, the list the stamp already holds, so a re-run
+# (an upgrade) keeps it. Each must exist. Sets SMT_PREV_MODELS, the namespaces
+# granted before: the stamp's list and every namespace holding this
+# controller's model-namespace RoleBinding (Forbidden is not absent: exit 7).
+smt_admin_models() {
+    local m found
+    smt_stamp_models
+    if [ ${#SMT_MODEL_NS[@]} -eq 0 ] && [ -n "$SMT_STAMP_MODELS" ]; then
+        mapfile -t SMT_MODEL_NS < <(printf '%s\n' "$SMT_STAMP_MODELS" | tr ',' '\n' | grep -v '^$' | sort -u)
+        echo "Model namespaces: $(smt_model_list | sed 's/,/, /g') (kept from ConfigMap $SMT_STAMP; give --model-namespace to change them)."
+    fi
+    SMT_PREV_MODELS=""
+    SMT_POLICY_NAMES=""
+    [ ${#SMT_MODEL_NS[@]} -gt 0 ] || return 0
+    for m in "${SMT_MODEL_NS[@]}"; do
+        smt_get namespace "$m" || smt_exit 4 "model namespace $m does not exist"
+        # The namespace a managed namespace names for its policy: make grants
+        # its read too (llmsm_managed_policy_label).
+        found="$(printf '%s' "$KC_OUT" | jq -r --arg k "$SMT_POLICY_LABEL" '.metadata.labels[$k] // ""')"
+        [ -z "$found" ] || SMT_POLICY_NAMES="$SMT_POLICY_NAMES $found"
+    done
+    smt_kc get rolebindings -A -l "$SMT_INSTANCE_LABEL=$SMT_NS" -o json
+    found="$(printf '%s' "$KC_OUT" | jq -r --arg n "scaling-manager-manager-rolebinding-$SMT_NS" --arg ns "$SMT_NS" --arg k "$SMT_INSTANCE_LABEL" \
+        '.items[] | select(.metadata.name == $n and .metadata.namespace != $ns and .metadata.labels[$k] == $ns) | .metadata.namespace')"
+    SMT_PREV_MODELS="$(printf '%s\n%s\n' "$found" "$(printf '%s' "$SMT_STAMP_MODELS" | tr ',' '\n')" | grep -v '^$' | grep -vxF -- "$SMT_NS" | sort -u | tr '\n' ' ')"
+}
+
+# smt_render_readers: the Namespace reader of the main file names the model
+# namespaces too, with the controller's own, scaling-manager-policy and the
+# policy namespaces they name: the set make narrows it to
+# (llmsm_append_policy_namespace_reader_scope_patch). Nothing without a list.
+smt_render_readers() {
+    local names n
+    [ ${#SMT_MODEL_NS[@]} -gt 0 ] || return 0
+    names="$(printf '%s\n' "$SMT_NS" "${SMT_MODEL_NS[@]}" scaling-manager-policy $SMT_POLICY_NAMES | awk 'NF && !seen[$0]++' | paste -sd, -)"
+    R="scaling-manager-policy-namespace-reader-role-$SMT_NS" N="$names" yq -i \
+        '(select(.kind == "ClusterRole" and .metadata.name == strenv(R)) | .rules[] | select(.resources[0] == "namespaces") | .resourceNames) = (strenv(N) | split(","))' \
+        "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot name the model namespaces in the Namespace reader of $SMT_MAIN"
+    n="$(R="scaling-manager-policy-namespace-reader-role-$SMT_NS" yq ea '[select(.kind == "ClusterRole" and .metadata.name == strenv(R)) | .rules[] | select(.resources[0] == "namespaces") | .resourceNames | join(",")] | .[]' "$SMT_DIR/$SMT_MAIN")"
+    [ "$n" = "$names" ] || smt_exit 2 "$SMT_MAIN holds no Namespace reader scaling-manager-policy-namespace-reader-role-$SMT_NS to name the model namespaces in"
+}
+
+# smt_render_watch: with model namespaces, the controller manages them: the
+# list on its LLMSM_WATCH_NAMESPACE, which its --watch-namespace reads, as make
+# sets it. Without, the Deployment is the release file's, unchanged.
+smt_render_watch() {
+    local n
+    [ ${#SMT_MODEL_NS[@]} -gt 0 ] || return 0
+    D="$SMT_DEPLOY" E="$SMT_WATCH_ENV" W="$(smt_model_list)" yq -i \
+        '(select(.kind == "Deployment" and .metadata.name == strenv(D)) | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == strenv(E)) | .value) = strenv(W)' \
+        "$SMT_DIR/$SMT_MAIN" || smt_exit 2 "cannot set $SMT_WATCH_ENV in $SMT_MAIN"
+    n="$(D="$SMT_DEPLOY" E="$SMT_WATCH_ENV" yq ea '[select(.kind == "Deployment" and .metadata.name == strenv(D)) | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == strenv(E)) | .value] | .[]' "$SMT_DIR/$SMT_MAIN")"
+    [ "$n" = "$(smt_model_list)" ] || smt_exit 2 "$SMT_MAIN: the controller has no $SMT_WATCH_ENV to set the model namespaces on"
+}
+
+# smt_preflight_reads_file <model namespace>: the preflight's reads of pods
+# and PodMonitors, copied from its Role in the controller's namespace into
+# the model namespace, bound to its ServiceAccount (docs/reference/preflight.md,
+# "Other watched namespaces"). Written to SMT_TMP; echoes its path.
+smt_preflight_reads_file() {
+    local out="$SMT_TMP/preflight-reads-$1.yaml" n
+    N="$SMT_NS" M="$1" yq ea '
+        select((.kind == "Role" or .kind == "RoleBinding") and .metadata.name == "scaling-manager-preflight")
+        | .metadata.name = .metadata.name + "-" + strenv(N)
+        | .metadata.namespace = strenv(M)
+        | (select(.kind == "Role") | .rules) |= map(select((.resources | contains(["pods"])) or (.resources | contains(["podmonitors"]))))
+        | (select(.kind == "RoleBinding") | .roleRef.name) = .roleRef.name + "-" + strenv(N)' \
+        "$SMT_DIR/$SMT_PREFLIGHT" > "$out" || smt_exit 2 "cannot copy the preflight reads for $1"
+    n="$(yq ea -o json -I 0 'select(.kind == "Role")' "$out" | jq -r '[.rules[] | (.resources | join(",")) + ":" + (.verbs | join(","))] | join(" ")')"
+    [ "$n" = "pods:list podmonitors:list" ] || smt_exit 2 "the preflight Role of $SMT_PREFLIGHT does not read exactly pods and PodMonitors ($n)"
+    printf '%s\n' "$out"
+}
+
+# smt_revoke_model <namespace>: removes from a namespace taken out of the list
+# what admin-setup applied there for this controller (the model-namespace
+# file, the preflight reads) and the activation grant: each object by kind and
+# name, and only when its instance label names this controller.
+smt_revoke_model() {
+    local ns="$1" f kind group name res
+    for f in "$(smt_model_file "$ns")" "$(smt_preflight_reads_file "$ns")" "$(smt_activate_file "$ns")"; do
+        while read -r kind group name; do
+            [ -n "$name" ] || continue
+            res="$(printf '%s' "$kind" | tr 'A-Z' 'a-z')"
+            [ "$group" = - ] || res="$res.$group"
+            smt_get "$res" "$name" -n "$ns" || continue
+            [ "$(printf '%s' "$KC_OUT" | jq -r --arg k "$SMT_INSTANCE_LABEL" '.metadata.labels[$k] // ""')" = "$SMT_NS" ] || continue
+            smt_kc delete "$res" "$name" -n "$ns" --ignore-not-found
+            echo "  $ns: deleted $kind/$name"
+        done < <(yq ea -o json -I 0 'select(.kind != null)' "$f" \
+            | jq -r '.kind + " " + (if (.apiVersion | test("/")) then (.apiVersion | split("/") | .[0]) else "-" end) + " " + .metadata.name')
+    done
+}
+
+# smt_activate_file <namespace>: the activation grant for that namespace.
+smt_activate_file() {
+    local out="$SMT_TMP/activate-$1.yaml"
+    sed -e "s/__NAMESPACE__/$SMT_NS/g" -e "s/__MODEL_NAMESPACE__/$1/g" "$SMT_SHIPPED/scaling-manager-activate.yaml" > "$out" \
+        || smt_exit 2 "cannot render scaling-manager-activate.yaml for $1"
+    printf '%s\n' "$out"
 }
 
 # --- Settings ----------------------------------------------------------------
@@ -725,20 +867,34 @@ smt_summary_lines() {
 
 # smt_check_stamp: the admin stamp exists and names these admin objects, or
 # exit 3 with the admin-setup line.
+#
+# The model namespaces come from the stamp: only the cluster admin grants the
+# controller its Role in another namespace. --model-namespace, when given, must
+# name the same list, or exit 3 with the admin-setup line for the list given.
 smt_check_stamp() {
-    local have want keda
+    local have want keda models flags
     want="$(smt_admin_hash)"
+    flags="$(smt_model_list)"
     if ! smt_get configmap "$SMT_STAMP" -n "$SMT_NS"; then
         echo "The cluster admin has not run admin-setup for $SMT_NS (no ConfigMap $SMT_STAMP). Ask them to run, with this tools image:" >&2
-        echo "  $(smt_admin_line)" >&2
+        echo "  $(smt_admin_line "" "$flags")" >&2
         exit 3
     fi
     have="$(printf '%s' "$KC_OUT" | jq -r '.data.adminObjectsSha256 // ""')"
     keda="$(printf '%s' "$KC_OUT" | jq -r '.data.kedaNamespace // ""')"
+    models="$(printf '%s' "$KC_OUT" | jq -r '.data.modelNamespaces // ""')"
     if [ "$have" != "$want" ]; then
         echo "The admin objects in $SMT_NS are from another release ($(printf '%s' "$KC_OUT" | jq -r '.data.release // "unknown"')): this release changes them, and only a cluster admin may apply them. Ask them to run, with this tools image ($(smt_version)):" >&2
-        echo "  $(smt_admin_line "$keda")" >&2
+        echo "  $(smt_admin_line "$keda" "${flags:-$models}")" >&2
         exit 3
+    fi
+    if [ -n "$flags" ] && [ "$flags" != "$models" ]; then
+        echo "The cluster admin set up $SMT_NS to manage ${models:-only $SMT_NS} (ConfigMap $SMT_STAMP), not $flags as --model-namespace says. Only a cluster admin may change which namespaces the controller reaches. Ask them to run, with this tools image:" >&2
+        echo "  $(smt_admin_line "$keda" "$flags")" >&2
+        exit 3
+    fi
+    if [ -z "$flags" ] && [ -n "$models" ]; then
+        mapfile -t SMT_MODEL_NS < <(printf '%s\n' "$models" | tr ',' '\n' | grep -v '^$')
     fi
     SMT_STAMP_KEDA="$keda"
 }
@@ -978,8 +1134,7 @@ smt_wl_image() {
 
 # smt_wl_list echoes the --model-namespace list, comma-separated.
 smt_wl_list() {
-    local IFS=,
-    printf '%s\n' "${SMT_MODEL_NS[*]}"
+    smt_model_list
 }
 
 # smt_weights_labeller: the cluster-wide install applies or updates the
@@ -1041,15 +1196,20 @@ smt_weights_labeller_dry() {
 # smt_admin_setup_labeller: admin-setup checks the labeller is there and adds
 # this namespace to its watch list. Never fails admin-setup: the labeller is
 # an addition to the weights preparation, not to the install.
+#
+# With model namespaces, it adds those: the model servers run there.
 smt_admin_setup_labeller() {
-    local rc=0
+    local rc ns
     echo "Weights labeller:"
-    bash "$HERE/weights.sh" labeller --add -n "$SMT_NS" > "$SMT_TMP/labeller.out" 2>&1 || rc=$?
-    sed 's/^/  /' "$SMT_TMP/labeller.out"
-    case "$rc" in
-        0|3|4) ;;
-        *) echo "  (weights.sh labeller --add exited $rc; admin-setup goes on)" ;;
-    esac
+    for ns in "${SMT_MODEL_NS[@]:-$SMT_NS}"; do
+        rc=0
+        bash "$HERE/weights.sh" labeller --add -n "$ns" > "$SMT_TMP/labeller.out" 2>&1 || rc=$?
+        sed 's/^/  /' "$SMT_TMP/labeller.out"
+        case "$rc" in
+            0|3|4) ;;
+            *) echo "  (weights.sh labeller --add -n $ns exited $rc; admin-setup goes on)" ;;
+        esac
+    done
 }
 
 # --- dry-run -----------------------------------------------------------------
@@ -1072,6 +1232,11 @@ smt_dry_admin() {
     if [ "$SMT_SCOPE" = cluster ]; then
         for m in "${SMT_MODEL_NS[@]}"; do
             smt_dry_write "12-model-namespace-$m.yaml" "" "$(smt_model_file "$m")"
+        done
+    elif [ ${#SMT_MODEL_NS[@]} -gt 0 ]; then
+        for m in "${SMT_MODEL_NS[@]}"; do
+            smt_dry_write "12-model-namespace-$m.yaml" "" "$(smt_model_file "$m")"
+            smt_dry_write "13-preflight-reads-$m.yaml" "" "$(smt_preflight_reads_file "$m")"
         done
     else
         smt_dry_write 12-model-namespace.yaml "" "$SMT_DIR/scaling-manager-model-namespace.yaml"
@@ -1126,40 +1291,64 @@ smt_admin_setup() {
     smt_detect_platform
     smt_files_for
     smt_need "$SMT_MAIN" "$SMT_PREFLIGHT" scaling-manager-model-namespace.yaml
+    [ ${#SMT_MODEL_NS[@]} -eq 0 ] || smt_need scaling-manager-activate.yaml
     if [ "$SMT_DRY_RUN" = true ]; then
         smt_resolve_keda_ns admin-setup
+        SMT_POLICY_NAMES=""
         smt_render
+        smt_render_readers
         smt_dry_begin
         smt_dry_admin
         smt_stamp_yaml > "$SMT_OUT/19-admin-setup-stamp.yaml"
         echo "  $SMT_OUT/19-admin-setup-stamp.yaml"
         [ "$SMT_PLATFORM" != openshift ] || echo "  then: kubectl label namespace $SMT_NS openshift.io/user-monitoring=true --overwrite"
         echo "KEDA's namespace in the scaler NetworkPolicy: $SMT_KEDA_NS ($SMT_KEDA_FROM)."
-        echo "Weights labeller: admin-setup adds $SMT_NS to its watch list when one runs (smt weights labeller --add -n $SMT_NS)."
+        echo "Weights labeller: admin-setup adds ${SMT_MODEL_NS[*]:-$SMT_NS} to its watch list when one runs (smt weights labeller --add -n <namespace>)."
         return 0
     fi
     smt_header admin-setup
     smt_require_namespace
+    smt_admin_models
     smt_resolve_keda_ns admin-setup
     echo "KEDA runs in $SMT_KEDA_NS ($SMT_KEDA_FROM)."
     smt_render
+    smt_render_readers
     echo "Admin objects:"
     smt_apply "$SMT_DIR/$SMT_MAIN" admin
     echo "Preflight RBAC:"
     smt_apply "$SMT_DIR/$SMT_PREFLIGHT" admin
-    echo "Model namespace:"
-    smt_apply "$SMT_DIR/scaling-manager-model-namespace.yaml"
+    if [ ${#SMT_MODEL_NS[@]} -eq 0 ]; then
+        echo "Model namespace:"
+        smt_apply "$SMT_DIR/scaling-manager-model-namespace.yaml"
+    fi
+    local m
+    for m in "${SMT_MODEL_NS[@]}"; do
+        echo "Model namespace $m:"
+        smt_apply "$(smt_model_file "$m")"
+        smt_apply "$(smt_preflight_reads_file "$m")"
+        if [ "$SMT_PLATFORM" = openshift ]; then
+            smt_kc label namespace "$m" openshift.io/user-monitoring=true --overwrite
+        fi
+    done
+    for m in $SMT_PREV_MODELS; do
+        printf '%s\n' "${SMT_MODEL_NS[@]}" | grep -qxF -- "$m" && continue
+        echo "No longer managed, $m: this controller's grants there are removed:"
+        smt_revoke_model "$m"
+    done
     if [ "$SMT_PLATFORM" = openshift ]; then
         smt_kc label namespace "$SMT_NS" openshift.io/user-monitoring=true --overwrite
         echo "Labelled namespace $SMT_NS openshift.io/user-monitoring=true."
     fi
     smt_stamp_yaml > "$SMT_TMP/stamp.yaml"
     smt_kc apply -f "$SMT_TMP/stamp.yaml"
-    echo "Stamp: ConfigMap $SMT_STAMP ($(smt_version), KEDA in $SMT_KEDA_NS)."
+    echo "Stamp: ConfigMap $SMT_STAMP ($(smt_version), KEDA in $SMT_KEDA_NS$([ ${#SMT_MODEL_NS[@]} -eq 0 ] || echo ", manages $(smt_model_list | sed 's/,/, /g')"))."
     smt_admin_setup_labeller
     echo
     echo "Done. The namespace owner runs next, with their own kubeconfig:"
     echo "  smt install -n $SMT_NS --prometheus-url <https://prometheus:9090>   (an http:// Prometheus: add --allow-http)"
+    if [ ${#SMT_MODEL_NS[@]} -gt 0 ]; then
+        echo "  It reads the model namespaces from the stamp. After a change to them, the owner runs it again: until then the controller reports a namespace it lost as unreadable."
+    fi
 }
 
 # smt_install: the part of the namespace owner, or with --scope cluster everything.
@@ -1173,6 +1362,7 @@ smt_install() {
     if [ "$SMT_DRY_RUN" = true ]; then
         [ "$SMT_SCOPE" = namespace ] || smt_resolve_keda_ns install
         smt_render
+        [ "$SMT_SCOPE" = cluster ] || smt_render_watch
         smt_dry_begin
         if [ "$SMT_SCOPE" = cluster ]; then
             jq -n --arg n "$SMT_NS" '{apiVersion: "v1", kind: "Namespace", metadata: {name: $n}}' | yq -P > "$SMT_OUT/05-namespace.yaml"
@@ -1192,6 +1382,8 @@ smt_install() {
     smt_render
     smt_require_namespace
     smt_check_stamp
+    smt_render_watch
+    [ ${#SMT_MODEL_NS[@]} -eq 0 ] || echo "Manages $(smt_model_list | sed 's/,/, /g') (ConfigMap $SMT_STAMP); runs in $SMT_NS."
     smt_check_adoptable
     smt_settings_preconditions
     smt_settings

@@ -37,7 +37,9 @@ You need:
   a LocalQueue on it in each model namespace. Step 8 checks them.
 - `kubectl`, `helm`, `git`, `jq`, `yq`, `make` and `openssl`.
 - A checkout of this repository. Run every command from its top directory, in
-  one shell: steps 6 and 8 set variables that the later steps read.
+  one shell: steps 6 and 8 set variables that the later steps read. The install
+  itself can instead run from the release's tools image, with `docker` and
+  no checkout ([with the tools image](#with-the-tools-image)).
 
 KEDA and Prometheus are optional. If the cluster has none, the installer adds
 them.
@@ -158,6 +160,63 @@ nsm-kind-worker          Ready    <none>          14m   v1.31.2   NVIDIA-A100-PC
 Write down the product of the nodes the models run on. Step 8 needs it.
 
 ## Install
+
+### With the tools image
+
+The release's tools image installs option A (step 8) with no checkout and no
+`make`. You need `docker` (or `podman`), and the namespaces from step 3. The
+examples use `team-a` and `team-b`; the GPU product comes from step 5.
+
+<!-- guide:steps.smt start -->
+```bash
+# Once per machine. The release's tools image, by the digest the release prints. Each person uses their own kubeconfig.
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
+mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+smt() { docker run --rm --user "$(id -u):$(id -g)" \
+  -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+```
+<!-- guide:steps.smt end -->
+
+<!-- guide:steps.smtadmin start -->
+```bash
+# Cluster admin. The scaling manager's namespace, then a Role in each llm-d namespace and nothing cluster-wide on workloads. Run it again with the full list to add or remove a namespace.
+kubectl create namespace scaling-manager-system
+smt admin-setup -n scaling-manager-system --model-namespace team-a --model-namespace team-b
+```
+<!-- guide:steps.smtadmin end -->
+
+<!-- guide:steps.smtinstall start -->
+```bash
+# The owner of scaling-manager-system. It manages the namespaces the admin named, under one GPU budget. A private CA for Prometheus? Add --prometheus-ca <file in this directory>.
+smt install -n scaling-manager-system --prometheus-url https://<prometheus>:9090 \
+  --quota "<gpu product>=<gpus>" --set quotaScope=cluster
+```
+<!-- guide:steps.smtinstall end -->
+
+<!-- guide:steps.smtfinish start -->
+```bash
+# Cluster admin, after the install. KEDA's client certificate, then the preflight's cluster reads are removed.
+smt admin-finish -n scaling-manager-system
+```
+<!-- guide:steps.smtfinish end -->
+
+`smt install` should end with `Installed in scaling-manager-system, passive.`,
+after `Manages team-a, team-b`, and `smt admin-finish` with `serves the scaler
+over mutual TLS`. Every flag and exit code:
+[install commands of the tools image](../../reference/tools-install.md).
+
+Then go to step 11. Steps 11 to 20 run from a checkout; set the two names they
+read first:
+
+<!-- guide:steps.smtnext start -->
+```bash
+# For steps 11 to 20, from a checkout of this repository.
+export CONTROLLER_NAMESPACE=scaling-manager-system LLMSM_WATCH_NS=team-a,team-b
+```
+<!-- guide:steps.smtnext end -->
+
+Steps 6 to 10 below are the same install with `make`. Use them for options B
+and C, or to let the installer find the namespaces and add KEDA.
 
 ### Step 6: Say which namespaces it manages
 

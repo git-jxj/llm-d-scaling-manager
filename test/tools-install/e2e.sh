@@ -52,6 +52,9 @@ PREVIOUS_RELEASE="${PREVIOUS_RELEASE:-v0.11.1}"
 REPO_DIR="$(pwd)"
 NEG_NS=smt-negative
 UPG_NS=smt-upgrade
+MULTI_NS=smt-multi
+MULTI_A=smt-models-a
+MULTI_B=smt-models-b
 DEPLOY=scaling-manager-controller-manager
 STATUS_CM=scaling-manager-controller-status
 
@@ -358,6 +361,62 @@ if [ "$SCOPE" = namespace ]; then
 fi
 kubectl delete namespace "$NEG_NS" --wait=false >/dev/null 2>&1
 drop_cluster_objects "$NEG_NS"
+
+# --- one controller, two model namespaces, nothing cluster-wide on workloads ----
+# The setup docs/guides/utilization-share-namespaced installs: the controller in
+# a namespace of its own, a Role in each model namespace. Then one namespace
+# is taken out of the list, and its Role must go.
+
+# can_ctl <verb> <resource> <namespace or -A>: what the controller's account may do.
+can_ctl() {
+    local where=(-n "$3")
+    [ "$3" = -A ] && where=(-A)
+    kubectl auth can-i "$1" "$2" "${where[@]}" --as "system:serviceaccount:$MULTI_NS:$DEPLOY" 2>/dev/null
+}
+watch_env() {
+    kubectl get deployment "$DEPLOY" -n "$MULTI_NS" \
+        -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env[?(@.name=="LLMSM_WATCH_NAMESPACE")].value}'
+}
+if [ "$SCOPE" = namespace ]; then
+    for n in "$MULTI_NS" "$MULTI_A" "$MULTI_B"; do
+        kubectl create namespace "$n" --dry-run=client -o yaml | kubectl apply -f - >/dev/null || fail multi "cannot create namespace $n"
+    done
+    make_owner "$MULTI_NS" owner-multi
+    smt_as admin multi-admin-setup admin-setup -n "$MULTI_NS" --keda-namespace "$KEDA_NS" --model-namespace "$MULTI_A" --model-namespace "$MULTI_B" \
+        || { rc=$?; tail -20 "$LOGS/multi-admin-setup.log"; fail multi "admin-setup with two model namespaces: exit $rc"; }
+    smt_as owner-multi multi-install-mismatch install -n "$MULTI_NS" "${INSTALL_FLAGS[@]}" --model-namespace "$MULTI_A"
+    rc=$?
+    [ "$rc" = 3 ] || fail multi "install with a list the stamp does not hold: exit $rc, want 3"
+    grep -q "smt admin-setup -n $MULTI_NS --keda-namespace $KEDA_NS --model-namespace $MULTI_A" "$LOGS/multi-install-mismatch.log" || fail multi "the refusal prints no admin-setup line for the list given"
+    kubectl get deployment "$DEPLOY" -n "$MULTI_NS" >/dev/null 2>&1 && fail multi "the refused install created the controller"
+    pass "several namespaces: admin-setup for $MULTI_A and $MULTI_B; install as the owner with another list exits 3 and prints the admin-setup line"
+
+    smt_as owner-multi multi-install install -n "$MULTI_NS" "${INSTALL_FLAGS[@]}" \
+        || { rc=$?; tail -30 "$LOGS/multi-install.log"; fail multi "install as the owner of $MULTI_NS: exit $rc"; }
+    preflight_clean "$LOGS/multi-install.log" || fail multi "the preflight after the install has a FAIL"
+    [ "$(watch_env)" = "$MULTI_A,$MULTI_B" ] || fail multi "LLMSM_WATCH_NAMESPACE is '$(watch_env)', not $MULTI_A,$MULTI_B"
+    got="$(can_ctl list pods "$MULTI_A") $(can_ctl list pods "$MULTI_B") $(can_ctl list pods "$MODEL_NS") $(can_ctl list pods -A) $(can_ctl list deployments.apps -A) $(can_ctl get configmaps -A)"
+    [ "$got" = "yes yes no no no no" ] || fail multi "the controller may list pods in $MULTI_A, $MULTI_B, $MODEL_NS, every namespace; list Deployments and get ConfigMaps in every namespace: '$got', want 'yes yes no no no no'"
+    kubectl logs -n "$MULTI_NS" "deployment/$DEPLOY" --tail=-1 2>/dev/null > "$LOGS/multi-controller.log"
+    grep 'Watching namespaces' "$LOGS/multi-controller.log" | tail -1 | grep "$MULTI_A" | grep -q "$MULTI_B" \
+        || fail multi "the controller log does not say it watches $MULTI_A and $MULTI_B"
+    pass "several namespaces: install as the owner manages $(watch_env); the controller may list pods there and nowhere else ($got); preflight without FAIL"
+
+    smt_as admin multi-admin-setup-shrink admin-setup -n "$MULTI_NS" --keda-namespace "$KEDA_NS" --model-namespace "$MULTI_A" \
+        || { rc=$?; tail -20 "$LOGS/multi-admin-setup-shrink.log"; fail multi "admin-setup without $MULTI_B: exit $rc"; }
+    [ "$(can_ctl list pods "$MULTI_B")" = no ] || fail multi "the controller may still list pods in $MULTI_B after it left the list"
+    kubectl get role "scaling-manager-manager-role-$MULTI_NS" -n "$MULTI_B" >/dev/null 2>&1 && fail multi "the controller's Role is still in $MULTI_B"
+    [ "$(can_ctl list pods "$MULTI_A")" = yes ] || fail multi "the controller lost its rights in $MULTI_A"
+    smt_as owner-multi multi-install-shrink install -n "$MULTI_NS" "${INSTALL_FLAGS[@]}" \
+        || { rc=$?; tail -30 "$LOGS/multi-install-shrink.log"; fail multi "install after the list shrank: exit $rc"; }
+    [ "$(watch_env)" = "$MULTI_A" ] || fail multi "after the list shrank LLMSM_WATCH_NAMESPACE is '$(watch_env)', not $MULTI_A"
+    pass "several namespaces: admin-setup without $MULTI_B revokes the controller's Role there; install again manages $(watch_env) only"
+
+    kubectl delete namespace "$MULTI_NS" "$MULTI_A" "$MULTI_B" --wait=false >/dev/null 2>&1
+    drop_cluster_objects "$MULTI_NS"
+else
+    notrun "several namespaces" "namespace scope only: --scope cluster already manages every namespace"
+fi
 
 # --- upgrade from a hand install of the previous release ------------------------
 

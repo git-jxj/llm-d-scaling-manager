@@ -22,6 +22,30 @@ steps:
     note: The GPU product of each node.
     run: |
       kubectl get nodes -L nvidia.com/gpu.product
+  smt:
+    note: Once per machine. The release's tools image, by the digest the release prints. Each person uses their own kubeconfig.
+    run: |
+      TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
+      mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+      smt() { docker run --rm --user "$(id -u):$(id -g)" \
+        -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+  smtadmin:
+    note: Cluster admin. The scaling manager's namespace, then a Role in each llm-d namespace and nothing cluster-wide on workloads. Run it again with the full list to add or remove a namespace.
+    run: |
+      kubectl create namespace scaling-manager-system
+      smt admin-setup -n scaling-manager-system --model-namespace team-a --model-namespace team-b
+  smtinstall:
+    note: The owner of scaling-manager-system. It manages the namespaces the admin named, under one GPU budget. A private CA for Prometheus? Add --prometheus-ca <file in this directory>.
+    run: |
+      smt install -n scaling-manager-system --prometheus-url https://<prometheus>:9090 \
+        --quota "<gpu product>=<gpus>" --set quotaScope=cluster
+  smtfinish:
+    note: Cluster admin, after the install. KEDA's client certificate, then the preflight's cluster reads are removed.
+    run: smt admin-finish -n scaling-manager-system
+  smtnext:
+    note: For steps 11 to 20, from a checkout of this repository.
+    run: |
+      export CONTROLLER_NAMESPACE=scaling-manager-system LLMSM_WATCH_NS=team-a,team-b
   names:
     note: Manage every namespace that runs llm-d, from the scaling manager's own namespace. Every later step reads both.
     run: |
