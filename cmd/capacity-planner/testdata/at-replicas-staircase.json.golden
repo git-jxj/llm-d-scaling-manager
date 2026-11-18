@@ -144,11 +144,11 @@
           "binds": "0.85 x fleet knee (scaleUpThreshold)"
         },
         "maxAtSLO": {
-          "value": 29.717183317002267,
+          "value": 29.717183360970793,
           "unit": "r/s",
           "sensitivity": {
-            "lo": 29.07974065898292,
-            "hi": 29.90434170026834
+            "lo": 29.079740667090974,
+            "hi": 29.9043417692343
           },
           "boundBy": [
             "TTFT p90, end to end"
@@ -165,7 +165,7 @@
             "AssumedA",
             "ExtrapolatedFill"
           ],
-          "outputTokensPerSecond": 5942.716788377384,
+          "outputTokensPerSecond": 5942.716797170025,
           "binds": "TTFT p90, end to end"
         },
         "headroom": 0.85,
@@ -223,33 +223,33 @@
             }
           ],
           "tpotMean": {
-            "value": 0.006992075616521239,
+            "value": 0.0031524994131438247,
             "unit": "s",
             "band": {
-              "lo": 0.006208715228774295,
-              "hi": 0.007034629071835134
+              "lo": 0.003072972705812775,
+              "hi": 0.003175184178523507
             },
-            "floor": 0.006992075616521239,
+            "floor": 0.003072972705812775,
             "flags": [
               "BelowFittedBand"
             ]
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.01640517772196182,
+            "value": 0.007396560903718552,
             "unit": "s",
             "band": {
-              "lo": 0.014567216137140264,
-              "hi": 0.016505018890077695
+              "lo": 0.007209971135678055,
+              "hi": 0.007449785100372742
             },
-            "floor": 0.01640517772196182,
+            "floor": 0.007209971135678055,
             "flags": [
               "BelowFittedBand",
               "CoarseTPOTBucket"
             ]
           },
           "e2eMeanSum": {
-            "value": 1.6385487444166742,
+            "value": 0.8745660906104351,
             "unit": "s"
           },
           "cell": {
@@ -276,13 +276,13 @@
             },
             "tpot": {
               "statistic": "p90",
-              "value": 0.01640517772196182,
+              "value": 0.007396560903718552,
               "unit": "s",
               "band": {
-                "lo": 0.014567216137140264,
-                "hi": 0.016505018890077695
+                "lo": 0.007209971135678055,
+                "hi": 0.007449785100372742
               },
-              "floor": 0.01640517772196182,
+              "floor": 0.007209971135678055,
               "flags": [
                 "BelowFittedBand",
                 "CoarseTPOTBucket"
@@ -299,11 +299,11 @@
           "ttft": [
             {
               "statistic": "p50",
-              "value": 0.2260398293044357,
+              "value": 0.22603982356867805,
               "unit": "s",
               "sensitivity": {
-                "lo": 0.1750775012597531,
-                "hi": 0.5415228923807665
+                "lo": 0.1750774968757017,
+                "hi": 0.54152287958135
               },
               "floor": 0.057518296999330115,
               "flags": [
@@ -321,11 +321,11 @@
             },
             {
               "statistic": "p90",
-              "value": 2.489509957122022,
+              "value": 2.489509724432668,
               "unit": "s",
               "sensitivity": {
-                "lo": 2.3866735824624308,
-                "hi": 2.8481042608522436
+                "lo": 2.3866733581235944,
+                "hi": 2.8481040019129913
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -342,43 +342,43 @@
             }
           ],
           "tpotMean": {
-            "value": 0.006992075616521239,
+            "value": 0.006804836055194229,
             "unit": "s",
             "band": {
-              "lo": 0.006208715228774295,
-              "hi": 0.007034629071835134
+              "lo": 0.004679343096169867,
+              "hi": 0.006976989644978102
             },
-            "floor": 0.006992075616521239,
+            "floor": 0.003072972705812775,
             "flags": [
               "BelowFittedBand"
             ]
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.01640517772196182,
+            "value": 0.015965866357408813,
             "unit": "s",
             "band": {
-              "lo": 0.014567216137140264,
-              "hi": 0.016505018890077695
+              "lo": 0.010978922329346146,
+              "hi": 0.01636978221741538
             },
-            "floor": 0.01640517772196182,
+            "floor": 0.007209971135678055,
             "flags": [
               "BelowFittedBand",
               "CoarseTPOTBucket"
             ]
           },
           "e2eMeanSum": {
-            "value": 2.3072641411683286,
+            "value": 2.2700080019946762,
             "unit": "s"
           },
           "cell": {
             "ttft": {
               "statistic": "p90",
-              "value": 2.489509957122022,
+              "value": 2.489509724432668,
               "unit": "s",
               "sensitivity": {
-                "lo": 2.3866735824624308,
-                "hi": 2.8481042608522436
+                "lo": 2.3866733581235944,
+                "hi": 2.8481040019129913
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -395,13 +395,13 @@
             },
             "tpot": {
               "statistic": "p90",
-              "value": 0.01640517772196182,
+              "value": 0.015965866357408813,
               "unit": "s",
               "band": {
-                "lo": 0.014567216137140264,
-                "hi": 0.016505018890077695
+                "lo": 0.010978922329346146,
+                "hi": 0.01636978221741538
               },
-              "floor": 0.01640517772196182,
+              "floor": 0.007209971135678055,
               "flags": [
                 "BelowFittedBand",
                 "CoarseTPOTBucket"
@@ -420,14 +420,14 @@
               "statistic": "p50",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.876705133433134 r/s"
+                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.877025894764095 r/s"
               }
             },
             {
               "statistic": "p90",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.876705133433134 r/s"
+                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.877025894764095 r/s"
               }
             }
           ],
@@ -450,7 +450,7 @@
           "e2eMeanSum": {
             "refused": {
               "reason": "AboveDecodeOnset",
-              "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.876705133433134 r/s"
+              "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.877025894764095 r/s"
             }
           },
           "cell": {
@@ -458,7 +458,7 @@
               "statistic": "p90",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.876705133433134 r/s"
+                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.877025894764095 r/s"
               }
             },
             "tpot": {
@@ -481,14 +481,14 @@
               "statistic": "p50",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "41.7 r/s at or above the decode gate's onset 36.876705133433134 r/s"
+                "detail": "41.7 r/s at or above the decode gate's onset 36.877025894764095 r/s"
               }
             },
             {
               "statistic": "p90",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "41.7 r/s at or above the decode gate's onset 36.876705133433134 r/s"
+                "detail": "41.7 r/s at or above the decode gate's onset 36.877025894764095 r/s"
               }
             }
           ],
@@ -511,7 +511,7 @@
           "e2eMeanSum": {
             "refused": {
               "reason": "AboveDecodeOnset",
-              "detail": "41.7 r/s at or above the decode gate's onset 36.876705133433134 r/s"
+              "detail": "41.7 r/s at or above the decode gate's onset 36.877025894764095 r/s"
             }
           },
           "cell": {
@@ -519,7 +519,7 @@
               "statistic": "p90",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "41.7 r/s at or above the decode gate's onset 36.876705133433134 r/s"
+                "detail": "41.7 r/s at or above the decode gate's onset 36.877025894764095 r/s"
               }
             },
             "tpot": {
