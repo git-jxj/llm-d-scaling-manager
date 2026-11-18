@@ -327,6 +327,7 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	}
 
 	out.Limits = p.limitsOf(rate, rateSource, ls)
+	validatePlan(out, k, fl.Class(), cs, rate)
 	out.Marginal = p.marginal(le, ls.Fleet)
 	if sc.Views.AllTrafficPerBucket {
 		if out.TTFT.PerBucket, err = p.perBucket(ctx, k, le, rate); err != nil {
@@ -530,4 +531,42 @@ func withFlag(f Figure, flag string) Figure {
 	}
 	f.Flags = append(slices.Clone(f.Flags), flag)
 	return f
+}
+
+// validatePlan sets the envelope's verdict on the figures a plan reads: the
+// knees, the TTFT at the rate and the rate at its target, the TPOT's two
+// points, and the limits. A marginal step is another fleet's, and carries
+// none.
+func validatePlan(out *PlanResponse, k Knobs, c whatif.FigureClass, cs *curveSet, rate float64) {
+	m := out.TTFT.Markers
+	if m.PrefillKnee != nil {
+		*m.PrefillKnee = validate(*m.PrefillKnee, whatif.FigurePrefillKnee, 0, c, 0)
+	}
+	if m.DecodeKnee != nil {
+		*m.DecodeKnee = validate(*m.DecodeKnee, whatif.FigureDecodeKnee, 0, c, 0)
+	}
+	q := k.TTFTPercentile
+	knee := 0.0
+	if cs.kneeOK {
+		knee = cs.lowerKnee
+	}
+	l := &out.TTFT.Line
+	l.AtRate.Figure = validate(l.AtRate.Figure, whatif.FigureTTFT, q, c, shareOf(rate, knee))
+	l.AtTarget.Rate = validateRate(l.AtTarget.Rate, q, c, knee)
+	if t := out.TPOT; t != nil {
+		kind := whatif.FigureMeanTPOT
+		if k.TPOTPercentile != 0 {
+			kind = whatif.FigurePercentileTPOT
+		}
+		dk, _ := valueOf(cs.decodeKnee)
+		t.AtRate.Figure = validate(t.AtRate.Figure, kind, k.TPOTPercentile, c, shareOf(rate, dk))
+		t.AtTarget.Rate = validate(t.AtTarget.Rate, whatif.FigureRateAtTPOT, 0, c, 0)
+	}
+	lim := &out.Limits
+	lim.Prefill = validateRate(lim.Prefill, q, c, knee)
+	if lim.Decode != nil {
+		*lim.Decode = validate(*lim.Decode, whatif.FigureRateAtTPOT, 0, c, 0)
+	}
+	lim.Fleet.Figure = validateRate(lim.Fleet.Figure, q, c, knee)
+	lim.Fleet.WithoutHeadroom = validateRate(lim.Fleet.WithoutHeadroom, q, c, knee)
 }

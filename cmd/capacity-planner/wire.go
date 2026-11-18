@@ -7,6 +7,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // The -o json wire format. The library carries no json tags
@@ -328,6 +329,8 @@ type wireAnswer struct {
 	// Sensitivity is the figure's span at V_P and f either way, absent on a
 	// figure that does not rest on them.
 	Sensitivity *wireSensitivity `json:"sensitivity,omitempty"`
+	// Validation is the envelope's verdict on the figure (envelope.go).
+	Validation *whatifapi.Validation `json:"validation,omitempty"`
 }
 
 // wireSensitivity is whatif.Sensitivity on the wire: Refused is a corner's
@@ -362,6 +365,8 @@ type wireTTFTAnswer struct {
 	Parts wireTTFTParts `json:"parts"`
 	// Sensitivity is as on wireAnswer.
 	Sensitivity *wireSensitivity `json:"sensitivity,omitempty"`
+	// Validation is the envelope's verdict on the figure (envelope.go).
+	Validation *whatifapi.Validation `json:"validation,omitempty"`
 }
 
 // wireTTFTParts is the figures beside the union bound, and its parts' means,
@@ -533,7 +538,8 @@ const sourcePrefillKnee = "headroom x prefill knee"
 // wire is the fleet's prefill role.
 func (o operatingTTFT) wire() wireRole {
 	return wireRole{Role: rolePrefill, Variant: o.fleet.variant, TTFT: &o.fleet.in, Results: wireResults{
-		Knee: toWire(o.knee, unitRate), TTFT: toWireTTFT(o.ttft)}}
+		Knee: validated(toWire(o.knee, unitRate), o.fleet.kneeValidation(o.knee)),
+		TTFT: validatedTTFT(toWireTTFT(o.ttft), o.fleet.ttftValidation(o.q.q, o.rate, o.ttft))}}
 }
 
 // inputsOf is the wire's account of what a variant was priced from.

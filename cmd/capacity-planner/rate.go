@@ -115,7 +115,7 @@ func sloToRate(ctx context.Context, args []string, out, warn io.Writer) error {
 			if asksTPOT {
 				in.TPOT = f.tpotInputs(st, target.Seconds, target.Percentile, target.Ratio)
 				w.Roles = append(w.Roles, wireRole{Role: "decode", Variant: a.pv.state.Variant, Inputs: in,
-					Results: wireResults{Rate: toWire(a.result, unitRate)}})
+					Results: wireResults{Rate: validated(toWire(a.result, unitRate), a.pv.rateValidation(a.result))}})
 			}
 			w.Roles = append(w.Roles, a.wireTTFT()...)
 		}
@@ -162,6 +162,8 @@ func decodeRate(pv pricedVariant, query whatif.RateQuery, r resolvedRatio) whati
 func (a *rateAnswer) priceTTFT(t ttftQuestion, headroom float64) {
 	corners := a.priceTTFTRate(t)
 	a.fleetRate = a.fleetAt(t, headroom, a.result, corners)
+	a.fleetRate = settled(a.fleetRate, a.fleet.rateValidation(t.q, a.fleetRate, a.ttft))
+	a.ttft = settled(a.ttft, a.fleet.rateValidation(t.q, a.ttft, a.ttft))
 }
 
 // priceTTFTRate prices the prefill role's rate at the target, with its span,
@@ -196,8 +198,8 @@ func (a *rateAnswer) wireTTFT() []wireRole {
 		decode = a.fleet.pv.state.Variant
 	}
 	return []wireRole{
-		{Role: rolePrefill, Variant: a.fleet.variant, TTFT: &a.fleet.in, Results: wireResults{Rate: toWire(a.ttft, unitRate)}},
-		{Role: "fleet", Variant: decode, Results: wireResults{Rate: toWire(a.fleetRate, unitRate)}},
+		{Role: rolePrefill, Variant: a.fleet.variant, TTFT: &a.fleet.in, Results: wireResults{Rate: validated(toWire(a.ttft, unitRate), a.fleet.rateValidation(a.fleet.q, a.ttft, a.ttft))}},
+		{Role: "fleet", Variant: decode, Results: wireResults{Rate: validated(toWire(a.fleetRate, unitRate), a.fleet.rateValidation(a.fleet.q, a.fleetRate, a.ttft))}},
 	}
 }
 
@@ -250,7 +252,7 @@ func writeRateText(out io.Writer, st *learnreplay.State, variants []pricedVarian
 			if r.Band != nil {
 				basis += fmt.Sprintf(" [%.1f .. %.1f]", r.Band.Lo, r.Band.Hi)
 			}
-			fmt.Fprintf(&b, layout, role, rateText(r.Value), by, strings.TrimSpace(basis))
+			fmt.Fprintf(&b, layout, role, rateText(r.Value), by, strings.TrimSpace(basis)+"; "+a.pv.rateValidation(r).String())
 		case whatif.Unanswerable:
 			fmt.Fprintf(&b, "%-9s%s\n", role, refusedText(r))
 		}

@@ -107,7 +107,12 @@
             },
             "flags": [
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+            }
           }
         },
         "operatingRate": {
@@ -151,7 +156,12 @@
             },
             "flags": [
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+            }
           }
         }
       }

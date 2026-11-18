@@ -1,5 +1,5 @@
 role     est. rate at SLO   bound by                                 basis
-decode   11.32 r/s          operating-point cap (TPOT alone: 12.03)  ols [11.2 .. 11.4]
+decode   11.32 r/s          operating-point cap (TPOT alone: 12.03)  ols [11.2 .. 11.4]; OUTSIDE VALIDATED REGION (rate at a TPOT target: never measured)
          shape IL 1000 OL 1000 (assumed)
          engine vLLM release not recorded
          line check ok at another shape (rows at KV 6502 a request, priced at 1500): median 3.0% off the rate read, line low; 0 of 10 rows past 15%, worst 4.4%, fill 0.52-0.55, cycles 122-131; left out 20 on a ramp, 0 above the band, 10 older than 30m0s

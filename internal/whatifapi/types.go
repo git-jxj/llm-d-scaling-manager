@@ -198,6 +198,10 @@ type Figure struct {
 	BoundBy         []string `json:"boundBy,omitempty"`
 	Flags           []string `json:"flags,omitempty"`
 	Refused         *Refusal `json:"refused,omitempty"`
+	// Validation is the envelope's verdict on the figure, on the figures a
+	// plan reads (the points A and B, the knees and the limits), not on a
+	// curve's points.
+	Validation *Validation `json:"validation,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.

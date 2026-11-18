@@ -404,43 +404,10 @@ func gateOf(st *learnreplay.State) frozenGate {
 // is a question this command cannot ask.
 func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b freezeBucket,
 	held map[string]map[float64]float64) (frozenBucket, error) {
-	out := frozenBucket{freezeBucket: b, Flags: []whatif.Flag{}, Assumed: []string{}, Targets: []frozenTarget{}, Curve: []frozenPoint{}}
-	if v, ok := f.ca2[b.Name]; ok {
-		out.Ca2 = v
-	}
-	a := answerFlags{question: "freeze", cycle: "last", decode: b.Decode, prefill: b.Prefill,
-		inputTokens: b.Prompt, outputTokens: b.Output, assumeVP: f.assumeVP, seed: 1,
-		set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
-	if f.assumeVP > 0 {
-		a.set["assume-vp"] = true
-	}
-	variants, err := a.decodeVariants(st)
-	if err != nil {
+	out, off, pf, err := f.bucketFleet(st, spec, b)
+	if err != nil || pf == nil {
 		return out, err
 	}
-	if len(variants) != 1 {
-		return out, usagef("the recording holds %d decode variants, want 1: a staircase prices one fleet", len(variants))
-	}
-	ps, err := a.prefillState(st)
-	if err != nil {
-		return out, err
-	}
-	pf := a.fleetFor(st, ps, ttftQuestion{q: 0.9}, &variants[0])
-	out.Flags, out.Assumed = settledFlags(pf.flags, out.Ca2), settledAssumed(pf.in.Assumed)
-	if pf.refused != nil {
-		out.Refused = refusalText(*pf.refused)
-		return out, nil
-	}
-	off := pf.fleet
-	off.Prefill.PromptCV, off.Prefill.PromptCVAssumed = spec.PromptCV, false
-	out.TransferSecondsPerToken = off.Prefill.TransferSecondsPerToken
-	out.AllRowsTransferSeconds = variants[0].state.DecodeTTFT.AllRowsTransferSeconds
-	// ArrivalCV2 reads 0 as Poisson, and a Poisson bucket flags no burst.
-	off.Prefill.ArrivalCV2 = 0
-	if out.Ca2 != 1 {
-		off.Prefill.ArrivalCV2 = out.Ca2
-	}
-	off.FlowControl = whatif.FlowControl{State: whatif.FlowControlOff}
 	on := off
 	on.FlowControl = whatif.FlowControl{State: whatif.FlowControlOn,
 		QueueThreshold: whatif.FlowControlQueueThreshold, KVThreshold: whatif.FlowControlKVThreshold}
@@ -481,6 +448,51 @@ func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b fre
 		out.Curve = append(out.Curve, modelPoint(off, rate))
 	}
 	return out, nil
+}
+
+// bucketFleet is one bucket's fleet as the freeze prices it, flow control
+// off: the spec's counts, shape, spread and arrivals on the recording's
+// terms, and the priced fleet it came from; pf is nil where the fleet
+// refused, with out saying why.
+func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b freezeBucket) (frozenBucket, whatif.TTFTFleet, *pricedFleet, error) {
+	out := frozenBucket{freezeBucket: b, Flags: []whatif.Flag{}, Assumed: []string{}, Targets: []frozenTarget{}, Curve: []frozenPoint{}}
+	if v, ok := f.ca2[b.Name]; ok {
+		out.Ca2 = v
+	}
+	a := answerFlags{question: "freeze", cycle: "last", decode: b.Decode, prefill: b.Prefill,
+		inputTokens: b.Prompt, outputTokens: b.Output, assumeVP: f.assumeVP, seed: 1,
+		set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
+	if f.assumeVP > 0 {
+		a.set["assume-vp"] = true
+	}
+	variants, err := a.decodeVariants(st)
+	if err != nil {
+		return out, whatif.TTFTFleet{}, nil, err
+	}
+	if len(variants) != 1 {
+		return out, whatif.TTFTFleet{}, nil, usagef("the recording holds %d decode variants, want 1: a staircase prices one fleet", len(variants))
+	}
+	ps, err := a.prefillState(st)
+	if err != nil {
+		return out, whatif.TTFTFleet{}, nil, err
+	}
+	pf := a.fleetFor(st, ps, ttftQuestion{q: 0.9}, &variants[0])
+	out.Flags, out.Assumed = settledFlags(pf.flags, out.Ca2), settledAssumed(pf.in.Assumed)
+	if pf.refused != nil {
+		out.Refused = refusalText(*pf.refused)
+		return out, whatif.TTFTFleet{}, nil, nil
+	}
+	off := pf.fleet
+	off.Prefill.PromptCV, off.Prefill.PromptCVAssumed = spec.PromptCV, false
+	out.TransferSecondsPerToken = off.Prefill.TransferSecondsPerToken
+	out.AllRowsTransferSeconds = variants[0].state.DecodeTTFT.AllRowsTransferSeconds
+	// ArrivalCV2 reads 0 as Poisson, and a Poisson bucket flags no burst.
+	off.Prefill.ArrivalCV2 = 0
+	if out.Ca2 != 1 {
+		off.Prefill.ArrivalCV2 = out.Ca2
+	}
+	off.FlowControl = whatif.FlowControl{State: whatif.FlowControlOff}
+	return out, off, pf, nil
 }
 
 // settledAssumed is the fleet's assumptions, less those the spec settles: what the

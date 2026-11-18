@@ -304,6 +304,7 @@ NonPositiveStepSlope
 NotTriggerScaleUp
 Nothing
 OLS
+OUTSIDE
 OnePod
 Optimization
 Optimizer
@@ -363,6 +364,7 @@ PromptSpreadAbovePeak
 PromptSpreadClamped
 Published
 PullUnseen
+REGION
 REST_CLIENT_TIMEOUT
 ROLE
 R_q
@@ -462,6 +464,7 @@ Utilization
 V
 V2
 VA
+VALIDATED
 VAs
 VLLM_ALL2ALL_BACKEND
 VLLM_USE_V1
@@ -556,6 +559,7 @@ against
 age
 ageSeconds
 aged
+aggregated
 ago
 agree
 agreeCycles
@@ -719,6 +723,7 @@ bounded
 boundedBy
 bounds
 bound|
+bracket
 bridge
 bridgePerReplica
 bridges
@@ -922,6 +927,7 @@ declared
 declares
 declined
 decode
+decode-knee
 decode-only
 decode-queue-unknown
 decode-style
@@ -1054,6 +1060,7 @@ effectiveClusterQuotas
 effectiveInputTokens
 effectiveNamespaceQuotas
 effective_max_batched_tokens
+either
 election
 elsewhere
 emit
@@ -1095,6 +1102,7 @@ entries
 entry
 env
 env.VLLM_ALL2ALL_BACKEND
+envelope
 environment
 ep
 ep_size
@@ -1214,6 +1222,7 @@ flooredTo
 floors
 flow
 flow-control
+flow-control-onset
 flowControl
 folded
 for
@@ -1336,6 +1345,7 @@ history
 historyAgeSeconds
 historyKey
 historyWindowLen
+hit
 hold
 hold-only
 holdCap
@@ -1399,6 +1409,7 @@ infers
 info
 infrastructure
 inline
+input
 input-invalid
 inputTokensNow
 inputTokensWas
@@ -1608,6 +1619,7 @@ l40
 label
 label_
 labels
+ladder
 lagFraction
 landed
 lands
@@ -1652,6 +1664,7 @@ length
 lengthen
 lent
 let
+levels
 liftReason
 lifted
 likely
@@ -1756,6 +1769,7 @@ maximum
 may
 mayOrder
 mean
+mean-tpot
 meanNeedGPUs
 meanRemaining
 means
@@ -1790,6 +1804,7 @@ mi355
 mid-rollout
 mid-run
 milliseconds
+min-max
 minKSpread
 minReplicas
 minSamples
@@ -1872,6 +1887,7 @@ multi-Pod
 multiple
 must
 mutually
+n
 n-dependence
 n-dependent
 n/a
@@ -2014,6 +2030,7 @@ once
 one
 one-minute
 one-pod
+one-sided
 ones
 only
 onset
@@ -2023,6 +2040,7 @@ onto
 open
 operating
 operating-point
+operating-point-cap
 operation
 operator
 optimization
@@ -2078,9 +2096,11 @@ owner_kind
 owner_name
 owning
 p
+p10-p90
 page_size
 panic
 panicked
+parallelism
 parameter
 parameters
 parked
@@ -2098,6 +2118,7 @@ past
 path
 paused
 paused-replicas
+pd
 pd-pair-borrows-whole
 peak-under-queue
 peakClaimGPUs
@@ -2122,6 +2143,7 @@ perReplicaRate
 perReplicaTokensPerSec
 percent
 percentile
+percentile-tpot
 percentiles
 period
 persist
@@ -2190,6 +2212,8 @@ prefill-capacity-observe
 prefill-capacity-observed
 prefill-catchup
 prefill-demand-held
+prefill-knee
+prefill-latency
 prefill-required
 prefill-throughput-bound-reading
 prefillBoundHeld
@@ -2301,6 +2325,8 @@ ran
 range
 rank
 rate
+rate-at-tpot
+rate-at-ttft
 rateRefused
 rates
 rather
@@ -2793,6 +2819,7 @@ starts
 stashed
 stashedWindows
 state
+stated
 states
 static
 stationary
@@ -2865,6 +2892,7 @@ targets
 tell
 template
 tenants
+tensor
 tensor_parallel_size
 term
 terminating
@@ -2959,6 +2987,7 @@ too
 too-few-readings
 took
 top
+topology
 totalAvail
 totalDecisions
 totalDemand
