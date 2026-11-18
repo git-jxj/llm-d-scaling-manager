@@ -59,7 +59,7 @@ With an empty directory the page says "This server reads no source".
 ```bash
 # A sample recording, from the source tree of the release you run: one P/D model, one prefill and one decode
 # replica, an hour of a test run. Or put your own run.jsonl.gz from the record guide in recordings/ instead.
-export V=<release, v0.11.2 or later>
+export V=<release, v0.12.0 or later>
 mkdir -p recordings
 curl -fsSL -o recordings/ols-sweep.jsonl.gz \
   https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz
@@ -75,7 +75,7 @@ Run the image:
 # read them. -p 127.0.0.1:... keeps the port
 # off your network; never publish it beyond 127.0.0.1. Rootless Podman: --userns=keep-id in place of --user,
 # and with SELinux mount with :ro,Z.
-export V=<release, v0.11.2 or later>
+export V=<release, v0.12.0 or later>
 mkdir -p recordings
 docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
   ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V}
@@ -108,7 +108,7 @@ use:
 ```bash
 # Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
 # signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
-export V=<release, v0.11.2 or later> OS=linux ARCH=amd64
+export V=<release, v0.12.0 or later> OS=linux ARCH=amd64
 B=capacity-planner-${V}-${OS}-${ARCH}
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
 curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS

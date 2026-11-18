@@ -13,7 +13,7 @@ cluster-admin credentials, and a tag can move. The release run's summary
 prints the digest, in the `cosign verify` command for it.
 
 ```bash
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:97ac9e064c4984fb109ca6e15e52d4716f91dc65245dd995e5636c8544cc1393
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:TOOLS_DIGEST_V0120
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
