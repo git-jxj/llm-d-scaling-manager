@@ -109,6 +109,7 @@ for section in ("requests", "limits"):
 check(res.get("limits", {}).get("memory"), "a memory limit")
 csc = c.get("securityContext", {})
 check(csc.get("allowPrivilegeEscalation") is False and "ALL" in csc.get("capabilities", {}).get("drop", []), "drops all capabilities")
+check("add" not in csc.get("capabilities", {}), "adds none back: %s" % csc.get("capabilities"))
 
 check(len(default) == 4, "defaults render four documents")
 if len(default) == 4:
@@ -146,7 +147,8 @@ check('merge() {' in script and 'local e n t' in script and 'merge "$e" "$t"' in
 check(script.index("if [ -d /seed ]") < script.index('touch "/engine-cache/$MARKER"'), "the seed is copied before the prepared marker is written")
 check('[ "$seeded_from" != "$want" ]' in script and 'echo "$want" > "/engine-cache/$SEED_MARKER"' in script and 'want="$SEED_ID@$stamp"' in script, "the seed marker records the seed and its publish stamp, and a different seed or a new stamp is merged in")
 i_ok = script.index('if [ "$complete" = 1 ]; then\n'); i_mark = script.index('echo "$want" > "/engine-cache/$SEED_MARKER"'); i_loop = script.index('cp -a --no-preserve=ownership "$e" "$t"')
-check(i_loop < i_ok < i_mark and '|| { complete=0; rm -f "$t"; continue; }' in script and 'else complete=0; rm -rf "$t"; added=' in script, "the marker is written only after every copy succeeded; a failed copy is removed and the seed retried next start")
+check(i_loop < i_ok < i_mark and '|| { rm -f "$t"; unreadable "$e" || complete=0; continue; }' in script and '[ "$complete" = 1 ] && complete="$was" || complete=0\n' in script and 'rm -rf "$t"; added="$wa"' in script, "the marker is written only after every copy succeeded; a failed copy is removed and the seed retried next start")
+check("dmode=1777; skipunread=0\n" in script, "the preparer makes the directories it copies 1777, and an entry it may not read fails the seed (retried next start), not skipped")
 probe_seed = seed["containers"][0]["readinessProbe"]["exec"]["command"][2]
 check(probe_seed.endswith('&& grep -qx -e "workload-pvc:engine-cache" -e "workload-pvc:engine-cache@[0-9]*" -e "none:workload-pvc:engine-cache" /engine-cache/.seeded'), "with a seed, Ready also requires the node to carry that seed (as published, or before any publish), or the record that it had nothing to seed: %s" % probe_seed)
 env = {e["name"]: e.get("value") for e in seed["containers"][0]["env"]}
@@ -393,17 +395,99 @@ modes_case() { # $1: merge or publish; $2: gnu or busybox
     fi
     [ "$(cat "$dst/$k/rank_0_0/model" 2>/dev/null)" = m ] || bad="$bad no copy;"
     ls -ld "$dst/$k/rank_0_0/model" 2>/dev/null | grep -q '^-......r' || bad="$bad model not o+r;"
+    # On a node the copies are 1777, as the cache directories are, so an
+    # engine of any UID adds to them; in the shared seed no user but the
+    # publisher writes.
     for d in vllm/torch_compile_cache vllm/torch_compile_cache/torch_aot_compile "$k" "$k/rank_0_0"; do
-        ls -ld "$dst/$d" 2>/dev/null | grep -q '^d......r.x' || bad="$bad $d not o+rx;"
+        if [ "$1" = merge ]; then
+            ls -ld "$dst/$d" 2>/dev/null | grep -q '^drwxrwxrwt' || bad="$bad $d not 1777;"
+        else
+            ls -ld "$dst/$d" 2>/dev/null | grep -q '^d....-.r-x' || bad="$bad $d not o+rx, or writable by another user;"
+        fi
     done
     # publish also creates the seed subPath and its engine directory
     if [ "$1" = publish ]; then
         for d in . vllm; do ls -ld "$dst/$d" 2>/dev/null | grep -q '^d......r.x' || bad="$bad seed $d not o+rx;"; done
     fi
-    [ "$rc" = 0 ] && [ -z "$bad" ] && ok "$1 ($2 cp): a 600 file under 700 directories is copied o+r, its directories o+rx" \
+    [ "$rc" = 0 ] && [ -z "$bad" ] && ok "$1 ($2 cp): a 600 file under 700 directories is copied o+r, its directories $([ "$1" = merge ] && echo 1777 || echo 'o+rx, not g+w or o+w')" \
         || fail "$1 ($2 cp) modes: rc=$rc$bad $(ls -lR "$dst/vllm" 2>&1 | head -12 | tr '\n' ';') $(cat "$W/run.out")"
 }
 modes_case merge gnu; modes_case merge busybox; modes_case publish gnu; modes_case publish busybox
+# Publish from a node a non-root engine wrote to (#200): files only that user
+# may read (vLLM writes modelinfos/*.json and its AOT files 600). Here they are
+# mode 000, which their owner, the non-root check runner, may not read either.
+# Publish skips each and names it, and leaves out every new directory above
+# it up to one the seed already has (a partial key fails vLLM's cache
+# lookup; the cost is a compile). It keeps the readable rest, exits 0, and
+# says how many it skipped. Here the seed already has modelinfos/ and
+# torch_compile_cache/ from an earlier publish; triton/ is new, but publish
+# makes each cache directory before merging into it.
+U="$T/unread"; UN="$U/node"; US="$U/seed/engine-cache"
+mkdir -p "$UN/vllm/modelinfos" "$UN/vllm/torch_compile_cache/keyU/rank_0_0" "$UN/vllm/torch_compile_cache/keyV" "$UN/vllm/torch_compile_cache/keyW/d" \
+    "$UN/triton/H1" "$UN/triton/H2" "$US/vllm/modelinfos" "$US/vllm/torch_compile_cache"
+echo s > "$US/vllm/modelinfos/s.json"; echo a > "$UN/vllm/modelinfos/a.json"; echo b > "$UN/vllm/modelinfos/b.json"
+echo u > "$UN/vllm/torch_compile_cache/keyU/rank_0_0/ok"; echo x > "$UN/vllm/torch_compile_cache/keyU/rank_0_0/aot"; echo v > "$UN/vllm/torch_compile_cache/keyV/f"
+echo 1 > "$UN/triton/H1/k.cubin"; echo 2 > "$UN/triton/H2/k.cubin"
+chmod 000 "$UN/vllm/modelinfos/b.json" "$UN/vllm/torch_compile_cache/keyU/rank_0_0/aot" "$UN/vllm/torch_compile_cache/keyW/d" "$UN/triton/H1/k.cubin"
+sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$U/seed|g; s|/engine-cache|$U/node|g" > "$U/pub.sh"
+SEED_SUBPATH=engine-cache NODE_NAME=n1 "$SH" "$U/pub.sh" > "$U/pub.out" 2>&1; rc=$?
+chmod 644 "$UN/vllm/modelinfos/b.json" "$UN/vllm/torch_compile_cache/keyU/rank_0_0/aot" "$UN/triton/H1/k.cubin"; chmod 755 "$UN/vllm/torch_compile_cache/keyW/d"
+if [ "$(id -u)" = 0 ]; then ok "publish: (the unreadable-file case needs a non-root check runner)"; else
+    nskip="$(grep -c ': this pod may not read it$' "$U/pub.out")"
+    if [ "$rc" = 0 ] && [ "$(cat "$US/vllm/modelinfos/a.json" 2>/dev/null)" = a ] && [ "$(cat "$US/vllm/modelinfos/s.json" 2>/dev/null)" = s ] && [ ! -e "$US/vllm/modelinfos/b.json" ] \
+        && [ "$(cat "$US/vllm/torch_compile_cache/keyV/f" 2>/dev/null)" = v ] && [ ! -e "$US/vllm/torch_compile_cache/keyU" ] && [ ! -e "$US/vllm/torch_compile_cache/keyW" ] \
+        && [ "$(cat "$US/triton/H2/k.cubin" 2>/dev/null)" = 2 ] && [ ! -e "$US/triton/H1" ] \
+        && [ "$nskip" = 4 ] && grep -q "skipped $UN/vllm/modelinfos/b.json: this pod may not read it" "$U/pub.out" \
+        && grep -q "skipped $UN/vllm/torch_compile_cache/keyU/rank_0_0/aot: this pod may not read it" "$U/pub.out" \
+        && grep -q "skipped $UN/vllm/torch_compile_cache/keyW/d: this pod may not read it" "$U/pub.out" \
+        && grep -q "^engine cache: 4 entr(y/ies) this pod may not read were skipped" "$U/pub.out" && grep -q "published from n1: 3 file(s) copied" "$U/pub.out"; then
+        ok "publish: a file or directory the publisher may not read is skipped and named, a new key holding one is left out whole, the rest is published (4 skipped, 3 copied)"
+    else
+        fail "publish with unreadable entries: rc=$rc skipped=$nskip $(cd "$U/seed" 2>/dev/null && find . | sort | tr '\n' ' ') $(cat "$U/pub.out")"
+    fi
+fi
+# The capability that lets publish read those files at all is on the publish
+# pod and nowhere else: not on the preparer, with or without a seed.
+mkdir -p "$T/pubbin"
+cat > "$T/pubbin/kubectl" <<'EOF'
+#!/usr/bin/env bash
+case " $* " in
+  *" get daemonset "*engine-cache-seed*) printf 'workload-pvc:engine-cache' ;;
+  *" get daemonset "*'containers[0].image'*) printf 'registry.example.com/vllm:v1' ;;
+  *" get pods "*) printf '{"items":[{"spec":{"nodeName":"node-a"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' ;;
+  *) echo "stub kubectl: unexpected $*" >&2; exit 2 ;;
+esac
+EOF
+chmod +x "$T/pubbin/kubectl"
+PATH="$T/pubbin:$PATH" bash deploy/enginecache.sh publish -n check-ns --dry-run > "$T/render-publish.yaml" 2> "$T/render-publish.err" || fail "publish --dry-run failed: $(cat "$T/render-publish.err")"
+"$PY" - "$T/render-publish.yaml" "$T/render.yaml" "$T/render-default.yaml" "$T/render-seed.yaml" "$T/render-seed2.yaml" <<'PYEOF' || FAILED=1
+import sys, yaml
+found = []
+def walk(o, kind, path):
+    if isinstance(o, dict):
+        caps = o.get("capabilities")
+        if isinstance(caps, dict) and "add" in caps:
+            found.append((path, kind, caps["add"], caps.get("drop")))
+        for k, v in o.items():
+            walk(v, kind, path)
+    elif isinstance(o, list):
+        for v in o:
+            walk(v, kind, path)
+pods = 0
+for p in sys.argv[1:]:
+    for d in yaml.safe_load_all(open(p, encoding="utf-8")):
+        if not d:
+            continue
+        if p == sys.argv[1] and d.get("kind") == "Pod":
+            pods += 1
+        walk(d, d.get("kind"), p)
+want = [(sys.argv[1], "Pod", ["DAC_OVERRIDE"], ["ALL"])]
+if pods == 1 and found == want:
+    sys.exit(0)
+print("  FAIL publish render: %d publish Pod(s); capabilities added: %s (want only %s)" % (pods, found, want))
+sys.exit(1)
+PYEOF
+[ "$FAILED" = 0 ] && ok "render: the publish pod drops every capability and adds DAC_OVERRIDE alone (baseline admits it); the preparer adds none"
 # the readiness probe accepts every marker form the preparer writes
 for m in "workload-pvc:engine-cache" "workload-pvc:engine-cache@20261013120000" "none:workload-pvc:engine-cache"; do
     echo "$m" > "$T/marker"

@@ -785,6 +785,14 @@ If a node does not, publish fails and says so. The seed stays stamped, so run
 `make engine-cache-status` to see which node, and read that node's preparer log
 to see why.
 
+Engines that run as a non-root user write some cache files readable only by
+that user (vLLM's `modelinfos/*.json`, for example). The publish pod runs as
+root and adds one capability, `DAC_OVERRIDE`, so it can read them. Pod Security
+"baseline" admits it. If a file still cannot be read, publish skips it, names
+it in its output, and still stamps the seed. On a seeded node, the copied
+directories are writable by every user (`1777`, as the cache directories
+themselves are), so an engine of any UID can add new keys beside them.
+
 #### Python bytecode
 
 Engine images ship almost no compiled bytecode for their Python packages

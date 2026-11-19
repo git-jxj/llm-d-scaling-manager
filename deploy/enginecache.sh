@@ -192,7 +192,11 @@
 # trade-off, taken so the engines need no fsGroup; a namespace that runs
 # its engines under one UID and wants the separation can chown the four
 # directories to it and chmod them 1770 on each node. The preparer runs as
-# its own ServiceAccount, engine-cache-preparer.
+# its own ServiceAccount, engine-cache-preparer. The publish pods (same
+# ServiceAccount) add one capability, DAC_OVERRIDE, to read what a non-root
+# engine wrote 600; baseline admits it. A seeded node gets the copies as the
+# preparer's, in directories it makes 1777, so an engine of any UID can add
+# to them.
 #
 # On OpenShift -- NOT YET RUN THERE -- restricted-v2 runs the preparer and
 # the engines as the project's range UID with GID 0, and the kubelet does not
@@ -284,6 +288,13 @@ for d in vllm flashinfer triton pycache; do
   mkdir -p "/engine-cache/$d" || exit 1
   chmod 1777 "/engine-cache/$d" 2>/dev/null || true
 done
+# A directory the merge makes is 1777, as the four above are: the copies are
+# this pod's, and an engine of any UID must still add to the tree it finds --
+# a new key under torch_compile_cache/, a .pyc under pycache/<key>/, the
+# guard's .writable marker. Sticky, so no engine removes a seeded copy. A seed
+# entry this pod may not read fails the merge (skipunread=0), so the next
+# start of the pod tries again.
+dmode=1777; skipunread=0
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
 cpa=0
@@ -299,13 +310,30 @@ rm -f /tmp/.ec-cp-check /tmp/.ec-cp-check.2
 #  * a new directory is removed whole when any copy under it fails, so no
 #    half-copied key is left behind, and the merge is marked incomplete;
 #    what was counted under it is uncounted;
-#    a directory that cannot be listed is a failed copy, not an empty one.
+#    a directory that cannot be listed is a failed copy, not an empty one;
+#  * with skipunread=1, an entry this pod may not open is not a failed copy:
+#    it is named and skipped, with every new directory above it up to the
+#    first one DST had, so no partial key is left; the rest goes on.
 # The copier owns every copy, whatever owned the original. The globs match
 # every name: plain, one leading dot, and two leading dots (..x).
+# unreadable PATH: with skipunread=1, true when the kernel refuses this pod
+# PATH (a read, or for a directory a read or a search) -- asked by opening it,
+# as `test -r` answers yes for root whatever its capabilities -- and then
+# PATH is named and counted. Any other failure is a failed copy.
+unreadable() {
+  [ "$skipunread" = 1 ] || return 1
+  if [ -d "$1" ]; then
+    (: < "$1") 2>/dev/null && (cd "$1") 2>/dev/null && return 1
+  else
+    (: < "$1") 2>/dev/null && return 1
+  fi
+  unread="$unread."; skip=1
+  echo "engine cache: skipped $1: this pod may not read it"
+}
 merge() {
-  local e n t was wa wp wpe pub
+  local e n t was wa wp wpe ws pub
   # a directory that cannot be listed would glob to nothing and read as empty
-  ls -a "$1" >/dev/null || { complete=0; return; }
+  ls -a "$1" >/dev/null || { unreadable "$1" || complete=0; return; }
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     n="${e##*/}"; t="$2/$n"
@@ -318,13 +346,19 @@ merge() {
     elif [ -e "$t" ] || [ -L "$t" ]; then
       if [ -d "$e" ] && [ -d "$t" ] && [ ! -L "$t" ]; then merge "$e" "$t"; fi
     elif [ -d "$e" ]; then
-      was="$complete"; wa="$added"; wp="$private"; wpe="$private_eg"; complete=1
-      mkdir "$t" && chmod a+rx "$t" || complete=0
+      was="$complete"; wa="$added"; wp="$private"; wpe="$private_eg"; ws="$skip"; complete=1; skip=0
+      mkdir "$t" && chmod "$dmode" "$t" || complete=0
       [ "$complete" = 0 ] || merge "$e" "$t"
-      if [ "$complete" = 1 ]; then complete="$was"; else complete=0; rm -rf "$t"; added="$wa"; private="$wp"; private_eg="$wpe"; fi
+      if [ "$complete" = 1 ] && [ "$skip" = 0 ]; then complete="$was"; skip="$ws"
+      else
+        # a failed copy fails the merge; a skipped entry drops this new
+        # directory, and skip stays set so a new parent goes with it
+        [ "$complete" = 1 ] && complete="$was" || complete=0
+        rm -rf "$t"; added="$wa"; private="$wp"; private_eg="$wpe"
+      fi
     elif [ -f "$e" ]; then
       pub=0; ls -ld "$e" | grep -q '^-......r' && pub=1
-      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { complete=0; rm -f "$t"; continue; }
+      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { rm -f "$t"; unreadable "$e" || complete=0; continue; }
       added="$added."
       [ "$pub" = 1 ] || { private="$private."; [ -n "$private_eg" ] || private_eg="$e"; }
     else
@@ -336,6 +370,7 @@ merge() {
 merge_report() {
   [ -z "$links" ] || echo "engine cache: ${#links} symlink(s) skipped (named above)"
   [ -z "$private" ] || echo "engine cache: ${#private} file(s) not readable by every user were copied readable by every user, for example $private_eg"
+  [ -z "$unread" ] || echo "engine cache: ${#unread} entr(y/ies) this pod may not read were skipped (named above), each with the new directories that held it"
 }
 seeded_from=""
 [ ! -f "/engine-cache/$SEED_MARKER" ] || read -r seeded_from < "/engine-cache/$SEED_MARKER" || seeded_from=""
@@ -361,7 +396,7 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
   # Drop the old marker first. If this merge fails, the node must be not
   # Ready -- not Ready on the stamp it merged before.
   rm -f "/engine-cache/$SEED_MARKER" || exit 1
-  complete=1; added=""; links=""; private=""; private_eg=""
+  complete=1; added=""; links=""; private=""; private_eg=""; unread=""; skip=0
   for d in vllm flashinfer triton pycache; do
     [ -d "$seed_dir/$d" ] || continue
     merge "$seed_dir/$d" "/engine-cache/$d"
@@ -849,6 +884,14 @@ dst="/seed${SEED_SUBPATH:+/$SEED_SUBPATH}"
 # umask 022: every directory mkdir -p creates is readable and searchable by
 # every user, as the merge makes its own; one that exists is left as it is
 (umask 022; mkdir -p "$dst") || exit 1
+# A directory the merge makes in the seed is readable and searchable by every
+# user and writable by none but this pod: the seed claim is shared, and what
+# is in it is code every seeded node runs. An entry this pod may not read is
+# skipped and named (skipunread=1), not a failed publish: the pod reads as
+# root with CAP_DAC_OVERRIDE, so on Kubernetes there is none, but a runtime
+# that drops the capability, or OpenShift running the pod as the project UID,
+# would otherwise leave the seed unstamped for one file vLLM wrote 600.
+dmode=a+rx; skipunread=1
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
 cpa=0
@@ -864,13 +907,30 @@ rm -f /tmp/.ec-cp-check /tmp/.ec-cp-check.2
 #  * a new directory is removed whole when any copy under it fails, so no
 #    half-copied key is left behind, and the merge is marked incomplete;
 #    what was counted under it is uncounted;
-#    a directory that cannot be listed is a failed copy, not an empty one.
+#    a directory that cannot be listed is a failed copy, not an empty one;
+#  * with skipunread=1, an entry this pod may not open is not a failed copy:
+#    it is named and skipped, with every new directory above it up to the
+#    first one DST had, so no partial key is left; the rest goes on.
 # The copier owns every copy, whatever owned the original. The globs match
 # every name: plain, one leading dot, and two leading dots (..x).
+# unreadable PATH: with skipunread=1, true when the kernel refuses this pod
+# PATH (a read, or for a directory a read or a search) -- asked by opening it,
+# as `test -r` answers yes for root whatever its capabilities -- and then
+# PATH is named and counted. Any other failure is a failed copy.
+unreadable() {
+  [ "$skipunread" = 1 ] || return 1
+  if [ -d "$1" ]; then
+    (: < "$1") 2>/dev/null && (cd "$1") 2>/dev/null && return 1
+  else
+    (: < "$1") 2>/dev/null && return 1
+  fi
+  unread="$unread."; skip=1
+  echo "engine cache: skipped $1: this pod may not read it"
+}
 merge() {
-  local e n t was wa wp wpe pub
+  local e n t was wa wp wpe ws pub
   # a directory that cannot be listed would glob to nothing and read as empty
-  ls -a "$1" >/dev/null || { complete=0; return; }
+  ls -a "$1" >/dev/null || { unreadable "$1" || complete=0; return; }
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     n="${e##*/}"; t="$2/$n"
@@ -883,13 +943,19 @@ merge() {
     elif [ -e "$t" ] || [ -L "$t" ]; then
       if [ -d "$e" ] && [ -d "$t" ] && [ ! -L "$t" ]; then merge "$e" "$t"; fi
     elif [ -d "$e" ]; then
-      was="$complete"; wa="$added"; wp="$private"; wpe="$private_eg"; complete=1
-      mkdir "$t" && chmod a+rx "$t" || complete=0
+      was="$complete"; wa="$added"; wp="$private"; wpe="$private_eg"; ws="$skip"; complete=1; skip=0
+      mkdir "$t" && chmod "$dmode" "$t" || complete=0
       [ "$complete" = 0 ] || merge "$e" "$t"
-      if [ "$complete" = 1 ]; then complete="$was"; else complete=0; rm -rf "$t"; added="$wa"; private="$wp"; private_eg="$wpe"; fi
+      if [ "$complete" = 1 ] && [ "$skip" = 0 ]; then complete="$was"; skip="$ws"
+      else
+        # a failed copy fails the merge; a skipped entry drops this new
+        # directory, and skip stays set so a new parent goes with it
+        [ "$complete" = 1 ] && complete="$was" || complete=0
+        rm -rf "$t"; added="$wa"; private="$wp"; private_eg="$wpe"
+      fi
     elif [ -f "$e" ]; then
       pub=0; ls -ld "$e" | grep -q '^-......r' && pub=1
-      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { complete=0; rm -f "$t"; continue; }
+      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { rm -f "$t"; unreadable "$e" || complete=0; continue; }
       added="$added."
       [ "$pub" = 1 ] || { private="$private."; [ -n "$private_eg" ] || private_eg="$e"; }
     else
@@ -901,8 +967,9 @@ merge() {
 merge_report() {
   [ -z "$links" ] || echo "engine cache: ${#links} symlink(s) skipped (named above)"
   [ -z "$private" ] || echo "engine cache: ${#private} file(s) not readable by every user were copied readable by every user, for example $private_eg"
+  [ -z "$unread" ] || echo "engine cache: ${#unread} entr(y/ies) this pod may not read were skipped (named above), each with the new directories that held it"
 }
-complete=1; added=""; links=""; private=""; private_eg=""
+complete=1; added=""; links=""; private=""; private_eg=""; unread=""; skip=0
 for d in vllm flashinfer triton pycache; do
   [ -d "/engine-cache/$d" ] || continue
   (umask 022; mkdir -p "$dst/$d") || exit 1
@@ -1029,10 +1096,17 @@ $(publish_script | sed 's/^/          /')
           memory: 32Mi
         limits:
           memory: 256Mi
+      # Root with every capability dropped cannot read a file another user
+      # wrote 600, and a non-root engine's caches hold them (vLLM's
+      # modelinfos/*.json and AOT files). DAC_OVERRIDE, not DAC_READ_SEARCH:
+      # Pod Security "baseline" admits the first and not the second, and the
+      # write half reaches only the seed, which this pod writes anyway --
+      # the node cache is mounted read-only.
       securityContext:
         allowPrivilegeEscalation: false
         capabilities:
           drop: ["ALL"]
+          add: ["DAC_OVERRIDE"]
 EOF
 )"
         if [ "$DRY_RUN" = true ]; then printf '%s\n---\n' "$manifest"; continue; fi
@@ -1043,7 +1117,8 @@ EOF
             kubectl delete pod -n "$NAMESPACE" "$pod" --ignore-not-found --wait=false >/dev/null 2>&1
             log_error "publish: ${pod} on ${node} did not succeed (its log is above); the seed is not stamped, so no node re-seeds from a partial copy"
         fi
-        kubectl logs -n "$NAMESPACE" "$pod" 2>/dev/null | tail -1
+        # What was skipped (a symlink, an entry the pod may not read), then the count.
+        kubectl logs -n "$NAMESPACE" "$pod" 2>/dev/null | grep -E '^engine cache: ([0-9]|skipped |published from)' | tail -20
         kubectl delete pod -n "$NAMESPACE" "$pod" --ignore-not-found --wait=false >/dev/null
     done
     [ "$DRY_RUN" = false ] || return 0
