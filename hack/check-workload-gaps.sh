@@ -184,6 +184,10 @@ fail() {
 }
 
 ok() { RAN=$((RAN + 1)); printf 'ok    %s\n' "$CASE"; }
+# skip REASON: the case checked nothing here. It is counted apart from ok,
+# so a skipped case never reads as a passing one.
+SKIPPED=0
+skip() { SKIPPED=$((SKIPPED + 1)); printf 'SKIP  %s: %s\n' "$CASE" "$1" >&2; }
 
 # gaps_field reads one field the way PRODUCTION reads it: `IFS read`, not `cut`.
 # The difference is the whole point of one of the cases below -- `cut` is
@@ -2484,8 +2488,12 @@ me="$(id -u)"
 mkdir -p "$G/noown"
 printf '%s\n' '#!/bin/sh' 'f="${1%XXXXXX}fake"; ln -s /dev/null "$f" && echo "$f"' > "$G/noown/mktemp"
 chmod 755 "$G/noown/mktemp"
+# chmod that always fails, so the guard refuses a directory it just made
+mkdir -p "$G/nochmod"
+printf '%s\n' '#!/bin/sh' 'exit 1' > "$G/nochmod/chmod"
+chmod 755 "$G/nochmod/chmod"
 if [ "$me" = 0 ]; then
-    printf 'SKIP  %s: as root every file reads as owned by this user; the real-user case below covers it\n' "$CASE" >&2
+    skip "as root every file reads as owned by this user; the real-user case below covers it"
 fi
 for sh_ in $GUARD_SHELLS; do
     [ "$me" != 0 ] || break
@@ -2541,6 +2549,16 @@ for sh_ in $GUARD_SHELLS; do
         assert_eq "$(printf '%s\n' "$out" | grep -c 'engine cache')" "1" "$sh_: log lines for $k"
     done
     assert_eq "$(ls -A "$C/mine" | tr '\n' ' ')" "" "$sh_: the directory the planted link points at"
+    # A directory of its own that the guard made and then refused (here
+    # chmod fails; on a filesystem that does not report owners, -O) is
+    # removed again: nothing empty is left beside the other user's cache.
+    mkdir -p "$C/ec/pycache/h"
+    ln -s /dev/null "$C/ec/pycache/h/.writable"
+    chmod 555 "$C/ec/pycache/h"
+    out="$(LOOP_PATH="$G/nochmod" run_loop "$sh_" "$G/guard.sh" PYTHONPYCACHEPREFIX="$C/ec/pycache/h")"
+    assert_contains "$out" "VLLM=unset PYC=unset"
+    assert_contains "$out" "engine cache PYTHONPYCACHEPREFIX=$C/ec/pycache/h is not writable; using the engine default instead"
+    [ ! -e "$C/ec/pycache/h.uid-$me" ] || fail "$sh_: a refused directory of its own was left behind: $C/ec/pycache/h.uid-$me"
     # A filesystem that does not report owners: the directory is used when it
     # is writable, whoever the marker says made it, as before this guard knew
     # of owners -- and never a per-user directory, which would be decided by
@@ -2550,10 +2568,10 @@ for sh_ in $GUARD_SHELLS; do
     assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$C/ec/vllm: this filesystem does not report file owners; using it because it is writable"
     assert_eq "$(printf '%s\n' "$out" | grep -c 'engine cache')" "1" "$sh_: log lines without owners"
     [ ! -e "$C/ec/vllm/.own.fake" ] && [ ! -L "$C/ec/vllm/.own.fake" ] || fail "$sh_: the owner probe was left behind"
-    chmod 755 "$C/ec/pycache/k" "$C/ec/pycache/j" "$C/ec/pycache/i"
+    chmod 755 "$C/ec/pycache/k" "$C/ec/pycache/j" "$C/ec/pycache/i" "$C/ec/pycache/h"
 done
 rm -rf "$G"
-[ "$FAILED" -eq "$before" ] && ok
+[ "$me" != 0 ] && [ "$FAILED" -eq "$before" ] && ok
 
 # The same, as real users: engines run under setpriv as other UIDs, on the
 # layout the preparer makes (a root 755 node directory, 1777 cache
@@ -2568,7 +2586,7 @@ if [ "$(id -u)" = 0 ]; then AS_ROOT=""; elif sudo -n true 2>/dev/null; then AS_R
 command -v setpriv >/dev/null 2>&1 || AS_ROOT=none
 if [ "$AS_ROOT" = none ]; then
     if [ "${LLMSM_CHECK_SKIP_MULTIUSER:-}" = 1 ]; then
-        printf 'SKIP  %s: no root, passwordless sudo or setpriv here (LLMSM_CHECK_SKIP_MULTIUSER=1)\n' "$CASE" >&2
+        skip "no root, passwordless sudo or setpriv here (LLMSM_CHECK_SKIP_MULTIUSER=1)"
     else
         fail "needs root or passwordless sudo, and setpriv, to run engines as other users; LLMSM_CHECK_SKIP_MULTIUSER=1 skips it, out loud"
     fi
@@ -2629,7 +2647,7 @@ if [ "$AS_ROOT" != none ] && [ -n "$R" ]; then
     assert_eq "$(ls -A "$R/n/pycache/mine" | tr '\n' ' ')" "" "the directory the planted link points at"
     $AS_ROOT rm -rf "$R"
 fi
-[ "$FAILED" -eq "$before" ] && ok
+[ "$AS_ROOT" != none ] && [ "$FAILED" -eq "$before" ] && ok
 
 CASE="guard: VLLM_USE_MEGA_AOT_ARTIFACT=1 on an installed vLLM 0.26 only, never over a user value"
 reset; f_engine_cache_only_gap
@@ -3511,9 +3529,13 @@ fi
 # Every `ok` above increments RAN. A run that ends early -- a library that
 # aborts, a case whose command substitution dies under `set -u`, a case deleted
 # by accident -- otherwise exits 0 having checked less than it claims.
-if [ "$RAN" -ne "$EXPECT_CASES" ]; then
-    printf '\n%d case(s) reported ok, %d expected -- the run did not finish.\n' \
-        "$RAN" "$EXPECT_CASES" >&2
+if [ $((RAN + SKIPPED)) -ne "$EXPECT_CASES" ]; then
+    printf '\n%d case(s) reported ok and %d skipped, %d expected -- the run did not finish.\n' \
+        "$RAN" "$SKIPPED" "$EXPECT_CASES" >&2
     exit 1
 fi
-printf '\nWorkload readiness checks passed.\n'
+if [ "$SKIPPED" -gt 0 ]; then
+    printf '\nWorkload readiness checks passed: %d case(s), %d skipped.\n' "$RAN" "$SKIPPED"
+else
+    printf '\nWorkload readiness checks passed: %d case(s).\n' "$RAN"
+fi

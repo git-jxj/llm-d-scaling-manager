@@ -1529,7 +1529,9 @@ helm upgrade lws oci://registry.k8s.io/lws/charts/lws --version 0.10.0 -n lws-sy
 
 Upgrade the controller too: new CRDs alone create no role scalers. Then set
 `scaling.mode: External` on each role and run `make scaledobjects-plan` again. The install deploys `LWS_CHART_VERSION` (default `0.10.0`) only where
-no LeaderWorkerSet is installed; it never upgrades one.
+no LeaderWorkerSet is installed; it never upgrades one. The controller picks up
+the role scalers after the upgrade without a restart; the warning already in its
+log is from before the upgrade and no longer applies.
 
 1. Look at the set's events:
    `kubectl describe disaggregatedset <set> -n <namespace>`.

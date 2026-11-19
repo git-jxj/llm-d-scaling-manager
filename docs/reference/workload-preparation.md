@@ -841,6 +841,8 @@ its first CUDA context from 4.6 s to 2.3 s. The first start writes about 150 MB
   - The guard takes only a real directory the user made itself, made `755`.
     That keeps users out of each other's copies on one node; it does not make
     the directory a trust boundary (see [What it costs](#what-it-costs)).
+    Where the node directory is group-writable and not sticky (OpenShift
+    makes it `2775`, group 0), another pod in that group can rename a copy.
   - Seed and publish skip these copies and the `.writable` markers.
   - On a filesystem that does not report file owners (SMB or Azure Files
     with a fixed uid, some FUSE and NFSv4 mounts) every user shares the one
@@ -907,11 +909,15 @@ for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHE
   ecp=
   if [ "$ecown" = yes ]; then
     for p in "$d.uid-$ecu" "$d/.uid-$ecu"; do
-      (umask 022; mkdir -p "$p") 2>/dev/null || continue
+      # One made here and then refused (a filesystem that does not
+      # report owners, seen only now) is removed, not left empty.
+      ecnew=
+      if (umask 022; mkdir "$p") 2>/dev/null; then ecnew=yes; elif [ ! -d "$p" ]; then continue; fi
       if [ -d "$p" ] && [ ! -L "$p" ] && [ -O "$p" ] && chmod go-w "$p" 2>/dev/null && touch "$p/.writable" 2>/dev/null; then
         ecp=$p
         break
       fi
+      [ -z "$ecnew" ] || rmdir "$p" 2>/dev/null
     done
   fi
   if [ -n "$ecp" ]; then
