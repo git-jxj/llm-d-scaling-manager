@@ -79,7 +79,7 @@ func busyFleetRecording(t *testing.T) string {
 	rng := rand.New(rand.NewPCG(19, 23))
 	for s := range busyFleetSteps {
 		at := busyAt.Add(time.Duration(s) * 15 * time.Second)
-		var rows []domain.ReplicaMetrics
+		rows := make([]domain.ReplicaMetrics, 0, 11)
 		for j := range 9 {
 			rm := w.row(fmt.Sprintf("dec-%d", j), 0.06+0.04*float64(j)+0.002*float64(s%3))
 			rows = append(rows, rm)
