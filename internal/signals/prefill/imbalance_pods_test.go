@@ -139,3 +139,24 @@ func TestImbalance_ByPodsCountsServingPodsOnly(t *testing.T) {
 	assert.Contains(t, est.FByPods, 3)
 	assert.Equal(t, map[string]int{rowBridge: 1, rowNotReady: 1}, est.Refused)
 }
+
+// A minute with a row of several engine ranks marks the estimate FMultiRank:
+// its f is of rows, and the spread inside a row is not seen. Rows of one
+// rank leave it unset.
+func TestImbalance_MultiRankRowsAreMarked(t *testing.T) {
+	read := func(ranks int) Estimate {
+		rng := rand.New(rand.NewPCG(4, 2))
+		cs := fixedShares(rng, 6, 1, 1)
+		for i := range cs {
+			cs[i].Now = t0.Add(time.Duration(i) * minute)
+		}
+		cs[2].Rows[0].EngineRanks = ranks
+		return run(NewObserver(), cs...)
+	}
+	one := read(1)
+	require.Contains(t, one.FByPods, 2)
+	assert.False(t, one.FMultiRank)
+	four := read(4)
+	require.Contains(t, four.FByPods, 2)
+	assert.True(t, four.FMultiRank)
+}
