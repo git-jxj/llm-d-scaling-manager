@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# A short-lived Pod that mounts the recordings volume read-write, so that
+#   kubectl -n <namespace> cp run.jsonl.gz capacity-planner-loader:/recordings/
+# copies a recording in. Delete it when done; it stops by itself after an hour.
+# The planner sees a new file without a restart. On OpenShift use
+# config/capacity-planner/openshift/loader instead.
+resources:
+  - recordings-loader-pod.yaml

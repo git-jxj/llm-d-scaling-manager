@@ -387,7 +387,8 @@ loopback only. [Get the planner](README.md#get-the-planner) has the command.
 Never run the default command with `--network host`: the server would listen
 on every interface of the host. Give the command yourself, with
 `--listen 127.0.0.1:8080` and without `--listen-all-in-container`
-([In a container](README.md#in-a-container)). In a Kubernetes Pod, use
+([In a container](README.md#in-a-container)). For a browser in a Kubernetes
+Pod, see [Run it in a cluster](in-cluster.md); for API clients, use
 `--auth=kubernetes` with TLS.
 
 ## Kubernetes authentication

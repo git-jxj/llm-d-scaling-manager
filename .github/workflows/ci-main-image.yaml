@@ -129,6 +129,25 @@ jobs:
             -f Dockerfile.warmpool-proxy \
             -t ${{ steps.img.outputs.image }}/warmpool-proxy:${{ steps.img.outputs.tag }} .
 
+      # The capacity planner (Dockerfile.capacity-planner), under the same tag,
+      # to <image>/capacity-planner. config/capacity-planner names :main between
+      # releases, as config/base/manager does for the controller, so main must
+      # publish it.
+      - name: Build and push the capacity planner image
+        run: |
+          docker buildx build \
+            --platform ${{ steps.img.outputs.platforms }} \
+            --push \
+            --annotation "index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --annotation "index:org.opencontainers.image.description=llm-d-scaling-manager capacity planner - price a fleet from a learner recording or a Prometheus window" \
+            --annotation "index:org.opencontainers.image.licenses=Apache-2.0" \
+            --annotation "index:org.opencontainers.image.revision=${{ github.sha }}" \
+            --build-arg "IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}" \
+            --build-arg "GIT_COMMIT=${{ github.sha }}" \
+            --build-arg "VERSION=${{ steps.img.outputs.tag }}" \
+            -f Dockerfile.capacity-planner \
+            -t ${{ steps.img.outputs.image }}/capacity-planner:${{ steps.img.outputs.tag }} .
+
       - name: Summarise
         run: |
           echo "Pushed \`${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY

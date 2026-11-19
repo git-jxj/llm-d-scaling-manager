@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: capacity-planner-loader
+  labels:
+    app.kubernetes.io/name: capacity-planner-loader
+    app.kubernetes.io/part-of: llm-d-scaling-manager
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 3600
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  # On the planner's node: the volume is ReadWriteOnce.
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: capacity-planner
+          topologyKey: kubernetes.io/hostname
+  # The planner's user, so the files it writes are the planner's to read.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: loader
+      # Has tar, which kubectl cp needs.
+      image: registry.k8s.io/e2e-test-images/busybox:1.36.1-1@sha256:a9155b13325b2abef48e71de77bb8ac015412a566829f621d06bfae5c699b1b9
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi
+      volumeMounts:
+        - name: recordings
+          mountPath: /recordings
+  volumes:
+    - name: recordings
+      persistentVolumeClaim:
+        claimName: capacity-planner-recordings
