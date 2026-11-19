@@ -930,6 +930,7 @@ declared
 declares
 declined
 decode
+decode-full
 decode-knee
 decode-only
 decode-queue-unknown
@@ -2228,6 +2229,7 @@ prefill-demand-held
 prefill-knee
 prefill-latency
 prefill-required
+prefill-spare
 prefill-throughput-bound-reading
 prefillBoundHeld
 prefillBounds
@@ -2522,6 +2524,8 @@ round
 routed
 routedVariants
 router
+routerBacklogOwed
+routerBacklogOwedBy
 routerMeasured
 routing
 row
@@ -2554,6 +2558,7 @@ saturatedThroughput
 saturatedThroughputBucket
 saturates
 saturation
+saturation-decode-owes-router-backlog
 saturation-holds-role
 saturation-itl-clears-on-a-new-revision
 saturation-itl-one-sided-at-cap

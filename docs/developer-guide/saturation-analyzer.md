@@ -1631,6 +1631,25 @@ Two hold rules gate ordering, both measured rather than reasoned:
 
 Both are covered in [analyzer-evidence.md](analyzer-evidence.md).
 
+On P/D the router's queue is charged to prefill alone. Where decode binds,
+as under flow control with decode full, decode is then sized for the arrivals
+only and drains the backlog by its target-fill headroom: the property case
+`known-truth/floor/flow-control-unlearned-mu-pd-decode` orders 0.45-0.85 of
+what the fleet needs (issue llm-d-incubation/llm-d-scaling-manager#51). The
+replay switch `saturation-decode-owes-router-backlog`
+(`SwitchDecodeOwesRouterBacklog`, `decode_router_backlog.go`) also charges
+decode `min(Q/H, rate)`, H its drain horizon. With a prefill floor term, rate
+is the prefill the analyzer orders times prefill's mu, less lambda, so it is
+about 0 where prefill binds. With none, rate is unbounded while decode's
+resident KV is at least `scaleUp` of its ready supply, and 0 below it. The
+floor log line carries `routerBacklogOwed` and `routerBacklogOwedBy`
+(`prefill-spare`, `decode-full`). On, the case passes as `-owes-backlog` at
+1.01-1.06 of the truth (seeds 1-100), and prefill-bound P/D is unchanged. The
+switch is off from the constructor: the controller keeps the old charge until
+a P/D run checks it. No controller golden moves; replayed on,
+`ttft-staircase-c-on` asks one more decode replica on 16 of its 584
+role-cycles, in the runaway step.
+
 ### The prefill bound
 
 With `enablePrefillThroughputBound` on, a prefill replica queued behind a full

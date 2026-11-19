@@ -553,6 +553,11 @@ type SaturationAnalyzer struct {
 	// (llm-d-incubation/llm-d-scaling-manager#97, throughput_floor.go): on
 	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	lowerBoundCapsShare bool
+	// decodeOwesRouterBacklog is SwitchDecodeOwesRouterBacklog
+	// (llm-d-incubation/llm-d-scaling-manager#51, decode_router_backlog.go):
+	// off from the constructor; only a replay turns it on
+	// (SetSwitchesForReplay).
+	decodeOwesRouterBacklog bool
 	// floorTrustCompleted is SwitchFloorTrustReadsCompletions
 	// (llm-d-incubation/llm-d-scaling-manager#54, throughput_floor.go): on
 	// from the constructor; a replay turns it off (SetSwitchesForReplay).

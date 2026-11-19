@@ -30,6 +30,8 @@ func flowControlCases() []propCase {
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-decode", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcDecode, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-decode", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPD, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPDPrefillBound, nil)},
+		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-decode-owes-backlog", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPD.owingBacklog(), nil)},
+		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound-owes-backlog", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPDPrefillBound.owingBacklog(), nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-aggregated", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcAggregated, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-dp8", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcDP8, nil)},
 		{class: classKnownTruth, learner: "k2", name: "above-k1-leaves-capacity", family: familyDirect, tuning: tunedDefault, check: checkK2AboveK1Capacity},
@@ -50,6 +52,18 @@ type fcShape struct {
 	prefillBound bool
 	// ranks is the engine ranks a pod runs (data parallel).
 	ranks int
+	// owesBacklog runs both runs with SwitchDecodeOwesRouterBacklog on
+	// (issue llm-d-incubation/llm-d-scaling-manager#51): decode is charged
+	// the router's queue prefill can hand on. Off, the constructor's
+	// default, decode-bound P/D under-orders (the ledgered pd-decode case).
+	owesBacklog bool
+}
+
+// owingBacklog is s with SwitchDecodeOwesRouterBacklog on.
+func (s fcShape) owingBacklog() fcShape {
+	s.name += "-owes-backlog"
+	s.owesBacklog = true
+	return s
 }
 
 var (
@@ -218,6 +232,11 @@ func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaM
 	rig := newPropRig()
 	rig.a = NewSaturationAnalyzer(store)
 	rig.a.now = func() time.Time { return rig.clock }
+	if s.owesBacklog {
+		if err := rig.a.SetSwitchesForReplay(map[string]bool{SwitchDecodeOwesRouterBacklog: true}); err != nil {
+			return fcOutcome{}, err
+		}
+	}
 	ready := rig.clock.Add(-time.Hour)
 	states := fcStates(s)
 	itlNoise := propRand(g.seed + 3<<32)
