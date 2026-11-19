@@ -186,7 +186,7 @@ func TestDayPlanPinnedDecodeLineSizesNothing(t *testing.T) {
 			assert.Zero(t, p.Summary.Counts.Sized)
 			assert.Equal(t, 1, p.Summary.Counts.Refused)
 			assert.Nil(t, p.Summary.PeakNeeded)
-			var terms []string
+			terms := make([]string, 0, len(p.Refused))
 			for _, x := range p.Refused {
 				terms = append(terms, x.Term+":"+x.Reason)
 				assert.Equal(t, 1, x.Buckets, x.Term)
