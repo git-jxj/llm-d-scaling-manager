@@ -87,7 +87,7 @@ else
     bad "the driver prints the Ca2 it will send"
 fi
 
-# The planner's old variable, STAIRCASE_WHATIF, is read until v0.12.0: alone it is used,
+# The planner's old variable, STAIRCASE_WHATIF, is read until v0.13.0: alone it is used,
 # and with the new one set too the new one wins. The line is evaluated as the script has it.
 planner_line=$(grep '^PLANNER=' "$B/staircase.sh")
 planner() { env -i ROOT=/root-of-tree "$@" bash -c "$planner_line"'; printf %s "$PLANNER"'; }

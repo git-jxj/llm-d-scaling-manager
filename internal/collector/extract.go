@@ -47,6 +47,14 @@ type podMetricData struct {
 	// V2 fields for token-based capacity analysis
 	numGpuBlocks int64
 	blockSize    int64
+	// effectiveBlockSize and kvCacheSizeTokens are the
+	// effective_attention_block_size and kv_cache_size_tokens labels of
+	// cache_config_info (QueryCacheConfigSizes), each zero where the engine
+	// reports none or its ranks disagree; cacheSizeRows counts the distinct
+	// pairs read (see kvCapacityTokens).
+	effectiveBlockSize int64
+	kvCacheSizeTokens  int64
+	cacheSizeRows      int
 	// engineRanks is the value of the cache_config_info row: how many engine
 	// ranks the instance serves (see QueryCacheConfigInfo). Zero when no row.
 	engineRanks                 int
@@ -337,6 +345,37 @@ func (c *ReplicaMetricsCollector) extractPodMetrics(
 					"numGpuBlocks", data.numGpuBlocks,
 					"blockSize", data.blockSize,
 					"engineRanks", data.engineRanks)
+			}
+		}
+	}
+
+	// The KV cache size the engine reports itself (QueryCacheConfigSizes),
+	// attached by instance like cache_config_info. Each row is one
+	// (kv_cache_size_tokens, effective_attention_block_size) pair and the
+	// ranks that report it. A value is kept only where every rank of the
+	// instance reports the same one; kvCapacityTokens decides what it is
+	// used for.
+	if result := results[registration.QueryCacheConfigSizes]; result != nil && !result.HasError() {
+		for _, value := range result.Values {
+			instanceKey, _, _ := c.buildInstanceKey(ctx, namespace, value.Labels)
+			data := podData[instanceKey]
+			if instanceKey == "" || data == nil {
+				continue
+			}
+			data.cacheSizeRows++
+			size := positiveIntLabel(value.Labels, "kv_cache_size_tokens")
+			block := positiveIntLabel(value.Labels, "effective_attention_block_size")
+			if data.cacheSizeRows == 1 {
+				data.kvCacheSizeTokens, data.effectiveBlockSize = size, block
+				continue
+			}
+			// A second row: the ranks disagree on one of the two, and
+			// that one is not used.
+			if size != data.kvCacheSizeTokens {
+				data.kvCacheSizeTokens = 0
+			}
+			if block != data.effectiveBlockSize {
+				data.effectiveBlockSize = 0
 			}
 		}
 	}
@@ -722,4 +761,15 @@ func (c *ReplicaMetricsCollector) extractPodMetrics(
 	c.extractTTFTInputs(ctx, modelID, namespace, results, podData)
 
 	return podData, nil
+}
+
+// positiveIntLabel is the label key of labels read as a positive integer, or
+// zero when it is absent, not an integer (vLLM writes "None" for an unset
+// field), or not positive.
+func positiveIntLabel(labels map[string]string, key string) int64 {
+	v, err := strconv.ParseInt(labels[key], 10, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
 }

@@ -56,10 +56,10 @@ func fetchDisaggregatedSetRole(ctx context.Context, c client.Client, name, names
 	scaler.SetGroupVersionKind(dsetRoleScalerGVK)
 	if err := resources.GetResourceWithBackoff(ctx, c, client.ObjectKey{Name: name, Namespace: namespace}, scaler,
 		constants.StandardBackoff, constants.DisaggregatedSetRoleScalerKind); err != nil {
-		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		if apierrors.IsNotFound(err) || observeRoleScaler(err, namespace, name) {
 			// No role scaler: a Static role, or an LWS without the
-			// DisaggregatedSetRoleScaler kind at all (before v0.10.0).
-			// Only the role writer registers such a target.
+			// DisaggregatedSetRoleScaler kind at all (before v0.10.0,
+			// warned once). Only the role writer registers such a target.
 			acc, serr := fetchStaticRole(ctx, c, name, namespace)
 			if serr != nil {
 				return nil, serr

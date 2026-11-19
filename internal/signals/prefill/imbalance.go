@@ -2,6 +2,7 @@ package prefill
 
 import (
 	"math"
+	"slices"
 	"time"
 )
 
@@ -44,12 +45,12 @@ const MinImbalanceMinutes = 5
 // uses the normal approximation instead of the exact sum.
 const GaussianMaxMean = 1e4
 
-// normalMaxMean is the expected max of n standard normals: the integral over
+// NormalMaxMean is the expected max of n standard normals: the integral over
 // x > 0 of 1 - Phi(x)^n less the integral over x < 0 of Phi(x)^n, folded
 // onto x > 0 as 1 - Phi(x)^n - Phi(-x)^n, which is smooth, and summed by
 // Simpson's rule over [0, 10] at a step of 0.01. Beyond 10 the integrand is
 // below float64's resolution for any n a variant has.
-func normalMaxMean(n int) float64 {
+func NormalMaxMean(n int) float64 {
 	const lim, steps = 10.0, 1000
 	h := lim / steps
 	f := func(x float64) float64 {
@@ -75,6 +76,8 @@ type share struct {
 	rateOK     bool
 	requests   float64
 	requestsOK bool
+	// multiRank is a row of more than one engine rank (domain.ReplicaMetrics.Ranks).
+	multiRank bool
 }
 
 // minuteImbalance is the de-biased imbalance of one cycle's shares, and
@@ -113,10 +116,10 @@ func (ks *keyState) noteImbalance(shares []share, allAdmitted bool, now time.Tim
 		return
 	}
 	if n := len(ks.f); n > 0 && now.Sub(ks.f[n-1].at) < SampleSpacing {
-		ks.f[n-1].f, ks.f[n-1].pods = f, len(shares)
+		ks.f[n-1].f, ks.f[n-1].pods, ks.f[n-1].multiRank = f, len(shares), multiRank(shares)
 		return
 	}
-	ks.f = append(ks.f, fSample{at: now, f: f, pods: len(shares)})
+	ks.f = append(ks.f, fSample{at: now, f: f, pods: len(shares), multiRank: multiRank(shares)})
 	if len(ks.f) > maxSamples {
 		ks.f = ks.f[len(ks.f)-maxSamples:]
 	}
@@ -130,6 +133,7 @@ func (est *Estimate) imbalance(ks *keyState, shares []share, serving int) {
 	est.FPodsLast = serving
 	est.FSamples = len(ks.f)
 	est.FByPods, est.FSamplesByPods = imbalanceByPods(ks.f)
+	est.FMultiRank = slices.ContainsFunc(ks.f, func(s fSample) bool { return s.multiRank })
 	if len(ks.f) >= MinImbalanceMinutes {
 		fs := make([]float64, len(ks.f))
 		for i, s := range ks.f {
@@ -193,7 +197,7 @@ func poissonMaxExcess(n int, m float64) float64 {
 		return 0
 	}
 	if m > GaussianMaxMean {
-		return normalMaxMean(n) / math.Sqrt(m)
+		return NormalMaxMean(n) / math.Sqrt(m)
 	}
 	sd := math.Sqrt(m)
 	lo := math.Max(0, math.Floor(m-12*sd))
@@ -212,4 +216,9 @@ func poissonMaxExcess(n int, m float64) float64 {
 		expMax += 1 - math.Pow(cdf, float64(n))
 	}
 	return expMax/m - 1
+}
+
+// multiRank reports whether any share is a row of more than one engine rank.
+func multiRank(shares []share) bool {
+	return slices.ContainsFunc(shares, func(s share) bool { return s.multiRank })
 }

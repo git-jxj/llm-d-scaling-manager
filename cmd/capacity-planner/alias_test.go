@@ -35,7 +35,7 @@ func TestInvokedAsDeprecated(t *testing.T) {
 func TestDeprecationNoteNamesTheNewCommand(t *testing.T) {
 	assert.Contains(t, deprecationNote, progName)
 	assert.Contains(t, deprecationNote, "deprecated")
-	assert.Contains(t, deprecationNote, "whatif will be removed in v0.12.0")
+	assert.Contains(t, deprecationNote, "whatif will be removed in v0.13.0")
 }
 
 // The note goes to the writer main gives as stderr, as one line, and only

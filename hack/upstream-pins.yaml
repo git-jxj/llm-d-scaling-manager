@@ -257,7 +257,9 @@ components:
     note: >-
       Helm chart the installer deploys for multi-node models, and the Go
       module the controller builds against. Dependabot skips sigs.k8s.io
-      minor bumps.
+      minor bumps. The chart may lead the module: KEDA scales DisaggregatedSet
+      roles from chart v0.10.0, and the controller reads those objects
+      unstructured, so the module need not follow.
     pins:
       - file: deploy/install.sh
         regex: '^LWS_CHART_VERSION=\$\{LWS_CHART_VERSION:-"?([0-9][0-9a-z.+-]*)'

@@ -258,14 +258,14 @@ The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
 - Build it with `make capacity-planner` and run `bin/capacity-planner`. The
   subcommands and flags are the same. `go build ./cmd/whatif` and
   `go run ./cmd/whatif` are now `./cmd/capacity-planner`.
-- `make whatif` and `bin/whatif` still work for this release. whatif will be
-  removed in v0.12.0, so update your scripts now.
+- `make whatif` and `bin/whatif` still work through v0.12. whatif will be
+  removed in v0.13.0, so update your scripts now.
 - Errors and warnings on stderr now start with `capacity-planner:`, also when
   you run `bin/whatif`. `bin/whatif` also prints one deprecation line on
   stderr first. Keep stderr out of JSON output: do not use `2>&1` when you
   parse `-o json`.
 - The TTFT staircase reads `STAIRCASE_CAPACITY_PLANNER`. It still reads the
-  old `STAIRCASE_WHATIF` until v0.12.0.
+  old `STAIRCASE_WHATIF` until v0.13.0.
 - The developer pages moved: `whatif-capture.md` is now
   [capacity-planner-capture.md](../developer-guide/capacity-planner-capture.md)
   and `whatif-serve.md` is now
