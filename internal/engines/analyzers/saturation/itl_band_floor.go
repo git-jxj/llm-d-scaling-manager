@@ -81,10 +81,6 @@ func (a *SaturationAnalyzer) adaptITLBandFloor(input domain.AnalyzerInput, cfg *
 	key := input.Namespace + "|" + input.ModelID
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.itlFills == nil {
-		a.itlFills = map[string][]fillSpan{}
-		a.itlBandFloors = map[string]bandFloor{}
-	}
 	spans := slices.DeleteFunc(a.itlFills[key], func(s fillSpan) bool { return now.Sub(s.at) > adaptiveBandHorizon })
 	if ok {
 		span.at = now
