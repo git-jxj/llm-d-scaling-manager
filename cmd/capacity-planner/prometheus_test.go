@@ -299,7 +299,7 @@ var identityCases = []struct {
 	code int
 }{
 	{"replicas-to-slo", []string{"replicas-to-slo"}, 0},
-	{"replicas-to-slo at a rate", []string{"replicas-to-slo", "--rate", "5", "--decode", "2"}, 0},
+	{"replicas-to-slo at a rate", []string{"replicas-to-slo", "--rate", "4", "--decode", "2"}, 0},
 	{"replicas-to-slo at cycle 90", []string{"replicas-to-slo", "--cycle", "90"}, 0},
 	{"replicas-to-slo, an assumed ratio", []string{"replicas-to-slo", "--tpot-percentile", "90", "--assume-tpot-ratio", "1.3",
 		"--assume-output-tokens", "500"}, 0},

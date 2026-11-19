@@ -13,7 +13,9 @@
 # rollout-timeout (rollout status times out), can-i-no ("<verb> <resource>
 # <namespace>" lines auth can-i answers no), forbid-namespaces (reading a
 # Namespace is Forbidden, as for a namespace owner), forbid-daemonsets
-# (reading DaemonSets is Forbidden), apply-fails (a
+# (reading DaemonSets is Forbidden), forbid-roles (reading a Role by name is
+# Forbidden), roles-fail (reading a Role by name fails with a server error),
+# apply-fails (a
 # server-side apply is refused by the API server).
 D="${STUB_DIR:?}"
 printf '%s\n' "$*" >> "$D/calls.log"
@@ -133,6 +135,14 @@ case "$verb" in
         n="${pos[1]:-}"
         if [ "$r" = daemonset ] && [ -f "$D/forbid-daemonsets" ]; then
             echo "Error from server (Forbidden): daemonsets.apps is forbidden: User \"admin\" cannot list resource \"daemonsets\" in API group \"apps\" in the namespace \"$ns\"" >&2
+            exit 1
+        fi
+        if [ "$r" = role ] && [ -n "$n" ] && [ -f "$D/forbid-roles" ]; then
+            echo "Error from server (Forbidden): roles.rbac.authorization.k8s.io \"$n\" is forbidden: User \"owner\" cannot get resource \"roles\" in API group \"rbac.authorization.k8s.io\" in the namespace \"$ns\"" >&2
+            exit 1
+        fi
+        if [ "$r" = role ] && [ -n "$n" ] && [ -f "$D/roles-fail" ]; then
+            echo "Error from server (InternalError): an error on the server (\"\") has prevented the request from succeeding (get roles.rbac.authorization.k8s.io $n)" >&2
             exit 1
         fi
         if [ -z "$n" ]; then

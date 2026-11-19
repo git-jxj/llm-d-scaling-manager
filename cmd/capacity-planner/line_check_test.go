@@ -104,7 +104,7 @@ func TestLineCheck_ReadsTheRowsNotTheShapeAsked(t *testing.T) {
 	require.Positive(t, plain.Compared, "ols-sweep has rows to compare: an empty check here reads as a pass")
 	assert.Equal(t, plain.MedianErrorPct, asked.MedianErrorPct)
 	assert.Equal(t, plain.Compared, asked.Compared)
-	assert.False(t, plain.OtherShape, "%+v", plain)
+	assert.Equal(t, plain.RowKVPerRequest, asked.RowKVPerRequest, "the rows are read at their own KV")
 	assert.True(t, asked.OtherShape, "%+v", asked)
 	assert.Equal(t, checkOtherShape, asked.Status)
 }
@@ -188,7 +188,9 @@ const goldenDir = "../../internal/engines/analyzers/learnreplay/testdata/goldens
 
 // The check on committed recordings, at their last cycle, frozen: the figures
 // the page quotes, not a pass mark. ols-sweep, the worked example, holds its
-// line. The staircase's B off reads the opposite: its line predicts half the
+// line, at another shape: its synthetic rows hold 8 requests at every fill, so
+// a row reads more KV a request than the window it is priced from. The
+// staircase's B off reads the opposite: its line predicts half the
 // tokens read. It is the line the planner refuses, PinnedDefaultB, so no
 // answer rests on it, and the check prints all the same.
 func TestLineCheck_OnTheGoldens(t *testing.T) {
@@ -198,10 +200,10 @@ func TestLineCheck_OnTheGoldens(t *testing.T) {
 		compared int
 		median   float64
 	}{
-		{"ols-sweep", checkOK, 10, 3.0},
-		{"ttft-three-pods", checkOK, 57, 2.0},
-		{"ttft-staircase-b-off", checkMismatch, 36, 49.8},
-		{"ttft-staircase-c-on", checkMismatch, 26, 61.7},
+		{"ols-sweep", checkOtherShape, 10, 4.6},
+		{"ttft-three-pods", checkOK, 57, 2.6},
+		{"ttft-staircase-b-off", checkMismatch, 36, 51.8},
+		{"ttft-staircase-c-on", checkMismatch, 26, 63.0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -217,7 +219,7 @@ func TestLineCheck_OnTheGoldens(t *testing.T) {
 	}
 }
 
-// Through the command: the synthetic mu-paths run prices a line nine times the
+// Through the command: the synthetic mu-paths run prices a line four times the
 // tokens its rows read, and every answer on it says so.
 func TestLineCheck_AMismatchReachesEveryAnswer(t *testing.T) {
 	q := []string{"replicas-to-slo", "--recording", goldenDir + "mu-paths/recording.jsonl.gz", "--variant", "variant-03"}
@@ -232,5 +234,5 @@ func TestLineCheck_AMismatchReachesEveryAnswer(t *testing.T) {
 	}
 	text, code := runCmd(t, q...)
 	assert.Equal(t, 0, code, "a flag, not a refusal")
-	assert.Contains(t, text, "line check      MISMATCH: median 974.3% off the rate read, line high")
+	assert.Contains(t, text, "line check      MISMATCH: median 312.5% off the rate read, line high")
 }

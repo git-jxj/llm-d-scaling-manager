@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: capacity-planner-viewer
+  labels:
+    app.kubernetes.io/name: capacity-planner
+    app.kubernetes.io/part-of: llm-d-scaling-manager
+# Exactly what the proxy's --openshift-sar asks. Bind it to a group with
+#   oc -n <namespace> create rolebinding capacity-planner-viewer --role=capacity-planner-viewer --group=<group>
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["capacity-planner"]
+    verbs: ["get"]

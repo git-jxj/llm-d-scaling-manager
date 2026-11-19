@@ -60,7 +60,7 @@ it.
 | `vllm:inter_token_latency_seconds_sum` | histogram sum | | mean inter-token latency: the latency line | TPOT |
 | `vllm:inter_token_latency_seconds_count` | histogram count | | mean inter-token latency; tokens per step under speculative decoding | TPOT |
 | `vllm:generation_tokens_total` | counter | | token rate: the line check | TPOT |
-| `vllm:num_requests_running` | gauge | | running requests: the batch cap, where no flag gives it | optional |
+| `vllm:num_requests_running` | gauge | | running requests: the batch cap, where no flag gives it; with the KV fill, the KV a decode request holds (tokens in use over running requests). Without it, decode is priced at the whole context, `IL + D x OL/2`, never at the prefix-hit discount. A stated prompt or output length scales the reading by its context over the measured one, a fixed per-request excess with it, which errs towards more replicas. On SGLang a reading above the context is priced at the context | optional |
 | `vllm:num_requests_waiting` | gauge | | queue length, and the least queue in a minute: prefill busy minutes (`V_P`) | TTFT |
 | `vllm:num_requests_waiting_by_reason` | gauge | `reason="capacity"` | requests waiting for KV space (vLLM 0.20 and later) | optional |
 | `vllm:num_requests_kv_fetch_by_stage` | gauge | `stage="completed_waiting"` | P/D decode requests whose KV has landed and that wait for a batch slot (vLLM 0.32 and later) | optional |
@@ -70,7 +70,7 @@ it.
 | `vllm:request_generation_tokens_sum` | histogram sum | | mean output length: KV per request, the rate per replica | TPOT |
 | `vllm:request_generation_tokens_count` | histogram count | | mean output length; request rate | TPOT |
 | `vllm:request_generation_tokens_bucket` | histogram buckets | `le` | output-length spread `D`: KV per request | optional |
-| `vllm:prefix_cache_hits_total` | counter | | prefix-cache hit rate: the prompt tokens a request computes | optional |
+| `vllm:prefix_cache_hits_total` | counter | | prefix-cache hit rate: the prompt tokens a request computes (prefill only; a hit does not shrink the KV a decode request holds) | optional |
 | `vllm:prefix_cache_queries_total` | counter | | prefix-cache hit rate | optional |
 | `vllm:request_prefill_kv_computed_tokens_sum` | histogram sum | | computed prompt tokens per second: prefill capacity `V_P` | TTFT |
 | `vllm:request_prefill_kv_computed_tokens_bucket` | histogram buckets | `le` | prompt spread `cv` | optional |

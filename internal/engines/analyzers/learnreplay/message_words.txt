@@ -445,6 +445,7 @@ TooFewHopWindows
 TooFewImbalanceMinutes
 TooFewLowLoadMinutes
 TooFewPromptClusters
+TooFewTimedMinutes
 TooManySlots
 TransferHeld
 TransferOmitted
@@ -1091,6 +1092,7 @@ enforcement
 enforces
 engine
 engine-agnostic
+engine-prefill-timing
 engineMeasured
 engineParams
 engineParamsSource
@@ -1438,6 +1440,7 @@ it
 items
 iteration
 itl
+itl-adaptive-band-floor
 itl-aggregated-lift
 itl-aggregated-no-occupancy
 itl-aggregated-sglang-unverified
@@ -1476,10 +1479,12 @@ itlBand.capMaxPreemptionRate
 itlBand.maxObservableK
 itlBand.minObservableK
 itlBand.minObservableK/maxObservableK
+itlBandFloors
 itlBaselineStash
 itlBaselines
 itlBeta
 itlCycles
+itlFills
 itlForgotten
 itlLines
 itlLogged
@@ -1722,6 +1727,7 @@ loop
 lose
 lost
 low-confirmed
+low-load
 lowHoldFor
 lowSeconds
 lower
@@ -2208,6 +2214,8 @@ preemption
 preemptions
 preempts
 prefill
+prefill-a-engine-timing
+prefill-a-low-load-per-rank
 prefill-a-quadratic
 prefill-bound
 prefill-bound-held-confidence

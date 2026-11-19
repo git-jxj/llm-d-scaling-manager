@@ -1,20 +1,23 @@
 // Command learnergolden turns learner recordings into committed test
 // fixtures (docs/developer-guide/testing.md, Learner Goldens):
 //
-//	learnergolden export -in RAW.jsonl -out EXPORT.jsonl[.gz]
-//	learnergolden add    -in RAW.jsonl -name NAME -source TEXT [-head-lines N] [-replace] [-dir DIR]
+//	learnergolden export -in RAW.jsonl[.gz] -out EXPORT.jsonl[.gz]
+//	learnergolden add    -in RAW.jsonl[.gz] -name NAME -source TEXT [-head-lines N] [-replace] [-dir DIR]
 //	learnergolden update [-dir DIR]
 //	learnergolden check  [-dir DIR]
 //
 // export pseudonymises a recording. add exports it, holds the export to a
 // replay that reproduces it byte for byte at this commit, and commits it as a
-// golden fixture with its outputs. update rewrites every fixture's outputs
+// golden fixture with its outputs. Both read a gzipped recording as it is
+// (a capacity planner run writes one). update rewrites every fixture's outputs
 // from a replay at this commit. check is the golden check make test runs.
 // Run from the module root; the make targets do, and set the commit the
 // add compares with (learnrec.Commit).
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"flag"
@@ -48,6 +51,25 @@ func main() {
 	}
 }
 
+// readRecording is the recording at path, gunzipped when it is gzip (its
+// first two bytes the gzip magic, whatever its name).
+func readRecording(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.HasPrefix(data, []byte{0x1f, 0x8b}) {
+		return data, err
+	}
+	r, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	defer func() { _ = r.Close() }()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return out, nil
+}
+
 const usage = "usage: learnergolden export|add|update|check [flags]; -h after a command lists its flags"
 
 // run runs one command, writing what it reports to out. Asking for help is
@@ -67,7 +89,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	switch args[0] {
 	case "export":
-		in := fs.String("in", "", "the raw recording")
+		in := fs.String("in", "", "the raw recording, gzipped or not")
 		dst := fs.String("out", "", "where to write the export; a name ending in .gz is gzipped")
 		if ok, err := parse(); !ok {
 			return err
@@ -75,7 +97,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		if *in == "" || *dst == "" {
 			return errors.New("export needs -in and -out")
 		}
-		raw, err := os.ReadFile(*in)
+		raw, err := readRecording(*in)
 		if err != nil {
 			return err
 		}
@@ -94,7 +116,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		report(out, "exported "+*dst, rep)
 	case "add":
 		dir := fs.String("dir", learnreplay.GoldenDir, "the golden directory")
-		in := fs.String("in", "", "the raw recording")
+		in := fs.String("in", "", "the raw recording, gzipped or not")
 		name := fs.String("name", "", "the fixture's name: lowercase letters, digits and dashes")
 		source := fs.String("source", "", "where the recording came from: scenario, build, policy; no cluster or namespace names")
 		head := fs.Int("head-lines", 0, "keep only the recording's first N lines")
@@ -105,7 +127,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		if *in == "" || *name == "" || *source == "" {
 			return errors.New("add needs -in, -name and -source")
 		}
-		raw, err := os.ReadFile(*in)
+		raw, err := readRecording(*in)
 		if err != nil {
 			return err
 		}

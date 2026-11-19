@@ -684,7 +684,7 @@ tolerations:
 terminationGracePeriodSeconds: 120
 containers:
 - name: inference-server
-  image: ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.6.4@sha256:9df3f3bee8c321c14d5c0265d94ab8ae533cff1899c65eeb2623a5dcd753647e
+  image: ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:9c9d03f0d485be9b0529a1623813ebfea24066156233ee13f4177c96bcbbf656
   imagePullPolicy: IfNotPresent
   command:
   - /bin/bash
@@ -845,7 +845,7 @@ tolerations:
 terminationGracePeriodSeconds: 120
 containers:
 - name: inference-server
-  image: ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.6.4@sha256:9df3f3bee8c321c14d5c0265d94ab8ae533cff1899c65eeb2623a5dcd753647e
+  image: ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:9c9d03f0d485be9b0529a1623813ebfea24066156233ee13f4177c96bcbbf656
   imagePullPolicy: IfNotPresent
   command:
   - /bin/bash

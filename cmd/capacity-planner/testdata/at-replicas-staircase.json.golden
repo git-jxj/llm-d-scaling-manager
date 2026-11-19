@@ -88,21 +88,21 @@
           "kvFill": {
             "refused": {
               "reason": "Saturated",
-              "detail": "rate 41.7 r/s at or above the knee 38.13925805407484 r/s"
+              "detail": "rate 41.7 r/s at or above the knee 36.984638260324516 r/s"
             }
           },
           "bandTop": 0.8,
           "slotsOccupied": {
             "refused": {
               "reason": "Saturated",
-              "detail": "rate 41.7 r/s at or above the knee 38.13925805407484 r/s"
+              "detail": "rate 41.7 r/s at or above the knee 36.984638260324516 r/s"
             }
           },
-          "slots": 228,
+          "slots": 222,
           "waitProbability": {
             "refused": {
               "reason": "Saturated",
-              "detail": "41.7 r/s at or above the knee 38.13925805407484 r/s"
+              "detail": "41.7 r/s at or above the knee 36.984638260324516 r/s"
             }
           }
         },
@@ -136,11 +136,11 @@
           "binds": "prefill compute: N_p 2 x V_P / (f 1.003 x 8001 tokens)"
         },
         "decodeKnee": {
-          "value": 38.13925805407484,
+          "value": 36.984638260324516,
           "unit": "r/s",
           "band": {
-            "lo": 37.85376231092757,
-            "hi": 44.28828220148544
+            "lo": 36.70771971610106,
+            "hi": 42.949167301324636
           },
           "boundBy": [
             "band top"
@@ -148,27 +148,27 @@
           "flags": [
             "ExtrapolatedFill"
           ],
-          "outputTokensPerSecond": 7626.927717760277,
-          "binds": "decode band top at fill 0.795"
+          "outputTokensPerSecond": 7396.031728752224,
+          "binds": "decode band top at fill 0.798"
         },
         "fleetKnee": {
-          "value": 38.13925805407484,
+          "value": 36.984638260324516,
           "unit": "r/s",
-          "outputTokensPerSecond": 7626.927717760277,
+          "outputTokensPerSecond": 7396.031728752224,
           "binds": "decode"
         },
         "operating": {
-          "value": 32.41836934596361,
+          "value": 31.43694252127584,
           "unit": "r/s",
-          "outputTokensPerSecond": 6482.888560096236,
+          "outputTokensPerSecond": 6286.62696943939,
           "binds": "0.85 x fleet knee (scaleUpThreshold)"
         },
         "maxAtSLO": {
-          "value": 29.717183360970793,
+          "value": 29.70906603248329,
           "unit": "r/s",
           "sensitivity": {
-            "lo": 29.079740667090974,
-            "hi": 29.9043417692343
+            "lo": 29.071335426327515,
+            "hi": 29.89653130704545
           },
           "boundBy": [
             "TTFT p90, end to end"
@@ -185,7 +185,7 @@
             "AssumedA",
             "ExtrapolatedFill"
           ],
-          "outputTokensPerSecond": 5942.716797170025,
+          "outputTokensPerSecond": 5941.09352810832,
           "binds": "TTFT p90, end to end"
         },
         "headroom": 0.85,
@@ -196,15 +196,15 @@
           "load": "50%",
           "label": "50% of knee",
           "shareOfKnee": 0.5,
-          "rate": 19.06962902703742,
+          "rate": 18.492319130162258,
           "ttft": [
             {
               "statistic": "p50",
-              "value": 0.11465503626471647,
+              "value": 0.11173489666855463,
               "unit": "s",
               "sensitivity": {
-                "lo": 0.09786313392475984,
-                "hi": 0.1720551704505029
+                "lo": 0.0959109705813649,
+                "hi": 0.16510656795726303
               },
               "floor": 0.057518296999330115,
               "flags": [
@@ -222,11 +222,11 @@
             },
             {
               "statistic": "p90",
-              "value": 0.6367418387260763,
+              "value": 0.6165689606774934,
               "unit": "s",
               "sensitivity": {
-                "lo": 0.6003253043431973,
-                "hi": 0.7128778695938307
+                "lo": 0.5814796633223659,
+                "hi": 0.6952656919576171
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -243,11 +243,11 @@
             }
           ],
           "tpotMean": {
-            "value": 0.0031524994131438247,
+            "value": 0.003153175255424744,
             "unit": "s",
             "band": {
               "lo": 0.003072972705812775,
-              "hi": 0.003175184178523507
+              "hi": 0.0031758752601755862
             },
             "floor": 0.003072972705812775,
             "flags": [
@@ -256,11 +256,11 @@
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.004998846295829323,
+            "value": 0.004999917963493543,
             "unit": "s",
             "band": {
               "lo": 0.004872742612921775,
-              "hi": 0.005034817010024285
+              "hi": 0.005035912842411187
             },
             "floor": 0.004872742612921775,
             "flags": [
@@ -269,17 +269,17 @@
             ]
           },
           "e2eMeanSum": {
-            "value": 0.8745660906104351,
+            "value": 0.867949898264616,
             "unit": "s"
           },
           "cell": {
             "ttft": {
               "statistic": "p90",
-              "value": 0.6367418387260763,
+              "value": 0.6165689606774934,
               "unit": "s",
               "sensitivity": {
-                "lo": 0.6003253043431973,
-                "hi": 0.7128778695938307
+                "lo": 0.5814796633223659,
+                "hi": 0.6952656919576171
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -296,11 +296,11 @@
             },
             "tpot": {
               "statistic": "p90",
-              "value": 0.004998846295829323,
+              "value": 0.004999917963493543,
               "unit": "s",
               "band": {
                 "lo": 0.004872742612921775,
-                "hi": 0.005034817010024285
+                "hi": 0.005035912842411187
               },
               "floor": 0.004872742612921775,
               "flags": [
@@ -315,15 +315,15 @@
           "load": "80%",
           "label": "80% of knee",
           "shareOfKnee": 0.8,
-          "rate": 30.511406443259872,
+          "rate": 29.587710608259613,
           "ttft": [
             {
               "statistic": "p50",
-              "value": 0.22603982356867805,
+              "value": 0.2159068258940632,
               "unit": "s",
               "sensitivity": {
-                "lo": 0.1750774968757017,
-                "hi": 0.54152287958135
+                "lo": 0.16941481636720168,
+                "hi": 0.4773812861330592
               },
               "floor": 0.057518296999330115,
               "flags": [
@@ -341,11 +341,11 @@
             },
             {
               "statistic": "p90",
-              "value": 2.489509724432668,
+              "value": 1.943689150486154,
               "unit": "s",
               "sensitivity": {
-                "lo": 2.3866733581235944,
-                "hi": 2.8481040019129913
+                "lo": 1.8525390376963151,
+                "hi": 2.2335687010863206
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -362,11 +362,11 @@
             }
           ],
           "tpotMean": {
-            "value": 0.006804836055194229,
+            "value": 0.006809877083731042,
             "unit": "s",
             "band": {
-              "lo": 0.004679343096169867,
-              "hi": 0.006976989644978102
+              "lo": 0.004681375720249567,
+              "hi": 0.006982331419160296
             },
             "floor": 0.003072972705812775,
             "flags": [
@@ -375,11 +375,11 @@
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.010790273066002182,
+            "value": 0.010798266509783123,
             "unit": "s",
             "band": {
-              "lo": 0.007419927440962251,
-              "hi": 0.01106325308021466
+              "lo": 0.007423150526527075,
+              "hi": 0.011071723409494498
             },
             "floor": 0.004872742612921775,
             "flags": [
@@ -388,17 +388,17 @@
             ]
           },
           "e2eMeanSum": {
-            "value": 2.2700080019946762,
+            "value": 2.073930744709211,
             "unit": "s"
           },
           "cell": {
             "ttft": {
               "statistic": "p90",
-              "value": 2.489509724432668,
+              "value": 1.943689150486154,
               "unit": "s",
               "sensitivity": {
-                "lo": 2.3866733581235944,
-                "hi": 2.8481040019129913
+                "lo": 1.8525390376963151,
+                "hi": 2.2335687010863206
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -415,11 +415,11 @@
             },
             "tpot": {
               "statistic": "p90",
-              "value": 0.010790273066002182,
+              "value": 0.010798266509783123,
               "unit": "s",
               "band": {
-                "lo": 0.007419927440962251,
-                "hi": 0.01106325308021466
+                "lo": 0.007423150526527075,
+                "hi": 0.011071723409494498
               },
               "floor": 0.004872742612921775,
               "flags": [
@@ -427,41 +427,41 @@
                 "CoarseTPOTBucket"
               ]
             },
-            "mark": "missed"
+            "mark": "met"
           }
         },
         {
           "load": "100%",
           "label": "100% of knee",
           "shareOfKnee": 1,
-          "rate": 38.13925805407484,
+          "rate": 36.984638260324516,
           "ttft": [
             {
               "statistic": "p50",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.877025894764095 r/s"
+                "detail": "36.984638260324516 r/s at or above the decode gate's onset 35.74811315725482 r/s"
               }
             },
             {
               "statistic": "p90",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.877025894764095 r/s"
+                "detail": "36.984638260324516 r/s at or above the decode gate's onset 35.74811315725482 r/s"
               }
             }
           ],
           "tpotMean": {
             "refused": {
               "reason": "Saturated",
-              "detail": "rate 38.13925805407484 r/s at or above the knee 38.13925805407484 r/s"
+              "detail": "rate 36.984638260324516 r/s at or above the knee 36.984638260324516 r/s"
             }
           },
           "tpotPercentile": {
             "statistic": "p90",
             "refused": {
               "reason": "Saturated",
-              "detail": "rate 38.13925805407484 r/s at or above the knee 38.13925805407484 r/s",
+              "detail": "rate 36.984638260324516 r/s at or above the knee 36.984638260324516 r/s",
               "flags": [
                 "CoarseTPOTBucket"
               ]
@@ -470,7 +470,7 @@
           "e2eMeanSum": {
             "refused": {
               "reason": "AboveDecodeOnset",
-              "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.877025894764095 r/s"
+              "detail": "36.984638260324516 r/s at or above the decode gate's onset 35.74811315725482 r/s"
             }
           },
           "cell": {
@@ -478,14 +478,14 @@
               "statistic": "p90",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "38.13925805407484 r/s at or above the decode gate's onset 36.877025894764095 r/s"
+                "detail": "36.984638260324516 r/s at or above the decode gate's onset 35.74811315725482 r/s"
               }
             },
             "tpot": {
               "statistic": "mean",
               "refused": {
                 "reason": "Saturated",
-                "detail": "rate 38.13925805407484 r/s at or above the knee 38.13925805407484 r/s"
+                "detail": "rate 36.984638260324516 r/s at or above the knee 36.984638260324516 r/s"
               }
             },
             "mark": "saturated"
@@ -494,35 +494,35 @@
         {
           "load": "seen",
           "label": "load seen",
-          "shareOfKnee": 1.0933615945249027,
+          "shareOfKnee": 1.12749514288839,
           "rate": 41.7,
           "ttft": [
             {
               "statistic": "p50",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "41.7 r/s at or above the decode gate's onset 36.877025894764095 r/s"
+                "detail": "41.7 r/s at or above the decode gate's onset 35.74811315725482 r/s"
               }
             },
             {
               "statistic": "p90",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "41.7 r/s at or above the decode gate's onset 36.877025894764095 r/s"
+                "detail": "41.7 r/s at or above the decode gate's onset 35.74811315725482 r/s"
               }
             }
           ],
           "tpotMean": {
             "refused": {
               "reason": "Saturated",
-              "detail": "rate 41.7 r/s at or above the knee 38.13925805407484 r/s"
+              "detail": "rate 41.7 r/s at or above the knee 36.984638260324516 r/s"
             }
           },
           "tpotPercentile": {
             "statistic": "p90",
             "refused": {
               "reason": "Saturated",
-              "detail": "rate 41.7 r/s at or above the knee 38.13925805407484 r/s",
+              "detail": "rate 41.7 r/s at or above the knee 36.984638260324516 r/s",
               "flags": [
                 "CoarseTPOTBucket"
               ]
@@ -531,7 +531,7 @@
           "e2eMeanSum": {
             "refused": {
               "reason": "AboveDecodeOnset",
-              "detail": "41.7 r/s at or above the decode gate's onset 36.877025894764095 r/s"
+              "detail": "41.7 r/s at or above the decode gate's onset 35.74811315725482 r/s"
             }
           },
           "cell": {
@@ -539,14 +539,14 @@
               "statistic": "p90",
               "refused": {
                 "reason": "AboveDecodeOnset",
-                "detail": "41.7 r/s at or above the decode gate's onset 36.877025894764095 r/s"
+                "detail": "41.7 r/s at or above the decode gate's onset 35.74811315725482 r/s"
               }
             },
             "tpot": {
               "statistic": "mean",
               "refused": {
                 "reason": "Saturated",
-                "detail": "rate 41.7 r/s at or above the knee 38.13925805407484 r/s"
+                "detail": "rate 41.7 r/s at or above the knee 36.984638260324516 r/s"
               }
             },
             "mark": "saturated"
@@ -555,9 +555,9 @@
       ],
       "verdict": {
         "verdict": "UNDER-PROVISIONED",
-        "summary": "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).",
+        "summary": "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).",
         "scope": "fleet",
-        "reason": "2 prefill + 2 decode: 41.70 r/s is 1.1x the fleet knee of 38.14 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms. Add decode: decode sets the knee",
+        "reason": "2 prefill + 2 decode: 41.70 r/s is 1.1x the fleet knee of 36.98 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms. Add decode: decode sets the knee",
         "needed": {
           "prefill": 3,
           "decode": 3,
@@ -575,7 +575,7 @@
             "decode": 2,
             "holds": false,
             "known": true,
-            "reason": "41.70 r/s is 1.1x the fleet knee of 38.14 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms"
+            "reason": "41.70 r/s is 1.1x the fleet knee of 36.98 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms"
           }
         ]
       },

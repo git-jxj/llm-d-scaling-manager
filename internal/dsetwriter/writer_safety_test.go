@@ -338,7 +338,7 @@ func TestPassListFailures(t *testing.T) {
 		want string
 	}{
 		{"no CRD", &meta.NoKindMatchError{GroupKind: setGVK.GroupKind(), SearchedVersions: []string{"v1"}}, "CRD is not installed"},
-		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Group: setGVK.Group, Resource: "disaggregatedsets"}, "", assertErr("no grant")), "DSET_ROLE_WRITER=true"},
+		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Group: setGVK.Group, Resource: "disaggregatedsets"}, "", assertErr("no grant")), "smt admin-setup -n <namespace> --dset-role-writer"},
 		{"other", apierrors.NewServiceUnavailable("down"), "Could not list DisaggregatedSets"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -270,10 +270,16 @@ type sizer struct {
 	// seen is every fleet priced, by its counts; plain, with low, every
 	// fleet priced for decode's own limit alone, without the span.
 	seen, plain map[FleetCounts]sizeEval
+	// kneeRefused is decode's knee's refusal, nil when it prices, read once
+	// (kneeRead) from the first fleet priced with no TPOT asked: a refusal of
+	// the line or its inputs holds at every count of one replica or more.
+	kneeRefused whatif.Result
+	kneeRead    bool
 }
 
 // sizeEval is one fleet's limits at the scenario's targets and headroom:
-// decode's (nil with no TPOT asked), the prefill role's, and the fleet's.
+// decode's (nil with no TPOT asked, but decode's knee's refusal where it is
+// refused, and then the fleet's too), the prefill role's, and the fleet's.
 type sizeEval struct {
 	decode, prefill, fleet whatif.Result
 }
@@ -323,6 +329,24 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 	} else {
 		v.decode, v.prefill, v.fleet = fl.PlainLimits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
 	}
+	if z.sc.TPOT == nil {
+		// With no TPOT asked, decode's knee is what bounds decode: the
+		// fleet's limit reads it through the lower of the roles' knees.
+		// Refused (no usable decode line), that limit is prefill's alone and
+		// no rule bounds decode, so decode's limit, and the fleet's, are the
+		// refusal, as at-replicas refuses the fleet. That refusal replaces
+		// a refused prefill's too: decode is named first, as at-replicas
+		// names it.
+		if !z.kneeRead {
+			if knee := fl.DecodeKnee(); isRefusal(knee) {
+				z.kneeRefused = knee
+			}
+			z.kneeRead = true
+		}
+		if z.kneeRefused != nil {
+			v.decode, v.fleet = z.kneeRefused, z.kneeRefused
+		}
+	}
 	cache[n] = v
 	return v, nil
 }
@@ -331,9 +355,10 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 func (z *sizer) meets(v sizeEval) bool { return resultReaches(v.fleet, z.rate, z.low) }
 
 // decodeMeets reports whether decode's own limit, TPOT and the
-// operating-point cap on decode's knee, reaches the rate; with no TPOT asked
-// decode has no limit of its own, and the fleet's says the rest. Decode's
-// limit has no span over V_P and f, the prefill side's terms.
+// operating-point cap on decode's knee, reaches the rate. With no TPOT asked
+// decode has no limit of its own and the fleet's says the rest, but a refused
+// knee meets no rate (priced). Decode's limit has no span over V_P and f, the
+// prefill side's terms.
 func (z *sizer) decodeMeets(v sizeEval) bool {
 	return v.decode == nil || resultReaches(v.decode, z.rate, false)
 }

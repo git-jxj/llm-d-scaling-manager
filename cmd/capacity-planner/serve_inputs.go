@@ -167,7 +167,7 @@ func termsOf(f *answerFlags, st *learnreplay.State, pv *pricedVariant, pf *price
 		add("itlB", pv.state.Tier, figure(pv.decode.Line.B, "s"))
 	}
 	add("capacityTokens", "", figure(pv.decode.CapacityTokens, "tokens"))
-	add("kvPerRequest", "", figure(pv.decode.KVPerRequest, "tokens"))
+	add("kvPerRequest", pv.kvSource, figure(pv.decode.KVPerRequest, "tokens"))
 	add("batchCap", pv.state.BatchCapSource, figure(float64(pv.perRank), "sequences per rank"))
 	add(whatifapi.TermMaxModelLen, "engine arguments", contextOf(st.Variants, pf.variant, pv.state.Variant))
 	// R_q at p90, a TPOT percentile's usual ask; a plan reads its own.
