@@ -1,32 +1,34 @@
 # Capacity planner: run it in a cluster
 
-Run one planner in the cluster and let people open it from their browser,
-with no install on their side but `kubectl` (or `oc`). It serves the
-recordings you copy into it. It never changes the cluster.
+Run one planner in a namespace and let people open it from their browser.
+They need nothing but `kubectl` (or an OpenShift login). The planner serves
+the recordings you copy into it, and it never changes the cluster.
 
-- **Plain Kubernetes.** Nothing is exposed. Each person opens it with
-  `kubectl port-forward`; Kubernetes RBAC decides who may.
-- **OpenShift.** A Route, behind the cluster's login (and so its SSO).
+## Who does what
 
-Both need only admin of one namespace. Neither creates a cluster-scoped
-object.
+| Step | Who | How often |
+| --- | --- | --- |
+| [Install it](#install-it) | an admin of one namespace; no cluster admin needed | once, and again on each upgrade |
+| [Load recordings](#load-recordings) | anyone who may create Pods in that namespace: its admin, or a user with `edit` there | each time there is new data |
+| [Open it](#open-it) | anyone you allow: by default, everyone who can log in to the cluster | any time |
 
-## Prerequisites
+- **Plain Kubernetes.** Nothing is exposed. Each person runs
+  `kubectl port-forward`, and Kubernetes RBAC decides who may.
+- **OpenShift.** A Route behind the cluster's login (and so its SSO).
+
+## Install it
+
+For the namespace admin.
+
+### Prerequisites
 
 - [ ] Admin of a namespace that holds nothing but the planner. You create it
   below, or your cluster admin creates it for you.
 - [ ] `kubectl` 1.27 or later (or `oc`), and `git`: `kubectl apply -k` fetches
   the manifests from GitHub.
 - [ ] A default StorageClass, for the planner's 1 GiB recordings volume. The
-  loader writes it as uid 65532, which needs a StorageClass that applies
-  `fsGroup`, or a volume root that uid can write
-  ([Copy recordings in](#2-copy-recordings-in)).
-- [ ] One or more recordings, from
-  [Record a window](../record-for-capacity-planner/). Name each file after its
-  model, such as `qwen3-32b.jsonl.gz`: people pick a recording by file name.
-  They may hold real names: see [Real names in recordings](#real-names-in-recordings).
-- [ ] The people who open it need `kubectl` and a kubeconfig for the cluster
-  (plain Kubernetes), or a login to it (OpenShift).
+  loader writes it as uid 65532, so the StorageClass must apply `fsGroup`, or
+  the volume root must be writable by that uid.
 
 ```bash
 # The namespace, and the release: v0.12.0 or later.
@@ -34,9 +36,7 @@ export NS=capacity-planner V=<release, v0.12.0 or later>
 export SRC=https://github.com/llm-d-incubation/llm-d-scaling-manager//config/capacity-planner
 ```
 
-## Plain Kubernetes
-
-### 1. Deploy it
+### Plain Kubernetes
 
 ```bash
 # Skip the first command if your cluster admin made the namespace. The planner listens on 127.0.0.1 inside its Pod;
@@ -46,26 +46,72 @@ kubectl apply -n ${NS} -k "${SRC}/kubernetes?ref=${V}"
 kubectl -n ${NS} rollout status statefulset/capacity-planner
 ```
 
-### 2. Copy recordings in
+To let only one group open it, see [Narrow who can open it](#narrow-who-can-open-it).
 
-Copy an exported (pseudonymised) recording if names are sensitive
-([Real names in recordings](#real-names-in-recordings)).
-If `kubectl cp` says Permission denied, your StorageClass ignores `fsGroup`
-(`kubectl get csidriver <driver> -o jsonpath='{.spec.fsGroupPolicy}'`); ask
-your admin for one that applies it, or a volume whose root uid 65532 can
-write.
+### OpenShift
+
+The Route sends people to the cluster's login page. After login, an
+oauth-proxy sidecar forwards them to the planner on the Pod's 127.0.0.1. The
+proxy image is Red Hat's, from `registry.redhat.io`, which the cluster's
+global pull secret covers.
 
 ```bash
-# A short-lived Pod that mounts the recordings volume read-write. The planner sees new files without a restart.
+# Skip the first command if your cluster admin made the namespace. The secret signs the proxy's session cookie.
+oc new-project ${NS}
+oc -n ${NS} create secret generic capacity-planner-proxy --from-literal=session_secret="$(openssl rand -hex 16)"
+# Any user who can log in to the cluster may open it. Use openshift-sar in place of openshift to narrow that (below).
+oc apply -n ${NS} -k "${SRC}/openshift?ref=${V}"
+oc -n ${NS} rollout status statefulset/capacity-planner
+```
+
+### Let someone else load recordings
+
+Loading needs Pod create in the namespace. To let a user do it without making
+them its admin:
+
+```bash
+kubectl -n ${NS} create rolebinding capacity-planner-loaders --clusterrole=edit --user=<user>
+```
+
+`edit` also lets them read the recordings volume. Give it only to people who
+may see every recording in the namespace.
+
+## Load recordings
+
+For whoever loads data. A recording comes from
+[Record a window](../record-for-capacity-planner/). Name each file after what
+it holds, such as `qwen3-32b.jsonl.gz`: people pick a recording by its file
+name. If the people who open the planner should not see your namespace, model
+and Pod names, load an exported copy instead
+([Real names in recordings](#real-names-in-recordings)).
+
+```bash
+# Use oc and the openshift/loader overlay on OpenShift. The loader is a short-lived Pod that mounts the recordings
+# volume read-write; the planner sees new files without a restart. Copy as many files as you like in one go.
 kubectl apply -n ${NS} -k "${SRC}/loader?ref=${V}"
 kubectl -n ${NS} wait --for=condition=Ready pod/capacity-planner-loader
 kubectl -n ${NS} cp qwen3-32b.jsonl.gz capacity-planner-loader:/recordings/qwen3-32b.jsonl.gz
+kubectl -n ${NS} exec capacity-planner-loader -- ls -l /recordings
 kubectl -n ${NS} delete pod capacity-planner-loader
 ```
 
-### 3. Open it
+- **Replace a recording:** copy a file of the same name over it.
+- **Remove one:** `kubectl -n ${NS} exec capacity-planner-loader -- rm /recordings/<file>`
+  while the loader runs.
+- **Permission denied on `kubectl cp`:** the StorageClass ignores `fsGroup`
+  (`kubectl get csidriver <driver> -o jsonpath='{.spec.fsGroupPolicy}'`). Ask
+  your admin for one that applies it, or a volume whose root uid 65532 can
+  write.
+- The loader stops by itself after an hour. A stopped loader stays until it
+  is deleted: delete it before you load again.
 
-Send people this, with your namespace in it:
+## Open it
+
+Send this to the people who use it, with your namespace in it.
+
+### Plain Kubernetes
+
+You need `kubectl` and a kubeconfig for the cluster.
 
 ```bash
 # Leave it running, then open http://localhost:8080. Use localhost or 127.0.0.1: the planner refuses other names.
@@ -73,10 +119,24 @@ Send people this, with your namespace in it:
 kubectl -n <namespace> port-forward pod/capacity-planner-0 8080:8080
 ```
 
-In **Source**, pick a recording by its file name. An upgrade replaces the
-Pod and ends every port-forward: run the command again.
+In **Source**, pick a recording by its file name.
 
-### Narrow who can open it
+- **Forbidden:** you are not in the group allowed to open it; ask the
+  namespace admin.
+- **The page stops answering** after an upgrade: the Pod was replaced, which
+  ends every port-forward. Run the command again.
+
+### OpenShift
+
+Open the address the admin gets from this command, and log in:
+
+```bash
+echo "https://$(oc -n ${NS} get route capacity-planner -o jsonpath='{.spec.host}')"
+```
+
+## Narrow who can open it
+
+### Plain Kubernetes
 
 By default the RoleBinding names the group `system:authenticated`: everyone
 who can log in to the cluster, ServiceAccounts included. It lets them
@@ -107,50 +167,7 @@ kubectl apply -n ${NS} -k .
 Reading the namespace (`view`) is not enough to open the planner; the Role
 `capacity-planner-viewer` is.
 
-## OpenShift
-
-The Route sends people to the cluster's login page. After login, an
-oauth-proxy sidecar forwards them to the planner on the Pod's 127.0.0.1.
-The proxy image is Red Hat's, from `registry.redhat.io`, which the cluster's
-global pull secret covers.
-
-### 1. Create the namespace and the proxy's cookie secret
-
-```bash
-# Skip the first command if your cluster admin made the namespace. The secret signs the proxy's session cookie.
-oc new-project ${NS}
-oc -n ${NS} create secret generic capacity-planner-proxy --from-literal=session_secret="$(openssl rand -hex 16)"
-```
-
-### 2. Deploy it
-
-```bash
-# Any user who can log in to the cluster may open it. Use openshift-sar in place of openshift to narrow that (below).
-oc apply -n ${NS} -k "${SRC}/openshift?ref=${V}"
-oc -n ${NS} rollout status statefulset/capacity-planner
-```
-
-### 3. Copy recordings in
-
-Copy an exported (pseudonymised) recording if names are sensitive
-([Real names in recordings](#real-names-in-recordings)).
-
-```bash
-# As on plain Kubernetes, with the loader made for OpenShift's restricted SCC.
-oc apply -n ${NS} -k "${SRC}/openshift/loader?ref=${V}"
-oc -n ${NS} wait --for=condition=Ready pod/capacity-planner-loader
-oc -n ${NS} cp qwen3-32b.jsonl.gz capacity-planner-loader:/recordings/qwen3-32b.jsonl.gz
-oc -n ${NS} delete pod capacity-planner-loader
-```
-
-### 4. Open it
-
-```bash
-# The address to send people.
-echo "https://$(oc -n ${NS} get route capacity-planner -o jsonpath='{.spec.host}')"
-```
-
-### Narrow who can open it
+### OpenShift
 
 Deploy the `openshift-sar` overlay in place of `openshift`. Then only users
 who may `get` the Service `capacity-planner` in the namespace get in: anyone
@@ -181,7 +198,18 @@ git clone https://github.com/llm-d-incubation/llm-d-scaling-manager.git && cd ll
 go run ./cmd/learnergolden export -in /path/to/qwen3-32b.jsonl -out /path/to/qwen3-32b-export.jsonl.gz
 ```
 
-Copy the export in, and not the original.
+Load the export, not the original.
+
+## Upgrade
+
+Apply the same overlay with the new release, then tell people to run their
+port-forward again. The recordings stay.
+
+```bash
+export V=<new release>
+kubectl apply -n ${NS} -k "${SRC}/kubernetes?ref=${V}"
+kubectl -n ${NS} rollout status statefulset/capacity-planner
+```
 
 ## Remove it
 
@@ -226,6 +254,7 @@ kubectl -n ${NS} delete secret capacity-planner-proxy
   read-only.
 - **Recordings only.** The in-cluster planner does not read Prometheus. To
   plan from a live window, run it [on your machine](README.md#start-the-planner).
+  Loading from the page is planned (#195).
 - **Kubernetes authentication.** `serve --auth=kubernetes`
   ([Kubernetes authentication](api.md#kubernetes-authentication)) is for API
   clients that send a bearer token. A browser sends none, which is why these
