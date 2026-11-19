@@ -20,9 +20,10 @@ import (
 // saturation test recorded a k2 at the busiest rank's 24 %, scaled to the
 // pod, and the variant was priced there from then on.
 
-// landedRow is that pod: n landed requests on its busiest rank, running
+// landedRow is that pod: five landed requests on its busiest rank, running
 // sequences over its ranks, the busiest rank at busiestKV.
-func landedRow(n, running int, busiestKV float64) domain.ReplicaMetrics {
+func landedRow(running int, busiestKV float64) domain.ReplicaMetrics {
+	const n = 5
 	total := budgetRanks * budgetKVPerRank
 	rm := makeReplicaMetrics("decode-0", decodeVariant, total*15/100, total, n, budgetIn, budgetOut)
 	rm.EngineRanks = budgetRanks
@@ -55,7 +56,7 @@ func analyzeLanded(t *testing.T, row domain.ReplicaMetrics, on bool) bool {
 }
 
 func TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2(t *testing.T) {
-	row := landedRow(5, 9, 0.24)
+	row := landedRow(9, 0.24)
 	require.True(t, analyzeLanded(t, row, false),
 		"the defect: five landed requests on a rank at 24 % KV, 9 of 256 sequences, record a k2")
 	assert.False(t, analyzeLanded(t, row, true), "on: a decode with room has no backlog to record")
@@ -65,13 +66,13 @@ func TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2(t *testing.T) {
 // backlog with the switch on, as before.
 func TestDecodeLandedNeedsABound_ABoundReplicaStillRecords(t *testing.T) {
 	for name, row := range map[string]domain.ReplicaMetrics{
-		"a rank may be at its cap": landedRow(5, 64, 0.24),
-		"the busiest rank is full": landedRow(5, 9, 0.85),
+		"a rank may be at its cap": landedRow(64, 0.24),
+		"the busiest rank is full": landedRow(9, 0.85),
 		"a request waits for capacity": func() domain.ReplicaMetrics {
-			return withReason(landedRow(5, 9, 0.24), 5)
+			return withReason(landedRow(9, 0.24), 5)
 		}(),
 		"the running count is not read": func() domain.ReplicaMetrics {
-			rm := landedRow(5, 9, 0.24)
+			rm := landedRow(9, 0.24)
 			rm.RunningRequestsKnown = false
 			return rm
 		}(),
@@ -84,7 +85,7 @@ func TestDecodeLandedNeedsABound_ABoundReplicaStillRecords(t *testing.T) {
 
 // The rule on one row: a stated cap is needed to rule the cap out.
 func TestDecodeLandedNeedsABound_TheRule(t *testing.T) {
-	raw := landedRow(5, 9, 0.24)
+	raw := landedRow(9, 0.24)
 	view := decodeCapacityView(raw, domain.RoleDecode, 64)
 	require.Equal(t, 5, view.BusiestRankQueue(), "precondition: the view counts the landed five")
 	assert.Equal(t, 0, landedWithoutBound(view, raw, domain.RoleDecode, 64, 0.8).BusiestRankQueue())

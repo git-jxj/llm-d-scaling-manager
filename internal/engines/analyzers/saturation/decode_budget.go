@@ -81,15 +81,15 @@ func finiteNonNegative(v float64) bool {
 	return whatif.Finite(v) && v >= 0
 }
 
-// steadyBatch is the requests one engine rank holds at its token budget B,
-// capped at its batch cap S. A request is resident for O / emitted steps and
+// steadyBatch is the requests one engine rank holds at its token budget
+// (B, budgetTokens), capped at its batch cap (S, batchCap). A request is resident for O / emitted steps and
 // takes prompt + stepTokens x O / emitted of budget over its life, so a rank
 // spending B per step holds B x (O / emitted) / (prompt + stepTokens x O /
 // emitted). The zero budget is prompt I, one token per step: B x O / (I + O).
-func steadyBatch(B, S, avgInput, avgOutput float64, budget stepBudget) float64 {
+func steadyBatch(budgetTokens, batchCap, avgInput, avgOutput float64, budget stepBudget) float64 {
 	if !budget.set {
-		return min(B*avgOutput/(avgInput+avgOutput), S)
+		return min(budgetTokens*avgOutput/(avgInput+avgOutput), batchCap)
 	}
 	steps := avgOutput / budget.emitted
-	return min(B*steps/(budget.prompt+budget.stepTokens*steps), S)
+	return min(budgetTokens*steps/(budget.prompt+budget.stepTokens*steps), batchCap)
 }
