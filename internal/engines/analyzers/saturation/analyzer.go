@@ -522,6 +522,10 @@ type SaturationAnalyzer struct {
 	itlAdaptiveFloor bool
 	itlFills         map[string][]engineFill
 	itlBandFloors    map[string]bandFloor
+	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
+	// (itl_baseline_floor.go): off from the constructor; only a replay
+	// turns it on.
+	itlBaselineFromFloor bool
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
 	// (SetSwitchesForReplay).

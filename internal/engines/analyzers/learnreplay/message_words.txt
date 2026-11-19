@@ -2168,6 +2168,7 @@ picture
 pinned-B
 pinned-B-held
 pinnedAtBPrior
+pinnedAtFloor
 pinnedAtLeastITL
 pins
 pipeline_parallel_size
@@ -2555,6 +2556,7 @@ saturatedThroughputBucket
 saturates
 saturation
 saturation-holds-role
+saturation-itl-baseline-from-floor
 saturation-itl-clears-on-a-new-revision
 saturation-itl-one-sided-at-cap
 saturation-itl-tier-hysteresis

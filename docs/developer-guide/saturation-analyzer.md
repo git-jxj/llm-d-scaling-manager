@@ -963,6 +963,35 @@ variant in `EvictStaleHistory`) for a line recorded as raised
 (`PinnedAtBPrior`). The scope is built by `itl.NewPriorScope`, which reads
 each analyzer's arguments map lazily, under its own lock.
 
+#### B from the floor below the band (issue #169, item 1)
+
+A key learns B only from a full fit. Many never make one: on the e1 and
+staircase recordings nearly every published line is pinned at the 6 ms
+default. Under `SwitchITLBaselineFromFloor`
+(`saturation-itl-baseline-from-floor`, off; `itl_baseline_floor.go`) the
+admission sets `itl.Admission.BaselineFromFloor`:
+
+- **Readings.** The tracker keeps each key's steady readings below the band
+  (`k < MinK`, the replica past its settle and its fill still), the latest
+  `itl.BelowBandWindow` of them.
+- **Floor.** `itl.BelowBandFloor`, the 10th percentile by ITL once there are
+  `itl.BelowBandMinReadings`. The capacity planner reads the same floor
+  (`whatif.BelowBand.LeastITL`).
+- **B.** The floor is read at its own fill: B is the intercept of the line
+  through it and the mean of the pinned fit's readings (`floorIntercept`),
+  which on a true line is its B. Pinned at the floor's ITL as if read at no
+  fill, B would be high by `A x k_floor` and the line under the truth past
+  its readings. With too few readings to fit, the last such B stands, which a
+  held slope was kept against.
+- **Ends.** A learned B ends it; the one-sided rule is set against the pinned
+  fit as against the default. `itl-fit` logs `pinnedAtFloor` and `floor`.
+
+`TestGoldens_ITLBaselineFromFloorReplicas` holds what it moves. On e1 the
+floor pins 9.5-11.9 ms, and decode asks for one replica fewer on 18 of 762
+cycles. On the staircases and three-pods it pins 0.1-2.9 ms, under the
+default (b-on's own full fits learned 1.4-2.4 ms): mu falls 14-35 %,
+and three-pods asks for one replica more on 36 of 203 cycles.
+
 #### When a replica's settle starts (learner PR 4a)
 
 The settle is read from the engine's settle tracker (`internal/signals/settle`,

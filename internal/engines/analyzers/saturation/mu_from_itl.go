@@ -268,7 +268,7 @@ func (a *SaturationAnalyzer) noteITL(key string, replicas []domain.ReplicaMetric
 		logger.V(logging.DEFAULT).Info("itl-fit", "variant", variantName, "tier", "pinned-B",
 			"a", r.Model.A, "b", r.Model.B, "held", r.Held, "baselineLearned", r.BaselineStored,
 			"slopeHeld", r.SlopeHeld, "tierHeld", r.TierHeld, "slopeAge", r.SlopeAge(now), "pinnedAtBPrior", r.PinnedAtBPrior,
-			"priorBeyondReadings", r.PriorBeyondReadings)
+			"priorBeyondReadings", r.PriorBeyondReadings, "pinnedAtFloor", r.PinnedAtFloor, "floor", r.Floor)
 	case r.Declined:
 		logger.V(logging.DEFAULT).Info("itl-fit-declined", "variant", variantName, "held", r.Held)
 	}

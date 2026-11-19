@@ -191,7 +191,7 @@ type VariantState struct {
 	// BelowBandITL is the floor below the band, in seconds: the 10th
 	// percentile of the variant's latest mean ITLs read off a ramp at a fill
 	// under the band's bottom (whatif.BelowBand.LeastITL). 0 with fewer than
-	// belowBandMinReadings, where the line is not read below the band.
+	// itl.BelowBandMinReadings, where the line is not read below the band.
 	BelowBandITL float64
 }
 

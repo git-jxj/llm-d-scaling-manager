@@ -1045,6 +1045,14 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillALowLoadPerRank: nil,
 	saturation.SwitchPrefillAEngineTiming:   nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
+	// llm-d-incubation/llm-d-scaling-manager#169 item 1: the ITL line's B
+	// pinned through the floor below the band while unlearned. Off from the
+	// constructor, so every golden replay runs it off, and off alone from
+	// all on moves nothing. On, it moves the variant and demand outputs of
+	// the fixtures whose lines sit on the default B;
+	// TestGoldens_ITLBaselineFromFloorReplicas holds what it moves on e1, the
+	// staircases and three-pods, and its unit tests hold it (heldBy).
+	saturation.SwitchITLBaselineFromFloor: nil,
 	// ev-shindin/llm-scaling-manager#275 (two switches) and ev-shindin/llm-scaling-manager#438, this file's own rows before learner PR
 	// 4b-1 (see replaySwitches).
 	saturation.SwitchZeroReplicaDataParallel: nil,
@@ -1290,6 +1298,13 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPrefillAEngineTiming_ABusyGroupLearnsA"},
 		{"../../../signals/prefill", "TestTiming_ABusyFleetLearnsAFromEngineTiming"},
 		{"../../../signals/prefill", "TestTiming_LongPromptsAreFlaggedNotRefused"},
+	},
+	saturation.SwitchITLBaselineFromFloor: {
+		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},
+		{"../../../signals/itl", "TestTracker_BaselineFromFloorPinsAnUnlearnedKey"},
+		{"../../../signals/itl", "TestTracker_ALearnedBaselineEndsTheFloor"},
+		{"../../../signals/itl", "TestTracker_TheFloorReadsSteadyRowsOnly"},
+		{".", "TestGoldens_ITLBaselineFromFloorReplicas"},
 	},
 	saturation.SwitchITLAdaptiveBandFloor: {
 		{"../saturation", "TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine"},

@@ -8,6 +8,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 )
 
 // belowRow is one pod of variant at fill k reading a mean ITL of itl.
@@ -66,20 +67,20 @@ func TestLineSamples_OneLowWindowDoesNotSetTheFloor(t *testing.T) {
 // Too few readings below the band is no floor, and the line is then not read
 // below the band at all (whatif.LowestFill).
 func TestLineSamples_TooFewReadingsBelowTheBandIsNoFloor(t *testing.T) {
-	// Cycles 9 to 12 are off a ramp: 8 readings, under belowBandMinReadings.
+	// Cycles 9 to 12 are off a ramp: 8 readings, under itl.BelowBandMinReadings.
 	l := noteCycles(lineT0, repeated(12, belowInput(0.011, 0.012))...)
 	assert.Len(t, l.below["dec"], 8)
 	assert.Zero(t, l.leastBelowBand("dec"))
-	assert.Zero(t, belowBandFloor(make([]float64, belowBandMinReadings-1)))
+	assert.Zero(t, itl.BelowBandFloor(make([]float64, itl.BelowBandMinReadings-1)))
 }
 
-// The floor is read from the latest belowBandWindow readings, so a floor read
+// The floor is read from the latest itl.BelowBandWindow readings, so a floor read
 // under an older engine ages out.
 func TestLineSamples_TheFloorAgesOut(t *testing.T) {
 	in := repeated(30, belowInput(0.005, 0.005))
-	in = append(in, repeated(belowBandWindow/2+10, belowInput(0.011, 0.012))...)
+	in = append(in, repeated(itl.BelowBandWindow/2+10, belowInput(0.011, 0.012))...)
 	l := noteCycles(lineT0, in...)
-	assert.Len(t, l.below["dec"], belowBandWindow)
+	assert.Len(t, l.below["dec"], itl.BelowBandWindow)
 	assert.InDelta(t, 0.011, l.leastBelowBand("dec"), 1e-15)
 }
 

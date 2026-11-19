@@ -66,6 +66,18 @@ type Tracker struct {
 	latches map[string]tierLatch
 	// revisions holds, per key, the revision its readings are of (rollout.go).
 	revisions map[string]revisionState
+	// belowBand is each key's latest steady readings below the band and the
+	// intercept last pinned through their floor, kept only under
+	// Admission.BaselineFromFloor (below_band.go).
+	belowBand map[string]*belowBandState
+}
+
+// belowBandState is a key's steady readings below the band, and the
+// intercept last pinned through their floor (floorIntercept), which a held
+// slope pairs with.
+type belowBandState struct {
+	readings []Observation
+	b        float64
 }
 
 // heldSlope is a key's last fitted A, when it was fitted, and the engine
@@ -90,6 +102,7 @@ func NewTracker() *Tracker {
 		aboveSteady: map[string]*Window{},
 		latches:     map[string]tierLatch{},
 		revisions:   map[string]revisionState{},
+		belowBand:   map[string]*belowBandState{},
 	}
 }
 
@@ -106,6 +119,13 @@ type Reading struct {
 	// earlier full fit. BaselineLearned is that intercept being positive, so
 	// the pinned B is this key's measurement rather than DefaultBaselineSec.
 	BaselineStored, BaselineLearned bool
+	// PinnedAtFloor says the pinned B was read through the key's floor
+	// below the band (Admission.BaselineFromFloor, floorIntercept). Floor
+	// and FloorK are that floor and the fill it was read at, read with the
+	// admission set whether or not B was pinned through it; 0 with too few
+	// readings.
+	PinnedAtFloor bool
+	Floor, FloorK float64
 
 	// What the window was offered this cycle, by why a row was turned away.
 	// Offered counts the readings the window kept; BelowBand those it dropped
@@ -358,6 +378,14 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 			r.NoK++
 		case k < lo:
 			r.BelowBand++
+			if adm.BaselineFromFloor && steady && rm.AvgITL > 0 && !math.IsInf(rm.AvgITL, 0) {
+				st := t.belowBand[key]
+				if st == nil {
+					st = &belowBandState{}
+					t.belowBand[key] = st
+				}
+				st.readings = keepBelowBand(st.readings, Observation{K: k, ITLSec: rm.AvgITL, Timestamp: now, pod: rm.PodName})
+			}
 		case k > hi && !adm.atSequenceCap(rm):
 			r.AboveBand++
 			if !atOrPastKSat(k) {
@@ -429,12 +457,25 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 	}
 	r.Held, r.Ready, r.SteadyHeld, r.SteadySpread = len(obs), sw.Ready(), len(steadyObs), sw.KSpread()
 	baseline, stored := t.baselines[key]
+	var floor Observation
+	var haveFloor bool
+	var heldFloorB float64
+	if st := t.belowBand[key]; adm.BaselineFromFloor && st != nil {
+		floor, haveFloor = belowBandPoint(st.readings)
+		heldFloorB = st.b
+	}
 	t.mu.Unlock()
 
 	r.BaselineStored = stored
 	r.BaselineLearned = stored && baseline > 0
+	if haveFloor {
+		r.Floor, r.FloorK = floor.ITLSec, floor.K
+	}
 	if !r.BaselineLearned {
 		baseline = DefaultBaselineSec
+		if b, ok := t.floorBaseline(key, obs, steadyObs, floor, haveFloor, heldFloorB); ok {
+			baseline, r.PinnedAtFloor = b, true
+		}
 	}
 	// The fits run outside the lock: they read a copy of the window.
 	c := chooseFit(obs, steadyObs, t.fullFitReady(key, r.Ready, steadyObs, adm, now), baseline, s.MinSettledSamples)
@@ -1060,6 +1101,11 @@ func (t *Tracker) sweep(now time.Time, stale func(key string) bool, keepTraces b
 	for key := range t.slopes {
 		if stale(key) {
 			delete(t.slopes, key)
+		}
+	}
+	for key := range t.belowBand {
+		if stale(key) {
+			delete(t.belowBand, key)
 		}
 	}
 	for key := range t.latches {
