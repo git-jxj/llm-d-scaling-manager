@@ -2735,6 +2735,7 @@ slo-ttft-decode-term
 slo-ttft-imbalance-across-counts
 slo-ttft-joint
 slo-ttft-joint-inputs
+slo-ttft-low-load-decode-ttft
 slo-ttft-measured-spread
 slo-ttft-measured-transfer
 slo-ttft-price

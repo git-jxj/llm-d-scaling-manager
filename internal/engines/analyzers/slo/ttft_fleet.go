@@ -303,6 +303,41 @@ type decodeTTFTWindow struct {
 	seen   time.Time
 	// transfer is the variant's transfer readings.
 	transfer prefill.TransferWindow
+	// backlog carries the variant's decode backlog past the queue's drain,
+	// and calm is the latest figure read off the window's calm cycles, at
+	// calmAt (SwitchTTFTLowLoadDecodeTTFT).
+	backlog prefill.DecodeBacklogCarry
+	calm    whatif.DecodeTTFT
+	calmAt  time.Time
+}
+
+// lowLoad is the window's figure with SwitchTTFTLowLoadDecodeTTFT on, read at
+// now: the largest of the cycles that carry no backlog; with none, the
+// latest such figure, for prefill.HeldDecodeAge after the last cycle whose
+// window held it; past that, the largest of the rest, as with the switch
+// off. Waiting is 0 on what it returns: S1 does not refuse on it.
+func (w *decodeTTFTWindow) lowLoad(now time.Time) whatif.DecodeTTFT {
+	var calm, loaded whatif.DecodeTTFT
+	for _, c := range w.cycles {
+		if c.Waiting > 0 {
+			if c.Seconds > loaded.Seconds {
+				loaded = c
+			}
+			continue
+		}
+		if c.Seconds > calm.Seconds {
+			calm = c
+		}
+	}
+	loaded.Waiting = 0
+	switch {
+	case calm.Seconds > 0:
+		w.calm, w.calmAt = calm, now
+		return calm
+	case loaded.Seconds > 0 && w.calm.Seconds > 0 && now.Sub(w.calmAt) <= prefill.HeldDecodeAge:
+		return w.calm
+	}
+	return loaded
 }
 
 // noteTransfer folds the cycle's decode rows into the transfer window under key
@@ -322,6 +357,9 @@ func (a *Analyzer) noteTransfer(key, accelerator, args string, rows []domain.Rep
 
 // noteDecodeTTFT folds the cycle's decode-engine TTFT into the variant's
 // window and returns the largest, as a pair from one cycle; zero with none.
+// With SwitchTTFTLowLoadDecodeTTFT on, cycle.Waiting is the cycle's decode
+// backlog, and the figure is read off the calm cycles (lowLoad); off, Waiting
+// is not read.
 func (a *Analyzer) noteDecodeTTFT(key string, cycle whatif.DecodeTTFT, now time.Time) whatif.DecodeTTFT {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -331,9 +369,17 @@ func (a *Analyzer) noteDecodeTTFT(key string, cycle whatif.DecodeTTFT, now time.
 		a.decodeTTFT[key] = w
 	}
 	w.seen = now
+	if a.ttftLowLoadDecodeTTFT {
+		cycle.Waiting = w.backlog.Carry(cycle.Waiting, now)
+	} else {
+		cycle.Waiting = 0
+	}
 	w.cycles = append(w.cycles, cycle)
 	if len(w.cycles) > whatif.TTFTWindowCycles {
 		w.cycles = w.cycles[1:]
+	}
+	if a.ttftLowLoadDecodeTTFT {
+		return w.lowLoad(now)
 	}
 	var largest whatif.DecodeTTFT
 	for _, c := range w.cycles {

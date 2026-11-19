@@ -472,23 +472,8 @@ func TestTTFTSamples_TheJointFeedIsS1s(t *testing.T) {
 	assert.Equal(t, prefill.NoQueueFreeMinutes, other.joint.Estimate().PrefillWorkRefused, "two decode variants: not fed")
 }
 
-// A decode backlog is the capacity wait where vLLM names it, so a queue of KV
-// pulls in flight is none; without that series it is unknown, never guessed
-// from the queue's length.
-func TestDecodeBacklog(t *testing.T) {
-	n, known := decodeBacklog(domain.ReplicaMetrics{QueueLength: 26, CapacityQueueKnown: true})
-	assert.Zero(t, n)
-	assert.True(t, known)
-	n, known = decodeBacklog(domain.ReplicaMetrics{QueueLength: 52, CapacityQueueLength: 48, CapacityQueueKnown: true})
-	assert.Equal(t, 48, n)
-	assert.True(t, known)
-	n, known = decodeBacklog(domain.ReplicaMetrics{QueueLength: 300})
-	assert.Zero(t, n)
-	assert.False(t, known)
-}
-
 // The TTFT mean lags the queue: after the queue drains, the cycles inside
-// DecodeTTFTLag read a high TTFT with none waiting. They carry the backlog, the
+// prefill.DecodeTTFTLag read a high TTFT with none waiting. They carry the backlog, the
 // window reads its largest, and no cycle is named calm until a whole window
 // has passed clear of them.
 func TestTTFTSamples_TheBacklogOutlivesTheQueue(t *testing.T) {
