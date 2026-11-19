@@ -483,6 +483,9 @@ type SaturationAnalyzer struct {
 	// last logged as withheld for (itl_per_token.go), so the line is logged
 	// once per change rather than every cycle.
 	itlWithheldLogged map[string]itlWithheldReasons
+	// itlReadsEngines is the ITL window keys whose rows were last read a
+	// group's engines one by one (itl_group_engines.go).
+	itlReadsEngines map[string]bool
 	// k2Pending is the readings held for each k2 key whose window they would
 	// start, until a later cycle confirms them (k2_confirm.go), and
 	// analyzeSeq numbers the Analyze calls, the cycles a confirmation is
@@ -776,6 +779,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		joinedFromFirstServed:  true,
 		itlPerToken:            true,
 		itlWithheldLogged:      make(map[string]itlWithheldReasons),
+		itlReadsEngines:        make(map[string]bool),
 		k2Pending:              make(map[string]*k2PendingReadings),
 		prefillObserve:         true,
 		prefillBusyMinutes:     true,
@@ -1126,6 +1130,12 @@ func (a *SaturationAnalyzer) evictStaleHistory() Evicted {
 	for key := range a.itlWithheldLogged {
 		if a.variantIsStale(key, now, variantTimeout) {
 			delete(a.itlWithheldLogged, key)
+		}
+	}
+	// So does how its rows were last read (itl_group_engines.go).
+	for key := range a.itlReadsEngines {
+		if a.variantIsStale(key, now, variantTimeout) {
+			delete(a.itlReadsEngines, key)
 		}
 	}
 	// So does an aggregated variant's shape state (itl_aggregated_shape.go).
