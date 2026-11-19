@@ -157,6 +157,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// recording's cycle reaches one. Their unit tests hold them (heldBy).
 	slo.SwitchTTFTPSOnsets:         nil,
 	slo.SwitchTTFTDecodeGateCharge: nil,
+	// f at an unlearned prefill pod count read across counts, off in
+	// production (whatif.DefaultImbalanceAcrossCounts). It moves no golden:
+	// it moves only a priced fleet's f, and no committed recording's cycle
+	// reaches a priced fleet. Its unit tests hold it (heldBy); the CLI's
+	// --imbalance-across-counts is held on the staircase recording.
+	slo.SwitchTTFTImbalanceAcrossCounts: nil,
 	// J1 of the joint prefill and decode TTFT sizing: the joint inputs in
 	// shadow, and the inverted V_P where P1 refused V_P. Base: main at
 	// 90d1489. Alone it moves no golden: it runs inside S1's pricing, which
@@ -1347,6 +1353,12 @@ var heldBy = map[string][]heldTest{
 	},
 	slo.SwitchTTFTDecodeGateCharge: {
 		{"../slo", "TestTTFT_TheOnsetSwitches"},
+	},
+	// It prices one fleet with the switch on and off and asserts both (f at
+	// three pods 1.5 off, the curve through two pods' f on).
+	slo.SwitchTTFTImbalanceAcrossCounts: {
+		{"../slo", "TestTTFT_TheImbalanceAcrossCountsSwitch"},
+		{"../slo", "TestTTFT_TheImbalanceAcrossCountsDefault"},
 	},
 	// The first runs the switch on and off through Analyze and asserts both;
 	// the model row replays the staircase goldens with it on.
