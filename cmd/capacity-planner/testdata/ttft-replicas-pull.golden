@@ -10,7 +10,7 @@ ttft inputs     V_P 30000 ASSUMED; a 9.00 ms ASSUMED; f 1.5 (assumed); N_p 2 (--
 assumed         V_P 30000 tok/s (--assume-vp); a 9ms (--assume-a); f 1.5 on 2 pods (none learned at that count); prompt cv 0.06 (--assume-prompt-cv); decode TTFT 29.1 ms held from a quiet row, slope 10 on ITL above 3.34 ms (no fit: NoStepSpread); router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow control off (no queue series); Poisson arrivals
 shape           IL 1000 OL 602 (measured, cycles 64-83), output spread D 1.304 (measured)
 engine          vLLM release not recorded
-line check      ok at another shape (rows at KV 2992 a request, priced at 1393): median 14.3% off the rate read, line high; 3 of 10 rows past 15%, worst 15.9%, fill 0.48-0.58, cycles 33-42; left out 17 on a ramp, 0 above the band, 0 older than 30m0s
+line check      ok at another shape (rows at KV 3062 a request, priced at 1393): median 11.2% off the rate read, line high; 0 of 10 rows past 15%, worst 14.7%, fill 0.48-0.58, cycles 33-42; left out 17 on a ramp, 0 above the band, 0 older than 30m0s
 flags: ExtrapolatedFill (fill 0.680, 0.396 above the readings); UnvalidatedTTFT; AssumedVP; AssumedImbalance; AssumedPromptSpread; DecodeStepSlopeAssumed; RouterHopAssumed; FlowControlInferredOff; AssumedPoissonArrivals; AssumedA; TransferHeld
 estimate from 14 readings (cycles 64-77) of a 83-cycle recording, not a guarantee; see basis (-o json)
 TTFT is not a bound, and is validated only where its figure says so: at the sent spread (cv 0.06) it read up to 33% under the router's percentile on the P2 recordings. V_P ASSUMED. a ASSUMED.

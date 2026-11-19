@@ -27,6 +27,12 @@ ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless
 sha256:e836bcf5bfa1268b5ec1c8027ba9732e2cafff11ab554dd8dbac67b110c65faf
 ```
 
+This image is based on launcher v0.6.4, not on the v0.8.0 that single-Pod pools
+run. It does not have v0.8.0's eviction fixes: an evicted rank's worker
+processes can keep their GPU memory, and a `DELETE` can stall that Pod's
+launcher, health checks included, for up to 10 s. A fork based on v0.8.0 is
+planned.
+
 It is `vllm/vllm-openai:v0.26.0` with the fork's `launcher.py` on top, and that
 file is byte-identical to the readable copy in `warmpool/supervisor/` (checked by
 extracting it from the published image). Pin the digest to keep the image fixed,

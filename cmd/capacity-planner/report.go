@@ -162,6 +162,9 @@ func buildReport(ctx context.Context, st *learnreplay.State, s *servedState, q w
 	out.NotValidated = append(out.NotValidated, decodeKneeNotValidated)
 	if ttftPriced {
 		out.NotValidated = append(out.NotValidated, footerNote([]*pricedFleet{base.pf}))
+		if n := busyFleetNote([]*pricedFleet{base.pf}); n != "" {
+			out.NotValidated = append(out.NotValidated, n)
+		}
 	}
 	out.NotValidated = append(out.NotValidated, e2eNote)
 	out.ExitCode = code
@@ -176,6 +179,9 @@ func (r *reporter) shapeReport(ctx context.Context, np, nd int) (whatifapi.Repor
 		return whatifapi.ReportShape{}, 0, false, err
 	}
 	r.pv = base.pv
+	if r.pv.bandFloor > 0 {
+		r.addAssumed(adaptedBandFloorWords(r.pv))
+	}
 	rs := whatifapi.ReportShape{Label: r.sh.Label, InputTokens: r.pv.shape.AvgInputTokens, OutputTokens: r.pv.shape.AvgOutputTokens,
 		PrefixHitRate: r.pv.shape.PrefixHitRate, Source: measuredText(r.pv), Flags: []string{}, Assumed: []string{}}
 	if !r.sh.Measured {
@@ -373,6 +379,13 @@ func (r *reporter) counts(base *servedFleet) (np, nd int) {
 		}
 	}
 	return np, nd
+}
+
+// adaptedBandFloorWords names the ITL band floor a decode line was read
+// over, where the replay lowered it (AdaptedBandFloor), with the policy's.
+func adaptedBandFloorWords(pv pricedVariant) string {
+	return fmt.Sprintf("%s (%.2f, the policy's %.2f): the decode line was read over a lowered KV-fill floor",
+		adaptedBandFloor, pv.bandFloor, pv.bandPolicyFloor)
 }
 
 // addAssumed adds words to the assumed list, once each.

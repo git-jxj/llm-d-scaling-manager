@@ -24,7 +24,8 @@
 // the preferred path; this one exists for sets that cannot take it.
 //
 // Off unless DSET_ROLE_WRITER is true, and on the leader only. It needs patch
-// on disaggregatedsets, which the installer grants with DSET_ROLE_WRITER=true.
+// on disaggregatedsets, which the install grants only when asked: make with
+// DSET_ROLE_WRITER=true, smt with --dset-role-writer.
 // See docs/reference/disaggregatedset.md.
 package dsetwriter
 
@@ -260,7 +261,9 @@ func (w *Writer) listFailure(ctx context.Context, ns string, err error) {
 	case kind == "NoMatch":
 		logger.Info("The DisaggregatedSet CRD is not installed: the role writer has nothing to scale until it is", "namespace", ns)
 	case apierrors.IsForbidden(err):
-		logger.Error(err, "The role writer may not list DisaggregatedSets: install with DSET_ROLE_WRITER=true, which grants get, list and patch on them, or turn the writer off", "namespace", ns)
+		logger.Error(err, "The role writer may not list DisaggregatedSets: it needs get, list and patch on them, which the install grants only when asked. "+
+			"Release install: the cluster admin runs smt admin-setup -n <namespace> --dset-role-writer (a cluster-wide install: smt install --scope cluster --dset-role-writer). "+
+			"make install: DSET_ROLE_WRITER=true make deploy-scaling-manager. Or turn the writer off: DSET_ROLE_WRITER=false", "namespace", ns)
 	default:
 		logger.Error(err, "Could not list DisaggregatedSets", "namespace", ns)
 	}

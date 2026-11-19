@@ -184,8 +184,9 @@ func TestServeSizeLowUnderTheFloor(t *testing.T) {
 	assert.NotContains(t, out.Unmet.Refused.Detail, "short of")
 }
 
-// A recording that learned no V_P sizes nothing: the refusal is the
-// engine's, with the prefill role named.
+// A recording that learned no V_P and no decode line sizes nothing: the
+// refusal is the engine's. With no TPOT asked, the decode knee is what bounds
+// decode, so it is named first, as at-replicas names it.
 func TestServeSizeRefusesATermRefused(t *testing.T) {
 	h, _ := servedAPI(t)
 	in, _ := apiInputs(t, h, "short.jsonl.gz", "")
@@ -195,8 +196,8 @@ func TestServeSizeRefusesATermRefused(t *testing.T) {
 		MaxReplicas: &whatifapi.FleetKnob{Prefill: ip(4), Decode: ip(4)}})
 	assert.Nil(t, out.Answer)
 	require.NotNil(t, out.Unmet)
-	assert.Equal(t, "prefill", out.Unmet.Role)
-	assert.NotEqual(t, whatifapi.ReasonReplicaBound, out.Unmet.Refused.Reason)
+	assert.Equal(t, "decode", out.Unmet.Role)
+	assert.Equal(t, "NoLine", out.Unmet.Refused.Reason)
 	assert.NotEmpty(t, out.Unmet.Refused.Detail)
 	assert.NotNil(t, out.Unmet.AtBound.Limit.Refused)
 	t.Logf("refused: %s: %s", out.Unmet.Refused.Reason, out.Unmet.Refused.Detail)

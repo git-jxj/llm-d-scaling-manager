@@ -39,16 +39,18 @@ This document defines the process for releasing llm-d-scaling-manager.
 Follow [the release process](https://github.com/llm-d-incubation/llm-d-scaling-manager/blob/main/docs/developer-guide/release-process.md).
 There is no release branch: only `main` can be released, and the
 [CI release workflow] refuses a tag that is not on `main` or whose commit does
-not pin `newTag: ${VERSION}` and the warm-pool proxy image `:${VERSION}`.
+not pin `newTag: ${VERSION}` (controller and planner) and the warm-pool proxy
+image `:${VERSION}`.
 
 - [ ] 1. Release PR to `main`: `newTag: ${VERSION}` in
-      `config/base/manager/kustomization.yaml`, and the proxy `image:` tag
+      `config/base/manager/kustomization.yaml` and
+      `config/capacity-planner/base/kustomization.yaml`, and the proxy `image:` tag
       `${VERSION}` in `config/warmpool/warmpool-deployment.yaml` followed by
       `make warmpool-render`; merge it.
 - [ ] 2. Tag the merge commit of the release PR, check it, push the tag
       ([step 1](https://github.com/llm-d-incubation/llm-d-scaling-manager/blob/main/docs/developer-guide/release-process.md#1-push-the-tag)).
 - [ ] 3. Wait for the [CI release workflow] to succeed.
-- [ ] 4. Reset PR to `main`: `newTag: main` and the proxy image `:main` again
+- [ ] 4. Reset PR to `main`: `newTag: main` in both kustomizations and the proxy image `:main` again
       (then `make warmpool-render`), only after the run succeeded.
 - [ ] 5. Publish the GitHub Release with the release notes ([new release]);
       mark a release candidate as a pre-release. Verify the signature.

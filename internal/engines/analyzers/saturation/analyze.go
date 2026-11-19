@@ -107,6 +107,11 @@ func (a *SaturationAnalyzer) analyze(ctx context.Context, input domain.AnalyzerI
 	a.beginITLCycle(input.Namespace, input.ModelID)
 	a.beginStartCycle(input.Namespace, input.ModelID)
 
+	if a.itlAdaptiveFloor {
+		// The band's floor adapted to a low-fill fleet, planner-only
+		// (itl_band_floor.go).
+		satConfig = a.adaptITLBandFloor(input, satConfig, a.now())
+	}
 	c := a.newCycle(ctx, input, satConfig)
 	c.observeFleetShape()
 	c.resolvePricing()

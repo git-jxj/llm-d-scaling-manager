@@ -43,13 +43,13 @@
             "onRamp": 17,
             "aboveBand": 0,
             "tooOld": 0,
-            "past": 3,
-            "medianErrorPct": 14.319396863089322,
-            "worstErrorPct": 15.861032138310588,
-            "signedErrorPct": 14.319396863089322,
+            "past": 0,
+            "medianErrorPct": 11.231262372828112,
+            "worstErrorPct": 14.728444423366996,
+            "signedErrorPct": 11.231262372828112,
             "fromCycle": 33,
             "toCycle": 42,
-            "rowKVPerRequest": 2991.942343243448,
+            "rowKVPerRequest": 3061.6565656565654,
             "otherShape": true
           }
         },
@@ -59,6 +59,7 @@
         },
         "capacityTokens": 131072,
         "kvPerRequest": 1392.8280927271592,
+        "kvPerRequestSource": "measured below the prefix-hit discount, priced at it",
         "shape": {
           "inputTokens": 1000.2564938328671,
           "inputSource": "measured",

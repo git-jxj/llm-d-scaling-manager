@@ -143,6 +143,11 @@ func (a *SaturationAnalyzer) learnedMapsLocked() []learnedMap {
 		// with no trailing separator, so forgetVariant deletes the one key;
 		// a flush takes it with the observation it came from.
 		registered("prefillEstimates", scopeOwnRule, a.prefillEstimates),
+		// The capacity planner's adapted ITL band floor, per model
+		// (itl_band_floor.go): the fleet's fill spans and the floor they
+		// gave. Empty while SwitchITLAdaptiveBandFloor is off.
+		registered("itlFills", scopeShared, a.itlFills),
+		registered("itlBandFloors", scopeShared, a.itlBandFloors),
 	}
 }
 

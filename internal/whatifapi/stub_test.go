@@ -41,7 +41,16 @@ type stubResolver struct {
 	// with this reason from 2 prefill replicas on: a refusal that holds at
 	// more replicas than one, as NoImbalance would with f unlearned.
 	refuseFrom2 whatif.Reason
+	// pinnedLine, when set, is a decode line pinned on the default
+	// intercept (PinnedDefaultB): decode's knee, TPOT and TPOT limit are
+	// refused, and with no TPOT asked the fleet's limit is prefill's alone,
+	// as the CLI's is with no decode line to read decode's knee from.
+	pinnedLine bool
+	// knees counts the DecodeKnee calls.
+	knees atomic.Int64
 }
+
+var pinnedB = whatif.Unanswerable{Reason: whatif.PinnedDefaultB, Detail: "stub: a pinned-b line on the default intercept"}
 
 func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved, error) {
 	switch req.Model {
@@ -122,6 +131,10 @@ func (f *stubFleet) PrefillKnee() whatif.Result {
 }
 
 func (f *stubFleet) DecodeKnee() whatif.Result {
+	f.r.knees.Add(1)
+	if f.r.pinnedLine {
+		return pinnedB
+	}
 	return whatif.Answer{Value: f.decodeKnee(), Basis: whatif.Basis{BoundBy: []whatif.Bound{whatif.BoundBatchCap}}}
 }
 
@@ -175,6 +188,9 @@ func (f *stubFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (dec
 		f.r.onPlainLimits(n)
 	}
 	knee := min(f.prefillKnee(), f.decodeKnee())
+	if f.r.pinnedLine {
+		knee = f.prefillKnee()
+	}
 	switch {
 	case f.refusePrefill:
 		prefill = noVP
@@ -187,8 +203,14 @@ func (f *stubFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (dec
 		decode = whatif.Answer{Value: min(headroom*f.decodeKnee(), (tpotSeconds-0.005)*1000),
 			Basis: whatif.Basis{BoundBy: []whatif.Bound{whatif.BoundTPOT}, Uncapped: (tpotSeconds - 0.005) * 1000}}
 	}
+	if tpotSeconds > 0 && f.r.pinnedLine {
+		decode = pinnedB
+	}
 	if u, ok := prefill.(whatif.Unanswerable); ok {
 		return decode, prefill, u
+	}
+	if u, ok := decode.(whatif.Unanswerable); ok {
+		return u, prefill, u
 	}
 	// A percentile with no ratio refuses decode's limit, and the fleet's.
 	if tpotSeconds > 0 && f.k.TPOTPercentile != 0 && f.k.Assume.TPOTRatio == nil {
