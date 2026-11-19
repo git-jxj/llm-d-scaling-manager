@@ -187,6 +187,8 @@ ok() { RAN=$((RAN + 1)); printf 'ok    %s\n' "$CASE"; }
 # skip REASON: the case checked nothing here. It is counted apart from ok,
 # so a skipped case never reads as a passing one.
 SKIPPED=0
+# The places a case may skip, counted from the file like EXPECT_CASES.
+SKIP_SITES="$(grep -c '^ *skip "' "${BASH_SOURCE[0]}")"
 skip() { SKIPPED=$((SKIPPED + 1)); printf 'SKIP  %s: %s\n' "$CASE" "$1" >&2; }
 
 # gaps_field reads one field the way PRODUCTION reads it: `IFS read`, not `cut`.
@@ -2488,10 +2490,6 @@ me="$(id -u)"
 mkdir -p "$G/noown"
 printf '%s\n' '#!/bin/sh' 'f="${1%XXXXXX}fake"; ln -s /dev/null "$f" && echo "$f"' > "$G/noown/mktemp"
 chmod 755 "$G/noown/mktemp"
-# chmod that always fails, so the guard refuses a directory it just made
-mkdir -p "$G/nochmod"
-printf '%s\n' '#!/bin/sh' 'exit 1' > "$G/nochmod/chmod"
-chmod 755 "$G/nochmod/chmod"
 if [ "$me" = 0 ]; then
     skip "as root every file reads as owned by this user; the real-user case below covers it"
 fi
@@ -2549,16 +2547,6 @@ for sh_ in $GUARD_SHELLS; do
         assert_eq "$(printf '%s\n' "$out" | grep -c 'engine cache')" "1" "$sh_: log lines for $k"
     done
     assert_eq "$(ls -A "$C/mine" | tr '\n' ' ')" "" "$sh_: the directory the planted link points at"
-    # A directory of its own that the guard made and then refused (here
-    # chmod fails; on a filesystem that does not report owners, -O) is
-    # removed again: nothing empty is left beside the other user's cache.
-    mkdir -p "$C/ec/pycache/h"
-    ln -s /dev/null "$C/ec/pycache/h/.writable"
-    chmod 555 "$C/ec/pycache/h"
-    out="$(LOOP_PATH="$G/nochmod" run_loop "$sh_" "$G/guard.sh" PYTHONPYCACHEPREFIX="$C/ec/pycache/h")"
-    assert_contains "$out" "VLLM=unset PYC=unset"
-    assert_contains "$out" "engine cache PYTHONPYCACHEPREFIX=$C/ec/pycache/h is not writable; using the engine default instead"
-    [ ! -e "$C/ec/pycache/h.uid-$me" ] || fail "$sh_: a refused directory of its own was left behind: $C/ec/pycache/h.uid-$me"
     # A filesystem that does not report owners: the directory is used when it
     # is writable, whoever the marker says made it, as before this guard knew
     # of owners -- and never a per-user directory, which would be decided by
@@ -2568,10 +2556,45 @@ for sh_ in $GUARD_SHELLS; do
     assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$C/ec/vllm: this filesystem does not report file owners; using it because it is writable"
     assert_eq "$(printf '%s\n' "$out" | grep -c 'engine cache')" "1" "$sh_: log lines without owners"
     [ ! -e "$C/ec/vllm/.own.fake" ] && [ ! -L "$C/ec/vllm/.own.fake" ] || fail "$sh_: the owner probe was left behind"
-    chmod 755 "$C/ec/pycache/k" "$C/ec/pycache/j" "$C/ec/pycache/i" "$C/ec/pycache/h"
+    chmod 755 "$C/ec/pycache/k" "$C/ec/pycache/j" "$C/ec/pycache/i"
 done
 rm -rf "$G"
 [ "$me" != 0 ] && [ "$FAILED" -eq "$before" ] && ok
+
+# A directory of its own that the guard made and then refused is removed
+# again: nothing empty is left beside the other user's cache. On a
+# filesystem that does not report owners -O refuses it; here a chmod that
+# always fails does, which works for any user, root included.
+CASE="guard: a directory of its own that it made and then refused is removed, not left empty"
+reset; f_engine_cache_only_gap
+before=$FAILED
+G="$(mktemp -d)"
+guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
+grep -q 'PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+me="$(id -u)"
+mkdir -p "$G/nochmod"
+printf '%s\n' '#!/bin/sh' 'exit 1' > "$G/nochmod/chmod"
+chmod 755 "$G/nochmod/chmod"
+for sh_ in $GUARD_SHELLS; do
+    C="$G/$sh_"
+    # Another user's: its marker is a link, and (for a non-root user) the
+    # directory is not writable.
+    mkdir -p "$C/ec/pycache/h"
+    ln -s /dev/null "$C/ec/pycache/h/.writable"
+    chmod 555 "$C/ec/pycache/h"
+    out="$(LOOP_PATH="$G/nochmod" run_loop "$sh_" "$G/guard.sh" PYTHONPYCACHEPREFIX="$C/ec/pycache/h")"
+    assert_contains "$out" "VLLM=unset PYC=unset"
+    assert_contains "$out" "engine cache PYTHONPYCACHEPREFIX=$C/ec/pycache/h is not writable; using the engine default instead"
+    [ ! -e "$C/ec/pycache/h.uid-$me" ] || fail "$sh_: a refused directory of its own was left behind: $C/ec/pycache/h.uid-$me"
+    [ ! -e "$C/ec/pycache/h/.uid-$me" ] || fail "$sh_: a refused directory of its own was left behind: $C/ec/pycache/h/.uid-$me"
+    # One that was there before it ran is never removed.
+    mkdir -p "$C/ec/pycache/h.uid-$me"
+    out="$(LOOP_PATH="$G/nochmod" run_loop "$sh_" "$G/guard.sh" PYTHONPYCACHEPREFIX="$C/ec/pycache/h")"
+    [ -d "$C/ec/pycache/h.uid-$me" ] || fail "$sh_: a directory that was there before the guard ran was removed"
+    chmod 755 "$C/ec/pycache/h"
+done
+rm -rf "$G"
+[ "$FAILED" -eq "$before" ] && ok
 
 # The same, as real users: engines run under setpriv as other UIDs, on the
 # layout the preparer makes (a root 755 node directory, 1777 cache
@@ -3532,6 +3555,13 @@ fi
 if [ $((RAN + SKIPPED)) -ne "$EXPECT_CASES" ]; then
     printf '\n%d case(s) reported ok and %d skipped, %d expected -- the run did not finish.\n' \
         "$RAN" "$SKIPPED" "$EXPECT_CASES" >&2
+    exit 1
+fi
+# A run that skipped everything checked nothing. Each skip site can skip one
+# case, so more skips than sites, or no ok at all, is a broken run.
+if [ "$RAN" -eq 0 ] || [ "$SKIPPED" -gt "$SKIP_SITES" ]; then
+    printf '\n%d case(s) reported ok and %d skipped, at most %d may skip -- the run checked too little.\n' \
+        "$RAN" "$SKIPPED" "$SKIP_SITES" >&2
     exit 1
 fi
 if [ "$SKIPPED" -gt 0 ]; then
