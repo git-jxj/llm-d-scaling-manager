@@ -17,7 +17,10 @@ object.
   below, or your cluster admin creates it for you.
 - [ ] `kubectl` 1.27 or later (or `oc`), and `git`: `kubectl apply -k` fetches
   the manifests from GitHub.
-- [ ] A default StorageClass, for the planner's 1 GiB recordings volume.
+- [ ] A default StorageClass, for the planner's 1 GiB recordings volume. The
+  loader writes it as uid 65532, which needs a StorageClass that applies
+  `fsGroup`, or a volume root that uid can write
+  ([Copy recordings in](#2-copy-recordings-in)).
 - [ ] One or more recordings, from
   [Record a window](../record-for-capacity-planner/). Name each file after its
   model, such as `qwen3-32b.jsonl.gz`: people pick a recording by file name.
@@ -47,6 +50,10 @@ kubectl -n ${NS} rollout status statefulset/capacity-planner
 
 Copy an exported (pseudonymised) recording if names are sensitive
 ([Real names in recordings](#real-names-in-recordings)).
+If `kubectl cp` says Permission denied, your StorageClass ignores `fsGroup`
+(`kubectl get csidriver <driver> -o jsonpath='{.spec.fsGroupPolicy}'`); ask
+your admin for one that applies it, or a volume whose root uid 65532 can
+write.
 
 ```bash
 # A short-lived Pod that mounts the recordings volume read-write. The planner sees new files without a restart.
@@ -179,7 +186,8 @@ Copy the export in, and not the original.
 ## Remove it
 
 ```bash
-# Name the overlay you applied (kubernetes, openshift or openshift-sar). Deletes the recordings volume too.
+# Name the overlay you applied (kubernetes, openshift or openshift-sar). Deletes the recordings claim. If your StorageClass's
+# reclaim policy is Retain, its volume stays (kubectl get pv | grep capacity-planner-recordings) for your cluster admin to delete.
 kubectl delete -n ${NS} -k "${SRC}/kubernetes?ref=${V}"
 # OpenShift only: the cookie secret.
 kubectl -n ${NS} delete secret capacity-planner-proxy

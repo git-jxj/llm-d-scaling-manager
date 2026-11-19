@@ -25,8 +25,11 @@ spec:
       enableServiceLinks: false
       # The image's own user. The loader Pod runs as the same user, so the
       # recordings it writes (0600, as the record guide writes them) are
-      # readable here. The openshift overlay removes the three IDs: OpenShift
-      # assigns them from the namespace's range.
+      # readable here. fsGroup makes the volume writable by that user only
+      # where the volume's driver applies it: some CSI drivers (NFS with
+      # fsGroupPolicy ReadWriteOnceWithFSType) skip it, and the loader can
+      # then write only a volume root it already may. The openshift overlay
+      # removes the three IDs: OpenShift assigns them from the namespace's range.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
