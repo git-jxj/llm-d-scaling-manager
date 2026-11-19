@@ -47,7 +47,7 @@ var (
 		"from", "to", "step", "force"}
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
-		"accelerator", "policy", "engine-image", "vllm-version"}
+		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts"}
 )
 
 // statedOutside is the flags in flagsOutside that were set, as --name.

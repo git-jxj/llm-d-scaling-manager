@@ -827,9 +827,24 @@ its first CUDA context from 4.6 s to 2.3 s. The first start writes about 150 MB
   image that already ships its bytecode compiled (vLLM 0.32 does). The guard
   does the second by itself: it unsets the variable when every top-level
   module of the engine package has its `.pyc`.
-- **One user per image.** The first engine to start an image creates its key
-  directory as its own user, mode `755`. An engine of that image under another
-  user cannot write there; the guard then unsets the variable.
+- **A second user gets its own copy.** The first engine to start on a node
+  owns what it creates there (its key directory is `755`). An engine of the
+  same image under another user cannot write there, so the guard gives it a
+  directory of its own beside it (`<dir>.uid-<uid>`, else `<dir>/.uid-<uid>`)
+  and logs `... is another user's; using ...`. That user compiles once on each
+  node and is warm from its second start. The same holds for `vllm/` and
+  `triton/`.
+  - It costs one more copy per extra user on each node, as large as that
+    user's own cache (the bytecode alone is about 150 MB per image).
+    `make engine-cache-verify` checks the first user's keys, and lists every
+    other user's copy with its size.
+  - The guard takes only a real directory the user made itself, made `755`.
+    That keeps users out of each other's copies on one node; it does not make
+    the directory a trust boundary (see [What it costs](#what-it-costs)).
+  - Seed and publish skip these copies and the `.writable` markers.
+  - On a filesystem that does not report file owners (SMB or Azure Files
+    with a fixed uid, some FUSE and NFSv4 mounts) every user shares the one
+    directory, as before; the guard logs `does not report file owners`.
 - **It is code, like the other caches.** The key comes from the public image
   name and `pycache/` is `1777`, so anyone who can run a pod that mounts the
   same node directory can create a key directory first and put bytecode in it
@@ -864,8 +879,45 @@ LeaderWorkerSet, the leader's and the worker's):
 ```bash
 for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
   eval "d=\${$v:-}"
+  d=${d%/}
   [ -n "$d" ] || continue
-  if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
+  # Does this filesystem report who owns a file? Some do not (SMB or Azure
+  # Files with a fixed uid, a FUSE mount, NFSv4 mapping users to nobody):
+  # a file this process just made reads as someone else's. There owners
+  # decide nothing, and the check is only that the directory is writable.
+  ecown=yes
+  if mkdir -p "$d" 2>/dev/null && ecf=$(mktemp "$d/.own.XXXXXX" 2>/dev/null); then
+    [ -O "$ecf" ] || ecown=no
+    rm -f "$ecf"
+  fi
+  if [ "$ecown" = no ]; then
+    if touch "$d/.writable" 2>/dev/null; then
+      echo "engine cache $v=$d: this filesystem does not report file owners; using it because it is writable"
+      continue
+    fi
+  # The first user to start an engine here wrote the marker, a plain file,
+  # and owns the directory: what that engine made under it is that user's.
+  elif [ ! -L "$d/.writable" ] && touch "$d/.writable" 2>/dev/null && [ -O "$d/.writable" ]; then
+    continue
+  fi
+  # Another user's: a directory of this user's own, beside it, else inside
+  # it. Only a real directory this user made (-O, not a link), made 755
+  # whatever the pod's umask, so no other user can write in it.
+  ecu=$(id -u)
+  ecp=
+  if [ "$ecown" = yes ]; then
+    for p in "$d.uid-$ecu" "$d/.uid-$ecu"; do
+      (umask 022; mkdir -p "$p") 2>/dev/null || continue
+      if [ -d "$p" ] && [ ! -L "$p" ] && [ -O "$p" ] && chmod go-w "$p" 2>/dev/null && touch "$p/.writable" 2>/dev/null; then
+        ecp=$p
+        break
+      fi
+    done
+  fi
+  if [ -n "$ecp" ]; then
+    echo "engine cache $v=$d is another user's; using $ecp, user $ecu's own"
+    eval "$v=\$ecp"
+  else
     echo "engine cache $v=$d is not writable; using the engine default instead"
     unset $v
   fi

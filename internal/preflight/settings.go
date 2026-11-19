@@ -60,6 +60,13 @@ var promLoaderKeys = []string{envAllowHTTP, envTokenPath, envBearerToken, envIns
 // Deployment is then not what the controller will start with.
 const TokenPathEmptiedEnv = "LLMSM_PREFLIGHT_TOKEN_PATH_EMPTIED"
 
+// WatchNamespaceEnv is the preflight Job's environment variable that names
+// the namespaces the controller is about to be applied to manage, comma
+// separated (smt install sets it when they differ from the live Deployment):
+// a list an admin just shrank names namespaces the controller may no longer
+// read, and the install that drops them must not be stopped by them.
+const WatchNamespaceEnv = "LLMSM_PREFLIGHT_WATCH_NAMESPACE"
+
 // settingsDefaults are the values the shipped settings file holds, used for a
 // key neither the settings nor the legacy configuration holds.
 var settingsDefaults = map[string]string{
@@ -331,6 +338,11 @@ func (s *state) loadSettings(ctx context.Context) settingsState {
 		}
 		var d *appsv1.Deployment
 		st.deployWatch, st.deployWhy, d = s.deploymentWatch(ctx, old)
+		if s.env.WatchNamespace != "" && s.env.Scope != ScopeCluster {
+			// The install is about to apply the controller with these
+			// namespaces: check those, not the ones the live Deployment names.
+			st.deployWatch, st.deployWhy = config.NormalizeWatchNamespace(s.env.WatchNamespace), ""
+		}
 		st.deployFound = d != nil
 		st.deployEnv, st.deployRef = controllerPromEnv(d)
 		st.legacyProm = legacyPromValues(old)

@@ -580,6 +580,38 @@ almost certainly wrong: a typo, a stale NAMESPACE export, or the wrong cluster.
     fi
 }
 
+# LLMSM_LWS_ROLE_SCALER_RELEASE is the first LeaderWorkerSet release that serves
+# DisaggregatedSetRoleScaler, whose /scale subresource KEDA drives for one role
+# of a DisaggregatedSet (LWSRoleScalerRelease in internal/utils/scaletarget).
+# It only names the release to upgrade to: the check reads the capability.
+LLMSM_LWS_ROLE_SCALER_RELEASE=v0.10.0
+
+# llmsm_report_lws_dset warns, never fails, when LeaderWorkerSet serves
+# DisaggregatedSet but not disaggregatedsetrolescalers/scale: LeaderWorkerSet
+# v0.9.x, on which KEDA cannot scale a set's roles. It asks discovery what
+# disaggregatedset.x-k8s.io/v1 serves, which every authenticated account may
+# read. No DisaggregatedSet API says nothing. Always returns 0.
+llmsm_report_lws_dset() {
+    local names rel="$LLMSM_LWS_ROLE_SCALER_RELEASE" chart="${LLMSM_LWS_ROLE_SCALER_RELEASE#v}"
+    if ! kc_capture get --raw /apis/disaggregatedset.x-k8s.io/v1; then
+        case "$KC_ERR" in
+            *NotFound*|*"could not find the requested resource"*) return 0 ;;
+        esac
+        log_warning "Could not read what LeaderWorkerSet serves (disaggregatedset.x-k8s.io/v1): ${KC_ERR%%$'\n'*} -- whether KEDA can scale DisaggregatedSet roles was not checked."
+        return 0
+    fi
+    names=" $(printf '%s' "$KC_OUT" | jq -r '[.resources[]?.name] | join(" ")' 2>/dev/null) "
+    case "$names" in *" disaggregatedsets "*) : ;; *) return 0 ;; esac
+    case "$names" in
+        *" disaggregatedsetrolescalers/scale "*)
+            log_info "The API serves DisaggregatedSetRoleScaler /scale: KEDA can scale DisaggregatedSet roles in scaling.mode External, provided the LeaderWorkerSet controller is $rel or later too (new CRDs alone create no role scalers)."
+            return 0 ;;
+    esac
+    log_warning "LeaderWorkerSet in this cluster serves DisaggregatedSet but not DisaggregatedSetRoleScaler (LeaderWorkerSet older than $rel), so KEDA cannot scale DisaggregatedSet roles: they have nothing with a /scale subresource for the HPA to drive. Until it is upgraded, only the role writer (DSET_ROLE_WRITER=true) scales them."
+    log_warning "  Fix: upgrade LeaderWorkerSet to $rel or later, the way it was installed (on OpenShift, through its operator). If it was installed with the upstream Helm chart, apply the new CRDs first, because helm upgrade never updates them:  helm pull oci://registry.k8s.io/lws/charts/lws --version $chart --untar && kubectl apply --server-side --force-conflicts -f lws/crds && helm upgrade lws oci://registry.k8s.io/lws/charts/lws --version $chart -n ${LWS_NAMESPACE:-lws-system}  (the release and namespace this install uses). Then set scaling.mode: External on each role and re-run make scaledobjects-plan. (The install deploys LWS_CHART_VERSION only where no LeaderWorkerSet is installed.)"
+    return 0
+}
+
 # llmsm_model_server_count counts llm-d model servers in one namespace, by the same
 # marker and on the same pod-template basis the ScaledObject scan uses — `-l` on
 # the object matches nothing, because llm-d labels the pod template.

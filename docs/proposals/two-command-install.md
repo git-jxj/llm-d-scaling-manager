@@ -477,6 +477,7 @@ on every PR.
 - Going active: `scaling-manager-activate.yaml` stays a separate admin step.
 - The optional files: Kueue, alerts, metrics reader, policy example.
 - A namespaced controller that watches other namespaces (`watchNamespaces`).
+  Added since: `smt admin-setup --model-namespace` (docs/reference/tools-install.md).
 - Installing KEDA, Prometheus or llm-d.
 - Registering workloads: `scaledobjects-plan` and `-apply` already do it.
 - Migration from installs made before v0.11.0.

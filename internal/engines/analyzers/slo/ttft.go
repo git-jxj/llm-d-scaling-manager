@@ -83,6 +83,20 @@ const SwitchTTFTRouterWait = "slo-ttft-router-wait"
 // the AboveFlowControlOnset verdict.
 const SwitchTTFTPSOnsets = "slo-ttft-ps-onsets"
 
+// SwitchTTFTImbalanceAcrossCounts is the replay switch for f at a prefill
+// pod count P1 has not learned (whatif.ImbalanceReadings.At): on, the curve
+// fitted to the counts P1 learned and the current count's raw share, at
+// least whatif.FreshImbalance with no count learned, and at the current
+// count at least the raw share. Off, as before, min(N,
+// max(whatif.ImbalanceFloor, f)). A count P1 learned prices at its own f
+// either way, and any other is flagged AssumedImbalance, as is any f read
+// from rows of several engine ranks (prefill.Estimate.FMultiRank). Off
+// from the constructor, at whatif.DefaultImbalanceAcrossCounts, the CLI's
+// --imbalance-across-counts default, so the analyzer and the CLI answer the
+// same; only SetSwitchesForReplay turns it on. It moves only the f of an
+// unlearned count.
+const SwitchTTFTImbalanceAcrossCounts = "slo-ttft-imbalance-across-counts"
+
 // SwitchTTFTDecodeGateCharge is the replay switch for
 // whatif.TTFTFleet.ChargeDecodeGate: on, the published rate is charged the
 // share of time the decode flow-control gate is closed below its onset, in
@@ -443,6 +457,7 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 			decodeTTFT:   measured, term: term, legacyDecodeSum: !a.ttftDecodeTerm, flow: flow, mismatch: mismatch,
 			processorSharing: a.ttftProcessorSharing, routerWait: a.ttftRouterWait,
 			psOnsets: a.ttftPSOnsets, decodeGateCharge: a.ttftDecodeGateCharge,
+			acrossCounts: a.ttftImbalanceAcrossCounts,
 		}
 		in.outputSpreadUnread = a.outputSpreadUnread(fleet)
 		p := gateOrPrice(&in, fresh, arrival, target)
