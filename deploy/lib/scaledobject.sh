@@ -2477,11 +2477,15 @@ ENGINENEED
 #       ecp=
 #       if [ "$ecown" = yes ]; then
 #         for p in "$d.uid-$ecu" "$d/.uid-$ecu"; do
-#           (umask 022; mkdir -p "$p") 2>/dev/null || continue
+#           # One made here and then refused (a filesystem that does not
+#           # report owners, seen only now) is removed, not left empty.
+#           ecnew=
+#           if (umask 022; mkdir "$p") 2>/dev/null; then ecnew=yes; elif [ ! -d "$p" ]; then continue; fi
 #           if [ -d "$p" ] && [ ! -L "$p" ] && [ -O "$p" ] && chmod go-w "$p" 2>/dev/null && touch "$p/.writable" 2>/dev/null; then
 #             ecp=$p
 #             break
 #           fi
+#           [ -z "$ecnew" ] || rmdir "$p" 2>/dev/null
 #         done
 #       fi
 #       if [ -n "$ecp" ]; then
