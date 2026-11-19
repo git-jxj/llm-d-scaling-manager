@@ -189,7 +189,7 @@ func TestResidentKV_BelowTheDiscountIsHeldAtIt(t *testing.T) {
 	assert.Equal(t, kvDiscountFloor, pv.kvSource)
 }
 
-// A reading inside the context, or up to aboveContextFactor above it, is
+// A reading inside the context, or up to shape.AboveContextFactor above it, is
 // priced as read and says only that it was measured.
 func TestResidentKV_ANearContextReadingIsPricedAsRead(t *testing.T) {
 	pv := read(1.5*highHit.context(), inferenceengine.EngineVLLM)

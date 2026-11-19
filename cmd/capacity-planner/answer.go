@@ -395,18 +395,14 @@ const (
 	// kvDiscountFloor is a reading below the shape's prefix-hit discount,
 	// priced at the discount.
 	kvDiscountFloor = "measured below the prefix-hit discount, priced at it"
-	// kvAboveContext marks a reading above aboveContextFactor times the whole
-	// context, priced as read.
+	// kvAboveContext marks a reading above shape.AboveContextFactor times the
+	// whole context, priced as read: an engine's own KV beyond the context (an
+	// indexer's keys, a draft model's KV) is real, but a reader should see it.
 	kvAboveContext = ", above the context"
 	// kvSGLangContext is an SGLang reading above the whole context, priced at
 	// the context.
 	kvSGLangContext = "measured above the context on SGLang, priced at the context"
 )
-
-// aboveContextFactor is how far above the whole context a reading is before
-// its source says so: an engine's own KV beyond the context (an indexer's
-// keys, a draft model's KV) is priced as read, but a reader should see it.
-const aboveContextFactor = 2
 
 // residentKV is the KV one running request holds on the decode side, as the
 // decode line is priced at, and sets kvSource.
@@ -419,7 +415,9 @@ const aboveContextFactor = 2
 // holds beyond the context (an indexer's keys, a draft model's KV) and so is
 // not capped at it. A shape the flags state scales the reading by the ratio
 // of its context to the measured one's, keeping the measured overhead factor.
-// With no reading, the whole context, IL + D x OL/2.
+// With no reading, the whole context, IL + D x OL/2. The reading is priced by
+// shape.PriceResident, the rule the controller's analyzer shares
+// (saturation.SwitchKVPerRequestAboveContext).
 //
 // A reading is held above the discount, as the controller's analyzer holds
 // it (withResidentKV): below it is requests part way through their prefill,
@@ -434,11 +432,11 @@ const aboveContextFactor = 2
 // Not gated by count as the analyzer's reading is: few requests read a prefix
 // they truly share high, each carrying the whole of it, so a window of low
 // concurrency on a shared prefix prices the knee low, at most by 1/(1 - hit).
-// That errs towards more replicas; a reading above aboveContextFactor times
-// the context says so in its source.
+// That errs towards more replicas; a reading above shape.AboveContextFactor
+// times the context says so in its source.
 func (pv *pricedVariant) residentKV() float64 {
 	d := pv.shape.OutputDispersion
-	whole := shape.New(pv.shape.AvgInputTokens, pv.shape.AvgOutputTokens, 0).WithOutputDispersion(d).KVreq
+	whole := pv.shape.Context()
 	r, m := pv.state.Resident, pv.state.Shape
 	measured := shape.New(m.InputTokens, m.OutputTokens, 0).WithOutputDispersion(d).KVreq
 	var kv float64
@@ -451,12 +449,14 @@ func (pv *pricedVariant) residentKV() float64 {
 	default:
 		pv.kvSource, kv = kvMeasured, r.PerRequest
 	}
-	switch {
-	case kv < pv.shape.KVreq:
-		pv.kvSource, kv = kvDiscountFloor, pv.shape.KVreq
-	case kv > whole && pv.state.Params != nil && pv.state.Params.Engine == inferenceengine.EngineSGLang:
-		pv.kvSource, kv = kvSGLangContext, whole
-	case kv > aboveContextFactor*whole:
+	sglang := pv.state.Params != nil && pv.state.Params.Engine == inferenceengine.EngineSGLang
+	kv, how := pv.shape.PriceResident(kv, sglang)
+	switch how {
+	case shape.ResidentAtDiscount:
+		pv.kvSource = kvDiscountFloor
+	case shape.ResidentHeldAtContext:
+		pv.kvSource = kvSGLangContext
+	case shape.ResidentAboveContext:
 		pv.kvSource += kvAboveContext
 	}
 	return kv
