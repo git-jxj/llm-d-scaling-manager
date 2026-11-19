@@ -2562,8 +2562,8 @@ ENGINENEED
 #   it cannot write when it builds a kernel there, so its whole tree is
 #   checked. In the container command, before the engine starts (the command
 #   belongs to the chart, so it is not patched here). If the command carries
-#   an older copy of this guard, replace all of it; renaming its variables is
-#   not enough:
+#   an older copy of this guard,
+#   replace all of it; renaming its variables is not enough:
 #
 #     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
 #       eval "d=\${$v:-}"
@@ -2589,7 +2589,7 @@ ENGINENEED
 #       # under it is that user's. Another user's own directory is taken only
 #       # if it is a real directory this user made (-O, not a link), made 755
 #       # whatever the pod's umask, so no other user can write in it.
-#       ecu=`id -u`
+#       ecu=`id -u 2>/dev/null || :`
 #       ecp=
 #       ecbad=
 #       ecmine=
@@ -2602,7 +2602,7 @@ ENGINENEED
 #           fi
 #           ecmine=yes
 #         else
-#           [ "$ecown" = yes ] || break
+#           [ "$ecown" = yes ] && [ -n "$ecu" ] || break
 #           (umask 022; mkdir -p "$p") 2>/dev/null || continue
 #           if [ ! -d "$p" ] || [ -L "$p" ] || [ ! -O "$p" ] || ! chmod go-w "$p" 2>/dev/null || ! touch "$p/.writable" 2>/dev/null; then
 #             continue
