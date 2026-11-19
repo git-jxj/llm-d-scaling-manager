@@ -170,7 +170,9 @@ func decodeRate(pv pricedVariant, query whatif.RateQuery, r resolvedRatio) whati
 // decode; refused (no usable decode line, such as NoLine or PinnedDefaultB),
 // nothing does, and a fleet limit read off prefill alone would claim a bound
 // no rule gives, as at-replicas refuses the fleet. It is DecodeKnee's
-// refusal: band passes a refusal through, so it is not banded.
+// refusal: band passes a refusal through, so it is not banded. Unbanded, it
+// is the line's checks and one closed form, no resample sweep, so the sizer
+// reads it with each fleet's limits rather than once a search.
 func kneeRefusal(pv pricedVariant) whatif.Result {
 	if u, ok := whatif.KneeRate(pv.decode).(whatif.Unanswerable); ok {
 		return pv.qualify(u)

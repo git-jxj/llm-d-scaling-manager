@@ -38,10 +38,17 @@ type curveSet struct {
 	prefillKnee, decodeKnee whatif.Result
 	onsets                  whatif.Result
 	// lowerKnee is the lower of the knees answered; ok false with neither.
+	// The curves stop past it.
 	lowerKnee float64
 	kneeOK    bool
-	ttft      []Point
-	tpot      []Point
+	// capRefused is decode's knee's refusal, nil where it prices. The cap
+	// is headroom times the lower of both knees: with decode's unpriced,
+	// nothing bounds decode, so there is no cap and no operating point, and
+	// the prefill knee alone would claim one, as at-replicas refuses the
+	// fleet.
+	capRefused whatif.Result
+	ttft       []Point
+	tpot       []Point
 	// ttftFloor and tpotFloor are each curve's floor, read off its first
 	// answered point.
 	ttftFloor, tpotFloor Figure
@@ -55,6 +62,9 @@ func priceCurves(ctx context.Context, fl Fleet, tpotAsked bool) (*curveSet, erro
 		if v, ok := valueOf(k); ok && (!cs.kneeOK || v < cs.lowerKnee) {
 			cs.lowerKnee, cs.kneeOK = v, true
 		}
+	}
+	if isRefusal(cs.decodeKnee) {
+		cs.capRefused = cs.decodeKnee
 	}
 	cs.ttft, cs.tpot = []Point{}, []Point{}
 	if !cs.kneeOK {
@@ -113,14 +123,19 @@ func firstRefusal(points []Point, fallback whatif.Result) whatif.Result {
 }
 
 // markers are a curve set's markers at headroom: the cap is headroom times the
-// lower knee, as the CLI's fleet row caps it.
+// lower knee, as the CLI's fleet row caps it, and decode's knee's refusal
+// where that knee is refused.
 func (cs *curveSet) markers(headroom float64) Markers {
 	m := Markers{}
 	pk, dk := figureOf(cs.prefillKnee, unitRate, false), figureOf(cs.decodeKnee, unitRate, false)
 	m.PrefillKnee, m.DecodeKnee = &pk, &dk
-	if cs.kneeOK {
+	switch {
+	case cs.capRefused != nil:
+		c := noFloor(cs.capRefused)
+		m.OperatingCap = &c
+	case cs.kneeOK:
 		m.OperatingCap = &Figure{Value: ptr(headroom * cs.lowerKnee), Unit: unitRate}
-	} else {
+	default:
 		c := noFloor(cs.prefillKnee)
 		m.OperatingCap = &c
 	}
@@ -292,6 +307,9 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	switch {
 	case sc.Rate != nil:
 		rate = *sc.Rate
+	case cs.capRefused != nil:
+		return nil, InputErrorf("the decode knee is refused (%s), so no operating point is priced: give traffic.classes.critical.rate",
+			reasonOf(cs.capRefused))
 	case cs.kneeOK:
 		rate, rateSource = sc.Headroom*cs.lowerKnee, "operating point"
 	default:

@@ -18,8 +18,12 @@ import (
 // missing (ttft-saturated) prices no knee, so decode's limit and the fleet's
 // are that refusal, never prefill's rate alone: slo-to-rate refuses both rows
 // and exits 3, and /v1/plan refuses limits.decode, limits.fleet (with and
-// without headroom) and both +1 steps, while the prefill limit still prices.
-// Before, each fleet figure was the prefill limit, read as bounded.
+// without headroom), both +1 steps and the operating-point cap, while the
+// prefill limit still prices. With no rate given, the plan is a 400 naming
+// the knee: there is no operating point to start at. Before, each fleet
+// figure was the prefill limit, read as bounded, and a plan with no rate
+// chose headroom times the prefill knee as its operating point (9.33 r/s on
+// ttft-three-pods).
 func TestFleetLimitRefusesAnUnpricedDecodeKnee(t *testing.T) {
 	for name, c := range map[string]struct{ recording, reason string }{
 		"pinned line": {"ttft-three-pods", "PinnedDefaultB"},
@@ -43,9 +47,25 @@ func TestFleetLimitRefusesAnUnpricedDecodeKnee(t *testing.T) {
 		t.Run(name+"/plan", func(t *testing.T) {
 			h := servedOne(t, path)
 			in, _ := apiInputs(t, h, "run.jsonl.gz", "")
-			plan, _ := apiPlan(t, h, whatifapi.PlanRequest{InputsID: in.InputsID, Assume: &whatifapi.Assume{A: fp(0.02)},
+			req := whatifapi.PlanRequest{InputsID: in.InputsID, Assume: &whatifapi.Assume{A: fp(0.02)},
 				SLO: &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p90", Target: fp(2)},
-					TPOT: &whatifapi.Objective{Statistic: "none"}}})
+					TPOT: &whatifapi.Objective{Statistic: "none"}}}
+			code, body := apiPost(t, h, "/v1/plan", req)
+			assert.Equal(t, http.StatusBadRequest, code, "no rate given: an operating point chosen off prefill's knee alone: %s", body)
+			assert.Contains(t, string(body), "decode knee is refused ("+c.reason+")")
+			assert.Contains(t, string(body), "traffic.classes.critical.rate")
+
+			req.Traffic = &whatifapi.Traffic{Classes: &whatifapi.Classes{Critical: &whatifapi.ClassRate{Rate: fp(3)}}}
+			plan, _ := apiPlan(t, h, req)
+			assert.Equal(t, 3.0, plan.Limits.Chosen.Rate)
+			assert.Equal(t, "request", plan.Limits.Chosen.RateSource)
+			oc := plan.TTFT.Markers.OperatingCap
+			require.NotNil(t, oc)
+			assert.Nil(t, oc.Value, "the cap priced off prefill's knee alone")
+			if assert.NotNil(t, oc.Refused, "the cap") {
+				assert.Equal(t, c.reason, oc.Refused.Reason)
+			}
+			assert.NotNil(t, plan.TTFT.Markers.PrefillKnee.Value, "the prefill knee still prices")
 			l := plan.Limits
 			for what, f := range map[string]whatifapi.Figure{"fleet": l.Fleet.Figure, "without headroom": l.Fleet.WithoutHeadroom,
 				"+1 prefill": plan.Marginal.PrefillPlusOne.Limit, "+1 decode": plan.Marginal.DecodePlusOne.Limit} {

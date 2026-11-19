@@ -450,6 +450,13 @@ func TestSizePinnedDecodeLineRefusesDecode(t *testing.T) {
 			before := r.knees.Load()
 			out, _ := sizeOf(t, h, req)
 			assert.Zero(t, r.knees.Load()-before, "the fleet's limits carry the knee's refusal: the sizer reads no knee")
+			// The counter counts: a plan of the same fleet reads the knee
+			// for its markers, so the zero above is the sizer's, not a
+			// counter nothing reaches.
+			before = r.knees.Load()
+			_, _ = plan(t, h, PlanRequest{InputsID: req.InputsID, SLO: req.SLO,
+				Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(3)}}}})
+			assert.Positive(t, r.knees.Load()-before, "a plan reads decode's knee: the counter is live")
 			assert.Nil(t, out.Answer, "a decode count no rule bounds")
 			require.NotNil(t, out.Unmet)
 			assert.Equal(t, roleDecode, out.Unmet.Role)

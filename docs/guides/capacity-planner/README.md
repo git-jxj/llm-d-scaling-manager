@@ -262,8 +262,8 @@ kill %1
   roles and the fleet on one axis, with the rate you chose. "binds" marks the
   role whose limit sets the fleet figure. With no TPOT target, decode's knee
   is all that bounds decode: when the source cannot price it (`NoLine`,
-  `PinnedDefaultB`), decode and the fleet are refused, not shown at prefill's
-  rate.
+  `PinnedDefaultB`), decode, the fleet and the cap are refused, not shown at
+  prefill's rate. With no operating point to start from, type a rate.
 - **+1 prefill, +1 decode.** The fleet limit with one more replica of each role.
   Adding a replica of the role that does not bind changes nothing, and the page
   says so.
