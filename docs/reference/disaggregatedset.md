@@ -207,8 +207,14 @@ kubectl apply -f scaling-manager-dset-role-writer-cluster.yaml
 kubectl set env deployment/scaling-manager-controller-manager -n <ctl> DSET_ROLE_WRITER=true
 ```
 
-A namespaced controller that manages other namespaces needs the same Role and
-a RoleBinding in each of them.
+A namespaced controller that manages other namespaces needs the grant in each
+of them: use `smt admin-setup --model-namespace <ns> --dset-role-writer`,
+which writes it there.
+
+Upgrading from a grant made by hand (the `kubectl create` commands of earlier
+releases): those objects carry no `app.kubernetes.io/instance` label, so `smt` does not
+remove them with `--no-dset-role-writer`. Delete them yourself once `smt` has
+made its own.
 
 To remove it, turn it off as above, then:
 

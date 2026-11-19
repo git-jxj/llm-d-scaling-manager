@@ -674,6 +674,9 @@ smt_install_dsetw() {
                 echo "  $(smt_admin_line "$2" "$3" true)" >&2
                 exit 3
             fi
+            # Only a refusal is left to the stamp; any other failure is one.
+            printf '%s' "$KC_ERR" | grep -qF '(Forbidden)' || smt_kubectl_failed "get role $role -n $ns"
+            echo "  may not read Role $role in $ns; ConfigMap $SMT_STAMP says it is granted"
         done < <(smt_dsetw_targets)
         on=true
     elif [ "$SMT_NO_DSETW" = false ] && [ "$dw" = true ] && smt_get deployment "$SMT_DEPLOY" -n "$SMT_NS"; then

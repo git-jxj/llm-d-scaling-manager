@@ -1041,6 +1041,24 @@ else
     bad "stamp without the Role: exit $rc: $(tail -1 "$W/out")"
 fi
 mv "$W/dsetw-role.json" "$STUB_DIR/obj/role/team-a/scaling-manager-dset-role-writer-role.json"
+touch "$STUB_DIR/forbid-roles"
+smt install -n team-a --prometheus-url https://p:9090 --dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && [ "$(dset_env team-a)" = true ] && grep -q 'may not read Role scaling-manager-dset-role-writer-role in team-a' "$W/out"; then
+    ok "install --dset-role-writer by an owner who may not read the Role (Forbidden): the stamp decides, and it says so"
+else
+    bad "Forbidden Role read: exit $rc, DSET_ROLE_WRITER '$(dset_env team-a)': $(tail -1 "$W/out")"
+fi
+rm -f "$STUB_DIR/forbid-roles"
+touch "$STUB_DIR/roles-fail"
+smt install -n team-a --prometheus-url https://p:9090 --dset-role-writer
+rc=$?
+if [ "$rc" = 7 ] && grep -q 'kubectl get role scaling-manager-dset-role-writer-role -n team-a failed' "$W/out"; then
+    ok "a Role read that fails with a server error is exit 7, not taken as Forbidden"
+else
+    bad "Role read server error: exit $rc: $(tail -1 "$W/out")"
+fi
+rm -f "$STUB_DIR/roles-fail"
 : > "$STUB_DIR/calls.log"
 smt admin-setup -n team-a
 rc=$?
@@ -1123,6 +1141,18 @@ fi
 smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m3 --no-dset-role-writer
 rc=$?
 if [ "$rc" = 0 ] && [ -z "$(dset_grants)" ]; then ok "--no-dset-role-writer with a new model list leaves no grant in any namespace"; else bad "off with models: exit $rc, grants '$(dset_grants)'"; fi
+# Another controller's objects of the same names are never removed: revoke
+# checks the instance label (smt_revoke_one).
+mkdir -p "$STUB_DIR/obj/role/m1" "$STUB_DIR/obj/rolebinding/m1"
+printf '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"scaling-manager-dset-role-writer-role-ctl","namespace":"m1","labels":{"app.kubernetes.io/instance":"other"}},"rules":[]}' > "$STUB_DIR/obj/role/m1/scaling-manager-dset-role-writer-role-ctl.json"
+printf '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"scaling-manager-dset-role-writer-rolebinding-ctl","namespace":"m1","labels":{"app.kubernetes.io/instance":"other"}},"roleRef":{"kind":"Role","name":"scaling-manager-dset-role-writer-role-ctl"},"subjects":[]}' > "$STUB_DIR/obj/rolebinding/m1/scaling-manager-dset-role-writer-rolebinding-ctl.json"
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --no-dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && has_obj role m1 scaling-manager-dset-role-writer-role-ctl && has_obj rolebinding m1 scaling-manager-dset-role-writer-rolebinding-ctl; then
+    ok "--no-dset-role-writer leaves a Role and RoleBinding of the same names labelled for another instance"
+else
+    bad "foreign role writer objects: exit $rc, role $(has_obj role m1 scaling-manager-dset-role-writer-role-ctl && echo kept || echo deleted), binding $(has_obj rolebinding m1 scaling-manager-dset-role-writer-rolebinding-ctl && echo kept || echo deleted)"
+fi
 
 reset m1
 echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
@@ -1644,7 +1674,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=186
+EXPECT_CASES=189
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
