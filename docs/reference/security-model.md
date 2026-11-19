@@ -279,7 +279,7 @@ delete it when they go
 | `9090` | gRPC over **mutual TLS** when the install can turn it on, else plaintext ([when](install-options.md#external-scaler-mutual-tls)) | Service `scaling-manager-external-scaler` (ClusterIP); NetworkPolicy `scaling-manager-external-scaler` admits only KEDA's namespace, where the admin phase wrote it (below) | with TLS, only a client certificate the install's CA signed for `scaling-manager-keda-client`; in plaintext, **none** | the KEDA external scaler |
 | `8443` | HTTPS | Service `scaling-manager-controller-manager-metrics-service` (ClusterIP) | TokenReview + SubjectAccessReview on `get /metrics` | self-signed certificate unless `--metrics-cert-path` is set (OpenShift sets it, from the service CA) |
 | `8081` | HTTP | no Service; the kubelet's probes | none | `/healthz`, `/readyz` |
-| `8001` (warm pool only) | HTTP, **plaintext** | the warm-pool pod's launcher (supervisor); also `8002` (proxy control) and `9001`-`9016` (engine instances) | **none** | the supervisor starts engine processes with **caller-supplied argv and env**, in a pod that mounts the shared model cache (`model-pvc`) **read-write**. The only protection is the pool's NetworkPolicy, see below |
+| `8001` (warm pool only) | HTTP, **plaintext** | the warm-pool pod's launcher (supervisor); also `8002` (proxy control) and `9001`-`9016` (engine instances) | **none** | the supervisor starts engine processes with **caller-supplied argv and env**, in a pod that mounts the shared model cache (`model-pvc`) **read-write**. The launcher image runs as **root** (upstream publishes it that way), so the pool Pod does not set `runAsNonRoot`. The only protection is the pool's NetworkPolicy, see below |
 
 **The warm-pool NetworkPolicy.** `deploy/warmpool.sh` renders one per pool,
 `llmsm-warm-pool-<pool>`, in the pool's namespace:
@@ -290,6 +290,11 @@ delete it when they go
   controller pods (`app.kubernetes.io/name=scaling-manager`,
   `control-plane=controller-manager`) in the namespace given as
   `--scaling-manager-namespace`. Anyone who can start a pod with those labels there passes.
+  On `:8001` the launcher serves `/health`, `/v2/vllm/instances` (list, watch,
+  create, delete, log) and, since launcher v0.7.0, `GET /v2/gpu-debug`, which runs a fixed
+  `nvidia-smi` command and returns its output. It takes no input and changes
+  nothing, but it shows the Pod's GPUs, their memory use and any processes
+  `nvidia-smi` can see, so the same rule keeps it to the controller.
 - A pool whose unit spans several pods (`GROUP_SIZE` > 1) also admits **all
   ports, `:8001` included,** from any pod carrying that pool's labels, so the
   ranks can reach each other.
@@ -442,7 +447,7 @@ answers at that address. Set `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` to
 | Image | Default | Recommendation |
 | --- | --- | --- |
 | Controller | from a checkout of `main`: `ghcr.io/llm-d-incubation/llm-d-scaling-manager:main`, a **floating** tag rebuilt on every push to main. The installer sets `imagePullPolicy: Always` for it; a kustomize or GitOps render keeps the manifest's `IfNotPresent`, so a node keeps whichever `:main` it pulled first. From a checkout of a release tag: that release's image, signed with cosign | install a release: `git checkout v0.11.2`, which deploys `:v0.11.2`, or pin its digest from the [release notes](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases), `IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:<digest>` (the digest form has not been verified end to end through the installer yet) ([upgrade and uninstall](upgrade-and-uninstall.md#pin-the-version)). A floating tag means any pod restart can run different code. A registry host with a port (`host:5000/...`) is not parsed correctly by the installer yet; use a Kustomize overlay for that until it is fixed |
-| Warm-pool launcher | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.6.4@sha256:...` | pinned by digest in `config/warmpool/` |
+| Warm-pool launcher | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:...` (single-Pod pools) | pinned by digest in `config/warmpool/`. Not cosign-signed upstream, so the digest is the only integrity check |
 | Warm-pool proxy | from a checkout of `main`: `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:main`, a **floating** tag rebuilt on every push to main. From a checkout of a release tag: that release's image, signed with cosign | install a release, or pin the digest from the release run's summary with `--proxy-image` |
 
 `LLMSM_IMAGE_PULL_SECRET` names an existing pull Secret for a private registry; the

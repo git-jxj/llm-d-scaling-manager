@@ -30,8 +30,8 @@ Each pool Pod runs two containers, and only one is built here:
 
 | container | image | owner |
 | --- | --- | --- |
-| `inference-server` (pool of Pods) | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher` | Fast Model Actuation |
-| `inference-server` (pool of **groups**) | `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` — `--launcher-image` is required, and `create` refuses without it | **our fork**, [ev-shindin/llm-d-fast-model-actuation](https://github.com/ev-shindin/llm-d-fast-model-actuation) — see [pools of groups](groups.md#a-group-needs-a-patched-supervisor-image) |
+| `inference-server` (pool of Pods) | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0`, pinned by digest | Fast Model Actuation |
+| `inference-server` (pool of **groups**) | `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` — `--launcher-image` is required, and `create` refuses without it. Based on launcher v0.6.4, so it lacks v0.8.0's eviction fixes | **our fork**, [ev-shindin/llm-d-fast-model-actuation](https://github.com/ev-shindin/llm-d-fast-model-actuation) — see [pools of groups](groups.md#a-group-needs-a-patched-supervisor-image) |
 | `proxy` | the image `config/warmpool` names, `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy` (`:main`, or the release's tag in a release checkout), or `--proxy-image` | this repo, published with each release (`make docker-build-warmpool-proxy` to build your own) |
 
 A pool node must pull from `ghcr.io/llm-d-incubation`, and for a pool of groups
