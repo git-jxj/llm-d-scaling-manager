@@ -58,6 +58,8 @@ const FLAG_WORDS = {
   AssumedPoissonArrivals: ["Arrivals are taken as Poisson: on bursty traffic the TTFT over-promises.", "a stated arrival burstiness (Ca²)"],
   AssumedArrivalCV2: ["The arrival burstiness Ca² is a value you set.", "nothing: a stated assumption"],
   AssumedA: ["a, the fixed latency, is the value you typed, not a learned one.", "a low-load window that fits a"],
+  AFromEngineTiming: ["a, the fixed latency, was fitted from the engine's own prefill timing on a fleet too busy for low-load minutes, not from quiet minutes.", "a low-load window that fits a"],
+  AdaptedBandFloor: ["The decode ITL line was read over a KV-fill band whose floor the replay lowered to the fleet's fill, below the policy's floor.", "readings at the policy's fill floor or above"],
   PromptSpreadAbovePeak: ["The prompt cv is past the peak for this percentile: a larger cv can price a shorter floor and a higher rate.", "a measured prompt spread"],
   PromptSpreadClamped: ["The measured prompt spread was clamped at its stop.", "a prompt histogram with wider bounds"],
   RoutingBound: ["One prefill pod takes most of the work: more pods would mostly sit idle behind the router.", "fix the routing, not the replica count"],
