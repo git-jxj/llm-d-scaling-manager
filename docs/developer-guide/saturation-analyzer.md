@@ -253,7 +253,10 @@ the capacity planner's rule, `shape.PriceResident`: held at the discount from
 below, priced as read above the context, held at the context on SGLang. A
 shape with no hit is read too. `residentKVBound` is then `above-context` for a
 reading over twice the context, and `upper` only for SGLang held at the
-context. The switch is off from the constructor: the controller keeps the
+context. The count gate is taken at the reading where it is above `KVreq`
+(`countGateKV`): at the discounted `KVreq`, a reading R times it passes only
+from a fill of `minK x R`, so a reading far above the context would never be
+taken. The switch is off from the constructor: the controller keeps the
 bound until a GPU check on a prefix-heavy P/D workload clears the change.
 
 `KVreq` is the single most load-bearing quantity in the analyzer. Everything

@@ -68,7 +68,9 @@ import (
 //     right. The fill gate alone does not bound it where prompts are long
 //     against the cache: a 500,000-token cache with 100,000-token prompts,
 //     90% of them shared, holds 2 requests at a fill of 0.22 and reads 55,500
-//     a request where the shape says 10,500 -- a KV-bound mu 5x low.
+//     a request where the shape says 10,500 -- a KV-bound mu 5x low. With
+//     SwitchKVPerRequestAboveContext on, KVreq here is the reading where it
+//     is higher (countGateKV).
 //
 // The count gate costs the issue's own case some of its reach. Where the hits
 // are on blocks no running request shares, a request holds IL + D*OL/2 and a
@@ -278,6 +280,23 @@ func (a *SaturationAnalyzer) residentRuleFor(params *capacity.EngineParams) resi
 	}
 }
 
+// countGateKV is the KV a request is taken to hold by the count gate, minK x
+// the capacity read / countGateKV (the file comment): s's own KVreq, or with
+// rule.aboveContext the reading itself where it is higher. A gate at the
+// discounted KVreq asks a cache filled to fill k for k x C / KVreq requests,
+// and one that holds R times that per request has k / R x C / KVreq: it
+// passes only from a fill of minK x R. A reading R times the shape is the
+// case SwitchKVPerRequestAboveContext prices, and at R above 1 / minK no fill
+// passes, so the gate would keep the switch from ever seeing it.
+func countGateKV(s shape.Shape, r residentReading, rule residentRule) float64 {
+	if rule.aboveContext {
+		if m := r.perSeq(); m > s.KVreq && !math.IsInf(m, 0) {
+			return m
+		}
+	}
+	return s.KVreq
+}
+
 // withResidentKV is s with its KVreq set to the KV a resident request is
 // measured to hold, bounded by s's own KVreq and the KVreq of s with no hit,
 // and which bound applied: residentBoundNone (priced as read),
@@ -295,7 +314,8 @@ func (a *SaturationAnalyzer) residentRuleFor(params *capacity.EngineParams) resi
 // residentBoundAboveContext past shape.AboveContextFactor times it), except
 // on an engine that over-reads there (rule.heldAtContext), held at the
 // context (residentBoundUpper). A shape with no hit is read as well: its
-// discount is its context, and an engine can hold more than that.
+// discount is its context, and an engine can hold more than that. The count
+// gate is then taken at the KV a request is read to hold (countGateKV).
 func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.Shape, string) {
 	if !(s.KVreq > 0) {
 		return s, residentBoundNoReading
@@ -305,7 +325,7 @@ func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.
 	}
 	noHit := noHitShape(s)
 	need := float64(minResidentOf(noHit))
-	if byBand := math.Ceil(r.minK * r.capTokens / s.KVreq); byBand > need {
+	if byBand := math.Ceil(r.minK * r.capTokens / countGateKV(s, r, rule)); byBand > need {
 		need = byBand
 	}
 	if !(float64(r.running) >= need) {

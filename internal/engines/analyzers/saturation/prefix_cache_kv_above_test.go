@@ -9,6 +9,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 )
 
 // Issue llm-d-incubation/llm-d-scaling-manager#188: an engine can hold more KV
@@ -54,6 +55,42 @@ func TestKVAboveContext_AReadingAboveTheContextIsPricedAsRead(t *testing.T) {
 	assert.InDelta(t, 1050, off["kvReqPerSeq"], 1e-9)
 	assert.Equal(t, "upper", off["residentKVBound"])
 	assert.Less(t, on["rate"], off["rate"], "more KV a request, fewer sequences, a lower mu")
+}
+
+// Ten running requests hold 30,000 tokens at a fill of 0.3, 3000 each,
+// against a discount of 550 and a context of 1050. The count gate at the
+// discount asks for 0.15 x 100,000 / 550 = 28 requests, more than a cache
+// filled to 0.3 holds at 3000 each, so it would read nothing at any fill
+// below 0.82. On, the gate is taken at the reading, 0.15 x 100,000 / 3000 =
+// 5 requests: the reading is taken and marked above the context. Off, the
+// gate stays at the discount and there is no reading, as before.
+func TestKVAboveContext_TheCountGateTakesTheReading(t *testing.T) {
+	r := residentReading{tokens: 30_000, running: 10, capTokens: 100_000, minK: 0.15}
+	s := shape.New(1000, 100, 0.5)
+	got, bound := withResidentKV(s, r, residentRule{aboveContext: true})
+	assert.InDelta(t, 3000, got.KVreq, 1e-9)
+	assert.Equal(t, residentBoundAboveContext, bound)
+	got, bound = withResidentKV(s, r, residentRule{})
+	assert.InDelta(t, 550, got.KVreq, 1e-9)
+	assert.Equal(t, residentBoundNoReading, bound)
+
+	on := hitMu(t, cachingRow(0.3, 10), aboveOn(t))
+	assert.InDelta(t, 3000, on["kvReqPerSeq"], 1e-9)
+	assert.Equal(t, "above-context", on["residentKVBound"])
+	assert.InDelta(t, 68_000.0/3000, on["seqs"], 1e-9)
+
+	off := hitMu(t, cachingRow(0.3, 10), nil)
+	assert.InDelta(t, 550, off["kvReqPerSeq"], 1e-9)
+	assert.Equal(t, "no-reading", off["residentKVBound"])
+}
+
+// A reading below the discount keeps the gate at the discount, on or off:
+// 2000 tokens over 10 requests, 200 each, reads nothing at a gate of 28.
+func TestKVAboveContext_ALowReadingKeepsTheGate(t *testing.T) {
+	r := residentReading{tokens: 2000, running: 10, capTokens: 100_000, minK: 0.15}
+	s := shape.New(1000, 100, 0.5)
+	_, bound := withResidentKV(s, r, residentRule{aboveContext: true})
+	assert.Equal(t, residentBoundNoReading, bound)
 }
 
 // Between the context and twice it the reading is priced as read and the
