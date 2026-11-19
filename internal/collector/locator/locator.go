@@ -11,13 +11,18 @@ package locator
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/scaletarget"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -91,17 +96,32 @@ type PodLocator interface {
 // It takes no cached client. It used to, for the field-indexed scaler lookup and
 // a direct Get by name — and both of those were served by a cluster-wide
 // ScaledObject informer. The registry replaces them with an in-memory lookup.
-func New(apiReader client.Reader, variants func() *registry.Registry) (PodLocator, error) {
+func New(apiReader client.Reader, variants func() *registry.Registry, opts ...Option) (PodLocator, error) {
 	cache, err := newResolutionCache(defaultCacheSize)
 	if err != nil {
 		return nil, err
 	}
-	return &podLocator{
-		apiReader: apiReader,
-		variants:  variants,
-		maxDepth:  defaultMaxDepth,
-		cache:     cache,
-	}, nil
+	l := &podLocator{
+		apiReader:   apiReader,
+		variants:    variants,
+		maxDepth:    defaultMaxDepth,
+		cache:       cache,
+		roleScalers: scaletarget.DefaultRoleScalerWarner,
+		log:         ctrl.Log.WithName("lws"),
+	}
+	for _, o := range opts {
+		o(l)
+	}
+	return l, nil
+}
+
+// Option configures a PodLocator.
+type Option func(*podLocator)
+
+// WithRoleScalerWarner makes the locator warn through w, on log, instead of
+// the controller's shared warner.
+func WithRoleScalerWarner(w *scaletarget.RoleScalerWarner, log logr.Logger) Option {
+	return func(l *podLocator) { l.roleScalers, l.log = w, log }
 }
 
 type podLocator struct {
@@ -109,7 +129,19 @@ type podLocator struct {
 	variants  func() *registry.Registry
 	maxDepth  int
 	cache     *resolutionCache
+	// roleScalers warns, once, that DisaggregatedSetRoleScaler is not
+	// served; roleScalerKnown is set once a read has said whether it is,
+	// and roleScalerRetryAt (Unix nanoseconds) is when a read that answered
+	// nothing may be made again.
+	roleScalers       *scaletarget.RoleScalerWarner
+	roleScalerKnown   atomic.Bool
+	roleScalerRetryAt atomic.Int64
+	log               logr.Logger
 }
+
+// roleScalerProbeRetry is how long a role-scaler probe that answered nothing
+// (Forbidden, a timeout) waits before it reads again.
+const roleScalerProbeRetry = time.Minute
 
 // registry returns the current variant registry, or nil when none is wired.
 func (l *podLocator) registry() *registry.Registry {
@@ -306,6 +338,7 @@ func (l *podLocator) resolveScaleTarget(ctx context.Context, pod *corev1.Pod, na
 	}
 	for _, n := range chain {
 		if n.Kind == constants.DisaggregatedSetKind && n.APIVersion == constants.DisaggregatedSetAPIVersion {
+			l.probeRoleScaler(ctx, n)
 			return dsetRoleScaler(pod, n), nil
 		}
 	}
@@ -315,6 +348,34 @@ func (l *podLocator) resolveScaleTarget(ctx context.Context, pod *corev1.Pod, na
 		}
 	}
 	return chainNode{}, nil
+}
+
+// probeRoleScaler reads, until one read answers, whether the cluster serves
+// DisaggregatedSetRoleScaler, the kind KEDA scales a role of set through. A
+// NoMatch means a LeaderWorkerSet older than v0.10.0, and warns once; a found
+// or NotFound scaler means it is served. Any other error (Forbidden, a
+// timeout) answers nothing, and no read is made again for
+// roleScalerProbeRetry. So an unanswered probe costs at most one read a
+// minute, and an answered one none.
+func (l *podLocator) probeRoleScaler(ctx context.Context, set chainNode) {
+	if l.roleScalerKnown.Load() {
+		return
+	}
+	now := time.Now().UnixNano()
+	retryAt := l.roleScalerRetryAt.Load()
+	if now < retryAt || !l.roleScalerRetryAt.CompareAndSwap(retryAt, now+int64(roleScalerProbeRetry)) {
+		// Not yet due, or another resolution has just taken this read.
+		return
+	}
+	scaler := &unstructured.Unstructured{}
+	scaler.SetAPIVersion(constants.DisaggregatedSetAPIVersion)
+	scaler.SetKind(constants.DisaggregatedSetRoleScalerKind)
+	// Any name will do: only whether the kind is served is asked.
+	err := l.apiReader.Get(ctx, types.NamespacedName{Namespace: set.Namespace, Name: set.Name}, scaler)
+	if err == nil || apierrors.IsNotFound(err) ||
+		l.roleScalers.Observe(l.log, err, set.Namespace, constants.DisaggregatedSetKind+"/"+set.Name) {
+		l.roleScalerKnown.Store(true)
+	}
 }
 
 // dsetRoleScaler is the DisaggregatedSetRoleScaler of a pod of DisaggregatedSet

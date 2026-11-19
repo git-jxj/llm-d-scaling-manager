@@ -17,7 +17,7 @@ var wantChecks = []string{
 	"settings", "keda.crd", "keda.version", "keda.networkpolicy", "keda.mtls", "scaler.tls",
 	"prometheus.reachable", "metrics.model", "podmonitor.port", "prometheus.selects",
 	"openshift.user-monitoring", "rbac.controller", "rbac.namespaces", "kueue",
-	"overlap", "accelerators", "activation",
+	"overlap", "accelerators", "activation", "lws.disaggregatedset",
 }
 
 func TestCheckList(t *testing.T) {
@@ -56,7 +56,7 @@ func TestHealthyInstallPasses(t *testing.T) {
 			t.Errorf("check %s neither reported nor said why it does not apply", name)
 		}
 	}
-	for _, name := range []string{"openshift.user-monitoring", "kueue", "accelerators", "activation"} {
+	for _, name := range []string{"openshift.user-monitoring", "kueue", "accelerators", "activation", "lws.disaggregatedset"} {
 		if !notApplicable(rep, name) {
 			t.Errorf("%s should not apply to the fixture", name)
 		}

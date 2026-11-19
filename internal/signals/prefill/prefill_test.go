@@ -894,9 +894,9 @@ func TestObserver_ForgetsAKeyPastRetention(t *testing.T) {
 // pods (1/sqrt(pi)) and three (3/(2*sqrt(pi))), and the tabulated 1.029375
 // for four.
 func TestNormalMaxMean(t *testing.T) {
-	assert.InDelta(t, 1/math.Sqrt(math.Pi), normalMaxMean(2), 1e-9)
-	assert.InDelta(t, 1.5/math.Sqrt(math.Pi), normalMaxMean(3), 1e-9)
-	assert.InDelta(t, 1.029375, normalMaxMean(4), 1e-6)
+	assert.InDelta(t, 1/math.Sqrt(math.Pi), NormalMaxMean(2), 1e-9)
+	assert.InDelta(t, 1.5/math.Sqrt(math.Pi), NormalMaxMean(3), 1e-9)
+	assert.InDelta(t, 1.029375, NormalMaxMean(4), 1e-6)
 }
 
 // At GaussianMaxMean the normal approximation agrees with the exact sum
@@ -907,11 +907,11 @@ func TestNormalMaxMean(t *testing.T) {
 func TestPoissonMaxExcess_TheNormalApproximationAgreesAtTheThreshold(t *testing.T) {
 	for _, n := range []int{2, 3, 4, 8, 16, 64} {
 		exact := poissonMaxExcess(n, GaussianMaxMean)
-		approx := normalMaxMean(n) / math.Sqrt(GaussianMaxMean)
+		approx := NormalMaxMean(n) / math.Sqrt(GaussianMaxMean)
 		assert.InEpsilon(t, exact, approx, 0.005, "n=%d: exact %.6g, normal %.6g", n, exact, approx)
 		t.Logf("n=%d: exact %.6g, normal %.6g, relative %.2g", n, exact, approx, math.Abs(approx-exact)/exact)
 		// Just above it the approximation is what is returned.
-		assert.Equal(t, normalMaxMean(n)/math.Sqrt(math.Nextafter(GaussianMaxMean, math.Inf(1))),
+		assert.Equal(t, NormalMaxMean(n)/math.Sqrt(math.Nextafter(GaussianMaxMean, math.Inf(1))),
 			poissonMaxExcess(n, math.Nextafter(GaussianMaxMean, math.Inf(1))))
 	}
 }
@@ -926,7 +926,7 @@ func TestPoissonMaxExcess_AHugeRateIsFastAndFinite(t *testing.T) {
 		require.Greater(t, x, 0.0)
 	}
 	assert.Less(t, time.Since(start), time.Second, "100 calls at m = 1e8")
-	assert.InDelta(t, normalMaxMean(8)/1e4, poissonMaxExcess(8, 1e8), 1e-12)
+	assert.InDelta(t, NormalMaxMean(8)/1e4, poissonMaxExcess(8, 1e8), 1e-12)
 }
 
 // The boundaries, by literal: the back-pressure bound is a source from two

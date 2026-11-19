@@ -521,7 +521,7 @@ namespace-scoped installs side by side each have their own budget.
 | `PROM_CA_CERT_PATH` | Local file where the installer saves the Prometheus CA to check it. The controller never sees this file; to verify Prometheus, mount the CA as in [TLS configuration](prometheus.md#tls-configuration) | `/tmp/prometheus-ca.crt` |
 | `GATEWAY_API_VERSION` | Gateway API version installed for llm-d | `v1.2.0` |
 | `LWS_NAMESPACE` | Namespace for LeaderWorkerSet installation | `lws-system` |
-| `LWS_CHART_VERSION` | LeaderWorkerSet Helm chart version | `0.8.0` |
+| `LWS_CHART_VERSION` | LeaderWorkerSet Helm chart version, installed only where no LeaderWorkerSet is. v0.10.0 or later lets KEDA scale DisaggregatedSet roles | `0.10.0` |
 
 The three `LEARNED_STATE_*` horizons are how long the saturation analyzer keeps
 what it has learned. Each is checked on its own. An unset value takes its
