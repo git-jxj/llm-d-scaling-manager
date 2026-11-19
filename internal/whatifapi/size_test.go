@@ -428,6 +428,34 @@ func TestSizeBusyAndDecodeOnly(t *testing.T) {
 	assert.Contains(t, string(body), "no prefill variant")
 }
 
+// A decode line pinned on the default intercept prices no decode knee: with
+// no TPOT asked, nothing else bounds decode, so the size is refused for
+// decode, not answered on prefill's limit alone (1 prefill and 1 decode at
+// 3 r/s, whatever decode could carry). With TPOT asked, the same refusal.
+func TestSizePinnedDecodeLineRefusesDecode(t *testing.T) {
+	for name, c := range map[string]struct {
+		tpot *Objective
+		on   string
+	}{
+		"no tpot":            {&Objective{Statistic: statisticNone}, ""},
+		"no tpot, low end":   {&Objective{Statistic: statisticNone}, SizeOnLow},
+		"tpot mean":          {&Objective{Statistic: statisticMean, Target: f64(0.05)}, ""},
+		"tpot mean, low end": {&Objective{Statistic: statisticMean, Target: f64(0.05)}, SizeOnLow},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := New(Config{Resolver: &stubResolver{pinnedLine: true}, WhatifSchema: "schema-v3"}).Handler()
+			req := sizeAt(inputsOf(t, h), 3, 0.05)
+			req.SLO.TPOT, req.SizeOn = c.tpot, c.on
+			out, _ := sizeOf(t, h, req)
+			assert.Nil(t, out.Answer, "a decode count no rule bounds")
+			require.NotNil(t, out.Unmet)
+			assert.Equal(t, roleDecode, out.Unmet.Role)
+			assert.Equal(t, string(whatif.PinnedDefaultB), out.Unmet.Refused.Reason)
+			assert.NotNil(t, out.Unmet.AtBound.Limit.Refused, "the bound's limit is the refusal")
+		})
+	}
+}
+
 // A limit reaches the rate within a billionth of it, as the worked
 // recording's plateau wanders by up to 8e-13; a millionth short does not.
 func TestReachesTolerance(t *testing.T) {

@@ -157,6 +157,53 @@ func TestDayPlanDecodeAloneIsALowerBound(t *testing.T) {
 	assert.True(t, slices.ContainsFunc(p.Notes, func(n string) bool { return strings.Contains(n, "lower bound") }))
 }
 
+// A decode line pinned on the default intercept prices neither TPOT nor
+// decode's knee: dropping TPOT leaves no rule that bounds decode, so nothing
+// is sized and the hour is refused, naming both terms, as at-replicas
+// refuses the fleet. Sized on prefill's limit alone it read 1 prefill and 1
+// decode for 6 r/s, whatever decode could carry. Asked with no TPOT, the
+// same.
+func TestDayPlanPinnedDecodeLineSizesNothing(t *testing.T) {
+	for name, tpot := range map[string]*Objective{"tpot asked": nil, "no tpot": {Statistic: statisticNone}} {
+		t.Run(name, func(t *testing.T) {
+			r := &stubResolver{pinnedLine: true}
+			res, err := r.Resolve(t.Context(), InputsRequest{})
+			require.NoError(t, err)
+			t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+			for i := range 20 {
+				res.Series = append(res.Series, SeriesSample{At: t0.Add(time.Duration(i) * 15 * time.Second), Rate: 6, RateKnown: true,
+					Prefill: 2, Decode: 2})
+			}
+			p, err := DayPlan(t.Context(), res, DayPlanRequest{SLO: &SLORequest{TPOT: tpot}}, "schema-v3")
+			require.NoError(t, err)
+			b := p.Buckets[0]
+			assert.Nil(t, b.Needed, "a decode count no rule bounds")
+			assert.Equal(t, BucketRefused, b.Status)
+			assert.Equal(t, DayVerdictRefused, b.Verdict)
+			require.Len(t, p.Hours, 1)
+			assert.Nil(t, p.Hours[0].Needed)
+			assert.Equal(t, DayVerdictRefused, p.Hours[0].Verdict)
+			assert.Zero(t, p.Summary.Counts.Sized)
+			assert.Equal(t, 1, p.Summary.Counts.Refused)
+			assert.Nil(t, p.Summary.PeakNeeded)
+			var terms []string
+			for _, x := range p.Refused {
+				terms = append(terms, x.Term+":"+x.Reason)
+				assert.Equal(t, 1, x.Buckets, x.Term)
+				assert.NotContains(t, x.Hint, "--tpot none", "asking no TPOT does not price the knee")
+			}
+			want := []string{"decodeKnee:PinnedDefaultB"}
+			if tpot == nil {
+				want = []string{"tpot:PinnedDefaultB", "decodeKnee:PinnedDefaultB"}
+			}
+			assert.Equal(t, want, terms)
+			require.NotEmpty(t, p.Refused)
+			knee := p.Refused[len(p.Refused)-1]
+			assert.Contains(t, knee.Effect, "the decode knee is not priced")
+		})
+	}
+}
+
 // A refusal that holds at more replicas than one, which the probe at one a
 // role does not see, is still the source's: the buckets are refused and it
 // lands in Refused, not as a bucket beyond the bound. The stub refuses the

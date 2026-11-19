@@ -273,7 +273,8 @@ type sizer struct {
 }
 
 // sizeEval is one fleet's limits at the scenario's targets and headroom:
-// decode's (nil with no TPOT asked), the prefill role's, and the fleet's.
+// decode's (nil with no TPOT asked, but decode's knee's refusal where it is
+// refused, and then the fleet's too), the prefill role's, and the fleet's.
 type sizeEval struct {
 	decode, prefill, fleet whatif.Result
 }
@@ -323,6 +324,16 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 	} else {
 		v.decode, v.prefill, v.fleet = fl.PlainLimits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
 	}
+	if z.sc.TPOT == nil {
+		// With no TPOT asked, decode's knee is what bounds decode: the
+		// fleet's limit reads it through the lower of the roles' knees.
+		// Refused (no usable decode line), that limit is prefill's alone and
+		// no rule bounds decode, so decode's limit, and the fleet's, are the
+		// refusal, as at-replicas refuses the fleet.
+		if knee := fl.DecodeKnee(); isRefusal(knee) {
+			v.decode, v.fleet = knee, knee
+		}
+	}
 	cache[n] = v
 	return v, nil
 }
@@ -332,7 +343,8 @@ func (z *sizer) meets(v sizeEval) bool { return resultReaches(v.fleet, z.rate, z
 
 // decodeMeets reports whether decode's own limit, TPOT and the
 // operating-point cap on decode's knee, reaches the rate; with no TPOT asked
-// decode has no limit of its own, and the fleet's says the rest. Decode's
+// decode has no limit of its own, and the fleet's says the rest; a refused
+// knee meets no rate (priced). Decode's
 // limit has no span over V_P and f, the prefill side's terms.
 func (z *sizer) decodeMeets(v sizeEval) bool {
 	return v.decode == nil || resultReaches(v.decode, z.rate, false)

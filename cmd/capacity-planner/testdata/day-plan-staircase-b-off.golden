@@ -6,7 +6,7 @@ REFUSED prefill's TTFT (NoFixedLatency), in 15 buckets: P1 refused a: TooFewLowL
   what the plan did: Prefill is not sized: decode is sized alone, on its knee times headroom.
 
 REFUSED decode's knee (PinnedDefaultB), in 15 buckets: a pinned-B line on the default intercept 0.006 s
-  what to do: The source fitted no decode ITL line it can price (PinnedDefaultB): record a window with decode under varied load, or ask no TPOT target (--tpot none).
+  what to do: The source fitted no decode ITL line it can price (PinnedDefaultB), so neither TPOT nor the decode knee is priced: record a window with decode under varied load.
   what the plan did: Nothing is sized: decode's own limit is refused too.
 
 each hour: the need of its busiest bucket, the fewest pods it had, and the fleet it had judged whole at each bucket's rate

@@ -227,6 +227,8 @@ weighed. The report's `needed` fleet is found the same way.
 | `unmet` | Instead of `answer` when no fleet within the bound serves the rate: `refused` (the reason, such as `NoPrefillCapacity` or `TargetBelowFloor`, or `ReplicaBoundReached` with the figure the bound reached), `role` (`decode`, `prefill`, or `fleet` when each role alone reaches the rate and the fleet does not), and `atBound`, the fleet at the bound. |
 
 A size with no fleet within the bound is a 200 with `unmet`, not an error.
+A decode knee the source refuses (`NoLine`, `PinnedDefaultB`) is `unmet` for
+`decode` even with no TPOT asked: nothing else bounds decode.
 [What to do about each reason](troubleshooting.md#refused-figures).
 
 ## The report

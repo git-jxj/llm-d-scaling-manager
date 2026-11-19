@@ -160,6 +160,53 @@ func TestDayPlanStaircaseRefusals(t *testing.T) {
 	}
 }
 
+// A decode line the planner refuses prices neither TPOT nor the decode knee.
+// With a assumed, prefill prices on these recordings, but no rule bounds
+// decode: no bucket is sized and no hour is judged, and the plan names the
+// decode knee, as at-replicas refuses the same fleet ("the decode knee is
+// not priced"). Sized on prefill's limit alone, decode read 1 replica in
+// every bucket (three-pods: 17 prefill + 1 decode at the busiest). Asked
+// with no TPOT, the same.
+func TestDayPlanUnpricedDecodeSizesNothing(t *testing.T) {
+	for name, c := range map[string]struct {
+		recording, tpot string
+		want            []string
+	}{
+		"pinned line":         {stair("ttft-three-pods"), "30ms", []string{"tpot:PinnedDefaultB", "decodeKnee:PinnedDefaultB"}},
+		"pinned line no tpot": {stair("ttft-three-pods"), "none", []string{"decodeKnee:PinnedDefaultB"}},
+		"no line":             {stair("ttft-saturated"), "30ms", []string{"tpot:NoLine", "decodeKnee:NoLine"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, code := dayJSON(t, "--recording", c.recording, "--assume-a", "20ms", "--ttft", "2s@p90", "--tpot", c.tpot)
+			assert.Equal(t, 3, code)
+			assert.Zero(t, p.Summary.Counts.Sized)
+			assert.Positive(t, p.Summary.Counts.Refused)
+			assert.Nil(t, p.Summary.PeakNeeded)
+			for _, b := range p.Buckets {
+				assert.Nil(t, b.Needed, "%s: a decode count no rule bounds", b.Start)
+			}
+			assert.NotEmpty(t, p.Summary.RefusedHours)
+			for _, h := range p.Hours {
+				assert.Nil(t, h.Needed, "%s", h.Start)
+				assert.Contains(t, []string{whatifapi.DayVerdictRefused, ""}, h.Verdict, "%s: judged with decode unpriced", h.Start)
+			}
+			reasons := make([]string, 0, len(p.Refused))
+			for _, r := range p.Refused {
+				reasons = append(reasons, r.Term+":"+r.Reason)
+				assert.Positive(t, r.Buckets, r.Term)
+				assert.NotContains(t, r.Hint, "--tpot none", "asking no TPOT does not price the knee")
+			}
+			assert.Equal(t, c.want, reasons)
+			require.NotEmpty(t, p.Refused)
+			assert.Contains(t, p.Refused[len(p.Refused)-1].Effect, "the decode knee is not priced")
+
+			// at-replicas says the same of the fleet the recording had.
+			out, _ := runCmd(t, "at-replicas", "--recording", c.recording, "--assume-a", "20ms", "--ttft", "2s@p90", "--tpot", "30ms")
+			assert.Contains(t, out, "the decode knee is not priced")
+		})
+	}
+}
+
 // A plan that sizes no bucket exits 3, even with nothing refused and no rate
 // beyond the bound: every bucket has too little data.
 func TestDayPlanNothingSizedExits3(t *testing.T) {
