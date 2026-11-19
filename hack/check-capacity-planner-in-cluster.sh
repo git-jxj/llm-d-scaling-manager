@@ -32,6 +32,9 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 FAIL=0
 PASS=0
+# Every assertion and negative control below, each one ok. A case dropped, or a
+# run that stops early, fails on the count. Change it with the cases.
+EXPECT_PASS=73
 
 command -v yq >/dev/null 2>&1 || { echo "FAIL: yq is required (not skipping: a skipped check reads as a pass)"; exit 1; }
 
@@ -52,7 +55,7 @@ render() {
 WANT_TAG="$(awk '$1 == "newTag:" {gsub(/["\r]/, "", $2); print $2; exit}' config/base/manager/kustomization.yaml)"
 [ -n "$WANT_TAG" ] || { echo "FAIL: no newTag in config/base/manager/kustomization.yaml"; exit 1; }
 
-DEP='select(.kind == "Deployment" and .metadata.name == "capacity-planner")'
+DEP='select(.kind == "StatefulSet" and .metadata.name == "capacity-planner")'
 PLANNER="$DEP | .spec.template.spec.containers[] | select(.name == \"planner\")"
 PROXY="$DEP | .spec.template.spec.containers[] | select(.name == \"oauth-proxy\")"
 TOKEN_PATH=/var/run/secrets/kubernetes.io/serviceaccount
@@ -65,7 +68,7 @@ TOKEN_PATH=/var/run/secrets/kubernetes.io/serviceaccount
 v_namespaced_only() {
     yq -N '.kind + "/" + .metadata.name' "$1" | while read -r obj; do
         case "${obj%%/*}" in
-            ServiceAccount|Deployment|PersistentVolumeClaim|Role|RoleBinding|Service|Route|Pod) ;;
+            ServiceAccount|StatefulSet|PersistentVolumeClaim|Role|RoleBinding|Service|Route|Pod) ;;
             *) echo "$obj is not one of the namespaced kinds this may ship" ;;
         esac
     done
@@ -103,7 +106,7 @@ v_hardened() {
     local f="$1" spec
     for spec in '.spec.template.spec' '.spec'; do
         local sel
-        if [ "$spec" = .spec ]; then sel='select(.kind == "Pod")'; else sel='select(.kind == "Deployment")'; fi
+        if [ "$spec" = .spec ]; then sel='select(.kind == "Pod")'; else sel='select(.kind == "StatefulSet")'; fi
         yq -N "$sel | select($spec.securityContext.runAsNonRoot != true) | .kind + \"/\" + .metadata.name" "$f" | sed 's/$/: runAsNonRoot is not true/'
         yq -N "$sel | $spec.containers[] | select(.securityContext.readOnlyRootFilesystem != true) | .name" "$f" | sed 's/$/: readOnlyRootFilesystem is not true/'
         yq -N "$sel | $spec.containers[] | select(.securityContext.allowPrivilegeEscalation != false) | .name" "$f" | sed 's/$/: allowPrivilegeEscalation is not false/'
@@ -150,8 +153,12 @@ v_rbac_k8s() {
         || echo "the RoleBinding subject is not exactly Group system:authenticated: $(yq -o=json -I=0 "$RB | .subjects" "$f")"
     local got want
     got="$(yq -N "$ROLE | .rules[] | ((.apiGroups | join(\",\")) + \"|\" + (.resources | join(\",\")) + \"|\" + ((.resourceNames // []) | join(\",\")) + \"|\" + (.verbs | sort | join(\",\")))" "$f" | sort | tr '\n' ';')"
-    want='apps|deployments|capacity-planner|get;|pods/portforward||create,get;|pods||get,list;'
+    # Both rules name the planner's one Pod: no other Pod, and no list.
+    want='|pods/portforward|capacity-planner-0|create,get;|pods|capacity-planner-0|get;'
     [ "$got" = "$want" ] || echo "the Role's rules are '$got', want '$want'"
+    # The name the Role holds is the StatefulSet's only Pod.
+    [ "$(yq -N "$DEP | .spec.replicas" "$f")" = 1 ] \
+        || echo "the StatefulSet has $(yq -N "$DEP | .spec.replicas" "$f") replicas; the Role names capacity-planner-0 alone"
 }
 
 # OpenShift: the proxy forwards to the planner's loopback with a loopback
@@ -199,7 +206,7 @@ v_token_masked() {
 
 # OpenShift's restricted SCC refuses fixed IDs.
 v_no_fixed_ids() {
-    yq -N '((select(.kind == "Deployment") | .spec.template.spec), (select(.kind == "Pod") | .spec)) | .securityContext | select(has("runAsUser") or has("runAsGroup") or has("fsGroup")) | "fixed IDs: " + (. | @json)' "$1"
+    yq -N '((select(.kind == "StatefulSet") | .spec.template.spec), (select(.kind == "Pod") | .spec)) | .securityContext | select(has("runAsUser") or has("runAsGroup") or has("fsGroup")) | "fixed IDs: " + (. | @json)' "$1"
 }
 
 # The SAR is asked in the planner's own namespace, and the shipped Role
@@ -333,8 +340,8 @@ subjects:
     name: capacity-planner
     namespace: capacity-planner
 EOF
-PA='(select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "planner"))'
-XA='(select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "oauth-proxy"))'
+PA='(select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "planner"))'
+XA='(select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "oauth-proxy"))'
 caught "a Service on plain Kubernetes" v_not_exposed "$K" "append:$WORK/svc.yaml"
 caught "a ClusterRoleBinding" v_namespaced_only "$K" "append:$WORK/crb.yaml"
 caught "a ClusterRoleBinding in openshift-sar" v_namespaced_only "$S" "append:$WORK/crb.yaml"
@@ -345,13 +352,17 @@ caught "--auth dropped" v_planner_loopback "$K" "$PA.args |= map(select(. != \"-
 caught "the recordings mount writable" v_recordings_readonly "$K" "$PA.volumeMounts[0].readOnly = false"
 caught "a writable root filesystem" v_hardened "$K" "$PA.securityContext.readOnlyRootFilesystem = false"
 caught "no memory limit" v_hardened "$K" "del($PA.resources.limits)"
-caught "runAsNonRoot dropped" v_hardened "$K" 'del(select(.kind == "Deployment") | .spec.template.spec.securityContext.runAsNonRoot)'
-caught "a token mounted on plain Kubernetes" v_no_token_k8s "$K" '(select(.kind == "Deployment") | .spec.template.spec.automountServiceAccountToken) = true'
+caught "runAsNonRoot dropped" v_hardened "$K" 'del(select(.kind == "StatefulSet") | .spec.template.spec.securityContext.runAsNonRoot)'
+caught "a token mounted on plain Kubernetes" v_no_token_k8s "$K" '(select(.kind == "StatefulSet") | .spec.template.spec.automountServiceAccountToken) = true'
 caught "the RoleBinding to another group" v_rbac_k8s "$K" '(select(.kind == "RoleBinding") | .subjects[0].name) = "system:unauthenticated"'
 caught "a second RoleBinding subject" v_rbac_k8s "$K" '(select(.kind == "RoleBinding") | .subjects) += [{"kind": "User", "name": "eve"}]'
 caught "the Role grants Secrets" v_rbac_k8s "$K" '(select(.kind == "Role") | .rules) += [{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get"]}]'
-caught "the Role grants exec" v_rbac_k8s "$K" '(select(.kind == "Role") | .rules[2].resources) = ["pods/portforward", "pods/exec"]'
-caught "the Role loses pods/portforward create" v_rbac_k8s "$K" '(select(.kind == "Role") | .rules[2].verbs) = ["get"]'
+caught "the Role grants exec" v_rbac_k8s "$K" '(select(.kind == "Role") | .rules[1].resources) = ["pods/portforward", "pods/exec"]'
+caught "the Role loses pods/portforward create" v_rbac_k8s "$K" '(select(.kind == "Role") | .rules[1].verbs) = ["get"]'
+caught "the Role lists Pods" v_rbac_k8s "$K" '(select(.kind == "Role") | .rules[0].verbs) = ["get", "list"]'
+caught "the Role names no Pod" v_rbac_k8s "$K" 'del(select(.kind == "Role") | .rules[1].resourceNames)'
+caught "the Role names another Pod" v_rbac_k8s "$K" '(select(.kind == "Role") | .rules[0].resourceNames) = ["capacity-planner-1"]'
+caught "a second planner replica" v_rbac_k8s "$K" '(select(.kind == "StatefulSet") | .spec.replicas) = 2'
 caught "a planner tag other than newTag" v_planner_tag "$K" "$PA.image = \"ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:v0.0.1\""
 caught "a Docker Hub image" v_images "$K" "$PA.image = \"docker.io/library/busybox:1.36\""
 caught "an image with no registry host" v_images "$L" '(select(.kind == "Pod") | .spec.containers[0].image) = "busybox:1.36"'
@@ -363,7 +374,7 @@ caught "a Route with no TLS" v_proxy "$O" 'del(select(.kind == "Route") | .spec.
 caught "the redirect reference names another Route" v_proxy "$O" '(select(.kind == "ServiceAccount") | .metadata.annotations."serviceaccounts.openshift.io/oauth-redirectreference.primary") = "{\"kind\":\"OAuthRedirectReference\",\"apiVersion\":\"v1\",\"reference\":{\"kind\":\"Route\",\"name\":\"other\"}}"'
 caught "a Service port to the planner" v_proxy "$O" '(select(.kind == "Service") | .spec.ports) += [{"name": "planner", "port": 8080, "targetPort": 8080}]'
 caught "the token mounted into the planner" v_token_masked "$O" "$PA.volumeMounts |= map(select(.mountPath != \"$TOKEN_PATH\"))"
-caught "a fixed runAsUser on OpenShift" v_no_fixed_ids "$O" '(select(.kind == "Deployment") | .spec.template.spec.securityContext.runAsUser) = 65532'
+caught "a fixed runAsUser on OpenShift" v_no_fixed_ids "$O" '(select(.kind == "StatefulSet") | .spec.template.spec.securityContext.runAsUser) = 65532'
 caught "a fixed runAsUser in the OpenShift loader" v_no_fixed_ids "$OL" '(select(.kind == "Pod") | .spec.securityContext.runAsUser) = 65532'
 caught "the SAR in no namespace" v_sar "$S" "$XA.args |= map(select(test(\"^--openshift-sar=\") | not)) + [\"--openshift-sar={\\\"resource\\\":\\\"services\\\",\\\"resourceName\\\":\\\"capacity-planner\\\",\\\"verb\\\":\\\"get\\\"}\"]"
 caught "the SAR Role grants another Service" v_sar "$S" '(select(.kind == "Role") | .rules[0].resourceNames) = ["other"]'
@@ -371,5 +382,5 @@ caught "the loader off the planner's node" v_loader "$L" 'del(select(.kind == "P
 caught "the loader as another user" v_loader_user "$L" '(select(.kind == "Pod") | .spec.securityContext.runAsUser) = 1000' "$K"
 
 echo
-echo "capacity planner in-cluster manifests: $PASS passed, $FAIL failed"
-[ "$FAIL" = 0 ] && [ "$PASS" -gt 0 ]
+echo "capacity planner in-cluster manifests: $PASS passed, $FAIL failed (expected $EXPECT_PASS)"
+[ "$FAIL" = 0 ] && [ "$PASS" = "$EXPECT_PASS" ]

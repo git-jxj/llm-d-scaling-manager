@@ -1,15 +1,16 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: capacity-planner
   labels:
     app.kubernetes.io/name: capacity-planner
     app.kubernetes.io/part-of: llm-d-scaling-manager
 spec:
+  # A StatefulSet of one, so the Pod is always capacity-planner-0 and the
+  # viewer Role can name it: port-forward to that Pod and to no other. It
+  # also replaces the Pod by deleting it first, as the ReadWriteOnce
+  # recordings claim needs. Keep it at 1: the Role names only -0.
   replicas: 1
-  # Recreate: the recordings volume is ReadWriteOnce.
-  strategy:
-    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: capacity-planner

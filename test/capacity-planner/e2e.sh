@@ -31,7 +31,7 @@ KEEP="${KEEP:-false}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RECORDING="$ROOT/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-open-loop-short/recording.jsonl.gz"
 # One ok or FAIL per case. Change it deliberately with the cases.
-EXPECT_CASES=15
+EXPECT_CASES=16
 
 for tool in kubectl curl jq; do
     command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: $tool is required"; exit 1; }
@@ -42,7 +42,7 @@ T="$(mktemp -d)"
 PF_PIDS=()
 cleanup() {
     local p
-    for p in "${PF_PIDS[@]}"; do kill "$p" 2>/dev/null || true; done
+    for p in ${PF_PIDS[@]+"${PF_PIDS[@]}"}; do kill "$p" 2>/dev/null || true; done
     if [ "$KEEP" != true ]; then
         kubectl delete namespace "$NS" "$USERS_NS" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     fi
@@ -75,12 +75,13 @@ overlay() { # overlay <dir> <overlay> [extra kustomization lines file]
     } > "$dir/kustomization.yaml"
 }
 
-# pf <log> <port> <kubectl args...>: port-forward in the background. 0 once it
-# forwards, 1 when kubectl exits first (its log says why), 2 after 30 s.
+# pf <log> <port> <kubectl args...>: port-forward to PF_TARGET (default the
+# planner's Pod, as the guide does) in the background. 0 once it forwards, 1
+# when kubectl exits first (its log says why), 2 after 30 s.
 pf() {
     local log="$1" port="$2"
     shift 2
-    kubectl "$@" -n "$NS" port-forward deploy/capacity-planner "$port:8080" >"$log" 2>&1 &
+    kubectl "$@" -n "$NS" port-forward "${PF_TARGET:-pod/capacity-planner-0}" "$port:8080" >"$log" 2>&1 &
     local pid=$!
     PF_PIDS+=("$pid")
     local i
@@ -113,7 +114,7 @@ echo "Deploying the kubernetes overlay with $PLANNER_IMG into $NS"
 kubectl create namespace "$NS" >/dev/null || die "cannot create namespace $NS"
 overlay "$T/planner" kubernetes
 kubectl apply -n "$NS" -k "$T/planner" || die "kubectl apply -k the kubernetes overlay failed"
-kubectl -n "$NS" rollout status deploy/capacity-planner --timeout=180s || {
+kubectl -n "$NS" rollout status statefulset/capacity-planner --timeout=180s || {
     kubectl -n "$NS" describe pods
     die "the planner did not become ready"
 }
@@ -123,7 +124,7 @@ exposed="$(kubectl -n "$NS" get services,ingresses -o name 2>&1)"
 if [ -z "$exposed" ]; then ok "nothing exposes the planner: no Service, no Ingress in $NS"; else fail "exposed: $exposed"; fi
 
 # 2. The planner bound the Pod's loopback, with no authentication.
-plog="$(kubectl -n "$NS" logs deploy/capacity-planner -c planner 2>&1)"
+plog="$(kubectl -n "$NS" logs pod/capacity-planner-0 -c planner 2>&1)"
 if printf '%s\n' "$plog" | grep -q 'serving the capacity planner.s API on 127.0.0.1:8080 (auth none)'; then
     ok "the planner serves 127.0.0.1:8080 with auth none"
 else
@@ -133,9 +134,12 @@ fi
 # 3. No token is mounted into the planner.
 mounts="$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=capacity-planner -o json \
     | jq -r '[.items[0].spec.containers[].volumeMounts[]?.mountPath] | join(",")')"
+# Non-empty: an empty list would also hold no token, and prove nothing.
 case ",$mounts," in
+    ,,) fail "no mounts read from the planner Pod" ;;
     *,/var/run/secrets/kubernetes.io/serviceaccount,*) fail "a ServiceAccount token is mounted: $mounts" ;;
-    *) ok "no ServiceAccount token in the Pod (mounts: $mounts)" ;;
+    *,/recordings,*) ok "no ServiceAccount token in the Pod (mounts: $mounts)" ;;
+    *) fail "the planner Pod does not mount /recordings: $mounts" ;;
 esac
 
 echo "Copying the recording in with the loader Pod"
@@ -166,8 +170,9 @@ VIEWER=(--kubeconfig "$VK")
 
 # 4. The viewer has nothing but the Role.
 if [ "$(kubectl "${VIEWER[@]}" auth can-i get secrets -n "$NS" 2>/dev/null)" = no ] \
-    && [ "$(kubectl "${VIEWER[@]}" auth can-i create pods/exec -n "$NS" 2>/dev/null)" = no ]; then
-    ok "the viewer may not read Secrets or exec in $NS"
+    && [ "$(kubectl "${VIEWER[@]}" auth can-i create pods/exec -n "$NS" 2>/dev/null)" = no ] \
+    && [ "$(kubectl "${VIEWER[@]}" auth can-i list pods -n "$NS" 2>/dev/null)" = no ]; then
+    ok "the viewer may not read Secrets, exec or list Pods in $NS"
 else
     fail "the viewer has more than the Role in $NS"
 fi
@@ -196,6 +201,26 @@ else
     fail "the viewer cannot port-forward over SPDY: $(cat "$T/pf-spdy.log")"
 fi
 
+# 10. The Role names the planner's Pod: another Pod in the namespace is
+# refused, over WebSocket and over SPDY.
+kubectl -n "$NS" run other --image=registry.k8s.io/e2e-test-images/busybox:1.36.1-1@sha256:a9155b13325b2abef48e71de77bb8ac015412a566829f621d06bfae5c699b1b9 \
+    --restart=Never --command -- sleep 600 >/dev/null || die "cannot create the second Pod"
+kubectl -n "$NS" wait --for=condition=Ready pod/other --timeout=120s >/dev/null || die "the second Pod did not start"
+other_ok=true
+for ws in true false; do
+    if KUBECTL_PORT_FORWARD_WEBSOCKETS=$ws PF_TARGET=pod/other pf "$T/pf-other-$ws.log" 18088 "${VIEWER[@]}"; then
+        other_ok=false; fail "the viewer port-forwards to another Pod (websockets=$ws)"
+    elif ! grep -q 'pods "other" is forbidden' "$T/pf-other-$ws.log"; then
+        other_ok=false; fail "another Pod failed, but not as forbidden (websockets=$ws): $(cat "$T/pf-other-$ws.log")"
+    fi
+done
+# The port-forward rule itself names the Pod, not only the get rule.
+if [ "$(kubectl "${VIEWER[@]}" auth can-i create pods/other --subresource=portforward -n "$NS" 2>/dev/null)" != no ] \
+    || [ "$(kubectl "${VIEWER[@]}" auth can-i create pods/capacity-planner-0 --subresource=portforward -n "$NS" 2>/dev/null)" != yes ]; then
+    other_ok=false; fail "pods/portforward is not granted for capacity-planner-0 alone"
+fi
+[ "$other_ok" = false ] || ok "the viewer is denied another Pod in $NS: $(grep -m1 forbidden "$T/pf-other-false.log")"
+
 echo "Narrowing the RoleBinding to the group planners, as the guide does"
 cat > "$T/narrow.yaml" <<'EOF'
 patches:
@@ -213,7 +238,7 @@ EOF
 overlay "$T/narrow" kubernetes "$T/narrow.yaml"
 kubectl apply -n "$NS" -k "$T/narrow" >/dev/null || die "cannot apply the narrowed overlay"
 
-# 10. In the group: allowed.
+# 11. In the group: allowed.
 if pf "$T/pf-carol.log" 18082 --as=carol --as-group=planners; then
     code="$(get 18082 "$T/carol.html")"
     if [ "$code" = 200 ]; then ok "carol (group planners) opens the page: 200"; else fail "carol: GET / $code"; fi
@@ -221,16 +246,16 @@ else
     fail "carol (group planners) cannot port-forward: $(cat "$T/pf-carol.log")"
 fi
 
-# 11. Not in the group: denied before any Pod is reached.
+# 12. Not in the group: denied before any Pod is reached.
 if pf "$T/pf-dave.log" 18083 --as=dave; then
     fail "dave (no group) port-forwards after the narrowing"
-elif grep -qi 'forbidden' "$T/pf-dave.log"; then
+elif grep -q 'pods "capacity-planner-0" is forbidden' "$T/pf-dave.log"; then
     ok "dave (no group) is denied: $(grep -i -m1 forbidden "$T/pf-dave.log")"
 else
     fail "dave failed, but not as forbidden: $(cat "$T/pf-dave.log")"
 fi
 
-# 12. The viewer lost it with the narrowing.
+# 13. The viewer lost it with the narrowing.
 if pf "$T/pf-viewer2.log" 18084 "${VIEWER[@]}"; then
     fail "the viewer port-forwards after the narrowing"
 elif grep -qi 'forbidden' "$T/pf-viewer2.log"; then
@@ -239,18 +264,18 @@ else
     fail "the viewer failed, but not as forbidden: $(cat "$T/pf-viewer2.log")"
 fi
 
-# 13. Reading the namespace is not enough: view grants Pods and Deployments,
+# 14. Reading the namespace is not enough: view grants get on Pods,
 # not pods/portforward.
 kubectl -n "$NS" create rolebinding viewer-view --clusterrole=view --serviceaccount="$USERS_NS:viewer" >/dev/null
 if pf "$T/pf-viewer3.log" 18085 "${VIEWER[@]}"; then
     fail "the viewer port-forwards with view alone"
-elif grep -qi 'pods/portforward' "$T/pf-viewer3.log"; then
+elif grep -q 'pods "capacity-planner-0" is forbidden.*pods/portforward' "$T/pf-viewer3.log"; then
     ok "with view alone, pods/portforward is denied: $(grep -i -m1 forbidden "$T/pf-viewer3.log")"
 else
     fail "with view alone, a failure that does not name pods/portforward: $(cat "$T/pf-viewer3.log")"
 fi
 
-# 14-15. The Role is exactly enough: add the viewer to the narrowed binding by
+# 15-16. The Role is exactly enough: add the viewer to the narrowed binding by
 # a binding of the Role alone.
 kubectl -n "$NS" delete rolebinding viewer-view >/dev/null
 kubectl -n "$NS" create rolebinding viewer-role --role=capacity-planner-viewer --serviceaccount="$USERS_NS:viewer" >/dev/null

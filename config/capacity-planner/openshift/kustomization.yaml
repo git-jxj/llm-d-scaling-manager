@@ -14,12 +14,12 @@ resources:
   - capacity-planner-route.yaml
 
 patches:
-  - path: oauth-proxy-deployment.yaml
+  - path: oauth-proxy-statefulset.yaml
   - path: oauth-proxy-serviceaccount.yaml
   # OpenShift's restricted SCC assigns the user, group and fsGroup from the
   # namespace's range and refuses fixed ones.
   - target:
-      kind: Deployment
+      kind: StatefulSet
       name: capacity-planner
     patch: |-
       - op: remove

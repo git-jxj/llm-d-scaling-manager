@@ -248,7 +248,9 @@ branch's tags are refused.
 2. **Release PR to `release-0.10`**, not to `main`. It sets
    `newTag: v0.10.2` and the proxy image `:v0.10.2` (a line released before
    the proxy job existed has no proxy pin to set, and one before
-   `config/capacity-planner` no planner pin), and moves every version reference on the branch to
+   `config/capacity-planner` no planner pin; do not backport the
+   `ci-release.yaml` planner pin step to such a line, where it fails every
+   tag), and moves every version reference on the branch to
    `v0.10.2`; list them with
    `git grep -n 'v0\.10\.[0-9]' -- docs deploy hack/benchmark`. It adds
    "Upgrading from v0.10.1 to v0.10.2" to

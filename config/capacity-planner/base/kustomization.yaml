@@ -7,7 +7,7 @@ kind: Kustomization
 # docs/guides/capacity-planner/in-cluster.md.
 resources:
   - capacity-planner-serviceaccount.yaml
-  - capacity-planner-deployment.yaml
+  - capacity-planner-statefulset.yaml
   - recordings-persistentvolumeclaim.yaml
 
 # The planner image follows the controller's newTag (config/base/manager):
