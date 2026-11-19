@@ -165,6 +165,56 @@ func TestResidentKV_NotCappedAtTheContext(t *testing.T) {
 	w.overhead, w.capTokens = 3.8, 10_000_000
 	pv := w.priced(t, 0, 0)
 	assert.InEpsilon(t, 3.8*w.context(), pv.decode.KVPerRequest, 0.05)
+	assert.Equal(t, kvMeasured+kvAboveContext, pv.kvSource, "a reading far above the context says so")
+}
+
+// read is a resident reading of perRequest over enough cycles, on a variant
+// measured at the high-hit workload's shape, run by engine.
+func read(perRequest float64, engine inferenceengine.Engine) pricedVariant {
+	pv := pricedVariant{state: learnreplay.VariantState{
+		Shape:    learnreplay.MeasuredShape{InputTokens: highHit.il, OutputTokens: highHit.ol, PrefixHitRate: highHit.hit},
+		Resident: learnreplay.ResidentKV{PerRequest: perRequest, Running: 40, Cycles: 5, FromCycle: 1, ToCycle: 5},
+		Params:   &capacity.EngineParams{Engine: engine},
+	}}
+	pv.shape = shape.New(highHit.il, highHit.ol, highHit.hit).WithOutputDispersion(1)
+	return pv
+}
+
+// A reading below the shape's prefix-hit discount is priced at the discount,
+// as the controller's analyzer holds it: pricing it would raise the knee.
+func TestResidentKV_BelowTheDiscountIsHeldAtIt(t *testing.T) {
+	pv := read(500, inferenceengine.EngineVLLM)
+	discounted := highHit.il*(1-highHit.hit) + highHit.ol/2
+	assert.InDelta(t, discounted, pv.residentKV(), 1e-9)
+	assert.Equal(t, kvDiscountFloor, pv.kvSource)
+}
+
+// A reading inside the context, or up to aboveContextFactor above it, is
+// priced as read and says only that it was measured.
+func TestResidentKV_ANearContextReadingIsPricedAsRead(t *testing.T) {
+	pv := read(1.5*highHit.context(), inferenceengine.EngineVLLM)
+	assert.InDelta(t, 1.5*highHit.context(), pv.residentKV(), 1e-9)
+	assert.Equal(t, kvMeasured, pv.kvSource)
+}
+
+// On SGLang a reading above the context is held at the context: SGLang reads
+// the busiest rank's usage against the pod's whole capacity, so on
+// data-parallel attention it over-reads by about the rank count. On vLLM the
+// same reading is priced as read.
+func TestResidentKV_SGLangIsHeldAtTheContext(t *testing.T) {
+	over := 4 * highHit.context()
+	sg := read(over, inferenceengine.EngineSGLang)
+	assert.InDelta(t, highHit.context(), sg.residentKV(), 1e-9)
+	assert.Equal(t, kvSGLangContext, sg.kvSource)
+
+	vl := read(over, inferenceengine.EngineVLLM)
+	assert.InDelta(t, over, vl.residentKV(), 1e-9)
+	assert.Equal(t, kvMeasured+kvAboveContext, vl.kvSource)
+
+	// Below the context SGLang is priced as read, like vLLM.
+	under := read(0.9*highHit.context(), inferenceengine.EngineSGLang)
+	assert.InDelta(t, 0.9*highHit.context(), under.residentKV(), 1e-9)
+	assert.Equal(t, kvMeasured, under.kvSource)
 }
 
 // With no reading, the decode side is priced at the whole context, with no

@@ -49,7 +49,9 @@ type ResidentKV struct {
 func (r ResidentKV) Read() bool { return r.PerRequest > 0 && r.Cycles >= minResidentCycles }
 
 // noteResident keeps, per variant that is not prefill, the resident reading of
-// each of its latest shapeCycles cycles that have one: summed over its Ready
+// each of its latest shapeCycles cycles that have one (the latest samples with
+// a reading, not the latest cycles: after a lull below the band they can be
+// old, as the line's rows are; FromCycle and ToCycle say which): summed over its Ready
 // rows not lent by the warm pool, that read both the running requests and the
 // tokens in use of the same scrape, with a KV capacity, and whose fill is in
 // [the ITL band's bottom, 1]. Below the band a few requests read a prefix

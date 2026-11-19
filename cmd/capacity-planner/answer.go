@@ -18,6 +18,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
@@ -386,7 +387,18 @@ const (
 	// kvDiscountFloor is a reading below the shape's prefix-hit discount,
 	// priced at the discount.
 	kvDiscountFloor = "measured below the prefix-hit discount, priced at it"
+	// kvAboveContext marks a reading above aboveContextFactor times the whole
+	// context, priced as read.
+	kvAboveContext = ", above the context"
+	// kvSGLangContext is an SGLang reading above the whole context, priced at
+	// the context.
+	kvSGLangContext = "measured above the context on SGLang, priced at the context"
 )
+
+// aboveContextFactor is how far above the whole context a reading is before
+// its source says so: an engine's own KV beyond the context (an indexer's
+// keys, a draft model's KV) is priced as read, but a reader should see it.
+const aboveContextFactor = 2
 
 // residentKV is the KV one running request holds on the decode side, as the
 // decode line is priced at, and sets kvSource.
@@ -405,6 +417,17 @@ const (
 // it (withResidentKV): below it is requests part way through their prefill,
 // or a spread of output lengths D under-states, not more sharing than the hit
 // rate allows, and pricing it would raise the knee.
+//
+// On SGLang a reading is held at the whole context: SGLang publishes the
+// busiest rank's usage and running count against the pod's whole capacity
+// (prefix_cache_kv.go), so on data-parallel attention it over-reads by about
+// the rank count, and the knee would come out that many times low.
+//
+// Not gated by count as the analyzer's reading is: few requests read a prefix
+// they truly share high, each carrying the whole of it, so a window of low
+// concurrency on a shared prefix prices the knee low, at most by 1/(1 - hit).
+// That errs towards more replicas; a reading above aboveContextFactor times
+// the context says so in its source.
 func (pv *pricedVariant) residentKV() float64 {
 	d := pv.shape.OutputDispersion
 	whole := shape.New(pv.shape.AvgInputTokens, pv.shape.AvgOutputTokens, 0).WithOutputDispersion(d).KVreq
@@ -420,8 +443,13 @@ func (pv *pricedVariant) residentKV() float64 {
 	default:
 		pv.kvSource, kv = kvMeasured, r.PerRequest
 	}
-	if kv < pv.shape.KVreq {
+	switch {
+	case kv < pv.shape.KVreq:
 		pv.kvSource, kv = kvDiscountFloor, pv.shape.KVreq
+	case kv > whole && pv.state.Params != nil && pv.state.Params.Engine == inferenceengine.EngineSGLang:
+		pv.kvSource, kv = kvSGLangContext, whole
+	case kv > aboveContextFactor*whole:
+		pv.kvSource += kvAboveContext
 	}
 	return kv
 }

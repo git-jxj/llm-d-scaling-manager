@@ -209,9 +209,11 @@ type wireShape struct {
 	InputSource  string  `json:"inputSource"`
 	OutputTokens float64 `json:"outputTokens"`
 	OutputSource string  `json:"outputSource"`
-	// OutputDispersion is D = E[O^2]/E[O]^2 as read, the KV per request priced
-	// at ILeff + D*OL/2; absent with no output-length histogram, where it is
-	// flagged OutputSpreadUnread and priced at ILeff + OL/2.
+	// OutputDispersion is D = E[O^2]/E[O]^2 as read: it sets the shape's KVreq,
+	// ILeff + D*OL/2, and the whole context a decode request is priced at with
+	// no resident reading, IL + D*OL/2 (kvPerRequestSource); absent with no
+	// output-length histogram, where it is flagged OutputSpreadUnread and read
+	// as 1.
 	OutputDispersion float64 `json:"outputDispersion,omitempty"`
 	PrefixHitRate    float64 `json:"prefixHitRate"`
 	FromCycle        int     `json:"fromCycle"`
