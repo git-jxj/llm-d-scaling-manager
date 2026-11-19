@@ -151,6 +151,22 @@ func TestRun_ExportPlainAndGzipped(t *testing.T) {
 	assert.Equal(t, []byte{0x1f, 0x8b}, gz[:2])
 }
 
+// A gzipped recording exports as its unzipped self does: the committed
+// recording, read as it is, against its unzipped copy.
+func TestRun_ExportReadsAGzippedRecording(t *testing.T) {
+	dir := t.TempDir()
+	_, err := runOut("export", "-in", rawRecording(t), "-out", filepath.Join(dir, "plain.jsonl"))
+	require.NoError(t, err)
+	gzIn := filepath.Join(goldens, "acceptance", learnreplay.RecordingName)
+	_, err = runOut("export", "-in", gzIn, "-out", filepath.Join(dir, "from-gz.jsonl"))
+	require.NoError(t, err)
+	plain, err := os.ReadFile(filepath.Join(dir, "plain.jsonl"))
+	require.NoError(t, err)
+	fromGz, err := os.ReadFile(filepath.Join(dir, "from-gz.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, plain, fromGz)
+}
+
 // add writes a fixture and runs the check; the check then fails on an
 // edited golden, and update repairs it.
 func TestRun_AddCheckUpdate(t *testing.T) {
