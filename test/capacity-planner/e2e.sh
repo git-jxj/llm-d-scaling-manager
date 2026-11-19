@@ -105,6 +105,10 @@ inputs() {
         -d '{"source": {"kind": "recording", "name": "short.jsonl.gz"}}' "http://localhost:$1/v1/inputs" || echo 000
 }
 
+# The e2e's own namespaces, left by a run with KEEP=true or still terminating
+# from the last one.
+kubectl delete namespace "$NS" "$USERS_NS" --ignore-not-found --wait=true --timeout=180s >/dev/null \
+    || die "namespaces $NS and $USERS_NS are still there"
 echo "Deploying the kubernetes overlay with $PLANNER_IMG into $NS"
 kubectl create namespace "$NS" >/dev/null || die "cannot create namespace $NS"
 overlay "$T/planner" kubernetes
