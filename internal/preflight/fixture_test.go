@@ -64,6 +64,8 @@ type fixture struct {
 	now time.Time
 	// tokenPathEmptied is Env.TokenPathEmptied: smt install --allow-http.
 	tokenPathEmptied bool
+	// watchNamespace is Env.WatchNamespace: smt install about to apply a new list.
+	watchNamespace string
 }
 
 type reaction struct {
@@ -413,6 +415,7 @@ func (f *fixture) env(t *testing.T) *Env {
 		DialTLS:          f.dialer(),
 		CheckTimeout:     5 * time.Second,
 		TokenPathEmptied: f.tokenPathEmptied,
+		WatchNamespace:   f.watchNamespace,
 		Now: func() time.Time {
 			if !f.now.IsZero() {
 				return f.now

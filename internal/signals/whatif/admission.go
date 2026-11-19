@@ -86,9 +86,9 @@ const maxSlots = 1_000_000
 // an approximation the answer flags (KVBoundSlots): KV-bound admission is not
 // a fixed number of slots.
 //
-// The line is read at each state's own fill, clamped to the band the line
-// was fitted over: below it at the band's bottom (the higher, safer ITL, as
-// ReachableFill reads it), and the slots never fill above its top. A fill
+// The line is read at each state's own fill (chainMu): below the band at the
+// fill itself for a measured intercept, at the band's bottom otherwise, and
+// the slots never fill above the band's top. A fill
 // below the band moves only the few least-loaded states, so it is not
 // flagged; the knee's own read below the band is (Admission.Basis carries the
 // knee, and the flags its BelowFittedBand).

@@ -87,6 +87,8 @@ func PriceTPOT(band FillBand, line itl.Model, targetSeconds float64) Pricing {
 		return Pricing{}
 	}
 	k := (targetSeconds - line.B) / line.A
+	// The slo analyzer's own floor, at band.Lo: the controller's pricing,
+	// which the planner's Decode.lowestFill does not move.
 	if targetSeconds <= line.ITLAt(band.Lo) {
 		return Pricing{Target: k, OK: true}
 	}

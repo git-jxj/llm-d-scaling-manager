@@ -67,6 +67,10 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		src = *req.Source
 	}
 	info := whatifapi.SourceInfo{Kind: src.Kind}
+	f.hint, f.hintSet = hintAPIPrometheus, true
+	if src.Kind == whatifapi.SourceRecording {
+		f.hint = hintAPIRecording
+	}
 	var hide string
 	switch src.Kind {
 	case whatifapi.SourceRecording:
@@ -278,10 +282,15 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 	}
 	content := strings.Join([]string{hex.EncodeToString(sum[:]), st.Namespace, st.ModelID, strconv.Itoa(st.Cycle), prefill,
 		variants[0].state.Variant, f.prefillVariant, f.variant}, "\x00")
+	series, err := seriesOf(data, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
+	if err != nil {
+		return nil, apiError(err)
+	}
 	return &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
-		Pricer:  &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant},
+		Pricer:  &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource()},
+		Series:  series,
 	}, nil
 }
 
@@ -290,6 +299,8 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 type servedState struct {
 	st                            *learnreplay.State
 	decodeVariant, prefillVariant string
+	// hint is the words a refusal names a calm cycle in: the source's.
+	hint hintSource
 }
 
 // seconds is x seconds as a duration, to the nanosecond.
@@ -298,7 +309,17 @@ func seconds(x float64) time.Duration { return time.Duration(math.Round(x * floa
 // Fleet reads the fleet at k: the flags k stands for, checked as the CLI
 // checks them, and the fleet slo-to-rate would read with them.
 func (s *servedState) Fleet(k whatifapi.Knobs) (whatifapi.Fleet, error) {
-	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant,
+	sf, err := s.fleetAt(k)
+	if err != nil {
+		return nil, err
+	}
+	return sf, nil
+}
+
+// fleetAt is Fleet as the fleet itself, for the report, which reads the
+// variant and the prefill inputs it was priced from.
+func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
+	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant, hint: s.hint, hintSet: true,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{"ttft": true, "headroom": true}, warn: io.Discard,
 		decode: k.Decode, prefill: k.Prefill, headroom: k.Headroom, priceRouterWait: whatif.DefaultPriceRouterWait,
 		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate}
@@ -307,6 +328,7 @@ func (s *servedState) Fleet(k whatifapi.Knobs) (whatifapi.Fleet, error) {
 		f.inputTokens = k.PromptTokens
 		set("assume-input-tokens")
 	}
+	f.prefixHit = k.PrefixHit
 	if k.OutputTokens > 0 {
 		f.outputTokens = k.OutputTokens
 		set("assume-output-tokens")
@@ -470,3 +492,6 @@ func (sf *servedFleet) TPOTRatio() whatifapi.Ratio {
 
 // Assumed is the fleet's assumed inputs as read, in the CLI's words.
 func (sf *servedFleet) Assumed() []string { return sf.assumed }
+
+// Class is the class of the fleet's figures, as the CLI judges them.
+func (sf *servedFleet) Class() whatif.FigureClass { return sf.pf.class() }

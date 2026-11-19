@@ -60,6 +60,11 @@ Read the review first; the implementation design says what was built.
   from them, and the workload patch adds a preferred node affinity and an init
   container that waits for the copy. Why preferred and not required for
   scaling, and the failure modes.
+- **[Workloads that bring their own JIT cache](external-jit-cache.md)** —
+  proposed, depends on PR #146. When an external cache manager owns the
+  engine's compile caches, an annotation tells `make workload-patch` to leave
+  them alone and report what it left, instead of warning "COMPILES FROM
+  NOTHING" and patching them away.
 
 ## Scaling and actuation
 
@@ -148,6 +153,11 @@ Read the review first; the implementation design says what was built.
   the count scaling manager derives capacity from means "Pods that reported metrics", is
   used as though it meant "Pods taking traffic", and the gap produced three
   symptoms investigated as unrelated bugs.
+- **[Count only the replicas the router can reach](pool-selected-supply.md)** —
+  built. A Pod its InferencePool does not select takes no router traffic and
+  is no longer counted as supply. A variant whose pod template no pool selects
+  is held at its replica count, with an Event saying why and how to release
+  it. Pools that cannot be read leave supply counted as before.
 
 Traffic shape and the units capacity is priced in — read the per-token economy
 last; it is the unit change that makes the other two land.

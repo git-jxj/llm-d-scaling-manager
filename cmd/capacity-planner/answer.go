@@ -41,11 +41,16 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
-	decode                                   int
-	batchCap                                 int64
-	inputTokens, outputTokens                float64
-	headroom, tpotRatio                      float64
-	seed                                     uint64
+	// hint, when hintSet, is the words a refusal names a calm cycle in, set
+	// by a caller that prices for another source (the server, the report);
+	// else they follow the CLI's own source (hintSource).
+	hint                      hintSource
+	hintSet                   bool
+	decode                    int
+	batchCap                  int64
+	inputTokens, outputTokens float64
+	headroom, tpotRatio       float64
+	seed                      uint64
 	// ttft, ttftPercentile, assumeVP, assumePromptCV, arrivalCV2, prefill and
 	// prefillVariant are the TTFT half's flags (ttft.go); inputBucket only
 	// refuses per-bucket answers.
@@ -54,8 +59,14 @@ type answerFlags struct {
 	assumeRouterHop                                   time.Duration
 	prefill                                           int
 	set                                               map[string]bool
+	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
+	// report shape, at-replicas --shape).
+	prefixHit *float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
+	// flowControl is --flow-control, a TTFT flag (ttft.go): the router's flow
+	// control stated, on or off, in place of its inference from the queue series.
+	flowControl string
 	// priceRouterWait is --price-router-wait, a TTFT flag (ttft.go): opt-in,
 	// off by default.
 	priceRouterWait bool
@@ -105,6 +116,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.ttftPercentile, "ttft-percentile", "", "the TTFT percentile, in percent (90); on replicas-to-slo, default the policy's, else 90")
 	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, in place of the learned one (flagged)")
 	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, 0 to 3, in place of the measured one or the default 2 (flagged)")
+	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the queue series (flagged as stated)")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "Ca^2, the arrivals' squared coefficient of variation at the prefill queue, in place of Poisson's 1 (flagged)")
 	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the hop between the router and the engines (8ms), in place of the learned or default one (flagged)")
 	fs.IntVar(&f.prefill, "prefill", 0, "prefill replicas to price; 0 takes the recorded count")
@@ -322,6 +334,18 @@ func (f *answerFlags) sourceLine(st *learnreplay.State) string {
 // rather than from a recording.
 func (f *answerFlags) prometheus() bool { return f.window.prometheus != "" }
 
+// hintSource is the words a calm cycle is named in: the caller's, when set,
+// else the CLI's flag for the source it read.
+func (f *answerFlags) hintSource() hintSource {
+	switch {
+	case f.hintSet:
+		return f.hint
+	case f.prometheus():
+		return hintCLIPrometheus
+	}
+	return hintCLIRecording
+}
+
 // pricedVariant is one decode variant as a question prices it: the state
 // read from the recording, the Decode built from it, and the flags every
 // answer on it carries.
@@ -338,12 +362,18 @@ type pricedVariant struct {
 	check whatif.LineCheck
 	// assumedIL and assumedOL say which lengths the flags assumed.
 	assumedIL, assumedOL bool
-	flags                []whatif.Flag
-	lines                whatif.LineResamples
+	// assumedHit says the prefix-hit rate was stated.
+	assumedHit bool
+	flags      []whatif.Flag
+	lines      whatif.LineResamples
+	// model is the model served, and stated the pricing flags set that put
+	// every figure outside the envelope (statedOutside).
+	model  string
+	stated []string
 }
 
 // assumed reports a shape the flags assumed, in part or whole.
-func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL }
+func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL || pv.assumedHit }
 
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
@@ -359,7 +389,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.variant != "" && vs.Variant != f.variant {
 			continue
 		}
-		pv := pricedVariant{state: vs, cycle: st.Cycle}
+		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside()}
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
 			il, pv.assumedIL = f.inputTokens, true
@@ -369,7 +399,11 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		// A spread is a figure of the traffic the histogram counted, whatever
 		// length is asked: as the prompt's cv (prefillShape).
-		pv.shape = shape.New(il, ol, vs.Shape.PrefixHitRate).WithOutputDispersion(vs.Shape.OutputDispersion)
+		hit := vs.Shape.PrefixHitRate
+		if f.prefixHit != nil {
+			hit, pv.assumedHit = *f.prefixHit, true
+		}
+		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(vs.Shape.OutputDispersion)
 		replicas := vs.Replicas
 		if f.decode > 0 {
 			replicas = f.decode
@@ -383,6 +417,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
 			KVPerRequest: pv.shape.KVreq, OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
+			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL},
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)
@@ -600,13 +635,51 @@ func onRatio(r whatif.Result, ratio whatif.TPOTRatio, flags []whatif.Flag) whati
 func (f *answerFlags) ratioNote(st *learnreplay.State, r whatif.TPOTRatio) string {
 	switch {
 	case f.engineTPOT:
-		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st))
+		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st)) + worstNote(st.EngineTPOTWindows) + byFillNote(r)
 	case r.Assumed && len(st.TPOTWindows) == 0:
 		return fmt.Sprintf("R_q %s ASSUMED (no TPOT histogram)", num(r.Value))
 	case r.Assumed:
 		return fmt.Sprintf("R_q %s ASSUMED (the recording's %d TPOT windows not used)", num(r.Value), len(st.TPOTWindows))
 	}
-	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows))
+	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + worstNote(st.TPOTWindows) + byFillNote(r)
+}
+
+// worstNote says R_q is the worst window where so few windows held requests
+// that the median's margin reaches the largest (whatif.WorstWindow).
+func worstNote(windows []whatif.TPOTWindow) string {
+	n := 0
+	for _, w := range windows {
+		if w.Count > 0 {
+			n++
+		}
+	}
+	if !whatif.WorstWindow(n) {
+		return ""
+	}
+	return fmt.Sprintf(" (the worst of %d)", n)
+}
+
+// byFillNote is R_q by fill for the human output: each fill bucket's ratio,
+// its own reading where the rise over fill raised it, and the global ratio
+// standing in where the bucket was thin; "" with one ratio at every fill.
+func byFillNote(r whatif.TPOTRatio) string {
+	if len(r.ByFill) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(r.ByFill))
+	for _, fr := range r.ByFill {
+		p := fmt.Sprintf("%.1f-%.1f %.3g", fr.Lo, fr.Hi, fr.Value)
+		switch {
+		case fr.Thin:
+			p += fmt.Sprintf(" (global, %d windows)", fr.Windows)
+		case fr.Learned != fr.Value:
+			p += fmt.Sprintf(" (own %.3g, raised)", fr.Learned)
+		case whatif.WorstWindow(fr.Windows):
+			p += fmt.Sprintf(" (the worst of %d)", fr.Windows)
+		}
+		parts = append(parts, p)
+	}
+	return ", by fill " + strings.Join(parts, ", ")
 }
 
 // num prints a ratio or fill with no trailing zeros.

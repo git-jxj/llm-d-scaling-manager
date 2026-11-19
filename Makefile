@@ -494,7 +494,7 @@ learner-golden-add: ## Commit a raw learner recording as a golden: RECORDING=<fi
 .PHONY: capacity-planner
 capacity-planner: ## Build the capacity planner command line (bin/capacity-planner), with the commit a generated recording carries; not in the manager image
 	go build -ldflags "$(LEARNREC_LDFLAGS)" -o bin/capacity-planner ./cmd/capacity-planner
-	@# The old name until v0.12.0: run as whatif, it prints a deprecation note.
+	@# The old name until v0.13.0: run as whatif, it prints a deprecation note.
 	ln -sf capacity-planner bin/whatif
 
 # The capacity planner binaries a release attaches, one per platform, named
@@ -515,7 +515,7 @@ capacity-planner-dist: ## Build the release's capacity planner binaries: make ca
 	done
 
 .PHONY: whatif
-whatif: capacity-planner ## Deprecated alias of capacity-planner; whatif will be removed in v0.12.0
+whatif: capacity-planner ## Deprecated alias of capacity-planner; whatif will be removed in v0.13.0
 
 .PHONY: learner-goldens
 learner-goldens: ## Rewrite every learner golden from a replay at this commit (only for a golden change the PR names)
@@ -3603,6 +3603,15 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# Runs the release workflow step against a scratch repository. A backport
 	@# tagged after a newer release used to move latest back to the old line.
 	@bash hack/check-release-latest.sh
+	@echo "Checking the monthly upstream versions report and its issue step..."
+	@# Runs hack/upstream-versions.sh on fixture pins and stubbed API answers,
+	@# and the workflow issue step on a stubbed gh. A failed request, an empty
+	@# release list or a pin the inventory no longer finds all print a tidy
+	@# report; none of them may read as current. Also reads every location in
+	@# hack/upstream-pins.yaml, so a pin moved without its entry fails here.
+	@bash -n hack/upstream-versions.sh
+	@bash -n hack/check-upstream-versions.sh
+	@bash hack/check-upstream-versions.sh
 	@echo "Checking no tracked file names a personal registry namespace..."
 	@# The warm-pool proxy shipped from a personal GHCR namespace long after the
 	@# project moved. Allowed references are listed, with reasons, in the script.

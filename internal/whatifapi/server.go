@@ -131,6 +131,9 @@ type inputsEntry struct {
 	id     string
 	doc    InputsResponse
 	pricer Pricer
+	// series is the source's cycles, for a day plan; nil where the
+	// Resolver gave none.
+	series []SeriesSample
 }
 
 // New is a server with empty caches.
@@ -172,11 +175,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/inputs", s.handleInputs)
 	mux.HandleFunc("POST /v1/plan", s.handlePlan)
 	mux.HandleFunc("POST /v1/size", s.handleSize)
+	mux.HandleFunc("POST /v1/report", s.handleReport)
+	mux.HandleFunc("POST /v1/dayplan", s.handleDayPlan)
 	mux.HandleFunc("GET /v1/sources", s.handleSources)
 	mux.HandleFunc("GET /{$}", servePage)
 	mux.HandleFunc("GET /page/", servePage)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, fmt.Errorf("%s %s: no such endpoint; the server serves POST /v1/inputs, POST /v1/plan, POST /v1/size, GET /v1/sources and the page at /",
+		writeError(w, http.StatusNotFound, fmt.Errorf("%s %s: no such endpoint; the server serves POST /v1/inputs, POST /v1/plan, POST /v1/size, POST /v1/report, POST /v1/dayplan, GET /v1/sources and the page at /",
 			r.Method, r.URL.Path))
 	})
 	return mux
@@ -231,7 +236,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	// The entry kept is the first caller's, but each caller is answered with
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.
-	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer})
+	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series})
 	body, err := marshal(doc)
 	if err != nil {
 		writeErr(w, err)

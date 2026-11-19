@@ -87,10 +87,32 @@ type FleetInfo struct {
 	Decode  RoleInfo  `json:"decode"`
 }
 
-// RoleInfo is one role's variant and its replica count at the cycle.
+// RoleInfo is one role's variant and its replica count at the cycle, and
+// the engine it runs.
 type RoleInfo struct {
-	Variant  string `json:"variant"`
-	Replicas int    `json:"replicas"`
+	Variant  string      `json:"variant"`
+	Replicas int         `json:"replicas"`
+	Engine   *EngineInfo `json:"engine,omitempty"`
+}
+
+// EngineInfo is the engine a variant runs: which one, for vLLM the release
+// and where it was read from (annotation, image tag, --vllm-version,
+// --engine-image, none; both absent in a recording made before the release
+// was read), and the figures that release's defaults decide where the
+// engine's flags set none, each with its source (flag, default, not
+// recorded). It is reported for reference: no figure of an answer reads it
+// yet. See docs/reference/vllm-versions.md.
+type EngineInfo struct {
+	Engine                     string  `json:"engine"`
+	Summary                    string  `json:"summary"`
+	VLLMVersion                string  `json:"vllmVersion,omitempty"`
+	VLLMVersionFrom            string  `json:"vllmVersionFrom,omitempty"`
+	StepBudget                 int64   `json:"stepBudget"`
+	StepBudgetSource           string  `json:"stepBudgetSource"`
+	GPUMemoryUtilization       float64 `json:"gpuMemoryUtilization"`
+	GPUMemoryUtilizationSource string  `json:"gpuMemoryUtilizationSource"`
+	BlockSize                  int64   `json:"blockSize"`
+	BlockSizeSource            string  `json:"blockSizeSource"`
 }
 
 // Observed is the traffic the source saw.
@@ -176,6 +198,10 @@ type Figure struct {
 	BoundBy         []string `json:"boundBy,omitempty"`
 	Flags           []string `json:"flags,omitempty"`
 	Refused         *Refusal `json:"refused,omitempty"`
+	// Validation is the envelope's verdict on the figure, on the figures a
+	// plan reads (the points A and B, the knees and the limits), not on a
+	// curve's points.
+	Validation *Validation `json:"validation,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.

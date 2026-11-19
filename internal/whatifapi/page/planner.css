@@ -193,3 +193,72 @@ td:first-child, th:first-child { text-align: left; }
 @media (max-width: 1000px) {
   .controls, .charts, .summary { grid-template-columns: 1fr; }
 }
+
+/* The day plan: three charts on one time axis. The rate's band is a wash of
+   its line's hue; the replicas the fleet had are the recessive grey, the
+   replicas needed the accent; a bucket short of what it needed is washed
+   red. */
+.dayplan { margin-top: 12px; }
+.dayplan .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+#daychart { width: 100%; height: auto; display: block; margin-top: 8px; }
+#dayout.stale { opacity: 0.45; transition: opacity 0.2s; }
+.daysum, .daynotes { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+.daynotes { font-size: 12px; color: var(--muted); }
+svg .ptitle { fill: var(--text-primary); font-weight: 600; }
+/* Washes at about 10%, as the dataviz reference has them; the band a step
+   stronger in dark mode, where 10% of the hue on the dark surface is lost. */
+svg .dband, .legend .dband { fill: var(--series-1); fill-opacity: 0.12; stroke: none; }
+svg .dunder, .legend .dunder { fill: var(--critical); fill-opacity: 0.12; stroke: none; }
+@media (prefers-color-scheme: dark) {
+  svg .dband, .legend .dband { fill-opacity: 0.26; }
+  svg .dunder, .legend .dunder { fill-opacity: 0.2; }
+}
+/* The hatch's fill is the pattern, set on the element: no fill here. */
+svg .dunmet, .legend .dunmet { stroke: none; }
+svg .hatchl { stroke: var(--muted); stroke-width: 1.5; }
+svg .pnote { fill: var(--text-secondary); font-size: 12px; }
+.c-rate { stroke: var(--series-1); fill: var(--series-1); }
+.c-need { stroke: var(--series-2); fill: var(--series-2); }
+.c-had { stroke: var(--muted); fill: var(--muted); }
+svg .line.c-had, svg .line.c-need, svg .line.c-rate { fill: none; }
+/* Needed is drawn wide under had, so that where the two are equal both
+   show: the grey line inside the orange one. */
+svg .line.c-need { stroke-width: 4; }
+svg .line.c-had { stroke-width: 1.5; }
+.dayrefused { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--critical); }
+.dayrefused .hint { color: var(--text-secondary); }
+
+/* The fleet report: a mark carries its word, so no state relies on colour. */
+.reportform { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+.reportform fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+.rshape { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.rshape input { width: 70px; }
+#rmatrix td, #rmatrix th { padding: 4px 8px; border: 1px solid var(--border); text-align: left; }
+.rmark { padding: 1px 6px; border-radius: 6px; font-weight: 600; }
+.rmark.met, td.met { background: color-mix(in srgb, var(--good) 18%, transparent); }
+.rmark.missed, td.missed { background: color-mix(in srgb, var(--critical) 22%, transparent); }
+.rmark.saturated, td.saturated { background: color-mix(in srgb, var(--warning) 25%, transparent); }
+.rmark.unknown, td.unknown { background: color-mix(in srgb, var(--muted) 18%, transparent); }
+.rextra { color: #8a5c00; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .rextra { color: var(--warning); } }
+.rpart { white-space: nowrap; }
+
+.rmark.notarget, td.notarget { background: color-mix(in srgb, var(--muted) 10%, transparent); }
+td.none { color: var(--muted); font-style: italic; }
+#rmatrix td .rmark { margin-left: 6px; }
+#rloads { width: 40ch; max-width: 100%; }
+.rverdicts { list-style: none; padding: 0; margin: 8px 0; }
+.rverdicts li { margin: 4px 0; font-size: 14px; }
+.rverdicts .rverdict { font-weight: normal; }
+.rsub { font-size: 13px; margin: 12px 0 4px; color: var(--text-secondary); }
+#rdetail details { margin: 4px 0; }
+#rdetail details p { margin: 4px 0 4px 16px; }
+.rmore { display: inline-block; margin-left: 8px; }
+#rmatrix { display: block; overflow-x: auto; max-width: 100%; }
+.rgrowthline { margin: 2px 0 2px 24px; font-size: 13px; }
+.rwhatif { color: var(--text-secondary); font-style: italic; }
+.rscope { margin-left: 6px; font-size: 12px; }
+#rload { margin: 4px 0; }
+.rneeds { display: inline-block; font-weight: 700; padding: 0 8px; border-radius: 8px; border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.rneeds.unmet { background: color-mix(in srgb, var(--critical) 18%, transparent); }

@@ -113,7 +113,7 @@ manual:
       kube_pod_info kube_pod_owner kube_replicaset_owner kube_pod_labels kube_pod_status_phase
       kube_pod_status_ready kube_pod_status_ready_time kube_pod_created kube_pod_start_time
       kube_pod_deletion_timestamp kube_pod_container_resource_requests kube_node_labels
-      kube_deployment_spec_replicas
+      kube_deployment_spec_replicas kube_pod_container_info kube_deployment_annotations
       "
       rm -rf planner-export
       mkdir -p planner-export
@@ -135,29 +135,32 @@ manual:
   describe:
     note: |
       What loading the export needs and Prometheus does not hold: the window, the engine, and the engine
-      arguments of the decode and prefill Deployments (leave PREFILL_DEPLOYMENT empty without one).
+      arguments of the decode and prefill workloads (leave PREFILL_WORKLOAD empty without one).
+      A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet; for a DisaggregatedSet, the role's), or pod/NAME (a leader Pod).
       ENGINE is vllm or sglang; ENGINE_CONTAINER is the engine's container name.
-      It stops, and writes no window.txt, when a Deployment or its container is not found.
+      It stops, and writes no window.txt, when a workload or its container is not found.
     run: |
       export ENGINE=vllm
       export ENGINE_CONTAINER=vllm
-      export DECODE_DEPLOYMENT=<decode deployment>
-      export PREFILL_DEPLOYMENT=
+      export DECODE_WORKLOAD=deploy/<decode deployment>
+      export PREFILL_WORKLOAD=
       engine_args() {
-        out=$(kubectl -n "${NAMESPACE}" get deploy "$1" -o json | jq -r --arg c "${ENGINE_CONTAINER}" '
-          [.spec.template.spec.containers[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
+        out=$(kubectl -n "${NAMESPACE}" get "$1" -o json | jq -r --arg c "${ENGINE_CONTAINER}" '
+          [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
+            // .spec.leaderWorkerTemplate.workerTemplate.spec // .spec)
+           | .containers[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
            | gsub("\n"; " ")
            | if test("^[[{]") then (try (fromjson | tojson) catch .) else . end]
           | join(" ")')
-        [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in Deployment $1" >&2; return 1; }
+        [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" >&2; return 1; }
         echo "${out}"
       }
       rm -f planner-export/window.txt
       (
-        [ -n "${DECODE_DEPLOYMENT}" ] || { echo "set DECODE_DEPLOYMENT" >&2; exit 1; }
-        decode_args=$(engine_args "${DECODE_DEPLOYMENT}") || exit 1
+        [ -n "${DECODE_WORKLOAD}" ] || { echo "set DECODE_WORKLOAD" >&2; exit 1; }
+        decode_args=$(engine_args "${DECODE_WORKLOAD}") || exit 1
         prefill_args=
-        if [ -n "${PREFILL_DEPLOYMENT}" ]; then prefill_args=$(engine_args "${PREFILL_DEPLOYMENT}") || exit 1; fi
+        if [ -n "${PREFILL_WORKLOAD}" ]; then prefill_args=$(engine_args "${PREFILL_WORKLOAD}") || exit 1; fi
         {
           echo "NAMESPACE=${NAMESPACE}"
           echo "FROM=${FROM}"
@@ -192,9 +195,11 @@ manual:
         echo "$(jq '.data.result | length' "${f}" 2>/dev/null || echo 0) $(basename "${f}" | cut -d. -f1)"
       done | awk '{n[$2] += $1} END {for (m in n) print n[m], m}' | sort -n
   pack:
-    note: One file to send. It holds your metric labels (Pod, node, model names) and engine arguments, no request content.
+    note: |
+      One file to send. It holds your metric labels (Pod, node, model names) and engine arguments, no request content.
+      COPYFILE_DISABLE=1 keeps macOS tar from adding a ._ file beside each answer.
     run: |
-      tar czf planner-export.tgz planner-export
+      COPYFILE_DISABLE=1 tar czf planner-export.tgz planner-export
 
 load:
   tools:
@@ -214,7 +219,7 @@ load:
   convert:
     note: |
       Merges the answers into one OpenMetrics file, and prints the lookback to serve them with.
-      It reads only the *.json answers. window.txt is read as data, never sourced, and checked.
+      It reads only the *.json answers, and skips macOS ._ files. window.txt is read as data, never sourced, and checked.
     run: |
       tar xzf planner-export.tgz --no-same-owner
       python3 hack/promjson-to-openmetrics.py -o planner-export.om planner-export/*.json
@@ -231,9 +236,10 @@ load:
   serve:
     note: |
       Serve the blocks. A retention longer than their age, or Prometheus deletes them on start.
-      LOOKBACK is the one the converter printed, four scrape intervals: it ends a series about when the original did (see Limits).
+      LOOKBACK is the one the converter printed: four scrape intervals of the slowest metric, often kube-state-metrics'.
+      A deleted Pod stays visible that long (see Limits).
     run: |
-      export LOOKBACK=<the lookback the converter printed, e.g. 60s>
+      export LOOKBACK=<the lookback the converter printed, e.g. 240s>
       touch empty.yml
       prometheus --config.file=empty.yml --storage.tsdb.path=planner-tsdb \
         --storage.tsdb.retention.time=10y --query.lookback-delta="${LOOKBACK}" \
@@ -242,7 +248,7 @@ load:
   capture:
     note: |
       Then capture as in the first path, against the local copy, from 5 minutes into the export.
-      capacity-planner takes one set of engine arguments: the decode Deployment's. PREFILL_ARGS is there to read.
+      capacity-planner takes one set of engine arguments: the decode workload's. PREFILL_ARGS is there to read.
     run: |
       bin/capacity-planner capture --prometheus http://127.0.0.1:9091 --namespace "${NAMESPACE}" --kube-state-metrics \
         --from "${CAPTURE_FROM}" --to "${TO}" --engine "${ENGINE}" --engine-args "${DECODE_ARGS}" \

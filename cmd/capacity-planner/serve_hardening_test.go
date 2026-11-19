@@ -58,6 +58,8 @@ func TestServeParityWithoutHeadroomAndMarginal(t *testing.T) {
 	} {
 		want := wantOf(cliRole(t, "fleet", append(slices.Clone(question), c.flag, "2")...).Results.Rate)
 		want.Sensitivity = nil
+		// A marginal step is another fleet's figure: the plan judges none.
+		want.Validation = nil
 		sameFigure(t, c.what, want, c.step.Limit)
 	}
 }

@@ -7,13 +7,15 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // The -o json wire format. The library carries no json tags
 // (internal/signals/whatif); these types are the one place the planner's
 // answers are given names on the wire, and schemaVersion says which names.
 // Removing, renaming or retyping a key, or changing its meaning, bumps
-// schemaVersion; a key absent unless a new flag asks for it does not. Either
+// schemaVersion; adding a key does not, whether a new flag asks for it or it
+// is always there: a reader that knows the old keys reads them unchanged. Either
 // way the pinned key list in testdata/schema-v<N>.txt changes
 // (TestJSONSchemaIsPinned).
 
@@ -100,6 +102,9 @@ type wireRole struct {
 // the text prints. An input not reached before a refusal is absent.
 type wireTTFT struct {
 	DecodeVariant string `json:"decodeVariant,omitempty"`
+	// PrefillEngine is the engine the prefill variant runs, for reference
+	// (engineOf); absent where the recording holds none.
+	PrefillEngine *wireEngine `json:"prefillEngine,omitempty"`
 	// Percentile is q in (0, 1), absent for the mean; TargetSeconds is
 	// question 1's target. Rate is the rate question 2 was priced at, and
 	// RateSource what set it.
@@ -143,6 +148,13 @@ type wireTTFT struct {
 	DecodeSide             string  `json:"decodeSide,omitempty"`
 	DecodeTTFTSeconds      float64 `json:"decodeTTFTSeconds,omitempty"`
 	DecodeTTFTPromptTokens float64 `json:"decodeTTFTPromptTokens,omitempty"`
+	// DecodeTTFTCalmCycle is the latest cycle with no decode queue, present
+	// only on a DecodeTTFTUnderLoad refusal from a recording: the cycle to
+	// answer at. DecodeTTFTCalmAt is that cycle's time (RFC 3339) in its
+	// place from a Prometheus window, whose cycles no flag can name: the
+	// time to end the window at.
+	DecodeTTFTCalmCycle int    `json:"decodeTTFTCalmCycle,omitempty"`
+	DecodeTTFTCalmAt    string `json:"decodeTTFTCalmAt,omitempty"`
 	// DecodeTermSource and RouterHopSource say where the line's decode term
 	// and hop came from (measured, assumed; the term may be omitted), each
 	// with why no fit stands. The figures are the term as priced: on no fit
@@ -181,6 +193,8 @@ type wireInputs struct {
 	// RateSource says what set Rate where a flag did not: the prefill knee.
 	RateSource string    `json:"rateSource,omitempty"`
 	TPOT       *wireTPOT `json:"tpot,omitempty"`
+	// Engine is the engine the variant runs, for reference (engineOf).
+	Engine *wireEngine `json:"engine,omitempty"`
 }
 
 // wireShape is the traffic shape a variant was priced at: each length
@@ -315,6 +329,8 @@ type wireAnswer struct {
 	// Sensitivity is the figure's span at V_P and f either way, absent on a
 	// figure that does not rest on them.
 	Sensitivity *wireSensitivity `json:"sensitivity,omitempty"`
+	// Validation is the envelope's verdict on the figure (envelope.go).
+	Validation *whatifapi.Validation `json:"validation,omitempty"`
 }
 
 // wireSensitivity is whatif.Sensitivity on the wire: Refused is a corner's
@@ -349,6 +365,8 @@ type wireTTFTAnswer struct {
 	Parts wireTTFTParts `json:"parts"`
 	// Sensitivity is as on wireAnswer.
 	Sensitivity *wireSensitivity `json:"sensitivity,omitempty"`
+	// Validation is the envelope's verdict on the figure (envelope.go).
+	Validation *whatifapi.Validation `json:"validation,omitempty"`
 }
 
 // wireTTFTParts is the figures beside the union bound, and its parts' means,
@@ -520,7 +538,8 @@ const sourcePrefillKnee = "headroom x prefill knee"
 // wire is the fleet's prefill role.
 func (o operatingTTFT) wire() wireRole {
 	return wireRole{Role: rolePrefill, Variant: o.fleet.variant, TTFT: &o.fleet.in, Results: wireResults{
-		Knee: toWire(o.knee, unitRate), TTFT: toWireTTFT(o.ttft)}}
+		Knee: validated(toWire(o.knee, unitRate), o.fleet.kneeValidation(o.knee)),
+		TTFT: validatedTTFT(toWireTTFT(o.ttft), o.fleet.ttftValidation(o.q.q, o.rate, o.ttft))}}
 }
 
 // inputsOf is the wire's account of what a variant was priced from.
@@ -538,6 +557,7 @@ func inputsOf(f *answerFlags, pv pricedVariant) *wireInputs {
 			OutputDispersion: pv.state.Shape.OutputDispersion},
 		BatchCap: pv.perRank, BatchCapSource: pv.state.BatchCapSource,
 		Ranks: max(pv.state.Ranks, 1), Replicas: pv.decode.Replicas, ReplicasFrom: "recording",
+		Engine: engineOf(pv.state.Params),
 	}
 	if pv.assumedIL {
 		in.Shape.InputSource = shapeAssumed

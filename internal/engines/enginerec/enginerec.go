@@ -130,10 +130,16 @@ type CompositeEntry struct {
 }
 
 // VariantMeta is the part of a variant's discovery metadata the
-// capacity-build step reads: its name, its role, and its current replicas.
+// capacity-build step reads: its name, its role, its current replicas, and
+// what of it the router cannot reach (applyRouting). The routing fields are
+// left out of a recording while zero, so a recording of a fleet the pools
+// fully select reads as one made before they existed.
 type VariantMeta struct {
 	VariantName, Role string
 	CurrentReplicas   int
+	HeldUnrouted      bool `learnrec:"omitzero"`
+	UnroutedReplicas  int  `learnrec:"omitzero"`
+	UnroutedReady     int  `learnrec:"omitzero"`
 }
 
 // MetaOf is what a recording keeps of metadata.
@@ -143,7 +149,8 @@ func MetaOf(metadata []domain.VariantMetadata) []VariantMeta {
 	}
 	out := make([]VariantMeta, 0, len(metadata))
 	for _, m := range metadata {
-		out = append(out, VariantMeta{VariantName: m.VariantName, Role: m.Role, CurrentReplicas: m.CurrentReplicas})
+		out = append(out, VariantMeta{VariantName: m.VariantName, Role: m.Role, CurrentReplicas: m.CurrentReplicas,
+			HeldUnrouted: m.HeldUnrouted, UnroutedReplicas: m.UnroutedReplicas, UnroutedReady: m.UnroutedReady})
 	}
 	return out
 }
@@ -156,7 +163,8 @@ func Metadata(meta []VariantMeta) []domain.VariantMetadata {
 	}
 	out := make([]domain.VariantMetadata, 0, len(meta))
 	for _, m := range meta {
-		out = append(out, domain.VariantMetadata{VariantName: m.VariantName, Role: m.Role, CurrentReplicas: m.CurrentReplicas})
+		out = append(out, domain.VariantMetadata{VariantName: m.VariantName, Role: m.Role, CurrentReplicas: m.CurrentReplicas,
+			HeldUnrouted: m.HeldUnrouted, UnroutedReplicas: m.UnroutedReplicas, UnroutedReady: m.UnroutedReady})
 	}
 	return out
 }

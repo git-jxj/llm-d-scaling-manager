@@ -768,8 +768,13 @@ def report(run, frozen_file, spec, redo_file, out, repeats=None, only_gate=False
     for (bucket, fc), repeats in sorted(data.items()):
         b = frozen[bucket]
         readings = [("mean", "router_tpot_mean", "client_tpot_mean", b["meanTPOT"])]
+        # The planner's own percentile at the operating fill (R_q by fill), where
+        # freeze wrote it; a frozen file from before it, the mean times R_q.
+        priced = {p["percentile"]: p["seconds"] for p in b.get("percentileTPOT") or []}
         for q in (90, 95):
-            if ratio_q.get(q):
+            if priced.get(q):
+                readings.append(("p%d" % q, "router_tpot_p%d" % q, "client_tpot_p%d" % q, priced[q]))
+            elif ratio_q.get(q):
                 readings.append(("p%d" % q, "router_tpot_p%d" % q, "client_tpot_p%d" % q, b["meanTPOT"] * ratio_q[q]))
         for name, router_key, client_key, target in readings:
             if not target > 0:

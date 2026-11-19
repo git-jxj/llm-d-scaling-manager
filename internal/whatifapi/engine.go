@@ -34,6 +34,9 @@ type Resolved struct {
 	// the model and the variants): the server hashes it into the inputsId.
 	Content string
 	Pricer  Pricer
+	// Series is every cycle of the source, oldest first, for a day plan
+	// (POST /v1/dayplan); nil where the source carries none.
+	Series []SeriesSample
 }
 
 // Pricer builds the fleet a scenario prices. It must be safe to call from
@@ -53,6 +56,9 @@ type Knobs struct {
 	// of the observed ones (the CLI's --assume-input-tokens and
 	// --assume-output-tokens, flagged AssumedShape); 0 is the observed one.
 	PromptTokens, OutputTokens float64
+	// PrefixHit is a stated prefix-cache hit rate in [0, 1), nil the
+	// observed one (flagged AssumedShape).
+	PrefixHit *float64
 	// TTFTPercentile and TPOTPercentile are q in (0, 1); 0 is the mean.
 	TTFTPercentile, TPOTPercentile float64
 	Assume                         Assume
@@ -93,6 +99,9 @@ type Fleet interface {
 	// Assumed is every assumed input of the fleet as read, in words, as the
 	// CLI's assumed row names them.
 	Assumed() []string
+	// Class is the class the envelope judges the fleet's figures by
+	// (whatif.FigureClass): its pods, accelerator, shape and flow control.
+	Class() whatif.FigureClass
 }
 
 // LimitSet is slo-to-rate's rates at one set of targets. Notes is what the

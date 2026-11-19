@@ -2453,6 +2453,183 @@ run_guard() {
     env -u VLLM_USE_MEGA_AOT_ARTIFACT -u PYTHONPYCACHEPREFIX -u VLLM_CACHE_ROOT \
         PYTHONPATH="$sp" "$@" "$shell" -c ". \"$g\"; echo \"AOT=\${VLLM_USE_MEGA_AOT_ARTIFACT-unset} PYC=\${PYTHONPYCACHEPREFIX-unset}\"" 2>&1
 }
+# modeof PATH: its mode and numeric owner, "drwxr-xr-x 1000"
+modeof() { ls -ldn "$1" | awk '{ print substr($1, 1, 10), $3 }'; }
+# run_loop <shell> <guard loop> [VAR=value ...]: the loop alone, then where two caches landed.
+# LOOP_UMASK sets the umask it runs under; LOOP_PATH is put first on its PATH.
+run_loop() {
+    local shell="$1" g="$2"
+    shift 2
+    env -u VLLM_CACHE_ROOT -u FLASHINFER_WORKSPACE_DIR -u TRITON_CACHE_DIR -u PYTHONPYCACHEPREFIX \
+        PATH="${LOOP_PATH:+$LOOP_PATH:}$PATH" "$@" \
+        "$shell" -c "umask ${LOOP_UMASK:-022}; . \"$g\"; echo \"VLLM=\${VLLM_CACHE_ROOT-unset} PYC=\${PYTHONPYCACHEPREFIX-unset}\"" 2>&1
+}
+
+# A node cache is shared by every engine on the node, and the first one to
+# start under a directory makes what is under it as its own user (its marker,
+# a bytecode key directory 755). An engine of a second user used to fail the
+# check and lose every cache, on every start. It now keeps a directory of its
+# own beside that one (else inside it), and never writes the first user's.
+# This case fakes the other user (a runner cannot own a file as one); the
+# next one runs real users when it can.
+CASE="guard: a cache another user started first is left to it; a second user gets its own, warm from its second start"
+reset; f_engine_cache_only_gap
+before=$FAILED
+G="$(mktemp -d)"
+guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
+grep -q 'PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+me="$(id -u)"
+# mktemp for a filesystem that does not report owners: the file it makes
+# reads as another user's (a link to /dev/null, which root owns)
+mkdir -p "$G/noown"
+printf '%s\n' '#!/bin/sh' 'f="${1%XXXXXX}fake"; ln -s /dev/null "$f" && echo "$f"' > "$G/noown/mktemp"
+chmod 755 "$G/noown/mktemp"
+if [ "$me" = 0 ]; then
+    printf 'SKIP  %s: as root every file reads as owned by this user; the real-user case below covers it\n' "$CASE" >&2
+fi
+for sh_ in $GUARD_SHELLS; do
+    [ "$me" != 0 ] || break
+    C="$G/$sh_"
+    mkdir -p "$C/ec/vllm" "$C/ec/pycache"
+    # The first user: kept where it is, silently, and nothing left beside it
+    # (the owner probe included).
+    out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm" PYTHONPYCACHEPREFIX="$C/ec/pycache/k")"
+    assert_contains "$out" "VLLM=$C/ec/vllm PYC=$C/ec/pycache/k"
+    assert_not_contains "$out" "engine cache"
+    assert_eq "$(ls -A "$C/ec" | tr '\n' ' ')" "pycache vllm " "$sh_: entries beside the first user's caches"
+    assert_eq "$(ls -A "$C/ec/vllm" | tr '\n' ' ')" ".writable " "$sh_: entries in the first user's vLLM root"
+    # Now another user's: a marker that is not this user's plain file (a
+    # link), and a bytecode key directory this user cannot write (555).
+    rm -f "$C/ec/vllm/.writable" "$C/ec/pycache/k/.writable"
+    ln -s /dev/null "$C/ec/vllm/.writable"
+    ln -s /dev/null "$C/ec/pycache/k/.writable"
+    chmod 555 "$C/ec/pycache/k"
+    # ...under umask 000, which the user's own directory must not inherit
+    out="$(LOOP_UMASK=000 run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm" PYTHONPYCACHEPREFIX="$C/ec/pycache/k")"
+    assert_contains "$out" "VLLM=$C/ec/vllm.uid-$me PYC=$C/ec/pycache/k.uid-$me"
+    assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$C/ec/vllm is another user's; using $C/ec/vllm.uid-$me, user $me's own"
+    assert_contains "$out" "engine cache PYTHONPYCACHEPREFIX=$C/ec/pycache/k is another user's; using $C/ec/pycache/k.uid-$me, user $me's own"
+    assert_not_contains "$out" "not writable"
+    assert_eq "$(modeof "$C/ec/vllm.uid-$me") $(modeof "$C/ec/pycache/k.uid-$me")" "drwxr-xr-x $me drwxr-xr-x $me" "$sh_: the user's own directories under umask 000"
+    assert_eq "$(ls -A "$C/ec/vllm" | tr '\n' ' ')" ".writable " "$sh_: the first user's vLLM root, after the second user"
+    assert_eq "$(ls -A "$C/ec/pycache/k" | tr '\n' ' ')" ".writable " "$sh_: the first user's bytecode, after the second user"
+    # Its second start finds what its first one left; a trailing / is the same directory.
+    : > "$C/ec/pycache/k.uid-$me/compiled"
+    out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm/" PYTHONPYCACHEPREFIX="$C/ec/pycache/k")"
+    assert_contains "$out" "VLLM=$C/ec/vllm.uid-$me PYC=$C/ec/pycache/k.uid-$me"
+    [ -f "$C/ec/pycache/k.uid-$me/compiled" ] || fail "$sh_: the second user's own bytecode is gone on its second start"
+    # No room beside it (the parent is the node directory, root's 755): inside it.
+    mkdir -p "$C/ec/vllm2"
+    ln -s /dev/null "$C/ec/vllm2/.writable"
+    chmod 555 "$C/ec"
+    out="$(run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm2")"
+    chmod 755 "$C/ec"
+    assert_contains "$out" "VLLM=$C/ec/vllm2/.uid-$me PYC=unset"
+    assert_contains "$out" "using $C/ec/vllm2/.uid-$me, user $me's own"
+    # Never a link where the user's own directory goes, even to a directory
+    # this user owns: whoever planted it can point it elsewhere later. Not a
+    # directory another user made either (a link to /, root's). With no other
+    # place, the engine default.
+    mkdir -p "$C/mine" "$C/ec/pycache/j" "$C/ec/pycache/i"
+    ln -s "$C/mine" "$C/ec/pycache/j.uid-$me"
+    ln -s / "$C/ec/pycache/i.uid-$me"
+    chmod 555 "$C/ec/pycache/j" "$C/ec/pycache/i"
+    for k in j i; do
+        out="$(run_loop "$sh_" "$G/guard.sh" PYTHONPYCACHEPREFIX="$C/ec/pycache/$k")"
+        assert_contains "$out" "VLLM=unset PYC=unset"
+        assert_contains "$out" "engine cache PYTHONPYCACHEPREFIX=$C/ec/pycache/$k is not writable; using the engine default instead"
+        assert_eq "$(printf '%s\n' "$out" | grep -c 'engine cache')" "1" "$sh_: log lines for $k"
+    done
+    assert_eq "$(ls -A "$C/mine" | tr '\n' ' ')" "" "$sh_: the directory the planted link points at"
+    # A filesystem that does not report owners: the directory is used when it
+    # is writable, whoever the marker says made it, as before this guard knew
+    # of owners -- and never a per-user directory, which would be decided by
+    # owners it cannot read.
+    out="$(LOOP_PATH="$G/noown" run_loop "$sh_" "$G/guard.sh" VLLM_CACHE_ROOT="$C/ec/vllm")"
+    assert_contains "$out" "VLLM=$C/ec/vllm PYC=unset"
+    assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$C/ec/vllm: this filesystem does not report file owners; using it because it is writable"
+    assert_eq "$(printf '%s\n' "$out" | grep -c 'engine cache')" "1" "$sh_: log lines without owners"
+    [ ! -e "$C/ec/vllm/.own.fake" ] && [ ! -L "$C/ec/vllm/.own.fake" ] || fail "$sh_: the owner probe was left behind"
+    chmod 755 "$C/ec/pycache/k" "$C/ec/pycache/j" "$C/ec/pycache/i"
+done
+rm -rf "$G"
+[ "$FAILED" -eq "$before" ] && ok
+
+# The same, as real users: engines run under setpriv as other UIDs, on the
+# layout the preparer makes (a root 755 node directory, 1777 cache
+# directories). It needs root or passwordless sudo, and setpriv -- CI has
+# both. Without them it FAILS, unless LLMSM_CHECK_SKIP_MULTIUSER=1 says to
+# skip it, which it then says out loud.
+CASE="guard, as real users: the first keeps its cache, a second (root included) gets its own, a planted link is refused"
+reset; f_engine_cache_only_gap
+before=$FAILED
+AS_ROOT=none
+if [ "$(id -u)" = 0 ]; then AS_ROOT=""; elif sudo -n true 2>/dev/null; then AS_ROOT="sudo -n"; fi
+command -v setpriv >/dev/null 2>&1 || AS_ROOT=none
+if [ "$AS_ROOT" = none ]; then
+    if [ "${LLMSM_CHECK_SKIP_MULTIUSER:-}" = 1 ]; then
+        printf 'SKIP  %s: no root, passwordless sudo or setpriv here (LLMSM_CHECK_SKIP_MULTIUSER=1)\n' "$CASE" >&2
+    else
+        fail "needs root or passwordless sudo, and setpriv, to run engines as other users; LLMSM_CHECK_SKIP_MULTIUSER=1 skips it, out loud"
+    fi
+else
+    R="$(mktemp -d)"
+    case "$R" in /tmp/?*|/var/tmp/?*) ;; *) fail "mktemp -d gave '$R'"; R="" ;; esac
+fi
+if [ "$AS_ROOT" != none ] && [ -n "$R" ]; then
+    chmod 755 "$R"
+    guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$R/guard.sh"
+    chmod 644 "$R/guard.sh"
+    $AS_ROOT sh -c 'mkdir -p "$1/n/vllm" "$1/n/pycache" && chown 0:0 "$1/n" && chmod 755 "$1/n" && chmod 1777 "$1/n/vllm" "$1/n/pycache"' sh "$R" \
+        || fail "could not lay out the node directory as root"
+    # eng UID [UMASK]: the guard as that user, then where each cache landed,
+    # then what an engine writes under each
+    eng() {
+        $AS_ROOT setpriv --reuid="$1" --regid="$1" --clear-groups env -i PATH=/usr/bin:/bin \
+            VLLM_CACHE_ROOT="$R/n/vllm" PYTHONPYCACHEPREFIX="$R/n/pycache/k" \
+            sh -c "umask ${2:-022}; . \"$R/guard.sh\"; echo \"VLLM=\${VLLM_CACHE_ROOT-unset} PYC=\${PYTHONPYCACHEPREFIX-unset}\"
+                for d in \"\${VLLM_CACHE_ROOT:-}\" \"\${PYTHONPYCACHEPREFIX:-}\"; do
+                    [ -z \"\$d\" ] || { mkdir -p \"\$d/key\" && : > \"\$d/key/f\"; } || echo \"WRITE FAILED \$d\"
+                done" 2>&1
+    }
+    out="$(eng 4242)"
+    assert_contains "$out" "VLLM=$R/n/vllm PYC=$R/n/pycache/k"
+    assert_not_contains "$out" "engine cache"
+    assert_not_contains "$out" "WRITE FAILED"
+    # root second: its own, beside (root can write the node directory)
+    out="$(eng 0)"
+    assert_contains "$out" "VLLM=$R/n/vllm.uid-0 PYC=$R/n/pycache/k.uid-0"
+    assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$R/n/vllm is another user's; using $R/n/vllm.uid-0, user 0's own"
+    assert_not_contains "$out" "WRITE FAILED"
+    # a third user, under umask 000: inside the vLLM root, beside the key
+    out="$(eng 4243 000)"
+    assert_contains "$out" "VLLM=$R/n/vllm/.uid-4243 PYC=$R/n/pycache/k.uid-4243"
+    assert_not_contains "$out" "WRITE FAILED"
+    assert_eq "$(modeof "$R/n/vllm/.uid-4243") $(modeof "$R/n/pycache/k.uid-4243")" "drwxr-xr-x 4243 drwxr-xr-x 4243" "the third user's own directories"
+    # the first user again: unchanged, and none of the others wrote its tree
+    out="$(eng 4242)"
+    assert_contains "$out" "VLLM=$R/n/vllm PYC=$R/n/pycache/k"
+    assert_not_contains "$out" "engine cache"
+    assert_not_contains "$out" "WRITE FAILED"
+    assert_eq "$(find "$R/n/vllm" "$R/n/pycache/k" -path "$R/n/vllm/.uid-*" -prune -o ! -user 4242 ! -path "$R/n/vllm" -print | wc -l | tr -d ' ')" "0" "entries in the first user's tree owned by another user"
+    # A link planted where a user's own directory goes, to a directory that
+    # user owns: refused, and nothing written through it. In a sticky
+    # directory Linux already refuses to follow another user's link
+    # (fs.protected_symlinks), so the link goes where that does not hold: a
+    # node directory every engine can write and that is not sticky, as
+    # OpenShift's 2775 group-0 one is (777 here, for a shared group).
+    $AS_ROOT sh -c 'mkdir -p "$1/o/vllm" && chmod 777 "$1/o" && chmod 1777 "$1/o/vllm"' sh "$R"
+    $AS_ROOT setpriv --reuid=4242 --regid=4242 --clear-groups touch "$R/o/vllm/.writable"
+    $AS_ROOT setpriv --reuid=4245 --regid=4245 --clear-groups mkdir "$R/n/pycache/mine"
+    $AS_ROOT setpriv --reuid=4244 --regid=4244 --clear-groups ln -s "$R/n/pycache/mine" "$R/o/vllm.uid-4245"
+    out="$($AS_ROOT setpriv --reuid=4245 --regid=4245 --clear-groups env -i PATH=/usr/bin:/bin VLLM_CACHE_ROOT="$R/o/vllm" \
+        sh -c ". \"$R/guard.sh\"; echo \"VLLM=\${VLLM_CACHE_ROOT-unset}\"" 2>&1)"
+    assert_contains "$out" "VLLM=$R/o/vllm/.uid-4245"
+    assert_contains "$out" "engine cache VLLM_CACHE_ROOT=$R/o/vllm is another user's; using $R/o/vllm/.uid-4245, user 4245's own"
+    assert_eq "$(ls -A "$R/n/pycache/mine" | tr '\n' ' ')" "" "the directory the planted link points at"
+    $AS_ROOT rm -rf "$R"
+fi
+[ "$FAILED" -eq "$before" ] && ok
 
 CASE="guard: VLLM_USE_MEGA_AOT_ARTIFACT=1 on an installed vLLM 0.26 only, never over a user value"
 reset; f_engine_cache_only_gap

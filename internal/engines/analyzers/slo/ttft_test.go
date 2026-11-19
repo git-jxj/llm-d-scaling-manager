@@ -1123,6 +1123,9 @@ func TestTTFTDecode_OnlyAMeasuredLinePrices(t *testing.T) {
 		got := a.ttftDecode(domain.AnalyzerInput{ModelID: "m", Namespace: "ns"}, fleet, line(source))
 		assert.Equal(t, ok, got != nil, source)
 		if ok {
+			// The controller reads the line at the band's bottom below it:
+			// only the planner reads it at the fill (whatif.BelowBand).
+			assert.Equal(t, whatif.BelowBand{}, got.BelowBand, "the controller never reads below the band")
 			assert.Equal(t, 2, got.Replicas)
 			assert.Equal(t, 100000.0, got.CapacityTokens)
 			assert.Equal(t, 1500.0, got.KVPerRequest)
