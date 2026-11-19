@@ -24,8 +24,8 @@ object.
   names: see [Real names in recordings](#real-names-in-recordings).
 
 ```bash
-# The namespace, and the release: v0.12.1 or later.
-export NS=capacity-planner V=<release, v0.12.1 or later>
+# The namespace, and the release: v0.12.0 or later.
+export NS=capacity-planner V=<release, v0.12.0 or later>
 export SRC=https://github.com/llm-d-incubation/llm-d-scaling-manager//config/capacity-planner
 ```
 
