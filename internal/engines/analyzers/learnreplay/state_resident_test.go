@@ -7,6 +7,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 )
 
 // residentRow is a Ready decode row at fill k holding running requests.
@@ -54,4 +55,27 @@ func TestResidentOf_TheMedianUnbounded(t *testing.T) {
 	assert.Equal(t, ResidentKV{PerRequest: 70_000, Running: 10, Cycles: 3, FromCycle: 1, ToCycle: 4}, got)
 
 	assert.False(t, residentOf(samples[:2], m).Read(), "one cycle of enough requests is no reading")
+}
+
+// A line-check row is priced at its own reading where it has one, held at its
+// shape's prefix-hit discount below that, and at its shape with no hit where
+// it has none.
+func TestRowResidentKV_ItsThreeBranches(t *testing.T) {
+	s := shape.New(20000, 400, 0.9) // discount 2,200; no hit 20,200
+	unread := residentRow("dec", 0.5, 10)
+	unread.RunningRequestsKnown = false
+	cases := []struct {
+		name string
+		row  domain.ReplicaMetrics
+		want float64
+	}{
+		{"reading used", residentRow("dec", 0.5, 10), 50_000},
+		{"floor applied", residentRow("dec", 0.01, 10), 2_200},
+		{"no reading: the whole context", unread, 20_200},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.InDelta(t, c.want, rowResidentKV(c.row, s), 1e-6)
+		})
+	}
 }

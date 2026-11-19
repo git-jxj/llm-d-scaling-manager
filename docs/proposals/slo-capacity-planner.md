@@ -99,7 +99,7 @@ Refusals, flags, the standalone mode and exit codes are in the
 | ITL line | `ITL(k) = A·k + B`, inter-token latency against fill `k`, fitted per variant (`internal/signals/itl`) |
 | Tier | Where a line came from: `ols` (full fit), `pinned-B` (slope fitted, intercept held from the last full fit, or 6 ms if none), `held` (last slope kept), `borrowed` (another variant's line) |
 | Line check | The token rate the line predicts at a replica's fill against its reported `generation_tokens` rate (`itl.GPSErrorPct`, 15%; the analyzers call it the GPS check) |
-| `KVreq` | KV tokens one in-flight request holds on average: `ILeff + D·OL/2`, `ILeff = IL·(1 − hit)`, `D` the spread of output lengths, 1 with no reading |
+| `KVreq` | KV tokens one in-flight request holds on average. On the decode side the planner prices the measured KV per running request (tokens in use over running requests), held at least at `ILeff + D·OL/2`; with no reading, the whole context `IL + D·OL/2`. `ILeff = IL·(1 − hit)` is the prefill side's prompt, `D` the spread of output lengths, 1 with no reading |
 | `V_P` | A prefill pod's prompt-token throughput while it has work |
 | `a` | The fixed latency one request pays on a prefill pod |
 | Batch cap | Most sequences an engine runs: flags, else the `llm-d.ai/max-num-seqs` annotation, else learned (ev-shindin/llm-scaling-manager#422, ev-shindin/llm-scaling-manager#429) |
@@ -120,7 +120,7 @@ closed form (Little's law, residence `OL·ITL(k)`):
 
 valid while the denominator is positive and `n` is under the cap.
 
-Corrections: `KVreq = ILeff + D·OL/2` with the output spread
+Corrections: on the decode side `KVreq` is the measured resident KV per running request, or the whole context `IL + D·OL/2` with no reading (a prefix hit saves decode KV only where running requests share the blocks). The analyzers price `KVreq = ILeff + D·OL/2` with the output spread
 `D = E[O²]/E[O]²` (ev-shindin/llm-scaling-manager#276), read from the output-length histogram, in the saturation
 analyzer, the slo analyzer (switch `slo-kv-per-request-output-dispersion`), the
 throughput analyzer (switch `throughput-kv-per-request-output-dispersion`, ev-shindin/llm-scaling-manager#433) and
