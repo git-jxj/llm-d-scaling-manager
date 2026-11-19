@@ -3,7 +3,9 @@
 # Executes the DisaggregatedSet paths in deploy/lib/scaledobject.sh against a
 # fixture set: discovery (one ScaledObject plan entry per role, targeting the
 # role's DisaggregatedSetRoleScaler), the reasons a role cannot be targeted
-# yet, the workload report, and the namespace scan.
+# yet, the workload report, and the namespace scan. Also the install's
+# LeaderWorkerSet report (llmsm_report_lws_dset in deploy/lib/prereqs.sh):
+# a LeaderWorkerSet without the role scaler's /scale is warned about.
 #
 # Every case has a POSITIVE assertion: a function that does not exist must
 # fail it (see the note at the top of hack/check-workload-gaps.sh).
@@ -92,12 +94,23 @@ DSET_OBJ=""
 CRD_RC=0
 LIST_RC=0
 SO_OBJS=""
-reset() { DSET_OBJ="$(dset 0 External "")"; CRD_RC=0; LIST_RC=0; SO_OBJS=""; }
+# What discovery serves for disaggregatedset.x-k8s.io/v1, as LeaderWorkerSet
+# v0.9.0 (sets only) and v0.10.0 (the role scaler and its /scale) answer it.
+LWS_V09='{"kind":"APIResourceList","groupVersion":"disaggregatedset.x-k8s.io/v1","resources":[{"name":"disaggregatedsets"},{"name":"disaggregatedsets/status"}]}'
+LWS_V010='{"kind":"APIResourceList","groupVersion":"disaggregatedset.x-k8s.io/v1","resources":[{"name":"disaggregatedsetrolescalers"},{"name":"disaggregatedsetrolescalers/scale"},{"name":"disaggregatedsetrolescalers/status"},{"name":"disaggregatedsets"},{"name":"disaggregatedsets/status"}]}'
+RAW_OUT=""
+RAW_RC=0
+RAW_ERR=""
+reset() { DSET_OBJ="$(dset 0 External "")"; CRD_RC=0; LIST_RC=0; SO_OBJS=""; RAW_OUT="$LWS_V010"; RAW_RC=0; RAW_ERR=""; }
 
 kubectl() {
     case "${1:-}" in
         get)
             case "${2:-}" in
+                --raw)
+                    [ "${3:-}" = "/apis/disaggregatedset.x-k8s.io/v1" ] || return 1
+                    [ "$RAW_RC" -eq 0 ] || { printf '%s\n' "$RAW_ERR" >&2; return "$RAW_RC"; }
+                    printf '%s' "$RAW_OUT" ;;
                 crd) return "$CRD_RC" ;;
                 disaggregatedsets)
                     [ "$LIST_RC" -eq 0 ] || return "$LIST_RC"
@@ -311,6 +324,53 @@ rc=0
 out="$(so_discover_dsets serving 2>/dev/null)" || rc=$?
 assert_eq "$rc" "0" "return code"
 assert_eq "$out" "" "output"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="lws: v0.9.x serves sets without the role scaler: warn, name the release and the CRD-first upgrade"
+reset
+RAW_OUT="$LWS_V09"
+before=$FAILED
+rc=0
+out="$(llmsm_report_lws_dset 2>&1)" || rc=$?
+assert_eq "$rc" "0" "return code"
+assert_contains "$out" "[WARNING]"
+assert_contains "$out" "serves DisaggregatedSet but not DisaggregatedSetRoleScaler"
+assert_contains "$out" "KEDA cannot scale DisaggregatedSet roles"
+assert_contains "$out" "v0.10.0 or later"
+assert_contains "$out" "kubectl apply --server-side --force-conflicts -f lws/crds"
+assert_contains "$out" "--version 0.10.0"
+assert_contains "$out" "LWS_CHART_VERSION"
+assert_contains "$out" "the way it was installed (on OpenShift, through its operator)"
+assert_contains "$out" "If it was installed with the upstream Helm chart"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="lws: v0.10.0 serves the role scaler /scale: no warning"
+reset
+before=$FAILED
+out="$(llmsm_report_lws_dset 2>&1)"
+assert_not_contains "$out" "[WARNING]"
+assert_contains "$out" "KEDA can scale DisaggregatedSet roles"
+assert_contains "$out" "The API serves"
+assert_contains "$out" "controller is v0.10.0 or later"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="lws: no DisaggregatedSet API (LWS before v0.9.0, or none): nothing said"
+reset
+RAW_RC=1
+RAW_ERR="Error from server (NotFound): the server could not find the requested resource"
+before=$FAILED
+out="$(llmsm_report_lws_dset 2>&1)"
+assert_eq "$out" "" "output"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="lws: discovery refused: says it was not checked, never that all is well"
+reset
+RAW_RC=1
+RAW_ERR="Error from server (Forbidden): forbidden"
+before=$FAILED
+out="$(llmsm_report_lws_dset 2>&1)"
+assert_contains "$out" "was not checked"
+assert_not_contains "$out" "[INFO]"
 [ "$FAILED" -eq "$before" ] && ok
 
 # ----------------------------------------------------------------------------

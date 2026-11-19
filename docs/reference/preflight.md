@@ -127,9 +127,10 @@ after it.
 | `overlap` | another controller already manages a namespace this one would: a cluster-wide one, or one whose `--watch-namespace` names it | | a namespaced preflight may not list Deployments: it reads the cluster-wide controller in `scaling-manager-system` by name, and says other namespaces were not looked at |
 | `accelerators` (with `quotas`) | | a quota key matches no node's accelerator label | nodes cannot be listed |
 | `activation` (with `utilizationShare: "active"`) | the controller may not patch pods in a sharing namespace; the fix is the `scaling-manager-activate.yaml` line for it | | a review is refused |
+| `lws.disaggregatedset` (with a DisaggregatedSet API) | | LeaderWorkerSet serves DisaggregatedSet but not `disaggregatedsetrolescalers/scale` (before v0.10.0), so KEDA cannot scale its roles. The fix is the upgrade, the way it was installed ([troubleshooting](troubleshooting.md#a-disaggregatedset-role-is-not-scaled)). A PASS reads the API only: the LeaderWorkerSet controller must be v0.10.0 or later too | the API resources cannot be read |
 
 `scaler.tls`, `openshift.user-monitoring`, `kueue`, `accelerators`,
-`activation` and, for a cluster-wide install, `rbac.namespaces` are listed
+`activation`, `lws.disaggregatedset` and, for a cluster-wide install, `rbac.namespaces` are listed
 under "not applicable" when they do not apply. When the settings cannot be
 read, the checks they gate are UNKNOWN instead.
 
