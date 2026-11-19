@@ -295,6 +295,26 @@ requests into the tokens they occupy, the same per-request footprint as
 `KVreq`, with the same spread `D` (the replica's own; see the shape above).
 `N_steady` is a throughput over the token budget and keeps the means.
 
+A decode of a P/D model does not prefill its prompt: the KV arrives from
+prefill, and the engine computes only what the transfer and its own prefix
+cache did not cover. Charged the whole `I`, a decode with `B = 256` and
+80,000-token prompts holds about 2 requests per rank against a cap of 64, and
+its `k2` is a fortieth of its cache (issue
+llm-d-incubation/llm-d-scaling-manager#201). The replay switch
+`k2-decode-budget-at-computed-prompt` (`SwitchK2DecodeBudgetAtComputedPrompt`,
+`decode_budget.go`) charges a decode replica the prompt tokens it computed per
+request (`PrefillComputedTokenRate / RequestRate`, at most `I`), and with
+speculative decoding `1 + num_speculative_tokens` of budget a step for
+`1 + SpecAcceptedPerStep` tokens emitted:
+
+```
+steps    = O / (1 + accepted)
+N_steady = min(B x steps / (prompt + (1 + k) x steps), S)
+```
+
+A replica that reports no computed prompt or no completions is priced as
+before. The switch is off from the constructor.
+
 The spread moves the two figures it enters in opposite directions, both
 towards the truth: `k2` rises (the sequences the batch cap admits hold more KV
 each, so a replica holds more before its batch binds, and fewer replicas are
@@ -325,6 +345,17 @@ one (`atCapBatchCap`):
 | zero-replica estimate (`estimateStoredCapacity`, issue ev-shindin/llm-scaling-manager#427) | `zeroReplicaBatchCap`, per engine rank: flags, else declared (only while `SwitchBatchCapDeclared` is on too), else default; never learned. A prefill variant keeps flags, else default: P3 never prices prefill. The estimate is one rank's figure, also for a data-parallel variant (ev-shindin/llm-scaling-manager#438). `zero-replica-capacity-estimate` logs `batchCap` and `batchCapSource` on its `deployment-derived` line | `SwitchBatchCapZeroReplica` |
 | `slo` analyzer's admission (`slo.admission`) | `EngineParams.StatedBatchCap`: flags, else declared (not gated by `SwitchBatchCapDeclared`, a saturation switch); `slo-variant` logs `lineBatchCap` and `lineBatchCapSource` | `slo.SwitchBatchCapAdmission` |
 | `slo` analyzer's per-rank cap (`priceVariant`) | `StatedBatchCap`, else `BatchCap`; `slo-variant` logs `batchCap` and `batchCapSource` | `slo.SwitchBatchCapPerRank` |
+
+A landed pull is a backlog only where the scheduler can stop before it. On a
+decode below its stated cap on every rank (running summed over ranks under
+the per-rank cap) and with its busiest rank's KV under `kvCacheThreshold`, a
+landed request waits for the next step, and the one-minute peak of that wait
+is a burst, not a backlog. Read as one, five landed requests on a rank at 24 %
+KV met the queue threshold of 5 and recorded a `k2` at 24 % of the cache
+(issue llm-d-incubation/llm-d-scaling-manager#201). The replay switch
+`decode-landed-queue-needs-a-bound` (`SwitchDecodeLandedNeedsABound`,
+`landedWithoutBound`) reads such a replica's queue as the capacity part
+alone. Off from the constructor.
 
 Why the at-cap readers do not read the learned cap: it is the highest
 plateau seen, so it may sit below the true cap. Below the true cap vLLM

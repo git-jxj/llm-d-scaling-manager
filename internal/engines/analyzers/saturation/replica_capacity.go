@@ -242,6 +242,10 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	// (batch_cap.go, issue ev-shindin/llm-scaling-manager#399): this row may raise the learned one first.
 	a.observeBatchCap(namespace, modelID, role, rm, adm, k1, engineParams, config.EnableBatchCapLearning, logger)
 	batchCap := a.pricingBatchCap(namespace, modelID, rm.VariantName, engineParams, config.EnableBatchCapLearning)
+	if a.k2DecodeBudget {
+		// What a decode replica's budget is spent on (decode_budget.go).
+		batchCap.budget = decodeStepBudget(rm, role, engineParams)
+	}
 	d := a.computeK2(
 		historyKey,
 		modelID, namespace, rm.VariantName,
@@ -1223,7 +1227,14 @@ func (a *SaturationAnalyzer) k2Chain(
 		// output lengths (outputDispersion, issue ev-shindin/llm-scaling-manager#276): a long request
 		// stays resident longer, so the sequences the batch cap admits hold
 		// more KV than I + O/2 each, and k2 is that much higher.
-		if k2Derived := estimateCapacityAtCapSpread(engineParams, batchCap.perRank, avgInput, avgOutput, outputDispersion) * int64(max(ranks, 1)); k2Derived > 0 {
+		//
+		// The batch at the token budget charges each request the prompt it
+		// prefills. A decode of a P/D model prefills almost none of it, and
+		// under SwitchK2DecodeBudgetAtComputedPrompt batchCap.budget says what
+		// it computes (decodeStepBudget, issue
+		// llm-d-incubation/llm-d-scaling-manager#201); the zero value charges
+		// the whole prompt, as before.
+		if k2Derived := estimateCapacityAtCapBudget(engineParams, batchCap.perRank, avgInput, avgOutput, outputDispersion, batchCap.budget) * int64(max(ranks, 1)); k2Derived > 0 {
 			if b, ok := borrow(min(k1, k2Derived)); ok {
 				logBorrowedK2(logger, b, modelID, namespace, variantName, historyKey, min(k1, k2Derived), capacity.K2SrcDerived)
 				return b.k2, b.source(), b
@@ -1517,6 +1528,16 @@ func (a *SaturationAnalyzer) estimateStoredCapacity(
 // the token budget, depends on the means alone and keeps them. A D below 1,
 // or not a finite number, is read as 1.
 func estimateCapacityAtCapSpread(params *capacity.EngineParams, batchCap int64, avgInput, avgOutput, dispersion float64) int64 {
+	return estimateCapacityAtCapBudget(params, batchCap, avgInput, avgOutput, dispersion, stepBudget{})
+}
+
+// estimateCapacityAtCapBudget is estimateCapacityAtCapSpread with the rank's
+// token budget spent as budget says (steadyBatch): the zero value, I + O, is
+// estimateCapacityAtCapSpread; a decode replica's under
+// SwitchK2DecodeBudgetAtComputedPrompt is the prompt it computes and the
+// tokens a step takes with speculation (decodeStepBudget). Only the batch
+// moves: the KV a resident request holds is still I + D*O/2.
+func estimateCapacityAtCapBudget(params *capacity.EngineParams, batchCap int64, avgInput, avgOutput, dispersion float64, budget stepBudget) int64 {
 	if !(dispersion >= 1) || math.IsInf(dispersion, 0) {
 		dispersion = 1
 	}
@@ -1529,7 +1550,7 @@ func estimateCapacityAtCapSpread(params *capacity.EngineParams, batchCap int64, 
 
 	nSteady := S
 	if params != nil {
-		nSteady = min(float64(params.EffectiveMaxBatchedTokens)*O/(I+O), S)
+		nSteady = steadyBatch(float64(params.EffectiveMaxBatchedTokens), S, I, O, budget)
 	}
 	k2Derived := int64(nSteady * (I + dispersion*O/2))
 	if k2Derived > 0 {

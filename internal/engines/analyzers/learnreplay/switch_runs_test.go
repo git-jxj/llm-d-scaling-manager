@@ -1045,6 +1045,13 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillALowLoadPerRank: nil,
 	saturation.SwitchPrefillAEngineTiming:   nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
+	// llm-d-incubation/llm-d-scaling-manager#201: a decode's derived k2
+	// charged the prompt it computes, and a landed request a backlog only
+	// where the decode can be at a bound. Off from the constructor, so every
+	// golden replay runs them off, and off alone from all on moves nothing.
+	// Their unit tests hold them (heldBy).
+	saturation.SwitchK2DecodeBudgetAtComputedPrompt: nil,
+	saturation.SwitchDecodeLandedNeedsABound:        nil,
 	// ev-shindin/llm-scaling-manager#275 (two switches) and ev-shindin/llm-scaling-manager#438, this file's own rows before learner PR
 	// 4b-1 (see replaySwitches).
 	saturation.SwitchZeroReplicaDataParallel: nil,
@@ -1279,6 +1286,17 @@ func withSeams(more, rows map[string][]string) map[string][]string {
 // test that holds the same on either side is a control, not a hold, and is
 // not listed here.
 var heldBy = map[string][]heldTest{
+	// llm-d-incubation/llm-d-scaling-manager#201: each runs the switch on
+	// and off and asserts both.
+	saturation.SwitchK2DecodeBudgetAtComputedPrompt: {
+		{"../saturation", "TestK2DecodeBudget_ADecodeIsNotChargedThePromptItDidNotCompute"},
+		{"../saturation", "TestK2DecodeBudget_ThroughAnalyze"},
+		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+	},
+	saturation.SwitchDecodeLandedNeedsABound: {
+		{"../saturation", "TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2"},
+		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+	},
 	// The capacity planner's switches: each runs the switch on and off and
 	// asserts both, and the first holds all three off from the constructor.
 	saturation.SwitchPrefillALowLoadPerRank: {

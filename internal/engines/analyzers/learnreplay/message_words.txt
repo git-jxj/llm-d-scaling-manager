@@ -931,6 +931,7 @@ declares
 declined
 decode
 decode-knee
+decode-landed-queue-needs-a-bound
 decode-only
 decode-queue-unknown
 decode-style
@@ -1521,6 +1522,7 @@ k1MemoryBound
 k2
 k2-compute
 k2-decision
+k2-decode-budget-at-computed-prompt
 k2-first-reading-waits-for-a-second
 k2-held-dropped
 k2-key-bucket-held

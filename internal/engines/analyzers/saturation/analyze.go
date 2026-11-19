@@ -740,6 +740,15 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 	// (decodeCapacityView), except on a replica at its sequence cap. The
 	// idle tests below read the raw row.
 	rows := decodeCapacityViews(c.input.ReplicaMetrics, c.rolesByVariant, c.atCapBatchCaps())
+	if c.a.decodeLandedNeedsBound && domain.HasPrefill(c.rolesByVariant) {
+		// A landed request is a backlog only where the replica can be at a
+		// bound (SwitchDecodeLandedNeedsABound).
+		caps := c.atCapBatchCaps()
+		for i := range rows {
+			rows[i] = landedWithoutBound(rows[i], c.input.ReplicaMetrics[i], c.rolesByVariant[rows[i].VariantName],
+				caps[rows[i].VariantName], c.cfg.KvCacheThreshold)
+		}
+	}
 	served := c.tune.servedBounds(rows, c.rolesByVariant, c.cfg.QueueLengthThreshold, c.cfg.KvCacheThreshold, c.fleetOutput,
 		c.stableInput, c.stableOutput, c.fleetHitRate)
 	if c.a.muUnreadAtTarget {

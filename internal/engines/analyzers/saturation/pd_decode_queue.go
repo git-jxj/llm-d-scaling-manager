@@ -106,3 +106,44 @@ func decodeCapacityViews(rows []domain.ReplicaMetrics, rolesByVariant map[string
 	}
 	return out
 }
+
+// SwitchDecodeLandedNeedsABound is the replay switch for a landed request on
+// a decode replica that has room (issue
+// llm-d-incubation/llm-d-scaling-manager#201).
+//
+// decodeCapacityView adds the landed requests to the queue because the
+// scheduler promotes a landed pull only inside its waiting loop, which stops
+// at max_num_seqs and when a block cannot be allocated. A replica below its
+// stated cap on every rank, with its busiest rank's KV under the threshold,
+// stops at neither: a landed request waits for the next step, and the
+// one-minute peak of that wait is a burst of arrivals, not a backlog. Read as
+// one, five landed requests on a decode rank at 24 % KV, its pod running 9
+// sequences against a cap of 64 per rank, met the queue threshold of 5,
+// recorded a k2 at 24 % of the cache, and priced the variant there for the
+// rest of the day.
+//
+// On, such a replica's queue is the capacity part alone, as without the
+// landed series. Where the cap is not stated, the running count is not read,
+// or the busiest rank's KV is at or over the threshold, the landed requests
+// stay in, as before. Off, as before.
+//
+// Off from the constructor: it moves what decode records and charges, and
+// the default changes only after review.
+const SwitchDecodeLandedNeedsABound = "decode-landed-queue-needs-a-bound"
+
+// landedWithoutBound returns view, decodeCapacityView's reading of raw, with
+// the landed requests taken back out where raw cannot be at a bound
+// (SwitchDecodeLandedNeedsABound): a decode of a P/D model whose stated cap
+// maxNumSeqs is above its running count summed over ranks -- so no rank is at
+// it -- and whose busiest rank's KV is under kvThreshold. Any other row is
+// view unchanged.
+func landedWithoutBound(view, raw domain.ReplicaMetrics, role string, maxNumSeqs int64, kvThreshold float64) domain.ReplicaMetrics {
+	if domain.CanonicalRole(role) != domain.RoleDecode || !raw.CapacityQueueKnown || !raw.LandedQueueKnown ||
+		maxNumSeqs <= 0 || !raw.RunningRequestsKnown || int64(raw.RunningRequests) >= maxNumSeqs ||
+		!(raw.BusiestRankKvUsage() < kvThreshold) {
+		return view
+	}
+	view.QueueLength = raw.CapacityQueueLength
+	view.MaxRankQueueLength = raw.BusiestRankCapacityQueue()
+	return view
+}
