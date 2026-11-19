@@ -167,6 +167,31 @@ func TestRun_ExportReadsAGzippedRecording(t *testing.T) {
 	assert.Equal(t, plain, fromGz)
 }
 
+// add takes a gzipped recording as it takes the raw one: the same fixture,
+// byte for byte.
+func TestRun_AddReadsAGzippedRecording(t *testing.T) {
+	in := headRecording(t)
+	raw, err := os.ReadFile(in)
+	require.NoError(t, err)
+	zipped, err := learnreplay.Gzip(raw)
+	require.NoError(t, err)
+	gzIn := filepath.Join(t.TempDir(), "raw.jsonl.gz")
+	require.NoError(t, os.WriteFile(gzIn, zipped, 0o644))
+
+	plainDir, gzDir := filepath.Join(t.TempDir(), "plain"), filepath.Join(t.TempDir(), "gz")
+	out, err := runOut("add", "-dir", plainDir, "-in", in, "-name", "e1", "-source", "a test run")
+	require.NoError(t, err, out)
+	out, err = runOut("add", "-dir", gzDir, "-in", gzIn, "-name", "e1", "-source", "a test run")
+	require.NoError(t, err, out)
+	for _, name := range []string{learnreplay.RecordingName, learnreplay.OutputResults} {
+		want, err := os.ReadFile(filepath.Join(plainDir, "e1", name))
+		require.NoError(t, err)
+		got, err := os.ReadFile(filepath.Join(gzDir, "e1", name))
+		require.NoError(t, err)
+		assert.Equal(t, want, got, name)
+	}
+}
+
 // add writes a fixture and runs the check; the check then fails on an
 // edited golden, and update repairs it.
 func TestRun_AddCheckUpdate(t *testing.T) {

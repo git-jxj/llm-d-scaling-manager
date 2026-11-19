@@ -586,6 +586,10 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		pf.flags = append(pf.flags, aFromEngineTiming)
 		pf.assume("a %.0f ms from engine prefill timing, no low-load minutes (intercept %.0f ms over %d minutes at per-engine occupancy <= %.2f, + overhead %.0f ms)",
 			1000*est.A, 1000*est.AIntercept, est.ATimingMinutes, est.ATimingOccupancy, 1000*est.AOverhead)
+		if est.AExtrapolated {
+			pf.assume("the intercept is extrapolated from long prompts (p10 %.0f computed tokens, over %.0f) and may read low",
+				est.AShortestPrompt, prefill.MaxAShortestPrompt)
+		}
 	}
 
 	p.Replicas = ps.Pods
@@ -961,6 +965,20 @@ func (pf *pricedFleet) verdict(on whatif.Validation) string {
 		v += "; a ASSUMED"
 	}
 	return v
+}
+
+// busyFleetTTFTNote is the line every TTFT answer carries when a fleet's a
+// came from engine prefill timing (aFromEngineTiming): such a fleet is busy
+// at every load, and the busy-minute V_P it is priced on is a lower bound.
+const busyFleetTTFTNote = "TTFT on a fleet that never goes quiet is not validated: prefill capacity V_P is a lower bound."
+
+// busyFleetNote is busyFleetTTFTNote where some fleet's a came from engine
+// prefill timing, and "" otherwise.
+func busyFleetNote(fleets []*pricedFleet) string {
+	if slices.ContainsFunc(fleets, func(pf *pricedFleet) bool { return slices.Contains(pf.flags, aFromEngineTiming) }) {
+		return busyFleetTTFTNote
+	}
+	return ""
 }
 
 // footerNote is the fleets' closing note. The direction turns on the spread:

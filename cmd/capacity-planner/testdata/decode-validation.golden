@@ -52,5 +52,5 @@ ttft-staircase-b-on ns-01/model-02 freeze 174 of 289 variant-01 pinned-B; tpot -
 ttft-staircase-b-on ns-01/model-02 freeze 174 of 289 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity
 ttft-staircase-c-on ns-01/model-02 freeze 176 of 292 variant-01 pinned-B; tpot -21.2% over 227 rows, OUT of +-10%, unclamped -21.2%, 2 below the band, 0 above it, on a line the planner refuses; knee SKIPPED the knee refused on all 1 saturated windows: PinnedDefaultB
 ttft-staircase-c-on ns-01/model-02 freeze 176 of 292 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity
-ttft-three-pods ns-01/model-02 freeze 122 of 203 variant-01 pinned-B; tpot -9.4% over 237 rows, in of +-10%, unclamped -9.4%, 44 below the band, 0 above it, on a line the planner refuses; knee SKIPPED no saturated window off a ramp held out
+ttft-three-pods ns-01/model-02 freeze 122 of 203 variant-01 pinned-B; tpot -9.4% over 237 rows, in of +-10%, unclamped -9.4%, 40 below the band, 0 above it, on a line the planner refuses; knee SKIPPED no saturated window off a ramp held out
 ttft-three-pods ns-01/model-02 freeze 122 of 203 variant-02 prefill; own SKIPPED P1 refused a: TooFewLowLoadMinutes

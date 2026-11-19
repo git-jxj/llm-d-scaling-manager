@@ -516,11 +516,11 @@ type SaturationAnalyzer struct {
 	prefillALowLoadPerRank, prefillAEngineTiming bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
-	// decode fill spans over the horizon, and itlBandFloors the floor
+	// decode engine fills over the horizon, and itlBandFloors the floor
 	// adapted for its latest cycle; both under mu, and empty while the
 	// switch is off.
 	itlAdaptiveFloor bool
-	itlFills         map[string][]fillSpan
+	itlFills         map[string][]engineFill
 	itlBandFloors    map[string]bandFloor
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
@@ -811,7 +811,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillObserver:        prefill.NewObserver(),
 		prefillBounds:          make(map[string]stashedBound),
 		prefillEstimates:       make(map[string]stashedEstimate),
-		itlFills:               make(map[string][]fillSpan),
+		itlFills:               make(map[string][]engineFill),
 		itlBandFloors:          make(map[string]bandFloor),
 	}
 }

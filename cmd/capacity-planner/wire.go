@@ -535,6 +535,9 @@ func newWireOutput(question string, f *answerFlags, st *learnreplay.State, varia
 func (w *wireOutput) addTTFTNote(fleets []*pricedFleet) {
 	if len(fleets) > 0 {
 		w.Note += "; " + footerNote(fleets)
+		if n := busyFleetNote(fleets); n != "" {
+			w.Note += "; " + n
+		}
 	}
 }
 

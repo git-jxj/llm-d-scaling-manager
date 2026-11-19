@@ -51,6 +51,12 @@ import (
 // (NonPositiveSlope, NonPositiveIntercept), or an intercept whose standard
 // error is above MaxAInterceptRelSE of it (AUncertain). No slope bound on
 // V_P is read from it: its slope is a shared pod's, not a lone prompt's.
+//
+// Its shortest prompt is the 10th percentile of the minutes it reads
+// (Estimate.AShortestPrompt). Past MaxAShortestPrompt the intercept is an
+// extrapolation that reads low, as the low-load fit's does; that fit refuses
+// it (NoShortPrompts), this one keeps it and marks it AExtrapolated, since a
+// long-context fleet is the one with no other a to read.
 
 // MinTimingMinutes is the fewest minutes the fit of a from the engine's
 // prefill timing reads, counted after the quieter half is taken.
@@ -174,6 +180,11 @@ func (est *Estimate) fixedFromTiming(ks *keyState) {
 	est.APromptMin, est.APromptMax = sorted[0], sorted[len(sorted)-1]
 	est.AModel, est.ASlope, est.ALineReason = AModelLinear, slope, ""
 	est.AInterceptSE = se
+	// Extrapolated from long prompts, the intercept reads low (fixed.go,
+	// MaxAShortestPrompt), the unsafe side. It is not refused here: a fleet
+	// that only sends long prompts is the one this fit is for. It is flagged.
+	est.AShortestPrompt = lo
+	est.AExtrapolated = !(lo <= MaxAShortestPrompt)
 	est.AIntercept, est.A = intercept, intercept
 	if len(over) > 0 {
 		est.AOverhead, est.AOverheadKnown = median(over), true
