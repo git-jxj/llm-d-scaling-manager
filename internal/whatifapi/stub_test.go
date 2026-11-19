@@ -43,8 +43,8 @@ type stubResolver struct {
 	refuseFrom2 whatif.Reason
 	// pinnedLine, when set, is a decode line pinned on the default
 	// intercept (PinnedDefaultB): decode's knee, TPOT and TPOT limit are
-	// refused, and with no TPOT asked the fleet's limit is prefill's alone,
-	// as the CLI's is with no decode line to read decode's knee from.
+	// refused, and with no TPOT asked decode's limit and the fleet's are the
+	// knee's refusal, as Fleet.Limits says.
 	pinnedLine bool
 	// knees counts the DecodeKnee calls.
 	knees atomic.Int64
@@ -188,9 +188,6 @@ func (f *stubFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (dec
 		f.r.onPlainLimits(n)
 	}
 	knee := min(f.prefillKnee(), f.decodeKnee())
-	if f.r.pinnedLine {
-		knee = f.prefillKnee()
-	}
 	switch {
 	case f.refusePrefill:
 		prefill = noVP
@@ -203,14 +200,16 @@ func (f *stubFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (dec
 		decode = whatif.Answer{Value: min(headroom*f.decodeKnee(), (tpotSeconds-0.005)*1000),
 			Basis: whatif.Basis{BoundBy: []whatif.Bound{whatif.BoundTPOT}, Uncapped: (tpotSeconds - 0.005) * 1000}}
 	}
-	if tpotSeconds > 0 && f.r.pinnedLine {
+	if f.r.pinnedLine {
+		// With a TPOT target or none: the line prices neither TPOT nor the
+		// knee. Decode's refusal is the fleet's first, as the CLI's is.
 		decode = pinnedB
-	}
-	if u, ok := prefill.(whatif.Unanswerable); ok {
-		return decode, prefill, u
 	}
 	if u, ok := decode.(whatif.Unanswerable); ok {
 		return u, prefill, u
+	}
+	if u, ok := prefill.(whatif.Unanswerable); ok {
+		return decode, prefill, u
 	}
 	// A percentile with no ratio refuses decode's limit, and the fleet's.
 	if tpotSeconds > 0 && f.k.TPOTPercentile != 0 && f.k.Assume.TPOTRatio == nil {

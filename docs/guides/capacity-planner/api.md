@@ -183,7 +183,7 @@ is the model's own, which the source does not carry.
 | `ttft.perBucket` | With the per-bucket view, one line per bucket, each with its own knees, target and points. No limit reads it. |
 | `ttft.markers` | The prefill and decode knees, the operating-point cap (headroom times the lower knee), and the flow-control onsets when flow control is on. |
 | `tpot` | The TPOT line at the statistic asked (`pNN` is the mean times R_q, with R_q's source in `ratio`), its curve, floor and points. Absent with `"statistic": "none"`, or when neither the request nor the policy sets a TPOT target. |
-| `limits` | `prefill`, `decode`, and `fleet` (the operating-point cap applied, with `withoutHeadroom`, `capApplied` and `binding`, the role with the lower limit); and `chosen`, the chosen rate and its headroom under the fleet limit. |
+| `limits` | `prefill`, `decode`, and `fleet` (the operating-point cap applied, with `withoutHeadroom`, `capApplied` and `binding`, the role with the lower limit); and `chosen`, the chosen rate and its headroom under the fleet limit. With no TPOT asked, `decode` is absent, unless the decode knee is refused: then `decode` and `fleet` are that refusal. |
 | `marginal` | The fleet limit with one more prefill replica, and with one more decode replica: the limit, the change, and which role binds. |
 | `flags` | Every flag in the plan once, with the places it qualifies. |
 | `assumed` | Every assumed input, in the CLI's words. |
@@ -229,7 +229,8 @@ weighed. The report's `needed` fleet is found the same way.
 A size with no fleet within the bound is a 200 with `unmet`, not an error.
 A decode knee the source refuses (such as `NoLine`, `PinnedDefaultB` or
 `NoCapacity`) is `unmet` for
-`decode` even with no TPOT asked: nothing else bounds decode.
+`decode` even with no TPOT asked: nothing else bounds decode, so the fleet
+limit is that refusal, as in the plan's `limits`.
 [What to do about each reason](troubleshooting.md#refused-figures).
 
 ## The report

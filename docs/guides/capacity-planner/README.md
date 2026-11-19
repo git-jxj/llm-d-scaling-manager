@@ -260,7 +260,10 @@ kill %1
   the lower knee. When the cap is what sets it, the figure without headroom is
   shown beside it, with the role that would set it then. The bar shows both
   roles and the fleet on one axis, with the rate you chose. "binds" marks the
-  role whose limit sets the fleet figure.
+  role whose limit sets the fleet figure. With no TPOT target, decode's knee
+  is all that bounds decode: when the source cannot price it (`NoLine`,
+  `PinnedDefaultB`), decode and the fleet are refused, not shown at prefill's
+  rate.
 - **+1 prefill, +1 decode.** The fleet limit with one more replica of each role.
   Adding a replica of the role that does not bind changes nothing, and the page
   says so.

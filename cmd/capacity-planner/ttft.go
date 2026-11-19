@@ -1225,7 +1225,8 @@ func (o *operatingTTFT) decodeNote() string {
 
 // fleetRate is question 1's fleet row: the smaller of the roles' rates and
 // the operating point of the lower knee. decode is nil when no TPOT was
-// asked. A role's refusal is the fleet's.
+// asked and decode's knee prices (kneeRefusal). A role's refusal is the
+// fleet's, decode's first.
 func fleetRate(q ttftQuestion, headroom float64, decode, ttft whatif.Result) whatif.Result {
 	if u, ok := decode.(whatif.Unanswerable); ok {
 		return u

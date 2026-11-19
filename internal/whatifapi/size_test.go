@@ -449,9 +449,7 @@ func TestSizePinnedDecodeLineRefusesDecode(t *testing.T) {
 			req.SLO.TPOT, req.SizeOn = c.tpot, c.on
 			before := r.knees.Load()
 			out, _ := sizeOf(t, h, req)
-			if c.tpot.Statistic == statisticNone {
-				assert.Equal(t, int64(1), r.knees.Load()-before, "the knee read once a search, not once a fleet")
-			}
+			assert.Zero(t, r.knees.Load()-before, "the fleet's limits carry the knee's refusal: the sizer reads no knee")
 			assert.Nil(t, out.Answer, "a decode count no rule bounds")
 			require.NotNil(t, out.Unmet)
 			assert.Equal(t, roleDecode, out.Unmet.Role)
