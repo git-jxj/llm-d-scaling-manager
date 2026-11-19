@@ -244,6 +244,18 @@ change. The replay switch is
 `kv-per-request-hits-resident` (`SwitchKVPerRequestHitsResident`). The
 throughput and slo analyzers still price their KV per request at `ILeff`.
 
+The upper bound under-prices an engine that holds more KV per request than its
+context in the same pool, such as a sparse-attention indexer's keys or a
+speculative draft model's KV (issue llm-d-incubation/llm-d-scaling-manager#188).
+The replay switch `kv-per-request-above-context`
+(`SwitchKVPerRequestAboveContext`) drops the bound and prices the reading by
+the capacity planner's rule, `shape.PriceResident`: held at the discount from
+below, priced as read above the context, held at the context on SGLang. A
+shape with no hit is read too. `residentKVBound` is then `above-context` for a
+reading over twice the context, and `upper` only for SGLang held at the
+context. The switch is off from the constructor: the controller keeps the
+bound until a GPU check on a prefix-heavy P/D workload clears the change.
+
 `KVreq` is the single most load-bearing quantity in the analyzer. Everything
 that asks "how many requests fit" divides by it.
 
@@ -2194,8 +2206,8 @@ the per-variant `replica-capacity-summary` stands in for them.
   spread of output lengths priced into `kvReqPerSeq` (1 is none, or none
   read); `residentKVPerSeq` is the KV the running requests were measured to
   hold, over `residentRunning` requests, and `residentKVBound` which bound
-  `kvReqPerSeq` held it to (`none`, `lower`, `upper`, `no-hit`,
-  `no-reading`, `off`; issue ev-shindin/llm-scaling-manager#277), and `residentKVBoundFleet` the same for
+  `kvReqPerSeq` held it to (`none`, `lower`, `upper`, `above-context`,
+  `no-hit`, `no-reading`, `off`; issue ev-shindin/llm-scaling-manager#277), and `residentKVBoundFleet` the same for
   `kvReqFleet`;
   `muShortWindow` says whether the pair moved to the short window.
   It, and every ITL line (`itl-window`, `itl-fit`, `itl-fit-declined`,

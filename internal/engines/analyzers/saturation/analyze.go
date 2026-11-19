@@ -772,7 +772,7 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 		// it: see its comment for the run that decided that.
 		itlModel := c.itlModels[rm.VariantName]
 		engineParams := engineParamsFor(c.a, c.input.Namespace, c.input.ModelID, rm.VariantName)
-		fleetShape, muShape, residentBoundFleet, residentBound := c.pricingShapes(rm.PrefixCacheHitRate)
+		fleetShape, muShape, residentBoundFleet, residentBound := c.pricingShapes(rm.PrefixCacheHitRate, engineParams)
 		// Only a generating role is priced from the ITL line. ITL is the gap
 		// between two generated tokens, and a prefill replica emits one and
 		// hands the KV to decode, so tokenSec/avgOutput does not describe it.
@@ -867,8 +867,10 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 
 // pricingShapes is the shape a replica at this prefix-cache hit rate is
 // priced at: the fleet's, and the one mu is priced at, each with the KV a
-// running request is measured to hold and which bound held it there.
-func (c *cycle) pricingShapes(hitRate float64) (fleetShape, muShape shape.Shape, residentBoundFleet, residentBound string) {
+// running request is measured to hold and which bound held it there. params
+// is the replica's engine, whose kind decides how a reading above the context
+// is priced (residentRuleFor).
+func (c *cycle) pricingShapes(hitRate float64, params *capacity.EngineParams) (fleetShape, muShape shape.Shape, residentBoundFleet, residentBound string) {
 	// The spread of output lengths is priced into the KV a resident
 	// request holds (KVreq = ILeff + D*OL/2, issue ev-shindin/llm-scaling-manager#276): with lengths
 	// that vary, a long request stays resident longer, so fewer
@@ -900,8 +902,9 @@ func (c *cycle) pricingShapes(hitRate float64) (fleetShape, muShape shape.Shape,
 	// (prefix_cache_kv.go). With none, as before.
 	residentBound, residentBoundFleet = residentBoundOff, residentBoundOff
 	if c.a.kvHitsResident {
-		fleetShape, residentBoundFleet = withResidentKV(fleetShape, c.resident)
-		muShape, residentBound = withResidentKV(muShape, c.resident)
+		rule := c.a.residentRuleFor(params)
+		fleetShape, residentBoundFleet = withResidentKV(fleetShape, c.resident, rule)
+		muShape, residentBound = withResidentKV(muShape, c.resident, rule)
 	}
 	return fleetShape, muShape, residentBoundFleet, residentBound
 }

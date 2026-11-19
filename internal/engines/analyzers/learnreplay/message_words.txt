@@ -519,6 +519,7 @@ abort
 about
 above
 above-band
+above-context
 aboveBand
 aboveBandHeld
 absent
@@ -1598,6 +1599,7 @@ kueueBorrowedGPUs
 kueueNamespace
 kv-bound
 kv-cache-utilization-scorer
+kv-per-request-above-context
 kv-per-request-hits-resident
 kv-per-request-output-dispersion
 kvCacheThreshold

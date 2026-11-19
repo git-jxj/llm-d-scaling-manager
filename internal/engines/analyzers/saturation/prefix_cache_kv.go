@@ -4,6 +4,8 @@ import (
 	"math"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 )
 
@@ -110,6 +112,21 @@ import (
 // reading. Off, at ILeff + D*OL/2 throughout.
 const SwitchKVPerRequestHitsResident = "kv-per-request-hits-resident"
 
+// SwitchKVPerRequestAboveContext is the replay switch for a reading above the
+// whole context (issue llm-d-incubation/llm-d-scaling-manager#188). An engine
+// can hold more KV per request than its prompt and output in the same pool (a
+// sparse-attention indexer's keys, a speculative draft model's KV), and the
+// upper bound above then under-prices a request by that factor and over-states
+// a KV-bound mu by the same. On, a reading is priced by the capacity planner's
+// rule (shape.PriceResident): held at the discount from below, priced as read
+// above the context, except on SGLang, held at the context; a shape with no
+// hit takes a reading too. Off, as SwitchKVPerRequestHitsResident prices it.
+// It needs SwitchKVPerRequestHitsResident on, and moves nothing without it.
+//
+// Off from the constructor: the controller keeps the bound until a GPU check
+// on a prefix-heavy P/D workload shows decode is not under-sized with it gone.
+const SwitchKVPerRequestAboveContext = "kv-per-request-above-context"
+
 // Which bound, if any, a reading was held to (withResidentKV), as derived-mu
 // logs it in residentKVBound.
 const (
@@ -118,8 +135,13 @@ const (
 	// residentBoundLower is a reading below the shape's KVreq, priced at it.
 	residentBoundLower = "lower"
 	// residentBoundUpper is a reading above the shape with no hit, priced at
-	// it.
+	// it: with SwitchKVPerRequestAboveContext off, or on an engine that
+	// over-reads there (residentRule.heldAtContext).
 	residentBoundUpper = "upper"
+	// residentBoundAboveContext is a reading above shape.AboveContextFactor
+	// times the shape with no hit, priced as read
+	// (SwitchKVPerRequestAboveContext).
+	residentBoundAboveContext = "above-context"
 	// residentBoundNoReading is no reading, or too few requests in it
 	// (minResidentSequences, or the band's count gate): priced at the
 	// shape's KVreq.
@@ -236,6 +258,26 @@ func fleetResidentKVPerRequest(replicas []domain.ReplicaMetrics, rolesByVariant 
 	return r
 }
 
+// residentRule is how withResidentKV prices a reading above the whole
+// context.
+type residentRule struct {
+	// aboveContext is SwitchKVPerRequestAboveContext: a reading above the
+	// whole context is priced as read (shape.PriceResident), not at the
+	// context, and a shape with no hit takes a reading too.
+	aboveContext bool
+	// heldAtContext says the engine's reading over-states above the context
+	// (SGLang), so it is held there whatever aboveContext says.
+	heldAtContext bool
+}
+
+// residentRuleFor is the rule a replica on params is priced by.
+func (a *SaturationAnalyzer) residentRuleFor(params *capacity.EngineParams) residentRule {
+	return residentRule{
+		aboveContext:  a.kvAboveContext,
+		heldAtContext: params != nil && params.Engine == inferenceengine.EngineSGLang,
+	}
+}
+
 // withResidentKV is s with its KVreq set to the KV a resident request is
 // measured to hold, bounded by s's own KVreq and the KVreq of s with no hit,
 // and which bound applied: residentBoundNone (priced as read),
@@ -246,11 +288,19 @@ func fleetResidentKVPerRequest(replicas []domain.ReplicaMetrics, rolesByVariant 
 // count gate asks: minK x the capacity read / s.KVreq (the file comment).
 // Only KVreq moves; ILeff stays the hit-discounted prompt the shape's other
 // readers take.
-func withResidentKV(s shape.Shape, r residentReading) (shape.Shape, string) {
+//
+// With rule.aboveContext (SwitchKVPerRequestAboveContext) the upper bound
+// goes: the reading is priced by shape.PriceResident, the capacity planner's
+// rule. Above the context it is priced as read (residentBoundNone, or
+// residentBoundAboveContext past shape.AboveContextFactor times it), except
+// on an engine that over-reads there (rule.heldAtContext), held at the
+// context (residentBoundUpper). A shape with no hit is read as well: its
+// discount is its context, and an engine can hold more than that.
+func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.Shape, string) {
 	if !(s.KVreq > 0) {
 		return s, residentBoundNoReading
 	}
-	if !(s.PrefixHitRate > 0) {
+	if !rule.aboveContext && !(s.PrefixHitRate > 0) {
 		return s, residentBoundNoHit
 	}
 	noHit := noHitShape(s)
@@ -264,6 +314,20 @@ func withResidentKV(s shape.Shape, r residentReading) (shape.Shape, string) {
 	measured := r.perSeq()
 	if !(measured > 0) || math.IsInf(measured, 0) {
 		return s, residentBoundNoReading
+	}
+	if rule.aboveContext {
+		kv, how := s.PriceResident(measured, rule.heldAtContext)
+		s.KVreq = kv
+		switch how {
+		case shape.ResidentAtDiscount:
+			return s, residentBoundLower
+		case shape.ResidentHeldAtContext:
+			return s, residentBoundUpper
+		case shape.ResidentAboveContext:
+			return s, residentBoundAboveContext
+		default:
+			return s, residentBoundNone
+		}
 	}
 	switch {
 	case measured < s.KVreq:
