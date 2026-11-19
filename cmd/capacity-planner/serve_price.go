@@ -43,6 +43,9 @@ type servedSources struct {
 	// read one (whatifapi.Authenticator.NamespaceAllowed); nil with no auth.
 	allowed          []string
 	namespaceAllowed func(ctx context.Context, namespace string) error
+	// onPass, when set, is called as each pass over a recording file opens,
+	// with the pass's count (recordingSource.onPass): a test's hook.
+	onPass func(pass int)
 }
 
 // apiError is a CLI error as the API's: a usage or input error is the
@@ -93,6 +96,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		return nil, hidePath(apiError(err), hide, info.Name)
 	}
 	defer func() { _ = data.Close() }()
+	data.onPass = s.onPass
 	st, err := f.stateOf(ctx, name, data)
 	if err != nil {
 		return nil, hidePath(apiError(err), hide, info.Name)
@@ -102,7 +106,13 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		info.From, info.To = &o.from, &o.to
 	}
 	info.Cycle, info.TotalCycles, info.FirstAt, info.LastAt = st.Cycle, st.Cycles, st.FirstAt, st.At
-	return s.resolved(&f, st, data, info)
+	res, err := s.resolved(&f, st, data, info)
+	// The series is the last pass: a file changed under it is refused, and
+	// nothing is kept under the content id its first pass summed.
+	if cerr := data.unchanged(); cerr != nil {
+		return nil, hidePath(apiError(cerr), hide, info.Name)
+	}
+	return res, err
 }
 
 // recordingPath is the recording a source names: a file name in the
@@ -288,13 +298,14 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 	}
 	pricer := &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
 		imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
-	return &whatifapi.Resolved{
+	res := &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
 		Pricer:  pricer,
 		Series:  series,
-		Bytes:   sizeOf(pricer) + sizeOf(series),
-	}, nil
+	}
+	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(res.Inputs))
+	return res, nil
 }
 
 // servedState prices fleets from one replayed state. The state is read only,

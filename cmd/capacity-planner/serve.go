@@ -78,7 +78,7 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.DurationVar(&f.shutdownDeadline, "shutdown-timeout", 10*time.Second, "how long requests in flight may run once the server is told to stop")
 	fs.DurationVar(&f.planBudget, "plan-budget", whatifapi.DefaultPlanBudget, "how long one plan may be priced; past it the plan is refused with PlanBudgetExceeded")
 	fs.IntVar(&f.maxInputs, "max-inputs", whatifapi.DefaultMaxInputs, "how many sources are resolved at once; each holds its replay's memory while it runs, and past them a request is 503 with Retry-After")
-	fs.StringVar(&f.inputsCache, "inputs-cache-size", quantityOf(whatifapi.DefaultInputsBytes), "the most memory the resolved sources kept may weigh in all, a quantity (256Mi); the least used is dropped first, and the newest is kept whatever it weighs")
+	fs.StringVar(&f.inputsCache, "inputs-cache-size", quantityOf(whatifapi.DefaultInputsBytes), "the most memory the resolved sources kept may take in all, as estimated, a quantity (256Mi); the least used is dropped first, and the newest is kept whatever it weighs")
 	fs.StringVar(&f.allowedNamespaces, "allowed-namespaces", "", "the namespaces a prometheus source may read, comma-separated; default --namespace alone")
 	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network. Refused when KUBERNETES_SERVICE_HOST is set, a best-effort tripwire, not enforcement")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")

@@ -30,7 +30,8 @@ func skipSpace(b []byte, i int) int {
 	return i
 }
 
-// skipString is the index just past the string that opens at b[i].
+// skipString is the index just past the string that opens at b[i], len(b)
+// at most: a string cut short ends with b.
 func skipString(b []byte, i int) int {
 	for i++; i < len(b); i++ {
 		switch b[i] {
@@ -40,11 +41,15 @@ func skipString(b []byte, i int) int {
 			return i + 1
 		}
 	}
-	return i
+	return min(i, len(b))
 }
 
-// skipValue is the index just past the value that starts at b[i].
+// skipValue is the index just past the value that starts at b[i], len(b) at
+// most: a value cut short ends with b, and none starts past it.
 func skipValue(b []byte, i int) int {
+	if i >= len(b) {
+		return len(b)
+	}
 	switch b[i] {
 	case '"':
 		return skipString(b, i)
@@ -94,8 +99,20 @@ func splitList(raw []byte) ([][]byte, bool) {
 }
 
 // splitObject is the members of the valid JSON object raw, in order, a key
-// given twice once, at its last value; false when raw is not an object.
+// given twice once, at its last value; false when raw is not an object. Of
+// data that is not valid JSON it reads only the punctuation: an object cut
+// short, or with a key, colon, value or comma missing, is false, never an
+// index past raw, and what the punctuation passes is not checked.
 func splitObject(raw []byte) ([]member, bool) {
+	ms, ok := members(raw)
+	if !ok {
+		return nil, false
+	}
+	return dedupe(ms), true
+}
+
+// members is splitObject's members, a key given twice twice.
+func members(raw []byte) ([]member, bool) {
 	if len(raw) == 0 || raw[0] != '{' {
 		return nil, false
 	}
@@ -104,20 +121,34 @@ func splitObject(raw []byte) ([]member, bool) {
 	if i < len(raw) && raw[i] == '}' {
 		return out, true
 	}
-	for i < len(raw) {
+	for {
+		if i >= len(raw) || raw[i] != '"' {
+			return nil, false
+		}
 		kend := skipString(raw, i)
+		if kend-i < 2 || raw[kend-1] != '"' {
+			return nil, false
+		}
 		key := keyOf(raw[i:kend])
-		i = skipSpace(raw, kend)
-		i = skipSpace(raw, i+1) // the colon
+		if i = skipSpace(raw, kend); i >= len(raw) || raw[i] != ':' {
+			return nil, false
+		}
+		i = skipSpace(raw, i+1)
 		end := skipValue(raw, i)
+		if end == i {
+			return nil, false
+		}
 		out = append(out, member{key: key, raw: raw[i:end]})
-		i = skipSpace(raw, end)
-		if i >= len(raw) || raw[i] != ',' {
-			break
+		switch i = skipSpace(raw, end); {
+		case i >= len(raw):
+			return nil, false
+		case raw[i] == '}':
+			return out, true
+		case raw[i] != ',':
+			return nil, false
 		}
 		i = skipSpace(raw, i+1)
 	}
-	return dedupe(out), true
 }
 
 // keyOf is the key the JSON string s spells: its bytes, or, where it has an
@@ -184,9 +215,10 @@ func dedupe(ms []member) []member {
 }
 
 // Member is the raw value of the member name of the object r, the last of a
-// key given twice, and whether r is an object that has it. r must be valid
-// JSON (json.Valid): a reader that needs one field of a large value finds it
-// without decoding the rest.
+// key given twice, and whether r is an object that has it. r is meant to be
+// valid JSON (json.Valid), and is not checked: a reader that needs one field
+// of a large value finds it without reading the rest twice. An object cut
+// short or missing its punctuation is false (splitObject), never a panic.
 func (r Raw) Member(name string) (Raw, bool) {
 	ms, ok := splitObject(bytes.TrimSpace(r))
 	if !ok {

@@ -235,7 +235,8 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 
 // stateOf is readState on a recording already opened: src, and the name its
 // errors call it by. It checks the recording first (recordingSource.check),
-// which sums it.
+// which sums it, and that the file did not change under its passes
+// (recordingSource.unchanged), before any error a changed file would cause.
 func (f *answerFlags) stateOf(ctx context.Context, name string, src *recordingSource) (*learnreplay.State, error) {
 	if err := src.check(name, f.recording); err != nil {
 		return nil, err
@@ -243,6 +244,9 @@ func (f *answerFlags) stateOf(ctx context.Context, name string, src *recordingSo
 	cycle, _ := f.cycleNumber()
 	st, err := learnreplay.StateFrom(ctx, src.open, learnreplay.Options{},
 		learnreplay.StateQuery{Namespace: f.window.namespace, ModelID: f.model, Cycle: cycle})
+	if cerr := src.unchanged(); cerr != nil {
+		return nil, cerr
+	}
 	var q *learnreplay.QueryError
 	switch {
 	case errors.As(err, &q):

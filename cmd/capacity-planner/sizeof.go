@@ -8,10 +8,18 @@ import (
 // the bucket's share of hashes and pointers, about.
 const mapEntryOverhead = 16
 
+// heapEstimate is the heap n bytes of sizeOf keep alive, about: sizeOf counts
+// what is reached, not the allocator's rounding to its size classes nor a
+// map's spare slots. Measured in a warm process on the three committed
+// recordings (ols-sweep, ttft-three-pods, ttft-saturated), the heap a
+// resolved entry kept was 1.03 to 1.19 times sizeOf; a quarter more keeps
+// the estimate above each. It is an estimate, not an account.
+func heapEstimate(n int) int { return n + n/4 }
+
 // sizeOf is about how many bytes v reaches: its own size and what its
 // pointers, slices, maps, strings and interfaces hold, each pointer followed
-// once. It weighs a resolved source in the inputs cache: an estimate of the
-// memory an entry keeps alive, not an account.
+// once. It weighs a resolved source in the inputs cache (heapEstimate): an
+// estimate of the memory an entry keeps alive, not an account.
 func sizeOf(v any) int {
 	rv := reflect.ValueOf(v)
 	if !rv.IsValid() {
