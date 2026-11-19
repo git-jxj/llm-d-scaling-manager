@@ -206,20 +206,23 @@ fi
 kubectl -n "$NS" run other --image=registry.k8s.io/e2e-test-images/busybox:1.36.1-1@sha256:a9155b13325b2abef48e71de77bb8ac015412a566829f621d06bfae5c699b1b9 \
     --restart=Never --command -- sleep 600 >/dev/null || die "cannot create the second Pod"
 kubectl -n "$NS" wait --for=condition=Ready pod/other --timeout=120s >/dev/null || die "the second Pod did not start"
-other_ok=true
+why=""
+port=18088
 for ws in true false; do
-    if KUBECTL_PORT_FORWARD_WEBSOCKETS=$ws PF_TARGET=pod/other pf "$T/pf-other-$ws.log" 18088 "${VIEWER[@]}"; then
-        other_ok=false; fail "the viewer port-forwards to another Pod (websockets=$ws)"
+    port=$((port + 1))
+    if KUBECTL_PORT_FORWARD_WEBSOCKETS=$ws PF_TARGET=pod/other pf "$T/pf-other-$ws.log" "$port" "${VIEWER[@]}"; then
+        why="$why; it port-forwards to another Pod (websockets=$ws)"
     elif ! grep -q 'pods "other" is forbidden' "$T/pf-other-$ws.log"; then
-        other_ok=false; fail "another Pod failed, but not as forbidden (websockets=$ws): $(cat "$T/pf-other-$ws.log")"
+        why="$why; another Pod failed, but not as forbidden (websockets=$ws): $(cat "$T/pf-other-$ws.log")"
     fi
 done
 # The port-forward rule itself names the Pod, not only the get rule.
 if [ "$(kubectl "${VIEWER[@]}" auth can-i create pods/other --subresource=portforward -n "$NS" 2>/dev/null)" != no ] \
     || [ "$(kubectl "${VIEWER[@]}" auth can-i create pods/capacity-planner-0 --subresource=portforward -n "$NS" 2>/dev/null)" != yes ]; then
-    other_ok=false; fail "pods/portforward is not granted for capacity-planner-0 alone"
+    why="$why; pods/portforward is not granted for capacity-planner-0 alone"
 fi
-[ "$other_ok" = false ] || ok "the viewer is denied another Pod in $NS: $(grep -m1 forbidden "$T/pf-other-false.log")"
+# One result for the case, whatever failed in it.
+if [ -z "$why" ]; then ok "the viewer is denied another Pod in $NS: $(grep -m1 forbidden "$T/pf-other-false.log")"; else fail "another Pod${why}"; fi
 
 echo "Narrowing the RoleBinding to the group planners, as the guide does"
 cat > "$T/narrow.yaml" <<'EOF'
