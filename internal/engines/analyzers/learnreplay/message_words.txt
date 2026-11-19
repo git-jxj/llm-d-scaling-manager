@@ -134,6 +134,7 @@ CreateContainerConfigError
 CreateContainerError
 D
 DSET_ROLE_WRITER
+Data
 DataParallelRanks
 Datastore
 DecodeEngineMeasured
@@ -216,6 +217,7 @@ KUEUE_NAMESPACE
 KV
 KV-cache
 KVBoundSlots
+Kind
 Kubernetes
 Kueue
 LEADER_ELECT
@@ -304,6 +306,7 @@ NonPositiveSlope
 NonPositiveStepSlope
 NotTriggerScaleUp
 Nothing
+Now
 OLS
 OUTSIDE
 OnePod
@@ -410,6 +413,7 @@ Scaling
 ScalingPolicy
 Seconds
 Selected
+Seq
 Set
 SetRecordedValue
 SetUsed

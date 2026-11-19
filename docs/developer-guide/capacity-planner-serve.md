@@ -248,8 +248,18 @@ request was turned away busy, the size asks once more, on its own slot. A
 caller never reruns its own call on a deadline error.
 
 Plan slots are a channel of `MaxPlans` tokens (the CPU count) and input slots
-one of `MaxInputs` (two); a request that finds none free is `errBusy`, a 503
-with `Retry-After: 1`. A plan whose client goes away stops between figures.
+one of `MaxInputs` (`--max-inputs`, two by default); a request that finds none
+free is `errBusy`, a 503 with `Retry-After: 1`. The inputs cache holds at most
+16 entries and `MaxInputsBytes` (`--inputs-cache-size`) in all, each weighed
+by `Resolved.Bytes`: `sizeOf` (`cmd/capacity-planner/sizeof.go`) of the
+replayed state and the series.
+
+A recording is never held whole. `recordingSource` opens the file once and
+reads it in passes, gunzipped as it goes: `check` (every line, and the
+content hash), then `learnreplay.StateFrom` (resolve the model, replay to the
+cycle, with no recording of its own) and `learnreplay.SeriesFrom`. Each pass
+holds one line (`learnrec.Scanner`). `TestServeResolvesALargeRecordingWithoutHoldingIt`
+holds it to that. A plan whose client goes away stops between figures.
 The HTTP server's timeouts are in `serve.go`: read 30 s, idle 2 minutes,
 write 10 minutes (`writeTimeout`).
 

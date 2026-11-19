@@ -78,6 +78,10 @@ type Options struct {
 	// stop, when set, is asked after each applied event; true ends the
 	// replay there (StateAt).
 	stop func(r *replayer, ev learnrec.RawEvent) bool
+	// discardRecording, when set, writes the replay's own recording nowhere
+	// (Report.Recording is nil): a replay read for its state (StateAt) would
+	// otherwise hold a second copy of the recording it reads.
+	discardRecording bool
 }
 
 // build makes the analyzers and the store a recording's start describes.

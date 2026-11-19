@@ -97,6 +97,8 @@ Any other path is a 404.
 | `--token-audiences A,...` | The audiences a TokenReview checks a token for. Default: the API server's own. |
 | `--shutdown-timeout` | How long requests in flight may run after Ctrl-C. Default 10s. |
 | `--plan-budget` | How long one plan may be priced. Default 5m; 0 is the default too. At most 9m. See [The plan budget](#the-plan-budget). |
+| `--max-inputs N` | How many sources are loaded at once. Default 2. Each holds its replay's memory while it loads. Past it, `POST /v1/inputs` is a 503 with `Retry-After`. |
+| `--inputs-cache-size SIZE` | The most memory the loaded sources kept may take in all, such as `256Mi` (the default). At most 16 are kept. The least used is dropped first; the newest is always kept. |
 
 No request can name a host or a file path: the Prometheus URL is a flag, and a
 recording is a file name inside `--recordings`. An error names no server path.

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -89,10 +88,11 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	default:
 		return nil, whatifapi.InputErrorf("source.kind %q, want %s or %s", src.Kind, whatifapi.SourcePrometheus, whatifapi.SourceRecording)
 	}
-	name, data, err := f.recordingData(ctx)
+	name, data, err := f.recordingSource(ctx)
 	if err != nil {
 		return nil, hidePath(apiError(err), hide, info.Name)
 	}
+	defer func() { _ = data.Close() }()
 	st, err := f.stateOf(ctx, name, data)
 	if err != nil {
 		return nil, hidePath(apiError(err), hide, info.Name)
@@ -249,7 +249,7 @@ func hidePath(err error, path, name string) error {
 // resolved reads the fleet from st as the CLI would at the recorded counts,
 // and names the inputs by content: the recording's bytes, the cycle, the model
 // and the variants.
-func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []byte, info whatifapi.SourceInfo) (*whatifapi.Resolved, error) {
+func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *recordingSource, info whatifapi.SourceInfo) (*whatifapi.Resolved, error) {
 	variants, err := f.decodeVariants(st)
 	if err != nil {
 		return nil, apiError(err)
@@ -275,23 +275,25 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 	if err != nil {
 		return nil, apiError(err)
 	}
-	sum := sha256.Sum256(data)
+	sum := data.sum
 	prefill := ""
 	if ps != nil {
 		prefill = ps.Variant
 	}
 	content := strings.Join([]string{hex.EncodeToString(sum[:]), st.Namespace, st.ModelID, strconv.Itoa(st.Cycle), prefill,
 		variants[0].state.Variant, f.prefillVariant, f.variant}, "\x00")
-	series, err := seriesOf(data, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
+	series, err := seriesOf(data.open, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
 	if err != nil {
 		return nil, apiError(err)
 	}
+	pricer := &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
+		imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
 	return &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
-		Pricer: &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
-			imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts},
-		Series: series,
+		Pricer:  pricer,
+		Series:  series,
+		Bytes:   sizeOf(pricer) + sizeOf(series),
 	}, nil
 }
 

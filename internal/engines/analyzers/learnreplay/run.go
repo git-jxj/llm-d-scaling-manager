@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"strings"
 
@@ -138,58 +139,111 @@ func Replay(ctx context.Context, recording []byte, opts Options) (*Report, error
 	if opts.Mode == Generate {
 		return generate(ctx, recording, opts)
 	}
-	read, err := learnrec.Read(recording)
+	src := BytesSource(recording)
+	// A recording that does not read fails before any event is applied.
+	if err := check(src); err != nil {
+		return nil, err
+	}
+	return replayFrom(ctx, src, opts)
+}
+
+// replayFrom is Replay of a recording that reads (check), streamed from src:
+// only the events a Fidelity replay compares are held. With opts.stop the
+// replay ends at the event it stops after, and the report counts only the
+// events read until then.
+func replayFrom(ctx context.Context, src Source, opts Options) (*Report, error) {
+	rc, err := src()
 	if err != nil {
 		return nil, err
 	}
-	events := read.Events
-	if len(events) == 0 || events[0].Kind != learnrec.KindStart {
+	defer func() { _ = rc.Close() }()
+	s := learnrec.NewScanner(rc)
+	if !s.Scan() || s.Event().Kind != learnrec.KindStart {
+		if err := s.Err(); err != nil {
+			return nil, err
+		}
 		return nil, errors.New("learnreplay: the recording has no start line; a replay cannot build its analyzers without one")
 	}
+	first := s.Event()
 	var start learnrec.Start
-	if err := events[0].DecodeData(&start); err != nil {
+	if err := first.DecodeData(&start); err != nil {
 		return nil, fmt.Errorf("learnreplay: start: %w", err)
 	}
 	var buf bytes.Buffer
-	rec := learnrec.New(&buf, 0)
-	r, err := build(start, events[0].Now, opts, rec)
+	var sink io.Writer = &buf
+	if opts.discardRecording {
+		sink = io.Discard
+	}
+	rec := learnrec.New(sink, 0)
+	r, err := build(start, first.Now, opts, rec)
 	if err != nil {
 		return nil, err
 	}
-	rec.Record(learnrec.KindStart, events[0].Now, start)
-	r.rep.Events = len(events)
-	r.rep.TornTail = read.TornTail
+	rec.Record(learnrec.KindStart, first.Now, start)
+	r.rep.Events = 1
 
+	// kept is the driven events, for a Fidelity replay's comparison.
+	fidelity := opts.Mode == Fidelity
 	var kept []learnrec.RawEvent
-	for _, ev := range events {
+	if fidelity {
+		kept = append(kept, first)
+	}
+	// Check events are written inside the Analyze they belong to, before it.
+	// At the end of a recording, with no Analyze after them, a cap or a crash
+	// cut that Analyze off; the replay cannot make them, so they go: pending
+	// holds them until an event that is no check follows.
+	var pending []learnrec.RawEvent
+	stopped := false
+	applyOne := func(ev learnrec.RawEvent) error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("learnreplay: %w", err)
+		}
+		if err := r.apply(ctx, ev); err != nil {
+			return fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
+		}
+		stopped = opts.stop != nil && opts.stop(r, ev)
+		return nil
+	}
+	for !stopped && s.Scan() {
+		ev := s.Event()
+		r.rep.Events++
 		if !r.driven(ev.Kind) {
 			r.rep.Ignored[ev.Kind]++
 			continue
 		}
-		kept = append(kept, ev)
-	}
-	// Check events are written inside the Analyze they belong to, before it.
-	// At the end of a recording, with no Analyze after them, a cap or a crash
-	// cut that Analyze off; the replay cannot make them, so they go.
-	for len(kept) > 1 && checkKinds[kept[len(kept)-1].Kind] {
-		kept = kept[:len(kept)-1]
-		r.rep.TrimmedChecks++
-	}
-	for _, ev := range kept[1:] {
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("learnreplay: %w", err)
+		if fidelity {
+			kept = append(kept, ev)
 		}
-		if err := r.apply(ctx, ev); err != nil {
-			return nil, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
+		if checkKinds[ev.Kind] {
+			pending = append(pending, ev)
+			continue
 		}
-		if opts.stop != nil && opts.stop(r, ev) {
-			break
+		for _, p := range append(pending, ev) {
+			if err := applyOne(p); err != nil {
+				return nil, err
+			}
+			if stopped {
+				break
+			}
+		}
+		pending = pending[:0]
+	}
+	if !stopped {
+		if err := s.Err(); err != nil {
+			return nil, err
+		}
+		r.rep.TrimmedChecks = len(pending)
+		if fidelity {
+			kept = kept[:len(kept)-len(pending)]
 		}
 	}
+	r.rep.TornTail = s.TornTail()
 	if err := rec.Err(); err != nil {
 		return nil, fmt.Errorf("learnreplay: the replay's own recording failed: %w", err)
 	}
-	r.rep.Recording = buf.Bytes()
+	if !opts.discardRecording {
+		r.rep.Recording = buf.Bytes()
+	}
 	r.rep.Paths = r.sat.PathCounts()
 	maps.Copy(r.rep.Paths, r.settle.pathCounts())
 	if r.slo != nil {
@@ -201,7 +255,7 @@ func Replay(ctx context.Context, recording []byte, opts Options) (*Report, error
 	if r.engine != nil {
 		maps.Copy(r.rep.Paths, r.engine.PathCounts())
 	}
-	if opts.Mode == Fidelity {
+	if fidelity {
 		r.rep.Mismatches = append(r.rep.Mismatches, compareEvents(kept, r.rep.Recording)...)
 	}
 	return r.rep, nil

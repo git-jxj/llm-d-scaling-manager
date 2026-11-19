@@ -37,6 +37,10 @@ type Resolved struct {
 	// Series is every cycle of the source, oldest first, for a day plan
 	// (POST /v1/dayplan); nil where the source carries none.
 	Series []SeriesSample
+	// Bytes is about how much memory the Pricer and the Series keep alive,
+	// the entry's weight in the inputs cache (Config.MaxInputsBytes); 0
+	// weighs nothing.
+	Bytes int
 }
 
 // Pricer builds the fleet a scenario prices. It must be safe to call from
