@@ -21,24 +21,35 @@ import (
 // pinned on the default B on nearly every cycle; with the floor set to 0.05
 // by hand it learned from the first trough on.
 //
-// So, with the switch on, the floor follows the fill the fleet has: over the
-// last adaptiveBandHorizon, if the fleet's highest fill (capped at the band's
-// top) is less than DefaultMinKSpread above the policy's floor, and its lowest
-// fill, held at AdaptiveBandFloorMin or above, leaves that spread, the floor
-// is that lowest fill, rounded down to a hundredth. Otherwise the policy's
-// floor stands: a fleet whose range has no spread either way learns nothing
-// from a lower floor. Every reader of the band in the cycle reads the adapted
-// one, as if the policy had set it, and the capacity planner states it
-// (ITLBandFloor).
+// So, with the switch on, the floor follows the fill the fleet has, read over
+// every engine reading of the last adaptiveBandHorizon:
 //
-// Once adapted, the floor holds, at the lowest it was adapted to, until the
-// fleet's fill reaches the spread inside the policy's band: the line keeps
-// the readings and the intercept it learned under the lower floor, so a
-// floor that went back up between troughs would price a line under a band
-// it was not read in, and would not say so.
+//   - If the highest fill (capped at the band's top) is DefaultMinKSpread or
+//     more above the policy's floor, the policy's floor stands.
+//   - Otherwise, if at least adaptiveBandMinEngines engines read below the
+//     policy's floor, the floor is the readings' adaptiveBandPercentile
+//     fill, rounded down to a hundredth and never under AdaptiveBandFloorMin,
+//     provided that leaves the spread. A percentile and an engine count, not
+//     the least fill: one straggler engine, idle at a fill no other reaches,
+//     neither sets the floor nor makes the case for lowering it.
+//   - Otherwise the policy's floor stands: a fleet whose range has no spread
+//     either way learns nothing from a lower floor.
+//
+// Every reader of the band inside the saturation analyzer reads the adapted
+// floor, as if the policy had set it, and so does the capacity planner's
+// state (ITLBandFloor). The slo and throughput analyzers read the policy's:
+// the planner prices no line of theirs.
+//
+// Once adapted, the floor holds, at the lowest it was adapted to: the line
+// keeps the readings and the intercept it learned under it, so a floor that
+// went back up between troughs would price a line under a band it was not
+// read in, and would not say so. It is released only when the fill has
+// spread adaptiveBandReleaseSpread above the policy's floor, more than the
+// spread that adapts it, for adaptiveBandReleaseCycles cycles in a row: one
+// threshold for both made a fleet near the edge flip at the horizon's cadence.
 
 // SwitchITLAdaptiveBandFloor is the replay switch for the adapted floor. On,
-// the cycle's policy band floor is lowered to the fleet's lowest fill where
+// the cycle's policy band floor is lowered to the fleet's low fill where
 // that gives a line the spread the policy's floor cannot. Off, the policy's
 // floor stands. Planner-only: off from the constructor;
 // learnreplay.StateAt turns it on (learnreplay.PlannerSwitches).
@@ -53,18 +64,38 @@ const AdaptiveBandFloorMin = 0.05
 // ITL window's own horizon (itl.DefaultObservationMaxAge).
 const adaptiveBandHorizon = itl.DefaultObservationMaxAge
 
-// fillSpan is one cycle's lowest and highest fill over a model's decode
-// rows.
-type fillSpan struct {
-	at     time.Time
-	lo, hi float64
+// adaptiveBandPercentile is the percentile of the horizon's engine fills
+// the floor is set at.
+const adaptiveBandPercentile = 0.10
+
+// adaptiveBandMinEngines is the fewest distinct engines that must read
+// below the policy's floor over the horizon for it to be lowered: more than
+// a straggler or two, and few enough that a decode fleet of one LWS group
+// of four engines can still adapt.
+const adaptiveBandMinEngines = 3
+
+// adaptiveBandReleaseSpread is the spread above the policy's floor that
+// releases an adapted floor, and adaptiveBandReleaseCycles how many cycles
+// in a row it must hold: two minutes at the default 15 s cycle.
+const (
+	adaptiveBandReleaseSpread = itl.DefaultMinKSpread + 0.05
+	adaptiveBandReleaseCycles = 8
+)
+
+// engineFill is one engine's fill on one cycle.
+type engineFill struct {
+	at  time.Time
+	pod string
+	k   float64
 }
 
-// bandFloor is the floor adapted for a model's latest cycle, and the
-// policy's it replaced.
+// bandFloor is the floor adapted for a model's latest cycle, the policy's it
+// replaced, and how many cycles in a row the fill has spread past
+// adaptiveBandReleaseSpread.
 type bandFloor struct {
 	floor, policy float64
 	at            time.Time
+	released      int
 }
 
 // adaptITLBandFloor notes the cycle's decode fills for input's model and
@@ -76,73 +107,83 @@ func (a *SaturationAnalyzer) adaptITLBandFloor(input domain.AnalyzerInput, cfg *
 	for _, vs := range input.VariantStates {
 		roles[vs.VariantName] = vs.Role
 	}
-	// The rows the line reads: an LWS group's engines each (domain.EngineRows).
-	span, ok := fillSpanOf(domain.EngineRows(input.ReplicaMetrics), roles)
 	key := input.Namespace + "|" + input.ModelID
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	spans := slices.DeleteFunc(a.itlFills[key], func(s fillSpan) bool { return now.Sub(s.at) > adaptiveBandHorizon })
-	if ok {
-		span.at = now
-		spans = append(spans, span)
-	}
-	a.itlFills[key] = spans
+	fills := slices.DeleteFunc(a.itlFills[key], func(f engineFill) bool { return now.Sub(f.at) > adaptiveBandHorizon })
+	// The rows the line reads: an LWS group's engines each (domain.EngineRows).
+	fills = append(fills, engineFillsOf(domain.EngineRows(input.ReplicaMetrics), roles, now)...)
+	a.itlFills[key] = fills
 	lo0, hi0 := cfg.ITLBand()
-	held := a.itlBandFloors[key].floor
-	floor, adapted := adaptedFloor(spans, lo0, hi0, held)
+	bf, adapted := adaptedFloor(fills, lo0, hi0, a.itlBandFloors[key])
 	if !adapted {
 		delete(a.itlBandFloors, key)
 		return cfg
 	}
-	a.itlBandFloors[key] = bandFloor{floor: floor, policy: lo0, at: now}
+	bf.policy, bf.at = lo0, now
+	a.itlBandFloors[key] = bf
 	var out config.ScalingPolicy
 	if cfg != nil {
 		out = *cfg
 	}
-	out.AnalyzerTuning.ITLBand.MinObservableK, out.AnalyzerTuning.ITLBand.MaxObservableK = floor, hi0
+	out.AnalyzerTuning.ITLBand.MinObservableK, out.AnalyzerTuning.ITLBand.MaxObservableK = bf.floor, hi0
 	return &out
 }
 
-// adaptedFloor is the floor the fleet's fill spans give, and whether it is
-// adapted (SwitchITLAdaptiveBandFloor's rule); held is the floor adapted
-// before, 0 with none, which holds unless the spans reach the spread inside
-// the policy's band.
-func adaptedFloor(spans []fillSpan, lo0, hi0, held float64) (float64, bool) {
-	keep := func() (float64, bool) {
-		if held > 0 {
-			return held, true
+// adaptedFloor is the floor the horizon's engine fills give, and whether it
+// is adapted (SwitchITLAdaptiveBandFloor's rule); held is the floor adapted
+// before (floor 0 with none).
+func adaptedFloor(fills []engineFill, lo0, hi0 float64, held bandFloor) (bandFloor, bool) {
+	keep := func(top float64) (bandFloor, bool) {
+		if !(held.floor > 0) {
+			return bandFloor{}, false
 		}
-		return lo0, false
+		if top-lo0 >= adaptiveBandReleaseSpread {
+			held.released++
+		} else {
+			held.released = 0
+		}
+		if held.released >= adaptiveBandReleaseCycles {
+			return bandFloor{}, false
+		}
+		return held, true
 	}
-	if len(spans) == 0 {
-		return keep()
+	if len(fills) == 0 {
+		return keep(0)
 	}
-	low, high := math.Inf(1), math.Inf(-1)
-	for _, s := range spans {
-		low, high = min(low, s.lo), max(high, s.hi)
+	ks := make([]float64, len(fills))
+	below := map[string]bool{}
+	high := math.Inf(-1)
+	for i, f := range fills {
+		ks[i], high = f.k, max(high, f.k)
+		if f.k < lo0 {
+			below[f.pod] = true
+		}
 	}
 	top := min(high, hi0)
-	if top-lo0 >= itl.DefaultMinKSpread {
-		return lo0, false
+	if top-lo0 >= itl.DefaultMinKSpread || len(below) < adaptiveBandMinEngines {
+		return keep(top)
 	}
+	slices.Sort(ks)
+	low := ks[int(math.Floor(adaptiveBandPercentile*float64(len(ks)-1)))]
 	// The nudge keeps a fill read as 0.07 at 0.07: 0.07 * 100 is
 	// 7.000000000000001, but 0.29 * 100 is 28.999999999999996.
 	floor := math.Floor(max(low, AdaptiveBandFloorMin)*100+1e-9) / 100
 	if !(floor < lo0) || top-floor < itl.DefaultMinKSpread {
-		return keep()
+		return keep(top)
 	}
-	if held > 0 {
-		floor = min(floor, held)
+	out := bandFloor{floor: floor}
+	if held.floor > 0 {
+		out.floor = min(floor, held.floor)
 	}
-	return floor, true
+	return out, true
 }
 
-// fillSpanOf is the lowest and highest fill (KvUsageForITL) over the rows of
-// decode and aggregated variants that are serving and read an ITL, an
-// engine's row each, as the line reads them; false with none.
-func fillSpanOf(rows []domain.ReplicaMetrics, roles map[string]string) (fillSpan, bool) {
-	s := fillSpan{lo: math.Inf(1), hi: math.Inf(-1)}
-	n := 0
+// engineFillsOf is the fill (KvUsageForITL) of each row of a decode or
+// aggregated variant that is serving and reads an ITL, an engine's row
+// each, as the line reads them, stamped now.
+func engineFillsOf(rows []domain.ReplicaMetrics, roles map[string]string, now time.Time) []engineFill {
+	var out []engineFill
 	for _, rm := range rows {
 		if domain.CanonicalRole(roles[rm.VariantName]) == domain.RolePrefill || !rm.Ready || rm.FromWarmPool {
 			continue
@@ -151,10 +192,9 @@ func fillSpanOf(rows []domain.ReplicaMetrics, roles map[string]string) (fillSpan
 		if !(k > 0 && k <= 1) || !(rm.AvgITL > 0) || math.IsInf(rm.AvgITL, 0) {
 			continue
 		}
-		s.lo, s.hi = min(s.lo, k), max(s.hi, k)
-		n++
+		out = append(out, engineFill{at: now, pod: rm.PodName, k: k})
 	}
-	return s, n > 0
+	return out
 }
 
 // ITLBandFloor is the band floor adapted for the model's latest cycle, and

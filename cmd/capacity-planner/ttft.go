@@ -586,6 +586,10 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		pf.flags = append(pf.flags, aFromEngineTiming)
 		pf.assume("a %.0f ms from engine prefill timing, no low-load minutes (intercept %.0f ms over %d minutes at per-engine occupancy <= %.2f, + overhead %.0f ms)",
 			1000*est.A, 1000*est.AIntercept, est.ATimingMinutes, est.ATimingOccupancy, 1000*est.AOverhead)
+		if est.AExtrapolated {
+			pf.assume("the intercept is extrapolated from long prompts (p10 %.0f computed tokens, over %.0f) and may read low",
+				est.AShortestPrompt, prefill.MaxAShortestPrompt)
+		}
 	}
 
 	p.Replicas = ps.Pods

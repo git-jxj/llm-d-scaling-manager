@@ -373,11 +373,23 @@ A fleet whose load never goes quiet still gets two terms, each flagged:
   tokens each request computed, over the quieter half of the busy minutes,
   plus the median time outside the prefill and the queue. The assumed line
   gives the intercept, the minutes and the overhead. It holds for the prompt
-  length and prefix-hit rate it was read at.
+  length and prefix-hit rate it was read at. When even the shorter prompts
+  compute more than 2,500 tokens, the intercept is extrapolated from long
+  prompts and may read low; the assumed line says so.
 - **An adapted ITL band floor** (`AdaptedBandFloor`). When the decode pods
   never fill far enough above the band's floor (`minObservableK`, 0.15) for
-  the latency line to spread 0.30, the floor is lowered to the lowest fill
-  the pods had, not under 0.05. The flag gives the floor used.
+  the latency line to spread 0.30, and at least 3 engines read below it, the
+  floor is lowered to the 10th percentile of the engines' fills over the last
+  30 minutes, not under 0.05. It goes back up only after the fill has spread
+  0.35 for 2 minutes. The flag gives the floor used.
+
+Limits of both:
+
+- The low-load test per engine assumes a group's data-parallel ranks share
+  its load evenly, and context-parallel ranks (PCP, DCP) are not counted as
+  engines.
+- The adapted floor is the same on every replay of one recording, but a
+  different window of the same fleet can adapt to a different floor.
 
 ## Find the fleet a rate needs
 

@@ -135,36 +135,96 @@ func TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine(t *testing.T) {
 }
 
 // The rule: a fleet that reaches the spread inside the band, or has none to
-// give below it, keeps the policy's floor; one that has it only below is
-// lowered to its lowest fill, never under AdaptiveBandFloorMin, and held
-// there.
+// give below it, or fewer than adaptiveBandMinEngines engines below the
+// policy's floor, keeps the policy's floor; one that has it only below is
+// lowered to the 10th percentile of its fills, never under
+// AdaptiveBandFloorMin, and held there.
 func TestITLAdaptiveBandFloor_TheRule(t *testing.T) {
 	at := time.Unix(0, 0)
-	span := func(lo, hi float64) []fillSpan { return []fillSpan{{at: at, lo: lo, hi: hi}} }
+	// fleet is one reading per engine, engine i at ks[i].
+	fleet := func(ks ...float64) []engineFill {
+		out := make([]engineFill, len(ks))
+		for i, k := range ks {
+			out[i] = engineFill{at: at, pod: fmt.Sprintf("e-%d", i), k: k}
+		}
+		return out
+	}
+	spread := fleet(0.07, 0.08, 0.09, 0.12, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40)
+	// One straggler at 0.01 among 19 engines from 0.08 up: the 10th
+	// percentile is the second fill, 0.08, not the straggler's.
+	straggler := []float64{0.01}
+	for i := range 19 {
+		straggler = append(straggler, 0.08+0.32*float64(i)/18)
+	}
+	// Two engines below the floor, read on many cycles: readings enough,
+	// engines too few.
+	var two []engineFill
+	for range 10 {
+		two = append(two, engineFill{at: at, pod: "e-0", k: 0.06}, engineFill{at: at, pod: "e-1", k: 0.07})
+	}
+	two = append(two, fleet(0.20, 0.25, 0.30, 0.35, 0.40)...)
+	for i := range two[20:] {
+		two[20+i].pod = fmt.Sprintf("f-%d", i)
+	}
 	for _, c := range []struct {
 		name    string
-		spans   []fillSpan
+		fills   []engineFill
 		held    float64
 		floor   float64
 		adapted bool
 	}{
-		{"reaches the spread inside the band", span(0.05, 0.50), 0, 0.15, false},
-		{"no spread below either", span(0.10, 0.30), 0, 0.15, false},
-		{"low fill with the spread", span(0.07, 0.40), 0, 0.07, true},
-		{"at the minimum", span(0.01, 0.40), 0, AdaptiveBandFloorMin, true},
-		{"the top is the band's", span(0.07, 0.95), 0, 0.15, false},
-		{"no readings", nil, 0, 0.15, false},
-		{"over cycles", []fillSpan{{at: at, lo: 0.20, hi: 0.40}, {at: at, lo: 0.08, hi: 0.25}}, 0, 0.08, true},
+		{"reaches the spread inside the band", fleet(0.05, 0.06, 0.07, 0.50), 0, 0, false},
+		{"no spread below either", fleet(0.10, 0.11, 0.12, 0.30), 0, 0, false},
+		{"low fill with the spread", spread, 0, 0.07, true},
+		{"at the minimum", fleet(0.01, 0.02, 0.03, 0.20, 0.40), 0, AdaptiveBandFloorMin, true},
+		{"one straggler sets nothing", fleet(straggler...), 0, 0.08, true},
+		{"two engines below are not enough", two, 0, 0, false},
+		{"the top is the band's", fleet(0.07, 0.08, 0.09, 0.95), 0, 0, false},
+		{"no readings", nil, 0, 0, false},
 		// An adapted floor holds through a range with no spread, and through
-		// none, and goes lower, never higher, until the band is reached.
-		{"held through no spread", span(0.10, 0.30), 0.07, 0.07, true},
+		// none, and goes lower, never higher.
+		{"held through no spread", fleet(0.10, 0.11, 0.12, 0.30), 0.07, 0.07, true},
 		{"held through no readings", nil, 0.07, 0.07, true},
-		{"held, and lower", span(0.06, 0.40), 0.07, 0.06, true},
-		{"held, not higher", span(0.09, 0.40), 0.07, 0.07, true},
-		{"released at the band", span(0.05, 0.50), 0.07, 0.15, false},
+		{"held, and lower", fleet(0.06, 0.07, 0.08, 0.40), 0.07, 0.06, true},
+		{"held, not higher", fleet(0.09, 0.10, 0.11, 0.40), 0.07, 0.07, true},
 	} {
-		floor, adapted := adaptedFloor(c.spans, 0.15, 0.80, c.held)
+		got, adapted := adaptedFloor(c.fills, 0.15, 0.80, bandFloor{floor: c.held})
 		assert.Equal(t, c.adapted, adapted, c.name)
-		assert.InDelta(t, c.floor, floor, 1e-12, c.name)
+		assert.InDelta(t, c.floor, got.floor, 1e-12, c.name)
 	}
+}
+
+// An adapted floor is released only after the fill spreads
+// adaptiveBandReleaseSpread above the policy's floor for
+// adaptiveBandReleaseCycles cycles in a row: a spread that only just reaches
+// the adapting threshold holds it, and a cycle under the release spread
+// starts the count over.
+func TestITLAdaptiveBandFloor_ReleaseHasHysteresis(t *testing.T) {
+	at := time.Unix(0, 0)
+	reach := func(top float64) []engineFill {
+		return []engineFill{{at: at, pod: "e-0", k: 0.10}, {at: at, pod: "e-1", k: top}}
+	}
+	held := bandFloor{floor: 0.07}
+	// At the adapting spread (0.15 + 0.32), never released.
+	for i := range 3 * adaptiveBandReleaseCycles {
+		var ok bool
+		held, ok = adaptedFloor(reach(0.47), 0.15, 0.80, held)
+		require.True(t, ok, "cycle %d: a spread under the release spread releases nothing", i)
+	}
+	// Past the release spread: held for the cycles before the last.
+	for i := range adaptiveBandReleaseCycles - 2 {
+		var ok bool
+		held, ok = adaptedFloor(reach(0.55), 0.15, 0.80, held)
+		require.True(t, ok, "cycle %d", i)
+	}
+	// One cycle back under it starts the count over.
+	held, ok := adaptedFloor(reach(0.47), 0.15, 0.80, held)
+	require.True(t, ok)
+	require.Zero(t, held.released)
+	for i := range adaptiveBandReleaseCycles - 1 {
+		held, ok = adaptedFloor(reach(0.55), 0.15, 0.80, held)
+		require.True(t, ok, "cycle %d", i)
+	}
+	_, ok = adaptedFloor(reach(0.55), 0.15, 0.80, held)
+	assert.False(t, ok, "released on the release spread's cycle %d in a row", adaptiveBandReleaseCycles)
 }

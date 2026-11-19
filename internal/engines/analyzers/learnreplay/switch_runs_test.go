@@ -1288,10 +1288,12 @@ var heldBy = map[string][]heldTest{
 	saturation.SwitchPrefillAEngineTiming: {
 		{"../saturation", "TestPrefillAEngineTiming_ABusyGroupLearnsA"},
 		{"../../../signals/prefill", "TestTiming_ABusyFleetLearnsAFromEngineTiming"},
+		{"../../../signals/prefill", "TestTiming_LongPromptsAreFlaggedNotRefused"},
 	},
 	saturation.SwitchITLAdaptiveBandFloor: {
 		{"../saturation", "TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine"},
 		{"../saturation", "TestITLAdaptiveBandFloor_TheRule"},
+		{"../saturation", "TestITLAdaptiveBandFloor_ReleaseHasHysteresis"},
 	},
 	// llm-d-incubation/llm-d-scaling-manager#97: runs the switch on and off
 	// and asserts both (the share capped at one doubling on, whole off).

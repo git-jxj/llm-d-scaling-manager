@@ -174,3 +174,28 @@ func TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad(t *testing.T) {
 	assert.Equal(t, TooFewLowLoadMinutes, off.ARefused)
 	assert.Zero(t, off.ASamples)
 }
+
+// A fleet that only computes long prompts still gets a, marked extrapolated:
+// its intercept is read from prompts past MaxAShortestPrompt and may read
+// low. The default fleet's shorter prompts are not.
+func TestTiming_LongPromptsAreFlaggedNotRefused(t *testing.T) {
+	rng := rand.New(rand.NewPCG(13, 17))
+	long := make([]Cycle, 120)
+	for i := range long {
+		c := cycle(t0.Add(time.Duration(i)*minute), busyRow("g-0", 0.5+rng.Float64(), 4000+8000*rng.Float64()),
+			busyRow("g-1", 0.5+rng.Float64(), 4000+8000*rng.Float64()))
+		c.AFromTiming = true
+		long[i] = c
+	}
+	est := run(NewObserver(), long...)
+	require.Equal(t, ASourceEngineTiming, est.ASource, "%+v", est)
+	assert.Empty(t, est.ARefused)
+	assert.True(t, est.AExtrapolated)
+	assert.Greater(t, est.AShortestPrompt, MaxAShortestPrompt)
+
+	short := run(NewObserver(), busyMinutes(120, true)...)
+	require.Equal(t, ASourceEngineTiming, short.ASource)
+	assert.False(t, short.AExtrapolated)
+	assert.Positive(t, short.AShortestPrompt)
+	assert.LessOrEqual(t, short.AShortestPrompt, MaxAShortestPrompt)
+}
