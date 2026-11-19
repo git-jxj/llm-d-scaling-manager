@@ -935,6 +935,258 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+echo "the DisaggregatedSet role writer (--dset-role-writer)"
+# dset_grants: the Roles and ClusterRoles in the stub cluster that grant more
+# than get on disaggregatedsets. Only the opt-in may make one.
+dset_grants() {
+    cat "$STUB_DIR"/obj/role/*/*.json "$STUB_DIR"/obj/clusterrole/_/*.json 2>/dev/null \
+        | jq -r 'select(any(.rules[]?; ((.resources // []) | (index("disaggregatedsets") or index("*"))) and (((.verbs // []) - ["get"]) | length > 0)))
+            | .kind + "/" + .metadata.name' | sort | tr '\n' ' ' | sed 's/ $//'
+}
+# dset_env <namespace>: DSET_ROLE_WRITER on the controller there, empty when unset.
+dset_env() {
+    jq -r '[.spec.template.spec.containers[] | select(.name == "manager") | .env[]? | select(.name == "DSET_ROLE_WRITER") | .value] | join(",")' \
+        "$STUB_DIR/obj/deployment/$1/scaling-manager-controller-manager.json" 2>/dev/null
+}
+dset_stamp() { obj configmap team-a scaling-manager-admin-setup | jq -r '.data.dsetRoleWriter // "unset"'; }
+# The grant file is read only when a grant is rendered.
+rm -rf "$W/nodsetw"; cp -R "$W/dist" "$W/nodsetw"; rm -f "$W"/nodsetw/scaling-manager-dset-role-writer*.yaml
+reset
+smt_in "$DEVDIR" admin-setup -n team-a --keda-namespace kk --files "$W/nodsetw" --dry-run --out "$W/nodsetw-out"; rc1=$?
+smt_in "$DEVDIR" admin-setup -n team-a --keda-namespace kk --files "$W/nodsetw" --dset-role-writer --dry-run --out "$W/nodsetw-out2"; rc2=$?
+if [ "$rc1$rc2" = 02 ] && grep -q 'the release files lack scaling-manager-dset-role-writer.yaml' "$W/out"; then
+    ok "files without the role writer grant: admin-setup runs without the flag, and --dset-role-writer names the missing file"
+else
+    bad "missing grant file: exits $rc1 $rc2: $(tail -1 "$W/out")"
+fi
+reset
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(dset_grants)" ] && [ "$(dset_stamp)" = false ] && has_obj role team-a scaling-manager-manager-role-team-a; then
+    ok "admin-setup without --dset-role-writer grants no list or patch on disaggregatedsets, and the stamp says dsetRoleWriter false"
+else
+    bad "default admin-setup: exit $rc, grants '$(dset_grants)', stamp '$(dset_stamp)'"
+fi
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url https://p:9090 --dset-role-writer
+rc=$?
+if [ "$rc" = 3 ] && grep -q 'smt admin-setup -n team-a --keda-namespace keda-system --dset-role-writer' "$W/out" && [ "$(writes)" = 0 ]; then
+    ok "install --dset-role-writer before the admin granted it: exit 3, the admin-setup line with --dset-role-writer, nothing written"
+else
+    bad "install --dset-role-writer, no grant: exit $rc, $(writes) writes: $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 0 ] && has_obj deployment team-a scaling-manager-controller-manager && [ -z "$(dset_env team-a)" ] && [ -z "$(dset_grants)" ]; then
+    ok "the default install: no DSET_ROLE_WRITER on the controller, no grant"
+else
+    bad "default install: exit $rc, DSET_ROLE_WRITER '$(dset_env team-a)', grants '$(dset_grants)'"
+fi
+smt install -n team-a --prometheus-url https://p:9090 --set DSET_ROLE_WRITER=true
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'give --dset-role-writer' "$W/out"; then ok "--set DSET_ROLE_WRITER is refused, naming the flag"; else bad "--set DSET_ROLE_WRITER: exit $rc: $(tail -1 "$W/out")"; fi
+smt admin-finish -n team-a --dset-role-writer
+expect_rc "admin-finish does not take --dset-role-writer" 2 $?
+smt admin-setup -n team-a --dset-role-writer
+rc=$?
+sub="$(obj rolebinding team-a scaling-manager-dset-role-writer-rolebinding | jq -r '[.roleRef.kind, .roleRef.name, (.subjects[] | .namespace + "/" + .name)] | join(" ")')"
+if [ "$rc" = 0 ] && [ "$(dset_grants)" = Role/scaling-manager-dset-role-writer-role ] && [ "$(dset_stamp)" = true ] \
+    && [ "$sub" = "Role scaling-manager-dset-role-writer-role team-a/scaling-manager-controller-manager" ] \
+    && grep -q 'smt install -n team-a --prometheus-url <https://prometheus:9090> --dset-role-writer' "$W/out"; then
+    ok "admin-setup --dset-role-writer: the Role in team-a bound to the controller, the stamp says so, the install line names the flag"
+else
+    bad "admin-setup --dset-role-writer: exit $rc, grants '$(dset_grants)', stamp '$(dset_stamp)', binding '$sub'"
+fi
+gen="$(obj deployment team-a scaling-manager-controller-manager | jq -r '.metadata.generation')"
+smt install -n team-a --prometheus-url https://p:9090 --dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && [ "$(dset_env team-a)" = true ] && [ "$(obj deployment team-a scaling-manager-controller-manager | jq -r '.metadata.generation')" != "$gen" ] \
+    && [ "$(obj configmap team-a scaling-manager-settings | jq -r '.data.passive')" = true ] && grep -q 'writes no replicas while a model is passive' "$W/out"; then
+    ok "install --dset-role-writer: DSET_ROLE_WRITER=true on the controller (a new rollout), the install still passive"
+else
+    bad "install --dset-role-writer: exit $rc, DSET_ROLE_WRITER '$(dset_env team-a)': $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 0 ] && [ "$(dset_env team-a)" = true ] && grep -q 'as the live controller has it' "$W/out"; then
+    ok "a re-run of install without the flag keeps the writer on, as the live controller has it"
+else
+    bad "install re-run without the flag: exit $rc, DSET_ROLE_WRITER '$(dset_env team-a)'"
+fi
+smt install -n team-a --prometheus-url https://p:9090 --no-dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(dset_env team-a)" ]; then ok "install --no-dset-role-writer turns the writer off on the controller"; else bad "install --no-dset-role-writer: exit $rc, DSET_ROLE_WRITER '$(dset_env team-a)'"; fi
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(dset_env team-a)" ]; then ok "a re-run after it keeps the writer off"; else bad "re-run after off: exit $rc, DSET_ROLE_WRITER '$(dset_env team-a)'"; fi
+smt admin-setup -n team-a --dset-role-writer --no-dset-role-writer
+expect_rc "--dset-role-writer with --no-dset-role-writer is usage" 2 $?
+jq '.data.adminObjectsSha256 = "0000"' "$STUB_DIR/obj/configmap/team-a/scaling-manager-admin-setup.json" > "$W/s.json" && cp "$STUB_DIR/obj/configmap/team-a/scaling-manager-admin-setup.json" "$W/s.orig.json" && mv "$W/s.json" "$STUB_DIR/obj/configmap/team-a/scaling-manager-admin-setup.json"
+smt install -n team-a --prometheus-url https://p:9090
+rc=$?
+if [ "$rc" = 3 ] && grep -q 'smt admin-setup -n team-a --keda-namespace keda-system --dset-role-writer' "$W/out"; then
+    ok "an upgrade that needs admin-setup keeps --dset-role-writer in the line it prints, when the stamp has it"
+else
+    bad "stamp of another release with the grant: exit $rc: $(tail -1 "$W/out")"
+fi
+mv "$W/s.orig.json" "$STUB_DIR/obj/configmap/team-a/scaling-manager-admin-setup.json"
+# The stamp is the owner's to edit: install also reads the Role.
+mv "$STUB_DIR/obj/role/team-a/scaling-manager-dset-role-writer-role.json" "$W/dsetw-role.json"
+smt install -n team-a --prometheus-url https://p:9090 --dset-role-writer
+rc=$?
+if [ "$rc" = 3 ] && grep -q 'Role scaling-manager-dset-role-writer-role is not in team-a' "$W/out" && [ -z "$(dset_env team-a)" ]; then
+    ok "install --dset-role-writer with the stamp saying granted but no Role: exit 3, the admin-setup line"
+else
+    bad "stamp without the Role: exit $rc: $(tail -1 "$W/out")"
+fi
+mv "$W/dsetw-role.json" "$STUB_DIR/obj/role/team-a/scaling-manager-dset-role-writer-role.json"
+touch "$STUB_DIR/forbid-roles"
+smt install -n team-a --prometheus-url https://p:9090 --dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && [ "$(dset_env team-a)" = true ] && grep -q 'may not read Role scaling-manager-dset-role-writer-role in team-a' "$W/out"; then
+    ok "install --dset-role-writer by an owner who may not read the Role (Forbidden): the stamp decides, and it says so"
+else
+    bad "Forbidden Role read: exit $rc, DSET_ROLE_WRITER '$(dset_env team-a)': $(tail -1 "$W/out")"
+fi
+rm -f "$STUB_DIR/forbid-roles"
+touch "$STUB_DIR/roles-fail"
+smt install -n team-a --prometheus-url https://p:9090 --dset-role-writer
+rc=$?
+if [ "$rc" = 7 ] && grep -q 'kubectl get role scaling-manager-dset-role-writer-role -n team-a failed' "$W/out"; then
+    ok "a Role read that fails with a server error is exit 7, not taken as Forbidden"
+else
+    bad "Role read server error: exit $rc: $(tail -1 "$W/out")"
+fi
+rm -f "$STUB_DIR/roles-fail"
+: > "$STUB_DIR/calls.log"
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 0 ] && [ "$(dset_grants)" = Role/scaling-manager-dset-role-writer-role ] && [ "$(dset_stamp)" = true ] && grep -q 'granted by the last run, so kept' "$W/out" \
+    && ! grep -q '^delete ' "$STUB_DIR/calls.log"; then
+    ok "admin-setup without the flag keeps the grant the last run made (an upgrade re-run), as it keeps the model namespaces"
+else
+    bad "flagless re-run: exit $rc, grants '$(dset_grants)', stamp '$(dset_stamp)'"
+fi
+# The keep reads the Namespace reader, which only a cluster admin writes, not the stamp.
+jq '.data.dsetRoleWriter = "true"' "$STUB_DIR/obj/configmap/team-a/scaling-manager-admin-setup.json" > "$W/s.json"
+: > "$STUB_DIR/calls.log"
+smt admin-setup -n team-a --no-dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(dset_grants)" ] && ! has_obj rolebinding team-a scaling-manager-dset-role-writer-rolebinding && [ "$(dset_stamp)" = false ] \
+    && [ "$(grep -n '^delete role' "$STUB_DIR/calls.log" | head -1 | grep -c 'rolebinding scaling-manager-dset-role-writer-rolebinding -n team-a')" = 1 ] \
+    && grep -q 'team-a: deleted role/scaling-manager-dset-role-writer-role' "$W/out"; then
+    ok "admin-setup --no-dset-role-writer removes the grant, binding first, and says so"
+else
+    bad "revoke: exit $rc, grants '$(dset_grants)', stamp '$(dset_stamp)': $(grep -m1 -i 'role writer' "$W/out")"
+fi
+cp "$W/s.json" "$STUB_DIR/obj/configmap/team-a/scaling-manager-admin-setup.json"
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(dset_grants)" ] && [ "$(dset_stamp)" = false ]; then
+    ok "a stamp edited to dsetRoleWriter true does not bring the grant back: the keep reads the Namespace reader"
+else
+    bad "edited stamp: exit $rc, grants '$(dset_grants)'"
+fi
+rm -rf "$W/dryd"
+smt admin-setup -n team-a --keda-namespace kk --dset-role-writer --dry-run --out "$W/dryd"; rc1=$?
+smt install -n team-a --prometheus-url https://p:9090 --dset-role-writer --dry-run --out "$W/dryd"; rc2=$?
+want="$(norm "$(sedded scaling-manager-dset-role-writer.yaml team-a team-a)")"
+if [ "$rc1$rc2" = 00 ] && [ -n "$want" ] && [ "$(norm "$W/dryd/14-dset-role-writer.yaml")" = "$want" ] && [ ! -e "$W/dry/14-dset-role-writer.yaml" ] \
+    && [ "$(yq ea '[select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "manager") | .env[] | select(.name == "DSET_ROLE_WRITER") | .value] | join(",")' "$W/dryd/50-controller.yaml")" = true ] \
+    && [ "$(yq ea '[select(.kind == "Deployment") | .spec.template.spec.containers[] | .env[]? | select(.name == "DSET_ROLE_WRITER")] | length' "$W/dry/50-controller.yaml")" = 0 ]; then
+    ok "--dry-run --dset-role-writer: 14-dset-role-writer.yaml is the release file, the controller has DSET_ROLE_WRITER=true; without the flag neither"
+else
+    bad "dry-run --dset-role-writer: exits $rc1 $rc2: $(ls "$W/dryd" | tr '\n' ' ')"
+fi
+
+# Several model namespaces: the writer lists DisaggregatedSets where the
+# controller manages them, so the grant goes in each model namespace.
+reset ctl m1 m2 m3
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+# dsetw_in <ns>: the role writer Role and RoleBinding of ctl there, roleRef, subject and instance label.
+dsetw_in() {
+    local b
+    b="$(obj rolebinding "$1" scaling-manager-dset-role-writer-rolebinding-ctl)" || return 0
+    has_obj role "$1" scaling-manager-dset-role-writer-role-ctl || return 0
+    printf '%s' "$b" | jq -r '[.roleRef.name, (.subjects[] | .namespace + "/" + .name), .metadata.labels["app.kubernetes.io/instance"]] | join(" ")'
+}
+want_dsetw="scaling-manager-dset-role-writer-role-ctl ctl/scaling-manager-controller-manager ctl"
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --model-namespace m2 --dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && [ "$(dsetw_in m1)" = "$want_dsetw" ] && [ "$(dsetw_in m2)" = "$want_dsetw" ] && [ -z "$(dsetw_in m3)" ] \
+    && ! has_obj role ctl scaling-manager-dset-role-writer-role \
+    && [ "$(obj role m1 scaling-manager-dset-role-writer-role-ctl | jq -c '.rules[0].verbs')" = '["get","list","patch"]' ]; then
+    ok "admin-setup --model-namespace m1 m2 --dset-role-writer: the grant in m1 and m2, bound to ctl's controller, none in ctl or m3"
+else
+    bad "grant per model namespace: exit $rc, m1 '$(dsetw_in m1)', m2 '$(dsetw_in m2)': $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+smt install -n ctl --prometheus-url https://p:9090 --dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && [ "$(dset_env ctl)" = true ]; then ok "install --dset-role-writer with model namespaces: the Role in each read, DSET_ROLE_WRITER=true"; else bad "install with model namespaces: exit $rc: $(tail -2 "$W/out" | tr '\n' ' ')"; fi
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1
+rc=$?
+if [ "$rc" = 0 ] && [ "$(dsetw_in m1)" = "$want_dsetw" ] && [ -z "$(dsetw_in m2)" ] && ! has_obj role m2 scaling-manager-dset-role-writer-role-ctl; then
+    ok "a model namespace dropped from the list loses the grant; the one kept keeps it (no flag: the grant is kept)"
+else
+    bad "dropped namespace: exit $rc, m1 '$(dsetw_in m1)', m2 '$(dsetw_in m2)'"
+fi
+smt admin-setup -n ctl --keda-namespace keda-system --single-namespace
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(dsetw_in m1)" ] && has_obj role ctl scaling-manager-dset-role-writer-role && has_obj rolebinding ctl scaling-manager-dset-role-writer-rolebinding; then
+    ok "--single-namespace moves the grant to the controller namespace"
+else
+    bad "single namespace: exit $rc, m1 '$(dsetw_in m1)'"
+fi
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m3 --no-dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(dset_grants)" ]; then ok "--no-dset-role-writer with a new model list leaves no grant in any namespace"; else bad "off with models: exit $rc, grants '$(dset_grants)'"; fi
+# Another controller's objects of the same names are never removed: revoke
+# checks the instance label (smt_revoke_one).
+mkdir -p "$STUB_DIR/obj/role/m1" "$STUB_DIR/obj/rolebinding/m1"
+printf '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"scaling-manager-dset-role-writer-role-ctl","namespace":"m1","labels":{"app.kubernetes.io/instance":"other"}},"rules":[]}' > "$STUB_DIR/obj/role/m1/scaling-manager-dset-role-writer-role-ctl.json"
+printf '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"scaling-manager-dset-role-writer-rolebinding-ctl","namespace":"m1","labels":{"app.kubernetes.io/instance":"other"}},"roleRef":{"kind":"Role","name":"scaling-manager-dset-role-writer-role-ctl"},"subjects":[]}' > "$STUB_DIR/obj/rolebinding/m1/scaling-manager-dset-role-writer-rolebinding-ctl.json"
+smt admin-setup -n ctl --keda-namespace keda-system --model-namespace m1 --no-dset-role-writer
+rc=$?
+if [ "$rc" = 0 ] && has_obj role m1 scaling-manager-dset-role-writer-role-ctl && has_obj rolebinding m1 scaling-manager-dset-role-writer-rolebinding-ctl; then
+    ok "--no-dset-role-writer leaves a Role and RoleBinding of the same names labelled for another instance"
+else
+    bad "foreign role writer objects: exit $rc, role $(has_obj role m1 scaling-manager-dset-role-writer-role-ctl && echo kept || echo deleted), binding $(has_obj rolebinding m1 scaling-manager-dset-role-writer-rolebinding-ctl && echo kept || echo deleted)"
+fi
+
+reset m1
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+mkdir -p "$STUB_DIR/obj/configmap/scaling-manager-system"
+cp "$W/status.json" "$STUB_DIR/obj/configmap/scaling-manager-system/scaling-manager-controller-status.json"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --no-weights-labeller
+if [ -z "$(dset_grants)" ] && [ -z "$(dset_env scaling-manager-system)" ] && has_obj deployment scaling-manager-system scaling-manager-controller-manager; then
+    ok "install --scope cluster without the flag: no grant, no DSET_ROLE_WRITER"
+else
+    bad "default cluster install: grants '$(dset_grants)', DSET_ROLE_WRITER '$(dset_env scaling-manager-system)'"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --no-weights-labeller --dset-role-writer
+sub="$(obj clusterrolebinding _ scaling-manager-dset-role-writer-rolebinding | jq -r '[.roleRef.name, (.subjects[] | .namespace + "/" + .name)] | join(" ")')"
+if [ "$(dset_grants)" = ClusterRole/scaling-manager-dset-role-writer-role ] && [ "$(dset_env scaling-manager-system)" = true ] \
+    && [ "$sub" = "scaling-manager-dset-role-writer-role scaling-manager-system/scaling-manager-controller-manager" ]; then
+    ok "install --scope cluster --dset-role-writer: the ClusterRole bound to the controller, DSET_ROLE_WRITER=true"
+else
+    bad "cluster --dset-role-writer: grants '$(dset_grants)', DSET_ROLE_WRITER '$(dset_env scaling-manager-system)', binding '$sub'"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --no-weights-labeller
+if [ "$(dset_grants)" = ClusterRole/scaling-manager-dset-role-writer-role ] && [ "$(dset_env scaling-manager-system)" = true ]; then
+    ok "a cluster re-run without the flag keeps the grant and the switch"
+else
+    bad "cluster re-run without the flag: grants '$(dset_grants)', DSET_ROLE_WRITER '$(dset_env scaling-manager-system)'"
+fi
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --no-weights-labeller --no-dset-role-writer
+if [ -z "$(dset_grants)" ] && ! has_obj clusterrolebinding _ scaling-manager-dset-role-writer-rolebinding && [ -z "$(dset_env scaling-manager-system)" ]; then
+    ok "install --scope cluster --no-dset-role-writer removes the grant and turns the writer off"
+else
+    bad "cluster --no-dset-role-writer: grants '$(dset_grants)', DSET_ROLE_WRITER '$(dset_env scaling-manager-system)'"
+fi
+
+
+# ---------------------------------------------------------------------------
 echo "the weights labeller"
 LNS=scaling-manager-weights-labeller
 largs() { jq -c '.spec.template.spec.containers[0].args' "$STUB_DIR/obj/deployment/$LNS/weights-labeller.json" 2>/dev/null; }
@@ -1422,7 +1674,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=159
+EXPECT_CASES=189
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
