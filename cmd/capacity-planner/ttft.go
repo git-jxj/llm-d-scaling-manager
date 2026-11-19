@@ -11,6 +11,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -31,6 +32,9 @@ const (
 	sideDecodeEngine = "decode engine"
 	rolePrefill      = "prefill"
 )
+
+// sourceEngineTiming is an a P1 fitted from the engine's prefill timing.
+const sourceEngineTiming = "learned from engine prefill timing"
 
 // The flags S1 raises beside P3's, under S1's names.
 const (
@@ -81,6 +85,14 @@ const (
 // assumedA is a --assume-a supplied: P3 has no flag for it, as S1 has no
 // assumption for a.
 const assumedA whatif.Flag = "AssumedA"
+
+// aFromEngineTiming is an a P1 fitted from the engine's own prefill timing,
+// a fleet too busy for low-load minutes (prefill.ASourceEngineTiming).
+const aFromEngineTiming whatif.Flag = "AFromEngineTiming"
+
+// adaptedBandFloor is a decode line read over an ITL band whose floor the
+// replay lowered to the fleet's fill (learnreplay.State.ITLBandFloor).
+const adaptedBandFloor whatif.Flag = "AdaptedBandFloor"
 
 // ttftQuestion is the TTFT a command was asked for.
 type ttftQuestion struct {
@@ -566,8 +578,14 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 	}
 	pf.in.VP, pf.in.VPPromptTokens = p.VP, p.VPPromptTokens
 	pf.in.FixedLatencySeconds, pf.in.FixedLatencySource = p.FixedLatency, sourceLearned
-	if pf.assumedA {
+	switch {
+	case pf.assumedA:
 		pf.in.FixedLatencySource = shapeAssumed
+	case est.ASource == prefill.ASourceEngineTiming:
+		pf.in.FixedLatencySource = sourceEngineTiming
+		pf.flags = append(pf.flags, aFromEngineTiming)
+		pf.assume("a %.0f ms from engine prefill timing, no low-load minutes (intercept %.0f ms over %d minutes at per-engine occupancy <= %.2f, + overhead %.0f ms)",
+			1000*est.A, 1000*est.AIntercept, est.ATimingMinutes, est.ATimingOccupancy, 1000*est.AOverhead)
 	}
 
 	p.Replicas = ps.Pods

@@ -366,6 +366,19 @@ prompt cv or the router hop. The learned value, or the reason it is missing,
 is shown under each box. A typed value flags every figure that rests on it.
 [Each reason and its fix](troubleshooting.md#refused-figures).
 
+A fleet whose load never goes quiet still gets two terms, each flagged:
+
+- **a from engine prefill timing** (`AFromEngineTiming`). With too few
+  low-load minutes, a is fitted from vLLM's own prefill time against the
+  tokens each request computed, over the quieter half of the busy minutes,
+  plus the median time outside the prefill and the queue. The assumed line
+  gives the intercept, the minutes and the overhead. It holds for the prompt
+  length and prefix-hit rate it was read at.
+- **An adapted ITL band floor** (`AdaptedBandFloor`). When the decode pods
+  never fill far enough above the band's floor (`minObservableK`, 0.15) for
+  the latency line to spread 0.30, the floor is lowered to the lowest fill
+  the pods had, not under 0.05. The flag gives the floor used.
+
 ## Find the fleet a rate needs
 
 Above the controls, pick **What fleet does this traffic need?** Then set the
