@@ -576,12 +576,31 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		p.Replicas, pf.in.ReplicasFrom = f.prefill, "--prefill"
 		pf.in.Replicas = f.prefill
 	}
-	p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAt(ps, p.Replicas)
-	pf.in.Imbalance = max(p.Imbalance, 1)
-	if p.ImbalanceAssumed {
-		pf.assume("f %s on %d pods (none learned at that count)", num(p.Imbalance), p.Replicas)
+	if f.imbalanceAcrossCounts {
+		p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAcross(ps, p.Replicas)
+		if p.ImbalanceAssumed {
+			pf.assume("f %s on %d pods (%s)", num(p.Imbalance), p.Replicas, pf.in.ImbalanceSource)
+		}
+	} else {
+		p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAt(ps, p.Replicas)
+		if p.ImbalanceAssumed {
+			pf.assume("f %s on %d pods (none learned at that count)", num(p.Imbalance), p.Replicas)
+		}
 	}
+	pf.in.Imbalance = max(p.Imbalance, 1)
 	return p, nil
+}
+
+// imbalanceAcross is f at pods read across counts
+// (--imbalance-across-counts, whatif.ImbalanceReadings.At), as the SLO
+// analyzer reads it with slo.SwitchTTFTImbalanceAcrossCounts on: none on one
+// pod; P1's own at a count it learned; else the curve fitted to the counts P1
+// learned and the recorded count's raw share, at least
+// whatif.FreshImbalance with no count learned, and at the recorded count at
+// least the raw share.
+func imbalanceAcross(ps *learnreplay.PrefillState, pods int) (f float64, assumed bool, source string) {
+	r := whatif.ImbalanceReadingsOf(ps.Estimate, ps.Pods, ps.RawShare).At(pods)
+	return r.F, r.Assumed, r.Source
 }
 
 // imbalanceAt is f at pods, by S1's decision 1: P1's own at that count, else

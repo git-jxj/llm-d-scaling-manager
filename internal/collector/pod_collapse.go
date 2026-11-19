@@ -26,8 +26,8 @@ import (
 // instance capacity. Collapsing here keeps that arithmetic in one unit without
 // every consumer having to know a DP factor the cluster never reports.
 //
-// LWS needs no special handling: worker pods are dropped upstream, so a group's
-// leader is already its single row.
+// An LWS group whose Pods each run an engine is merged one step further, by
+// collapseToGroups, with the same rules.
 //
 // Merging is keyed by pod AND MODEL, not by pod alone -- see podModel. A warm
 // pool Pod holds several models at once, and summing their capacity into one
@@ -232,8 +232,8 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 	pod.AvgITLKnown = len(itlFinite) > 0 && itlNoneAbsent
 	pod.AvgITLEmpty = itlAllEmpty && !itlEmptyGenerated
 
-	// BlockSize is a per-instance config value, uniform across a pod's ranks;
-	// keeping the first preserves NumGpuBlocks × BlockSize == TotalKvCapacityTokens.
+	// BlockSize is a per-instance config value, uniform across a pod's ranks,
+	// so the first is kept; the capacity is the sum of the ranks' own.
 	capacity := float64(pod.TotalKvCapacityTokens)
 	if capacity > 0 {
 		pod.KvCacheUsage = weightedKvUsage / capacity

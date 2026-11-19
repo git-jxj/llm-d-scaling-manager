@@ -60,7 +60,7 @@ LOAD_IMAGE="${STAIRCASE_LOAD_IMAGE:-ghcr.io/llm-d/llm-d-benchmark:v0.7.8}"
 PROM="${BENCHMARK_PROMETHEUS_URL:-}"
 SLO_TTFT="${STAIRCASE_SLO_TTFT:-200ms}"
 SCENARIO="${BENCHMARK_SPEC:-guides/pd-disaggregation}"
-# STAIRCASE_WHATIF is the old name, read for one release.
+# STAIRCASE_WHATIF is the old name, read until v0.13.0.
 PLANNER="${STAIRCASE_CAPACITY_PLANNER:-${STAIRCASE_WHATIF:-$ROOT/bin/capacity-planner}}"
 # The longest held-out prompt, its spread and the answer must fit.
 MAX_MODEL_LEN="${STAIRCASE_MAX_MODEL_LEN:-40960}"

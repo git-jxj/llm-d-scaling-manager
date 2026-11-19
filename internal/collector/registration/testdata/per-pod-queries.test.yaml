@@ -375,6 +375,10 @@ tests:
         values: '1x15'
       - series: 'vllm:cache_config_info{namespace="llm",pod="dup-2",instance="10.0.0.2:8000",engine="1",num_gpu_blocks="2000",block_size="16",cache_dtype="auto",job="b"}'
         values: '1x15'
+      - series: 'vllm:cache_config_info{namespace="llm",pod="kvsz-0",instance="10.0.2.1:8000",engine="0",num_gpu_blocks="9390",block_size="64",kv_cache_size_tokens="2403840",effective_attention_block_size="512",cache_dtype="auto"}'
+        values: '1x15'
+      - series: 'vllm:cache_config_info{namespace="llm",pod="kvsz-0",instance="10.0.2.1:8000",engine="1",num_gpu_blocks="9390",block_size="64",kv_cache_size_tokens="2400000",effective_attention_block_size="512",cache_dtype="auto"}'
+        values: '1x15'
       - series: 'vllm:inter_token_latency_seconds_count{namespace="llm",pod="dup-2",instance="10.0.0.2:8000",engine="0",model_name="glm",job="a"}'
         values: '0+128x15'
       - series: 'vllm:inter_token_latency_seconds_sum{namespace="llm",pod="dup-2",instance="10.0.0.2:8000",engine="0",model_name="glm",job="a"}'
@@ -534,6 +538,22 @@ tests:
             value: 1
           - labels: '{instance="10.0.0.2:8000",pod="dup-2",num_gpu_blocks="2000",block_size="16"}'
             value: 2
+          - labels: '{instance="10.0.2.1:8000",pod="kvsz-0",num_gpu_blocks="9390",block_size="64"}'
+            value: 2
+      # cache_config_sizes: the engine's own size, apart from the blocks; kvsz-0's two ranks report different counts, so it splits into two rows of one rank while cache_config_info above still counts its 2 ranks; a pod without the labels is one row of all its ranks
+      - expr: 'count by (instance, pod, kv_cache_size_tokens, effective_attention_block_size) (max by (instance, pod, kv_cache_size_tokens, effective_attention_block_size, engine) (vllm:cache_config_info{namespace="llm"}))'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{instance="10.0.0.8:8000",pod="dp8-0"}'
+            value: 8
+          - labels: '{instance="10.0.1.1:8000",pod="solo-0"}'
+            value: 1
+          - labels: '{instance="10.0.0.2:8000",pod="dup-2"}'
+            value: 2
+          - labels: '{instance="10.0.2.1:8000",pod="kvsz-0",kv_cache_size_tokens="2403840",effective_attention_block_size="512"}'
+            value: 1
+          - labels: '{instance="10.0.2.1:8000",pod="kvsz-0",kv_cache_size_tokens="2400000",effective_attention_block_size="512"}'
+            value: 1
       # avg_output_tokens: weighted by each rank's requests; the idle rank adds nothing
       - expr: 'sum by (model_name, instance, pod) (rate(vllm:request_generation_tokens_sum{namespace="llm"}[5m])) / sum by (model_name, instance, pod) (rate(vllm:request_generation_tokens_count{namespace="llm"}[5m]))'
         eval_time: 10m
