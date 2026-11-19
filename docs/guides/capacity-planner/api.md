@@ -76,7 +76,8 @@ point (headroom times the lower knee).
 | `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
 | `POST /v1/report` | One fleet judged at the load the source saw, for each request shape and load asked: utilization, knees, the SLO against load, a shape-by-load summary and a verdict per shape. The same report as `capacity-planner at-replicas -o json`. |
 | `POST /v1/dayplan` | The prefill and decode replicas each bucket of the source's window needed, against the replicas it had: [the day plan](#the-day-plan). |
-| `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. |
+| `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. With `--allow-upload`, also the uploads (first, newest first) and `upload.maxBytes`. |
+| `POST /v1/recordings` | Uploads a recording, with `--allow-upload` only: [Upload a recording](#upload-a-recording). |
 | `GET /` | The page, with its files under `/page/`. |
 
 Any other path is a 404.
@@ -99,21 +100,74 @@ Any other path is a 404.
 | `--plan-budget` | How long one plan may be priced. Default 5m; 0 is the default too. At most 9m. See [The plan budget](#the-plan-budget). |
 | `--max-inputs N` | How many sources are loaded at once. Default 2. Each holds its replay's memory while it loads. Past it, `POST /v1/inputs` is a 503 with `Retry-After`. |
 | `--inputs-cache-size SIZE` | The most memory the loaded sources kept may take in all, such as `256Mi` (the default). At most 16 are kept. The least used is dropped first; the newest is always kept. |
+| `--allow-upload` | Lets people upload a recording from the page, or with `POST /v1/recordings`. Off by default. See [Upload a recording](#upload-a-recording). |
+| `--upload-max-size SIZE` | With `--allow-upload`, the largest upload, such as `256Mi` (the default). |
 
 No request can name a host or a file path: the Prometheus URL is a flag, and a
-recording is a file name inside `--recordings`. An error names no server path.
+recording is a file name inside `--recordings`, or the name the server gave an
+upload. An error names no server path.
 
 ## Requests
 
 Every request body is one JSON value of at most 1 MiB, sent as
 `Content-Type: application/json`. An unknown field, or a second JSON value, is
-a 400.
+a 400. An upload is the one exception: see below.
 
 With `--auth=none` the server answers only requests addressed to a loopback
 name (`localhost`, `127.0.0.0/8`, `[::1]`), so a web page that rebinds its own
 name to 127.0.0.1 cannot read it. This holds with `--listen-all-in-container`
 too. It is not access control: any client that reaches the port can send
 `Host: localhost`. Only where you publish the port bounds who can ask.
+
+## Upload a recording
+
+Start the server with `--allow-upload`. On the page, pick the file under
+**Upload a recording** and press **Upload**; the page then loads it. With curl:
+
+```bash
+curl -sS -X POST --data-binary @qwen3-32b.jsonl.gz \
+  -H 'Content-Type: application/octet-stream' http://localhost:8080/v1/recordings
+```
+
+```json
+{"schemaVersion": 1, "name": "upload:3f9a2b1c4d5e6f70.jsonl.gz", "bytes": 95114025}
+```
+
+Load it as any recording, with `"source": {"kind": "recording", "name": "upload:3f9a2b1c4d5e6f70.jsonl.gz"}`.
+
+- **Who can upload is who can open the planner.** Every user who can open it
+  also sees every upload, as they see `--recordings`. With
+  `--auth=kubernetes`, an upload needs `post` on `/whatif/v1/recordings`
+  (below); `get` on `/whatif/*` does not allow it.
+- **Kept as sent.** The planner does not rename anything in the file. To hide
+  real names, upload an exported copy ([Real names in
+  recordings](in-cluster.md#real-names-in-recordings)).
+- **Where it goes.** A directory of the server's own, mode 0700, under
+  `TMPDIR` (else `/tmp`). The name comes from the file's bytes; the file
+  name you send is not read. The last 4 uploads are kept; an older one is
+  deleted. All are deleted when the server stops.
+- **Send** `.jsonl` or `.jsonl.gz` bytes as `application/octet-stream` or
+  `application/gzip`. Another type is a 415: a page on another site cannot
+  send these types without asking the server first, and the server never
+  answers that.
+- **The same file twice** is a 200 with the name it already has; a new one is
+  a 201.
+- **An upload may take 15 minutes** to arrive and be checked; other requests
+  still have 30 s.
+
+The server reads every line before it keeps the file, and refuses:
+
+| Status | When |
+| --- | --- |
+| 403 | The server was started without `--allow-upload`. |
+| 413 | Larger than `--upload-max-size`; gunzips to more than 16 times it (4 GiB by default); or has a line longer than 64 MiB. |
+| 400 | Not a learner recording: not JSON lines, a gzip cut short, no start line, or empty. |
+| 503 | Another upload is being read. Ask again. |
+
+Loading an upload is refused with a 413 when the loaded recording would take
+more memory than `--inputs-cache-size`, so one upload cannot push every
+other loaded source out. A recording in `--recordings` is not refused this
+way.
 
 ## The inputs
 
@@ -347,9 +401,10 @@ act on also has a `reason`:
 | --- | --- |
 | 400 | A field asked wrongly; the message names it. |
 | 401 | `--auth=kubernetes` and no token, or a token TokenReview does not accept. |
-| 403 | A Host that is not a loopback name with `--auth=none`; a namespace not in `--allowed-namespaces`; with `--auth=kubernetes`, a user not allowed the path or the namespace. |
+| 403 | A Host that is not a loopback name with `--auth=none`; a namespace not in `--allowed-namespaces`; with `--auth=kubernetes`, a user not allowed the path or the namespace; an upload without `--allow-upload`. |
 | 404 | An unknown path, or an `inputsId` the server no longer holds: resolve the inputs again. |
-| 415 | A `Content-Type` other than `application/json`. |
+| 413 | An upload past a bound, or an upload that would take too much memory loaded: [Upload a recording](#upload-a-recording). |
+| 415 | A `Content-Type` other than `application/json` (for an upload, other than `application/octet-stream` or `application/gzip`). |
 | 500 | Anything else. A failed authentication review is a 500 that names no client error; the error goes to stderr. |
 | 503 with `Retry-After: 1` | The server is busy: it prices as many plans at once as it has CPUs, and two inputs at once. Ask again. |
 | 503 with `reason: PlanBudgetExceeded` | The plan ran past `--plan-budget`. See below. |
@@ -403,7 +458,9 @@ With `--auth=kubernetes` the server:
 1. checks the bearer token with a TokenReview (missing or not accepted: 401);
 2. asks a SubjectAccessReview for `get` on the non-resource URL `/whatif` plus
    the path, for every method: `POST /v1/plan` is `get` on `/whatif/v1/plan`,
-   and the page is `/whatif/` and `/whatif/page/*` (not allowed: 403);
+   and the page is `/whatif/` and `/whatif/page/*` (not allowed: 403). An
+   upload, `POST /v1/recordings`, is `post` on `/whatif/v1/recordings`: add a
+   rule with `verbs: ["post"]` for the users who may upload;
 3. for a `prometheus` source, also asks for `get` on `pods` in its namespace.
 
 Reviews are reused for 30 s. The client comes from `KUBECONFIG`,

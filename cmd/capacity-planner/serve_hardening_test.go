@@ -180,7 +180,7 @@ func TestServeInputsFlags(t *testing.T) {
 			assert.ErrorAs(t, err, new(usageError), "--max-inputs %d --inputs-cache-size %q", c.n, c.size)
 		}
 	}
-	n, err := bytesFlag("inputs-cache-size", quantityOf(whatifapi.DefaultInputsBytes))
+	n, err := bytesFlag("inputs-cache-size", whatifapi.Quantity(whatifapi.DefaultInputsBytes))
 	require.NoError(t, err)
 	assert.Equal(t, whatifapi.DefaultInputsBytes, n, "the flag's default is the server's")
 }

@@ -551,6 +551,22 @@ type SourcesResponse struct {
 	// RecordingsTruncated whether the server listed only the first of them.
 	Recordings          []string `json:"recordings"`
 	RecordingsTruncated bool     `json:"recordingsTruncated,omitempty"`
+	// Upload is set when the server takes uploads (POST /v1/recordings).
+	Upload *UploadInfo `json:"upload,omitempty"`
+}
+
+// UploadInfo is what a server that takes uploads takes.
+type UploadInfo struct {
+	// MaxBytes is the largest upload, in bytes as sent.
+	MaxBytes int `json:"maxBytes"`
+}
+
+// UploadResponse is POST /v1/recordings: the name a recording source gives
+// the recording uploaded, which the server chose, and its size as sent.
+type UploadResponse struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Name          string `json:"name"`
+	Bytes         int    `json:"bytes"`
 }
 
 // SizeRequest is POST /v1/size: the fewest replicas per role whose fleet

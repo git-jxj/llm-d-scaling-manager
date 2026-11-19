@@ -43,6 +43,11 @@ type servedSources struct {
 	// read one (whatifapi.Authenticator.NamespaceAllowed); nil with no auth.
 	allowed          []string
 	namespaceAllowed func(ctx context.Context, namespace string) error
+	// uploads is the recordings uploaded (--allow-upload), nil with none;
+	// maxUploadWeight bounds what one of them may keep loaded, in the
+	// weight the inputs cache counts (--inputs-cache-size).
+	uploads         *uploadStore
+	maxUploadWeight int
 }
 
 // apiError is a CLI error as the API's: a usage or input error is the
@@ -71,12 +76,14 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		f.hint = hintAPIRecording
 	}
 	var hide string
+	uploaded := false
 	switch src.Kind {
 	case whatifapi.SourceRecording:
-		path, err := s.recordingPath(src)
+		path, up, err := s.recordingPath(src)
 		if err != nil {
 			return nil, err
 		}
+		uploaded = up
 		f.recording, hide, info.Name = path, path, src.Name
 		if src.Cycle > 0 {
 			f.cycle = strconv.Itoa(src.Cycle)
@@ -102,27 +109,56 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		info.From, info.To = &o.from, &o.to
 	}
 	info.Cycle, info.TotalCycles, info.FirstAt, info.LastAt = st.Cycle, st.Cycles, st.FirstAt, st.At
-	return s.resolved(&f, st, data, info)
+	res, err := s.resolved(&f, st, data, info)
+	if err == nil && uploaded && s.maxUploadWeight > 0 && res.Bytes > s.maxUploadWeight {
+		return nil, whatifapi.TooLargeError{Err: fmt.Errorf("%s: loaded, it takes %s of memory, more than this server keeps for loaded sources "+
+			"(--inputs-cache-size %s): load a shorter recording, or ask whoever runs the planner to raise --inputs-cache-size",
+			info.Name, whatifapi.Quantity(int64(res.Bytes)), whatifapi.Quantity(int64(s.maxUploadWeight)))}
+	}
+	return res, err
 }
 
-// recordingPath is the recording a source names: a file name in the
-// recordings directory, never a path.
-func (s *servedSources) recordingPath(src whatifapi.SourceRequest) (string, error) {
-	switch {
-	case s.recordings == "":
-		return "", whatifapi.InputErrorf("source.kind recording: the server reads no recordings (--recordings)")
-	case src.Namespace != "" || src.From != "" || src.To != "":
-		return "", whatifapi.InputErrorf("source.namespace, from and to are a prometheus source's")
-	case src.Cycle < 0:
-		return "", whatifapi.InputErrorf("source.cycle %d, want a cycle from 1, or 0 for the last", src.Cycle)
-	case !recordingName(src.Name):
-		return "", whatifapi.InputErrorf("source.name %q: want a file name in the server's recordings directory, not a path", src.Name)
+// recordingPath is the recording a source names, and whether it was
+// uploaded: an upload's name, looked up and never joined to a path, or a file
+// name in the recordings directory, never a path.
+func (s *servedSources) recordingPath(src whatifapi.SourceRequest) (string, bool, error) {
+	if s.uploads != nil && strings.HasPrefix(src.Name, uploadPrefix) {
+		if err := recordingFields(src); err != nil {
+			return "", false, err
+		}
+		path, ok := s.uploads.path(src.Name)
+		if !ok {
+			return "", false, whatifapi.InputErrorf("source.name %q: no such upload: the server keeps the last %d uploads until it stops; upload it again",
+				src.Name, maxKeptUploads)
+		}
+		return path, true, nil
+	}
+	if s.recordings == "" {
+		return "", false, whatifapi.InputErrorf("source.kind recording: the server reads no recordings (--recordings)")
+	}
+	if err := recordingFields(src); err != nil {
+		return "", false, err
+	}
+	if !recordingName(src.Name) {
+		return "", false, whatifapi.InputErrorf("source.name %q: want a file name in the server's recordings directory, not a path", src.Name)
 	}
 	path, ok := s.recordingFile(src.Name)
 	if !ok {
-		return "", whatifapi.InputErrorf("source.name %q: no such recording in the server's recordings directory", src.Name)
+		return "", false, whatifapi.InputErrorf("source.name %q: no such recording in the server's recordings directory", src.Name)
 	}
-	return path, nil
+	return path, false, nil
+}
+
+// recordingFields refuses the fields a recording source does not take, and a
+// negative cycle.
+func recordingFields(src whatifapi.SourceRequest) error {
+	switch {
+	case src.Namespace != "" || src.From != "" || src.To != "":
+		return whatifapi.InputErrorf("source.namespace, from and to are a prometheus source's")
+	case src.Cycle < 0:
+		return whatifapi.InputErrorf("source.cycle %d, want a cycle from 1, or 0 for the last", src.Cycle)
+	}
+	return nil
 }
 
 // recordingName reports whether name is one a recording source may give: a
@@ -146,7 +182,8 @@ const maxListedRecordings = 1000
 // reads a Prometheus and in which namespaces, and the recordings a recording
 // source may name: every name in --recordings that recordingPath accepts (a
 // regular file, a link followed, under a name that is no path and not
-// hidden), so that nothing listed is refused when picked.
+// hidden), so that nothing listed is refused when picked. The uploads kept
+// come first, newest first.
 func (s *servedSources) Sources(context.Context) (whatifapi.SourcesResponse, error) {
 	out := whatifapi.SourcesResponse{Prometheus: s.window.prometheus != "", Namespaces: slices.Clone(s.allowed), Recordings: []string{}}
 	if out.Prometheus {
@@ -154,6 +191,9 @@ func (s *servedSources) Sources(context.Context) (whatifapi.SourcesResponse, err
 		if out.Namespace == "" && len(s.allowed) > 0 {
 			out.Namespace = s.allowed[0]
 		}
+	}
+	if s.uploads != nil {
+		out.Recordings = append(out.Recordings, s.uploads.names()...)
 	}
 	if s.recordings == "" {
 		return out, nil

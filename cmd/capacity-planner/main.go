@@ -29,6 +29,7 @@
 //	capacity-planner serve           [--recordings DIR] [--prometheus URL capture's flags --namespace NS [--allowed-namespaces NS,...]]
 //	                                 [--listen 127.0.0.1:8080] [--auth none|kubernetes --tls-cert-file F --tls-key-file F [--token-audiences A,...]]
 //	                                 [--listen-all-in-container (in a container: --listen 0.0.0.0:PORT, no auth)]
+//	                                 [--allow-upload [--upload-max-size 256Mi]]
 //	capacity-planner version         (the release and commit; the controller of the recordings is released under the same tag)
 //
 // capture writes the window's cycle inputs (internal/whatifsource);

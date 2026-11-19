@@ -242,6 +242,10 @@ async function start() {
   el("rectrunc").hidden = !s.recordingsTruncated;
   el("kprom").disabled = !s.prometheus;
   el("krec").disabled = s.recordings.length === 0;
+  el("upfield").hidden = !s.upload;
+  if (s.upload) {
+    el("uphint").textContent = `.jsonl or .jsonl.gz, at most ${mib(s.upload.maxBytes)}. The server keeps the last 4 until it restarts; everyone who opens this page sees them.`;
+  }
   // The page opens on a Prometheus window, the last hour ending now; a
   // server with recordings alone opens on its first.
   let kind = s.prometheus ? "prometheus" : s.recordings.length ? "recording" : "";
@@ -250,6 +254,11 @@ async function start() {
   const refused = linked.get("recording") || linked.get("namespace") ? sourceProblem(linked.toString(), s) : "";
   if (!refused) kind = linkSource() || kind;
   showScenarios();
+  if (!kind && s.upload) {
+    setStatus("Upload a recording to start.");
+    el("source").open = true;
+    return;
+  }
   if (!kind) {
     setStatus("This server reads no source: start it with --prometheus or --recordings.", true);
     el("source").open = true;
@@ -312,13 +321,21 @@ async function loadInputs() {
   const seq = ++state.seq;
   state.link = linkAtLoadStart(state.link, seq);
   el("load").disabled = true;
+  let tick = 0;
   try {
     const req = {source: sourceRequest()};
     if (el("model").value.trim()) req.model = el("model").value.trim();
     if (el("pvariant").value.trim()) req.prefillVariant = el("pvariant").value.trim();
     if (el("dvariant").value.trim()) req.decodeVariant = el("dvariant").value.trim();
-    setStatus(req.source.kind === "prometheus" ? "Reading the Prometheus window (seconds to a minute)..." : "Replaying the recording...");
+    const loading = req.source.kind === "prometheus" ? "Reading the Prometheus window (seconds to a minute)" :
+      "Replaying the recording (a day-long one takes a minute or two; asking again starts a second load)";
+    setStatus(loading + "...");
+    const t0 = Date.now();
+    tick = setInterval(() => {
+      if (seq === state.seq) setStatus(`${loading}... ${Math.round((Date.now() - t0) / 1000)} s`);
+    }, 1000);
     const inputs = await api("POST", "v1/inputs", req);
+    clearInterval(tick);
     if (seq !== state.seq) return;
     setInputs(inputs);
     const end = linkAtLoadEnd(state.link, seq, state.seq, true);
@@ -327,6 +344,7 @@ async function loadInputs() {
     el("source").open = false;
     plan();
   } catch (e) {
+    clearInterval(tick);
     const end = linkAtLoadEnd(state.link, seq, state.seq, false);
     state.link = end.link;
     let opened = "";
@@ -339,6 +357,60 @@ async function loadInputs() {
   } finally {
     el("load").disabled = false;
   }
+}
+
+// mib is n bytes in MiB, for the upload's words.
+function mib(n) {
+  return `${Math.round(n / 1048576)} MiB`;
+}
+
+// uploadRecording sends the file picked to the server (POST v1/recordings),
+// showing how much of it has gone, then picks it as the recording and loads
+// it. The server names it; the file's own name is never sent. XMLHttpRequest,
+// not fetch: only it reports an upload's progress.
+function uploadRecording() {
+  const file = el("upfile").files[0];
+  if (!file) {
+    setStatus("Pick a file to upload.", true);
+    return;
+  }
+  const max = state.sources.upload.maxBytes;
+  if (file.size > max) {
+    setStatus(`${file.name} is ${mib(file.size)}, more than this server takes (${mib(max)}).`, true);
+    return;
+  }
+  el("upload").disabled = el("load").disabled = true;
+  const done = () => { el("upload").disabled = el("load").disabled = false; };
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "v1/recordings");
+  xhr.setRequestHeader("Content-Type", "application/octet-stream");
+  xhr.upload.onprogress = e => {
+    if (e.lengthComputable) setStatus(`Uploading ${file.name}: ${Math.floor(100 * e.loaded / e.total)}%`);
+  };
+  xhr.upload.onload = () => setStatus(`Checking ${file.name}: the server reads every line once...`);
+  xhr.onerror = () => { done(); setStatus(`Could not upload ${file.name}: the connection failed.`, true); };
+  xhr.onload = () => {
+    done();
+    let doc = null;
+    try { doc = JSON.parse(xhr.responseText); } catch (e) { doc = null; }
+    if (xhr.status !== 200 && xhr.status !== 201) {
+      setStatus(`Could not upload ${file.name}: ${xhr.status}: ${(doc && doc.error) || xhr.statusText}`, true);
+      return;
+    }
+    const s = state.sources;
+    if (!s.recordings.includes(doc.name)) {
+      s.recordings.unshift(doc.name);
+      el("rec").insertAdjacentHTML("afterbegin", `<option>${esc(doc.name)}</option>`);
+    }
+    el("rec").value = doc.name;
+    el("cycle").value = 0;
+    el("krec").disabled = false;
+    el("krec").checked = true;
+    showKind();
+    setStatus(`Uploaded ${file.name} as ${doc.name}.`);
+    loadInputs();
+  };
+  xhr.send(file);
 }
 
 // setInputs starts a session from the inputs: the recorded replicas, the
@@ -1880,6 +1952,7 @@ function wire() {
   el("unpin").onclick = unpin;
   el("kprom").onchange = el("krec").onchange = el("lasthour").onchange = showKind;
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
+  el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
 }
 
