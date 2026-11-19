@@ -208,6 +208,28 @@ SEED_SUBPATH=engine-cache NODE_NAME=n1 "$SH" "$P/pub.sh" > "$P/pub.out" 2>&1; rc
 [ "$rc" = 0 ] && [ "$(cat "$P/seed/engine-cache/vllm/torch_compile_cache/keyN/f")" = n ] && [ "$(cat "$P/seed/engine-cache/triton/t/f")" = t ] \
     && [ "$(cat "$P/seed/engine-cache/vllm/torch_compile_cache/keyS/f")" = s ] && grep -q "published from n1: 2 file(s) copied" "$P/pub.out" \
     && ok "publish: a node's caches are merged into the seed, the seed's own entries kept" || fail "publish run: rc=$rc $(cat "$P/pub.out")"
+# the engine-cache guard's own entries are never copied, either way: the
+# .writable marker (it names the user who wrote it), FlashInfer's .engine-uid,
+# an owner probe left behind, and a second user's .uid-<uid> copies, inside a
+# cache (vllm/.uid-1000) or beside a key (pycache/k.uid-1000)
+Q="$T/guardents"
+for side in node:n seed/engine-cache:s; do
+    qk="${side#*:}"; side="$Q/${side%%:*}"
+    mkdir -p "$side/vllm/torch_compile_cache/key-$qk" "$side/vllm/.uid-1000/torch_compile_cache/u" "$side/pycache/k.uid-1000" "$side/flashinfer/k"
+    : > "$side/vllm/torch_compile_cache/key-$qk/f"; : > "$side/vllm/.writable"; : > "$side/vllm/.own.a1B2c3"
+    : > "$side/vllm/.uid-1000/torch_compile_cache/u/f"; : > "$side/pycache/k.uid-1000/x.pyc"; : > "$side/flashinfer/k/.engine-uid"
+done
+mkdir -p "$Q/cache"
+sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$Q/pubseed|g; s|/engine-cache|$Q/node|g" > "$Q/pub.sh"
+sed -n "/^preparer_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$Q/seed|g; s|/engine-cache|$Q/cache|g; s|^trap .*||" > "$Q/p.sh"
+SEED_SUBPATH=engine-cache NODE_NAME=n1 "$SH" "$Q/pub.sh" > "$Q/pub.out" 2>&1; rc=$?
+SEED_MARKER=.seeded SEED_ID=workload-pvc:engine-cache SEED_SUBPATH=engine-cache MARKER=.prepared NODE_NAME=n1 "$SH" "$Q/p.sh" > "$Q/prep.out" 2>&1; rc2=$?
+pub_got="$(cd "$Q/pubseed/engine-cache" 2>/dev/null && find . -mindepth 1 | sort | tr '\n' ' ')"
+prep_got="$(cd "$Q/cache" && find vllm pycache flashinfer -mindepth 1 | sort | tr '\n' ' ')"
+[ "$rc" = 0 ] && [ "$rc2" = 0 ] && grep -q "published from n1: 1 file(s) copied" "$Q/pub.out" && grep -q "1 file(s) copied" "$Q/prep.out" \
+    && [ "$pub_got" = "./flashinfer ./flashinfer/k ./pycache ./vllm ./vllm/torch_compile_cache ./vllm/torch_compile_cache/key-n ./vllm/torch_compile_cache/key-n/f " ] \
+    && [ "$prep_got" = "flashinfer/k vllm/torch_compile_cache vllm/torch_compile_cache/key-s vllm/torch_compile_cache/key-s/f " ] \
+    && ok "merge: seed and publish copy no .writable, .engine-uid, owner probe or .uid-<uid> copy" || fail "merge guard entries: rc=$rc/$rc2 publish=[$pub_got] prepare=[$prep_got] $(cat "$Q/pub.out" "$Q/prep.out" | tr '\n' ' ')"
 # Python bytecode: pycache/ is prepared 1777 like the other three (an engine
 # under another UID can create its image's key directory), and seed and
 # publish carry it -- each node of a LeaderWorkerSet needs its own copy.
@@ -932,6 +954,17 @@ if [ "$rc" = 0 ] && grep -q '3 usable node(s) x 2 key(s): 6 present, 0 absent, 0
 else fail "verify all present: rc=$rc $(tail -3 "$T/ecv-all.out" | tr '\n' ';')"; fi
 grep -q "^exec -n check-ns ec-a -c prepare -- /bin/sh -c " "$T/calls" && ! grep -q '^exec -n check-ns other-ds' "$T/calls" \
     && ok "verify: reads through our preparer pods only, in the prepare container" || fail "verify exec calls: $(grep '^exec' "$T/calls" | cut -c1-60 | tr '\n' ';')"
+# a second user's own copies on a node are listed with their size, beside
+# the verdict on the first user's keys, which they do not change
+ecv_reset; mkdir -p "$T/ecv/ec-a/vllm/.uid-1000/torch_compile_cache/k" "$T/ecv/ec-a/pycache/k.uid-1000"
+head -c 8192 /dev/zero > "$T/ecv/ec-a/vllm/.uid-1000/torch_compile_cache/k/f"; : > "$T/ecv/ec-a/pycache/k.uid-1000/x.pyc"
+ln -s / "$T/ecv/ec-a/pycache/j.uid-1000"
+rc="$(ecv "$T/ecv-uid.out" --keys "$K1")"
+if [ "$rc" = 0 ] && grep -qE '^    other users. own copies on n-a, not checked above: vllm/\.uid-1000 \([0-9]+ KiB\), pycache/k\.uid-1000 \([0-9]+ KiB\)$' "$T/ecv-uid.out" \
+    && [ "$(grep -c 'own copies on' "$T/ecv-uid.out")" = 1 ]; then
+    ok "verify: a node's second-user copies are listed with their size (a link is not one), and the verdict stands"
+else fail "verify second-user copies: rc=$rc $(grep -E 'own copies|present,' "$T/ecv-uid.out" | tr '\n' ';')"; fi
+rm -rf "$T/ecv/ec-a/vllm/.uid-1000" "$T/ecv/ec-a/pycache/k.uid-1000" "$T/ecv/ec-a/pycache/j.uid-1000"
 # one node lacks a key: a fail, naming the node and the key
 ecv_reset; rm -rf "$T/ecv/ec-b/vllm/$K2"
 rc="$(ecv "$T/ecv-miss.out" --keys "$K1,$K2")"
@@ -1331,6 +1364,17 @@ PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns pd-decode-0 pd-pre
 PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns fell-back > "$T/keys3.out" 2> "$T/keys3.err"; rc=$?
 [ "$(cat "$T/keys3.out")" = "$K1@rank_0_0" ] && grep -q 'compiled under /root/.cache/vllm, not VLLM_CACHE_ROOT=/engine-cache/vllm' "$T/keys3.err" \
     && ok "keys: an engine that fell back off the cache root still names its key, and says the start did not fill the node cache" || fail "keys fell back: out=$(cat "$T/keys3.out") err=$(tr '\n' ' ' < "$T/keys3.err")"
+# an engine of a second user on the node: the guard gives it its own
+# directory beside the root (else inside it), which is not a fall-back
+cat > "$T/engine-logs/second-user" <<'EOF'
+engine cache VLLM_CACHE_ROOT=/engine-cache/vllm is another user's; using /engine-cache/vllm/.uid-1000, user 1000's own
+INFO 10-14 [backends.py:550] Using cache directory: /engine-cache/vllm/.uid-1000/torch_compile_cache/3f2a9c1d0e/rank_0_0/backbone for vLLM's torch.compile
+EOF
+printf /engine-cache/vllm > "$T/engine-root/second-user"
+PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns second-user > "$T/keys-uid.out" 2> "$T/keys-uid.err"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$T/keys-uid.out")" = "$K1@rank_0_0" ] \
+    && grep -q 'compiled under /engine-cache/vllm/.uid-1000, its user.s own directory beside VLLM_CACHE_ROOT=/engine-cache/vllm' "$T/keys-uid.err" && ! grep -q 'fell back' "$T/keys-uid.err" \
+    && ok "keys: an engine of a second user names its key under its own directory, and is not called a fall-back" || fail "keys second user: rc=$rc out=$(cat "$T/keys-uid.out") err=$(tr '\n' ' ' < "$T/keys-uid.err")"
 PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns aot > "$T/keys-aot.out" 2> "$T/keys-aot.err"; rc=$?
 [ "$rc" = 0 ] && [ "$(cat "$T/keys-aot.out")" = "$AOT@rank_0_0+rank_1_0" ] && ! grep -q WARNING "$T/keys-aot.err" \
     && ok "keys: an AOT compile names its key under the cache root (torch_compile_cache/torch_aot_compile/<hash>), with its ranks" || fail "keys AOT: rc=$rc out=$(cat "$T/keys-aot.out") err=$(tr '\n' ' ' < "$T/keys-aot.err")"

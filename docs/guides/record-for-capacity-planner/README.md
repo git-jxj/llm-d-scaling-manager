@@ -335,10 +335,11 @@ unset PREFILL_ARGS
 while IFS='=' read -r k v; do
   case "${k}" in NAMESPACE|FROM|TO|FROM_ISO|TO_ISO|CAPTURE_FROM|ENGINE|DECODE_ARGS|PREFILL_ARGS) export "${k}=${v}" ;; esac
 done < planner-export/window.txt
+[ -n "${PREFILL_ARGS:-}" ] || unset PREFILL_ARGS
 case "${FROM}:${TO}:${CAPTURE_FROM}" in *[!0-9:]*|:*|*::*|*:) echo "STOP: FROM, TO and CAPTURE_FROM in window.txt must be Unix seconds" ;; esac
 case "${ENGINE}" in vllm|sglang) ;; *) echo "STOP: ENGINE in window.txt must be vllm or sglang" ;; esac
 echo "namespace ${NAMESPACE}, engine ${ENGINE}, decode arguments: ${DECODE_ARGS}"
-echo "prefill arguments: ${PREFILL_ARGS-none in window.txt, prefill takes the decode arguments}"
+echo "prefill arguments: ${PREFILL_ARGS-none, prefill takes the decode arguments}"
 
 # Writes TSDB blocks.
 ${PROMTOOL} tsdb create-blocks-from openmetrics planner-export.om planner-tsdb
@@ -354,8 +355,8 @@ prometheus --config.file=empty.yml --storage.tsdb.path=planner-tsdb \
 until curl -sf http://127.0.0.1:9091/-/ready >/dev/null; do sleep 1; done
 
 # Then capture as in the first path, against the local copy, from 5 minutes into the export.
-# Each role is priced with its own engine arguments: DECODE_ARGS, and PREFILL_ARGS when window.txt has that line.
-# An empty PREFILL_ARGS line means the prefill engine runs its defaults; with no line, prefill takes DECODE_ARGS.
+# Each role is priced with its own engine arguments: DECODE_ARGS, and PREFILL_ARGS when window.txt has them.
+# With no PREFILL_ARGS line or an empty one (an older export wrote one empty), prefill takes DECODE_ARGS.
 bin/capacity-planner capture --prometheus http://127.0.0.1:9091 --namespace "${NAMESPACE}" --kube-state-metrics \
   --from "${CAPTURE_FROM}" --to "${TO}" --engine "${ENGINE}" --engine-args "${DECODE_ARGS}" \
   ${PREFILL_ARGS+--prefill-engine-args "${PREFILL_ARGS}"} \

@@ -477,7 +477,9 @@ It replays the recording once and answers, for each shape and load:
   Each role's standing is in the sentence ("decode: one fewer holds even
   at the peak 43.2 r/s; prefill: no spare (1.9% under its operating
   point)"), with any prefill imbalance f that no run learned at that pod
-  count. The `checks` lines give each fleet tried and its numbers.
+  count. That f is assumed at 1.5. With `--imbalance-across-counts`
+  (opt-in), it is read off the pod counts that were learned, or 1.15 with
+  none. The `checks` lines give each fleet tried and its numbers.
 - **Per shape:** utilization at the load (decode KV fill, batch slots, wait
   probability; prefill utilization pooled and on the busiest pod), the
   prefill, decode and fleet knees in req/s and output tok/s with what binds

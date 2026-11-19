@@ -309,6 +309,10 @@ merge() {
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     n="${e##*/}"; t="$2/$n"
+    # The engine-cache guard's own entries are not cache content: a marker
+    # names the user who wrote it, and a .uid-<uid> directory is a second
+    # user's copy. Copied, both would be the copier's, on every node.
+    case "$n" in .writable|.engine-uid|.own.*|.uid-[0-9]*|*.uid-[0-9]*) continue ;; esac
     if [ -L "$e" ]; then
       links="$links."; echo "engine cache: skipped $e: a symlink, not cache content"
     elif [ -e "$t" ] || [ -L "$t" ]; then
@@ -870,6 +874,10 @@ merge() {
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     n="${e##*/}"; t="$2/$n"
+    # The engine-cache guard's own entries are not cache content: a marker
+    # names the user who wrote it, and a .uid-<uid> directory is a second
+    # user's copy. Copied, both would be the copier's, on every node.
+    case "$n" in .writable|.engine-uid|.own.*|.uid-[0-9]*|*.uid-[0-9]*) continue ;; esac
     if [ -L "$e" ]; then
       links="$links."; echo "engine cache: skipped $e: a symlink, not cache content"
     elif [ -e "$t" ] || [ -L "$t" ]; then
@@ -1159,7 +1167,14 @@ cmd_keys() {
                 # a relative root is resolved against the engine working directory, which the log does not show
                 log_warning "${pod}: VLLM_CACHE_ROOT=${root} is a relative path, so whether this start filled the node cache cannot be told; set it to the absolute mount path"
             elif [ "$base" != "$root" ]; then
-                log_warning "${pod}: compiled under ${base}, not VLLM_CACHE_ROOT=${root} -- the cache root was not writable and the engine fell back; this start did not fill the node cache"
+                case "$base" in
+                    # The guard's own directory for a second user: another
+                    # user's engine started on the node first.
+                    "$root".uid-[0-9]*|"$root"/.uid-[0-9]*)
+                        log_warning "${pod}: compiled under ${base}, its user's own directory beside VLLM_CACHE_ROOT=${root} -- an engine of another user started on this node first; verify reads ${root} and will not find this key there" ;;
+                    *)
+                        log_warning "${pod}: compiled under ${base}, not VLLM_CACHE_ROOT=${root} -- the cache root was not writable and the engine fell back; this start did not fill the node cache" ;;
+                esac
             fi
         done
     done
@@ -1326,6 +1341,14 @@ for s in "$@"; do
     esac
   fi
 done
+# Second users' own copies (the engine-cache guard's <dir>.uid-<uid> and
+# <dir>/.uid-<uid>), with their size in KiB: disk the keys above do not show.
+b="${root%/*}"
+for u in "$b"/*.uid-[0-9]* "$b"/*/.uid-[0-9]* "$b"/*/*.uid-[0-9]*; do
+  [ -d "$u" ] && [ ! -L "$u" ] || continue
+  k=$(du -sk "$u" 2>/dev/null); k=${k%%[!0-9]*}
+  echo "ecu ${u#"$b"/} ${k:-?}"
+done
 VERIFY
 }
 
@@ -1449,6 +1472,8 @@ cmd_verify() {
                    [ -n "$why" ] || why="no answer from ${pod} for this key (exit ${xrc})" ;;
             esac
         done
+        line="$(printf '%s\n' "$out" | awk '$1 == "ecu" { printf "%s%s (%s KiB)", (n++ ? ", " : ""), $2, $3 }')"
+        [ -z "$line" ] || echo "    other users' own copies on ${node}, not checked above: ${line}"
         [ -z "$why" ] || echo "    ${why}"
     done < <(jq -r --arg ds "$CLAIM" --slurpfile pods "$pods_file" \
         '.items[] as $node

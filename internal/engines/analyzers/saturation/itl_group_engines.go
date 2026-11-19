@@ -9,20 +9,22 @@ import (
 )
 
 // The ITL line of a LeaderWorkerSet group whose Pods each run an engine
-// reads the engines one by one (domain.EngineRows), where a controller
-// before it read the group's merged row. The two are different readings of
-// the same replicas: a group's row is a mean over its engines, one point a
-// cycle, and its engines are a point each around it. A window that held the
-// means and goes on to take the engines mixes them until BucketRetention
-// ages the means out, and reaches its sample thresholds sooner than either
-// would alone. So the first cycle a key's rows carry a group's engines, its
-// window starts over (itlReadsEnginesFirst).
+// reads the engines one by one (domain.EngineRows). A row of several
+// Pods' engines merged, which carries no engines, is a different reading:
+// a mean over them, one point a cycle, where its engines are a point each
+// around it. A window that held such rows and goes on to take the engines
+// mixes the two until BucketRetention ages the means out, and reaches its
+// sample thresholds sooner than either would alone. So the first cycle a
+// key's rows carry a group's engines, its window starts over
+// (itlReadsEnginesFirst).
 //
-// Only that first cycle. A cycle whose group arrives as its leader's row
-// alone (its workers not reporting) is the leader's own engine, a reading
-// of the same kind, and does not clear the window again. A controller
-// restart starts the windows empty, so the first cycle after one clears
-// nothing.
+// That happens only while a controller runs: a variant whose rows had no
+// engines and now do. A controller upgrade does not reach it, since the
+// windows are not persisted and start empty, so the first cycle after a
+// restart clears nothing. Only that first cycle clears: a cycle whose group
+// arrives as its leader's row alone (its workers not reporting) is the
+// leader's own engine, a reading of the same kind, and does not clear the
+// window again.
 
 // readsEngines reports whether any of variant's rows is a group read engine
 // by engine.

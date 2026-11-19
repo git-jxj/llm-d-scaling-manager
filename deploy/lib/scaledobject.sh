@@ -2439,14 +2439,55 @@ ENGINENEED
 #   be writable: vLLM fails hard on a read-only cache directory unless the
 #   variable is unset first, and a storage hiccup must cost one compile, not
 #   the replica. PYTHONPYCACHEPREFIX too: with it set, Python reads bytecode
-#   only from it, so one it cannot write is slower than none. In the
-#   container command, before the engine starts (the command belongs to the
-#   chart, so it is not patched here):
+#   only from it, so one it cannot write is slower than none. A cache that
+#   another user's engine started first on the node is that user's: an
+#   engine of a second user keeps its own directory beside it, so it is
+#   warm from its own second start and neither user writes the other's
+#   compiled code (on a filesystem that does not report owners, every user
+#   shares it, as before). In the container command, before the engine starts (the
+#   command belongs to the chart, so it is not patched here):
 #
 #     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
 #       eval "d=\${$v:-}"
+#       d=${d%/}
 #       [ -n "$d" ] || continue
-#       if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
+#       # Does this filesystem report who owns a file? Some do not (SMB or Azure
+#       # Files with a fixed uid, a FUSE mount, NFSv4 mapping users to nobody):
+#       # a file this process just made reads as someone else's. There owners
+#       # decide nothing, and the check is only that the directory is writable.
+#       ecown=yes
+#       if mkdir -p "$d" 2>/dev/null && ecf=$(mktemp "$d/.own.XXXXXX" 2>/dev/null); then
+#         [ -O "$ecf" ] || ecown=no
+#         rm -f "$ecf"
+#       fi
+#       if [ "$ecown" = no ]; then
+#         if touch "$d/.writable" 2>/dev/null; then
+#           echo "engine cache $v=$d: this filesystem does not report file owners; using it because it is writable"
+#           continue
+#         fi
+#       # The first user to start an engine here wrote the marker, a plain file,
+#       # and owns the directory: what that engine made under it is that user's.
+#       elif [ ! -L "$d/.writable" ] && touch "$d/.writable" 2>/dev/null && [ -O "$d/.writable" ]; then
+#         continue
+#       fi
+#       # Another user's: a directory of this user's own, beside it, else inside
+#       # it. Only a real directory this user made (-O, not a link), made 755
+#       # whatever the pod's umask, so no other user can write in it.
+#       ecu=$(id -u)
+#       ecp=
+#       if [ "$ecown" = yes ]; then
+#         for p in "$d.uid-$ecu" "$d/.uid-$ecu"; do
+#           (umask 022; mkdir -p "$p") 2>/dev/null || continue
+#           if [ -d "$p" ] && [ ! -L "$p" ] && [ -O "$p" ] && chmod go-w "$p" 2>/dev/null && touch "$p/.writable" 2>/dev/null; then
+#             ecp=$p
+#             break
+#           fi
+#         done
+#       fi
+#       if [ -n "$ecp" ]; then
+#         echo "engine cache $v=$d is another user's; using $ecp, user $ecu's own"
+#         eval "$v=\$ecp"
+#       else
 #         echo "engine cache $v=$d is not writable; using the engine default instead"
 #         unset $v
 #       fi
