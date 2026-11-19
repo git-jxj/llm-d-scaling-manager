@@ -1043,7 +1043,7 @@ start.
   user's own directory (`<base>.uid-<uid>`, else `<base>/.uid-<uid>`), and
   only then the engine default. For the owner of the tree it logs
   `holds an entry this user cannot write; using <dir>, user <uid>'s own`.
-  Each fall back to the default logs one line, and FlashInfer works under
+  Each fallback to the default logs one line, and FlashInfer works under
   `$HOME`: slower, never a lost replica.
 - **Two users on one node.** The second user's engines get their own
   `flashinfer/<image key>.uid-<uid>` and log `is another user's`
