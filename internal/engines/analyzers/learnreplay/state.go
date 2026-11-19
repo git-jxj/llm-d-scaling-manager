@@ -165,6 +165,9 @@ type VariantState struct {
 	Params *capacity.EngineParams
 	// Shape is the traffic the variant served (shapeOf).
 	Shape MeasuredShape
+	// Resident is the KV a running request held, measured over the same
+	// window (residentOf); not read for a prefill variant.
+	Resident ResidentKV
 	// ShapeRange is the range of the per-cycle mean lengths over every cycle
 	// with traffic up to the one asked: what the recording saw, and what a
 	// stated shape is extrapolated past.
@@ -246,6 +249,7 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		windows  []whatif.TPOTWindow
 		engine   []whatif.TPOTWindow
 		shapes   = map[string][]shapeSample{}
+		resident = map[string][]residentSample{}
 		ttft     = newTTFTSamples()
 		lines    = newLineSamples()
 		cycleAt  = map[time.Time]int{}
@@ -284,6 +288,7 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		}
 		noteShapes(shapes, in.ReplicaMetrics, n)
 		noteRanges(ranges, shapes, n)
+		noteResident(resident, in, n)
 		ttft.note(in, n, ev.Now)
 		args := func(variant string) string {
 			if rec := r.store.Get(in.Namespace, in.ModelID, variant); rec != nil {
@@ -301,7 +306,11 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		if n == cycle {
 			st = r.stateOf(in, n, ev.Now, shapes)
 			for i := range st.Variants {
-				st.Variants[i].ShapeRange = ranges[st.Variants[i].Variant]
+				v := &st.Variants[i]
+				v.ShapeRange = ranges[v.Variant]
+				if domain.CanonicalRole(v.Role) != domain.RolePrefill {
+					v.Resident = residentOf(resident[v.Variant], v.Shape)
+				}
 			}
 			r.fillTTFT(st, in, ttft)
 			return true

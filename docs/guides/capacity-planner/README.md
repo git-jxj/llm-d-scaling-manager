@@ -336,6 +336,27 @@ kill %1
 A refused figure, or an error, is explained in
 [Troubleshooting](troubleshooting.md).
 
+### Why decode capacity can drop on prefix-heavy traffic
+
+A prefix-cache hit saves prefill work. It does not save decode memory, unless
+another running request holds the same blocks. A request that reuses an old
+prefix still keeps its whole context in the KV cache while it decodes. So the
+planner prices decode at the KV a running request was measured to hold, not at
+the prompt minus its cached part. On traffic with long, mostly cached prompts,
+fewer requests fit in the cache than the hit rate suggests, and the decode knee
+comes out lower than a planner that trusts the hit rate.
+
+The `kvPerRequest` term says where its figure came from:
+
+| Source | Meaning |
+| --- | --- |
+| `measured` | Tokens in use over running requests, on the decode rows. |
+| `measured, scaled to the shape asked` | That reading, scaled to the prompt and output you typed. |
+| `..., above the context` | Added to either one above when the reading is more than twice the whole context. The engine keeps extra KV per request, such as a draft model's. It is priced as read. |
+| `measured below the prefix-hit discount, priced at it` | The reading was below the hit-discounted figure, so the discounted figure is used. |
+| `measured above the context on SGLang, priced at the context` | SGLang reports its busiest rank against the whole pod, so the reading is held at the whole context. |
+| `context, no resident reading` | No usable reading. The whole context is priced: the prompt plus half the output, more where output lengths vary. |
+
 ## When a term is refused
 
 A source that did not see enough load cannot learn every term, and the page

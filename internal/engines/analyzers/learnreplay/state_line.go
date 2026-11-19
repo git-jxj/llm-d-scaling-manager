@@ -115,9 +115,24 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 		case ramp:
 			kept = l.ramps
 		}
-		kept[rm.VariantName] = keepCycles(append(kept[rm.VariantName], whatif.LineRow{Cycle: cycle, At: at, K: k, KVPerRequest: s.KVreq,
+		kept[rm.VariantName] = keepCycles(append(kept[rm.VariantName], whatif.LineRow{Cycle: cycle, At: at, K: k, KVPerRequest: rowResidentKV(rm, s),
 			TokenRate: rm.GenerationTokenRate, Ramp: ramp, AboveBand: k > top}), shapeCycles)
 	}
+}
+
+// rowResidentKV is the KV a request held on the row, as the line check prices
+// the row at (whatif.LineRow.KVPerRequest): the row's tokens in use over its
+// running requests, read from the same scrape (state_resident.go), else the
+// row's shape s with no prefix-cache hit. A hit saves no decode-resident KV
+// unless another running request shares the block, and a check against the
+// discount prices more sequences than the row held. A reading is held above
+// the discount, as the planner holds its price (pricedVariant.residentKV).
+func rowResidentKV(rm domain.ReplicaMetrics, s shape.Shape) float64 {
+	if rm.RunningRequestsKnown && rm.KvUsageInstantKnown && rm.RunningRequests > 0 && rm.KvUsageInstant > 0 &&
+		rm.TotalKvCapacityTokens > 0 && rm.TotalKvCapacityTokens != math.MaxInt64 {
+		return max(rm.KvUsageInstant*float64(rm.TotalKvCapacityTokens)/float64(rm.RunningRequests), s.KVreq)
+	}
+	return shape.New(s.AvgInputTokens, s.AvgOutputTokens, 0).WithOutputDispersion(s.OutputDispersion).KVreq
 }
 
 // onRamp notes the pod's reading now and reports whether the row is on a ramp:

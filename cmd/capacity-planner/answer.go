@@ -18,6 +18,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
@@ -368,12 +369,93 @@ type pricedVariant struct {
 	assumedIL, assumedOL bool
 	// assumedHit says the prefix-hit rate was stated.
 	assumedHit bool
-	flags      []whatif.Flag
-	lines      whatif.LineResamples
+	// kvSource says where the decode KV per request came from (residentKV).
+	kvSource string
+	flags    []whatif.Flag
+	lines    whatif.LineResamples
 	// model is the model served, and stated the pricing flags set that put
 	// every figure outside the envelope (statedOutside).
 	model  string
 	stated []string
+}
+
+// Where the decode KV per request came from (pricedVariant.residentKV), as
+// the inputs carry it.
+const (
+	// kvMeasured is the KV a running request held on the recording's rows.
+	kvMeasured = "measured"
+	// kvMeasuredScaled is that reading scaled to the lengths asked.
+	kvMeasuredScaled = "measured, scaled to the shape asked"
+	// kvContext is no reading: the whole context, IL + D x OL/2.
+	kvContext = "context, no resident reading"
+	// kvDiscountFloor is a reading below the shape's prefix-hit discount,
+	// priced at the discount.
+	kvDiscountFloor = "measured below the prefix-hit discount, priced at it"
+	// kvAboveContext marks a reading above aboveContextFactor times the whole
+	// context, priced as read.
+	kvAboveContext = ", above the context"
+	// kvSGLangContext is an SGLang reading above the whole context, priced at
+	// the context.
+	kvSGLangContext = "measured above the context on SGLang, priced at the context"
+)
+
+// aboveContextFactor is how far above the whole context a reading is before
+// its source says so: an engine's own KV beyond the context (an indexer's
+// keys, a draft model's KV) is priced as read, but a reader should see it.
+const aboveContextFactor = 2
+
+// residentKV is the KV one running request holds on the decode side, as the
+// decode line is priced at, and sets kvSource.
+//
+// A prefix-cache hit saves compute, but on the decode side the whole context
+// is resident: a hit saves KV only where another running request holds the
+// same blocks (saturation's prefix_cache_kv.go). So the shape's KVreq, IL x
+// (1 - hit) + D x OL/2, is never the price. The price is the measured KV per
+// running request (learnreplay.ResidentKV), which also counts what the engine
+// holds beyond the context (an indexer's keys, a draft model's KV) and so is
+// not capped at it. A shape the flags state scales the reading by the ratio
+// of its context to the measured one's, keeping the measured overhead factor.
+// With no reading, the whole context, IL + D x OL/2.
+//
+// A reading is held above the discount, as the controller's analyzer holds
+// it (withResidentKV): below it is requests part way through their prefill,
+// or a spread of output lengths D under-states, not more sharing than the hit
+// rate allows, and pricing it would raise the knee.
+//
+// On SGLang a reading is held at the whole context: SGLang publishes the
+// busiest rank's usage and running count against the pod's whole capacity
+// (prefix_cache_kv.go), so on data-parallel attention it over-reads by about
+// the rank count, and the knee would come out that many times low.
+//
+// Not gated by count as the analyzer's reading is: few requests read a prefix
+// they truly share high, each carrying the whole of it, so a window of low
+// concurrency on a shared prefix prices the knee low, at most by 1/(1 - hit).
+// That errs towards more replicas; a reading above aboveContextFactor times
+// the context says so in its source.
+func (pv *pricedVariant) residentKV() float64 {
+	d := pv.shape.OutputDispersion
+	whole := shape.New(pv.shape.AvgInputTokens, pv.shape.AvgOutputTokens, 0).WithOutputDispersion(d).KVreq
+	r, m := pv.state.Resident, pv.state.Shape
+	measured := shape.New(m.InputTokens, m.OutputTokens, 0).WithOutputDispersion(d).KVreq
+	var kv float64
+	switch {
+	case !r.Read() || !(measured > 0):
+		pv.kvSource = kvContext
+		return whole
+	case pv.assumedIL || pv.assumedOL:
+		pv.kvSource, kv = kvMeasuredScaled, r.PerRequest*whole/measured
+	default:
+		pv.kvSource, kv = kvMeasured, r.PerRequest
+	}
+	switch {
+	case kv < pv.shape.KVreq:
+		pv.kvSource, kv = kvDiscountFloor, pv.shape.KVreq
+	case kv > whole && pv.state.Params != nil && pv.state.Params.Engine == inferenceengine.EngineSGLang:
+		pv.kvSource, kv = kvSGLangContext, whole
+	case kv > aboveContextFactor*whole:
+		pv.kvSource += kvAboveContext
+	}
+	return kv
 }
 
 // assumed reports a shape the flags assumed, in part or whole.
@@ -419,7 +501,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		perRank := pv.perRank
 		pv.decode = whatif.Decode{
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
-			KVPerRequest: pv.shape.KVreq, OutputTokens: pv.shape.AvgOutputTokens,
+			KVPerRequest: pv.residentKV(), OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
 			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL},
 		}
