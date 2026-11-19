@@ -287,6 +287,11 @@ type Estimate struct {
 	// learned f at any count.
 	FByPods        map[int]float64
 	FSamplesByPods map[int]int
+	// FMultiRank is a kept minute with a row of more than one engine rank: a
+	// data-parallel pod, or an LWS group whose every Pod runs an engine,
+	// collapsed to one row. f is then the spread across rows; the spread
+	// across the engines inside a row is not seen, and f reads low for it.
+	FMultiRank bool
 
 	// Admitted is how many rows were admitted this cycle, and Refused how
 	// many were not, by reason.
@@ -339,6 +344,10 @@ type fSample struct {
 	at   time.Time
 	f    float64
 	pods int
+	// multiRank: a row of the minute ran more than one engine rank (a
+	// data-parallel pod, or an LWS group collapsed to one row), so f is of
+	// rows, not of engines.
+	multiRank bool
 }
 
 // keyState is what one key keeps.
@@ -455,7 +464,7 @@ func (o *Observer) Observe(c Cycle) Estimate {
 			}
 		}
 		ps.add(s)
-		shares = append(shares, share{rate: s.rate, rateOK: s.rateOK, requests: rr, requestsOK: rrOK})
+		shares = append(shares, share{rate: s.rate, rateOK: s.rateOK, requests: rr, requestsOK: rrOK, multiRank: s.multiRank})
 	}
 	ks.prune(c.Now)
 

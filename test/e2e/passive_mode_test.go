@@ -215,12 +215,29 @@ func (m passiveModel) scale(n int32) {
 	GinkgoWriter.Printf("PASSIVE-EVIDENCE %s kubectl scale --replicas=%d at %s\n", m.deployment(), n, time.Now().UTC().Format(time.RFC3339))
 }
 
-// specReplicas reads the Deployment's spec.replicas.
+// specReadAttempts is how many times specReplicas tries a read that fails
+// transiently (an API-server timeout) before failing the spec.
+const specReadAttempts = 5
+
+// specReplicas reads the Deployment's spec.replicas. A transient failure is
+// retried a second apart; any other failure, NotFound included, fails at once.
 func (m passiveModel) specReplicas() int32 {
 	GinkgoHelper()
-	dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, m.deployment(), metav1.GetOptions{})
-	Expect(err).NotTo(HaveOccurred())
-	return ptr.Deref(dep.Spec.Replicas, 1)
+	var err error
+	for attempt := 1; attempt <= specReadAttempts; attempt++ {
+		dep, getErr := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, m.deployment(), metav1.GetOptions{})
+		if getErr == nil {
+			return ptr.Deref(dep.Spec.Replicas, 1)
+		}
+		err = getErr
+		if !utils.IsTransientReadError(err) {
+			break
+		}
+		GinkgoWriter.Printf("PASSIVE-EVIDENCE %s read %d of %d failed, retrying: %v\n", m.deployment(), attempt, specReadAttempts, err)
+		time.Sleep(time.Second)
+	}
+	Expect(err).NotTo(HaveOccurred(), "reading %s spec.replicas", m.deployment())
+	return 0
 }
 
 func (m passiveModel) waitReady(n int32) {
@@ -294,7 +311,8 @@ type replicaSample struct {
 	at                    time.Duration
 	spec, status, updated int32
 	ready                 int32
-	err                   string
+	err                   string // the failed read's message, for the timeline
+	readErr               error  // the failed read, nil when it succeeded
 }
 
 // replicaRecorder samples a Deployment every second until stopped.
@@ -324,7 +342,7 @@ func recordReplicasIn(namespace, deployment string) *replicaRecorder {
 			s := replicaSample{at: time.Since(r.start).Round(time.Second)}
 			dep, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deployment, metav1.GetOptions{})
 			if err != nil {
-				s.err, s.spec = err.Error(), -1
+				s.err, s.readErr, s.spec = err.Error(), err, -1
 			} else {
 				s.spec = ptr.Deref(dep.Spec.Replicas, 1)
 				s.status, s.updated, s.ready = dep.Status.Replicas, dep.Status.UpdatedReplicas, dep.Status.ReadyReplicas
@@ -374,6 +392,18 @@ func specValues(samples []replicaSample) []int32 {
 		}
 	}
 	return out
+}
+
+// expectSpecHeld fails unless the samples show spec.replicas held at want.
+// A transient read failure (the API server timing out) says nothing about the
+// Deployment and is skipped; utils.CheckReplicasHeld has the rules.
+func expectSpecHeld(label string, samples []replicaSample, want int32) {
+	GinkgoHelper()
+	reads := make([]utils.ReplicaRead, len(samples))
+	for i, s := range samples {
+		reads[i] = utils.ReplicaRead{At: s.at, Spec: s.spec, Err: s.readErr}
+	}
+	Expect(utils.CheckReplicasHeld(reads, want)).To(Succeed(), "%s; the timeline is above", label)
 }
 
 // metricSample is one read of the controller's published view of a model.
@@ -446,9 +476,7 @@ func (m passiveModel) expectHeld(pc *utils.PrometheusClient, label string, held 
 			label, s.at, s.desired, s.current, s.mode, s.on, d, s.wantsAway, s.hpa)
 		wanted = wanted || s.wantsAway
 	}
-	for _, s := range samples {
-		Expect(s.spec).To(Equal(held), "%s: spec.replicas moved to %d at +%s; the timeline is above", label, s.spec, s.at)
-	}
+	expectSpecHeld(label, samples, held)
 	Expect(wanted).To(BeTrue(), "%s: the controller never wanted to scale %s from %d during the window, so the hold proved nothing", label, d, held)
 	Expect(metrics[len(metrics)-1].on).To(Equal(1.0), "%s: llmsm_passive_mode{mode=%q} was not 1 at the end of the window", label, mode)
 }
@@ -851,10 +879,7 @@ var _ = Describe("Passive mode: hold at zero", Serial, Label("full", "passive"),
 		sendQueuedRequests(fmt.Sprintf("passive-zero-trigger-%d", time.Now().Unix()), m.modelID())
 		rec := recordReplicas(m.deployment())
 		time.Sleep(passiveHoldWindow)
-		samples := rec.Stop("case3-zero")
-		for _, s := range samples {
-			Expect(s.spec).To(Equal(int32(0)), "a passive model at zero was woken at +%s", s.at)
-		}
+		expectSpecHeld("case3-zero: a passive model at zero was woken", rec.Stop("case3-zero"), 0)
 		expectNoWake(since, m.modelID(), m.scaledObject())
 		_, _, on := m.metricsOf(pc, "hold")
 		GinkgoWriter.Printf("PASSIVE-METRICS case3 llmsm_passive_mode{mode=\"hold\"}=%v\n", on)
@@ -865,10 +890,7 @@ var _ = Describe("Passive mode: hold at zero", Serial, Label("full", "passive"),
 		m.scale(2)
 		rec := recordReplicas(m.deployment())
 		time.Sleep(passiveHoldWindow)
-		samples := rec.Stop("case3-scale-0-to-2")
-		for _, s := range samples {
-			Expect(s.spec).To(Equal(int32(2)), "the count set by hand did not stick: %d at +%s", s.spec, s.at)
-		}
+		expectSpecHeld("case3-scale-0-to-2: the count set by hand did not stick", rec.Stop("case3-scale-0-to-2"), 2)
 		d, cur, on := m.metricsOf(pc, "hold")
 		GinkgoWriter.Printf("PASSIVE-METRICS case3-after-scale llmsm_desired_replicas=%v llmsm_current_replicas=%v llmsm_passive_mode{mode=\"hold\"}=%v\n", d, cur, on)
 	})
@@ -927,9 +949,7 @@ var _ = Describe("Passive mode: observe beside a foreign trigger", Serial, Label
 		sendQueuedRequests(fmt.Sprintf("passive-obs-trigger-%d", time.Now().Unix()), m.modelID())
 		rec := recordReplicas(m.deployment())
 		time.Sleep(passiveHoldWindow)
-		for _, s := range rec.Stop("case5-observe-zero") {
-			Expect(s.spec).To(Equal(int32(0)), "an observed model at zero was woken at +%s", s.at)
-		}
+		expectSpecHeld("case5-observe-zero: an observed model at zero was woken", rec.Stop("case5-observe-zero"), 0)
 		expectNoWake(since, m.modelID(), m.scaledObject())
 	})
 

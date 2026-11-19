@@ -3133,6 +3133,9 @@ deploy_scaling_manager_prerequisites_kube_like() {
     if [ "${DEPLOY_LWS:-true}" = "true" ]; then
         if kubectl get crd leaderworkersets.leaderworkerset.x-k8s.io &> /dev/null; then
             log_info "LeaderWorkerSet CRD already installed, skipping LWS deployment"
+            # An installed LWS is kept as it is: say when it is too old for KEDA
+            # to scale DisaggregatedSet roles.
+            llmsm_report_lws_dset
         else
             log_info "Installing LeaderWorkerSet version ${LWS_CHART_VERSION} into ${LWS_NAMESPACE} namespace"
             helm upgrade -i lws oci://registry.k8s.io/lws/charts/lws \

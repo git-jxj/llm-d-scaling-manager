@@ -40,7 +40,7 @@ func TestAttributeInstance_PairedLauncherIsReportedEvenWhenDroppedAsWorker(t *te
 			constants.ComponentLabelKey: constants.LauncherComponent,
 			lwsv1.WorkerIndexLabelKey:   "0",
 		})
-		metric, pairedAs, ok := c.attributeInstance(ctx, "m", "ns", "launcher-0:8000", data(), time.Now(), nil, freshness)
+		metric, pairedAs, _, ok := c.attributeInstance(ctx, "m", "ns", "launcher-0:8000", data(), time.Now(), nil, freshness)
 		if !ok {
 			t.Fatalf("a leader launcher must produce a row")
 		}
@@ -57,7 +57,7 @@ func TestAttributeInstance_PairedLauncherIsReportedEvenWhenDroppedAsWorker(t *te
 			constants.ComponentLabelKey: constants.LauncherComponent,
 			lwsv1.WorkerIndexLabelKey:   "1",
 		})
-		_, pairedAs, ok := c.attributeInstance(ctx, "m", "ns", "launcher-0:8000", data(), time.Now(), nil, freshness)
+		_, pairedAs, _, ok := c.attributeInstance(ctx, "m", "ns", "launcher-0:8000", data(), time.Now(), nil, freshness)
 		if ok {
 			t.Fatalf("a worker must not produce a row")
 		}
@@ -68,7 +68,7 @@ func TestAttributeInstance_PairedLauncherIsReportedEvenWhenDroppedAsWorker(t *te
 
 	t.Run("an ordinary pod is a row and is not paired", func(t *testing.T) {
 		c := newCollector(map[string]string{})
-		_, pairedAs, ok := c.attributeInstance(ctx, "m", "ns", "launcher-0:8000", data(), time.Now(), nil, freshness)
+		_, pairedAs, _, ok := c.attributeInstance(ctx, "m", "ns", "launcher-0:8000", data(), time.Now(), nil, freshness)
 		if !ok || pairedAs != "" {
 			t.Errorf("got ok=%v pairedAs=%q, want ok=true pairedAs=\"\"", ok, pairedAs)
 		}

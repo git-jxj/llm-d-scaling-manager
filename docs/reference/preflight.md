@@ -127,9 +127,10 @@ after it.
 | `overlap` | another controller already manages a namespace this one would: a cluster-wide one, or one whose `--watch-namespace` names it | | a namespaced preflight may not list Deployments: it reads the cluster-wide controller in `scaling-manager-system` by name, and says other namespaces were not looked at |
 | `accelerators` (with `quotas`) | | a quota key matches no node's accelerator label | nodes cannot be listed |
 | `activation` (with `utilizationShare: "active"`) | the controller may not patch pods in a sharing namespace; the fix is the `scaling-manager-activate.yaml` line for it | | a review is refused |
+| `lws.disaggregatedset` (with a DisaggregatedSet API) | | LeaderWorkerSet serves DisaggregatedSet but not `disaggregatedsetrolescalers/scale` (before v0.10.0), so KEDA cannot scale its roles. The fix is the upgrade, the way it was installed ([troubleshooting](troubleshooting.md#a-disaggregatedset-role-is-not-scaled)). A PASS reads the API only: the LeaderWorkerSet controller must be v0.10.0 or later too | the API resources cannot be read |
 
 `scaler.tls`, `openshift.user-monitoring`, `kueue`, `accelerators`,
-`activation` and, for a cluster-wide install, `rbac.namespaces` are listed
+`activation`, `lws.disaggregatedset` and, for a cluster-wide install, `rbac.namespaces` are listed
 under "not applicable" when they do not apply. When the settings cannot be
 read, the checks they gate are UNKNOWN instead.
 
@@ -166,7 +167,11 @@ that is what its Deployment names, read the way the controller reads it: the
 `scaling-manager-manager-config`. Before the install there is no Deployment,
 and the checks read what the install files name: the controller's own
 namespace for the namespaced file, every namespace for the cluster-wide one.
-Either way, `watchNamespaces` may only narrow it.
+Either way, `watchNamespaces` may only narrow it. `smt install` sets
+`LLMSM_PREFLIGHT_WATCH_NAMESPACE` on the Job to the namespaces it is about to
+apply, when it has a list or the live Deployment names others; the checks then
+read those, so a namespace the admin just took out of the list does not stop
+the install that drops it.
 
 ## Not yet
 

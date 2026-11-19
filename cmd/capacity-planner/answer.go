@@ -64,6 +64,9 @@ type answerFlags struct {
 	prefixHit *float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
+	// flowControl is --flow-control, a TTFT flag (ttft.go): the router's flow
+	// control stated, on or off, in place of its inference from the queue series.
+	flowControl string
 	// priceRouterWait is --price-router-wait, a TTFT flag (ttft.go): opt-in,
 	// off by default.
 	priceRouterWait bool
@@ -75,6 +78,9 @@ type answerFlags struct {
 	// engineTPOT says R_q was read from the engine's TPOT histogram
 	// (tpotRatioFor).
 	engineTPOT bool
+	// imbalanceAcrossCounts is --imbalance-across-counts, a TTFT flag
+	// (ttft.go): opt-in, off by default, as in the SLO analyzer.
+	imbalanceAcrossCounts bool
 	// window is the --prometheus mode's flags, capture's own, and its
 	// namespace the --namespace both modes take; captured is the window
 	// read, once it is. question names the command, and warn is where a
@@ -113,6 +119,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.ttftPercentile, "ttft-percentile", "", "the TTFT percentile, in percent (90); on replicas-to-slo, default the policy's, else 90")
 	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, in place of the learned one (flagged)")
 	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, 0 to 3, in place of the measured one or the default 2 (flagged)")
+	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the queue series (flagged as stated)")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "Ca^2, the arrivals' squared coefficient of variation at the prefill queue, in place of Poisson's 1 (flagged)")
 	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the hop between the router and the engines (8ms), in place of the learned or default one (flagged)")
 	fs.IntVar(&f.prefill, "prefill", 0, "prefill replicas to price; 0 takes the recorded count")
@@ -123,6 +130,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.IntVar(&f.prefillRunningCap, "prefill-running-cap", 0, "with --ps-onsets, the most prompts a prefill pod computes at once (about max_num_batched_tokens over the prompt); 0 (unknown, the default) takes the lower of processor sharing at 1 and first come")
 	fs.BoolVar(&f.chargeDecodeGate, "charge-decode-gate", whatif.DefaultChargeDecodeGate, "experimental, unvalidated, slo-to-rate only: charge the time the decode flow-control gate is closed below its onset to the rate answer")
 	fs.StringVar(&f.inputBucket, "input-bucket", "", "not supported: per-bucket answers are the planner's M1")
+	fs.BoolVar(&f.imbalanceAcrossCounts, "imbalance-across-counts", whatif.DefaultImbalanceAcrossCounts, fmt.Sprintf("opt-in: at a prefill count P1 has not learned, price f off a curve fitted to the counts it learned, or %g with none, in place of max(%g, f) (flagged AssumedImbalance either way)", whatif.FreshImbalance, whatif.ImbalanceFloor))
 	f.window.registerWindow(fs)
 	fs.Lookup("prometheus").Usage = "answer from a window of this Prometheus (base URL), captured and generated in memory, in place of --recording"
 	fs.Lookup("from").Usage = "with --prometheus, the window's start: RFC 3339 or Unix seconds, to the millisecond (required)"
@@ -362,6 +370,10 @@ type pricedVariant struct {
 	assumedHit bool
 	flags      []whatif.Flag
 	lines      whatif.LineResamples
+	// model is the model served, and stated the pricing flags set that put
+	// every figure outside the envelope (statedOutside).
+	model  string
+	stated []string
 }
 
 // assumed reports a shape the flags assumed, in part or whole.
@@ -381,7 +393,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.variant != "" && vs.Variant != f.variant {
 			continue
 		}
-		pv := pricedVariant{state: vs, cycle: st.Cycle}
+		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside()}
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
 			il, pv.assumedIL = f.inputTokens, true
@@ -627,13 +639,51 @@ func onRatio(r whatif.Result, ratio whatif.TPOTRatio, flags []whatif.Flag) whati
 func (f *answerFlags) ratioNote(st *learnreplay.State, r whatif.TPOTRatio) string {
 	switch {
 	case f.engineTPOT:
-		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st))
+		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st)) + worstNote(st.EngineTPOTWindows) + byFillNote(r)
 	case r.Assumed && len(st.TPOTWindows) == 0:
 		return fmt.Sprintf("R_q %s ASSUMED (no TPOT histogram)", num(r.Value))
 	case r.Assumed:
 		return fmt.Sprintf("R_q %s ASSUMED (the recording's %d TPOT windows not used)", num(r.Value), len(st.TPOTWindows))
 	}
-	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows))
+	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + worstNote(st.TPOTWindows) + byFillNote(r)
+}
+
+// worstNote says R_q is the worst window where so few windows held requests
+// that the median's margin reaches the largest (whatif.WorstWindow).
+func worstNote(windows []whatif.TPOTWindow) string {
+	n := 0
+	for _, w := range windows {
+		if w.Count > 0 {
+			n++
+		}
+	}
+	if !whatif.WorstWindow(n) {
+		return ""
+	}
+	return fmt.Sprintf(" (the worst of %d)", n)
+}
+
+// byFillNote is R_q by fill for the human output: each fill bucket's ratio,
+// its own reading where the rise over fill raised it, and the global ratio
+// standing in where the bucket was thin; "" with one ratio at every fill.
+func byFillNote(r whatif.TPOTRatio) string {
+	if len(r.ByFill) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(r.ByFill))
+	for _, fr := range r.ByFill {
+		p := fmt.Sprintf("%.1f-%.1f %.3g", fr.Lo, fr.Hi, fr.Value)
+		switch {
+		case fr.Thin:
+			p += fmt.Sprintf(" (global, %d windows)", fr.Windows)
+		case fr.Learned != fr.Value:
+			p += fmt.Sprintf(" (own %.3g, raised)", fr.Learned)
+		case whatif.WorstWindow(fr.Windows):
+			p += fmt.Sprintf(" (the worst of %d)", fr.Windows)
+		}
+		parts = append(parts, p)
+	}
+	return ", by fill " + strings.Join(parts, ", ")
 }
 
 // num prints a ratio or fill with no trailing zeros.

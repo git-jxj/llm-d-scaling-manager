@@ -53,10 +53,10 @@ Seconds:
   every CUDA graph once to measure memory (`profile_cudagraph_memory` in
   `gpu_worker.py`). `--kv-cache-memory-bytes` skips it (to 1.0 s).
 - Weight load from the page cache vs from disk, v0.32.0: 10.0 s vs 19.9 s.
-- These runs predate v0.12.0. The engine cache then held no FlashInfer
+- These runs predate v0.12.1. The engine cache then held no FlashInfer
   kernels: the patch set `FLASHINFER_WORKSPACE_DIR`, which FlashInfer does not
   read, so they went to `$HOME/.cache/flashinfer` in the container. Any
-  FlashInfer build is in both columns. From v0.12.0 the patch sets
+  FlashInfer build is in both columns. From v0.12.1 the patch sets
   `FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/<image key>`, and they land in
   `flashinfer/<image key>/.cache/flashinfer/` on the node.
 

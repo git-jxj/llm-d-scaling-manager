@@ -137,7 +137,11 @@ func buildReport(ctx context.Context, st *learnreplay.State, s *servedState, q w
 	out.Source = whatifapi.ReportSource{Namespace: st.Namespace, Model: st.ModelID, Cycle: st.Cycle, TotalCycles: st.Cycles,
 		FirstAt: st.FirstAt, LastAt: st.At}
 	out.Fleet = whatifapi.ReportFleet{Prefill: np, Decode: nd, PrefillVariant: base.pf.variant, DecodeVariant: base.pv.state.Variant,
-		PrefillFrom: from(q.Prefill), DecodeFrom: from(q.Decode)}
+		PrefillFrom: from(q.Prefill), DecodeFrom: from(q.Decode),
+		DecodeEngine: engineInfo(base.pv.state.Params)}
+	if base.pf.variant != "" {
+		out.Fleet.PrefillEngine = engineInfo(variantParams(st, base.pf.variant))
+	}
 	r.loadOf(&out.Load)
 	out.SLO = r.sloOf()
 	for _, l := range r.q.Loads {

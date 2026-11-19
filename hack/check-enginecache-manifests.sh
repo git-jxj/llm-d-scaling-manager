@@ -208,6 +208,28 @@ SEED_SUBPATH=engine-cache NODE_NAME=n1 "$SH" "$P/pub.sh" > "$P/pub.out" 2>&1; rc
 [ "$rc" = 0 ] && [ "$(cat "$P/seed/engine-cache/vllm/torch_compile_cache/keyN/f")" = n ] && [ "$(cat "$P/seed/engine-cache/triton/t/f")" = t ] \
     && [ "$(cat "$P/seed/engine-cache/vllm/torch_compile_cache/keyS/f")" = s ] && grep -q "published from n1: 2 file(s) copied" "$P/pub.out" \
     && ok "publish: a node's caches are merged into the seed, the seed's own entries kept" || fail "publish run: rc=$rc $(cat "$P/pub.out")"
+# the engine-cache guard's own entries are never copied, either way: the
+# .writable marker (it names the user who wrote it), FlashInfer's .engine-uid,
+# an owner probe left behind, and a second user's .uid-<uid> copies, inside a
+# cache (vllm/.uid-1000) or beside a key (pycache/k.uid-1000)
+Q="$T/guardents"
+for side in node:n seed/engine-cache:s; do
+    qk="${side#*:}"; side="$Q/${side%%:*}"
+    mkdir -p "$side/vllm/torch_compile_cache/key-$qk" "$side/vllm/.uid-1000/torch_compile_cache/u" "$side/pycache/k.uid-1000" "$side/flashinfer/k"
+    : > "$side/vllm/torch_compile_cache/key-$qk/f"; : > "$side/vllm/.writable"; : > "$side/vllm/.own.a1B2c3"
+    : > "$side/vllm/.uid-1000/torch_compile_cache/u/f"; : > "$side/pycache/k.uid-1000/x.pyc"; : > "$side/flashinfer/k/.engine-uid"
+done
+mkdir -p "$Q/cache"
+sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$Q/pubseed|g; s|/engine-cache|$Q/node|g" > "$Q/pub.sh"
+sed -n "/^preparer_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$Q/seed|g; s|/engine-cache|$Q/cache|g; s|^trap .*||" > "$Q/p.sh"
+SEED_SUBPATH=engine-cache NODE_NAME=n1 "$SH" "$Q/pub.sh" > "$Q/pub.out" 2>&1; rc=$?
+SEED_MARKER=.seeded SEED_ID=workload-pvc:engine-cache SEED_SUBPATH=engine-cache MARKER=.prepared NODE_NAME=n1 "$SH" "$Q/p.sh" > "$Q/prep.out" 2>&1; rc2=$?
+pub_got="$(cd "$Q/pubseed/engine-cache" 2>/dev/null && find . -mindepth 1 | sort | tr '\n' ' ')"
+prep_got="$(cd "$Q/cache" && find vllm pycache flashinfer -mindepth 1 | sort | tr '\n' ' ')"
+[ "$rc" = 0 ] && [ "$rc2" = 0 ] && grep -q "published from n1: 1 file(s) copied" "$Q/pub.out" && grep -q "1 file(s) copied" "$Q/prep.out" \
+    && [ "$pub_got" = "./flashinfer ./flashinfer/k ./pycache ./vllm ./vllm/torch_compile_cache ./vllm/torch_compile_cache/key-n ./vllm/torch_compile_cache/key-n/f " ] \
+    && [ "$prep_got" = "flashinfer/k vllm/torch_compile_cache vllm/torch_compile_cache/key-s vllm/torch_compile_cache/key-s/f " ] \
+    && ok "merge: seed and publish copy no .writable, .engine-uid, owner probe or .uid-<uid> copy" || fail "merge guard entries: rc=$rc/$rc2 publish=[$pub_got] prepare=[$prep_got] $(cat "$Q/pub.out" "$Q/prep.out" | tr '\n' ' ')"
 # Python bytecode: pycache/ is prepared 1777 like the other three (an engine
 # under another UID can create its image's key directory), and seed and
 # publish carry it -- each node of a LeaderWorkerSet needs its own copy.
@@ -240,7 +262,7 @@ mode="$(stat -c %a "$Z/cache/pycache" 2>/dev/null)"
 # FlashInfer: FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer puts its tree
 # at flashinfer/.cache/flashinfer/<arch>/{cached_ops,generated} and cubins at
 # flashinfer/.cache/flashinfer/cubins -- under a DOT directory, which a merge
-# that globbed only plain names would skip. Every node prepared before v0.12.0
+# that globbed only plain names would skip. Every node prepared before v0.12.1
 # has an empty flashinfer/ (the patch set FLASHINFER_WORKSPACE_DIR, which
 # FlashInfer does not read): the seed lands in it, and a node that compiled the
 # kernels publishes them.
@@ -265,18 +287,17 @@ mkdir -p "$FI/empty/flashinfer" "$FI/eseed"
 sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$FI/eseed|g; s|/engine-cache|$FI/empty|g" > "$FI/epub.sh"
 NODE_NAME=n3 "$SH" "$FI/epub.sh" > "$FI/epub.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ -d "$FI/eseed/flashinfer" ] && grep -q "published from n3: 0 file(s) copied" "$FI/epub.out" \
-    && ok "publish: an empty flashinfer/ (a node from before v0.12.0) publishes nothing, and is no error" || fail "publish empty flashinfer: rc=$rc $(cat "$FI/epub.out")"
-# FlashInfer writes under its base on EVERY start (a lock, its build files,
-# the ninja log) and fails on an entry it cannot write. A seeded copy belongs
+    && ok "publish: an empty flashinfer/ (a node from before v0.12.1) publishes nothing, and is no error" || fail "publish empty flashinfer: rc=$rc $(cat "$FI/epub.out")"
+# FlashInfer fails on an entry it cannot write when it builds (a lock, its
+# build files, the ninja log). A seeded copy belongs
 # to the preparer, not the engine user that owns the tree, so what the seed
 # puts under flashinfer/ is writable by every user; the other directories
 # stay read-only copies. What an engine built itself is its own, and the
-# preparer leaves its modes alone: the guard gives each tree one user. The
-# guard's claim (.engine-uid, a symbolic link) is one node's and is not
-# carried, and not reported as a skipped link either.
+# preparer leaves its modes alone. A second user's own copy
+# (flashinfer/.uid-<uid>) is one node's and is not carried.
 W="$T/fi-modes"; mkdir -p "$W/seed/flashinfer/$FIT/cached_ops/a" "$W/seed/vllm/torch_compile_cache/k" "$W/cache/flashinfer/$FIT/cached_ops/b"
 echo a > "$W/seed/flashinfer/$FIT/cached_ops/a/a.so"; echo l > "$W/seed/flashinfer/$FIT/cached_ops/a/.ninja_log"; echo v > "$W/seed/vllm/torch_compile_cache/k/f"
-ln -s 4242 "$W/seed/flashinfer/.engine-uid"
+mkdir -p "$W/seed/flashinfer/.uid-4242/$FIT"; echo u > "$W/seed/flashinfer/.uid-4242/$FIT/u.so"
 echo b > "$W/cache/flashinfer/$FIT/cached_ops/b/b.so"; chmod 755 "$W/cache/flashinfer/$FIT/cached_ops/b"; chmod 644 "$W/cache/flashinfer/$FIT/cached_ops/b/b.so"
 sed -n "/^preparer_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$W/seed|g; s|/engine-cache|$W/cache|g; s|^trap .*||" > "$W/p.sh"
 SEED_MARKER=.seeded SEED_ID=shared:m MARKER=.prepared NODE_NAME=n1 "$SH" "$W/p.sh" > "$W/run1.out" 2>&1; rc=$?
@@ -286,38 +307,42 @@ own_modes="$(find "$W/cache/flashinfer/$FIT/cached_ops/b" -prune -perm 755 -prin
 vllm_open="$(find "$W/cache/vllm" -mindepth 1 -perm -0002 -print | head -3)"
 [ "$rc" = 0 ] && [ -f "$W/cache/flashinfer/$FIT/cached_ops/a/.ninja_log" ] && [ -z "$fi_closed" ] && [ -z "$fi_dirs_closed" ] \
     && [ "$own_modes" = "$W/cache/flashinfer/$FIT/cached_ops/b$W/cache/flashinfer/$FIT/cached_ops/b/b.so" ] \
-    && [ ! -e "$W/cache/flashinfer/.engine-uid" ] && [ ! -L "$W/cache/flashinfer/.engine-uid" ] && ! grep -q "symlink" "$W/run1.out" \
+    && [ ! -e "$W/cache/flashinfer/.uid-4242" ] && ! grep -q "symlink" "$W/run1.out" \
     && [ -f "$W/cache/vllm/torch_compile_cache/k/f" ] && [ -z "$vllm_open" ] \
-    && ok "preparer: seeded copies under flashinfer/ are writable by every user, an engine's own tree keeps its modes, a claim is not carried; vllm/ copies stay read-only" \
+    && ok "preparer: seeded copies under flashinfer/ are writable by every user, an engine's own tree keeps its modes, a second user's copy is not carried; vllm/ copies stay read-only" \
     || fail "flashinfer modes: rc=$rc closed=[$fi_closed] closed dirs=[$fi_dirs_closed] own=[$own_modes] vllm open=[$vllm_open] $(cat "$W/run1.out"; ls -la "$W/cache/flashinfer")"
 sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$W/pseed|g; s|/engine-cache|$W/node|g" > "$W/pub.sh"
 mkdir -p "$W/node/flashinfer/$FIT/cached_ops/c" "$W/node/vllm/k2"; echo c > "$W/node/flashinfer/$FIT/cached_ops/c/c.so"; echo k > "$W/node/vllm/k2/f"
-ln -s 1000 "$W/node/flashinfer/.engine-uid"
+mkdir -p "$W/node/flashinfer/.uid-1000"; echo u > "$W/node/flashinfer/.uid-1000/u.so"
 NODE_NAME=n2 "$SH" "$W/pub.sh" > "$W/pub.out" 2>&1; rc=$?
 pub_closed="$(find "$W/pseed/flashinfer" -mindepth 2 ! -perm -0006 -print | head -3)"
 pub_vllm_open="$(find "$W/pseed/vllm" -mindepth 1 -type f -perm -0002 -print | head -3)"
 [ "$rc" = 0 ] && [ -f "$W/pseed/flashinfer/$FIT/cached_ops/c/c.so" ] && [ -z "$pub_closed" ] && [ -f "$W/pseed/vllm/k2/f" ] && [ -z "$pub_vllm_open" ] \
-    && [ ! -L "$W/pseed/flashinfer/.engine-uid" ] && ! grep -q "symlink" "$W/pub.out" \
-    && ok "publish: what it copies under flashinfer/ is writable by every user, the node's claim stays on the node; vllm/ copies are not" \
+    && [ ! -e "$W/pseed/flashinfer/.uid-1000" ] && ! grep -q "symlink" "$W/pub.out" \
+    && ok "publish: what it copies under flashinfer/ is writable by every user, a second user's copy stays on the node; vllm/ copies are not" \
     || fail "publish flashinfer modes: rc=$rc closed=[$pub_closed] vllm open=[$pub_vllm_open] $(cat "$W/pub.out")"
 # The guard each benchmark scenario writes, run against a FlashInfer tree. A
 # directory with no write bit for this user stands for one another UID made
-# (the runner cannot chown): the guard must unset the variable, or FlashInfer
-# fails the engine on its first write. The same tree opened up by the
-# preparer is kept.
+# (the runner cannot chown): the guard must not use that tree, or FlashInfer
+# fails the engine on its first write. It takes this user's own copy beside
+# it, else unsets the variable. The same tree opened up by the preparer is
+# kept.
 GS="$T/fi-guard"; mkdir -p "$GS/base/$FIT/cached_ops/x"; echo x > "$GS/base/$FIT/cached_ops/x/x.so"
 awk '/<<.EOF.$/ {on=1; next} on && /^ *EOF$/ {exit} on' hack/benchmark/scenarios/guides/two-variant-scaling-manager.yaml | sed 's/^            //' > "$GS/guard.sh"
-grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do$' "$GS/guard.sh" && grep -q 'find "\$d/" ! -type l' "$GS/guard.sh" || fail "fi guard: no scenario guard with the FlashInfer tree check extracted: $(cat "$GS/guard.sh")"
+grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do$' "$GS/guard.sh" && grep -q 'find "\$p/" -path "\$p/.uid-\*" -prune -o ! -type l' "$GS/guard.sh" || fail "fi guard: no scenario guard with the FlashInfer tree check extracted: $(cat "$GS/guard.sh")"
 printf '%s\n' 'echo "FI=${FLASHINFER_WORKSPACE_BASE-unset}"' >> "$GS/guard.sh"
 out="$(FLASHINFER_WORKSPACE_BASE="$GS/base" "$SH" "$GS/guard.sh" 2>&1)"
 case "$out" in *"FI=$GS/base"*) ok "guard: a FlashInfer tree this user can write is kept" ;; *) fail "fi guard writable: $out" ;; esac
 if [ "$(id -u)" = 0 ]; then ok "guard: (the unwritable FlashInfer tree case needs a non-root check runner)"; else
+gsme="$(id -u)"
 chmod 555 "$GS/base/$FIT/cached_ops/x"
 out="$(FLASHINFER_WORKSPACE_BASE="$GS/base" "$SH" "$GS/guard.sh" 2>&1)"
-case "$out" in *"FI=unset"*"cannot write"*|*"cannot write"*"FI=unset"*) ok "guard: a directory deep in the FlashInfer tree that this user cannot write unsets the variable, with one line" ;; *) fail "fi guard unwritable dir: $out" ;; esac
+case "$out" in *"holds an entry this user cannot write; using $GS/base.uid-$gsme, user $gsme's own"*"FI=$GS/base.uid-$gsme") ok "guard: a directory deep in the FlashInfer tree that this user cannot write sends it to its own copy, with one line" ;; *) fail "fi guard unwritable dir: $out" ;; esac
+rm -rf "$GS/base.uid-$gsme"; : > "$GS/base.uid-$gsme"; : > "$GS/base/.uid-$gsme"
 chmod 755 "$GS/base/$FIT/cached_ops/x"; chmod 444 "$GS/base/$FIT/cached_ops/x/x.so"
 out="$(FLASHINFER_WORKSPACE_BASE="$GS/base" "$SH" "$GS/guard.sh" 2>&1)"
-case "$out" in *"FI=unset"*) ok "guard: a file in the FlashInfer tree that this user cannot write unsets the variable" ;; *) fail "fi guard unwritable file: $out" ;; esac
+case "$out" in *"cannot write; using the engine default instead"*"FI=unset") ok "guard: a file in the FlashInfer tree that this user cannot write, and no own copy to take, unsets the variable" ;; *) fail "fi guard unwritable file: $out" ;; esac
+rm -f "$GS/base.uid-$gsme" "$GS/base/.uid-$gsme"
 chmod -R a+rwX "$GS/base"
 out="$(FLASHINFER_WORKSPACE_BASE="$GS/base" "$SH" "$GS/guard.sh" 2>&1)"
 case "$out" in *"FI=$GS/base"*) ok "guard: the same tree, writable again, is kept" ;; *) fail "fi guard reopened: $out" ;; esac
@@ -1017,6 +1042,17 @@ if [ "$rc" = 0 ] && grep -q '3 usable node(s) x 2 key(s): 6 present, 0 absent, 0
 else fail "verify all present: rc=$rc $(tail -3 "$T/ecv-all.out" | tr '\n' ';')"; fi
 grep -q "^exec -n check-ns ec-a -c prepare -- /bin/sh -c " "$T/calls" && ! grep -q '^exec -n check-ns other-ds' "$T/calls" \
     && ok "verify: reads through our preparer pods only, in the prepare container" || fail "verify exec calls: $(grep '^exec' "$T/calls" | cut -c1-60 | tr '\n' ';')"
+# a second user's own copies on a node are listed with their size, beside
+# the verdict on the first user's keys, which they do not change
+ecv_reset; mkdir -p "$T/ecv/ec-a/vllm/.uid-1000/torch_compile_cache/k" "$T/ecv/ec-a/pycache/k.uid-1000"
+head -c 8192 /dev/zero > "$T/ecv/ec-a/vllm/.uid-1000/torch_compile_cache/k/f"; : > "$T/ecv/ec-a/pycache/k.uid-1000/x.pyc"
+ln -s / "$T/ecv/ec-a/pycache/j.uid-1000"
+rc="$(ecv "$T/ecv-uid.out" --keys "$K1")"
+if [ "$rc" = 0 ] && grep -qE '^    other users. own copies on n-a, not checked above: vllm/\.uid-1000 \([0-9]+ KiB\), pycache/k\.uid-1000 \([0-9]+ KiB\)$' "$T/ecv-uid.out" \
+    && [ "$(grep -c 'own copies on' "$T/ecv-uid.out")" = 1 ]; then
+    ok "verify: a node's second-user copies are listed with their size (a link is not one), and the verdict stands"
+else fail "verify second-user copies: rc=$rc $(grep -E 'own copies|present,' "$T/ecv-uid.out" | tr '\n' ';')"; fi
+rm -rf "$T/ecv/ec-a/vllm/.uid-1000" "$T/ecv/ec-a/pycache/k.uid-1000" "$T/ecv/ec-a/pycache/j.uid-1000"
 # one node lacks a key: a fail, naming the node and the key
 ecv_reset; rm -rf "$T/ecv/ec-b/vllm/$K2"
 rc="$(ecv "$T/ecv-miss.out" --keys "$K1,$K2")"
@@ -1416,6 +1452,17 @@ PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns pd-decode-0 pd-pre
 PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns fell-back > "$T/keys3.out" 2> "$T/keys3.err"; rc=$?
 [ "$(cat "$T/keys3.out")" = "$K1@rank_0_0" ] && grep -q 'compiled under /root/.cache/vllm, not VLLM_CACHE_ROOT=/engine-cache/vllm' "$T/keys3.err" \
     && ok "keys: an engine that fell back off the cache root still names its key, and says the start did not fill the node cache" || fail "keys fell back: out=$(cat "$T/keys3.out") err=$(tr '\n' ' ' < "$T/keys3.err")"
+# an engine of a second user on the node: the guard gives it its own
+# directory beside the root (else inside it), which is not a fall-back
+cat > "$T/engine-logs/second-user" <<'EOF'
+engine cache VLLM_CACHE_ROOT=/engine-cache/vllm is another user's; using /engine-cache/vllm/.uid-1000, user 1000's own
+INFO 10-14 [backends.py:550] Using cache directory: /engine-cache/vllm/.uid-1000/torch_compile_cache/3f2a9c1d0e/rank_0_0/backbone for vLLM's torch.compile
+EOF
+printf /engine-cache/vllm > "$T/engine-root/second-user"
+PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns second-user > "$T/keys-uid.out" 2> "$T/keys-uid.err"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$T/keys-uid.out")" = "$K1@rank_0_0" ] \
+    && grep -q 'compiled under /engine-cache/vllm/.uid-1000, its user.s own directory beside VLLM_CACHE_ROOT=/engine-cache/vllm' "$T/keys-uid.err" && ! grep -q 'fell back' "$T/keys-uid.err" \
+    && ok "keys: an engine of a second user names its key under its own directory, and is not called a fall-back" || fail "keys second user: rc=$rc out=$(cat "$T/keys-uid.out") err=$(tr '\n' ' ' < "$T/keys-uid.err")"
 PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns aot > "$T/keys-aot.out" 2> "$T/keys-aot.err"; rc=$?
 [ "$rc" = 0 ] && [ "$(cat "$T/keys-aot.out")" = "$AOT@rank_0_0+rank_1_0" ] && ! grep -q WARNING "$T/keys-aot.err" \
     && ok "keys: an AOT compile names its key under the cache root (torch_compile_cache/torch_aot_compile/<hash>), with its ranks" || fail "keys AOT: rc=$rc out=$(cat "$T/keys-aot.out") err=$(tr '\n' ' ' < "$T/keys-aot.err")"
@@ -1534,7 +1581,7 @@ for sc in $(git -C "$ROOT" ls-files 'hack/benchmark/scenarios/*.yaml'); do
     [ "$n" -gt 0 ] || continue
     fi_loops=$((fi_loops + n))
     [ "$(grep -c 'for v in .*VLLM_CACHE_ROOT.*FLASHINFER_WORKSPACE_BASE' "$ROOT/$sc")" = "$n" ] || fi_bad="$fi_bad $sc(loop)"
-    [ "$(grep -c 'find "\$d/" ! -type l' "$ROOT/$sc")" = "$n" ] || fi_bad="$fi_bad $sc(tree check)"
+    [ "$(grep -c 'find "\$p/" -path "\$p/.uid-\*" -prune -o ! -type l' "$ROOT/$sc")" = "$n" ] || fi_bad="$fi_bad $sc(tree check)"
 done
 [ "$fi_loops" -gt 0 ] && [ -z "$fi_bad" ] \
     && ok "flashinfer: all $fi_loops scenario guard loops name FLASHINFER_WORKSPACE_BASE and check its whole tree" \
@@ -1547,16 +1594,20 @@ for f in config/warmpool/warmpool-deployment.yaml deploy/warmpool.sh test/e2e/fi
 done
 [ -z "$fi_wp" ] && ok "flashinfer: the warm pool manifest, script and e2e fixture set FLASHINFER_WORKSPACE_BASE" || fail "flashinfer: no FLASHINFER_WORKSPACE_BASE in:$fi_wp"
 
-# The FlashInfer half of the guard lives in nine copies: the one
-# workload-patch emits, the docs, the six scenario guards and the warm pool
-# manifest. They must say the same thing, or a fix lands in one and not the
-# others (it did: the warm pool had no guard at all). The two pool specs
-# rendered from the manifest into deploy/warmpool.sh are escaped for a
-# heredoc; hack/check-warmpool-manifests.sh compares what they deliver. Each copy is the 14 lines from its first comment line,
-# compared with leading blanks and a leading comment marker removed.
+# The guard loop lives in nine copies: the one workload-patch emits, the
+# docs, the six scenario guards and the warm pool manifest. They must say the
+# same thing, or a fix lands in one and not the others (it did: the warm pool
+# had no guard at all, and the scenarios kept the loop from before the
+# second-user fix). The two pool specs rendered from the manifest into
+# deploy/warmpool.sh are escaped for a heredoc;
+# hack/check-warmpool-manifests.sh compares what they deliver. Each copy is
+# the loop's body, from the line after its `for v in` (whose word lists
+# differ: only the emitted one and the docs guard the bytecode) to its
+# `done`, with what comes before `for` on that line taken off every line.
 fi_block() {   # <file>: every copy in it, one per paragraph
-    awk '/# FlashInfer writes under its base on every start, hit or miss, and fails$/ { n = 14 }
-         n > 0 { l = $0; sub(/^#?[ ]*/, "", l); print l; n--; if (n == 0) print "" }' "$ROOT/$1"
+    awk '!on && /for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE[A-Z_ ]*; do$/ { pre = substr($0, 1, index($0, "for v in ") - 1); on = 1; next }
+         on && $0 == pre "done" { print ""; on = 0; next }
+         on { if (substr($0, 1, length(pre)) == pre) print substr($0, length(pre) + 1); else print "!" $0 }' "$ROOT/$1"
 }
 fi_want="$(fi_block deploy/lib/scaledobject.sh)"
 fi_copies=0; fi_differ=""
@@ -1570,12 +1621,18 @@ for f in docs/reference/workload-preparation.md config/warmpool/warmpool-deploym
         [ "$one" = "$fi_want" ] || fi_differ="$fi_differ $f"
     done < <(printf '%s\n' "$got" | awk 'BEGIN { RS = ""; ORS = "\0" } { print }')
 done
-if [ "$(printf '%s\n' "$fi_want" | grep -c '')" -ne 14 ] || ! printf '%s\n' "$fi_want" | grep -q '^elif .*ln -s "\$ecu" "\$d/.engine-uid"'; then
-    fail "flashinfer: the emitted guard's FlashInfer half was not found whole: $fi_want"
+# The emitted loop must be found whole, once: its first-user check, its
+# per-user directory and the FlashInfer tree check with its prune.
+fi_want_n="$(printf '%s\n' "$fi_want" | grep -c '')"
+if [ "$fi_want_n" -lt 60 ] || [ "$(printf '%s\n' "$fi_want" | grep -c '^  done$')" != 1 ] \
+    || ! printf '%s\n' "$fi_want" | grep -q '|| \[ ! -O "\$d/.writable" \]; then$' \
+    || ! printf '%s\n' "$fi_want" | grep -q 'for p in "\$d" "\$d.uid-\$ecu" "\$d/.uid-\$ecu"; do$' \
+    || ! printf '%s\n' "$fi_want" | grep -q 'find "\$p/" -path "\$p/.uid-\*" -prune -o ! -type l '; then
+    fail "flashinfer: the emitted guard loop was not found whole ($fi_want_n lines): $fi_want"
 elif [ "$fi_copies" -eq 8 ] && [ -z "$fi_differ" ]; then
-    ok "flashinfer: the guard's FlashInfer half is the same in all $fi_copies copies and the emitted one"
+    ok "flashinfer: the guard loop is the same in all $fi_copies copies and the emitted one ($fi_want_n lines)"
 else
-    fail "flashinfer: $fi_copies copies of the guard's FlashInfer half (8 expected), differing in:$fi_differ"
+    fail "flashinfer: $fi_copies copies of the guard loop (8 expected), differing in:$fi_differ"
 fi
 
 exit $FAILED

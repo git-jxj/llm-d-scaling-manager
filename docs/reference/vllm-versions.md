@@ -28,6 +28,13 @@ defaults below until this page lists it.
 3. **Do nothing, and the version is unknown.** The scaling manager then uses
    the defaults below marked *unknown*. It never assumes the newest release.
 
+The capacity planner reads the version the same way when it records a
+window, from a Deployment's annotation or the image tag (kube-state-metrics
+exports no LeaderWorkerSet annotations), and takes `--vllm-version` where the
+workload shows none. It reports the version and these defaults; its answers
+do not use them yet. See
+[The vLLM release](../guides/record-for-capacity-planner/README.md#the-vllm-release).
+
 ## Defaults that change between versions
 
 These apply only when the engine is **not** given the flag. From vLLM's

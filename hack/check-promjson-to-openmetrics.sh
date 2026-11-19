@@ -36,6 +36,31 @@ elif ! grep -q -- "--query.lookback-delta=60s" "$TMP/err"; then
   fail=1
 fi
 
+# 1b. A family scraped every 60 s beside ones at 15 s: the lookback is the
+# slow family's (240 s), not the median over every interval (15 s, as the
+# fast families' 5 intervals outnumber its 2), and both are printed.
+# shellcheck disable=SC2086
+if ! python3 "$CONVERT" -o "$TMP/slow.om" $GOOD "$FIX/slow.1700000000.json" "$FIX/slow.1700000030.json" 2>"$TMP/err"; then
+  echo "FAIL: the converter refused good answers with a slow family: $(cat "$TMP/err")" >&2
+  fail=1
+elif ! grep -q -- "--query.lookback-delta=240s" "$TMP/err"; then
+  echo "FAIL: the converter did not suggest a 240s lookback for a family scraped every 60 s: $(cat "$TMP/err")" >&2
+  fail=1
+elif ! grep -q -- "15s at the fastest (vllm:kv_cache_usage_perc), 60s at the slowest (kube_pod_info)" "$TMP/err"; then
+  echo "FAIL: the converter did not name the fastest and the slowest family: $(cat "$TMP/err")" >&2
+  fail=1
+fi
+
+# 1c. A macOS ._ file beside the answers is skipped, and said to be.
+# shellcheck disable=SC2086
+if ! python3 "$CONVERT" -o "$TMP/apple.om" $GOOD "$FIX/._mixed.1700000000.json" 2>"$TMP/err"; then
+  echo "FAIL: the converter refused a macOS ._ file instead of skipping it: $(cat "$TMP/err")" >&2
+  fail=1
+elif ! grep -q "skipped 1 macOS ._ files" "$TMP/err" || ! cmp -s "$FIX/expected.om" "$TMP/apple.om"; then
+  echo "FAIL: skipping a macOS ._ file did not leave the output as expected.om: $(cat "$TMP/err")" >&2
+  fail=1
+fi
+
 # 2. Answers the converter must refuse, each with the words that name why.
 refuse() {
   local what=$1 want=$2

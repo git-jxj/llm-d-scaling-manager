@@ -95,7 +95,8 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	if _, err := f.prefillState(st); err != nil {
 		return err
 	}
-	s := &servedState{st: st, decodeVariant: variants[0].state.Variant, prefillVariant: f.prefillVariant, hint: f.hintSource()}
+	s := &servedState{st: st, decodeVariant: variants[0].state.Variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
+		imbalanceAcrossCounts: f.imbalanceAcrossCounts}
 	rep, err := buildReport(ctx, st, s, q)
 	if err != nil {
 		if whatifapi.IsInputError(err) {
@@ -318,6 +319,12 @@ func reportText(r *whatifapi.ReportResponse) string {
 	}
 	fmt.Fprintf(&b, "%s/%s  P/D %s + %d decode (%s)  window %s, cycle %d of %d\n", r.Source.Namespace, r.Source.Model,
 		prefill, fl.Decode, fl.DecodeVariant, windowText(r.Source), r.Source.Cycle, r.Source.TotalCycles)
+	if e := fl.DecodeEngine; e != nil {
+		fmt.Fprintf(&b, "%-16s%s\n", "decode engine", engineInfoText(e))
+	}
+	if e := fl.PrefillEngine; e != nil {
+		fmt.Fprintf(&b, "%-16s%s\n", "prefill engine", engineInfoText(e))
+	}
 	fmt.Fprintf(&b, "%-16s%s\n", "load judged", loadText(r.Load))
 	fmt.Fprintf(&b, "%-16s%s\n", "SLO", sloText(r.SLO))
 

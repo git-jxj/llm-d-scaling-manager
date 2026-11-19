@@ -16,7 +16,27 @@
     "prefillVariant": "variant-02",
     "decodeVariant": "variant-01",
     "prefillFrom": "recording",
-    "decodeFrom": "recording"
+    "decodeFrom": "recording",
+    "prefillEngine": {
+      "engine": "vllm",
+      "summary": "vLLM release not recorded",
+      "stepBudget": 65536,
+      "stepBudgetSource": "not recorded",
+      "gpuMemoryUtilization": 0.9,
+      "gpuMemoryUtilizationSource": "not recorded",
+      "blockSize": 128,
+      "blockSizeSource": "not recorded"
+    },
+    "decodeEngine": {
+      "engine": "vllm",
+      "summary": "vLLM release not recorded",
+      "stepBudget": 8192,
+      "stepBudgetSource": "not recorded",
+      "gpuMemoryUtilization": 0.9,
+      "gpuMemoryUtilizationSource": "not recorded",
+      "blockSize": 128,
+      "blockSizeSource": "not recorded"
+    }
   },
   "load": {
     "rate": {
@@ -236,13 +256,13 @@
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.007396560903718552,
+            "value": 0.004998846295829323,
             "unit": "s",
             "band": {
-              "lo": 0.007209971135678055,
-              "hi": 0.007449785100372742
+              "lo": 0.004872742612921775,
+              "hi": 0.005034817010024285
             },
-            "floor": 0.007209971135678055,
+            "floor": 0.004872742612921775,
             "flags": [
               "BelowFittedBand",
               "CoarseTPOTBucket"
@@ -276,13 +296,13 @@
             },
             "tpot": {
               "statistic": "p90",
-              "value": 0.007396560903718552,
+              "value": 0.004998846295829323,
               "unit": "s",
               "band": {
-                "lo": 0.007209971135678055,
-                "hi": 0.007449785100372742
+                "lo": 0.004872742612921775,
+                "hi": 0.005034817010024285
               },
-              "floor": 0.007209971135678055,
+              "floor": 0.004872742612921775,
               "flags": [
                 "BelowFittedBand",
                 "CoarseTPOTBucket"
@@ -355,13 +375,13 @@
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.015965866357408813,
+            "value": 0.010790273066002182,
             "unit": "s",
             "band": {
-              "lo": 0.010978922329346146,
-              "hi": 0.01636978221741538
+              "lo": 0.007419927440962251,
+              "hi": 0.01106325308021466
             },
-            "floor": 0.007209971135678055,
+            "floor": 0.004872742612921775,
             "flags": [
               "BelowFittedBand",
               "CoarseTPOTBucket"
@@ -395,13 +415,13 @@
             },
             "tpot": {
               "statistic": "p90",
-              "value": 0.015965866357408813,
+              "value": 0.010790273066002182,
               "unit": "s",
               "band": {
-                "lo": 0.010978922329346146,
-                "hi": 0.01636978221741538
+                "lo": 0.007419927440962251,
+                "hi": 0.01106325308021466
               },
-              "floor": 0.007209971135678055,
+              "floor": 0.004872742612921775,
               "flags": [
                 "BelowFittedBand",
                 "CoarseTPOTBucket"
@@ -586,7 +606,7 @@
   ],
   "notValidated": [
     "decode knee: not validated; it read 44% to 103% high on the goldens (docs/proposals/slo-capacity-planner.md, Measured on the goldens)",
-    "TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.",
+    "TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.",
     "e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile"
   ],
   "exitCode": 0

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
 )
@@ -70,4 +71,16 @@ func TestExport_KeepsTheUtilizationShareOptimizerType(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, r.Failed())
 	assert.Empty(t, r.Mismatches, "the export does not replay")
+}
+
+// Every flag the joint TTFT model raises is a word the export keeps. Before
+// constants.SLOTTFTJointFlags was in the vocabulary, a P/D recording whose
+// joint model priced a mean was refused ("Joint.Flags in slo.Analyze holds a
+// value that is not allowed after the export"): the Qwen3-32B staircase's
+// warm-up among them.
+func TestVocabulary_HoldsTheJointTTFTFlags(t *testing.T) {
+	require.NotEmpty(t, constants.SLOTTFTJointFlags)
+	for _, flag := range constants.SLOTTFTJointFlags {
+		assert.True(t, vocabulary[flag], "%q is not in the export's vocabulary", flag)
+	}
 }

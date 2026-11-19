@@ -630,7 +630,7 @@ Then re-run this command." ;;
 # The proxy image config/warmpool pins, which is what --proxy-image
 # defaults to. Emitted here rather than written out again, so the
 # default and the manifest cannot disagree about which image a pool runs.
-WARMPOOL_DEFAULT_PROXY_IMAGE="ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:v0.12.0-rc1"
+WARMPOOL_DEFAULT_PROXY_IMAGE="ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:v0.12.0"
 
 pool_pod_spec() {
   local memory="$1" indent="$2" role="${3:-leader}"
@@ -696,23 +696,69 @@ containers:
     # engines the launcher spawns inherit what it leaves set.
     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do
       eval "d=\\\${\$v:-}"
+      d=\${d%/}
       [ -n "\$d" ] || continue
-      if ! mkdir -p "\$d" 2>/dev/null || ! touch "\$d/.writable" 2>/dev/null; then
-        echo "engine cache \$v=\$d is not writable; using the engine default instead"
-        unset \$v
-      # FlashInfer writes under its base on every start, hit or miss, and fails
-      # on an entry it cannot write. So the whole tree is checked, through a link
-      # at the top, and a find that fails fails the check. The first user to pass
-      # owns the tree (.engine-uid): an engine of another user falls back rather
-      # than race it for the directories it creates.
-      elif [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+      if [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
         echo "engine cache \$v=\$d cannot be checked: this image has no find; using the engine default instead"
         unset \$v
-      elif [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && { ecbad=\`find "\$d/" ! -type l -exec sh -c 'for f in "\$@"; do [ -w "\$f" ] || echo "\$f"; done' sh {} + 2>/dev/null || echo find\`; [ -n "\$ecbad" ]; }; then
+        continue
+      fi
+      # Does this filesystem report who owns a file? Some do not (SMB or Azure
+      # Files with a fixed uid, a FUSE mount, NFSv4 mapping users to nobody):
+      # a file this process just made reads as someone else's. There owners
+      # decide nothing, and the check is only that the directory is writable.
+      ecown=yes
+      if mkdir -p "\$d" 2>/dev/null && ecf=\`mktemp "\$d/.own.XXXXXX" 2>/dev/null\`; then
+        [ -O "\$ecf" ] || ecown=no
+        rm -f "\$ecf"
+      fi
+      # The directory itself, then a directory of this user's own beside it,
+      # else inside it. The first user to start an engine here wrote the
+      # marker, a plain file, and owns the directory: what that engine made
+      # under it is that user's. Another user's own directory is taken only
+      # if it is a real directory this user made (-O, not a link), made 755
+      # whatever the pod's umask, so no other user can write in it.
+      ecu=\`id -u\`
+      ecp=
+      ecbad=
+      ecmine=
+      for p in "\$d" "\$d.uid-\$ecu" "\$d/.uid-\$ecu"; do
+        if [ "\$p" = "\$d" ]; then
+          if [ "\$ecown" = no ]; then
+            touch "\$d/.writable" 2>/dev/null || continue
+          elif [ -L "\$d/.writable" ] || ! touch "\$d/.writable" 2>/dev/null || [ ! -O "\$d/.writable" ]; then
+            continue
+          fi
+          ecmine=yes
+        else
+          [ "\$ecown" = yes ] || break
+          (umask 022; mkdir -p "\$p") 2>/dev/null || continue
+          if [ ! -d "\$p" ] || [ -L "\$p" ] || [ ! -O "\$p" ] || ! chmod go-w "\$p" 2>/dev/null || ! touch "\$p/.writable" 2>/dev/null; then
+            continue
+          fi
+        fi
+        # FlashInfer: every entry of the tree, through a link at the top, but
+        # not another user's own directory in it. A find that fails fails it.
+        if [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && { ecf=\`find "\$p/" -path "\$p/.uid-*" -prune -o ! -type l -exec sh -c 'for f in "\$@"; do [ -w "\$f" ] || echo "\$f"; done' sh {} + 2>/dev/null || echo find\`; [ -n "\$ecf" ]; }; then
+          ecbad=\$p
+          continue
+        fi
+        ecp=\$p
+        break
+      done
+      if [ "\$ecp" = "\$d" ]; then
+        [ "\$ecown" = yes ] || echo "engine cache \$v=\$d: this filesystem does not report file owners; using it because it is writable"
+      elif [ -n "\$ecp" ] && [ -n "\$ecmine" ]; then
+        echo "engine cache \$v=\$d holds an entry this user cannot write; using \$ecp, user \$ecu's own"
+        eval "\$v=\\\$ecp"
+      elif [ -n "\$ecp" ]; then
+        echo "engine cache \$v=\$d is another user's; using \$ecp, user \$ecu's own"
+        eval "\$v=\\\$ecp"
+      elif [ -n "\$ecbad" ]; then
         echo "engine cache \$v=\$d holds an entry this user cannot write; using the engine default instead"
         unset \$v
-      elif [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && { ecu=\`id -u\`; ln -s "\$ecu" "\$d/.engine-uid" 2>/dev/null; ecown=\`readlink "\$d/.engine-uid" 2>/dev/null\`; [ "\$ecown" != "\$ecu" ]; }; then
-        echo "engine cache \$v=\$d belongs to user \${ecown:-unknown}; using the engine default instead"
+      else
+        echo "engine cache \$v=\$d is not writable; using the engine default instead"
         unset \$v
       fi
     done
@@ -882,23 +928,69 @@ containers:
     # engines the launcher spawns inherit what it leaves set.
     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do
       eval "d=\\\${\$v:-}"
+      d=\${d%/}
       [ -n "\$d" ] || continue
-      if ! mkdir -p "\$d" 2>/dev/null || ! touch "\$d/.writable" 2>/dev/null; then
-        echo "engine cache \$v=\$d is not writable; using the engine default instead"
-        unset \$v
-      # FlashInfer writes under its base on every start, hit or miss, and fails
-      # on an entry it cannot write. So the whole tree is checked, through a link
-      # at the top, and a find that fails fails the check. The first user to pass
-      # owns the tree (.engine-uid): an engine of another user falls back rather
-      # than race it for the directories it creates.
-      elif [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+      if [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
         echo "engine cache \$v=\$d cannot be checked: this image has no find; using the engine default instead"
         unset \$v
-      elif [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && { ecbad=\`find "\$d/" ! -type l -exec sh -c 'for f in "\$@"; do [ -w "\$f" ] || echo "\$f"; done' sh {} + 2>/dev/null || echo find\`; [ -n "\$ecbad" ]; }; then
+        continue
+      fi
+      # Does this filesystem report who owns a file? Some do not (SMB or Azure
+      # Files with a fixed uid, a FUSE mount, NFSv4 mapping users to nobody):
+      # a file this process just made reads as someone else's. There owners
+      # decide nothing, and the check is only that the directory is writable.
+      ecown=yes
+      if mkdir -p "\$d" 2>/dev/null && ecf=\`mktemp "\$d/.own.XXXXXX" 2>/dev/null\`; then
+        [ -O "\$ecf" ] || ecown=no
+        rm -f "\$ecf"
+      fi
+      # The directory itself, then a directory of this user's own beside it,
+      # else inside it. The first user to start an engine here wrote the
+      # marker, a plain file, and owns the directory: what that engine made
+      # under it is that user's. Another user's own directory is taken only
+      # if it is a real directory this user made (-O, not a link), made 755
+      # whatever the pod's umask, so no other user can write in it.
+      ecu=\`id -u\`
+      ecp=
+      ecbad=
+      ecmine=
+      for p in "\$d" "\$d.uid-\$ecu" "\$d/.uid-\$ecu"; do
+        if [ "\$p" = "\$d" ]; then
+          if [ "\$ecown" = no ]; then
+            touch "\$d/.writable" 2>/dev/null || continue
+          elif [ -L "\$d/.writable" ] || ! touch "\$d/.writable" 2>/dev/null || [ ! -O "\$d/.writable" ]; then
+            continue
+          fi
+          ecmine=yes
+        else
+          [ "\$ecown" = yes ] || break
+          (umask 022; mkdir -p "\$p") 2>/dev/null || continue
+          if [ ! -d "\$p" ] || [ -L "\$p" ] || [ ! -O "\$p" ] || ! chmod go-w "\$p" 2>/dev/null || ! touch "\$p/.writable" 2>/dev/null; then
+            continue
+          fi
+        fi
+        # FlashInfer: every entry of the tree, through a link at the top, but
+        # not another user's own directory in it. A find that fails fails it.
+        if [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && { ecf=\`find "\$p/" -path "\$p/.uid-*" -prune -o ! -type l -exec sh -c 'for f in "\$@"; do [ -w "\$f" ] || echo "\$f"; done' sh {} + 2>/dev/null || echo find\`; [ -n "\$ecf" ]; }; then
+          ecbad=\$p
+          continue
+        fi
+        ecp=\$p
+        break
+      done
+      if [ "\$ecp" = "\$d" ]; then
+        [ "\$ecown" = yes ] || echo "engine cache \$v=\$d: this filesystem does not report file owners; using it because it is writable"
+      elif [ -n "\$ecp" ] && [ -n "\$ecmine" ]; then
+        echo "engine cache \$v=\$d holds an entry this user cannot write; using \$ecp, user \$ecu's own"
+        eval "\$v=\\\$ecp"
+      elif [ -n "\$ecp" ]; then
+        echo "engine cache \$v=\$d is another user's; using \$ecp, user \$ecu's own"
+        eval "\$v=\\\$ecp"
+      elif [ -n "\$ecbad" ]; then
         echo "engine cache \$v=\$d holds an entry this user cannot write; using the engine default instead"
         unset \$v
-      elif [ "\$v" = FLASHINFER_WORKSPACE_BASE ] && { ecu=\`id -u\`; ln -s "\$ecu" "\$d/.engine-uid" 2>/dev/null; ecown=\`readlink "\$d/.engine-uid" 2>/dev/null\`; [ "\$ecown" != "\$ecu" ]; }; then
-        echo "engine cache \$v=\$d belongs to user \${ecown:-unknown}; using the engine default instead"
+      else
+        echo "engine cache \$v=\$d is not writable; using the engine default instead"
         unset \$v
       fi
     done

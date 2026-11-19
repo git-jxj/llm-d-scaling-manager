@@ -1,13 +1,15 @@
 ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-06 02:18-03:30Z, cycle 289 of 289
+decode engine   vLLM release not recorded
+prefill engine  vLLM release not recorded
 load judged     41.70 r/s, the p95 of the 282 of 289 cycles with traffic
 load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/s; busiest 2m0s (8 cycles): 42.13 r/s
 SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
 cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
 mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
 summary                     50%                80%                    5r/s              seen            seen x1.2
-  measured                  637/7.4 @19.07 ok  2490/16.0 @30.51 MISS  388/7.2 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
-  1k/1k EXTRAPOLATED        134/7.2 @18.27 ok  152/13.1 @29.24 ok     124/7.2 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
-  16k/200/0.3 EXTRAPOLATED  898/7.4 @13.36 ok  3673/16.0 @21.37 MISS  567/7.2 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  measured                  637/5.0 @19.07 ok  2490/10.8 @30.51 MISS  388/4.9 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  1k/1k EXTRAPOLATED        134/4.9 @18.27 ok  152/8.9 @29.24 ok      124/4.9 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  16k/200/0.3 EXTRAPOLATED  898/5.0 @13.36 ok  3673/10.8 @21.37 MISS  567/4.9 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
 verdicts
   measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).
                             x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.3x the fleet knee (38.1 r/s); needs 4 prefill + 4 decode (has 2 + 2) (prefill f 1.5 assumed at 4 pods).
@@ -29,9 +31,9 @@ capacity            req/s     out tok/s   bound by
   operating (0.85)  32.42     6483        0.85 x fleet knee (scaleUpThreshold)
   max at SLO        29.72     5943        TTFT p90, end to end
 SLO vs load              r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee            19.07  114.7/636.7     3.15/7.40         0.87 s
-  80% of knee            30.51  226.0/2489.5    6.80/15.97        2.27 s
-  5r/s                   5.00   65.8/388.4      3.07/7.21         0.77 s
+  50% of knee            19.07  114.7/636.7     3.15/5.00         0.87 s
+  80% of knee            30.51  226.0/2489.5    6.80/10.79        2.27 s
+  5r/s                   5.00   65.8/388.4      3.07/4.87         0.77 s
   load seen (109%)       41.70  saturated       saturated         saturated
   load seen x1.2 (131%)  50.04  saturated       saturated         saturated
 checks
@@ -53,9 +55,9 @@ capacity            req/s     out tok/s   bound by
   operating (0.85)  31.06     31809       0.85 x fleet knee (scaleUpThreshold)
   max at SLO        35.47     36320       TTFT p90, end to end
 SLO vs load              r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee            18.27  94.7/133.5      3.07/7.21         3.25 s
-  80% of knee            29.24  112.0/152.1     5.60/13.13        5.85 s
-  5r/s                   5.00   87.5/124.5      3.07/7.21         3.24 s
+  50% of knee            18.27  94.7/133.5      3.07/4.87         3.25 s
+  80% of knee            29.24  112.0/152.1     5.60/8.88         5.85 s
+  5r/s                   5.00   87.5/124.5      3.07/4.87         3.24 s
   load seen (114%)       41.70  saturated       saturated         saturated
   load seen x1.2 (137%)  50.04  saturated       saturated         saturated
 checks
@@ -77,9 +79,9 @@ capacity            req/s     out tok/s   bound by
   operating (0.85)  22.70     4541        0.85 x fleet knee (scaleUpThreshold)
   max at SLO        19.48     3895        TTFT p90, end to end
 SLO vs load              r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee            13.36  146.3/898.0     3.15/7.40         0.96 s
-  80% of knee            21.37  289.7/3673.4    6.81/15.97        2.68 s
-  5r/s                   5.00   83.7/566.9      3.07/7.21         0.83 s
+  50% of knee            13.36  146.3/898.0     3.15/5.00         0.96 s
+  80% of knee            21.37  289.7/3673.4    6.81/10.79        2.68 s
+  5r/s                   5.00   83.7/566.9      3.07/4.87         0.83 s
   load seen (156%)       41.70  saturated       saturated         saturated
   load seen x1.2 (187%)  50.04  saturated       saturated         saturated
 checks
@@ -89,5 +91,5 @@ flags: ExtrapolatedShape; UnvalidatedTTFT; AssumedVP; AssumedPromptSpread; Assum
 
 not validated:
   - decode knee: not validated; it read 44% to 103% high on the goldens (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
-  - TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.
+  - TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.
   - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile

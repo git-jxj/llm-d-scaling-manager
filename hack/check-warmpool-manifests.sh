@@ -265,8 +265,8 @@ WORKER_SECTION="$(printf '%s\n' "$GROUP" | sed -n '/workerTemplate:/,$p')"
 # --- the engine-cache guard in the launcher command --------------------------
 # The pool's engines write their compile caches to the shared claim, so the
 # launcher command carries the engine-cache guard: a cache directory this user
-# cannot write costs a compile, and a FlashInfer tree another user owns sends
-# this pool's engines to their own default instead of failing them. The guard
+# cannot write costs a compile, and a cache another user's engine started
+# first gives this pool's engines their own copy instead of failing them. The guard
 # is shell full of $ and backticks, carried through the generator's unquoted
 # heredoc: compare what is DELIVERED with the manifest, character for
 # character, and then run it.
@@ -280,11 +280,11 @@ else
   fail "the pool's launcher command differs from the manifest's, or has no guard: $(diff <(printf '%s\n' "$WANT_ARGS") <(printf '%s\n' "$GOT_ARGS") | head -5)"
 fi
 gl="$(printf '%s\n' "$GROUP" | grep -c '^ *for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR; do$')"
-ge="$(printf '%s\n' "$GROUP" | grep -c 'ln -s "\$ecu" "\$d/.engine-uid"')"
+ge="$(printf '%s\n' "$GROUP" | grep -c 'find "\$p/" -path "\$p/.uid-\*" -prune -o ! -type l ')"
 if [ "$gl" = 2 ] && [ "$ge" = 2 ]; then
   ok "a group's leader and workers both carry the guard"
 else
-  fail "a group's templates carry $gl guard loop(s) and $ge FlashInfer claim(s), 2 of each expected"
+  fail "a group's templates carry $gl guard loop(s) and $ge FlashInfer tree check(s), 2 of each expected"
 fi
 # Run the delivered guard: everything before the exec, then what it left.
 WPG="$(mktemp -d)"
@@ -294,18 +294,24 @@ wp_guard() {   # <base>: what the guard said, and FI=<what it left>
     sh -c ". \"$WPG/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1
 }
 mkdir -p "$WPG/fi/.cache/flashinfer/90/x"
+wme="$(id -u)"
 r1="$(wp_guard "$WPG/fi")"
-rm -f "$WPG/fi/.engine-uid"; ln -s 4242 "$WPG/fi/.engine-uid"
-r2="$(wp_guard "$WPG/fi")"
-rm -f "$WPG/fi/.engine-uid"
-if [ "$(id -u)" = 0 ]; then
+if [ "$wme" = 0 ]; then
+  # as root every file reads as its own and every entry as writable
+  r2="FI=$WPG/fi.uid-0 (the other-user case needs a non-root check runner)"
   r3="FI=unset (the unwritable case needs a non-root check runner)"
 else
+  # another user's tree: a marker that is not this user's plain file
+  rm -f "$WPG/fi/.writable"; ln -s /dev/null "$WPG/fi/.writable"
+  r2="$(wp_guard "$WPG/fi")"
+  rm -rf "$WPG/fi/.writable" "$WPG/fi.uid-$wme"
+  # this user's tree with an entry it cannot write, and no copy of its own to take
+  : > "$WPG/fi.uid-$wme"; : > "$WPG/fi/.uid-$wme"
   chmod 555 "$WPG/fi/.cache/flashinfer/90/x"; r3="$(wp_guard "$WPG/fi")"; chmod 755 "$WPG/fi/.cache/flashinfer/90/x"
 fi
 case "$r1|$r2|$r3" in
-  "FI=$WPG/fi|"*"belongs to user 4242"*"FI=unset|"*"FI=unset"*)
-    ok "the pool's guard keeps a clean FlashInfer tree and falls back from another user's, or an unwritable one" ;;
+  "FI=$WPG/fi|"*"FI=$WPG/fi.uid-$wme"*"|"*"FI=unset"*)
+    ok "the pool's guard keeps a clean FlashInfer tree, takes its own copy beside another user's, and falls back from an unwritable one" ;;
   *) fail "the pool's guard: clean=[$r1] other user=[$r2] unwritable=[$r3]" ;;
 esac
 rm -rf "$WPG"

@@ -64,6 +64,11 @@ type fixture struct {
 	now time.Time
 	// tokenPathEmptied is Env.TokenPathEmptied: smt install --allow-http.
 	tokenPathEmptied bool
+	// lwsDiscovery is what discovery serves for disaggregatedset.x-k8s.io/v1;
+	// nil: the group is not served.
+	lwsDiscovery []string
+	// watchNamespace is Env.WatchNamespace: smt install about to apply a new list.
+	watchNamespace string
 }
 
 type reaction struct {
@@ -374,6 +379,13 @@ func (f *fixture) env(t *testing.T) *Env {
 	if f.openshift {
 		groups = append(groups, &metav1.APIResourceList{GroupVersion: "route.openshift.io/v1"})
 	}
+	if f.lwsDiscovery != nil {
+		l := &metav1.APIResourceList{GroupVersion: "disaggregatedset.x-k8s.io/v1"}
+		for _, name := range f.lwsDiscovery {
+			l.APIResources = append(l.APIResources, metav1.APIResource{Name: name})
+		}
+		groups = append(groups, l)
+	}
 	kube.Discovery().(*fakediscovery.FakeDiscovery).Resources = groups
 	allow := f.sar
 	if allow == nil {
@@ -413,6 +425,7 @@ func (f *fixture) env(t *testing.T) *Env {
 		DialTLS:          f.dialer(),
 		CheckTimeout:     5 * time.Second,
 		TokenPathEmptied: f.tokenPathEmptied,
+		WatchNamespace:   f.watchNamespace,
 		Now: func() time.Time {
 			if !f.now.IsZero() {
 				return f.now

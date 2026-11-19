@@ -171,7 +171,7 @@
 # FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR under it (FlashInfer adds
 # .cache/flashinfer/ under its base, so its kernels and cubins land in
 # flashinfer/<image key>/.cache/flashinfer/; seed and publish copy that tree as they copy
-# the rest, and an empty flashinfer/ -- every node prepared before v0.12.0,
+# the rest, and an empty flashinfer/ -- every node prepared before v0.12.1,
 # when the patch set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not
 # read -- is nothing to copy, not an error) -- and keeps a guard
 # that unsets a variable whose directory is not writable, so a node that is
@@ -291,11 +291,11 @@ for d in vllm flashinfer triton pycache; do
   chmod 1777 "/engine-cache/$d" 2>/dev/null || true
 done
 # The modes merge gives what it copies: readable by every user, and under
-# flashinfer/ writable too. FlashInfer writes under its base on EVERY start,
-# hit or miss (a lock file, its build files, the ninja log), and an engine
-# that cannot write there fails rather than compiling elsewhere; a copy is
-# the preparer's, not the engine user's. The cost: any user on the node can
-# rewrite a seeded FlashInfer kernel.
+# flashinfer/ writable too. FlashInfer fails on an entry it cannot write when
+# it builds a kernel (a lock file, its build files, the ninja log), so the
+# guard sends an engine away from a tree with any entry it cannot write; a
+# copy is the preparer's, not the engine user's. The cost: any user on the
+# node can rewrite a seeded FlashInfer kernel.
 dmode=a+rx; fmode=a+r
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
@@ -322,9 +322,10 @@ merge() {
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     n="${e##*/}"; t="$2/$n"
-    # the guard's claim on a FlashInfer tree: one node's engine user, which
-    # another node does not inherit; not cache content, and not worth a line
-    [ "$n" != .engine-uid ] || continue
+    # The engine-cache guard's own entries are not cache content: a marker
+    # names the user who wrote it, and a .uid-<uid> directory is a second
+    # user's copy. Copied, both would be the copier's, on every node.
+    case "$n" in .writable|.engine-uid|.own.*|.uid-[0-9]*|*.uid-[0-9]*) continue ;; esac
     if [ -L "$e" ]; then
       links="$links."; echo "engine cache: skipped $e: a symlink, not cache content"
     elif [ -e "$t" ] || [ -L "$t" ]; then
@@ -388,10 +389,10 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
   fi
 fi
 # Nothing under flashinfer/ is opened up beyond what a merge copies. The
-# guard lets one user own each tree (.engine-uid) and sends an engine of any
-# other user to its own default, so no engine needs to write another user's
-# entries; this preparer could not reopen them anyway, with every capability
-# dropped it changes the modes of its own files only.
+# guard leaves each tree to the user whose engine started on it first and
+# gives an engine of any other user its own copy, so no engine needs to write
+# another user's entries; this preparer could not reopen them anyway, with
+# every capability dropped it changes the modes of its own files only.
 touch "/engine-cache/$MARKER" || exit 1
 echo "engine cache: prepared on $NODE_NAME: /engine-cache/{vllm,flashinfer,triton,pycache}"
 trap 'exit 0' TERM; while :; do sleep 3600 & wait; done
@@ -896,9 +897,10 @@ merge() {
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     n="${e##*/}"; t="$2/$n"
-    # the guard's claim on a FlashInfer tree: one node's engine user, which
-    # another node does not inherit; not cache content, and not worth a line
-    [ "$n" != .engine-uid ] || continue
+    # The engine-cache guard's own entries are not cache content: a marker
+    # names the user who wrote it, and a .uid-<uid> directory is a second
+    # user's copy. Copied, both would be the copier's, on every node.
+    case "$n" in .writable|.engine-uid|.own.*|.uid-[0-9]*|*.uid-[0-9]*) continue ;; esac
     if [ -L "$e" ]; then
       links="$links."; echo "engine cache: skipped $e: a symlink, not cache content"
     elif [ -e "$t" ] || [ -L "$t" ]; then
@@ -1189,7 +1191,14 @@ cmd_keys() {
                 # a relative root is resolved against the engine working directory, which the log does not show
                 log_warning "${pod}: VLLM_CACHE_ROOT=${root} is a relative path, so whether this start filled the node cache cannot be told; set it to the absolute mount path"
             elif [ "$base" != "$root" ]; then
-                log_warning "${pod}: compiled under ${base}, not VLLM_CACHE_ROOT=${root} -- the cache root was not writable and the engine fell back; this start did not fill the node cache"
+                case "$base" in
+                    # The guard's own directory for a second user: another
+                    # user's engine started on the node first.
+                    "$root".uid-[0-9]*|"$root"/.uid-[0-9]*)
+                        log_warning "${pod}: compiled under ${base}, its user's own directory beside VLLM_CACHE_ROOT=${root} -- an engine of another user started on this node first; verify reads ${root} and will not find this key there" ;;
+                    *)
+                        log_warning "${pod}: compiled under ${base}, not VLLM_CACHE_ROOT=${root} -- the cache root was not writable and the engine fell back; this start did not fill the node cache" ;;
+                esac
             fi
         done
     done
@@ -1356,6 +1365,14 @@ for s in "$@"; do
     esac
   fi
 done
+# Second users' own copies (the engine-cache guard's <dir>.uid-<uid> and
+# <dir>/.uid-<uid>), with their size in KiB: disk the keys above do not show.
+b="${root%/*}"
+for u in "$b"/*.uid-[0-9]* "$b"/*/.uid-[0-9]* "$b"/*/*.uid-[0-9]*; do
+  [ -d "$u" ] && [ ! -L "$u" ] || continue
+  k=$(du -sk "$u" 2>/dev/null); k=${k%%[!0-9]*}
+  echo "ecu ${u#"$b"/} ${k:-?}"
+done
 VERIFY
 }
 
@@ -1479,6 +1496,8 @@ cmd_verify() {
                    [ -n "$why" ] || why="no answer from ${pod} for this key (exit ${xrc})" ;;
             esac
         done
+        line="$(printf '%s\n' "$out" | awk '$1 == "ecu" { printf "%s%s (%s KiB)", (n++ ? ", " : ""), $2, $3 }')"
+        [ -z "$line" ] || echo "    other users' own copies on ${node}, not checked above: ${line}"
         [ -z "$why" ] || echo "    ${why}"
     done < <(jq -r --arg ds "$CLAIM" --slurpfile pods "$pods_file" \
         '.items[] as $node

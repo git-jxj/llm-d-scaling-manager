@@ -60,6 +60,9 @@ res() {
         pods) r=pod ;;
         scaledobjects) r=scaledobject ;;
         apiservices) r=apiservice ;;
+        roles) r=role ;;
+        rolebindings) r=rolebinding ;;
+        podmonitors) r=podmonitor ;;
     esac
     printf '%s' "$r"
 }

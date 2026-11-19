@@ -827,9 +827,24 @@ its first CUDA context from 4.6 s to 2.3 s. The first start writes about 150 MB
   image that already ships its bytecode compiled (vLLM 0.32 does). The guard
   does the second by itself: it unsets the variable when every top-level
   module of the engine package has its `.pyc`.
-- **One user per image.** The first engine to start an image creates its key
-  directory as its own user, mode `755`. An engine of that image under another
-  user cannot write there; the guard then unsets the variable.
+- **A second user gets its own copy.** The first engine to start on a node
+  owns what it creates there (its key directory is `755`). An engine of the
+  same image under another user cannot write there, so the guard gives it a
+  directory of its own beside it (`<dir>.uid-<uid>`, else `<dir>/.uid-<uid>`)
+  and logs `... is another user's; using ...`. That user compiles once on each
+  node and is warm from its second start. The same holds for `vllm/` and
+  `triton/`.
+  - It costs one more copy per extra user on each node, as large as that
+    user's own cache (the bytecode alone is about 150 MB per image).
+    `make engine-cache-verify` checks the first user's keys, and lists every
+    other user's copy with its size.
+  - The guard takes only a real directory the user made itself, made `755`.
+    That keeps users out of each other's copies on one node; it does not make
+    the directory a trust boundary (see [What it costs](#what-it-costs)).
+  - Seed and publish skip these copies and the `.writable` markers.
+  - On a filesystem that does not report file owners (SMB or Azure Files
+    with a fixed uid, some FUSE and NFSv4 mounts) every user shares the one
+    directory, as before; the guard logs `does not report file owners`.
 - **It is code, like the other caches.** The key comes from the public image
   name and `pycache/` is `1777`, so anyone who can run a pod that mounts the
   same node directory can create a key directory first and put bytecode in it
@@ -864,23 +879,69 @@ LeaderWorkerSet, the leader's and the worker's):
 ```bash
 for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
   eval "d=\${$v:-}"
+  d=${d%/}
   [ -n "$d" ] || continue
-  if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
-    echo "engine cache $v=$d is not writable; using the engine default instead"
-    unset $v
-  # FlashInfer writes under its base on every start, hit or miss, and fails
-  # on an entry it cannot write. So the whole tree is checked, through a link
-  # at the top, and a find that fails fails the check. The first user to pass
-  # owns the tree (.engine-uid): an engine of another user falls back rather
-  # than race it for the directories it creates.
-  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+  if [ "$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
     echo "engine cache $v=$d cannot be checked: this image has no find; using the engine default instead"
     unset $v
-  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecbad=`find "$d/" ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecbad" ]; }; then
+    continue
+  fi
+  # Does this filesystem report who owns a file? Some do not (SMB or Azure
+  # Files with a fixed uid, a FUSE mount, NFSv4 mapping users to nobody):
+  # a file this process just made reads as someone else's. There owners
+  # decide nothing, and the check is only that the directory is writable.
+  ecown=yes
+  if mkdir -p "$d" 2>/dev/null && ecf=`mktemp "$d/.own.XXXXXX" 2>/dev/null`; then
+    [ -O "$ecf" ] || ecown=no
+    rm -f "$ecf"
+  fi
+  # The directory itself, then a directory of this user's own beside it,
+  # else inside it. The first user to start an engine here wrote the
+  # marker, a plain file, and owns the directory: what that engine made
+  # under it is that user's. Another user's own directory is taken only
+  # if it is a real directory this user made (-O, not a link), made 755
+  # whatever the pod's umask, so no other user can write in it.
+  ecu=`id -u`
+  ecp=
+  ecbad=
+  ecmine=
+  for p in "$d" "$d.uid-$ecu" "$d/.uid-$ecu"; do
+    if [ "$p" = "$d" ]; then
+      if [ "$ecown" = no ]; then
+        touch "$d/.writable" 2>/dev/null || continue
+      elif [ -L "$d/.writable" ] || ! touch "$d/.writable" 2>/dev/null || [ ! -O "$d/.writable" ]; then
+        continue
+      fi
+      ecmine=yes
+    else
+      [ "$ecown" = yes ] || break
+      (umask 022; mkdir -p "$p") 2>/dev/null || continue
+      if [ ! -d "$p" ] || [ -L "$p" ] || [ ! -O "$p" ] || ! chmod go-w "$p" 2>/dev/null || ! touch "$p/.writable" 2>/dev/null; then
+        continue
+      fi
+    fi
+    # FlashInfer: every entry of the tree, through a link at the top, but
+    # not another user's own directory in it. A find that fails fails it.
+    if [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecf=`find "$p/" -path "$p/.uid-*" -prune -o ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecf" ]; }; then
+      ecbad=$p
+      continue
+    fi
+    ecp=$p
+    break
+  done
+  if [ "$ecp" = "$d" ]; then
+    [ "$ecown" = yes ] || echo "engine cache $v=$d: this filesystem does not report file owners; using it because it is writable"
+  elif [ -n "$ecp" ] && [ -n "$ecmine" ]; then
+    echo "engine cache $v=$d holds an entry this user cannot write; using $ecp, user $ecu's own"
+    eval "$v=\$ecp"
+  elif [ -n "$ecp" ]; then
+    echo "engine cache $v=$d is another user's; using $ecp, user $ecu's own"
+    eval "$v=\$ecp"
+  elif [ -n "$ecbad" ]; then
     echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
     unset $v
-  elif [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecu=`id -u`; ln -s "$ecu" "$d/.engine-uid" 2>/dev/null; ecown=`readlink "$d/.engine-uid" 2>/dev/null`; [ "$ecown" != "$ecu" ]; }; then
-    echo "engine cache $v=$d belongs to user ${ecown:-unknown}; using the engine default instead"
+  else
+    echo "engine cache $v=$d is not writable; using the engine default instead"
     unset $v
   fi
 done
@@ -930,7 +991,7 @@ when its directory is not writable (then the faster choice), or when the image
 ships its bytecode, and the check leaves an empty `.writable` file in that
 directory. The last block is emitted for vLLM only
 ([Depends on the vLLM version](#depends-on-the-vllm-version)).
-The three FlashInfer branches are explained in
+The FlashInfer checks are explained in
 [FlashInfer kernels](#flashinfer-kernels). If your command carries an older
 copy of this guard, replace all of it.
 
@@ -955,45 +1016,47 @@ start.
 - **`FLASHINFER_CUBIN_DIR` is not set.** Its default is already the
   `cubins/` directory above, so the base carries it. Setting it would also
   override where an image that bundles its cubins keeps them.
-- **Before v0.12.0, `make workload-patch` set `FLASHINFER_WORKSPACE_DIR`.**
+- **Before v0.12.1, `make workload-patch` set `FLASHINFER_WORKSPACE_DIR`.**
   FlashInfer does not read that variable, so no engine cache held FlashInfer
-  kernels. [Upgrading from v0.11.2 to v0.12.0](upgrade-and-uninstall.md#upgrading-from-v0112-to-v0120)
+  kernels. [Upgrading from v0.12.0 to v0.12.1](upgrade-and-uninstall.md#upgrading-from-v0120-to-v0121)
   has the steps. In short: `make workload-patch` reports such a workload as
   `BUILDS ITS FLASHINFER KERNELS AGAIN` and writes `FLASHINFER_WORKSPACE_BASE`
   under the same path, keyed by image, with the guard. That variable has no
   volume of its own, so it is written to the file and never applied. Once the
   workload sets `FLASHINFER_WORKSPACE_BASE`, the report is quiet.
-- **Replace the guard, do not rename it.** The guard from before v0.12.0 only
+- **Replace the guard, do not rename it.** The guard from before v0.12.1 only
   checks the top directory. The new one also checks the whole FlashInfer tree
-  and gives the tree one owner (below). Renaming the variable in the old loop
-  leaves both checks out. Replace the whole block with the one in the file.
-- **FlashInfer writes on every start, not only on a miss.** It takes a lock
-  file and rewrites its build files and its ninja log under the base, and an
-  engine that cannot write there fails instead of compiling. So the guard,
-  before the engine starts:
-  - checks every entry of the tree, following a symbolic link at the top. Any
-    entry this user cannot write, or a `find` that fails, unsets the variable;
-  - unsets it when the image has no `find`, since it cannot check;
-  - lets the first user that passes own the tree: it leaves
-    `<base>/.engine-uid`, a symbolic link to its UID. An engine of another user
-    then unsets the variable instead of racing the owner for the directories
-    FlashInfer creates. Engines of the owner's UID, any number at once, keep
-    it.
+  (below). Renaming the variable in the old loop leaves that check out.
+  Replace the whole block with the one in the file.
+- **FlashInfer fails on an entry it cannot write.** When it builds a kernel
+  it takes a lock file and writes its build files and its ninja log under the
+  base, and an engine that cannot write there fails instead of compiling. On
+  a cache hit it writes nothing there (measured with FlashInfer 0.7.4). So the
+  guard, before the engine starts:
+  - checks every entry of the tree, following a symbolic link at the top. It
+    skips other users' own directories (`<base>/.uid-<uid>`). An entry this
+    user cannot write, or a `find` that fails, fails the check;
+  - unsets the variable when the image has no `find`, since it cannot check.
 
-  Each unset logs one line and FlashInfer works under `$HOME`, as it did
-  before v0.12.0: slower, never a lost replica.
-- **Two users on one node.** The second user's engines fall back for as long
-  as the first user owns the tree. To give the second user a warm cache, give
-  it its own engine-cache directory or a different image. To hand the tree
-  over, delete `<node dir>/engine-cache/flashinfer/<image key>` on the nodes.
+  The tree belongs to the first user to start an engine on it, as for the
+  other caches. A tree that fails the check is not used: the guard tries the
+  user's own directory (`<base>.uid-<uid>`, else `<base>/.uid-<uid>`), and
+  only then the engine default. For the owner of the tree it logs
+  `holds an entry this user cannot write; using <dir>, user <uid>'s own`.
+  Each fall back to the default logs one line, and FlashInfer works under
+  `$HOME`: slower, never a lost replica.
+- **Two users on one node.** The second user's engines get their own
+  `flashinfer/<image key>.uid-<uid>` and log `is another user's`
+  ([A second user gets its own copy](#python-bytecode)). Each user builds
+  its kernels once per node.
   `umask 000` in the engine command, so that every user could write every
   tree, is not used: a umask applies to everything the engine writes, so the vLLM,
   Triton and bytecode caches and any weights it downloads to a shared volume
   would become writable by every user too.
 - **What it opens up.** `flashinfer/` is `1777`, like the other three
   directories. Seed and publish copy FlashInfer files writable by every user,
-  because a copy belongs to the preparer and the owning engine must still write
-  it. So any user whose pod mounts the node directory can rewrite a seeded
+  because a copy belongs to the preparer and the tree check needs every entry
+  writable. So any user whose pod mounts the node directory can rewrite a seeded
   FlashInfer kernel, and the next engine to start loads and runs it. A tree an
   engine built itself keeps the modes its umask gave it. The preparer sets the
   four directories back to `1777` at every start wherever it owns them: where
@@ -1005,9 +1068,9 @@ start.
   configuration has started, as for the other directories.
 - **Check it.** After an engine has started and served a request, its
   FlashInfer tree is on the cache, not under `$HOME`. If the guard logged
-  `holds an entry this user cannot write`, `belongs to user`,
-  `cannot be checked` or `is not writable`, the variable was unset and the
-  tree is not used:
+  `cannot be checked`, `is not writable`, or `holds an entry this user cannot
+  write; using the engine default`, the variable was unset and the tree is
+  not used:
 
   ```bash
   kubectl exec -n <ns> <engine pod> -- sh -c 'ls "$FLASHINFER_WORKSPACE_BASE/.cache/flashinfer"'
