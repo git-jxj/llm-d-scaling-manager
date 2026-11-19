@@ -153,13 +153,14 @@ func TestITLAdaptiveBandFloor_TheRule(t *testing.T) {
 	spread := fleet(0.07, 0.08, 0.09, 0.12, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40)
 	// One straggler at 0.01 among 19 engines from 0.08 up: the 10th
 	// percentile is the second fill, 0.08, not the straggler's.
-	straggler := []float64{0.01}
+	straggler := make([]float64, 0, 20)
+	straggler = append(straggler, 0.01)
 	for i := range 19 {
 		straggler = append(straggler, 0.08+0.32*float64(i)/18)
 	}
 	// Two engines below the floor, read on many cycles: readings enough,
 	// engines too few.
-	var two []engineFill
+	two := make([]engineFill, 0, 25)
 	for range 10 {
 		two = append(two, engineFill{at: at, pod: "e-0", k: 0.06}, engineFill{at: at, pod: "e-1", k: 0.07})
 	}
