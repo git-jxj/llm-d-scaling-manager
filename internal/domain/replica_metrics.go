@@ -2,6 +2,7 @@ package domain
 
 import (
 	"math"
+	"slices"
 	"time"
 )
 
@@ -594,6 +595,121 @@ type ReplicaMetrics struct {
 	// known.
 	QueueMin      float64 `learnrec:"omitzero"`
 	QueueMinKnown bool    `learnrec:"omitzero"`
+	// GroupEngines is the engines of a LeaderWorkerSet group whose Pods each
+	// run one, one per Pod, as read before the collector merged them into
+	// this row; nil for any other row. The merged row is the replica, and
+	// capacity and replica counts read it. The ITL line reads the engines
+	// instead (EngineRows): a mean over the group's engines hides the spread
+	// of fill the line is fitted from. Each keeps only what the line and its
+	// admission read (EngineReading), so a recording grows by little.
+	GroupEngines []EngineReading `learnrec:"omitzero"`
+}
+
+// EngineReading is one engine of a LeaderWorkerSet group, as the ITL line
+// and its admission read it (ReplicaMetrics.GroupEngines): the fill, the
+// ITL and its three states, the tokens a step emits, the batch against the
+// cap, the queue and preemptions, the generation rate and the KV. A field
+// is written to a recording only when set.
+type EngineReading struct {
+	PodName                  string  `learnrec:"omitzero"`
+	EngineRanks              int     `learnrec:"omitzero"`
+	KvUsageMean              float64 `learnrec:"omitzero"`
+	KvUsageMeanKnown         bool    `learnrec:"omitzero"`
+	KvUsageInstant           float64 `learnrec:"omitzero"`
+	KvUsageInstantKnown      bool    `learnrec:"omitzero"`
+	AvgITL                   float64 `learnrec:"omitzero"`
+	AvgITLKnown              bool    `learnrec:"omitzero"`
+	AvgITLEmpty              bool    `learnrec:"omitzero"`
+	SpecAcceptedPerStep      float64 `learnrec:"omitzero"`
+	SpecAcceptedPerStepKnown bool    `learnrec:"omitzero"`
+	RunningRequests          int     `learnrec:"omitzero"`
+	RunningRequestsKnown     bool    `learnrec:"omitzero"`
+	QueueLength              int     `learnrec:"omitzero"`
+	MaxRankQueueLength       int     `learnrec:"omitzero"`
+	PreemptionRate           float64 `learnrec:"omitzero"`
+	PreemptionRateKnown      bool    `learnrec:"omitzero"`
+	GenerationTokenRate      float64 `learnrec:"omitzero"`
+	GenerationTokenRateKnown bool    `learnrec:"omitzero"`
+	TokensInUse              int64   `learnrec:"omitzero"`
+	TotalKvCapacityTokens    int64   `learnrec:"omitzero"`
+}
+
+// EngineReadingOf is what the ITL line reads of an engine's row.
+func EngineReadingOf(rm ReplicaMetrics) EngineReading {
+	return EngineReading{PodName: rm.PodName, EngineRanks: rm.EngineRanks,
+		KvUsageMean: rm.KvUsageMean, KvUsageMeanKnown: rm.KvUsageMeanKnown,
+		KvUsageInstant: rm.KvUsageInstant, KvUsageInstantKnown: rm.KvUsageInstantKnown,
+		AvgITL: rm.AvgITL, AvgITLKnown: rm.AvgITLKnown, AvgITLEmpty: rm.AvgITLEmpty,
+		SpecAcceptedPerStep: rm.SpecAcceptedPerStep, SpecAcceptedPerStepKnown: rm.SpecAcceptedPerStepKnown,
+		RunningRequests: rm.RunningRequests, RunningRequestsKnown: rm.RunningRequestsKnown,
+		QueueLength: rm.QueueLength, MaxRankQueueLength: rm.MaxRankQueueLength,
+		PreemptionRate: rm.PreemptionRate, PreemptionRateKnown: rm.PreemptionRateKnown,
+		GenerationTokenRate: rm.GenerationTokenRate, GenerationTokenRateKnown: rm.GenerationTokenRateKnown,
+		TokensInUse: rm.TokensInUse, TotalKvCapacityTokens: rm.TotalKvCapacityTokens}
+}
+
+// rowOf is e as a row of its group: the group's identity (namespace, model,
+// variant, readiness, warm-pool mark, revision, ready time) with the
+// engine's readings.
+func (e EngineReading) rowOf(group ReplicaMetrics) ReplicaMetrics {
+	return ReplicaMetrics{PodName: e.PodName, VariantName: group.VariantName, Namespace: group.Namespace,
+		ModelID: group.ModelID, Ready: group.Ready, ReadySince: group.ReadySince, FromWarmPool: group.FromWarmPool,
+		Revision: group.Revision, EngineRanks: e.EngineRanks,
+		KvUsageMean: e.KvUsageMean, KvUsageMeanKnown: e.KvUsageMeanKnown,
+		KvUsageInstant: e.KvUsageInstant, KvUsageInstantKnown: e.KvUsageInstantKnown,
+		AvgITL: e.AvgITL, AvgITLKnown: e.AvgITLKnown, AvgITLEmpty: e.AvgITLEmpty,
+		SpecAcceptedPerStep: e.SpecAcceptedPerStep, SpecAcceptedPerStepKnown: e.SpecAcceptedPerStepKnown,
+		RunningRequests: e.RunningRequests, RunningRequestsKnown: e.RunningRequestsKnown,
+		QueueLength: e.QueueLength, MaxRankQueueLength: e.MaxRankQueueLength,
+		PreemptionRate: e.PreemptionRate, PreemptionRateKnown: e.PreemptionRateKnown,
+		GenerationTokenRate: e.GenerationTokenRate, GenerationTokenRateKnown: e.GenerationTokenRateKnown,
+		TokensInUse: e.TokensInUse, TotalKvCapacityTokens: e.TotalKvCapacityTokens}
+}
+
+// EngineRows is rows with the row of each LeaderWorkerSet group whose Pods
+// each run an engine replaced by its engines' rows (GroupEngines), for the
+// ITL line; every other row as it is. An engine's row takes its group's
+// identity where the group decides it: its variant, its readiness (a group
+// is Ready only when all its Pods are), whether it came from a warm pool,
+// and its settle (EngineGroups). The input is not modified, and is returned as
+// it is when no row has engines.
+func EngineRows(rows []ReplicaMetrics) []ReplicaMetrics {
+	if !slices.ContainsFunc(rows, func(rm ReplicaMetrics) bool { return len(rm.GroupEngines) > 0 }) {
+		return rows
+	}
+	n := 0
+	for _, rm := range rows {
+		n += max(len(rm.GroupEngines), 1)
+	}
+	out := make([]ReplicaMetrics, 0, n)
+	for _, rm := range rows {
+		if len(rm.GroupEngines) == 0 {
+			out = append(out, rm)
+			continue
+		}
+		for _, e := range rm.GroupEngines {
+			out = append(out, e.rowOf(rm))
+		}
+	}
+	return out
+}
+
+// EngineGroups is, for each engine's row EngineRows puts in place of a
+// group's, the PodName of its group's row; nil when rows hold no group with
+// engines. A settle is the replica's: the settle tracker observes the group
+// rows, and an engine settles as its group does. It is derived here and
+// never recorded.
+func EngineGroups(rows []ReplicaMetrics) map[string]string {
+	var out map[string]string
+	for _, rm := range rows {
+		for _, e := range rm.GroupEngines {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[e.PodName] = rm.PodName
+		}
+	}
+	return out
 }
 
 // ITLState is which of three readings a replica's AvgITL is.
