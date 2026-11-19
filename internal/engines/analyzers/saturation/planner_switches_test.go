@@ -40,7 +40,7 @@ func (h *observeHarness) busyGroupCycle(rr, ieff float64) prefill.Estimate {
 		{VariantName: "decode", Role: domain.RoleDecode, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 		{VariantName: "prefill", Role: domain.RolePrefill, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 8},
 	}
-	const ranks, a0, perToken = 4, 0.38, 60e-6
+	const ranks, a0, perToken = 4, 0.25, 80e-6
 	b, l := perToken*ieff, rr/ranks
 	pt := (a0 + b) / (1 - b*l)
 	dec := makeReplicaMetrics("decode-0", "decode", 5000, 16000, 0, 4000, 500)
@@ -50,8 +50,8 @@ func (h *observeHarness) busyGroupCycle(rr, ieff float64) prefill.Estimate {
 	pre.PrefillComputedTokenRate, pre.PrefillComputedTokenRateKnown = rr*ieff, true
 	pre.AvgServiceTime = pt
 	pre.AvgPrefillTime, pre.AvgPrefillTimeKnown = pt, true
-	pre.AvgQueueTime, pre.AvgQueueTimeKnown = 0.09, true
-	pre.AvgTTFT, pre.AvgTTFTKnown = pt+0.09+0.6, true
+	pre.AvgQueueTime, pre.AvgQueueTimeKnown = 0.05, true
+	pre.AvgTTFT, pre.AvgTTFTKnown = pt+0.05+0.4, true
 	_, err := h.a.Analyze(h.ctx, makeAnalyzerInput([]domain.ReplicaMetrics{dec, pre}, states))
 	require.NoError(h.t, err)
 	h.clock = h.clock.Add(time.Minute)
@@ -70,15 +70,15 @@ func TestPrefillAEngineTiming_ABusyGroupLearnsA(t *testing.T) {
 		rng := rand.New(rand.NewPCG(3, 5))
 		var est prefill.Estimate
 		for range 90 {
-			est = h.busyGroupCycle(2+3*rng.Float64(), 1500+3500*rng.Float64())
+			est = h.busyGroupCycle(1+3*rng.Float64(), 1000+5000*rng.Float64())
 		}
 		return est
 	}
 	on := run(true)
 	require.Empty(t, on.ARefused, "%+v", on)
 	assert.Equal(t, prefill.ASourceEngineTiming, on.ASource)
-	assert.InEpsilon(t, 0.38, on.AIntercept, 0.10)
-	assert.InDelta(t, 0.6, on.AOverhead, 1e-9)
+	assert.InEpsilon(t, 0.25, on.AIntercept, 0.10)
+	assert.InDelta(t, 0.4, on.AOverhead, 1e-9)
 
 	off := run(false)
 	assert.Equal(t, prefill.TooFewLowLoadMinutes, off.ARefused)

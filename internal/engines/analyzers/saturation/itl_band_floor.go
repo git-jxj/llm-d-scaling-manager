@@ -17,9 +17,9 @@ import (
 // a full fit needs its steady readings to spread over itl.DefaultMinKSpread
 // (0.30). A fleet whose pods never fill past 0.45 can never spread that far
 // inside the band: its line is pinned on the default intercept for good. On
-// a P/D fleet of 11 decode groups whose fill ran 0.07 to 0.37 a pod over a
-// day, the line was pinned on the default B in 5,753 of 5,761 cycles; with
-// the floor set to 0.05 by hand it learned from the first trough on.
+// a P/D fleet whose engines filled well under 0.45 all day, the line was
+// pinned on the default B on nearly every cycle; with the floor set to 0.05
+// by hand it learned from the first trough on.
 //
 // So, with the switch on, the floor follows the fill the fleet has: over the
 // last adaptiveBandHorizon, if the fleet's highest fill (capped at the band's

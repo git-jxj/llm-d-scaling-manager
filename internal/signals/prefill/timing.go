@@ -9,9 +9,9 @@ import (
 // where the low-load fit has too few minutes (TooFewLowLoadMinutes).
 //
 // A prefill fleet whose load never goes idle has no low-load minute to read
-// a from: on a P/D fleet of LWS groups, each row a group of four engines, the
-// least per-engine occupancy over a day read 0.24, against LowLoadOccupancy
-// 0.1. Its busy minutes still say what a request costs. vLLM times each
+// a from: on a P/D fleet of LWS groups under steady load, each row a group of
+// several engines, no minute of a whole day may come near LowLoadOccupancy
+// per engine. Its busy minutes still say what a request costs. vLLM times each
 // request's prefill (request_prefill_time_seconds, the queue wait excluded:
 // domain.ReplicaMetrics.AvgPrefillTime) and counts the tokens it computed
 // (request_prefill_kv_computed_tokens), both over the same completed
@@ -20,23 +20,22 @@ import (
 // request pays whatever its tokens.
 //
 // A busy minute shares the pod's steps, and the sharing stretches the
-// per-token part: on that fleet the slope rose from 75 to 153 us a token as
-// per-engine occupancy rose from 0.4 to 1.2, while the intercept held at
-// 369 to 417 ms. That is the model the TTFT pricing takes (whatif.Prefill:
+// per-token part: binned by per-engine occupancy, such a fleet's slope
+// roughly doubles from the quietest bin to the busiest, while the intercept
+// moves by a tenth. That is the model the TTFT pricing takes (whatif.Prefill:
 // a enters a request's own latency, never the shared work). Busier minutes
 // also compute longer prompts, so a fit over every minute reads the stretch
-// as a steeper slope and pulls the intercept down (285 ms over the day). The
+// as a steeper slope and pulls the intercept down, by a quarter there. The
 // fit reads the quieter half of the minutes instead: those at or under the
-// median per-engine occupancy. Over trailing six-hour windows of that day
-// its intercept read 366 to 458 ms.
+// median per-engine occupancy, whose intercept held within a few percent
+// over trailing six-hour windows of a day.
 //
 // The computed tokens, not the prompt: at a prefix hit near 0.95 a request
 // computes a twentieth of its prompt. The cost of the cached part (attention
 // over it, a load from a CPU KV tier) is not modelled apart; it lands in the
-// intercept at the shape the minutes were read at. On the same day a second
-// term in the cached tokens read 1.5 us a token, about 120 ms of the
-// intercept at 80k cached tokens, so a is the shape's, and moves with the
-// prompt length and the hit rate.
+// intercept at the shape the minutes were read at: a second term in the
+// cached tokens can carry a third of it at long prompts, so a is the shape's,
+// and moves with the prompt length and the hit rate.
 //
 // The overhead added to it is the median, over the same minutes, of the
 // engine's TTFT less its prefill time and its queue time (the request's wait

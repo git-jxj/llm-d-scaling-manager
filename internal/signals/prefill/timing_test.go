@@ -18,10 +18,10 @@ import (
 
 const (
 	busyRanks    = 4
-	busyA0       = 0.380 // the fixed part of a request's prefill, seconds
-	busyPerToken = 60e-6 // a lone request's seconds per computed token
-	busyOverhead = 0.600 // TTFT outside the prefill and the queue, seconds
-	busyQueue    = 0.090 // the queue wait, seconds
+	busyA0       = 0.250 // the fixed part of a request's prefill, seconds
+	busyPerToken = 80e-6 // a lone request's seconds per computed token
+	busyOverhead = 0.400 // TTFT outside the prefill and the queue, seconds
+	busyQueue    = 0.050 // the queue wait, seconds
 )
 
 // busyRow is one minute of group pod: rr requests/s over the group, ieff
@@ -44,14 +44,14 @@ func busyRow(pod string, rr, ieff float64) domain.ReplicaMetrics {
 }
 
 // busyMinutes is n minutes of two groups at loads and prompts drawn from a
-// seeded source: per-engine occupancy about 0.4 to 1.4, never low load
+// seeded source: a queue on every minute, so never low load
 // whether the row is read whole or per rank.
 func busyMinutes(n int, on bool) []Cycle {
 	rng := rand.New(rand.NewPCG(7, 11))
 	out := make([]Cycle, n)
 	for i := range out {
-		c := cycle(t0.Add(time.Duration(i)*minute), busyRow("g-0", 2+3*rng.Float64(), 1500+3500*rng.Float64()),
-			busyRow("g-1", 2+3*rng.Float64(), 1500+3500*rng.Float64()))
+		c := cycle(t0.Add(time.Duration(i)*minute), busyRow("g-0", 1+3*rng.Float64(), 1000+5000*rng.Float64()),
+			busyRow("g-1", 1+3*rng.Float64(), 1000+5000*rng.Float64()))
 		c.AFromTiming, c.ALowLoadPerRank = on, on
 		out[i] = c
 	}
