@@ -494,6 +494,9 @@ func (c *cycle) fitLines() {
 	// nothing to tie-break on here yet; that is a known gap, not a property.
 	sort.Strings(variants)
 	mixed := domain.RevisionsMixed(c.input.ReplicaMetrics)
+	// The rows as the ITL line reads them, a group's engines in place of its
+	// row (domain.EngineRows), and the group each engine settles as.
+	engineRows, engineGroups := domain.EngineRows(c.input.ReplicaMetrics), domain.EngineGroups(c.input.ReplicaMetrics)
 	for _, variant := range variants {
 		// Decode, and an aggregated variant (itlLineRole, issue ev-shindin/llm-scaling-manager#432); never
 		// prefill. ITL is the latency between GENERATED tokens, and
@@ -543,7 +546,7 @@ func (c *cycle) fitLines() {
 		// engines (itl_group_engines.go).
 		c.a.itlReadsEnginesFirst(variantKey, variant, readsEngines(c.input.ReplicaMetrics, variant),
 			c.logger.WithValues("namespace", c.input.Namespace))
-		rows, withheld := c.a.itlRows(domain.EngineRows(c.input.ReplicaMetrics), variant, params)
+		rows, withheld := c.a.itlRows(engineRows, variant, params)
 		rollingOut := rec.InRollout() || mixed[variant]
 		if rollingOut {
 			rows = nil
@@ -577,7 +580,7 @@ func (c *cycle) fitLines() {
 		if adm.Settle != nil {
 			// An engine of a group settles as its group, the row the
 			// settle tracker observes.
-			adm.Settle.Groups = domain.EngineGroups(c.input.ReplicaMetrics)
+			adm.Settle.Groups = engineGroups
 		}
 		// Readings at the cap sit above kSat, where a pinned fit through the
 		// default B prices under the truth: priced one-sided at the line's

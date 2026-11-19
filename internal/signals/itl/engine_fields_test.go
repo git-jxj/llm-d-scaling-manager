@@ -19,10 +19,11 @@ import (
 // other field reads zero. The line reads its rows through this package
 // (Observe, Admission, the settle), the saturation analyzer's itlRows (the
 // per-token reading) and settlerow.Key, and through the ReplicaMetrics
-// methods those call. This test reads, from the type-checked sources, every
-// ReplicaMetrics field those paths read, and fails when one is neither kept
-// by EngineReading nor taken from the group: a field newly read there would
-// otherwise be silently zero on every engine's row.
+// methods and the functions taking a ReplicaMetrics those call. This test
+// reads, from the type-checked sources, every ReplicaMetrics field those
+// paths read, and fails when one is neither kept by EngineReading nor taken
+// from the group: a field newly read there would otherwise be silently
+// zero on every engine's row.
 
 const modulePath = "github.com/llm-d-incubation/llm-d-scaling-manager/"
 
@@ -48,12 +49,31 @@ func TestEngineRows_CarryEveryFieldTheLineReads(t *testing.T) {
 		n, ok := t.(*types.Named)
 		return ok && n.Obj().Name() == rmType.Name() && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == modulePath+"internal/domain"
 	}
+	// takesRM reports whether a function's parameters include a ReplicaMetrics,
+	// a pointer to one or a slice of them.
+	takesRM := func(sig *types.Signature) bool {
+		for v := range sig.Params().Variables() {
+			t := v.Type()
+			if s, ok := t.(*types.Slice); ok {
+				t = s.Elem()
+			}
+			if isRM(t) {
+				return true
+			}
+		}
+		return false
+	}
 	type fn struct {
 		decl *ast.FuncDecl
 		info *types.Info
 	}
+	// methods is ReplicaMetrics' methods by name, and funcs every package-level
+	// function of the loaded packages that takes a ReplicaMetrics, by its
+	// types.Func: a call to one is followed.
 	methods := map[string]fn{}
+	funcs := map[*types.Func]fn{}
 	var roots []fn
+	found := map[string]bool{}
 	for _, p := range pkgs {
 		require.Empty(t, p.Errors, "loading %s", p.PkgPath)
 		for _, f := range p.Syntax {
@@ -62,33 +82,51 @@ func TestEngineRows_CarryEveryFieldTheLineReads(t *testing.T) {
 				if !ok || fd.Body == nil {
 					continue
 				}
+				obj, _ := p.TypesInfo.Defs[fd.Name].(*types.Func)
+				require.NotNil(t, obj, "precondition: %s has a type", fd.Name.Name)
+				sig := obj.Signature()
+				if fd.Recv == nil && takesRM(sig) {
+					funcs[obj] = fn{fd, p.TypesInfo}
+				}
 				switch p.PkgPath {
 				case modulePath + "internal/signals/itl":
 					roots = append(roots, fn{fd, p.TypesInfo})
 				case modulePath + "internal/domain":
-					if fd.Recv != nil && len(fd.Recv.List) == 1 && isRM(p.TypesInfo.TypeOf(fd.Recv.List[0].Type)) {
+					if sig.Recv() != nil && isRM(sig.Recv().Type()) {
 						methods[fd.Name.Name] = fn{fd, p.TypesInfo}
 					}
 				case modulePath + "internal/engines/analyzers/saturation":
-					if fd.Name.Name == "itlRows" {
-						roots = append(roots, fn{fd, p.TypesInfo})
+					if fd.Name.Name == "itlRows" && fd.Recv != nil {
+						roots, found["itlRows"] = append(roots, fn{fd, p.TypesInfo}), true
 					}
 				case modulePath + "internal/signals/settle/settlerow":
-					if fd.Name.Name == "Key" {
-						roots = append(roots, fn{fd, p.TypesInfo})
+					if fd.Name.Name == "Key" && fd.Recv == nil {
+						roots, found["Key"] = append(roots, fn{fd, p.TypesInfo}), true
 					}
 				}
 			}
 		}
 	}
-	require.GreaterOrEqual(t, len(roots), 30, "precondition: the itl package's functions and the two others were found")
+	require.True(t, found["itlRows"], "precondition: saturation's itlRows was found; renamed, name it here")
+	require.True(t, found["Key"], "precondition: settlerow.Key was found; renamed, name it here")
+	require.GreaterOrEqual(t, len(roots), 30, "precondition: the itl package's functions were found")
 	require.Contains(t, methods, "KvUsageForITL", "precondition: the ReplicaMetrics methods were found")
 
 	read := map[string]bool{}
 	seen := map[string]bool{}
+	followed := map[*types.Func]bool{}
 	var walk func(f fn)
 	walk = func(f fn) {
 		ast.Inspect(f.decl.Body, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				if obj, ok := f.info.Uses[id].(*types.Func); ok {
+					if g, ok := funcs[obj]; ok && !followed[obj] {
+						followed[obj] = true
+						walk(g)
+					}
+				}
+				return true
+			}
 			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {
 				return true
@@ -128,5 +166,5 @@ func TestEngineRows_CarryEveryFieldTheLineReads(t *testing.T) {
 	slices.Sort(missing)
 	assert.Empty(t, missing, "ReplicaMetrics fields the line reads that an engine's row does not carry: "+
 		"add them to domain.EngineReading (and EngineReadingOf, rowOf)")
-	t.Logf("the line reads %d ReplicaMetrics fields through %d methods", len(read), len(seen))
+	t.Logf("the line reads %d ReplicaMetrics fields through %d methods and %d functions", len(read), len(seen), len(followed))
 }
