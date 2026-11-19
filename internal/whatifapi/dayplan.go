@@ -654,15 +654,24 @@ func refusalHint(term string, reason whatif.Reason) string {
 		return "The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail."
 	case reason == whatif.TargetBelowFloor:
 		return "The TPOT target is under decode's TPOT at zero load: no replica count meets it. Raise the TPOT target."
-	case term == termTPOT || term == termDecodeKnee:
+	case (term == termTPOT || term == termDecodeKnee) && (reason == whatif.NoLine || reason == whatif.PinnedDefaultB):
+		// The line prices decode's knee too: asking no TPOT does not help.
+		return "The source fitted no decode ITL line it can price (" + string(reason) + "), so neither TPOT nor the decode knee is priced: " +
+			"record a window with decode under varied load (docs/guides/record-for-capacity-planner)."
+	case term == termDecodeKnee:
+		// Whatever the reason, asking no TPOT does not price the knee.
+		return "Decode's knee is not priced (" + string(reason) + "): supply the decode input the detail names, or record a window that " +
+			"carries it (docs/guides/record-for-capacity-planner); docs/guides/capacity-planner/troubleshooting.md lists every reason."
+	case term == termTPOT:
 		return "The source fitted no decode ITL line it can price (" + string(reason) + "): record a window with decode under varied load, or ask no TPOT target (--tpot none)."
 	}
 	return "See the detail; docs/guides/capacity-planner/troubleshooting.md lists every reason."
 }
 
 // group probes k's fleet once, at one replica a role, and builds its
-// sizing: a TPOT term that refuses is dropped, and a TTFT term that refuses
-// leaves decode sized alone. Each refusal is added to refused once.
+// sizing: a TPOT term that refuses is dropped, a TTFT term that refuses
+// leaves decode sized alone, and a decode knee that refuses sizes nothing,
+// since then no rule bounds decode. Each refusal is added to refused once.
 func (q *dayQuestion) group(ctx context.Context, k Knobs, refused *[]DayRefusal) (*dayGroup, error) {
 	add := func(r DayRefusal) { addRefusal(refused, r) }
 	sc := q.sc
@@ -677,15 +686,28 @@ func (q *dayQuestion) group(ctx context.Context, k Knobs, refused *[]DayRefusal)
 		return nil, err
 	}
 	if sc.TPOT != nil && isRefusal(v.decode) {
-		add(dayRefusalOf(roleDecode, termTPOT, v.decode, "TPOT is not priced: decode is sized on the fleet limit, TTFT and its knee times headroom."))
+		tpot := v.decode
 		g.flags = append(g.flags, FlagTPOTNotPriced)
 		sc.TPOT = nil
 		g.z = newSizer()
 		if v, err = g.z.at(ctx, one); err != nil {
 			return nil, err
 		}
+		effect := "TPOT is not priced: decode is sized on the fleet limit, TTFT and its knee times headroom."
+		if isRefusal(v.decode) {
+			effect = "TPOT is not priced, and the decode knee is not priced either: decode is not sized."
+		}
+		add(dayRefusalOf(roleDecode, termTPOT, tpot, effect))
 	}
 	if !isRefusal(v.prefill) {
+		if isRefusal(v.decode) {
+			// With no TPOT, the sizer sets decode's limit only to the
+			// decode knee's refusal: no rule bounds decode then, and a count
+			// sized on prefill's limit alone would be unbounded. Nothing is
+			// sized, as at-replicas refuses the fleet.
+			add(dayRefusalOf(roleDecode, termDecodeKnee, v.decode, "Nothing is sized: the decode knee is not priced, so no rule bounds decode."))
+			g.refused = true
+		}
 		return g, nil
 	}
 	how := "its knee times headroom"

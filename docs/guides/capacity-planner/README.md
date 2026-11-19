@@ -590,8 +590,11 @@ alone. A higher `--ttft` sizes them.
   it did not learn, a TTFT target under the TTFT at zero load, or a decode line
   it did not fit refuses every rate alike. The plan says so at the top, with
   what to do, and sizes what does price: decode alone when prefill is refused,
-  decode without its TPOT when the TPOT is refused. When nothing prices, no
-  bucket is sized and no figure of a need is printed. It then exits 3.
+  decode without its TPOT when the TPOT is refused. When the decode knee is
+  refused (a decode line it did not fit, or no KV capacity or batch cap),
+  nothing bounds decode, so, as when nothing prices, no bucket is sized and
+  no figure of a need is printed, as `at-replicas` refuses the same fleet. It
+  then exits 3.
 - **Beyond the bound.** A bucket whose rate no fleet within `--max-prefill`
   and `--max-decode` (32 each) serves is not sized; its hour is UNDER. It
   also exits 3.
