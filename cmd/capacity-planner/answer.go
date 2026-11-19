@@ -371,8 +371,12 @@ type pricedVariant struct {
 	assumedHit bool
 	// kvSource says where the decode KV per request came from (residentKV).
 	kvSource string
-	flags    []whatif.Flag
-	lines    whatif.LineResamples
+	// bandFloor is the ITL band floor the replay adapted to the fleet's fill
+	// (learnreplay.State.ITLBandFloor), and bandPolicyFloor the policy's it
+	// replaced; 0 where the policy's stood.
+	bandFloor, bandPolicyFloor float64
+	flags                      []whatif.Flag
+	lines                      whatif.LineResamples
 	// model is the model served, and stated the pricing flags set that put
 	// every figure outside the envelope (statedOutside).
 	model  string
@@ -510,6 +514,10 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		if vs.Shape.OutputDispersion == 0 {
 			pv.flags = append(pv.flags, whatif.OutputSpreadUnread)
+		}
+		if st.ITLBandFloor > 0 {
+			pv.bandFloor, pv.bandPolicyFloor = st.ITLBandFloor, st.ITLBandPolicyFloor
+			pv.flags = append(pv.flags, adaptedBandFloor)
 		}
 		switch vs.Tier {
 		case whatif.TierBorrowed:

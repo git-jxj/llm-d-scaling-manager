@@ -509,6 +509,19 @@ type SaturationAnalyzer struct {
 	// prefillAQuadratic is SwitchPrefillAQuadratic (a's curved fit): on
 	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	prefillAQuadratic bool
+	// prefillALowLoadPerRank is SwitchPrefillALowLoadPerRank and
+	// prefillAEngineTiming SwitchPrefillAEngineTiming: off from the
+	// constructor, planner-only; the capacity planner's replay turns them on
+	// (learnreplay.PlannerSwitches).
+	prefillALowLoadPerRank, prefillAEngineTiming bool
+	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
+	// off from the constructor, planner-only. itlFills is each model's
+	// decode fill spans over the horizon, and itlBandFloors the floor
+	// adapted for its latest cycle; both under mu, and empty while the
+	// switch is off.
+	itlAdaptiveFloor bool
+	itlFills         map[string][]fillSpan
+	itlBandFloors    map[string]bandFloor
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
 	// (SetSwitchesForReplay).
@@ -798,6 +811,8 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillObserver:        prefill.NewObserver(),
 		prefillBounds:          make(map[string]stashedBound),
 		prefillEstimates:       make(map[string]stashedEstimate),
+		itlFills:               make(map[string][]fillSpan),
+		itlBandFloors:          make(map[string]bandFloor),
 	}
 }
 
