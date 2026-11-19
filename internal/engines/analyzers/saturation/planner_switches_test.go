@@ -100,7 +100,8 @@ func lowFillReadings(variant string, n int, lo, hi float64) []domain.ReplicaMetr
 	return out
 }
 
-// A fleet whose fill runs 0.06 to 0.39 spreads 0.24 inside the default band
+// A synthetic fleet whose fill runs from 0.06 to 0.39 spreads too little
+// inside the default band
 // (from 0.15): on, the floor follows it down to 0.06 and the line is the
 // fleet's own; off, the line is pinned on the default intercept.
 func TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine(t *testing.T) {
@@ -226,5 +227,88 @@ func TestITLAdaptiveBandFloor_ReleaseHasHysteresis(t *testing.T) {
 		require.True(t, ok, "cycle %d", i)
 	}
 	_, ok = adaptedFloor(reach(0.55), 0.15, 0.80, held)
+	assert.False(t, ok, "released on the release spread's cycle %d in a row", adaptiveBandReleaseCycles)
+}
+
+// lowLoadGroupCycle runs one cycle of the harness's P/D model whose prefill
+// row is a group of four engines, each at occupancy 0.08 on prompts of ieff
+// tokens: 0.32 read whole. It returns the variant's estimate.
+func (h *observeHarness) lowLoadGroupCycle(ieff float64) prefill.Estimate {
+	h.t.Helper()
+	states := []domain.VariantReplicaState{
+		{VariantName: "decode", Role: domain.RoleDecode, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+		{VariantName: "prefill", Role: domain.RolePrefill, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 8},
+	}
+	svc := 0.010 + 1e-6*ieff
+	rr := 4 * 0.08 / svc
+	dec := makeReplicaMetrics("decode-0", "decode", 5000, 16000, 0, 4000, 500)
+	pre := makeReplicaMetrics("prefill-0", "prefill", 0, 16000, 0, ieff, 1)
+	pre.EngineRanks = 4
+	pre.RequestRate, pre.RequestRateKnown = rr, true
+	pre.PrefillComputedTokenRate, pre.PrefillComputedTokenRateKnown = rr*ieff, true
+	pre.AvgServiceTime, pre.AvgTTFT = svc, svc+0.002
+	_, err := h.a.Analyze(h.ctx, makeAnalyzerInput([]domain.ReplicaMetrics{dec, pre}, states))
+	require.NoError(h.t, err)
+	h.clock = h.clock.Add(time.Minute)
+	est, _, ok := h.a.PrefillEstimate("test-ns", "test-model", "prefill")
+	require.True(h.t, ok)
+	return est
+}
+
+// SwitchPrefillALowLoadPerRank reaches the observation through Analyze: on,
+// a group of four quiet engines is low load and a is learned; off, the row
+// read whole is refused, as P1 shipped.
+func TestPrefillALowLoadPerRank_AQuietGroupThroughAnalyze(t *testing.T) {
+	run := func(on bool) prefill.Estimate {
+		h := newObserveHarness(t, &capacity.EngineParams{Engine: inferenceengine.EngineVLLM})
+		require.NoError(t, h.a.SetSwitchesForReplay(map[string]bool{SwitchPrefillALowLoadPerRank: on}))
+		var est prefill.Estimate
+		for _, l := range []float64{1000, 2000, 4000} {
+			for range 4 {
+				est = h.lowLoadGroupCycle(l)
+			}
+		}
+		return est
+	}
+	on := run(true)
+	require.Empty(t, on.ARefused, "%+v", on)
+	assert.InDelta(t, 0.012, on.A, 1e-9)
+	assert.Positive(t, on.ASamples)
+	off := run(false)
+	assert.Equal(t, prefill.TooFewLowLoadMinutes, off.ARefused)
+	assert.Zero(t, off.ASamples)
+}
+
+// Through Analyze: a cycle that adapts the floor, a cycle with no spread that
+// still reads it (the held floor, from the analyzer's own map), cycles that
+// spread only to the adapting threshold and hold it, then
+// adaptiveBandReleaseCycles cycles past the release spread that release it.
+func TestITLAdaptiveBandFloor_HeldThenReleasedThroughAnalyze(t *testing.T) {
+	const v = "decode-low"
+	states := []domain.VariantReplicaState{
+		{VariantName: v, Role: domain.RoleDecode, AcceleratorName: srAccel, CurrentReplicas: 10, GPUsPerReplica: 1},
+	}
+	a := srAnalyzer(v)
+	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchITLAdaptiveBandFloor: true}))
+	ctx, _ := observedCtx(t)
+	cycle := func(lo, hi float64) (float64, bool) {
+		t.Helper()
+		_, err := a.Analyze(ctx, makeAnalyzerInput(lowFillReadings(v, 10, lo, hi), states))
+		require.NoError(t, err)
+		floor, _, ok := a.ITLBandFloor(srNS, srModel)
+		return floor, ok
+	}
+	floor, ok := cycle(0.06, 0.39)
+	require.True(t, ok, "the first cycle adapts")
+	require.InDelta(t, 0.06, floor, 1e-12)
+	floor, ok = cycle(0.20, 0.25)
+	require.True(t, ok, "a cycle with no spread reads the held floor")
+	assert.InDelta(t, 0.06, floor, 1e-12)
+	for i := range adaptiveBandReleaseCycles - 1 {
+		floor, ok = cycle(0.20, 0.55)
+		require.True(t, ok, "cycle %d past the release spread still holds", i)
+		assert.InDelta(t, 0.06, floor, 1e-12)
+	}
+	_, ok = cycle(0.20, 0.55)
 	assert.False(t, ok, "released on the release spread's cycle %d in a row", adaptiveBandReleaseCycles)
 }

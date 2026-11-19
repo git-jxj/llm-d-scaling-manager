@@ -368,28 +368,37 @@ is shown under each box. A typed value flags every figure that rests on it.
 
 A fleet whose load never goes quiet still gets two terms, each flagged:
 
-- **a from engine prefill timing** (`AFromEngineTiming`). With too few
-  low-load minutes, a is fitted from vLLM's own prefill time against the
-  tokens each request computed, over the quieter half of the busy minutes,
-  plus the median time outside the prefill and the queue. The assumed line
-  gives the intercept, the minutes and the overhead. It holds for the prompt
-  length and prefix-hit rate it was read at. When even the shorter prompts
-  compute more than 2,500 tokens, the intercept is extrapolated from long
-  prompts and may read low; the assumed line says so.
-- **An adapted ITL band floor** (`AdaptedBandFloor`). When the decode pods
-  never fill far enough above the band's floor (`minObservableK`, 0.15) for
-  the latency line to spread 0.30, and at least 3 engines read below it, the
-  floor is lowered to the 10th percentile of the engines' fills over the last
-  30 minutes, not under 0.05. It goes back up only after the fill has spread
-  0.35 for 2 minutes. The flag gives the floor used.
+- **Prefill's fixed latency a, from the engines' own timing**
+  (`AFromEngineTiming`). A busy fleet has no quiet minutes to measure a from.
+  The planner then fits vLLM's prefill time against the tokens each request
+  computed, using the less busy minutes, and adds the time a request spends
+  on the prefill pod outside prefill and queueing. The assumed line gives the
+  figures it used. The value holds for the prompt length and cache hit rate
+  it was measured at. If even the shorter prompts compute more than 2,500
+  tokens, a is extrapolated from long prompts and may read low; the assumed
+  line says so.
+- **A lower KV-fill floor for the decode latency line** (`AdaptedBandFloor`).
+  The line is fitted over a range of KV fill. A fleet whose decode pods never
+  fill far enough above the default floor (0.15) never gets the 0.30 range a
+  fit needs. When at least 3 engines read below the floor, the planner lowers
+  it to the 10th percentile of the engines' fills over the last 30 minutes,
+  never under 0.05. It raises it back only after the fill has spread 0.35 for
+  2 minutes. The flag gives the floor used.
+
+**TTFT on a fleet that never goes quiet is not validated: prefill capacity
+V_P is a lower bound.** Such a fleet's prefill pods queue at every load, so
+the planner's prefill capacity is under what the fleet serves, and the decode
+side's share of TTFT is not priced. TTFT and prefill sizing can be wrong in
+either direction; decode TPOT is usable. Every TTFT answer on such a fleet
+says so.
 
 Limits of both:
 
-- The low-load test per engine assumes a group's data-parallel ranks share
-  its load evenly, and context-parallel ranks (PCP, DCP) are not counted as
-  engines.
-- The adapted floor is the same on every replay of one recording, but a
-  different window of the same fleet can adapt to a different floor.
+- The quiet-minute test per engine assumes a group's data-parallel ranks
+  share its load evenly, and context-parallel ranks (PCP, DCP) are not
+  counted as engines.
+- The lowered floor is the same on every replay of one recording, but a
+  different window of the same fleet can lower it to a different floor.
 
 ## Find the fleet a rate needs
 

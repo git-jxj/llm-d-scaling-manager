@@ -967,6 +967,20 @@ func (pf *pricedFleet) verdict(on whatif.Validation) string {
 	return v
 }
 
+// busyFleetTTFTNote is the line every TTFT answer carries when a fleet's a
+// came from engine prefill timing (aFromEngineTiming): such a fleet is busy
+// at every load, and the busy-minute V_P it is priced on is a lower bound.
+const busyFleetTTFTNote = "TTFT on a fleet that never goes quiet is not validated: prefill capacity V_P is a lower bound."
+
+// busyFleetNote is busyFleetTTFTNote where some fleet's a came from engine
+// prefill timing, and "" otherwise.
+func busyFleetNote(fleets []*pricedFleet) string {
+	if slices.ContainsFunc(fleets, func(pf *pricedFleet) bool { return slices.Contains(pf.flags, aFromEngineTiming) }) {
+		return busyFleetTTFTNote
+	}
+	return ""
+}
+
 // footerNote is the fleets' closing note. The direction turns on the spread:
 // the frozen table's assumed row was read at whatif.AssumedPromptCV, so a
 // measured cv (the collector's Q1), or one --assume-prompt-cv states at any

@@ -276,6 +276,9 @@ func writeRateText(out io.Writer, st *learnreplay.State, variants []pricedVarian
 	b.WriteString(footer(st, variants) + "\n")
 	if len(fleets) > 0 {
 		b.WriteString(footerNote(fleets) + "\n")
+		if n := busyFleetNote(fleets); n != "" {
+			b.WriteString(n + "\n")
+		}
 	}
 	_, err := io.WriteString(out, b.String())
 	return err

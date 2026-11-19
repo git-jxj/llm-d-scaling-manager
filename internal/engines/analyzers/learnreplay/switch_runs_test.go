@@ -1284,6 +1284,7 @@ var heldBy = map[string][]heldTest{
 	saturation.SwitchPrefillALowLoadPerRank: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
+		{"../saturation", "TestPrefillALowLoadPerRank_AQuietGroupThroughAnalyze"},
 	},
 	saturation.SwitchPrefillAEngineTiming: {
 		{"../saturation", "TestPrefillAEngineTiming_ABusyGroupLearnsA"},
@@ -1294,6 +1295,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine"},
 		{"../saturation", "TestITLAdaptiveBandFloor_TheRule"},
 		{"../saturation", "TestITLAdaptiveBandFloor_ReleaseHasHysteresis"},
+		{"../saturation", "TestITLAdaptiveBandFloor_HeldThenReleasedThroughAnalyze"},
 	},
 	// llm-d-incubation/llm-d-scaling-manager#97: runs the switch on and off
 	// and asserts both (the share capped at one doubling on, whole off).
