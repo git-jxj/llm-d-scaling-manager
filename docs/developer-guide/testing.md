@@ -2528,6 +2528,41 @@ stamp is a namespace-scope step.
   job `tools-image` builds the image with freshly rendered files and runs
   `hack/check-tools-image.sh`, which fails when the image carries none.
 
+### The capacity planner in a cluster
+
+`make test-e2e-capacity-planner-in-cluster` deploys
+`config/capacity-planner/kubernetes` with the planner image built from the
+tree and checks the
+[in-cluster guide](../guides/capacity-planner/in-cluster.md). It needs only
+docker, kind, kubectl, curl and jq: it makes its own kind cluster,
+`capacity-planner-e2e` (`PLANNER_E2E_CLUSTER`), if there is none, and never
+deletes it.
+
+```bash
+make test-e2e-capacity-planner-in-cluster    # builds PLANNER_E2E_IMG if the daemon lacks it
+```
+
+`test/capacity-planner/e2e.sh`, in order, 14 cases:
+
+1. Nothing exposes the planner (no Service or Ingress), it logs
+   `127.0.0.1:8080 (auth none)`, and no token is mounted.
+2. The loader Pod copies a 0600 recording in with `kubectl cp`.
+3. A ServiceAccount token in its own kubeconfig (`tokenFile`), with nothing
+   but the shipped RoleBinding: no Secrets, no exec; it port-forwards; `GET /`
+   is 200, `GET /` with `Host: planner.example.com` is 403, `POST /v1/inputs`
+   on the copied recording is 200.
+4. The RoleBinding narrowed to the group `planners`, as the guide does: an
+   impersonated member gets 200; a non-member and the ServiceAccount are
+   denied; the ServiceAccount with `view` alone is denied
+   `pods/portforward`; bound to the Role alone, it gets 200 again.
+
+- In CI: the `capacity-planner-image` job runs it after
+  `hack/check-capacity-planner-image.sh`, on the image that job built.
+- Without a cluster, `make lint-deploy-scripts` runs
+  `hack/check-capacity-planner-in-cluster.sh`, which renders every
+  `config/capacity-planner` overlay, asserts it, and fails each assertion on a
+  broken copy of the render. The OpenShift overlays are checked this way only.
+
 ### Controller state between runs
 
 `BeforeSuite` restarts the controller first. This is needed for determinism.

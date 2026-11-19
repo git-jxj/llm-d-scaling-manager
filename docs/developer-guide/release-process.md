@@ -11,10 +11,10 @@ instead.
 
 | Step | Where | What |
 |------|--------|------|
-| 1. Release PR | PR to `main` | `newTag: vX.Y.Z` and the proxy image `:vX.Y.Z`; merge it |
+| 1. Release PR | PR to `main` | `newTag: vX.Y.Z` (controller and planner) and the proxy image `:vX.Y.Z`; merge it |
 | 2. Tag | Your clone | Tag the merge commit of the release PR, check it, push the tag |
 | 3. Wait | GitHub Actions | The release run must succeed |
-| 4. Reset PR | PR to `main` | `newTag: main` and the proxy image `:main` again, only after the run succeeded |
+| 4. Reset PR | PR to `main` | `newTag: main` (controller and planner) and the proxy image `:main` again, only after the run succeeded |
 | 5. Publish | GitHub | Publish the draft GitHub Release the run made, with the release notes; verify the signatures |
 | 6. Docs PR | PR to `main` | Point the install, upgrade and benchmark docs at the release and its digest |
 
@@ -51,6 +51,9 @@ instead.
    others. The planner replays recordings with the controller's learners, so
    it is never released apart from the controller
    ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
+   `config/capacity-planner` (the planner in a cluster) names the image by
+   `newTag`, like the controller: `:main` between releases (published by
+   `ci-main-image.yaml`), the release's tag on a release commit.
 7. **The warm-pool proxy image** at
    `ghcr.io/<repository owner>/llm-d-scaling-manager/warmpool-proxy:<tag>`
    (`Dockerfile.warmpool-proxy`), the sidecar in every warm-pool Pod.
@@ -60,8 +63,8 @@ instead.
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line
-has a tag on `main`, and only when `newTag` and the proxy image tag on the
-tagged commit equal the tag. See [Patch releases](#patch-releases).
+has a tag on `main`, and only when both `newTag`s and the proxy image tag on
+the tagged commit equal the tag. See [Patch releases](#patch-releases).
 
 ---
 
@@ -85,8 +88,10 @@ The workflow checks where a tag is, not who reviewed it. Review on `main` and
    `config/warmpool/warmpool-deployment.yaml` to
    `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:vX.Y.Z`,
    then runs `make warmpool-render` (it copies the image into
-   `deploy/warmpool.sh`; the PR checks fail if it was not run). The release
-   fails before it builds anything if either is not the tag.
+   `deploy/warmpool.sh`; the PR checks fail if it was not run). It sets the
+   same `newTag: vX.Y.Z` in `config/capacity-planner/base/kustomization.yaml`
+   (the PR checks fail when it differs from the controller's). The release
+   fails before it builds anything if any of the three is not the tag.
 2. **Bump dependency pins**, if the release moves one (for example
    [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)), in
    every file `hack/upstream-versions.sh` lists for it. Same PR. See
@@ -116,6 +121,7 @@ git fetch "$REMOTE"
 git tag -m "llm-d-scaling-manager vX.Y.Z" vX.Y.Z <merge commit of the release PR>
 git show vX.Y.Z:config/base/manager/kustomization.yaml | grep -x '  newTag: vX.Y.Z' \
   && git show vX.Y.Z:config/warmpool/warmpool-deployment.yaml | grep -E 'image: .*/warmpool-proxy:vX\.Y\.Z$' \
+  && git show vX.Y.Z:config/capacity-planner/base/kustomization.yaml | grep -x '    newTag: vX.Y.Z' \
   && git merge-base --is-ancestor vX.Y.Z "$REMOTE/main" && git push "$REMOTE" vX.Y.Z
 ```
 
@@ -137,7 +143,8 @@ Do not merge anything that changes `newTag` yet. If the run fails, see
 
 Once the run has succeeded, open a second PR to `main` that sets `newTag: main`
 and the proxy image back to `warmpool-proxy:main` (then `make warmpool-render`),
-and merge it. Until it merges, an install from `main` deploys the release
+and `newTag: main` in `config/capacity-planner/base/kustomization.yaml`, and
+merge it. Until it merges, an install from `main` deploys the release
 image instead of `:main`. Merged earlier, a re-tag after a failed run would fail
 the pin check.
 
@@ -240,7 +247,8 @@ branch's tags are refused.
    PRs to `release-*` run the same checks as PRs to `main`.
 2. **Release PR to `release-0.10`**, not to `main`. It sets
    `newTag: v0.10.2` and the proxy image `:v0.10.2` (a line released before
-   the proxy job existed has no proxy pin to set), and moves every version reference on the branch to
+   the proxy job existed has no proxy pin to set, and one before
+   `config/capacity-planner` no planner pin), and moves every version reference on the branch to
    `v0.10.2`; list them with
    `git grep -n 'v0\.10\.[0-9]' -- docs deploy hack/benchmark`. It adds
    "Upgrading from v0.10.1 to v0.10.2" to

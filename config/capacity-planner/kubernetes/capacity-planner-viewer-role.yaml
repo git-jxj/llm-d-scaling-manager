@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: capacity-planner-viewer
+  labels:
+    app.kubernetes.io/name: capacity-planner
+    app.kubernetes.io/part-of: llm-d-scaling-manager
+# What `kubectl port-forward deploy/capacity-planner` asks for: the
+# Deployment, its Pods, and a port-forward to one of them. Nothing else: no
+# exec, no logs, no Secrets.
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["capacity-planner"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # create for the SPDY upgrade; get for the WebSocket one, which a newer
+  # kubectl tries first (it falls back to SPDY). Each rule above is needed:
+  # kubectl refuses without any one of them.
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create", "get"]

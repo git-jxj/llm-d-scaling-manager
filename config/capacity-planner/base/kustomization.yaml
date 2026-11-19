@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The capacity planner's server in a cluster, for people to open in a browser.
+# Not part of a scaling manager install: it is applied into a namespace of its
+# own with the kubernetes or the openshift overlay, never on its own.
+# docs/guides/capacity-planner/in-cluster.md.
+resources:
+  - capacity-planner-serviceaccount.yaml
+  - capacity-planner-deployment.yaml
+  - recordings-persistentvolumeclaim.yaml
+
+# The planner image follows the controller's newTag (config/base/manager):
+# :main between releases, the release's tag on a release commit. The release
+# and reset PRs change both; hack/check-capacity-planner-in-cluster.sh fails
+# when they differ (docs/developer-guide/release-process.md).
+images:
+  - name: ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner
+    newTag: v0.12.0

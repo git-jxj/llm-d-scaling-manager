@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Plain Kubernetes: no Service, no Ingress. A user opens the page with
+#   kubectl -n <namespace> port-forward deploy/capacity-planner 8080:8080
+# and the Role below is what lets them. By default it is bound to every
+# authenticated user; docs/guides/capacity-planner/in-cluster.md narrows it to
+# a group. Apply into a namespace that holds only the planner: the Role lets
+# its subjects port-forward to every Pod in the namespace.
+resources:
+  - ../base
+  - capacity-planner-viewer-role.yaml
+  - capacity-planner-viewer-rolebinding.yaml

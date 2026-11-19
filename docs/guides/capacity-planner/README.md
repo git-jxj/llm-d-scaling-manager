@@ -17,13 +17,15 @@ It reads what your fleet did, from a window of Prometheus or from a
 recording, and prices answers with the same model the `capacity-planner`
 command line uses. It is read only: it never changes a replica count, a policy
 or a ConfigMap. It runs on your machine, from one binary that serves both the
-page and its API. Nothing is installed in the cluster.
+page and its API. Nothing is installed in the cluster; to share one planner
+with a team, [run it in a cluster](in-cluster.md).
 
 This page gets you to a first plan in about five minutes. The rest of the
 capacity planner's pages:
 
 | Page | For |
 | --- | --- |
+| [Run it in a cluster](in-cluster.md) | one planner in a namespace that people open from their browser: port-forward on Kubernetes, a Route with login on OpenShift |
 | [Record a window](../record-for-capacity-planner/) | saving a window of Prometheus as a recording: with `capacity-planner`, or with only curl and jq |
 | [The HTTP API](api.md) | calling the API yourself: every endpoint, field, flag and error, the plan budget, and Kubernetes authentication |
 | [The metrics it needs](metrics.md) | every series it reads, and what your Prometheus must keep |

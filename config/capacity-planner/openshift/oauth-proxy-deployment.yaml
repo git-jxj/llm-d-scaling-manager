@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capacity-planner
+spec:
+  template:
+    spec:
+      # For the proxy, which reads the token as its OAuth client secret. The
+      # planner container mounts an empty directory over the token's path, so
+      # the token is not mounted into it.
+      automountServiceAccountToken: true
+      containers:
+        - name: planner
+          volumeMounts:
+            - name: no-token
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+        - name: oauth-proxy
+          # Red Hat's supported build; the cluster's global pull secret covers
+          # registry.redhat.io. Pick the tag of your cluster's minor version.
+          image: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.19
+          args:
+            - --provider=openshift
+            - --openshift-service-account=capacity-planner
+            - --https-address=:8443
+            - --http-address=
+            - --upstream=http://127.0.0.1:8080
+            # The planner answers loopback Host names only: send it the
+            # upstream's Host, not the Route's.
+            - --pass-host-header=false
+            - --tls-cert=/etc/tls/private/tls.crt
+            - --tls-key=/etc/tls/private/tls.key
+            - --cookie-secret-file=/etc/proxy/secrets/session_secret
+            - --email-domain=*
+          ports:
+            - name: https
+              containerPort: 8443
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: proxy-tls
+              mountPath: /etc/tls/private
+              readOnly: true
+            - name: proxy-cookie
+              mountPath: /etc/proxy/secrets
+              readOnly: true
+      volumes:
+        - name: no-token
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: proxy-tls
+          secret:
+            secretName: capacity-planner-tls
+        - name: proxy-cookie
+          secret:
+            secretName: capacity-planner-proxy
