@@ -31,7 +31,7 @@ KEEP="${KEEP:-false}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RECORDING="$ROOT/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-open-loop-short/recording.jsonl.gz"
 # One ok or FAIL per case. Change it deliberately with the cases.
-EXPECT_CASES=14
+EXPECT_CASES=15
 
 for tool in kubectl curl jq; do
     command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: $tool is required"; exit 1; }
@@ -187,6 +187,15 @@ else
     fail "GET / not tried"; fail "foreign Host not tried"; fail "POST /v1/inputs not tried"
 fi
 
+# 9. And over SPDY, which an older kubectl uses and a newer one falls back to:
+# that upgrade needs create on pods/portforward, the WebSocket one get.
+if KUBECTL_PORT_FORWARD_WEBSOCKETS=false pf "$T/pf-spdy.log" 18087 "${VIEWER[@]}" \
+    && [ "$(get 18087 "$T/spdy.html")" = 200 ]; then
+    ok "the viewer port-forwards over SPDY too: 200"
+else
+    fail "the viewer cannot port-forward over SPDY: $(cat "$T/pf-spdy.log")"
+fi
+
 echo "Narrowing the RoleBinding to the group planners, as the guide does"
 cat > "$T/narrow.yaml" <<'EOF'
 patches:
@@ -204,7 +213,7 @@ EOF
 overlay "$T/narrow" kubernetes "$T/narrow.yaml"
 kubectl apply -n "$NS" -k "$T/narrow" >/dev/null || die "cannot apply the narrowed overlay"
 
-# 9. In the group: allowed.
+# 10. In the group: allowed.
 if pf "$T/pf-carol.log" 18082 --as=carol --as-group=planners; then
     code="$(get 18082 "$T/carol.html")"
     if [ "$code" = 200 ]; then ok "carol (group planners) opens the page: 200"; else fail "carol: GET / $code"; fi
@@ -212,7 +221,7 @@ else
     fail "carol (group planners) cannot port-forward: $(cat "$T/pf-carol.log")"
 fi
 
-# 10. Not in the group: denied before any Pod is reached.
+# 11. Not in the group: denied before any Pod is reached.
 if pf "$T/pf-dave.log" 18083 --as=dave; then
     fail "dave (no group) port-forwards after the narrowing"
 elif grep -qi 'forbidden' "$T/pf-dave.log"; then
@@ -221,7 +230,7 @@ else
     fail "dave failed, but not as forbidden: $(cat "$T/pf-dave.log")"
 fi
 
-# 11. The viewer lost it with the narrowing.
+# 12. The viewer lost it with the narrowing.
 if pf "$T/pf-viewer2.log" 18084 "${VIEWER[@]}"; then
     fail "the viewer port-forwards after the narrowing"
 elif grep -qi 'forbidden' "$T/pf-viewer2.log"; then
@@ -230,7 +239,7 @@ else
     fail "the viewer failed, but not as forbidden: $(cat "$T/pf-viewer2.log")"
 fi
 
-# 12. Reading the namespace is not enough: view grants Pods and Deployments,
+# 13. Reading the namespace is not enough: view grants Pods and Deployments,
 # not pods/portforward.
 kubectl -n "$NS" create rolebinding viewer-view --clusterrole=view --serviceaccount="$USERS_NS:viewer" >/dev/null
 if pf "$T/pf-viewer3.log" 18085 "${VIEWER[@]}"; then
@@ -241,7 +250,7 @@ else
     fail "with view alone, a failure that does not name pods/portforward: $(cat "$T/pf-viewer3.log")"
 fi
 
-# 13-14. The Role is exactly enough: add the viewer to the narrowed binding by
+# 14-15. The Role is exactly enough: add the viewer to the narrowed binding by
 # a binding of the Role alone.
 kubectl -n "$NS" delete rolebinding viewer-view >/dev/null
 kubectl -n "$NS" create rolebinding viewer-role --role=capacity-planner-viewer --serviceaccount="$USERS_NS:viewer" >/dev/null

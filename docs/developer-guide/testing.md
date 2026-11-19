@@ -2542,7 +2542,7 @@ deletes it.
 make test-e2e-capacity-planner-in-cluster    # builds PLANNER_E2E_IMG if the daemon lacks it
 ```
 
-`test/capacity-planner/e2e.sh`, in order, 14 cases:
+`test/capacity-planner/e2e.sh`, in order, 15 cases:
 
 1. Nothing exposes the planner (no Service or Ingress), it logs
    `127.0.0.1:8080 (auth none)`, and no token is mounted.
@@ -2550,7 +2550,9 @@ make test-e2e-capacity-planner-in-cluster    # builds PLANNER_E2E_IMG if the dae
 3. A ServiceAccount token in its own kubeconfig (`tokenFile`), with nothing
    but the shipped RoleBinding: no Secrets, no exec; it port-forwards; `GET /`
    is 200, `GET /` with `Host: planner.example.com` is 403, `POST /v1/inputs`
-   on the copied recording is 200.
+   on the copied recording is 200; it port-forwards over SPDY too
+   (`KUBECTL_PORT_FORWARD_WEBSOCKETS=false`), which needs `create` where the
+   WebSocket upgrade needs `get`.
 4. The RoleBinding narrowed to the group `planners`, as the guide does: an
    impersonated member gets 200; a non-member and the ServiceAccount are
    denied; the ServiceAccount with `view` alone is denied
