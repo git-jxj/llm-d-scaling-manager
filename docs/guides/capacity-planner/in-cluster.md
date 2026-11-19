@@ -64,6 +64,39 @@ oc apply -n ${NS} -k "${SRC}/openshift?ref=${V}"
 oc -n ${NS} rollout status statefulset/capacity-planner
 ```
 
+### Long recordings need more memory
+
+The shipped limit, 2 GiB, is enough for recordings of a few hours. The planner
+replays a recording into memory when someone first picks it, and may load two
+at once. Measured on a 24-hour recording of a 16-replica P/D fleet (95 MB
+compressed): 8 GiB while it loads, about 4 minutes, then 4 GiB kept while
+people use it. A second load at the same time doubles the peak. Past the limit
+the Pod is killed and restarts, and the person sees the page stop answering.
+
+For day-long recordings, raise the limit before you load them:
+
+```bash
+# Keep the directory, and apply it again after each upgrade, with the new V. On OpenShift, name your overlay.
+cd "$(mktemp -d)"
+cat > kustomization.yaml <<EOF
+resources:
+  - ${SRC}/kubernetes?ref=${V}
+patches:
+  - target:
+      kind: StatefulSet
+      name: capacity-planner
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: {cpu: 500m, memory: 4Gi}
+          limits: {memory: 16Gi}
+EOF
+kubectl apply -n ${NS} -k .
+```
+
+A smaller replay is planned (#196).
+
 ### Let someone else load recordings
 
 Loading needs Pod create in the namespace. To let a user do it without making
