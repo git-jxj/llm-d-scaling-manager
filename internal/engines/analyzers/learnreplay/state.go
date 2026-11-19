@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -62,6 +63,12 @@ type State struct {
 	// Policy is the scaling policy the cycle was analyzed under; nil when
 	// the recorded config was no policy.
 	Policy *config.ScalingPolicy
+	// ITLBandFloor is the ITL band floor the saturation analyzer adapted for
+	// the cycle (saturation.SwitchITLAdaptiveBandFloor), and
+	// ITLBandPolicyFloor the policy's floor it replaced; both 0 where the
+	// policy's stood. Policy then carries the adapted floor, as the cycle was
+	// analyzed under it.
+	ITLBandFloor, ITLBandPolicyFloor float64
 	// Variants is each variant the cycle priced, by name.
 	Variants []VariantState
 	// TPOTWindows is the router's per-request TPOT histogram of every cycle
@@ -216,8 +223,49 @@ type shapeSample struct {
 	il, ol, squared, hit, req float64
 }
 
+// PlannerSwitches is the replay switches the capacity planner's replay turns
+// on (StateAt), by package: the planner-only changes, off from every
+// analyzer's constructor, so the controller never runs them and no golden of
+// its replays moves. Each is the planner reading a busy or low-fill fleet
+// the controller's learners refuse:
+//
+//   - saturation.SwitchPrefillALowLoadPerRank: the low-load test of a per
+//     engine rank, for a row of an LWS group.
+//   - saturation.SwitchPrefillAEngineTiming: a from the engine's prefill
+//     timing where there are too few low-load minutes.
+//   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
+//     the fill a low-fill fleet has.
+func PlannerSwitches() map[string]map[string]bool {
+	return map[string]map[string]bool{PackageSaturation: {
+		saturation.SwitchPrefillALowLoadPerRank: true,
+		saturation.SwitchPrefillAEngineTiming:   true,
+		saturation.SwitchITLAdaptiveBandFloor:   true,
+	}}
+}
+
+// withPlannerSwitches is sw with every switch of PlannerSwitches it does not
+// set, so a caller's own setting of one wins (a test turns one off).
+func withPlannerSwitches(sw map[string]map[string]bool) map[string]map[string]bool {
+	out := make(map[string]map[string]bool, len(sw)+1)
+	for pkg, set := range sw {
+		out[pkg] = maps.Clone(set)
+	}
+	for pkg, set := range PlannerSwitches() {
+		if out[pkg] == nil {
+			out[pkg] = map[string]bool{}
+		}
+		for name, on := range set {
+			if _, ok := out[pkg][name]; !ok {
+				out[pkg][name] = on
+			}
+		}
+	}
+	return out
+}
+
 // StateAt replays recording through the analyzers (in Normal mode, whatever
-// opts.Mode says) and returns the state of the model q names after q's
+// opts.Mode says), with the planner's switches on where opts does not set
+// them (PlannerSwitches), and returns the state of the model q names after q's
 // cycle. A *QueryError is a model the recording does not hold or names
 // ambiguously, or a cycle past its last; any other error is a recording
 // that does not replay.
@@ -241,6 +289,7 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		return nil, queryErrorf("cycle %d asked for, and the recording holds %d of %s/%s", cycle, total, ns, model)
 	}
 	opts.Mode = Normal
+	opts.Switches = withPlannerSwitches(opts.Switches)
 	var (
 		st       *State
 		stateErr error
@@ -273,6 +322,10 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		if in.Namespace != ns || in.ModelID != model {
 			return false
 		}
+		// The cycle's policy as the saturation analyzer read it: with the
+		// band floor it adapted (saturation.SwitchITLAdaptiveBandFloor), so
+		// every reader of the band below reads the line's.
+		in.Config = r.analyzedPolicy(in)
 		n++
 		if n == 1 {
 			firstAt = ev.Now
@@ -521,11 +574,31 @@ func tpotWindow(rl *domain.RouterLatency) (whatif.TPOTWindow, bool) {
 	return w, true
 }
 
+// analyzedPolicy is in's recorded config, or, where the saturation analyzer
+// adapted the ITL band floor for the cycle, a copy of its policy with that
+// floor (saturation.SwitchITLAdaptiveBandFloor).
+func (r *replayer) analyzedPolicy(in domain.AnalyzerInput) domain.AnalyzerConfig {
+	floor, _, ok := r.sat.ITLBandFloor(in.Namespace, in.ModelID)
+	if !ok {
+		return in.Config
+	}
+	var p config.ScalingPolicy
+	if rec, isPolicy := in.Config.(*config.ScalingPolicy); isPolicy && rec != nil {
+		p = *rec
+	}
+	_, hi := p.ITLBand()
+	p.AnalyzerTuning.ITLBand.MinObservableK, p.AnalyzerTuning.ITLBand.MaxObservableK = floor, hi
+	return &p
+}
+
 // stateOf reads the analyzers' learned state of the model in after its
 // saturation Analyze.
 func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, shapes map[string][]shapeSample) *State {
 	st := &State{Namespace: in.Namespace, ModelID: in.ModelID, Cycle: cycle, At: now}
 	st.Policy, _ = in.Config.(*config.ScalingPolicy)
+	if floor, policy, ok := r.sat.ITLBandFloor(in.Namespace, in.ModelID); ok {
+		st.ITLBandFloor, st.ITLBandPolicyFloor = floor, policy
+	}
 	res := r.results[resultKey(domain.SaturationAnalyzerName, in.Namespace, in.ModelID)]
 	if res == nil {
 		return st
