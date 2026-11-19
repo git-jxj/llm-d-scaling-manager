@@ -134,7 +134,7 @@ present, absent and NaN.
 | Variant, role | `kube_pod_owner` and `kube_replicaset_owner` (the Deployment), `label_llm_d_ai_role` in `kube_pod_labels`; or `--role-of` |
 | `CurrentReplicas`, `PendingReplicas`, `DesiredReplicas`; parked variants | the variant's engine Pods in kube-state-metrics (those with a KV series at some step of the window, so a router Pod a name prefix also picks is not counted); `kube_deployment_spec_replicas` |
 | `GPUsPerReplica`, `AcceleratorName` | `kube_pod_container_resource_requests{resource="nvidia_com_gpu"}`; `kube_pod_info` joined to `kube_node_labels`; else `--gpus-per-replica`, `--accelerator` |
-| Engine parameters | `--engine`, `--engine-args`, `--batch-cap`, parsed by `capacity.ParseEngineArgs` |
+| Engine parameters | `--engine`, `--engine-args`, `--batch-cap`, parsed by `capacity.ParseEngineArgs`; the prefill role's from `--prefill-engine-args` when given (empty is the engine's defaults, and `--batch-cap` is then the decode role's only), else from `--engine-args` and `--batch-cap` like every role |
 
 ## What a capture cannot know
 

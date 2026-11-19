@@ -780,7 +780,7 @@ func TestPrometheus_HelpListsTheWindowFlags(t *testing.T) {
 	slices.Sort(want)
 	assert.Equal(t, want, got)
 	assert.NotContains(t, want, "prometheus")
-	assert.Len(t, want, 17)
+	assert.Len(t, want, 18)
 }
 
 // queryOf is a registered query's PromQL in the sweep's namespace.
