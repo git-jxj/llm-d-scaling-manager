@@ -443,10 +443,15 @@ func TestSizePinnedDecodeLineRefusesDecode(t *testing.T) {
 		"tpot mean, low end": {&Objective{Statistic: statisticMean, Target: f64(0.05)}, SizeOnLow},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h := New(Config{Resolver: &stubResolver{pinnedLine: true}, WhatifSchema: "schema-v3"}).Handler()
+			r := &stubResolver{pinnedLine: true}
+			h := New(Config{Resolver: r, WhatifSchema: "schema-v3"}).Handler()
 			req := sizeAt(inputsOf(t, h), 3, 0.05)
 			req.SLO.TPOT, req.SizeOn = c.tpot, c.on
+			before := r.knees.Load()
 			out, _ := sizeOf(t, h, req)
+			if c.tpot.Statistic == statisticNone {
+				assert.Equal(t, int64(1), r.knees.Load()-before, "the knee read once a search, not once a fleet")
+			}
 			assert.Nil(t, out.Answer, "a decode count no rule bounds")
 			require.NotNil(t, out.Unmet)
 			assert.Equal(t, roleDecode, out.Unmet.Role)

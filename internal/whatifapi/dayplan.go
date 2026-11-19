@@ -657,8 +657,12 @@ func refusalHint(term string, reason whatif.Reason) string {
 	case (term == termTPOT || term == termDecodeKnee) && (reason == whatif.NoLine || reason == whatif.PinnedDefaultB):
 		// The line prices decode's knee too: asking no TPOT does not help.
 		return "The source fitted no decode ITL line it can price (" + string(reason) + "), so neither TPOT nor the decode knee is priced: " +
-			"record a window with decode under varied load."
-	case term == termTPOT || term == termDecodeKnee:
+			"record a window with decode under varied load (docs/guides/record-for-capacity-planner)."
+	case term == termDecodeKnee:
+		// Whatever the reason, asking no TPOT does not price the knee.
+		return "Decode's knee is not priced (" + string(reason) + "): supply the decode input the detail names, or record a window that " +
+			"carries it (docs/guides/record-for-capacity-planner); docs/guides/capacity-planner/troubleshooting.md lists every reason."
+	case term == termTPOT:
 		return "The source fitted no decode ITL line it can price (" + string(reason) + "): record a window with decode under varied load, or ask no TPOT target (--tpot none)."
 	}
 	return "See the detail; docs/guides/capacity-planner/troubleshooting.md lists every reason."

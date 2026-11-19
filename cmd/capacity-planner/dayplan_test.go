@@ -182,6 +182,7 @@ func TestDayPlanUnpricedDecodeSizesNothing(t *testing.T) {
 			assert.Zero(t, p.Summary.Counts.Sized)
 			assert.Positive(t, p.Summary.Counts.Refused)
 			assert.Nil(t, p.Summary.PeakNeeded)
+			require.NotEmpty(t, p.Buckets)
 			for _, b := range p.Buckets {
 				assert.Nil(t, b.Needed, "%s: a decode count no rule bounds", b.Start)
 			}

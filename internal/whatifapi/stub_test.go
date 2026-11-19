@@ -46,6 +46,8 @@ type stubResolver struct {
 	// refused, and with no TPOT asked the fleet's limit is prefill's alone,
 	// as the CLI's is with no decode line to read decode's knee from.
 	pinnedLine bool
+	// knees counts the DecodeKnee calls.
+	knees atomic.Int64
 }
 
 var pinnedB = whatif.Unanswerable{Reason: whatif.PinnedDefaultB, Detail: "stub: a pinned-b line on the default intercept"}
@@ -129,6 +131,7 @@ func (f *stubFleet) PrefillKnee() whatif.Result {
 }
 
 func (f *stubFleet) DecodeKnee() whatif.Result {
+	f.r.knees.Add(1)
 	if f.r.pinnedLine {
 		return pinnedB
 	}

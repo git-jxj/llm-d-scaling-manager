@@ -204,6 +204,21 @@ func TestDayPlanPinnedDecodeLineSizesNothing(t *testing.T) {
 	}
 }
 
+// A decode knee refused for any reason names that reason and never sends the
+// operator to --tpot none, which prices no knee; only a missing or pinned
+// line is called a line. TPOT refused for a reason of its own still may.
+func TestDecodeKneeHintIsReasonAgnostic(t *testing.T) {
+	for _, r := range []whatif.Reason{whatif.NoLine, whatif.PinnedDefaultB, whatif.NoCapacity, whatif.NoBatchCap,
+		whatif.NoTraffic, whatif.InvalidInput, whatif.NoDecodeReplicas} {
+		h := refusalHint(termDecodeKnee, r)
+		assert.Contains(t, h, string(r))
+		assert.NotContains(t, h, "--tpot none", r)
+		line := r == whatif.NoLine || r == whatif.PinnedDefaultB
+		assert.Equal(t, line, strings.Contains(h, "ITL line"), r)
+	}
+	assert.Contains(t, refusalHint(termTPOT, whatif.NoTPOTHistogram), "--tpot none")
+}
+
 // A refusal that holds at more replicas than one, which the probe at one a
 // role does not see, is still the source's: the buckets are refused and it
 // lands in Refused, not as a bucket beyond the bound. The stub refuses the
