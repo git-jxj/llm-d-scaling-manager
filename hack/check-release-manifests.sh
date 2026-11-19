@@ -67,7 +67,10 @@ for t in tar gtar; do
     if command -v "$t" >/dev/null 2>&1 && "$t" --version 2>/dev/null | grep -q 'GNU tar'; then TAR="$t"; break; fi
 done
 [ -n "$TAR" ] || { echo "FAIL: GNU tar is required (tar or gtar; on macOS brew install gnu-tar), not skipping"; exit 1; }
-ALL_FILES="$MAIN_FILES scaling-manager-settings.yaml scaling-manager-model-namespace.yaml scaling-manager-activate.yaml scaling-manager-keda-auth.yaml scaling-manager-scaler-tls.yaml scaling-manager-kueue.yaml scaling-manager-alerts.yaml scaling-manager-policy-example.yaml scaling-manager-metrics-reader.yaml scaling-manager-preflight.yaml scaling-manager-preflight-cluster.yaml"
+# The role writer grant: opt-in, and the only files that may grant more than
+# get on disaggregatedsets.
+DSETW_FILES="scaling-manager-dset-role-writer.yaml scaling-manager-dset-role-writer-cluster.yaml"
+ALL_FILES="$MAIN_FILES scaling-manager-settings.yaml scaling-manager-model-namespace.yaml scaling-manager-activate.yaml scaling-manager-keda-auth.yaml scaling-manager-scaler-tls.yaml scaling-manager-kueue.yaml scaling-manager-alerts.yaml scaling-manager-policy-example.yaml scaling-manager-metrics-reader.yaml scaling-manager-preflight.yaml scaling-manager-preflight-cluster.yaml $DSETW_FILES"
 
 render() {
     bash "$ROOT/deploy/release-manifests.sh" --image "$1" --version "$VERSION" --out "$2"
@@ -179,6 +182,7 @@ check_dir() {
             scaling-manager-namespaced-openshift.yaml) ins=__NAMESPACE__; safile="$f" ;;
             scaling-manager-preflight.yaml) ins=__NAMESPACE__; safile="$f" ;;
             scaling-manager-preflight-cluster.yaml) ins=scaling-manager-system; safile="$f" ;;
+            scaling-manager-dset-role-writer-cluster.yaml) ins=scaling-manager-system; safile=scaling-manager-cluster.yaml ;;
             *) ins=__NAMESPACE__; safile=scaling-manager-namespaced.yaml ;;
         esac
         [ "$(q "$f" 'length')" -gt 0 ] || say "$f holds no object"
@@ -226,6 +230,18 @@ check_dir() {
         else
             [ -z "$n" ] || say "$f grants patch on pods, which only scaling-manager-activate.yaml may: $n"
         fi
+        # list and patch on disaggregatedsets are the role writer's (patch
+        # reaches every field of a set). The default install gets them only:
+        # only the opt-in role writer files may grant more.
+        n="$(q "$f" '.[] | select(.kind == "Role" or .kind == "ClusterRole")
+            | select(any(.rules[]?; ((.apiGroups // []) | (index("disaggregatedset.x-k8s.io") or index("*")))
+                and ((.resources // []) | (index("disaggregatedsets") or index("*")))
+                and ((.verbs // []) - ["get"] | length > 0)))
+            | .kind + "/" + .metadata.name')"
+        case " $DSETW_FILES " in
+            *" $f "*) ;;
+            *) [ -z "$n" ] || say "$f grants more than get on disaggregatedsets, which only the opt-in role writer files may: $n" ;;
+        esac
         # Secrets are read by name only: the controller's three scaler TLS
         # Secrets (scaling-manager-scaler-tls-role). A get, list or watch on
         # secrets with no resourceNames reads every Secret in reach, service
@@ -291,6 +307,9 @@ check_dir() {
         n="$(q "$f" '[.[] | select(.kind == "Deployment") | .spec.template.spec.volumes[]
             | select(.configMap.name == "scaling-manager-manager-config") | .configMap.optional] | tojson')"
         [ "$n" = '[true]' ] || say "$f: the scaling-manager-manager-config volume is not optional: $n"
+        # The role writer is off unless the operator opts in.
+        n="$(q "$f" '[.[] | select(.kind == "Deployment") | .spec.template.spec.containers[] | .env[]? | select(.name == "DSET_ROLE_WRITER") | .value] | join(",")')"
+        [ -z "$n" ] || say "$f turns the role writer on (DSET_ROLE_WRITER=$n); only the opt-in may"
         # The Prometheus CA the operator creates is mounted, optional, where
         # prometheusCACertPath points: without it a private CA cannot be trusted.
         n="$(q "$f" '[.[] | select(.kind == "Deployment") | . as $d | .spec.template.spec.volumes[]
@@ -349,6 +368,20 @@ check_dir() {
     # The Kueue file: its Namespace read names the controller namespace only.
     n="$(q scaling-manager-kueue.yaml '[.[] | select(.kind == "ClusterRole" and .metadata.name == "scaling-manager-kueue-reader-role-__NAMESPACE__") | .rules[] | select(.resources | index("namespaces")) | .resourceNames] | tojson')"
     [ "$n" = '[["__NAMESPACE__"]]' ] || say "scaling-manager-kueue.yaml: the Kueue Namespace read names $n, not exactly __NAMESPACE__"
+
+    # The role writer files: get, list and patch on disaggregatedsets and
+    # nothing else, a Role in __NAMESPACE__ or a ClusterRole for the
+    # cluster-wide install, bound to the controller (the subject check above).
+    for f in $DSETW_FILES; do
+        want='Role scaling-manager-dset-role-writer-role __NAMESPACE__;RoleBinding scaling-manager-dset-role-writer-rolebinding __NAMESPACE__'
+        [ "$f" = scaling-manager-dset-role-writer-cluster.yaml ] && want='ClusterRole scaling-manager-dset-role-writer-role -;ClusterRoleBinding scaling-manager-dset-role-writer-rolebinding -'
+        n="$(q "$f" '[.[] | .kind + " " + .metadata.name + " " + (.metadata.namespace // "-")] | join(";")')"
+        [ "$n" = "$want" ] || say "$f holds '$n', not '$want'"
+        n="$(q "$f" '[.[] | select(.kind == "Role" or .kind == "ClusterRole") | .rules | map(.verbs |= sort)] | tojson')"
+        [ "$n" = '[[{"apiGroups":["disaggregatedset.x-k8s.io"],"resources":["disaggregatedsets"],"verbs":["get","list","patch"]}]]' ] \
+            || say "$f: the role writer grant is $n, not get, list and patch on disaggregatedsets"
+    done
+    grep -q '__[A-Z_]*NAMESPACE__' "$d/scaling-manager-dset-role-writer-cluster.yaml" && say "scaling-manager-dset-role-writer-cluster.yaml holds a placeholder; it applies as is"
 
     # The KEDA file: the marker names the ClusterTriggerAuthentication, which
     # reads the Secret of its own name in KEDA namespace.
@@ -656,6 +689,20 @@ mutate preflight-no-ttl "ttlSecondsAfterFinished" scaling-manager-preflight-clus
 mutate preflight-cluster-scope-lost "preflight Job runs" scaling-manager-preflight-cluster.yaml \
     '(select(.kind == "Job") | .spec.template.spec.containers[0].args) = ["preflight", "check"]'
 mutate preflight-cluster-controller "differs from the installer split" scaling-manager-preflight.yaml \
+    '(select(.kind == "ClusterRole") | .metadata.labels["scaling-manager.llmd.ai/part"]) = "controller"'
+mutate dset-patch-in-main "more than get on disaggregatedsets" scaling-manager-namespaced.yaml \
+    '(select(.kind == "Role" and .metadata.name == "scaling-manager-manager-role") | .rules[] | select(.resources | contains(["disaggregatedsets"])) | .verbs) += ["list", "patch"]'
+mutate dset-patch-cluster-main "more than get on disaggregatedsets" scaling-manager-cluster.yaml \
+    '(select(.kind == "ClusterRole" and .metadata.name == "scaling-manager-manager-role") | .rules[] | select(.resources | contains(["disaggregatedsets"])) | .verbs) += ["patch"]'
+mutate dset-wildcard-in-kueue "more than get on disaggregatedsets" scaling-manager-kueue.yaml \
+    '(select(.kind == "ClusterRole") | .rules) += [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}]'
+mutate dset-writer-on-by-default "turns the role writer on" scaling-manager-namespaced.yaml \
+    '(select(.kind == "Deployment") | .spec.template.spec.containers[0].env) += [{"name": "DSET_ROLE_WRITER", "value": "true"}]'
+mutate dset-writer-wider "the role writer grant is" scaling-manager-dset-role-writer.yaml \
+    '(select(.kind == "Role") | .rules[0].verbs) += ["delete"]'
+mutate dset-writer-cluster-subject "ServiceAccount subject" scaling-manager-dset-role-writer-cluster.yaml \
+    '(select(.kind == "ClusterRoleBinding") | .subjects[0].namespace) = "default"'
+mutate dset-writer-cluster-part "differs from the installer split" scaling-manager-dset-role-writer-cluster.yaml \
     '(select(.kind == "ClusterRole") | .metadata.labels["scaling-manager.llmd.ai/part"]) = "controller"'
 d="$WORK/m-preview-back"; rm -rf "$d"; cp -r "$GOOD" "$d"
 sed -i '1a # PREVIEW: not yet installable on its own.' "$d/scaling-manager-activate.yaml"

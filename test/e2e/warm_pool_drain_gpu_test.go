@@ -290,7 +290,7 @@ func launcherImage() string {
 	if img := os.Getenv("LLMSM_E2E_LAUNCHER_IMAGE"); img != "" {
 		return img
 	}
-	return "ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.6.4"
+	return "ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:9c9d03f0d485be9b0529a1623813ebfea24066156233ee13f4177c96bcbbf656"
 }
 
 // cacheClaim names the RWX model cache the engine reads weights from.

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: capacity-planner-recordings
+  labels:
+    app.kubernetes.io/name: capacity-planner
+    app.kubernetes.io/part-of: llm-d-scaling-manager
+spec:
+  # The planner mounts it read-only; the loader Pod (config/capacity-planner/
+  # loader) mounts it read-write on the same node to copy recordings in.
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

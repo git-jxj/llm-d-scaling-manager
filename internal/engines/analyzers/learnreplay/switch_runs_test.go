@@ -1037,6 +1037,14 @@ func switchPackage(name string) string {
 // PR 4a's rows are learner4aSeams, 4b-1's learner4b1Seams and 4b-2's
 // learner4b2Seams, merged in.
 var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMoves, withMoves(staircaseSeamMoves, withMoves(startSeedSeamMoves, withSeams(learner4b2Seams, withSeams(learner4b1Seams, withSeams(learner4aSeams, map[string][]string{
+	// The capacity planner's switches (learnreplay.PlannerSwitches): off from
+	// the constructor, so every golden replay, the controller's, runs them
+	// off, and off alone from all on moves nothing. Only StateAt turns them
+	// on; their unit tests hold them (heldBy), and the planner's goldens
+	// (cmd/capacity-planner/testdata) move with them.
+	saturation.SwitchPrefillALowLoadPerRank: nil,
+	saturation.SwitchPrefillAEngineTiming:   nil,
+	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	// ev-shindin/llm-scaling-manager#275 (two switches) and ev-shindin/llm-scaling-manager#438, this file's own rows before learner PR
 	// 4b-1 (see replaySwitches).
 	saturation.SwitchZeroReplicaDataParallel: nil,
@@ -1271,6 +1279,24 @@ func withSeams(more, rows map[string][]string) map[string][]string {
 // test that holds the same on either side is a control, not a hold, and is
 // not listed here.
 var heldBy = map[string][]heldTest{
+	// The capacity planner's switches: each runs the switch on and off and
+	// asserts both, and the first holds all three off from the constructor.
+	saturation.SwitchPrefillALowLoadPerRank: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
+		{"../saturation", "TestPrefillALowLoadPerRank_AQuietGroupThroughAnalyze"},
+	},
+	saturation.SwitchPrefillAEngineTiming: {
+		{"../saturation", "TestPrefillAEngineTiming_ABusyGroupLearnsA"},
+		{"../../../signals/prefill", "TestTiming_ABusyFleetLearnsAFromEngineTiming"},
+		{"../../../signals/prefill", "TestTiming_LongPromptsAreFlaggedNotRefused"},
+	},
+	saturation.SwitchITLAdaptiveBandFloor: {
+		{"../saturation", "TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine"},
+		{"../saturation", "TestITLAdaptiveBandFloor_TheRule"},
+		{"../saturation", "TestITLAdaptiveBandFloor_ReleaseHasHysteresis"},
+		{"../saturation", "TestITLAdaptiveBandFloor_HeldThenReleasedThroughAnalyze"},
+	},
 	// llm-d-incubation/llm-d-scaling-manager#97: runs the switch on and off
 	// and asserts both (the share capped at one doubling on, whole off).
 	saturation.SwitchLowerBoundCapsRouterShare: {

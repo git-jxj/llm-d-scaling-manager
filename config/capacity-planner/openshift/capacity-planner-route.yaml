@@ -1,0 +1,17 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: capacity-planner
+  labels:
+    app.kubernetes.io/name: capacity-planner
+    app.kubernetes.io/part-of: llm-d-scaling-manager
+spec:
+  to:
+    kind: Service
+    name: capacity-planner
+  port:
+    targetPort: https
+  # The router re-encrypts to the proxy's service-CA certificate.
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect

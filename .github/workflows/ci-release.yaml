@@ -197,6 +197,24 @@ jobs:
           esac
           echo "warm-pool proxy image: ${refs}"
 
+      # And for the capacity planner's in-cluster manifests: config/capacity-planner
+      # names the planner image by newTag, :main between releases.
+      # hack/check-capacity-planner-in-cluster.sh keeps it equal to the
+      # controller's newTag on every PR; this refuses a tag whose commit names
+      # another, before anything is built.
+      - name: Verify the capacity planner manifests pin this release
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          f=config/capacity-planner/base/kustomization.yaml
+          have="$(awk '$1 == "newTag:" {print $2}' "$f" | tr -d '"\r')"
+          if [ "$have" != "$VERSION" ]; then
+            echo "::error file=$f::newTag is '${have}', expected '${VERSION}'. Pin the release tag on the tagged commit (release-process.md, pre-release checklist step 1)."
+            exit 1
+          fi
+          echo "capacity planner newTag: ${have}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 

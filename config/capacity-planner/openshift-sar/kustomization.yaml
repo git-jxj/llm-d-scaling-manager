@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The openshift overlay, open only to users who may get the Service
+# capacity-planner in this namespace: anyone with view, edit or admin here,
+# and anyone bound to the Role below. The proxy asks with the user's own
+# token (--openshift-sar), so its ServiceAccount needs no grant and this adds
+# no cluster-scoped object.
+resources:
+  - ../openshift
+  - capacity-planner-viewer-role.yaml
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: capacity-planner
+    patch: |-
+      - op: test
+        path: /spec/template/spec/containers/1/name
+        value: oauth-proxy
+      - op: add
+        path: /spec/template/spec/containers/1/env
+        value:
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+      - op: add
+        path: /spec/template/spec/containers/1/args/-
+        value: '--openshift-sar={"namespace":"$(POD_NAMESPACE)","resource":"services","resourceName":"capacity-planner","verb":"get"}'

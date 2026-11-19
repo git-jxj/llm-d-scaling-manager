@@ -227,6 +227,9 @@ weighed. The report's `needed` fleet is found the same way.
 | `unmet` | Instead of `answer` when no fleet within the bound serves the rate: `refused` (the reason, such as `NoPrefillCapacity` or `TargetBelowFloor`, or `ReplicaBoundReached` with the figure the bound reached), `role` (`decode`, `prefill`, or `fleet` when each role alone reaches the rate and the fleet does not), and `atBound`, the fleet at the bound. |
 
 A size with no fleet within the bound is a 200 with `unmet`, not an error.
+A decode knee the source refuses (such as `NoLine`, `PinnedDefaultB` or
+`NoCapacity`) is `unmet` for
+`decode` even with no TPOT asked: nothing else bounds decode.
 [What to do about each reason](troubleshooting.md#refused-figures).
 
 ## The report
@@ -387,7 +390,8 @@ loopback only. [Get the planner](README.md#get-the-planner) has the command.
 Never run the default command with `--network host`: the server would listen
 on every interface of the host. Give the command yourself, with
 `--listen 127.0.0.1:8080` and without `--listen-all-in-container`
-([In a container](README.md#in-a-container)). In a Kubernetes Pod, use
+([In a container](README.md#in-a-container)). For a browser in a Kubernetes
+Pod, see [Run it in a cluster](in-cluster.md); for API clients, use
 `--auth=kubernetes` with TLS.
 
 ## Kubernetes authentication

@@ -40,6 +40,7 @@
         },
         "capacityTokens": 1162240,
         "kvPerRequest": 10777.874445030275,
+        "kvPerRequestSource": "context, no resident reading",
         "shape": {
           "inputTokens": 10770.115567753704,
           "inputSource": "measured",
