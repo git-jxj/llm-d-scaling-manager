@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -206,8 +209,8 @@ func TestServeUploadRefusesANonRecording(t *testing.T) {
 func TestServeUploadAnswersAsTheRecording(t *testing.T) {
 	h, f := uploadServer(t, serveFlags{allowUpload: true})
 	up := uploaded(t, h, olsSweepBytes(t), http.StatusCreated)
-	assert.True(t, strings.HasPrefix(up.Name, uploadPrefix), up.Name)
-	assert.True(t, strings.HasSuffix(up.Name, ".jsonl.gz"), up.Name)
+	sum := sha256.Sum256(olsSweepBytes(t))
+	assert.Equal(t, uploadPrefix+hex.EncodeToString(sum[:])+".jsonl.gz", up.Name, "named by the whole SHA-256 of the bytes sent")
 	assert.Equal(t, len(olsSweepBytes(t)), up.Bytes)
 	assert.Equal(t, up, uploaded(t, h, olsSweepBytes(t), http.StatusOK))
 	assert.Len(t, uploadFiles(t, f), 1)
@@ -280,4 +283,79 @@ func TestServeUploadKeepsTheLast(t *testing.T) {
 	assert.Contains(t, string(body), "no such upload")
 	code, _, body = uploadInputs(t, h, names[maxKeptUploads])
 	assert.Equal(t, http.StatusOK, code, "%s", body)
+}
+
+// newUploads is a store of the default bound whose log is warn, removed
+// with the test.
+func newUploads(t *testing.T, warn io.Writer) *uploadStore {
+	t.Helper()
+	up, err := newUploadStore(whatifapi.DefaultUploadBytes, warn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = up.Close() })
+	return up
+}
+
+// An upload pushed out by newer ones while it loads is kept until its load
+// ends: the load succeeds, and only then is its file removed. Before, the
+// file was removed under the load, which failed with "the file changed
+// while it was read".
+func TestServeUploadKeptWhileItLoads(t *testing.T) {
+	up := newUploads(t, io.Discard)
+	lines := olsSweepLines(t)
+	first, created, err := up.Upload(t.Context(), bytes.NewReader(lines))
+	require.NoError(t, err)
+	require.True(t, created)
+	firstPath, ok := up.path(first.Name)
+	require.True(t, ok)
+	src := &servedSources{uploads: up, warn: io.Discard}
+	src.onPass = func(pass int) {
+		if pass != 1 {
+			return
+		}
+		for i := range maxKeptUploads {
+			_, created, err := up.Upload(t.Context(), bytes.NewReader(append(bytes.Clone(lines), bytes.Repeat([]byte("\n"), i+1)...)))
+			require.NoError(t, err)
+			require.True(t, created)
+		}
+		_, kept := up.path(first.Name)
+		require.False(t, kept, "pushed out of the store while it loads")
+	}
+	res, err := resolveRecording(src, first.Name)
+	require.NoError(t, err)
+	assert.Equal(t, first.Name, res.Inputs.Source.Name)
+	assert.NoFileExists(t, firstPath, "removed once its load ended")
+	assert.Len(t, up.names(), maxKeptUploads)
+	entries, err := os.ReadDir(up.dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, maxKeptUploads)
+}
+
+// A disk error storing an upload is a 500 that names no server path; the
+// error itself goes to the server's log.
+func TestServeUploadDiskErrorNamesNoPath(t *testing.T) {
+	h, f := uploadServer(t, serveFlags{allowUpload: true})
+	var log bytes.Buffer
+	f.uploads.warn = &log
+	require.NoError(t, os.RemoveAll(f.uploads.dir))
+	code, body := send(t, h, http.MethodPost, whatifapi.UploadPath, "application/gzip", olsSweepBytes(t))
+	assert.Equal(t, http.StatusInternalServerError, code, "%s", body)
+	assert.Contains(t, string(body), "the server could not store the upload")
+	assert.NotContains(t, string(body), f.uploads.dir)
+	assert.NotContains(t, string(body), os.TempDir())
+	assert.Contains(t, log.String(), f.uploads.dir, "the server's log has the detail")
+}
+
+// A client that leaves while its upload is checked stops the check: the
+// rest is not read, and nothing is kept. The file here would read as no
+// recording; read to its end, that was the answer.
+func TestServeUploadCheckStopsWhenTheClientLeaves(t *testing.T) {
+	up := newUploads(t, io.Discard)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err := up.Upload(ctx, strings.NewReader("hello, planner\n"))
+	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, whatifapi.IsInputError(err), "%v", err)
+	entries, err := os.ReadDir(up.dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }

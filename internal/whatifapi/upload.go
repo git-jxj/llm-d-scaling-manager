@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -26,6 +27,10 @@ const DefaultUploadBytes = 256 << 20
 // server's 30 s read timeout is for a request of a few hundred bytes, and a
 // recording of a hundred megabytes through a port-forward takes minutes.
 const uploadDeadline = 15 * time.Minute
+
+// uploadIdle is how long an upload may send nothing before it is stopped: a
+// client that stalls does not hold the one upload slot for uploadDeadline.
+const uploadIdle = time.Minute
 
 // uploadTypes are the media types an upload may be sent as. Neither is one
 // a page on another site may post without asking first (a CORS preflight,
@@ -92,11 +97,19 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer func() { <-s.uploadSlots }()
 	// A recorder in a test has no connection to set deadlines on.
 	rc := http.NewResponseController(w)
-	_ = rc.SetReadDeadline(time.Now().Add(uploadDeadline))
-	_ = rc.SetWriteDeadline(time.Now().Add(uploadDeadline + time.Minute))
-	out, created, err := s.uploader.Upload(r.Context(), http.MaxBytesReader(w, r.Body, s.uploadMax))
-	if errors.As(err, new(*http.MaxBytesError)) {
+	end := time.Now().Add(uploadDeadline)
+	_ = rc.SetReadDeadline(end)
+	_ = rc.SetWriteDeadline(end.Add(time.Minute))
+	in := &idleReader{r: http.MaxBytesReader(w, r.Body, s.uploadMax), rc: rc, idle: s.uploadIdle, end: end}
+	out, created, err := s.uploader.Upload(r.Context(), in)
+	switch {
+	case errors.As(err, new(*http.MaxBytesError)):
 		err = tooLarge
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		// The rest of the body is never read: the connection is not reused.
+		w.Header().Set("Connection", "close")
+		writeError(w, http.StatusRequestTimeout, fmt.Errorf("the upload was stopped: nothing arrived for %s, or it took longer than %s", s.uploadIdle, uploadDeadline))
+		return
 	}
 	if err != nil {
 		writeErr(w, err)
@@ -116,4 +129,33 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeBody(w, body)
+}
+
+// idleReader reads an upload's body, moving the connection's read deadline
+// to idle from each read, never past end: a client that stops sending is cut
+// off after idle, not end. Once the body is read the deadline is end again,
+// so that the server notices a client that leaves while the upload is
+// checked (its context ends) and no sooner.
+type idleReader struct {
+	r    io.Reader
+	rc   *http.ResponseController
+	idle time.Duration
+	end  time.Time
+}
+
+func (b *idleReader) Read(p []byte) (int, error) {
+	next := time.Now().Add(b.idle)
+	if next.After(b.end) {
+		next = b.end
+	}
+	// A recorder in a test has no connection to set deadlines on.
+	_ = b.rc.SetReadDeadline(next)
+	n, err := b.r.Read(p)
+	// Any other error leaves the deadline passed: the server then gives up
+	// on the rest of the body at once, rather than wait for it before it
+	// answers.
+	if errors.Is(err, io.EOF) {
+		_ = b.rc.SetReadDeadline(b.end)
+	}
+	return n, err
 }

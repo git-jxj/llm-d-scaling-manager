@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -34,12 +35,24 @@ const (
 // so no file in --recordings has a name an upload could take.
 const uploadPrefix = "upload:"
 
+// uploadDirPrefix starts the name of every store's directory in TMPDIR.
+const uploadDirPrefix = "capacity-planner-uploads-"
+
+// errNoUploadStore is a disk error storing an upload, as the client is told
+// it: the error itself names the server's paths, and goes to the server's
+// log.
+var errNoUploadStore = errors.New("the server could not store the upload")
+
 // uploadStore keeps the recordings uploaded to serve (--allow-upload) in a
 // directory of its own, readable by the server's user alone and removed when
 // the server stops. An upload is kept under a name the server gives it, from
 // its bytes; nothing the client sends names a file.
 type uploadStore struct {
 	dir string
+	// lock is the directory held open, and locked where the system can
+	// (lockUploadDir), for as long as the server runs: a server starting
+	// later tells a live store's directory from one a stopped server left.
+	lock *os.File
 	// maxBytes is --upload-max-size.
 	maxBytes int64
 	warn     io.Writer
@@ -49,16 +62,61 @@ type uploadStore struct {
 	// first.
 	paths map[string]string
 	order []string
+	// loading counts the loads reading each file, by path; a file pushed
+	// out by newer uploads while it loads is removed when its last load
+	// ends (evicted).
+	loading map[string]int
+	evicted map[string]bool
 }
 
 // newUploadStore makes the store's directory, in the system's temporary
-// directory (TMPDIR), mode 0700.
+// directory (TMPDIR), mode 0700. It first removes the directories a server
+// that stopped without removing its own left there (a container restarted
+// keeps its emptyDir), and none a running server holds.
 func newUploadStore(maxBytes int64, warn io.Writer) (*uploadStore, error) {
-	dir, err := os.MkdirTemp("", "capacity-planner-uploads-")
-	if err != nil {
-		return nil, err
+	sweepUploadDirs(os.TempDir(), warn)
+	for range 3 {
+		dir, err := os.MkdirTemp("", uploadDirPrefix)
+		if err != nil {
+			return nil, err
+		}
+		lock, err := lockUploadDir(dir)
+		if err == nil {
+			// A server starting at the same moment may have swept the
+			// directory between its making and its lock.
+			if _, err = os.Stat(dir); err == nil {
+				return &uploadStore{dir: dir, lock: lock, maxBytes: maxBytes, warn: warn,
+					paths: map[string]string{}, loading: map[string]int{}, evicted: map[string]bool{}}, nil
+			}
+			_ = lock.Close()
+		}
+		_ = os.RemoveAll(dir)
 	}
-	return &uploadStore{dir: dir, maxBytes: maxBytes, warn: warn, paths: map[string]string{}}, nil
+	return nil, errors.New("the upload directory was removed as it was made")
+}
+
+// sweepUploadDirs removes the store directories in tmp that no running
+// server holds (lockUploadDir), so that a server that restarts in the same
+// TMPDIR does not keep the uploads of the one before it. A directory it
+// cannot open, another user's, is left.
+func sweepUploadDirs(tmp string, warn io.Writer) {
+	dirs, _ := filepath.Glob(filepath.Join(tmp, uploadDirPrefix+"*"))
+	for _, dir := range dirs {
+		if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+			continue
+		}
+		lock, err := lockUploadDir(dir)
+		if err != nil || !uploadDirLocks {
+			if lock != nil {
+				_ = lock.Close()
+			}
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil && warn != nil {
+			fmt.Fprintf(warn, "capacity-planner: removing a stopped server's uploads: %v\n", err)
+		}
+		_ = lock.Close()
+	}
 }
 
 // Close removes the store's directory and every upload in it.
@@ -66,7 +124,11 @@ func (u *uploadStore) Close() error {
 	if u == nil {
 		return nil
 	}
-	return os.RemoveAll(u.dir)
+	err := os.RemoveAll(u.dir)
+	if u.lock != nil {
+		_ = u.lock.Close()
+	}
+	return err
 }
 
 // path is the file of the upload named name.
@@ -75,6 +137,44 @@ func (u *uploadStore) path(name string) (string, bool) {
 	defer u.mu.Unlock()
 	p, ok := u.paths[name]
 	return p, ok
+}
+
+// load is the file of the upload named name, held until release is called:
+// newer uploads pushing it out while it loads leave the file in place until
+// then, so that the load reads it to the end.
+func (u *uploadStore) load(name string) (path string, release func(), ok bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	path, ok = u.paths[name]
+	if !ok {
+		return "", func() {}, false
+	}
+	u.loading[path]++
+	var once sync.Once
+	return path, func() { once.Do(func() { u.release(path) }) }, true
+}
+
+// release ends one load of path, and removes the file when it was the last
+// load of an upload pushed out meanwhile.
+func (u *uploadStore) release(path string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.loading[path]--; u.loading[path] > 0 {
+		return
+	}
+	delete(u.loading, path)
+	if u.evicted[path] {
+		delete(u.evicted, path)
+		u.remove(path)
+	}
+}
+
+// remove removes an upload's file, saying so on the server's log when it
+// cannot.
+func (u *uploadStore) remove(path string) {
+	if err := os.Remove(path); err != nil && u.warn != nil {
+		fmt.Fprintf(u.warn, "capacity-planner: removing an upload: %v\n", err)
+	}
 }
 
 // names is the uploads kept, newest first.
@@ -94,7 +194,7 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 	var none whatifapi.UploadResponse
 	f, err := os.CreateTemp(u.dir, "upload-*")
 	if err != nil {
-		return none, false, err
+		return none, false, u.storeError(err)
 	}
 	path, kept := f.Name(), false
 	defer func() {
@@ -103,14 +203,20 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 		}
 	}()
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), body)
+	// A disk error is the server's, and names its paths; an error reading
+	// body is the client's connection, or its bound.
+	file := &writeErrors{w: f}
+	n, err := io.Copy(io.MultiWriter(file, h), body)
 	var magic [2]byte
 	m, _ := f.ReadAt(magic[:], 0)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
+	cerr := f.Close()
+	switch {
+	case file.err != nil:
+		return none, false, u.storeError(file.err)
+	case err != nil:
 		return none, false, fmt.Errorf("reading the upload: %w", err)
+	case cerr != nil:
+		return none, false, u.storeError(cerr)
 	}
 	if n == 0 {
 		return none, false, whatifapi.InputErrorf("the upload is empty")
@@ -119,7 +225,7 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 	if m == len(magic) && bytes.Equal(magic[:], []byte{0x1f, 0x8b}) {
 		ext = ".jsonl.gz"
 	}
-	name := uploadPrefix + hex.EncodeToString(h.Sum(nil))[:16] + ext
+	name := uploadPrefix + hex.EncodeToString(h.Sum(nil)) + ext
 	out := whatifapi.UploadResponse{Name: name, Bytes: int(n)}
 	if _, ok := u.path(name); ok {
 		return out, false, nil
@@ -138,12 +244,38 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 	for len(u.order) > maxKeptUploads {
 		old := u.order[0]
 		u.order = u.order[1:]
-		if err := os.Remove(u.paths[old]); err != nil && u.warn != nil {
-			fmt.Fprintf(u.warn, "capacity-planner: removing the upload %s: %v\n", old, err)
+		// A file being loaded is removed when its loads end (release).
+		if p := u.paths[old]; u.loading[p] > 0 {
+			u.evicted[p] = true
+		} else {
+			u.remove(p)
 		}
 		delete(u.paths, old)
 	}
 	return out, true, nil
+}
+
+// storeError is errNoUploadStore, the disk error err said on the server's
+// log alone.
+func (u *uploadStore) storeError(err error) error {
+	if u.warn != nil {
+		fmt.Fprintf(u.warn, "capacity-planner: storing an upload: %v\n", err)
+	}
+	return errNoUploadStore
+}
+
+// writeErrors is a writer that keeps the first error writing to w.
+type writeErrors struct {
+	w   io.Writer
+	err error
+}
+
+func (w *writeErrors) Write(p []byte) (int, error) {
+	n, err := w.w.Write(p)
+	if err != nil && w.err == nil {
+		w.err = err
+	}
+	return n, err
 }
 
 // errUploadBound is a read stopped at one of an upload's bounds.
@@ -158,7 +290,7 @@ func (u *uploadStore) check(ctx context.Context, name, path string) error {
 		return err
 	}
 	defer func() { _ = rs.Close() }()
-	b := &boundedReader{left: u.maxBytes * maxUploadExpansion}
+	b := &boundedReader{ctx: ctx, left: u.maxBytes * maxUploadExpansion}
 	open := rs.open
 	rs.open = func() (io.ReadCloser, error) {
 		rc, err := open()
@@ -173,6 +305,9 @@ func (u *uploadStore) check(ctx context.Context, name, path string) error {
 	}
 	err = rs.check(name, name)
 	switch {
+	case ctx.Err() != nil:
+		// The client left, or the deadline passed: the rest is not read.
+		return ctx.Err()
 	case b.long:
 		return whatifapi.TooLargeError{Err: fmt.Errorf("the upload was not kept: it has a line longer than %s, "+
 			"more than a recording holds", whatifapi.Quantity(maxUploadLine))}
@@ -187,8 +322,9 @@ func (u *uploadStore) check(ctx context.Context, name, path string) error {
 
 // boundedReader reads r until it has read left bytes, or a line longer than
 // maxUploadLine: past either it stops with a readError, and left is below 0
-// or long is set.
+// or long is set. It stops too once ctx is done, between two reads.
 type boundedReader struct {
+	ctx  context.Context
 	r    io.Reader
 	left int64
 	line int64
@@ -196,6 +332,9 @@ type boundedReader struct {
 }
 
 func (b *boundedReader) Read(p []byte) (int, error) {
+	if err := b.ctx.Err(); err != nil {
+		return 0, readError{err}
+	}
 	if b.left < 0 || b.long {
 		return 0, readError{errUploadBound}
 	}

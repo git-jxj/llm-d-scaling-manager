@@ -130,10 +130,10 @@ curl -sS -X POST --data-binary @qwen3-32b.jsonl.gz \
 ```
 
 ```json
-{"schemaVersion": 1, "name": "upload:3f9a2b1c4d5e6f70.jsonl.gz", "bytes": 95114025}
+{"schemaVersion": 1, "name": "upload:3f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f70.jsonl.gz", "bytes": 95114025}
 ```
 
-Load it as any recording, with `"source": {"kind": "recording", "name": "upload:3f9a2b1c4d5e6f70.jsonl.gz"}`.
+Load it as any recording, with `"source": {"kind": "recording", "name": "upload:3f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f70.jsonl.gz"}`.
 
 - **Who can upload is who can open the planner.** Every user who can open it
   also sees every upload, as they see `--recordings`. With
@@ -143,9 +143,11 @@ Load it as any recording, with `"source": {"kind": "recording", "name": "upload:
   real names, upload an exported copy ([Real names in
   recordings](in-cluster.md#real-names-in-recordings)).
 - **Where it goes.** A directory of the server's own, mode 0700, under
-  `TMPDIR` (else `/tmp`). The name comes from the file's bytes; the file
-  name you send is not read. The last 4 uploads are kept; an older one is
-  deleted. All are deleted when the server stops.
+  `TMPDIR` (else `/tmp`). The name is `upload:` and the SHA-256 of the
+  file's bytes; the file name you send is not read. The last 4 uploads are
+  kept; an older one is deleted, once no load is reading it. All are deleted
+  when the server stops. A server that starts deletes what a stopped one left
+  in the same `TMPDIR`, as after a container restart.
 - **Send** `.jsonl` or `.jsonl.gz` bytes as `application/octet-stream` or
   `application/gzip`. Another type is a 415: a page on another site cannot
   send these types without asking the server first, and the server never
@@ -153,7 +155,8 @@ Load it as any recording, with `"source": {"kind": "recording", "name": "upload:
 - **The same file twice** is a 200 with the name it already has; a new one is
   a 201.
 - **An upload may take 15 minutes** to arrive and be checked; other requests
-  still have 30 s.
+  still have 30 s. An upload that sends nothing for 60 s is stopped with a
+  408, so a stalled client does not hold the one upload slot.
 
 The server reads every line before it keeps the file, and refuses:
 
@@ -162,10 +165,12 @@ The server reads every line before it keeps the file, and refuses:
 | 403 | The server was started without `--allow-upload`. |
 | 413 | Larger than `--upload-max-size`; gunzips to more than 16 times it (4 GiB by default); or has a line longer than 64 MiB. |
 | 400 | Not a learner recording: not JSON lines, a gzip cut short, no start line, or empty. |
+| 408 | Nothing arrived for 60 s, or the upload took more than 15 minutes. |
 | 503 | Another upload is being read. Ask again. |
+| 500 | The server could not write the file to its disk. The response names no server path; the server's log has the detail. |
 
-Loading an upload is refused with a 413 when the loaded recording would take
-more memory than `--inputs-cache-size`, so one upload cannot push every
+Loading an upload is refused with a 413 when the memory the loaded recording
+would take, as estimated, is more than `--inputs-cache-size`, so one upload cannot push every
 other loaded source out. A recording in `--recordings` is not refused this
 way.
 

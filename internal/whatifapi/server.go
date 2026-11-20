@@ -144,6 +144,8 @@ type Server struct {
 	uploader    Uploader
 	uploadMax   int64
 	uploadSlots chan struct{}
+	// uploadIdle is how long an upload may send nothing (uploadIdle).
+	uploadIdle time.Duration
 }
 
 // inputsEntry is a source resolved: its id, the inputs a plan reads its
@@ -187,7 +189,7 @@ func New(c Config) *Server {
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
-		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1)}
+		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle}
 }
 
 // errBusy is a request past the server's bound on work in flight.

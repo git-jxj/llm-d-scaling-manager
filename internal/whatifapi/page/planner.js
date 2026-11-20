@@ -322,8 +322,10 @@ async function loadInputs() {
   state.link = linkAtLoadStart(state.link, seq);
   el("load").disabled = true;
   let tick = 0;
+  let source = null;
   try {
     const req = {source: sourceRequest()};
+    source = req.source;
     if (el("model").value.trim()) req.model = el("model").value.trim();
     if (el("pvariant").value.trim()) req.prefillVariant = el("pvariant").value.trim();
     if (el("dvariant").value.trim()) req.decodeVariant = el("dvariant").value.trim();
@@ -351,6 +353,11 @@ async function loadInputs() {
     if (end.restore) {
       restorePage(end.restore);
       opened = " The scenario was not opened; the page keeps the one before.";
+    }
+    // An upload pushed out by newer ones is no longer offered.
+    if (source && source.kind === "recording" && source.name.startsWith("upload:") &&
+        e.message.startsWith("400:") && e.message.includes("no such upload")) {
+      forgetUpload(source.name);
     }
     setStatus("Could not load the inputs: " + e.message + opened, true);
     el("source").open = true;
@@ -381,20 +388,37 @@ function uploadRecording() {
   }
   el("upload").disabled = el("load").disabled = true;
   const done = () => { el("upload").disabled = el("load").disabled = false; };
-  const xhr = new XMLHttpRequest();
-  xhr.open("POST", "v1/recordings");
-  xhr.setRequestHeader("Content-Type", "application/octet-stream");
-  xhr.upload.onprogress = e => {
-    if (e.lengthComputable) setStatus(`Uploading ${file.name}: ${Math.floor(100 * e.loaded / e.total)}%`);
+  // A server taking another upload answers 503: tried again as api() does.
+  const send = attempt => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "v1/recordings");
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) setStatus(`Uploading ${file.name}: ${Math.floor(100 * e.loaded / e.total)}%`);
+    };
+    xhr.upload.onload = () => setStatus(`Checking ${file.name}: the server reads every line once...`);
+    xhr.onerror = () => { done(); setStatus(`Could not upload ${file.name}: the connection failed.`, true); };
+    xhr.onload = () => {
+      const wait = retryDelay(xhr.status, xhr.getResponseHeader("Retry-After"), attempt);
+      if (wait >= 0) {
+        setStatus(`The server is taking another upload; sending ${file.name} again in ${Math.round(wait / 1000)} s...`);
+        setTimeout(() => send(attempt + 1), wait);
+        return;
+      }
+      uploaded(xhr);
+    };
+    xhr.send(file);
   };
-  xhr.upload.onload = () => setStatus(`Checking ${file.name}: the server reads every line once...`);
-  xhr.onerror = () => { done(); setStatus(`Could not upload ${file.name}: the connection failed.`, true); };
-  xhr.onload = () => {
+  const uploaded = xhr => {
     done();
     let doc = null;
     try { doc = JSON.parse(xhr.responseText); } catch (e) { doc = null; }
     if (xhr.status !== 200 && xhr.status !== 201) {
       setStatus(`Could not upload ${file.name}: ${xhr.status}: ${(doc && doc.error) || xhr.statusText}`, true);
+      return;
+    }
+    if (!doc || typeof doc.name !== "string" || !doc.name) {
+      setStatus(`Could not upload ${file.name}: the server's answer was not the upload's name.`, true);
       return;
     }
     const s = state.sources;
@@ -410,7 +434,19 @@ function uploadRecording() {
     setStatus(`Uploaded ${file.name} as ${doc.name}.`);
     loadInputs();
   };
-  xhr.send(file);
+  send(0);
+}
+
+// forgetUpload removes an upload the server no longer keeps from the
+// recordings offered.
+function forgetUpload(name) {
+  const s = state.sources;
+  s.recordings = s.recordings.filter(n => n !== name);
+  const rec = el("rec");
+  for (const o of Array.from(rec.options)) {
+    if (o.value === name) o.remove();
+  }
+  el("krec").disabled = s.recordings.length === 0;
 }
 
 // setInputs starts a session from the inputs: the recorded replicas, the

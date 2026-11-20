@@ -85,11 +85,14 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	uploaded := false
 	switch src.Kind {
 	case whatifapi.SourceRecording:
-		path, up, err := s.recordingPath(src)
+		path, release, err := s.recordingPath(src)
 		if err != nil {
 			return nil, err
 		}
-		uploaded = up
+		if release != nil {
+			uploaded = true
+			defer release()
+		}
 		// The name was a regular file when checked; what is opened is judged
 		// again, as opened (openRecording).
 		f.recording, f.regularOnly, hide, info.Name = path, true, path, src.Name
@@ -128,42 +131,43 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		return nil, hidePath(apiError(cerr), hide, info.Name)
 	}
 	if err == nil && uploaded && s.maxUploadWeight > 0 && res.Bytes > s.maxUploadWeight {
-		return nil, whatifapi.TooLargeError{Err: fmt.Errorf("%s: loaded, it takes %s of memory, more than this server keeps for loaded sources "+
+		return nil, whatifapi.TooLargeError{Err: fmt.Errorf("%s: loaded, it takes an estimated %s of memory, more than this server keeps for loaded sources "+
 			"(--inputs-cache-size %s): load a shorter recording, or ask whoever runs the planner to raise --inputs-cache-size",
 			info.Name, whatifapi.Quantity(int64(res.Bytes)), whatifapi.Quantity(int64(s.maxUploadWeight)))}
 	}
 	return res, err
 }
 
-// recordingPath is the recording a source names, and whether it was
-// uploaded: an upload's name, looked up and never joined to a path, or a file
-// name in the recordings directory, never a path.
-func (s *servedSources) recordingPath(src whatifapi.SourceRequest) (string, bool, error) {
+// recordingPath is the recording a source names: an upload's name, looked
+// up and never joined to a path, or a file name in the recordings directory,
+// never a path. For an upload, release is non-nil and the caller calls it
+// when the load ends: until then the file is kept (uploadStore.load).
+func (s *servedSources) recordingPath(src whatifapi.SourceRequest) (path string, release func(), err error) {
 	if s.uploads != nil && strings.HasPrefix(src.Name, uploadPrefix) {
 		if err := recordingFields(src); err != nil {
-			return "", false, err
+			return "", nil, err
 		}
-		path, ok := s.uploads.path(src.Name)
+		path, release, ok := s.uploads.load(src.Name)
 		if !ok {
-			return "", false, whatifapi.InputErrorf("source.name %q: no such upload: the server keeps the last %d uploads until it stops; upload it again",
+			return "", nil, whatifapi.InputErrorf("source.name %q: no such upload: the server keeps the last %d uploads until it stops; upload it again",
 				src.Name, maxKeptUploads)
 		}
-		return path, true, nil
+		return path, release, nil
 	}
 	if s.recordings == "" {
-		return "", false, whatifapi.InputErrorf("source.kind recording: the server reads no recordings (--recordings)")
+		return "", nil, whatifapi.InputErrorf("source.kind recording: the server reads no recordings (--recordings)")
 	}
 	if err := recordingFields(src); err != nil {
-		return "", false, err
+		return "", nil, err
 	}
 	if !recordingName(src.Name) {
-		return "", false, whatifapi.InputErrorf("source.name %q: want a file name in the server's recordings directory, not a path", src.Name)
+		return "", nil, whatifapi.InputErrorf("source.name %q: want a file name in the server's recordings directory, not a path", src.Name)
 	}
 	path, ok := s.recordingFile(src.Name)
 	if !ok {
-		return "", false, whatifapi.InputErrorf("source.name %q: no such recording in the server's recordings directory", src.Name)
+		return "", nil, whatifapi.InputErrorf("source.name %q: no such recording in the server's recordings directory", src.Name)
 	}
-	return path, false, nil
+	return path, nil, nil
 }
 
 // recordingFields refuses the fields a recording source does not take, and a

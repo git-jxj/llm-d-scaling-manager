@@ -119,12 +119,14 @@ kubectl -n ${NS} delete pod capacity-planner-loader
 For the namespace admin. Off by default. Turned on, everyone who can open
 the planner can upload a recording from the page, and everyone sees every
 upload. Uploads are kept as sent (no renaming of real names) in the Pod's
-`/tmp`, the last 4, and are lost when the Pod restarts. Use the loader for
-recordings that should stay.
+`/tmp`, the last 4. A restart loses them: a new Pod starts with an empty
+`/tmp`, and a planner container that restarts in the same Pod deletes the
+uploads it finds there as it starts. Use the loader for recordings that
+should stay.
 
 ```bash
-# On OpenShift use oc, and openshift (or openshift-sar) in place of kubernetes. Keep the directory, and apply it
-# again after each upgrade, with the new V. To also narrow who can open it, put both patches in this one file.
+# On OpenShift, see below. Keep the directory, and apply it again after each upgrade, with the new V.
+# To also narrow who can open it, put both patches in this one file.
 cd "$(mktemp -d)"
 cat > kustomization.yaml <<EOF
 resources:
@@ -145,6 +147,32 @@ patches:
         value: {name: uploads, emptyDir: {sizeLimit: 2Gi}}
 EOF
 kubectl apply -n ${NS} -k .
+```
+
+On OpenShift, use `oc`, put `openshift` (or `openshift-sar`) in place of
+`kubernetes`, and add these two patches under `patches:`. The Route and the
+oauth-proxy each stop waiting for an answer after 30 s, and checking a large
+upload takes longer; the planner allows an upload 15 minutes. These patches
+were rendered with `kubectl kustomize`, not run on a live OpenShift cluster.
+
+```yaml
+  - target:
+      kind: Route
+      name: capacity-planner
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value: {haproxy.router.openshift.io/timeout: 16m}
+  - target:
+      kind: StatefulSet
+      name: capacity-planner
+    patch: |-
+      - op: test
+        path: /spec/template/spec/containers/1/name
+        value: oauth-proxy
+      - op: add
+        path: /spec/template/spec/containers/1/args/-
+        value: --upstream-timeout=16m
 ```
 
 - The largest upload is 256 MiB; a day-long recording of a 16-replica P/D
