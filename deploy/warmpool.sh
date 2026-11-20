@@ -497,6 +497,12 @@ cmd_create() {
       log_error "${ram_flag%%=*} must be a number of GiB, such as 2016 or 1250, got '${ram_flag#*=}'"
     fi
   done
+  if [ -n "$NODE_RAM_GIB" ] && ! printf '%s' "$NODE_RAM_GIB" | grep -q '[1-9]'; then
+    log_error "--ram-gib must be more than 0, got '${NODE_RAM_GIB}'"
+  fi
+  if [ "$APPLY" -eq 0 ] && [ -z "$NODE_RAM_GIB" ] && [ -n "$RESERVED_RAM_GIB" ]; then
+    log_warning "--reserved-ram-gib is not checked on a dry run without --ram-gib: a dry run reads no node"
+  fi
   if [ "$APPLY" -eq 1 ] || [ -n "$NODE_RAM_GIB" ]; then
     local fit_out fit_rc=0 line
     local fit_args=(--check-pool-gib "${memory%Gi}")

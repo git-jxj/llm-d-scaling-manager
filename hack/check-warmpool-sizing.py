@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "deploy" / "lib"))
 import warmpool_sizing as ws  # noqa: E402
 
-EXPECT_CASES = 50
+EXPECT_CASES = 58
 CASES = []
 
 
@@ -90,6 +90,18 @@ check("human-readable 200g is decimal", round(200e9 / GIB, 3),
       round(tier_of(args=["--kv-transfer-config", offload % "200g"]), 3))
 check("--kv-offloading-size N is GiB for the server", 300.0, tier_of(gpus=8, args=["--kv-offloading-size", "300"]))
 check("--kv-offloading-size=N", 300.0, tier_of(args=["--kv-offloading-size=300"]))
+check("--kv_offloading_size, the underscore spelling", 300.0, tier_of(args=["--kv_offloading_size", "300"]))
+check("an exponent is read, not cut at the e", round(1e11 / GIB, 3),
+      round(tier_of(args=["--kv-transfer-config", offload % "1e11"]), 3))
+check("LMCache's size in kv_connector_extra_config, per rank", 200.0,
+      tier_of(gpus=2, args=["--kv-transfer-config",
+                            '{"kv_connector_extra_config":{"lmcache.max_local_cpu_size": 100}}']))
+check("LMCACHE_LOCAL_CPU=False holds no CPU tier", 0.0,
+      tier_of(gpus=8, env=[{"name": "LMCACHE_MAX_LOCAL_CPU_SIZE", "value": "100"},
+                           {"name": "LMCACHE_LOCAL_CPU", "value": "False"}]))
+_, _, unread = ws.pod_host_ram({"containers": [container(
+    env=[{"name": "LMCACHE_CONFIG_FILE", "value": "/cfg/lmcache.yaml"}])]})
+check("an LMCache config file is reported, not read", ["vllm: LMCache CPU size in LMCACHE_CONFIG_FILE /cfg/lmcache.yaml"], unread)
 shell = 'exec vllm serve m --kv-transfer-config "{\\"kv_connector_extra_config\\": {\\"cpu_bytes_to_use\\": %d}}"'
 check("a tier inside a shell string with escaped quotes", 100.0,
       tier_of(command=["sh", "-c", shell % (100 * GIB)]))
@@ -166,16 +178,16 @@ workloads = [{"kind": "Deployment", "metadata": {"name": "prefill"},
               "spec": {"template": {"spec": tier_spec}}}]
 held, _ = ws.reserved_by_node(pods, workloads, nodes)
 check("two tier Pods on one node: what they hold now beats one more",
-      (320.0, ["pod/prefill-0", "pod/prefill-1"], "a CPU KV tier"), held["a"])
+      (320.0, ["pod/prefill-0", "pod/prefill-1"], "a CPU KV tier", 320.0), held["a"])
 check("a node the workload can schedule to holds one Pod's worth",
-      (160.0, ["deployment/prefill"], "a CPU KV tier"), held["b"])
+      (160.0, ["deployment/prefill"], "a CPU KV tier", 0.0), held["b"])
 check("pool Pods, Pods with no GPU and nodes the workload cannot reach hold nothing", False, "c" in held)
 lws = [{"kind": "LeaderWorkerSet", "metadata": {"name": "glm"}, "spec": {"leaderWorkerTemplate": {
     "leaderTemplate": {"spec": {"containers": [{"name": "proxy"}]}},
     "workerTemplate": {"spec": dict(tier_spec, nodeSelector={})}}}}]
 held, _ = ws.reserved_by_node([], lws, nodes)
 check("an LWS worker template counts; a leader with no GPU does not",
-      (160.0, ["leaderworkerset/glm (worker)"], "a CPU KV tier"), held["c"])
+      (160.0, ["leaderworkerset/glm (worker)"], "a CPU KV tier", 0.0), held["c"])
 
 # --- read_reserved(): what the cluster refuses ------------------------------
 
@@ -199,6 +211,8 @@ notes = ws.read_reserved("tenant", ns_nodes)
 check("no LeaderWorkerSet CRD is not a problem", [], notes)
 check("... and the figures land on the nodes", (320.0, 160.0, 0.0),
       tuple(n["reserved_gib"] for n in ns_nodes))
+check("... with what runs there now beside them", (320.0, 0.0, 0.0),
+      tuple(n["held_now_gib"] for n in ns_nodes))
 unbounded = {"containers": [container()], "volumes": [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]}
 ws._kubectl_items = fake({"pods": ([pod("p%d" % i, "a", unbounded) for i in range(5)], ""),
                           "deployments": ([], ""), "statefulsets": ([], ""), "leaderworkersets": ([], "")})
@@ -215,6 +229,10 @@ check("the refusal names the numbers", True,
 fits, _ = ws.check_pool([{"name": "n", "ram_gib": 2016, "reserved_gib": 1950.0},
                          {"name": "m", "ram_gib": 2016}], 100)
 check("one node with room is enough", 1, fits)
+fits, lines = ws.check_pool([{"name": "idle", "ram_gib": 2016, "alloc_ram_gib": 2000, "reserved_gib": 1950.0,
+                              "held_now_gib": 0.0, "reserved_by": ["deployment/prefill"]}], 100)
+check("a replica that does not exist yet is not refused on", 1, fits)
+check("... but it is printed", True, any("would hold up to 1950 GiB more" in x for x in lines))
 
 if len(CASES) != EXPECT_CASES:
     print(f"FAIL  ran {len(CASES)} cases, expected {EXPECT_CASES}", file=sys.stderr)

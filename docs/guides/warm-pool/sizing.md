@@ -81,9 +81,11 @@ deploy/warmpool.sh sizing --params 8B --dtype bf16 -n <models' namespace>
 
 `create` checks the same: it refuses a pool whose memory limit fits no node
 once the held RAM is taken off, and prints the numbers. On a dry run it checks
-only when you state the node with `--ram-gib` (and `--reserved-ram-gib`). If it
-cannot read the nodes or Pods, it creates the pool unchecked and warns; state
-the figures by hand then.
+only when you state the node with `--ram-gib` (and `--reserved-ram-gib`).
+`create` refuses only on what runs on a node now; one more replica that may
+land there is printed, not refused on. If it cannot read the nodes, it creates
+the pool unchecked and warns; if it cannot read the Pods, it checks against
+allocatable memory only and warns.
 
 If nothing fits, place the pool on nodes without the tier, hold fewer or
 smaller models, or keep a replica up instead. The pool sleeps at level 1 only:

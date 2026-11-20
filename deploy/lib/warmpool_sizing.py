@@ -185,15 +185,23 @@ def _quantity_gib(q):
 
 # A number in vLLM's human-readable form: k/m/g/t decimal, K/M/G/T binary.
 # A shell variable with a default, ${X:-50}, reads as its default.
-_NUM = (r"""([0-9][0-9.]*[kKmMgGtT]?|\$\{[A-Za-z_][A-Za-z0-9_]*:-[0-9][0-9.]*[kKmMgGtT]?\}"""
+_NUM = (r"""([0-9][0-9.]*(?:[eE][+-]?[0-9]+)?[kKmMgGtT]?"""
+        r"""|\$\{[A-Za-z_][A-Za-z0-9_]*:-[0-9][0-9.]*[kKmMgGtT]?\}"""
         r"""|\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*))""")
 _SHELL_DEFAULT_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}")
 # Inside --kv-transfer-config, in a plain arg or a shell string with escaped quotes.
 _CPU_BYTES_RE = re.compile(r"""cpu_bytes_to_use(_per_rank)?[\\'"]*\s*:\s*[\\'"]*""" + _NUM)
-_OFFLOAD_SIZE_RE = re.compile(r"""--kv-offloading-size[=\s]+['"]?""" + _NUM)
+# vLLM accepts both spellings of a flag.
+_OFFLOAD_SIZE_RE = re.compile(r"""--kv[-_]offloading[-_]size[=\s]+['"]?""" + _NUM)
 LMCACHE_CPU_ENV = "LMCACHE_MAX_LOCAL_CPU_SIZE"
-# `X=50`, `X: 50`, or a shell default `${X:-50}`.
-_LMCACHE_RE = re.compile(LMCACHE_CPU_ENV + r"""(?:=|:-|:\s*)['"]?""" + _NUM)
+# `X=50`, `X: 50`, a shell default `${X:-50}`, or the extra-config key
+# `lmcache.max_local_cpu_size` / `max_local_cpu_size` in --kv-transfer-config.
+_LMCACHE_RE = re.compile(r"""(?:""" + LMCACHE_CPU_ENV + r"""|max_local_cpu_size[\\'"]*)"""
+                         r"""(?:=|:-|\s*:\s*)[\\'"]*""" + _NUM)
+# LMCache with its local CPU backend switched off holds no CPU tier; a config
+# file holds its size where this cannot read it.
+_LMCACHE_CPU_OFF_RE = re.compile(r"""LMCACHE_LOCAL_CPU[=:]\s*['"]?(?:false|False|FALSE|0)\b""")
+LMCACHE_CONFIG_ENV = "LMCACHE_CONFIG_FILE"
 GPU_KEYS = ("nvidia.com/gpu", "amd.com/gpu")
 _HUMAN = {"k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12,
           "K": 1024.0, "M": 1024.0 ** 2, "G": 1024.0 ** 3, "T": 1024.0 ** 4}
@@ -264,6 +272,7 @@ def pod_host_ram(spec):
             else:
                 server = max(server, v)
         lmcache = [m.group(1) for m in _LMCACHE_RE.finditer(text)]
+        env_text = "\n".join("%s=%s" % (e.get("name"), e.get("value", "")) for e in c.get("env") or [])
         for env in c.get("env") or []:
             if env.get("name") == LMCACHE_CPU_ENV:
                 if "value" in env:
@@ -271,6 +280,11 @@ def pod_host_ram(spec):
                 else:
                     unread.append("%s: %s from %s" % (cname, LMCACHE_CPU_ENV,
                                                      ", ".join(sorted(k for k in env if k != "name"))))
+            if env.get("name") == LMCACHE_CONFIG_ENV:
+                unread.append("%s: LMCache CPU size in %s %s" % (cname, LMCACHE_CONFIG_ENV,
+                                                                env.get("value", "(from valueFrom)")))
+        if _LMCACHE_CPU_OFF_RE.search(text + "\n" + env_text):
+            lmcache = []
         for raw in lmcache:
             v = _human(raw)
             if v is None:
@@ -371,11 +385,12 @@ def _template_specs(obj):
 def reserved_by_node(pods, workloads, nodes):
     """Host RAM the namespace's model workloads hold, per node name.
 
-    Returns {node: (gib, [who], what)} and a list of unread notes, where what
-    names the term that dominates. A node's figure is the larger of what the
-    Pods running there hold now, and what ONE Pod of any workload that can
-    schedule there would hold: the next replica may land on a node that has
-    none today. Pools and Pods with no GPU are left out.
+    Returns {node: (gib, [who], what, now_gib)} and a list of unread notes,
+    where what names the term that dominates. A node's figure is the larger of
+    what the Pods running there hold now (now_gib), and what ONE Pod of any
+    workload that can schedule there would hold: the next replica may land on
+    a node that has none today. sizing plans with the figure; create refuses
+    only on now_gib. Pools and Pods with no GPU are left out.
     """
     now, who_now, what_now, maybe, who_maybe, what_maybe, unread = {}, {}, {}, {}, {}, {}, []
     for pod in pods:
@@ -408,18 +423,24 @@ def reserved_by_node(pods, workloads, nodes):
     out = {}
     for node in set(now) | set(maybe):
         if now.get(node, 0.0) >= maybe.get(node, 0.0):
-            out[node] = (now[node], who_now[node], " and ".join(sorted(what_now[node])))
+            out[node] = (now[node], who_now[node], " and ".join(sorted(what_now[node])), now[node])
         else:
-            out[node] = (maybe[node], who_maybe[node], what_maybe[node])
+            out[node] = (maybe[node], who_maybe[node], what_maybe[node], now.get(node, 0.0))
     return out, sorted(set(unread))
 
 
 def _kubectl_items(args):
-    out = subprocess.run(["kubectl"] + args + ["-o", "json"], capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=120)
+    try:
+        out = subprocess.run(["kubectl"] + args + ["-o", "json"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
     if out.returncode != 0:
         return None, out.stderr.strip()
-    return json.loads(out.stdout).get("items", []), ""
+    try:
+        return json.loads(out.stdout).get("items", []), ""
+    except ValueError as e:
+        return None, "unreadable answer: %s" % e
 
 
 # More unread notes than this are summarised: one workload with an unbounded
@@ -450,7 +471,8 @@ def read_reserved(namespace, nodes):
         workloads += items
     held, unread = reserved_by_node(pods, workloads, nodes)
     for n in nodes:
-        n["reserved_gib"], n["reserved_by"], n["reserved_what"] = held.get(n["name"], (0.0, [], ""))
+        (n["reserved_gib"], n["reserved_by"], n["reserved_what"],
+         n["held_now_gib"]) = held.get(n["name"], (0.0, [], "", 0.0))
     shown = unread[:MAX_UNREAD_NOTES]
     for u in shown:
         notes.append("not read, so not subtracted: %s. State it with --reserved-ram-gib" % u)
@@ -621,26 +643,30 @@ def check_pool(nodes, pool_gib):
     """Whether a pool Pod with this memory limit fits a node after what is held there.
 
     Returns (fits, lines). A node's room is its allocatable memory (capacity
-    for a described node) minus the host RAM its serving workloads hold. Only
-    a pool that fits NO candidate node is refused; the scheduler decides the rest.
+    for a described node) minus the host RAM its serving Pods hold NOW. One
+    more replica that may land there is printed, not refused on: it does not
+    exist yet, and an emptyDir sizeLimit is a cap, not memory in use. Only a
+    pool that fits NO candidate node is refused; the scheduler decides the rest.
     """
     lines, fits = [], 0
     shapes = {}
     for n in nodes:
-        room = n.get("alloc_ram_gib", n["ram_gib"]) - (n.get("reserved_gib") or 0.0)
-        key = (round(n.get("alloc_ram_gib", n["ram_gib"])), round(n.get("reserved_gib") or 0.0))
-        shapes.setdefault(key, []).append((n, room))
-    for (alloc, reserved), members in sorted(shapes.items()):
-        room = members[0][1]
+        alloc = round(n.get("alloc_ram_gib", n["ram_gib"]))
+        held = round(n.get("held_now_gib", n.get("reserved_gib") or 0.0))
+        more = round(n.get("reserved_gib") or 0.0) - held
+        shapes.setdefault((alloc, held, max(0, more)), []).append(n)
+    for (alloc, held, more), members in sorted(shapes.items()):
+        room = alloc - held
         ok = room >= pool_gib
         if ok:
             fits += len(members)
-        who = sorted({w for n, _ in members for w in (n.get("reserved_by") or [])})
+        who = sorted({w for n in members for w in (n.get("reserved_by") or [])})
         lines.append("%d node(s): %d GiB allocatable - %d GiB held by serving workloads%s = "
                      "%d GiB for the pool, which needs %.0f GiB: %s"
-                     % (len(members), alloc, reserved,
-                        (" (%s)" % ", ".join(who)) if who else "", max(0, int(room)),
-                        pool_gib, "fits" if ok else "does NOT fit"))
+                     % (len(members), alloc, held, (" (%s)" % ", ".join(who)) if who else "",
+                        max(0, room), pool_gib, "fits" if ok else "does NOT fit"))
+        if more > 0:
+            lines.append("   one more replica there would hold up to %d GiB more (not refused on)" % more)
     return fits, lines
 
 
@@ -687,16 +713,16 @@ def main():
                 n["reserved_gib"], n["reserved_by"] = args.reserved_ram_gib, ["--reserved-ram-gib"]
                 n["reserved_what"] = "stated by hand"
             return []
-        if described and args.namespace:
-            return ["-n is not read for a described node: state the held RAM with "
-                    "--reserved-ram-gib"]
+        if described:
+            return ["host RAM held by serving engines is NOT subtracted on a described "
+                    "node: state it with --reserved-ram-gib"]
         if not args.namespace:
             return ["host RAM held by serving engines is NOT subtracted: pass -n <models' "
                     "namespace> to read it, or --reserved-ram-gib to state it"]
         return read_reserved(args.namespace, nodes)
 
     if args.check_pool_gib is not None:
-        if args.ram_gib:
+        if args.ram_gib is not None:
             nodes = [{"name": args.product, "ram_gib": args.ram_gib, "described": True}]
         else:
             try:
@@ -707,7 +733,7 @@ def main():
             if not nodes:
                 print("cannot tell whether the pool fits: no GPU node matches '%s'" % args.selector)
                 return 2
-        notes = apply_reserved(nodes, bool(args.ram_gib))
+        notes = apply_reserved(nodes, args.ram_gib is not None)
         fits, lines = check_pool(nodes, args.check_pool_gib)
         for line in lines:
             print(line)
