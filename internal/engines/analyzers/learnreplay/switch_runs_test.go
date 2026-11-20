@@ -1162,6 +1162,13 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// jumps a day and that window would have aged out anyway. No cluster
 	// recording forgets. Its unit tests hold it (heldBy).
 	slo.SwitchITLForgetReachesTheLine: nil,
+	// llm-d-incubation/llm-d-scaling-manager#131 sizes a prefill variant on
+	// TTFT, the joint a₀ standing where P1 refused a: off from the
+	// constructor, so every golden replay runs it off, and off alone from
+	// all on moves nothing. On, it moves the slo analyzer's rows wherever a
+	// prefill is priced; TestGoldens_TTFTSizesPrefillOnTheStaircases holds
+	// what it moves on the staircases, and its unit tests hold it (heldBy).
+	slo.SwitchTTFTSizesPrefill: nil,
 	// ev-shindin/llm-scaling-manager#277 prices a resident request at the KV it is measured to hold,
 	// between the prefix-cache hit rate's discount and none. It moves the
 	// derived mu, and the decode demand the floor prices from it, in the two
@@ -1485,6 +1492,16 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadDropsTheHold"},
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadRows"},
 		{".", "TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases"},
+	},
+	// The first and last run the switch on and off and assert both; the
+	// others hold the constructor's off and the two halves alone.
+	slo.SwitchTTFTSizesPrefill: {
+		{"../slo", "TestTTFT_TheSizesPrefillSwitch"},
+		{"../slo", "TestTTFT_TheSizesPrefillOffFromTheConstructor"},
+		{"../slo", "TestTTFT_WithJointFixedLatency"},
+		{"../slo", "TestTTFT_PrefillAsk"},
+		{"../slo", "TestTTFT_SizePrefill"},
+		{".", "TestGoldens_TTFTSizesPrefillOnTheStaircases"},
 	},
 	// The first runs the switch on and off through Analyze and asserts both;
 	// the model row replays the staircase goldens with it on.

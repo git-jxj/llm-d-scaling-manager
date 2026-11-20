@@ -519,6 +519,7 @@ aRefused
 aSamples
 aShortestPrompt
 aSlope
+aSource
 abort
 about
 above
@@ -1522,6 +1523,7 @@ joined
 joined-clock-starts-at-first-served
 joined-refused-ready-since
 joint
+joint-overhead
 judged
 k
 k-price
@@ -2121,6 +2123,7 @@ owner_kind
 owner_name
 owning
 p
+p1
 p10-p90
 page_size
 panic
@@ -2758,6 +2761,7 @@ slo-itl-waits-after-controller-restart
 slo-kv-per-request-output-dispersion
 slo-model
 slo-transient
+slo-ttft
 slo-ttft-decode-gate-charge
 slo-ttft-decode-term
 slo-ttft-imbalance-across-counts
@@ -2771,6 +2775,7 @@ slo-ttft-processor-sharing
 slo-ttft-ps-onsets
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
+slo-ttft-sizes-prefill
 slo-ttft-variant
 slo-variant
 slo.Analyze
