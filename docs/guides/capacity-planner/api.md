@@ -59,13 +59,16 @@ The answer carries an `inputsId`. Price a scenario against it:
 curl -s localhost:8080/v1/plan -H 'Content-Type: application/json' -d '{"inputsId": "sha256:...",
   "fleet": {"prefill": 1, "decode": 1},
   "traffic": {"classes": {"critical": {"rate": 6}}, "mix": {"promptTokens": 1000, "outputTokens": 1000}},
-  "slo": {"ttft": {"statistic": "p95", "target": 0.2}, "tpot": {"statistic": "mean", "target": 0.004}},
+  "slo": {"ttft": {"statistic": "p95", "target": 0.5}, "tpot": {"statistic": "mean", "target": 0.004}},
   "assume": {"vp": 30000}}'
 ```
 
 Everything but `inputsId` has a default: the recorded replica counts, the
 observed mix, the policy's SLO and headroom, and as the rate the operating
-point (headroom times the lower knee).
+point (headroom times the lower knee). A TTFT target has no default when
+the policy sets none, as in the samples: send `slo.ttft`, or the plan is a
+400. The answer's `limits.fleet` is the most the fleet serves under the
+targets, here about 11 r/s, so 6 r/s holds.
 
 ## Endpoints
 
