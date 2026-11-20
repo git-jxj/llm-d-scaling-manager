@@ -231,8 +231,9 @@ count. On a DisaggregatedSet they meet in three places:
   out: when the template carries the label as `true`, the role is selected and
   not held, and each relabelled group is counted out through its leader, its
   metric row dropped, during a rollout too. The capacity planner does not read
-  InferencePools, so a planner capture still counts such a group. `internal/engines/variantmeta/routing_dset_test.go` and
-  `internal/engines/steadystate/pool_routing_dset_test.go` cover it.
+  InferencePools, so a planner capture still counts such a group. Tests:
+  `internal/engines/variantmeta/routing_dset_test.go`,
+  `internal/engines/steadystate/pool_routing_dset_test.go`.
 - **Drain on scale-in.** The DisaggregatedSet controller deletes groups directly
   on scale-down. The engine must drain in its own `preStop`, on the leader and
   every worker, as for a LeaderWorkerSet
