@@ -116,6 +116,7 @@ Exit codes: `0` done; `2` your input (a bad flag, no replica with a KV-cache
 series in the namespace and window, a window too large without `--force`);
 `1` anything else, usually a failed Prometheus query, which the message names.
 The answer commands add `3`: a role refused, with the reason printed.
+`130` or `143`: stopped by Ctrl-C or SIGTERM.
 [What to do about each](../capacity-planner/troubleshooting.md#recording-a-window).
 
 `replicas-to-slo` and `slo-to-rate` also take the [capture flags](#capture-flags)
@@ -665,7 +666,7 @@ from idle, while it settles, and this command reads them, so its inputs can
 lean on a warm-up the analyzer never saw.
 
 Exit codes for all of these: `0` answered, `3` a refusal, `2` a usage error,
-`1` anything else. The full CLI reference is in
+`130` or `143` stopped by Ctrl-C or SIGTERM, `1` anything else. The full CLI reference is in
 [the planner's design](../../proposals/slo-capacity-planner.md#cli-reference).
 
 ## See also
