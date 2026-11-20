@@ -523,6 +523,7 @@ abort
 about
 above
 above-band
+above-band-line
 above-context
 aboveBand
 aboveBandHeld
@@ -660,6 +661,7 @@ backlogRequests
 bad
 balanced
 band
+band-pricing-point
 bare
 baseline
 baselineLearned
@@ -966,6 +968,7 @@ deduced
 deepep_low_latency
 deeper
 default
+default-intercept
 defaultPolicy
 defaults
 defect
@@ -1339,6 +1342,7 @@ head
 headroom
 health-probe-bind-address
 held
+held-line
 heldAt
 heldAtFleet
 heldCycles
@@ -1494,6 +1498,7 @@ itlBandFloors
 itlBaselineStash
 itlBaselines
 itlBeta
+itlBoundWhy
 itlCycles
 itlFills
 itlForgotten
@@ -1506,6 +1511,9 @@ itlReadsEngines
 itlRefused
 itlResidualPct
 itlSamples
+itlTargetFill
+itlTargetSec
+itlTargetSource
 itlWindows
 itlWithheldLogged
 itlZero
@@ -1530,6 +1538,7 @@ k1-bound
 k1-memory
 k1MemoryBound
 k2
+k2-batch-held-at-itl-target
 k2-compute
 k2-decision
 k2-decode-budget-at-computed-prompt
@@ -1545,6 +1554,8 @@ k2-unsettled-window
 k2-waits-after-a-rollout
 k2-waits-after-controller-restart
 k2AtContext
+k2AtSteady
+k2BatchBound
 k2Borrows
 k2ComputeBound
 k2Cycles
@@ -1921,6 +1932,8 @@ n/a
 nDecErrPct
 nDecGPS
 nDecModel
+nITL
+nSteady
 name
 named
 names
@@ -2012,6 +2025,7 @@ noout
 nor
 not
 not-actionable
+not-decode
 not-detected
 not-learned
 not-ready
@@ -2058,6 +2072,7 @@ one
 one-minute
 one-pod
 one-sided
+one-sided-line
 ones
 only
 onset
@@ -2164,6 +2179,7 @@ per-model
 per-replica
 per-request
 per-role
+per-step-line
 perModel
 perReplicaCapacity
 perReplicaRate
@@ -2495,6 +2511,7 @@ rest
 rest-client-timeout
 restart
 restarted
+resting-fit
 restore
 restored
 restoredKeys
@@ -2760,6 +2777,7 @@ slo-itl-tier-hysteresis
 slo-itl-waits-after-controller-restart
 slo-kv-per-request-output-dispersion
 slo-model
+slo-tpot
 slo-transient
 slo-ttft-decode-gate-charge
 slo-ttft-decode-term
@@ -2867,6 +2885,7 @@ status
 stay
 stayed
 stays
+steady
 steadyFor
 steadyGate.carry
 steadyGate.idleRows
@@ -2924,6 +2943,8 @@ taken
 taken-by-another-borrower
 takes
 target
+target-below-band
+target-under-intercept
 targetFill
 targetReplicas
 target_model_name

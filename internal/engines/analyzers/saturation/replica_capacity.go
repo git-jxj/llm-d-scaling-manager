@@ -1273,7 +1273,14 @@ func (a *SaturationAnalyzer) k2Chain(
 			atSteady := k2Derived
 			atCtx, itlHeld := itlBoundedK2(k2Derived, batchCap.itl, kvCeiling)
 			if b, ok := borrow(min(k1, atCtx)); ok {
-				logBorrowedK2(logger, b, modelID, namespace, variantName, historyKey, min(k1, atCtx), capacity.K2SrcDerived)
+				bl := logger
+				if batchCap.itl.on {
+					// The bound's fields on the borrowed line too: a prior
+					// above the bound prices the replica here.
+					bl = logger.WithValues(k2BatchBoundFields(engineParams, batchCap, avgInput, avgOutput, outputDispersion,
+						ranks, kvCeiling, atSteady, itlHeld)...)
+				}
+				logBorrowedK2(bl, b, modelID, namespace, variantName, historyKey, min(k1, atCtx), capacity.K2SrcDerived)
 				return b.k2, b.source(), b
 			}
 			k2Derived = k2AtResidentKV(engineParams, batchCap, avgInput, avgOutput, ranks, k1, atCtx)
