@@ -813,17 +813,14 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 	// BacklogGrowthLookback after the growth stops, so the full charge
 	// outlives it by up to a minute: an over-order, the cheap direction.
 	//
-	// decodeOwedRate is the rate at which a P/D decode is owed the router's
-	// queue (SwitchDecodeOwesRouterBacklog, decodeRouterBacklogRate): zero,
-	// and decode is charged none of it, unless the switch is on. Decode is
-	// charged min(Q, rate x H) on top of its own queues, H its drain
-	// horizon, so the floor prices min(Q/H, rate) beside lambda.
-	var decodeOwedRate float64
+	// decodeOwing is how a P/D decode is owed the router's queue
+	// (SwitchDecodeOwesRouterBacklog, decodeRouterBacklogRate): nothing, and
+	// decode is charged none of it, unless the switch is on. Decode is
+	// charged min(Q, rate x H) x share on top of its own queues, H its drain
+	// horizon, so the floor prices min(Q/H, rate) x share beside lambda.
+	var decodeOwing decodeOwedRead
 	decodeOwed := func(startSeconds map[string]float64) float64 {
-		if !(decodeOwedRate > 0) {
-			return 0
-		}
-		return min(eppQueued, decodeOwedRate*floor.DrainHorizon(floor.BacklogDrainSeconds, startSeconds[domain.RoleDecode]))
+		return decodeOwing.owed(eppQueued, floor.DrainHorizon(floor.BacklogDrainSeconds, startSeconds[domain.RoleDecode]))
 	}
 	backlogFor := func(reps []capacity.ReplicaCapacity, startSeconds map[string]float64) map[string]float64 {
 		backlog := localBacklog(reps, startSeconds)
@@ -943,10 +940,10 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 	// read from the first pricing, whose prefill term it is capped by, and
 	// from prefill's demand after the share above; priced by a second
 	// pricing. Decode's backlog moves no other role's term.
-	var decodeOwedWhy string
 	if a.decodeOwesRouterBacklog && roleDemand != nil && queueOwner == domain.RolePrefill && eppQueued > 0 {
-		decodeOwedRate, decodeOwedWhy = decodeRouterBacklogRate(tf, variants, roleDemand, residency, scaleUp)
-		if decodeOwedRate > 0 {
+		served := completedRateByRole(input, replicas, roleOf)[domain.RoleDecode].total
+		decodeOwing = decodeRouterBacklogRate(tf, variants, roleDemand, served, scaleUp)
+		if decodeOwed(startSeconds) > 0 {
 			tf, startSeconds, startSources = priceFloor()
 		}
 	}
@@ -1098,12 +1095,7 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 		if startKnown {
 			startFrom = startSources[role]
 		}
-		var owedReqs float64
-		var owedBy string
-		if role == domain.RoleDecode {
-			owedReqs, owedBy = decodeOwed(startSeconds), decodeOwedWhy
-		}
-		logger.Info("throughput-demand-floor",
+		kv := []any{
 			"modelID", input.ModelID, "namespace", input.Namespace, "role", role,
 			"demandBeforeFloor", measured, "residentDemand", resident, "flooredTo", want,
 			"arrivalRate", tf.Lambda, "backlogRequests", term.Backlog, "drainSeconds", tf.DrainSeconds,
@@ -1139,10 +1131,6 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 			// (noteBacklogGrowth), so the swap was not made: arrivals
 			// exceed what the fleet drains.
 			"backlogGrew", grew[role],
-			// The router's requests decode was charged on top of its own
-			// queues, and why (SwitchDecodeOwesRouterBacklog); 0 and empty
-			// off, on prefill, and where decode is owed none.
-			"routerBacklogOwed", owedReqs, "routerBacklogOwedBy", owedBy,
 			// How far the swap was trusted, and what the role completes,
 			// which the trust reads the arrival rate against
 			// (SwitchFloorTrustReadsCompletions; 0 with it off).
@@ -1153,7 +1141,18 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 			// terms.
 			"drainRegion", dp.region, "drainArrival", dp.arrival, "drainGrowth", dp.growth,
 			"drainMu", dp.mu, "drainFirstReadMu", dp.mu0, "drainBacklog", dp.backlog,
-			"drainHorizon", dp.horizon, "drainReplicas", dp.replicas)
+			"drainHorizon", dp.horizon, "drainReplicas", dp.replicas,
+		}
+		if a.decodeOwesRouterBacklog && role == domain.RoleDecode {
+			// The router's requests decode was charged on top of its own
+			// queues, why (empty where it is owed none), and decode's served
+			// share (decodeRouterBacklogRate; 0 where it was not read).
+			// Only with SwitchDecodeOwesRouterBacklog on: off, the line is
+			// as before the switch.
+			kv = append(kv, "routerBacklogOwed", decodeOwed(startSeconds),
+				"routerBacklogOwedBy", decodeOwing.why, "decodeServedShare", decodeOwing.served)
+		}
+		logger.Info("throughput-demand-floor", kv...)
 		if roleDemand != nil {
 			roleDemand[role] = want
 		}

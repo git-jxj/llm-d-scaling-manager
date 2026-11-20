@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/aggregation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/floor"
 )
 
@@ -29,70 +28,116 @@ const (
 	// decodeOwedPrefillSpare: capped at what the prefill the analyzer
 	// orders completes beyond the arrivals.
 	decodeOwedPrefillSpare = "prefill-spare"
-	// decodeOwedDecodeFull: prefill has no mu, and decode holds at least
-	// its scale-up share of its ready supply, so decode is what binds.
-	decodeOwedDecodeFull = "decode-full"
+	// decodeOwedDecodeAtMu: prefill has no mu, and decode completes what
+	// its ready replicas complete at their mu, so decode is what binds.
+	decodeOwedDecodeAtMu = "decode-at-mu"
 )
 
-// decodeRouterBacklogRate is the rate, in requests a second, at which a P/D
-// decode is owed the router's standing queue: what prefill can pass on to
-// it beyond the arrivals, which the floor already charges every role. The
-// floor then charges decode min(Q, rate x H), H its drain horizon, so the
-// backlog rate is min(Q/H, rate). why names the case, and is empty where
-// decode is owed nothing.
+// The band over decode's served share (completions over ready replicas x
+// mu) in which a P/D decode with no prefill mu is owed the router's queue:
+// none at or below decodeAtMuFrom, all of it from decodeAtMuFull, and in
+// proportion between, so the charge does not appear and vanish across one
+// reading. Decode that completes its mu is at its pricing point, and under
+// flow control the router holds what it cannot take. In the flow-control
+// property cases (seeds 1-100) a decode-bound decode reads 1.04-1.15, and
+// one behind a prefill bottleneck 0.54-0.92: it takes all prefill passes on
+// and is not what holds the router back.
+const (
+	decodeAtMuFrom = 0.95
+	decodeAtMuFull = 1.0
+)
+
+// decodeOwedRead is how much of the router's standing queue a P/D decode is
+// owed (decodeRouterBacklogRate): min(Q, rate x H) x share, H decode's drain
+// horizon. why names the case, and is empty where decode is owed nothing.
+// served is decode's served share where it was read (0 otherwise), for the
+// log.
+type decodeOwedRead struct {
+	rate, share, served float64
+	why                 string
+}
+
+// owed is the requests of a router queue of queued decode is charged, over
+// drain horizon horizon: 0 where it is owed none or the product is not a
+// finite positive number.
+func (d decodeOwedRead) owed(queued, horizon float64) float64 {
+	if !(d.rate > 0) || !(d.share > 0) {
+		return 0
+	}
+	q := min(queued, d.rate*horizon)
+	if !(q > 0) || math.IsInf(q, 1) {
+		return 0
+	}
+	return d.share * q
+}
+
+// decodeRouterBacklogRate is how a P/D decode is owed the router's standing
+// queue: at what prefill can pass on to it beyond the arrivals, which the
+// floor already charges every role. The floor then charges decode
+// min(Q, rate x H) x share, H its drain horizon.
 //
 //   - Prefill has a floor term: rate is the prefill the analyzer orders, in
-//     replicas, times prefill's mu, less lambda, and at least zero. The
-//     prefill ordered is the larger of its ready replicas and its demand
-//     (occupancy or floor, the larger) at the scale-up threshold of its
-//     per-replica capacity, rounded up, as the engine orders whole replicas.
-//     Where prefill binds that is about zero, and decode is sized for the
-//     arrivals, as with the switch off. A prefill lower bound under-states
-//     the rate, so decode is charged less, never more.
+//     replicas, times prefill's mu, less lambda, and at least zero; share is
+//     1. The prefill ordered is the larger of its ready replicas and its
+//     demand (occupancy or floor, the larger) at the scale-up threshold of
+//     its per-replica capacity, rounded up, as the engine orders whole
+//     replicas. Where prefill binds that is about zero, and decode is sized
+//     for the arrivals, as with the switch off. A prefill lower bound
+//     under-states the rate, so decode is charged less, never more.
 //   - Prefill has none: its spare is unknown. Decode is charged the whole
-//     queue (an infinite rate) only while its resident KV is at least
-//     scaleUp of its ready supply, the fill it scales out at. A full decode
-//     is what holds the router's queue back; a decode below that fill takes
-//     all prefill passes on, so prefill binds and decode is owed nothing.
+//     queue (an infinite rate) in proportion to how far its served share,
+//     decodeServed over its ready replicas x its own mu, is into the band
+//     decodeAtMuFrom-decodeAtMuFull. Decode that completes its mu is what
+//     holds the router's queue back; one that completes less takes all
+//     prefill passes on, so prefill binds and decode is owed nothing. A full
+//     KV alone is not the evidence: decode can be full of long requests and
+//     still wait on prefill. Nor is decode's own queue: under flow control
+//     the router holds the requests decode cannot take, so decode's engine
+//     queue reads empty exactly where decode binds.
 //
-// roleDemand is each role's occupancy demand and residency the queues'
-// residency charge in it, so roleDemand - residency is decode's resident KV.
+// decodeServed is decode's completions a second (completedRateByRole), and
+// roleDemand each role's occupancy demand.
 func decodeRouterBacklogRate(tf floor.Floor, variants []domain.VariantCapacity,
-	roleDemand, residency map[string]float64, scaleUp float64) (rate float64, why string) {
+	roleDemand map[string]float64, decodeServed, scaleUp float64) decodeOwedRead {
 	if !(tf.Lambda > 0) || math.IsInf(tf.Lambda, 1) || !(scaleUp > 0) {
-		return 0, ""
+		return decodeOwedRead{}
 	}
 	if _, ok := tf.ByRole[domain.RoleDecode]; !ok {
 		// Decode has no floor to charge.
-		return 0, ""
+		return decodeOwedRead{}
+	}
+	ready := map[string]int{}
+	var prefillPerReplica float64
+	for _, vc := range variants {
+		role := domain.CanonicalRole(vc.Role)
+		ready[role] += vc.ReplicaCount
+		if role == domain.RolePrefill {
+			prefillPerReplica = max(prefillPerReplica, vc.PerReplicaCapacity)
+		}
 	}
 	if term, ok := tf.Terms[domain.RolePrefill]; ok && term.Mu > 0 && term.PerReplica > 0 {
-		var ready int
-		var perReplica float64
-		for _, vc := range variants {
-			if domain.CanonicalRole(vc.Role) != domain.RolePrefill {
-				continue
-			}
-			ready += vc.ReplicaCount
-			perReplica = max(perReplica, vc.PerReplicaCapacity)
-		}
-		ordered := float64(ready)
-		if perReplica > 0 {
+		ordered := float64(ready[domain.RolePrefill])
+		if prefillPerReplica > 0 {
 			tokens := max(roleDemand[domain.RolePrefill], tf.ByRole[domain.RolePrefill])
 			// Rounded up as the engine orders whole replicas; the epsilon
 			// keeps an exact fit from ordering one more.
-			ordered = max(ordered, math.Ceil(tokens/(scaleUp*perReplica)-1e-9))
+			ordered = max(ordered, math.Ceil(tokens/(scaleUp*prefillPerReplica)-1e-9))
 		}
 		spare := ordered*term.Mu - tf.Lambda
 		if !(spare > 0) || math.IsInf(spare, 1) {
-			return 0, ""
+			return decodeOwedRead{}
 		}
-		return spare, decodeOwedPrefillSpare
+		return decodeOwedRead{rate: spare, share: 1, why: decodeOwedPrefillSpare}
 	}
-	supply := aggregation.AggregateByRole(variants)[domain.RoleDecode].TotalSupply
-	resident := roleDemand[domain.RoleDecode] - residency[domain.RoleDecode]
-	if supply > 0 && resident >= scaleUp*supply {
-		return math.Inf(1), decodeOwedDecodeFull
+	mu := tf.Terms[domain.RoleDecode].Mu
+	n := float64(ready[domain.RoleDecode])
+	if !(mu > 0) || math.IsInf(mu, 1) || !(n > 0) || !(decodeServed > 0) || math.IsInf(decodeServed, 1) {
+		return decodeOwedRead{}
 	}
-	return 0, ""
+	served := decodeServed / (n * mu)
+	share := min(1, (served-decodeAtMuFrom)/(decodeAtMuFull-decodeAtMuFrom))
+	if !(share > 0) {
+		return decodeOwedRead{served: served}
+	}
+	return decodeOwedRead{rate: math.Inf(1), share: share, served: served, why: decodeOwedDecodeAtMu}
 }

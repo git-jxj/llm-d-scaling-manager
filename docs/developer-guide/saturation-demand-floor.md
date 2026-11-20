@@ -186,8 +186,8 @@ so each must keep up with all of it), and on the total otherwise.
   llm-d-incubation/llm-d-scaling-manager#51). Off, the queue's request count
   is prefill's backlog alone. On, decode is charged `min(Q/H, rate)` beside
   lambda: rate is what the prefill the analyzer orders completes beyond
-  lambda, or, with no prefill `mu`, the whole queue while decode's resident
-  KV is at its scale-up fill and none below it. See
+  lambda, or, with no prefill `mu`, the whole queue while decode completes
+  its own `mu` (none at 0.95 of it, all from 1.0). See
   [the saturation analyzer](saturation-analyzer.md#the-throughput-floor).
 
 The floor writes the role's figure (`RoleDemand`) and the model total. A role

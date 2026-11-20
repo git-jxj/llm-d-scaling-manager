@@ -1,6 +1,7 @@
 package saturation
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -32,6 +33,7 @@ func flowControlCases() []propCase {
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPDPrefillBound, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-decode-owes-backlog", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPD.owingBacklog(), nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound-owes-backlog", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPDPrefillBound.owingBacklog(), nil)},
+		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound-decode-full-owes-backlog", family: familyDirect, tuning: tunedDefault, check: checkPrefillBoundDecodeFull},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-aggregated", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcAggregated, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-dp8", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcDP8, nil)},
 		{class: classKnownTruth, learner: "k2", name: "above-k1-leaves-capacity", family: familyDirect, tuning: tunedDefault, check: checkK2AboveK1Capacity},
@@ -226,12 +228,19 @@ type fcOutcome struct {
 // (flow control off), so k2 and mu are learned there. wrap, when set, edits
 // each of v's rows before the analyzer reads it (a mutant).
 func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaMetrics)) (fcOutcome, error) {
+	return runFlowControlLogged(nil, s, g, learned, wrap)
+}
+
+// runFlowControlLogged is runFlowControl with Analyze logging to ctx's
+// logger (context.Background when nil).
+func runFlowControlLogged(ctx context.Context, s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaMetrics)) (fcOutcome, error) {
 	store := capacity.NewStore()
 	store.Update("test-ns", "test-model", "v", capacity.Record{AcceleratorName: "H200", GpuCount: s.ranks,
 		EngineParams: keyParams(fcMaxSeqs)}, propStart)
 	rig := newPropRig()
 	rig.a = NewSaturationAnalyzer(store)
 	rig.a.now = func() time.Time { return rig.clock }
+	rig.ctx = ctx
 	if s.owesBacklog {
 		if err := rig.a.SetSwitchesForReplay(map[string]bool{SwitchDecodeOwesRouterBacklog: true}); err != nil {
 			return fcOutcome{}, err
@@ -417,6 +426,37 @@ func checkFlowControlFloor(s fcShape, wrap func(*domain.ReplicaMetrics)) func(ui
 		}
 		return holds(nl.replicas <= max(lr.replicas, truth)*(1+propTruthTol), kindOverPriced, "%s: over both", msg)
 	}
+}
+
+// checkPrefillBoundDecodeFull: prefill-bound P/D whose decode reads full
+// (0.70-0.80 of its KV, by seed) for reasons other than the router's queue,
+// such as long requests. Prefill has no mu, decode still completes only what
+// prefill passes on, so with SwitchDecodeOwesRouterBacklog on decode is
+// owed none of the queue and orders what it orders off, within
+// propTruthTol. A decode charged on its fill alone ordered 1.4-3.1x that
+// (in review, seed 5 at 0.80: 8.13 decode replicas against a truth of 3.89).
+func checkPrefillBoundDecodeFull(seed uint64) error {
+	g := fcGenFor(fcPDPrefillBound, seed)
+	fill := 0.70 + 0.025*float64((seed-1)%5)
+	full := func(rm *domain.ReplicaMetrics) {
+		rm.KvCacheUsage, rm.KvUsageInstant = fill, fill
+		rm.TokensInUse = int64(fill * float64(rm.TotalKvCapacityTokens))
+	}
+	off, err := runFlowControl(fcPDPrefillBound, g, false, full)
+	if err != nil {
+		return err
+	}
+	on, err := runFlowControl(fcPDPrefillBound.owingBacklog(), g, false, full)
+	if err != nil {
+		return err
+	}
+	truth := fcTruth(fcPDPrefillBound, on, g)
+	msg := fmt.Sprintf("prefill-bound P/D, decode at %.3f of KV, rho %.2f, router queue %.0f: decode ordered %.3f replicas on, %.3f off, truth %.3f",
+		fill, g.rho, on.queue, on.replicas, off.replicas, truth)
+	if math.IsNaN(on.replicas) || math.IsNaN(off.replicas) {
+		return violation(kindNotLearned, "%s: no order", msg)
+	}
+	return holds(on.replicas <= off.replicas*(1+propTruthTol), kindOverPriced, "%s: on over off", msg)
 }
 
 // checkK2AboveK1Capacity: each flow-control shape saturated at 0.85-0.95 of

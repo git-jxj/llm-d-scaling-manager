@@ -134,6 +134,7 @@ known-truth/floor/flow-control-unlearned-mu-dp8
 known-truth/floor/flow-control-unlearned-mu-pd-decode
 known-truth/floor/flow-control-unlearned-mu-pd-decode-owes-backlog
 known-truth/floor/flow-control-unlearned-mu-pd-prefill-bound
+known-truth/floor/flow-control-unlearned-mu-pd-prefill-bound-decode-full-owes-backlog
 known-truth/floor/flow-control-unlearned-mu-pd-prefill-bound-owes-backlog
 known-truth/floor/prefill-without-mu-keeps-router-prompts
 known-truth/floor/standing-queue-priced-at-drain

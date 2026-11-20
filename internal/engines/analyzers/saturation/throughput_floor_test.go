@@ -759,6 +759,31 @@ var _ = Describe("the throughput floor, through Analyze", func() {
 			"residency still over-prices the same cycle; that is what the floor is for")
 	})
 
+	// The spec above with SwitchDecodeOwesRouterBacklog on (issue
+	// llm-d-incubation/llm-d-scaling-manager#51). Prefill has no mu, and
+	// decode completes its mu, 5.4 req/s, while prefill completes 6 and 180
+	// requests wait on decode's engine: decode is what binds, so the
+	// scheduler's 200 reach it as fast as prefill takes them, and decode is
+	// owed them too, (180 + 200) / 60 s beside lambda. The switch reads
+	// decode's served share (decodeRouterBacklogRate), not its fill or its
+	// own queue.
+	It("charges decode the scheduler's queue with the decode-owes-router-backlog switch on", func() {
+		Expect(analyzer.SetSwitchesForReplay(map[string]bool{SwitchDecodeOwesRouterBacklog: true})).To(Succeed())
+		saturate()
+		in := makeAnalyzerInput(
+			[]domain.ReplicaMetrics{decode("decode-0", 1_158_912, 180, runMu), prefill("prefill-0", 66_183)},
+			states(1, 1))
+		in.ArrivalRate = runLambda
+		in.SchedulerQueue = &domain.SchedulerQueueMetrics{QueueSize: 200, QueueBytes: 200 * 6000 * 4}
+		result, err := standing(in)
+		Expect(err).NotTo(HaveOccurred())
+		decodeP := decodePOf(result)
+		want := (runLambda + (180.0+200.0)/floor.BacklogDrainSeconds) / runMu * decodeP
+		Expect(result.RoleDemand[domain.RoleDecode]).To(BeNumerically("~", want, 1))
+		Expect(result.RoleDemand[domain.RoleDecode]/decodeP).To(BeNumerically("~", 2.28, 0.01),
+			"2.28 replicas against the 1.67 the switch off orders")
+	})
+
 	It("keeps the resident KV when the backlog term is smaller than it", func() {
 		saturate()
 		// Three replicas nearly full with a small queue: the resident KV is

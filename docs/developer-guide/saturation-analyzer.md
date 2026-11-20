@@ -1640,11 +1640,18 @@ replay switch `saturation-decode-owes-router-backlog`
 (`SwitchDecodeOwesRouterBacklog`, `decode_router_backlog.go`) also charges
 decode `min(Q/H, rate)`, H its drain horizon. With a prefill floor term, rate
 is the prefill the analyzer orders times prefill's mu, less lambda, so it is
-about 0 where prefill binds. With none, rate is unbounded while decode's
-resident KV is at least `scaleUp` of its ready supply, and 0 below it. The
-floor log line carries `routerBacklogOwed` and `routerBacklogOwedBy`
-(`prefill-spare`, `decode-full`). On, the case passes as `-owes-backlog` at
-1.01-1.06 of the truth (seeds 1-100), and prefill-bound P/D is unchanged. The
+about 0 where prefill binds. With none, decode is charged the whole queue in
+proportion to its served share, its completions over its ready replicas times
+its mu: none at 0.95 or below, all of it from 1.0. Decode that completes its
+mu is what holds the router back. A full KV is not the evidence, since decode
+can be full of long requests and still wait on prefill, and neither is
+decode's own queue, which flow control keeps empty where decode binds. With the
+switch on, the floor log line carries `routerBacklogOwed`,
+`routerBacklogOwedBy` (`prefill-spare`, `decode-at-mu`) and
+`decodeServedShare` on decode. On, the case passes as `-owes-backlog` at
+1.01-1.06 of the truth (seeds 1-100), and prefill-bound P/D is unchanged, also
+with decode's KV at 0.70-0.80
+(`flow-control-unlearned-mu-pd-prefill-bound-decode-full-owes-backlog`). The
 switch is off from the constructor: the controller keeps the old charge until
 a P/D run checks it. No controller golden moves; replayed on,
 `ttft-staircase-c-on` asks one more decode replica on 16 of its 584
