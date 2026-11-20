@@ -922,6 +922,42 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 		"ttft-three-pods/composite-roles.csv", "ttft-three-pods/results.csv",
 		"ttft-three-pods/variant-capacities.csv",
 	},
+
+	// llm-d-incubation/llm-d-scaling-manager#201, on from the constructor
+	// since v0.12.2 (they were earlier seams, off, until then).
+	//
+	//   - SwitchK2DecodeBudgetAtComputedPrompt: a P/D decode's derived k2
+	//     (P3) charges its token budget the prompt it computes, not the
+	//     whole prompt. It moves the three fixtures whose decode is priced
+	//     at P3 with a stated --max-num-batched-tokens and reports the
+	//     computed prompt. Decode's PerReplicaCapacity rises 7.4x at the
+	//     median on ttft-open-loop-long and ttft-saturated, 4.3x on
+	//     ttft-open-loop-short, most rows now held at k1 (K2Source k1-bound).
+	//     The store, the composite's supply and spare and the warm pool's
+	//     spare fraction move with it. On the 20-40 cycles a fixture prices
+	//     decode's demand at 0.7 of its supply, that demand scales with the
+	//     supply; its utilization does not move. No role's RequiredCapacity
+	//     moves. ttft-saturated's model-level RequiredCapacity, which pools
+	//     decode's new spare against prefill's need, falls on 65 cycles; a
+	//     P/D model is sized per role (RoleCapacities), and prefill's is
+	//     unchanged.
+	//   - SwitchDecodeLandedNeedsABound: a landed request is a decode's
+	//     backlog only where the replica can be at a bound. No committed
+	//     recording has a decode with landed requests below its bound, so it
+	//     moves no golden; its unit tests hold it (heldBy).
+	saturation.SwitchK2DecodeBudgetAtComputedPrompt: {
+		"ttft-open-loop-long/composite-results.csv", "ttft-open-loop-long/composite-roles.csv",
+		"ttft-open-loop-long/composite-variants.csv", "ttft-open-loop-long/results.csv",
+		"ttft-open-loop-long/store-records.csv", "ttft-open-loop-long/variant-capacities.csv",
+		"ttft-open-loop-short/composite-results.csv", "ttft-open-loop-short/composite-roles.csv",
+		"ttft-open-loop-short/composite-variants.csv", "ttft-open-loop-short/results.csv",
+		"ttft-open-loop-short/store-records.csv", "ttft-open-loop-short/variant-capacities.csv",
+		"ttft-open-loop-short/warm-pool-pressure.csv", "ttft-saturated/composite-results.csv",
+		"ttft-saturated/composite-roles.csv", "ttft-saturated/composite-variants.csv",
+		"ttft-saturated/results.csv", "ttft-saturated/store-records.csv",
+		"ttft-saturated/variant-capacities.csv", "ttft-saturated/warm-pool-pressure.csv",
+	},
+	saturation.SwitchDecodeLandedNeedsABound: nil,
 })
 
 // learner4b2Seams is learner PR 4b-2's switches, earlier seams now (merged
@@ -1058,13 +1094,6 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillALowLoadPerRank: nil,
 	saturation.SwitchPrefillAEngineTiming:   nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
-	// llm-d-incubation/llm-d-scaling-manager#201: a decode's derived k2
-	// charged the prompt it computes, and a landed request a backlog only
-	// where the decode can be at a bound. Off from the constructor, so every
-	// golden replay runs them off, and off alone from all on moves nothing.
-	// Their unit tests hold them (heldBy).
-	saturation.SwitchK2DecodeBudgetAtComputedPrompt: nil,
-	saturation.SwitchDecodeLandedNeedsABound:        nil,
 	// llm-d-incubation/llm-d-scaling-manager#188 prices a resident reading
 	// above the whole context as read: off from the constructor, so every
 	// golden replay runs it off, and off alone from all on moves nothing. Its
@@ -1955,6 +1984,12 @@ func TestGoldens_ASwitchWithTwoRowsPanics(t *testing.T) {
 // base digests of the outputs a throughput switch could move that the
 // expectation does not name, so the measured rows need no new lookup.
 var switchBase = withDigests(staircaseBase, map[string]string{
+	// llm-d-incubation/llm-d-scaling-manager#201's budget switch, at main
+	// 22745c3, where it was off from the constructor.
+	"ttft-open-loop-long/store-records.csv":  "898a6947e053f7f89eeb8a944ea43ecd7ff1d38250763f576efe42c847a076df",
+	"ttft-open-loop-short/store-records.csv": "8a16f127a4de2ab2c877c39fae242c2e1bd25c2c71b6b5702cb449c40a88eed0",
+	"ttft-saturated/store-records.csv":       "79ba58cb43e4653b9c2f02ec09ca29f27319921f69ff3be79d83984748f82e54",
+
 	"acceptance/results.csv":            "7aef7e7391f761fe984f89720d61b0583048b330989c449098dce8ec2d285981",
 	"acceptance/variant-capacities.csv": "47ad82ad3c017924b6cc5398d9578ddd28ab95fdc547adcec6decb69abcc91b3",
 	"engine/composite-holds.csv":        "ce02c822639f90959858c2ddc1e4681dc5b65d281a13d033520cfaa9945d3e0c",

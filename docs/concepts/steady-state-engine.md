@@ -454,6 +454,10 @@ model; check the health metrics below.
 Deployment engine args (`--max-num-seqs`, `--gpu-memory-utilization`, `--block-size`,
 `--max-model-len`, `--max-num-batched-tokens`, `--num-gpu-blocks-override`, …) are read from the
 Deployment/LeaderWorkerSet — **not** Prometheus — and feed the derived-capacity path.
+On a P/D decode, the derived path charges `--max-num-batched-tokens` only the prompt tokens
+the decode computes, read from `vllm:request_prefill_kv_computed_tokens`: the rest of the
+prompt's KV arrives from prefill. An engine that publishes no such series (SGLang) is charged
+the whole prompt.
 
 A pod that runs several data-parallel engine ranks is one replica, measured as all of its ranks.
 This holds whether each rank has its own API server or the ranks share one (vLLM then labels

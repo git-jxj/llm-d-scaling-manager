@@ -1671,7 +1671,15 @@ limits apply:
 Until a replica has been seen full, its capacity is **derived** from the engine's
 flags (`P3-k2`): how many sequences one engine runs at once (`--max-num-seqs`,
 SGLang `--max-running-requests`) times the tokens each holds. The scaling
-manager reads that cap from the flags. When it cannot read them (a launcher
+manager reads that cap from the flags.
+
+The token budget (`--max-num-batched-tokens`) can bind first. On a P/D decode
+the budget is charged only the prompt tokens the decode computes itself, not
+the whole prompt: its KV arrives from prefill. Before v0.12.2 the whole prompt
+was charged, and a decode with a small budget and long prompts was priced
+10-18x below its capacity. Expect fewer decode replicas and a higher
+per-token latency where the fleet had headroom. Nothing caps that packing at a
+TPOT target yet; the engine's own limits bound it. When it cannot read them (a launcher
 script, or `--max-num-seqs $VAR` with the value from an `envFrom`), it assumes
 vLLM's 256. An engine whose real cap is lower is then priced as if it held
 more than it can.
