@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"slices"
@@ -93,6 +94,10 @@ const (
 	ExcludedScaling       = "scaling"
 	ExcludedWarmUp        = "warmUp"
 	ExcludedNotPriced     = "notPriced"
+	// ExcludedOtherVariants is a step in which variants other than the
+	// priced ones also served: the model's rate and the router's latency
+	// are the whole model's, the replicas priced are not.
+	ExcludedOtherVariants = "otherVariants"
 )
 
 // The reasons one figure of a judged step is not scored.
@@ -307,6 +312,7 @@ type BacktestExcluded struct {
 	Scaling       int `json:"scaling"`
 	WarmUp        int `json:"warmUp"`
 	NotPriced     int `json:"notPriced"`
+	OtherVariants int `json:"otherVariants"`
 }
 
 // BacktestScore is one statistic's score.
@@ -449,9 +455,9 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 }
 
 // Backtest answers req against sources resolved outside a server: the CLI's
-// backtest, on the same code path as POST /v1/backtest. test is nil for a
-// split: fit is then the source read at the split (cutoff), and wholeTest
-// the whole source the test steps are read from.
+// backtest, on the same code path as POST /v1/backtest. For a split, fit is
+// the source read at the split (cutoff) and wholeTest the whole source the
+// test steps are read from; for two sources, cutoff is zero.
 func Backtest(ctx context.Context, fit, wholeTest *Resolved, req BacktestRequest, cutoff time.Time, split, whatifSchema string) (*BacktestResponse, error) {
 	entry := func(res *Resolved) *inputsEntry {
 		doc := res.Inputs
@@ -617,6 +623,9 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time.Time, s
 	}
 	if fit.id == test.id && cutoff.IsZero() {
 		return nil, InputErrorf("the test is the fit's own source: a backtest scores a period the planner did not see; split it, or test another recording")
+	}
+	if fit.doc.Fleet.Prefill == nil || test.doc.Fleet.Prefill == nil {
+		return nil, InputErrorf("the inputs have no prefill variant: a backtest prices a P/D fleet")
 	}
 	if fit.doc.Model != test.doc.Model {
 		return nil, InputErrorf("the fit is model %q and the test model %q: a backtest compares one model", fit.doc.Model, test.doc.Model)
@@ -1045,6 +1054,8 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 			time.Duration(st.windowSeconds*float64(time.Second)), q.settle)
 	case slices.ContainsFunc(changes, func(c time.Time) bool { return !c.After(end) && c.After(st.windowStart.Add(-q.settle)) }):
 		out.Excluded, out.Detail = ExcludedScaling, fmt.Sprintf("the replicas changed in its measurement window or within %s before it", q.settle)
+	case in.otherPods:
+		out.Excluded, out.Detail = ExcludedOtherVariants, "variants other than the priced ones also served: the rate and the latency are the whole model's"
 	case in.prefill == 0 || in.decode == 0:
 		out.Excluded, out.Detail = ExcludedNotPriced, fmt.Sprintf("%d prefill and %d decode pods served: a P/D fleet is priced with both", in.prefill, in.decode)
 	}
@@ -1102,6 +1113,8 @@ type stepInputs struct {
 	// promptCV is the step's own prompt spread, read from its prefill
 	// pods' computed-token histograms; nil where they read none.
 	promptCV *float64
+	// otherPods says variants other than the priced ones served in it.
+	otherPods bool
 }
 
 // stepInputsOf is the step's inputs: its mean rate, the median serving pods
@@ -1111,6 +1124,7 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 	a := actualOf(samples)
 	in.prefill, in.decode = a.Prefill, a.Decode
 	in.prompt, in.output, _, in.hasShape = bucketShape(samples)
+	in.otherPods = slices.ContainsFunc(samples, func(x SeriesSample) bool { return x.OtherPods > 0 })
 	pooled := map[float64]float64{}
 	var computed, requests float64
 	for _, x := range samples {
@@ -1125,7 +1139,7 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 	}
 	if requests > 0 {
 		if sp := whatif.ReadPromptSpread(pooled, computed/requests); !sp.Assumed {
-			in.promptCV = ptr(math.Round(sp.CV/promptCVGrid) * promptCVGrid)
+			in.promptCV = ptr(math.Round(sp.CV/promptCVGrid) / (1 / promptCVGrid))
 		}
 	}
 	return in
@@ -1174,26 +1188,29 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		return out, errors.New("no fleet to price")
 	}
 	for _, q := range backtestStats {
-		k := predictKey{np: in.prefill, nd: in.decode, q: q}
-		if in.promptCV != nil {
-			k.promptCV = *in.promptCV
-		}
+		k := predictKey{np: in.prefill, nd: in.decode, q: q, promptCV: -1}
 		if in.hasShape {
 			k.prompt, k.output = shapeKnob(in.prompt), shapeKnob(in.output)
+		}
+		cv := p.assume.PromptCV
+		if cv == nil {
+			switch {
+			case in.promptCV != nil:
+				cv = ptr(max(*in.promptCV, promptCVGrid))
+			case p.promptCV != nil:
+				cv = p.promptCV
+			}
+		}
+		// The key is the spread priced: none (-1, the fit's) or its value.
+		if cv != nil {
+			k.promptCV = *cv
 		}
 		fl, ok := p.fleets[k]
 		if !ok {
 			kn := Knobs{Prefill: k.np, Decode: k.nd, PromptTokens: k.prompt, OutputTokens: k.output, TTFTPercentile: q, TPOTPercentile: q,
 				ArrivalCV2: p.cv2, Headroom: p.headroom}
 			kn.Assume = p.assume
-			if kn.Assume.PromptCV == nil {
-				switch {
-				case in.promptCV != nil:
-					kn.Assume.PromptCV = ptr(max(*in.promptCV, promptCVGrid))
-				case p.promptCV != nil:
-					kn.Assume.PromptCV = p.promptCV
-				}
-			}
+			kn.Assume.PromptCV = cv
 			var err error
 			if fl, err = p.pricer.Fleet(kn); err != nil {
 				return out, err
@@ -1401,8 +1418,8 @@ func predictedPoint(q float64, pred Figure, bound *float64) BacktestPoint {
 }
 
 // scoredPoint is p with the measured figure meas beside it, from a
-// histogram holding requests requests (its +Inf bucket over the window),
-// whose top finite bound is top, scored
+// histogram holding the given count of requests (its +Inf bucket over the
+// window), whose top finite bound is top, scored
 // where both are figures. A measured figure above the top bucket is a miss
 // the planner read low wherever its own figure is under the top bound: it
 // is scored at the top bound, a ratio no lower than the truth's, and never
@@ -1418,17 +1435,25 @@ func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why stri
 		p.Unscored = UnscoredNotMeasured
 		return p
 	}
-	if !math.IsInf(*meas, 1) {
+	switch {
+	case requests < minRequestsFor(q):
+		// Too few to read the statistic: no measured figure, not even
+		// beside a refusal (what the fleet measured where it was refused).
+		p.Unscored = UnscoredFewRequests
+		return p
+	case math.IsInf(*meas, 1):
 		// JSON holds no +Inf: a figure above the top bucket is AboveHistogram,
 		// or unscored aboveHistogram, with no measured value.
+	case !whatif.Finite(*meas) || *meas < 0:
+		p.Unscored = UnscoredNotMeasured
+		return p
+	default:
 		p.Measured = meas
 	}
 	switch {
 	case pred.Value == nil:
 		p.Unscored = UnscoredRefused
-	case requests < minRequestsFor(q):
-		p.Unscored = UnscoredFewRequests
-	case math.IsInf(*meas, 1) && top > 0 && *pred.Value < top:
+	case math.IsInf(*meas, 1) && top > 0 && *pred.Value > 0 && *pred.Value < top:
 		p.Ratio, p.AboveHistogram = ptr(*pred.Value/top), true
 	case math.IsInf(*meas, 1):
 		p.Unscored = UnscoredAboveHistogram
@@ -1487,6 +1512,8 @@ func summarize(steps []BacktestStep, target bool) BacktestSummary {
 			s.Excluded.WarmUp++
 		case ExcludedNotPriced:
 			s.Excluded.NotPriced++
+		case ExcludedOtherVariants:
+			s.Excluded.OtherVariants++
 		}
 	}
 	s.TTFT, s.TPOT = scoresOf(steps)
@@ -1733,7 +1760,8 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 		var why []string
 		hint := ""
 		if i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 }); i >= 0 {
-			for r, n := range scores[i].Refused {
+			for _, r := range slices.Sorted(maps.Keys(scores[i].Refused)) {
+				n := scores[i].Refused[r]
 				why = append(why, fmt.Sprintf("%s in %d", r, n))
 				if hint == "" || r != string(whatif.Saturated) {
 					hint = backtestHint(r)
@@ -1747,11 +1775,16 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 		if len(why) == 0 {
 			return fmt.Sprintf("The planner's %s was not scored in any step.", name), nil
 		}
-		return fmt.Sprintf("The planner gave no %s figure for any step: %s (refused: %s).", name, hint, strings.Join(why, ", ")), nil
+		w := fmt.Sprintf("The planner gave no %s figure for any step: %s (refused: %s).", name, hint, strings.Join(why, ", "))
+		if i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 }); i >= 0 && scores[i].PastKnee != nil {
+			b := scores[i].PastKnee
+			w += fmt.Sprintf(" Where it called the fleet overloaded, the fleet measured p90 %s %s to %s.", name, secondsWords(b.Lo), secondsWords(b.Hi))
+		}
+		return w, nil
 	}
 	sc := quoted
 	a := sc.All
-	w := fmt.Sprintf("%s %s: within %.0f%% of measured in %d of the %d %s it gave a figure for; %s",
+	w := fmt.Sprintf("%s %s: within %.0f%% of measured in %d of the %d %s scored (a figure, and enough measured requests); %s",
 		sc.Statistic, name, BacktestTolerance*100, int(math.Round(*a.Within*float64(a.Steps))), a.Steps, unit, leanWords(a))
 	if a.Low > 0 {
 		w += fmt.Sprintf("; it read %d more than 20%% low", a.Low)
@@ -1825,7 +1858,7 @@ func verdictOf(out *BacktestResponse, step time.Duration) ([]string, string) {
 		n    int
 		what string
 	}{{e.WarmUp, "warm-up"}, {e.Scaling, "replicas changing"}, {e.NoTraffic, "no traffic"}, {e.NoMeasurement, "no measured requests"},
-		{e.NotPriced, "not priced"}} {
+		{e.NotPriced, "not priced"}, {e.OtherVariants, "other variants serving"}} {
 		if x.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", x.n, x.what))
 		}
@@ -1843,8 +1876,9 @@ func backtestNotes(q *backtestQuestion) []string {
 	notes := []string{
 		"Fitted on the fit window alone. Each step of the test is priced from its own inputs (request rate, prompt and output lengths, " +
 			"prompt-length spread, the replicas each role served), read over the same window its measurement covers, and never from its measured latency.",
-		fmt.Sprintf("Each step is measured at its last cycle, over the source's rate window (the router's five minutes, the engines' one): "+
-			"a step shorter than the window is measured over the window. A step whose window reaches before the test, or over a change of "+
+		fmt.Sprintf("Each step is measured at its last cycle, over the rate window its histogram was read over (the router's, recorded "+
+			"with it; the engines' one minute): a step shorter than the window is measured over the window, so neighbouring steps share "+
+			"requests and are not independent. A step whose window reaches before the test, or over a change of "+
 			"replicas, is not judged. A percentile is scored with %0.f requests or more at p50, %0.f at p90 and %0.f at p95 (50 for the mean); "+
 			"measured percentiles are interpolated inside the histogram's buckets.", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95)),
 		fmt.Sprintf("Median ratio is the middle step's predicted over measured; typical and worst-10%% miss the median and p90 of the factor "+
