@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,7 +37,7 @@ func scEntry(t *testing.T, latencyX, rateX float64) (*inputsEntry, []FoldFit) {
 	}
 	e := btEntry(t, r, "src", s, l, btConfig("H100"))
 	e.doc.Source.Cycle = len(s) // answered at its last cycle
-	folds := make([]FoldFit, 0, len(SelfCheckFractions))
+	folds := make([]FoldFit, 0, len(selfCheckFractions))
 	for _, c := range SelfCheckCycles(len(s)) {
 		folds = append(folds, FoldFit{Cycle: c, At: s[c-1].At, Pricer: r})
 	}
@@ -146,4 +147,18 @@ func TestSelfCheck_OverHTTP(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &none))
 	assert.Nil(t, none.SelfCheck)
 	assert.False(t, *r.lastSelfCheck, "the resolver was told not to read folds")
+}
+
+// The server's self-check is bounded as a plan is: out of its budget it is
+// not run, and says so, and the inputs are still answered.
+func TestSelfCheck_OverHTTPIsBounded(t *testing.T) {
+	r := &btResolver{folds: true, n: 480}
+	h := New(Config{Resolver: r, WhatifSchema: "schema-v3", SelfCheck: true, PlanBudget: time.Nanosecond}).Handler()
+	code, body := post(t, h, "/v1/inputs", InputsRequest{Source: &SourceRequest{Kind: SourceRecording, Name: "run.jsonl.gz"}})
+	require.Equal(t, http.StatusOK, code, string(body))
+	var in InputsResponse
+	require.NoError(t, json.Unmarshal(body, &in))
+	require.NotNil(t, in.SelfCheck)
+	assert.Equal(t, SelfCheckNotRun, in.SelfCheck.Status)
+	assert.Contains(t, in.SelfCheck.Why, "time budget")
 }

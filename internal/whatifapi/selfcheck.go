@@ -2,6 +2,7 @@ package whatifapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -59,14 +60,14 @@ const (
 	selfCheckMinSpan = time.Hour
 )
 
-// SelfCheckFractions are the folds' cuts, shares of the cycles up to the
+// selfCheckFractions are the folds' cuts, shares of the cycles up to the
 // one answered: the planner fitted up to each predicts up to the next.
-var SelfCheckFractions = []float64{0.5, 0.75}
+var selfCheckFractions = []float64{0.5, 0.75}
 
 // SelfCheckCycles is the cycles a recording answered at cycle is cut at.
 func SelfCheckCycles(cycle int) []int {
-	out := make([]int, 0, len(SelfCheckFractions))
-	for _, f := range SelfCheckFractions {
+	out := make([]int, 0, len(selfCheckFractions))
+	for _, f := range selfCheckFractions {
 		if c := int(math.Round(f * float64(cycle))); c >= 1 && c < cycle && !slices.Contains(out, c) {
 			out = append(out, c)
 		}
@@ -191,12 +192,15 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 		if err != nil {
 			refusals = append(refusals, err.Error())
 			sc.Checks = append(sc.Checks, SelfCheckRule{Name: "fold", Passed: false,
-				Detail: fmt.Sprintf("the fold fitted to %s was not backtested: %v", f.At.UTC().Format(time.RFC3339), err)})
+				Detail: fmt.Sprintf("the fold fitted to cycle %d was not backtested: %v", f.Cycle, err)})
 			continue
 		}
 		out, err := q.run(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
+				if errors.Is(context.Cause(ctx), errPlanBudget) {
+					return notRun("the self-check ran out of its time budget")
+				}
 				return notRun("stopped: " + ctx.Err().Error())
 			}
 			refusals = append(refusals, err.Error())
@@ -340,7 +344,12 @@ func selfCheckIssueURL(sc *SelfCheck, e *inputsEntry, info SelfCheckInfo) string
 	var b strings.Builder
 	fmt.Fprintf(&b, "planner: %s\nself-check: %s\n", info.PlannerVersion, sc.Status)
 	for _, r := range sc.Checks {
-		if !r.Passed {
+		switch {
+		case r.Passed:
+		case r.Name == "fold":
+			// Its detail carries an error's free text: the name alone.
+			b.WriteString("failed: fold: not backtested\n")
+		default:
 			fmt.Fprintf(&b, "failed: %s: %s\n", r.Name, r.Detail)
 		}
 	}

@@ -296,8 +296,12 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	doc := res.Inputs
 	doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 	doc.InputsID = contentID("inputs", res.Content)
-	if check && doc.Source.Kind == SourceRecording || check && doc.Source.Kind == SourcePrometheus {
-		doc.SelfCheck = SelfCheckOf(r.Context(), res, SelfCheckInfo{PlannerVersion: s.plannerVersion})
+	if check && (doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
+		// The self-check is bounded as a plan is; out of time it is not run,
+		// and the inputs are still answered.
+		sctx, cancel := context.WithTimeoutCause(r.Context(), s.planBudget, errPlanBudget)
+		doc.SelfCheck = SelfCheckOf(sctx, res, SelfCheckInfo{PlannerVersion: s.plannerVersion})
+		cancel()
 	}
 	// The entry kept is the first caller's, but each caller is answered with
 	// its own source: two recordings of the same bytes share an id, not a
