@@ -62,3 +62,13 @@ func TestRoleScalerWarner_OnlyNoMatch(t *testing.T) {
 	assert.True(t, w.Observe(log, &meta.NoKindMatchError{GroupKind: dsetRoleScalerGVK.GroupKind()}, "ns", "y"))
 	assert.Len(t, lines, 1)
 }
+
+// The Helm commands in the fix name the chart version of LWSRoleScalerRelease,
+// so the two cannot drift, and no namespace the install may not use.
+func TestRoleScalerUnservedFix_ChartVersionFollowsRelease(t *testing.T) {
+	chart := strings.TrimPrefix(LWSRoleScalerRelease, "v")
+	require.NotEqual(t, LWSRoleScalerRelease, chart)
+	assert.Equal(t, 2, strings.Count(RoleScalerUnservedFix, "--version "+chart+" "), RoleScalerUnservedFix)
+	assert.Equal(t, 2, strings.Count(RoleScalerUnservedFix, "--version "), RoleScalerUnservedFix)
+	assert.NotContains(t, RoleScalerUnservedFix, "lws-system")
+}
