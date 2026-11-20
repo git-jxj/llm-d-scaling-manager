@@ -1414,10 +1414,13 @@ terminationGracePeriodSeconds >= preStop sleep + --shutdown-timeout + 15
 
 The engine gets SIGTERM only after the preStop hook ends. With vLLM's
 `--shutdown-timeout N`, it then waits up to N seconds for in-flight requests
-before it exits. The 15 seconds are for the exit itself.
+before it exits. The 15 seconds are for the exit itself. Without
+`--shutdown-timeout`, the preStop sleep is the only drain, and it is what has
+to cover your longest generation.
 
 Example: `--shutdown-timeout 90` and the 45 s preStop the patch adds need at
-least 150 s. A grace of 120 kills the last 30 s of the drain.
+least 150 s. A grace of 120 is 30 s short: it cuts the last 15 s of the drain
+and leaves no time to exit.
 
 What `make workload-patch` does with it:
 
@@ -1431,7 +1434,7 @@ What `make workload-patch` does with it:
   the all-clear. Fix the grace where the pod spec is owned.
 - **LeaderWorkerSet and DisaggregatedSet.** The same check runs on the leader
   and the worker template, and on each role of a set. It is reported, never
-  written.
+  written. (`make scaledobjects-plan` checks the leader template only.)
 
 How the numbers are read:
 
@@ -1440,10 +1443,11 @@ How the numbers are read:
   means 0.
 - The hook's sleep: a `sleep` action's `seconds`, or the sum of every
   `sleep N` (`N`, `Ns` or `Nm`) in an `exec` hook. A sleep inside a loop counts
-  once.
+  once; sleeps on two branches of an `if`, or one sent to the background, both
+  count.
 - A value it cannot read (an `httpGet` hook, `sleep infinity`, a timeout in a
-  variable) counts as 0 s, and the message says so. A grace reported as too
-  short is then too short for certain; one not reported may still be.
+  variable) counts as 0 s, and the message says so. Read the numbers in the
+  message against your hook before you raise the grace.
 
 `make scaledobjects-plan` reports a missing hook per workload, because
 registering a ScaledObject is when scale-down becomes possible:

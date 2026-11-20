@@ -1515,6 +1515,13 @@ llmsm_workload_patch() {
             *[!a-z0-9-]*|-*|*-) log_warning "$tool must be a DNS-1123 label (lower-case letters, digits, -), not '${!tool}'."; return 1 ;;
         esac
     done
+    # Whole seconds, checked once: they are added up below, and `45s` in an
+    # arithmetic expansion ends the run rather than one line of it.
+    for tool in LLMSM_DRAIN_GRACE_SECONDS LLMSM_DRAIN_SLEEP_SECONDS; do
+        case "${!tool:-1}" in
+            *[!0-9]*) log_warning "$tool must be a whole number of seconds, not '${!tool}'."; return 1 ;;
+        esac
+    done
     # Two volumes of one name is a document the API server rejects, and with
     # both opt-ins a refusal that quotes two claim names on one line.
     if [ "${LLMSM_MODEL_VOLUME_NAME:-model-storage}" = "${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}" ]; then
@@ -1655,6 +1662,10 @@ llmsm_workload_patch() {
         log_warning "  They set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read (workload-patch wrote"
         log_warning "  it before v0.12.1). $out sets FLASHINFER_WORKSPACE_BASE under the same path, keyed by"
         log_warning "  image. It is emitted, not applied: put it in your chart values and remove FLASHINFER_WORKSPACE_DIR."
+    fi
+    if [ "$short_grace" -gt 0 ]; then
+        log_warning "$short_grace model server(s) have a preStop hook but a grace period shorter than their drain (see above)."
+        log_warning "  That is not in $out: raise terminationGracePeriodSeconds where the pod spec is owned."
     fi
 
     if [ "$apply" = "true" ]; then
@@ -2847,13 +2858,14 @@ so_workload_patch_doc() {
     # The engine's own drain time (so_drain_times). Without a hook it sizes the
     # grace period written below; with one, nothing is written and a grace
     # period too short for it is reported (so_drain_short).
-    local dtimes dhook dsleep dtimeout dunread dshort
-    dtimeout=0
+    local dtimes="" dhook dsleep dtimeout=0 dunread dshort
     if dtimes="$(so_drain_times "$ns" "$resource" "$name" "$pod" "$engine")"; then
         IFS=$'\037' read -r dhook dsleep dtimeout dunread <<< "$dtimes"
+    elif [ "$want_drain" -eq 1 ]; then
+        log_warning "  $ns/$name: could not read the pod spec again for --shutdown-timeout; the grace period below is sized without it."
     fi
     if [ "$want_drain" -eq 0 ]; then
-        dshort="$(so_drain_short "$ns" "$resource" "$name" "$pod" "$engine" "${grace:-30}")"
+        dshort="$(so_drain_short "$ns" "$resource" "$name" "$pod" "$engine" "${grace:-30}" "$dtimes")"
         if [ -n "$dshort" ]; then
             log_warning "  $ns/$name: $dshort"
             short_grace=$(( ${short_grace:-0} + 1 ))
@@ -2893,7 +2905,7 @@ GATEWHY
         [ "${grace:-30}" -gt "$grace_want" ] && grace_want="$grace"
         # ...nor set it below what the drain needs: the preStop sleep, then the
         # engine's --shutdown-timeout, then the margin.
-        local dneed=$(( ${LLMSM_DRAIN_SLEEP_SECONDS:-45} + ${dtimeout:-0} + SO_DRAIN_MARGIN_SECONDS ))
+        local dneed=$(( $(so_drain_int "${LLMSM_DRAIN_SLEEP_SECONDS:-45}" 45) + ${dtimeout:-0} + SO_DRAIN_MARGIN_SECONDS ))
         [ "$dneed" -gt "$grace_want" ] && grace_want="$dneed"
         cat <<DRAINWHY
 #   drain: ${engine} declares no preStop hook; terminationGracePeriodSeconds is ${grace:-30}.
@@ -2950,7 +2962,7 @@ HEAD
       # The kubelet sends SIGKILL when this expires, hook or not, so it is the
       # total budget rather than the drain window. The drain window is the
       # preStop sleep below plus the engine's --shutdown-timeout; this covers
-      # both with ${SO_DRAIN_MARGIN_SECONDS} s to spare.
+      # both with at least ${SO_DRAIN_MARGIN_SECONDS} s to spare.
       terminationGracePeriodSeconds: ${grace_want}
 GRACE
     fi
@@ -3440,6 +3452,16 @@ LWSGUARD
 # its drain ends, and the kubelet does not wait for that.
 SO_DRAIN_MARGIN_SECONDS=15
 
+# so_drain_int prints $1 when it is a whole number of seconds (at most nine
+# digits, read as decimal), else $2. Arithmetic on a value like `45s` would
+# otherwise end the whole run, not just one line.
+so_drain_int() {
+    case "$1" in
+        ""|*[!0-9]*|??????????*) printf '%s' "$2" ;;
+        *) printf '%s' "$(( 10#$1 ))" ;;
+    esac
+}
+
 # so_drain_times prints how long the engine container $5 of the pod template
 # at $4 takes to drain, as four \037-separated fields:
 #
@@ -3474,15 +3496,15 @@ so_drain_times() {
         | ([ $t.spec.containers[]? | select(.name == $c) ] | first) as $e
         | ($e.lifecycle.preStop // null) as $h
         | ( ($h.exec.command // []) | map(tostring | gsub("[\n\r]"; " ")) | join(" ") ) as $hcmd
-        | [ $hcmd | scan("(?:^|[^A-Za-z0-9_.-])sleep +([0-9]+)([sm]?)(?![A-Za-z0-9_.])")
+        | [ $hcmd | scan("(?:^|[^A-Za-z0-9_.-])sleep[ \t]+([0-9]{1,9})([sm]?)(?![A-Za-z0-9_.])")
             | (.[0] | tonumber) * (if .[1] == "m" then 60 else 1 end) ] as $sleeps
         | ( ($h.sleep.seconds | type) == "number" ) as $action
         | ( if $h == null then 0 elif $action then $h.sleep.seconds else ($sleeps | add // 0) end ) as $sleep
         | ( $h != null and ($action | not) and ($sleeps | length) == 0 ) as $sleepunread
         | ( (($e.command // []) + ($e.args // [])) | map(tostring | gsub("[\n\r]"; " ")) | join(" ") ) as $argv
-        | ( [ $argv | scan("(?:^|[^A-Za-z0-9_-])--shutdown[-_]timeout(?:=| +)([^ ;&|]*)")
+        | ( [ $argv | scan("(?:^|[^A-Za-z0-9_-])--shutdown[-_]timeout(?:=|[ \t]+)([^ \t;&|]*)")
               | .[0] | gsub("[\"" + ([39] | implode) + "]"; "") ] | last ) as $to
-        | ( $to != null and ($to | test("^[0-9]+$")) ) as $toread
+        | ( $to != null and ($to | test("^[0-9]{1,9}$")) ) as $toread
         | [ (if $h == null then 0 else 1 end),
             $sleep,
             (if $toread then ($to | tonumber) else 0 end),
@@ -3492,13 +3514,18 @@ so_drain_times() {
 }
 
 # so_drain_short prints why the grace period $6 of the engine $5 is too short
-# for the drain its own pod spec asks for, and nothing when it is long enough,
-# when the engine has no preStop hook (so_drain_note says that), or when the
-# object cannot be read. The rule: sleep + --shutdown-timeout + the margin.
+# for the drain its own pod spec asks for, and nothing when it is long enough
+# or the engine has no preStop hook (so_drain_note says that). The rule:
+# sleep + --shutdown-timeout + the margin. $7, when given, is what
+# so_drain_times already printed for this template, so it is not read twice.
+# An object that cannot be read is said to be unknown, never long enough.
 so_drain_short() {
-    local ns="$1" resource="$2" name="$3" pod="$4" engine="$5" grace="${6:-30}"
-    local times hook sleep timeout unread need extra=""
-    times="$(so_drain_times "$ns" "$resource" "$name" "$pod" "$engine")" || return 0
+    local ns="$1" resource="$2" name="$3" pod="$4" engine="$5" grace="${6:-30}" times="${7:-}"
+    local hook sleep timeout unread need extra=""
+    if [ -z "$times" ] && ! times="$(so_drain_times "$ns" "$resource" "$name" "$pod" "$engine")"; then
+        printf '%s' "Could not read the pod spec again, so whether terminationGracePeriodSeconds (${grace}) covers the preStop hook and --shutdown-timeout of ${engine} is unknown -- this is not a report that it does."
+        return 0
+    fi
     IFS=$'\037' read -r hook sleep timeout unread <<< "$times"
     [ "${hook:-0}" -eq 1 ] || return 0
     need=$(( sleep + timeout + SO_DRAIN_MARGIN_SECONDS ))
@@ -3532,9 +3559,11 @@ so_drain_note() {
     fi
     if times="$(so_drain_times "$ns" "$resource" "$name" "$pod" "$engine")"; then
         IFS=$'\037' read -r hook sleep timeout unread <<< "$times"
-        [ "${timeout:-0}" -gt 0 ] && hint=" Its --shutdown-timeout is ${timeout} s, so with a ${LLMSM_DRAIN_SLEEP_SECONDS:-45} s preStop the grace period needs at least $(( ${LLMSM_DRAIN_SLEEP_SECONDS:-45} + timeout + SO_DRAIN_MARGIN_SECONDS )) s."
+        local dsl
+        dsl="$(so_drain_int "${LLMSM_DRAIN_SLEEP_SECONDS:-45}" 45)"
+        [ "${timeout:-0}" -gt 0 ] && hint=" Its --shutdown-timeout is ${timeout} s, so with a ${dsl} s preStop the grace period needs at least $(( dsl + timeout + SO_DRAIN_MARGIN_SECONDS )) s."
     fi
-    printf '%s' "Scale-down will cut in-flight requests: ${engine} declares no preStop hook, and terminationGracePeriodSeconds is ${grace:-30}. A replica removed mid-stream terminates the responses it is still writing.${hint} The pod spec belongs to the model server's chart rather than to the scaling manager -- see docs/reference/operations.md#draining-before-scale-down."
+    printf '%s' "Scale-down will cut in-flight requests: ${engine} declares no preStop hook, and terminationGracePeriodSeconds is ${grace:-30}. A replica removed mid-stream terminates the responses it is still writing.${hint} The pod spec belongs to the model server's chart rather than to the scaling manager -- see docs/reference/workload-preparation.md#draining-before-scale-down."
     return 0
 }
 

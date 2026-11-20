@@ -4052,6 +4052,30 @@ assert_contains "$(cat "$WORK/dset.err")" "drain: Scale-down will cut in-flight 
 DSET_FIXTURE=''
 [ "$FAILED" -eq "$before" ] && ok
 
+CASE="drain grace: a short hook beside a written document is summarised; bad numbers are refused or capped"
+reset; LIST_FIXTURE="$(serving_list)"
+before=$FAILED
+# A repository id with no volume: a weights document is written, the grace is not.
+f_drain 90 '["vllm","serve","Qwen/Qwen3-0.6B","--shutdown-timeout","90"]' '{"exec":{"command":["sleep","30"]}}'
+run_driver
+assert_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "#   cache:"   # anchor: a document was written
+assert_not_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "terminationGracePeriodSeconds:"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than their drain"
+assert_contains "$(cat "$DRIVER_LOG")" "That is not in"
+# A sleep setting the arithmetic cannot use is refused before anything is read.
+LLMSM_DRAIN_SLEEP_SECONDS=45s run_driver
+assert_eq "$DRIVER_RC" "1" "return code, LLMSM_DRAIN_SLEEP_SECONDS=45s"
+assert_contains "$(cat "$DRIVER_LOG")" "LLMSM_DRAIN_SLEEP_SECONDS must be a whole number of seconds"
+# The plan note falls back to 45 s instead of ending the run.
+f_drain 30 "$TO90"
+assert_contains "$(LLMSM_DRAIN_SLEEP_SECONDS=45s so_drain_note ns deployments w "$POD_DEPLOY")" "the grace period needs at least 150 s"
+# Ten digits are not read; a tab separates like a space.
+f_drain 30 '["vllm","serve","/models/qwen","--shutdown-timeout","9999999999"]'
+assert_eq "$(drain_times)" "0|0|0|timeout" "ten-digit timeout"
+f_drain 30 '["/bin/sh","-c","vllm serve /models/qwen --shutdown-timeout\t90"]'
+assert_eq "$(drain_times)" "0|0|90|" "tab-separated timeout"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="LWS: a healthy LWS beside a healthy Deployment is an all-clear, nothing skipped"
 reset
 before=$FAILED
