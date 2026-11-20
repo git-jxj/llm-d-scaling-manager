@@ -25,7 +25,7 @@ const MAX_SCENARIOS = 50, MAX_NAME = 80, MAX_LINK = 4096, MAX_FILE = 65536;
 // the free names (a recording, a namespace, a model, a variant, a bucket),
 // and the keys with a fixed set of values or a form of their own (edges).
 const LINK_NUMBERS = new Set(["cycle", "prefill", "decode", "rate", "ttft", "tpot", "ratio", "headroom", "out", "max",
-  "vp", "a", "promptCV", "routerHop"]);
+  "vp", "a", "promptCV", "routerHop", "itlB"]);
 const LINK_NAMES = new Set(["recording", "namespace", "model", "prefillVariant", "decodeVariant", "priceAs"]);
 const STAT_WORD = /^(mean|p[0-9]{1,2}(\.[0-9]{1,3})?)$/;
 const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD,

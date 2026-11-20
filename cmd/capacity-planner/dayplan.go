@@ -48,6 +48,8 @@ type dayPlanFlags struct {
 	assumeVP, assumePromptCV                 float64
 	assumeA, assumeRouterHop                 time.Duration
 	inputTokens, outputTokens                float64
+	// assumeITLB is --assume-itl-b, as answerFlags' (itl_b.go).
+	assumeITLB string
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -79,6 +81,8 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, in place of the learned one (flagged)")
 	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, in place of the measured one (flagged)")
 	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the router hop, in place of the learned one (flagged)")
+	fs.StringVar(&f.assumeITLB, "assume-itl-b", "", "the decode line's intercept B (12ms), or floor for B from the floor read below the band, "+
+		"where the source measured none (PinnedDefaultB); the slope is refitted through it (flagged AssumedITLB)")
 	fs.Float64Var(&f.inputTokens, "assume-input-tokens", 0, "price every bucket at this mean prompt, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "price every bucket at this mean output, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
@@ -213,6 +217,18 @@ func (f *dayPlanFlags) request() (whatifapi.DayPlanRequest, error) {
 	}
 	if f.assumeRouterHop > 0 {
 		a.RouterHop, typed = ptrTo(f.assumeRouterHop.Seconds()), true
+	}
+	if f.assumeITLB != "" {
+		floor, b, err := parseAssumeITLB(f.assumeITLB)
+		if err != nil {
+			return req, err
+		}
+		if floor {
+			a.ITLBFromFloor = true
+		} else {
+			a.ITLB = ptrTo(b.Seconds())
+		}
+		typed = true
 	}
 	if typed {
 		req.Assume = &a

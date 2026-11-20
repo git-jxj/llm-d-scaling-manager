@@ -333,12 +333,17 @@ type Objective struct {
 
 // Assume is a typed value for a learned term, as the CLI's --assume-* flags
 // give it, each raising the engine's own flag. A and RouterHop are seconds.
+// ITLB is the decode line's intercept B in seconds, and ITLBFromFloor takes
+// it from the floor read below the band: either is the CLI's --assume-itl-b,
+// used only on a line on the default intercept (PinnedDefaultB).
 type Assume struct {
-	VP        *float64 `json:"vp,omitempty"`
-	A         *float64 `json:"a,omitempty"`
-	PromptCV  *float64 `json:"promptCV,omitempty"`
-	TPOTRatio *float64 `json:"tpotRatio,omitempty"`
-	RouterHop *float64 `json:"routerHop,omitempty"`
+	VP            *float64 `json:"vp,omitempty"`
+	A             *float64 `json:"a,omitempty"`
+	PromptCV      *float64 `json:"promptCV,omitempty"`
+	TPOTRatio     *float64 `json:"tpotRatio,omitempty"`
+	RouterHop     *float64 `json:"routerHop,omitempty"`
+	ITLB          *float64 `json:"itlB,omitempty"`
+	ITLBFromFloor bool     `json:"itlBFromFloor,omitempty"`
 }
 
 // ViewRequest switches the optional views on.

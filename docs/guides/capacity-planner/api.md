@@ -210,7 +210,7 @@ is the model's own, which the source does not carry.
 | `slo.ttft` | the policy's | `statistic` `mean` or `pNN`, `target` in seconds. A TTFT target is required. `bucketTargets` sets a target per bucket of the per-bucket view, keyed by bucket name. |
 | `slo.tpot` | the policy's (a mean) | `statistic` `mean`, `pNN` or `none`. |
 | `headroom` | the policy's `scaleUpThreshold` | (0, 1]. |
-| `assume` | none | `vp`, `a` (seconds), `promptCV`, `tpotRatio`, `routerHop` (seconds), as the CLI's `--assume-*` flags. Each is flagged. |
+| `assume` | none | `vp`, `a` (seconds), `promptCV`, `tpotRatio`, `routerHop` (seconds), `itlB` (seconds), as the CLI's `--assume-*` flags; or `itlBFromFloor: true`, the CLI's `--assume-itl-b floor`. Each is flagged. `itlB` and `itlBFromFloor` act only on a line refused `PinnedDefaultB`. |
 | `views.allTrafficPerBucket` | off | The per-bucket view: one line per bucket, "if all traffic were bucket b". |
 | `bucketEdges` | 1024, 4096, 8192, 32768, 131072 | The per-bucket view's upper edges, in tokens. Needs `views.allTrafficPerBucket`. |
 
@@ -324,7 +324,7 @@ Every field but `inputsId` has a default.
 | `slo.ttft`, `slo.tpot` | the policy's targets | `statistic` (`mean` or `pNN`) and `target` in seconds. |
 | `ttftStatistics` | `["p50", "p90"]` | The TTFT statistics the tables print, at most 4. |
 | `tpotStatistic` | `p90` | The TPOT percentile printed beside the mean; `mean` for the mean alone. |
-| `assume` | none | As for a plan: `vp`, `a`, `promptCV`, `routerHop`, `tpotRatio`. |
+| `assume` | none | As for a plan: `vp`, `a`, `promptCV`, `routerHop`, `tpotRatio`, `itlB`, `itlBFromFloor`. |
 
 The answer:
 

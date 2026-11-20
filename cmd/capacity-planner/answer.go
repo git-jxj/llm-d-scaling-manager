@@ -53,6 +53,9 @@ type answerFlags struct {
 	inputTokens, outputTokens float64
 	headroom, tpotRatio       float64
 	seed                      uint64
+	// assumeITLB is --assume-itl-b: the decode line's intercept B, a
+	// duration or "floor", where the recording measured none (itl_b.go).
+	assumeITLB string
 	// ttft, ttftPercentile, assumeVP, assumePromptCV, arrivalCV2, prefill and
 	// prefillVariant are the TTFT half's flags (ttft.go); inputBucket only
 	// refuses per-bucket answers.
@@ -114,6 +117,8 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "mean output length to price at, in place of the recorded one (flagged)")
 	fs.Float64Var(&f.headroom, "headroom", 0, "the operating point as a fraction of the knee; default the policy's scaleUpThreshold")
 	fs.Float64Var(&f.tpotRatio, "assume-tpot-ratio", 0, "R_q, a TPOT percentile over its mean, assumed rather than learned (flagged)")
+	fs.StringVar(&f.assumeITLB, "assume-itl-b", "", "the decode line's intercept B (12ms), or floor for B from the floor read below the band, "+
+		"where the recording measured none (PinnedDefaultB); the slope is refitted through it (flagged AssumedITLB)")
 	fs.Uint64Var(&f.seed, "seed", whatif.DefaultResampling().Seed, "the seed of the bands' bootstrap")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	fs.StringVar(&f.output, "output", outputText, "output: text or json (the same as -o)")
@@ -160,6 +165,11 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 		return usagef("--assume-input-tokens %g, want a finite length of at least 0", f.inputTokens)
 	case f.set["assume-output-tokens"] && !(f.outputTokens > 0 && finite(f.outputTokens)):
 		return usagef("--assume-output-tokens %g, want a finite length above 0", f.outputTokens)
+	}
+	if f.set["assume-itl-b"] {
+		if _, _, err := parseAssumeITLB(f.assumeITLB); err != nil {
+			return err
+		}
 	}
 	if _, err := f.cycleNumber(); err != nil {
 		return err
@@ -391,6 +401,10 @@ type pricedVariant struct {
 	// every figure outside the envelope (statedOutside).
 	model  string
 	stated []string
+	// itlB is what --assume-itl-b did to the line (assumeIntercept), and api
+	// says the question came through the API, whose words a hint uses.
+	itlB interceptAssumption
+	api  bool
 }
 
 // Where the decode KV per request came from (pricedVariant.residentKV), as
@@ -489,7 +503,10 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.variant != "" && vs.Variant != f.variant {
 			continue
 		}
-		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside()}
+		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside(),
+			api: f.hintSource() == hintAPIRecording || f.hintSource() == hintAPIPrometheus}
+		f.assumeIntercept(&pv)
+		vs = pv.state
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
 			il, pv.assumedIL = f.inputTokens, true
@@ -517,10 +534,13 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
 			KVPerRequest: pv.residentKV(), OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
-			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL},
+			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL}, AssumedB: pv.itlB.Applied,
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)
+		}
+		if pv.itlB.Applied {
+			pv.flags = append(pv.flags, assumedITLB)
 		}
 		if vs.Shape.OutputDispersion == 0 {
 			pv.flags = append(pv.flags, whatif.OutputSpreadUnread)
@@ -588,6 +608,10 @@ func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 	if !ok {
 		if u, ok := r.(whatif.Unanswerable); ok && u.Reason == whatif.NoLine && pv.state.Line.IsZero() {
 			u.Detail = fmt.Sprintf("no ITL line learned by cycle %d", pv.cycle)
+			return u
+		}
+		if u, ok := r.(whatif.Unanswerable); ok && u.Reason == whatif.PinnedDefaultB {
+			u.Detail += pv.pinnedDefaultBHint()
 			return u
 		}
 		return r

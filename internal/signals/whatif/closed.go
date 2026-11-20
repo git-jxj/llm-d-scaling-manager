@@ -44,6 +44,11 @@ type Decode struct {
 	// BelowBand says how the line is read below the band; the zero value
 	// reads it at the band's bottom, as the controller prices.
 	BelowBand BelowBand
+	// AssumedB says the caller stated Line's intercept B and refitted the
+	// slope through it (the capacity planner's --assume-itl-b): a line on the
+	// default intercept is then priced, not refused (PinnedDefaultB), and the
+	// caller flags every figure as assumed. The controller never sets it.
+	AssumedB bool
 }
 
 // BelowBand is how a Decode reads its line at a fill under the band's bottom.
@@ -106,11 +111,18 @@ const defaultBTolerance = 1e-9
 // intercept rather than a measured one: a pinned-B, held or above-band fit
 // pins B, and a borrowed line is its donor's, so one of those on the
 // default B rests on no measured floor (PinnedDefaultB). An ols line fits B
-// itself and is never refused for where it lands.
+// itself and is never refused for where it lands. A B the caller stated
+// (AssumedB) is not the default's.
 func (d Decode) onDefaultB() bool {
-	switch d.Tier {
+	return !d.AssumedB && OnDefaultB(d.Tier, d.Line)
+}
+
+// OnDefaultB reports a line of tier on the default intercept, the line a
+// Decode refuses as PinnedDefaultB (Decode.onDefaultB).
+func OnDefaultB(tier string, line itl.Model) bool {
+	switch tier {
 	case TierPinnedB, TierHeld, TierBorrowed:
-		return math.Abs(d.Line.B-itl.DefaultBaselineSec) <= defaultBTolerance*itl.DefaultBaselineSec
+		return math.Abs(line.B-itl.DefaultBaselineSec) <= defaultBTolerance*itl.DefaultBaselineSec
 	}
 	return false
 }

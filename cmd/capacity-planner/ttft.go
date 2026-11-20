@@ -430,6 +430,11 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.promptAssumed = f.set["assume-input-tokens"]
 	pf.hint = f.hintSource()
 	pf.decodeSide()
+	if pv != nil {
+		if w := pv.itlBWords(); w != "" {
+			pf.assume("%s", w)
+		}
+	}
 	if pf.fleet.Decode != nil && pf.pv.state.Shape.OutputDispersion == 0 {
 		pf.assume("%s", outputSpreadUnreadWords)
 	}

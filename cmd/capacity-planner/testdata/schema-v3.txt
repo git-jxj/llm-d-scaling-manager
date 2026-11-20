@@ -34,6 +34,14 @@ roles[].inputs.kvPerRequest number
 roles[].inputs.kvPerRequestSource string
 roles[].inputs.line object
 roles[].inputs.line.a number
+roles[].inputs.line.assumedB object
+roles[].inputs.line.assumedB.applied boolean
+roles[].inputs.line.assumedB.defaultA number
+roles[].inputs.line.assumedB.floorFill number
+roles[].inputs.line.assumedB.floorSeconds number
+roles[].inputs.line.assumedB.seconds number
+roles[].inputs.line.assumedB.source string
+roles[].inputs.line.assumedB.why string
 roles[].inputs.line.b number
 roles[].inputs.line.borrowedFrom string
 roles[].inputs.line.check object

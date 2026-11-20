@@ -59,6 +59,7 @@ const FLAG_WORDS = {
   AssumedArrivalCV2: ["The arrival burstiness Ca² is a value you set.", "nothing: a stated assumption"],
   AssumedA: ["a, the fixed latency, is the value you typed, not a learned one.", "a low-load window that fits a"],
   AFromEngineTiming: ["a, the fixed latency, was fitted from the engine's own prefill timing on a fleet too busy for low-load minutes, not from quiet minutes.", "a low-load window that fits a"],
+  AssumedITLB: ["The decode ITL line's intercept B, its latency per token with the cache empty, is the value you typed or the one the floor below the band gives, not a measured one; the slope was refitted through it.", "a recording whose decode line measured its own B (a full fit)"],
   AdaptedBandFloor: ["The decode ITL line was read over a KV-fill band whose floor the replay lowered to the fleet's fill, below the policy's floor.", "readings at the policy's fill floor or above"],
   PromptSpreadAbovePeak: ["The prompt cv is past the peak for this percentile: a larger cv can price a shorter floor and a higher rate.", "a measured prompt spread"],
   PromptSpreadClamped: ["The measured prompt spread was clamped at its stop.", "a prompt histogram with wider bounds"],
@@ -75,7 +76,7 @@ const BUCKET_NOTE = "If all traffic were bucket b: each line is its own fleet's 
 const TERM_NAMES = {
   vp: "V_P", a: "a", imbalance: "f", promptTokens: "prompt", promptCV: "prompt cv",
   transferSecondsPerToken: "KV transfer", routerHop: "router hop", itlA: "ITL a", itlB: "ITL b",
-  itlLine: "ITL line", capacityTokens: "KV capacity", kvPerRequest: "KV per request", batchCap: "batch cap", maxModelLen: "context window",
+  itlLine: "ITL line", itlBFloor: "ITL b from the floor", capacityTokens: "KV capacity", kvPerRequest: "KV per request", batchCap: "batch cap", maxModelLen: "context window",
   tpotRatio: "R_q", prefill: "prefill",
 };
 
@@ -519,12 +520,16 @@ function setInputs(inputs) {
 }
 
 // ASSUMABLE are the terms a scenario may type: the box, the API's key, the
-// inputs' term, and the box's unit per the term's (ms for seconds).
+// inputs' term, and the box's unit per the term's (ms for seconds). refusedAs
+// is the term the inputs name instead when the source refused it: ITL B is
+// refused with the whole line (PinnedDefaultB), and floor is the term giving
+// the B the floor below the band would price at.
 const ASSUMABLE = [
   {box: "vp", key: "vp", term: "vp", scale: 1},
   {box: "a", key: "a", term: "a", scale: 1000},
   {box: "cv", key: "promptCV", term: "promptCV", scale: 1},
   {box: "hop", key: "routerHop", term: "routerHop", scale: 1000},
+  {box: "itlb", key: "itlB", term: "itlB", refusedAs: "itlLine", floor: "itlBFloor", scale: 1000},
 ];
 
 // showLearned puts each assumable term's learned value, or its refusal,
@@ -533,10 +538,12 @@ function showLearned(inputs) {
   let refused = false;
   for (const a of ASSUMABLE) {
     el("a-" + a.box).value = "";
-    const t = inputs.terms.find(x => x.name === a.term);
+    const t = inputs.terms.find(x => x.name === a.term) || (a.refusedAs && inputs.terms.find(x => x.name === a.refusedAs));
     let text = "not read";
     if (t && t.refused) {
       text = "refused: " + t.refused.reason;
+      const floor = a.floor && inputs.terms.find(x => x.name === a.floor && x.value != null);
+      if (floor) text += "; the floor below the band gives " + fmtNum(floor.value * a.scale);
       refused = true;
     } else if (t) {
       text = "learned " + fmtNum(t.value * a.scale);

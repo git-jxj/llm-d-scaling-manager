@@ -654,7 +654,12 @@ func refusalHint(term string, reason whatif.Reason) string {
 		return "The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail."
 	case reason == whatif.TargetBelowFloor:
 		return "The TPOT target is under decode's TPOT at zero load: no replica count meets it. Raise the TPOT target."
-	case (term == termTPOT || term == termDecodeKnee) && (reason == whatif.NoLine || reason == whatif.PinnedDefaultB):
+	case (term == termTPOT || term == termDecodeKnee) && reason == whatif.PinnedDefaultB:
+		// The line prices decode's knee too: asking no TPOT does not help.
+		return "The decode ITL line rests on the 6 ms default intercept B (PinnedDefaultB), so neither TPOT nor the decode knee is priced: " +
+			"state B, flagged as assumed: --assume-itl-b floor (from the floor read below the band) or --assume-itl-b 12ms, " +
+			"or in the API assume.itlBFromFloor or assume.itlB."
+	case (term == termTPOT || term == termDecodeKnee) && reason == whatif.NoLine:
 		// The line prices decode's knee too: asking no TPOT does not help.
 		return "The source fitted no decode ITL line it can price (" + string(reason) + "), so neither TPOT nor the decode knee is priced: " +
 			"record a window with decode under varied load (docs/guides/record-for-capacity-planner)."

@@ -192,7 +192,8 @@ type VariantState struct {
 	// percentile of the variant's latest mean ITLs read off a ramp at a fill
 	// under the band's bottom (whatif.BelowBand.LeastITL). 0 with fewer than
 	// itl.BelowBandMinReadings, where the line is not read below the band.
-	BelowBandITL float64
+	// BelowBandFill is the fill that reading was taken at, 0 with none.
+	BelowBandITL, BelowBandFill float64
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -391,7 +392,7 @@ func StateFrom(ctx context.Context, src Source, opts Options, q StateQuery) (*St
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
-		st.Variants[i].BelowBandITL = lines.leastBelowBand(st.Variants[i].Variant)
+		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
 	}
 	return st, nil
 }

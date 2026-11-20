@@ -373,9 +373,16 @@ The `kvPerRequest` term says where its figure came from:
 A source that did not see enough load cannot learn every term, and the page
 then shows refusals instead of numbers. Open **Assume a term the source did
 not learn** and type a value: the prefill rate V_P, the fixed latency a, the
-prompt cv or the router hop. The learned value, or the reason it is missing,
-is shown under each box. A typed value flags every figure that rests on it.
-[Each reason and its fix](troubleshooting.md#refused-figures).
+prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
+it is missing, is shown under each box. A typed value flags every figure that
+rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
+
+Decode refused with `PinnedDefaultB` is the common case on a real P/D window:
+the latency line's intercept B, the per-token latency with the cache empty,
+was never measured. The **ITL B** box shows the B the floor below the band
+gives; type it, or your own. On the CLI, `--assume-itl-b floor` uses that B
+and `--assume-itl-b 12ms` states one. Figures on it are flagged
+`AssumedITLB` and read as outside the validated region.
 
 A fleet whose load never goes quiet still gets two terms, each flagged:
 

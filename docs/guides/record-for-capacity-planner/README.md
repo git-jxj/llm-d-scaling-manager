@@ -615,6 +615,10 @@ capacity-planner slo-to-rate     --recording run.jsonl.gz --tpot 4ms --ttft 200m
   is then all that bounds decode. When the recording has no usable line
   (`NoLine`, `PinnedDefaultB`), the `decode` and `fleet` rows are refused, exit
   `3`; the `prefill` row is still priced.
+- **`PinnedDefaultB`** means the line's intercept B was never measured. Give
+  `--assume-itl-b floor` (B from the low-fill latency the decode Pods read) or
+  `--assume-itl-b 12ms` for a flagged answer. The `ITL B` row says which B
+  was used.
 - **The `line check` row** compares the token rate the latency line predicts
   with the rate the decode rows reported. `MISMATCH` (a median error above
   15%, flagged `LineMismatch`): do not size from it. `at another shape`: the
