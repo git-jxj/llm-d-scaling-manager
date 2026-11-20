@@ -719,6 +719,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	},
 	settle.SwitchFirstSightRestored: nil,
 
+	// llm-d-incubation/llm-d-scaling-manager#220: a start that overlapped a
+	// rollout is not folded. No recording holds a variant rolling out while
+	// a Pod reports a start, so no golden moves; its unit tests hold it
+	// (heldBy).
+	saturation.SwitchStartHeldThroughRollout: nil,
+
 	// Issue ev-shindin/llm-scaling-manager#397: the prefill bound held at a lower confidence bound
 	// (saturation.SwitchPrefillBoundHeldConfidence): the window keeps its
 	// samples as read, and the bound priced is the larger of their mean and
@@ -1318,6 +1324,15 @@ func withSeams(more, rows map[string][]string) map[string][]string {
 // test that holds the same on either side is a control, not a hold, and is
 // not listed here.
 var heldBy = map[string][]heldTest{
+	// llm-d-incubation/llm-d-scaling-manager#220: each runs the switch on
+	// and off and asserts both.
+	saturation.SwitchStartHeldThroughRollout: {
+		{"../saturation", "TestStartRollout_AStartDuringARolloutIsNotFolded"},
+		{"../saturation", "TestStartRollout_APodCreatedDuringARolloutIsNotFoldedAfterIt"},
+		{"../saturation", "TestStartRollout_AnalyzeHoldsStartsWhileRollingOut"},
+		{"../saturation", "TestStartRollout_ARowWithNoReadyTimeIsHeldAfterARollout"},
+		{"../saturation", "TestStartRollout_AHeldPodLeavesTheRunOfRefusedStarts"},
+	},
 	// llm-d-incubation/llm-d-scaling-manager#201: each runs the switch on
 	// and off and asserts both.
 	saturation.SwitchK2DecodeBudgetAtComputedPrompt: {

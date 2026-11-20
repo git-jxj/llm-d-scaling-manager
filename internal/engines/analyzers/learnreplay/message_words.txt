@@ -2463,6 +2463,7 @@ replica-capacity-skipped
 replica-capacity-store-fallback
 replica-capacity-summary
 replica-start-change-confirmed
+replica-start-held-through-rollout
 replica-start-measured
 replica-start-outlier-rejected
 replicaDemand
@@ -2855,6 +2856,7 @@ start-above-bound
 start-blends-first-samples
 start-confirms-by-distinct-pod
 start-counted-pods-restored
+start-held-through-rollout
 start-reads-replica-start-seed
 startAdmittedAt
 startCountedReady
@@ -2868,6 +2870,7 @@ startLogged
 startOutlierPods
 startOutliers
 startRestored
+startRolledAt
 startSamples
 startSeconds
 startSeedWarned

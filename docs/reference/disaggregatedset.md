@@ -110,7 +110,8 @@ It holds what KEDA and the HPA hold on the other path:
   alone keeps `max(min-replicas, 1)` groups.
 - **During a rollout.** A replica change does not start a roll. A scale-up
   lands in the rollout's pace; a scale-down waits for the old revision to drain
-  (`Deferred`, the default).
+  (`Deferred`, the default). A replica that starts while the set rolls out is
+  not used to learn the role's start time: its start is the rollout's.
 - **A refused scale-down.** A lower count counts as done only once the
   set's child LeaderWorkerSets run it. See
   [When the cluster refuses a scale-down](#when-the-cluster-refuses-a-scale-down).
