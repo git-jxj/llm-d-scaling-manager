@@ -37,6 +37,10 @@ type Resolved struct {
 	// Series is every cycle of the source, oldest first, for a day plan
 	// (POST /v1/dayplan); nil where the source carries none.
 	Series []SeriesSample
+	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
+	// the Series and the Inputs), its weight in the inputs cache
+	// (Config.MaxInputsBytes); 0 weighs nothing.
+	Bytes int
 }
 
 // Pricer builds the fleet a scenario prices. It must be safe to call from
@@ -86,12 +90,15 @@ type Fleet interface {
 	// mean asked), each banded, as replicas-to-slo --rate prints them.
 	TPOTAt(rate float64) (mean, percentile whatif.Result)
 	// Limits is slo-to-rate's rates at the targets: decode's at the TPOT
-	// target (nil with no TPOT target), the prefill role's at the TTFT target,
-	// and the fleet's at headroom and at headroom 1, each spanned.
+	// target, the prefill role's at the TTFT target, and the fleet's at
+	// headroom and at headroom 1, each spanned. With no TPOT target, decode's
+	// is nil, unless DecodeKnee is refused: then nothing bounds decode, and
+	// decode's limit and the fleet's are that refusal.
 	Limits(ttftSeconds, tpotSeconds, headroom float64) LimitSet
 	// PlainLimits is Limits' decode, prefill and fleet rates at headroom with
 	// no span over V_P and f, a fifth of the cost: the marginal steps' and a
-	// bucket line's.
+	// bucket line's. A refused decode knee with no TPOT target is decode's
+	// limit and the fleet's, as in Limits.
 	PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (decode, prefill, fleet whatif.Result)
 	// TPOTRatio is R_q as resolved for the percentile asked: its value and
 	// source, or its refusal; the zero Ratio with the mean asked.

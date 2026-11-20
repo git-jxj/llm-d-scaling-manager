@@ -510,11 +510,26 @@ type FleetLimit struct {
 // negative where the SLO is missed.
 type Chosen struct {
 	Rate float64 `json:"rate"`
-	// RateSource is "request", or "operating point" where the scenario gave
-	// no rate.
+	// RateSource is what set Rate: one of the RateSource constants.
 	RateSource string `json:"rateSource"`
 	Headroom   Figure `json:"headroom"`
 }
+
+// The values of Chosen.RateSource.
+const (
+	// RateSourceRequest is a rate the scenario gave.
+	RateSourceRequest = "request"
+	// RateSourceOperatingPoint is headroom times the lower of both knees,
+	// where the scenario gave no rate.
+	RateSourceOperatingPoint = "operating point"
+	// RateSourcePrefillKnee is headroom times the prefill knee, where the
+	// scenario gave no rate and the decode knee is refused: a rate to start
+	// from, not an operating point, which the decode knee would bound.
+	RateSourcePrefillKnee = "prefill knee; decode not priced"
+	// RateSourceDecodeKnee is headroom times the decode knee, where the
+	// scenario gave no rate and the prefill knee is refused.
+	RateSourceDecodeKnee = "decode knee; prefill not priced"
+)
 
 // Marginal is the fleet's limit with one more replica of each role.
 type Marginal struct {
@@ -551,6 +566,22 @@ type SourcesResponse struct {
 	// RecordingsTruncated whether the server listed only the first of them.
 	Recordings          []string `json:"recordings"`
 	RecordingsTruncated bool     `json:"recordingsTruncated,omitempty"`
+	// Upload is set when the server takes uploads (POST /v1/recordings).
+	Upload *UploadInfo `json:"upload,omitempty"`
+}
+
+// UploadInfo is what a server that takes uploads takes.
+type UploadInfo struct {
+	// MaxBytes is the largest upload, in bytes as sent.
+	MaxBytes int `json:"maxBytes"`
+}
+
+// UploadResponse is POST /v1/recordings: the name a recording source gives
+// the recording uploaded, which the server chose, and its size as sent.
+type UploadResponse struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Name          string `json:"name"`
+	Bytes         int    `json:"bytes"`
 }
 
 // SizeRequest is POST /v1/size: the fewest replicas per role whose fleet

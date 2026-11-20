@@ -408,6 +408,10 @@ type SaturationAnalyzer struct {
 	// kvHitsResident is SwitchKVPerRequestHitsResident (ev-shindin/llm-scaling-manager#277): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	kvHitsResident bool
+	// kvAboveContext is SwitchKVPerRequestAboveContext (issue
+	// llm-d-incubation/llm-d-scaling-manager#188): off from the constructor;
+	// only a replay turns it on (SetSwitchesForReplay).
+	kvAboveContext bool
 	// itlFitsAggregated is SwitchITLFitsAggregated (ev-shindin/llm-scaling-manager#432): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	itlFitsAggregated bool
@@ -522,6 +526,18 @@ type SaturationAnalyzer struct {
 	itlAdaptiveFloor bool
 	itlFills         map[string][]engineFill
 	itlBandFloors    map[string]bandFloor
+	// k2DecodeBudget is SwitchK2DecodeBudgetAtComputedPrompt (issue
+	// llm-d-incubation/llm-d-scaling-manager#201, decode_budget.go): off
+	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
+	k2DecodeBudget bool
+	// decodeLandedNeedsBound is SwitchDecodeLandedNeedsABound (issue
+	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): off
+	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
+	decodeLandedNeedsBound bool
+	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
+	// (itl_baseline_floor.go): off from the constructor; only a replay
+	// turns it on.
+	itlBaselineFromFloor bool
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
 	// (SetSwitchesForReplay).
@@ -553,6 +569,15 @@ type SaturationAnalyzer struct {
 	// (llm-d-incubation/llm-d-scaling-manager#97, throughput_floor.go): on
 	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	lowerBoundCapsShare bool
+	// decodeOwesRouterBacklog is SwitchDecodeOwesRouterBacklog
+	// (llm-d-incubation/llm-d-scaling-manager#51, decode_router_backlog.go):
+	// off from the constructor; only a replay turns it on
+	// (SetSwitchesForReplay).
+	decodeOwesRouterBacklog bool
+	// decodeOwing is, per namespace|model, a P/D decode's recent evidence
+	// for SwitchDecodeOwesRouterBacklog and the charge last held
+	// (decodeAtMuWeight). Written only with the switch on.
+	decodeOwing map[string]*decodeOwingMemo
 	// floorTrustCompleted is SwitchFloorTrustReadsCompletions
 	// (llm-d-incubation/llm-d-scaling-manager#54, throughput_floor.go): on
 	// from the constructor; a replay turns it off (SetSwitchesForReplay).
@@ -705,6 +730,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		capacityStore:          store,
 		decodeSaturatedAt:      make(map[string]time.Time),
 		hotRankHeld:            make(map[string]hotRankMemo),
+		decodeOwing:            make(map[string]*decodeOwingMemo),
 		k2Settle:               make(map[string]*settleMemo),
 		fleetShape:             make(map[string]*shapeMemo),
 		itlTracker:             itl.NewTracker(),
@@ -1363,6 +1389,11 @@ func (a *SaturationAnalyzer) evictStaleHistory() Evicted {
 		return now.Sub(m.seen) > variantTimeout
 	})
 	evicted.HotRankHolds = held - len(a.hotRankHeld)
+	// A P/D decode's evidence for SwitchDecodeOwesRouterBacklog: past
+	// decodeOwingMaxAge it is not read, so it goes with the model.
+	maps.DeleteFunc(a.decodeOwing, func(_ string, m *decodeOwingMemo) bool {
+		return now.Sub(m.seen) > variantTimeout
+	})
 	settled := len(a.k2Settle)
 	maps.DeleteFunc(a.k2Settle, func(_ string, m *settleMemo) bool {
 		return now.Sub(m.seen) > variantTimeout

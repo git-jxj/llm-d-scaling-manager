@@ -89,6 +89,35 @@ Known gaps (the first blocks flipping the default):
 
 It is replay-only too.
 
+`slo-ttft-low-load-decode-ttft` (off) sets the decode engine's measured TTFT,
+which prices the decode side when no decode line does
+(`whatif.TTFTFleet.DecodeTTFT`). Off, it is the largest of the last five
+cycles (`noteDecodeTTFT`). After an overload that is the queue's wait: 17-21 s
+on `ttft-staircase-b-off` and 6-12 s on `ttft-staircase-c-on`, against 0.15
+and 0.23 s calm. On:
+
+- Each cycle carries the decode rows' capacity backlog
+  (`prefill.DecodeBacklogOf`), held for `prefill.DecodeTTFTLag` after the
+  queue drains (`prefill.DecodeBacklogCarry`). The capacity planner reads the
+  same rule.
+- The figure is the largest of the window's cycles with no backlog
+  (`decodeTTFTWindow.lowLoad`).
+- With none, the latest such figure is held for `prefill.HeldDecodeAge`
+  after the last window that held it, then the window's largest stands, as
+  off.
+- A decode row with no capacity series (an older vLLM, SGLang) cannot say
+  it is calm, and the mean holds its TTFT. While the window holds a cycle
+  with such a row, the figure is the window's largest, as off, and any held
+  calm figure is dropped. The cycle also carries a backlog of 1, for
+  `prefill.DecodeTTFTLag` like any other. The planner only flags such rows
+  (`BacklogUnread`).
+
+The planner refuses a decode TTFT read under a backlog
+(`whatif.DecodeTTFTUnderLoad`) and names a calmer cycle to answer at. The
+analyzer cannot answer at another cycle, so it holds a calm figure instead. Replay-only;
+`TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases` replays the staircases
+both ways.
+
 The analyzer's met/unmet is `whatif.TTFTMeets`. `RateForTTFT`, which the
 CLI's and the planner API's rates and the analyzer's published rate come
 from, is capped under the prefill onset (`BoundPrefillOnset`), so it answers

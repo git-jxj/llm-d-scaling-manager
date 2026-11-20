@@ -122,17 +122,19 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchITLReadsSettle, SwitchITLWaitsAfterRestart,
 // SwitchITLKeepsSettleThroughMissingRow, SwitchITLReadsFinitePodMean,
 // SwitchITLRestartUnderName, SwitchITLIdleOnEvidence,
-// SwitchKVPerRequestHitsResident, SwitchZeroReplicaDataParallel,
+// SwitchKVPerRequestHitsResident, SwitchKVPerRequestAboveContext,
+// SwitchZeroReplicaDataParallel,
 // SwitchITLFitsAggregated, SwitchITLAggregatedShapeTerm,
 // SwitchITLAggregatedSizes, SwitchPrefillCapacityObserve,
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor,
-// SwitchITLOneSidedAtCap,
+// SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
+// SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
 // SwitchPrefillBoundHeldConfidence, SwitchThroughputFloorRaisesVariants,
 // SwitchQueuePricedAsDrain, SwitchFloorTrustReadsCompletions,
-// SwitchPrefillKeepsRouterPrompts, SwitchPrefillBusyShareBound and
-// SwitchLowerBoundCapsRouterShare; a name
+// SwitchPrefillKeepsRouterPrompts, SwitchPrefillBusyShareBound,
+// SwitchLowerBoundCapsRouterShare and SwitchDecodeOwesRouterBacklog; a name
 // it does not know is an error, and sets nothing. Never called on a
 // production path; a test holds that.
 func (a *SaturationAnalyzer) SetSwitchesForReplay(switches map[string]bool) error {
@@ -216,6 +218,11 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// ev-shindin/llm-scaling-manager#277: a prefix-cache hit stays resident.
 		SwitchKVPerRequestHitsResident: &a.kvHitsResident,
 
+		// llm-d-incubation/llm-d-scaling-manager#188: a resident reading
+		// above the whole context is priced as read. Off from the
+		// constructor.
+		SwitchKVPerRequestAboveContext: &a.kvAboveContext,
+
 		// ev-shindin/llm-scaling-manager#438: a data-parallel variant at zero replicas is priced at
 		// every engine rank its pod runs.
 		SwitchZeroReplicaDataParallel: &a.zeroReplicaDP,
@@ -246,6 +253,16 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// The planner's ITL band floor on a low-fill fleet
 		// (itl_band_floor.go). Off from the constructor.
 		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,
+		// Issue llm-d-incubation/llm-d-scaling-manager#201: a decode's
+		// derived k2 charges its budget the prompt it computes
+		// (decode_budget.go), and a landed request is a decode's backlog
+		// only where the replica can be at a bound (pd_decode_queue.go).
+		// Both off from the constructor.
+		SwitchK2DecodeBudgetAtComputedPrompt: &a.k2DecodeBudget,
+		SwitchDecodeLandedNeedsABound:        &a.decodeLandedNeedsBound,
+		// The ITL line's B pinned at the floor read below the band while
+		// unlearned (itl_baseline_floor.go). Off from the constructor.
+		SwitchITLBaselineFromFloor: &a.itlBaselineFromFloor,
 		// Issue ev-shindin/llm-scaling-manager#467: the ITL line priced one-sided at the sequence cap
 		// while B is unlearned (itl_one_sided.go).
 		SwitchITLOneSidedAtCap: &a.itlOneSidedAtCap,
@@ -278,6 +295,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// lower bound keeps its router-queue share only up to one doubling of
 		// its ready supply (throughput_floor.go).
 		SwitchLowerBoundCapsRouterShare: &a.lowerBoundCapsShare,
+		// llm-d-incubation/llm-d-scaling-manager#51: on P/D, decode is
+		// charged the router's backlog prefill can hand on
+		// (decode_router_backlog.go). Off from the constructor.
+		SwitchDecodeOwesRouterBacklog: &a.decodeOwesRouterBacklog,
 	}
 }
 

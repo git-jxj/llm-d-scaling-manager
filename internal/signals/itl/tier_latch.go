@@ -151,7 +151,7 @@ func (t *Tracker) dwellTier(key string, c fitChoice, in tierInputs, adm Admissio
 	}
 	if now.Sub(l.since) < DefaultTierDwell {
 		if c.tier == TierPinnedB {
-			line := Model{A: held.a, B: in.baseline}
+			line := Model{A: held.a, B: held.pin(in.baseline, in.learned)}
 			if have && adm.mayHold(held, now) && !adm.pricesMoreBy(pricedLine(c, in, adm), line, DefaultTierSafeMargin) {
 				return fitChoice{hold: true}, true
 			}

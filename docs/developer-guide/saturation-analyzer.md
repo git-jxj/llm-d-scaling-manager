@@ -244,6 +244,36 @@ change. The replay switch is
 `kv-per-request-hits-resident` (`SwitchKVPerRequestHitsResident`). The
 throughput and slo analyzers still price their KV per request at `ILeff`.
 
+The upper bound under-prices an engine that holds more KV per request than its
+context in the same pool, such as a sparse-attention indexer's keys or a
+speculative draft model's KV (issue llm-d-incubation/llm-d-scaling-manager#188).
+The replay switch `kv-per-request-above-context`
+(`SwitchKVPerRequestAboveContext`) drops the bound and prices the reading by
+the capacity planner's rule, `shape.PriceResident`: held at the discount from
+below, priced as read above the context, held at the context on SGLang. A
+shape with no hit is read too. `residentKVBound` is then `above-context` for a
+reading over twice the context, and `upper` only for SGLang held at the
+context. The count gate is taken at the reading where it is above the whole
+context (`countGateKV`), and at `KVreq` below it. Few requests sharing a
+prefix read at most the context each, so they stay no reading. A reading above
+the context is KV the engine holds beyond prompt and output; at the discounted
+`KVreq` it passes only from a fill of `minK x R`, and at the context only
+from `minK x reading / context`, so neither gate would ever take it on a
+recording that reads three times the context at a fill of 0.15-0.35. Not every
+reading above the context is KV held beyond prompt and output, so with the
+switch on two more rules apply. The tokens are spread over the requests that
+hold KV without running as well: on the decode side of a P/D split, those
+pulling their KV from prefill or waiting for the next step after it landed
+(the waiting queue less the requests waiting for capacity). A decode pulling
+30 prompts beside 4 running would otherwise read 8 times the context. And a
+reading above the context needs at least 8 such requests
+(`minAboveContextSequences`): a few long prompts in a mixed workload, or a
+running count that lags the KV, read several times the context with nothing
+held beyond it. Above 8 the scrape cannot tell a long tail from extra KV, so
+k prompts L times the shape's among n still lift the reading by about
+`k x (L - 1) / n`. The switch is off from the constructor: the controller keeps the
+bound until a GPU check on a prefix-heavy P/D workload clears the change.
+
 `KVreq` is the single most load-bearing quantity in the analyzer. Everything
 that asks "how many requests fit" divides by it.
 
@@ -295,6 +325,26 @@ requests into the tokens they occupy, the same per-request footprint as
 `KVreq`, with the same spread `D` (the replica's own; see the shape above).
 `N_steady` is a throughput over the token budget and keeps the means.
 
+A decode of a P/D model does not prefill its prompt: the KV arrives from
+prefill, and the engine computes only what the transfer and its own prefix
+cache did not cover. Charged the whole `I`, a decode with `B = 256` and
+80,000-token prompts holds about 2 requests per rank against a cap of 64, and
+its `k2` is a fortieth of its cache (issue
+llm-d-incubation/llm-d-scaling-manager#201). The replay switch
+`k2-decode-budget-at-computed-prompt` (`SwitchK2DecodeBudgetAtComputedPrompt`,
+`decode_budget.go`) charges a decode replica the prompt tokens it computed per
+request (`PrefillComputedTokenRate / RequestRate`, at most `I`), and with
+speculative decoding `1 + num_speculative_tokens` of budget a step for
+`1 + SpecAcceptedPerStep` tokens emitted:
+
+```
+steps    = O / (1 + accepted)
+N_steady = min(B x steps / (prompt + (1 + k) x steps), S)
+```
+
+A replica that reports no computed prompt or no completions is priced as
+before. The switch is off from the constructor.
+
 The spread moves the two figures it enters in opposite directions, both
 towards the truth: `k2` rises (the sequences the batch cap admits hold more KV
 each, so a replica holds more before its batch binds, and fewer replicas are
@@ -325,6 +375,24 @@ one (`atCapBatchCap`):
 | zero-replica estimate (`estimateStoredCapacity`, issue ev-shindin/llm-scaling-manager#427) | `zeroReplicaBatchCap`, per engine rank: flags, else declared (only while `SwitchBatchCapDeclared` is on too), else default; never learned. A prefill variant keeps flags, else default: P3 never prices prefill. The estimate is one rank's figure, also for a data-parallel variant (ev-shindin/llm-scaling-manager#438). `zero-replica-capacity-estimate` logs `batchCap` and `batchCapSource` on its `deployment-derived` line | `SwitchBatchCapZeroReplica` |
 | `slo` analyzer's admission (`slo.admission`) | `EngineParams.StatedBatchCap`: flags, else declared (not gated by `SwitchBatchCapDeclared`, a saturation switch); `slo-variant` logs `lineBatchCap` and `lineBatchCapSource` | `slo.SwitchBatchCapAdmission` |
 | `slo` analyzer's per-rank cap (`priceVariant`) | `StatedBatchCap`, else `BatchCap`; `slo-variant` logs `batchCap` and `batchCapSource` | `slo.SwitchBatchCapPerRank` |
+
+A landed pull is a backlog only where the scheduler can stop before it. On a
+decode below its stated cap on every rank (running summed over ranks under
+the per-rank cap) and with its busiest rank's KV under `kvCacheThreshold`, a
+landed request waits for the next step, and the one-minute peak of that wait
+is a burst, not a backlog. Read as one, five landed requests on a rank at 24 %
+KV met the queue threshold of 5 and recorded a `k2` at 24 % of the cache
+(issue llm-d-incubation/llm-d-scaling-manager#201). The replay switch
+`decode-landed-queue-needs-a-bound` (`SwitchDecodeLandedNeedsABound`,
+`landedWithoutBound`) reads such a replica's queue as the capacity part
+alone. The loop also stops when the step's token budget is spent, so where
+the flags give a budget the replica's busiest rank must also run fewer
+requests than `N_steady` above, priced at the prompt it computes. The engine
+reports running summed over ranks, so the busiest rank's count is the mean a
+rank scaled by its KV over the pod's mean, at most the sum. One step's sum is not the
+test: with chunked prefill a landed request starts on any budget left, and
+5 landed requests of 1,600 computed tokens are over a 256-token budget on
+every step. Off from the constructor.
 
 Why the at-cap readers do not read the learned cap: it is the highest
 plateau seen, so it may sit below the true cap. Below the true cap vLLM
@@ -962,6 +1030,49 @@ priced the key with (`SaturationAnalyzer.ITLOneSided`, kept per key in
 variant in `EvictStaleHistory`) for a line recorded as raised
 (`PinnedAtBPrior`). The scope is built by `itl.NewPriorScope`, which reads
 each analyzer's arguments map lazily, under its own lock.
+
+#### B from the floor below the band (issue #169, item 1)
+
+A key learns B only from a full fit. Many never make one: on the e1 and
+staircase recordings nearly every published line is pinned at the 6 ms
+default. Under `SwitchITLBaselineFromFloor`
+(`saturation-itl-baseline-from-floor`, off; `itl_baseline_floor.go`) the
+admission sets `itl.Admission.BaselineFromFloor`:
+
+- **Readings.** The tracker keeps each key's steady readings below the band
+  (`k < MinK`, the replica past its settle and its fill still), the latest
+  `itl.BelowBandWindow` of them, for `itl.DefaultObservationMaxAge` (30 min):
+  the horizon of the readings the floor is paired with. A rollout or a shape
+  move clears them with the window, a sweep or a forget with the key, and a
+  reading at or above the band's bottom now is not read. A decode variant's
+  window is kept through a change of the model's request shape; its floor is
+  not: it is dropped on every cycle of the change (`floorOnShapeChange`,
+  the model's shape tracker, `shapeChangedWithin`), and read again from the
+  new shape's readings after it.
+- **Floor.** `itl.BelowBandFloor`, the 10th percentile by ITL once there are
+  `itl.BelowBandMinReadings`. The capacity planner reads the same floor
+  (`whatif.BelowBand.LeastITL`).
+- **B.** The floor is read at its own fill: B is the intercept of the line
+  through it and the mean of the pinned fit's readings (`floorIntercept`),
+  which on a true line is its B. Pinned at the floor's ITL as if read at no
+  fill, B would be high by `A x k_floor` and the line under the truth past
+  its readings. The readings' mean must sit at twice the floor's fill or
+  more (`floorMinGap`): there B errs by no more than the readings do; closer,
+  a 0.4 ms error in their mean moved B by 2.8 ms.
+- **Holds.** A held slope keeps the B it was fitted through (`heldSlope.pin`):
+  a slope fitted through the default holds through the default though a
+  floor is read since. The learned-state snapshot carries a floor slope's B
+  (`SlopeSnapshot.FloorB`, absent otherwise, so a snapshot written with the
+  switch off is as it was), and a restored slope holds with it.
+- **Ends.** A learned B ends it; the one-sided rule is set against the pinned
+  fit as against the default. With the switch on, `itl-fit` logs
+  `pinnedAtFloor`, `floor` and `floorK`; off, the line is as it was.
+
+`TestGoldens_ITLBaselineFromFloorReplicas` holds what it moves. On e1 the
+floor pins 9.3-12.3 ms, and decode asks for one replica fewer on 18 of 762
+cycles. On the staircases and three-pods it pins 0.4-3.8 ms, under the
+default (b-on's own full fits learned 1.4-2.4 ms): mu falls 12-31 %,
+and three-pods asks for one replica more on 31 of 203 cycles.
 
 #### When a replica's settle starts (learner PR 4a)
 
@@ -1631,6 +1742,45 @@ Two hold rules gate ordering, both measured rather than reasoned:
 
 Both are covered in [analyzer-evidence.md](analyzer-evidence.md).
 
+On P/D the router's queue is charged to prefill alone. Where decode binds,
+as under flow control with decode full, decode is then sized for the arrivals
+only and drains the backlog by its target-fill headroom: the property case
+`known-truth/floor/flow-control-unlearned-mu-pd-decode` orders 0.45-0.85 of
+what the fleet needs (issue llm-d-incubation/llm-d-scaling-manager#51). The
+replay switch `saturation-decode-owes-router-backlog`
+(`SwitchDecodeOwesRouterBacklog`, `decode_router_backlog.go`) also charges
+decode `min(Q/H, rate)`, H its drain horizon. With a prefill floor term, rate
+is the prefill the analyzer orders times prefill's mu, less lambda, so it is
+about 0 where prefill binds. With none, decode is charged the whole queue
+times a weight read from two things, each the median of the last 4 cycles:
+
+- its KV fill (busiest-rank usage, mean over its ready replicas): none at 0.9
+  of `kvCacheThreshold`, full at the threshold. Flow control holds requests
+  once the engines read saturated, so a decode that holds them back is at the
+  threshold. In the property cases a decode-bound decode reads 0.85-0.95 and
+  one behind a prefill bottleneck 0.09-0.43.
+- its served share, completions over ready replicas times its mu: none at
+  0.80, full at 1.0. A full decode that completes well under its mu is full of
+  long requests, not binding. The band is wide because the share alone cannot
+  separate the cases: they read 0.54-0.92 and 1.04-1.15, and completions read
+  20% high lift the first to 1.10.
+
+A share above 1.25 is a mu error, not a binding decode: nothing is owed, and
+the log says `mu-suspect`. The weight falls by at most a quarter a cycle, so
+the charge does not appear and vanish with each reading. Decode's own queue
+is not evidence: flow control keeps it empty where decode binds. With the
+switch on, the floor log line carries `routerBacklogOwed`,
+`routerBacklogOwedBy` (`prefill-spare`, `decode-at-mu`, `mu-suspect`),
+`decodeServedShare` and `decodeKvFill` on decode. On, the case passes as
+`-owes-backlog` (seeds 1-100), and prefill-bound P/D is unchanged, also with
+decode's KV raised to 0.70-0.80, with completions read 10% and 20% high, and
+with each request reading twice the context under
+`kv-per-request-above-context`. The
+switch is off from the constructor: the controller keeps the old charge until
+a P/D run checks it. No controller golden moves; replayed on,
+`ttft-staircase-c-on` asks one more decode replica on 16 of its 584
+role-cycles, in the runaway step.
+
 ### The prefill bound
 
 With `enablePrefillThroughputBound` on, a prefill replica queued behind a full
@@ -2194,8 +2344,8 @@ the per-variant `replica-capacity-summary` stands in for them.
   spread of output lengths priced into `kvReqPerSeq` (1 is none, or none
   read); `residentKVPerSeq` is the KV the running requests were measured to
   hold, over `residentRunning` requests, and `residentKVBound` which bound
-  `kvReqPerSeq` held it to (`none`, `lower`, `upper`, `no-hit`,
-  `no-reading`, `off`; issue ev-shindin/llm-scaling-manager#277), and `residentKVBoundFleet` the same for
+  `kvReqPerSeq` held it to (`none`, `lower`, `upper`, `above-context`,
+  `no-hit`, `no-reading`, `off`; issue ev-shindin/llm-scaling-manager#277), and `residentKVBoundFleet` the same for
   `kvReqFleet`;
   `muShortWindow` says whether the pair moved to the short window.
   It, and every ITL line (`itl-window`, `itl-fit`, `itl-fit-declined`,

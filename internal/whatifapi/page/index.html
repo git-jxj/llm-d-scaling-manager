@@ -44,6 +44,12 @@
           <label for="cycle">Cycle (0 is the last)</label>
           <input type="number" id="cycle" min="0" step="1" value="0">
         </div>
+        <div class="field" id="upfield" hidden>
+          <label for="upfile">Upload a recording</label>
+          <input type="file" id="upfile" accept=".jsonl,.gz">
+          <button type="button" id="upload">Upload</button>
+          <span class="hint" id="uphint"></span>
+        </div>
         <div class="field">
           <label for="model">Model</label>
           <input type="text" id="model" placeholder="the only model in the source" autocomplete="off">

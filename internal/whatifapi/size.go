@@ -270,11 +270,6 @@ type sizer struct {
 	// seen is every fleet priced, by its counts; plain, with low, every
 	// fleet priced for decode's own limit alone, without the span.
 	seen, plain map[FleetCounts]sizeEval
-	// kneeRefused is decode's knee's refusal, nil when it prices, read once
-	// (kneeRead) from the first fleet priced with no TPOT asked: a refusal of
-	// the line or its inputs holds at every count of one replica or more.
-	kneeRefused whatif.Result
-	kneeRead    bool
 }
 
 // sizeEval is one fleet's limits at the scenario's targets and headroom:
@@ -328,24 +323,6 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 		v = sizeEval{decode: ls.Decode, prefill: ls.Prefill, fleet: ls.Fleet}
 	} else {
 		v.decode, v.prefill, v.fleet = fl.PlainLimits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
-	}
-	if z.sc.TPOT == nil {
-		// With no TPOT asked, decode's knee is what bounds decode: the
-		// fleet's limit reads it through the lower of the roles' knees.
-		// Refused (no usable decode line), that limit is prefill's alone and
-		// no rule bounds decode, so decode's limit, and the fleet's, are the
-		// refusal, as at-replicas refuses the fleet. That refusal replaces
-		// a refused prefill's too: decode is named first, as at-replicas
-		// names it.
-		if !z.kneeRead {
-			if knee := fl.DecodeKnee(); isRefusal(knee) {
-				z.kneeRefused = knee
-			}
-			z.kneeRead = true
-		}
-		if z.kneeRefused != nil {
-			v.decode, v.fleet = z.kneeRefused, z.kneeRefused
-		}
 	}
 	cache[n] = v
 	return v, nil

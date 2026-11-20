@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -36,6 +37,11 @@ type serveFlags struct {
 	// planBudget is --plan-budget, how long one plan may be priced; 0 is
 	// whatifapi.DefaultPlanBudget.
 	planBudget time.Duration
+	// maxInputs is --max-inputs, how many sources are resolved at once, and
+	// inputsCache --inputs-cache-size, the bound in bytes of the inputs kept;
+	// 0 and "" are whatifapi's defaults.
+	maxInputs   int
+	inputsCache string
 	// allowedNamespaces is --allowed-namespaces, comma-separated, and
 	// audiences --token-audiences.
 	allowedNamespaces, audiences string
@@ -45,13 +51,20 @@ type serveFlags struct {
 	// inPod is whether serve runs in a Kubernetes Pod (inKubernetesPod),
 	// where --listen-all-in-container is refused.
 	inPod bool
+	// allowUpload is --allow-upload, and uploadMax --upload-max-size.
+	allowUpload bool
+	uploadMax   string
+	// uploads is the store handler made with --allow-upload, for the caller
+	// to Close when the server stops; nil without.
+	uploads *uploadStore
 }
 
 // runServe serves the capacity planner's API (internal/whatifapi) until ctx
 // ends: POST /v1/inputs, POST /v1/plan and POST /v1/size, priced on the
 // CLI's own code paths. A Prometheus window is read from --prometheus with capture's
 // flags, the window and namespace coming with each request; a recording is
-// read from --recordings by file name. It binds a loopback address unless
+// read from --recordings by file name, or, with --allow-upload, uploaded
+// with POST /v1/recordings and named by the server. It binds a loopback address unless
 // --auth=kubernetes, which needs TLS, or --listen-all-in-container, which
 // binds every interface of a container with no authentication.
 func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
@@ -71,9 +84,13 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.tlsKey, "tls-key-file", "", "the server's private key, PEM; required with --auth=kubernetes")
 	fs.DurationVar(&f.shutdownDeadline, "shutdown-timeout", 10*time.Second, "how long requests in flight may run once the server is told to stop")
 	fs.DurationVar(&f.planBudget, "plan-budget", whatifapi.DefaultPlanBudget, "how long one plan may be priced; past it the plan is refused with PlanBudgetExceeded")
+	fs.IntVar(&f.maxInputs, "max-inputs", whatifapi.DefaultMaxInputs, "how many sources are resolved at once; each holds its replay's memory while it runs, and past them a request is 503 with Retry-After")
+	fs.StringVar(&f.inputsCache, "inputs-cache-size", whatifapi.Quantity(whatifapi.DefaultInputsBytes), "the most memory the resolved sources kept may take in all, as estimated, a quantity (256Mi); the least used is dropped first, and the newest is kept whatever it weighs")
 	fs.StringVar(&f.allowedNamespaces, "allowed-namespaces", "", "the namespaces a prometheus source may read, comma-separated; default --namespace alone")
 	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network. Refused when KUBERNETES_SERVICE_HOST is set, a best-effort tripwire, not enforcement")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
+	fs.BoolVar(&f.allowUpload, "allow-upload", false, "take recordings uploaded from the page (POST /v1/recordings): kept as sent, in a private temporary directory (TMPDIR), the last 4, until the server stops. Off by default: whoever may open the planner may then upload")
+	fs.StringVar(&f.uploadMax, "upload-max-size", whatifapi.Quantity(whatifapi.DefaultUploadBytes), "with --allow-upload, the largest upload, a quantity (256Mi); it may gunzip to 16 times that")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
@@ -82,6 +99,7 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = f.uploads.Close() }()
 	// The analyzers a replay runs log through controller-runtime, which the
 	// CLI never shows; a server lives past the 30 s after which an unset
 	// logger says so on stderr, with a stack.
@@ -104,6 +122,10 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 		ln = tls.NewListener(ln, srv.TLSConfig)
 	}
 	fmt.Fprintf(warn, "capacity-planner: serving the capacity planner's API on %s (auth %s)\n", ln.Addr(), f.auth)
+	if f.uploads != nil {
+		fmt.Fprintf(warn, "capacity-planner: --allow-upload: whoever may open the planner may upload a recording; "+
+			"uploads are kept in %s until the server stops\n", f.uploads.dir)
+	}
 	// Warned only once the port is taken, so a start refused or a bind that
 	// fails prints no warning.
 	if f.allInContainer {
@@ -172,6 +194,9 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		if fl.Name == "from" || fl.Name == "to" {
 			err = usagef("--%s: serve reads the window each request names", fl.Name)
 		}
+		if fl.Name == "upload-max-size" && !f.allowUpload {
+			err = usagef("--upload-max-size needs --allow-upload")
+		}
 	})
 	if err != nil {
 		return nil, err
@@ -190,8 +215,28 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s: a plan stopped later is refused after the server's %s write timeout has closed the connection",
 			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget, writeTimeout)
 	}
-	if f.recordings == "" && f.window.prometheus == "" {
-		return nil, usagef("serve needs --prometheus, --recordings or both: a source to resolve inputs from")
+	if f.maxInputs < 0 {
+		return nil, usagef("--max-inputs %d: want 1 or more, or 0 for the default, %d", f.maxInputs, whatifapi.DefaultMaxInputs)
+	}
+	cacheBytes := 0
+	if f.inputsCache != "" {
+		var err error
+		if cacheBytes, err = bytesFlag("inputs-cache-size", f.inputsCache); err != nil {
+			return nil, err
+		}
+	}
+	var uploadMax int
+	if f.allowUpload {
+		v := f.uploadMax
+		if v == "" {
+			v = whatifapi.Quantity(whatifapi.DefaultUploadBytes)
+		}
+		if uploadMax, err = bytesFlag("upload-max-size", v); err != nil {
+			return nil, err
+		}
+	}
+	if f.recordings == "" && f.window.prometheus == "" && !f.allowUpload {
+		return nil, usagef("serve needs --prometheus, --recordings or --allow-upload: a source to resolve inputs from")
 	}
 	if f.recordings != "" {
 		if fi, err := os.Stat(f.recordings); err != nil || !fi.IsDir() {
@@ -203,11 +248,40 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, err
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed}
-	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlanBudget: f.planBudget})
-	h := srv.Handler()
+	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlanBudget: f.planBudget,
+		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes}
+	if f.allowUpload {
+		// Built last, so that no check refusing the flags leaves its
+		// directory behind; the client below is the one step after it.
+		up, err := newUploadStore(int64(uploadMax), warn)
+		if err != nil {
+			return nil, usagef("--allow-upload: no private temporary directory (%v): set TMPDIR to a writable directory, "+
+				"or in a Pod with a read-only root mount an emptyDir at /tmp", err)
+		}
+		f.uploads, src.uploads = up, up
+		src.maxUploadWeight = cacheBytes
+		if src.maxUploadWeight == 0 {
+			src.maxUploadWeight = whatifapi.DefaultInputsBytes
+		}
+		cfg.Uploader, cfg.UploadMaxBytes = up, int64(uploadMax)
+	}
+	h := whatifapi.New(cfg).Handler()
 	if f.auth != whatifapi.AuthKubernetes {
 		return whatifapi.LoopbackOnly(h), nil
 	}
+	a, err := f.authenticator(warn)
+	if err != nil {
+		_ = f.uploads.Close()
+		f.uploads = nil
+		return nil, err
+	}
+	src.namespaceAllowed = a.NamespaceAllowed
+	return a.Wrap(h), nil
+}
+
+// authenticator is --auth=kubernetes's authenticator, its client built from
+// the kubeconfig's default loading rules.
+func (f *serveFlags) authenticator(warn io.Writer) (*whatifapi.Authenticator, error) {
 	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(clientcmd.NewDefaultClientConfigLoadingRules(),
 		&clientcmd.ConfigOverrides{}).ClientConfig()
 	if err != nil {
@@ -217,11 +291,9 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if err != nil {
 		return nil, fmt.Errorf("--auth=%s: %w", whatifapi.AuthKubernetes, err)
 	}
-	a := whatifapi.NewAuthenticator(c, splitList(f.audiences), 0, func(format string, args ...any) {
+	return whatifapi.NewAuthenticator(c, splitList(f.audiences), 0, func(format string, args ...any) {
 		fmt.Fprintf(warn, format+"\n", args...)
-	})
-	src.namespaceAllowed = a.NamespaceAllowed
-	return a.Wrap(h), nil
+	}), nil
 }
 
 // newHTTPServer is the server on addr, with its timeouts: a client may not
@@ -280,4 +352,18 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// bytesFlag is the quantity --name gives (256Mi, 1G, 1048576) in bytes, at
+// least 1.
+func bytesFlag(name, v string) (int, error) {
+	q, err := resource.ParseQuantity(v)
+	if err != nil {
+		return 0, usagef("--%s %q: want a quantity of bytes such as 256Mi: %v", name, v, err)
+	}
+	n, ok := q.AsInt64()
+	if !ok || n < 1 || n > 1<<47 {
+		return 0, usagef("--%s %s: want a whole number of bytes from 1 to 128Ti", name, v)
+	}
+	return int(n), nil
 }

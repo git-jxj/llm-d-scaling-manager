@@ -129,6 +129,51 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.12.0 to v0.12.1
+
+#### FlashInfer kernels now reach the engine cache
+
+Before v0.12.1, `make workload-patch` and the warm pool set
+`FLASHINFER_WORKSPACE_DIR`. FlashInfer does not read that variable; it reads
+`FLASHINFER_WORKSPACE_BASE`. So no engine cache held FlashInfer kernels, and
+every start built them again under `$HOME` in the container. Nodes prepared
+with `make engine-cache` need nothing. For each model server:
+
+1. Run `make workload-patch NAMESPACE=<ns>`. A workload that still sets the
+   old variable is reported as `BUILDS ITS FLASHINFER KERNELS AGAIN`. The file
+   sets `FLASHINFER_WORKSPACE_BASE` under the same path, keyed by image, and
+   carries the guard. This change is never applied for you.
+2. In your chart values, set `FLASHINFER_WORKSPACE_BASE` to the value in the
+   file and remove `FLASHINFER_WORKSPACE_DIR`.
+3. If your container command carries the engine-cache guard, replace the
+   whole guard with the one in the file. On a LeaderWorkerSet, do it in the
+   leader and the worker command. Do not only rename the variable in the old
+   loop: the new guard also checks the whole FlashInfer tree, and gives a
+   second user on the node its own copy of each cache. The old one does
+   neither.
+4. Roll the workload out. The first start of each engine configuration on
+   each node fills the tree. With a seed, run `make engine-cache-publish` once
+   after that.
+5. Run `make workload-patch NAMESPACE=<ns>` again. Silence for the workload is
+   the all-clear.
+
+Warm pools get the new variable and the guard when you apply them again.
+Their FlashInfer kernels then live on the pool's shared claim, beside the
+torch.compile and Triton caches. That is the trade the warm pool manifest
+already names: compiled code on a volume every pool engine can write.
+
+What this opens up, and what to do when two users run engines on one node:
+[FlashInfer kernels](workload-preparation.md#flashinfer-kernels).
+
+#### Seeded nodes and non-root engines
+
+`make engine-cache-publish` now works when non-root engines wrote to the node
+cache, and a node seeded from v0.12.1 restores its directories as `1777`, so a
+non-root engine can add to them. A node seeded before v0.12.1 keeps `755`
+directories, owned by root, until you wipe and reseed it: see "reseed the
+node" in
+[Engine caches on the node's disk](workload-preparation.md#engine-caches-on-the-nodes-disk).
+
 ### Upgrading from v0.11.2 to v0.12.0
 
 #### The warm-pool launcher moves to v0.8.0

@@ -3,6 +3,7 @@ package learnreplay
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -294,11 +295,9 @@ var policyType = fmt.Sprintf("%T", &config.ScalingPolicy{})
 
 func decodeInput(raw learnrec.Raw) (domain.AnalyzerInput, error) {
 	// The type first: a config of another type does not decode as a policy.
-	var loose map[string]any
-	if err := raw.Decode(&loose); err != nil {
+	if typ, err := configType(raw); err != nil {
 		return domain.AnalyzerInput{}, err
-	}
-	if typ, _ := loose["ConfigType"].(string); typ != "" && typ != policyType {
+	} else if typ != "" && typ != policyType {
 		return domain.AnalyzerInput{}, fmt.Errorf("the recorded config is a %s, which a replay cannot rebuild", typ)
 	}
 	var in policyInput
@@ -322,6 +321,26 @@ func decodeInput(raw learnrec.Raw) (domain.AnalyzerInput, error) {
 		out.Config = in.Config
 	}
 	return out, nil
+}
+
+// configType is the input's ConfigType, "" where it has none or it is no
+// string. Of an object, only that member is read (learnrec.Raw.Member): the
+// input is decoded once, by its type. Anything else is decoded loosely, as
+// before, for its error.
+func configType(raw learnrec.Raw) (string, error) {
+	if r := bytes.TrimSpace(raw); len(r) > 0 && r[0] == '{' && json.Valid(r) {
+		var typ string
+		if t, ok := raw.Member("ConfigType"); ok && json.Unmarshal(t, &typ) != nil {
+			typ = ""
+		}
+		return typ, nil
+	}
+	var loose map[string]any
+	if err := raw.Decode(&loose); err != nil {
+		return "", err
+	}
+	typ, _ := loose["ConfigType"].(string)
+	return typ, nil
 }
 
 // checkStore holds the replay's store to the records the run's Analyze read,

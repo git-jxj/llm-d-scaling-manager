@@ -242,6 +242,10 @@ async function start() {
   el("rectrunc").hidden = !s.recordingsTruncated;
   el("kprom").disabled = !s.prometheus;
   el("krec").disabled = s.recordings.length === 0;
+  el("upfield").hidden = !s.upload;
+  if (s.upload) {
+    el("uphint").textContent = `.jsonl or .jsonl.gz, at most ${mib(s.upload.maxBytes)}. The server keeps the last 4 until it restarts; everyone who opens this page sees them.`;
+  }
   // The page opens on a Prometheus window, the last hour ending now; a
   // server with recordings alone opens on its first.
   let kind = s.prometheus ? "prometheus" : s.recordings.length ? "recording" : "";
@@ -250,6 +254,11 @@ async function start() {
   const refused = linked.get("recording") || linked.get("namespace") ? sourceProblem(linked.toString(), s) : "";
   if (!refused) kind = linkSource() || kind;
   showScenarios();
+  if (!kind && s.upload) {
+    setStatus("Upload a recording to start.");
+    el("source").open = true;
+    return;
+  }
   if (!kind) {
     setStatus("This server reads no source: start it with --prometheus or --recordings.", true);
     el("source").open = true;
@@ -312,13 +321,23 @@ async function loadInputs() {
   const seq = ++state.seq;
   state.link = linkAtLoadStart(state.link, seq);
   el("load").disabled = true;
+  let tick = 0;
+  let source = null;
   try {
     const req = {source: sourceRequest()};
+    source = req.source;
     if (el("model").value.trim()) req.model = el("model").value.trim();
     if (el("pvariant").value.trim()) req.prefillVariant = el("pvariant").value.trim();
     if (el("dvariant").value.trim()) req.decodeVariant = el("dvariant").value.trim();
-    setStatus(req.source.kind === "prometheus" ? "Reading the Prometheus window (seconds to a minute)..." : "Replaying the recording...");
+    const loading = req.source.kind === "prometheus" ? "Reading the Prometheus window (seconds to a minute)" :
+      "Replaying the recording (a day-long one takes a minute or two; asking again starts a second load)";
+    setStatus(loading + "...");
+    const t0 = Date.now();
+    tick = setInterval(() => {
+      if (seq === state.seq) setStatus(`${loading}... ${Math.round((Date.now() - t0) / 1000)} s`);
+    }, 1000);
     const inputs = await api("POST", "v1/inputs", req);
+    clearInterval(tick);
     if (seq !== state.seq) return;
     setInputs(inputs);
     const end = linkAtLoadEnd(state.link, seq, state.seq, true);
@@ -327,6 +346,7 @@ async function loadInputs() {
     el("source").open = false;
     plan();
   } catch (e) {
+    clearInterval(tick);
     const end = linkAtLoadEnd(state.link, seq, state.seq, false);
     state.link = end.link;
     let opened = "";
@@ -334,11 +354,113 @@ async function loadInputs() {
       restorePage(end.restore);
       opened = " The scenario was not opened; the page keeps the one before.";
     }
+    // An upload pushed out by newer ones is no longer offered.
+    if (source && source.kind === "recording" && source.name.startsWith("upload:") &&
+        e.message.startsWith("400:") && e.message.includes("no such upload")) {
+      forgetUpload(source.name);
+    }
     setStatus("Could not load the inputs: " + e.message + opened, true);
     el("source").open = true;
   } finally {
     el("load").disabled = false;
   }
+}
+
+// PLAN_FIGURES are the elements a plan fills: the limits, the bars, the +1
+// steps, the points at the rate, the charts and the tables.
+const PLAN_FIGURES = ["fleet", "fleetn", "chosen", "bars", "barsdesc", "limits", "marginal", "ratenote", "limitsfor",
+  "ttftat", "tpotat", "rationote", "ttftchart", "ttftlegend", "ttftpoints", "buckettable",
+  "tpotchart", "tpotlegend", "tpotpoints", "curvetable", "flags", "flagcount"];
+
+// clearPlan takes the last plan off the page. A new source, or a plan that
+// failed, must not leave another scenario's figures on screen as if current.
+function clearPlan() {
+  state.plan = null;
+  for (const id of PLAN_FIGURES) el(id).textContent = "";
+  el("banner").hidden = true;
+}
+
+// mib is n bytes in MiB, for the upload's words.
+function mib(n) {
+  return `${Math.round(n / 1048576)} MiB`;
+}
+
+// uploadRecording sends the file picked to the server (POST v1/recordings),
+// showing how much of it has gone, then picks it as the recording and loads
+// it. The server names it; the file's own name is never sent. XMLHttpRequest,
+// not fetch: only it reports an upload's progress.
+function uploadRecording() {
+  const file = el("upfile").files[0];
+  if (!file) {
+    setStatus("Pick a file to upload.", true);
+    return;
+  }
+  const max = state.sources.upload.maxBytes;
+  if (file.size > max) {
+    setStatus(`${file.name} is ${mib(file.size)}, more than this server takes (${mib(max)}).`, true);
+    return;
+  }
+  el("upload").disabled = el("load").disabled = true;
+  const done = () => { el("upload").disabled = el("load").disabled = false; };
+  // A server taking another upload answers 503: tried again as api() does.
+  const send = attempt => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "v1/recordings");
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) setStatus(`Uploading ${file.name}: ${Math.floor(100 * e.loaded / e.total)}%`);
+    };
+    xhr.upload.onload = () => setStatus(`Checking ${file.name}: the server reads every line once...`);
+    xhr.onerror = () => { done(); setStatus(`Could not upload ${file.name}: the connection failed.`, true); };
+    xhr.onload = () => {
+      const wait = retryDelay(xhr.status, xhr.getResponseHeader("Retry-After"), attempt);
+      if (wait >= 0) {
+        setStatus(`The server is taking another upload; sending ${file.name} again in ${Math.round(wait / 1000)} s...`);
+        setTimeout(() => send(attempt + 1), wait);
+        return;
+      }
+      uploaded(xhr);
+    };
+    xhr.send(file);
+  };
+  const uploaded = xhr => {
+    done();
+    let doc = null;
+    try { doc = JSON.parse(xhr.responseText); } catch (e) { doc = null; }
+    if (xhr.status !== 200 && xhr.status !== 201) {
+      setStatus(`Could not upload ${file.name}: ${xhr.status}: ${(doc && doc.error) || xhr.statusText}`, true);
+      return;
+    }
+    if (!doc || typeof doc.name !== "string" || !doc.name) {
+      setStatus(`Could not upload ${file.name}: the server's answer was not the upload's name.`, true);
+      return;
+    }
+    const s = state.sources;
+    if (!s.recordings.includes(doc.name)) {
+      s.recordings.unshift(doc.name);
+      el("rec").insertAdjacentHTML("afterbegin", `<option>${esc(doc.name)}</option>`);
+    }
+    el("rec").value = doc.name;
+    el("cycle").value = 0;
+    el("krec").disabled = false;
+    el("krec").checked = true;
+    showKind();
+    setStatus(`Uploaded ${file.name} as ${doc.name}.`);
+    loadInputs();
+  };
+  send(0);
+}
+
+// forgetUpload removes an upload the server no longer keeps from the
+// recordings offered.
+function forgetUpload(name) {
+  const s = state.sources;
+  s.recordings = s.recordings.filter(n => n !== name);
+  const rec = el("rec");
+  for (const o of Array.from(rec.options)) {
+    if (o.value === name) o.remove();
+  }
+  el("krec").disabled = s.recordings.length === 0;
 }
 
 // setInputs starts a session from the inputs: the recorded replicas, the
@@ -355,7 +477,7 @@ function setInputs(inputs) {
   el("dayrun").disabled = !inputs.fleet.prefill;
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.priceFailed = false;
-  state.plan = null;
+  clearPlan();
   state.size = null;
   const p = inputs.policy || {};
   // With no policy objective the page sets one, and says so beside the
@@ -792,13 +914,16 @@ async function plan() {
     clearTimeout(slow);
     clearInterval(ticker);
     // A size a newer question cancelled is no error: the newer one follows.
-    // Any other failure leaves an older scenario's plan on screen, which the
-    // compare table must not set beside A as the current one.
+    // Any other failure clears the older scenario's plan off the page, its
+    // figures and the compare table's current column: they are not this
+    // scenario's.
     if (e.name !== "AbortError") {
-      setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message, true);
+      setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message +
+        ". Nothing is shown until a plan prices: type a rate, or change the replicas, targets or assumed terms, to price again.", true);
       if (!stale()) {
         state.priceFailed = true;
         if (sizing) state.abort = null;
+        clearPlan();
         renderCompare();
       }
     }
@@ -868,7 +993,7 @@ function render() {
   el("banner").textContent = p.banner;
   el("banner").hidden = !p.banner;
   fitRateSlider(lowerKnee(p.ttft.markers));
-  el("ratenote").textContent = p.limits.chosen.rateSource === "operating point" ? "started at the operating point: the source carries no request rate" : "";
+  el("ratenote").textContent = rateNote(p.limits.chosen.rateSource);
   el("limitsfor").textContent = `(priced at ${shapeOf(p)})`;
   renderSize();
   renderAtTarget();
@@ -1880,6 +2005,7 @@ function wire() {
   el("unpin").onclick = unpin;
   el("kprom").onchange = el("krec").onchange = el("lasthour").onchange = showKind;
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
+  el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
 }
 

@@ -37,9 +37,16 @@ const defaultResponseBytes = 64 << 20
 // bodyBytes is a response's weight in a cache: its length.
 func bodyBytes(b []byte) int { return len(b) }
 
-// defaultMaxInputs is how many sources are resolved at once by default: each
-// is a replay or a Prometheus capture of seconds to minutes.
-const defaultMaxInputs = 2
+// DefaultMaxInputs is how many sources are resolved at once by default: each
+// is a replay or a Prometheus capture of seconds to minutes, and holds its
+// memory while it runs.
+const DefaultMaxInputs = 2
+
+// DefaultInputsBytes bounds the inputs kept, by the weight each Resolved
+// gives (Resolved.Bytes): a replayed state of a day-long recording of a
+// 16-replica P/D fleet weighs some tens of MiB, so the cache's 16 entries
+// fit in it whatever the recordings, and a larger one is evicted first.
+const DefaultInputsBytes = 256 << 20
 
 // retryAfterSeconds is what a busy server asks a client to wait.
 const retryAfterSeconds = "1"
@@ -53,13 +60,22 @@ type Config struct {
 	WhatifSchema string
 	// MaxPlans and MaxInputs are how many plans and how many inputs are
 	// priced at once; past them a request is 503 with Retry-After. 0 is the
-	// default: GOMAXPROCS plans, defaultMaxInputs inputs.
+	// default: GOMAXPROCS plans, DefaultMaxInputs inputs.
 	MaxPlans, MaxInputs int
+	// MaxInputsBytes bounds the inputs kept, in all, by the weight each
+	// Resolved gives; the newest is kept whatever it weighs. 0 or less is
+	// DefaultInputsBytes.
+	MaxInputsBytes int
 	// PlanBudget is how long one plan may be priced. Past it the plan stops
 	// at its next figure and is refused with PlanBudgetExceeded. 0 or less is
 	// DefaultPlanBudget. It must end before the HTTP server's write timeout,
 	// or the refusal is written to a connection already closed.
 	PlanBudget time.Duration
+	// Uploader keeps the recordings uploaded with POST /v1/recordings; nil
+	// takes none, and the endpoint is 403. UploadMaxBytes is the largest
+	// upload; 0 or less is DefaultUploadBytes.
+	Uploader       Uploader
+	UploadMaxBytes int64
 }
 
 // DefaultPlanBudget is the plan budget a server has when its Config names
@@ -123,6 +139,15 @@ type Server struct {
 	onCurves, onLimits func()
 	// onSearch, when set, is called each time a size searches.
 	onSearch func()
+	// uploader keeps uploads, nil for none; uploadMax is the largest, and
+	// uploadSlots bounds them to one at a time.
+	uploader    Uploader
+	uploadMax   int64
+	uploadSlots chan struct{}
+	// uploadIdle is how long an upload may send nothing (uploadIdle), and
+	// uploadDeadline how long it may take in all (uploadDeadline).
+	uploadIdle     time.Duration
+	uploadDeadline time.Duration
 }
 
 // inputsEntry is a source resolved: its id, the inputs a plan reads its
@@ -134,7 +159,12 @@ type inputsEntry struct {
 	// series is the source's cycles, for a day plan; nil where the
 	// Resolver gave none.
 	series []SeriesSample
+	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
+	bytes int
 }
+
+// entryBytes is an inputs entry's weight in the cache.
+func entryBytes(e *inputsEntry) int { return e.bytes }
 
 // New is a server with empty caches.
 func New(c Config) *Server {
@@ -143,16 +173,25 @@ func New(c Config) *Server {
 		plans = runtime.GOMAXPROCS(0)
 	}
 	if inputs <= 0 {
-		inputs = defaultMaxInputs
+		inputs = DefaultMaxInputs
+	}
+	inputsBytes := c.MaxInputsBytes
+	if inputsBytes <= 0 {
+		inputsBytes = DefaultInputsBytes
 	}
 	budget := c.PlanBudget
 	if budget <= 0 {
 		budget = DefaultPlanBudget
 	}
-	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
+	uploadMax := c.UploadMaxBytes
+	if uploadMax <= 0 {
+		uploadMax = DefaultUploadBytes
+	}
+	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newWeighedLRU(defaultInputs, inputsBytes, entryBytes),
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
-		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget}
+		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
+		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle, uploadDeadline: uploadDeadline}
 }
 
 // errBusy is a request past the server's bound on work in flight.
@@ -178,10 +217,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/report", s.handleReport)
 	mux.HandleFunc("POST /v1/dayplan", s.handleDayPlan)
 	mux.HandleFunc("GET /v1/sources", s.handleSources)
+	mux.HandleFunc("POST "+UploadPath, s.handleUpload)
 	mux.HandleFunc("GET /{$}", servePage)
 	mux.HandleFunc("GET /page/", servePage)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, fmt.Errorf("%s %s: no such endpoint; the server serves POST /v1/inputs, POST /v1/plan, POST /v1/size, POST /v1/report, POST /v1/dayplan, GET /v1/sources and the page at /",
+		writeError(w, http.StatusNotFound, fmt.Errorf("%s %s: no such endpoint; the server serves POST /v1/inputs, POST /v1/plan, POST /v1/size, POST /v1/report, POST /v1/dayplan, GET /v1/sources, POST /v1/recordings and the page at /",
 			r.Method, r.URL.Path))
 	})
 	return mux
@@ -203,6 +243,9 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 		if out.Recordings == nil {
 			out.Recordings = []string{}
 		}
+	}
+	if s.uploader != nil {
+		out.Upload = &UploadInfo{MaxBytes: int(s.uploadMax)}
 	}
 	out.SchemaVersion = SchemaVersion
 	body, err := marshal(out)
@@ -236,7 +279,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	// The entry kept is the first caller's, but each caller is answered with
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.
-	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series})
+	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, bytes: res.Bytes})
 	body, err := marshal(doc)
 	if err != nil {
 		writeErr(w, err)
@@ -399,7 +442,7 @@ func writeBody(w http.ResponseWriter, body []byte) {
 }
 
 // writeErr writes err with its status: 400 for the caller's input, 404 for
-// an unknown inputsId, 503 for a busy server (with Retry-After), a plan past
+// an unknown inputsId, 413 for an upload past a bound, 503 for a busy server (with Retry-After), a plan past
 // the plan budget (reason PlanBudgetExceeded) or a request that ended, 500
 // for anything else.
 func writeErr(w http.ResponseWriter, err error) {
@@ -410,6 +453,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err)
 	case errors.As(err, new(ForbiddenError)):
 		writeError(w, http.StatusForbidden, err)
+	case errors.As(err, new(TooLargeError)):
+		writeError(w, http.StatusRequestEntityTooLarge, err)
 	case errors.Is(err, errBusy):
 		w.Header().Set("Retry-After", retryAfterSeconds)
 		writeError(w, http.StatusServiceUnavailable, err)

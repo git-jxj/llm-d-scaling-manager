@@ -50,16 +50,16 @@ func TestPricingBatchCap_Sources(t *testing.T) {
 		learning bool
 		want     pricedBatchCap
 	}{
-		{"flags", stated, 0, false, pricedBatchCap{64, batchCapFromFlags}},
-		{"flags win over the declared cap", both, 0, false, pricedBatchCap{64, batchCapFromFlags}},
-		{"flags win over a lower learned cap", stated, 32, true, pricedBatchCap{64, batchCapFromFlags}},
-		{"declared", declared, 0, false, pricedBatchCap{96, batchCapDeclared}},
-		{"declared wins over a lower learned cap", declared, 32, true, pricedBatchCap{96, batchCapDeclared}},
-		{"default", defaultedParams(), 0, true, pricedBatchCap{256, batchCapDefault}},
-		{"learned under the default", defaultedParams(), 120, true, pricedBatchCap{120, batchCapLearned}},
-		{"learned above the default is not taken", defaultedParams(), 300, true, pricedBatchCap{256, batchCapDefault}},
-		{"learned, learning off", defaultedParams(), 120, false, pricedBatchCap{256, batchCapDefault}},
-		{"learned with no params", nil, 120, true, pricedBatchCap{120, batchCapLearned}},
+		{"flags", stated, 0, false, pricedBatchCap{perRank: 64, source: batchCapFromFlags}},
+		{"flags win over the declared cap", both, 0, false, pricedBatchCap{perRank: 64, source: batchCapFromFlags}},
+		{"flags win over a lower learned cap", stated, 32, true, pricedBatchCap{perRank: 64, source: batchCapFromFlags}},
+		{"declared", declared, 0, false, pricedBatchCap{perRank: 96, source: batchCapDeclared}},
+		{"declared wins over a lower learned cap", declared, 32, true, pricedBatchCap{perRank: 96, source: batchCapDeclared}},
+		{"default", defaultedParams(), 0, true, pricedBatchCap{perRank: 256, source: batchCapDefault}},
+		{"learned under the default", defaultedParams(), 120, true, pricedBatchCap{perRank: 120, source: batchCapLearned}},
+		{"learned above the default is not taken", defaultedParams(), 300, true, pricedBatchCap{perRank: 256, source: batchCapDefault}},
+		{"learned, learning off", defaultedParams(), 120, false, pricedBatchCap{perRank: 256, source: batchCapDefault}},
+		{"learned with no params", nil, 120, true, pricedBatchCap{perRank: 120, source: batchCapLearned}},
 		{"nothing with no params", nil, 0, true, pricedBatchCap{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

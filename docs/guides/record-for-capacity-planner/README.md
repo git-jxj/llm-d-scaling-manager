@@ -611,6 +611,10 @@ capacity-planner slo-to-rate     --recording run.jsonl.gz --tpot 4ms --ttft 200m
   `Saturated` in it means the rate has no 15% to spare.
 - **`Saturated` means the rate is at or above the knee.** It is a refusal, exit
   `3`, not a figure.
+- **`slo-to-rate` with no `--tpot` still needs a decode line.** Decode's knee
+  is then all that bounds decode. When the recording has no usable line
+  (`NoLine`, `PinnedDefaultB`), the `decode` and `fleet` rows are refused, exit
+  `3`; the `prefill` row is still priced.
 - **The `line check` row** compares the token rate the latency line predicts
   with the rate the decode rows reported. `MISMATCH` (a median error above
   15%, flagged `LineMismatch`): do not size from it. `at another shape`: the

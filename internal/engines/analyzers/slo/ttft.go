@@ -97,6 +97,23 @@ const SwitchTTFTPSOnsets = "slo-ttft-ps-onsets"
 // unlearned count.
 const SwitchTTFTImbalanceAcrossCounts = "slo-ttft-imbalance-across-counts"
 
+// SwitchTTFTLowLoadDecodeTTFT is the replay switch for the decode engine's
+// measured TTFT (whatif.TTFTFleet.DecodeTTFT, priced where no decode line
+// prices): on, the window's largest is read off its calm cycles only, those
+// that carry no decode backlog (prefill.DecodeBacklog, carried for
+// prefill.DecodeTTFTLag), and with none calm the latest calm figure is held
+// for prefill.HeldDecodeAge; past that, the window's largest, as before.
+// Off, as before, the window's largest, which after an overload is the
+// queue's wait: 6 to 21 s on two staircase recordings, against 0.15 to
+// 0.23 s at low load, priced at every rate. While the window holds a cycle
+// with a decode row that has no capacity series, it reads as off and holds
+// no calm figure. The capacity planner refuses a decode TTFT read under a
+// backlog (whatif.DecodeTTFTUnderLoad) and names a calmer cycle to answer at;
+// the analyzer cannot answer at another cycle, so it holds a calm figure. Off from the constructor; only SetSwitchesForReplay turns
+// it on (llm-d-incubation/llm-d-scaling-manager#169). It moves no golden: no
+// committed recording's cycle reaches a priced fleet.
+const SwitchTTFTLowLoadDecodeTTFT = "slo-ttft-low-load-decode-ttft"
+
 // SwitchTTFTDecodeGateCharge is the replay switch for
 // whatif.TTFTFleet.ChargeDecodeGate: on, the published rate is charged the
 // share of time the decode flow-control gate is closed below its onset, in
@@ -405,7 +422,23 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 		if s, ok := decodeEngineTTFT(decodeRows); ok && modelPrompt > 0 {
 			cycle = whatif.DecodeTTFT{Seconds: s, PromptTokens: modelPrompt}
 		}
-		measured = a.noteDecodeTTFT(ttftWindowKey(input.Namespace, input.ModelID, decodes[0]), cycle, now)
+		var unread bool
+		if a.ttftLowLoadDecodeTTFT {
+			// Read on every cycle, one with no TTFT too: the backlog is
+			// carried past the queue's drain (prefill.DecodeBacklogCarry).
+			// A row with no capacity series cannot say it is calm, and the
+			// fleet's mean holds its TTFT: the cycle carries a backlog of
+			// at least 1, held for prefill.DecodeTTFTLag like any other,
+			// and the window reads as off while it holds the cycle. The
+			// planner only flags the same rows (BacklogUnread).
+			var waiting int
+			waiting, unread = prefill.DecodeBacklogOf(decodeRows)
+			if unread {
+				waiting = max(waiting, 1)
+			}
+			cycle.Waiting = waiting
+		}
+		measured = a.noteDecodeTTFTRead(ttftWindowKey(input.Namespace, input.ModelID, decodes[0]), cycle, unread, now)
 	}
 	// With several decode variants no one window holds the transfer.
 	decodeKey, accelerator, engineArgs := "", "", ""

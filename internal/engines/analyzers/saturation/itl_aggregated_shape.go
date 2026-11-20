@@ -419,7 +419,7 @@ func (c *cycle) aggregatedShapeNow(variant string, params *capacity.EngineParams
 	if !ok {
 		return 0
 	}
-	_, muShape, _, _ := c.pricingShapes(promptWeightedHitRate(c.input.ReplicaMetrics, variant))
+	_, muShape, _, _ := c.pricingShapes(promptWeightedHitRate(c.input.ReplicaMetrics, variant), params)
 	return shapeG(capTokens, muShape.ILeff, muShape.KVreq, c.muDivisor)
 }
 

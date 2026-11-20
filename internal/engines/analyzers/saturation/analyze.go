@@ -578,7 +578,7 @@ func (c *cycle) fitLines() {
 		adm := itl.Admission{MinK: lo, MaxK: hi, MaxNumSeqs: atCap.perRank, MaxNumSeqsSource: atCap.source,
 			CapMaxPreemptionRate: c.cfg.ITLCapPreemptionRate(), Steady: c.tune.steadiness(),
 			SlopeHoldFor: c.a.Horizons().BucketRetention, Args: windowArgs(params),
-			TierHysteresis: c.a.tierHysteresisOn()}
+			TierHysteresis: c.a.tierHysteresisOn(), BaselineFromFloor: c.a.baselineFromFloorOn()}
 		// When each replica's settle began: the engine's settle tracker
 		// (itl_settle.go).
 		c.a.itlSettleAdmission(&adm, c.input.Namespace, c.input.ModelID)
@@ -608,6 +608,9 @@ func (c *cycle) fitLines() {
 				c.a.noteOccupancy(c.occupancyInput(variantKey, variant, params), itlLogger)
 			}
 		}
+		// A decode variant's window is kept through a shape change; the
+		// floor below the band is not (itl_baseline_floor.go).
+		c.a.floorOnShapeChange(variantKey, role, adm, c.shapeChanging)
 		reading := c.a.noteITL(variantKey, rows, variant, adm, c.a.now(), itlLogger)
 		c.a.noteITLOneSided(variantKey, reading)
 		// The line as a learner: its report and learner-write (itl_learner.go).
@@ -740,6 +743,16 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 	// (decodeCapacityView), except on a replica at its sequence cap. The
 	// idle tests below read the raw row.
 	rows := decodeCapacityViews(c.input.ReplicaMetrics, c.rolesByVariant, c.atCapBatchCaps())
+	if c.a.decodeLandedNeedsBound && domain.HasPrefill(c.rolesByVariant) {
+		// A landed request is a backlog only where the replica can be at a
+		// bound (SwitchDecodeLandedNeedsABound).
+		caps := c.atCapBatchCaps()
+		for i := range rows {
+			v := rows[i].VariantName
+			rows[i] = landedWithoutBound(rows[i], c.input.ReplicaMetrics[i], c.rolesByVariant[v],
+				caps[v], c.cfg.KvCacheThreshold, engineParamsFor(c.a, c.input.Namespace, c.input.ModelID, v))
+		}
+	}
 	served := c.tune.servedBounds(rows, c.rolesByVariant, c.cfg.QueueLengthThreshold, c.cfg.KvCacheThreshold, c.fleetOutput,
 		c.stableInput, c.stableOutput, c.fleetHitRate)
 	if c.a.muUnreadAtTarget {
@@ -772,7 +785,7 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 		// it: see its comment for the run that decided that.
 		itlModel := c.itlModels[rm.VariantName]
 		engineParams := engineParamsFor(c.a, c.input.Namespace, c.input.ModelID, rm.VariantName)
-		fleetShape, muShape, residentBoundFleet, residentBound := c.pricingShapes(rm.PrefixCacheHitRate)
+		fleetShape, muShape, residentBoundFleet, residentBound := c.pricingShapes(rm.PrefixCacheHitRate, engineParams)
 		// Only a generating role is priced from the ITL line. ITL is the gap
 		// between two generated tokens, and a prefill replica emits one and
 		// hands the KV to decode, so tokenSec/avgOutput does not describe it.
@@ -867,8 +880,10 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 
 // pricingShapes is the shape a replica at this prefix-cache hit rate is
 // priced at: the fleet's, and the one mu is priced at, each with the KV a
-// running request is measured to hold and which bound held it there.
-func (c *cycle) pricingShapes(hitRate float64) (fleetShape, muShape shape.Shape, residentBoundFleet, residentBound string) {
+// running request is measured to hold and which bound held it there. params
+// is the replica's engine, whose kind decides how a reading above the context
+// is priced (residentRuleFor).
+func (c *cycle) pricingShapes(hitRate float64, params *capacity.EngineParams) (fleetShape, muShape shape.Shape, residentBoundFleet, residentBound string) {
 	// The spread of output lengths is priced into the KV a resident
 	// request holds (KVreq = ILeff + D*OL/2, issue ev-shindin/llm-scaling-manager#276): with lengths
 	// that vary, a long request stays resident longer, so fewer
@@ -900,8 +915,9 @@ func (c *cycle) pricingShapes(hitRate float64) (fleetShape, muShape shape.Shape,
 	// (prefix_cache_kv.go). With none, as before.
 	residentBound, residentBoundFleet = residentBoundOff, residentBoundOff
 	if c.a.kvHitsResident {
-		fleetShape, residentBoundFleet = withResidentKV(fleetShape, c.resident)
-		muShape, residentBound = withResidentKV(muShape, c.resident)
+		rule := c.a.residentRuleFor(params)
+		fleetShape, residentBoundFleet = withResidentKV(fleetShape, c.resident, rule)
+		muShape, residentBound = withResidentKV(muShape, c.resident, rule)
 	}
 	return fleetShape, muShape, residentBoundFleet, residentBound
 }

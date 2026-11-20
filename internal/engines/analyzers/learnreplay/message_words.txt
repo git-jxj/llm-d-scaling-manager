@@ -134,6 +134,7 @@ CreateContainerConfigError
 CreateContainerError
 D
 DSET_ROLE_WRITER
+Data
 DataParallelRanks
 Datastore
 DecodeEngineMeasured
@@ -216,6 +217,7 @@ KUEUE_NAMESPACE
 KV
 KV-cache
 KVBoundSlots
+Kind
 Kubernetes
 Kueue
 LEADER_ELECT
@@ -304,6 +306,7 @@ NonPositiveSlope
 NonPositiveStepSlope
 NotTriggerScaleUp
 Nothing
+Now
 OLS
 OUTSIDE
 OnePod
@@ -410,6 +413,7 @@ Scaling
 ScalingPolicy
 Seconds
 Selected
+Seq
 Set
 SetRecordedValue
 SetUsed
@@ -519,6 +523,7 @@ abort
 about
 above
 above-band
+above-context
 aboveBand
 aboveBandHeld
 absent
@@ -930,7 +935,9 @@ declared
 declares
 declined
 decode
+decode-at-mu
 decode-knee
+decode-landed-queue-needs-a-bound
 decode-only
 decode-queue-unknown
 decode-style
@@ -939,6 +946,8 @@ decodeBaseNet
 decodeFixed
 decodeFromITL
 decodeHeldPrompt
+decodeKvFill
+decodeOwing
 decodePerStep
 decodePerToken
 decodePerTokenNet
@@ -947,6 +956,7 @@ decodeRefused
 decodeSamples
 decodeSaturatedAt
 decodeSaturation
+decodeServedShare
 decodeSteps
 decodeTTFT
 decodeTTFTPrompt
@@ -1218,6 +1228,7 @@ float
 floor
 floor-trust-reads-completions
 floorExcessGPUs
+floorK
 floorTrust
 floorTrust.lagFraction
 floorTrust.lagFraction/trustFraction
@@ -1521,6 +1532,7 @@ k1MemoryBound
 k2
 k2-compute
 k2-decision
+k2-decode-budget-at-computed-prompt
 k2-first-reading-waits-for-a-second
 k2-held-dropped
 k2-key-bucket-held
@@ -1598,6 +1610,7 @@ kueueBorrowedGPUs
 kueueNamespace
 kv-bound
 kv-cache-utilization-scorer
+kv-per-request-above-context
 kv-per-request-hits-resident
 kv-per-request-output-dispersion
 kvCacheThreshold
@@ -1867,6 +1880,7 @@ mu-margin-clamp
 mu-reread-takes-latest
 mu-sample-weighs-the-fleet
 mu-sample-written
+mu-suspect
 mu-swap-freeze
 mu-unknown-age-resolves-safe
 mu-unread-replica-at-target
@@ -2168,6 +2182,7 @@ picture
 pinned-B
 pinned-B-held
 pinnedAtBPrior
+pinnedAtFloor
 pinnedAtLeastITL
 pins
 pipeline_parallel_size
@@ -2228,6 +2243,7 @@ prefill-demand-held
 prefill-knee
 prefill-latency
 prefill-required
+prefill-spare
 prefill-throughput-bound-reading
 prefillBoundHeld
 prefillBounds
@@ -2522,6 +2538,8 @@ round
 routed
 routedVariants
 router
+routerBacklogOwed
+routerBacklogOwedBy
 routerMeasured
 routing
 row
@@ -2554,7 +2572,9 @@ saturatedThroughput
 saturatedThroughputBucket
 saturates
 saturation
+saturation-decode-owes-router-backlog
 saturation-holds-role
+saturation-itl-baseline-from-floor
 saturation-itl-clears-on-a-new-revision
 saturation-itl-one-sided-at-cap
 saturation-itl-tier-hysteresis
@@ -2743,6 +2763,7 @@ slo-ttft-decode-term
 slo-ttft-imbalance-across-counts
 slo-ttft-joint
 slo-ttft-joint-inputs
+slo-ttft-low-load-decode-ttft
 slo-ttft-measured-spread
 slo-ttft-measured-transfer
 slo-ttft-price

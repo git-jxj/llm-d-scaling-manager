@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,7 +19,6 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource"
@@ -42,6 +40,9 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
+	// regularOnly refuses a --recording that is no regular file rather than
+	// read it whole: the server's (openRecording).
+	regularOnly bool
 	// hint, when hintSet, is the words a refusal names a calm cycle in, set
 	// by a caller that prices for another source (the server, the report);
 	// else they follow the CLI's own source (hintSource).
@@ -227,26 +228,33 @@ func (f *answerFlags) cycleNumber() (int, error) {
 // recording that fails inside the analyzers, or a replay cancelled, is an
 // internal one.
 func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error) {
-	name, data, err := f.recordingData(ctx)
+	name, src, err := f.recordingSource(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return f.stateOf(ctx, name, data)
+	defer func() { _ = src.Close() }()
+	return f.stateOf(ctx, name, src)
 }
 
-// stateOf is readState on a recording already read: data, gunzipped, and the
-// name its errors call it by.
-func (f *answerFlags) stateOf(ctx context.Context, name string, data []byte) (*learnreplay.State, error) {
-	rec, err := learnrec.Read(data)
-	if err != nil {
-		return nil, usagef("%s: not a learner recording: %v", name, err)
-	}
-	if len(rec.Events) == 0 || rec.Events[0].Kind != learnrec.KindStart {
-		return nil, usagef("%s: not a learner recording: no start line", name)
+// stateOf is readState on a recording already opened: src, and the name its
+// errors call it by. It checks the recording first (recordingSource.check),
+// which sums it, and that the file did not change under its passes
+// (recordingSource.unchanged), before any error a changed file would cause:
+// a file rewritten under the check pass itself reads short or mixed, and
+// that is the change, not the bytes it left.
+func (f *answerFlags) stateOf(ctx context.Context, name string, src *recordingSource) (*learnreplay.State, error) {
+	if err := src.check(name, f.recording); err != nil {
+		if cerr := src.unchanged(); cerr != nil {
+			return nil, cerr
+		}
+		return nil, err
 	}
 	cycle, _ := f.cycleNumber()
-	st, err := learnreplay.StateAt(ctx, data, learnreplay.Options{},
+	st, err := learnreplay.StateFrom(ctx, src.open, learnreplay.Options{},
 		learnreplay.StateQuery{Namespace: f.window.namespace, ModelID: f.model, Cycle: cycle})
+	if cerr := src.unchanged(); cerr != nil {
+		return nil, cerr
+	}
 	var q *learnreplay.QueryError
 	switch {
 	case errors.As(err, &q):
@@ -257,22 +265,24 @@ func (f *answerFlags) stateOf(ctx context.Context, name string, data []byte) (*l
 	return st, nil
 }
 
-// recordingData is the recording to answer from, gunzipped, and the name
-// errors call it by: the --recording file, or the window --prometheus
-// names, captured and generated in memory.
-func (f *answerFlags) recordingData(ctx context.Context) (string, []byte, error) {
+// recordingSource is the recording to answer from, and the name errors call
+// it by: the --recording file, read in passes, or the window --prometheus
+// names, captured and generated in memory. The caller closes it. With
+// regularOnly (the server), a --recording that is no regular file is
+// refused (openRecording).
+func (f *answerFlags) recordingSource(ctx context.Context) (string, *recordingSource, error) {
 	if f.prometheus() {
 		data, err := f.windowRecording(ctx)
-		return redactedURL(f.window.prometheus), data, err
+		if err != nil {
+			return "", nil, err
+		}
+		return redactedURL(f.window.prometheus), memoryRecording(data), nil
 	}
-	data, err := os.ReadFile(f.recording)
+	src, err := openRecording(f.recording, f.regularOnly)
 	if err != nil {
 		return "", nil, usageError{err}
 	}
-	if data, err = gunzipped(data); err != nil {
-		return "", nil, usagef("%s: %v", f.recording, err)
-	}
-	return f.recording, data, nil
+	return f.recording, src, nil
 }
 
 // windowRecording is the recording `capacity-planner capture` and then `capacity-planner
@@ -395,18 +405,14 @@ const (
 	// kvDiscountFloor is a reading below the shape's prefix-hit discount,
 	// priced at the discount.
 	kvDiscountFloor = "measured below the prefix-hit discount, priced at it"
-	// kvAboveContext marks a reading above aboveContextFactor times the whole
-	// context, priced as read.
+	// kvAboveContext marks a reading above shape.AboveContextFactor times the
+	// whole context, priced as read: an engine's own KV beyond the context (an
+	// indexer's keys, a draft model's KV) is real, but a reader should see it.
 	kvAboveContext = ", above the context"
 	// kvSGLangContext is an SGLang reading above the whole context, priced at
 	// the context.
 	kvSGLangContext = "measured above the context on SGLang, priced at the context"
 )
-
-// aboveContextFactor is how far above the whole context a reading is before
-// its source says so: an engine's own KV beyond the context (an indexer's
-// keys, a draft model's KV) is priced as read, but a reader should see it.
-const aboveContextFactor = 2
 
 // residentKV is the KV one running request holds on the decode side, as the
 // decode line is priced at, and sets kvSource.
@@ -419,7 +425,9 @@ const aboveContextFactor = 2
 // holds beyond the context (an indexer's keys, a draft model's KV) and so is
 // not capped at it. A shape the flags state scales the reading by the ratio
 // of its context to the measured one's, keeping the measured overhead factor.
-// With no reading, the whole context, IL + D x OL/2.
+// With no reading, the whole context, IL + D x OL/2. The reading is priced by
+// shape.PriceResident, the rule the controller's analyzer shares
+// (saturation.SwitchKVPerRequestAboveContext).
 //
 // A reading is held above the discount, as the controller's analyzer holds
 // it (withResidentKV): below it is requests part way through their prefill,
@@ -434,11 +442,11 @@ const aboveContextFactor = 2
 // Not gated by count as the analyzer's reading is: few requests read a prefix
 // they truly share high, each carrying the whole of it, so a window of low
 // concurrency on a shared prefix prices the knee low, at most by 1/(1 - hit).
-// That errs towards more replicas; a reading above aboveContextFactor times
-// the context says so in its source.
+// That errs towards more replicas; a reading above shape.AboveContextFactor
+// times the context says so in its source.
 func (pv *pricedVariant) residentKV() float64 {
 	d := pv.shape.OutputDispersion
-	whole := shape.New(pv.shape.AvgInputTokens, pv.shape.AvgOutputTokens, 0).WithOutputDispersion(d).KVreq
+	whole := pv.shape.Context()
 	r, m := pv.state.Resident, pv.state.Shape
 	measured := shape.New(m.InputTokens, m.OutputTokens, 0).WithOutputDispersion(d).KVreq
 	var kv float64
@@ -451,12 +459,14 @@ func (pv *pricedVariant) residentKV() float64 {
 	default:
 		pv.kvSource, kv = kvMeasured, r.PerRequest
 	}
-	switch {
-	case kv < pv.shape.KVreq:
-		pv.kvSource, kv = kvDiscountFloor, pv.shape.KVreq
-	case kv > whole && pv.state.Params != nil && pv.state.Params.Engine == inferenceengine.EngineSGLang:
-		pv.kvSource, kv = kvSGLangContext, whole
-	case kv > aboveContextFactor*whole:
+	sglang := pv.state.Params != nil && pv.state.Params.Engine == inferenceengine.EngineSGLang
+	kv, how := pv.shape.PriceResident(kv, sglang)
+	switch how {
+	case shape.ResidentAtDiscount:
+		pv.kvSource = kvDiscountFloor
+	case shape.ResidentHeldAtContext:
+		pv.kvSource = kvSGLangContext
+	case shape.ResidentAboveContext:
 		pv.kvSource += kvAboveContext
 	}
 	return kv
