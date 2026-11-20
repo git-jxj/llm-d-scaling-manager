@@ -23,7 +23,8 @@ type backtestFlags struct {
 	fit, test, recording, split, fitUntil string
 	model, decodeVariant, prefillVariant  string
 	step, settle, ttft, measured, output  string
-	arrivalCV2                            float64
+	arrivalCV2, assumeVP                  float64
+	assumeA                               time.Duration
 	allowMismatch                         bool
 }
 
@@ -46,6 +47,8 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.StringVar(&f.ttft, "ttft-target", "", "a TTFT target to judge each step by, predicted and measured: 500ms or 500ms@p90")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "the test's arrivals' Ca^2, when known; default Poisson (1), flagged")
 	fs.StringVar(&f.measured, "measured", whatifapi.MeasuredAuto, "the latency scored against: auto (the router's where recorded), router or engine")
+	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, where the fit learned none (flagged)")
+	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, where the fit learned none (flagged)")
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
@@ -130,6 +133,15 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 	if f.arrivalCV2 != 0 {
 		req.ArrivalCV2 = &f.arrivalCV2
 	}
+	if f.assumeVP > 0 || f.assumeA > 0 {
+		req.Assume = &whatifapi.Assume{}
+		if f.assumeVP > 0 {
+			req.Assume.VP = &f.assumeVP
+		}
+		if f.assumeA > 0 {
+			req.Assume.A = ptrTo(f.assumeA.Seconds())
+		}
+	}
 	o, err := objectiveOf("ttft-target", f.ttft)
 	if err != nil {
 		return req, err
@@ -167,7 +179,8 @@ func seriesAndLatencyOf(src learnreplay.Source, st *learnreplay.State, v learnre
 	for i, c := range cycles {
 		out[i] = whatifapi.SeriesSample{At: c.At, Rate: c.ArrivalRate, RateKnown: c.RateKnown, Prefill: c.PrefillPods, Decode: c.DecodePods,
 			PrefillGPUs: c.PrefillGPUs, DecodeGPUs: c.DecodeGPUs, PromptTokens: c.PromptTokens, OutputTokens: c.OutputTokens,
-			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods}
+			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods,
+			PromptComputedRate: c.PromptComputedRate, PromptRequestRate: c.PromptRequestRate, PromptBuckets: c.PromptBuckets}
 	}
 	ls := make([]whatifapi.LatencySample, len(lat))
 	for i, l := range lat {
@@ -348,7 +361,22 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 				shareText(a.P90Error), shareText(a.Coverage), shareText(a.Within), strconv.Itoa(r.Steps), ratioText(r.Bias), shareText(r.Within))
 		}
 	}
-	if t := bt.Summary.Target; t != nil {
+	b.WriteString("\nby load (the step's rate over the fit's knee at its fleet), all judged steps: steps, bias, within\n")
+	for _, l := range bt.Summary.ByLoad {
+		fmt.Fprintf(&b, "%-24s %3d steps", l.Load, l.Steps)
+		for _, part := range []struct {
+			name   string
+			scores []whatifapi.BacktestScore
+		}{{"TTFT", l.TTFT}, {"TPOT", l.TPOT}} {
+			for _, sc := range part.scores {
+				if sc.Statistic == "mean" || sc.Statistic == "p90" {
+					fmt.Fprintf(&b, "  %s %s %d %s %s", part.name, sc.Statistic, sc.All.Steps, ratioText(sc.All.Bias), shareText(sc.All.Within))
+				}
+			}
+		}
+		b.WriteString("\n")
+	}
+	if t :=bt.Summary.Target; t != nil {
 		fmt.Fprintf(&b, "\nTTFT target over %d judged steps: both met %d, both missed %d, predicted met but measured missed %d, "+
 			"predicted missed but measured met %d, not judged %d\n", t.Steps, t.BothMet, t.BothMissed, t.MissedMisses, t.FalseAlarms, t.NotJudged)
 	}

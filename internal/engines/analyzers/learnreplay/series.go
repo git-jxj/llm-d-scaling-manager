@@ -10,6 +10,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // CycleSample is what one cycle of a recording saw of a model: its arrival
@@ -40,6 +41,14 @@ type CycleSample struct {
 	// than the counted ones: the model's rate served by pods the counts
 	// leave out.
 	OtherPods int
+	// PromptComputedRate and PromptRequestRate are the counted prefill
+	// pods' computed prompt tokens and requests a second, summed over the
+	// serving pods that read both, as whatif.PromptWindow counts them, and
+	// PromptBuckets their computed-token histogram pooled
+	// (whatif.PoolComputedBuckets); zero and nil with none. They are the
+	// prompt's spread as the traffic carried it: lengths, not latency.
+	PromptComputedRate, PromptRequestRate float64
+	PromptBuckets                         map[float64]float64
 }
 
 // SeriesVariants names the variants a series counts: the prefill and the
@@ -143,6 +152,7 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 		}
 	}
 	var weight, il, ol, hit, modelRate float64
+	var prompted []domain.ReplicaMetrics
 	for _, rm := range in.ReplicaMetrics {
 		role := domain.CanonicalRole(roles[rm.VariantName])
 		if role == domain.RoleDecode && rm.RequestRateKnown && rm.RequestRate > 0 {
@@ -158,6 +168,12 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 			switch role {
 			case domain.RolePrefill:
 				s.PrefillPods++
+				if rm.PrefillComputedTokenRateKnown && rm.RequestRateKnown && whatif.Finite(rm.PrefillComputedTokenRate) &&
+					rm.PrefillComputedTokenRate > 0 && whatif.Finite(rm.RequestRate) && rm.RequestRate > 0 {
+					s.PromptComputedRate += rm.PrefillComputedTokenRate
+					s.PromptRequestRate += rm.RequestRate
+					prompted = append(prompted, rm)
+				}
 			case domain.RoleDecode:
 				s.DecodePods++
 			}
@@ -176,6 +192,9 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 		il += w * rm.AvgInputTokens
 		ol += w * rm.AvgOutputTokens
 		hit += w * rm.PrefixCacheHitRate
+	}
+	if pooled := whatif.PoolComputedBuckets(nil, prompted); len(pooled) > 0 {
+		s.PromptBuckets = pooled
 	}
 	if weight > 0 {
 		s.PromptTokens, s.OutputTokens, s.PrefixHitRate, s.HasShape = il/weight, ol/weight, hit/weight, true

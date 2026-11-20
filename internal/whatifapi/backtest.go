@@ -127,6 +127,9 @@ type BacktestRequest struct {
 	// AllowConfigMismatch prices a test whose configuration differs from
 	// the fit's, with the difference as a caveat; without it, refused.
 	AllowConfigMismatch bool `json:"allowConfigMismatch,omitempty"`
+	// Assume types a term the fit did not learn, as a plan's assume does;
+	// every figure it moves is flagged, and the answer lists it.
+	Assume *Assume `json:"assume,omitempty"`
 }
 
 // BacktestResponse is POST /v1/backtest's answer, and capacity-planner
@@ -200,7 +203,12 @@ type BacktestStep struct {
 	PromptTokens *float64 `json:"promptTokens,omitempty"`
 	OutputTokens *float64 `json:"outputTokens,omitempty"`
 	// Requests is the requests the measured histograms hold over the step.
-	Requests float64         `json:"requests"`
+	Requests float64 `json:"requests"`
+	// KneeShare is the rate over the fit's lower knee at the step's fleet,
+	// and Load its band (LoadBelow80, LoadNearKnee, LoadPastKnee); both
+	// absent where no knee priced.
+	KneeShare *float64 `json:"kneeShare,omitempty"`
+	Load      string   `json:"load,omitempty"`
 	TTFT     []BacktestPoint `json:"ttft"`
 	TPOT     []BacktestPoint `json:"tpot"`
 	// Target is the TTFT target judged, predicted and measured: met,
@@ -238,6 +246,24 @@ type BacktestSummary struct {
 	TPOT     []BacktestScore  `json:"tpot"`
 	// Target is the TTFT target's agreement, with a target.
 	Target *BacktestAgreement `json:"target,omitempty"`
+	// ByLoad is the same scores over the judged steps of each load band.
+	ByLoad []BacktestLoad `json:"byLoad"`
+}
+
+// The load bands a step is scored in: its rate over the fit's lower knee
+// at its fleet.
+const (
+	LoadBelow80  = "below 0.8 of the knee"
+	LoadNearKnee = "0.8 to 1.0 of the knee"
+	LoadPastKnee = "past the knee"
+)
+
+// BacktestLoad is the scores over one load band's judged steps.
+type BacktestLoad struct {
+	Load  string          `json:"load"`
+	Steps int             `json:"steps"`
+	TTFT  []BacktestScore `json:"ttft"`
+	TPOT  []BacktestScore `json:"tpot"`
 }
 
 // BacktestExcluded counts the steps not judged, by reason.
@@ -498,6 +524,7 @@ type backtestQuestion struct {
 	config      BacktestConfig
 	assumed     []string
 	testIndices []int
+	assume      Assume
 }
 
 // backtestQuestionOf checks req against fit and test, and refuses a test
@@ -577,6 +604,10 @@ func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time
 		q.promptCV = &v
 	} else {
 		q.assumed = append(q.assumed, "the test's prompt spread was not measured: the fit's is priced")
+	}
+	if a := req.Assume; a != nil {
+		q.assume = *a
+		q.assumed = append(q.assumed, "terms typed in for the fit (assume): every figure they move is flagged")
 	}
 	if q.cv2 == nil {
 		q.assumed = append(q.assumed, "arrivals Poisson (Ca^2 1): the source does not measure burstiness; give arrivalCV2 (--arrival-cv2) when known")
@@ -662,7 +693,7 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 	out.Fit = windowOf(q.fit, nil, q.cutoff)
 	out.Test = windowOf(test, q.testIndices, time.Time{})
 	p := &predictor{pricer: q.fit.pricer, fleets: map[predictKey]Fleet{}, cv2: q.cv2, promptCV: q.promptCV,
-		headroom: q.fit.doc.Policy.Headroom}
+		headroom: q.fit.doc.Policy.Headroom, assume: q.assume}
 	for _, st := range steps {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -780,6 +811,10 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		}
 		return out
 	}
+	if pred.knee != nil {
+		out.KneeShare = ptr(in.rate / *pred.knee)
+		out.Load = loadBand(*out.KneeShare)
+	}
 	for i, q := range backtestStats {
 		out.TTFT = append(out.TTFT, pointOf(q, pred.ttft[i], pred.ttftBound[i], m.ttft[i], m.requests))
 		out.TPOT = append(out.TPOT, pointOf(q, pred.tpot[i], pred.tpotBound[i], m.tpot[i], m.requests))
@@ -796,6 +831,9 @@ type stepInputs struct {
 	prefill, decode        int
 	prompt, output         float64
 	hasShape               bool
+	// promptCV is the step's own prompt spread, read from its prefill
+	// pods' computed-token histograms; nil where they read none.
+	promptCV *float64
 }
 
 // stepInputsOf is the step's inputs: its mean rate, the median serving pods
@@ -805,13 +843,35 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 	a := actualOf(samples)
 	in.prefill, in.decode = a.Prefill, a.Decode
 	in.prompt, in.output, _, in.hasShape = bucketShape(samples)
+	pooled := map[float64]float64{}
+	var computed, requests float64
+	for _, x := range samples {
+		if x.PromptBuckets == nil || !(x.PromptRequestRate > 0) {
+			continue
+		}
+		computed += x.PromptComputedRate
+		requests += x.PromptRequestRate
+		for b, r := range x.PromptBuckets {
+			pooled[b] += r
+		}
+	}
+	if requests > 0 {
+		if sp := whatif.ReadPromptSpread(pooled, computed/requests); !sp.Assumed {
+			in.promptCV = ptr(math.Round(sp.CV/promptCVGrid) * promptCVGrid)
+		}
+	}
 	return in
 }
+
+// promptCVGrid is the grid a step's prompt spread is priced on, so that
+// steps of nearly one spread share a fleet.
+const promptCVGrid = 0.05
 
 // predictKey is one fleet a backtest prices.
 type predictKey struct {
 	np, nd         int
 	prompt, output float64
+	promptCV       float64
 	q              float64
 }
 
@@ -824,12 +884,16 @@ type predictor struct {
 	promptCV *float64
 	// headroom is the fit's: it moves no TTFT or TPOT priced at a rate.
 	headroom float64
+	// assume is the request's typed terms.
+	assume Assume
 }
 
 // prediction is one step's figures at each statistic of backtestStats.
 type prediction struct {
 	ttft, tpot           []Figure
 	ttftBound, tpotBound []*float64
+	// knee is the lower knee of the fleet that priced, nil with none.
+	knee *float64
 }
 
 // predict prices one step at each statistic: the TTFT as a report's table
@@ -842,6 +906,9 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 	}
 	for _, q := range backtestStats {
 		k := predictKey{np: in.prefill, nd: in.decode, q: q}
+		if in.promptCV != nil {
+			k.promptCV = *in.promptCV
+		}
 		if in.hasShape {
 			k.prompt, k.output = shapeKnob(in.prompt), shapeKnob(in.output)
 		}
@@ -849,8 +916,14 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		if !ok {
 			kn := Knobs{Prefill: k.np, Decode: k.nd, PromptTokens: k.prompt, OutputTokens: k.output, TTFTPercentile: q, TPOTPercentile: q,
 				ArrivalCV2: p.cv2, Headroom: p.headroom}
-			if p.promptCV != nil {
-				kn.Assume.PromptCV = p.promptCV
+			kn.Assume = p.assume
+			if kn.Assume.PromptCV == nil {
+				switch {
+				case in.promptCV != nil:
+					kn.Assume.PromptCV = ptr(max(*in.promptCV, promptCVGrid))
+				case p.promptCV != nil:
+					kn.Assume.PromptCV = p.promptCV
+				}
 			}
 			var err error
 			if fl, err = p.pricer.Fleet(kn); err != nil {
@@ -896,6 +969,17 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 				b = max(b, pf.Band.Hi)
 			}
 			pb = &b
+		}
+		if out.knee == nil {
+			var ks []float64
+			for _, r := range []whatif.Result{fl.PrefillKnee(), fl.DecodeKnee()} {
+				if v, ok := valueOf(r); ok && v > 0 {
+					ks = append(ks, v)
+				}
+			}
+			if len(ks) > 0 {
+				out.knee = ptr(slices.Min(ks))
+			}
 		}
 		out.ttft, out.ttftBound = append(out.ttft, tf), append(out.ttftBound, tb)
 		out.tpot, out.tpotBound = append(out.tpot, pf), append(out.tpotBound, pb)
@@ -1141,9 +1225,18 @@ func summarize(steps []BacktestStep, target bool) BacktestSummary {
 			s.Excluded.NotPriced++
 		}
 	}
-	for i, q := range backtestStats {
-		s.TTFT = append(s.TTFT, scoreOf(q, steps, func(st BacktestStep) []BacktestPoint { return st.TTFT }, i))
-		s.TPOT = append(s.TPOT, scoreOf(q, steps, func(st BacktestStep) []BacktestPoint { return st.TPOT }, i))
+	s.TTFT, s.TPOT = scoresOf(steps)
+	s.ByLoad = []BacktestLoad{}
+	for _, band := range []string{LoadBelow80, LoadNearKnee, LoadPastKnee} {
+		var in []BacktestStep
+		for _, st := range steps {
+			if st.Excluded == "" && st.Load == band {
+				in = append(in, st)
+			}
+		}
+		l := BacktestLoad{Load: band, Steps: len(in)}
+		l.TTFT, l.TPOT = scoresOf(in)
+		s.ByLoad = append(s.ByLoad, l)
 	}
 	if target {
 		a := &BacktestAgreement{}
@@ -1168,6 +1261,27 @@ func summarize(steps []BacktestStep, target bool) BacktestSummary {
 		s.Target = a
 	}
 	return s
+}
+
+// loadBand is the band of a rate at share of the knee.
+func loadBand(share float64) string {
+	switch {
+	case share < 0.8:
+		return LoadBelow80
+	case share < 1:
+		return LoadNearKnee
+	}
+	return LoadPastKnee
+}
+
+// scoresOf is each statistic's TTFT and TPOT score over the judged steps.
+func scoresOf(steps []BacktestStep) (ttft, tpot []BacktestScore) {
+	ttft, tpot = []BacktestScore{}, []BacktestScore{}
+	for i, q := range backtestStats {
+		ttft = append(ttft, scoreOf(q, steps, func(st BacktestStep) []BacktestPoint { return st.TTFT }, i))
+		tpot = append(tpot, scoreOf(q, steps, func(st BacktestStep) []BacktestPoint { return st.TPOT }, i))
+	}
+	return ttft, tpot
 }
 
 // scoreOf is statistic i's score over the judged steps.
