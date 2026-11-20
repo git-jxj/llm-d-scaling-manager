@@ -51,6 +51,9 @@ const MaxDeniedRetry = time.Hour
 // DisaggregatedSet runs.
 const revisionLabelKey = "disaggregatedset.x-k8s.io/revision"
 
+// noMatch is the failure kind of a read whose kind the API server does not serve.
+const noMatch = "NoMatch"
+
 var lwsListGVK = schema.GroupVersionKind{Group: "leaderworkerset.x-k8s.io", Version: "v1", Kind: "LeaderWorkerSetList"}
 
 // scaleDown is a lower count the writer wrote for one role, or tried to.
@@ -342,7 +345,7 @@ func (w *Writer) childReadFailure(set types.NamespacedName, err error, logger lo
 	}
 	kind := string(apierrors.ReasonForError(err))
 	if meta.IsNoMatchError(err) {
-		kind = "NoMatch"
+		kind = noMatch
 	}
 	same := w.childFailed[set] == kind
 	w.childFailed[set] = kind

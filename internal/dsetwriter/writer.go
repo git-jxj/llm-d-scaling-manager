@@ -268,7 +268,7 @@ func (w *Writer) listFailure(ctx context.Context, ns string, err error) {
 	}
 	kind := string(apierrors.ReasonForError(err))
 	if meta.IsNoMatchError(err) {
-		kind = "NoMatch"
+		kind = noMatch
 	}
 	if w.listFailed[ns] == kind {
 		return
@@ -276,7 +276,7 @@ func (w *Writer) listFailure(ctx context.Context, ns string, err error) {
 	w.listFailed[ns] = kind
 	logger := ctrl.LoggerFrom(ctx)
 	switch {
-	case kind == "NoMatch":
+	case kind == noMatch:
 		logger.Info("The DisaggregatedSet CRD is not installed: the role writer has nothing to scale until it is", "namespace", ns)
 	case apierrors.IsForbidden(err):
 		logger.Error(err, "The role writer may not list DisaggregatedSets: it needs get, list and patch on them, which the install grants only when asked. "+

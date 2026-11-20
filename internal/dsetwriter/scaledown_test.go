@@ -37,8 +37,11 @@ type followRig struct {
 	deny error
 }
 
-func newFollowRig(t *testing.T, decode int64) *followRig {
+// newFollowRig starts with prefill at 2 groups and decode at 4, each child
+// LeaderWorkerSet running as many.
+func newFollowRig(t *testing.T) *followRig {
 	t.Helper()
+	const decode = 4
 	sch := runtime.NewScheme()
 	gv := schema.GroupVersion{Group: setGVK.Group, Version: setGVK.Version}
 	sch.AddKnownTypeWithName(setGVK, &unstructured.Unstructured{})
@@ -121,7 +124,7 @@ func (r *followRig) passAt(d time.Duration, decode int32) {
 // A lower count the children do not follow is reported once the bound has
 // passed, not before; the role is then held until the children follow.
 func TestScaleDownRefusedAfterTheBound(t *testing.T) {
-	r := newFollowRig(t, 4)
+	r := newFollowRig(t)
 	r.passAt(0, 2)
 	require.Equal(t, int64(2), r.decode())
 
@@ -147,7 +150,7 @@ func TestScaleDownRefusedAfterTheBound(t *testing.T) {
 
 // A scale-down that the children follow in time is never reported.
 func TestScaleDownFollowedIsNotReported(t *testing.T) {
-	r := newFollowRig(t, 4)
+	r := newFollowRig(t)
 	r.passAt(0, 2)
 	r.child("decode", "r1", 2)
 	r.passAt(time.Hour, 2)
@@ -160,7 +163,7 @@ func TestScaleDownFollowedIsNotReported(t *testing.T) {
 // A rollout that defers the scale-down (two revisions with groups, the
 // default Deferred) stops the clock; the bound counts from its end.
 func TestScaleDownDeferredByARolloutIsNotRefused(t *testing.T) {
-	r := newFollowRig(t, 4)
+	r := newFollowRig(t)
 	r.passAt(0, 2)
 	r.child("decode", "r2", 1) // the new revision rolls in
 	r.passAt(time.Hour, 2)
@@ -175,7 +178,7 @@ func TestScaleDownDeferredByARolloutIsNotRefused(t *testing.T) {
 
 // With scaleDownDuringRollout Immediate, a rollout does not stop the clock.
 func TestScaleDownImmediateIsTimedThroughARollout(t *testing.T) {
-	r := newFollowRig(t, 4)
+	r := newFollowRig(t)
 	live := &unstructured.Unstructured{}
 	live.SetGroupVersionKind(setGVK)
 	require.NoError(t, r.c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "glm"}, live))
@@ -190,7 +193,7 @@ func TestScaleDownImmediateIsTimedThroughARollout(t *testing.T) {
 // A raise resets a refused role: it is written at once, and a lower count
 // after it is asked for again.
 func TestScaleDownRefusedResetByARaise(t *testing.T) {
-	r := newFollowRig(t, 4)
+	r := newFollowRig(t)
 	r.passAt(0, 2)
 	r.passAt(DefaultFollowTimeout, 2)
 	require.Equal(t, 1, countReason(drain(r.rec), EventScaleDownRefused))
@@ -204,7 +207,7 @@ func TestScaleDownRefusedResetByARaise(t *testing.T) {
 
 // A count someone else sets (the operator, after a drain) drops the record.
 func TestScaleDownRecordDroppedWhenTheCountMoves(t *testing.T) {
-	r := newFollowRig(t, 4)
+	r := newFollowRig(t)
 	r.passAt(0, 2)
 	r.passAt(DefaultFollowTimeout, 2)
 	require.Equal(t, 1, countReason(drain(r.rec), EventScaleDownRefused))
@@ -227,7 +230,7 @@ func TestScaleDownRecordDroppedWhenTheCountMoves(t *testing.T) {
 // twice that, never more than MaxDeniedRetry apart; a write that lowers
 // nothing is not held by it.
 func TestScaleDownDeniedBacksOff(t *testing.T) {
-	r := newFollowRig(t, 4)
+	r := newFollowRig(t)
 	r.deny = apierrors.NewForbidden(schema.GroupResource{Group: setGVK.Group, Resource: "disaggregatedsets"}, "glm",
 		assertErr("ValidatingAdmissionPolicy 'guard' with binding 'guard' denied request: drain first"))
 	r.passAt(0, 2)
@@ -256,7 +259,7 @@ func TestScaleDownDeniedBacksOff(t *testing.T) {
 // An RBAC Forbidden is a failed write, not a refused scale-down: it is
 // retried every pass, as before.
 func TestScaleDownRBACForbiddenIsAFailure(t *testing.T) {
-	r := newFollowRig(t, 4)
+	r := newFollowRig(t)
 	r.deny = apierrors.NewForbidden(schema.GroupResource{Group: setGVK.Group, Resource: "disaggregatedsets"}, "glm",
 		assertErr(`User "system:serviceaccount:x:y" cannot patch resource "disaggregatedsets"`))
 	r.passAt(0, 2)
