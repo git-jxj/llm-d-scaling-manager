@@ -1057,6 +1057,11 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// golden replay runs it off, and off alone from all on moves nothing. Its
 	// unit tests hold it (heldBy).
 	saturation.SwitchKVPerRequestAboveContext: nil,
+	// llm-d-incubation/llm-d-scaling-manager#51 charges a P/D decode the
+	// router's queue prefill can hand on: off from the constructor, so every
+	// golden replay runs it off, and off alone from all on moves nothing.
+	// Its unit tests hold it (heldBy).
+	saturation.SwitchDecodeOwesRouterBacklog: nil,
 	// ev-shindin/llm-scaling-manager#275 (two switches) and ev-shindin/llm-scaling-manager#438, this file's own rows before learner PR
 	// 4b-1 (see replaySwitches).
 	saturation.SwitchZeroReplicaDataParallel: nil,
@@ -1313,6 +1318,13 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestKVAboveContext_AFewLongPromptsAreNoReading"},
 		{"../saturation", "TestKVAboveContext_ALaggingRunningCountIsNoReading"},
 		{"../saturation", "TestKVAboveContext_OffFromTheConstructor"},
+	},
+	// llm-d-incubation/llm-d-scaling-manager#51: the property case runs
+	// the switch on and off and asserts both; the rate is held on its own.
+	saturation.SwitchDecodeOwesRouterBacklog: {
+		{"../saturation", "TestDecodeRouterBacklog_DecodeBoundPDIsChargedTheQueue"},
+		{"../saturation", "TestDecodeRouterBacklog_PrefillBoundIsUnchanged"},
+		{"../saturation", "TestDecodeRouterBacklog_OffFromTheConstructor"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
 	// asserts both, and the first holds all three off from the constructor.

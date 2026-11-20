@@ -935,6 +935,7 @@ declared
 declares
 declined
 decode
+decode-at-mu
 decode-knee
 decode-landed-queue-needs-a-bound
 decode-only
@@ -945,6 +946,8 @@ decodeBaseNet
 decodeFixed
 decodeFromITL
 decodeHeldPrompt
+decodeKvFill
+decodeOwing
 decodePerStep
 decodePerToken
 decodePerTokenNet
@@ -953,6 +956,7 @@ decodeRefused
 decodeSamples
 decodeSaturatedAt
 decodeSaturation
+decodeServedShare
 decodeSteps
 decodeTTFT
 decodeTTFTPrompt
@@ -1875,6 +1879,7 @@ mu-margin-clamp
 mu-reread-takes-latest
 mu-sample-weighs-the-fleet
 mu-sample-written
+mu-suspect
 mu-swap-freeze
 mu-unknown-age-resolves-safe
 mu-unread-replica-at-target
@@ -2236,6 +2241,7 @@ prefill-demand-held
 prefill-knee
 prefill-latency
 prefill-required
+prefill-spare
 prefill-throughput-bound-reading
 prefillBoundHeld
 prefillBounds
@@ -2530,6 +2536,8 @@ round
 routed
 routedVariants
 router
+routerBacklogOwed
+routerBacklogOwedBy
 routerMeasured
 routing
 row
@@ -2562,6 +2570,7 @@ saturatedThroughput
 saturatedThroughputBucket
 saturates
 saturation
+saturation-decode-owes-router-backlog
 saturation-holds-role
 saturation-itl-clears-on-a-new-revision
 saturation-itl-one-sided-at-cap

@@ -180,6 +180,15 @@ so each must keep up with all of it), and on the total otherwise.
   zero and keeps none of the share, as before. With the switch off (a replay), the share is dropped, as before:
   a prefill replica holds a prompt only for its prefill time plus the
   hand-off.
+- On P/D, decode's share of the scheduler queue
+  (`SwitchDecodeOwesRouterBacklog`, replay switch
+  `saturation-decode-owes-router-backlog`, off from the constructor; issue
+  llm-d-incubation/llm-d-scaling-manager#51). Off, the queue's request count
+  is prefill's backlog alone. On, decode is charged `min(Q/H, rate)` beside
+  lambda: rate is what the prefill the analyzer orders completes beyond
+  lambda, or, with no prefill `mu`, the whole queue while decode is full (at
+  `kvCacheThreshold`) and completes its own `mu`, smoothed over 4 cycles. See
+  [the saturation analyzer](saturation-analyzer.md#the-throughput-floor).
 
 The floor writes the role's figure (`RoleDemand`) and the model total. A role
 it raises also lifts that role's variants (`raiseVariantsToRoles`, the same

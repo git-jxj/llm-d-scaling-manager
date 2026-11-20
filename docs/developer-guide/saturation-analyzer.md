@@ -1699,6 +1699,45 @@ Two hold rules gate ordering, both measured rather than reasoned:
 
 Both are covered in [analyzer-evidence.md](analyzer-evidence.md).
 
+On P/D the router's queue is charged to prefill alone. Where decode binds,
+as under flow control with decode full, decode is then sized for the arrivals
+only and drains the backlog by its target-fill headroom: the property case
+`known-truth/floor/flow-control-unlearned-mu-pd-decode` orders 0.45-0.85 of
+what the fleet needs (issue llm-d-incubation/llm-d-scaling-manager#51). The
+replay switch `saturation-decode-owes-router-backlog`
+(`SwitchDecodeOwesRouterBacklog`, `decode_router_backlog.go`) also charges
+decode `min(Q/H, rate)`, H its drain horizon. With a prefill floor term, rate
+is the prefill the analyzer orders times prefill's mu, less lambda, so it is
+about 0 where prefill binds. With none, decode is charged the whole queue
+times a weight read from two things, each the median of the last 4 cycles:
+
+- its KV fill (busiest-rank usage, mean over its ready replicas): none at 0.9
+  of `kvCacheThreshold`, full at the threshold. Flow control holds requests
+  once the engines read saturated, so a decode that holds them back is at the
+  threshold. In the property cases a decode-bound decode reads 0.85-0.95 and
+  one behind a prefill bottleneck 0.09-0.43.
+- its served share, completions over ready replicas times its mu: none at
+  0.80, full at 1.0. A full decode that completes well under its mu is full of
+  long requests, not binding. The band is wide because the share alone cannot
+  separate the cases: they read 0.54-0.92 and 1.04-1.15, and completions read
+  20% high lift the first to 1.10.
+
+A share above 1.25 is a mu error, not a binding decode: nothing is owed, and
+the log says `mu-suspect`. The weight falls by at most a quarter a cycle, so
+the charge does not appear and vanish with each reading. Decode's own queue
+is not evidence: flow control keeps it empty where decode binds. With the
+switch on, the floor log line carries `routerBacklogOwed`,
+`routerBacklogOwedBy` (`prefill-spare`, `decode-at-mu`, `mu-suspect`),
+`decodeServedShare` and `decodeKvFill` on decode. On, the case passes as
+`-owes-backlog` (seeds 1-100), and prefill-bound P/D is unchanged, also with
+decode's KV raised to 0.70-0.80, with completions read 10% and 20% high, and
+with each request reading twice the context under
+`kv-per-request-above-context`. The
+switch is off from the constructor: the controller keeps the old charge until
+a P/D run checks it. No controller golden moves; replayed on,
+`ttft-staircase-c-on` asks one more decode replica on 16 of its 584
+role-cycles, in the runaway step.
+
 ### The prefill bound
 
 With `enablePrefillThroughputBound` on, a prefill replica queued behind a full
