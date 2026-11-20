@@ -542,7 +542,7 @@ exit 3 means a shape's verdict is NOT JUDGED. Scripts read the verdict from
 (`shapes[].verdict.verdict`), which prints the same report as
 [`POST /v1/report`](api.md#the-report).
 
-The sample above prints (the start of it):
+With v0.12.1, the sample above prints (the start of it):
 
 ```text
 ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-06 02:18-03:30Z, cycle 289 of 289
@@ -566,8 +566,9 @@ verdicts
                             x1.2 (50.0 r/s): UNDER-PROVISIONED: 2.8x the fleet knee (18.2 r/s); needs 6 prefill + 7 decode (has 2 + 2) (prefill f 1.5 assumed at 6 pods).
 ```
 
-Read the not-validated lines at the end: the decode knee read 44% to 103%
+Read the `not validated` lines after each shape (not shown above): the decode knee read 44% to 103%
 high on the goldens, and TTFT is not validated.
+
 ## Plan replicas over a day
 
 How many prefill and decode replicas did your traffic need, hour by hour,

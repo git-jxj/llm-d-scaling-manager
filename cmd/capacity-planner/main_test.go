@@ -62,6 +62,9 @@ func TestRun_HelpIsNotAnError(t *testing.T) {
 			require.Contains(t, out, "usage: capacity-planner at-replicas|")
 		})
 	}
+	out, err := runCLI("help", "day-plan")
+	require.NoError(t, err)
+	require.Contains(t, out, "-bucket")
 }
 
 func captureArgs(prom, out string, extra ...string) []string {

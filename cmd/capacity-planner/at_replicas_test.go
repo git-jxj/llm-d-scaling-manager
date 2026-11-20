@@ -590,3 +590,20 @@ func TestAtReplicas_ShrinkIsPerRole(t *testing.T) {
 	require.NotNil(t, v.Needed)
 	assert.Less(t, v.Needed.Decode, 4, v.Summary)
 }
+
+// TestNoRoleHint: two variants a capture read as both roles (a P/D fleet with
+// no role map) get the role-map hint, not only "name one"; a real decode
+// variant among them, or none read as both, gets nothing added.
+func TestNoRoleHint(t *testing.T) {
+	pv := func(role string) pricedVariant {
+		return pricedVariant{state: learnreplay.VariantState{Variant: "v-" + role, Role: role}}
+	}
+	if got := noRoleHint([]pricedVariant{pv("both"), pv("")}); !strings.Contains(got, "--role-of") {
+		t.Errorf("both roles: hint %q, want one naming --role-of", got)
+	}
+	for _, vs := range [][]pricedVariant{{pv("decode"), pv("decode")}, {pv("both"), pv("decode")}} {
+		if got := noRoleHint(vs); got != "" {
+			t.Errorf("roles %s, %s: hint %q, want none", vs[0].state.Role, vs[1].state.Role, got)
+		}
+	}
+}

@@ -189,6 +189,11 @@ func run(ctx context.Context, args []string, out, warn io.Writer) error {
 	}
 	switch args[0] {
 	case "help", "-h", "-help", "--help":
+		if len(args) > 1 {
+			if cmd, ok := commands[args[1]]; ok {
+				return cmd(ctx, []string{"-h"}, out, warn)
+			}
+		}
 		_, err := fmt.Fprintln(out, usage)
 		return err
 	}

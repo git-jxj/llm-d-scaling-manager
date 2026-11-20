@@ -475,6 +475,20 @@ func (pv *pricedVariant) residentKV() float64 {
 // assumed reports a shape the flags assumed, in part or whole.
 func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL || pv.assumedHit }
 
+// noRoleHint is what to add to "the model has N decode variants" when none of
+// them was recorded as decode: every one read as both roles, which is what a
+// capture gives a P/D fleet when it could not tell the roles apart. Naming one
+// would then price a prefill variant as decode; the fix is the role map.
+func noRoleHint(variants []pricedVariant) string {
+	for _, pv := range variants {
+		if domain.CanonicalRole(pv.state.Role) != domain.RoleBoth {
+			return ""
+		}
+	}
+	return "; every one was recorded as both prefill and decode: for a P/D fleet, record again and say which Pods " +
+		"serve which role (capture --role-of, or kube-state-metrics exporting the llm-d.ai/role label)"
+}
+
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
 // --variant names.
