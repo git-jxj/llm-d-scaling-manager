@@ -785,7 +785,7 @@ func (a *SaturationAnalyzer) computeK2(
 		adm, borrowDisabled, &refused, &atContext, logger)
 	k2, src, recordable := a.unadmittedPrice(chain, chainSrc, historyKey, modelID, namespace, variantName,
 		queueLen, tokensInUse, queueThreshold, kvCeiling, downstreamSaturated, adm, refused == k2ReasonObsUnconfirmed, logger)
-	if atContext > 0 && recordable == chain {
+	if atContext > 0 {
 		// A derived k2 the resident reading raised prices this cycle only
 		// (SwitchK2DerivedAtResidentKV): the capacity store keeps the figure
 		// at the context, which the zero-replica estimate, a sibling's
@@ -1255,14 +1255,17 @@ func (a *SaturationAnalyzer) k2Chain(
 		// Under SwitchK2DerivedAtResidentKV a request is priced at the KV the
 		// fleet's requests are read to hold where that reading is trusted
 		// above the context (batchCap.resident, k2_resident_kv.go): the
-		// figure only rises, and never above k1.
+		// figure only rises, and never above k1. The lower bound is judged
+		// against the figure at the context, as with the switch off: a
+		// sibling or prior figure under the raised one arms no bound the
+		// context would not, and a bound relaxes towards the context.
 		if k2Derived := estimateCapacityAtCapBudget(engineParams, batchCap.perRank, avgInput, avgOutput, outputDispersion, batchCap.budget) * int64(max(ranks, 1)); k2Derived > 0 {
 			atCtx := k2Derived
-			k2Derived = k2AtResidentKV(engineParams, batchCap, avgInput, avgOutput, ranks, k1, atCtx)
-			if b, ok := borrow(min(k1, k2Derived)); ok {
-				logBorrowedK2(logger, b, modelID, namespace, variantName, historyKey, min(k1, k2Derived), capacity.K2SrcDerived)
+			if b, ok := borrow(min(k1, atCtx)); ok {
+				logBorrowedK2(logger, b, modelID, namespace, variantName, historyKey, min(k1, atCtx), capacity.K2SrcDerived)
 				return b.k2, b.source(), b
 			}
+			k2Derived = k2AtResidentKV(engineParams, batchCap, avgInput, avgOutput, ranks, k1, atCtx)
 			kv := []any{"modelID", modelID, "namespace", namespace, "variant", variantName,
 				"priority", capacity.K2SrcDerived.String(), "historyKey", historyKey,
 				"avgInputTokens", avgInput, "avgOutputTokens", avgOutput, "outputDispersion", outputDispersion,

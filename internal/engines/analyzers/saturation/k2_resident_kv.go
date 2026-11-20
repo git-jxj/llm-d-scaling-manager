@@ -51,8 +51,16 @@ import (
 // latter held at k1 (k2AtResidentKV). The raised figure prices the cycle
 // only: the capacity store keeps the figure at the context, so the
 // zero-replica estimate, a sibling's lookup and the fallback path, which
-// read the store with no reading behind them, do not move. Anywhere else it is priced at the context, as
-// before. The prefill role has no derived k2 and does not move.
+// read the store with no reading behind them, do not move. The lower bound
+// (P2-borrow, P2-prior) is judged against the figure at the context, and
+// where it applies the reading prices nothing. Anywhere else it is priced
+// at the context, as before. The prefill role has no derived k2 and does
+// not move.
+//
+// The gate compares the reading with the fleet's context, at the fleet's
+// spread of output lengths; the derived k2 prices the replica's own. A
+// reading between the two passes the gate and then prices nothing, since
+// the figure is never lowered.
 //
 // The reading reaches the derived k2 as a line in the resident requests
 // (residentKVLine), held once plus per request, with nothing held once: the

@@ -1327,8 +1327,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2"},
 		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
 	},
-	// The follow-up to PR #205: each runs the switch on and off and asserts
-	// both.
+	// The follow-up to PR #205: each fails with the switch off.
 	saturation.SwitchK2DerivedAtResidentKV: {
 		{"../saturation", "TestK2DerivedAtResidentKV_PricesTheReadingAboveTheContext"},
 		{"../saturation", "TestK2DerivedAtResidentKV_HeldAtK1"},

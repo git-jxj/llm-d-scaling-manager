@@ -40,10 +40,11 @@ func residentRow(fill float64) domain.ReplicaMetrics {
 type residentSwitches struct{ aboveContext, atResident bool }
 
 // residentRun runs three cycles of rows, decode replicas of the variants
-// named, and returns each variant's capacity, the last P3 k2-decision line,
-// and the capacity store.
-func residentRun(t *testing.T, rows []domain.ReplicaMetrics, variants []string, sw residentSwitches) (
-	map[string]domain.VariantCapacity, map[string]any, *capacity.Store) {
+// named, edits applied to the analyzer first, and returns each variant's
+// capacity, the last P3 k2-decision line (nil with none), and the capacity
+// store.
+func residentRun(t *testing.T, rows []domain.ReplicaMetrics, variants []string, sw residentSwitches,
+	edits ...func(*SaturationAnalyzer)) (map[string]domain.VariantCapacity, map[string]any, *capacity.Store) {
 	t.Helper()
 	ctx, logs := observedCtx(t)
 	store := capacity.NewStore()
@@ -62,6 +63,9 @@ func residentRun(t *testing.T, rows []domain.ReplicaMetrics, variants []string, 
 	}))
 	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	a.now = func() time.Time { return clock }
+	for _, edit := range edits {
+		edit(a)
+	}
 	in := makeAnalyzerInput(rows, states)
 	var res *domain.AnalyzerResult
 	for range 3 {
@@ -76,7 +80,6 @@ func residentRun(t *testing.T, rows []domain.ReplicaMetrics, variants []string, 
 			p3 = f
 		}
 	}
-	require.NotNil(t, p3, "a P3 k2-decision line")
 	out := map[string]domain.VariantCapacity{}
 	for _, vc := range res.VariantCapacities {
 		out[vc.VariantName] = vc
@@ -89,6 +92,7 @@ func residentRun(t *testing.T, rows []domain.ReplicaMetrics, variants []string, 
 func residentK2(t *testing.T, rm domain.ReplicaMetrics, sw residentSwitches) (float64, string, map[string]any) {
 	t.Helper()
 	out, p3, _ := residentRun(t, []domain.ReplicaMetrics{rm}, []string{"variant-d"}, sw)
+	require.NotNil(t, p3, "a P3 k2-decision line")
 	vc, ok := out["variant-d"]
 	require.True(t, ok, "no decode capacity")
 	return vc.PerReplicaCapacity, vc.Reason, p3
@@ -127,6 +131,37 @@ func TestK2DerivedAtResidentKV_TheStoreKeepsTheContext(t *testing.T) {
 	rec := store.Get("test-ns", "test-model", "variant-d")
 	require.NotNil(t, rec)
 	assert.Equal(t, int64(residentAtCtx), rec.EffectiveCapacity)
+}
+
+// A sibling's k2 window at 500,000 sits between the figure at the context
+// (268,800) and the one at the reading (768,000). The lower bound is judged
+// against the context, as with the switch off: the sibling is above it, no
+// bound arms, and the reading prices the replica. Judged against the raised
+// figure, the sibling would have armed a bound the context never would.
+func TestK2DerivedAtResidentKV_TheLowerBoundIsJudgedAtTheContext(t *testing.T) {
+	sw := residentSwitches{aboveContext: true, atResident: true}
+	_, p3, _ := residentRun(t, []domain.ReplicaMetrics{residentRow(0.3)}, []string{"variant-d"}, sw)
+	own, ok := p3["historyKey"].(string)
+	require.True(t, ok && strings.Contains(own, "variant-d"), "the replica's k2 key: %v", p3["historyKey"])
+	donor := strings.Replace(own, "variant-d", "variant-s", 1)
+	sibling := func(a *SaturationAnalyzer) {
+		a.capacityStore.Update("test-ns", "test-model", "variant-s", capacity.Record{
+			AcceleratorName: "H200", GpuCount: 1, EngineParams: deploymentParams(), TotalKvCapacityTokens: residentCap,
+		}, time.Now())
+		setDonor(a, donor, 500_000)
+	}
+	on, _, _ := residentRun(t, []domain.ReplicaMetrics{residentRow(0.3)}, []string{"variant-d"}, sw, sibling)
+	assert.Equal(t, 768_000.0, on["variant-d"].PerReplicaCapacity)
+	assert.True(t, strings.HasPrefix(on["variant-d"].Reason, "P3"), on["variant-d"].Reason)
+
+	// Control: a sibling under the context's figure arms the bound on or
+	// off, and the reading prices nothing.
+	under := func(a *SaturationAnalyzer) { sibling(a); setDonor(a, donor, 200_000) }
+	got, _, _ := residentRun(t, []domain.ReplicaMetrics{residentRow(0.3)}, []string{"variant-d"}, sw, under)
+	off, _, _ := residentRun(t, []domain.ReplicaMetrics{residentRow(0.3)}, []string{"variant-d"},
+		residentSwitches{aboveContext: true}, under)
+	assert.Equal(t, off["variant-d"].PerReplicaCapacity, got["variant-d"].PerReplicaCapacity)
+	assert.Less(t, got["variant-d"].PerReplicaCapacity, residentAtCtx)
 }
 
 // Two decode variants read together: variant-d's engine holds 3000 a

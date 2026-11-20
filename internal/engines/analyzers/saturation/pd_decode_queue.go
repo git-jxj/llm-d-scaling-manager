@@ -187,14 +187,16 @@ func landedHasBudgetRoom(raw domain.ReplicaMetrics, role string, maxNumSeqs int6
 // reports the running count summed over ranks, so it is the mean a rank, scaled
 // by the busiest rank's KV over the pod's mean KV (requests hold KV, so the
 // busiest rank by KV runs about that share more), and never above the sum.
-// Where the mean KV is not read it is the sum, which no rank can exceed. On a
-// pod of one rank it is the count. Measured on a day-long P/D recording: a pod
+// Where the mean KV or the busiest rank's KV is not read it is the sum, which
+// no rank can exceed. On a pod of one rank it is the count. It is an
+// estimate: the rank with the most KV need not run the most requests, and a
+// rank of short requests can reach its cap at less KV than its siblings. Measured on a day-long P/D recording: a pod
 // of four ranks running 12 at a busiest-rank KV of 0.24 read as the sum was
 // over a steady batch of 9.7 a rank, where its ranks ran about 3 each.
 func busiestRankRunning(raw domain.ReplicaMetrics) float64 {
 	sum := float64(raw.RunningRequests)
 	ranks := raw.Ranks()
-	if ranks <= 1 {
+	if ranks <= 1 || !(raw.MaxRankKvCacheUsage > 0) {
 		return sum
 	}
 	mean := raw.KvCacheUsage
