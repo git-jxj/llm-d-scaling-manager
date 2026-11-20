@@ -5,7 +5,7 @@
 #
 # The scenarios under hack/benchmark/scenarios/guides/ mount the harness's own
 # workload PVC (RWX, shared) at /engine-cache as the home of VLLM_CACHE_ROOT,
-# FLASHINFER_WORKSPACE_DIR and TRITON_CACHE_DIR. deploy/enginecache.sh puts
+# FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR. deploy/enginecache.sh puts
 # those caches on the node's disk instead, behind a claim named engine-cache;
 # this rewrites the scenario COPY the standup made so every `engine-cache`
 # volume names that claim, and drops the subPath (the volume's directory is
@@ -64,8 +64,8 @@ if [ "$n" -eq 0 ]; then
         .additionalVolumes = ((.additionalVolumes // []) + [{\"name\": \"engine-cache\", \"type\": \"persistentVolumeClaim\", \"persistentVolumeClaim\": {\"claimName\": strenv(CLAIM_NAME)}}])
         | .additionalVolumeMounts = ((.additionalVolumeMounts // []) + [{\"name\": \"engine-cache\", \"mountPath\": \"/engine-cache\"}])
         | .vllm.cacheRoot = \"/engine-cache/vllm\"
-        | .extraEnvVars = ([(.extraEnvVars // [])[] | select(.name != \"FLASHINFER_WORKSPACE_DIR\" and .name != \"TRITON_CACHE_DIR\")]
-            + [{\"name\": \"FLASHINFER_WORKSPACE_DIR\", \"value\": \"/engine-cache/flashinfer\"}, {\"name\": \"TRITON_CACHE_DIR\", \"value\": \"/engine-cache/triton\"}]))" "$SCENARIO"
+        | .extraEnvVars = ([(.extraEnvVars // [])[] | select(.name != \"FLASHINFER_WORKSPACE_BASE\" and .name != \"FLASHINFER_WORKSPACE_DIR\" and .name != \"TRITON_CACHE_DIR\")]
+            + [{\"name\": \"FLASHINFER_WORKSPACE_BASE\", \"value\": \"/engine-cache/flashinfer\"}, {\"name\": \"TRITON_CACHE_DIR\", \"value\": \"/engine-cache/triton\"}]))" "$SCENARIO"
     echo "node-local engine caches: added an engine cache to ${roles} vLLM role(s) that had none"
     n="$(yq -r '[.. | select(type == "!!map" and has("additionalVolumes")) | .additionalVolumes[] | select(.name == "engine-cache")] | length' "$SCENARIO")"
 fi

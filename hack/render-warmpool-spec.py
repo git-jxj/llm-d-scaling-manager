@@ -164,24 +164,33 @@ def as_yaml(role):
     # drain that drains nothing is silent by construction.
     text = text.replace("\\", "\\\\")
 
-    # The heredoc is UNQUOTED so the placeholders expand. Anything else the shell
-    # would treat as an expansion has to be caught here rather than discovered as
-    # a malformed manifest on a cluster. The manifest's own $ and ` live in
-    # comments, which yaml.dump drops -- this guard is for the day one moves into
-    # a value. Escaping cannot help: a doubled backslash before a dollar still
-    # leaves the dollar to the shell.
-    scrubbed = text
+    # The heredoc is UNQUOTED so the placeholders expand. Every other $ and `
+    # is escaped, after the doubling above, so the shell hands it on as
+    # written: the engine-cache guard in the launcher command is shell, and
+    # carries both. A doubled backslash before an escaped dollar comes back
+    # as one backslash and a dollar, which is what the manifest says.
+    # hack/check-warmpool-manifests.sh compares the delivered command with
+    # the manifest's, character for character.
+    pieces = [text]
     for placeholder in PLACEHOLDERS.values():
-        scrubbed = scrubbed.replace(placeholder, "")
-    for char, what in (("$", "an expansion"), ("`", "a command substitution")):
-        if char in scrubbed:
-            line = next(l for l in scrubbed.splitlines() if char in l)
-            raise SystemExit(
-                "the %s Pod spec contains %r, which the shell would read as %s: %r\n"
-                "Quote it in the manifest, or teach this generator to escape it."
-                % (role, char, what, line.strip())
-            )
+        pieces = [part for piece in pieces for part in _split_keep(piece, placeholder)]
+    escaped = []
+    for piece in pieces:
+        if piece in PLACEHOLDERS.values():
+            escaped.append(piece)
+        else:
+            escaped.append(piece.replace("$", "\\$").replace("`", "\\`"))
+    text = "".join(escaped)
     return text.rstrip("\n")
+
+
+def _split_keep(text, sep):
+    """text split on sep, with sep kept as its own element between the parts."""
+    parts = text.split(sep)
+    out = [parts[0]]
+    for part in parts[1:]:
+        out += [sep, part]
+    return out
 
 
 def manifest_proxy_image():

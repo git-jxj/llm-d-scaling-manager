@@ -2,8 +2,9 @@
 # Keep the engines' compile caches on every accelerator node's local disk, so
 # a replica's start does not depend on a shared volume being writable.
 #
-# vLLM keeps three caches between runs -- the torch.compile artefacts, the
-# FlashInfer autotune table and Triton's JIT cache -- and a replica that finds
+# vLLM keeps three caches between runs -- the torch.compile artefacts (with
+# vLLM's FlashInfer autotune results, under VLLM_CACHE_ROOT), FlashInfer's own
+# JIT kernels and Triton's JIT cache -- and a replica that finds
 # them warm skips the compile; one that does not pays it at every start.
 # Pointing them at a shared RWX claim works until the claim does not: measured
 # on one cluster, nine starts of the same pod spec split by node into 51-56 s
@@ -167,7 +168,12 @@
 # keyed by a hash of the engine config, so every model and flag set in the
 # namespace has its own entry and none hits another's). A model server
 # mounts it read-write at, say, /engine-cache and points VLLM_CACHE_ROOT,
-# FLASHINFER_WORKSPACE_DIR and TRITON_CACHE_DIR under it -- and keeps a guard
+# FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR under it (FlashInfer adds
+# .cache/flashinfer/ under its base, so its kernels and cubins land in
+# flashinfer/<image key>/.cache/flashinfer/; seed and publish copy that tree as they copy
+# the rest, and an empty flashinfer/ -- every node prepared before v0.12.1,
+# when the patch set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not
+# read -- is nothing to copy, not an error) -- and keeps a guard
 # that unsets a variable whose directory is not writable, so a node that is
 # not prepared costs a compile, not the replica. The guard covers
 # PYTHONPYCACHEPREFIX too: with it set Python reads bytecode only from it, so
@@ -194,9 +200,11 @@
 # directories to it and chmod them 1770 on each node. The preparer runs as
 # its own ServiceAccount, engine-cache-preparer. The publish pods (same
 # ServiceAccount) add one capability, DAC_OVERRIDE, to read what a non-root
-# engine wrote 600; baseline admits it. A seeded node gets the copies as the
-# preparer's, in directories it makes 1777, so an engine of any UID can add
-# to them.
+# engine wrote 600; baseline admits it, OpenShift's restricted-v2 does not
+# (there publish needs an SCC whose allowedCapabilities lists DAC_OVERRIDE;
+# not yet run). A seeded node gets the copies as the preparer's, in
+# directories it makes 1777 (a+rwx under flashinfer/), so an engine of any
+# UID can add to them.
 #
 # On OpenShift -- NOT YET RUN THERE -- restricted-v2 runs the preparer and
 # the engines as the project's range UID with GID 0, and the kubelet does not
@@ -291,10 +299,18 @@ done
 # A directory the merge makes is 1777, as the four above are: the copies are
 # this pod's, and an engine of any UID must still add to the tree it finds --
 # a new key under torch_compile_cache/, a .pyc under pycache/<key>/, the
-# guard's .writable marker. Sticky, so no engine removes a seeded copy. A seed
-# entry this pod may not read fails the merge (skipunread=0), so the next
-# start of the pod tries again.
+# guard's .writable marker. Sticky, so no engine removes a seeded copy. Files
+# are readable by every user (fmode). Under flashinfer/ the loop below makes
+# directories a+rwx, not sticky, and files a+rw: FlashInfer fails on an entry
+# it cannot write when it builds a kernel (a lock file, its build files, the
+# ninja log), so the guard sends an engine away from a tree with any entry it
+# cannot write, and a copy is the preparer's, not the engine user's. Sticky
+# would let a user write a seeded file but not remove or replace it, which
+# FlashInfer's build does. The cost: any user on the node can rewrite or
+# remove a seeded FlashInfer kernel. A seed entry this pod may not read fails
+# the merge (skipunread=0), so the next start of the pod tries again.
 dmode=1777; skipunread=0
+fmode=a+r
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
 cpa=0
@@ -358,8 +374,9 @@ unreadable() {
 }
 merge() {
   local e n t r dd was wa wp wpe ws pub
-  # a directory that cannot be listed would glob to nothing and read as empty
-  ls -a "$1" >/dev/null || { unreadable "$1" "$3" "$4" || complete=0; return; }
+  # a directory that cannot be listed, or listed but not searched (r--),
+  # would glob to nothing and read as empty
+  { ls -a "$1" >/dev/null && ls -d "$1/." >/dev/null; } || { unreadable "$1" "$3" "$4" || complete=0; return; }
   dd="$4."
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
@@ -388,7 +405,7 @@ merge() {
       fi
     elif [ -f "$e" ]; then
       pub=0; ls -ld "$e" | grep -q '^-......r' && pub=1
-      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { rm -f "$t"; unreadable "$e" "$r" "$dd" || complete=0; continue; }
+      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod "$fmode" "$t" || { rm -f "$t"; unreadable "$e" "$r" "$dd" || complete=0; continue; }
       added="$added."
       [ "$pub" = 1 ] || { private="$private."; [ -n "$private_eg" ] || private_eg="$e"; }
     else
@@ -429,6 +446,7 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
   complete=1; added=""; links=""; private=""; private_eg=""; unread=""; skip=0
   for d in vllm flashinfer triton pycache; do
     [ -d "$seed_dir/$d" ] || continue
+    if [ "$d" = flashinfer ]; then dmode=a+rwx; fmode=a+rw; else dmode=1777; fmode=a+r; fi
     merge "$seed_dir/$d" "/engine-cache/$d" "$d" .
   done
   merge_report
@@ -439,6 +457,11 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
     echo "engine cache: seeding on $NODE_NAME from $want did not complete (a copy failed and was removed); it is retried when this pod next starts"
   fi
 fi
+# Nothing under flashinfer/ is opened up beyond what a merge copies. The
+# guard leaves each tree to the user whose engine started on it first and
+# gives an engine of any other user its own copy, so no engine needs to write
+# another user's entries; this preparer could not reopen them anyway, with
+# every capability dropped it changes the modes of its own files only.
 touch "/engine-cache/$MARKER" || exit 1
 echo "engine cache: prepared on $NODE_NAME: /engine-cache/{vllm,flashinfer,triton,pycache}"
 trap 'exit 0' TERM; while :; do sleep 3600 & wait; done
@@ -701,7 +724,7 @@ cmd_apply() {
     # an existing claim keeps its size (deploy/lib/nodedir.sh says why)
     nodedir_claim_capacity "$NAMESPACE" "$CLAIM" "$CAPACITY_GIVEN" "enginecache.sh delete -n ${NAMESPACE}"
     render | kubectl apply -f - >/dev/null
-    log_info "preparing ${NODE_PATH}/${SUBDIR} on $(accelerator_selector_text "$NODE_SELECTOR"); claim ${CLAIM}${SEED_CLAIM:+, seeded from ${SEED_CLAIM}${SEED_SUBPATH:+:$SEED_SUBPATH}} -- mount it read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_DIR, TRITON_CACHE_DIR and PYTHONPYCACHEPREFIX (pycache/<image key>) under it"
+    log_info "preparing ${NODE_PATH}/${SUBDIR} on $(accelerator_selector_text "$NODE_SELECTOR"); claim ${CLAIM}${SEED_CLAIM:+, seeded from ${SEED_CLAIM}${SEED_SUBPATH:+:$SEED_SUBPATH}} -- mount it read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_BASE, TRITON_CACHE_DIR and PYTHONPYCACHEPREFIX (pycache/<image key>) under it"
     if kubectl api-resources --api-group=security.openshift.io 2>/dev/null | grep -q securitycontextconstraints; then
         log_warning "OpenShift: the preparer and the engines run as the project UID (GID 0) under restricted-v2 and the kubelet does not relabel a hostPath; on each node, before this takes: mkdir -p ${NODE_PATH}/${SUBDIR} && chgrp 0 ${NODE_PATH}/${SUBDIR} && chmod 2775 ${NODE_PATH}/${SUBDIR} && chcon -t container_file_t ${NODE_PATH}/${SUBDIR} (oc debug node/<n> -- chroot /host ...), or a MachineConfig mount with context=system_u:object_r:container_file_t:s0. Not yet run on OpenShift"
     fi
@@ -915,13 +938,16 @@ dst="/seed${SEED_SUBPATH:+/$SEED_SUBPATH}"
 # every user, as the merge makes its own; one that exists is left as it is
 (umask 022; mkdir -p "$dst") || exit 1
 # A directory the merge makes in the seed is readable and searchable by every
-# user and writable by none but this pod: the seed claim is shared, and what
-# is in it is code every seeded node runs. An entry this pod may not read is
-# skipped and named (skipunread=1), not a failed publish: the pod reads as
-# root with CAP_DAC_OVERRIDE, so on Kubernetes there is none, but a runtime
-# that drops the capability, or OpenShift running the pod as the project UID,
-# would otherwise leave the seed unstamped for one file vLLM wrote 600.
+# user, and its files readable: the seed claim is shared, and what is in it
+# is code every seeded node runs. Only this pod writes them, except under
+# flashinfer/, which the loop below makes writable by every user as the
+# preparer does, since FlashInfer writes there on every start. An entry this
+# pod may not read is skipped and named (skipunread=1), not a failed publish:
+# the pod reads as root with CAP_DAC_OVERRIDE, so on Kubernetes there is
+# none, but a runtime that drops the capability would otherwise leave the
+# seed unstamped for one file vLLM wrote 600.
 dmode=a+rx; skipunread=1
+fmode=a+r
 # cp -a without ownership is GNU only; busybox cp refuses the option. Try it
 # once; without it a plain cp copies the content and mode, not the times.
 cpa=0
@@ -985,8 +1011,9 @@ unreadable() {
 }
 merge() {
   local e n t r dd was wa wp wpe ws pub
-  # a directory that cannot be listed would glob to nothing and read as empty
-  ls -a "$1" >/dev/null || { unreadable "$1" "$3" "$4" || complete=0; return; }
+  # a directory that cannot be listed, or listed but not searched (r--),
+  # would glob to nothing and read as empty
+  { ls -a "$1" >/dev/null && ls -d "$1/." >/dev/null; } || { unreadable "$1" "$3" "$4" || complete=0; return; }
   dd="$4."
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
@@ -1015,7 +1042,7 @@ merge() {
       fi
     elif [ -f "$e" ]; then
       pub=0; ls -ld "$e" | grep -q '^-......r' && pub=1
-      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { rm -f "$t"; unreadable "$e" "$r" "$dd" || complete=0; continue; }
+      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod "$fmode" "$t" || { rm -f "$t"; unreadable "$e" "$r" "$dd" || complete=0; continue; }
       added="$added."
       [ "$pub" = 1 ] || { private="$private."; [ -n "$private_eg" ] || private_eg="$e"; }
     else
@@ -1033,6 +1060,7 @@ complete=1; added=""; links=""; private=""; private_eg=""; unread=""; skip=0
 for d in vllm flashinfer triton pycache; do
   [ -d "/engine-cache/$d" ] || continue
   (umask 022; mkdir -p "$dst/$d") || exit 1
+  if [ "$d" = flashinfer ]; then dmode=a+rwx; fmode=a+rw; else dmode=a+rx; fmode=a+r; fi
   merge "/engine-cache/$d" "$dst/$d" "$d" .
 done
 merge_report

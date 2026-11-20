@@ -518,7 +518,7 @@ func warmPoolSupervisorContainerFor(image, cacheClaim string) corev1.Container {
 		c.Env = append(c.Env,
 			corev1.EnvVar{Name: "HF_HOME", Value: "/model-cache"},
 			corev1.EnvVar{Name: "VLLM_CACHE_ROOT", Value: "/model-cache/vllm"},
-			corev1.EnvVar{Name: "FLASHINFER_WORKSPACE_DIR", Value: "/model-cache/flashinfer"},
+			corev1.EnvVar{Name: "FLASHINFER_WORKSPACE_BASE", Value: "/model-cache/flashinfer"},
 			corev1.EnvVar{Name: "TRITON_CACHE_DIR", Value: "/model-cache/triton"},
 			corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: "/model-cache"},
 			corev1.EnvVar{Name: "XDG_CONFIG_HOME", Value: "/model-cache/config"},
