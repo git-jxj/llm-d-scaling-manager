@@ -225,10 +225,12 @@ count. On a DisaggregatedSet they meet in three places:
   scale-down waits (`Deferred`). Do not fight it.
 - **A release gate label.** Some deployments keep a Ready pod out of the
   InferencePool with a label (for example `<prefix>/production-released=false`)
-  while it drains or before it is released. Our collector counts a pod as
-  supply when it is Ready (`podServingState.ready`), whatever the pool selector
-  says. Such a pod would be counted as capacity that serves nothing. See the
-  open decisions.
+  while it drains or before it is released. Such a group is Ready and serves
+  nothing. Pool-selected supply ([pool-selected-supply.md](pool-selected-supply.md),
+  on by default) leaves it out: the role's template is selected, so the role is
+  not held, and each relabelled group is counted out through its leader, during
+  a rollout too. `internal/engines/variantmeta/routing_dset_test.go` and
+  `internal/engines/steadystate/pool_routing_dset_test.go` cover it.
 - **Drain on scale-in.** The DisaggregatedSet controller deletes groups directly
   on scale-down. The engine must drain in its own `preStop`, on the leader and
   every worker, as for a LeaderWorkerSet
