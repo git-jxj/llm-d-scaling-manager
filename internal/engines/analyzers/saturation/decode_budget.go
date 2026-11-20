@@ -28,8 +28,12 @@ import (
 // emitted. A replica that reports neither rate is priced as before. Off, as
 // before, at I + O.
 //
-// Off from the constructor: on the controller's goldens it moves decode's
-// derived k2, and the default changes only after review.
+// On from the constructor (v0.12.2): a P/D decode's capacity is no longer
+// read 10-18x low where B is small. The batch it prices is the budget's
+// throughput ceiling, with no latency term: a fleet with headroom is packed
+// to fewer decode replicas at a higher per-token latency, bounded only by the
+// engine (issue llm-d-incubation/llm-d-scaling-manager#258 is the TPOT-aware
+// cap). A replay turns it off.
 const SwitchK2DecodeBudgetAtComputedPrompt = "k2-decode-budget-at-computed-prompt"
 
 // stepBudget is how one engine rank's token budget is spent per request, for

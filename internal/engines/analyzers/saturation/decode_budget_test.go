@@ -151,36 +151,47 @@ func TestK2DecodeBudget_TheComputedPromptIsHeldToThePrompt(t *testing.T) {
 
 // Through Analyze, on a P/D model: the decode variant's PerReplicaCapacity.
 func TestK2DecodeBudget_ThroughAnalyze(t *testing.T) {
+	run := func(on bool) float64 {
+		return decodeBudgetCapacity(t, map[string]bool{SwitchK2DecodeBudgetAtComputedPrompt: on})
+	}
+	assert.Equal(t, 713_688.0, run(false))
+	assert.Equal(t, 7_911_384.0, run(true))
+}
+
+// decodeBudgetCapacity runs three cycles of budgetRow beside a prefill
+// replica with the switches sw set, and returns the decode variant's
+// PerReplicaCapacity, which the derived k2 (P3) must price. Nil sw leaves
+// every switch at its constructor default.
+func decodeBudgetCapacity(t *testing.T, sw map[string]bool) float64 {
+	t.Helper()
 	states := []domain.VariantReplicaState{
 		{VariantName: decodeVariant, Role: domain.RoleDecode, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 32},
 		{VariantName: pdPrefillVariant, Role: domain.RolePrefill, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 32},
 	}
-	run := func(on bool) float64 {
-		store := capacity.NewStore()
-		store.Update("test-ns", "test-model", decodeVariant, capacity.Record{
-			GpuCount: 32, EngineParams: budgetParams(), LearnedFrom: "deployment",
-		}, time.Now())
-		a := NewSaturationAnalyzer(store)
-		require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchK2DecodeBudgetAtComputedPrompt: on}))
-		clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
-		a.now = func() time.Time { return clock }
-		in := makeAnalyzerInput([]domain.ReplicaMetrics{budgetRow(), pdPrefillRow()}, states)
-		var res *domain.AnalyzerResult
-		for range 3 {
-			var err error
-			res, err = a.Analyze(context.Background(), in)
-			require.NoError(t, err)
-			clock = clock.Add(15 * time.Second)
-		}
-		for _, vc := range res.VariantCapacities {
-			if vc.VariantName == decodeVariant {
-				require.True(t, strings.HasPrefix(vc.Reason, "P3"), "the derived k2 prices it: %s", vc.Reason)
-				return vc.PerReplicaCapacity
-			}
-		}
-		t.Fatal("no decode capacity")
-		return 0
+	store := capacity.NewStore()
+	store.Update("test-ns", "test-model", decodeVariant, capacity.Record{
+		GpuCount: 32, EngineParams: budgetParams(), LearnedFrom: "deployment",
+	}, time.Now())
+	a := NewSaturationAnalyzer(store)
+	if sw != nil {
+		require.NoError(t, a.SetSwitchesForReplay(sw))
 	}
-	assert.Equal(t, 713_688.0, run(false))
-	assert.Equal(t, 7_911_384.0, run(true))
+	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return clock }
+	in := makeAnalyzerInput([]domain.ReplicaMetrics{budgetRow(), pdPrefillRow()}, states)
+	var res *domain.AnalyzerResult
+	for range 3 {
+		var err error
+		res, err = a.Analyze(context.Background(), in)
+		require.NoError(t, err)
+		clock = clock.Add(15 * time.Second)
+	}
+	for _, vc := range res.VariantCapacities {
+		if vc.VariantName == decodeVariant {
+			require.True(t, strings.HasPrefix(vc.Reason, "P3"), "the derived k2 prices it: %s", vc.Reason)
+			return vc.PerReplicaCapacity
+		}
+	}
+	t.Fatal("no decode capacity")
+	return 0
 }

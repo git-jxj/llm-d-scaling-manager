@@ -1338,11 +1338,11 @@ var heldBy = map[string][]heldTest{
 	saturation.SwitchK2DecodeBudgetAtComputedPrompt: {
 		{"../saturation", "TestK2DecodeBudget_ADecodeIsNotChargedThePromptItDidNotCompute"},
 		{"../saturation", "TestK2DecodeBudget_ThroughAnalyze"},
-		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+		{"../saturation", "TestDecodeBudgetSwitches_OnFromTheConstructor"},
 	},
 	saturation.SwitchDecodeLandedNeedsABound: {
 		{"../saturation", "TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2"},
-		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+		{"../saturation", "TestDecodeBudgetSwitches_OnFromTheConstructor"},
 	},
 	// llm-d-incubation/llm-d-scaling-manager#188: each runs the switch on
 	// and off and asserts both.
