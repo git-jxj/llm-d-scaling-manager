@@ -127,17 +127,25 @@ prompt lengths, which one prompt length run above low load never gives. On:
 
 - Where P1 refused `a`, the joint window's `a₀` stands
   (`withJointFixedLatency`; `aSource` on the `slo-ttft-variant` line).
-- A prefill variant whose reading is `priced` gets that reading's
-  per-replica rate as `PerReplicaCapacity` (requests per second), reason
-  `slo-ttft`, and the role's demand is the model's arrival rate
-  (`sizePrefill`). The need is arrival over that rate. Decode-bound,
-  routing-bound and refused readings ask nothing.
-- On the staircase goldens only `a-off` is sized (one replica, as
-  saturation). `b-off`, the issue's case, is below the floor at the assumed
-  prompt cv of 2: no count meets 190 ms. Priced at a measured cv of 0.1, the
-  steps that missed ask 3 where saturation asks 2, and past 37 r/s the ask
-  climbs to 7-31 as the decode engine's TTFT nears the target.
-  `TestGoldens_TTFTSizesPrefillOnTheStaircases` holds the first two.
+- For a prefill variant whose reading is `priced`, the ask is the least pod
+  count the model prices under the target, each count at its own `f`
+  (`prefillAsk`), searched up to 4 times the Ready pods; past that nothing is
+  asked. `PerReplicaCapacity` is the arrival rate over the role's count at
+  that ask (requests per second), reason `slo-ttft`, and the role's demand is
+  the arrival rate (`sizePrefill`). Only when every prefill variant with a
+  Ready pod has an ask. Decode-bound, routing-bound and refused readings ask
+  nothing.
+- `a₀` comes from the joint window, kept only for one prefill and one decode
+  variant. The engine's capacity check reads the role's demand against its
+  scale-up threshold, as it does for decode.
+- On the staircase goldens only `a-off` is sized, at one replica. `b-off`,
+  the issue's case, is below the floor at the assumed prompt cv of 2: no
+  count meets 190 ms, so nothing is asked.
+  `TestGoldens_TTFTSizesPrefillOnTheStaircases` holds both. In a one-off
+  replay at a measured cv of 0.1, the steps that missed (30-35 r/s) asked a
+  median of 2-4 replicas, at most 5, where saturation asks 2; past 37 r/s the
+  ask was 5-8, or none past the bound, as the decode engine's TTFT nears the
+  target.
 
 It stays off until a cluster run settles whether a third prefill replica
 holds the target on that shape.

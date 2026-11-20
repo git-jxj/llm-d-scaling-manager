@@ -1165,9 +1165,9 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// llm-d-incubation/llm-d-scaling-manager#131 sizes a prefill variant on
 	// TTFT, the joint a₀ standing where P1 refused a: off from the
 	// constructor, so every golden replay runs it off, and off alone from
-	// all on moves nothing. On, it moves the slo analyzer's rows of the
-	// staircase goldens; TestGoldens_TTFTSizesPrefillOnTheStaircases holds
-	// what, and its unit tests hold it (heldBy).
+	// all on moves nothing. On, it moves the slo analyzer's rows wherever a
+	// prefill is priced; TestGoldens_TTFTSizesPrefillOnTheStaircases holds
+	// what it moves on the staircases, and its unit tests hold it (heldBy).
 	slo.SwitchTTFTSizesPrefill: nil,
 	// ev-shindin/llm-scaling-manager#277 prices a resident request at the KV it is measured to hold,
 	// between the prefix-cache hit rate's discount and none. It moves the

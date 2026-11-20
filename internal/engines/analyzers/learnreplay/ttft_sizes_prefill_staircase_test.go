@@ -61,7 +61,7 @@ func replaySizesPrefill(t *testing.T, raw []byte, on bool) sizesPrefillRun {
 		}
 		require.NoError(t, json.Unmarshal([]byte(row[4]), &r))
 		if d, ok := r.Result.RoleDemand[domain.RolePrefill]; ok {
-			demand[row[1]] = d
+			demand[row[1]+"|"+row[2]] = d
 		}
 	}
 	for _, row := range csvRows(t, run.outputs[OutputVariantCapacities]) {
@@ -76,7 +76,7 @@ func replaySizesPrefill(t *testing.T, raw []byte, on bool) sizesPrefillRun {
 		if vc.Role != domain.RolePrefill || !(vc.PerReplicaCapacity > 0) {
 			continue
 		}
-		d, ok := demand[row[1]]
+		d, ok := demand[row[1]+"|"+row[2]]
 		require.True(t, ok, "a sized prefill variant with no prefill demand at %s", row[1])
 		run.sized++
 		run.largest = max(run.largest, math.Ceil(d/vc.PerReplicaCapacity))
@@ -101,7 +101,7 @@ func replaySizesPrefill(t *testing.T, raw []byte, on bool) sizesPrefillRun {
 // and none sized.
 //
 //   - a-off (1000/1000) is priced on every cycle with V_P, at one prefill
-//     replica: the saturation analyzer's ask too.
+//     replica, as the saturation analyzer asks there (not asserted here).
 //   - b-off (8000/200, flow control off) is the case of
 //     llm-d-incubation/llm-d-scaling-manager#131. With a₀ as a it is priced
 //     as far as the floor, and the 190 ms p95 is below it on every cycle:
@@ -110,8 +110,9 @@ func replaySizesPrefill(t *testing.T, raw []byte, on bool) sizesPrefillRun {
 //     of 2. No prefill count meets it, so none is asked for. The recordings
 //     carry no computed-token histogram. In a one-off replay that priced a
 //     measured cv of 0.1, the fixed-length prompts the benchmark sent, the
-//     steps that missed (30 to 35 r/s) asked 3 prefill replicas, where the
-//     saturation analyzer asks 2; this test does not hold that.
+//     steps that missed (30 to 35 r/s) asked a median of 2 to 4 prefill
+//     replicas, at most 5, where the saturation analyzer asks 2; this test
+//     does not hold that.
 //   - b-on's last cycles hold a decode line and are below the floor too;
 //     c-on, flow control on with no decode line, stays no-decode-side.
 var sizesPrefillStaircase = []struct {

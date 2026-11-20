@@ -78,13 +78,12 @@ func TestTTFT_TheSizesPrefillSwitch(t *testing.T) {
 
 	pre = variantCapacity(t, res, "pre")
 	assert.Equal(t, reasonTTFTSized, pre.Reason)
-	assert.Equal(t, on.PerReplica, pre.PerReplicaCapacity)
+	assert.InDelta(t, 10, pre.PerReplicaCapacity, 1e-12, "30 r/s over the 3 pods it asks for")
 	assert.InDelta(t, 30, res.RoleDemand[domain.RolePrefill], 1e-12)
 	assert.InDelta(t, 30, pre.TotalDemand, 1e-12)
-	assert.InDelta(t, 30/(2*on.PerReplica), pre.Utilization, 1e-12)
+	assert.InDelta(t, 1.5, pre.Utilization, 1e-12)
 	need := res.RoleDemand[domain.RolePrefill] / pre.PerReplicaCapacity
-	assert.Greater(t, need, 2.0, "more than the fleet that missed")
-	assert.Equal(t, 3.0, math.Ceil(need))
+	assert.InDelta(t, 3, need, 1e-12, "more than the fleet that missed")
 
 	// The count it asks for meets the target, and the one below it does not.
 	target := whatif.TTFTTarget{Seconds: 0.3, Percentile: 0.9}
@@ -95,7 +94,7 @@ func TestTTFT_TheSizesPrefillSwitch(t *testing.T) {
 		return met
 	}
 	assert.False(t, at(2))
-	assert.True(t, at(int(math.Ceil(need))))
+	assert.True(t, at(3))
 
 	// The decode side is what it was.
 	assert.Equal(t, variantCapacity(t, offRes, "dec"), variantCapacity(t, res, "dec"))
@@ -109,7 +108,8 @@ func TestTTFT_TheSizesPrefillOffFromTheConstructor(t *testing.T) {
 	assert.Contains(t, ReplaySwitchNames(), SwitchTTFTSizesPrefill)
 }
 
-// a₀ stands only where P1 refused a, and only a learned one.
+// a₀ stands only where P1 refused a, and only a learned one. A curve P1
+// fitted and then refused the intercept of goes with the refused a.
 func TestTTFT_WithJointFixedLatency(t *testing.T) {
 	learned := &jointCycle{est: prefill.JointEstimate{Overhead: 0.015, OverheadSamples: 40}}
 	p1 := ttftEstimate()
@@ -125,6 +125,18 @@ func TestTTFT_WithJointFixedLatency(t *testing.T) {
 	assert.Empty(t, got.ARefused)
 	assert.Equal(t, aSourceJoint, aSource(got, taken))
 
+	afterFit := prefill.Estimate{VP: 100000, VPSource: prefill.SourceBusyMinutes, VPPromptTokens: 2000,
+		ARefused: prefill.AUncertain, AModel: prefill.AModelQuadratic, ASlope: 1e-5, ACurve: 1e-9}
+	got, taken = withJointFixedLatency(afterFit, learned)
+	require.True(t, taken)
+	assert.Empty(t, got.AModel)
+	assert.Zero(t, got.ASlope)
+	assert.Zero(t, got.ACurve)
+	base, u := whatif.PrefillFromEstimate(got)
+	require.Nil(t, u)
+	assert.Zero(t, base.CurveSlope, "V_P is not rescaled by a refused curve")
+	assert.Zero(t, base.CurveCurvature)
+
 	for _, j := range []*jointCycle{nil,
 		{est: prefill.JointEstimate{OverheadRefused: prefill.NoOverheadReadings}},
 		{est: prefill.JointEstimate{Overhead: 0}},
@@ -138,15 +150,53 @@ func TestTTFT_WithJointFixedLatency(t *testing.T) {
 	}
 }
 
-// Only a priced reading sizes: decode-bound and routing-bound say more
-// prefill would not meet the target, and a refusal has no rate. The role's
-// demand is the arrival rate, split over the prefill variants by Ready
-// replicas.
+// The ask is the least count the model prices under the target, each count
+// at its own f: on one pod f is 1, on more at least 1.5, so one pod meeting
+// says nothing of two. Past maxPrefillAskFactor times the Ready pods there is
+// none.
+func TestTTFT_PrefillAsk(t *testing.T) {
+	in := ttftInputsAt(2, 0)
+	target := whatif.TTFTTarget{Seconds: 3, Percentile: 0.9}
+	meets := func(n int, rate float64) bool {
+		fl, _ := ttftFleet(in, n)
+		met, known := whatif.TTFTMeets(whatif.TTFTAt(fl, rate, target.Percentile), target)
+		return known && met
+	}
+	for _, rate := range []float64{1, 20, 60, 100, 150} {
+		n, ok := prefillAsk(in, rate, target)
+		if !ok {
+			for c := 1; c <= maxPrefillAskFactor*in.pods; c++ {
+				assert.False(t, meets(c, rate), "%g r/s: %d pods meets, and no ask", rate, c)
+			}
+			continue
+		}
+		assert.True(t, meets(n, rate), "%g r/s: the ask %d meets", rate, n)
+		for c := 1; c < n; c++ {
+			assert.False(t, meets(c, rate), "%g r/s: %d pods, fewer than the ask %d, meets", rate, c, n)
+		}
+	}
+	n, ok := prefillAsk(in, 100, target)
+	require.True(t, ok)
+	assert.Greater(t, n, 2, "100 r/s is past what 2 pods serve")
+
+	_, ok = prefillAsk(in, 1000, target)
+	assert.False(t, ok, "past 4x the pods: the bound")
+	_, ok = prefillAsk(ttftInputsAt(0, 0), 10, target)
+	assert.False(t, ok, "no Ready pod")
+	for _, rate := range []float64{0, math.NaN(), math.Inf(1)} {
+		_, ok = prefillAsk(in, rate, target)
+		assert.False(t, ok, "rate %g", rate)
+	}
+}
+
+// The asks size every prefill variant, or none: the role's demand is the
+// whole arrival rate. Each variant's capacity is the arrival rate over the
+// role's count with it at its ask.
 func TestTTFT_SizePrefill(t *testing.T) {
 	fleet := fleetReading{
 		variants: []domain.VariantReplicaState{
 			{VariantName: "a", Role: domain.RolePrefill}, {VariantName: "b", Role: domain.RolePrefill},
-			{VariantName: "d", Role: domain.RoleDecode},
+			{VariantName: "d", Role: domain.RoleDecode}, {VariantName: "idle", Role: domain.RolePrefill},
 		},
 		ready: map[string]int{"a": 3, "b": 1, "d": 2},
 	}
@@ -157,46 +207,40 @@ func TestTTFT_SizePrefill(t *testing.T) {
 				{VariantName: "a", Role: domain.RolePrefill, ObservedReplicas: 3, Reason: domain.ReasonNoData},
 				{VariantName: "b", Role: domain.RolePrefill, ObservedReplicas: 1, Reason: domain.ReasonNoData},
 				{VariantName: "d", Role: domain.RoleDecode, ObservedReplicas: 2, PerReplicaCapacity: 100, Reason: "slo-own"},
+				{VariantName: "idle", Role: domain.RolePrefill, Reason: domain.ReasonNoData},
 			},
 		}
 	}
-	reading := func(v, reason string, perReplica float64) metrics.SLOTTFTReading {
-		return metrics.SLOTTFTReading{Variant: v, Reason: reason, PerReplica: perReplica}
-	}
 
 	res := newResult()
-	sizePrefill(res, []metrics.SLOTTFTReading{
-		reading("a", constants.SLOTTFTReasonPriced, 5), reading("b", constants.SLOTTFTReasonPriced, 5),
-	}, fleet, 40)
+	sizePrefill(res, map[string]int{"a": 5, "b": 1}, fleet, 40)
 	assert.InDelta(t, 40, res.RoleDemand[domain.RolePrefill], 0)
 	assert.InDelta(t, 500, res.RoleDemand[domain.RoleDecode], 0, "decode keeps its own")
 	a, b := res.VariantCapacities[0], res.VariantCapacities[1]
 	assert.Equal(t, reasonTTFTSized, a.Reason)
+	assert.InDelta(t, 40.0/6, a.PerReplicaCapacity, 1e-12, "a at 5 beside b's 1")
+	assert.InDelta(t, 40.0/4, b.PerReplicaCapacity, 1e-12, "b at 1 beside a's 3")
 	assert.InDelta(t, 30, a.TotalDemand, 1e-12)
 	assert.InDelta(t, 10, b.TotalDemand, 1e-12)
-	assert.InDelta(t, 2, a.Utilization, 1e-12, "30 r/s over 3 pods at 5 r/s each")
+	assert.InDelta(t, 30/(3*40.0/6), a.Utilization, 1e-12)
+	assert.InDelta(t, 1, b.Utilization, 1e-12)
 	assert.Equal(t, newResult().VariantCapacities[2], res.VariantCapacities[2])
+	assert.Equal(t, newResult().VariantCapacities[3], res.VariantCapacities[3], "no Ready pod, no ask, not sized")
 
-	for _, reason := range []string{constants.SLOTTFTReasonDecodeBound, constants.SLOTTFTReasonRoutingBound,
-		constants.SLOTTFTReasonTargetBelowFloor, constants.SLOTTFTReasonNoFixedLatency} {
+	for _, asks := range []map[string]int{nil, {"a": 5}, {"a": 5, "b": 0}} {
 		res = newResult()
-		sizePrefill(res, []metrics.SLOTTFTReading{reading("a", reason, 5)}, fleet, 40)
-		assert.Equal(t, newResult(), res, reason)
-	}
-	for _, perReplica := range []float64{0, -1, math.NaN(), math.Inf(1)} {
-		res = newResult()
-		sizePrefill(res, []metrics.SLOTTFTReading{reading("a", constants.SLOTTFTReasonPriced, perReplica)}, fleet, 40)
-		assert.Equal(t, newResult(), res, "per replica %g", perReplica)
+		sizePrefill(res, asks, fleet, 40)
+		assert.Equal(t, newResult(), res, "asks %v: a variant with Ready pods and no ask sizes none", asks)
 	}
 	for _, arrival := range []float64{0, math.NaN(), math.Inf(1)} {
 		res = newResult()
-		sizePrefill(res, []metrics.SLOTTFTReading{reading("a", constants.SLOTTFTReasonPriced, 5)}, fleet, arrival)
+		sizePrefill(res, map[string]int{"a": 5, "b": 1}, fleet, arrival)
 		assert.Equal(t, newResult(), res, "arrival %g", arrival)
 	}
 
 	// No role demand yet (no output length): the prefill role still gets its own.
 	res = newResult()
 	res.RoleDemand = nil
-	sizePrefill(res, []metrics.SLOTTFTReading{reading("a", constants.SLOTTFTReasonPriced, 5)}, fleet, 40)
+	sizePrefill(res, map[string]int{"a": 5, "b": 1}, fleet, 40)
 	assert.Equal(t, map[string]float64{domain.RolePrefill: 40}, res.RoleDemand)
 }

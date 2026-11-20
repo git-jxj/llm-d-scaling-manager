@@ -458,9 +458,10 @@ func (a *Analyzer) analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 	// After the loop, whatever order the variants sort in: a prefill variant
 	// reads its decode variant's line. After the judge: the decode term reads
 	// the router's mean it collected.
-	snap.TTFT = a.priceTTFTVariants(logger, input, cfg, fleet, decodeLines, j.Latency, now)
+	var asks map[string]int
+	snap.TTFT, asks = a.priceTTFTVariants(logger, input, cfg, fleet, decodeLines, j.Latency, now)
 	if a.ttftSizesPrefill {
-		sizePrefill(result, snap.TTFT, fleet, modelArrival(input, fleet))
+		sizePrefill(result, asks, fleet, modelArrival(input, fleet))
 	}
 
 	// A window that covered a wake or a starting replica is not judged: the
