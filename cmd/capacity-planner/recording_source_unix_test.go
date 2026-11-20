@@ -11,10 +11,70 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
+
+// The server reads a recording only as a regular file, judged by the file it
+// opened, not by the path it checked: a name swapped, between the check and
+// the open, for a link to a character device or to a pipe with no writer is
+// refused at once, a 400 naming no server path. Before, the CLI's fallback
+// read the swapped file whole: /dev/zero without end, and a pipe waited on
+// for a writer that never comes. The CLI still reads a pipe whole
+// (TestRecordingFromAPipeOrADirectory).
+func TestServeOpensRegularFilesOnly(t *testing.T) {
+	gz, err := os.ReadFile(olsSweep)
+	require.NoError(t, err)
+	for name, target := range map[string]func(t *testing.T) string{
+		"a character device": func(*testing.T) string { return "/dev/null" },
+		"a pipe with no writer": func(t *testing.T) string {
+			p := filepath.Join(t.TempDir(), "rec.pipe")
+			require.NoError(t, syscall.Mkfifo(p, 0o600))
+			t.Cleanup(func() {
+				// A reader left waiting on the pipe (the bug) is let go.
+				if w, err := os.OpenFile(p, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+					_ = w.Close()
+				}
+			})
+			return p
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "rec.jsonl.gz")
+			require.NoError(t, os.WriteFile(path, gz, 0o644))
+			swapTo := target(t)
+			src := &servedSources{recordings: dir, warn: io.Discard}
+			swapped := false
+			src.onOpen = func(p string) {
+				swapped = assert.NoError(t, os.Remove(p)) && assert.NoError(t, os.Symlink(swapTo, p))
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := resolveRecording(src, "rec.jsonl.gz")
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				require.True(t, swapped, "the file was not swapped")
+				require.Error(t, err, "a swapped file resolved")
+				assert.Equal(t, "rec.jsonl.gz: not a regular file", err.Error())
+				assert.True(t, whatifapi.IsInputError(err), "%T", err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("the server waited on the swapped file")
+			}
+		})
+	}
+	// Unswapped, the same file resolves: the refusal is the swap's.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rec.jsonl.gz"), gz, 0o644))
+	_, err = resolveRecording(&servedSources{recordings: dir, warn: io.Discard}, "rec.jsonl.gz")
+	require.NoError(t, err)
+}
 
 // makePipe is a named pipe that gives data once to the one reader that opens
 // it, as <(cat x.gz) gives a recording.

@@ -44,8 +44,19 @@ func memoryRecording(data []byte) *recordingSource {
 // not a regular file (a pipe, as <(cat x.gz) gives) has no size to read in
 // passes: it is read whole into memory, gunzipped, as before passes. A
 // directory is its read's error, which names the path once.
-func openRecording(path string) (*recordingSource, error) {
-	f, err := os.Open(path)
+//
+// With regularOnly (the server), anything but a regular file is refused,
+// judged by the file opened, not by its path: a name checked as a regular
+// file can be swapped for a link to /dev/zero or a pipe before it is
+// opened, and read whole, that is unbounded memory or a request that never
+// ends. It is opened without waiting for a pipe's writer (openNonBlock), so
+// that a pipe is refused, not waited on.
+func openRecording(path string, regularOnly bool) (*recordingSource, error) {
+	flag := os.O_RDONLY
+	if regularOnly {
+		flag |= openNonBlock
+	}
+	f, err := os.OpenFile(path, flag, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +64,10 @@ func openRecording(path string) (*recordingSource, error) {
 	if err != nil {
 		_ = f.Close()
 		return nil, err
+	}
+	if !fi.Mode().IsRegular() && regularOnly {
+		_ = f.Close()
+		return nil, fmt.Errorf("%s: not a regular file", path)
 	}
 	if !fi.Mode().IsRegular() {
 		defer func() { _ = f.Close() }()

@@ -46,6 +46,9 @@ type servedSources struct {
 	// onPass, when set, is called as each pass over a recording file opens,
 	// with the pass's count (recordingSource.onPass): a test's hook.
 	onPass func(pass int)
+	// onOpen, when set, is called with a recording's path after the path is
+	// checked and before the file is opened: a test's hook to swap the file.
+	onOpen func(path string)
 }
 
 // apiError is a CLI error as the API's: a usage or input error is the
@@ -80,9 +83,14 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		if err != nil {
 			return nil, err
 		}
-		f.recording, hide, info.Name = path, path, src.Name
+		// The name was a regular file when checked; what is opened is judged
+		// again, as opened (openRecording).
+		f.recording, f.regularOnly, hide, info.Name = path, true, path, src.Name
 		if src.Cycle > 0 {
 			f.cycle = strconv.Itoa(src.Cycle)
+		}
+		if s.onOpen != nil {
+			s.onOpen(path)
 		}
 	case whatifapi.SourcePrometheus:
 		if err := s.windowOf(ctx, &f, src); err != nil {
