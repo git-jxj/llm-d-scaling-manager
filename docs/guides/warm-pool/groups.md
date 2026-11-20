@@ -81,6 +81,9 @@ That holds even when the device totals agree: sixteen GPUs across two Pods and
 across four are a different engine. Run both layouts and you need a pool for
 each, just as two accelerators need two pools.
 
+Data parallelism across Pods (`--data-parallel-size` above 1 with `--nnodes`
+above 1) is declined permanently too: a pool of groups cannot start it.
+
 ### What is different once a pool holds groups
 
 - **Only the leader is lent.** It runs the supervisor and serves the API; workers

@@ -101,6 +101,8 @@ def test_follower_rank_runs_the_headless_executor_inline():
     m.executor_cls.return_value.start_worker_monitor.assert_called_once_with(
         inline=True
     )
+    # The child ends in os._exit, which runs no finalizer: shut down explicitly.
+    m.executor_cls.return_value.shutdown.assert_called_once_with()
     _, kwargs = m.engine_args_cls.from_cli_args.return_value.create_engine_config.call_args
     assert kwargs["headless"] is True
     m.run_server.assert_not_called()

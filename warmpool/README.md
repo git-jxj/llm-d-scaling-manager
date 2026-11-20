@@ -62,8 +62,11 @@ issue number became a full link):
 
 1. **The follower-rank fix**: a rank > 0 of a multi-node engine runs vLLM's
    headless executor instead of an API server, as vLLM's own `run_headless`
-   does. First carried in fork commit `65ba31b` of
-   `ev-shindin/llm-d-fast-model-actuation`; not upstream.
+   does, with its checks and its SIGTERM handling. One case is refused
+   instead: `--headless` on a node that is rank 0 of its own data-parallel
+   group, where vLLM would start headless data-parallel engines. The scaling
+   manager does not warm data parallelism across Pods. First carried in fork
+   commit `65ba31b` of `ev-shindin/llm-d-fast-model-actuation`; not upstream.
 2. **The vLLM v0.34 import paths**: v0.34 moved `make_arg_parser`,
    `validate_parsed_serve_args`, `cli_env_setup` and `run_server`.
 3. **`_wait_procs`**: psutil 7.2, which the vLLM v0.34 image ships, re-raises
@@ -77,6 +80,7 @@ issue number became a full link):
 | --- | --- | --- |
 | `supervisor/launcher.py` | `inference_server/launcher/launcher.py`, with the three changes | spawns and supervises vLLM engines inside one container. Proven: every 2-3 s wake measured on the test cluster came from an instance it created |
 | `supervisor/gputranslator.py` | `inference_server/launcher/gputranslator.py`, unchanged | GPU UUID ↔ index mapping via pynvml, with a mock mode for tests |
+| `supervisor/build_check.py` | ours | the image build's check against the real vLLM (below) |
 | `supervisor/tests/` | `inference_server/launcher/tests/`, with the vLLM stubs moved to the v0.34 paths; `test_follower_rank.py` is ours | the launcher's unit tests |
 
 v0.8.0 over the old v0.6.4 base brings two fixes the pool wants: deleting an
@@ -101,10 +105,13 @@ copy:
 - **On top:** `nvidia-ml-py` and `kubernetes` at pinned versions, installed
   with every package of the base as a constraint, so none of vLLM's own
   packages moves, and the two files above.
-- **Checked at build time:** the build imports the launcher against the real
-  vLLM, and checks the vLLM version. A vLLM module the launcher imports that
-  has moved fails the build, not a pool Pod. The unit tests cannot catch that:
-  they stub vLLM.
+- **Checked at build time** (`supervisor/build_check.py`, mounted for that one
+  step, not shipped): the build imports the launcher against the real vLLM and
+  checks the vLLM version, that every vLLM call the launcher makes still binds,
+  the engine-config attributes the follower reads, the `/sleep`, `/wake_up` and
+  `/is_sleeping` routes and the drain's `mode=wait` the scaling manager uses,
+  and psutil's EINVAL handling. A vLLM change there fails the build, not a pool
+  Pod. The unit tests cannot catch it: they stub vLLM.
 - **Released** with every scaling-manager release, under the same tag, for
   `linux/amd64` and `linux/arm64`, signed with cosign.
 - **One vLLM only.** A pool's engines run the launcher image's vLLM, not the

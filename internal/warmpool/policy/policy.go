@@ -709,6 +709,11 @@ func doesNotFit(model pool.ModelRef, resident []pool.Membership, cfg Config) (re
 	if shape.Pods != pods {
 		return fmt.Sprintf("spans %d Pod(s), this warm unit is %d", shape.Pods, pods), true
 	}
+	// A shape the launcher refuses would hold the whole group's GPUs once per
+	// admission attempt and never serve.
+	if pool.DataParallelAcrossPods(model.EngineOptions) {
+		return "runs data parallelism across Pods, which a pool of groups cannot start", true
+	}
 
 	// The right NUMBER of the wrong GPU is still the wrong GPU. A warm copy is
 	// only reusable on the accelerator it was loaded on, so a pool of one type

@@ -1408,9 +1408,10 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str, debug_gpu_memory: 
     # is NOT mirrored is its other branch: --headless on a node whose rank
     # within its data-parallel group is 0, where vLLM starts that node's
     # data-parallel engine cores (CoreEngineProcManager) and no API server.
-    # The pool never asks for that (it adds --headless only to ranks > 0 of a
-    # group with no data parallelism across Pods), so it is refused here
-    # rather than served by an API server nobody would talk to.
+    # The pool adds --headless to every rank > 0 and declines to warm a group
+    # with data parallelism across Pods (policy.doesNotFit), the one shape where
+    # that lands on such a node. A request for it is refused here rather than
+    # served by an API server nobody would talk to.
     if getattr(args, "headless", False):
         if (getattr(args, "api_server_count", None) or 1) > 1:
             raise ValueError("api_server_count can't be set in headless mode")
@@ -1432,9 +1433,11 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str, debug_gpu_memory: 
                 "a follower rank (node rank within its data-parallel group > 0) is"
             )
 
-        # A stop sends SIGTERM. As run_headless does: exit through SystemExit,
-        # so the executor's finalizer shuts its workers down, rather than
-        # dying on the default action and leaving them to the group sweep.
+        # A stop sends SIGTERM. As run_headless does, exit through SystemExit
+        # rather than the default action (or a handler inherited from the
+        # launcher through fork). This child ends in os._exit, which runs no
+        # finalizer, so the executor is shut down explicitly below; the stop's
+        # process-group sweep remains the backstop.
         shutdown_requested = False
 
         def _on_signal(signum, frame):
@@ -1457,7 +1460,10 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str, debug_gpu_memory: 
             # Inline: this call IS the process. Returning would end the child and
             # take the rank with it, leaving the leader waiting at a rendezvous
             # nobody attends.
-            executor.start_worker_monitor(inline=True)
+            try:
+                executor.start_worker_monitor(inline=True)
+            finally:
+                executor.shutdown()
             return
 
     # vLLM's serve CLI copies a positional model tag into args.model first

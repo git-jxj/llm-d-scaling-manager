@@ -1590,3 +1590,31 @@ func TestABorrowPrefersThePodHoldingLeastElse(t *testing.T) {
 			got.Borrow[0].Pod.Name)
 	}
 }
+
+// --nnodes 3 with --data-parallel-size 3: every Pod but the first is rank 0 of its own
+// data-parallel group, which the pool's launcher refuses, so the leader would
+// wait for a peer that never comes and hold the group's GPUs for nothing.
+func TestDataParallelismAcrossPodsIsDeclined(t *testing.T) {
+	c := cfg()
+	c.PodMemoryBytes = 400 << 30
+	c.SleepMinSize = 0
+	dpAcross := VariantDemand{
+		Model: pool.ModelRef{
+			Namespace:     "workload",
+			Variant:       "wide-ep",
+			EngineOptions: "--model Qwen/Qwen3-0.6B --tensor-parallel-size 4 --data-parallel-size 3 --nnodes 3",
+		},
+		Parked: true,
+	}
+	got := Decide(Input{
+		Memberships: []pool.Membership{asGroup(resident("leader", "", pool.Absent), 3, 4)},
+		Variants:    []VariantDemand{dpAcross},
+		Now:         now,
+	}, c)
+	if len(got.Admit) != 0 {
+		t.Fatalf("data parallelism across Pods must not be admitted: %+v", got.Admit)
+	}
+	if len(got.Declined) != 1 || !strings.Contains(got.Declined[0].Reason, "data parallelism") || !got.Declined[0].Permanent {
+		t.Fatalf("want one permanent decline naming data parallelism: %+v", got.Declined)
+	}
+}
