@@ -121,6 +121,9 @@ func schemaPaths(t reflect.Type, prefix string, out *[]string) {
 	case t == reflect.TypeFor[time.Time]():
 		*out = append(*out, prefix+" string")
 		return
+	case t == reflect.TypeFor[json.RawMessage]():
+		*out = append(*out, prefix+" object")
+		return
 	}
 	switch t.Kind() {
 	case reflect.Pointer:

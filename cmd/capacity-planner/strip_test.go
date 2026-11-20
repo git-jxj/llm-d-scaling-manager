@@ -15,7 +15,7 @@ import (
 func TestStripLatency(t *testing.T) {
 	in := strings.Join([]string{
 		`{"Seq":1,"Kind":"start","Data":{"Commit":"x"}}`,
-		`{"Seq":2,"Kind":"saturation.Analyze","Data":{"Result":{"x":1},"Input":{"ArrivalRate":3.5,"RouterLatency":{"WindowSeconds":300,"TTFTBuckets":[]},` +
+		`{"Seq":2,"Kind":"saturation.Analyze","Data":{"Result":{"x":1},"Input":{"ArrivalRate":3.5,"RouterLatency":{"WindowSeconds":300,"TTFTBuckets":[{"UpperBound":1,"Rate":1}]},` +
 			`"ReplicaMetrics":[{"PodName":"p","AvgITL":0.01,"AvgITLKnown":true,"AvgInputTokens":1000,"TTFTBuckets":[{"UpperBound":1}],` +
 			`"GroupEngines":[{"AvgITL":0.02,"KvUsageMean":0.5}]}]}}}`,
 		`{"Seq":3,"Kind":"saturation.publishLine","Data":{"A":0.001,"B":0.006}}`,

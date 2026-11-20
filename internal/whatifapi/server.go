@@ -416,11 +416,16 @@ func LoopbackOnly(next http.Handler) http.Handler {
 // is read) is 415; an unknown field, a second value, or a body past maxBody
 // is a 400.
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	return readJSONUpTo(w, r, v, maxBody)
+}
+
+// readJSONUpTo is readJSON with a body of at most limit bytes.
+func readJSONUpTo(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
 		writeError(w, http.StatusUnsupportedMediaType, fmt.Errorf("content type %q, want application/json", r.Header.Get("Content-Type")))
 		return false
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("request body: %w", err))

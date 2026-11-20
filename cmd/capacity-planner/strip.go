@@ -136,7 +136,13 @@ func stripLatency(r io.Reader, w io.Writer, gz bool) (stripStats, error) {
 				return st, usagef("line %d: a %s event with no input", line, kind)
 			}
 			if rl, ok := input["RouterLatency"].(map[string]any); ok {
-				input["RouterLatency"] = map[string]any{"WindowSeconds": rl["WindowSeconds"]}
+				// The router's window is what the latency will be measured
+				// over, where it measures TTFT; else the engines' minute is.
+				if b, _ := rl["TTFTBuckets"].([]any); len(b) > 0 {
+					input["RouterLatency"] = map[string]any{"WindowSeconds": rl["WindowSeconds"]}
+				} else {
+					delete(input, "RouterLatency")
+				}
 			}
 			ev["Data"] = map[string]any{"Input": dropLatency(input)}
 		}
@@ -154,6 +160,9 @@ func stripLatency(r io.Reader, w io.Writer, gz bool) (stripStats, error) {
 		return st, usagef("line %d: %v", line+1, err)
 	}
 	st.torn = pending != nil
+	if st.kept < 2 {
+		return st, usagef("no cycle input (saturation.Analyze) to keep: give a learner recording (capacity-planner generate turns a capture into one)")
+	}
 	if err := bw.Flush(); err != nil {
 		return st, err
 	}

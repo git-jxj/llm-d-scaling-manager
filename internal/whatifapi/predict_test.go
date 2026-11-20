@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 )
 
 // btNow is the time the tests' predictions are stamped with.
@@ -25,12 +27,15 @@ func btPredict(t *testing.T, fit, window *inputsEntry) *Prediction {
 	return p
 }
 
-// btWindow is the synthetic window, its latency kept or taken out.
+// btWindow is the synthetic window, its latency kept or taken out as
+// strip-latency takes it out: the router's rate window alone is left.
 func btWindow(t *testing.T, r *stubResolver, latency bool) *inputsEntry {
 	t.Helper()
 	s, l := btSeries(240, 0, 1)
 	if !latency {
-		l = nil
+		for i := range l {
+			l[i] = LatencySample{At: l[i].At, Router: &domain.RouterLatency{WindowSeconds: l[i].Router.WindowSeconds}}
+		}
 	}
 	return btEntry(t, r, "window", s, l, btConfig("H100"))
 }
@@ -183,6 +188,38 @@ func TestPredictAndCompareOverHTTP(t *testing.T) {
 	assert.Positive(t, out.Summary.Judged)
 	assert.True(t, strings.HasPrefix(out.Verdict, "Over the "))
 	assert.Contains(t, strings.Join(out.Notes, " "), p.PredictionHash[:12])
+}
+
+// A window with no router window predicts over the engines' minute, and a
+// file whose points are not the four statistics in order is refused.
+func TestPredict_EngineWindowAndPointShape(t *testing.T) {
+	r := &stubResolver{}
+	fs, fl := btEarlier(btSeries(240, 0, 1))
+	fit := btEntry(t, r, "fit", fs, fl, btConfig("H100"))
+	s, l := btSeries(240, 0, 1)
+	for i := range l {
+		l[i].Router = nil
+	}
+	cv2 := 1.0
+	p, err := predictEntries(context.Background(), fit, btEntry(t, r, "w", s, l, btConfig("H100")), PredictRequest{ArrivalCV2: &cv2},
+		PredictInfo{Now: btNow})
+	require.NoError(t, err)
+	assert.Equal(t, 60.0, p.MeasureWindow)
+
+	bad := *btPredict(t, fit, btWindow(t, r, false))
+	bad.Steps = append([]BacktestStep{}, bad.Steps...)
+	st := bad.Steps[3]
+	st.TTFT = append(append([]BacktestPoint{}, st.TTFT...), st.TTFT[0])
+	bad.Steps[3] = st
+	bad.InputsHash, err = inputsHash(bad.Steps, bad.MeasureWindow)
+	require.NoError(t, err)
+	bad.PredictionHash, err = predictionHash(bad)
+	require.NoError(t, err)
+	b, err := json.Marshal(bad)
+	require.NoError(t, err)
+	_, err = ReadPrediction(b)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "points")
 }
 
 // The CSV holds the hashes and a row a step.

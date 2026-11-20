@@ -192,7 +192,8 @@ function btFmt(v) {
 
 // btPredictionCSV is a prediction file as CSV: a comment line with its
 // hashes, then a row a step with each statistic predicted: the columns of
-// the CLI's predict --csv, its numbers written as JavaScript writes them.
+// the CLI's predict --csv, its times and numbers written as JavaScript
+// writes them.
 function btPredictionCSV(p) {
   const stats = ["mean", "p50", "p90", "p95"];
   const head = ["start", "excluded", "rate", "prefill", "decode"];

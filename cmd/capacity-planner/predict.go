@@ -45,7 +45,7 @@ func runPredict(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.decodeVariant, "variant", "", "the decode variant, when the model has several")
 	fs.StringVar(&f.step, "step", whatifapi.DefaultBacktestStep.String(), "the length of a step, 1m to 1h")
 	fs.StringVar(&f.settle, "settle", whatifapi.DefaultBacktestSettle.String(), "how long after a change of replicas, and after the window's start, a step is not judged")
-	fs.StringVar(&measureWindow, "measure-window", whatifapi.DefaultMeasureWindow.String(), "the window the latency will be measured over: the router's rate window")
+	fs.StringVar(&measureWindow, "measure-window", "", "the window the latency will be measured over; default the window's router rate window, else 1m")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "the window's arrivals' Ca^2, when known; default random (1), flagged")
 	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, where the fit learned none (flagged)")
 	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, where the fit learned none (flagged)")

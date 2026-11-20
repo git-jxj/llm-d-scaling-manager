@@ -171,6 +171,10 @@ func predictEntries(ctx context.Context, fit, window *inputsEntry, req PredictRe
 			}
 		}
 	}
+	if req.MeasureWindow == "" {
+		// No router window: the engines' histograms, over a minute.
+		req.MeasureWindow = time.Duration(defaultMeasureWindow * float64(time.Second)).String()
+	}
 	mw, err := measureWindowOfRequest(req.MeasureWindow)
 	if err != nil {
 		return nil, err
@@ -238,6 +242,22 @@ func ReadPrediction(b []byte) (*Prediction, error) {
 		!(p.MeasureWindow >= 15 && p.MeasureWindow <= 3600),
 		len(p.Steps) == 0 || len(p.Steps) > maxBacktestSteps+1, len(p.PredictionHash) < 12 || len(p.InputsHash) < 12:
 		return nil, InputErrorf("not a prediction file: its step, settle, measure window or steps are out of range")
+	}
+	for _, s := range p.Steps {
+		for _, pts := range [][]BacktestPoint{s.TTFT, s.TPOT} {
+			if len(pts) == 0 {
+				continue
+			}
+			if len(pts) != len(backtestStats) {
+				return nil, InputErrorf("not a prediction file: a step at %s has %d points, want %d", s.Start.UTC().Format(time.RFC3339), len(pts), len(backtestStats))
+			}
+			for i, x := range pts {
+				if x.Statistic != statisticName(backtestStats[i]) {
+					return nil, InputErrorf("not a prediction file: a step at %s has %q in place of %s", s.Start.UTC().Format(time.RFC3339), x.Statistic,
+						statisticName(backtestStats[i]))
+				}
+			}
+		}
 	}
 	h, err := predictionHash(p)
 	if err != nil {
@@ -354,11 +374,6 @@ func compareEntry(ctx context.Context, p *Prediction, e *inputsEntry, req Compar
 					"(--measure-window), which is no latency, and compare again",
 					secondsDuration(mw), secondsDuration(p.MeasureWindow), secondsDuration(mw))
 			}
-			if q.source == MeasuredRouter && l.Router != nil && l.Router.WindowSeconds > 0 && l.Router.WindowSeconds != p.MeasureWindow {
-				return nil, InputErrorf("the window was measured over %s, the prediction priced over %s: predict again with measureWindow %s",
-					time.Duration(l.Router.WindowSeconds*float64(time.Second)), time.Duration(p.MeasureWindow*float64(time.Second)),
-					time.Duration(l.Router.WindowSeconds*float64(time.Second)))
-			}
 			scoreStep(&s, measuredOf(l, q.source, st.windowSeconds, e.doc.Fleet.Prefill != nil), q.target)
 		}
 		out.Steps = append(out.Steps, s)
@@ -404,6 +419,10 @@ func cloneStep(s BacktestStep) BacktestStep {
 	s.TTFT, s.TPOT = slices.Clone(s.TTFT), slices.Clone(s.TPOT)
 	return s
 }
+
+// maxCompareBody is the largest POST /v1/compare body: a prediction of
+// maxBacktestSteps steps, about 2 KB each, with room.
+const maxCompareBody = 8 << 20
 
 // PredictionCSV is a prediction as CSV: a comment line with its hashes,
 // then a row a step with each statistic predicted.
@@ -485,7 +504,7 @@ func (s *Server) handlePredict(w http.ResponseWriter, r *http.Request) {
 // handleCompare is POST /v1/compare.
 func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 	var req CompareRequest
-	if !readJSON(w, r, &req) {
+	if !readJSONUpTo(w, r, &req, maxCompareBody) {
 		return
 	}
 	p, err := ReadPrediction(req.Prediction)

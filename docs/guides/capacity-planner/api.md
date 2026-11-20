@@ -448,8 +448,9 @@ latency it is scored against. The task is in
 `POST /v1/predict` takes `inputsId` (the fit), `windowInputsId` (the window
 to predict, its latency taken out or not: none is read), and the backtest's
 `step`, `settle`, `arrivalCV2`, `assume` and `allowConfigMismatch`, plus
-`measureWindow` (default `5m`, the router's rate window, which each step's
-inputs are read over). It answers the prediction file: `kind`, `format`,
+`measureWindow` (each step's inputs are read over it: by default the
+router's rate window, which a stripped window keeps where the router
+measured TTFT, else one minute, the engines'). It answers the prediction file: `kind`, `format`,
 `plannerVersion`, `whatifSchema`, `madeAt`, `model`, `fit`, `window`,
 `step`, `settle`, `measureWindow`, `arrivalCV2`, `config`, `assumed`,
 `notes`, `steps[]` (a backtest's steps, predicted only), `inputsHash` (the

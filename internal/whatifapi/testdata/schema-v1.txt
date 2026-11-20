@@ -308,8 +308,7 @@ backtestRequest.ttft.target number
 compareRequest object
 compareRequest.inputsId string
 compareRequest.measured string
-compareRequest.prediction array
-compareRequest.prediction[] uint8
+compareRequest.prediction object
 compareRequest.ttft object
 compareRequest.ttft.bucketTargets object
 compareRequest.ttft.bucketTargets.* number
