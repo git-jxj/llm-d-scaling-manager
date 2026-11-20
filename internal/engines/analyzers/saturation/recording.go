@@ -200,6 +200,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// Learner PR 5d: counted Pods survive a restart (start_est.go).
 		SwitchStartCountedPodsRestored: &a.startCountsRestored,
 
+		// llm-d-incubation/llm-d-scaling-manager#220: a start that overlapped
+		// a rollout is not folded (start_est.go).
+		SwitchStartHeldThroughRollout: &a.startHoldsRollout,
+
 		// ev-shindin/llm-scaling-manager#276: the spread of output lengths in the KV per request.
 		SwitchKVPerRequestOutputDispersion: &a.kvOutputDispersion,
 
