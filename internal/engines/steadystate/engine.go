@@ -318,6 +318,13 @@ type Engine struct {
 	// again. See pruneBlockedModels.
 	lastBlockedModels map[string]blockedModelRef
 
+	// notArriving tracks the replicas variants asked for that have not
+	// arrived (replicas_not_arriving.go). Nil until the first cycle.
+	notArriving *notArrivingTracker
+	// cycleScaleTargets is this cycle's active scale targets, keyed
+	// namespace/target (utils.ActiveVariants), for the report above.
+	cycleScaleTargets map[string]scaletarget.ScaleTargetAccessor
+
 	// optimizer is the V2 scaling optimizer that produces VariantDecisions from
 	// AnalyzerResults. Selected per-cycle from the declared limiters:
 	// CostAwareOptimizer when none is declared, GreedyByScoreOptimizer when one is.
@@ -896,11 +903,12 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 
 	e.VariantEnricher.Refresh(ctx) // resolve the scale target of anything newly registered
 
-	activeVAs, _, err := utils.ActiveVariants(ctx, e.client, e.Variants)
+	activeVAs, activeTargets, err := utils.ActiveVariants(ctx, e.client, e.Variants)
 	if err != nil {
 		logger.Error(err, "Unable to get active variant autoscalings")
 		return err
 	}
+	e.cycleScaleTargets = activeTargets
 	// Here, not with the analyzer series: those go with the active set, and a
 	// fleet at zero replicas is exactly what these series are kept for.
 	e.retainLearnerSeries(ctx)
@@ -934,6 +942,8 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		// a named model will never park. With no models left, every such assertion
 		// is about a workload that is gone.
 		e.evictAllBlockedModels()
+		// No variant asks for a replica, so none is missing one.
+		e.reportReplicasNotArriving(ctx, nil, nil, nil, time.Now())
 		// No active model resolves an accelerator: say so, or the status keeps
 		// the last busy cycle's list after a scale-to-zero, and a controller
 		// started with every model at zero never sets the key at all.
@@ -1110,6 +1120,8 @@ func constrainedMessage(d *domain.VariantDecision) string {
 // recordEvent ensures only one event is recorded per VA in an optimization cycle.
 // Exception: K8SEventResourceConstrained events bypass deduplication and can be
 // recorded alongside other event types (e.g., ScaledUp + ResourceConstrained).
+// The ReplicasNotArriving and ReplicasArrived events do not go through it
+// (recordArrivalEvent): they are rate-limited by their own report.
 func (e *Engine) recordEvent(
 	va *llmdvariant.Variant,
 	eventType, reason, message string,
@@ -1763,6 +1775,10 @@ func (e *Engine) optimizeV2(
 		modelTiers[utils.GetNamespacedKey(namespace, modelID)] = variantTiers(modelVAs)
 	}
 
+	// Before the early return below: a model none of whose replicas ever
+	// arrived produces no request, and is the one that most needs reporting.
+	e.reportReplicasNotArriving(ctx, modelGroups, modelScaleTargets, requests, time.Now())
+
 	if len(requests) == 0 {
 		// Active variants, none of which produced a request: every model FAILED
 		// collection this cycle. Nothing is published for the warm pool here,
@@ -2339,6 +2355,7 @@ func (e *Engine) assembleModelData(
 	// threaded to the optimizer (via ModelScalingRequest.Variants) as the source
 	// of truth for variant identity/cost/accelerator.
 	variantMetadata := variantmeta.Discover(ctx, modelVAs, scaleTargets, k8sClient, observeAccelerators(e.Config))
+	e.withholdOverdueArrivals(ctx, modelID, variantMetadata)
 	replicaMetrics = e.routeModel(ctx, modelID, namespace, variantMetadata, modelVAs, variants,
 		scaleTargets, replicaMetrics, k8sClient, time.Now())
 	variantStates := make([]domain.VariantReplicaState, 0, len(variantMetadata))

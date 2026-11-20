@@ -329,6 +329,15 @@ func pendingAgeSeconds(
 		// late is counted as STUCK and subtracted from the replicas anticipated
 		// to arrive; it contributes no age, because it is not going to serve.
 		if !podStarting(pod) {
+			// A pod that ENDED is not in PendingReplicas at all -- a
+			// ReplicaSet does not count it -- and stays until PodGC, so an
+			// eviction from last week would otherwise withhold a healthy
+			// starting replica on every scale-up. A recent one is still the
+			// best evidence that its replacement will end the same way: a
+			// node rejecting pods at admission leaves a stream of them.
+			if podEnded(pod) && !pod.CreationTimestamp.IsZero() && now.Sub(pod.CreationTimestamp.Time) > recentEndedPod {
+				continue
+			}
 			stuck++
 			continue
 		}
@@ -345,6 +354,15 @@ func pendingAgeSeconds(
 		ages = append(ages, age)
 	}
 	return ages, stuck
+}
+
+// recentEndedPod is how recently a Failed or Succeeded pod must have been
+// created to count as stuck (pendingAgeSeconds).
+const recentEndedPod = 10 * time.Minute
+
+// podEnded reports whether a Pod's phase is terminal.
+func podEnded(p *corev1.Pod) bool {
+	return p.Status.Phase == corev1.PodFailed || p.Status.Phase == corev1.PodSucceeded
 }
 
 // podStarting reports whether a Pod that is not yet Ready is actually on its way

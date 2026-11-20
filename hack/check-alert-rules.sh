@@ -84,8 +84,8 @@ for t in "$TESTS"/*.test.yaml; do
   RAN=$((RAN + 1))
 done
 # Every file, or a rename silently drops one.
-if [ "$RAN" -ne 8 ]; then
-  echo "FAIL: $RAN alert test files ran, not 8. Update the count deliberately." >&2
+if [ "$RAN" -ne 9 ]; then
+  echo "FAIL: $RAN alert test files ran, not 9. Update the count deliberately." >&2
   exit 1
 fi
 echo "ok: alert rules parse and the alert tests pass ($RAN files)"

@@ -1,0 +1,49 @@
+# promtool unit tests for LLMSMReplicasNotArriving (issue #224).
+# hack/check-alert-rules.sh copies the shipped PrometheusRule groups,
+# annotations stripped, to rules.yaml beside this file and runs promtool test
+# rules on it.
+#
+# llmsm_replicas_not_arriving carries the variant's namespace, renamed to
+# exported_namespace by the scrape; namespace is the controller's. The series
+# exists only once the shortfall outlasts twice the start time.
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  # 1. One replica rejected at admission: pages after 5 minutes, once, even
+  #    with two controller pods scraped; a variant whose replica arrived
+  #    within the window does not page.
+  - interval: 1m
+    input_series:
+      - series: 'llmsm_replicas_not_arriving{exported_namespace="models",namespace="scaling-manager",pod="a",variant_name="decode",role="decode",reason="admission-rejected"}'
+        values: '1x20'
+      - series: 'llmsm_replicas_not_arriving{exported_namespace="models",namespace="scaling-manager",pod="b",variant_name="decode",role="decode",reason="admission-rejected"}'
+        values: '1x20'
+      - series: 'llmsm_replicas_not_arriving{exported_namespace="models",namespace="scaling-manager",pod="a",variant_name="prefill",role="prefill",reason="starting"}'
+        values: '1x2 stale'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LLMSMReplicasNotArriving
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: LLMSMReplicasNotArriving
+        exp_alerts:
+          - exp_labels: {severity: warning, exported_namespace: models, variant_name: decode, role: decode}
+
+  # 2. The cause changes half way (a crash loop read between restarts), and
+  #    the alert keeps its for: rather than starting again. Then the
+  #    replicas arrive: the series goes, and so does the alert.
+  - interval: 1m
+    input_series:
+      - series: 'llmsm_replicas_not_arriving{exported_namespace="models",namespace="scaling-manager",pod="a",variant_name="decode",role="decode",reason="not-ready"}'
+        values: '2x3 stale'
+      - series: 'llmsm_replicas_not_arriving{exported_namespace="models",namespace="scaling-manager",pod="a",variant_name="decode",role="decode",reason="unschedulable"}'
+        values: '_x3 2x7 stale'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: LLMSMReplicasNotArriving
+        exp_alerts:
+          - exp_labels: {severity: warning, exported_namespace: models, variant_name: decode, role: decode}
+      - eval_time: 18m
+        alertname: LLMSMReplicasNotArriving
+        exp_alerts: []
