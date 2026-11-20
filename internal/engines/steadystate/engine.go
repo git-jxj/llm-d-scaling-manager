@@ -318,6 +318,10 @@ type Engine struct {
 	// again. See pruneBlockedModels.
 	lastBlockedModels map[string]blockedModelRef
 
+	// notArriving tracks the replicas variants asked for that have not
+	// arrived (replicas_not_arriving.go). Nil until the first cycle.
+	notArriving *notArrivingTracker
+
 	// optimizer is the V2 scaling optimizer that produces VariantDecisions from
 	// AnalyzerResults. Selected per-cycle from the declared limiters:
 	// CostAwareOptimizer when none is declared, GreedyByScoreOptimizer when one is.
@@ -901,6 +905,8 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		// a named model will never park. With no models left, every such assertion
 		// is about a workload that is gone.
 		e.evictAllBlockedModels()
+		// No variant asks for a replica, so none is missing one.
+		e.reportReplicasNotArriving(ctx, nil, nil, nil, time.Now())
 		// No active model resolves an accelerator: say so, or the status keeps
 		// the last busy cycle's list after a scale-to-zero, and a controller
 		// started with every model at zero never sets the key at all.
@@ -1730,6 +1736,10 @@ func (e *Engine) optimizeV2(
 		modelTiers[utils.GetNamespacedKey(namespace, modelID)] = variantTiers(modelVAs)
 	}
 
+	// Before the early return below: a model none of whose replicas ever
+	// arrived produces no request, and is the one that most needs reporting.
+	e.reportReplicasNotArriving(ctx, modelGroups, modelScaleTargets, requests, time.Now())
+
 	if len(requests) == 0 {
 		// Active variants, none of which produced a request: every model FAILED
 		// collection this cycle. Nothing is published for the warm pool here,
@@ -2306,6 +2316,7 @@ func (e *Engine) assembleModelData(
 	// threaded to the optimizer (via ModelScalingRequest.Variants) as the source
 	// of truth for variant identity/cost/accelerator.
 	variantMetadata := variantmeta.Discover(ctx, modelVAs, scaleTargets, k8sClient, observeAccelerators(e.Config))
+	e.withholdOverdueArrivals(ctx, modelID, variantMetadata)
 	replicaMetrics = e.routeModel(ctx, modelID, namespace, variantMetadata, modelVAs, variants,
 		scaleTargets, replicaMetrics, k8sClient, time.Now())
 	variantStates := make([]domain.VariantReplicaState, 0, len(variantMetadata))

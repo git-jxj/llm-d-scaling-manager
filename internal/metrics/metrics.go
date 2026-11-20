@@ -1080,6 +1080,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registerKEDAHPARepairMetrics(registry); err != nil {
 		return err
 	}
+	if err := registerReplicasNotArrivingMetrics(registry); err != nil {
+		return err
+	}
 
 	return nil
 }
