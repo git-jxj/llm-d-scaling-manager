@@ -1517,10 +1517,12 @@ llmsm_workload_patch() {
     done
     # Whole seconds, checked once: they are added up below, and `45s` in an
     # arithmetic expansion ends the run rather than one line of it.
+    # Normalised to decimal once (0120 is octal 80 to a YAML 1.1 reader).
     for tool in LLMSM_DRAIN_GRACE_SECONDS LLMSM_DRAIN_SLEEP_SECONDS; do
         case "${!tool:-1}" in
-            *[!0-9]*) log_warning "$tool must be a whole number of seconds, not '${!tool}'."; return 1 ;;
+            *[!0-9]*|??????????*) log_warning "$tool must be a whole number of seconds (at most nine digits), not '${!tool}'."; return 1 ;;
         esac
+        [ -z "${!tool:-}" ] || printf -v "$tool" '%s' "$(( 10#${!tool} ))"
     done
     # Two volumes of one name is a document the API server rejects, and with
     # both opt-ins a refusal that quotes two claim names on one line.
@@ -1622,7 +1624,7 @@ llmsm_workload_patch() {
         fi
         [ "$lws_undrained" -gt 0 ] && log_warning "  $lws_undrained LeaderWorkerSet(s) keep their caches but do not drain on scale-down (see above); that is set by hand."
         [ "$dset_gaps" -gt 0 ] && log_warning "  $dset_gaps DisaggregatedSet role(s) need changes to their role template (see above); that is set by hand, in the set's owner."
-        [ "$short_grace" -gt 0 ] && log_warning "  $short_grace model server(s) have a preStop hook but a grace period shorter than their drain (see above); that is set by hand."
+        [ "$short_grace" -gt 0 ] && log_warning "  $short_grace model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain (see above); that is set by hand."
         [ "$skipped" -gt 0 ] && log_warning "  $skipped other workload(s) were skipped and were not checked."
         so_workload_patch_clear_stale "$out"
         return 0
@@ -1664,7 +1666,7 @@ llmsm_workload_patch() {
         log_warning "  image. It is emitted, not applied: put it in your chart values and remove FLASHINFER_WORKSPACE_DIR."
     fi
     if [ "$short_grace" -gt 0 ]; then
-        log_warning "$short_grace model server(s) have a preStop hook but a grace period shorter than their drain (see above)."
+        log_warning "$short_grace model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain (see above)."
         log_warning "  That is not in $out: raise terminationGracePeriodSeconds where the pod spec is owned."
     fi
 
@@ -2864,6 +2866,9 @@ so_workload_patch_doc() {
     elif [ "$want_drain" -eq 1 ]; then
         log_warning "  $ns/$name: could not read the pod spec again for --shutdown-timeout; the grace period below is sized without it."
     fi
+    case ",${dunread:-}," in *,timeout,*)
+        [ "$want_drain" -eq 1 ] && log_warning "  $ns/$name: --shutdown-timeout is not a number this can read; the grace period below is sized without it. Add it to terminationGracePeriodSeconds by hand." ;;
+    esac
     if [ "$want_drain" -eq 0 ]; then
         dshort="$(so_drain_short "$ns" "$resource" "$name" "$pod" "$engine" "${grace:-30}" "$dtimes")"
         if [ -n "$dshort" ]; then
@@ -3498,7 +3503,7 @@ so_drain_times() {
         | ( ($h.exec.command // []) | map(tostring | gsub("[\n\r]"; " ")) | join(" ") ) as $hcmd
         | [ $hcmd | scan("(?:^|[^A-Za-z0-9_.-])sleep[ \t]+([0-9]{1,9})([sm]?)(?![A-Za-z0-9_.])")
             | (.[0] | tonumber) * (if .[1] == "m" then 60 else 1 end) ] as $sleeps
-        | ( ($h.sleep.seconds | type) == "number" ) as $action
+        | ( ($h.sleep.seconds | type) == "number" and $h.sleep.seconds >= 0 and $h.sleep.seconds < 1000000000 ) as $action
         | ( if $h == null then 0 elif $action then $h.sleep.seconds else ($sleeps | add // 0) end ) as $sleep
         | ( $h != null and ($action | not) and ($sleeps | length) == 0 ) as $sleepunread
         | ( (($e.command // []) + ($e.args // [])) | map(tostring | gsub("[\n\r]"; " ")) | join(" ") ) as $argv
@@ -3562,6 +3567,7 @@ so_drain_note() {
         local dsl
         dsl="$(so_drain_int "${LLMSM_DRAIN_SLEEP_SECONDS:-45}" 45)"
         [ "${timeout:-0}" -gt 0 ] && hint=" Its --shutdown-timeout is ${timeout} s, so with a ${dsl} s preStop the grace period needs at least $(( dsl + timeout + SO_DRAIN_MARGIN_SECONDS )) s."
+        case ",$unread," in *,timeout,*) hint=" Its --shutdown-timeout is not a number this can read; the grace period needs a ${dsl} s preStop, that timeout and ${SO_DRAIN_MARGIN_SECONDS} s more." ;; esac
     fi
     printf '%s' "Scale-down will cut in-flight requests: ${engine} declares no preStop hook, and terminationGracePeriodSeconds is ${grace:-30}. A replica removed mid-stream terminates the responses it is still writing.${hint} The pod spec belongs to the model server's chart rather than to the scaling manager -- see docs/reference/workload-preparation.md#draining-before-scale-down."
     return 0

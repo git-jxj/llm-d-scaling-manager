@@ -3993,7 +3993,7 @@ FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].arg
 run_driver
 assert_eq "$DRIVER_RC" "0" "return code"
 assert_contains "$(cat "$DRIVER_LOG")" "45 s of preStop + 90 s of --shutdown-timeout + 15 s = 150 s"
-assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than their drain"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain"
 assert_not_contains "$(cat "$DRIVER_LOG")" "already drain on scale-down"
 [ "$FAILED" -eq "$before" ] && ok
 
@@ -4018,7 +4018,7 @@ f_cached_properly; FIXTURE_MAP[w]="$FIXTURE"
 run_driver
 assert_eq "$DRIVER_RC" "0" "return code"
 assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) already drain on scale-down"
-assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than their drain"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="drain grace: DisaggregatedSet roles get the same check, leader falling back to worker"
@@ -4060,7 +4060,7 @@ f_drain 90 '["vllm","serve","Qwen/Qwen3-0.6B","--shutdown-timeout","90"]' '{"exe
 run_driver
 assert_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "#   cache:"   # anchor: a document was written
 assert_not_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "terminationGracePeriodSeconds:"
-assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than their drain"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain"
 assert_contains "$(cat "$DRIVER_LOG")" "That is not in"
 # A sleep setting the arithmetic cannot use is refused before anything is read.
 LLMSM_DRAIN_SLEEP_SECONDS=45s run_driver
@@ -4074,6 +4074,23 @@ f_drain 30 '["vllm","serve","/models/qwen","--shutdown-timeout","9999999999"]'
 assert_eq "$(drain_times)" "0|0|0|timeout" "ten-digit timeout"
 f_drain 30 '["/bin/sh","-c","vllm serve /models/qwen --shutdown-timeout\t90"]'
 assert_eq "$(drain_times)" "0|0|90|" "tab-separated timeout"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: an unreadable timeout without a hook is said; settings are read as decimal"
+reset
+before=$FAILED
+f_drain 30 '["/bin/sh","-c","vllm serve /models/qwen --shutdown-timeout $(T)"]'
+so_workload_patch_doc ns deployments w "$POD_DEPLOY" >/dev/null 2>"$WORK/drain.err"
+assert_contains "$(cat "$WORK/drain.err")" "ns/w: --shutdown-timeout is not a number this can read"
+assert_contains "$(so_drain_note ns deployments w "$POD_DEPLOY")" "Its --shutdown-timeout is not a number this can read"
+# A sleep action too large to add up is not read as a number.
+f_drain 300 "$TO90" '{"sleep":{"seconds":10000000000}}'
+assert_eq "$(drain_times)" "1|0|90|sleep" "ten-digit sleep action"
+# 0200 is 200 seconds, not octal 128, and it is written as 200.
+LIST_FIXTURE="$(serving_list)"
+f_drain 30 '["vllm","serve","/models/qwen"]'
+LLMSM_DRAIN_GRACE_SECONDS=0200 run_driver
+assert_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "terminationGracePeriodSeconds: 200"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="LWS: a healthy LWS beside a healthy Deployment is an all-clear, nothing skipped"

@@ -262,7 +262,7 @@ the half that is safe to apply. Full description in
 | `LLMSM_MODEL_PVC_SIZE` | Size for `make model-cache`. No default — it depends on how many models share the claim | *(required)* |
 | `LLMSM_MODEL_PVC_CLASS` | StorageClass for `make model-cache`. No default, and it must support ReadWriteMany. Run `make model-cache` with neither to list the classes this cluster already serves RWX from | *(required)* |
 | `LLMSM_MODEL_PVC_TIMEOUT` | How long to wait for the claim to bind. A `WaitForFirstConsumer` class is detected and not waited on | `120` |
-| `LLMSM_DRAIN_GRACE_SECONDS` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered | `120` |
+| `LLMSM_DRAIN_GRACE_SECONDS` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered, and it is raised to the preStop sleep plus `--shutdown-timeout` plus 15 when that is longer ([Sizing the grace period](workload-preparation.md#sizing-the-grace-period)) | `120` |
 | `LLMSM_DRAIN_SLEEP_SECONDS` | The preStop sleep — the drain window itself | `45` |
 | `LLMSM_MODEL_PVC_NAME` | The claim the emitted weights volume names. Nothing creates it | `model-pvc` |
 | `LLMSM_MODEL_VOLUME_NAME` | The volume name in the emitted patch | `model-storage` |

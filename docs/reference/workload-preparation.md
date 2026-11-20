@@ -1400,9 +1400,9 @@ routing to it meanwhile. So the window covers new arrivals still being sent here
 as well as generations already running. That is why the emitted patch sleeps 45s,
 not the 30s above. If the engine has a drain endpoint, call that instead.
 
-Set `terminationGracePeriodSeconds` above the preStop duration plus the longest
-generation. The grace period is the total budget; the kubelet sends SIGKILL when
-it expires, whatever the hook is doing.
+The grace period is the total budget: the kubelet sends SIGKILL when it
+expires, whatever the hook is doing. How long it must be is
+[below](#sizing-the-grace-period).
 
 ### Sizing the grace period
 
@@ -1433,8 +1433,10 @@ What `make workload-patch` does with it:
   terminationGracePeriodSeconds to at least N`), and the workload is left out of
   the all-clear. Fix the grace where the pod spec is owned.
 - **LeaderWorkerSet and DisaggregatedSet.** The same check runs on the leader
-  and the worker template, and on each role of a set. It is reported, never
-  written. (`make scaledobjects-plan` checks the leader template only.)
+  and the worker template of a LeaderWorkerSet, and on the leader template of
+  each role of a set (its worker template when it has no leader). It is
+  reported, never written. `make scaledobjects-plan` checks the leader template
+  only.
 
 How the numbers are read:
 
@@ -1446,7 +1448,7 @@ How the numbers are read:
   once; sleeps on two branches of an `if`, or one sent to the background, both
   count.
 - A value it cannot read (an `httpGet` hook, `sleep infinity`, a timeout in a
-  variable) counts as 0 s, and the message says so. Read the numbers in the
+  variable, more than nine digits) counts as 0 s, and the message says so. Read the numbers in the
   message against your hook before you raise the grace.
 
 `make scaledobjects-plan` reports a missing hook per workload, because
