@@ -244,6 +244,36 @@ change. The replay switch is
 `kv-per-request-hits-resident` (`SwitchKVPerRequestHitsResident`). The
 throughput and slo analyzers still price their KV per request at `ILeff`.
 
+The upper bound under-prices an engine that holds more KV per request than its
+context in the same pool, such as a sparse-attention indexer's keys or a
+speculative draft model's KV (issue llm-d-incubation/llm-d-scaling-manager#188).
+The replay switch `kv-per-request-above-context`
+(`SwitchKVPerRequestAboveContext`) drops the bound and prices the reading by
+the capacity planner's rule, `shape.PriceResident`: held at the discount from
+below, priced as read above the context, held at the context on SGLang. A
+shape with no hit is read too. `residentKVBound` is then `above-context` for a
+reading over twice the context, and `upper` only for SGLang held at the
+context. The count gate is taken at the reading where it is above the whole
+context (`countGateKV`), and at `KVreq` below it. Few requests sharing a
+prefix read at most the context each, so they stay no reading. A reading above
+the context is KV the engine holds beyond prompt and output; at the discounted
+`KVreq` it passes only from a fill of `minK x R`, and at the context only
+from `minK x reading / context`, so neither gate would ever take it on a
+recording that reads three times the context at a fill of 0.15-0.35. Not every
+reading above the context is KV held beyond prompt and output, so with the
+switch on two more rules apply. The tokens are spread over the requests that
+hold KV without running as well: on the decode side of a P/D split, those
+pulling their KV from prefill or waiting for the next step after it landed
+(the waiting queue less the requests waiting for capacity). A decode pulling
+30 prompts beside 4 running would otherwise read 8 times the context. And a
+reading above the context needs at least 8 such requests
+(`minAboveContextSequences`): a few long prompts in a mixed workload, or a
+running count that lags the KV, read several times the context with nothing
+held beyond it. Above 8 the scrape cannot tell a long tail from extra KV, so
+k prompts L times the shape's among n still lift the reading by about
+`k x (L - 1) / n`. The switch is off from the constructor: the controller keeps the
+bound until a GPU check on a prefix-heavy P/D workload clears the change.
+
 `KVreq` is the single most load-bearing quantity in the analyzer. Everything
 that asks "how many requests fit" divides by it.
 
@@ -2232,8 +2262,8 @@ the per-variant `replica-capacity-summary` stands in for them.
   spread of output lengths priced into `kvReqPerSeq` (1 is none, or none
   read); `residentKVPerSeq` is the KV the running requests were measured to
   hold, over `residentRunning` requests, and `residentKVBound` which bound
-  `kvReqPerSeq` held it to (`none`, `lower`, `upper`, `no-hit`,
-  `no-reading`, `off`; issue ev-shindin/llm-scaling-manager#277), and `residentKVBoundFleet` the same for
+  `kvReqPerSeq` held it to (`none`, `lower`, `upper`, `above-context`,
+  `no-hit`, `no-reading`, `off`; issue ev-shindin/llm-scaling-manager#277), and `residentKVBoundFleet` the same for
   `kvReqFleet`;
   `muShortWindow` says whether the pair moved to the short window.
   It, and every ITL line (`itl-window`, `itl-fit`, `itl-fit-declined`,

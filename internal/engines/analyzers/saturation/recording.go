@@ -122,7 +122,8 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchITLReadsSettle, SwitchITLWaitsAfterRestart,
 // SwitchITLKeepsSettleThroughMissingRow, SwitchITLReadsFinitePodMean,
 // SwitchITLRestartUnderName, SwitchITLIdleOnEvidence,
-// SwitchKVPerRequestHitsResident, SwitchZeroReplicaDataParallel,
+// SwitchKVPerRequestHitsResident, SwitchKVPerRequestAboveContext,
+// SwitchZeroReplicaDataParallel,
 // SwitchITLFitsAggregated, SwitchITLAggregatedShapeTerm,
 // SwitchITLAggregatedSizes, SwitchPrefillCapacityObserve,
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
@@ -216,6 +217,11 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 
 		// ev-shindin/llm-scaling-manager#277: a prefix-cache hit stays resident.
 		SwitchKVPerRequestHitsResident: &a.kvHitsResident,
+
+		// llm-d-incubation/llm-d-scaling-manager#188: a resident reading
+		// above the whole context is priced as read. Off from the
+		// constructor.
+		SwitchKVPerRequestAboveContext: &a.kvAboveContext,
 
 		// ev-shindin/llm-scaling-manager#438: a data-parallel variant at zero replicas is priced at
 		// every engine rank its pod runs.

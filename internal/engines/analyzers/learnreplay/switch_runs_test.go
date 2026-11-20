@@ -1052,6 +1052,11 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// Their unit tests hold them (heldBy).
 	saturation.SwitchK2DecodeBudgetAtComputedPrompt: nil,
 	saturation.SwitchDecodeLandedNeedsABound:        nil,
+	// llm-d-incubation/llm-d-scaling-manager#188 prices a resident reading
+	// above the whole context as read: off from the constructor, so every
+	// golden replay runs it off, and off alone from all on moves nothing. Its
+	// unit tests hold it (heldBy).
+	saturation.SwitchKVPerRequestAboveContext: nil,
 	// ev-shindin/llm-scaling-manager#275 (two switches) and ev-shindin/llm-scaling-manager#438, this file's own rows before learner PR
 	// 4b-1 (see replaySwitches).
 	saturation.SwitchZeroReplicaDataParallel: nil,
@@ -1296,6 +1301,18 @@ var heldBy = map[string][]heldTest{
 	saturation.SwitchDecodeLandedNeedsABound: {
 		{"../saturation", "TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2"},
 		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+	},
+	// llm-d-incubation/llm-d-scaling-manager#188: each runs the switch on
+	// and off and asserts both.
+	saturation.SwitchKVPerRequestAboveContext: {
+		{"../saturation", "TestKVAboveContext_AReadingAboveTheContextIsPricedAsRead"},
+		{"../saturation", "TestKVAboveContext_ANoHitShapeIsReadAboveItsContext"},
+		{"../saturation", "TestKVAboveContext_TheCountGateTakesTheReading"},
+		{"../saturation", "TestKVAboveContext_FewLongRequestsBelowTheContextAreNoReading"},
+		{"../saturation", "TestKVAboveContext_RequestsPullingTheirKVHoldIt"},
+		{"../saturation", "TestKVAboveContext_AFewLongPromptsAreNoReading"},
+		{"../saturation", "TestKVAboveContext_ALaggingRunningCountIsNoReading"},
+		{"../saturation", "TestKVAboveContext_OffFromTheConstructor"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
 	// asserts both, and the first holds all three off from the constructor.

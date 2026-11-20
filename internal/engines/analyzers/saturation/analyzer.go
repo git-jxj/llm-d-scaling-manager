@@ -408,6 +408,10 @@ type SaturationAnalyzer struct {
 	// kvHitsResident is SwitchKVPerRequestHitsResident (ev-shindin/llm-scaling-manager#277): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	kvHitsResident bool
+	// kvAboveContext is SwitchKVPerRequestAboveContext (issue
+	// llm-d-incubation/llm-d-scaling-manager#188): off from the constructor;
+	// only a replay turns it on (SetSwitchesForReplay).
+	kvAboveContext bool
 	// itlFitsAggregated is SwitchITLFitsAggregated (ev-shindin/llm-scaling-manager#432): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	itlFitsAggregated bool
