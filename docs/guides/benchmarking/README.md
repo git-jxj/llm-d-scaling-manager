@@ -302,7 +302,7 @@ is in its notes on the
 git checkout v0.12.1
 export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.12.1
 # or the exact build
-export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:0fc4c191f847b2746a41e2a1cdbb93072d0f2a1e2f3974d36478df62a9b31672
+export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:a8bcc05b69d6b29204750baa235bc5ebf45e062a8c28f3e741ce2bda42f6c440
 ```
 
 `:main` is rebuilt on every push to `main`, so two runs against it a day apart

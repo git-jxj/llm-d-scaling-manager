@@ -30,7 +30,7 @@ git checkout v0.12.1
 make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.12.1
 # or by digest (v0.12.1's, from its release notes)
 make deploy-scaling-manager NAMESPACE=<namespace> \
-  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:0fc4c191f847b2746a41e2a1cdbb93072d0f2a1e2f3974d36478df62a9b31672
+  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:a8bcc05b69d6b29204750baa235bc5ebf45e062a8c28f3e741ce2bda42f6c440
 # out-of-reach shape (the cluster admin runs it): the controller runs in llmsm-<namespace>
 NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.12.1
 ```
