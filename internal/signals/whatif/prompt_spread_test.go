@@ -132,6 +132,12 @@ func TestReadPromptSpread_AMeanBelowTheLowerEdges(t *testing.T) {
 	assert.False(t, got.Assumed)
 	assert.InDelta(t, upperEdgeCV(pooled, 900), got.CV, 1e-12)
 	assert.InDelta(t, math.Sqrt(2000.0*2000/(900*900)-1), got.CV, 1e-12)
+
+	// The step at the lower edges is the price of reading two populations
+	// high: at 1000 every request is on its lower edge, cv 0; just under it
+	// every request is on its upper edge.
+	assert.InDelta(t, 0, ReadPromptSpread(pooled, 1000).CV, 1e-12)
+	assert.InDelta(t, math.Sqrt(2000.0*2000/(999.0*999)-1), ReadPromptSpread(pooled, 999).CV, 1e-12)
 }
 
 // Over random prompts, narrow and wide, the reading is never below the true
@@ -163,6 +169,7 @@ func TestReadPromptSpread_BetweenTheTruthAndTheUpperEdges(t *testing.T) {
 			}
 			pooled[math.Inf(1)]++
 		}
+		// Every bound is a bucket, an empty one too, as the collector reads it.
 		for _, u := range bounds {
 			pooled[u] += 0
 		}
@@ -171,9 +178,7 @@ func TestReadPromptSpread_BetweenTheTruthAndTheUpperEdges(t *testing.T) {
 		truth := math.Sqrt(max(sq/n/(mean*mean)-1, 0))
 		got := ReadPromptSpread(pooled, mean)
 		require.False(t, got.Assumed, "case %d", i)
-		if got.Clamped {
-			continue
-		}
+		require.False(t, got.Clamped, "case %d", i)
 		old := upperEdgeCV(pooled, mean)
 		require.GreaterOrEqual(t, got.CV, truth*(1-1e-9)-1e-12, "case %d", i)
 		require.LessOrEqual(t, got.CV, old*(1+1e-9)+1e-12, "case %d", i)
@@ -212,15 +217,15 @@ func TestReadPromptSpread_AMeanTheBucketsCannotHold(t *testing.T) {
 	assert.False(t, ReadPromptSpread(map[float64]float64{1000: 3, inf: 3}, 10).Assumed)
 }
 
-// Past the check cv is at least the buckets' own spread about their upper-bound
-// mean, so an inconsistent mean cannot land it near 0 unless they have none.
-func TestReadPromptSpread_TheFloorPastTheCheck(t *testing.T) {
-	pooled := map[float64]float64{100: 1, 10000: 2, math.Inf(1): 2}
-	const upper = (100.0 + 10000) / 2
-	floor := math.Sqrt((100.0*100+10000.0*10000)/2/(upper*upper) - 1)
-	for _, mean := range []float64{upper, upper * 0.9, upper / 2} {
-		assert.GreaterOrEqual(t, ReadPromptSpread(pooled, mean).CV, floor*(1-1e-12), "mean %v", mean)
-	}
+// The +Inf rate can read under the last bound's: each series' rate is
+// extrapolated on its own. The reading is then taken over the requests the
+// buckets hold, so it does not fall under the widest spread they allow: the
+// 8k case 1% short on +Inf reads 0.306, as it does when the two agree.
+func TestReadPromptSpread_AnInfRateUnderTheLastBound(t *testing.T) {
+	short := map[float64]float64{5000: 0, 10000: 101, math.Inf(1): 100}
+	assert.InDelta(t, math.Sqrt((0.4*5000*5000+0.6*10000*10000)/(8000.0*8000)-1), ReadPromptSpread(short, 8000).CV, 1e-9)
+	one := map[float64]float64{1000: 0, 2000: 110, math.Inf(1): 100}
+	assert.InDelta(t, math.Sqrt((3000.0*1500-1000*2000)/(1500.0*1500)-1), ReadPromptSpread(one, 1500).CV, 1e-9)
 }
 
 // The reviewed worked example, at the default 15 s cycle over a one-minute
@@ -264,9 +269,10 @@ func TestPromptWindow_ARareLongPrompt(t *testing.T) {
 		maxMissed float64
 		maxLow    float64
 	}{
-		// The window's own prompts read under 1 in about 18% of its 15 s
-		// cycles: its few long prompts are the cv. Every request at its
-		// upper bound padded that to 11%.
+		// The window reads under 1 in 17.9% of its 15 s cycles, against
+		// 11.1% with every request at its upper bound: its few long prompts
+		// are the cv, and the upper bounds padded it. The case is seeded, so
+		// 0.2 leaves 2.1 points of margin and cannot flake.
 		{"15 s cycle", 1, 0.02, 0.2},
 		{"60 s cycle", 4, 0, 0.02},
 	} {

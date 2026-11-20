@@ -633,7 +633,7 @@ func TestTTFT_TheMeasuredSpreadSwitch(t *testing.T) {
 
 // S1 reads cv from the window the CLI reads, not from the cycle. A rare long
 // prompt that fell in an earlier minute is still in it: read from this minute
-// alone, cv is 0.48, unflagged, where the same traffic in the CLI is above 1.
+// alone, cv is 0.22, unflagged, where the same traffic in the CLI is above 1.
 func TestTTFT_TheSpreadIsTheWindowsNotTheCycles(t *testing.T) {
 	inf := math.Inf(1)
 	minute := func(long float64) []domain.ReplicaMetrics {

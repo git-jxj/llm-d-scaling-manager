@@ -188,7 +188,7 @@ const promptMeanTolerance = 1e-9
 // its two edges, and each token of mean moved into the bucket adds l + u to
 // it. So the mass starts on the lower edges and the mean is raised to mean in
 // the top buckets first (promptSecondMoment). Every 8k prompt in a (5000,
-// 10000] bucket at a mean of 8000 reads cv 0.31 so; the bucket's upper bound
+// 10000] bucket at a mean of 8000 read cv 0.31; the bucket's upper bound
 // alone read 0.75, and the truth on the staircase was about 0.06. The bound
 // is no tighter than that: those buckets also hold prompts split between
 // 5000 and 10000 at that mean.
@@ -229,11 +229,15 @@ func ReadPromptSpread(pooled map[float64]float64, mean float64) PromptSpread {
 	if total > below {
 		return PromptSpread{CV: PromptCVStop, Clamped: true}
 	}
-	second, ok := promptSecondMoment(buckets, mean*total)
+	// The buckets count below requests: the +Inf rate can read under the
+	// last bound's, each series' rate extrapolated on its own. The mean is
+	// spread over the requests the buckets hold, or the mass left on the
+	// lower edges would pull the reading under what they allow.
+	second, ok := promptSecondMoment(buckets, mean*below)
 	if !ok {
 		return assumed
 	}
-	cv := math.Sqrt(max(second/total/(mean*mean)-1, 0))
+	cv := math.Sqrt(max(second/below/(mean*mean)-1, 0))
 	if !Finite(cv) || cv > PromptCVStop {
 		return PromptSpread{CV: PromptCVStop, Clamped: true}
 	}

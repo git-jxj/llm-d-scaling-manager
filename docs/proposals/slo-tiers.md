@@ -1533,13 +1533,13 @@ held `cv` as `clamped`.
 
 Why not one cycle: at 40 requests a minute with 2% of prompts at 20000 tokens and
 the rest at 1800, true `cv` 1.2, a single minute holds no long prompt 45% of the
-time and reads 0.48 with no flag. `TestPromptWindow_ARareLongPrompt` replays it:
+time and reads 0.33 with no flag. `TestPromptWindow_ARareLongPrompt` replays it:
 
-| Read | Misses the long prompts (0.48) | Reads under 1 |
+| Read | Misses the long prompts (0.33) | Reads under 1 |
 | --- | --- | --- |
 | One cycle | 43.7% of cycles | as missed, or more |
-| Window, 15 s cycle | 1.2% | 11.1% |
-| Window, 60 s cycle | 0 | 1.1% |
+| Window, 15 s cycle | 1.5% | 17.9% |
+| Window, 60 s cycle | 0 | 1.3% |
 
 At 15 s a cycle the 20 samples overlap, so they span under 6 minutes of requests,
 not 20.
@@ -1570,9 +1570,9 @@ different requests: a pod in a rollout may carry no histogram, and the requests
 finishing in a window are not the ones that prefilled in it. A mean above the
 buckets' upper-bound mean proves that, so the reading is `Assumed` and
 `AssumedPromptSpread` stands. It does not read as `cv` 0, which the second moment
-alone would give, or as a small `cv` just above 0. Past that check `cv` is at
-least the buckets' own spread about their upper-bound mean
-(`TestReadPromptSpread_TheFloorPastTheCheck`). A mean inside the bound can still
+alone would give, or as a small `cv` just above 0. Past that check `cv` is the
+widest spread the buckets can hold at the mean, so it is at or above any spread
+they allow there (`TestReadPromptSpread_BetweenTheTruthAndTheUpperEdges`). A mean inside the bound can still
 be another population's: no histogram can show that, so a pod missing from the
 histogram whose prompts have the same mean and a wider spread reads low.
 
