@@ -113,14 +113,16 @@ func ceilReplicas(demand, scaleUp float64, perReplica int64) int {
 
 func TestK2DecodeBudget_UnreadAcceptanceStillTakesTheStepsBudget(t *testing.T) {
 	// No acceptance read: a step still takes 1 + k = 4 tokens of budget, and
-	// is read to emit one, so N = 256 x 700 / (1,600 + 4 x 700) = 40.7 a
-	// rank. Charged one token a step, as before, it read 77.9, capped at 64.
+	// is read to emit 4, the fewest steps (175): N = 256 x 175 / (1,600 +
+	// 4 x 175) = 19.5 a rank. Charged one token a step, as before, it read
+	// 77.9, capped at 64; read to emit one, 40.7.
 	rm := budgetRow()
 	rm.SpecAcceptedPerStep, rm.SpecAcceptedPerStepKnown = 0, false
-	n := 256.0 * 700 / (1_600 + 4*700)
+	n := 256.0 * 175 / (1_600 + 4*175)
 	got := priceBudget(t, rm, domain.RoleDecode, true).EffectiveCapacity
 	assert.InDelta(t, n*80_350*budgetRanks, float64(got), float64(budgetRanks), "the step's 1 + k is charged without the acceptance")
 	assert.Less(t, got, int64(64*80_350*budgetRanks), "not the one-token step's 64 a rank")
+	assert.Less(t, float64(got), 256.0*700/(1_600+4*700)*80_350*budgetRanks, "not one token emitted a step: 40.7 a rank")
 }
 
 func TestK2DecodeBudget_NoComputedPromptIsPricedAsBefore(t *testing.T) {

@@ -353,7 +353,8 @@ Two edges. The zero-replica estimate (`estimateStoredCapacity`) has no
 live rates, so it still charges the whole prompt: a parked decode with only a
 deployment record is priced low until its first live cycle. With
 `num_speculative_tokens` k stated, a step is charged `1 + k` of budget even
-when the acceptance is not read; it is then read to emit one token.
+when the acceptance is not read; it is then read to emit `1 + k`, the
+smallest batch the flags allow.
 
 The spread moves the two figures it enters in opposite directions, both
 towards the truth: `k2` rises (the sequences the batch cap admits hold more KV

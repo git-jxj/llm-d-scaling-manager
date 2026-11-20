@@ -58,8 +58,8 @@ type stepBudget struct {
 // completions. The prompt is held to [0, AvgInputTokens]: a replica cannot
 // compute more of the prompt than there is. Where the flags state
 // num_speculative_tokens k, a step takes 1 + k of budget; it emits 1 + the
-// accepted draft tokens where the replica reports its acceptance, and one
-// where it does not. Without k a step takes one token and emits one.
+// accepted draft tokens where the replica reports its acceptance, and 1 + k
+// where it does not: the smallest batch the flags allow. Without k a step takes one token and emits one.
 func decodeStepBudget(rm domain.ReplicaMetrics, role string, params *capacity.EngineParams) stepBudget {
 	if domain.CanonicalRole(role) != domain.RoleDecode {
 		return stepBudget{}
@@ -74,11 +74,13 @@ func decodeStepBudget(rm domain.ReplicaMetrics, role string, params *capacity.En
 	}
 	b := stepBudget{set: true, prompt: prompt, stepTokens: 1, emitted: 1}
 	// The budget a step takes, 1 + k, is set by the flags alone; only what it
-	// emits needs the acceptance reading. Unread acceptance emits one token
-	// a step, the most budget a request can take: charged one token a step
-	// instead, a rank at k = 3 read four times its batch.
+	// emits needs the acceptance reading. Unread, a step is read to emit
+	// 1 + k: the fewest steps a request lives, so its computed prompt weighs
+	// most a step and the batch is the smallest the flags allow. Charged one
+	// token a step instead, a rank at k = 3 read up to four times its batch.
 	if k := params.SpeculativeTokens(); k > 0 {
 		b.stepTokens = float64(1 + k)
+		b.emitted = float64(1 + k)
 		if rm.SpecAcceptedPerStepKnown && finiteNonNegative(rm.SpecAcceptedPerStep) {
 			b.emitted = 1 + min(rm.SpecAcceptedPerStep, float64(k))
 		}

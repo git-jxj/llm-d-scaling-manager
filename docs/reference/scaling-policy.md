@@ -1690,8 +1690,11 @@ budget and long prompts was priced 10-18x below its capacity. Since v0.12.2:
 - A capacity learned before the upgrade keeps pricing until it ages out. To
   drop it now, [reset the variant](troubleshooting.md#reset-one-variants-learned-state).
 - No setting turns this off. If per-token latency rises past what you accept,
-  raise the decode ScaledObject's `minReplicaCount`
-  ([trigger reference](scaledobject-trigger.md)).
+  lower the decode's `--max-num-seqs`: it caps the batch per rank, and the
+  derived capacity reads it. Or raise the decode ScaledObject's
+  `minReplicaCount` ([trigger reference](scaledobject-trigger.md)).
+- An engine that does not publish the computed prompt (SGLang) is still
+  charged the whole prompt.
 
 A cap read too high matters most under **flow control**. The router holds the queue, the engine's
 own queue stays under `queueLengthThreshold`, and the replica is never seen
