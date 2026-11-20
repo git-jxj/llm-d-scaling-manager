@@ -142,8 +142,44 @@ func TestTTFT_TheLowLoadDecodeTTFTThroughAnalyze(t *testing.T) {
 	assert.Less(t, onPredicted, 3.0, "on, the target is met")
 }
 
-// Rows that do not say why their requests wait read no backlog: the switch
-// on reads such a fleet as before.
+// A mixed fleet: pod A says it holds no capacity wait and reads 0.12 s; pod
+// B has no capacity series (an older vLLM) and queues 300 at 15 s. The
+// fleet's mean, 7.56 s, is B's queue, so those cycles are not calm and their
+// figure is not held: once A queues too, the window's largest stands.
+func TestTTFT_TheLowLoadDecodeTTFTMixedFleet(t *testing.T) {
+	r := newTTFTRig(ttftEstimate(), nil)
+	r.in.VariantStates = append(r.in.VariantStates, decState)
+	require.NoError(t, r.a.SetSwitchesForReplay(map[string]bool{SwitchTTFTLowLoadDecodeTTFT: true}))
+	var last ttftInputs
+	onTTFTPriced = func(in ttftInputs, _ float64, _ whatif.TTFTTarget) { last = in }
+	t.Cleanup(func() { onTTFTPriced = nil })
+	cycle := func(aTTFT float64, aWaiting int) {
+		dec := decodeRows("dec", 2)
+		dec[0].AvgTTFT, dec[0].AvgTTFTKnown = aTTFT, true
+		dec[0].CapacityQueueLength, dec[0].CapacityQueueKnown = aWaiting, true
+		dec[1].AvgTTFT, dec[1].AvgTTFTKnown, dec[1].QueueLength = 15, true, 300
+		r.in.ReplicaMetrics = append(prefillRows("pre", 4000), dec...)
+		r.one(t)
+		r.now = r.now.Add(15 * time.Second)
+	}
+	for range whatif.TTFTWindowCycles {
+		cycle(0.12, 0)
+	}
+	assert.InDelta(t, 7.56, last.decodeTTFT.Seconds, 1e-12, "nothing calm: the window's largest, as off")
+	w := r.a.decodeTTFT[ttftWindowKey(r.in.Namespace, r.in.ModelID, "dec")]
+	require.NotNil(t, w)
+	assert.Zero(t, w.calm, "the mixed cycles hold no calm figure")
+	assert.Positive(t, w.cycles[len(w.cycles)-1].Waiting, "the unread row counts as a backlog")
+
+	// A queues too, at 9 s: the fleet reads 12 s, not a held 7.56 s.
+	for range whatif.TTFTWindowCycles {
+		cycle(9, 140)
+	}
+	assert.InDelta(t, 12, last.decodeTTFT.Seconds, 1e-12)
+}
+
+// Rows that do not say why their requests wait cannot say they are calm: the
+// switch on reads such a fleet as before.
 func TestTTFT_TheLowLoadDecodeTTFTUnreadRows(t *testing.T) {
 	r := newTTFTRig(ttftEstimate(), nil)
 	r.in.VariantStates = append(r.in.VariantStates, decState)

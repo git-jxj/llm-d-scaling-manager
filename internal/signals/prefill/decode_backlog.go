@@ -9,7 +9,7 @@ import (
 // A decode backlog: the requests a decode pod holds waiting on its own
 // capacity. A decode engine's TTFT read while one stands is the queue's wait,
 // not what the engine takes at low load: on the staircase recordings it read
-// 9 to 17 s after an overload, against about 0.12 s at low load. The capacity
+// 6 to 21 s after an overload, against 0.15 to 0.23 s at low load. The capacity
 // planner refuses such a figure (whatif.DecodeTTFTUnderLoad) and the SLO
 // analyzer, behind its switch, prices a calm one instead
 // (slo.SwitchTTFTLowLoadDecodeTTFT). Both read the backlog here.

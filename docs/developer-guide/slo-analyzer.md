@@ -105,7 +105,9 @@ and 0.23 s calm. On:
 - With none, the latest such figure is held for `prefill.HeldDecodeAge`
   after the last window that held it, then the window's largest stands, as
   off.
-- Rows with no capacity series read no backlog, so they read as off.
+- A cycle with any decode row that has no capacity series (an older vLLM,
+  SGLang) counts as loaded: that row cannot say it is calm, and the mean
+  holds its TTFT. A fleet with such a row reads as off.
 
 The planner refuses the same case (`whatif.DecodeTTFTUnderLoad`) and names a
 calm cycle to answer at; the analyzer cannot, so it holds one. Replay-only;

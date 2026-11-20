@@ -104,8 +104,9 @@ const SwitchTTFTImbalanceAcrossCounts = "slo-ttft-imbalance-across-counts"
 // prefill.DecodeTTFTLag), and with none calm the latest calm figure is held
 // for prefill.HeldDecodeAge; past that, the window's largest, as before.
 // Off, as before, the window's largest, which after an overload is the
-// queue's wait: 9 to 17 s on two staircase recordings, against about 0.12 s
-// at low load, priced at every rate. The capacity planner refuses that case
+// queue's wait: 6 to 21 s on two staircase recordings, against 0.15 to
+// 0.23 s at low load, priced at every rate. A cycle with a decode row that
+// has no capacity series counts as loaded, so a fleet with one reads as off. The capacity planner refuses that case
 // (whatif.DecodeTTFTUnderLoad); the analyzer cannot answer at a calmer cycle,
 // so it holds one. Off from the constructor; only SetSwitchesForReplay turns
 // it on (llm-d-incubation/llm-d-scaling-manager#169). It moves no golden: no
@@ -423,7 +424,14 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 		if a.ttftLowLoadDecodeTTFT {
 			// Read on every cycle, one with no TTFT too: the backlog is
 			// carried past the queue's drain (prefill.DecodeBacklogCarry).
-			cycle.Waiting, _ = prefill.DecodeBacklogOf(decodeRows)
+			// A row with no capacity series cannot say it is calm, and the
+			// fleet's mean holds its TTFT, so the cycle counts as loaded
+			// (the planner's BacklogUnread).
+			waiting, unread := prefill.DecodeBacklogOf(decodeRows)
+			if unread {
+				waiting = max(waiting, 1)
+			}
+			cycle.Waiting = waiting
 		}
 		measured = a.noteDecodeTTFT(ttftWindowKey(input.Namespace, input.ModelID, decodes[0]), cycle, now)
 	}
