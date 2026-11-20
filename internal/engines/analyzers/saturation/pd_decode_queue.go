@@ -137,8 +137,8 @@ func decodeCapacityViews(rows []domain.ReplicaMetrics, rolesByVariant map[string
 // On, such a replica's queue is the capacity part alone, as without the
 // landed series. Where the cap is not stated, the running count is not read,
 // the busiest rank's KV is at or over the threshold, or the busiest rank's
-// running count is at the budget's steady batch, the landed requests stay in,
-// as before. Off, as before.
+// running count is at the cap or at the budget's steady batch, the landed
+// requests stay in, as before. Off, as before.
 //
 // Off from the constructor: it moves what decode records and charges, and
 // the default changes only after review.
@@ -147,14 +147,17 @@ const SwitchDecodeLandedNeedsABound = "decode-landed-queue-needs-a-bound"
 // landedWithoutBound returns view, decodeCapacityView's reading of raw, with
 // the landed requests taken back out where raw cannot be at a bound
 // (SwitchDecodeLandedNeedsABound): a decode of a P/D model whose stated cap
-// maxNumSeqs is above its running count summed over ranks -- so no rank is at
-// it -- whose busiest rank's KV is under kvThreshold, and whose running count
-// is under the batch its token budget holds where params state one
-// (landedHasBudgetRoom). Any other row is view unchanged.
+// maxNumSeqs, one rank's, is above its busiest rank's running count
+// (busiestRankRunning), whose busiest rank's KV is under kvThreshold, and
+// whose running count is under the batch its token budget holds where params
+// state one (landedHasBudgetRoom). Any other row is view unchanged. The cap
+// is one rank's, and the engine reports running summed over ranks: read
+// against the sum, a pod of four ranks with a cap of 64 kept its landed
+// requests from 16 a rank on.
 func landedWithoutBound(view, raw domain.ReplicaMetrics, role string, maxNumSeqs int64, kvThreshold float64,
 	params *capacity.EngineParams) domain.ReplicaMetrics {
 	if domain.CanonicalRole(role) != domain.RoleDecode || !raw.CapacityQueueKnown || !raw.LandedQueueKnown ||
-		maxNumSeqs <= 0 || !raw.RunningRequestsKnown || int64(raw.RunningRequests) >= maxNumSeqs ||
+		maxNumSeqs <= 0 || !raw.RunningRequestsKnown || !(busiestRankRunning(raw) < float64(maxNumSeqs)) ||
 		!(raw.BusiestRankKvUsage() < kvThreshold) || !landedHasBudgetRoom(raw, role, maxNumSeqs, params) {
 		return view
 	}
