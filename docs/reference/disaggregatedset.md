@@ -110,7 +110,8 @@ It holds what KEDA and the HPA hold on the other path:
   alone keeps `max(min-replicas, 1)` groups.
 - **During a rollout.** A replica change does not start a roll. A scale-up
   lands in the rollout's pace; a scale-down waits for the old revision to drain
-  (`Deferred`, the default).
+  (`Deferred`, the default). A replica that starts while the set rolls out is
+  not used to learn the role's start time: its start is the rollout's.
 - **Role order.** The write lists the roles in the set's own order. LWS before
   v1.0.0 hashes `spec.roles` in order into the revision, so a reordered list
   would roll every group.
