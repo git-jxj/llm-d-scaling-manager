@@ -68,6 +68,10 @@ func TestBacktestRefusesAnotherConfiguration(t *testing.T) {
 	assert.Contains(t, err.Error(), "--allow-config-mismatch")
 }
 
+// backtestParity is the backtest's JSON goldens TestBacktestAPIParity
+// holds POST /v1/backtest to.
+var backtestParity = []string{"backtest-q32-split-json"}
+
 // POST /v1/backtest, splitting the served recording, answers the CLI's JSON
 // golden, but for the ids: one code path.
 func TestBacktestAPIParity(t *testing.T) {
