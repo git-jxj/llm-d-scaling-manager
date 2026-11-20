@@ -35,7 +35,8 @@ capacity planner's pages:
 ## Prerequisites
 
 - [ ] One of: Docker (or Podman); `curl` and `cosign` for a binary (linux or
-  darwin, amd64 or arm64; on Windows, the linux binary in WSL); or a clone of
+  darwin, amd64 or arm64, or windows amd64 from v0.12.2 on; before v0.12.2, on
+  Windows, the linux binary in WSL); or a clone of
   this repository and Go 1.26 or later.
   `cosign` 3.0 or later checks the image and the binary; 2.4 is enough for the
   binary only.
@@ -109,7 +110,7 @@ use:
 
 <!-- guide:get.binary start -->
 ```bash
-# Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64; on Windows, the linux binary in WSL.
+# Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64; on Windows, the .exe below (v0.12.2 or later).
 # Check it against SHA256SUMS and its signature (cosign 2.4 or later), as for the other release files. On macOS,
 # use shasum -a 256 -c - for sha256sum -c -.
 export V=<release, v0.12.0 or later> OS=linux ARCH=amd64

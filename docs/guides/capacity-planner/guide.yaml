@@ -43,7 +43,7 @@ get:
         --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
   binary:
     note: |
-      Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64; on Windows, the linux binary in WSL.
+      Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64; on Windows, the .exe below (v0.12.2 or later).
       Check it against SHA256SUMS and its signature (cosign 2.4 or later), as for the other release files. On macOS,
       use shasum -a 256 -c - for sha256sum -c -.
     run: |
