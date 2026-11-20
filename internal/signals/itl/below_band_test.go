@@ -276,15 +276,95 @@ func TestTracker_AHoldKeepsItsSlopesB(t *testing.T) {
 	}
 }
 
-// A slope fitted through the floor's B is not exported: a restored Slope
-// carries no B and would hold with the default.
-func TestTracker_AFloorSlopeIsNotExported(t *testing.T) {
+// A slope fitted through the floor's B is exported with that B, and a
+// default-B slope without one, so a snapshot written with the switch off is
+// as it was; restored, each pairs its A with its own B.
+func TestTracker_AFloorSlopeIsExportedWithItsB(t *testing.T) {
 	tr := NewTracker()
 	tr.slopes["floor"] = heldSlope{a: 0.05, floorB: 0.012}
 	tr.slopes["default"] = heldSlope{a: 0.05}
 	got := tr.Slopes()
-	if _, ok := got["floor"]; ok || len(got) != 1 {
-		t.Errorf("exported %v, want the default-B slope alone", got)
+	if got["floor"].FloorB != 0.012 || got["default"].FloorB != 0 || len(got) != 2 {
+		t.Errorf("exported %v, want both, the floor's with B 0.012", got)
+	}
+	back := NewTracker()
+	for k, s := range got {
+		back.RestoreSlope(k, s)
+	}
+	if back.slopes["floor"].floorB != 0.012 || back.slopes["default"].floorB != 0 {
+		t.Errorf("restored %v", back.slopes)
+	}
+	back = NewTracker()
+	back.RestoreSlope("bad", Slope{A: 0.05, FloorB: math.Inf(1)})
+	if back.slopes["bad"].floorB != 0 {
+		t.Errorf("an infinite FloorB restored as %g", back.slopes["bad"].floorB)
+	}
+}
+
+// After a restart under light load a key whose slope was fitted through the
+// floor's B still holds a line (the round-2 review's repro): its slope is
+// exported with its B and restored paired with it. Before, it was not
+// exported, and the key had no line at all.
+func TestTracker_ARestoredFloorSlopeHoldsItsLine(t *testing.T) {
+	start := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	truth := Model{A: 0.05, B: 0.012}
+	adm := Admission{BaselineFromFloor: true, SlopeHoldFor: 3 * time.Hour}
+	tr := NewTracker()
+	c := 0
+	for ; c < 20; c++ {
+		tr.Observe("k", "v", floorRows(0.05, truth.A, truth.B, start), adm, start.Add(time.Duration(c)*15*time.Second))
+	}
+	var before Reading
+	for i, k := range []float64{0.30, 0.35, 0.40, 0.35, 0.30, 0.35, 0.40, 0.35} {
+		before = tr.Observe("k", "v", floorRows(k, truth.A, truth.B, start), adm, start.Add(time.Duration(c+i)*15*time.Second))
+	}
+	if !before.PinnedAtFloor {
+		t.Fatalf("premise: the line was pinned through the floor; got %+v", before)
+	}
+	restored := NewTracker()
+	for k, s := range tr.Slopes() {
+		restored.RestoreSlope(k, s)
+	}
+	at := start.Add(time.Duration(c+8)*15*time.Second + time.Minute)
+	var after Reading
+	for i := range 20 {
+		after = restored.Observe("k", "v", revisionRows("q", "", 0.05, truth, start), adm, at.Add(time.Duration(i)*15*time.Second))
+	}
+	if after.Tier == "" || !after.SlopeHeld {
+		t.Fatalf("after the restart under light load: no line (%+v)", after)
+	}
+	if after.Model != before.Model || !after.PinnedAtFloor {
+		t.Errorf("held line %+v (pinned at the floor %v), want the line before the restart %+v", after.Model, after.PinnedAtFloor, before.Model)
+	}
+}
+
+// ForgetFloor drops one key's readings below the band.
+func TestTracker_ForgetFloorDropsOneKey(t *testing.T) {
+	tr := NewTracker()
+	tr.belowBand["a"] = &belowBandState{readings: []Observation{{K: 0.05, ITLSec: 0.01}}}
+	tr.belowBand["b"] = &belowBandState{readings: []Observation{{K: 0.05, ITLSec: 0.01}}}
+	tr.ForgetFloor("a")
+	if _, ok := tr.belowBand["a"]; ok || tr.belowBand["b"] == nil {
+		t.Errorf("left %v", tr.belowBand)
+	}
+}
+
+// The tier dwell compares a new pinned fit with the held line, the held
+// slope through the B it was fitted through. A default-B slope against a
+// pinned fit through this cycle's lower floor B: through the default, the
+// held line prices at least as much, so the dwell holds; paired with this
+// cycle's B instead it would price less, and the change would go through.
+func TestDwellTier_ComparesTheHeldSlopeThroughItsB(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	tr := NewTracker()
+	tr.slopes["k"] = heldSlope{a: 0.05, fittedAt: now}
+	tr.latches["k"] = tierLatch{tier: TierOLS, since: now, seen: now, fitted: true}
+	const floorB = 0.001
+	c := fitChoice{model: Model{A: 0.055, B: floorB}, tier: TierPinnedB}
+	adm := Admission{TierHysteresis: true}
+	got, refused := tr.dwellTier("k", c, tierInputs{baseline: floorB, minSettled: DefaultMinSettledSamples}, adm, now.Add(time.Minute))
+	if !refused || !got.hold {
+		t.Errorf("the change went through (%+v): the held line was paired with this cycle's floor B", got)
 	}
 }
 

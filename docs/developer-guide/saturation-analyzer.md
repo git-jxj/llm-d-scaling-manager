@@ -976,7 +976,11 @@ admission sets `itl.Admission.BaselineFromFloor`:
   `itl.BelowBandWindow` of them, for `itl.DefaultObservationMaxAge` (30 min):
   the horizon of the readings the floor is paired with. A rollout or a shape
   move clears them with the window, a sweep or a forget with the key, and a
-  reading at or above the band's bottom now is not read.
+  reading at or above the band's bottom now is not read. A decode variant's
+  window is kept through a change of the model's request shape; its floor is
+  not: it is dropped on every cycle of the change (`floorOnShapeChange`,
+  the model's shape tracker, `shapeChangedWithin`), and read again from the
+  new shape's readings after it.
 - **Floor.** `itl.BelowBandFloor`, the 10th percentile by ITL once there are
   `itl.BelowBandMinReadings`. The capacity planner reads the same floor
   (`whatif.BelowBand.LeastITL`).
@@ -989,8 +993,9 @@ admission sets `itl.Admission.BaselineFromFloor`:
   a 0.4 ms error in their mean moved B by 2.8 ms.
 - **Holds.** A held slope keeps the B it was fitted through (`heldSlope.pin`):
   a slope fitted through the default holds through the default though a
-  floor is read since. A slope fitted through the floor's B is not exported
-  in the learned-state snapshot, which carries no B.
+  floor is read since. The learned-state snapshot carries a floor slope's B
+  (`SlopeSnapshot.FloorB`, absent otherwise, so a snapshot written with the
+  switch off is as it was), and a restored slope holds with it.
 - **Ends.** A learned B ends it; the one-sided rule is set against the pinned
   fit as against the default. With the switch on, `itl-fit` logs
   `pinnedAtFloor`, `floor` and `floorK`; off, the line is as it was.
@@ -998,8 +1003,8 @@ admission sets `itl.Admission.BaselineFromFloor`:
 `TestGoldens_ITLBaselineFromFloorReplicas` holds what it moves. On e1 the
 floor pins 9.3-12.3 ms, and decode asks for one replica fewer on 18 of 762
 cycles. On the staircases and three-pods it pins 0.4-3.8 ms, under the
-default (b-on's own full fits learned 1.4-2.4 ms): mu falls 14-32 %,
-and three-pods asks for one replica more on 36 of 203 cycles.
+default (b-on's own full fits learned 1.4-2.4 ms): mu falls 12-31 %,
+and three-pods asks for one replica more on 31 of 203 cycles.
 
 #### When a replica's settle starts (learner PR 4a)
 

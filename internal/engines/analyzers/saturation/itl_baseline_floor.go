@@ -1,5 +1,10 @@
 package saturation
 
+import (
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
+)
+
 // SwitchITLBaselineFromFloor is the replay switch for the ITL line's
 // intercept while the key has no learned B (issue
 // llm-d-incubation/llm-d-scaling-manager#169, item 1). A key learns B only
@@ -29,4 +34,20 @@ func (a *SaturationAnalyzer) baselineFromFloorOn() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.itlBaselineFromFloor
+}
+
+// floorOnShapeChange drops a decode variant's floor below the band while the
+// model's request shape changes (shapeChangedWithin), with
+// SwitchITLBaselineFromFloor on. A decode window is kept through a shape
+// change (noteITL), but a floor read at the old shape lies on the old shape's
+// line, and paired with readings at the new one it sets a B under the truth:
+// 19 % under at k 0.8 in the round-2 review's repro. Dropped each cycle of
+// the change, the floor is read again from the new shape's readings after it.
+// The model's shape tracker is the decode path's own signal; an aggregated
+// variant clears its window, and the floor with it, on its own shape move
+// (noteAggregatedShape).
+func (a *SaturationAnalyzer) floorOnShapeChange(key, role string, adm itl.Admission, shapeChanging bool) {
+	if adm.BaselineFromFloor && shapeChanging && domain.CanonicalRole(role) == domain.RoleDecode {
+		a.itlTracker.ForgetFloor(key)
+	}
 }

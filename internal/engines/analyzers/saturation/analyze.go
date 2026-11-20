@@ -608,6 +608,9 @@ func (c *cycle) fitLines() {
 				c.a.noteOccupancy(c.occupancyInput(variantKey, variant, params), itlLogger)
 			}
 		}
+		// A decode variant's window is kept through a shape change; the
+		// floor below the band is not (itl_baseline_floor.go).
+		c.a.floorOnShapeChange(variantKey, role, adm, c.shapeChanging)
 		reading := c.a.noteITL(variantKey, rows, variant, adm, c.a.now(), itlLogger)
 		c.a.noteITLOneSided(variantKey, reading)
 		// The line as a learner: its report and learner-write (itl_learner.go).

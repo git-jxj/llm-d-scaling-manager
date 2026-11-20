@@ -1226,6 +1226,15 @@ func (t *Tracker) clearWindowLocked(key string) bool {
 	return had
 }
 
+// ForgetFloor drops key's readings below the band
+// (Admission.BaselineFromFloor): the saturation analyzer calls it while a
+// decode variant's request shape changes, whose window is kept.
+func (t *Tracker) ForgetFloor(key string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.belowBand, key)
+}
+
 // ForgetFloors drops every key's readings below the band
 // (Admission.BaselineFromFloor), for a forget of all learned state.
 func (t *Tracker) ForgetFloors() {
@@ -1351,6 +1360,10 @@ type Slope struct {
 	A        float64
 	FittedAt time.Time
 	Args     string
+	// FloorB is the intercept A was fitted through when that was the floor
+	// below the band (Admission.BaselineFromFloor), 0 otherwise: restored,
+	// a hold pairs A with it, as before the restart (heldSlope.pin).
+	FloorB float64
 }
 
 // Slopes returns a copy of every key's last fitted A.
@@ -1359,12 +1372,7 @@ func (t *Tracker) Slopes() map[string]Slope {
 	defer t.mu.Unlock()
 	out := make(map[string]Slope, len(t.slopes))
 	for key, s := range t.slopes {
-		// A slope fitted through the floor's B is not exported: a Slope
-		// carries no B, and restored it would hold with the default.
-		if s.floorB > 0 {
-			continue
-		}
-		out[key] = Slope{A: s.a, FittedAt: s.fittedAt, Args: s.args}
+		out[key] = Slope{A: s.a, FittedAt: s.fittedAt, Args: s.args, FloorB: s.floorB}
 	}
 	return out
 }
@@ -1384,12 +1392,17 @@ func (t *Tracker) ForgetSlopes() {
 // RestoreSlope sets the key's last A unless it already holds one: what was
 // fitted since the process started wins over what a snapshot carried. The
 // hold it allows is bounded as a live one is, from FittedAt and by Args
-// (Admission).
+// (Admission), and pairs A with the B it was fitted through (Slope.FloorB;
+// a FloorB that is not a positive finite number reads as none).
 func (t *Tracker) RestoreSlope(key string, s Slope) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, have := t.slopes[key]; !have {
-		t.slopes[key] = heldSlope{a: s.A, fittedAt: s.FittedAt, args: s.Args}
+		floorB := s.FloorB
+		if !(floorB > 0) || math.IsInf(floorB, 0) {
+			floorB = 0
+		}
+		t.slopes[key] = heldSlope{a: s.A, fittedAt: s.FittedAt, args: s.Args, floorB: floorB}
 		t.restored[key] = struct{}{}
 	}
 }

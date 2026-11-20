@@ -110,22 +110,27 @@ type floorTable struct {
 // B at 9.3-12.3 ms, above the 6 ms default: mu rises and the decode role
 // asks for one replica fewer on 18 cycles (e1-tuned 2). On the staircases
 // and three-pods it pins 0.4-3.8 ms, under the default and where the b-on
-// line's own full fits learned 1.4-2.4 ms: mu falls (b-off 31.2 -> 21.1
+// line's own full fits learned 1.4-2.4 ms: mu falls (b-off 31.2 -> 21.8
 // r/s), which the staircases' demand absorbs without a replica more, and
-// three-pods asks for one more on 36 cycles. a-off never reads a line.
+// three-pods asks for one more on 31 cycles. a-off never reads a line.
 //
 // Round 1 of the review aged the floor out at DefaultObservationMaxAge and
 // cleared it with the window: the staircases pin it on fewer cycles (b-off
 // 194 -> 130, b-on 190 -> 167, c-on 196 -> 147), where the floor was older
 // than the readings it was paired with. No replica count moved.
+//
+// Round 2 dropped a decode variant's floor while the model's shape changes:
+// b-off's mu reads 21.8 where it read 21.1, and three-pods pins the floor
+// on 102 cycles where it pinned 145, asking for one replica more on 31
+// cycles where it asked on 36 (482 replica-cycles where 487).
 var floorReplicaTables = []floorTable{
 	{"e1", 762, 552, 18, 18, 0, 1449, 1431, 5.277, 5.270},
 	{"e1-tuned", 748, 545, 2, 2, 0, 1388, 1386, 4.779, 4.808},
 	{"ttft-staircase-a-off", 128, 0, 0, 0, 0, 125, 125, 0, 0},
-	{"ttft-staircase-b-off", 289, 130, 0, 0, 0, 283, 283, 31.239, 21.146},
+	{"ttft-staircase-b-off", 289, 130, 0, 0, 0, 283, 283, 31.239, 21.785},
 	{"ttft-staircase-b-on", 289, 167, 0, 0, 0, 284, 284, 32.655, 22.481},
 	{"ttft-staircase-c-on", 292, 147, 0, 0, 0, 286, 286, 28.938, 22.161},
-	{"ttft-three-pods", 203, 145, 36, 0, 36, 451, 487, 4.715, 4.041},
+	{"ttft-three-pods", 203, 102, 31, 0, 31, 451, 482, 4.715, 4.147},
 }
 
 // median is the median of xs, 0 with none.
