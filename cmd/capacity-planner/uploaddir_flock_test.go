@@ -1,4 +1,4 @@
-//go:build linux || darwin || freebsd || netbsd || openbsd || dragonfly
+//go:build linux || darwin || freebsd || netbsd || openbsd || dragonfly || windows
 
 package main
 
@@ -18,6 +18,8 @@ import (
 func TestUploadStoreSweepsAStoppedServersUploads(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
+	// Windows reads TMP.
+	t.Setenv("TMP", tmp)
 	stale := filepath.Join(tmp, uploadDirPrefix+"stale")
 	require.NoError(t, os.Mkdir(stale, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(stale, "upload-1"), []byte("left behind"), 0o600))

@@ -30,3 +30,11 @@ func lockUploadDir(dir string) (*os.File, error) {
 	}
 	return d, nil
 }
+
+// removeLockedDir removes dir, which lock holds, then lets the lock go: a
+// server starting meanwhile cannot take the directory being removed.
+func removeLockedDir(dir string, lock *os.File) error {
+	err := os.RemoveAll(dir)
+	_ = lock.Close()
+	return err
+}

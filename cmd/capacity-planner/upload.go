@@ -119,10 +119,9 @@ func sweepUploadDirs(tmp string, warn io.Writer) {
 			}
 			continue
 		}
-		if err := os.RemoveAll(dir); err != nil && warn != nil {
+		if err := removeLockedDir(dir, lock); err != nil && warn != nil {
 			fmt.Fprintf(warn, "capacity-planner: removing a stopped server's uploads: %v\n", err)
 		}
-		_ = lock.Close()
 	}
 }
 
@@ -131,11 +130,10 @@ func (u *uploadStore) Close() error {
 	if u == nil {
 		return nil
 	}
-	err := os.RemoveAll(u.dir)
-	if u.lock != nil {
-		_ = u.lock.Close()
+	if u.lock == nil {
+		return os.RemoveAll(u.dir)
 	}
-	return err
+	return removeLockedDir(u.dir, u.lock)
 }
 
 // path is the file of the upload named name.

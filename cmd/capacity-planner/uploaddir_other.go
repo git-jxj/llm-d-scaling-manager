@@ -1,4 +1,4 @@
-//go:build !(linux || darwin || freebsd || netbsd || openbsd || dragonfly)
+//go:build !(linux || darwin || freebsd || netbsd || openbsd || dragonfly || windows)
 
 package main
 
@@ -16,4 +16,11 @@ func lockHeld(error) bool { return false }
 // lockUploadDir opens dir; it takes no lock.
 func lockUploadDir(dir string) (*os.File, error) {
 	return os.Open(dir)
+}
+
+// removeLockedDir removes dir, then closes lock.
+func removeLockedDir(dir string, lock *os.File) error {
+	err := os.RemoveAll(dir)
+	_ = lock.Close()
+	return err
 }
