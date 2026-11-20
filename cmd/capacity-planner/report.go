@@ -1108,7 +1108,7 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 //   - RIGHT-SIZED otherwise.
 //
 // Each role's standing is reported (Roles), and on UNDER and OVER the
-// smallest fleet that holds (Needed), by the same rule for a role it cuts. Summary says it in one plain sentence.
+// smallest fleet that holds (Needed), a role it cuts judged as a spare is. Summary says it in one plain sentence.
 func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict, error) {
 	v := whatifapi.ReportVerdict{Scope: whatifapi.ScopeFleet, Roles: []whatifapi.ReportRole{}, Shrink: []string{}, Grow: []string{},
 		Checks: []whatifapi.ReportCheck{check(base)}}
@@ -1274,10 +1274,13 @@ func (r *reporter) marginWords(op float64) string {
 // headroom, the fewest replicas in all (ties to fewer decode), by POST
 // /v1/size's search (whatifapi.SmallestFleet) on the report's own check,
 // and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
-// A fleet with fewer replicas of a role than np + nd must also hold that
-// role's own check at the peak, the rule roles judges a spare by: removing
-// capacity is the costly mistake, and a fleet needed that cuts a role the
-// verdict says has no spare would contradict it.
+// A role it cuts, below np prefill or nd decode, must also hold its own
+// check at the peak with no more of the other role than the fleet runs,
+// the test roles judges a spare by at the peak: removing capacity is the
+// costly mistake, and more of the other role must not buy the cut back
+// there (decode admission can set most of a TTFT). So it never cuts a role
+// roles says has no spare, unless it trades the role for more of the
+// other at the load judged, which v.Grow then names.
 // With the prefill side not priced, it is the fewest decode replicas whose
 // own check holds. It fills v.Needed and adds the fleets tried to nothing:
 // the checks list the fleets the verdict rests on. notes are the assumed f
@@ -1289,34 +1292,49 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 	at := func(n whatifapi.FleetCounts) (fleetEval, error) {
 		return r.evaluateAt(n.Prefill, n.Decode, r.load, false)
 	}
-	// cutHolds is whether each role n has fewer of than the fleet runs holds
-	// its own check at the peak; true for a fleet that cuts no role, or with
-	// the peak no higher than the load.
+	// cutHolds is whether n's cut of a role holds the role's own check at
+	// the peak, the other role's count capped at the fleet's. True for a
+	// role n does not cut, or with the peak no higher than the load. It is
+	// monotone in each count, as the search takes holding to be.
 	shrinkAt := max(r.load, r.peak)
-	cutHolds := func(n whatifapi.FleetCounts, prefill bool) (bool, error) {
-		cutP, cutD := prefill && n.Prefill < np, n.Decode < nd
-		if !(shrinkAt > r.load) || (!cutP && !cutD) {
+	cutHolds := func(n whatifapi.FleetCounts, role string) (bool, error) {
+		f := whatifapi.FleetCounts{Prefill: n.Prefill, Decode: min(n.Decode, nd)}
+		if role == roleDecodeWord {
+			f = whatifapi.FleetCounts{Prefill: min(n.Prefill, np), Decode: n.Decode}
+		}
+		if (role == rolePrefill && n.Prefill >= np) || (role == roleDecodeWord && n.Decode >= nd) || !(shrinkAt > r.load) {
 			return true, nil
 		}
-		e, err := r.evaluateAt(n.Prefill, n.Decode, shrinkAt, false)
+		e, err := r.evaluateAt(f.Prefill, f.Decode, shrinkAt, false)
 		if err != nil {
 			return false, err
 		}
-		return (!cutP || e.prefillOK) && (!cutD || e.decodeOK), nil
+		return (role == rolePrefill && e.prefillOK) || (role == roleDecodeWord && e.decodeOK), nil
 	}
+	// decodeHolds is decode's own check, which the prefill count does not
+	// move: at the load, and at the peak on a cut.
 	decodeHolds := func(n whatifapi.FleetCounts) (bool, error) {
 		e, err := at(n)
 		if err != nil || !e.decodeOK {
 			return false, err
 		}
-		return cutHolds(n, false)
+		if n.Decode >= nd || !(shrinkAt > r.load) {
+			return true, nil
+		}
+		e, err = r.evaluateAt(n.Prefill, n.Decode, shrinkAt, false)
+		return err == nil && e.decodeOK, err
 	}
 	holds := func(n whatifapi.FleetCounts) (bool, error) {
 		e, err := at(n)
 		if err != nil || !e.holds {
 			return false, err
 		}
-		return cutHolds(n, true)
+		for _, role := range []string{rolePrefill, roleDecodeWord} {
+			if ok, err := cutHolds(n, role); err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
 	}
 	if !base.prefillPriced {
 		d, ok, err := whatifapi.SmallestCount(1, bound, func(d int) (bool, error) {

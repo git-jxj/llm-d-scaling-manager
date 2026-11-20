@@ -612,24 +612,28 @@ func TestAtReplicas_NeededKeepsARoleWithNoSpare(t *testing.T) {
 }
 
 // Across fleets over-provisioned at the staircase's p95, the fleet needed
-// and the roles agree: a role with no spare is never cut, and a role the
-// verdict shrinks is.
+// and the roles agree: a role with no spare is cut only in trade for more
+// of the other role, and the fleet needed is smaller than the one judged.
+// Spares are judged one role at a time, so with two the fewest in all may
+// cut only one of them. Every fleet here is over-provisioned: one that is
+// not fails rather than skips.
 func TestAtReplicas_NeededAgreesWithSpare(t *testing.T) {
 	for _, c := range [][2]int{{3, 4}, {4, 4}, {4, 5}, {5, 4}, {5, 5}} {
 		np, nd := c[0], c[1]
 		t.Run(fmt.Sprintf("%d+%d", np, nd), func(t *testing.T) {
 			v := stairReport(t, stairQuery(np, nd, 0)).Shapes[0].Verdict
-			if v.Verdict != whatifapi.VerdictOver {
-				t.Skipf("%s", v.Summary)
-			}
+			require.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
 			require.NotNil(t, v.Needed, v.Summary)
 			has := map[string]int{rolePrefill: np, roleDecode: nd}
 			got := map[string]int{rolePrefill: v.Needed.Prefill, roleDecode: v.Needed.Decode}
+			assert.Less(t, v.Needed.Prefill+v.Needed.Decode, np+nd, v.Summary)
 			for _, r := range v.Roles {
-				if r.Spare {
-					assert.Contains(t, v.Shrink, r.Role, v.Summary)
-					assert.Less(t, got[r.Role], has[r.Role], "%s has a spare but is not cut: %s", r.Role, v.Summary)
-				} else {
+				assert.Equal(t, r.Spare, slices.Contains(v.Shrink, r.Role), "%s: %s", r.Role, v.Summary)
+				other := rolePrefill
+				if r.Role == rolePrefill {
+					other = roleDecode
+				}
+				if !r.Spare && got[other] <= has[other] {
 					assert.GreaterOrEqual(t, got[r.Role], has[r.Role], "%s has no spare but is cut: %s", r.Role, v.Summary)
 				}
 			}
