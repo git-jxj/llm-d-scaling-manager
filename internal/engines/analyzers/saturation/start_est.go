@@ -140,15 +140,21 @@ const SwitchStartCountedPodsRestored = "start-counted-pods-restored"
 
 // SwitchStartHeldThroughRollout is the replay switch for issue
 // llm-d-incubation/llm-d-scaling-manager#220: a Pod that started while its
-// variant was rolling out -- created before the last cycle that saw the
-// rollout, or Ready during it -- is counted, never folded into the start
-// estimate. A variant is rolling out when its rows report two revisions, or
-// when its scale target has said so on two cycles in a row: one cycle alone
-// may be a scale the controller has not observed yet (scaletarget.RollingOut),
-// and the Pods of that scale-up are starts to learn from. Such a start is the rollout's: a new revision's first, cold
-// starts, or a scale-up waiting on a DisaggregatedSet rollout that can run
-// for hours. Off, every start is folded as before. On from the constructor;
-// a replay turns it off (SetSwitchesForReplay).
+// variant was rolling out -- Ready while its rows report two revisions, or
+// created before the last cycle that saw them -- is counted, never folded
+// into the start estimate. Such a start is the rollout's: a new revision's
+// first, cold starts, or a scale-up waiting on a DisaggregatedSet rollout
+// that can run for hours. Its Ready time is still observed in
+// llmsm_replica_start_seconds.
+//
+// The rows decide, not the scale target's status: scaletarget.RollingOut
+// also reads true while a scale write is not yet observed, and for a
+// LeaderWorkerSet-backed role while a new group starts, and those starts
+// are the ones to learn from. So a rollout that never shows two revisions
+// at once (one replica, replaced in place) is not held, and a canary held
+// below a LeaderWorkerSet partition, or a Deployment stuck mid-rollout,
+// holds every start while it lasts. Off, every start is folded as before.
+// On from the constructor; a replay turns it off (SetSwitchesForReplay).
 const SwitchStartHeldThroughRollout = "start-held-through-rollout"
 
 // The estimate gauge's sources (llmsm_replica_start_seconds_estimate), and the
@@ -171,9 +177,8 @@ type startNote struct {
 	// seed is the variant's replicaStartSeconds, 0 when unset.
 	seed float64
 	// revisionsMixed is whether the variant's rows report more than one
-	// revision this cycle, and targetRolling whether its scale target says
-	// it is rolling out (SwitchStartHeldThroughRollout).
-	revisionsMixed, targetRolling bool
+	// revision this cycle (SwitchStartHeldThroughRollout).
+	revisionsMixed bool
 }
 
 // startFigures is a key's start estimate as each reader takes it
@@ -367,7 +372,7 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 	// never visit a key that has no window.
 	now := a.now()
 	a.noteVariantSeen(key, now)
-	rolling, rolledAt := a.noteStartRolloutLocked(key, note.revisionsMixed, note.targetRolling, now)
+	rolling, rolledAt := a.noteStartRolloutLocked(key, note.revisionsMixed, now)
 	for _, rm := range replicas {
 		if seen, ok := startPodKey(key, variantName, rm); ok {
 			present[seen] = struct{}{}
@@ -412,10 +417,11 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 		if !(rm.StartSeconds > 0) {
 			continue
 		}
-		if a.startOverlapsRollout(rm, rolling, rolledAt, now) {
+		if a.startOverlapsRollout(rm, rolling, rolledAt) {
 			// Counted, so it is never folded on a later cycle either.
 			a.startSeenPods[seen] = now
 			heldByRollout = append(heldByRollout, rm.PodName)
+			metrics.ObserveReplicaStartSeconds(namespace, variantName, rm.StartSeconds)
 			continue
 		}
 		// The guard compares with the measured estimate, the only one
@@ -566,24 +572,17 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 	}
 }
 
-// noteStartRolloutLocked decides whether key's variant is rolling out this
-// cycle -- its rows report two revisions, or its scale target says so for
-// the second cycle in a row -- records it, and returns it with the last cycle
-// that saw it rolling out, zero when none is remembered. A mark older than
-// maxRestoredStartSeconds is dropped: a Pod created before it and Ready only
-// now reports no credible start. With SwitchStartHeldThroughRollout off
+// noteStartRolloutLocked records whether key's variant is rolling out this
+// cycle -- its rows report two revisions -- and returns it with the last
+// cycle that saw it rolling out, zero when none is remembered. A mark older
+// than maxRestoredStartSeconds is dropped: a Pod created before it and Ready
+// only now reports no credible start. With SwitchStartHeldThroughRollout off
 // nothing is kept. Callers hold a.mu.
-func (a *SaturationAnalyzer) noteStartRolloutLocked(key string, revisionsMixed, targetRolling bool, now time.Time) (bool, time.Time) {
+func (a *SaturationAnalyzer) noteStartRolloutLocked(key string, revisionsMixed bool, now time.Time) (bool, time.Time) {
 	if !a.startHoldsRollout {
 		return false, time.Time{}
 	}
-	_, targetBefore := a.startTargetRolling[key]
-	if targetRolling {
-		a.startTargetRolling[key] = now
-	} else {
-		delete(a.startTargetRolling, key)
-	}
-	if revisionsMixed || (targetRolling && targetBefore) {
+	if revisionsMixed {
 		a.startRolledAt[key] = now
 		return true, now
 	}
@@ -599,8 +598,9 @@ func (a *SaturationAnalyzer) noteStartRolloutLocked(key string, revisionsMixed, 
 // rollout of its variant (SwitchStartHeldThroughRollout): the variant is
 // rolling out now, or the Pod was created before rolledAt, the last cycle
 // that saw it rolling out. The Pod was created StartSeconds before it became
-// Ready (its row's Ready time, else now).
-func (a *SaturationAnalyzer) startOverlapsRollout(rm domain.ReplicaMetrics, rolling bool, rolledAt, now time.Time) bool {
+// Ready. A row with no Ready time cannot place its start, so after a rollout
+// it is held: read from now, a Pod created during the rollout would pass.
+func (a *SaturationAnalyzer) startOverlapsRollout(rm domain.ReplicaMetrics, rolling bool, rolledAt time.Time) bool {
 	if !a.startHoldsRollout {
 		return false
 	}
@@ -612,7 +612,7 @@ func (a *SaturationAnalyzer) startOverlapsRollout(rm domain.ReplicaMetrics, roll
 	}
 	ready := a.readySince(rm)
 	if ready.IsZero() {
-		ready = now
+		return true
 	}
 	created := ready.Add(-time.Duration(rm.StartSeconds * float64(time.Second)))
 	return created.Before(rolledAt)

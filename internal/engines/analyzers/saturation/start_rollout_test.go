@@ -31,42 +31,15 @@ func rolloutAnalyzer(t *testing.T, on bool) *SaturationAnalyzer {
 // rolloutCycle is one noteReplicaStartFor for confirmKey, the clock 30 s on,
 // the variant's rows reporting two revisions or not.
 func rolloutCycle(a *SaturationAnalyzer, rolling bool, rows ...domain.ReplicaMetrics) {
-	targetCycle(a, rolling, false, rows...)
-}
-
-// targetCycle is rolloutCycle with the scale target's own reading.
-func targetCycle(a *SaturationAnalyzer, mixed, target bool, rows ...domain.ReplicaMetrics) {
 	at := a.now().Add(30 * time.Second)
 	a.now = func() time.Time { return at }
-	a.noteReplicaStartFor(startNote{key: confirmKey, namespace: "ns", variant: confirmVariant,
-		revisionsMixed: mixed, targetRolling: target}, rows, logr.Discard())
+	a.noteReplicaStartFor(startNote{key: confirmKey, namespace: "ns", variant: confirmVariant, revisionsMixed: rolling},
+		rows, logr.Discard())
 }
 
-// A scale target read rolling out on one cycle alone may be a scale its
-// controller has not observed yet, and the Pods of that scale-up are starts
-// to learn from: folded. On two cycles in a row it is a rollout: a Pod Ready
-// then is not folded.
-func TestStartRollout_TheScaleTargetMarksARolloutOnTheSecondCycle(t *testing.T) {
-	a := rolloutAnalyzer(t, true)
-	at := a.now().Add(30 * time.Second)
-	targetCycle(a, false, true, confirmReplica("d0", 70), readyRow("u1", 100, at))
-	targetCycle(a, false, false, confirmReplica("d0", 70), readyRow("u1", 100, at))
-	if got, want := a.startSeconds[confirmKey], 0.7*70+0.3*100; !near(got, want) {
-		t.Fatalf("one cycle rolling: estimate = %v, want %v, the start folded", got, want)
-	}
-
-	b := rolloutAnalyzer(t, true)
-	targetCycle(b, false, true, confirmReplica("d0", 70))
-	at = b.now().Add(30 * time.Second)
-	targetCycle(b, false, true, confirmReplica("d0", 70), readyRow("u1", 100, at))
-	if got := b.startSeconds[confirmKey]; !near(got, 70) {
-		t.Fatalf("two cycles rolling: estimate = %v, want 70, the start not folded", got)
-	}
-}
-
-// readyRow is a Pod Ready at ready, reporting start seconds.
-func readyRow(pod string, start float64, ready time.Time) domain.ReplicaMetrics {
-	rm := confirmReplica(pod, start)
+// readyRow is Pod u1, a scale-up Ready at ready, reporting start seconds.
+func readyRow(start float64, ready time.Time) domain.ReplicaMetrics {
+	rm := confirmReplica("u1", start)
 	rm.ReadySince = ready
 	return rm
 }
@@ -79,8 +52,8 @@ func TestStartRollout_AStartDuringARolloutIsNotFolded(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		a := rolloutAnalyzer(t, on)
 		at := a.now().Add(30 * time.Second)
-		rolloutCycle(a, true, confirmReplica("d0", 70), readyRow("u1", 200, at))
-		rolloutCycle(a, false, confirmReplica("d0", 70), readyRow("u1", 200, at))
+		rolloutCycle(a, true, confirmReplica("d0", 70), readyRow(200, at))
+		rolloutCycle(a, false, confirmReplica("d0", 70), readyRow(200, at))
 		want := 70.0
 		if !on {
 			want = 109
@@ -102,7 +75,7 @@ func TestStartRollout_APodCreatedDuringARolloutIsNotFoldedAfterIt(t *testing.T) 
 		// Ready now, 200 s after it was created: a minute before the
 		// rollout's last cycle.
 		ready := a.now().Add(30 * time.Second)
-		rolloutCycle(a, false, confirmReplica("d0", 70), readyRow("u1", 200, ready))
+		rolloutCycle(a, false, confirmReplica("d0", 70), readyRow(200, ready))
 		want := 70.0
 		if !on {
 			want = 109
@@ -124,7 +97,7 @@ func TestStartRollout_APodCreatedAfterARolloutIsFolded(t *testing.T) {
 		}
 		// Created 100 s ago: five minutes after the rollout's last cycle.
 		ready := a.now().Add(30 * time.Second)
-		rolloutCycle(a, false, confirmReplica("d0", 70), readyRow("u1", 100, ready))
+		rolloutCycle(a, false, confirmReplica("d0", 70), readyRow(100, ready))
 		if got, want := a.startSeconds[confirmKey], 0.7*70+0.3*100; !near(got, want) {
 			t.Fatalf("switch %t: estimate = %v, want %v", on, got, want)
 		}
@@ -185,7 +158,6 @@ func TestStartRollout_AnalyzeHoldsStartsWhileRollingOut(t *testing.T) {
 		revA, revB   string
 	}{
 		{name: "two revisions", revA: "rev-1", revB: "rev-2"},
-		{name: "the scale target rolling out", storeRolling: true, revA: "rev-1", revB: "rev-1"},
 	} {
 		if n := run(true, tc.storeRolling, tc.revA, tc.revB); n != 0 {
 			t.Errorf("%s, switch on: %d start estimates, want none folded", tc.name, n)
@@ -196,5 +168,48 @@ func TestStartRollout_AnalyzeHoldsStartsWhileRollingOut(t *testing.T) {
 	}
 	if n := run(true, false, "rev-1", "rev-1"); n != 1 {
 		t.Errorf("one revision, not rolling out: %d start estimates, want the starts folded", n)
+	}
+	// The scale target's status alone does not hold a start: it also reads
+	// rolling out while a scale write is not yet observed, and while a
+	// LeaderWorkerSet-backed role's new group starts -- the starts to learn.
+	if n := run(true, true, "rev-1", "rev-1"); n != 1 {
+		t.Errorf("one revision, the scale target rolling out: %d start estimates, want the starts folded", n)
+	}
+}
+
+// After a rollout, a row with no Ready time cannot place its start: held,
+// since read from now a Pod created during the rollout would pass.
+func TestStartRollout_ARowWithNoReadyTimeIsHeldAfterARollout(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		a := rolloutAnalyzer(t, on)
+		rolloutCycle(a, true, confirmReplica("d0", 70))
+		rolloutCycle(a, false, confirmReplica("d0", 70), confirmReplica("u1", 200))
+		want := 70.0
+		if !on {
+			want = 109
+		}
+		if got := a.startSeconds[confirmKey]; !near(got, want) {
+			t.Fatalf("switch %t: estimate = %v, want %v", on, got, want)
+		}
+	}
+}
+
+// A variant held from its first start has a rollout mark and no estimate;
+// the sweep drops the mark when the variant goes stale.
+func TestStartRollout_TheSweepDropsAMarkWithNoEstimate(t *testing.T) {
+	a := rolloutAnalyzer(t, true)
+	const key = "ns|model|other|H100|1"
+	a.noteReplicaStartFor(startNote{key: key, namespace: "ns", variant: "other", revisionsMixed: true}, nil, logr.Discard())
+	if _, ok := a.startRolledAt[key]; !ok {
+		t.Fatal("the rollout was not marked")
+	}
+	if _, ok := a.startSeconds[key]; ok {
+		t.Fatal("precondition: the key has no estimate")
+	}
+	later := a.now().Add(30 * 24 * time.Hour)
+	a.now = func() time.Time { return later }
+	a.EvictStaleHistory()
+	if _, ok := a.startRolledAt[key]; ok {
+		t.Fatal("a stale key's rollout mark survived the sweep")
 	}
 }

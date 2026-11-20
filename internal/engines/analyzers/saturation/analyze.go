@@ -526,7 +526,6 @@ func (c *cycle) fitLines() {
 			modelID: c.input.ModelID, variant: variant, role: domain.CanonicalRole(role),
 			seed:           c.startSeedByVariant[variant],
 			revisionsMixed: mixed[variant],
-			targetRolling:  c.a.capacityStore.Get(c.input.Namespace, c.input.ModelID, variant).InRollout(),
 		}, c.input.ReplicaMetrics, c.logger)
 
 		if !c.a.itlLineRole(role) {

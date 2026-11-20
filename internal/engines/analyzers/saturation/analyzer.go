@@ -240,10 +240,6 @@ type SaturationAnalyzer struct {
 	// started during the rollout. Not in the snapshot: a restart forgets a
 	// rollout that has ended, and reads one still running afresh.
 	startRolledAt map[string]time.Time
-	// startTargetRolling is, per start key, when its scale target was last
-	// read rolling out, kept while it reads so on consecutive cycles: one
-	// cycle alone does not mark a rollout (noteStartRolloutLocked).
-	startTargetRolling map[string]time.Time
 	// startHoldsRollout is SwitchStartHeldThroughRollout: on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	startHoldsRollout bool
@@ -756,7 +752,6 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		startCountedRestored:   make(map[string]time.Time),
 		startCountsRestored:    true,
 		startRolledAt:          make(map[string]time.Time),
-		startTargetRolling:     make(map[string]time.Time),
 		startHoldsRollout:      true,
 		startOutliers:          make(map[string]int),
 		startOutlierPods:       make(map[string]map[string]startRunPod),
@@ -1138,9 +1133,14 @@ func (a *SaturationAnalyzer) evictStaleHistory() Evicted {
 		if a.variantIsStale(key, now, variantTimeout) {
 			delete(a.startSeconds, key)
 			delete(a.startOutliers, key)
-			delete(a.startRolledAt, key)
-			delete(a.startTargetRolling, key)
 			evicted.StartEstimates++
+		}
+	}
+	// A variant held from its first start has a rollout mark and no
+	// estimate: its own loop.
+	for key := range a.startRolledAt {
+		if a.variantIsStale(key, now, variantTimeout) {
+			delete(a.startRolledAt, key)
 		}
 	}
 	// The start learner's per-key state goes with its key's liveness, as
