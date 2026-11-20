@@ -1936,7 +1936,7 @@ It never changes a scaling decision.
 The `WARNING: load imbalanced` log line states the `idleAfterReady` and
 `sustainFor` in force.
 
-### `slo` (observe only)
+### `slo` (observes, bounds decode packing)
 
 Latency targets, and the analyzer that judges a model against them. **On this
 release the analyzer reports and does not decide**: replica counts still come
@@ -2209,13 +2209,16 @@ rose from 12 to 15-16 ms.
 
 With a `tpot` target set and `slo` listed, saturation holds each decode
 replica at the KV-cache fill where its variant's ITL line (below) reaches the
-target. A fill the line reaches outside the ITL band is held at the band's
-edge, where the line was fitted. So a model with a TPOT target is not sized
-to pack decode past it.
+target, wherever it trusts that line. A fill the line reaches outside the ITL
+band is held at the band's edge, where the line was fitted. At the lower edge
+(0.15 by default) a replica is held at under a fifth of the KV the 0.80
+threshold allows, so a tight target can ask for up to about five times the
+decode replicas. A target at or under the line's intercept, which no number
+of replicas meets, bounds nothing (`target-unreachable`).
 
 - **Only on a line the variant measured.** A line borrowed from another
-  variant, held from an earlier fit, or resting on the default intercept
-  bounds nothing, and saturation sizes as before. `itlBoundWhy` on the
+  variant, or resting on the default intercept, bounds nothing, and
+  saturation sizes as before. `itlBoundWhy` on the
   `k2-itl-bound` line names the reason.
 - **Saturation's own line.** Saturation fits its own ITL line. The SLO
   analyzer's `llmsm_slo_fill` comes from a fit of its own, so the two fills
@@ -2223,8 +2226,8 @@ to pack decode past it.
 - **Decode only.** Prefill and aggregated variants are not bound.
 - **The mean, not the busiest replica.** The line is fitted on the mean fill,
   so a replica above the mean runs above the target.
-- **Where to read it.** At `--v=3`, each decode replica logs a
-  `k2-itl-bound` line. `k2BatchBound` is `itl` when the target held it and
+- **Where to read it.** At `--v=3`, each decode replica of a model with a
+  `tpot` target logs a `k2-itl-bound` line. `k2BatchBound` is `itl` when the target held it and
   `none` when it did not. `k2Unbounded` and `k2` are the figure before and
   after. `nSteady` and `nITL` are requests per engine rank under the batch
   flags and under the target, and `itlTargetFill` is the fill.

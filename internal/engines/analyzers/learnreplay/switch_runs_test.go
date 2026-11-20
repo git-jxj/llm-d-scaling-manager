@@ -1334,7 +1334,6 @@ var heldBy = map[string][]heldTest{
 	// off.
 	saturation.SwitchK2BatchAtITLTarget: {
 		{"../saturation", "TestK2BatchAtITLTarget_ThroughAnalyze"},
-		{"../saturation", "TestK2BatchAtITLTarget_AnAggregatedVariantIsNotBound"},
 	},
 	// llm-d-incubation/llm-d-scaling-manager#220: each runs the switch on
 	// and off and asserts both.

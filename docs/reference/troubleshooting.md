@@ -1576,7 +1576,7 @@ how far saturation packs decode, but only on a decode line the variant
 measured: read `itlBoundWhy` on the `k2-itl-bound` line
 ([TPOT and decode packing](scaling-policy.md#how-a-tpot-target-bounds-decode-packing)). It is a tuning finding to act
 on in working hours, not an outage. Set up in
-[`slo` (observe only)](scaling-policy.md#slo-observe-only).
+[`slo`](scaling-policy.md#slo-observes-bounds-decode-packing).
 
 The `llmsm_slo_*` series carry the model's namespace as `exported_namespace`
 (see [the labels](prometheus.md#slo-analyzer-metrics)); filter on that, not on
@@ -1620,7 +1620,7 @@ for:
   (`kubectl edit scaledobject <so> -n <ns>`; where a tool generates the
   ScaledObject, change it there, or the next apply undoes it), or
 - lower the tier's `scaleUpThreshold` (and write the tier's other fields out,
-  see [Turn it on](scaling-policy.md#slo-observe-only), step 3).
+  see [Turn it on](scaling-policy.md#slo-observes-bounds-decode-packing), step 3).
 
 **3. Then find the cause**, per objective:
 

@@ -668,6 +668,7 @@ backlogGrowth.fraction
 backlogGrowth.minRequests
 backlogRequests
 bad
+bad-band
 balanced
 band
 bare
@@ -1354,7 +1355,6 @@ head
 headroom
 health-probe-bind-address
 held
-held-line
 heldAt
 heldAtFleet
 heldCycles
@@ -2531,7 +2531,6 @@ rest
 rest-client-timeout
 restart
 restarted
-resting-fit
 restore
 restored
 restoredKeys
@@ -2969,6 +2968,7 @@ taken
 taken-by-another-borrower
 takes
 target
+target-unreachable
 targetFill
 targetReduce
 targetReplicas
