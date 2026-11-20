@@ -1,0 +1,4229 @@
+{
+  "schemaVersion": 1,
+  "whatifSchema": "schema-v3",
+  "backtestId": "sha256:9922b79c7f221f7becfcac62c517b0eb79511cb9fe63e40d82959c9df0be83b2",
+  "banner": "TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.",
+  "verdict": "Over the 73 min it did not see, the planner's p90 TTFT was within 20% of what the fleet measured in 0% of the 10 5-minute steps it priced (median ratio 2.66, it reads high, on the safe side), and gave no figure for 1 it judged past the knee; p90 TPOT was within 20% of what the fleet measured in 100% of the 11 5-minute steps it priced (median ratio 0.94, it reads slightly low). 0 of the judged 5-minute steps were inside the planner's validated region (the envelope of measured runs).",
+  "excluded": "Judged 14 of 16 5-minute steps; not judged: 1 warm-up, 1 no traffic.",
+  "fit": {
+    "inputsId": "sha256:506e9482b0ed83830ee594a50e7488c03daa4267a2613d1f21dc606bb7667634",
+    "source": "warmup.jsonl.gz",
+    "from": "2026-11-14T07:09:46.613863541Z",
+    "to": "2026-11-14T08:22:24.937623046Z",
+    "cycles": 291
+  },
+  "test": {
+    "inputsId": "sha256:43a2132f5523edcfbec39e3a73a6d363f0154015549986b4c8dabd8053abda58",
+    "source": "warmup.jsonl.gz",
+    "from": "2026-11-14T08:22:39.962659026Z",
+    "to": "2026-11-14T09:35:09.792943235Z",
+    "cycles": 289
+  },
+  "split": "50%",
+  "config": {
+    "match": true,
+    "differences": [],
+    "notCompared": [
+      "router version (not recorded)",
+      "decode vLLM release (not recorded on both)",
+      "prefill vLLM release (not recorded on both)"
+    ]
+  },
+  "step": 300,
+  "settle": 120,
+  "measured": "router",
+  "measuredNote": "measured by the router (server side, the same scrape as the inputs): TTFT from the request's arrival at the router, its queue included; TPOT per streamed request",
+  "assumed": [],
+  "steps": [
+    {
+      "start": "2026-11-14T08:20:00Z",
+      "cycles": 10,
+      "excluded": "warmUp",
+      "detail": "within 2m0s of the test's first cycle",
+      "rate": 0.984,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 2012.007782788886,
+      "outputTokens": 31.342587245733597,
+      "promptCV": 1.7000000000000002,
+      "requests": 162.5312583430345,
+      "kneeShare": 0.06199004414912683,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.0033089565546331285,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.28314228938183306,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.26395126932056673,
+              "hi": 0.3131644396439434
+            },
+            "floor": 0.26850002211963475,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.3131644396439434,
+          "measured": 0.16039027467310293,
+          "ratio": 1.7653332782110096,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.10913789308169392,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.10175682491647695,
+              "hi": 0.12230244899577655
+            },
+            "floor": 0.09624653243968162,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.12230244899577655,
+          "measured": 0.1540890269151139,
+          "ratio": 0.7082781640370596,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.7911172728458598,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7314824709645789,
+              "hi": 0.8860492273470808
+            },
+            "floor": 0.7355990477814425,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.8860492273470808,
+          "measured": 0.197360248447205,
+          "ratio": 4.0084934989200125,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 1.1580052306107291,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.073297292049992,
+              "hi": 1.2890102083937371
+            },
+            "floor": 1.0989753213380145,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.2890102083937371,
+          "measured": 0.2677215189873422,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 2021 tokens, measured 800 to 1250)",
+              "outside": "prompt 2021 tokens, measured 800 to 1250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010837501620463054,
+          "ratio": 0.9937452684002636,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019,
+          "ratio": 0.9411017305909729,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.019500000000000003,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T08:25:00Z",
+      "cycles": 20,
+      "rate": 1.0989999999999998,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 2003.734034855726,
+      "outputTokens": 31.361373883799843,
+      "promptCV": 1.7000000000000002,
+      "requests": 310.59801235506205,
+      "kneeShare": 0.06923481556899429,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.0036956740381522434,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.284972494019427,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.26530516332876236,
+              "hi": 0.3162042344086607
+            },
+            "floor": 0.26850002211963475,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.3162042344086607,
+          "measured": 0.1586039004865331,
+          "ratio": 1.7967559003608722,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.11078584428716783,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.10303936419556846,
+              "hi": 0.12491704566909133
+            },
+            "floor": 0.09624653243968162,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.12491704566909133,
+          "measured": 0.15305526036131772,
+          "ratio": 0.723829053804721,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.7974051823944904,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7360959530819767,
+              "hi": 0.8962298316249776
+            },
+            "floor": 0.7355990477814425,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.8962298316249776,
+          "measured": 0.19549946865037193,
+          "ratio": 4.07880997272968,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 1.1646282894576259,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.078025612408842,
+              "hi": 1.3000231670209195
+            },
+            "floor": 1.0989753213380145,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.3000231670209195,
+          "measured": 0.22634782608695556,
+          "ratio": 5.145303622267674,
+          "inRegion": false
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 2021 tokens, measured 800 to 1250)",
+              "outside": "prompt 2021 tokens, measured 800 to 1250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010829275464656996,
+          "ratio": 0.9945001391611074,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019,
+          "ratio": 0.9411017305909729,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.0195,
+          "ratio": 1.019178534909875,
+          "inRegion": false
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T08:30:00Z",
+      "cycles": 20,
+      "rate": 0.571,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 2736.658031249494,
+      "outputTokens": 31.601708646498352,
+      "promptCV": 0.9,
+      "requests": 243.2525244483311,
+      "kneeShare": 0.04819980730097294,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.002566902270954347,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.3601382084075148,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.33750557321570546,
+              "hi": 0.39180012913584816
+            },
+            "floor": 0.3523902663182525,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.9, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.9, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.39180012913584816,
+          "measured": 0.19834606066760216,
+          "ratio": 1.8157063830526572,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.2781126117097981,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.2605090623487961,
+              "hi": 0.3039818624833676
+            },
+            "floor": 0.2686145008331684,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.3039818624833676,
+          "measured": 0.17609471294193968,
+          "ratio": 1.5793353875507599,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.7608681591086472,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7113347356101538,
+              "hi": 0.8318122345909531
+            },
+            "floor": 0.7445198253942911,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.9, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.9, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.8318122345909531,
+          "measured": 0.3479299156391955,
+          "ratio": 2.1868431684318574,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.9653556942951136,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.9015701280241777,
+              "hi": 1.054247180291338
+            },
+            "floor": 0.9420244671081701,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.9, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.9, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.054247180291338,
+          "measured": 0.3783776768332253,
+          "ratio": 2.551301922392758,
+          "inRegion": false
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 2708 tokens, measured 800 to 1250)",
+              "outside": "prompt 2708 tokens, measured 800 to 1250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010844773371987068,
+          "ratio": 0.9930789318690976,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019000000000000003,
+          "ratio": 0.9411017305909727,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.0195,
+          "ratio": 1.019178534909875,
+          "inRegion": false
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T08:35:00Z",
+      "cycles": 20,
+      "rate": 0.5799972802175823,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 4031.455274629611,
+      "outputTokens": 31.675203186982515,
+      "promptCV": 0.75,
+      "requests": 167.4044866149327,
+      "kneeShare": 0.07233609201215123,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.003846182013909917,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.5277626134232155,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.49278665225876983,
+              "hi": 0.5768799814555444
+            },
+            "floor": 0.5102797652248212,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.5768799814555444,
+          "measured": 0.2920172920358628,
+          "ratio": 1.8072991833593222,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.443812154523546,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.4138874512548399,
+              "hi": 0.4889371632626805
+            },
+            "floor": 0.42235101353108206,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.4889371632626805,
+          "measured": 0.30555737246792436,
+          "ratio": 1.4524675053295755,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 1.035968914999113,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.9650769494549534,
+              "hi": 1.1408607535347146
+            },
+            "floor": 0.9988337774082476,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.1408607535347146,
+          "measured": 0.3900032704422639,
+          "ratio": 2.6563082761442582,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 1.276710072232163,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.1876569741721101,
+              "hi": 1.4033848769432973
+            },
+            "floor": 1.2251122460465727,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.4033848769432973,
+          "measured": 0.41096156549647844,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 4001 tokens, measured 800 to 1250)",
+              "outside": "prompt 4001 tokens, measured 800 to 1250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010894153281882618,
+          "ratio": 0.9885776046979059,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019,
+          "ratio": 0.9411017305909729,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.0195,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T08:40:00Z",
+      "cycles": 20,
+      "rate": 0.5229999999999999,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 4002.5222984744014,
+      "outputTokens": 31.406945237107067,
+      "promptCV": 0.75,
+      "requests": 166.2640336542621,
+      "kneeShare": 0.06522750608099874,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.0034682114242333426,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.5259337763288405,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.491421286782162,
+              "hi": 0.5742100561456343
+            },
+            "floor": 0.5102797652248212,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.5742100561456343,
+          "measured": 0.28737693480208615,
+          "ratio": 1.830118261547491,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.44185597472994775,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.4123823075096855,
+              "hi": 0.4859040722396146
+            },
+            "floor": 0.42235101353108206,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.4859040722396146,
+          "measured": 0.30419103313840157,
+          "ratio": 1.452560814075381,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 1.0324590788826853,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.9623642730876163,
+              "hi": 1.1355100193330758
+            },
+            "floor": 0.9988337774082476,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.1355100193330758,
+          "measured": 0.38754385964912286,
+          "ratio": 2.664108985799595,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 1.2711639789126548,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.1836164312430422,
+              "hi": 1.3950151899039807
+            },
+            "floor": 1.2251122460465727,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.3950151899039807,
+          "measured": 0.39796296296296296,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 4001 tokens, measured 800 to 1250)",
+              "outside": "prompt 4001 tokens, measured 800 to 1250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010891474094933195,
+          "ratio": 0.9888207842890165,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019,
+          "ratio": 0.9411017305909729,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.0195,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T08:45:00Z",
+      "cycles": 20,
+      "rate": 0.42600000000000016,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 4872.898766668621,
+      "outputTokens": 31.403590884493028,
+      "promptCV": 1.3,
+      "requests": 142.62312334982073,
+      "kneeShare": 0.0645764850578121,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.0034320490352978362,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.6408520954072702,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.597142716521794,
+              "hi": 0.7070719765804124
+            },
+            "floor": 0.6155394311625337,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.3, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.7070719765804124,
+          "measured": 0.356357088273609,
+          "ratio": 1.798342495478096,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.35858855603093376,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.33309705953632074,
+              "hi": 0.3997657626265481
+            },
+            "floor": 0.33104974799396747,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.3997657626265481,
+          "measured": 0.3552483069977427,
+          "ratio": 1.0094025755151939,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 1.6353739481458787,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.520236789922683,
+              "hi": 1.8094678456858397
+            },
+            "floor": 1.5709786999004165,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.3, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.8094678456858397,
+          "measured": 0.5644626168224299,
+          "ratio": 2.897222773320237,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 2.2365349633945915,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.082040939066543,
+              "hi": 2.4662096695145737
+            },
+            "floor": 2.169234715888254,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.3, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.4662096695145737,
+          "measured": 0.5966004672897197,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 4863 tokens, measured 800 to 1250)",
+              "outside": "prompt 4863 tokens, measured 800 to 1250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010909913970653605,
+          "ratio": 0.9871494849166206,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019,
+          "ratio": 0.9411017305909729,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.0195,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T08:50:00Z",
+      "cycles": 20,
+      "rate": 0.42299999999999993,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 6011.597671277665,
+      "outputTokens": 31.599781019356875,
+      "promptCV": 1.35,
+      "requests": 120.4338478886345,
+      "kneeShare": 0.07794026183327182,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.004145838273583028,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.7829397056663877,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7275298863646774,
+              "hi": 0.8692198290526599
+            },
+            "floor": 0.7435117396343698,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.8692198290526599,
+          "measured": 0.4402631292042332,
+          "ratio": 1.7783449344975482,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.41921779684259763,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.38754889316322333,
+              "hi": 0.47263123605745955
+            },
+            "floor": 0.3767421411530335,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.47263123605745955,
+          "measured": 0.4599718111346019,
+          "ratio": 0.9113988872677279,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 2.041335778680728,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.8920341157150844,
+              "hi": 2.273163721741599
+            },
+            "floor": 1.9364299971819094,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.273163721741599,
+          "measured": 0.5909372797744892,
+          "ratio": 3.454403451174604,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 2.8135243669531342,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.6129904960565553,
+              "hi": 3.1185556566738613
+            },
+            "floor": 2.703832945730915,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 3.1185556566738613,
+          "measured": 0.6762500000000005,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 5911 tokens, measured 800 to 1250)",
+              "outside": "prompt 5911 tokens, measured 800 to 1250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010922070150140087,
+          "ratio": 0.9860507951853079,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019000000000000003,
+          "ratio": 0.9411017305909727,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.0195,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T08:55:00Z",
+      "cycles": 20,
+      "rate": 0.34600000000000003,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 6009.749850688852,
+      "outputTokens": 31.670820753317823,
+      "promptCV": 1.35,
+      "requests": 115.45681414033106,
+      "kneeShare": 0.06375255459648241,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.0033911584932854095,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.7753025027500196,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7219021396095198,
+              "hi": 0.8564490288879872
+            },
+            "floor": 0.7435117396343698,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.8564490288879872,
+          "measured": 0.45507687325044316,
+          "ratio": 1.7036737050870658,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.41109789207589,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.3812851273583838,
+              "hi": 0.45976941169817775
+            },
+            "floor": 0.3767421411530335,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.45976941169817775,
+          "measured": 0.46711267605633805,
+          "ratio": 0.8800829289126545,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 2.022066772960255,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.8781615405740602,
+              "hi": 2.2407802079197108
+            },
+            "floor": 1.9364299971819094,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.2407802079197108,
+          "measured": 0.5925774647887325,
+          "ratio": 3.412324789774394,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 2.7933327722896686,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.598769467115114,
+              "hi": 3.083690103377146
+            },
+            "floor": 2.703832945730915,
+            "flags": [
+              "UnvalidatedTTFT",
+              "VPShapeMoved",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 3.083690103377146,
+          "measured": 0.7430487804878043,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt 5911 tokens, measured 800 to 1250)",
+              "outside": "prompt 5911 tokens, measured 800 to 1250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010924777175907088,
+          "ratio": 0.9858064638944122,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019000000000000003,
+          "ratio": 0.9411017305909727,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.019499999999999997,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T09:00:00Z",
+      "cycles": 19,
+      "rate": 0.29684210526315796,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 6874.341207117298,
+      "outputTokens": 31.479006350417016,
+      "promptCV": 0.8,
+      "requests": 96.84478168573794,
+      "kneeShare": 0.06331878557967505,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.003369627761976302,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.8831213227975313,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.8243039937637645,
+              "hi": 0.9653094118310697
+            },
+            "floor": 0.85731917426772,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.8, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.8, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 0.9653094118310697,
+          "measured": 0.5117637100486093,
+          "ratio": 1.7256427242831442,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.719811296882039,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.6707989454536544,
+              "hi": 0.7930916992848537
+            },
+            "floor": 0.6873757720349243,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.7930916992848537,
+          "measured": 0.4887599709934735,
+          "ratio": 1.4727296415435192,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 1.8009673509092323,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.678391531472633,
+              "hi": 1.9807753702813704
+            },
+            "floor": 1.7457343931282834,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.8, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.8, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.9807753702813704,
+          "measured": 0.5971283538796228,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 2.2461430210142925,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.091229582117471,
+              "hi": 2.4647371493277195
+            },
+            "floor": 2.1689738140888273,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.8, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.8, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.4647371493277195,
+          "measured": 0.8827027027027022,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (output 32 tokens, measured 160 to 250)",
+              "outside": "output 32 tokens, measured 160 to 250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010943053720085926,
+          "ratio": 0.9841600189577415,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019000000000000003,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.019500000000000003,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T09:05:00Z",
+      "cycles": 20,
+      "rate": 0.29100000000000004,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 8054.697294671378,
+      "outputTokens": 31.400826451218162,
+      "promptCV": 0.75,
+      "requests": 87.82390801693795,
+      "kneeShare": 0.07186018993508728,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.003815785591101058,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 1.0232315852840221,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.9540410202763314,
+              "hi": 1.1203713618495774
+            },
+            "floor": 0.9890769231619101,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.1203713618495774,
+          "measured": 0.5771459226018923,
+          "ratio": 1.7729165973677576,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.8569943300346305,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7978031424832726,
+              "hi": 0.9461986136792978
+            },
+            "floor": 0.8149775552744316,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.9461986136792978,
+          "measured": 0.5101430429128739,
+          "ratio": 1.6799098643809096,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 2.029195069670897,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.8889707967638156,
+              "hi": 2.2367019168558038
+            },
+            "floor": 1.9564163094446154,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.2367019168558038,
+          "measured": 0.598257477243173,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 2.505653240326797,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.3295298236617867,
+              "hi": 2.756089393479229
+            },
+            "floor": 2.4044488084580644,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.756089393479229,
+          "measured": 0.8473972602739731,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (output 32 tokens, measured 160 to 250)",
+              "outside": "output 32 tokens, measured 160 to 250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010959533876186513,
+          "ratio": 0.9826801101474205,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019000000000000003,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.0195,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T09:10:00Z",
+      "cycles": 20,
+      "rate": 0.269,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 7975.749800362662,
+      "outputTokens": 31.588420031638016,
+      "promptCV": 0.75,
+      "requests": 83.26162708099311,
+      "kneeShare": 0.06642746079910129,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.0035273069553477133,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 1.0204786657330387,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.9519901437077772,
+              "hi": 1.1163440185879785
+            },
+            "floor": 0.9890769231619101,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.1163440185879785,
+          "measured": 0.5594607312166655,
+          "ratio": 1.8240398455022793,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.8540512408250847,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7955426501201801,
+              "hi": 0.9416251166940699
+            },
+            "floor": 0.8149775552744316,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.9416251166940699,
+          "measured": 0.5072096128170894,
+          "ratio": 1.6838230570623545,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 2.023879968721372,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.8848014601838379,
+              "hi": 2.228619764797474
+            },
+            "floor": 1.9564163094446154,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.228619764797474,
+          "measured": 0.592977303070761,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 2.4972687574038432,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.3234267544755824,
+              "hi": 2.743424468613978
+            },
+            "floor": 2.4044488084580644,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.743424468613978,
+          "measured": 0.7231111111111123,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (output 32 tokens, measured 160 to 250)",
+              "outside": "output 32 tokens, measured 160 to 250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.010955589841065143,
+          "ratio": 0.9830338770302373,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.019000000000000003,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.0195,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T09:15:00Z",
+      "cycles": 20,
+      "rate": 3.0859999999999994,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 8047.139401952468,
+      "outputTokens": 9.868193980284868,
+      "promptCV": 0.75,
+      "requests": 454.2061736342345,
+      "kneeShare": 0.7620637324387604,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.012632130646155903,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 2.534552198327169,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.7689294104171056,
+              "hiRefused": "Saturated"
+            },
+            "floor": 0.9890769231619101,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.534552198327169,
+          "measured": 10.331521682378623,
+          "ratio": 0.2453222551572519,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 1.8877789800518523,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.3883869483092763,
+              "hiRefused": "Saturated"
+            },
+            "floor": 0.8149775552744316,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 1.8877789800518523,
+          "measured": 10.943150475022987,
+          "ratio": 0.17250781521834888,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 6.1023896445664265,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 4.037617719581618,
+              "hiRefused": "Saturated"
+            },
+            "floor": 1.9564163094446154,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 6.1023896445664265,
+          "measured": 17.472302365839585,
+          "ratio": 0.34926076236508585,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 8.100812748254487,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 5.25290622394169,
+              "hiRefused": "Saturated"
+            },
+            "floor": 2.4044488084580644,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 8.100812748254487,
+          "measured": 18.73615118291979,
+          "ratio": 0.4323626912041216,
+          "inRegion": false
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (output 10 tokens, measured 160 to 250)",
+              "outside": "output 10 tokens, measured 160 to 250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.011898565916210321,
+          "ratio": 0.9051272256216143,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.014593587336688819,
+          "ratio": 0.9016556232900929,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.01892564004900337,
+          "ratio": 0.9447993745485029,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.019467146638042693,
+          "ratio": 1.0208985322946524,
+          "inRegion": false
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T09:20:00Z",
+      "cycles": 19,
+      "rate": 4.130526315789473,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 8013.938888371913,
+      "outputTokens": 7.502914800433935,
+      "promptCV": 0.75,
+      "requests": 1166.7515052663448,
+      "kneeShare": 1.0200013937611951,
+      "load": "past the knee",
+      "decodeKneeShare": 0.011833720652205051,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "refused": {
+              "reason": "Saturated",
+              "detail": "4.130526315789473 r/s at or above the prefill knee 4.049530070305493 r/s"
+            }
+          },
+          "measured": 11.528160062671473,
+          "inRegion": false,
+          "unscored": "refused"
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "refused": {
+              "reason": "Saturated",
+              "detail": "4.130526315789473 r/s at or above the prefill knee 4.049530070305493 r/s"
+            }
+          },
+          "measured": 12.063495895702559,
+          "inRegion": false,
+          "unscored": "refused"
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "refused": {
+              "reason": "Saturated",
+              "detail": "4.130526315789473 r/s at or above the prefill knee 4.049530070305493 r/s"
+            }
+          },
+          "measured": 17.823921871978342,
+          "inRegion": false,
+          "unscored": "refused"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "refused": {
+              "reason": "Saturated",
+              "detail": "4.130526315789473 r/s at or above the prefill knee 4.049530070305493 r/s"
+            }
+          },
+          "measured": 18.911960935989168,
+          "inRegion": false,
+          "unscored": "refused"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (output 7 tokens, measured 160 to 250)",
+              "outside": "output 7 tokens, measured 160 to 250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.01207301735495953,
+          "ratio": 0.8920484117577456,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.014512925771051226,
+          "ratio": 0.9066669459818681,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.018919424027797456,
+          "ratio": 0.9451097906023375,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.019470236309890733,
+          "ratio": 1.0207365290500727,
+          "inRegion": false
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T09:25:00Z",
+      "cycles": 20,
+      "rate": 2.024,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 7998.414909107737,
+      "outputTokens": 7.54262006686218,
+      "promptCV": 0.75,
+      "requests": 1003.9610264155863,
+      "kneeShare": 0.49981108051071005,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.005798643748741049,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 1.4047706810025933,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.2103262735410916,
+              "hi": 2.0407427190460723
+            },
+            "floor": 0.9890769231619101,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.0407427190460723,
+          "measured": 11.4306497921754,
+          "ratio": 0.12289508527889624,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 1.164636731831549,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.0133300288169915,
+              "hi": 1.7546256078856837
+            },
+            "floor": 0.8149775552744316,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 1.7546256078856837,
+          "measured": 11.781534860803154,
+          "ratio": 0.09885271703488004,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 3.0063587067050515,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.5238032692861045,
+              "hi": 4.649571680174613
+            },
+            "floor": 1.9564163094446154,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 4.649571680174613,
+          "measured": 17.827574601750054,
+          "ratio": 0.1686353176954273,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 3.848035133496417,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 3.203940478335059,
+              "hi": 6.1695850472783835
+            },
+            "floor": 2.4044488084580644,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 6.1695850472783835,
+          "measured": 18.91378730087503,
+          "ratio": 0.2034513274513979,
+          "inRegion": false
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (output 7 tokens, measured 160 to 250)",
+              "outside": "output 7 tokens, measured 160 to 250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.01195503609144873,
+          "ratio": 0.9008518146021137,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.014419513607411696,
+          "ratio": 0.9125404950786337,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.018904748118123912,
+          "ratio": 0.9458434870172165,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.019465402431962937,
+          "ratio": 1.0209900103636553,
+          "inRegion": false
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T09:30:00Z",
+      "cycles": 20,
+      "rate": 0.258,
+      "prefill": 2,
+      "decode": 2,
+      "promptTokens": 8015.392079417556,
+      "outputTokens": 25.539211292321163,
+      "promptCV": 0.75,
+      "requests": 149.77760936300692,
+      "kneeShare": 0.0637110962311083,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.002642130727488127,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 1.0190703504130145,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.9509288423641967,
+              "hi": 1.1143079548002601
+            },
+            "floor": 0.9890769231619101,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.1143079548002601,
+          "measured": 6.101589474875301,
+          "ratio": 0.16701719357050673,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.8525337388794574,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7943659525745214,
+              "hi": 0.9392970547315362
+            },
+            "floor": 0.8149775552744316,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.9392970547315362,
+          "measured": 4.671052631578949,
+          "ratio": 0.18251426522489786,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 2.0213853680842755,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.8829640826047243,
+              "hi": 2.224546465889728
+            },
+            "floor": 1.9564163094446154,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.224546465889728,
+          "measured": 15.370192307692301,
+          "ratio": 0.13151334268424444,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 2.4930816103254383,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.3203623084982192,
+              "hi": 2.737140791537711
+            },
+            "floor": 2.4044488084580644,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.737140791537711,
+          "measured": 17.68509615384615,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (output 25 tokens, measured 160 to 250)",
+              "outside": "output 25 tokens, measured 160 to 250"
+            }
+          },
+          "bound": 0.010769715956615349,
+          "measured": 0.011398405335531357,
+          "ratio": 0.9448440935017248,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.013158390086100563,
+          "measured": 0.01468543046357616,
+          "ratio": 0.8960166417141758,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.017880932881228485,
+          "measured": 0.01893708609271523,
+          "ratio": 0.9442283144135344,
+          "inRegion": false
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "bound": 0.019873981430742562,
+          "measured": 0.019468543046357617,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
+    },
+    {
+      "start": "2026-11-14T09:35:00Z",
+      "cycles": 1,
+      "excluded": "noTraffic",
+      "detail": "no requests arrived",
+      "rate": 0,
+      "prefill": 2,
+      "decode": 2,
+      "requests": 3.3698666004137934,
+      "ttft": [],
+      "tpot": []
+    }
+  ],
+  "summary": {
+    "steps": 16,
+    "judged": 14,
+    "excluded": {
+      "noTraffic": 1,
+      "noMeasurement": 0,
+      "scaling": 0,
+      "warmUp": 1,
+      "notPriced": 0
+    },
+    "ttft": [
+      {
+        "statistic": "mean",
+        "all": {
+          "steps": 13,
+          "bias": 1.7783449344975482,
+          "medianError": 0.8072991833593222,
+          "p90Error": 4.987407515489401,
+          "coverage": 0.7692307692307693,
+          "within": 0
+        },
+        "inRegion": {
+          "steps": 0
+        },
+        "unscored": {
+          "refused": 1,
+          "refused:Saturated": 1
+        },
+        "outside": {
+          "prompt cv": 13
+        }
+      },
+      {
+        "statistic": "p50",
+        "all": {
+          "steps": 13,
+          "bias": 1.0094025755151939,
+          "medianError": 0.47272964154351915,
+          "p90Error": 4.796838819935587,
+          "coverage": 0.6153846153846154,
+          "within": 0.23076923076923078
+        },
+        "inRegion": {
+          "steps": 0
+        },
+        "unscored": {
+          "refused": 1,
+          "refused:Saturated": 1
+        },
+        "outside": {
+          "p": 13
+        }
+      },
+      {
+        "statistic": "p90",
+        "all": {
+          "steps": 10,
+          "bias": 2.6602086309719266,
+          "medianError": 2.1442431666300177,
+          "p90Error": 4.929955917099777,
+          "coverage": 0.7,
+          "within": 0
+        },
+        "inRegion": {
+          "steps": 0
+        },
+        "unscored": {
+          "fewRequests": 3,
+          "refused": 1,
+          "refused:Saturated": 1
+        },
+        "outside": {
+          "prompt cv": 10
+        }
+      },
+      {
+        "statistic": "p95",
+        "all": {
+          "steps": 4,
+          "bias": 1.4918323067984398,
+          "medianError": 2.541201701585118,
+          "p90Error": 4.145303622267674,
+          "coverage": 0.5,
+          "within": 0
+        },
+        "inRegion": {
+          "steps": 0
+        },
+        "unscored": {
+          "fewRequests": 9,
+          "refused": 1,
+          "refused:Saturated": 1
+        },
+        "outside": {
+          "prompt cv": 4
+        }
+      }
+    ],
+    "tpot": [
+      {
+        "statistic": "mean",
+        "all": {
+          "steps": 14,
+          "bias": 0.9849832414260768,
+          "medianError": 0.015246054146745668,
+          "p90Error": 0.1100604825241739,
+          "coverage": 0,
+          "within": 1
+        },
+        "inRegion": {
+          "steps": 0
+        },
+        "unscored": {},
+        "outside": {
+          "output": 7,
+          "prompt": 7
+        }
+      },
+      {
+        "statistic": "p50",
+        "all": {
+          "steps": 14,
+          "bias": 0.8772260057400376,
+          "medianError": 0.13995708455586528,
+          "p90Error": 0.13995708455586528,
+          "coverage": 0,
+          "within": 1
+        },
+        "inRegion": {
+          "steps": 0
+        },
+        "unscored": {},
+        "outside": {
+          "TPOT percentiles: never scored against a client": 14
+        }
+      },
+      {
+        "statistic": "p90",
+        "all": {
+          "steps": 11,
+          "bias": 0.9411017305909729,
+          "medianError": 0.06258438115084691,
+          "p90Error": 0.06258438115084716,
+          "coverage": 0,
+          "within": 1
+        },
+        "inRegion": {
+          "steps": 0
+        },
+        "unscored": {
+          "fewRequests": 3
+        },
+        "outside": {
+          "TPOT percentiles: never scored against a client": 11
+        }
+      },
+      {
+        "statistic": "p95",
+        "all": {
+          "steps": 5,
+          "bias": 1.0207365290500727,
+          "medianError": 0.020736529050072727,
+          "p90Error": 0.02099001036365533,
+          "coverage": 1,
+          "within": 1
+        },
+        "inRegion": {
+          "steps": 0
+        },
+        "unscored": {
+          "fewRequests": 9
+        },
+        "outside": {
+          "TPOT percentiles: never scored against a client": 5
+        }
+      }
+    ],
+    "byLoad": [
+      {
+        "load": "below 0.8 of the knee",
+        "steps": 13,
+        "decodeSteps": 14,
+        "ttft": [
+          {
+            "statistic": "mean",
+            "all": {
+              "steps": 13,
+              "bias": 1.7783449344975482,
+              "medianError": 0.8072991833593222,
+              "p90Error": 4.987407515489401,
+              "coverage": 0.7692307692307693,
+              "within": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {
+              "prompt cv": 13
+            }
+          },
+          {
+            "statistic": "p50",
+            "all": {
+              "steps": 13,
+              "bias": 1.0094025755151939,
+              "medianError": 0.47272964154351915,
+              "p90Error": 4.796838819935587,
+              "coverage": 0.6153846153846154,
+              "within": 0.23076923076923078
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {
+              "p": 13
+            }
+          },
+          {
+            "statistic": "p90",
+            "all": {
+              "steps": 10,
+              "bias": 2.6602086309719266,
+              "medianError": 2.1442431666300177,
+              "p90Error": 4.929955917099777,
+              "coverage": 0.7,
+              "within": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {
+              "fewRequests": 3
+            },
+            "outside": {
+              "prompt cv": 10
+            }
+          },
+          {
+            "statistic": "p95",
+            "all": {
+              "steps": 4,
+              "bias": 1.4918323067984398,
+              "medianError": 2.541201701585118,
+              "p90Error": 4.145303622267674,
+              "coverage": 0.5,
+              "within": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {
+              "fewRequests": 9
+            },
+            "outside": {
+              "prompt cv": 4
+            }
+          }
+        ],
+        "tpot": [
+          {
+            "statistic": "mean",
+            "all": {
+              "steps": 14,
+              "bias": 0.9849832414260768,
+              "medianError": 0.015246054146745668,
+              "p90Error": 0.1100604825241739,
+              "coverage": 0,
+              "within": 1
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {
+              "output": 7,
+              "prompt": 7
+            }
+          },
+          {
+            "statistic": "p50",
+            "all": {
+              "steps": 14,
+              "bias": 0.8772260057400376,
+              "medianError": 0.13995708455586528,
+              "p90Error": 0.13995708455586528,
+              "coverage": 0,
+              "within": 1
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {
+              "TPOT percentiles: never scored against a client": 14
+            }
+          },
+          {
+            "statistic": "p90",
+            "all": {
+              "steps": 11,
+              "bias": 0.9411017305909729,
+              "medianError": 0.06258438115084691,
+              "p90Error": 0.06258438115084716,
+              "coverage": 0,
+              "within": 1
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {
+              "fewRequests": 3
+            },
+            "outside": {
+              "TPOT percentiles: never scored against a client": 11
+            }
+          },
+          {
+            "statistic": "p95",
+            "all": {
+              "steps": 5,
+              "bias": 1.0207365290500727,
+              "medianError": 0.020736529050072727,
+              "p90Error": 0.02099001036365533,
+              "coverage": 1,
+              "within": 1
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {
+              "fewRequests": 9
+            },
+            "outside": {
+              "TPOT percentiles: never scored against a client": 5
+            }
+          }
+        ]
+      },
+      {
+        "load": "0.8 to 1.0 of the knee",
+        "steps": 0,
+        "decodeSteps": 0,
+        "ttft": [
+          {
+            "statistic": "mean",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p50",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p90",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p95",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          }
+        ],
+        "tpot": [
+          {
+            "statistic": "mean",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p50",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p90",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p95",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          }
+        ]
+      },
+      {
+        "load": "past the knee",
+        "steps": 1,
+        "decodeSteps": 0,
+        "ttft": [
+          {
+            "statistic": "mean",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {
+              "refused": 1,
+              "refused:Saturated": 1
+            },
+            "outside": {}
+          },
+          {
+            "statistic": "p50",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {
+              "refused": 1,
+              "refused:Saturated": 1
+            },
+            "outside": {}
+          },
+          {
+            "statistic": "p90",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {
+              "refused": 1,
+              "refused:Saturated": 1
+            },
+            "outside": {}
+          },
+          {
+            "statistic": "p95",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {
+              "refused": 1,
+              "refused:Saturated": 1
+            },
+            "outside": {}
+          }
+        ],
+        "tpot": [
+          {
+            "statistic": "mean",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p50",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p90",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          },
+          {
+            "statistic": "p95",
+            "all": {
+              "steps": 0
+            },
+            "inRegion": {
+              "steps": 0
+            },
+            "unscored": {},
+            "outside": {}
+          }
+        ]
+      }
+    ]
+  },
+  "notes": [
+    "Fitted on the fit window alone; each step of the test is priced from its own inputs (rate, prompt and output lengths, the replicas each role served) and never from its measured latency.",
+    "Each step's rate is the mean of its cycles' rates; its measured figures average the cycles' histograms, each over the source's rate window, so a step's measurement reaches back that window before the step. A percentile is scored with 50 requests or more at p50, 100 at p90 and 200 at p95 (50 for the mean).",
+    "Bias is the median of predicted over measured; error the median and p90 of |ln ratio| as a share; coverage the share of steps measured at or under the prediction's upper bound (the top of its span over V_P and f for TTFT, of its band for TPOT); within, the share inside 20%.",
+    "In region: the prediction is inside the validated envelope (docs/guides/capacity-planner/accuracy.md); all: every judged step."
+  ]
+}

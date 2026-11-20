@@ -361,9 +361,9 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 				shareText(a.P90Error), shareText(a.Coverage), shareText(a.Within), strconv.Itoa(r.Steps), ratioText(r.Bias), shareText(r.Within))
 		}
 	}
-	b.WriteString("\nby load (the step's rate over the fit's knee at its fleet), all judged steps: steps, bias, within\n")
+	b.WriteString("\nby load (the step's rate over the fit's knee at its fleet: TTFT by the lower knee, TPOT by decode's), judged steps: steps, bias, within\n")
 	for _, l := range bt.Summary.ByLoad {
-		fmt.Fprintf(&b, "%-24s %3d steps", l.Load, l.Steps)
+		fmt.Fprintf(&b, "%-24s %3d+%-3d steps", l.Load, l.Steps, l.DecodeSteps)
 		for _, part := range []struct {
 			name   string
 			scores []whatifapi.BacktestScore
@@ -376,7 +376,7 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 		}
 		b.WriteString("\n")
 	}
-	if t :=bt.Summary.Target; t != nil {
+	if t := bt.Summary.Target; t != nil {
 		fmt.Fprintf(&b, "\nTTFT target over %d judged steps: both met %d, both missed %d, predicted met but measured missed %d, "+
 			"predicted missed but measured met %d, not judged %d\n", t.Steps, t.BothMet, t.BothMissed, t.MissedMisses, t.FalseAlarms, t.NotJudged)
 	}
