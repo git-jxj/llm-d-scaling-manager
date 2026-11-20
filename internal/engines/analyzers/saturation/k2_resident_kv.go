@@ -74,6 +74,8 @@ import (
 // the traffic. The reading is not what over-prices there: the steady batch
 // at the budget is 16-19 requests a rank, where the ranks ran 2-6. Priced
 // at the context, the low KV a request hid that batch.
+// SwitchK2BatchAtITLTarget holds that batch where the variant's ITL line
+// reaches its target (issue llm-d-incubation/llm-d-scaling-manager#258).
 //
 // Off from the constructor: on, a decode is priced at more capacity and
 // fewer replicas are ordered, and the default changes only after a GPU

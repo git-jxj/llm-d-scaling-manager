@@ -130,12 +130,15 @@ const BatchCapRankSpread = 0.10
 // not I + O (decodeStepBudget); only the derived k2 reads it. resident is
 // the KV the rank's resident requests are read to hold where the derived k2
 // prices them at that and not at their context (k2ResidentKV); the zero
-// value is the context.
+// value is the context. itl is the fill at which the variant's ITL line
+// reaches its target, which holds the batch (k2ITLBound); the zero value
+// holds nothing.
 type pricedBatchCap struct {
 	perRank  int64
 	source   string
 	budget   stepBudget
 	resident residentKVLine
+	itl      itlBatchBound
 }
 
 // learnedBatchCap is a variant's learned batch cap: the most sequences per

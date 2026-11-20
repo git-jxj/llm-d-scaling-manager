@@ -1064,6 +1064,11 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// golden replay runs it off, and off alone from all on moves nothing. Its
 	// unit tests hold it (heldBy).
 	saturation.SwitchK2DerivedAtResidentKV: nil,
+	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
+	// where the variant's ITL line reaches its target. Off from the
+	// constructor, so every golden replay runs it off, and off alone from
+	// all on moves nothing. Its unit tests hold it (heldBy).
+	saturation.SwitchK2BatchAtITLTarget: nil,
 	// llm-d-incubation/llm-d-scaling-manager#188 prices a resident reading
 	// above the whole context as read: off from the constructor, so every
 	// golden replay runs it off, and off alone from all on moves nothing. Its
@@ -1326,6 +1331,11 @@ var heldBy = map[string][]heldTest{
 	saturation.SwitchDecodeLandedNeedsABound: {
 		{"../saturation", "TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2"},
 		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+	},
+	// llm-d-incubation/llm-d-scaling-manager#258: each fails with the switch
+	// off.
+	saturation.SwitchK2BatchAtITLTarget: {
+		{"../saturation", "TestK2BatchAtITLTarget_ThroughAnalyze"},
 	},
 	// The follow-up to PR #205: each fails with the switch off.
 	saturation.SwitchK2DerivedAtResidentKV: {

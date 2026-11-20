@@ -89,6 +89,9 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	// where the derived k2 prices them at that (k2ResidentKV); the zero
 	// value prices the context.
 	resident residentKVLine,
+	// itlBound is the fill at which the variant's ITL line reaches its
+	// target, the bound on the derived k2's batch (k2ITLBound).
+	itlBound itlBatchBound,
 	logger logr.Logger,
 ) *capacity.ReplicaCapacity {
 	if rm.TotalKvCapacityTokens <= 0 {
@@ -251,6 +254,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		batchCap.budget = decodeStepBudget(rm, role, engineParams)
 	}
 	batchCap.resident = resident
+	batchCap.itl = itlBound
 	d := a.computeK2(
 		historyKey,
 		modelID, namespace, rm.VariantName,
@@ -1259,13 +1263,23 @@ func (a *SaturationAnalyzer) k2Chain(
 		// against the figure at the context, as with the switch off: a
 		// sibling or prior figure under the raised one arms no bound the
 		// context would not, and a bound relaxes towards the context.
+		//
+		// Under SwitchK2BatchAtITLTarget the batch is also held where the
+		// variant's own ITL line reaches its target (batchCap.itl,
+		// k2_itl_bound.go): k2 is then at most the bound's fill of the
+		// replica's KV, at the context and at the reading alike, and the
+		// lower bound is judged against that.
 		if k2Derived := estimateCapacityAtCapBudget(engineParams, batchCap.perRank, avgInput, avgOutput, outputDispersion, batchCap.budget) * int64(max(ranks, 1)); k2Derived > 0 {
-			atCtx := k2Derived
+			atSteady := k2Derived
+			atCtx, itlHeld := itlBoundedK2(k2Derived, batchCap.itl, kvCeiling)
 			if b, ok := borrow(min(k1, atCtx)); ok {
 				logBorrowedK2(logger, b, modelID, namespace, variantName, historyKey, min(k1, atCtx), capacity.K2SrcDerived)
 				return b.k2, b.source(), b
 			}
 			k2Derived = k2AtResidentKV(engineParams, batchCap, avgInput, avgOutput, ranks, k1, atCtx)
+			if held, ok := itlBoundedK2(k2Derived, batchCap.itl, kvCeiling); ok {
+				k2Derived, itlHeld = held, true
+			}
 			kv := []any{"modelID", modelID, "namespace", namespace, "variant", variantName,
 				"priority", capacity.K2SrcDerived.String(), "historyKey", historyKey,
 				"avgInputTokens", avgInput, "avgOutputTokens", avgOutput, "outputDispersion", outputDispersion,
@@ -1278,6 +1292,12 @@ func (a *SaturationAnalyzer) k2Chain(
 				if k2Derived > atCtx {
 					*atContext = atCtx
 				}
+			}
+			if batchCap.itl.on {
+				// Only with SwitchK2BatchAtITLTarget on: off, the line is
+				// the one before the switch.
+				kv = append(kv, k2BatchBoundFields(engineParams, batchCap, avgInput, avgOutput, outputDispersion,
+					ranks, kvCeiling, atSteady, itlHeld)...)
 			}
 			logger.V(perReplicaLogLevel).Info("k2-decision", kv...)
 			return k2Derived, capacity.K2SrcDerived, k2Borrow{}
