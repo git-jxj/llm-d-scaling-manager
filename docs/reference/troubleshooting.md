@@ -28,6 +28,7 @@ LOGS="kubectl logs -n $NS -l app.kubernetes.io/name=scaling-manager --tail=-1"
 | one replica full while others idle | `LLMSMLoadImbalanced`; `llmsm_load_imbalanced == 1`; log `WARNING: load imbalanced` | the router's scorer weights (`prefix-cache-scorer` above `queue-scorer`, `active-request-scorer`, `kv-cache-utilization-scorer`), prefix caching off on the engines | [uneven load](#one-replica-is-saturated-while-others-idle) |
 | replicas never move, though `llmsm_desired_replicas` does | `llmsm_passive_mode{mode=~"hold\|observe\|observe-unsafe"} == 1`; `Passive mode entered` in the log; `PassiveRecommendation` Events | the model is passive: `LLMSM_PASSIVE`, or `passive: true` on a scaling-policy entry | [passive](#a-passive-model-does-not-scale) |
 | desired is not current | `llmsm_desired_replicas != llmsm_current_replicas` for many cycles | HPA stabilization window, KEDA not reaching the scaler, Pods Pending (GPUs, ResourceQuota), slow starts | [actuation stuck](#desired-is-not-current-actuation-stuck) |
+| replicas asked for never become Ready | `LLMSMReplicasNotArriving`; `llmsm_replicas_not_arriving` above 0; `ReplicasNotArriving` events | a node rejecting pods at admission, no GPU free, a Kueue gate, an image that does not pull, a crash loop, a ResourceQuota | [never arrive](#replicas-asked-for-never-arrive) |
 | a DisaggregatedSet role never moves | `RoleWriterRefused`, `RoleReplicasConflict` or `RoleReplicasWriteFailed` on the set; no `RoleReplicasWritten` | the role writer off or without its grant, the set refused (no model-id, bad bounds, slices above 1), another field manager owns `replicas`, a passive model, the 5-minute scale-down window | [DisaggregatedSet role](#a-disaggregatedset-role-is-not-scaled) |
 | replicas dropped under Kueue borrowing | fewer replicas with no scale-down asked for; `llmsm_model_scaling_blocked{reason=~"lender-reclaimed\|borrow-unplaced\|released-to-lender"}`; `BorrowedCapacityReleased` Event | Kueue preempted, a borrowed replica did not place and was released, a waiting lender was handed it back (opt-in), demand fell | [replicas dropped](#replicas-dropped-under-kueue-borrowing) |
 | a lender's replica Pending after Kueue preempted | the lender's new pod `Pending` with no node; a borrower's Workload evicted with reason `Preempted`; later `reason="borrow-unplaced"` | Kueue preempts by priority, not by node: the GPUs it freed form no node the replica fits | [replicas dropped](#replicas-dropped-under-kueue-borrowing) |
@@ -527,6 +528,48 @@ chain in order:
 4. **Slow starts.** Pods created but not Ready for minutes: compare
    `llmsm_replica_start_seconds` with what you expect, and see
    [Preparing a workload](workload-preparation.md).
+
+## Replicas asked for never arrive
+
+**Symptom**: `LLMSMReplicasNotArriving` fires, or a `ReplicasNotArriving`
+event appears on a ScaledObject. A variant has had fewer Ready replicas than
+it asked for, for longer than twice its start time (at least 5 minutes).
+
+1. **Read the cause.** The event and the status line say why, from the pods:
+   ```bash
+   kubectl get events -n <ns> --field-selector reason=ReplicasNotArriving
+   kubectl get configmap scaling-manager-controller-status -n $NS \
+     -o jsonpath='{.data.replicasNotArriving}'
+   ```
+   A line reads like this:
+   ```
+   models/decode (decode): 1/2 Ready since 2026-11-20T10:00:00Z: admission-rejected on node gpu-node-7: UnexpectedAdmissionError: Allocate failed due to no healthy devices present; cannot allocate unhealthy devices rdma/ib
+   ```
+2. **Act on the reason.**
+
+   | reason | what it means | what to do |
+   | --- | --- | --- |
+   | `admission-rejected` | the scheduler places pods on a node and its kubelet refuses them, usually because a device plugin reports devices unhealthy that the node still advertises. The ReplicaSet replaces each pod on the same node, so rejected pods pile up | (cluster admin) cordon the node (`kubectl cordon <node>`), then fix its devices: the device plugin, the GPU operator, node remediation. Delete the rejected pods: `kubectl delete pods -n <ns> --field-selector=status.phase=Failed` |
+   | `unschedulable` | no node fits; the line carries the scheduler's message, for example `Insufficient nvidia.com/gpu` | free GPUs, or lower the model's max; see [GPUs held](#gpus-held-or-quota-spent) |
+   | `scheduling-gated` | Kueue has not admitted the pods | see [Kueue borrowing](#replicas-dropped-under-kueue-borrowing) |
+   | `image-pull` | the image does not pull | check the image name and the pull secret |
+   | `crash-loop` | the engine starts and exits; the line has the last exit reason | `kubectl logs -n <ns> <pod> --previous` |
+   | `container-config` | the container cannot be created: a missing Secret or ConfigMap | `kubectl describe pod -n <ns> <pod>` |
+   | `failed` | pods ended Failed for another reason (evicted, killed) | `kubectl describe pod -n <ns> <pod>` |
+   | `not-ready` | the engine runs and its readiness probe does not pass | the engine's log; a node with broken networking hangs a multi-GPU engine here |
+   | `starting` | pods are still pulling or loading, slower than usual | see [Preparing a workload](workload-preparation.md) |
+   | `no-pods` | the workload controller created no pods | `kubectl get events -n <ns> --field-selector reason=FailedCreate`; often a ResourceQuota |
+   | `unknown` | the controller could not list the pods | the controller's log |
+
+**What the scaling manager does.** It counts only Ready replicas as supply.
+Pods that are rejected, unschedulable, gated or failing are not counted as on
+their way either, and neither is a pod that has not become Ready in twice its
+role's measured or declared start time, so the controller orders replacements. It
+does not cordon, taint or steer pods away from a node: node health is the
+platform's to judge, for every workload on the node at once.
+
+The report lifts on its own when the replicas arrive (a `ReplicasArrived`
+event). It restarts its clock when the controller restarts.
 
 ## GPUs held or quota spent
 
