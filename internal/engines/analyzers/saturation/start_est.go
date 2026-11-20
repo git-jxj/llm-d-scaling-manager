@@ -141,8 +141,9 @@ const SwitchStartCountedPodsRestored = "start-counted-pods-restored"
 // SwitchStartHeldThroughRollout is the replay switch for issue
 // llm-d-incubation/llm-d-scaling-manager#220: a Pod that started while its
 // variant was rolling out -- Ready while its rows report two revisions, or
-// created before the last cycle that saw them -- is counted, never folded
-// into the start estimate. Such a start is the rollout's: a new revision's
+// created before the last cycle that saw them, or, until that mark expires
+// (up to an hour), Ready at a time its row does not report -- is counted,
+// never folded into the start estimate nor into a run of refused starts. Such a start is the rollout's: a new revision's
 // first, cold starts, or a scale-up waiting on a DisaggregatedSet rollout
 // that can run for hours. Its Ready time is still observed in
 // llmsm_replica_start_seconds.
@@ -418,8 +419,12 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 			continue
 		}
 		if a.startOverlapsRollout(rm, rolling, rolledAt) {
-			// Counted, so it is never folded on a later cycle either.
+			// Counted, so it is never folded on a later cycle either, and
+			// out of any run of refused starts, whose median it would join.
 			a.startSeenPods[seen] = now
+			if run := a.startOutlierPods[key]; run != nil {
+				delete(run, seen)
+			}
 			heldByRollout = append(heldByRollout, rm.PodName)
 			metrics.ObserveReplicaStartSeconds(namespace, variantName, rm.StartSeconds)
 			continue

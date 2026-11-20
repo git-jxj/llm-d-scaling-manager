@@ -256,4 +256,6 @@ count. On a DisaggregatedSet they meet in three places:
 3. **Drain timing under `Deferred`** (done, #220). A lower count waits for
    the rollout to finish. The start-time learner now takes no sample from a Pod
    whose start overlapped a rollout of its variant
-   (`SwitchStartHeldThroughRollout`).
+   (`SwitchStartHeldThroughRollout`). It decides from the Pods' own rows (two
+   revisions at once) and a look-back, not from the role's rollout status, so
+   an in-place one-replica rollout is not held.

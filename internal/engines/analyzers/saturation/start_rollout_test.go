@@ -72,8 +72,8 @@ func TestStartRollout_APodCreatedDuringARolloutIsNotFoldedAfterIt(t *testing.T) 
 		a := rolloutAnalyzer(t, on)
 		rolloutCycle(a, true, confirmReplica("d0", 70))
 		rolloutCycle(a, false, confirmReplica("d0", 70))
-		// Ready now, 200 s after it was created: a minute before the
-		// rollout's last cycle.
+		// Ready now, 200 s after it was created: 140 s before the
+		// rollout's only cycle, so its start spans it.
 		ready := a.now().Add(30 * time.Second)
 		rolloutCycle(a, false, confirmReplica("d0", 70), readyRow(200, ready))
 		want := 70.0
@@ -95,7 +95,7 @@ func TestStartRollout_APodCreatedAfterARolloutIsFolded(t *testing.T) {
 		for range 10 {
 			rolloutCycle(a, false, confirmReplica("d0", 70))
 		}
-		// Created 100 s ago: five minutes after the rollout's last cycle.
+		// Created 100 s ago: 230 s after the rollout's last cycle.
 		ready := a.now().Add(30 * time.Second)
 		rolloutCycle(a, false, confirmReplica("d0", 70), readyRow(100, ready))
 		if got, want := a.startSeconds[confirmKey], 0.7*70+0.3*100; !near(got, want) {
@@ -127,8 +127,8 @@ func TestStartRollout_TheMarkIsDroppedWhenItCanNoLongerMatter(t *testing.T) {
 }
 
 // The wiring: Analyze reads the variant as rolling out when its replicas
-// report two revisions, or when its scale target says so, and the start of
-// a replica that reports then is not folded. Off, it is.
+// report two revisions, and the start of a replica that reports then is not
+// folded; off, it is. The scale target's status alone does not decide.
 func TestStartRollout_AnalyzeHoldsStartsWhileRollingOut(t *testing.T) {
 	states := []domain.VariantReplicaState{{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 2, GPUsPerReplica: 1}}
 	run := func(on, storeRolling bool, revA, revB string) int {
@@ -137,8 +137,7 @@ func TestStartRollout_AnalyzeHoldsStartsWhileRollingOut(t *testing.T) {
 			t.Fatal(err)
 		}
 		r4Rolling(store, mtParams(256, "vllm:v1"), storeRolling)
-		// Two cycles, the starts reported on the second: the scale target
-		// marks a rollout on its second cycle.
+		// Two cycles, the starts reported on the second.
 		for _, start := range []float64{0, 90} {
 			ra := makeReplicaMetrics("pod-a", "variant-a", 4000, 16000, 6, 100, 50)
 			ra.Ready, ra.StartSeconds, ra.Revision = true, start, revA
@@ -211,5 +210,34 @@ func TestStartRollout_TheSweepDropsAMarkWithNoEstimate(t *testing.T) {
 	a.EvictStaleHistory()
 	if _, ok := a.startRolledAt[key]; ok {
 		t.Fatal("a stale key's rollout mark survived the sweep")
+	}
+}
+
+// A Pod refused as an outlier before a rollout, then held by it, leaves the
+// run: two later slow Pods do not confirm a change with its sample. Off, it
+// stays in the run, and the three confirm one (the median, 400).
+func TestStartRollout_AHeldPodLeavesTheRunOfRefusedStarts(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		a := rolloutAnalyzer(t, on)
+		slow := func(pod string, ready time.Time) domain.ReplicaMetrics {
+			rm := confirmReplica(pod, 400)
+			rm.ReadySince = ready
+			return rm
+		}
+		p1 := slow("p1", a.now().Add(30*time.Second))
+		rolloutCycle(a, false, confirmReplica("d0", 70), p1)
+		rolloutCycle(a, true, confirmReplica("d0", 70), p1)
+		for range 20 {
+			rolloutCycle(a, false, confirmReplica("d0", 70), p1)
+		}
+		ready := a.now().Add(30 * time.Second)
+		rolloutCycle(a, false, confirmReplica("d0", 70), p1, slow("p2", ready), slow("p3", ready))
+		want := 70.0
+		if !on {
+			want = 400
+		}
+		if got := a.startSeconds[confirmKey]; !near(got, want) {
+			t.Fatalf("switch %t: estimate = %v, want %v", on, got, want)
+		}
 	}
 }

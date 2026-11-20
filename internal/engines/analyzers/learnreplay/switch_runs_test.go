@@ -1323,6 +1323,8 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestStartRollout_AStartDuringARolloutIsNotFolded"},
 		{"../saturation", "TestStartRollout_APodCreatedDuringARolloutIsNotFoldedAfterIt"},
 		{"../saturation", "TestStartRollout_AnalyzeHoldsStartsWhileRollingOut"},
+		{"../saturation", "TestStartRollout_ARowWithNoReadyTimeIsHeldAfterARollout"},
+		{"../saturation", "TestStartRollout_AHeldPodLeavesTheRunOfRefusedStarts"},
 	},
 	// llm-d-incubation/llm-d-scaling-manager#201: each runs the switch on
 	// and off and asserts both.

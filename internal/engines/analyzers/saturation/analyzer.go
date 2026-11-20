@@ -236,8 +236,8 @@ type SaturationAnalyzer struct {
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	startCountsRestored bool
 	// startRolledAt is, per start key, the last cycle that saw its variant
-	// rolling out (SwitchStartHeldThroughRollout): a Pod created before it
-	// started during the rollout. Not in the snapshot: a restart forgets a
+	// rolling out (SwitchStartHeldThroughRollout): a Pod created before it is
+	// taken to have started during the rollout. Not in the snapshot: a restart forgets a
 	// rollout that has ended, and reads one still running afresh.
 	startRolledAt map[string]time.Time
 	// startHoldsRollout is SwitchStartHeldThroughRollout: on from the
