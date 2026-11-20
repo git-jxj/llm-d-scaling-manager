@@ -19,22 +19,33 @@ python -m pytest tests/test_launcher.py -v
 """
 
 import asyncio
+import errno
 import os
 import signal
 import sys
-from unittest.mock import MagicMock, patch
+import threading
+import time
+from dataclasses import dataclass
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from gputranslator import GpuTranslator
 
-# Mock vllm before importing launcher
+# Mock vllm before importing launcher. The list is every vllm module the
+# launcher imports, in the vLLM v0.34 layout (llm-d-scaling-manager: the
+# upstream list named the v0.26 paths and missed the follower-rank imports).
+# A module missing here fails the import with "'vllm' is not a package".
 sys.modules["vllm"] = MagicMock()
 sys.modules["vllm.utils"] = MagicMock()
 sys.modules["vllm.utils.argparse_utils"] = MagicMock()
-sys.modules["vllm.entrypoints.openai.api_server"] = MagicMock()
-sys.modules["vllm.entrypoints.openai.cli_args"] = MagicMock()
-sys.modules["vllm.entrypoints.serve.utils.api_utils"] = MagicMock()
+sys.modules["vllm.engine.arg_utils"] = MagicMock()
+sys.modules["vllm.entrypoints.common.cli_args"] = MagicMock()
+sys.modules["vllm.entrypoints.common.startup"] = MagicMock()
+sys.modules["vllm.entrypoints.launchers.api_server.entry"] = MagicMock()
+sys.modules["vllm.usage.usage_lib"] = MagicMock()
+sys.modules["vllm.v1.executor.multiproc_executor"] = MagicMock()
 
 # Import the application and classes
 from launcher import (  # noqa: E402
@@ -48,8 +59,10 @@ from launcher import (  # noqa: E402
     VllmMultiProcessManager,
     WatchEvent,
     app,
+    lifespan,
     parse_range_header,
     set_env_vars,
+    watch_instances,
 )
 
 
@@ -94,14 +107,242 @@ def tmp_log_dir(tmp_path):
     return str(tmp_path)
 
 
+class FakeNoSuchProcess(Exception):
+    """Stand-in for psutil.NoSuchProcess."""
+
+    def __init__(self, pid: int) -> None:
+        super().__init__(f"process no longer exists (pid={pid})")
+        self.pid = pid
+
+
+@dataclass
+class FakeProcEntry:
+    """One process in a FakeProcTable.
+
+    `dies_on` is the set of signals that are fatal to this process; see
+    FakeProcTable for the three cases that matter here.
+    """
+
+    pid: int
+    ppid: int
+    pgid: int
+    name: str
+    cmdline: list[str]
+    dies_on: frozenset[int]
+    create_time: float
+
+
+class FakeProcess:
+    """Stand-in for psutil.Process, delegating to the FakeProcTable it came from.
+
+    Like a real psutil.Process this is a handle on a process that may since
+    have exited, and `info` is a snapshot taken when the handle was made.
+    Hashes and compares by (pid, create time), just as psutil.Process does:
+    VllmInstance.stop() relies on that to recognize, in a later round, a
+    process it has already signalled.
+    """
+
+    def __init__(
+        self,
+        table: "FakeProcTable",
+        pid: int,
+        pgid: int,
+        create_time: float,
+        info: dict[str, object],
+    ) -> None:
+        self._table = table
+        self.pid = pid
+        self.pgid = pgid
+        self.create_time = create_time
+        self.info = info
+
+    def __hash__(self) -> int:
+        return hash((self.pid, self.create_time))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, FakeProcess) and (self.pid, self.create_time) == (
+            other.pid,
+            other.create_time,
+        )
+
+    def __repr__(self) -> str:
+        # The launcher logs sets of these when giving up on stopping an
+        # instance, and a set formats its elements with repr, so say
+        # everything a reader of that log line would want to know.
+        return (
+            f"FakeProcess(pid={self.pid}, pgid={self.pgid},"
+            f" ppid={self.info['ppid']}, name={self.info['name']!r},"
+            f" cmdline={self.info['cmdline']!r},"
+            f" create_time={self.create_time},"
+            f" signals={self._table.signals.get(self.pid)},"
+            f" {'alive' if self._table.is_alive(self.pid) else 'gone'})"
+        )
+
+    def terminate(self) -> None:
+        self._table.deliver(self.pid, signal.SIGTERM)
+
+    def kill(self) -> None:
+        self._table.deliver(self.pid, signal.SIGKILL)
+
+
+class FakeProcTable:
+    """A fake process table: as much of one as VllmInstance.stop() looks at.
+
+    Each entry has a pid, a process group, and the set of signals that are
+    fatal to it — DIES_ON_SIGTERM for a well-behaved process,
+    DIES_ON_SIGKILL for one that ignores SIGTERM, and UNKILLABLE for one
+    that ignores both. Signals delivered to each pid are recorded in
+    `signals`, so a test can assert on the escalation that stop() performed.
+
+    An instance supplies the `psutil.Process`, `psutil.process_iter`,
+    `psutil.wait_procs` and `os.getpgid` that launcher.py calls; the
+    `fake_procs` fixture patches them in place of the real ones.
+    """
+
+    DIES_ON_SIGTERM = frozenset({signal.SIGTERM, signal.SIGKILL})
+    DIES_ON_SIGKILL = frozenset({signal.SIGKILL})
+    UNKILLABLE: frozenset[int] = frozenset()
+
+    def __init__(self) -> None:
+        self._alive: dict[int, FakeProcEntry] = {}
+        self.signals: dict[int, list[int]] = {}
+        self._last_create_time = 1000.0
+
+    def add(
+        self,
+        pid: int,
+        *,
+        pgid: int | None = None,
+        ppid: int = 1,
+        name: str = "vllm",
+        cmdline: list[str] | None = None,
+        dies_on: frozenset[int] = DIES_ON_SIGTERM,
+    ) -> None:
+        """Add a live process, by default leading a process group of its own."""
+        self._last_create_time += 1
+        self._alive[pid] = FakeProcEntry(
+            pid=pid,
+            ppid=ppid,
+            pgid=pid if pgid is None else pgid,
+            name=name,
+            cmdline=["vllm", "serve"] if cmdline is None else cmdline,
+            dies_on=dies_on,
+            create_time=self._last_create_time,
+        )
+        self.signals.setdefault(pid, [])
+
+    def is_alive(self, pid: int) -> bool:
+        return pid in self._alive
+
+    def deliver(self, pid: int, sig: int) -> None:
+        """Deliver `sig` to `pid`, reaping it if that signal is fatal to it."""
+        entry = self._alive.get(pid)
+        if entry is None:
+            return
+        self.signals[pid].append(sig)
+        if sig in entry.dies_on:
+            del self._alive[pid]
+
+    def exit(self, pid: int) -> None:
+        """Have `pid` exit of its own accord, as after a slow shutdown."""
+        self._alive.pop(pid, None)
+
+    def _handle(self, entry: FakeProcEntry) -> FakeProcess:
+        return FakeProcess(
+            self,
+            entry.pid,
+            entry.pgid,
+            entry.create_time,
+            {
+                "pid": entry.pid,
+                "ppid": entry.ppid,
+                "name": entry.name,
+                "cmdline": list(entry.cmdline),
+            },
+        )
+
+    # The psutil and os surface that launcher.py uses.
+
+    def Process(self, pid: int) -> FakeProcess:
+        """Stand in for psutil.Process; named to match it."""
+        if pid not in self._alive:
+            raise FakeNoSuchProcess(pid)
+        return self._handle(self._alive[pid])
+
+    def process_iter(self, attrs: list[str] | None = None) -> list[FakeProcess]:
+        return [self._handle(entry) for entry in list(self._alive.values())]
+
+    def wait_procs(
+        self, procs, timeout: float | None = None
+    ) -> tuple[list[FakeProcess], list[FakeProcess]]:
+        """Like psutil.wait_procs, block the calling thread until `procs` are
+        gone or `timeout` elapses, so that a test can tell waiting on the event
+        loop apart from blocking it."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            alive = [proc for proc in procs if proc.pid in self._alive]
+            if not alive or (deadline is not None and time.monotonic() >= deadline):
+                break
+            time.sleep(0.01)
+        gone = [proc for proc in procs if proc not in alive]
+        return gone, alive
+
+    def getpgid(self, pid: int) -> int:
+        entry = self._alive.get(pid)
+        if entry is None:
+            raise ProcessLookupError(errno.ESRCH, os.strerror(errno.ESRCH))
+        return entry.pgid
+
+
+@pytest.fixture
+def fake_procs():
+    """Replace the process-table calls that VllmInstance.stop() makes.
+
+    Yields the FakeProcTable that stop() will see, so that stopping an
+    instance neither depends on nor touches this machine's real processes.
+    """
+    table = FakeProcTable()
+    fake_psutil = SimpleNamespace(
+        Process=table.Process,
+        process_iter=table.process_iter,
+        wait_procs=table.wait_procs,
+        NoSuchProcess=FakeNoSuchProcess,
+    )
+    with (
+        patch("launcher.psutil", fake_psutil),
+        patch("launcher.os.getpgid", table.getpgid),
+    ):
+        yield table
+
+
 # Mock process for testing without actually starting vLLM
 class MockProcess:
-    def __init__(self):
+    def __init__(
+        self,
+        proc_table: FakeProcTable | None = None,
+        pid: int = 12345,
+        dies_on: frozenset[int] = FakeProcTable.DIES_ON_SIGTERM,
+    ):
+        """Stand in for the multiprocessing.Process that runs vllm_kickoff.
+
+        VllmInstance.stop() consults both this handle and the process table
+        (through psutil and os.getpgid), so a test that exercises stop()
+        passes the FakeProcTable standing in for the latter. This mock then
+        keeps the two views consistent: it enters itself in that table,
+        leading a process group of its own — the state that vllm_kickoff's
+        os.setpgrp() would have established, had this mock not replaced the
+        process that runs it — and terminate()/kill() deliver their signal
+        there rather than only to this mock's own state. `dies_on` says which
+        signals are fatal to that entry.
+        """
         self._is_alive = True
         self.terminated = False
         self.killed = False
-        self.pid = 12345
+        self.pid = pid
         self.exitcode = None
+        self._proc_table = proc_table
+        if proc_table is not None:
+            proc_table.add(pid, dies_on=dies_on)
         # sentinel is a readable fd when the process exits
         self._sentinel_r, self._sentinel_w = os.pipe()
         self.sentinel = self._sentinel_r
@@ -114,16 +355,24 @@ class MockProcess:
 
     def terminate(self):
         self.terminated = True
-        self._is_alive = False
-        self.exitcode = -15
+        self._deliver(signal.SIGTERM, -15)
 
     def join(self, timeout=None):
         pass
 
     def kill(self):
         self.killed = True
+        self._deliver(signal.SIGKILL, -9)
+
+    def _deliver(self, sig, exitcode):
+        """Deliver `sig` the way the OS would: to the process table if this
+        mock is wired to one, else straight to this mock's own state."""
+        if self._proc_table is not None:
+            self._proc_table.deliver(self.pid, sig)
+            if self._proc_table.is_alive(self.pid):
+                return  # the process ignored the signal
         self._is_alive = False
-        self.exitcode = -9
+        self.exitcode = exitcode
 
     def simulate_exit(self, exitcode=0):
         """Simulate process termination by making sentinel fd readable."""
@@ -213,10 +462,15 @@ class TestVllmInstance:
 
     @patch("launcher.multiprocessing.Process")
     def test_instance_stop(
-        self, mock_process_class, vllm_config: VllmConfig, gpu_translator, tmp_log_dir
+        self,
+        mock_process_class,
+        vllm_config: VllmConfig,
+        gpu_translator,
+        tmp_log_dir,
+        fake_procs,
     ):
         """Test stopping a running instance"""
-        mock_process = MockProcess()
+        mock_process = MockProcess(fake_procs)
         mock_process_class.return_value = mock_process
 
         instance = VllmInstance(
@@ -230,6 +484,9 @@ class TestVllmInstance:
         for key, val in vllm_config.model_dump(exclude_none=True).items():
             assert result[key] == val
         assert mock_process.terminated is True
+        # SIGTERM sufficed, so no SIGKILL followed
+        assert fake_procs.signals[mock_process.pid] == [signal.SIGTERM]
+        assert not fake_procs.is_alive(mock_process.pid)
 
     @patch("launcher.multiprocessing.Process")
     def test_instance_stop_not_running(self, vllm_config, gpu_translator, tmp_log_dir):
@@ -240,39 +497,40 @@ class TestVllmInstance:
         with pytest.raises(HalfMade):
             _ = instance.stop()
 
-    @patch("launcher.os.killpg")
     @patch("launcher.multiprocessing.Process")
     def test_instance_force_kill(
-        self, mock_process_class, mock_killpg, vllm_config, gpu_translator, tmp_log_dir
+        self, mock_process_class, vllm_config, gpu_translator, tmp_log_dir, fake_procs
     ):
         """Test force killing an instance that won't terminate"""
-        mock_process = MockProcess()
-
-        # Simulate process that won't die on terminate
-        def stay_alive_on_terminate():
-            pass  # Don't change _is_alive
-
-        mock_process.terminate = stay_alive_on_terminate
-
-        # Make join after killpg finally stop the process
-        call_count = 0
-
-        def join_side_effect(timeout=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count > 1:
-                mock_process._is_alive = False
-
-        mock_process.join = join_side_effect
+        # The vLLM process ignores SIGTERM, and its process group holds
+        # another process (an EngineCore, say) that the launcher has not
+        # signalled at all yet.
+        mock_process = MockProcess(fake_procs, dies_on=FakeProcTable.DIES_ON_SIGKILL)
+        engine_pid = mock_process.pid + 1
+        fake_procs.add(
+            engine_pid,
+            pgid=mock_process.pid,
+            ppid=mock_process.pid,
+            name="VLLM::EngineCore",
+        )
         mock_process_class.return_value = mock_process
 
         instance = VllmInstance(
             "test-id", vllm_config, gpu_translator, log_dir=tmp_log_dir
         )
         instance.start()
-        _ = instance.stop(timeout=0.1)
+        result = instance.stop()
 
-        mock_killpg.assert_called_once_with(mock_process.pid, signal.SIGKILL)
+        assert result["status"] == "terminated"
+        # The vLLM process got SIGKILL because SIGTERM was not enough, and
+        # the rest of the group got the SIGTERM it had not yet received.
+        assert fake_procs.signals[mock_process.pid] == [
+            signal.SIGTERM,
+            signal.SIGKILL,
+        ]
+        assert fake_procs.signals[engine_pid] == [signal.SIGTERM]
+        assert not fake_procs.is_alive(mock_process.pid)
+        assert not fake_procs.is_alive(engine_pid)
 
     @patch("launcher.multiprocessing.Process")
     def test_instance_get_status(
@@ -430,7 +688,7 @@ class TestVllmMultiProcessManager:
         mock_process = MockProcess()
         mock_process_class.return_value = mock_process
 
-        result = manager.create_instance(vllm_config)
+        result = asyncio.run(manager.create_instance_async(vllm_config))
 
         assert result["status"] == "running"
         assert "instance_id" in result
@@ -462,9 +720,9 @@ class TestVllmMultiProcessManager:
             manager.create_instance(vllm_config, "duplicate-id")
 
     @patch("launcher.multiprocessing.Process")
-    def test_stop_instance(self, mock_process_class, manager, vllm_config):
+    def test_stop_instance(self, mock_process_class, manager, vllm_config, fake_procs):
         """Test stopping a specific instance"""
-        mock_process = MockProcess()
+        mock_process = MockProcess(fake_procs)
         mock_process_class.return_value = mock_process
 
         result = manager.create_instance(vllm_config, "test-id")
@@ -482,9 +740,11 @@ class TestVllmMultiProcessManager:
             manager.stop_instance("nonexistent-id")
 
     @patch("launcher.multiprocessing.Process")
-    def test_stop_all_instances(self, mock_process_class, manager, vllm_config):
+    def test_stop_all_instances(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
         """Test stopping all instances"""
-        mock_process = MockProcess()
+        mock_process = MockProcess(fake_procs)
         mock_process_class.return_value = mock_process
 
         # Create multiple instances
@@ -566,8 +826,9 @@ class TestVllmMultiProcessManager:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"Log line 1Log line 2Log line 3")
 
-        data, total = manager.get_instance_log_bytes("test-id", start=0)
+        read_start, data, total = manager.get_instance_log_bytes("test-id", start=0)
 
+        assert read_start == 0
         assert isinstance(data, bytes)
         assert b"Log line 1" in data
         assert b"Log line 2" in data
@@ -595,11 +856,394 @@ class TestVllmMultiProcessManager:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"A" * 60 + b"B" * 60)
 
-        data, total = manager.get_instance_log_bytes("test-id", start=0, end=99)
+        read_start, data, total = manager.get_instance_log_bytes(
+            "test-id", start=0, end=99
+        )
 
+        assert read_start == 0
         assert isinstance(data, bytes)
         assert len(data) == 100
         assert total == 120
+
+
+# Tests for stopping without holding up the event loop
+class SlowExitProcess:
+    """Stand-in for multiprocessing.Process that takes *delay* to exit on SIGTERM.
+
+    Faithful on the two things these tests turn on, and that MockProcess does not
+    model: join() blocks the calling thread, and the sentinel fd becomes readable
+    when the child exits.  Without both, a test cannot tell waiting on the loop
+    apart from blocking it.
+
+    Like MockProcess, it enters itself in the FakeProcTable standing in for the
+    process table, leading a process group of its own, and that table is where
+    it lives or dies.  SIGTERM is recorded there but is not fatal at once; after
+    *delay* the process exits of its own accord.  SIGKILL, which the launcher
+    sends through psutil, is fatal at once.
+    """
+
+    def __init__(self, delay, proc_table, pid=12345):
+        self._delay = delay
+        self._proc_table = proc_table
+        self.pid = pid
+        self.exitcode = None
+        self._sentinel_r, self._sentinel_w = os.pipe()
+        self.sentinel = self._sentinel_r
+        self._timer = None
+        proc_table.add(pid, dies_on=FakeProcTable.DIES_ON_SIGKILL)
+
+    def start(self):
+        pass
+
+    def terminate(self):
+        self._proc_table.deliver(self.pid, signal.SIGTERM)
+        self._timer = threading.Timer(self._delay, self._expire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _expire(self):
+        """Stand in for the kernel: the process exits, the sentinel turns readable."""
+        self._proc_table.exit(self.pid)
+        self.exitcode = 0
+        try:
+            os.write(self._sentinel_w, b"x")
+        except OSError:
+            pass
+
+    def is_alive(self):
+        return self._proc_table.is_alive(self.pid)
+
+    def join(self, timeout=None):
+        deadline = time.monotonic() + (timeout if timeout is not None else 3600)
+        while self.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    def close(self):
+        if self._timer is not None:
+            self._timer.cancel()
+        for fd in (self._sentinel_r, self._sentinel_w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+# Long enough to measure, short enough to keep the suite quick.
+SLOW_EXIT_SECS = 0.3
+
+
+class TestAsyncStop:
+    """Stopping must not hold up the event loop; see PR #751."""
+
+    @patch("launcher.multiprocessing.Process")
+    def test_stop_instance_async_leaves_the_loop_running(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
+        """Other coroutines must keep making progress while a stop is in flight."""
+        proc = SlowExitProcess(SLOW_EXIT_SECS, fake_procs)
+        mock_process_class.return_value = proc
+
+        async def run():
+            manager.create_instance(vllm_config, "slow-id")
+            ticks = 0
+
+            async def ticker():
+                nonlocal ticks
+                while True:
+                    await asyncio.sleep(0.01)
+                    ticks += 1
+
+            task = asyncio.create_task(ticker())
+            await manager.stop_instance_async("slow-id")
+            task.cancel()
+            return ticks
+
+        try:
+            ticks = asyncio.run(run())
+        finally:
+            proc.close()
+        # Waiting with a blocking join would leave this at 0.
+        assert ticks >= 5, f"event loop only ticked {ticks} times during the stop"
+
+    @patch("launcher.multiprocessing.Process")
+    def test_stop_async_waits_for_the_process_group_on_the_loop(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
+        """Waiting for the rest of the process group must not block the loop.
+
+        Those processes have no sentinel fd, so this is a different wait from the
+        one test_stop_instance_async_leaves_the_loop_running covers.  Here one of
+        them survives everything, so each round of stopping waits out its timeout.
+        """
+        proc = SlowExitProcess(0.05, fake_procs)
+        stuck_pid = proc.pid + 1
+        fake_procs.add(
+            stuck_pid,
+            pgid=proc.pid,
+            ppid=proc.pid,
+            name="VLLM::EngineCore",
+            dies_on=FakeProcTable.UNKILLABLE,
+        )
+        mock_process_class.return_value = proc
+        timeout = 0.2
+
+        async def run():
+            manager.create_instance(vllm_config, "stuck-id")
+            gaps = []
+
+            async def ticker():
+                previous = time.monotonic()
+                while True:
+                    await asyncio.sleep(0.01)
+                    now = time.monotonic()
+                    gaps.append(now - previous)
+                    previous = now
+
+            task = asyncio.create_task(ticker())
+            started = time.monotonic()
+            try:
+                await manager.stop_instance_async("stuck-id", timeout=timeout)
+                elapsed = time.monotonic() - started
+                # Let the ticker run once more, so that a stall at the very end
+                # of the stop gets recorded too.
+                await asyncio.sleep(0.01)
+            finally:
+                task.cancel()
+            return gaps, elapsed
+
+        try:
+            gaps, elapsed = asyncio.run(run())
+        finally:
+            proc.close()
+
+        # Both rounds did wait for the stuck process...
+        assert fake_procs.signals[stuck_pid] == [signal.SIGTERM, signal.SIGKILL]
+        assert elapsed >= 2 * timeout, f"the stop took only {elapsed:.2f}s"
+        # ...but not by blocking the loop, which would show up as a long gap.
+        assert max(gaps) < timeout / 2, f"the loop stalled for {max(gaps):.2f}s"
+
+    @pytest.mark.parametrize("generated", [False, True], ids=["named", "generated"])
+    @patch("launcher.multiprocessing.Process")
+    def test_instance_lock_keeps_a_stop_from_eating_a_later_create(
+        self, mock_process_class, generated, manager, vllm_config, fake_procs
+    ):
+        """A create of the same id must not land inside a stop of that id.
+
+        Without the per-instance lock the create runs while the instance being
+        stopped is still in ``self.instances``, so it is rejected as a duplicate
+        and then the stop deletes the entry anyway: the caller loses its create
+        for no real reason.  That goes for a generated id too, since nothing
+        keeps one from coinciding with an id in use; here uuid4 is rigged to
+        make it so.
+        """
+        procs = [
+            SlowExitProcess(SLOW_EXIT_SECS, fake_procs, pid) for pid in (12345, 12346)
+        ]
+        mock_process_class.side_effect = procs
+
+        async def run():
+            manager.create_instance(vllm_config, "dup-id")
+
+            async def creator():
+                await asyncio.sleep(0.05)  # while the stop is still in flight
+                if generated:
+                    with patch("launcher.uuid.uuid4", return_value="dup-id"):
+                        await manager.create_instance_async(vllm_config)
+                else:
+                    await manager.create_instance_async(vllm_config, "dup-id")
+
+            await asyncio.gather(manager.stop_instance_async("dup-id"), creator())
+
+        try:
+            asyncio.run(run())
+        finally:
+            for proc in procs:
+                proc.close()
+        assert manager.instances["dup-id"].process is procs[1]
+
+    @patch("launcher.multiprocessing.Process")
+    def test_stop_async_escalates_when_sigterm_is_not_enough(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
+        """stop()'s escalation has to work when the waiting is on the loop, too.
+
+        The counterpart of TestVllmInstance.test_instance_force_kill.
+        """
+        proc = SlowExitProcess(3600, fake_procs)  # SIGTERM never takes effect
+        engine_pid = proc.pid + 1
+        fake_procs.add(
+            engine_pid,
+            pgid=proc.pid,
+            ppid=proc.pid,
+            name="VLLM::EngineCore",
+        )
+        mock_process_class.return_value = proc
+
+        async def run():
+            manager.create_instance(vllm_config, "stubborn-id")
+            await manager.stop_instance_async("stubborn-id", timeout=0.1)
+
+        try:
+            asyncio.run(run())
+        finally:
+            proc.close()
+
+        assert fake_procs.signals[proc.pid] == [signal.SIGTERM, signal.SIGKILL]
+        assert fake_procs.signals[engine_pid] == [signal.SIGTERM]
+        assert not fake_procs.is_alive(proc.pid)
+        assert not fake_procs.is_alive(engine_pid)
+        assert manager.instances == {}
+
+    @patch("launcher.multiprocessing.Process")
+    def test_stop_all_instances_async_stops_them_concurrently(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
+        """N instances must cost about one stop, not N of them."""
+        procs = [
+            SlowExitProcess(SLOW_EXIT_SECS, fake_procs, pid)
+            for pid in (12345, 12346, 12347)
+        ]
+        mock_process_class.side_effect = procs
+
+        async def run():
+            for instance_id in ("id-1", "id-2", "id-3"):
+                manager.create_instance(vllm_config, instance_id)
+
+            started = time.monotonic()
+            result = await manager.stop_all_instances_async()
+            return result, time.monotonic() - started
+
+        try:
+            result, elapsed = asyncio.run(run())
+        finally:
+            for proc in procs:
+                proc.close()
+        assert result["total_stopped"] == 3
+        assert manager.instances == {}
+        # Sequentially this would be ~3x SLOW_EXIT_SECS.
+        assert elapsed < 2 * SLOW_EXIT_SECS, f"stopping three took {elapsed:.2f}s"
+
+    @patch("launcher.multiprocessing.Process")
+    def test_stop_all_instances_async_stops_instances_created_meanwhile(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
+        """It must return only once no instances are left, late arrivals too."""
+        procs = [
+            SlowExitProcess(SLOW_EXIT_SECS, fake_procs, pid) for pid in (12345, 12346)
+        ]
+        mock_process_class.side_effect = procs
+
+        async def run():
+            manager.create_instance(vllm_config, "early-id")
+
+            async def creator():
+                await asyncio.sleep(0.05)  # while early-id is still stopping
+                await manager.create_instance_async(vllm_config, "late-id")
+
+            result, _ = await asyncio.gather(
+                manager.stop_all_instances_async(), creator()
+            )
+            return result
+
+        try:
+            result = asyncio.run(run())
+        finally:
+            for proc in procs:
+                proc.close()
+        assert manager.instances == {}
+        stopped = [state["instance_id"] for state in result["stopped_instances"]]
+        assert sorted(stopped) == ["early-id", "late-id"]
+
+    @patch("launcher.multiprocessing.Process")
+    def test_stop_all_instances_async_reports_the_ones_that_failed(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
+        """A bulk delete must stop what it can, then admit what it could not.
+
+        Reporting "all_stopped" with a 200 while an instance is still running and
+        still tracked would leave the caller with no way to find out.
+        """
+        procs = [SlowExitProcess(0.05, fake_procs, pid) for pid in (12345, 12346)]
+        mock_process_class.side_effect = procs
+        failure = RuntimeError("could not stop")
+
+        async def run():
+            manager.create_instance(vllm_config, "good-id")
+            manager.create_instance(vllm_config, "bad-id")
+            manager.instances["bad-id"].stop_async = AsyncMock(side_effect=failure)
+            with pytest.raises(ExceptionGroup) as caught:
+                await manager.stop_all_instances_async()
+            return caught.value
+
+        try:
+            group = asyncio.run(run())
+        finally:
+            for proc in procs:
+                proc.close()
+
+        # The failure did not stop the others from being stopped...
+        assert "good-id" not in manager.instances
+        # ...and the one that failed is still there to be dealt with, and still
+        # watched, so that its eventual exit gets reported.
+        assert manager.instances["bad-id"]._sentinel_active
+        assert group.exceptions == (failure,)
+
+    @patch("launcher.multiprocessing.Process")
+    def test_cancelled_stop_keeps_watching_the_instance(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
+        """A stop cancelled midway must leave the instance tracked and watched.
+
+        CancelledError is not an Exception, so it needs handling of its own; if
+        the sentinel watcher were not put back, the instance's eventual exit
+        would never be reported.
+        """
+        proc = SlowExitProcess(3600, fake_procs)  # still stopping when cancelled
+        mock_process_class.return_value = proc
+
+        async def run():
+            manager.create_instance(vllm_config, "cancelled-id")
+            task = asyncio.create_task(manager.stop_instance_async("cancelled-id"))
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            return manager.instances["cancelled-id"]._sentinel_active
+
+        try:
+            sentinel_active = asyncio.run(run())
+        finally:
+            proc.close()
+        assert sentinel_active
+
+    @patch("launcher.multiprocessing.Process")
+    def test_shutdown_stops_instances_concurrently(
+        self, mock_process_class, manager, vllm_config, fake_procs
+    ):
+        """Shutting the launcher down must stop instances concurrently, too."""
+        procs = [
+            SlowExitProcess(SLOW_EXIT_SECS, fake_procs, pid)
+            for pid in (12345, 12346, 12347)
+        ]
+        mock_process_class.side_effect = procs
+
+        async def run():
+            for instance_id in ("id-1", "id-2", "id-3"):
+                manager.create_instance(vllm_config, instance_id)
+            started = time.monotonic()
+            with patch("launcher.vllm_manager", manager):
+                async with lifespan(app):
+                    pass
+            return time.monotonic() - started
+
+        try:
+            elapsed = asyncio.run(run())
+        finally:
+            for proc in procs:
+                proc.close()
+        assert manager.instances == {}
+        # Sequentially this would be ~3x SLOW_EXIT_SECS.
+        assert elapsed < 2 * SLOW_EXIT_SECS, f"stopping three took {elapsed:.2f}s"
 
 
 # Tests for API Endpoints
@@ -618,15 +1262,14 @@ class TestAPIEndpoints:
         assert data["name"] == "Multi-Instance vLLM Management API"
         assert data["version"] == "2.0"
         assert "endpoints" in data
-        assert len(data["endpoints"]) == 10
+        assert len(data["endpoints"]) == 11
 
     @patch("launcher.vllm_manager")
     def test_create_vllm_instance(self, mock_manager, client, vllm_config):
         """Test creating vLLM instance via API"""
-        mock_manager.create_instance.return_value = {
-            "status": "started",
-            "instance_id": "test-id",
-        }
+        mock_manager.create_instance_async = AsyncMock(
+            return_value={"status": "started", "instance_id": "test-id"}
+        )
 
         response = client.post(
             "/v2/vllm/instances", json={"options": "--model test --port 8000"}
@@ -640,10 +1283,9 @@ class TestAPIEndpoints:
     @patch("launcher.vllm_manager")
     def test_create_id_vllm_instance(self, mock_manager, client):
         """Test creating vLLM instance with custom ID via API"""
-        mock_manager.create_instance.return_value = {
-            "status": "started",
-            "instance_id": "custom-id",
-        }
+        mock_manager.create_instance_async = AsyncMock(
+            return_value={"status": "started", "instance_id": "custom-id"}
+        )
 
         response = client.put(
             "/v2/vllm/instances/custom-id", json={"options": "--model test --port 8000"}
@@ -656,7 +1298,9 @@ class TestAPIEndpoints:
     @patch("launcher.vllm_manager")
     def test_create_duplicate_instance(self, mock_manager, client):
         """Test creating instance with duplicate ID returns 409"""
-        mock_manager.create_instance.side_effect = ValueError("already exists")
+        mock_manager.create_instance_async = AsyncMock(
+            side_effect=ValueError("already exists")
+        )
 
         response = client.put(
             "/v2/vllm/instances/duplicate-id",
@@ -668,10 +1312,9 @@ class TestAPIEndpoints:
     @patch("launcher.vllm_manager")
     def test_delete_vllm_instance(self, mock_manager, client):
         """Test deleting vLLM instance via API"""
-        mock_manager.stop_instance.return_value = {
-            "status": "terminated",
-            "instance_id": "test-id",
-        }
+        mock_manager.stop_instance_async = AsyncMock(
+            return_value={"status": "terminated", "instance_id": "test-id"}
+        )
 
         response = client.delete("/v2/vllm/instances/test-id")
 
@@ -682,7 +1325,7 @@ class TestAPIEndpoints:
     @patch("launcher.vllm_manager")
     def test_delete_nonexistent_instance(self, mock_manager, client):
         """Test deleting nonexistent instance returns 404"""
-        mock_manager.stop_instance.side_effect = KeyError("not found")
+        mock_manager.stop_instance_async = AsyncMock(side_effect=KeyError("not found"))
 
         response = client.delete("/v2/vllm/instances/nonexistent-id")
 
@@ -691,10 +1334,9 @@ class TestAPIEndpoints:
     @patch("launcher.vllm_manager")
     def test_delete_all_instances(self, mock_manager, client):
         """Test deleting all instances via API"""
-        mock_manager.stop_all_instances.return_value = {
-            "status": "all_stopped",
-            "stopped_instances": [],
-        }
+        mock_manager.stop_all_instances_async = AsyncMock(
+            return_value={"status": "all_stopped", "stopped_instances": []}
+        )
 
         response = client.delete("/v2/vllm/instances")
 
@@ -766,6 +1408,7 @@ class TestAPIEndpoints:
     def test_get_instance_logs_endpoint(self, mock_manager, client):
         """Test getting instance logs without Range header returns 200"""
         mock_manager.get_instance_log_bytes.return_value = (
+            0,
             b"Log line 1Log line 2Log line 3",
             30,
         )
@@ -781,7 +1424,7 @@ class TestAPIEndpoints:
     @patch("launcher.vllm_manager")
     def test_get_instance_logs_with_range_header(self, mock_manager, client):
         """Test getting instance logs with Range header"""
-        mock_manager.get_instance_log_bytes.return_value = (b"A" * 5000, 10000)
+        mock_manager.get_instance_log_bytes.return_value = (0, b"A" * 5000, 10000)
 
         response = client.get(
             "/v2/vllm/instances/test-id/log",
@@ -818,7 +1461,7 @@ class TestAPIEndpoints:
     @patch("launcher.vllm_manager")
     def test_get_instance_logs_partial_content_206(self, mock_manager, client):
         """Test 206 Partial Content with correct Content-Range header"""
-        mock_manager.get_instance_log_bytes.return_value = (b"ABCDE", 100)
+        mock_manager.get_instance_log_bytes.return_value = (10, b"ABCDE", 100)
 
         response = client.get(
             "/v2/vllm/instances/test-id/log",
@@ -832,7 +1475,7 @@ class TestAPIEndpoints:
     @patch("launcher.vllm_manager")
     def test_get_instance_logs_open_ended_range(self, mock_manager, client):
         """Test open-ended Range: bytes=100-"""
-        mock_manager.get_instance_log_bytes.return_value = (b"rest of log", 200)
+        mock_manager.get_instance_log_bytes.return_value = (100, b"rest of log", 200)
 
         response = client.get(
             "/v2/vllm/instances/test-id/log",
@@ -856,14 +1499,20 @@ class TestAPIEndpoints:
         assert response.status_code == 400
 
     @patch("launcher.vllm_manager")
-    def test_get_instance_logs_suffix_range_rejected(self, mock_manager, client):
-        """Test suffix range bytes=-500 returns 400"""
+    def test_get_instance_logs_suffix_range_zeroed(self, mock_manager, client):
+        """Test suffix range bytes=-500"""
+        mock_manager.get_instance_log_bytes.return_value = (0, b"rest of log", 11)
+
         response = client.get(
             "/v2/vllm/instances/test-id/log",
             headers={"Range": "bytes=-500"},
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 206
+        mock_manager.get_instance_log_bytes.assert_called_once_with(
+            "test-id", None, 500
+        )
+        assert response.headers["content-range"] == "bytes 0-10/11"
 
 
 # Tests for VllmInstance log functionality
@@ -897,8 +1546,8 @@ class TestVllmInstanceLogs:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"Log 1Log 2")
 
-        data, total = instance.get_log_bytes()
-
+        read_start, data, total = instance.get_log_bytes()
+        assert read_start == 0
         assert isinstance(data, bytes)
         assert b"Log 1" in data
         assert b"Log 2" in data
@@ -910,8 +1559,9 @@ class TestVllmInstanceLogs:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"A" * 50 + b"B" * 50 + b"C" * 50)
 
-        data, total = instance.get_log_bytes(start=0, end=99)
+        read_start, data, total = instance.get_log_bytes(start=0, end=99)
 
+        assert read_start == 0
         assert isinstance(data, bytes)
         assert len(data) == 100
         assert total == 150
@@ -922,13 +1572,15 @@ class TestVllmInstanceLogs:
 
         with open(instance._log_file_path, "wb") as f:
             f.write(b"Hello World")
-        data, total = instance.get_log_bytes(start=0)
+        read_start, data, total = instance.get_log_bytes(start=0)
+        assert read_start == 0
         assert data == b"Hello World"
         assert total == 11
 
         with open(instance._log_file_path, "ab") as f:
             f.write(b"!")
-        data, total = instance.get_log_bytes(start=0)
+        read_start, data, total = instance.get_log_bytes(start=0)
+        assert read_start == 0
         assert data == b"Hello World!"
         assert total == 12
 
@@ -974,7 +1626,8 @@ class TestLogFile:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"Test message 1Test message 2")
 
-        data, total = instance.get_log_bytes(start=0)
+        read_start, data, total = instance.get_log_bytes(start=0)
+        assert read_start == 0
         assert isinstance(data, bytes)
         assert b"Test message 1" in data
         assert b"Test message 2" in data
@@ -996,7 +1649,8 @@ class TestLogFile:
         with open(instance._log_file_path, "wb") as f:
             f.write(content.encode("utf-8"))
 
-        data, total = instance.get_log_bytes(start=0, end=49)
+        read_start, data, total = instance.get_log_bytes(start=0, end=49)
+        assert read_start == 0
         assert isinstance(data, bytes)
         assert len(data) == 50
 
@@ -1006,7 +1660,8 @@ class TestLogFile:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"ShortMessage")
 
-        data, total = instance.get_log_bytes(start=0, end=9999)
+        read_start, data, total = instance.get_log_bytes(start=0, end=9999)
+        assert read_start == 0
         assert isinstance(data, bytes)
         assert b"Short" in data
         assert b"Message" in data
@@ -1019,7 +1674,8 @@ class TestLogFile:
         with open(instance._log_file_path, "wb") as f:
             f.write(raw)
 
-        data, total = instance.get_log_bytes(start=0)
+        read_start, data, total = instance.get_log_bytes(start=0)
+        assert read_start == 0
         assert isinstance(data, bytes)
         assert data == raw
         assert total == len(raw)
@@ -1030,7 +1686,8 @@ class TestLogFile:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"A" * 20 + b"B" * 20 + b"C" * 20)
 
-        data, total = instance.get_log_bytes(start=0, end=44)
+        read_start, data, total = instance.get_log_bytes(start=0, end=44)
+        assert read_start == 0
         assert data == b"A" * 20 + b"B" * 20 + b"C" * 5
         assert total == 60
 
@@ -1338,6 +1995,52 @@ class TestWatchAPIEndpoint:
             assert event["object"]["revision"] == 3
             assert "revision" not in event
 
+    def test_watch_initial_state_survives_instances_changing(self):
+        """Changes made while the initial state is being sent must neither break
+        the stream nor show up in it: each yield lets other requests run, and
+        the initial state is the state as of the starting revision."""
+        import json
+
+        manager = MagicMock()
+        manager.revision = 0
+
+        async def no_events(since_revision=0):
+            return
+            yield  # make it an async generator
+
+        manager.broadcaster.watch = no_events
+
+        def instance(instance_id):
+            mock_instance = MagicMock()
+            mock_instance.get_status.return_value = {
+                "instance_id": instance_id,
+                "status": "running",
+            }
+            return mock_instance
+
+        manager.instances = {"a": instance("a"), "b": instance("b")}
+
+        async def run():
+            with patch("launcher.vllm_manager", manager):
+                response = await watch_instances(since=None)
+                lines = []
+                async for line in response.body_iterator:
+                    lines.append(line)
+                    # What a create interleaved here would do to the dict.
+                    manager.instances["c"] = instance("c")
+                    # And what a stop interleaved here would do to a status.
+                    manager.instances["b"].get_status.return_value = {
+                        "instance_id": "b",
+                        "status": "stopped",
+                    }
+                return lines
+
+        events = [json.loads(line) for line in asyncio.run(run())]
+        assert [event["object"] for event in events] == [
+            {"instance_id": "a", "status": "running"},
+            {"instance_id": "b", "status": "running"},
+        ]
+
 
 class TestLogStartOffset:
     """Test suite for log retrieval with start offsets."""
@@ -1354,7 +2057,8 @@ class TestLogStartOffset:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"A" * 10 + b"B" * 10 + b"C" * 10)
 
-        data, total = instance.get_log_bytes(start=15)
+        read_start, data, total = instance.get_log_bytes(start=15)
+        assert read_start == 15
         assert data == b"B" * 5 + b"C" * 10
         assert total == 30
 
@@ -1364,7 +2068,8 @@ class TestLogStartOffset:
         with open(instance._log_file_path, "wb") as f:
             f.write(b"A" * 10 + b"B" * 10 + b"C" * 10)
 
-        data, total = instance.get_log_bytes(start=10)
+        read_start, data, total = instance.get_log_bytes(start=10)
+        assert read_start == 10
         assert data == b"B" * 10 + b"C" * 10
         assert total == 30
 
@@ -1413,10 +2118,10 @@ class TestLogFileCleanup:
 
     @patch("launcher.multiprocessing.Process")
     def test_stop_terminated_cleans_up_log_file(
-        self, mock_process_class, gpu_translator, tmp_log_dir
+        self, mock_process_class, gpu_translator, tmp_log_dir, fake_procs
     ):
         """Test that stop() removes the log file after terminating"""
-        mock_process = MockProcess()
+        mock_process = MockProcess(fake_procs)
         mock_process_class.return_value = mock_process
 
         instance = self._make_instance(gpu_translator, tmp_log_dir)
@@ -1448,10 +2153,9 @@ class TestParseRangeHeader:
         """Test parsing large byte values"""
         assert parse_range_header("bytes=1048576-2097151") == (1048576, 2097151)
 
-    def test_suffix_range_rejected(self):
-        """Test that suffix range bytes=-500 raises ValueError"""
-        with pytest.raises(ValueError, match="Unsupported or malformed"):
-            parse_range_header("bytes=-500")
+    def test_suffix_range(self):
+        """Test parsing suffix range bytes=-500"""
+        assert parse_range_header("bytes=-500") == (None, 500)
 
     def test_invalid_unit(self):
         """Test that non-bytes unit raises ValueError"""

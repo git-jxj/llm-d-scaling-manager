@@ -8,7 +8,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/kueue"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/scaletarget"
@@ -28,7 +27,9 @@ var GateGrace = 30 * time.Second
 // of its pods is. since is when the newest unplaced pod became so (the
 // Unschedulable condition's transition, or the gated pod's creation), pods
 // their names, sorted, and at when each unplaced replica became so: per pod,
-// or on a LeaderWorkerSet per group (its group-index label), a group counting
+// or on a LeaderWorkerSet per group (lwsGroupKey: its LeaderWorkerSet and
+// group index, so two revisions of a DisaggregatedSet role mid-rollout keep
+// their groups 0 apart), a group counting
 // from when its newest unplaced pod became so. since is the newest, for the
 // signals that ask whether anything is newly unplaced; the placement timeout
 // reads at (BorrowGovernor.timeoutReleases), so it counts replicas, never the
@@ -77,7 +78,7 @@ func countGated(list []corev1.Pod, group bool, at map[string]time.Time, reserved
 		}
 		key := p.Name
 		if group {
-			key = p.Labels[lwsv1.GroupIndexLabelKey]
+			key, _ = lwsGroupKey(p)
 		}
 		t, unplaced := at[key]
 		if !unplaced {
@@ -105,7 +106,7 @@ func countUnplaced(list []corev1.Pod, group bool, now time.Time) (unplaced int, 
 		}
 		key := p.Name
 		if group {
-			key = p.Labels[lwsv1.GroupIndexLabelKey]
+			key, _ = lwsGroupKey(p)
 		}
 		if prev, seen := at[key]; !seen || t.After(prev) {
 			at[key] = t

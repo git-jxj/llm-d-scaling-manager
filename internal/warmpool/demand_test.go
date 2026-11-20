@@ -3,6 +3,7 @@ package warmpool
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -701,6 +702,61 @@ func TestWithoutAnOverrideTheWorkloadsUtilisationIsKept(t *testing.T) {
 	}
 }
 
+func TestAWarmCopyAlwaysNamesItsGPUUtilisation(t *testing.T) {
+	// vLLM 0.34 defaults --gpu-memory-utilization to 1.0: an engine started
+	// without the flag takes every byte left after warmup, and the sleepers
+	// beside it have nowhere to go. So a warm copy never goes without it, even
+	// when the pool inherits and the workload names none.
+	d, reg, _ := demandFor(t,
+		[]client.Object{deployment(1, corev1.Container{
+			Name:  "vllm",
+			Args:  []string{"--model", "Qwen/Qwen3-0.6B"},
+			Image: "vllm",
+		})},
+		&fakeDatastore{pool: inferencePool()})
+	d.GPUMemoryUtilization = 0
+	registerVariant(reg, scaleTarget)
+
+	got, err := d.Variants(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Variants = %+v, %v", got, err)
+	}
+	// The last field, exactly: Contains would also match 0.95 or 0.99.
+	if fields := strings.Fields(got[0].Model.EngineOptions); len(fields) < 2 ||
+		fields[len(fields)-2] != "--gpu-memory-utilization" || fields[len(fields)-1] != "0.9" {
+		t.Errorf("a warm copy must name its utilisation, 0.9: %q", got[0].Model.EngineOptions)
+	}
+}
+
+func TestWithGPUMemoryUtilization(t *testing.T) {
+	const flag = "--gpu-memory-utilization"
+	for _, tc := range []struct {
+		name    string
+		options string
+		value   float64
+		want    string
+	}{
+		{"inherit, workload names it", "--model m " + flag + " 0.95", 0, "--model m " + flag + " 0.95"},
+		{"inherit, workload names it inline", "--model m " + flag + "=0.8", 0, "--model m " + flag + "=0.8"},
+		{"inherit, workload names none", "--model m", 0, "--model m " + flag + " 0.9"},
+		{"negative inherits", "--model m", -1, "--model m " + flag + " 0.9"},
+		{"NaN inherits, never reaches vLLM", "--model m", math.NaN(), "--model m " + flag + " 0.9"},
+		{"pool value replaces the workload's", "--model m " + flag + " 0.95 --seed 1", 0.6, "--model m --seed 1 " + flag + " 0.6"},
+		{"pool value replaces an inline one", "--model m " + flag + "=0.95", 0.6, "--model m " + flag + " 0.6"},
+		{"pool value added when none", "--model m", 0.75, "--model m " + flag + " 0.75"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := withGPUMemoryUtilization(tc.options, tc.value)
+			if got != tc.want {
+				t.Errorf("withGPUMemoryUtilization(%q, %v) = %q, want %q", tc.options, tc.value, got, tc.want)
+			}
+			if n := strings.Count(got, flag); n != 1 {
+				t.Errorf("%q names %s %d times, want exactly once", got, flag, n)
+			}
+		})
+	}
+}
+
 func TestParallelismAndExpertLayoutSurviveIntoTheWarmCopy(t *testing.T) {
 	// A warm copy has to be laid out like the replicas it stands in for. Drop
 	// --enable-expert-parallel and the same model is arranged differently: a
@@ -741,5 +797,27 @@ func TestAnEngineThatSpansPodsIsNotWarmedAndSaysWhy(t *testing.T) {
 	// that many devices warms such a model like any other.
 	if pool.ShapeOf("--model m --tensor-parallel-size 2 --pipeline-parallel-size 2").GPUs != 4 {
 		t.Fatal("TP and PP multiply into the GPU count")
+	}
+}
+
+func TestUnderscoreFlagsAreKeptInTheDashedForm(t *testing.T) {
+	// vLLM accepts --gpu_memory_utilization as --gpu-memory-utilization. Dropped
+	// as unknown, the warm copy would run at the pool default (0.9) instead of
+	// the workload's 0.8, with a different compile-cache key.
+	got, err := EngineOptionsFrom(specWith(nil, []string{
+		"--model", "m",
+		"--gpu_memory_utilization", "0.8",
+		"--max_model_len=4096",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--gpu-memory-utilization 0.8", "--max-model-len=4096"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("EngineOptionsFrom = %q, want it to contain %q", got, want)
+		}
+	}
+	if got := withGPUMemoryUtilization(got, 0); strings.Count(got, "--gpu-memory-utilization") != 1 || !strings.Contains(got, "--gpu-memory-utilization 0.8") {
+		t.Errorf("withGPUMemoryUtilization(inherit) = %q, want the workload's 0.8 once", got)
 	}
 }

@@ -225,10 +225,15 @@ count. On a DisaggregatedSet they meet in three places:
   scale-down waits (`Deferred`). Do not fight it.
 - **A release gate label.** Some deployments keep a Ready pod out of the
   InferencePool with a label (for example `<prefix>/production-released=false`)
-  while it drains or before it is released. Our collector counts a pod as
-  supply when it is Ready (`podServingState.ready`), whatever the pool selector
-  says. Such a pod would be counted as capacity that serves nothing. See the
-  open decisions.
+  while it drains or before it is released. Such a group is Ready and serves
+  nothing. In the controller, pool-selected supply
+  ([pool-selected-supply.md](pool-selected-supply.md), on by default) leaves it
+  out: when the template carries the label as `true`, the role is selected and
+  not held, and each relabelled group is counted out through its leader, its
+  metric row dropped, during a rollout too. The capacity planner does not read
+  InferencePools, so a planner capture still counts such a group. Tests:
+  `internal/engines/variantmeta/routing_dset_test.go`,
+  `internal/engines/steadystate/pool_routing_dset_test.go`.
 - **Drain on scale-in.** The DisaggregatedSet controller deletes groups directly
   on scale-down. The engine must drain in its own `preStop`, on the leader and
   every worker, as for a LeaderWorkerSet
@@ -246,13 +251,16 @@ count. On a DisaggregatedSet they meet in three places:
 
 ## Follow-ups
 
-1. **Release-gated pods as supply** (decided: its own PR). The collector will
-   count only pods the variant's InferencePool selects. It is the right answer
-   for any gated deployment, not only this one.
-2. **Group keys during a rollout** (accepted for now). Two revisions of one role
-   each have a group 0. Code that keys groups by `group-index` alone merges them
-   while a rollout runs. Readings are held while rolling out; the held-GPU and
-   placement counts are not. Fix: key by child LWS and group index everywhere.
-3. **Drain timing under `Deferred`** (accepted for now). A lower count waits for
-   the rollout to finish. The actuator reads the live count, but the start-time
-   learner does not yet tell that wait from a slow start.
+1. **Release-gated pods as supply** (done: pool-selected supply, #158; tested
+   for DisaggregatedSet groups, #216). Only pods the variant's InferencePool
+   selects count. It is the right answer for any gated deployment.
+2. **Group keys during a rollout** (done, #220). Two revisions of one role
+   each have a group 0. The held-GPU, placed and unplaced counts
+   (`internal/engines/variantmeta`) now key a group by its child LWS name and
+   group index, so the two are counted apart.
+3. **Drain timing under `Deferred`** (done, #220). A lower count waits for
+   the rollout to finish. The start-time learner now takes no sample from a Pod
+   whose start overlapped a rollout of its variant
+   (`SwitchStartHeldThroughRollout`). It decides from the Pods' own rows (two
+   revisions at once) and a look-back, not from the role's rollout status, so
+   an in-place one-replica rollout is not held.

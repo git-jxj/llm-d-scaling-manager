@@ -23,16 +23,21 @@ is the original proposal)
   Per-analyzer tolerances do not decide anything yet
   ([#305](https://github.com/ev-shindin/llm-scaling-manager/issues/305)), and
   units still have to be converted into saturation's.
-- **External analyzer, as an MVP:** a demand query and a constant `P`, with a
+- **External analyzer:** a demand query and a constant `P`, with a
   query body per inference engine (not in this proposal), escaped
   `{{.namespace}}`/`{{.modelID}}`, declared under `analyzerDefinitions` on the
   cluster `default` scaling entry
   ([reference](../reference/scaling-policy.md#external-analyzers-analyzerdefinitions)).
-  Missing: role `match` rules, so it cannot size a P/D model
-  ([#343](https://github.com/ev-shindin/llm-scaling-manager/issues/343)); a
-  target query, ordered fallbacks and `e:` tokens, `targetReduce`, `orZero`,
-  and "an empty result is missing": today an empty result reads as 0 demand
-  ([#344](https://github.com/ev-shindin/llm-scaling-manager/issues/344)).
+  Also built: demand rules with `match: { role }`, so it can size a P/D model
+  ([#46](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/46));
+  a per-Pod target query with ordered fallbacks and `targetReduce`, and
+  `orZero` ([#47](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/47)).
+  Built differently: "an empty result is missing" is opt-in
+  (`emptyIsMissing: true`), so a definition written before it reads an empty
+  result as 0 demand, as it did; `match` selects by role only; a target rule's
+  `e:` token is logged, not published; a constant `threshold` is the last
+  fallback; and the query is a full PromQL expression, not a bare selector the
+  scaling manager wraps.
 - **Not built:** the `llmsm_analyzer_info` series and the provenance series
   (phase 3, [#346](https://github.com/ev-shindin/llm-scaling-manager/issues/346)).
 

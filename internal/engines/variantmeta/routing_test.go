@@ -272,9 +272,11 @@ func TestRouteLWSCountsLeadersOnly(t *testing.T) {
 	metas := Discover(context.Background(), []llmdvariant.Variant{va}, targets, c, DeclaredOnly)
 	Route(context.Background(), metas, []llmdvariant.Variant{va}, nil, targets, c, lister(sel, nil))
 	got := gotRoute(metas[0])
-	want := routeWant{unrouted: 1, ready: 1, pods: []string{"pd-1"}, known: true}
+	// The worker is named, not counted: its row goes if the collector named
+	// the group's row for it.
+	want := routeWant{unrouted: 1, ready: 1, pods: []string{"pd-1", "pd-1-1"}, known: true}
 	if !routeEqual(got, want) {
-		t.Fatalf("got %+v, want %+v: one group outside the pool, by its leader", got, want)
+		t.Fatalf("got %+v, want %+v: one group outside the pool, counted by its leader", got, want)
 	}
 }
 

@@ -719,6 +719,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	},
 	settle.SwitchFirstSightRestored: nil,
 
+	// llm-d-incubation/llm-d-scaling-manager#220: a start that overlapped a
+	// rollout is not folded. No recording holds a variant rolling out while
+	// a Pod reports a start, so no golden moves; its unit tests hold it
+	// (heldBy).
+	saturation.SwitchStartHeldThroughRollout: nil,
+
 	// Issue ev-shindin/llm-scaling-manager#397: the prefill bound held at a lower confidence bound
 	// (saturation.SwitchPrefillBoundHeldConfidence): the window keeps its
 	// samples as read, and the bound priced is the larger of their mean and
@@ -1162,6 +1168,13 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// jumps a day and that window would have aged out anyway. No cluster
 	// recording forgets. Its unit tests hold it (heldBy).
 	slo.SwitchITLForgetReachesTheLine: nil,
+	// llm-d-incubation/llm-d-scaling-manager#131 sizes a prefill variant on
+	// TTFT, the joint a₀ standing where P1 refused a: off from the
+	// constructor, so every golden replay runs it off, and off alone from
+	// all on moves nothing. On, it moves the slo analyzer's rows wherever a
+	// prefill is priced; TestGoldens_TTFTSizesPrefillOnTheStaircases holds
+	// what it moves on the staircases, and its unit tests hold it (heldBy).
+	slo.SwitchTTFTSizesPrefill: nil,
 	// ev-shindin/llm-scaling-manager#277 prices a resident request at the KV it is measured to hold,
 	// between the prefix-cache hit rate's discount and none. It moves the
 	// derived mu, and the decode demand the floor prices from it, in the two
@@ -1311,6 +1324,15 @@ func withSeams(more, rows map[string][]string) map[string][]string {
 // test that holds the same on either side is a control, not a hold, and is
 // not listed here.
 var heldBy = map[string][]heldTest{
+	// llm-d-incubation/llm-d-scaling-manager#220: each runs the switch on
+	// and off and asserts both.
+	saturation.SwitchStartHeldThroughRollout: {
+		{"../saturation", "TestStartRollout_AStartDuringARolloutIsNotFolded"},
+		{"../saturation", "TestStartRollout_APodCreatedDuringARolloutIsNotFoldedAfterIt"},
+		{"../saturation", "TestStartRollout_AnalyzeHoldsStartsWhileRollingOut"},
+		{"../saturation", "TestStartRollout_ARowWithNoReadyTimeIsHeldAfterARollout"},
+		{"../saturation", "TestStartRollout_AHeldPodLeavesTheRunOfRefusedStarts"},
+	},
 	// llm-d-incubation/llm-d-scaling-manager#201: each runs the switch on
 	// and off and asserts both.
 	saturation.SwitchK2DecodeBudgetAtComputedPrompt: {
@@ -1485,6 +1507,16 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadDropsTheHold"},
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadRows"},
 		{".", "TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases"},
+	},
+	// The first and last run the switch on and off and assert both; the
+	// others hold the constructor's off and the two halves alone.
+	slo.SwitchTTFTSizesPrefill: {
+		{"../slo", "TestTTFT_TheSizesPrefillSwitch"},
+		{"../slo", "TestTTFT_TheSizesPrefillOffFromTheConstructor"},
+		{"../slo", "TestTTFT_WithJointFixedLatency"},
+		{"../slo", "TestTTFT_PrefillAsk"},
+		{"../slo", "TestTTFT_SizePrefill"},
+		{".", "TestGoldens_TTFTSizesPrefillOnTheStaircases"},
 	},
 	// The first runs the switch on and off through Analyze and asserts both;
 	// the model row replays the staircase goldens with it on.

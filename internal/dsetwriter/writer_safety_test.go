@@ -169,7 +169,13 @@ func TestPassScansOnlyItsNamespaces(t *testing.T) {
 			w, got, _ := newWriter(t, set(optIn("true"), "", 3), store, nil)
 			w.Client = interceptor.NewClient(w.Client.(client.WithWatch), interceptor.Funcs{
 				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-					lists = append(lists, (&client.ListOptions{}).ApplyOptions(opts).Namespace)
+					in := (&client.ListOptions{}).ApplyOptions(opts).Namespace
+					if u, ok := list.(*unstructured.UnstructuredList); ok && u.GroupVersionKind() == lwsListGVK {
+						// The children of a set it scales, in the set's namespace only.
+						assert.Equal(t, ns, in)
+						return c.List(ctx, list, opts...)
+					}
+					lists = append(lists, in)
 					return c.List(ctx, list, opts...)
 				},
 				Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
@@ -340,6 +346,8 @@ func TestPassListFailures(t *testing.T) {
 		{"no CRD", &meta.NoKindMatchError{GroupKind: setGVK.GroupKind(), SearchedVersions: []string{"v1"}}, "CRD is not installed"},
 		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Group: setGVK.Group, Resource: "disaggregatedsets"}, "", assertErr("no grant")), "smt admin-setup -n <namespace> --dset-role-writer"},
 		{"other", apierrors.NewServiceUnavailable("down"), "Could not list DisaggregatedSets"},
+		// A plain error has no API reason; it is logged all the same.
+		{"plain", assertErr("connection refused"), "Could not list DisaggregatedSets"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w, got, _ := newWriter(t, set(optIn("true"), "", 3), decision.NewStore(), nil)

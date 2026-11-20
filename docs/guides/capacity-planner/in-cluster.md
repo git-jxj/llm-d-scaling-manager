@@ -332,7 +332,8 @@ kubectl -n ${NS} delete secret capacity-planner-proxy
   read-only.
 - **Recordings only.** The in-cluster planner does not read Prometheus. To
   plan from a live window, run it [on your machine](README.md#start-the-planner).
-  Loading from the page is planned (#195).
+  People can also upload a recording from the page, if the admin
+  [turns it on](#or-let-people-upload-from-the-page).
 - **Kubernetes authentication.** `serve --auth=kubernetes`
   ([Kubernetes authentication](api.md#kubernetes-authentication)) is for API
   clients that send a bearer token. A browser sends none, which is why these

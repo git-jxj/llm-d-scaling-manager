@@ -250,6 +250,18 @@ func nodeCount(options string) int {
 	return n
 }
 
+// DataParallelAcrossPods reports whether an engine spans more than one Pod AND
+// runs more than one data-parallel rank. The pool cannot start that shape: it
+// adds --headless to every Pod but the first, and vLLM runs a headless node
+// that is rank 0 of its own data-parallel group as headless data-parallel
+// engines, which the pool's launcher refuses (warmpool/supervisor/launcher.py).
+// With --nnodes 2 --data-parallel-size 2 --tensor-parallel-size 8 that is the
+// second Pod, so the leader waits for a peer that never comes.
+func DataParallelAcrossPods(options string) bool {
+	dp, err := strconv.Atoi(flagValue(options, "--data-parallel-size"))
+	return err == nil && dp > 1 && nodeCount(options) > 1
+}
+
 func parallelism(options string) int {
 	gpus := 1
 	for _, flag := range []string{

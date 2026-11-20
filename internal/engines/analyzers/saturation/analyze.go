@@ -524,7 +524,9 @@ func (c *cycle) fitLines() {
 		role := c.rolesByVariant[variant]
 		c.a.noteReplicaStartFor(startNote{key: variantKey, namespace: c.input.Namespace,
 			modelID: c.input.ModelID, variant: variant, role: domain.CanonicalRole(role),
-			seed: c.startSeedByVariant[variant]}, c.input.ReplicaMetrics, c.logger)
+			seed:           c.startSeedByVariant[variant],
+			revisionsMixed: mixed[variant],
+		}, c.input.ReplicaMetrics, c.logger)
 
 		if !c.a.itlLineRole(role) {
 			continue

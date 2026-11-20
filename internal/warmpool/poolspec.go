@@ -33,8 +33,9 @@ type PoolSpec struct {
 	// can ever admit anything: a reserve that reaches the ceiling leaves a
 	// budget of zero forever. Zero means unbounded/unknown.
 	MaxReplicas int
-	// GPUMemoryUtilization is a pool-scoped override of the adapter's value.
-	// Zero inherits it.
+	// GPUMemoryUtilization is a pool-scoped override of the controller-wide
+	// value (Demand.GPUMemoryUtilization), applied by VariantsFor. Zero
+	// inherits it.
 	GPUMemoryUtilization float64
 	// Switch is when this pool changes which model it has awake. Retained pools
 	// only: an ordinary pool lends to whoever is short and needs no policy.
@@ -278,10 +279,18 @@ func Orphaned(all []pool.Membership, pools []PoolSpec) []string {
 // default to "the first pool": with two pools of different accelerators, a guess
 // is wrong half the time, and being wrong costs a ~35 s load that can never
 // serve the variant that triggered it.
+//
+// It is also where a pool's own --gpu-memory-utilization (the trigger key
+// warmPoolGPUMemoryUtilization, PoolSpec.GPUMemoryUtilization) replaces the
+// controller-wide value Demand applied: this is the first point at which a
+// variant's pool is known. Zero leaves the options as Demand made them.
 func VariantsFor(variants []policy.VariantDemand, spec PoolSpec, pools []PoolSpec) []policy.VariantDemand {
 	out := make([]policy.VariantDemand, 0, len(variants))
 	for _, v := range variants {
 		if v.WarmPool == spec.Name || (v.WarmPool == "" && len(pools) == 1) {
+			if spec.GPUMemoryUtilization > 0 && v.Model.EngineOptions != "" {
+				v.Model.EngineOptions = withGPUMemoryUtilization(v.Model.EngineOptions, spec.GPUMemoryUtilization)
+			}
 			out = append(out, v)
 		}
 	}

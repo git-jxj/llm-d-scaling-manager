@@ -35,7 +35,8 @@ capacity planner's pages:
 ## Prerequisites
 
 - [ ] One of: Docker (or Podman); `curl` and `cosign` for a binary (linux or
-  darwin, amd64 or arm64); or a clone of this repository and Go 1.26 or later.
+  darwin, amd64 or arm64; on Windows, the linux binary in WSL); or a clone of
+  this repository and Go 1.26 or later.
   `cosign` 3.0 or later checks the image and the binary; 2.4 is enough for the
   binary only.
 - [ ] One of:
@@ -108,8 +109,9 @@ use:
 
 <!-- guide:get.binary start -->
 ```bash
-# Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
-# signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
+# Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64; on Windows, the linux binary in WSL.
+# Check it against SHA256SUMS and its signature (cosign 2.4 or later), as for the other release files. On macOS,
+# use shasum -a 256 -c - for sha256sum -c -.
 export V=<release, v0.12.0 or later> OS=linux ARCH=amd64
 B=capacity-planner-${V}-${OS}-${ARCH}
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
@@ -465,12 +467,13 @@ with `--prefill` and `--decode`; without them it judges the recorded counts.
 
 <!-- guide:fleet.check start -->
 ```bash
-# From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw, with
-# what that load grown by a fifth does beside it, for its own shape and two it never saw. The sample learned no prefill
-# speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at 50%, 80% and 100%
-# of the knee and the load seen.
-bin/capacity-planner at-replicas \
-  --recording internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz \
+# On the staircase sample, downloaded as the first sample was: two prefill and two decode replicas, judged at the
+# load it saw, with what that load grown by a fifth does beside it, for its own shape and two it never saw. The
+# sample learned no prefill speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at
+# 50%, 80% and 100% of the knee and the load seen.
+curl -fsSL -o recordings/ttft-staircase-b-on.jsonl.gz \
+  https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz
+bin/capacity-planner at-replicas --recording recordings/ttft-staircase-b-on.jsonl.gz \
   --assume-vp 200000 --assume-a 20ms --ttft 2s@p90 --tpot 30ms \
   --shape measured --shape 1k/1k --shape 16k/200/0.3 \
   --load 50% --load 80% --load 5r/s --load seen --load-seen-x 1.2
@@ -493,8 +496,8 @@ It replays the recording once and answers, for each shape and load:
   `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
   repeatable: `80%` of that shape's fleet knee, `5r/s`, `seen`, or
   `seen x1.5`). A cell
-  such as `637/16.4 @19.07 ok` is TTFT p90 637 ms and TPOT p90 16.4 ms at
-  19.07 r/s, and the SLO's own statistics are met there. The mark is `ok`
+  such as `617/5.0 @18.49 ok` is TTFT p90 617 ms and TPOT p90 5.0 ms at
+  18.49 r/s, and the SLO's own statistics are met there. The mark is `ok`
   met, `MISS` missed, `MISS*` missed because the rate is past the prefill
   flow-control onset (the router queues) though the figure is within, `SAT`
   saturated, `?` not judged. A TPOT ending in `m` is the mean, where the
@@ -539,30 +542,33 @@ exit 3 means a shape's verdict is NOT JUDGED. Scripts read the verdict from
 (`shapes[].verdict.verdict`), which prints the same report as
 [`POST /v1/report`](api.md#the-report).
 
-The sample above prints (the start of it):
+With v0.12.1, the sample above prints (the start of it):
 
 ```text
 ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-06 02:18-03:30Z, cycle 289 of 289
+decode engine   vLLM release not recorded
+prefill engine  vLLM release not recorded
 load judged     41.70 r/s, the p95 of the 282 of 289 cycles with traffic
 load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/s; busiest 2m0s (8 cycles): 42.13 r/s
 SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
 cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
 mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
-summary                     50%                 80%                    5r/s               seen            seen x1.2
-  measured                  637/16.4 @19.07 ok  2490/16.4 @30.51 MISS  388/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
-  1k/1k EXTRAPOLATED        134/16.4 @18.27 ok  152/16.4 @29.24 ok     124/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
-  16k/200/0.3 EXTRAPOLATED  898/16.4 @13.36 ok  3673/16.4 @21.37 MISS  567/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+summary                     50%                80%                  5r/s              seen            seen x1.2
+  measured                  617/5.0 @18.49 ok  1944/10.8 @29.59 ok  388/4.9 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  1k/1k EXTRAPOLATED        133/4.9 @17.78 ok  152/9.0 @28.45 ok    125/4.9 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  16k/200/0.3 EXTRAPOLATED  667/5.0 @9.08 ok   1015/10.8 @14.53 ok  567/4.9 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
 verdicts
-  measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.3x the fleet knee (38.1 r/s); needs 4 prefill + 4 decode (has 2 + 2) (prefill f 1.5 assumed at 4 pods).
-  1k/1k EXTRAPOLATED        UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 36.5 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2).
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (36.5 r/s); needs 1 prefill + 4 decode (has 2 + 2).
-  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.6x the fleet knee of 26.7 r/s, the fleet saturates; needs 5 prefill + 5 decode (has 2 + 2) (prefill f 1.5 assumed at 5 pods).
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.9x the fleet knee (26.7 r/s); needs 6 prefill + 6 decode (has 2 + 2) (prefill f 1.5 assumed at 6 pods).
+  measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (37.0 r/s); needs 4 prefill + 4 decode (has 2 + 2) (prefill f 1.5 assumed at 4 pods).
+  1k/1k EXTRAPOLATED        UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.2x the fleet knee of 35.6 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (35.6 r/s); needs 1 prefill + 4 decode (has 2 + 2).
+  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 2.3x the fleet knee of 18.2 r/s, the fleet saturates; needs 5 prefill + 6 decode (has 2 + 2) (prefill f 1.5 assumed at 5 pods).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 2.8x the fleet knee (18.2 r/s); needs 6 prefill + 7 decode (has 2 + 2) (prefill f 1.5 assumed at 6 pods).
 ```
 
-Read the not-validated lines at the end: the decode knee read 44% to 103%
+Read the `not validated` lines after each shape (not shown above): the decode knee read 44% to 103%
 high on the goldens, and TTFT is not validated.
+
 ## Plan replicas over a day
 
 How many prefill and decode replicas did your traffic need, hour by hour,
@@ -586,7 +592,7 @@ in the table):
 
 ```bash
 # --prometheus URL --namespace NS --kube-state-metrics in place of --recording reads the last 24 hours.
-capacity-planner day-plan --recording recordings/ols-sweep.jsonl.gz --model model-02 --assume-vp 30000 --ttft 500ms@p95 --tpot 4ms
+bin/capacity-planner day-plan --recording recordings/ols-sweep.jsonl.gz --model model-02 --assume-vp 30000 --ttft 500ms@p95 --tpot 4ms
 ```
 
 ```text

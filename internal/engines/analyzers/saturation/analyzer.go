@@ -235,6 +235,14 @@ type SaturationAnalyzer struct {
 	// startCountsRestored is SwitchStartCountedPodsRestored: on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	startCountsRestored bool
+	// startRolledAt is, per start key, the last cycle that saw its variant
+	// rolling out (SwitchStartHeldThroughRollout): a Pod created before it is
+	// taken to have started during the rollout. Not in the snapshot: a restart forgets a
+	// rollout that has ended, and reads one still running afresh.
+	startRolledAt map[string]time.Time
+	// startHoldsRollout is SwitchStartHeldThroughRollout: on from the
+	// constructor; a replay turns it off (SetSwitchesForReplay).
+	startHoldsRollout bool
 	// startOutliers counts consecutive start-time samples rejected as
 	// implausible for a variant, so a genuine change of hardware is eventually
 	// admitted rather than rejected forever against a stale estimate.
@@ -743,6 +751,8 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		startCountedReady:      make(map[string]time.Time),
 		startCountedRestored:   make(map[string]time.Time),
 		startCountsRestored:    true,
+		startRolledAt:          make(map[string]time.Time),
+		startHoldsRollout:      true,
 		startOutliers:          make(map[string]int),
 		startOutlierPods:       make(map[string]map[string]startRunPod),
 		startConfirmsByPod:     true,
@@ -1124,6 +1134,13 @@ func (a *SaturationAnalyzer) evictStaleHistory() Evicted {
 			delete(a.startSeconds, key)
 			delete(a.startOutliers, key)
 			evicted.StartEstimates++
+		}
+	}
+	// A variant held from its first start has a rollout mark and no
+	// estimate: its own loop.
+	for key := range a.startRolledAt {
+		if a.variantIsStale(key, now, variantTimeout) {
+			delete(a.startRolledAt, key)
 		}
 	}
 	// The start learner's per-key state goes with its key's liveness, as
