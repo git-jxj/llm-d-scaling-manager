@@ -228,11 +228,11 @@ type fcOutcome struct {
 // (flow control off), so k2 and mu are learned there. wrap, when set, edits
 // each of v's rows before the analyzer reads it (a mutant).
 func runFlowControl(s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaMetrics)) (fcOutcome, error) {
-	return runFlowControlLogged(nil, s, g, learned, wrap)
+	return runFlowControlLogged(context.Background(), s, g, learned, wrap)
 }
 
 // runFlowControlLogged is runFlowControl with Analyze logging to ctx's
-// logger (context.Background when nil).
+// logger.
 func runFlowControlLogged(ctx context.Context, s fcShape, g fcGen, learned bool, wrap func(*domain.ReplicaMetrics)) (fcOutcome, error) {
 	store := capacity.NewStore()
 	store.Update("test-ns", "test-model", "v", capacity.Record{AcceleratorName: "H200", GpuCount: s.ranks,
