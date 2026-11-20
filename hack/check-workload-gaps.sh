@@ -3868,6 +3868,347 @@ assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
 assert_contains "$(cat "$DRIVER_LOG")" "BUILD THEIR FLASHINFER KERNELS AGAIN"
 [ "$FAILED" -eq "$before" ] && ok
 
+# --- engine caches owned externally (engine-cache-owner) ----------------------
+#
+# A cache manager (a sidecar) restores the compile caches into the pod and
+# publishes them after the engine has served, and the pod spec already points
+# every cache variable into its directory. The pod-template annotation
+# scaling-manager.llmd.ai/engine-cache-owner=external leaves each variable the
+# pod spec sets to it; one it does not set is still ours, and named. Every
+# case below asserts a line or a patch that did not exist before it.
+
+EXT_ANN="scaling-manager.llmd.ai/engine-cache-owner"
+
+# The manager shape: a native sidecar shares the emptyDir the engine keeps its
+# caches in, and mounts the store claim. No preStop, so a document is written
+# (the drain half) and what it carries of the caches can be read.
+f_ext_manager() {
+    FIXTURE='{"spec":{"template":{
+        "metadata":{"annotations":{"'"$EXT_ANN"'":"external"}},
+        "spec":{
+        "terminationGracePeriodSeconds":120,
+        "volumes":[{"name":"jit","emptyDir":{}},
+                   {"name":"jit-store","persistentVolumeClaim":{"claimName":"jit-store"}},
+                   {"name":"model-storage","persistentVolumeClaim":{"claimName":"model-pvc"}}],
+        "initContainers":[{"name":"cache-sync","image":"quay.io/x/sync:1","restartPolicy":"Always",
+                           "volumeMounts":[{"name":"jit","mountPath":"/var/cache/jit"},
+                                           {"name":"jit-store","mountPath":"/store"}]}],
+        "containers":[{"name":"vllm","image":"quay.io/x/vllm-openai:v0.11",
+                       "env":[{"name":"HF_HOME","value":"/model-cache/huggingface"},
+                              {"name":"VLLM_CACHE_ROOT","value":"/var/cache/jit/vllm"},
+                              {"name":"FLASHINFER_WORKSPACE_BASE","value":"/var/cache/jit/flashinfer"},
+                              {"name":"TRITON_CACHE_DIR","value":"/var/cache/jit/triton"},
+                              {"name":"PYTHONPYCACHEPREFIX","value":"/var/cache/jit/pycache"}],
+                       "volumeMounts":[{"name":"model-storage","mountPath":"/model-cache"},
+                                       {"name":"jit","mountPath":"/var/cache/jit"}],
+                       "args":["vllm","serve","Qwen/Qwen3-0.6B"]}]}}}}'
+}
+
+# ext_drop NAME...: the fixture without those env entries of the engine.
+ext_drop() {
+    local n
+    for n in "$@"; do
+        FIXTURE="$(printf '%s' "$FIXTURE" | jq -c --arg n "$n" '.spec.template.spec.containers[0].env |= map(select(.name != $n))')"
+    done
+}
+# ext_owner VALUE: the annotation set to VALUE; "-" removes it.
+ext_owner() {
+    if [ "$1" = "-" ]; then
+        FIXTURE="$(printf '%s' "$FIXTURE" | jq -c --arg a "$EXT_ANN" '.spec.template.metadata.annotations |= del(.[$a])')"
+    else
+        FIXTURE="$(printf '%s' "$FIXTURE" | jq -c --arg a "$EXT_ANN" --arg v "$1" '.spec.template.metadata.annotations = ((.spec.template.metadata.annotations // {}) + {($a): $v})')"
+    fi
+}
+# ext_envnames DOC: the env names the emitted document gives the engine.
+ext_envnames() { printf '%s\n' "$1" | yq eval '[.spec.template.spec.containers[0].env[]?.name] | join(" ")' - 2>/dev/null; }
+# ext_doc: the document for the Deployment fixture; the log in $WORK/ext.err.
+ext_doc() { so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>"$WORK/ext.err"; }
+
+CASE="engine-cache-owner external, every variable covered: no engine-cache half, the owned-externally line, the guard still offered"
+reset; f_ext_manager
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "ns/w: engine caches owned externally ($EXT_ANN=external)"
+assert_contains "$log" "store: claim jit-store, mounted read-write by cache-sync in every pod"
+assert_contains "$log" "every cache variable is set in the pod spec: deferred to the owner, nothing of ours is patched"
+assert_not_contains "$log" "COMPILES FROM NOTHING"
+assert_not_contains "$log" "not set in the pod spec"
+# The document is the drain half alone, with the guard offered to the owner.
+assert_contains "$doc" "preStop"
+assert_contains "$doc" "#   engine caches: owned externally; none is ours (see the report)"
+assert_contains "$doc" "the guard below is offered for whoever"
+assert_contains "$doc" "#     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
+assert_not_contains "$doc" "#   engine-cache:"
+assert_eq "$(ext_envnames "$doc")" "" "env the document writes"
+assert_eq "$(printf '%s\n' "$doc" | yq eval '[.spec.template.spec.volumes[]?.name] | join(" ")' - 2>/dev/null)" "" "volumes the document writes"
+# The owner VLLM_CACHE_ROOT is not ours to switch to one AOT artefact.
+assert_not_contains "$doc" "VLLM_USE_MEGA_AOT_ARTIFACT=1"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, TRITON_CACHE_DIR not set: ours for it alone, named in the report"
+reset; f_ext_manager; ext_drop TRITON_CACHE_DIR
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_eq "$(ext_envnames "$doc")" "TRITON_CACHE_DIR" "env the document writes"
+assert_contains "$doc" "value: /engine-cache/triton"
+assert_contains "$doc" "claimName: engine-cache"
+assert_contains "$doc" "#   engine caches: owned externally; only TRITON_CACHE_DIR is ours (see the report)"
+assert_contains "$log" "TRITON_CACHE_DIR: not set in the pod spec; patched under /engine-cache"
+assert_not_contains "$log" "COMPILES FROM NOTHING"
+assert_not_contains "$log" "deferred to the owner"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, owner sets VLLM_CACHE_ROOT and not FLASHINFER_WORKSPACE_BASE: FLASHINFER_WORKSPACE_BASE emitted alone"
+reset; f_ext_manager; ext_drop FLASHINFER_WORKSPACE_BASE
+before=$FAILED
+doc="$(ext_doc)"
+assert_eq "$(ext_envnames "$doc")" "FLASHINFER_WORKSPACE_BASE" "env the document writes"
+assert_contains "$doc" "value: $(so_flashinfer_base /engine-cache/flashinfer quay.io/x/vllm-openai:v0.11)"
+assert_contains "$(cat "$WORK/ext.err")" "FLASHINFER_WORKSPACE_BASE: not set in the pod spec"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, owner sets FLASHINFER_WORKSPACE_BASE and not VLLM_CACHE_ROOT: ours for VLLM_CACHE_ROOT, the owner one untouched"
+reset; f_ext_manager; ext_drop VLLM_CACHE_ROOT
+before=$FAILED
+doc="$(ext_doc)"
+assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT" "env the document writes"
+assert_contains "$doc" "value: /engine-cache/vllm"
+assert_not_contains "$doc" "value: /engine-cache/flashinfer"
+# Ours, so the AOT artefact line comes with it.
+assert_contains "$doc" "VLLM_USE_MEGA_AOT_ARTIFACT=1"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, owner sets FLASHINFER_WORKSPACE_DIR only: no FlashInfer patch, the warning addressed to the owner"
+reset; f_ext_manager; ext_drop FLASHINFER_WORKSPACE_BASE
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/var/cache/jit/flashinfer"}]')"
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_eq "$(ext_envnames "$doc")" "" "env the document writes"
+assert_contains "$log" "FLASHINFER_WORKSPACE_DIR: left to the owner, but FlashInfer does not read it"
+assert_contains "$log" "The owner should set FLASHINFER_WORKSPACE_BASE instead."
+assert_not_contains "$log" "BUILDS ITS FLASHINFER KERNELS AGAIN"
+assert_not_contains "$doc" "#   flashinfer:"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, cache variables set only in the image: ours emitted, each named as not set in the pod spec"
+reset; f_ext_manager; ext_drop VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "env the document writes"
+assert_eq "$(printf '%s\n' "$log" | grep -c ': not set in the pod spec; patched under')" "4" "variables named"
+assert_contains "$log" "A value set only in the image counts as not set"
+assert_contains "$doc" "only VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX are ours"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner ours: the patch as before, plus the caches-are-ours line"
+reset; f_engine_cache_only_gap; ext_owner ours
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "ns/w: engine caches are ours ($EXT_ANN=ours)."
+assert_contains "$log" "COMPILES FROM NOTHING"
+assert_contains "$doc" "#   engine-cache: the compile caches"
+assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "env the document writes"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner with an unknown value: the patch as before, plus a warning naming the value"
+reset; f_engine_cache_only_gap; ext_owner External
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "$EXT_ANN=External is neither external nor ours, so it is treated as ours"
+assert_contains "$doc" "#   engine-cache: the compile caches"
+assert_not_contains "$log" "owned externally ("
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="no engine-cache-owner, the manager shape: the patch as before, plus the suggestion"
+reset; f_ext_manager; ext_owner -; ext_drop FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "COMPILES FROM NOTHING"
+assert_contains "$log" "container cache-sync shares the emptyDir jit, which holds an engine cache, and mounts claim jit-store"
+assert_contains "$log" "annotate the pod template with $EXT_ANN=external"
+assert_contains "$doc" "#   engine-cache: the compile caches"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="no engine-cache-owner, a weights downloader with scratch space: the warning and patch as before, plus the suggestion"
+reset; f_ext_manager; ext_owner -; ext_drop FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.initContainers = [{"name":"download","image":"quay.io/x/dl:1",
+    "volumeMounts":[{"name":"jit","mountPath":"/scratch"},{"name":"model-storage","mountPath":"/model-cache"}]}]')"
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "COMPILES FROM NOTHING"
+assert_contains "$log" "container download shares the emptyDir jit, which holds an engine cache, and mounts claim model-pvc"
+assert_contains "$doc" "#   engine-cache: the compile caches"
+assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "env the document writes"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, patched before it was annotated: the conflict and the revert"
+reset; f_engine_cache_on_claim; ext_owner external
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "CONFLICT: the pod spec still carries what an earlier make workload-patch wrote (the volume engine-cache) (PYTHONPYCACHEPREFIX VLLM_CACHE_ROOT under /engine-cache)"
+assert_contains "$log" "remove the volume engine-cache, its mounts, and every cache variable that points under /engine-cache"
+assert_contains "$log" "delete the copies the manager stored while that was applied"
+assert_contains "$log" "Nothing more of ours is patched until it is reverted"
+assert_not_contains "$log" "shared ReadWriteMany claim"
+# FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR are unset, and still not
+# added under /engine-cache while the conflict stands.
+assert_not_contains "$log" "not set in the pod spec"
+assert_eq "$doc" "" "document"
+# On a claim of its own, said to be what make engine-cache does not make.
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '(.spec.template.spec.volumes[] | select(.name == "engine-cache") | .persistentVolumeClaim.claimName) = "shared-rwx"')"
+ext_doc >/dev/null
+assert_contains "$(cat "$WORK/ext.err")" "shared-rwx is not the node-local claim make engine-cache makes. If it is a shared ReadWriteMany claim"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, patched before it was annotated, in the driver: no all-clear, and --apply-engine-cache refused"
+reset; LIST_FIXTURE="$(serving_list)"; f_engine_cache_on_claim; ext_owner external
+before=$FAILED
+dir="$(mktemp -d)"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "0" "return code, report only"
+assert_contains "$(cat "$dir/log")" "still carrying our earlier engine-cache patch: ns1/w"
+assert_not_contains "$(cat "$dir/log")" "already drain on scale-down"
+assert_not_contains "$(cat "$dir/log")" "left to an external owner"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true LLMSM_WORKLOAD_PATCH_FILE="$dir/p2.yaml" \
+    llmsm_workload_patch >"$dir/log2" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "1" "return code, applying"
+assert_contains "$(cat "$dir/log2")" "is refused for ns1/w: the engine caches are owned externally, and the pod spec still carries our earlier engine-cache patch"
+assert_not_contains "$(cat "$dir/log2")" "the pod spec sets every cache variable"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, FLASHINFER_WORKSPACE_BASE the only variable of ours: --apply-engine-cache emits it, never sends the volume alone"
+reset; LIST_FIXTURE="$(serving_list)"; f_ext_manager; ext_drop FLASHINFER_WORKSPACE_BASE
+PVC_FIXTURE='{"items":[{"metadata":{"name":"engine-cache"},"spec":{"accessModes":["ReadWriteMany"]},"status":{"phase":"Bound"}}]}'
+before=$FAILED
+dir="$(mktemp -d)"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_contains "$(cat "$dir/log")" "the only cache variable of ours is FLASHINFER_WORKSPACE_BASE"
+assert_contains "$(cat "$dir/p.yaml")" "- name: FLASHINFER_WORKSPACE_BASE"
+assert_contains "$PATCH_BODY" "preStop"
+assert_not_contains "$PATCH_BODY" "engine-cache"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR ours: the report says the first is emitted only"
+reset; f_ext_manager; ext_drop FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR
+before=$FAILED
+doc="$(ext_doc)"
+assert_eq "$(ext_envnames "$doc")" "FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR" "env the document writes"
+assert_contains "$(cat "$WORK/ext.err")" "FLASHINFER_WORKSPACE_BASE is in the emitted file only: without VLLM_CACHE_ROOT beside it"
+# With VLLM_CACHE_ROOT ours too, it goes live, and nothing says otherwise.
+reset; f_ext_manager; ext_drop VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE
+ext_doc >/dev/null
+assert_contains "$(cat "$WORK/ext.err")" "FLASHINFER_WORKSPACE_BASE: not set in the pod spec"
+assert_not_contains "$(cat "$WORK/ext.err")" "in the emitted file only"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, a weights downloader listed before the manager: the store is the manager one"
+reset; f_ext_manager
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.volumes += [{"name":"scratch","emptyDir":{}}]
+    | .spec.template.spec.containers[0].volumeMounts += [{"name":"scratch","mountPath":"/scratch"}]
+    | .spec.template.spec.initContainers = [{"name":"download","image":"quay.io/x/dl:1",
+        "volumeMounts":[{"name":"scratch","mountPath":"/scratch"},{"name":"model-storage","mountPath":"/model-cache"}]}]
+      + .spec.template.spec.initContainers')"
+before=$FAILED
+ext_doc >/dev/null
+assert_contains "$(cat "$WORK/ext.err")" "store: claim jit-store, mounted read-write by cache-sync"
+assert_not_contains "$(cat "$WORK/ext.err")" "mounts the store"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, every variable covered, --apply-engine-cache: refused, non-zero exit"
+reset; LIST_FIXTURE="$(serving_list)"; f_ext_manager
+before=$FAILED
+dir="$(mktemp -d)"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "1" "return code"
+assert_contains "$(cat "$dir/log")" "LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true is refused for ns1/w: the engine caches are owned externally"
+# The drain half still goes; nothing of the caches does.
+assert_eq "$PATCH_CALLS" "1" "kubectl patch calls"
+assert_contains "$PATCH_BODY" "preStop"
+assert_not_contains "$PATCH_BODY" "engine-cache"
+# With a drain hook too there is no document at all, and still a refusal.
+reset; LIST_FIXTURE="$(serving_list)"; f_ext_manager
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].lifecycle = {"preStop":{"exec":{"command":["sleep","45"]}}}')"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true LLMSM_WORKLOAD_PATCH_FILE="$dir/p2.yaml" \
+    llmsm_workload_patch >"$dir/log2" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "1" "return code, nothing else to patch"
+assert_contains "$(cat "$dir/log2")" "is refused for ns1/w"
+assert_contains "$(cat "$dir/log2")" "Engine caches left to an external owner: ns1/w"
+# Not asked to apply it: the same workload is a clean run.
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_FILE="$dir/p3.yaml" llmsm_workload_patch >"$dir/log3" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "0" "return code, not applying"
+assert_contains "$(cat "$dir/log3")" "Engine caches left to an external owner: ns1/w"
+assert_not_contains "$(cat "$dir/log3")" "refused"
+[ "$FAILED" -eq "$before" ] && ok
+
+# A LeaderWorkerSet: each template is decided on its own annotation.
+f_lws_ext() {
+    FIXTURE='{"metadata":{"name":"w","resourceVersion":"7"},"spec":{"leaderWorkerTemplate":{
+        "leaderTemplate":{"metadata":{"annotations":{"'"$EXT_ANN"'":"external"}},"spec":{
+            "volumes":[{"name":"jit","emptyDir":{}}],
+            "containers":[{"name":"vllm-leader","image":"'"$LWS_LEADER_IMAGE"'",
+                           "env":[{"name":"VLLM_CACHE_ROOT","value":"/var/cache/jit/vllm"},
+                                  {"name":"FLASHINFER_WORKSPACE_BASE","value":"/var/cache/jit/flashinfer"},
+                                  {"name":"TRITON_CACHE_DIR","value":"/var/cache/jit/triton"},
+                                  {"name":"PYTHONPYCACHEPREFIX","value":"/var/cache/jit/pycache"}],
+                           "volumeMounts":[{"name":"jit","mountPath":"/var/cache/jit"}],
+                           "args":["vllm","serve","/models/qwen"]}]}},
+        "workerTemplate":{"spec":{"containers":[{"name":"vllm-worker","image":"'"$LWS_LEADER_IMAGE"'",
+            "args":["vllm","serve","/models/qwen","--headless"]}]}}}}}'
+}
+
+CASE="LWS: engine-cache-owner on one template only: each decided on its own, and the per-template line"
+reset; f_lws_ext
+before=$FAILED
+doc="$(so_workload_patch_doc ns leaderworkersets w "$POD_LWS" 2>"$WORK/ext.err")"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "LeaderWorkerSet ns/w: the templates are annotated differently, and each is decided on its own: leaderTemplate external, workerTemplate ours (not annotated)."
+assert_contains "$log" "ns/w (leaderTemplate): engine caches owned externally"
+assert_contains "$log" "ns/w (workerTemplate) COMPILES FROM NOTHING"
+assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.leaderTemplate')" "null" "leader in the document"
+assert_eq "$(lws_get "$doc" '[.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env[].name] | join(" ")')" \
+    "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "worker env"
+assert_contains "$doc" "#   engine caches: owned externally in leaderTemplate; none is ours"
+assert_contains "$doc" "#   engine-cache: the compile caches"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="LWS: engine-cache-owner external, owner sets FLASHINFER_WORKSPACE_BASE and not VLLM_CACHE_ROOT: ours for VLLM_CACHE_ROOT, the owner entry never replaced"
+reset; f_lws_ext
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env |= map(select(.name != "VLLM_CACHE_ROOT"))
+    | .spec.leaderWorkerTemplate.workerTemplate = .spec.leaderWorkerTemplate.leaderTemplate')"
+before=$FAILED
+doc="$(so_workload_patch_doc ns leaderworkersets w "$POD_LWS" 2>"$WORK/ext.err")"
+assert_eq "$(lws_get "$doc" '[.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env[].name] | join(" ")')" "VLLM_CACHE_ROOT" "leader env"
+assert_eq "$(lws_get "$doc" '[.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env[].name] | join(" ")')" "VLLM_CACHE_ROOT" "worker env"
+assert_contains "$(cat "$WORK/ext.err")" "ns/w (leaderTemplate): engine caches owned externally"
+# Applied as the JSON patch: the owner FLASHINFER_WORKSPACE_BASE keeps its value.
+f="$WORK/ext-lws.yaml"
+printf '%s\n' "$doc" > "$f"
+so_workload_patch_trim "$f" 0 1 '.spec.leaderWorkerTemplate[].spec' || fail "the trim left nothing"
+ops="$(so_workload_lws_json_patch ns w "$f" "$FIXTURE" 2>/dev/null)" || fail "no JSON patch"
+after="$(json_patch_apply "$FIXTURE" "$ops")" || fail "the JSON patch does not apply"
+assert_eq "$(printf '%s' "$after" | jq -r '[.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value] | join(" ")')" \
+    "/var/cache/jit/flashinfer" "owner FLASHINFER_WORKSPACE_BASE after the patch"
+assert_eq "$(printf '%s' "$after" | jq -r '[.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env[] | select(.name == "VLLM_CACHE_ROOT") | .value] | join(" ")')" \
+    "/engine-cache/vllm" "VLLM_CACHE_ROOT after the patch"
+[ "$FAILED" -eq "$before" ] && ok
+
 # --- LeaderWorkerSets: review round -----------------------------------------
 
 # f_lws_hooked: converged caches, and a preStop on leader and worker; $1 the
