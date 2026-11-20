@@ -57,7 +57,8 @@
 // output is still printed); 2 a usage or input error (a bad flag, an
 // unreadable or malformed capture or recording, overlapping --role-of
 // selectors, a window too large without --force); 1 anything else (a failed
-// Prometheus query, a Generate or a replay that fails inside the analyzers).
+// Prometheus query, a Generate or a replay that fails inside the analyzers);
+// 130 or 143 stopped by SIGINT or SIGTERM (execute).
 //
 // The command was named whatif before. Run under that name (make
 // capacity-planner also builds bin/whatif), it works the same and first
@@ -76,6 +77,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/go-logr/logr"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -118,16 +120,100 @@ func main() {
 	// The analyzers the replay runs log through controller-runtime: with no
 	// logger set it prints a stack trace on a run of 30 s or more.
 	ctrllog.SetLogger(logr.Discard())
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
-	stop()
-	if err != nil {
-		var s exitStatus
-		if !errors.As(err, &s) {
-			fmt.Fprintln(os.Stderr, progName+":", err)
-		}
-		os.Exit(exitCode(err))
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	os.Exit(execute(os.Args[1:], os.Stdout, os.Stderr, sigs, stopGrace))
+}
+
+// stopGrace is how long a command has, once SIGINT or SIGTERM ends its
+// context, to return before the process exits without it. Every command
+// reads its context between figures, so this is a backstop for a figure
+// that runs long, not the usual way out.
+const stopGrace = 5 * time.Second
+
+// selfStopping are the commands that stop on their own clock once their
+// context ends: serve gives requests in flight its --shutdown-timeout.
+// stopGrace does not cut them; a second signal still does.
+var selfStopping = map[string]bool{"serve": true}
+
+// interrupted is the cause a command's context ends with when a signal
+// stops it.
+type interrupted struct{ sig os.Signal }
+
+func (e interrupted) Error() string { return "stopped by " + signalName(e.sig) }
+
+// signalName is SIGINT or SIGTERM by that name, any other signal as Go
+// names it.
+func signalName(sig os.Signal) string {
+	switch sig {
+	case os.Interrupt:
+		return "SIGINT"
+	case syscall.SIGTERM:
+		return "SIGTERM"
 	}
+	return sig.String()
+}
+
+// execute runs the command args name and returns the process's exit code.
+// SIGINT or SIGTERM on sigs ends the command's context; a command that then
+// returns a context error, or has not returned within grace (unless it is
+// selfStopping), or meets a second signal, is stopped: execute says so on
+// warn and returns 128 plus the signal's number (130 for SIGINT, 143 for
+// SIGTERM). A command that still returns its own answer or error after the
+// signal (serve, shut down cleanly) exits as it would have.
+func execute(args []string, out, warn io.Writer, sigs <-chan os.Signal, grace time.Duration) int {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, args, out, warn) }()
+	var sig os.Signal
+	select {
+	case err := <-done:
+		return finish(err, warn)
+	case sig = <-sigs:
+	}
+	cancel(interrupted{sig})
+	var cut <-chan time.Time
+	if len(args) == 0 || !selfStopping[args[0]] {
+		t := time.NewTimer(grace)
+		defer t.Stop()
+		cut = t.C
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			return finish(err, warn)
+		}
+		fmt.Fprintf(warn, "%s: stopped by %s\n", progName, signalName(sig))
+	case <-cut:
+		fmt.Fprintf(warn, "%s: stopped by %s: the command did not stop within %s, so it was cut off\n", progName, signalName(sig), grace)
+	case s := <-sigs:
+		fmt.Fprintf(warn, "%s: stopped by a second signal (%s)\n", progName, signalName(s))
+	}
+	return signalExitCode(sig)
+}
+
+// finish is the exit code for the error a command returned, which it
+// prints to warn unless it is an exitStatus, whose output is already
+// printed.
+func finish(err error, warn io.Writer) int {
+	if err == nil {
+		return 0
+	}
+	var s exitStatus
+	if !errors.As(err, &s) {
+		fmt.Fprintln(warn, progName+":", err)
+	}
+	return exitCode(err)
+}
+
+// signalExitCode is the shell's exit code for a process a signal stopped:
+// 128 plus the signal's number, or 1 where a signal has no number.
+func signalExitCode(sig os.Signal) int {
+	if s, ok := sig.(syscall.Signal); ok {
+		return 128 + int(s)
+	}
+	return 1
 }
 
 // usageError is a usage or input error: exit 2.

@@ -63,9 +63,13 @@ const noSLONote = "no SLO target (the policy sets none; pass --ttft or --tpot): 
 
 // reporter prices one report from one replayed state.
 type reporter struct {
-	st *learnreplay.State
-	s  *servedState
-	q  whatifapi.ReportQuery
+	// ctx is the report's context: every fleet priced reads it first
+	// (evaluateAt), so the needed search and the verdict stop when it ends.
+	// Nil reads as never ending.
+	ctx context.Context
+	st  *learnreplay.State
+	s   *servedState
+	q   whatifapi.ReportQuery
 	// headroom is the operating point's fraction of the fleet knee, and
 	// headroomSource where it came from.
 	headroom       float64
@@ -109,7 +113,7 @@ func (s *servedState) Report(ctx context.Context, q whatifapi.ReportQuery) (*wha
 // buildReport prices the report q asks of st: every shape and every load
 // from the one replayed state.
 func buildReport(ctx context.Context, st *learnreplay.State, s *servedState, q whatifapi.ReportQuery) (*whatifapi.ReportResponse, error) {
-	r := &reporter{st: st, s: s, q: q, fleets: map[fleetKey]*servedFleet{}}
+	r := &reporter{ctx: ctx, st: st, s: s, q: q, fleets: map[fleetKey]*servedFleet{}}
 	r.resolveTargets()
 	if len(r.q.Shapes) == 0 {
 		r.q.Shapes = []whatifapi.ReportShapeAsk{{Measured: true, Label: "measured"}}
@@ -628,6 +632,11 @@ func (r *reporter) evaluate(np, nd int) (fleetEval, error) {
 // words adds what an assumed term does there to the shape's assumed list.
 func (r *reporter) evaluateAt(np, nd int, rate float64, words bool) (fleetEval, error) {
 	e := fleetEval{np: np, nd: nd}
+	if r.ctx != nil {
+		if err := r.ctx.Err(); err != nil {
+			return e, err
+		}
+	}
 	sf, err := r.fleet(np, nd, r.sloTTFTQ(), r.sloTPOTQ())
 	if err != nil {
 		return e, fmt.Errorf("pricing %s: %w", fleetText(np, nd), err)

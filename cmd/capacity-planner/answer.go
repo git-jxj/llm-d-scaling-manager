@@ -901,11 +901,11 @@ func wantsJSON(args []string) bool {
 
 // asJSONError writes err, a command's error before any answer was written,
 // as a JSON error object when args asked for JSON, and ends with its exit
-// code. Any other error, and an exit status (the output already written),
-// passes through.
+// code. Any other error, an exit status (the output already written), and a
+// run stopped by its context (a signal: execute says so) pass through.
 func asJSONError(question string, args []string, out io.Writer, err error) error {
 	var s exitStatus
-	if err == nil || errors.As(err, &s) || !wantsJSON(args) {
+	if err == nil || errors.As(err, &s) || errors.Is(err, context.Canceled) || !wantsJSON(args) {
 		return err
 	}
 	code := exitCode(err)
