@@ -273,7 +273,9 @@ The full key list is pinned in
 The inputs must have a prefill variant; a source with none is a 400. The search
 finds the fewest replicas in all whose fleet limit reaches the rate; of two as
 few, the one with fewer decode replicas. A role's GPUs per replica are not
-weighed. The report's `needed` fleet is found the same way.
+weighed. The report's `needed` fleet is found the same way, and a fleet with
+fewer replicas of a role than the one judged must also hold that role at the
+peak.
 
 | Key | What it is |
 | --- | --- |
@@ -337,7 +339,7 @@ The answer:
 | `shapes[].utilization` | At the load judged: decode's KV fill, batch slots occupied of the fleet's slots, and wait probability; prefill's utilization pooled and on the busiest pod. |
 | `shapes[].capacity` | The prefill, decode and fleet knees, the operating point and the highest rate that holds every target (`maxAtSLO`), each with output tokens a second and what binds it. |
 | `shapes[].table[]` | One row per load: TTFT at each statistic, TPOT mean and percentile, and `e2eMeanSum`, TTFT mean + (OL - 1) x TPOT mean, a sum of means and not a percentile. `cell` is the row in the summary: TTFT p90, the TPOT percentile (the mean where it is refused; `tpot.statistic` says which), and `mark`, the SLO judged at its own statistics (`met`, `missed`, `missed at onset` for a TTFT past the prefill flow-control onset, `saturated`, `unknown`, `no target`). |
-| `shapes[].verdict` | `UNDER-PROVISIONED` when the load judged is past headroom times the fleet knee or a target is missed there; `OVER-PROVISIONED` when a role has a replica to spare: one fewer of it holds every target at the load judged, and the role's own knee and target at the peak (`shrink` names the roles); `RIGHT-SIZED` otherwise; `roles[]` is each role's `spare` and `detail`; `needed` (on UNDER and OVER) is the smallest fleet that holds, `{prefill, decode, decodeOnly, alternatives, unmet, maxReplicas}`, by the search `/v1/size` runs, and `grow` the roles it adds to; `NOT JUDGED` with no knee, no load, a target its own check cannot price, or a prefill side that does not price (`scope` `decode only`: never right-sized or over-provisioned, and no `maxAtSLO`). `summary` is one plain sentence, `reason` gives the numbers, and `checks` each fleet tried. |
+| `shapes[].verdict` | `UNDER-PROVISIONED` when the load judged is past headroom times the fleet knee or a target is missed there; `OVER-PROVISIONED` when a role has a replica to spare: one fewer of it holds every target at the load judged, and the role's own knee and target at the peak (`shrink` names the roles); `RIGHT-SIZED` otherwise; `roles[]` is each role's `spare` and `detail`; `needed` (on UNDER and OVER) is the smallest fleet that holds, and holds at the peak too each role it has fewer of than the fleet judged, so it never cuts a role with no `spare`, `{prefill, decode, decodeOnly, alternatives, unmet, maxReplicas}`, by the search `/v1/size` runs, and `grow` the roles it adds to; `NOT JUDGED` with no knee, no load, a target its own check cannot price, or a prefill side that does not price (`scope` `decode only`: never right-sized or over-provisioned, and no `maxAtSLO`). `summary` is one plain sentence, `reason` gives the numbers, and `checks` each fleet tried. |
 | `shapes[].growth[]` | One per growth load asked, in order: `load` (`seen x1.5`), `x`, the `rate` judged at, and a `verdict` of the same form. A what-if beside `verdict`, never in its place. |
 | `notValidated` | What no run has validated: the decode knee read 44% to 103% high on the goldens, and TTFT is unvalidated. |
 

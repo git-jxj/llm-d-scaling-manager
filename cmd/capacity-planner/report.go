@@ -1108,7 +1108,7 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 //   - RIGHT-SIZED otherwise.
 //
 // Each role's standing is reported (Roles), and on UNDER and OVER the
-// smallest fleet that holds (Needed). Summary says it in one plain sentence.
+// smallest fleet that holds (Needed), by the same rule for a role it cuts. Summary says it in one plain sentence.
 func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict, error) {
 	v := whatifapi.ReportVerdict{Scope: whatifapi.ScopeFleet, Roles: []whatifapi.ReportRole{}, Shrink: []string{}, Grow: []string{},
 		Checks: []whatifapi.ReportCheck{check(base)}}
@@ -1274,6 +1274,10 @@ func (r *reporter) marginWords(op float64) string {
 // headroom, the fewest replicas in all (ties to fewer decode), by POST
 // /v1/size's search (whatifapi.SmallestFleet) on the report's own check,
 // and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
+// A fleet with fewer replicas of a role than np + nd must also hold that
+// role's own check at the peak, the rule roles judges a spare by: removing
+// capacity is the costly mistake, and a fleet needed that cuts a role the
+// verdict says has no spare would contradict it.
 // With the prefill side not priced, it is the fewest decode replicas whose
 // own check holds. It fills v.Needed and adds the fleets tried to nothing:
 // the checks list the fleets the verdict rests on. notes are the assumed f
@@ -1285,9 +1289,34 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 	at := func(n whatifapi.FleetCounts) (fleetEval, error) {
 		return r.evaluateAt(n.Prefill, n.Decode, r.load, false)
 	}
+	// cutHolds is whether each role n has fewer of than the fleet runs holds
+	// its own check at the peak; true for a fleet that cuts no role, or with
+	// the peak no higher than the load.
+	shrinkAt := max(r.load, r.peak)
+	cutHolds := func(n whatifapi.FleetCounts, prefill bool) (bool, error) {
+		cutP, cutD := prefill && n.Prefill < np, n.Decode < nd
+		if !(shrinkAt > r.load) || (!cutP && !cutD) {
+			return true, nil
+		}
+		e, err := r.evaluateAt(n.Prefill, n.Decode, shrinkAt, false)
+		if err != nil {
+			return false, err
+		}
+		return (!cutP || e.prefillOK) && (!cutD || e.decodeOK), nil
+	}
 	decodeHolds := func(n whatifapi.FleetCounts) (bool, error) {
 		e, err := at(n)
-		return err == nil && e.decodeOK, err
+		if err != nil || !e.decodeOK {
+			return false, err
+		}
+		return cutHolds(n, false)
+	}
+	holds := func(n whatifapi.FleetCounts) (bool, error) {
+		e, err := at(n)
+		if err != nil || !e.holds {
+			return false, err
+		}
+		return cutHolds(n, true)
 	}
 	if !base.prefillPriced {
 		d, ok, err := whatifapi.SmallestCount(1, bound, func(d int) (bool, error) {
@@ -1306,11 +1335,7 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 		}
 		return fmt.Sprintf("needs at least %d decode (has %d)", d, nd), nil, nil
 	}
-	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, decodeHolds,
-		func(n whatifapi.FleetCounts) (bool, error) {
-			e, err := at(n)
-			return err == nil && e.holds, err
-		})
+	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, decodeHolds, holds)
 	switch {
 	case err != nil:
 		return "", nil, err
@@ -1336,11 +1361,11 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 		if alt.Prefill < 1 || alt.Decode < 1 || alt.Prefill > bound || alt.Decode > bound {
 			continue
 		}
-		e, err := at(alt)
+		ok, err := holds(alt)
 		if err != nil {
 			return "", nil, err
 		}
-		if e.holds {
+		if ok {
 			out.Alternatives = append(out.Alternatives, alt)
 			words = append(words, fmt.Sprintf("or %d + %d", alt.Prefill, alt.Decode))
 		}

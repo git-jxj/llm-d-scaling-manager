@@ -590,3 +590,49 @@ func TestAtReplicas_ShrinkIsPerRole(t *testing.T) {
 	require.NotNil(t, v.Needed)
 	assert.Less(t, v.Needed.Decode, 4, v.Summary)
 }
+
+// The fleet needed never cuts a role the verdict says has no spare: four
+// prefill and four decode replicas at the staircase's p95 (41.7 r/s) have a
+// decode replica to spare even at the peak (43.2 r/s), and no prefill to
+// spare, since three prefill replicas hold at the p95 but miss at the peak.
+// The fleet needed was once found at the p95 alone, and said "needs 3
+// prefill + 3 decode (has 4 + 4)" right after "prefill: no spare".
+func TestAtReplicas_NeededKeepsARoleWithNoSpare(t *testing.T) {
+	v := stairReport(t, stairQuery(4, 4, 0)).Shapes[0].Verdict
+	require.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
+	assert.Equal(t, []string{roleDecode}, v.Shrink)
+	require.NotNil(t, v.Needed, v.Summary)
+	assert.Equal(t, whatifapi.ReportNeeded{Prefill: 4, Decode: 3, MaxReplicas: whatifapi.DefaultSizeBound},
+		whatifapi.ReportNeeded{Prefill: v.Needed.Prefill, Decode: v.Needed.Decode, MaxReplicas: v.Needed.MaxReplicas}, v.Summary)
+	assert.Contains(t, v.Summary, "prefill: no spare: one fewer misses at the peak 43.2 r/s")
+	assert.Contains(t, v.Summary, "needs 4 prefill + 3 decode (has 4 + 4)")
+	for _, alt := range v.Needed.Alternatives {
+		assert.GreaterOrEqual(t, alt.Prefill, 4, "alternative %d + %d: %s", alt.Prefill, alt.Decode, v.Summary)
+	}
+}
+
+// Across fleets over-provisioned at the staircase's p95, the fleet needed
+// and the roles agree: a role with no spare is never cut, and a role the
+// verdict shrinks is.
+func TestAtReplicas_NeededAgreesWithSpare(t *testing.T) {
+	for _, c := range [][2]int{{3, 4}, {4, 4}, {4, 5}, {5, 4}, {5, 5}} {
+		np, nd := c[0], c[1]
+		t.Run(fmt.Sprintf("%d+%d", np, nd), func(t *testing.T) {
+			v := stairReport(t, stairQuery(np, nd, 0)).Shapes[0].Verdict
+			if v.Verdict != whatifapi.VerdictOver {
+				t.Skipf("%s", v.Summary)
+			}
+			require.NotNil(t, v.Needed, v.Summary)
+			has := map[string]int{rolePrefill: np, roleDecode: nd}
+			got := map[string]int{rolePrefill: v.Needed.Prefill, roleDecode: v.Needed.Decode}
+			for _, r := range v.Roles {
+				if r.Spare {
+					assert.Contains(t, v.Shrink, r.Role, v.Summary)
+					assert.Less(t, got[r.Role], has[r.Role], "%s has a spare but is not cut: %s", r.Role, v.Summary)
+				} else {
+					assert.GreaterOrEqual(t, got[r.Role], has[r.Role], "%s has no spare but is cut: %s", r.Role, v.Summary)
+				}
+			}
+		})
+	}
+}
