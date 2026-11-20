@@ -568,6 +568,20 @@ type SourcesResponse struct {
 	RecordingsTruncated bool     `json:"recordingsTruncated,omitempty"`
 	// Upload is set when the server takes uploads (POST /v1/recordings).
 	Upload *UploadInfo `json:"upload,omitempty"`
+	// Uploads are the uploads kept, newest first, as Recordings lists their
+	// names, each with the file name it was sent under, its size and when.
+	Uploads []UploadedRecording `json:"uploads,omitempty"`
+}
+
+// UploadedRecording is one upload kept: Name, which a recording source
+// gives; FileName, the file name it was last sent under (UploadFileName),
+// empty when none was given, a label never used to name a file; Bytes, its
+// size as sent; UploadedAt, when it was last sent (RFC 3339, UTC).
+type UploadedRecording struct {
+	Name       string `json:"name"`
+	FileName   string `json:"fileName,omitempty"`
+	Bytes      int    `json:"bytes"`
+	UploadedAt string `json:"uploadedAt"`
 }
 
 // UploadInfo is what a server that takes uploads takes.
@@ -577,11 +591,14 @@ type UploadInfo struct {
 }
 
 // UploadResponse is POST /v1/recordings: the name a recording source gives
-// the recording uploaded, which the server chose, and its size as sent.
+// the recording uploaded, which the server chose, its size as sent, and the
+// file name and time it is listed with (UploadedRecording).
 type UploadResponse struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Name          string `json:"name"`
 	Bytes         int    `json:"bytes"`
+	FileName      string `json:"fileName,omitempty"`
+	UploadedAt    string `json:"uploadedAt,omitempty"`
 }
 
 // SizeRequest is POST /v1/size: the fewest replicas per role whose fleet

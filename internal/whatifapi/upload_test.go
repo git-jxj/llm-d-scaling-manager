@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -22,10 +23,13 @@ type stubUploader struct {
 	calls int
 	seen  map[string]bool
 	err   error
+	// fileName is the one the last upload was given.
+	fileName string
 }
 
-func (u *stubUploader) Upload(_ context.Context, body io.Reader) (UploadResponse, bool, error) {
+func (u *stubUploader) Upload(_ context.Context, body io.Reader, fileName string) (UploadResponse, bool, error) {
 	u.calls++
+	u.fileName = fileName
 	b, err := io.ReadAll(body)
 	if err != nil {
 		return UploadResponse{}, false, fmt.Errorf("reading the upload: %w", err)
@@ -119,6 +123,63 @@ func TestUploadIsAuthorizedAsPost(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "may not post /whatif/v1/recordings")
+	require.NotNil(t, c.lastSAR.NonResourceAttributes)
+	assert.Equal(t, authzv1.NonResourceAttributes{Path: "/whatif/v1/recordings", Verb: "post"}, *c.lastSAR.NonResourceAttributes)
+}
+
+// An upload's file name is a label: the last element of a path, characters
+// a name needs kept, every other one replaced, bounded. Before, the name the
+// client sent was never read, and uploads were listed by hash alone.
+func TestUploadFileName(t *testing.T) {
+	for in, want := range map[string]string{
+		"sample-staircase-qwen3-0.6b.jsonl.gz": "sample-staircase-qwen3-0.6b.jsonl.gz",
+		"C:/Users/me/runs/run (2).jsonl.gz":    "run (2).jsonl.gz",
+		`C:\Users\me\runs\run.jsonl.gz`:        "run.jsonl.gz",
+		"../../etc/passwd":                     "passwd",
+		"..":                                   "..",
+		"<script>alert(1)</script>.jsonl":      "script_.jsonl",
+		"run\u202egz.lmthjsonl":                "run_gz.lmthjsonl",
+		"tab\there\nnewline":                   "tab_here_newline",
+		"Qwen3-32B 2026-11-17 15:25Z.jsonl.gz": "Qwen3-32B 2026-11-17 15_25Z.jsonl.gz",
+		"  spaced  ":                           "spaced",
+		"":                                     "",
+		"dir/":                                 "",
+		"\u0430\u0431\u0432-\u05e9\u05dc\u05d5\u05dd.jsonl": "\u0430\u0431\u0432-\u05e9\u05dc\u05d5\u05dd.jsonl",
+	} {
+		assert.Equal(t, want, UploadFileName(in), "%q", in)
+	}
+	long := UploadFileName(strings.Repeat("a", 300))
+	assert.Equal(t, strings.Repeat("a", 100), long)
+}
+
+// The file name an upload gives, ?filename=, reaches the Uploader cleaned,
+// and none is empty; with Kubernetes authentication the query does not
+// change the path an upload is authorized on (here as post, which this
+// cluster refuses).
+func TestUploadPassesTheFileName(t *testing.T) {
+	u := &stubUploader{}
+	h := New(Config{Resolver: &stubResolver{}, Uploader: u}).Handler()
+	for target, want := range map[string]string{
+		UploadPath + "?filename=" + url.QueryEscape(`C:\runs\run <1>.jsonl.gz`): "run _1_.jsonl.gz",
+		UploadPath + "?filename=": "",
+		UploadPath:                "",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(target))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		h.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		assert.Equal(t, want, u.fileName, target)
+	}
+
+	c := newCluster("/whatif"+UploadPath, "")
+	ah := NewAuthenticator(c, nil, 0, nil).Wrap(h)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, UploadPath+"?filename=run.jsonl.gz", strings.NewReader("y"))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Authorization", "Bearer good")
+	ah.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.NotNil(t, c.lastSAR.NonResourceAttributes)
 	assert.Equal(t, authzv1.NonResourceAttributes{Path: "/whatif/v1/recordings", Verb: "post"}, *c.lastSAR.NonResourceAttributes)
 }
