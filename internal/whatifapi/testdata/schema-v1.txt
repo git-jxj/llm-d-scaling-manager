@@ -289,6 +289,8 @@ backtestRequest.allowConfigMismatch boolean
 backtestRequest.arrivalCV2 number
 backtestRequest.assume object
 backtestRequest.assume.a number
+backtestRequest.assume.itlB number
+backtestRequest.assume.itlBFromFloor boolean
 backtestRequest.assume.promptCV number
 backtestRequest.assume.routerHop number
 backtestRequest.assume.tpotRatio number
@@ -555,6 +557,8 @@ predictRequest.allowConfigMismatch boolean
 predictRequest.arrivalCV2 number
 predictRequest.assume object
 predictRequest.assume.a number
+predictRequest.assume.itlB number
+predictRequest.assume.itlBFromFloor boolean
 predictRequest.assume.promptCV number
 predictRequest.assume.routerHop number
 predictRequest.assume.tpotRatio number
