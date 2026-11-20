@@ -956,7 +956,7 @@ for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACH
     fi
     # FlashInfer: every entry of the tree, through a link at the top, but
     # not another user's own directory in it. A find that fails fails it.
-    if [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecf=`find "$p/" -path "$p/.uid-*" -prune -o ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecf" ]; }; then
+    if [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecf=`find "$p/" -path "$p/.uid-*" -prune -o ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || [ ! -e "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecf" ]; }; then
       ecbad=$p
       continue
     fi
