@@ -157,10 +157,11 @@ func TestExternalAnalyzerCatalogCopiesRules(t *testing.T) {
 		}},
 	})
 
+	const mutated = "mutated"
 	got := c.ExternalAnalyzerCatalog()
-	got["a"].Demand[0].Query = "mutated"
-	got["a"].Target[0].Queries[0].Query = "mutated"
-	got["b"].Engines["vllm"].Demand[0].Query = "mutated"
+	got["a"].Demand[0].Query = mutated
+	got["a"].Target[0].Queries[0].Query = mutated
+	got["b"].Engines["vllm"].Demand[0].Query = mutated
 
 	fresh := c.ExternalAnalyzerCatalog()
 	assert.Equal(t, "original", fresh["a"].Demand[0].Query)
