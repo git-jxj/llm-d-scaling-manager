@@ -57,7 +57,8 @@ H200 cluster, 2026-10, from in-pod timestamps, median of 2 to 3 starts after
 one start that fills the caches.
 
 Each row adds to the one above it. The prepared rows have the weight files
-already in the node's page cache; a fresh node adds ~10 s (see below).
+already in the node's page cache; a fresh node, or one whose engines release
+the page cache, adds ~10 s (see below).
 
 | | vLLM | to `/health` | what it takes |
 | --- | --- | ---: | --- |
@@ -88,11 +89,11 @@ already in the node's page cache; a fresh node adds ~10 s (see below).
 **A fresh node is ~10 s slower.** On v0.32.0, prepared, the weight load took
 19.9 s with the weight files out of memory (53.7 s to `/health`) and 10.0 s when
 they had been read once beforehand (43.6 s). A node that ran the model recently
-has them in memory; a fresh node does not. Nor does a node where engines
-release the page cache when they start (vLLM's `--release-weight-page-cache`
-for the same model, or a `DONTNEED` walk over the model files): there every
-start is the cold one. Recorded in
+has them in memory; a fresh node does not. Recorded in
 [Reading a model's weights into memory](../proposals/weights-prewarm-on-schedule.md#small-model-qwen3-32b-one-gpu).
+Nor does a node where engines release the page cache (vLLM's
+`--release-weight-page-cache` for the same model, or a `DONTNEED` walk over
+the model files): there every start is the cold one.
 
 About half of the prepared start happens before the engine touches the GPU, and
 most of the rest is CUDA-graph recording, kernel warmup and the weight load:

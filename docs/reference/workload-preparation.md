@@ -433,11 +433,12 @@ The benchmark standup has the same measure under
 [Benchmark the scaling manager](../guides/benchmarking/README.md#replica-start-time-in-the-harness).
 
 **A warm page cache is not guaranteed.** Some deployments drop the weight
-files from memory when an engine starts, to give the RAM to a CPU KV tier
-(vLLM's `--release-weight-page-cache`, or a `posix_fadvise(POSIX_FADV_DONTNEED)`
+files from memory at engine start or right after the load, to give the RAM
+to a CPU KV tier (vLLM's `--release-weight-page-cache`, or a `posix_fadvise(POSIX_FADV_DONTNEED)`
 walk over the model mount). On those nodes expect the cold load, ~10 s more on
 Qwen3-32B ([start time](start-time.md#qwen3-32b-on-one-h200)). The scaling
-manager's replica start estimate is measured, so it already includes this.
+manager's replica start estimate is measured from the third start on, so it
+includes this.
 
 ### Gate replicas on the weights
 
