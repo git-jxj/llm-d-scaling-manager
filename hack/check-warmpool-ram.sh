@@ -29,8 +29,9 @@ create() {
 
 # --- refused: 2016 GiB - 1950 GiB held leaves 66 GiB for a 100Gi pool ---------
 create --ram-gib 2016 --reserved-ram-gib 1950
-[ "$RC" -ne 0 ] && ok "a pool that fits no node is refused" \
-  || fail "a pool that fits no node was created (rc 0)"
+[ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q "Nothing was created: a pool Pod with 100Gi fits no node" \
+  && ok "a pool that fits no node is refused, and says so" \
+  || fail "a pool that fits no node was not refused for that reason (rc $RC): $OUT"
 printf '%s\n' "$OUT" | grep -q "2016 GiB allocatable - 1950 GiB held by serving workloads" \
   && printf '%s\n' "$OUT" | grep -q "66 GiB for the pool, which needs 100 GiB" \
   && ok "the refusal names the node's RAM, the held RAM and the pool's limit" \
@@ -50,7 +51,8 @@ printf '%s\n' "$OUT" | grep -q "Host RAM: 1 node(s): 2016 GiB allocatable - 1000
 
 # --- nothing held ---------------------------------------------------------------
 create --ram-gib 2016
-[ "$RC" -eq 0 ] && ok "a node with nothing held is checked and passes" \
+[ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -q "Host RAM: 1 node(s): 2016 GiB allocatable - 0 GiB held" \
+  && ok "a node with nothing held is checked and passes" \
   || fail "a node with nothing held was refused (rc $RC): $OUT"
 
 # --- a dry run with no node stated reads no cluster, so it does not check --------
@@ -67,10 +69,10 @@ create --ram-gib 2Ti
 # --- sizing subtracts the held RAM too --------------------------------------------
 RC=0
 OUT="$(bash "$SCRIPT" sizing --params 8B --dtype bf16 --gpus-per-node 8 --gpu-mem-gib 141 \
-  --ram-gib 2016 --reserved-ram-gib 1500 2>&1)" || RC=$?
+  --ram-gib 2016 --reserved-ram-gib 1950 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -q "level 1 IMPOSSIBLE" \
-  && printf '%s\n' "$OUT" | grep -q "1500 GiB of host RAM held" \
-  && ok "sizing says level 1 does not fit beside 1500 GiB held" \
+  && printf '%s\n' "$OUT" | grep -q "1950 GiB of host RAM held" \
+  && ok "sizing says level 1 does not fit beside 1950 GiB held" \
   || fail "sizing ignored the held RAM (rc $RC): $OUT"
 
 if [ "$CASES" -ne "$EXPECT_CASES" ]; then

@@ -59,10 +59,10 @@ so `anon` reports it as costing nothing.
 
 ### Nodes where engines pin a CPU KV tier
 
-Sleepers and a CPU KV-offload tier use the same host RAM. An engine with
-`cpu_bytes_to_use` in `--kv-transfer-config`, or an LMCache CPU size, pins that
-much per rank, usually in `/dev/shm`. On such a node the pool gets only what is
-left.
+Sleepers and a CPU KV-offload tier use the same host RAM. The tier is pinned,
+usually in `/dev/shm`: vLLM's `cpu_bytes_to_use` (in `--kv-transfer-config`)
+or `--kv-offloading-size` is the total for the server, and LMCache's CPU size
+is per rank. On such a node the pool gets only what is left.
 
 Check what is left before you size:
 
@@ -71,14 +71,19 @@ deploy/warmpool.sh sizing --params 8B --dtype bf16 -n <models' namespace>
 ```
 
 - `-n` reads the GPU workloads in that namespace and subtracts, per node, the
-  largest of: their memory requests, the CPU tier times ranks, and a
-  memory-backed `/dev/shm` `sizeLimit`. A value it cannot read (a shell
-  variable, an env from a ConfigMap) is listed, not guessed.
+  largest of: their memory requests, the CPU tier, and a memory-backed
+  `/dev/shm` `sizeLimit`. A node with no replica yet counts one replica's
+  worth. A value it cannot read (a shell variable, an env from a ConfigMap) is
+  listed, not guessed.
+- Only that namespace's GPU Pods are counted, not other namespaces or Pods
+  without a GPU.
 - `--reserved-ram-gib N` states the held RAM by hand instead.
 
 `create` checks the same: it refuses a pool whose memory limit fits no node
 once the held RAM is taken off, and prints the numbers. On a dry run it checks
-only when you state the node with `--ram-gib` (and `--reserved-ram-gib`).
+only when you state the node with `--ram-gib` (and `--reserved-ram-gib`). If it
+cannot read the nodes or Pods, it creates the pool unchecked and warns; state
+the figures by hand then.
 
 If nothing fits, place the pool on nodes without the tier, hold fewer or
 smaller models, or keep a replica up instead. The pool sleeps at level 1 only:

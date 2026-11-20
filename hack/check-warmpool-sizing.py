@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "deploy" / "lib"))
 import warmpool_sizing as ws  # noqa: E402
 
-EXPECT_CASES = 23
+EXPECT_CASES = 50
 CASES = []
 
 
@@ -37,15 +37,32 @@ H200 = {"name": "h200", "gpus": 8, "free": 8, "per_gpu_gib": 141, "product": "H2
         "ram_gib": 2016, "disk_gib": 0}
 
 # --- recommend() ------------------------------------------------------------
+# One 8B bf16 sleeper is 2.6 + 1.4 x 14.9 = 23.5 GiB. Usable RAM is the smaller
+# of 0.75 x RAM and 0.95 x RAM minus what is held.
 check("a node with nothing held fits the 16-instance cap",
       True, "capped at 16" in sleep_line(dict(H200)))
-check("1500 GiB held by a CPU KV tier leaves no room for one 8B sleeper",
-      True, "IMPOSSIBLE" in sleep_line(dict(H200, reserved_gib=1500.0)))
-check("1400 GiB held leaves room for some, not 16",
-      True, "level 1 fits 4 model(s)" in sleep_line(dict(H200, reserved_gib=1400.0)))
+check("1950 GiB held by a CPU KV tier leaves no room for one 8B sleeper",
+      True, "IMPOSSIBLE" in sleep_line(dict(H200, reserved_gib=1950.0)))
+check("1800 GiB held leaves 115 GiB: 4 sleepers, not 16",
+      True, "level 1 fits 4 model(s)" in sleep_line(dict(H200, reserved_gib=1800.0)))
+check("100 GiB of requests is inside the 25 % margin, not taken off on top of it",
+      True, "capped at 16" in sleep_line(dict(H200, reserved_gib=100.0)))
+lines, verdict = ws.recommend(dict(H200, reserved_gib=1950.0, reserved_what="a CPU KV tier",
+                                   reserved_by=["deployment/prefill"]), 8, "bf16", 0.25, 1.8, 5.2, 0.75)
+check("the RAM line names what holds it and who",
+      True, any(t == "RAM" and "a CPU KV tier: deployment/prefill" in x for t, x in lines))
+check("the verdict names the held term, not always a tier",
+      True, any("(a CPU KV tier)" in v for v in verdict))
+
+# --- quantities -------------------------------------------------------------
+GIB = 1024 ** 3
+check("1Gi", 1.0, ws._quantity_gib("1Gi"))
+check("1024Mi", 1.0, ws._quantity_gib("1024Mi"))
+check("bytes", 1.0, ws._quantity_gib(str(GIB)))
+check("decimal 1G", round(1e9 / GIB, 6), round(ws._quantity_gib("1G"), 6))
+check("milli", 64.0, ws._quantity_gib("68719476736000m"))
 
 # --- pod_host_ram() ---------------------------------------------------------
-GIB = 1024 ** 3
 
 
 def container(**kw):
@@ -55,21 +72,35 @@ def container(**kw):
     return c
 
 
-offload = '{"kv_connector":"OffloadingConnector","kv_connector_extra_config":{"cpu_bytes_to_use":%d}}'
+def tier_of(**kw):
+    return ws.pod_host_ram({"containers": [container(**kw)]})[1]["cpu_tier"]
+
+
+offload = '{"kv_connector":"OffloadingConnector","kv_connector_extra_config":{"cpu_bytes_to_use":%s}}'
 held, parts, unread = ws.pod_host_ram({"containers": [container(
     gpus=2, args=["--kv-transfer-config", offload % (512 * GIB)])]})
-check("cpu_bytes_to_use counts per rank: 512 GiB x 2 ranks", 1024.0, parts["cpu_tier"])
-check("the Pod holds the largest term", 1024.0, held)
+check("cpu_bytes_to_use is the server's total, not per rank", 512.0, parts["cpu_tier"])
+check("the Pod holds the largest term", 512.0, held)
 check("nothing unread in a plain JSON arg", [], unread)
-
+check("cpu_bytes_to_use_per_rank counts per rank",
+      400.0, tier_of(gpus=4, args=["--kv-transfer-config",
+                                   '{"kv_connector_extra_config":{"cpu_bytes_to_use_per_rank":%d}}' % (100 * GIB)]))
+check("human-readable 200G is binary", 200.0, tier_of(args=["--kv-transfer-config", offload % "200G"]))
+check("human-readable 200g is decimal", round(200e9 / GIB, 3),
+      round(tier_of(args=["--kv-transfer-config", offload % "200g"]), 3))
+check("--kv-offloading-size N is GiB for the server", 300.0, tier_of(gpus=8, args=["--kv-offloading-size", "300"]))
+check("--kv-offloading-size=N", 300.0, tier_of(args=["--kv-offloading-size=300"]))
 shell = 'exec vllm serve m --kv-transfer-config "{\\"kv_connector_extra_config\\": {\\"cpu_bytes_to_use\\": %d}}"'
-_, parts, _ = ws.pod_host_ram({"containers": [container(
-    gpus=1, command=["sh", "-c", shell % (100 * GIB)])]})
-check("a tier inside a shell string with escaped quotes", 100.0, parts["cpu_tier"])
-
-_, parts, _ = ws.pod_host_ram({"containers": [container(
-    gpus=4, env=[{"name": "LMCACHE_MAX_LOCAL_CPU_SIZE", "value": "100"}])]})
-check("LMCache's CPU size counts per rank: 100 GiB x 4", 400.0, parts["cpu_tier"])
+check("a tier inside a shell string with escaped quotes", 100.0,
+      tier_of(command=["sh", "-c", shell % (100 * GIB)]))
+check("LMCache's CPU size counts per rank: 100 GiB x 4", 400.0,
+      tier_of(gpus=4, env=[{"name": "LMCACHE_MAX_LOCAL_CPU_SIZE", "value": "100"}]))
+_, parts, unread = ws.pod_host_ram({"containers": [container(
+    gpus=2, command=["sh", "-c", "export LMCACHE_MAX_LOCAL_CPU_SIZE=${LMCACHE_MAX_LOCAL_CPU_SIZE:-50}"])]})
+check("a shell default ${X:-50} is read", 100.0, parts["cpu_tier"])
+check("... and is not reported unread", [], unread)
+_, parts, unread = ws.pod_host_ram({"containers": [container(command=["sh", "-c", "echo cpu_bytes_to_use: disabled"])]})
+check("a word after the key is neither a tier nor a note", (0.0, []), (parts["cpu_tier"], unread))
 
 held, parts, _ = ws.pod_host_ram({
     "containers": [container(resources={"requests": {"memory": "200Gi"}})],
@@ -77,27 +108,41 @@ held, parts, _ = ws.pod_host_ram({
 check("a memory-backed /dev/shm sizeLimit counts", 1250.0, parts["shm"])
 check("requests are read", 200.0, parts["requests"])
 check("the shm term wins over a smaller request", 1250.0, held)
-
 _, parts, _ = ws.pod_host_ram({"containers": [container(resources={"limits": {"memory": "512G"}})]})
 check("a decimal limit stands in for a missing request", round(512e9 / GIB, 3), round(parts["requests"], 3))
+_, parts, unread = ws.pod_host_ram({"containers": [container(resources={"requests": {"memory": "lots"}})]})
+check("a quantity that cannot be read is a note, not a crash", ["vllm: memory lots"], unread)
 
 _, _, unread = ws.pod_host_ram({
     "containers": [container(args=["--kv-transfer-config", '{"cpu_bytes_to_use": $TIER}'],
                              env=[{"name": "LMCACHE_MAX_LOCAL_CPU_SIZE",
                                    "valueFrom": {"configMapKeyRef": {"name": "c", "key": "k"}}}])],
     "volumes": [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]})
-check("a tier that is not a number is reported, not guessed", 3, len(unread))
+check("what is not a number is reported, not guessed",
+      ["vllm: cpu_bytes_to_use=$TIER", "vllm: LMCACHE_MAX_LOCAL_CPU_SIZE from valueFrom",
+       "memory-backed emptyDir 'dshm' has no sizeLimit"], unread)
 
 # --- can_schedule() ---------------------------------------------------------
 pinned = {"nodeSelector": {"role": "prefill"}}
 check("nodeSelector matches", True, ws.can_schedule(pinned, {"role": "prefill"}))
 check("nodeSelector excludes", False, ws.can_schedule(pinned, {"role": "decode"}))
-aff = {"affinity": {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {
-    "nodeSelectorTerms": [{"matchExpressions": [
-        {"key": "gpu", "operator": "In", "values": ["H200"]},
-        {"key": "tier", "operator": "DoesNotExist"}]}]}}}}
-check("required affinity matches", True, ws.can_schedule(aff, {"gpu": "H200"}))
-check("required affinity excludes", False, ws.can_schedule(aff, {"gpu": "H200", "tier": "x"}))
+
+
+def aff(*exprs):
+    return {"affinity": {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {
+        "nodeSelectorTerms": [{"matchExpressions": list(exprs)}]}}}}
+
+
+in_dne = aff({"key": "gpu", "operator": "In", "values": ["H200"]}, {"key": "tier", "operator": "DoesNotExist"})
+check("In + DoesNotExist matches", True, ws.can_schedule(in_dne, {"gpu": "H200"}))
+check("In + DoesNotExist excludes", False, ws.can_schedule(in_dne, {"gpu": "H200", "tier": "x"}))
+notin = aff({"key": "role", "operator": "NotIn", "values": ["decode"]})
+check("NotIn excludes", False, ws.can_schedule(notin, {"role": "decode"}))
+check("NotIn admits a node without the label", True, ws.can_schedule(notin, {}))
+check("Exists", (True, False), (ws.can_schedule(aff({"key": "nvme", "operator": "Exists"}), {"nvme": ""}),
+                                ws.can_schedule(aff({"key": "nvme", "operator": "Exists"}), {})))
+check("Gt on a missing label does not match", False,
+      ws.can_schedule(aff({"key": "ram", "operator": "Gt", "values": ["1"]}), {}))
 
 # --- reserved_by_node() -----------------------------------------------------
 tier_spec = {"nodeSelector": {"role": "prefill"},
@@ -105,19 +150,61 @@ tier_spec = {"nodeSelector": {"role": "prefill"},
 nodes = [{"name": "a", "labels": {"role": "prefill"}},
          {"name": "b", "labels": {"role": "prefill"}},
          {"name": "c", "labels": {"role": "decode"}}]
+
+
+def pod(name, node, spec, labels=None):
+    return {"metadata": {"name": name, "labels": labels or {}}, "spec": dict(spec, nodeName=node),
+            "status": {"phase": "Running"}}
+
+
 pods = [
-    {"metadata": {"name": "prefill-0"}, "spec": dict(tier_spec, nodeName="a"), "status": {"phase": "Running"}},
-    {"metadata": {"name": "pool-0", "labels": {"llm-d.ai/warm-pool": "p"}},
-     "spec": dict(tier_spec, nodeName="c"), "status": {"phase": "Running"}},
-    {"metadata": {"name": "cpu-only"}, "spec": {"nodeName": "c", "containers": [
-        {"name": "x", "resources": {"requests": {"memory": "900Gi"}}}]}, "status": {"phase": "Running"}},
+    pod("prefill-0", "a", tier_spec), pod("prefill-1", "a", tier_spec),
+    pod("pool-0", "c", tier_spec, {"llm-d.ai/warm-pool": "p"}),
+    pod("cpu-only", "c", {"containers": [{"name": "x", "resources": {"requests": {"memory": "900Gi"}}}]}),
 ]
 workloads = [{"kind": "Deployment", "metadata": {"name": "prefill"},
               "spec": {"template": {"spec": tier_spec}}}]
 held, _ = ws.reserved_by_node(pods, workloads, nodes)
-check("a node running a tier Pod holds it", 1280.0, held["a"][0])
-check("a node the workload can schedule to holds one Pod's worth", (1280.0, ["deployment/prefill"]), held["b"])
+check("two tier Pods on one node: what they hold now beats one more",
+      (320.0, ["pod/prefill-0", "pod/prefill-1"], "a CPU KV tier"), held["a"])
+check("a node the workload can schedule to holds one Pod's worth",
+      (160.0, ["deployment/prefill"], "a CPU KV tier"), held["b"])
 check("pool Pods, Pods with no GPU and nodes the workload cannot reach hold nothing", False, "c" in held)
+lws = [{"kind": "LeaderWorkerSet", "metadata": {"name": "glm"}, "spec": {"leaderWorkerTemplate": {
+    "leaderTemplate": {"spec": {"containers": [{"name": "proxy"}]}},
+    "workerTemplate": {"spec": dict(tier_spec, nodeSelector={})}}}}]
+held, _ = ws.reserved_by_node([], lws, nodes)
+check("an LWS worker template counts; a leader with no GPU does not",
+      (160.0, ["leaderworkerset/glm (worker)"], "a CPU KV tier"), held["c"])
+
+# --- read_reserved(): what the cluster refuses ------------------------------
+
+
+def fake(answers):
+    def items(args):
+        return answers[args[1]]
+    return items
+
+
+ws._kubectl_items = fake({"pods": (None, "Error from server (Forbidden): pods is forbidden")})
+ns_nodes = [dict(n) for n in nodes]
+notes = ws.read_reserved("tenant", ns_nodes)
+check("pods Forbidden: a note says nothing was subtracted",
+      True, len(notes) == 1 and "could not read pods" in notes[0] and "NOT subtracted" in notes[0])
+check("pods Forbidden: no node is given a held figure", False, any("reserved_gib" in n for n in ns_nodes))
+lws_missing = (None, 'error: the server doesn\'t have a resource type "leaderworkersets"')
+ws._kubectl_items = fake({"pods": (pods, ""), "deployments": (workloads, ""), "statefulsets": ([], ""),
+                          "leaderworkersets": lws_missing})
+notes = ws.read_reserved("tenant", ns_nodes)
+check("no LeaderWorkerSet CRD is not a problem", [], notes)
+check("... and the figures land on the nodes", (320.0, 160.0, 0.0),
+      tuple(n["reserved_gib"] for n in ns_nodes))
+unbounded = {"containers": [container()], "volumes": [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]}
+ws._kubectl_items = fake({"pods": ([pod("p%d" % i, "a", unbounded) for i in range(5)], ""),
+                          "deployments": ([], ""), "statefulsets": ([], ""), "leaderworkersets": ([], "")})
+notes = ws.read_reserved("tenant", [dict(n) for n in nodes])
+check("five unread values are summarised after three", (4, "... and 2 more values not read"),
+      (len(notes), notes[-1]))
 
 # --- check_pool() -----------------------------------------------------------
 fits, lines = ws.check_pool([{"name": "n", "ram_gib": 2016, "alloc_ram_gib": 2000,

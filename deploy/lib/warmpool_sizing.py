@@ -68,6 +68,9 @@ PCIE_GBPS = 39.0
 # implication is wrong.
 MAX_INSTANCES_PER_POD = 16
 
+# Host RAM left to the system when serving workloads hold part of it.
+SYSTEM_RAM_FRAC = 0.05
+
 BYTES_PER_PARAM = {"bf16": 2.0, "fp16": 2.0, "fp8": 1.0, "int8": 1.0, "fp4": 0.5, "int4": 0.5}
 
 
@@ -96,7 +99,7 @@ def gpu_requests_by_node():
     return used
 
 
-def nodes_from_cluster(selector):
+def nodes_from_cluster(selector, count_gpus=True):
     cmd = ["kubectl", "get", "nodes", "-o", "json"]
     if selector:
         cmd += ["-l", selector]
@@ -134,7 +137,9 @@ def nodes_from_cluster(selector):
             "labels": labels,
             "disk_gib": _quantity_gib(cap.get("ephemeral-storage", "0")),
         })
-    used = gpu_requests_by_node()
+    # Every Pod in the cluster: skipped where only RAM is asked (create's check),
+    # which never reads it.
+    used = gpu_requests_by_node() if count_gpus else None
     if used is not None:
         for n in nodes:
             n["requested"] = used.get(n["name"], 0)
@@ -146,11 +151,16 @@ _QUANTITY_SUFFIXES = (
     ("Ki", 1024.0), ("Mi", 1024.0 ** 2), ("Gi", 1024.0 ** 3), ("Ti", 1024.0 ** 4),
     ("Pi", 1024.0 ** 5), ("Ei", 1024.0 ** 6),
     ("k", 1e3), ("M", 1e6), ("G", 1e9), ("T", 1e12), ("P", 1e15), ("E", 1e18),
+    ("m", 1e-3),
 )
 
 
 def _quantity_gib(q):
-    """A Kubernetes memory quantity (binary or decimal suffix, or bytes) in GiB."""
+    """A Kubernetes memory quantity (binary, decimal or milli suffix, or bytes) in GiB.
+
+    Raises ValueError on anything else; callers that read a cluster turn that
+    into an unread note rather than a traceback.
+    """
     q = str(q).strip()
     for suffix, mult in _QUANTITY_SUFFIXES:
         if q.endswith(suffix):
@@ -160,20 +170,33 @@ def _quantity_gib(q):
 
 # --- host RAM the serving engines already hold --------------------------------
 #
-# A level-1 sleeper lives in host RAM. So does a CPU KV-offload tier: vLLM's
-# `cpu_bytes_to_use` in --kv-transfer-config, or LMCache's local CPU size, both
-# pinned per rank and usually in /dev/shm. On a node whose engines pin a large
-# tier, the RAM a node "has" is not the RAM a pool can use, and a pool sized
-# from capacity is Pending or, worse, evicted under memory pressure with every
-# resident model in it.
+# A level-1 sleeper lives in host RAM. So does a CPU KV-offload tier, usually in
+# /dev/shm. On a node whose engines pin a large tier, the RAM a node "has" is
+# not the RAM a pool can use, and a pool sized from capacity is Pending or,
+# worse, evicted under memory pressure with every resident model in it.
+#
+# How each tier is sized, from the engines' own sources:
+#   vLLM `cpu_bytes_to_use` (in --kv-transfer-config) and `--kv-offloading-size`
+#   (GiB) are the total for the whole SERVER: the connector divides them by the
+#   world size. Counted once per Pod; for an engine spanning Pods that is an
+#   upper bound.
+#   `cpu_bytes_to_use_per_rank` and LMCache's LMCACHE_MAX_LOCAL_CPU_SIZE (GiB)
+#   are per rank: times the container's GPUs.
 
-# A tier inside --kv-transfer-config, in a plain arg or inside a shell string,
-# where the quotes may be escaped.
-_CPU_BYTES_RE = re.compile(r"""cpu_bytes_to_use[\\'"]*\s*:\s*[\\'"]*([^,}\s\\'"]+)""")
-# LMCache's local CPU cache, in GiB per rank, set as an env or in a command.
+# A number in vLLM's human-readable form: k/m/g/t decimal, K/M/G/T binary.
+# A shell variable with a default, ${X:-50}, reads as its default.
+_NUM = (r"""([0-9][0-9.]*[kKmMgGtT]?|\$\{[A-Za-z_][A-Za-z0-9_]*:-[0-9][0-9.]*[kKmMgGtT]?\}"""
+        r"""|\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*))""")
+_SHELL_DEFAULT_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}")
+# Inside --kv-transfer-config, in a plain arg or a shell string with escaped quotes.
+_CPU_BYTES_RE = re.compile(r"""cpu_bytes_to_use(_per_rank)?[\\'"]*\s*:\s*[\\'"]*""" + _NUM)
+_OFFLOAD_SIZE_RE = re.compile(r"""--kv-offloading-size[=\s]+['"]?""" + _NUM)
 LMCACHE_CPU_ENV = "LMCACHE_MAX_LOCAL_CPU_SIZE"
-_LMCACHE_RE = re.compile(LMCACHE_CPU_ENV + r"""[=:]\s*['"]?([^\s'";]+)""")
+# `X=50`, `X: 50`, or a shell default `${X:-50}`.
+_LMCACHE_RE = re.compile(LMCACHE_CPU_ENV + r"""(?:=|:-|:\s*)['"]?""" + _NUM)
 GPU_KEYS = ("nvidia.com/gpu", "amd.com/gpu")
+_HUMAN = {"k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12,
+          "K": 1024.0, "M": 1024.0 ** 2, "G": 1024.0 ** 3, "T": 1024.0 ** 4}
 
 
 def _gpus_of(container):
@@ -186,9 +209,16 @@ def _gpus_of(container):
     return 0
 
 
-def _number(text):
+def _human(text):
+    """vLLM's human-readable number, or None for a variable or anything else."""
+    mult = 1.0
+    default = _SHELL_DEFAULT_RE.fullmatch(text)
+    if default:
+        text = default.group(1)
+    if text and text[-1] in _HUMAN:
+        text, mult = text[:-1], _HUMAN[text[-1]]
     try:
-        v = float(text)
+        v = float(text) * mult
     except ValueError:
         return None
     return v if v >= 0 else None
@@ -198,54 +228,78 @@ def pod_host_ram(spec):
     """Return (gib, parts, unread): host RAM one Pod of this spec holds.
 
     parts names each term in GiB: `requests` (memory requests, or limits where
-    no request is set), `cpu_tier` (a CPU KV tier per rank x the container's
-    ranks), `shm` (memory-backed emptyDir sizeLimits). The Pod holds the LARGEST
-    of the three, not their sum: a tier in /dev/shm is usually inside the
-    memory request too, and counting it twice refuses pools that fit. unread
-    lists what was found but could not be read as a number.
+    no request is set), `cpu_tier` (a CPU KV tier, sized as described above),
+    `shm` (memory-backed emptyDir sizeLimits). The Pod holds the LARGEST of the
+    three, not their sum: a tier in /dev/shm is usually inside the memory
+    request too, and counting it twice refuses pools that fit. unread lists
+    what was found but could not be read as a number.
     """
     requests = tier = shm = 0.0
     unread = []
     for c in spec.get("containers") or []:
+        cname = c.get("name", "?")
         res = c.get("resources") or {}
         mem = ((res.get("requests") or {}).get("memory")
                or (res.get("limits") or {}).get("memory"))
         if mem:
-            requests += _quantity_gib(mem)
+            try:
+                requests += _quantity_gib(mem)
+            except ValueError:
+                unread.append("%s: memory %s" % (cname, mem))
         ranks = max(1, _gpus_of(c))
         text = "\n".join(str(x) for x in (c.get("command") or []) + (c.get("args") or []))
-        per_rank = 0.0
+        server = per_rank = 0.0
         for m in _CPU_BYTES_RE.finditer(text):
-            v = _number(m.group(1))
+            v = _human(m.group(2))
             if v is None:
-                unread.append("%s: cpu_bytes_to_use=%s" % (c.get("name", "?"), m.group(1)))
-            else:
+                unread.append("%s: cpu_bytes_to_use%s=%s" % (cname, m.group(1) or "", m.group(2)))
+            elif m.group(1):
                 per_rank = max(per_rank, v / (1024.0 ** 3))
+            else:
+                server = max(server, v / (1024.0 ** 3))
+        for m in _OFFLOAD_SIZE_RE.finditer(text):
+            v = _human(m.group(1))
+            if v is None:
+                unread.append("%s: --kv-offloading-size %s" % (cname, m.group(1)))
+            else:
+                server = max(server, v)
         lmcache = [m.group(1) for m in _LMCACHE_RE.finditer(text)]
         for env in c.get("env") or []:
             if env.get("name") == LMCACHE_CPU_ENV:
                 if "value" in env:
                     lmcache.append(str(env["value"]))
                 else:
-                    unread.append("%s: %s from %s" % (c.get("name", "?"), LMCACHE_CPU_ENV,
+                    unread.append("%s: %s from %s" % (cname, LMCACHE_CPU_ENV,
                                                      ", ".join(sorted(k for k in env if k != "name"))))
         for raw in lmcache:
-            v = _number(raw)
+            v = _human(raw)
             if v is None:
-                unread.append("%s: %s=%s" % (c.get("name", "?"), LMCACHE_CPU_ENV, raw))
+                unread.append("%s: %s=%s" % (cname, LMCACHE_CPU_ENV, raw))
             else:
                 per_rank = max(per_rank, v)
-        tier += per_rank * ranks
+        tier += max(server, per_rank * ranks)
     for vol in spec.get("volumes") or []:
         ed = vol.get("emptyDir")
         if ed is None or ed.get("medium") != "Memory":
             continue
         if ed.get("sizeLimit"):
-            shm += _quantity_gib(ed["sizeLimit"])
+            try:
+                shm += _quantity_gib(ed["sizeLimit"])
+            except ValueError:
+                unread.append("emptyDir '%s' sizeLimit %s" % (vol.get("name", "?"), ed["sizeLimit"]))
         else:
             unread.append("memory-backed emptyDir '%s' has no sizeLimit" % vol.get("name", "?"))
     parts = {"requests": requests, "cpu_tier": tier, "shm": shm}
     return max(parts.values()), parts, unread
+
+
+# What dominates a Pod's held RAM, in words for the report.
+TERM_WORDS = {"requests": "memory requests", "cpu_tier": "a CPU KV tier",
+              "shm": "a memory-backed /dev/shm"}
+
+
+def _dominant(parts):
+    return TERM_WORDS[max(parts, key=lambda k: parts[k])]
 
 
 def _match_expression(expr, labels):
@@ -260,7 +314,9 @@ def _match_expression(expr, labels):
         return have
     if op == "DoesNotExist":
         return not have
-    if op in ("Gt", "Lt") and have and values:
+    if op in ("Gt", "Lt"):
+        if not have or not values:
+            return False
         try:
             a, b = int(labels[key]), int(values[0])
         except ValueError:
@@ -305,7 +361,8 @@ def _template_specs(obj):
         for role in ("leaderTemplate", "workerTemplate"):
             t = lwt.get(role)
             if t:
-                out.append((name, t.get("metadata"), t.get("spec") or {}))
+                out.append(("%s (%s)" % (name, role[:-len("Template")]), t.get("metadata"),
+                            t.get("spec") or {}))
         return out
     t = spec.get("template") or {}
     return [(name, t.get("metadata"), t.get("spec") or {})]
@@ -314,12 +371,13 @@ def _template_specs(obj):
 def reserved_by_node(pods, workloads, nodes):
     """Host RAM the namespace's model workloads hold, per node name.
 
-    Returns {node: (gib, [who])} and a list of unread notes. A node's figure is
-    the larger of what the Pods running there hold now, and what one Pod of any
-    workload that can schedule there would hold: the next replica may land on a
-    node that has none today. Pools and Pods with no GPU are left out.
+    Returns {node: (gib, [who], what)} and a list of unread notes, where what
+    names the term that dominates. A node's figure is the larger of what the
+    Pods running there hold now, and what ONE Pod of any workload that can
+    schedule there would hold: the next replica may land on a node that has
+    none today. Pools and Pods with no GPU are left out.
     """
-    now, who_now, maybe, who_maybe, unread = {}, {}, {}, {}, []
+    now, who_now, what_now, maybe, who_maybe, what_maybe, unread = {}, {}, {}, {}, {}, {}, []
     for pod in pods:
         spec = pod.get("spec") or {}
         node = spec.get("nodeName")
@@ -329,28 +387,30 @@ def reserved_by_node(pods, workloads, nodes):
             continue
         if not any(_gpus_of(c) for c in spec.get("containers") or []):
             continue
-        gib, _, notes = pod_host_ram(spec)
+        gib, parts, notes = pod_host_ram(spec)
         unread += ["pod/%s: %s" % (pod["metadata"]["name"], n) for n in notes]
         now[node] = now.get(node, 0.0) + gib
         who_now.setdefault(node, []).append("pod/%s" % pod["metadata"]["name"])
+        what_now.setdefault(node, set()).add(_dominant(parts))
     for obj in workloads:
         if _is_pool(obj.get("metadata")):
             continue
         for name, meta, spec in _template_specs(obj):
             if _is_pool(meta) or not any(_gpus_of(c) for c in spec.get("containers") or []):
                 continue
-            gib, _, notes = pod_host_ram(spec)
+            gib, parts, notes = pod_host_ram(spec)
             unread += ["%s: %s" % (name, n) for n in notes]
             for n in nodes:
                 if can_schedule(spec, n.get("labels") or {}) and gib > maybe.get(n["name"], 0.0):
                     maybe[n["name"]] = gib
                     who_maybe[n["name"]] = [name]
+                    what_maybe[n["name"]] = _dominant(parts)
     out = {}
     for node in set(now) | set(maybe):
         if now.get(node, 0.0) >= maybe.get(node, 0.0):
-            out[node] = (now[node], who_now[node])
+            out[node] = (now[node], who_now[node], " and ".join(sorted(what_now[node])))
         else:
-            out[node] = (maybe[node], who_maybe[node])
+            out[node] = (maybe[node], who_maybe[node], what_maybe[node])
     return out, sorted(set(unread))
 
 
@@ -362,8 +422,17 @@ def _kubectl_items(args):
     return json.loads(out.stdout).get("items", []), ""
 
 
+# More unread notes than this are summarised: one workload with an unbounded
+# /dev/shm would otherwise print a line per Pod on every create.
+MAX_UNREAD_NOTES = 3
+
+
 def read_reserved(namespace, nodes):
-    """Fill each node's reserved_gib and reserved_by from the namespace. Returns notes."""
+    """Fill each node's reserved_gib, reserved_by and reserved_what from the namespace.
+
+    Returns notes. Every note means held RAM was NOT counted, so callers show
+    them as warnings.
+    """
     notes = []
     pods, err = _kubectl_items(["get", "pods", "-n", namespace])
     if pods is None:
@@ -375,14 +444,18 @@ def read_reserved(namespace, nodes):
         if items is None:
             if kind == "leaderworkersets" and "doesn't have a resource type" in err:
                 continue
-            notes.append("could not read %s in %s (%s)" % (kind, namespace, err))
+            notes.append("could not read %s in %s (%s): what they hold is NOT subtracted"
+                         % (kind, namespace, err))
             continue
         workloads += items
     held, unread = reserved_by_node(pods, workloads, nodes)
     for n in nodes:
-        n["reserved_gib"], n["reserved_by"] = held.get(n["name"], (0.0, []))
-    for u in unread:
+        n["reserved_gib"], n["reserved_by"], n["reserved_what"] = held.get(n["name"], (0.0, [], ""))
+    shown = unread[:MAX_UNREAD_NOTES]
+    for u in shown:
         notes.append("not read, so not subtracted: %s. State it with --reserved-ram-gib" % u)
+    if len(unread) > len(shown):
+        notes.append("... and %d more values not read" % (len(unread) - len(shown)))
     return notes
 
 
@@ -426,11 +499,18 @@ def recommend(node, params_b, dtype, kv_headroom, shared_bw, local_bw, ram_frac)
     # What the serving engines on this node already hold (a CPU KV tier above
     # all) comes off the top: a sleeper and a pinned tier compete for the same
     # RAM, and the tier was there first.
+    #
+    # The ram_frac margin is for everything else on the node, serving Pods
+    # included, so held RAM is not taken off on top of it: what is left is the
+    # smaller of the margin's share and the RAM after what is held, less a 5 %
+    # floor for the system.
     reserved = node.get("reserved_gib") or 0.0
-    usable_ram = max(0.0, node["ram_gib"] * ram_frac - reserved)
+    usable_ram = node["ram_gib"] * ram_frac
     if reserved > 0:
-        lines.append(("RAM", "%.0f GiB of host RAM held by serving workloads (%s), subtracted"
-                      % (reserved, ", ".join(node.get("reserved_by") or ["--reserved-ram-gib"]))))
+        usable_ram = max(0.0, min(usable_ram, node["ram_gib"] * (1.0 - SYSTEM_RAM_FRAC) - reserved))
+        lines.append(("RAM", "%.0f GiB of host RAM held by serving workloads (%s: %s), subtracted"
+                      % (reserved, node.get("reserved_what") or "stated by hand",
+                         ", ".join(node.get("reserved_by") or ["--reserved-ram-gib"]))))
     # The fixed term is per RANK, not per model: each rank is a worker process
     # with its own CUDA context, and every rank on this node shares its RAM.
     # Measured on an H200 with Qwen3-8B awake, 3.16 GiB at TP=1 and 6.75 at
@@ -483,9 +563,10 @@ def recommend(node, params_b, dtype, kv_headroom, shared_bw, local_bw, ram_frac)
         # whether it is a bridge or a slow cold start.
         if reserved > 0:
             verdict.append(
-                "Serving workloads hold %.0f GiB of this node's RAM (a CPU KV tier pins it), "
-                "and level-1 sleepers need the same RAM. Place the pool on nodes without "
-                "the tier, or keep a replica up instead." % reserved)
+                "Serving workloads hold %.0f GiB of this node's RAM (%s), and level-1 "
+                "sleepers need the same RAM. Place the pool on nodes without them, or "
+                "keep a replica up instead."
+                % (reserved, node.get("reserved_what") or "stated by hand"))
         verdict.append(
             "Level 1 is IMPOSSIBLE here: host RAM cannot hold one sleeper. Level 2 "
             "holds no RAM, and its wake is a reload: ~%.0f s from node-local storage, "
@@ -604,8 +685,12 @@ def main():
         if args.reserved_ram_gib is not None:
             for n in nodes:
                 n["reserved_gib"], n["reserved_by"] = args.reserved_ram_gib, ["--reserved-ram-gib"]
+                n["reserved_what"] = "stated by hand"
             return []
-        if described or not args.namespace:
+        if described and args.namespace:
+            return ["-n is not read for a described node: state the held RAM with "
+                    "--reserved-ram-gib"]
+        if not args.namespace:
             return ["host RAM held by serving engines is NOT subtracted: pass -n <models' "
                     "namespace> to read it, or --reserved-ram-gib to state it"]
         return read_reserved(args.namespace, nodes)
@@ -615,7 +700,7 @@ def main():
             nodes = [{"name": args.product, "ram_gib": args.ram_gib, "described": True}]
         else:
             try:
-                nodes = nodes_from_cluster(args.selector)
+                nodes = nodes_from_cluster(args.selector, count_gpus=False)
             except SystemExit as e:
                 print("cannot tell whether the pool fits: %s" % e)
                 return 2
@@ -624,8 +709,10 @@ def main():
                 return 2
         notes = apply_reserved(nodes, bool(args.ram_gib))
         fits, lines = check_pool(nodes, args.check_pool_gib)
-        for line in lines + notes:
+        for line in lines:
             print(line)
+        for note in notes:
+            print("NOTE: %s" % note)
         return 0 if fits else 3
 
     if not args.params:

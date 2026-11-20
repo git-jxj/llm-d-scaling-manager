@@ -498,7 +498,7 @@ cmd_create() {
     fi
   done
   if [ "$APPLY" -eq 1 ] || [ -n "$NODE_RAM_GIB" ]; then
-    local fit_out fit_rc=0
+    local fit_out fit_rc=0 line
     local fit_args=(--check-pool-gib "${memory%Gi}")
     if [ -n "$NODE_RAM_GIB" ]; then
       fit_args+=(--ram-gib "$NODE_RAM_GIB")
@@ -514,7 +514,13 @@ cmd_create() {
     fit_out="$(python3 "$HERE/lib/warmpool_sizing.py" "${fit_args[@]}" 2>&1)" || fit_rc=$?
     case "$fit_rc" in
       0)
-        while IFS= read -r line; do log_info "Host RAM: ${line}"; done <<< "$fit_out"
+        # NOTE lines are RAM that was not counted: the check passed without it.
+        while IFS= read -r line; do
+          case "$line" in
+            "NOTE: "*) log_warning "Host RAM: ${line#NOTE: }" ;;
+            *) log_info "Host RAM: ${line}" ;;
+          esac
+        done <<< "$fit_out"
         ;;
       3)
         log_error "Nothing was created: a pool Pod with ${memory} fits no node once the host RAM serving workloads hold is taken off:
@@ -523,6 +529,7 @@ Level-1 sleepers and a CPU KV tier compete for the same RAM. Hold fewer or small
         ;;
       *)
         log_warning "Could not check host RAM on the nodes, so the pool is created unchecked: ${fit_out}"
+        log_warning "  To check by hand: --ram-gib <node RAM> --reserved-ram-gib <RAM the serving engines hold>"
         ;;
     esac
   fi
