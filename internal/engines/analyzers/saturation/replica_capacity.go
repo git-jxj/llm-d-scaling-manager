@@ -85,6 +85,9 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	// read once per cycle so every replica and the fleet shape agree: the
 	// derived k2 then prices no spread (replicaOutputDispersion).
 	shapeChanging bool,
+	// residentKV is the KV a resident request is read to hold, where the
+	// derived k2 prices it at that (k2ResidentKV); 0 prices the context.
+	residentKV float64,
 	logger logr.Logger,
 ) *capacity.ReplicaCapacity {
 	if rm.TotalKvCapacityTokens <= 0 {
@@ -246,6 +249,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		// What a decode replica's budget is spent on (decode_budget.go).
 		batchCap.budget = decodeStepBudget(rm, role, engineParams)
 	}
+	batchCap.residentKV = residentKV
 	d := a.computeK2(
 		historyKey,
 		modelID, namespace, rm.VariantName,
@@ -1234,17 +1238,29 @@ func (a *SaturationAnalyzer) k2Chain(
 		// it computes (decodeStepBudget, issue
 		// llm-d-incubation/llm-d-scaling-manager#201); the zero value charges
 		// the whole prompt, as before.
+		//
+		// Under SwitchK2DerivedAtResidentKV a request is priced at the KV the
+		// fleet's requests are read to hold where that reading is trusted
+		// above the context (batchCap.residentKV, k2_resident_kv.go): the
+		// figure only rises, and never above k1.
 		if k2Derived := estimateCapacityAtCapBudget(engineParams, batchCap.perRank, avgInput, avgOutput, outputDispersion, batchCap.budget) * int64(max(ranks, 1)); k2Derived > 0 {
+			atContext := k2Derived
+			k2Derived = k2AtResidentKV(engineParams, batchCap, avgInput, avgOutput, ranks, k1, atContext)
 			if b, ok := borrow(min(k1, k2Derived)); ok {
 				logBorrowedK2(logger, b, modelID, namespace, variantName, historyKey, min(k1, k2Derived), capacity.K2SrcDerived)
 				return b.k2, b.source(), b
 			}
-			logger.V(perReplicaLogLevel).Info("k2-decision",
-				"modelID", modelID, "namespace", namespace, "variant", variantName,
+			kv := []any{"modelID", modelID, "namespace", namespace, "variant", variantName,
 				"priority", capacity.K2SrcDerived.String(), "historyKey", historyKey,
 				"avgInputTokens", avgInput, "avgOutputTokens", avgOutput, "outputDispersion", outputDispersion,
 				"engineParams", engineParams, "engineRanks", max(ranks, 1),
-				"batchCap", batchCap.perRank, "batchCapSource", batchCap.source, "k2", k2Derived)
+				"batchCap", batchCap.perRank, "batchCapSource", batchCap.source, "k2", k2Derived}
+			if batchCap.residentKV > 0 {
+				// Only where SwitchK2DerivedAtResidentKV gave a reading:
+				// off, the line is the one before the switch.
+				kv = append(kv, "residentKVPerRequest", batchCap.residentKV, "k2AtContext", atContext)
+			}
+			logger.V(perReplicaLogLevel).Info("k2-decision", kv...)
 			return k2Derived, capacity.K2SrcDerived, k2Borrow{}
 		}
 	}
@@ -1541,18 +1557,11 @@ func estimateCapacityAtCapBudget(params *capacity.EngineParams, batchCap int64, 
 	if !(dispersion >= 1) || math.IsInf(dispersion, 0) {
 		dispersion = 1
 	}
-	if batchCap <= 0 || avgOutput <= 0 || (params != nil && params.EffectiveMaxBatchedTokens <= 0) {
+	nSteady := derivedBatch(params, batchCap, avgInput, avgOutput, budget)
+	if !(nSteady > 0) {
 		return 0
 	}
-	S := float64(batchCap)
-	I := avgInput
-	O := avgOutput
-
-	nSteady := S
-	if params != nil {
-		nSteady = steadyBatch(float64(params.EffectiveMaxBatchedTokens), S, I, O, budget)
-	}
-	k2Derived := int64(nSteady * (I + dispersion*O/2))
+	k2Derived := int64(nSteady * (avgInput + dispersion*avgOutput/2))
 	if k2Derived > 0 {
 		return k2Derived
 	}
