@@ -737,8 +737,9 @@ kubectl delete pod -n <ns> <preparer pod>
 ```
 
 Each copy belongs to the user the preparer runs as (root on Kubernetes), not to
-the user that compiled it. An engine under another user can read what was
-seeded, but cannot change it. Any image with `/bin/sh` works: with GNU `cp` the
+the user that compiled it. The directories it copies are `1777`, so an engine
+under any user can read what was seeded and add files beside it, but cannot
+change or remove a seeded file. Any image with `/bin/sh` works: with GNU `cp` the
 copies keep their file times; with busybox `cp` they do not.
 
 With a seed, a node is Ready only once it carries it, so `engine-cache-status`
@@ -788,8 +789,11 @@ to see why.
 Engines that run as a non-root user write some cache files readable only by
 that user (vLLM's `modelinfos/*.json`, for example). The publish pod runs as
 root and adds one capability, `DAC_OVERRIDE`, so it can read them. Pod Security
-"baseline" admits it. If a file still cannot be read, publish skips it, names
-it in its output, and still stamps the seed. On a seeded node, the copied
+"baseline" admits it. If a file still cannot be read, publish skips it and the
+cache key that holds it (one compile, one Triton or FlashInfer build, or one
+image's bytecode), names it in its output, and still stamps the seed. A file
+that disappears while publish copies it fails the publish: an engine was
+writing that cache, so run publish again once it is done. On a seeded node, the copied
 directories are writable by every user (`1777`, as the cache directories
 themselves are), so an engine of any UID can add new keys beside them.
 
@@ -849,6 +853,10 @@ its first CUDA context from 4.6 s to 2.3 s. The first start writes about 150 MB
   - The guard takes only a real directory the user made itself, made `755`.
     That keeps users out of each other's copies on one node; it does not make
     the directory a trust boundary (see [What it costs](#what-it-costs)).
+  - On a seeded node this holds only for directories a user made. The
+    directories the seed brought are `1777`, so any user can add a file in
+    them, such as a `.pyc` for a module the seed lacked. To keep users apart
+    there, use the `1770` variant in [What it costs](#what-it-costs).
   - Seed and publish skip these copies and the `.writable` markers.
   - On a filesystem that does not report file owners (SMB or Azure Files
     with a fixed uid, some FUSE and NFSv4 mounts) every user shares the one

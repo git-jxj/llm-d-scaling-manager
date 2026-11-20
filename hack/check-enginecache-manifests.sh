@@ -147,7 +147,7 @@ check('merge() {' in script and 'local e n t' in script and 'merge "$e" "$t"' in
 check(script.index("if [ -d /seed ]") < script.index('touch "/engine-cache/$MARKER"'), "the seed is copied before the prepared marker is written")
 check('[ "$seeded_from" != "$want" ]' in script and 'echo "$want" > "/engine-cache/$SEED_MARKER"' in script and 'want="$SEED_ID@$stamp"' in script, "the seed marker records the seed and its publish stamp, and a different seed or a new stamp is merged in")
 i_ok = script.index('if [ "$complete" = 1 ]; then\n'); i_mark = script.index('echo "$want" > "/engine-cache/$SEED_MARKER"'); i_loop = script.index('cp -a --no-preserve=ownership "$e" "$t"')
-check(i_loop < i_ok < i_mark and '|| { rm -f "$t"; unreadable "$e" || complete=0; continue; }' in script and '[ "$complete" = 1 ] && complete="$was" || complete=0\n' in script and 'rm -rf "$t"; added="$wa"' in script, "the marker is written only after every copy succeeded; a failed copy is removed and the seed retried next start")
+check(i_loop < i_ok < i_mark and '|| { rm -f "$t"; unreadable "$e" "$r" "$dd" || complete=0; continue; }' in script and '[ "$complete" = 1 ] && complete="$was" || complete=0\n' in script and 'rm -rf "$t"; added="$wa"' in script, "the marker is written only after every copy succeeded; a failed copy is removed and the seed retried next start")
 check("dmode=1777; skipunread=0\n" in script, "the preparer makes the directories it copies 1777, and an entry it may not read fails the seed (retried next start), not skipped")
 probe_seed = seed["containers"][0]["readinessProbe"]["exec"]["command"][2]
 check(probe_seed.endswith('&& grep -qx -e "workload-pvc:engine-cache" -e "workload-pvc:engine-cache@[0-9]*" -e "none:workload-pvc:engine-cache" /engine-cache/.seeded'), "with a seed, Ready also requires the node to carry that seed (as published, or before any publish), or the record that it had nothing to seed: %s" % probe_seed)
@@ -445,6 +445,80 @@ if [ "$(id -u)" = 0 ]; then ok "publish: (the unreadable-file case needs a non-r
     else
         fail "publish with unreadable entries: rc=$rc skipped=$nskip $(cd "$U/seed" 2>/dev/null && find . | sort | tr '\n' ' ') $(cat "$U/pub.out")"
     fi
+fi
+# The same into an empty seed, where every directory is new: what is left out
+# is the cache key holding an unreadable entry -- torch_compile_cache/<hash>,
+# torch_aot_compile/<hash>, triton/<hash>, pycache/<image key> -- or a
+# modelinfos file alone, never the directory above the key or the cache.
+E="$T/unread-empty"; EN="$E/node"; ES="$E/seed/engine-cache"; EK="$EN/vllm/torch_compile_cache"
+mkdir -p "$EK/k1" "$EK/k2" "$EK/torch_aot_compile/A/rank_0_0" "$EK/torch_aot_compile/B/rank_0_0" "$EN/vllm/modelinfos" \
+    "$EN/triton/H1" "$EN/triton/H2" "$EN/pycache/img1/usr/lib" "$EN/pycache/img2" "$E/seed"
+echo 1 > "$EK/k1/f"; echo ok > "$EK/k2/ok"; echo x > "$EK/k2/x"
+echo a > "$EK/torch_aot_compile/A/rank_0_0/model"; echo b > "$EK/torch_aot_compile/B/rank_0_0/model"
+echo a > "$EN/vllm/modelinfos/a.json"; echo b > "$EN/vllm/modelinfos/b.json"
+echo 1 > "$EN/triton/H1/k.cubin"; echo 2 > "$EN/triton/H2/k.cubin"
+echo p > "$EN/pycache/img1/usr/lib/m.pyc"; echo q > "$EN/pycache/img2/n.pyc"
+eu="$EK/k2/x $EK/torch_aot_compile/A/rank_0_0/model $EN/vllm/modelinfos/b.json $EN/triton/H1/k.cubin $EN/pycache/img1/usr/lib/m.pyc"
+# shellcheck disable=SC2086 # eu is a list of paths without spaces
+chmod 000 $eu
+sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$E/seed|g; s|/engine-cache|$EN|g" > "$E/pub.sh"
+SEED_SUBPATH=engine-cache NODE_NAME=n1 "$SH" "$E/pub.sh" > "$E/pub.out" 2>&1; rc=$?
+# shellcheck disable=SC2086
+chmod 644 $eu
+if [ "$(id -u)" = 0 ]; then ok "publish: (the unreadable-key case needs a non-root check runner)"; else
+    got="$(cd "$ES" 2>/dev/null && find . -type f | sort | tr '\n' ' ')"
+    want="./pycache/img2/n.pyc ./triton/H2/k.cubin ./vllm/modelinfos/a.json ./vllm/torch_compile_cache/k1/f ./vllm/torch_compile_cache/torch_aot_compile/B/rank_0_0/model "
+    nskip="$(grep -c ': this pod may not read it$' "$E/pub.out")"
+    if [ "$rc" = 0 ] && [ "$got" = "$want" ] && [ "$nskip" = 5 ] && [ ! -e "$ES/vllm/torch_compile_cache/k2" ] \
+        && [ ! -e "$ES/vllm/torch_compile_cache/torch_aot_compile/A" ] && [ ! -e "$ES/triton/H1" ] && [ ! -e "$ES/pycache/img1" ] \
+        && grep -q "published from n1: 5 file(s) copied" "$E/pub.out"; then
+        ok "publish into an empty seed: only the cache key holding an unreadable entry is left out (5 skipped, 5 copied, k1 kept beside k2)"
+    else
+        fail "publish into an empty seed: rc=$rc skipped=$nskip got [$got] want [$want] $(cat "$E/pub.out")"
+    fi
+fi
+# A file that is gone when publish copies it is a failed copy, not a skip: an
+# engine is writing that key, and publish fails so it is run again. So is any
+# other failed read. A fake cp removes VANISH before failing, and fails on
+# IOERR, which stays readable.
+mkdir -p "$T/vanishbin"
+cat > "$T/vanishbin/cp" <<EOF
+#!/bin/sh
+for a in "\$@"; do case "\$a" in
+  */VANISH) rm -f "\$a"; echo "cp: cannot stat '\$a': No such file or directory" >&2; exit 1 ;;
+  */IOERR) echo "cp: error reading '\$a': Input/output error" >&2; exit 1 ;;
+esac; done
+exec "$REAL_CP" "\$@"
+EOF
+chmod +x "$T/vanishbin/cp"
+for f in VANISH IOERR; do
+    V="$T/vanish-$f"; mkdir -p "$V/node/vllm/torch_compile_cache/kA" "$V/node/vllm/torch_compile_cache/kB" "$V/seed"
+    echo a > "$V/node/vllm/torch_compile_cache/kA/a"; echo f > "$V/node/vllm/torch_compile_cache/kB/$f"
+    sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$V/seed|g; s|/engine-cache|$V/node|g" > "$V/pub.sh"
+    PATH="$T/vanishbin:$PATH" SEED_SUBPATH=engine-cache NODE_NAME=n1 "$SH" "$V/pub.sh" > "$V/pub.out" 2>&1; rc=$?
+    gone=0; [ "$f" = IOERR ] || gone=1
+    if [ "$rc" != 0 ] && grep -q "did not complete" "$V/pub.out" && ! grep -q "may not read" "$V/pub.out" \
+        && [ ! -e "$V/seed/engine-cache/vllm/torch_compile_cache/kB" ] \
+        && { [ "$gone" = 0 ] || grep -q "kB/VANISH is gone: an engine is writing this cache" "$V/pub.out"; }; then
+        ok "publish: a file that $([ "$gone" = 1 ] && echo 'is gone when copied' || echo 'fails to read for another reason') fails the publish, not skipped"
+    else
+        fail "publish with $f: rc=$rc $(cat "$V/pub.out")"
+    fi
+done
+# The publish command prints what a pod skipped, the first 20 and how many
+# more, then its counts, and a log with none of them does not abort it under
+# pipefail.
+sed -n '/^publish_log_summary() {/,/^}/p' deploy/enginecache.sh > "$T/summary.sh"
+{ for i in $(seq 1 25); do echo "engine cache: skipped /n/k$i: this pod may not read it"; done
+  echo "engine cache: 25 entr(y/ies) this pod may not read were skipped (named above)"
+  echo "engine cache: published from n1: 3 file(s) copied into the seed"; echo "other noise"; } > "$T/summary.in"
+sout="$(bash -c 'set -euo pipefail; . "$1"; publish_log_summary < "$2"' _ "$T/summary.sh" "$T/summary.in")"; src=$?
+eout="$(bash -c 'set -euo pipefail; . "$1"; printf "" | publish_log_summary; echo done' _ "$T/summary.sh")"; erc=$?
+if [ "$src" = 0 ] && [ "$(printf '%s\n' "$sout" | grep -c ': skipped /n/k')" = 20 ] && printf '%s\n' "$sout" | grep -q '^engine cache: ... and 5 more skipped, 25 in all$' \
+    && printf '%s\n' "$sout" | grep -q 'published from n1: 3' && ! printf '%s\n' "$sout" | grep -q noise && [ "$erc" = 0 ] && [ "$eout" = done ]; then
+    ok "publish log: 20 skipped entries, then how many more, then the counts; an empty log does not abort"
+else
+    fail "publish log summary: rc=$src/$erc [$sout] [$eout]"
 fi
 # The capability that lets publish read those files at all is on the publish
 # pod and nowhere else: not on the preparer, with or without a seed.

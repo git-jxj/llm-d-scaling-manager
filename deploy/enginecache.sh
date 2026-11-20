@@ -300,9 +300,12 @@ dmode=1777; skipunread=0
 cpa=0
 : > /tmp/.ec-cp-check 2>/dev/null && cp -a --no-preserve=ownership /tmp/.ec-cp-check /tmp/.ec-cp-check.2 2>/dev/null && cpa=1
 rm -f /tmp/.ec-cp-check /tmp/.ec-cp-check.2
-# merge SRC DST: an entry DST has is kept, one it lacks is copied, a directory
-# both have is descended -- so a second engine config's key lands beside the
-# node's own. It walks every directory and copies one file at a time:
+# merge SRC DST REL DEPTH: an entry DST has is kept, one it lacks is copied, a
+# directory both have is descended -- so a second engine config's key lands
+# beside the node's own. REL is SRC's path under the cache directory (vllm,
+# vllm/torch_compile_cache, ...) and DEPTH its number of parts, as that many
+# dots (the command may not carry arithmetic). It walks every
+# directory and copies one file at a time:
 #  * a symlink is skipped and logged: vLLM writes none, and a link is not
 #    the cache (it would point at whatever the target is on each node);
 #  * a file not every user can read is copied readable by every user, and
@@ -311,32 +314,56 @@ rm -f /tmp/.ec-cp-check /tmp/.ec-cp-check.2
 #    half-copied key is left behind, and the merge is marked incomplete;
 #    what was counted under it is uncounted;
 #    a directory that cannot be listed is a failed copy, not an empty one;
-#  * with skipunread=1, an entry this pod may not open is not a failed copy:
-#    it is named and skipped, with every new directory above it up to the
-#    first one DST had, so no partial key is left; the rest goes on.
+#  * with skipunread=1, an entry this pod may not open (permission denied)
+#    is not a failed copy: it is named and skipped, and so is the new cache
+#    key that holds it (keydepth), the unit the engine reads whole, so no
+#    partial key is left. Other keys, and the cache, go on. An entry that is
+#    gone by the time it is copied is a failed copy: an engine is writing
+#    that tree, and the merge is run again.
 # The copier owns every copy, whatever owned the original. The globs match
 # every name: plain, one leading dot, and two leading dots (..x).
-# unreadable PATH: with skipunread=1, true when the kernel refuses this pod
-# PATH (a read, or for a directory a read or a search) -- asked by opening it,
-# as `test -r` answers yes for root whatever its capabilities -- and then
-# PATH is named and counted. Any other failure is a failed copy.
+# keydepth REL sets kd to the depth of the cache key REL is in or above:
+# vllm/torch_compile_cache/<hash>, vllm/torch_compile_cache/torch_aot_compile/<hash>,
+# vllm/modelinfos/<file>, and else one entry under the cache directory:
+# triton/<hash>, flashinfer/<image key>, pycache/<image key>, vllm/<other>.
+keydepth() {
+  case "$1/" in
+    vllm/torch_compile_cache/torch_aot_compile/*) kd=4 ;;
+    vllm/torch_compile_cache/*|vllm/modelinfos/*) kd=3 ;;
+    *) kd=2 ;;
+  esac
+}
+# unreadable PATH REL DEPTH: with skipunread=1, true when the kernel refuses
+# this pod PATH with permission denied (a read, or for a directory a read or
+# a search) -- asked by opening it, as `test -r` answers yes for root
+# whatever its capabilities. PATH is then named and counted, and skip is set
+# when PATH is the key or inside it, so the new key goes. A PATH that is gone,
+# or any other failure, is a failed copy.
 unreadable() {
   [ "$skipunread" = 1 ] || return 1
-  if [ -d "$1" ]; then
-    (: < "$1") 2>/dev/null && (cd "$1") 2>/dev/null && return 1
-  else
-    (: < "$1") 2>/dev/null && return 1
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+    echo "engine cache: $1 is gone: an engine is writing this cache; publish again once it is done"
+    return 1
   fi
-  unread="$unread."; skip=1
+  if [ -d "$1" ]; then
+    { LC_ALL=C ls -a "$1" >/dev/null && LC_ALL=C ls -d "$1/." >/dev/null; } 2>/tmp/.ec-why && return 1
+  else
+    (LC_ALL=C; : < "$1") 2>/tmp/.ec-why && return 1
+  fi
+  grep -q "ermission denied" /tmp/.ec-why || return 1
+  unread="$unread."
+  keydepth "$2"
+  if [ -d "$1" ]; then [ "${#3}" -lt "$kd" ] || skip=1; else [ "${#3}" -le "$kd" ] || skip=1; fi
   echo "engine cache: skipped $1: this pod may not read it"
 }
 merge() {
-  local e n t was wa wp wpe ws pub
+  local e n t r dd was wa wp wpe ws pub
   # a directory that cannot be listed would glob to nothing and read as empty
-  ls -a "$1" >/dev/null || { unreadable "$1" || complete=0; return; }
+  ls -a "$1" >/dev/null || { unreadable "$1" "$3" "$4" || complete=0; return; }
+  dd="$4."
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
-    n="${e##*/}"; t="$2/$n"
+    n="${e##*/}"; t="$2/$n"; r="$3/$n"
     # The engine-cache guard's own entries are not cache content: a marker
     # names the user who wrote it, and a .uid-<uid> directory is a second
     # user's copy. Copied, both would be the copier's, on every node.
@@ -344,21 +371,24 @@ merge() {
     if [ -L "$e" ]; then
       links="$links."; echo "engine cache: skipped $e: a symlink, not cache content"
     elif [ -e "$t" ] || [ -L "$t" ]; then
-      if [ -d "$e" ] && [ -d "$t" ] && [ ! -L "$t" ]; then merge "$e" "$t"; fi
+      # DST had it: it stays, whatever is skipped under it
+      if [ -d "$e" ] && [ -d "$t" ] && [ ! -L "$t" ]; then ws="$skip"; merge "$e" "$t" "$r" "$dd"; skip="$ws"; fi
     elif [ -d "$e" ]; then
       was="$complete"; wa="$added"; wp="$private"; wpe="$private_eg"; ws="$skip"; complete=1; skip=0
       mkdir "$t" && chmod "$dmode" "$t" || complete=0
-      [ "$complete" = 0 ] || merge "$e" "$t"
+      [ "$complete" = 0 ] || merge "$e" "$t" "$r" "$dd"
       if [ "$complete" = 1 ] && [ "$skip" = 0 ]; then complete="$was"; skip="$ws"
       else
         # a failed copy fails the merge; a skipped entry drops this new
-        # directory, and skip stays set so a new parent goes with it
+        # directory, and below the key the skip goes on up to it
         [ "$complete" = 1 ] && complete="$was" || complete=0
         rm -rf "$t"; added="$wa"; private="$wp"; private_eg="$wpe"
+        keydepth "$r"
+        [ "${#dd}" -gt "$kd" ] || skip="$ws"
       fi
     elif [ -f "$e" ]; then
       pub=0; ls -ld "$e" | grep -q '^-......r' && pub=1
-      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { rm -f "$t"; unreadable "$e" || complete=0; continue; }
+      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { rm -f "$t"; unreadable "$e" "$r" "$dd" || complete=0; continue; }
       added="$added."
       [ "$pub" = 1 ] || { private="$private."; [ -n "$private_eg" ] || private_eg="$e"; }
     else
@@ -370,7 +400,7 @@ merge() {
 merge_report() {
   [ -z "$links" ] || echo "engine cache: ${#links} symlink(s) skipped (named above)"
   [ -z "$private" ] || echo "engine cache: ${#private} file(s) not readable by every user were copied readable by every user, for example $private_eg"
-  [ -z "$unread" ] || echo "engine cache: ${#unread} entr(y/ies) this pod may not read were skipped (named above), each with the new directories that held it"
+  [ -z "$unread" ] || echo "engine cache: ${#unread} entr(y/ies) this pod may not read were skipped (named above), each with the new cache key that held it"
 }
 seeded_from=""
 [ ! -f "/engine-cache/$SEED_MARKER" ] || read -r seeded_from < "/engine-cache/$SEED_MARKER" || seeded_from=""
@@ -399,7 +429,7 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
   complete=1; added=""; links=""; private=""; private_eg=""; unread=""; skip=0
   for d in vllm flashinfer triton pycache; do
     [ -d "$seed_dir/$d" ] || continue
-    merge "$seed_dir/$d" "/engine-cache/$d"
+    merge "$seed_dir/$d" "/engine-cache/$d" "$d" .
   done
   merge_report
   if [ "$complete" = 1 ]; then
@@ -897,9 +927,12 @@ dmode=a+rx; skipunread=1
 cpa=0
 : > /tmp/.ec-cp-check 2>/dev/null && cp -a --no-preserve=ownership /tmp/.ec-cp-check /tmp/.ec-cp-check.2 2>/dev/null && cpa=1
 rm -f /tmp/.ec-cp-check /tmp/.ec-cp-check.2
-# merge SRC DST: an entry DST has is kept, one it lacks is copied, a directory
-# both have is descended -- so a second engine config's key lands beside the
-# node's own. It walks every directory and copies one file at a time:
+# merge SRC DST REL DEPTH: an entry DST has is kept, one it lacks is copied, a
+# directory both have is descended -- so a second engine config's key lands
+# beside the node's own. REL is SRC's path under the cache directory (vllm,
+# vllm/torch_compile_cache, ...) and DEPTH its number of parts, as that many
+# dots (the command may not carry arithmetic). It walks every
+# directory and copies one file at a time:
 #  * a symlink is skipped and logged: vLLM writes none, and a link is not
 #    the cache (it would point at whatever the target is on each node);
 #  * a file not every user can read is copied readable by every user, and
@@ -908,32 +941,56 @@ rm -f /tmp/.ec-cp-check /tmp/.ec-cp-check.2
 #    half-copied key is left behind, and the merge is marked incomplete;
 #    what was counted under it is uncounted;
 #    a directory that cannot be listed is a failed copy, not an empty one;
-#  * with skipunread=1, an entry this pod may not open is not a failed copy:
-#    it is named and skipped, with every new directory above it up to the
-#    first one DST had, so no partial key is left; the rest goes on.
+#  * with skipunread=1, an entry this pod may not open (permission denied)
+#    is not a failed copy: it is named and skipped, and so is the new cache
+#    key that holds it (keydepth), the unit the engine reads whole, so no
+#    partial key is left. Other keys, and the cache, go on. An entry that is
+#    gone by the time it is copied is a failed copy: an engine is writing
+#    that tree, and the merge is run again.
 # The copier owns every copy, whatever owned the original. The globs match
 # every name: plain, one leading dot, and two leading dots (..x).
-# unreadable PATH: with skipunread=1, true when the kernel refuses this pod
-# PATH (a read, or for a directory a read or a search) -- asked by opening it,
-# as `test -r` answers yes for root whatever its capabilities -- and then
-# PATH is named and counted. Any other failure is a failed copy.
+# keydepth REL sets kd to the depth of the cache key REL is in or above:
+# vllm/torch_compile_cache/<hash>, vllm/torch_compile_cache/torch_aot_compile/<hash>,
+# vllm/modelinfos/<file>, and else one entry under the cache directory:
+# triton/<hash>, flashinfer/<image key>, pycache/<image key>, vllm/<other>.
+keydepth() {
+  case "$1/" in
+    vllm/torch_compile_cache/torch_aot_compile/*) kd=4 ;;
+    vllm/torch_compile_cache/*|vllm/modelinfos/*) kd=3 ;;
+    *) kd=2 ;;
+  esac
+}
+# unreadable PATH REL DEPTH: with skipunread=1, true when the kernel refuses
+# this pod PATH with permission denied (a read, or for a directory a read or
+# a search) -- asked by opening it, as `test -r` answers yes for root
+# whatever its capabilities. PATH is then named and counted, and skip is set
+# when PATH is the key or inside it, so the new key goes. A PATH that is gone,
+# or any other failure, is a failed copy.
 unreadable() {
   [ "$skipunread" = 1 ] || return 1
-  if [ -d "$1" ]; then
-    (: < "$1") 2>/dev/null && (cd "$1") 2>/dev/null && return 1
-  else
-    (: < "$1") 2>/dev/null && return 1
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+    echo "engine cache: $1 is gone: an engine is writing this cache; publish again once it is done"
+    return 1
   fi
-  unread="$unread."; skip=1
+  if [ -d "$1" ]; then
+    { LC_ALL=C ls -a "$1" >/dev/null && LC_ALL=C ls -d "$1/." >/dev/null; } 2>/tmp/.ec-why && return 1
+  else
+    (LC_ALL=C; : < "$1") 2>/tmp/.ec-why && return 1
+  fi
+  grep -q "ermission denied" /tmp/.ec-why || return 1
+  unread="$unread."
+  keydepth "$2"
+  if [ -d "$1" ]; then [ "${#3}" -lt "$kd" ] || skip=1; else [ "${#3}" -le "$kd" ] || skip=1; fi
   echo "engine cache: skipped $1: this pod may not read it"
 }
 merge() {
-  local e n t was wa wp wpe ws pub
+  local e n t r dd was wa wp wpe ws pub
   # a directory that cannot be listed would glob to nothing and read as empty
-  ls -a "$1" >/dev/null || { unreadable "$1" || complete=0; return; }
+  ls -a "$1" >/dev/null || { unreadable "$1" "$3" "$4" || complete=0; return; }
+  dd="$4."
   for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
-    n="${e##*/}"; t="$2/$n"
+    n="${e##*/}"; t="$2/$n"; r="$3/$n"
     # The engine-cache guard's own entries are not cache content: a marker
     # names the user who wrote it, and a .uid-<uid> directory is a second
     # user's copy. Copied, both would be the copier's, on every node.
@@ -941,21 +998,24 @@ merge() {
     if [ -L "$e" ]; then
       links="$links."; echo "engine cache: skipped $e: a symlink, not cache content"
     elif [ -e "$t" ] || [ -L "$t" ]; then
-      if [ -d "$e" ] && [ -d "$t" ] && [ ! -L "$t" ]; then merge "$e" "$t"; fi
+      # DST had it: it stays, whatever is skipped under it
+      if [ -d "$e" ] && [ -d "$t" ] && [ ! -L "$t" ]; then ws="$skip"; merge "$e" "$t" "$r" "$dd"; skip="$ws"; fi
     elif [ -d "$e" ]; then
       was="$complete"; wa="$added"; wp="$private"; wpe="$private_eg"; ws="$skip"; complete=1; skip=0
       mkdir "$t" && chmod "$dmode" "$t" || complete=0
-      [ "$complete" = 0 ] || merge "$e" "$t"
+      [ "$complete" = 0 ] || merge "$e" "$t" "$r" "$dd"
       if [ "$complete" = 1 ] && [ "$skip" = 0 ]; then complete="$was"; skip="$ws"
       else
         # a failed copy fails the merge; a skipped entry drops this new
-        # directory, and skip stays set so a new parent goes with it
+        # directory, and below the key the skip goes on up to it
         [ "$complete" = 1 ] && complete="$was" || complete=0
         rm -rf "$t"; added="$wa"; private="$wp"; private_eg="$wpe"
+        keydepth "$r"
+        [ "${#dd}" -gt "$kd" ] || skip="$ws"
       fi
     elif [ -f "$e" ]; then
       pub=0; ls -ld "$e" | grep -q '^-......r' && pub=1
-      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { rm -f "$t"; unreadable "$e" || complete=0; continue; }
+      if [ "$cpa" = 1 ]; then cp -a --no-preserve=ownership "$e" "$t"; else cp "$e" "$t"; fi && chmod a+r "$t" || { rm -f "$t"; unreadable "$e" "$r" "$dd" || complete=0; continue; }
       added="$added."
       [ "$pub" = 1 ] || { private="$private."; [ -n "$private_eg" ] || private_eg="$e"; }
     else
@@ -967,18 +1027,31 @@ merge() {
 merge_report() {
   [ -z "$links" ] || echo "engine cache: ${#links} symlink(s) skipped (named above)"
   [ -z "$private" ] || echo "engine cache: ${#private} file(s) not readable by every user were copied readable by every user, for example $private_eg"
-  [ -z "$unread" ] || echo "engine cache: ${#unread} entr(y/ies) this pod may not read were skipped (named above), each with the new directories that held it"
+  [ -z "$unread" ] || echo "engine cache: ${#unread} entr(y/ies) this pod may not read were skipped (named above), each with the new cache key that held it"
 }
 complete=1; added=""; links=""; private=""; private_eg=""; unread=""; skip=0
 for d in vllm flashinfer triton pycache; do
   [ -d "/engine-cache/$d" ] || continue
   (umask 022; mkdir -p "$dst/$d") || exit 1
-  merge "/engine-cache/$d" "$dst/$d"
+  merge "/engine-cache/$d" "$dst/$d" "$d" .
 done
 merge_report
 [ "$complete" = 1 ] || { echo "engine cache: publishing from $NODE_NAME did not complete (a copy failed and was removed)"; exit 1; }
 echo "engine cache: published from $NODE_NAME: ${#added} file(s) copied into the seed; what the seed already had is kept"
 SCRIPT
+}
+
+# publish_log_summary reads a publish pod's log on stdin and prints what it
+# skipped (a symlink, an entry the pod may not read): the first 20, then how
+# many more. Then the counts. Safe under pipefail when nothing matches.
+publish_log_summary() {
+    local log skipped n=0
+    log="$(cat)"
+    skipped="$(printf '%s\n' "$log" | grep -E '^engine cache: skipped ' || true)"
+    [ -z "$skipped" ] || n="$(printf '%s\n' "$skipped" | wc -l | tr -d ' ')"
+    [ "$n" -eq 0 ] || printf '%s\n' "$skipped" | sed -n '1,20p'
+    [ "$n" -le 20 ] || echo "engine cache: ... and $((n - 20)) more skipped, $n in all"
+    printf '%s\n' "$log" | grep -E '^engine cache: ([0-9]|published from)' || true
 }
 
 # pod_succeeded POD TIMEOUT_S waits for a run-once pod to finish: 0 when it
@@ -1117,8 +1190,7 @@ EOF
             kubectl delete pod -n "$NAMESPACE" "$pod" --ignore-not-found --wait=false >/dev/null 2>&1
             log_error "publish: ${pod} on ${node} did not succeed (its log is above); the seed is not stamped, so no node re-seeds from a partial copy"
         fi
-        # What was skipped (a symlink, an entry the pod may not read), then the count.
-        kubectl logs -n "$NAMESPACE" "$pod" 2>/dev/null | grep -E '^engine cache: ([0-9]|skipped |published from)' | tail -20
+        { kubectl logs -n "$NAMESPACE" "$pod" 2>/dev/null || true; } | publish_log_summary
         kubectl delete pod -n "$NAMESPACE" "$pod" --ignore-not-found --wait=false >/dev/null
     done
     [ "$DRY_RUN" = false ] || return 0
