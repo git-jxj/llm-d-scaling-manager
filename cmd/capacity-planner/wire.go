@@ -396,7 +396,10 @@ type wireTTFTParts struct {
 	PrefillKnee           float64 `json:"prefillKnee"`
 	DecodeKnee            float64 `json:"decodeKnee"`
 	// RouterWait and BurstWait are the flow-control gate's waits, absent
-	// unless it is priced past the prefill onset (FlowControlWaitPriced).
+	// unless it is priced as a stage past the prefill onset
+	// (FlowControlWaitPriced with --price-router-wait; with
+	// --router-wait-in-prefill the wait is inside the prefill figure and
+	// they stay absent).
 	RouterWait float64 `json:"routerWait,omitempty"`
 	BurstWait  float64 `json:"burstWait,omitempty"`
 	// Onsets are the flow-control onsets, absent with flow control off.

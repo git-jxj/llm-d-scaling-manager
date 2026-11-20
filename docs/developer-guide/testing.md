@@ -1975,7 +1975,9 @@ built: the router stage"). The second run's onset steps are replayed by
 `TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset` and
 `TestStaircaseR2_TheStepWithARouterWaitReadsShort`, the Qwen3-32B run's by
 `TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep` and
-`TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient`. A bucket's `measureAboveOnset` in the spec adds steps at those
+`TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient`, and the router v1.0.0
+A/B's steps, for the opt-in `--router-wait-in-prefill`, by
+`TestRouterV1_TheWaitIsInsidePrefill`. A bucket's `measureAboveOnset` in the spec adds steps at those
 multiples of its frozen prefill onset, after its scored steps and held the same way.
 They are never scored: no crossing, knee or falsifier reads them. The report's "Above
 the prefill onset" table lists every flow-control-on step past the onset, with the

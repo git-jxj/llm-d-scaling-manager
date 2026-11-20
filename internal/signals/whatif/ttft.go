@@ -169,9 +169,18 @@ const MaxPSPromptCV = 0.25
 // the knee gates that.
 const DefaultPriceRouterWait = false
 
+// DefaultRouterWaitInPrefill is TTFTFleet.RouterWaitInPrefill's default, for
+// the CLI (--router-wait-in-prefill): off, so a TTFT past the prefill onset
+// is flagged AboveFlowControlOnset, a miss. The planner API and the SLO
+// analyzer have no switch for it. Measured on router v1.0.0 at six bursty
+// steps of one fleet (Ca^2 4, up to 0.88 of the prefill knee); no Poisson
+// step past the onset has been run on v1.0.0, so it is not the default.
+const DefaultRouterWaitInPrefill = false
+
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
-// at which TTFTFleet.PriceRouterWait takes; past it the wait keeps
-// AboveFlowControlOnset.
+// at which TTFTFleet.PriceRouterWait or RouterWaitInPrefill takes; past it
+// the wait keeps AboveFlowControlOnset. The router v1.0.0 steps behind
+// RouterWaitInPrefill reached 0.88 of the knee.
 //
 // Carried over from the switch's earlier form, which took the gate as
 // moving the wait rather than adding to it, and was bounded by a paired
@@ -287,6 +296,26 @@ type TTFTFleet struct {
 	// past the share, it reads about 20 times short
 	// (TestStaircaseR2_TheStepWithARouterWaitReadsShort).
 	PriceRouterWait bool
+	// RouterWaitInPrefill takes the router's wait past the prefill onset as
+	// already inside the processor-sharing prefill price: the figure does not
+	// move, and the answer is flagged FlowControlWaitPriced in place of
+	// AboveFlowControlOnset where it takes (as PriceRouterWait: processor
+	// sharing at a prompt spread up to MaxPSPromptCV, a rate up to
+	// MaxRouterWaitKneeShare of the prefill knee), so a rate answer may stand
+	// past the onset. Opt-in, off by default (DefaultRouterWaitInPrefill),
+	// and measured on llm-d-router v1.0.0 only.
+	//
+	// On v1.0.0 the gate moves the wait from the pods to the router rather
+	// than adding to it: on the Qwen3-32B flow-control A/B, at six bursty
+	// steps past the prefill onset that the fleet held, the router held each
+	// request 0.5 to 2.0 s on average, and at the one step also run with flow
+	// control off at the same arrivals the client's mean and p95 did not grow
+	// (its p90 rose 21%). The price reads at least the client there
+	// (TestRouterV1_TheWaitIsInsidePrefill), though by a margin that would
+	// also cover a wait that adds. On v0.11.0 the gate
+	// adds time and this reads short; PriceRouterWait prices that router's
+	// gate. With both set, PriceRouterWait takes.
+	RouterWaitInPrefill bool
 	// PSOnsets places the prefill gate's onset on the processor-sharing
 	// model the price runs on, with ProcessorSharing and flow control on: a
 	// pod's waiting count is the prompts on it past its running cap
@@ -699,9 +728,11 @@ type ttftPlan struct {
 	// psCapped is ps at a prompt spread past MaxPSPromptCV: each price is
 	// the larger of processor sharing's and first come's.
 	psCapped bool
-	// routerWait is TTFTFleet.PriceRouterWait where it takes: processor
-	// sharing alone, at a prompt spread up to MaxPSPromptCV.
-	routerWait bool
+	// routerWait is TTFTFleet.PriceRouterWait or RouterWaitInPrefill where it
+	// takes: processor sharing alone, at a prompt spread up to MaxPSPromptCV.
+	// gateStage is PriceRouterWait among them: the gate priced as a stage
+	// (ttft_gate.go); without it the wait is inside the prefill price.
+	routerWait, gateStage bool
 	// psOnsets is TTFTFleet.PSOnsets where it takes: processor sharing.
 	psOnsets bool
 	// chargeGate is TTFTFleet.ChargeDecodeGate where it takes: flow control
@@ -722,7 +753,8 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 	}
 	pl := ttftPlan{pf: pf, d: fl.Decode, fc: fl.FlowControl, ps: fl.ProcessorSharing,
 		psCapped: fl.ProcessorSharing && pf.cv > MaxPSPromptCV}
-	pl.routerWait = fl.PriceRouterWait && pl.ps && !pl.psCapped
+	pl.routerWait = (fl.PriceRouterWait || fl.RouterWaitInPrefill) && pl.ps && !pl.psCapped
+	pl.gateStage = pl.routerWait && fl.PriceRouterWait
 	pl.psOnsets = fl.PSOnsets && pl.ps
 	if fl.ProcessorSharing && fl.Decode != nil {
 		// The pull is its own stage on the decode pods. With no decode line
@@ -1080,7 +1112,9 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		return priced{u: &u}
 	}
 	// gated is the flow-control gate priced as a stage (ttft_gate.go): with
-	// TTFTFleet.PriceRouterWait taking, at or above the prefill onset.
+	// TTFTFleet.PriceRouterWait taking, at or above the prefill onset. With
+	// RouterWaitInPrefill instead the wait is flagged priced and the figure
+	// is the processor-sharing price.
 	var gated bool
 	if pl.fc.State == FlowControlOn {
 		if pl.d != nil && rate >= pl.onsets.Decode {
@@ -1090,7 +1124,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		if rate >= pl.onsets.Prefill {
 			f := AboveFlowControlOnset
 			if pl.routerWait && rate <= MaxRouterWaitKneeShare*pk {
-				f, gated = FlowControlWaitPriced, true
+				f, gated = FlowControlWaitPriced, pl.gateStage
 			}
 			out.Flags = append(out.Flags, f)
 		}
@@ -1449,7 +1483,8 @@ func checkPercentile(q float64) *Unanswerable {
 // It refuses (Saturated) at or above the lower knee, and, with flow control
 // on, at or above the decode gate's onset (AboveDecodeOnset); at or above the
 // prefill gate's onset it answers, flagged AboveFlowControlOnset, or
-// FlowControlWaitPriced where TTFTFleet.PriceRouterWait takes. TTFTMeets
+// FlowControlWaitPriced where TTFTFleet.PriceRouterWait or
+// RouterWaitInPrefill takes. TTFTMeets
 // reads the answer against a target.
 func TTFTAt(fl TTFTFleet, rate, q float64) Result {
 	// The question first: a usage error outranks what the fleet's data says,
@@ -1494,8 +1529,8 @@ func TTFTAt(fl TTFTFleet, rate, q float64) Result {
 //
 // With flow control on it is also capped where the router starts holding
 // requests the price does not take as priced (BoundPrefillOnset): the prefill
-// onset, or with TTFTFleet.PriceRouterWait taking, MaxRouterWaitKneeShare of
-// the prefill knee where that is higher. Above that cap a TTFT is flagged
+// onset, or with TTFTFleet.PriceRouterWait or RouterWaitInPrefill taking,
+// MaxRouterWaitKneeShare of the prefill knee where that is higher. Above that cap a TTFT is flagged
 // AboveFlowControlOnset, which TTFTMeets reads as a miss, so a rate answer
 // never stands there: the answer is always a rate whose own verdict is met.
 //
