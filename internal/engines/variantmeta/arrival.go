@@ -2,6 +2,7 @@ package variantmeta
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -84,12 +85,20 @@ type ArrivalCause struct {
 }
 
 // ExplainMissing reads why a variant's pods are not serving. pods are the
-// variant's pods; Ready pods and pods being deleted are skipped. Pods that
-// ended (Failed, Succeeded) count only when created at or after notBefore, so
-// a pod evicted last week does not explain a shortfall that began today.
+// variant's pods; Ready pods and pods being deleted are skipped.
+//
+// A pod still starting, or Running and not Ready, counts only when it was
+// created before stalledBefore: a younger one is on its way, and a rollout
+// or a scale-up that is making progress is not a fault. When such pods are
+// all the variant has, the result's Reason is "" -- nothing to report.
+//
+// Pods that ended (Failed, Succeeded) count only when created at or after
+// notBefore, so a pod evicted last week does not explain a shortfall that
+// began today. A lone ended pod older than the newest live one has been
+// replaced: it does not hide the cause the replacement shows.
 //
 // The result's Reason is NotArrivingNoPods when no pod explains anything.
-func ExplainMissing(pods []corev1.Pod, notBefore time.Time) ArrivalCause {
+func ExplainMissing(pods []corev1.Pod, notBefore, stalledBefore time.Time) ArrivalCause {
 	type found struct {
 		pods   int
 		nodes  map[string]int
@@ -97,19 +106,29 @@ func ExplainMissing(pods []corev1.Pod, notBefore time.Time) ArrivalCause {
 		detail string
 	}
 	byReason := map[string]*found{}
+	progressing := 0
+	var newestLive time.Time
 	for i := range pods {
 		p := &pods[i]
 		if p.DeletionTimestamp != nil || PodReady(p) {
 			continue
 		}
+		created := p.CreationTimestamp.Time
 		terminal := p.Status.Phase == corev1.PodFailed || p.Status.Phase == corev1.PodSucceeded
-		if terminal && p.CreationTimestamp.Time.Before(notBefore) {
+		if terminal && created.Before(notBefore) {
 			continue
 		}
 		if p.Status.Phase == corev1.PodSucceeded {
 			continue
 		}
+		if !terminal && created.After(newestLive) {
+			newestLive = created
+		}
 		reason, detail := classifyPod(p)
+		if (reason == NotArrivingStarting || reason == NotArrivingNotReady) && !created.Before(stalledBefore) {
+			progressing++
+			continue
+		}
 		f := byReason[reason]
 		if f == nil {
 			f = &found{nodes: map[string]int{}}
@@ -119,8 +138,8 @@ func ExplainMissing(pods []corev1.Pod, notBefore time.Time) ArrivalCause {
 		if p.Spec.NodeName != "" {
 			f.nodes[p.Spec.NodeName]++
 		}
-		if t := p.CreationTimestamp.Time; f.detail == "" || !t.Before(f.newest) {
-			f.newest, f.detail = t, detail
+		if f.detail == "" || !created.Before(f.newest) {
+			f.newest, f.detail = created, detail
 		}
 	}
 	for _, reason := range notArrivingOrder {
@@ -128,9 +147,20 @@ func ExplainMissing(pods []corev1.Pod, notBefore time.Time) ArrivalCause {
 		if f == nil {
 			continue
 		}
+		if endedReason(reason) && f.pods == 1 && f.newest.Before(newestLive) {
+			continue
+		}
 		return ArrivalCause{Reason: reason, Pods: f.pods, Node: busiestNode(f.nodes), Detail: cut(f.detail)}
 	}
+	if progressing > 0 {
+		return ArrivalCause{}
+	}
 	return ArrivalCause{Reason: NotArrivingNoPods}
+}
+
+// endedReason reports whether reason is read from pods that ended.
+func endedReason(reason string) bool {
+	return reason == NotArrivingAdmissionRejected || reason == NotArrivingFailed
 }
 
 // classifyPod names why one not-Ready, live pod is not serving, and its words
@@ -172,6 +202,14 @@ func classifyPod(p *corev1.Pod) (reason, detail string) {
 			}
 		}
 	}
+	// A container that exited and was restarted is crash-looping even while
+	// it runs again: an engine that loads for minutes before it dies would
+	// otherwise flip between not-ready and crash-loop on every restart.
+	for _, cs := range p.Status.ContainerStatuses {
+		if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
+			return NotArrivingCrashLoop, crashDetail(cs)
+		}
+	}
 	if p.Status.Phase == corev1.PodRunning {
 		for _, c := range p.Status.Conditions {
 			if c.Type == corev1.PodReady {
@@ -198,13 +236,14 @@ func admissionRejected(reason string) bool {
 }
 
 // crashDetail is a crash-looping container's name and how it last exited.
+// No restart count: it moves on every restart, and the detail lands in the
+// controller-status line.
 func crashDetail(cs corev1.ContainerStatus) string {
 	t := cs.LastTerminationState.Terminated
 	if t == nil {
 		return fmt.Sprintf("container %s: CrashLoopBackOff", cs.Name)
 	}
-	return fmt.Sprintf("container %s: CrashLoopBackOff, last exit %s (code %d), %d restarts",
-		cs.Name, t.Reason, t.ExitCode, cs.RestartCount)
+	return fmt.Sprintf("container %s restarting, last exit %s (code %d)", cs.Name, t.Reason, t.ExitCode)
 }
 
 // busiestNode is the node with the most pods, ties to the first by name so
@@ -250,8 +289,14 @@ func said(reason, message string) string {
 	return reason + ": " + message
 }
 
-// ListPods lists a variant's pods by its pod template's labels, the way
-// discovery does. A scale target without labels yields none.
+// ErrNoPodSelector is returned by ListPods for a scale target whose pods it
+// cannot select: no group labels and no pod template labels.
+var ErrNoPodSelector = errors.New("the scale target names no labels to select its pods by")
+
+// ListPods lists a variant's pods: by the labels every pod of its group
+// carries for a LeaderWorkerSet or a DisaggregatedSet role
+// (scaletarget.GroupPodLabels), else by its pod template's labels, the way
+// discovery does.
 func ListPods(
 	ctx context.Context,
 	k8sClient client.Reader,
@@ -259,15 +304,20 @@ func ListPods(
 	scaleTarget scaletarget.ScaleTargetAccessor,
 ) ([]corev1.Pod, error) {
 	if k8sClient == nil || scaleTarget == nil {
-		return nil, nil
+		return nil, ErrNoPodSelector
 	}
-	tmpl := scaleTarget.GetLeaderPodTemplateSpec()
-	if tmpl == nil || len(tmpl.Labels) == 0 {
-		return nil, nil
+	labels := scaletarget.GroupPodLabels(scaleTarget)
+	if len(labels) == 0 {
+		if tmpl := scaleTarget.GetLeaderPodTemplateSpec(); tmpl != nil {
+			labels = tmpl.Labels
+		}
+	}
+	if len(labels) == 0 {
+		return nil, ErrNoPodSelector
 	}
 	var pods corev1.PodList
 	if err := k8sClient.List(ctx, &pods,
-		client.InNamespace(namespace), client.MatchingLabels(tmpl.Labels)); err != nil {
+		client.InNamespace(namespace), client.MatchingLabels(labels)); err != nil {
 		return nil, err
 	}
 	return pods.Items, nil

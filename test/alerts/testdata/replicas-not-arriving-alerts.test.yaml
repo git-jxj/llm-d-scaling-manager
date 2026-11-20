@@ -28,18 +28,22 @@ tests:
       - eval_time: 6m
         alertname: LLMSMReplicasNotArriving
         exp_alerts:
-          - exp_labels: {severity: warning, exported_namespace: models, variant_name: decode, role: decode, reason: admission-rejected}
+          - exp_labels: {severity: warning, exported_namespace: models, variant_name: decode, role: decode}
 
-  # 2. The replicas arrive: the series goes, and so does the alert.
+  # 2. The cause changes half way (a crash loop read between restarts), and
+  #    the alert keeps its for: rather than starting again. Then the
+  #    replicas arrive: the series goes, and so does the alert.
   - interval: 1m
     input_series:
+      - series: 'llmsm_replicas_not_arriving{exported_namespace="models",namespace="scaling-manager",pod="a",variant_name="decode",role="decode",reason="not-ready"}'
+        values: '2x3 stale'
       - series: 'llmsm_replicas_not_arriving{exported_namespace="models",namespace="scaling-manager",pod="a",variant_name="decode",role="decode",reason="unschedulable"}'
-        values: '2x10 stale'
+        values: '_x3 2x7 stale'
     alert_rule_test:
       - eval_time: 8m
         alertname: LLMSMReplicasNotArriving
         exp_alerts:
-          - exp_labels: {severity: warning, exported_namespace: models, variant_name: decode, role: decode, reason: unschedulable}
+          - exp_labels: {severity: warning, exported_namespace: models, variant_name: decode, role: decode}
       - eval_time: 18m
         alertname: LLMSMReplicasNotArriving
         exp_alerts: []

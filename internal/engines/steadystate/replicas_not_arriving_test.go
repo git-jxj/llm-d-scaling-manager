@@ -26,6 +26,8 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/allocation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/variantmeta"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/scaletarget"
 	llmdvariant "github.com/llm-d-incubation/llm-d-scaling-manager/internal/variant"
 )
 
@@ -54,6 +56,13 @@ func stormFixture(t *testing.T, rejected int, now time.Time) (client.Client, *ap
 		})
 	}
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build(), d
+}
+
+// targetsOf is the cycle's active scale targets holding d alone.
+func targetsOf(d *appsv1.Deployment) map[string]scaletarget.ScaleTargetAccessor {
+	return map[string]scaletarget.ScaleTargetAccessor{
+		utils.GetNamespacedKey(d.Namespace, d.Name): scaletarget.NewDeploymentAccessor(d),
+	}
 }
 
 func decodeVariant() llmdvariant.Variant {
@@ -112,7 +121,7 @@ func TestReplicasNotArrivingAdmissionStorm(t *testing.T) {
 	c, d := stormFixture(t, 169, t0.Add(6*time.Minute))
 	recorder := record.NewFakeRecorder(100)
 	status := controllerstatus.New(nil, nil, "ctrl")
-	e := &Engine{Recorder: recorder, client: c, Status: status}
+	e := &Engine{Recorder: recorder, client: c, Status: status, cycleScaleTargets: targetsOf(d)}
 	groups := map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}
 	ctx := context.Background()
 
@@ -126,7 +135,7 @@ func TestReplicasNotArrivingAdmissionStorm(t *testing.T) {
 	events := drain(recorder)
 	require.Len(t, events, 1)
 	assert.True(t, strings.HasPrefix(events[0], "Warning "+constants.K8SEventReplicasNotArriving+" "), events[0])
-	for _, want := range []string{"1 of 2 replicas Ready for 6m0s", "169 pods rejected by the kubelet at admission",
+	for _, want := range []string{"1 of 2 replicas Ready since 2026-11-20T10:00:00Z", "169 pods rejected by the kubelet at admission",
 		"on node gpu-node-7", "cannot allocate unhealthy devices rdma/ib", "platform"} {
 		assert.Contains(t, events[0], want)
 	}
@@ -147,9 +156,13 @@ func TestReplicasNotArrivingAdmissionStorm(t *testing.T) {
 	d.Status.ReadyReplicas = 2
 	require.NoError(t, c.Status().Update(ctx, d))
 	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(25*time.Minute))
+	assert.Empty(t, drain(recorder), "arrived for less than notArrivingClearHold: not lifted yet")
+	assert.NotEmpty(t, notArrivingSeries(t, registry))
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(26*time.Minute))
 	events = drain(recorder)
 	require.Len(t, events, 1)
-	assert.Equal(t, "Normal "+constants.K8SEventReplicasArrived+" 2 of 2 replicas Ready, after 25m0s short", events[0])
+	assert.Equal(t, "Normal "+constants.K8SEventReplicasArrived+
+		" 2 of 2 replicas Ready; they were short since 2026-11-20T10:00:00Z", events[0])
 	assert.Empty(t, notArrivingSeries(t, registry))
 	assert.NotContains(t, status.Data(), controllerstatus.KeyReplicasNotArriving)
 }
@@ -160,9 +173,9 @@ func TestReplicasNotArrivingCauseChange(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	require.NoError(t, metrics.InitMetrics(registry))
 	t0 := time.Now()
-	c, _ := stormFixture(t, 0, t0)
+	c, d := stormFixture(t, 0, t0)
 	recorder := record.NewFakeRecorder(100)
-	e := &Engine{Recorder: recorder, client: c}
+	e := &Engine{Recorder: recorder, client: c, cycleScaleTargets: targetsOf(d)}
 	groups := map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}
 	ctx := context.Background()
 
@@ -228,4 +241,60 @@ func TestWithholdOverdueArrivals(t *testing.T) {
 	assert.Equal(t, 1, metas[0].StuckReplicas, "900 s is past max(5m, 2x200s)")
 	assert.Equal(t, []float64{900}, metas[1].PendingAges, "prefill's start time is not known")
 	assert.Equal(t, 0, metas[1].StuckReplicas)
+}
+
+// A rollout or a scale-up that lands a replica every few minutes is never
+// reported, however long it takes as a whole: the clock restarts when a
+// replica arrives. A replica that then stops arriving is, once its own pod is
+// older than the threshold.
+func TestReplicasNotArrivingProgressIsNotAFault(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+	t0 := time.Now()
+	c, d := stormFixture(t, 0, t0)
+	d.Spec.Replicas = ptr.To(int32(4))
+	d.Status.ReadyReplicas = 0
+	recorder := record.NewFakeRecorder(100)
+	e := &Engine{Recorder: recorder, client: c, cycleScaleTargets: targetsOf(d)}
+	groups := map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}
+	ctx := context.Background()
+
+	for minute := 0; minute <= 16; minute++ {
+		d.Status.ReadyReplicas = int32(min(minute/4, 3))
+		e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(time.Duration(minute)*time.Minute))
+	}
+	assert.Empty(t, drain(recorder), "one replica every 4 minutes for 12 minutes: progress, not a fault")
+
+	require.NoError(t, c.Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "decode-last", Namespace: "ns", Labels: decodeLabels,
+			CreationTimestamp: metav1.NewTime(t0.Add(12 * time.Minute))},
+		Spec: corev1.PodSpec{NodeName: "gpu-node-3"},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{
+			Type: corev1.PodScheduled, Status: corev1.ConditionTrue}}},
+	}))
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(18*time.Minute))
+	events := drain(recorder)
+	require.Len(t, events, 1, "the fourth replica made no progress for 6 minutes")
+	assert.Contains(t, events[0], "1 pod still starting on node gpu-node-3")
+	assert.Equal(t, []string{"decode/decode/starting=1"}, notArrivingSeries(t, registry))
+}
+
+// A scale target that is no longer among the cycle's active ones takes its
+// report with it, rather than leaving a series that alerts forever.
+func TestReplicasNotArrivingScaleTargetGone(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+	t0 := time.Now()
+	c, d := stormFixture(t, 0, t0)
+	e := &Engine{Recorder: record.NewFakeRecorder(100), client: c, cycleScaleTargets: targetsOf(d)}
+	groups := map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}
+	ctx := context.Background()
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0)
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(6*time.Minute))
+	require.NotEmpty(t, notArrivingSeries(t, registry))
+
+	e.cycleScaleTargets = nil
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(7*time.Minute))
+	assert.Empty(t, notArrivingSeries(t, registry))
+	assert.Empty(t, e.notArriving.variants)
 }

@@ -25,14 +25,15 @@ import (
 // starts the shortfall's clock. A model none of whose replicas ever arrived
 // is exactly the one that produces no request.
 func TestReplicasNotArrivingIsWiredIntoTheCycle(t *testing.T) {
-	c, _ := stormFixture(t, 3, time.Now())
+	c, d := stormFixture(t, 3, time.Now())
 	e := &Engine{
-		Config:        config.NewTestConfig(),
-		optimizer:     allocation.NewCostAwareOptimizer(),
-		analyzers:     testAnalyzers(plainAnalyzer{}),
-		capacityStore: capacity.NewStore(),
-		client:        c,
-		Recorder:      record.NewFakeRecorder(10),
+		cycleScaleTargets: targetsOf(d),
+		Config:            config.NewTestConfig(),
+		optimizer:         allocation.NewCostAwareOptimizer(),
+		analyzers:         testAnalyzers(plainAnalyzer{}),
+		capacityStore:     capacity.NewStore(),
+		client:            c,
+		Recorder:          record.NewFakeRecorder(10),
 	}
 	e.optimizeV2(context.Background(), map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}, nil)
 

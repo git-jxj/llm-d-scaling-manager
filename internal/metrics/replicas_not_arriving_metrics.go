@@ -23,15 +23,17 @@ var (
 // llmsm_replicas_not_arriving. Called from InitMetrics, after
 // controllerInstance is set.
 func registerReplicasNotArrivingMetrics(registry prometheus.Registerer) error {
-	labels := []string{constants.LabelNamespace, constants.LabelVariantName, constants.LabelRole, constants.LabelReason}
-	if controllerInstance != "" {
-		labels = append(labels, constants.LabelControllerInstance)
+	withInstance := func(labels ...string) []string {
+		if controllerInstance != "" {
+			labels = append(labels, constants.LabelControllerInstance)
+		}
+		return labels
 	}
 	replicasNotArriving = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: constants.LLMSMReplicasNotArriving,
 		Help: "Replicas a variant asked for beyond those Ready, once the shortfall has lasted longer than " +
 			"twice its start time (at least 5 minutes), by the reason read from its pods.",
-	}, labels)
+	}, withInstance(constants.LabelNamespace, constants.LabelVariantName, constants.LabelRole, constants.LabelReason))
 	if err := registry.Register(replicasNotArriving); err != nil {
 		return fmt.Errorf("failed to register %s: %w", constants.LLMSMReplicasNotArriving, err)
 	}

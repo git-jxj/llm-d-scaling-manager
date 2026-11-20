@@ -321,6 +321,9 @@ type Engine struct {
 	// notArriving tracks the replicas variants asked for that have not
 	// arrived (replicas_not_arriving.go). Nil until the first cycle.
 	notArriving *notArrivingTracker
+	// cycleScaleTargets is this cycle's active scale targets, keyed
+	// namespace/target (utils.ActiveVariants), for the report above.
+	cycleScaleTargets map[string]scaletarget.ScaleTargetAccessor
 
 	// optimizer is the V2 scaling optimizer that produces VariantDecisions from
 	// AnalyzerResults. Selected per-cycle from the declared limiters:
@@ -867,11 +870,12 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 
 	e.VariantEnricher.Refresh(ctx) // resolve the scale target of anything newly registered
 
-	activeVAs, _, err := utils.ActiveVariants(ctx, e.client, e.Variants)
+	activeVAs, activeTargets, err := utils.ActiveVariants(ctx, e.client, e.Variants)
 	if err != nil {
 		logger.Error(err, "Unable to get active variant autoscalings")
 		return err
 	}
+	e.cycleScaleTargets = activeTargets
 	// Here, not with the analyzer series: those go with the active set, and a
 	// fleet at zero replicas is exactly what these series are kept for.
 	e.retainLearnerSeries(ctx)
@@ -1083,6 +1087,8 @@ func constrainedMessage(d *domain.VariantDecision) string {
 // recordEvent ensures only one event is recorded per VA in an optimization cycle.
 // Exception: K8SEventResourceConstrained events bypass deduplication and can be
 // recorded alongside other event types (e.g., ScaledUp + ResourceConstrained).
+// The ReplicasNotArriving and ReplicasArrived events do not go through it
+// (recordArrivalEvent): they are rate-limited by their own report.
 func (e *Engine) recordEvent(
 	va *llmdvariant.Variant,
 	eventType, reason, message string,

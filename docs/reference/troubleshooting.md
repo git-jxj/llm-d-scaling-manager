@@ -532,13 +532,15 @@ chain in order:
 ## Replicas asked for never arrive
 
 **Symptom**: `LLMSMReplicasNotArriving` fires, or a `ReplicasNotArriving`
-event appears on a ScaledObject. A variant has had fewer Ready replicas than
-it asked for, for longer than twice its start time (at least 5 minutes).
+event appears on a ScaledObject. A variant has fewer Ready replicas than it
+asked for, and none has arrived for longer than twice its start time (at
+least 5 minutes). A rollout or a scale-up that lands a replica now and then
+is not reported.
 
 1. **Read the cause.** The event and the status line say why, from the pods:
    ```bash
    kubectl get events -n <ns> --field-selector reason=ReplicasNotArriving
-   kubectl get configmap scaling-manager-controller-status -n $NS \
+   kubectl get configmap scaling-manager-controller-status -n "$NS" \
      -o jsonpath='{.data.replicasNotArriving}'
    ```
    A line reads like this:
@@ -549,9 +551,9 @@ it asked for, for longer than twice its start time (at least 5 minutes).
 
    | reason | what it means | what to do |
    | --- | --- | --- |
-   | `admission-rejected` | the scheduler places pods on a node and its kubelet refuses them, usually because a device plugin reports devices unhealthy that the node still advertises. The ReplicaSet replaces each pod on the same node, so rejected pods pile up | (cluster admin) cordon the node (`kubectl cordon <node>`), then fix its devices: the device plugin, the GPU operator, node remediation. Delete the rejected pods: `kubectl delete pods -n <ns> --field-selector=status.phase=Failed` |
+   | `admission-rejected` | the scheduler places pods on a node and its kubelet refuses them, usually because a device plugin reports devices unhealthy that the node still advertises. The ReplicaSet replaces each pod on the same node, so rejected pods pile up | (cluster admin) cordon the node (`kubectl cordon <node>`), then fix its devices: the device plugin, the GPU operator, node remediation. Delete the rejected pods, selected by the variant's pod labels: `kubectl delete pods -n <ns> -l <key>=<value> --field-selector=status.phase=Failed` |
    | `unschedulable` | no node fits; the line carries the scheduler's message, for example `Insufficient nvidia.com/gpu` | free GPUs, or lower the model's max; see [GPUs held](#gpus-held-or-quota-spent) |
-   | `scheduling-gated` | Kueue has not admitted the pods | see [Kueue borrowing](#replicas-dropped-under-kueue-borrowing) |
+   | `scheduling-gated` | Kueue has not admitted the pods | see [Kueue borrowing alerts](#kueue-borrowing-alerts) and [GPUs held](#gpus-held-or-quota-spent) |
    | `image-pull` | the image does not pull | check the image name and the pull secret |
    | `crash-loop` | the engine starts and exits; the line has the last exit reason | `kubectl logs -n <ns> <pod> --previous` |
    | `container-config` | the container cannot be created: a missing Secret or ConfigMap | `kubectl describe pod -n <ns> <pod>` |
@@ -564,12 +566,14 @@ it asked for, for longer than twice its start time (at least 5 minutes).
 **What the scaling manager does.** It counts only Ready replicas as supply.
 Pods that are rejected, unschedulable, gated or failing are not counted as on
 their way either, and neither is a pod that has not become Ready in twice its
-role's measured or declared start time, so the controller orders replacements. It
+role's start time, so the controller orders replacements. That last rule
+applies only once the start time is measured or declared on the ScaledObject,
+and not to LeaderWorkerSet groups of more than one pod. It
 does not cordon, taint or steer pods away from a node: node health is the
 platform's to judge, for every workload on the node at once.
 
-The report lifts on its own when the replicas arrive (a `ReplicasArrived`
-event). It restarts its clock when the controller restarts.
+The report lifts on its own a minute after the replicas arrive (a
+`ReplicasArrived` event). It restarts its clock when the controller restarts.
 
 ## GPUs held or quota spent
 
