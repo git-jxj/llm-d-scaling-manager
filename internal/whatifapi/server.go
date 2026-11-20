@@ -37,9 +37,16 @@ const defaultResponseBytes = 64 << 20
 // bodyBytes is a response's weight in a cache: its length.
 func bodyBytes(b []byte) int { return len(b) }
 
-// defaultMaxInputs is how many sources are resolved at once by default: each
-// is a replay or a Prometheus capture of seconds to minutes.
-const defaultMaxInputs = 2
+// DefaultMaxInputs is how many sources are resolved at once by default: each
+// is a replay or a Prometheus capture of seconds to minutes, and holds its
+// memory while it runs.
+const DefaultMaxInputs = 2
+
+// DefaultInputsBytes bounds the inputs kept, by the weight each Resolved
+// gives (Resolved.Bytes): a replayed state of a day-long recording of a
+// 16-replica P/D fleet weighs some tens of MiB, so the cache's 16 entries
+// fit in it whatever the recordings, and a larger one is evicted first.
+const DefaultInputsBytes = 256 << 20
 
 // retryAfterSeconds is what a busy server asks a client to wait.
 const retryAfterSeconds = "1"
@@ -53,8 +60,12 @@ type Config struct {
 	WhatifSchema string
 	// MaxPlans and MaxInputs are how many plans and how many inputs are
 	// priced at once; past them a request is 503 with Retry-After. 0 is the
-	// default: GOMAXPROCS plans, defaultMaxInputs inputs.
+	// default: GOMAXPROCS plans, DefaultMaxInputs inputs.
 	MaxPlans, MaxInputs int
+	// MaxInputsBytes bounds the inputs kept, in all, by the weight each
+	// Resolved gives; the newest is kept whatever it weighs. 0 or less is
+	// DefaultInputsBytes.
+	MaxInputsBytes int
 	// PlanBudget is how long one plan may be priced. Past it the plan stops
 	// at its next figure and is refused with PlanBudgetExceeded. 0 or less is
 	// DefaultPlanBudget. It must end before the HTTP server's write timeout,
@@ -134,7 +145,12 @@ type inputsEntry struct {
 	// series is the source's cycles, for a day plan; nil where the
 	// Resolver gave none.
 	series []SeriesSample
+	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
+	bytes int
 }
+
+// entryBytes is an inputs entry's weight in the cache.
+func entryBytes(e *inputsEntry) int { return e.bytes }
 
 // New is a server with empty caches.
 func New(c Config) *Server {
@@ -143,13 +159,17 @@ func New(c Config) *Server {
 		plans = runtime.GOMAXPROCS(0)
 	}
 	if inputs <= 0 {
-		inputs = defaultMaxInputs
+		inputs = DefaultMaxInputs
+	}
+	inputsBytes := c.MaxInputsBytes
+	if inputsBytes <= 0 {
+		inputsBytes = DefaultInputsBytes
 	}
 	budget := c.PlanBudget
 	if budget <= 0 {
 		budget = DefaultPlanBudget
 	}
-	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newLRU[*inputsEntry](defaultInputs),
+	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newWeighedLRU(defaultInputs, inputsBytes, entryBytes),
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget}
@@ -236,7 +256,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	// The entry kept is the first caller's, but each caller is answered with
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.
-	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series})
+	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, bytes: res.Bytes})
 	body, err := marshal(doc)
 	if err != nil {
 		writeErr(w, err)

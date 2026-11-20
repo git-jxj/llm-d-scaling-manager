@@ -23,8 +23,8 @@ const defaultDayWindow = 24 * time.Hour
 
 // seriesOf is every cycle of st's model in the recording data, as the API's
 // day plan reads them, counted for the variants v names.
-func seriesOf(data []byte, st *learnreplay.State, v learnreplay.SeriesVariants) ([]whatifapi.SeriesSample, error) {
-	cycles, err := learnreplay.Series(data, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID}, v)
+func seriesOf(src learnreplay.Source, st *learnreplay.State, v learnreplay.SeriesVariants) ([]whatifapi.SeriesSample, error) {
+	cycles, err := learnreplay.SeriesFrom(src, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID}, v)
 	if err != nil {
 		return nil, err
 	}

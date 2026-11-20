@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -36,6 +37,11 @@ type serveFlags struct {
 	// planBudget is --plan-budget, how long one plan may be priced; 0 is
 	// whatifapi.DefaultPlanBudget.
 	planBudget time.Duration
+	// maxInputs is --max-inputs, how many sources are resolved at once, and
+	// inputsCache --inputs-cache-size, the bound in bytes of the inputs kept;
+	// 0 and "" are whatifapi's defaults.
+	maxInputs   int
+	inputsCache string
 	// allowedNamespaces is --allowed-namespaces, comma-separated, and
 	// audiences --token-audiences.
 	allowedNamespaces, audiences string
@@ -71,6 +77,8 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.tlsKey, "tls-key-file", "", "the server's private key, PEM; required with --auth=kubernetes")
 	fs.DurationVar(&f.shutdownDeadline, "shutdown-timeout", 10*time.Second, "how long requests in flight may run once the server is told to stop")
 	fs.DurationVar(&f.planBudget, "plan-budget", whatifapi.DefaultPlanBudget, "how long one plan may be priced; past it the plan is refused with PlanBudgetExceeded")
+	fs.IntVar(&f.maxInputs, "max-inputs", whatifapi.DefaultMaxInputs, "how many sources are resolved at once; each holds its replay's memory while it runs, and past them a request is 503 with Retry-After")
+	fs.StringVar(&f.inputsCache, "inputs-cache-size", quantityOf(whatifapi.DefaultInputsBytes), "the most memory the resolved sources kept may take in all, as estimated, a quantity (256Mi); the least used is dropped first, and the newest is kept whatever it weighs")
 	fs.StringVar(&f.allowedNamespaces, "allowed-namespaces", "", "the namespaces a prometheus source may read, comma-separated; default --namespace alone")
 	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network. Refused when KUBERNETES_SERVICE_HOST is set, a best-effort tripwire, not enforcement")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
@@ -190,6 +198,16 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s: a plan stopped later is refused after the server's %s write timeout has closed the connection",
 			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget, writeTimeout)
 	}
+	if f.maxInputs < 0 {
+		return nil, usagef("--max-inputs %d: want 1 or more, or 0 for the default, %d", f.maxInputs, whatifapi.DefaultMaxInputs)
+	}
+	cacheBytes := 0
+	if f.inputsCache != "" {
+		var err error
+		if cacheBytes, err = bytesFlag("inputs-cache-size", f.inputsCache); err != nil {
+			return nil, err
+		}
+	}
 	if f.recordings == "" && f.window.prometheus == "" {
 		return nil, usagef("serve needs --prometheus, --recordings or both: a source to resolve inputs from")
 	}
@@ -203,7 +221,8 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, err
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed}
-	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlanBudget: f.planBudget})
+	srv := whatifapi.New(whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlanBudget: f.planBudget,
+		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes})
 	h := srv.Handler()
 	if f.auth != whatifapi.AuthKubernetes {
 		return whatifapi.LoopbackOnly(h), nil
@@ -281,3 +300,20 @@ func splitList(s string) []string {
 	}
 	return out
 }
+
+// bytesFlag is the quantity --name gives (256Mi, 1G, 1048576) in bytes, at
+// least 1.
+func bytesFlag(name, v string) (int, error) {
+	q, err := resource.ParseQuantity(v)
+	if err != nil {
+		return 0, usagef("--%s %q: want a quantity of bytes such as 256Mi: %v", name, v, err)
+	}
+	n, ok := q.AsInt64()
+	if !ok || n < 1 || n > 1<<47 {
+		return 0, usagef("--%s %s: want a whole number of bytes from 1 to 128Ti", name, v)
+	}
+	return int(n), nil
+}
+
+// quantityOf is n bytes as a flag's default shows it (256Mi).
+func quantityOf(n int) string { return resource.NewQuantity(int64(n), resource.BinarySI).String() }

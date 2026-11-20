@@ -224,15 +224,16 @@ func runFreeze(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	a := answerFlags{question: "freeze", recording: f.recording, cycle: "last", warn: warn}
-	st, err := a.readState(ctx)
+	name, src, err := a.recordingSource(ctx)
 	if err != nil {
 		return err
 	}
-	_, raw, err := a.recordingData(ctx)
+	defer func() { _ = src.Close() }()
+	st, err := a.stateOf(ctx, name, src)
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(raw)
+	sum := src.sum
 	// The driver's prompts share no prefix: a warm-up's hit rate is not theirs.
 	// The CLI would price it; the file says what was dropped.
 	hitRates := map[string]float64{}

@@ -274,10 +274,17 @@ func withPlannerSwitches(sw map[string]map[string]bool) map[string]map[string]bo
 // saturation Analyze events alone, so the last cycle is a cycle number like
 // any other: the replay stops there and the state is read once.
 func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) (*State, error) {
+	return StateFrom(ctx, BytesSource(recording), opts, q)
+}
+
+// StateFrom is StateAt of the recording src opens, read in two passes and
+// never held: one to resolve the model and its cycles, one to replay to the
+// cycle.
+func StateFrom(ctx context.Context, src Source, opts Options, q StateQuery) (*State, error) {
 	if q.Cycle < 0 {
 		return nil, queryErrorf("cycle %d, want 1 or more, or 0 for the last", q.Cycle)
 	}
-	ns, model, total, err := resolveModel(recording, q)
+	ns, model, total, err := resolveModel(src, q)
 	if err != nil {
 		return nil, err
 	}
@@ -290,6 +297,7 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 	}
 	opts.Mode = Normal
 	opts.Switches = withPlannerSwitches(opts.Switches)
+	opts.discardRecording = true
 	var (
 		st       *State
 		stateErr error
@@ -309,12 +317,10 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		if ev.Kind != saturation.KindAnalyze {
 			return false
 		}
-		var d saturation.AnalyzeEvent
-		if err := ev.DecodeData(&d); err != nil {
-			stateErr = err
-			return true
-		}
-		in, err := decodeInput(d.Input)
+		// The replay applied the event before asking: its data decoded in
+		// full there, so the input alone is read here.
+		raw, _ := learnrec.Raw(ev.Data).Member("Input")
+		in, err := decodeInput(raw)
 		if err != nil {
 			stateErr = err
 			return true
@@ -370,7 +376,8 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		}
 		return false
 	}
-	if _, err := Replay(ctx, recording, opts); err != nil {
+	// resolveModel read every line: the recording reads.
+	if _, err := replayFrom(ctx, src, opts); err != nil {
 		return nil, err
 	}
 	if stateErr != nil {
@@ -391,31 +398,26 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 
 // resolveModel is the model q names and how many saturation cycles the
 // recording holds of it, read from its Analyze events without replaying
-// them.
-func resolveModel(recording []byte, q StateQuery) (ns, model string, cycles int, err error) {
-	read, err := learnrec.Read(recording)
-	if err != nil {
-		return "", "", 0, err
-	}
+// them. It reads every line, so a recording that does not read is
+// learnrec.Read's error.
+func resolveModel(src Source, q StateQuery) (ns, model string, cycles int, err error) {
 	counts := map[[2]string]int{}
-	for _, ev := range read.Events {
+	err = scan(src, func(ev learnrec.RawEvent) (bool, error) {
 		if ev.Kind != saturation.KindAnalyze {
-			continue
+			return true, nil
 		}
-		// Two fields of the input are all the scan reads: encoding/json skips
-		// the rest, where learnrec's own decoder would hold every field to
-		// the type (the replay decodes the event in full).
-		var d struct {
-			Input struct{ Namespace, ModelID string }
+		id, err := analyzedModel(ev.Data)
+		if err != nil {
+			return false, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
 		}
-		if err := json.Unmarshal(ev.Data, &d); err != nil {
-			return "", "", 0, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
-		}
-		id := d.Input
 		if q.ModelID != "" && id.ModelID != q.ModelID || q.Namespace != "" && id.Namespace != q.Namespace {
-			continue
+			return true, nil
 		}
 		counts[[2]string{id.Namespace, id.ModelID}]++
+		return true, nil
+	})
+	if err != nil {
+		return "", "", 0, err
 	}
 	keys := make([]string, 0, len(counts))
 	for k, c := range counts {
@@ -433,6 +435,32 @@ func resolveModel(recording []byte, q StateQuery) (ns, model string, cycles int,
 	}
 	return ns, model, cycles, nil
 }
+
+// analyzedModel is the namespace and the model of a saturation Analyze
+// event's input: two fields of it are all a scan reads, where learnrec's own
+// decoder would hold every field to the type (the replay decodes the event in
+// full). The two are found in the data, which a recording read has checked is
+// JSON, without decoding the rest (learnrec.Raw.Member); data of another
+// shape is read by encoding/json, as it was, for its error.
+func analyzedModel(data json.RawMessage) (struct{ Namespace, ModelID string }, error) {
+	var id struct{ Namespace, ModelID string }
+	if in, ok := learnrec.Raw(data).Member("Input"); ok && len(in) > 0 && in[0] == '{' {
+		ns, nsOK := in.Member("Namespace")
+		model, modelOK := in.Member("ModelID")
+		if nsOK && modelOK && isString(ns) && isString(model) &&
+			json.Unmarshal(ns, &id.Namespace) == nil && json.Unmarshal(model, &id.ModelID) == nil {
+			return id, nil
+		}
+	}
+	var d struct {
+		Input struct{ Namespace, ModelID string }
+	}
+	err := json.Unmarshal(data, &d)
+	return d.Input, err
+}
+
+// isString reports whether the JSON value raw is a string.
+func isString(raw learnrec.Raw) bool { return len(raw) > 0 && raw[0] == '"' }
 
 // cyclesSpanned is the first and the last cycle readings were taken at: a
 // reading is stamped with the clock of the Analyze that offered it.

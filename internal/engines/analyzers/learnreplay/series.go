@@ -54,31 +54,46 @@ type SeriesVariants struct {
 // the whole recording. A *QueryError is a model the recording does not hold
 // or names ambiguously.
 func Series(recording []byte, q StateQuery, v SeriesVariants) ([]CycleSample, error) {
-	ns, model, _, err := resolveModel(recording, q)
-	if err != nil {
-		return nil, err
-	}
-	read, err := learnrec.Read(recording)
-	if err != nil {
-		return nil, err
+	return SeriesFrom(BytesSource(recording), q, v)
+}
+
+// SeriesFrom is Series of the recording src opens, never held. A query that
+// names the namespace and the model is read in one pass, and resolved
+// (resolveModel) only when the pass found none of its cycles, for the
+// error; any other in two, resolved first.
+func SeriesFrom(src Source, q StateQuery, v SeriesVariants) ([]CycleSample, error) {
+	ns, model := q.Namespace, q.ModelID
+	if ns == "" || model == "" {
+		var err error
+		if ns, model, _, err = resolveModel(src, q); err != nil {
+			return nil, err
+		}
 	}
 	var out []CycleSample
-	for _, ev := range read.Events {
+	err := scan(src, func(ev learnrec.RawEvent) (bool, error) {
 		if ev.Kind != saturation.KindAnalyze {
-			continue
+			return true, nil
 		}
 		var d saturation.AnalyzeEvent
 		if err := ev.DecodeData(&d); err != nil {
-			return nil, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
+			return false, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
 		}
 		in, err := decodeInput(d.Input)
 		if err != nil {
-			return nil, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
+			return false, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
 		}
-		if in.Namespace != ns || in.ModelID != model {
-			continue
+		if in.Namespace == ns && in.ModelID == model {
+			out = append(out, sampleOf(in, ev.Now, v))
 		}
-		out = append(out, sampleOf(in, ev.Now, v))
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		if _, _, _, err := resolveModel(src, q); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
