@@ -254,14 +254,14 @@ func TestCapacity_ADeferredWaitIsNotAQueue(t *testing.T) {
 		return rm
 	}
 	for _, tc := range []struct {
-		name     string
-		byCap    bool
-		peak     bool
-		want     float64
-		source   Source
-		busy     int
-		refusal  Refusal
-		lowerBnd bool
+		name       string
+		byCap      bool
+		peak       bool
+		want       float64
+		source     Source
+		busy       int
+		refusal    Refusal
+		lowerBound bool
 	}{
 		{"on, peak then deferred", true, true, 30000, SourcePeakUnderQueue, 0, "", true},
 		{"off, peak then deferred", false, true, 10000, SourceBusyMinutes, 5, "", false},
@@ -287,7 +287,7 @@ func TestCapacity_ADeferredWaitIsNotAQueue(t *testing.T) {
 		assert.Equal(t, tc.want, est.VP, tc.name)
 		assert.Equal(t, tc.source, est.VPSource, tc.name)
 		assert.Equal(t, tc.refusal, est.VPRefused, tc.name)
-		assert.Equal(t, tc.lowerBnd, est.VPLowerBound, tc.name)
+		assert.Equal(t, tc.lowerBound, est.VPLowerBound, tc.name)
 	}
 }
 
@@ -296,9 +296,9 @@ func TestCapacity_ADeferredWaitIsNotAQueue(t *testing.T) {
 // minutes at 24k are V_P on and off alike.
 func TestCapacity_ACapacityQueueIsStillAQueue(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		known bool
-		cap   int
+		name     string
+		known    bool
+		capacity int
 	}{
 		{"capacity queue", true, 2},
 		{"no capacity series", false, 0},
@@ -308,7 +308,7 @@ func TestCapacity_ACapacityQueueIsStillAQueue(t *testing.T) {
 			var est Estimate
 			for i := range 5 {
 				rm := queued("p-0", 24000, 3)
-				rm.CapacityQueueKnown, rm.CapacityQueueLength = tc.known, tc.cap
+				rm.CapacityQueueKnown, rm.CapacityQueueLength = tc.known, tc.capacity
 				c := cycle(t0.Add(time.Duration(i)*minute), rm)
 				c.QueueMin = map[string]float64{"p-0": 2}
 				c.QueueByCapacity = byCap
@@ -337,13 +337,15 @@ func TestCapacity_AMinuteWithNoCapacityQueueEndsTheRun(t *testing.T) {
 			c.QueueByCapacity = byCap
 			est = o.Observe(c)
 		}
+		name := fmt.Sprintf("by capacity %v", byCap)
 		if byCap {
-			assert.Equal(t, NoPrefillCapacity, est.VPRefused)
-			assert.Equal(t, 1, est.VPLongestQueuedRun)
+			assert.Equal(t, NoPrefillCapacity, est.VPRefused, name)
+			assert.Equal(t, 1, est.VPLongestQueuedRun, name)
 			continue
 		}
-		assert.Equal(t, SourcePeakUnderQueue, est.VPSource)
-		assert.Equal(t, 20000.0, est.VP)
+		assert.Equal(t, 3, est.VPLongestQueuedRun, name)
+		assert.Equal(t, SourcePeakUnderQueue, est.VPSource, name)
+		assert.Equal(t, 20000.0, est.VP, name)
 	}
 }
 
