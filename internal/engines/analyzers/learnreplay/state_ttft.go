@@ -63,7 +63,7 @@ type DecodeTTFTState struct {
 	// pair is never split). A cycle with no reading holds an empty slot, so a
 	// figure ages out when the rows stop carrying one. Zero when unread. Its
 	// Waiting is the largest decode backlog (decodeBacklog) any cycle of the
-	// window carries, a backlog carried for DecodeTTFTLag after it drains.
+	// window carries, a backlog carried for prefill.DecodeTTFTLag after it drains.
 	EngineTTFT whatif.DecodeTTFT
 	// CalmCycle is the latest cycle, through this one, that read a decode
 	// TTFT and closed a run of whatif.TTFTWindowCycles such cycles carrying no
@@ -205,41 +205,13 @@ type decodeRows struct {
 	unread  bool
 }
 
-// decodeBacklog is the requests a serving decode row holds waiting on its
-// own capacity, and whether the row says so. Where vLLM says why requests
-// wait (CapacityQueueKnown) it is the part waiting for scheduling capacity.
-// The rest of a P/D decode queue is KV pulls in flight, which a request pays
-// at any load: on the staircase goldens a calm decode read 1 to 26 of them,
-// with a decode TTFT under 0.3 s. A row without the series (an older vLLM,
-// SGLang) cannot tell the two apart, so it reads no backlog, unknown.
-func decodeBacklog(rm domain.ReplicaMetrics) (int, bool) {
-	if !rm.CapacityQueueKnown {
-		return 0, false
-	}
-	return rm.CapacityQueueLength, true
-}
-
-// DecodeTTFTLag is how long a decode backlog taints the decode engine's TTFT
-// after the last cycle that read it. The TTFT is a rate over one minute
-// (registration.QueryAvgTTFT), and a request that queued has its first token
-// only once it leaves the queue, so for up to a minute the mean holds the
-// queue's wait with the queue empty. The capacity series is held over the
-// same minute (max_over_time[1m], registration.QueryCapacityQueueLength), so
-// while that hold lasts the two drain together. It does not always last: on
-// ttft-staircase-c-on a pod that was going away read 143 waiting, then 0 on
-// the next cycle, and one pod read 6.8 s with its own capacity at 0. So the
-// lag is the query's minute, again, and 30 s for the scrape, the fetch cache
-// and the cycle. Neither interval is in the recording, so it is a constant.
-const DecodeTTFTLag = 90 * time.Second
-
 // backlogTrack is one decode variant's backlog over the cycles: the latest
-// backlog and when it was read, the cycles in a row since the last tainted
-// one, the latest cycle that closed a calm window, and the latest cycle whose
-// rows did not say why they wait.
+// backlog, carried for prefill.DecodeTTFTLag (the rule the slo analyzer
+// reads too), the cycles in a row since the last tainted one, the latest
+// cycle that closed a calm window, and the latest cycle whose rows did not
+// say why they wait.
 type backlogTrack struct {
-	last         int
-	lastAt       time.Time
-	seen         bool
+	carry        prefill.DecodeBacklogCarry
 	calmRun      int
 	calm         int
 	calmAt       time.Time
@@ -248,24 +220,19 @@ type backlogTrack struct {
 }
 
 // note folds one cycle's backlog in and returns the backlog the cycle's TTFT
-// carries: the cycle's own, or the latest one read within DecodeTTFTLag
-// before it. read says the cycle has a decode TTFT: only such a cycle counts
-// toward a calm window, so a calm cycle is one the planner can answer at with
-// a calm decode figure, never an idle one; an idle cycle clears nothing. The
-// window must be whole: the first cycles of a window that begins during a
-// backlog's tail cannot see it.
+// carries: the cycle's own, or the latest one read within
+// prefill.DecodeTTFTLag before it (prefill.DecodeBacklogCarry). read says the
+// cycle has a decode TTFT: only such a cycle counts toward a calm window, so
+// a calm cycle is one the planner can answer at with a calm decode figure,
+// never an idle one; an idle cycle clears nothing. The window must be whole:
+// the first cycles of a window that begins during a backlog's tail cannot
+// see it.
 func (b *backlogTrack) note(d *decodeRows, cycle int, at time.Time, read bool) int {
 	if d.unread {
 		b.unreadCycle = cycle
 	}
 	b.unreadInView = b.unreadCycle > 0 && cycle-b.unreadCycle < whatif.TTFTWindowCycles
-	carried := d.waiting
-	switch {
-	case d.waiting > 0:
-		b.last, b.lastAt, b.seen = d.waiting, at, true
-	case b.seen && at.Sub(b.lastAt) <= DecodeTTFTLag:
-		carried = b.last
-	}
+	carried := b.carry.Carry(d.waiting, at)
 	if carried > 0 {
 		b.calmRun = 0
 		return carried
@@ -326,7 +293,7 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 		if d == nil {
 			continue
 		}
-		n, known := decodeBacklog(rm)
+		n, known := prefill.DecodeBacklog(rm)
 		d.waiting, d.unread = max(d.waiting, n), d.unread || !known
 		if rm.AvgTTFTKnown && positive(rm.AvgTTFT) {
 			d.ttftRows++

@@ -102,7 +102,7 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer,
 // SwitchTTFTProcessorSharing, SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
-// SwitchTTFTJointInputs and
+// SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTJointInputs and
 // SwitchKVPerRequestOutputDispersion; a name it does not know is an error,
 // and sets nothing. Never called on a production path; a test holds that.
 func (a *Analyzer) SetSwitchesForReplay(switches map[string]bool) error {
@@ -181,6 +181,9 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		// f at an unlearned prefill pod count read across counts, off by
 		// default (ttft_fleet.go, llm-d-incubation/llm-d-scaling-manager#169).
 		SwitchTTFTImbalanceAcrossCounts: &a.ttftImbalanceAcrossCounts,
+		// The decode engine's TTFT read off its calm cycles, off by default
+		// (ttft_fleet.go, llm-d-incubation/llm-d-scaling-manager#169).
+		SwitchTTFTLowLoadDecodeTTFT: &a.ttftLowLoadDecodeTTFT,
 		// J1: the joint prefill and decode model's inputs, in shadow
 		// (ttft_joint.go).
 		SwitchTTFTJointInputs: &a.ttftJointInputs,

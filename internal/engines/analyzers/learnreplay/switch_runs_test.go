@@ -163,6 +163,13 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// reaches a priced fleet. Its unit tests hold it (heldBy); the CLI's
 	// --imbalance-across-counts is held on the staircase recording.
 	slo.SwitchTTFTImbalanceAcrossCounts: nil,
+	// The decode engine's TTFT read off its calm cycles, off in production
+	// (llm-d-incubation/llm-d-scaling-manager#169). It moves no golden: the
+	// figure prices only a fleet with no decode line, and no committed
+	// recording's cycle reaches a priced fleet. Its unit tests hold it
+	// (heldBy), and TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases reads
+	// the figure it moves on the staircase recordings.
+	slo.SwitchTTFTLowLoadDecodeTTFT: nil,
 	// J1 of the joint prefill and decode TTFT sizing: the joint inputs in
 	// shadow, and the inverted V_P where P1 refused V_P. Base: main at
 	// 90d1489. Alone it moves no golden: it runs inside S1's pricing, which
@@ -1432,6 +1439,20 @@ var heldBy = map[string][]heldTest{
 	slo.SwitchTTFTImbalanceAcrossCounts: {
 		{"../slo", "TestTTFT_TheImbalanceAcrossCountsSwitch"},
 		{"../slo", "TestTTFT_TheImbalanceAcrossCountsDefault"},
+	},
+	// The first and fourth run the switch on and off and assert both; the
+	// others hold the on side (the hold's age, unread rows) and the
+	// constructor's off. The staircase test replays the four staircase
+	// recordings both ways.
+	slo.SwitchTTFTLowLoadDecodeTTFT: {
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTSwitch"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTHoldAgesOut"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTOffFromTheConstructor"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTThroughAnalyze"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTMixedFleet"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadDropsTheHold"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadRows"},
+		{".", "TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases"},
 	},
 	// The first runs the switch on and off through Analyze and asserts both;
 	// the model row replays the staircase goldens with it on.
