@@ -1279,7 +1279,7 @@ func (r *reporter) marginWords(op float64) string {
 // check at the peak, the test roles judges a spare by: removing capacity
 // is the costly mistake. Both tests being monotone in each count, it then
 // never cuts a role roles says has no spare unless it trades the role for
-// more of the other, which v.Grow names. Such a trade is not capped at the
+// more of the other, which v.Grow names and the sentence says. Such a trade is not capped at the
 // fleet's count of the other role: an under-provisioned fleet needs more
 // of it anyway.
 // With the prefill side not priced, it is the fewest decode replicas whose
@@ -1368,6 +1368,18 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 		notes = append(notes, e.fAssumed)
 	}
 	words := []string{fmt.Sprintf("needs %d prefill + %d decode (has %d + %d)", n.Prefill, n.Decode, np, nd)}
+	// A role the roles say has no spare is cut only in trade for more of
+	// the other: say so, or the sentence reads as cutting what it just
+	// said it cannot.
+	for _, rr := range v.Roles {
+		cut, other, grown := n.Prefill < np, roleDecodeWord, n.Decode > nd
+		if rr.Role == roleDecodeWord {
+			cut, other, grown = n.Decode < nd, rolePrefill, n.Prefill > np
+		}
+		if !rr.Spare && cut && grown {
+			words[0] += fmt.Sprintf(", trading %s for %s", rr.Role, other)
+		}
+	}
 	for _, alt := range []whatifapi.FleetCounts{{Prefill: n.Prefill - 1, Decode: n.Decode + 1}, {Prefill: n.Prefill + 1, Decode: n.Decode - 1}} {
 		if alt.Prefill < 1 || alt.Decode < 1 || alt.Prefill > bound || alt.Decode > bound {
 			continue

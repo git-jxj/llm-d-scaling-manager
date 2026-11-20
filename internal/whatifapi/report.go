@@ -377,8 +377,9 @@ type ReportStat struct {
 
 // ReportVerdict is the fleet judged at the load: Verdict, Summary in one
 // plain sentence, why in numbers (Reason), the roles that can lose a replica
-// (Shrink) or one more replica of which makes the fleet hold (Grow), and each
-// fleet checked. Scope is ScopeDecodeOnly when the prefill side does not
+// (Shrink), the roles Needed has more of than the fleet (Grow), and each
+// fleet checked. On OVER-PROVISIONED, Shrink and Grow can name the same
+// role: Needed may trade a role with no spare for more of one with a spare. Scope is ScopeDecodeOnly when the prefill side does not
 // price: such a verdict is never OVER-PROVISIONED.
 type ReportVerdict struct {
 	Verdict string `json:"verdict"`

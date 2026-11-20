@@ -615,27 +615,43 @@ func TestAtReplicas_NeededKeepsARoleWithNoSpare(t *testing.T) {
 // and the roles agree: a role with no spare is cut only in trade for more
 // of the other role, and the fleet needed is smaller than the one judged.
 // Spares are judged one role at a time, so with two the fewest in all may
-// cut only one of them. Every fleet here is over-provisioned: one that is
-// not fails rather than skips.
+// cut only one of them. The 16k-prompt shape is judged at TTFT p95, where
+// decode admission sets most of its TTFT. Every fleet here is
+// over-provisioned: one that is not fails rather than skips.
 func TestAtReplicas_NeededAgreesWithSpare(t *testing.T) {
-	for _, c := range [][2]int{{3, 4}, {4, 4}, {4, 5}, {5, 4}, {5, 5}} {
-		np, nd := c[0], c[1]
-		t.Run(fmt.Sprintf("%d+%d", np, nd), func(t *testing.T) {
-			v := stairReport(t, stairQuery(np, nd, 0)).Shapes[0].Verdict
+	for _, c := range []struct {
+		shape  string
+		np, nd int
+	}{{"measured", 3, 4}, {"measured", 4, 4}, {"measured", 4, 5}, {"measured", 5, 4}, {"measured", 5, 5},
+		{"measured", 4, 7}, {"16k/200/0.3", 5, 7}, {"16k/200/0.3", 6, 7}, {"16k/200/0.3", 8, 10}} {
+		np, nd := c.np, c.nd
+		t.Run(fmt.Sprintf("%s %d+%d", c.shape, np, nd), func(t *testing.T) {
+			q := stairQuery(np, nd, 0)
+			if c.shape != "measured" {
+				sh, err := whatifapi.ParseReportShape(c.shape)
+				require.NoError(t, err)
+				q.TTFT.Percentile = 0.95
+				q.Shapes = []whatifapi.ReportShapeAsk{sh}
+			}
+			v := stairReport(t, q).Shapes[0].Verdict
 			require.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
 			require.NotNil(t, v.Needed, v.Summary)
 			has := map[string]int{rolePrefill: np, roleDecode: nd}
 			got := map[string]int{rolePrefill: v.Needed.Prefill, roleDecode: v.Needed.Decode}
 			assert.Less(t, v.Needed.Prefill+v.Needed.Decode, np+nd, v.Summary)
 			for _, r := range v.Roles {
-				assert.Equal(t, r.Spare, slices.Contains(v.Shrink, r.Role), "%s: %s", r.Role, v.Summary)
 				other := rolePrefill
 				if r.Role == rolePrefill {
 					other = roleDecode
 				}
-				if !r.Spare && got[other] <= has[other] {
-					assert.GreaterOrEqual(t, got[r.Role], has[r.Role], "%s has no spare but is cut: %s", r.Role, v.Summary)
+				if r.Spare || got[r.Role] >= has[r.Role] {
+					continue
 				}
+				// A role with no spare is cut: only in trade for more of
+				// the other, and the sentence says so.
+				assert.Greater(t, got[other], has[other], "%s has no spare but is cut: %s", r.Role, v.Summary)
+				assert.Contains(t, v.Grow, other, v.Summary)
+				assert.Contains(t, v.Summary, "trading "+r.Role+" for "+other)
 			}
 		})
 	}

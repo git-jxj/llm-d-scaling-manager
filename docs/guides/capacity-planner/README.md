@@ -519,9 +519,10 @@ It replays the recording once and answers, for each shape and load:
   [`POST /v1/size`](api.md#the-size), for example "needs 3 prefill +
   3 decode (has 2 + 2)". A role it cuts must hold at the window's peak
   too, as a spare must, so it never cuts a role the sentence says has no
-  spare unless it adds replicas of the other role in its place. Other
-  mixes of the same size that hold are listed too. With the prefill side
-  not priced it says "needs at least 3 decode".
+  spare unless it also adds replicas of the other role, and then it says
+  so ("trading prefill for decode"). Other mixes of the same size that
+  hold are listed too. With the prefill side not priced it says "needs at
+  least 3 decode".
   Each role's standing is in the sentence ("decode: one fewer holds even
   at the peak 43.2 r/s; prefill: no spare (1.9% under its operating
   point)"), with any prefill imbalance f that no run learned at that pod
