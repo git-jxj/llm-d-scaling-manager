@@ -1571,7 +1571,8 @@ finishing in a window are not the ones that prefilled in it. A mean above the
 buckets' upper-bound mean proves that, so the reading is `Assumed` and
 `AssumedPromptSpread` stands. It does not read as `cv` 0, which the second moment
 alone would give, or as a small `cv` just above 0. Past that check `cv` is the
-widest spread the buckets can hold at the mean, so it is at or above any spread
+widest spread the buckets can hold at the mean (or, for a mean below their
+lower edges, every request at its upper bound), so it is at or above any spread
 they allow there (`TestReadPromptSpread_BetweenTheTruthAndTheUpperEdges`). A mean inside the bound can still
 be another population's: no histogram can show that, so a pod missing from the
 histogram whose prompts have the same mean and a wider spread reads low.

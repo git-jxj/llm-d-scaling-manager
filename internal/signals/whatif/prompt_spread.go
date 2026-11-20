@@ -199,8 +199,11 @@ const promptMeanTolerance = 1e-9
 // mean proves two populations, and the reading is refused as Assumed, not
 // read as cv 0 or close to it. A mean below their lower-bound mean proves the
 // same, and reads every request at its bucket's upper bound, high, the safe
-// side. A mean inside the bounds can still be another population's, which no
-// histogram can show.
+// side. One population's mean is never on the lower edges, but a mean read a
+// little low can fall under them: constant 5050-token prompts read cv 0.10 at
+// their mean and 1.73 at a mean 1% low; every request at its upper bound read
+// them at 1.71 either way. A mean inside the bounds can still be another
+// population's, which no histogram can show.
 //
 // Mass past the last finite bound has no upper bound, so cv is the top and
 // Clamped, as is a cv above it. With no histogram, no request in it, or no mean
