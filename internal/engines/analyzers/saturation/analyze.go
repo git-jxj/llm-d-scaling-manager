@@ -745,8 +745,9 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 		// bound (SwitchDecodeLandedNeedsABound).
 		caps := c.atCapBatchCaps()
 		for i := range rows {
-			rows[i] = landedWithoutBound(rows[i], c.input.ReplicaMetrics[i], c.rolesByVariant[rows[i].VariantName],
-				caps[rows[i].VariantName], c.cfg.KvCacheThreshold)
+			v := rows[i].VariantName
+			rows[i] = landedWithoutBound(rows[i], c.input.ReplicaMetrics[i], c.rolesByVariant[v],
+				caps[v], c.cfg.KvCacheThreshold, engineParamsFor(c.a, c.input.Namespace, c.input.ModelID, v))
 		}
 	}
 	served := c.tune.servedBounds(rows, c.rolesByVariant, c.cfg.QueueLengthThreshold, c.cfg.KvCacheThreshold, c.fleetOutput,

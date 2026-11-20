@@ -2,6 +2,7 @@ package saturation
 
 import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 )
 
 // decodeCapacityView returns rm, a replica of a disaggregated model, with its
@@ -122,10 +123,22 @@ func decodeCapacityViews(rows []domain.ReplicaMetrics, rolesByVariant map[string
 // recorded a k2 at 24 % of the cache, and priced the variant there for the
 // rest of the day.
 //
+// The loop also stops when the step's token budget is spent. A rank whose
+// budget is known is clear of it only below the batch the budget holds in
+// steady state (steadyBatch, the derived k2's own: the prompt it computes per
+// request and the tokens a step takes with speculation, decodeStepBudget),
+// read against its busiest rank's running count (busiestRankRunning).
+// That, not one step's sum, is the test: with chunked prefill a landed
+// request is admitted on any budget left after the running requests, and
+// computes its prompt over the next steps. One step's sum of the landed
+// prompts reads every landed request as bound where B is small against the
+// prompt a decode computes: 256 tokens against 1,600 a request.
+//
 // On, such a replica's queue is the capacity part alone, as without the
 // landed series. Where the cap is not stated, the running count is not read,
-// or the busiest rank's KV is at or over the threshold, the landed requests
-// stay in, as before. Off, as before.
+// the busiest rank's KV is at or over the threshold, or the busiest rank's
+// running count is at the budget's steady batch, the landed requests stay in,
+// as before. Off, as before.
 //
 // Off from the constructor: it moves what decode records and charges, and
 // the default changes only after review.
@@ -135,15 +148,56 @@ const SwitchDecodeLandedNeedsABound = "decode-landed-queue-needs-a-bound"
 // the landed requests taken back out where raw cannot be at a bound
 // (SwitchDecodeLandedNeedsABound): a decode of a P/D model whose stated cap
 // maxNumSeqs is above its running count summed over ranks -- so no rank is at
-// it -- and whose busiest rank's KV is under kvThreshold. Any other row is
-// view unchanged.
-func landedWithoutBound(view, raw domain.ReplicaMetrics, role string, maxNumSeqs int64, kvThreshold float64) domain.ReplicaMetrics {
+// it -- whose busiest rank's KV is under kvThreshold, and whose running count
+// is under the batch its token budget holds where params state one
+// (landedHasBudgetRoom). Any other row is view unchanged.
+func landedWithoutBound(view, raw domain.ReplicaMetrics, role string, maxNumSeqs int64, kvThreshold float64,
+	params *capacity.EngineParams) domain.ReplicaMetrics {
 	if domain.CanonicalRole(role) != domain.RoleDecode || !raw.CapacityQueueKnown || !raw.LandedQueueKnown ||
 		maxNumSeqs <= 0 || !raw.RunningRequestsKnown || int64(raw.RunningRequests) >= maxNumSeqs ||
-		!(raw.BusiestRankKvUsage() < kvThreshold) {
+		!(raw.BusiestRankKvUsage() < kvThreshold) || !landedHasBudgetRoom(raw, role, maxNumSeqs, params) {
 		return view
 	}
 	view.QueueLength = raw.CapacityQueueLength
 	view.MaxRankQueueLength = raw.BusiestRankCapacityQueue()
 	return view
+}
+
+// landedHasBudgetRoom reports whether raw, a decode replica, runs fewer
+// requests on its busiest rank (busiestRankRunning) than one rank holds at its
+// token budget in steady state: steadyBatch at params' budget B, capped at
+// maxNumSeqs, with the prompt the replica computes and the tokens a step
+// takes (decodeStepBudget; the whole prompt and one token where the replica
+// does not report them). Where params state no budget, B is unknown and the
+// budget is not what stops the waiting loop: true. A figure that is not a
+// number (an unread shape) is no room.
+func landedHasBudgetRoom(raw domain.ReplicaMetrics, role string, maxNumSeqs int64, params *capacity.EngineParams) bool {
+	if params == nil || params.EffectiveMaxBatchedTokens <= 0 {
+		return true
+	}
+	steady := steadyBatch(float64(params.EffectiveMaxBatchedTokens), float64(maxNumSeqs),
+		raw.AvgInputTokens, raw.AvgOutputTokens, decodeStepBudget(raw, role, params))
+	return busiestRankRunning(raw) < steady
+}
+
+// busiestRankRunning is the requests raw's busiest rank runs. The engine
+// reports the running count summed over ranks, so it is the mean a rank, scaled
+// by the busiest rank's KV over the pod's mean KV (requests hold KV, so the
+// busiest rank by KV runs about that share more), and never above the sum.
+// Where the mean KV is not read it is the sum, which no rank can exceed. On a
+// pod of one rank it is the count. Measured on a day-long P/D recording: a pod
+// of four ranks running 12 at a busiest-rank KV of 0.24 read as the sum was
+// over a steady batch of 9.7 a rank, where its ranks ran about 3 each.
+func busiestRankRunning(raw domain.ReplicaMetrics) float64 {
+	sum := float64(raw.RunningRequests)
+	ranks := raw.Ranks()
+	if ranks <= 1 {
+		return sum
+	}
+	mean := raw.KvCacheUsage
+	if !(mean > 0) || !(mean <= 1) {
+		return sum
+	}
+	skew := max(1, raw.BusiestRankKvUsage()/mean)
+	return min(sum, sum/float64(ranks)*skew)
 }

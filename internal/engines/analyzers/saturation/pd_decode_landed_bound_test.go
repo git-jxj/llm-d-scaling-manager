@@ -2,6 +2,7 @@ package saturation
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -21,7 +22,12 @@ import (
 // pod, and the variant was priced there from then on.
 
 // landedRow is that pod: five landed requests on its busiest rank, running
-// sequences over its ranks, the busiest rank at busiestKV.
+// sequences over its ranks, the busiest rank at busiestKV. It computes 1,600
+// prompt tokens a request and accepts 1.8 draft tokens a step (budgetRow), so
+// one rank's 256-token budget holds 256 x 250 / (1,600 + 4 x 250) = 24.6
+// requests in steady state (steadyBatch). Its mean KV is 0.15, so its busiest
+// rank runs 0.24 / 0.15 = 1.6 times the mean a rank of four: 0.4 x running
+// (busiestRankRunning).
 func landedRow(running int, busiestKV float64) domain.ReplicaMetrics {
 	const n = 5
 	total := budgetRanks * budgetKVPerRank
@@ -31,6 +37,8 @@ func landedRow(running int, busiestKV float64) domain.ReplicaMetrics {
 	rm.MaxRankKvCacheUsage = busiestKV
 	rm.RunningRequests, rm.RunningRequestsKnown = running, true
 	rm.RequestRate, rm.RequestRateKnown = budgetReqRate, true
+	rm.PrefillComputedTokenRate, rm.PrefillComputedTokenRateKnown = budgetPromptRate, true
+	rm.SpecAcceptedPerStep, rm.SpecAcceptedPerStepKnown = budgetAccepted, true
 	return withLanded(withReason(rm, 0), n)
 }
 
@@ -76,6 +84,9 @@ func TestDecodeLandedNeedsABound_ABoundReplicaStillRecords(t *testing.T) {
 			rm.RunningRequestsKnown = false
 			return rm
 		}(),
+		// 62 running is under the cap of 64, and its busiest rank's 24.8 is
+		// over the 24.6 the budget holds (TestDecodeLandedNeedsABound_TheBudget).
+		"the budget may be spent": landedRow(62, 0.24),
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.True(t, analyzeLanded(t, row, true))
@@ -86,12 +97,61 @@ func TestDecodeLandedNeedsABound_ABoundReplicaStillRecords(t *testing.T) {
 // The rule on one row: a stated cap is needed to rule the cap out.
 func TestDecodeLandedNeedsABound_TheRule(t *testing.T) {
 	raw := landedRow(9, 0.24)
+	p := budgetParams()
 	view := decodeCapacityView(raw, domain.RoleDecode, 64)
 	require.Equal(t, 5, view.BusiestRankQueue(), "precondition: the view counts the landed five")
-	assert.Equal(t, 0, landedWithoutBound(view, raw, domain.RoleDecode, 64, 0.8).BusiestRankQueue())
-	assert.Equal(t, 0, landedWithoutBound(view, raw, domain.RoleDecode, 64, 0.8).QueueLength)
-	assert.Equal(t, view, landedWithoutBound(view, raw, domain.RoleDecode, 0, 0.8), "no stated cap: as before")
-	assert.Equal(t, view, landedWithoutBound(view, raw, domain.RolePrefill, 64, 0.8), "not a decode: as before")
+	assert.Equal(t, 0, landedWithoutBound(view, raw, domain.RoleDecode, 64, 0.8, p).BusiestRankQueue())
+	assert.Equal(t, 0, landedWithoutBound(view, raw, domain.RoleDecode, 64, 0.8, p).QueueLength)
+	assert.Equal(t, view, landedWithoutBound(view, raw, domain.RoleDecode, 0, 0.8, p), "no stated cap: as before")
+	assert.Equal(t, view, landedWithoutBound(view, raw, domain.RolePrefill, 64, 0.8, p), "not a decode: as before")
+}
+
+// vLLM's waiting loop also stops when the step's token budget is spent. One
+// rank of the pod holds 24.6 requests at its budget of 256 (landedRow): at
+// 60 running its busiest rank runs 24 and is clear of it; at 62, 24.8, it may
+// be at it, and the landed requests stay its backlog. Priced at the whole
+// prompt (no computed rate read) the budget holds 2.2, and 9 running, 3.6 on
+// the busiest rank, may be at it. With no budget stated, B is unknown and only
+// the cap and the KV rule.
+func TestDecodeLandedNeedsABound_TheBudget(t *testing.T) {
+	p := budgetParams()
+	out := func(raw domain.ReplicaMetrics, params *capacity.EngineParams) bool {
+		view := decodeCapacityView(raw, domain.RoleDecode, 64)
+		require.Equal(t, 5, view.BusiestRankQueue(), "precondition: the view counts the landed five")
+		return landedWithoutBound(view, raw, domain.RoleDecode, 64, 0.8, params).BusiestRankQueue() == 0
+	}
+	steady := steadyBatch(256, 64, budgetIn, budgetOut, decodeStepBudget(landedRow(9, 0.24), domain.RoleDecode, p))
+	require.InDelta(t, 24.6, steady, 0.05)
+	assert.True(t, out(landedRow(60, 0.24), p), "60 running, 24 on the busiest rank: room in the budget")
+	assert.False(t, out(landedRow(62, 0.24), p), "62 running, 24.8 on the busiest rank: it may have spent its budget")
+
+	whole := landedRow(9, 0.24)
+	whole.PrefillComputedTokenRateKnown = false
+	assert.False(t, out(whole, p), "priced at the whole prompt the budget holds 2.2")
+
+	unstated := budgetParams()
+	unstated.MaxNumBatchedTokens, unstated.EffectiveMaxBatchedTokens = 0, 0
+	assert.True(t, out(landedRow(30, 0.24), unstated), "no budget: the cap and the KV decide")
+	assert.True(t, out(landedRow(30, 0.24), nil), "no params: the cap and the KV decide")
+
+	nan := landedRow(9, 0.24)
+	nan.AvgOutputTokens = math.NaN()
+	assert.False(t, out(nan, p), "an unread shape is no room")
+}
+
+// The busiest rank's running count: the mean a rank, scaled by the busiest
+// rank's KV over the mean, never above the sum; the sum where the mean KV is
+// not read; the count on one rank.
+func TestDecodeLandedNeedsABound_BusiestRankRunning(t *testing.T) {
+	assert.InDelta(t, 4.0, busiestRankRunning(landedRow(10, 0.24)), 1e-9, "10 / 4 x 1.6")
+	assert.InDelta(t, 2.5, busiestRankRunning(landedRow(10, 0.10)), 1e-9, "a busiest rank under the mean reads the mean")
+	assert.InDelta(t, 10.0, busiestRankRunning(landedRow(10, 0.90)), 1e-9, "6x the mean: held at the sum")
+	unread := landedRow(10, 0.24)
+	unread.KvCacheUsage = 0
+	assert.InDelta(t, 10.0, busiestRankRunning(unread), 1e-9, "no mean KV: the sum")
+	one := landedRow(10, 0.24)
+	one.EngineRanks = 1
+	assert.InDelta(t, 10.0, busiestRankRunning(one), 1e-9, "one rank: the count")
 }
 
 func TestDecodeBudgetSwitches_OffFromTheConstructor(t *testing.T) {

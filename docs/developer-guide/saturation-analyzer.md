@@ -355,7 +355,14 @@ KV met the queue threshold of 5 and recorded a `k2` at 24 % of the cache
 (issue llm-d-incubation/llm-d-scaling-manager#201). The replay switch
 `decode-landed-queue-needs-a-bound` (`SwitchDecodeLandedNeedsABound`,
 `landedWithoutBound`) reads such a replica's queue as the capacity part
-alone. Off from the constructor.
+alone. The loop also stops when the step's token budget is spent, so where
+the flags give a budget the replica's busiest rank must also run fewer
+requests than `N_steady` above, priced at the prompt it computes. The engine
+reports running summed over ranks, so the busiest rank's count is the mean a
+rank scaled by its KV over the pod's mean, at most the sum. One step's sum is not the
+test: with chunked prefill a landed request starts on any budget left, and
+5 landed requests of 1,600 computed tokens are over a 256-token budget on
+every step. Off from the constructor.
 
 Why the at-cap readers do not read the learned cap: it is the highest
 plateau seen, so it may sit below the true cap. Below the true cap vLLM
