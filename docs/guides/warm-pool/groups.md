@@ -27,19 +27,24 @@ ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless
 sha256:e836bcf5bfa1268b5ec1c8027ba9732e2cafff11ab554dd8dbac67b110c65faf
 ```
 
+This image is based on launcher v0.6.4, not on the v0.8.0 that single-Pod pools
+run. It does not have v0.8.0's eviction fixes: an evicted rank's worker
+processes can keep their GPU memory, and a `DELETE` can stall that Pod's
+launcher, health checks included, for up to 10 s.
+
 It is `vllm/vllm-openai:v0.26.0` with the fork's `launcher.py` on top. Pin the
 digest to keep the image fixed, or build your own from the
 [fork](https://github.com/ev-shindin/llm-d-fast-model-actuation).
 
-From v0.12.0 on there is a second choice, built and released by this repo:
+There is a second choice, built and released by this repo:
 `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher:<release>`.
-It carries the same follower fix on FMA's newer launcher (v0.8.0) and runs
-vLLM v0.34.0, and it is signed. **Use it only for workloads that run vLLM
-v0.34.0:** the pool's engines run the launcher's vLLM, not the workload's, and
-the fork image above runs v0.26.0. So: a v0.26 workload takes the fork image,
-and a v0.34.0 workload takes this one, which has **not** run a group on a GPU
-yet. The copy in `warmpool/supervisor/` is the source of this new image, not
-of the fork image. Which image fits which workload:
+It carries the same follower fix on FMA's v0.8.0 launcher, so it has the
+eviction fixes, runs vLLM v0.34.0, and is signed. **Use it only for workloads
+that run vLLM v0.34.0:** the pool's engines run the launcher's vLLM, not the
+workload's, and the fork image above runs v0.26.0. So: a v0.26 workload takes
+the fork image, and a v0.34.0 workload takes this one, which has **not** run a
+group on a GPU yet. The copy in `warmpool/supervisor/` is the source of this
+new image, not of the fork image. Which image fits which workload:
 [the table in `warmpool/README.md`](../../../warmpool/README.md#which-launcher-image-to-use);
 how to get and verify it:
 [our own launcher image](install.md#our-own-launcher-image-optional-not-yet-the-default).

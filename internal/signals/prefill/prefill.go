@@ -180,6 +180,18 @@ type Cycle struct {
 	// ALineOnly fits a from the straight line alone, as P1 shipped: the
 	// quadratic off (saturation.SwitchPrefillAQuadratic).
 	ALineOnly bool
+	// ALowLoadPerRank reads a row's occupancy for the low-load test per
+	// engine rank: the row's request rate times its service time, over
+	// domain.ReplicaMetrics.Ranks. A row of an LWS group or a data-parallel
+	// pod sums its engines' requests, so the whole row reads the engines'
+	// occupancies summed, and four engines at 0.08 each read 0.32 and are
+	// refused. Off, the row is read whole, as P1 shipped
+	// (saturation.SwitchPrefillALowLoadPerRank).
+	ALowLoadPerRank bool
+	// AFromTiming fits a from the engine's prefill timing where the
+	// low-load fit has too few minutes (timing.go;
+	// saturation.SwitchPrefillAEngineTiming).
+	AFromTiming bool
 	// Now is the cycle's time.
 	Now time.Time
 }
@@ -268,6 +280,17 @@ type Estimate struct {
 	AInterceptSE    float64
 	AShortestPrompt float64
 	AExtrapolated   bool
+	// ASource is where a came from: the low-load fit, or the engine's
+	// prefill timing (timing.go); empty while a is refused.
+	// ATimingMinutes is how many minutes the timing fit read (the quieter
+	// half), ATimingOccupancy the per-engine occupancy that half is cut at,
+	// and ATimingRefused why the timing fit refused a, where it was tried;
+	// all zero where it was not (Cycle.AFromTiming off, or the low-load fit
+	// had the minutes).
+	ASource          ASource
+	ATimingMinutes   int
+	ATimingOccupancy float64
+	ATimingRefused   Refusal
 
 	// F is the de-biased imbalance, at least 1; zero when refused. It is
 	// the median over every minute kept, whatever the pod count of each:
@@ -287,6 +310,11 @@ type Estimate struct {
 	// learned f at any count.
 	FByPods        map[int]float64
 	FSamplesByPods map[int]int
+	// FMultiRank is a kept minute with a row of more than one engine rank: a
+	// data-parallel pod, or an LWS group whose every Pod runs an engine,
+	// collapsed to one row. f is then the spread across rows; the spread
+	// across the engines inside a row is not seen, and f reads low for it.
+	FMultiRank bool
 
 	// Admitted is how many rows were admitted this cycle, and Refused how
 	// many were not, by reason.
@@ -318,6 +346,10 @@ type sample struct {
 	svc        float64
 	overhead   float64
 	overheadOK bool
+	// timed is the minute's engine prefill timing, for the fit of a from it
+	// (timing.go), valid when timedOK.
+	timed   timedSample
+	timedOK bool
 }
 
 // promptPoint is one row's effective prompt length, for the steady gate.
@@ -339,6 +371,10 @@ type fSample struct {
 	at   time.Time
 	f    float64
 	pods int
+	// multiRank: a row of the minute ran more than one engine rank (a
+	// data-parallel pod, or an LWS group collapsed to one row), so f is of
+	// rows, not of engines.
+	multiRank bool
 }
 
 // keyState is what one key keeps.
@@ -447,21 +483,38 @@ func (o *Observer) Observe(c Cycle) Estimate {
 		s.multiRank = rm.Ranks() > 1
 		svc := rm.AvgServiceTime
 		rr, rrOK := requestRate(rm)
+		occupancy := rr * svc
+		if c.ALowLoadPerRank {
+			occupancy /= float64(rm.Ranks())
+		}
 		if c.Disaggregated && steady && rm.QueueLength == 0 && rrOK && finitePositive(svc) &&
-			rr*svc <= LowLoadOccupancy {
+			occupancy <= LowLoadOccupancy {
 			s.lowLoad, s.ieff, s.svc = true, ieff, svc
 			if finitePositive(rm.AvgTTFT) && rm.AvgTTFT >= svc {
 				s.overhead, s.overheadOK = rm.AvgTTFT-svc, true
 			}
 		}
+		if c.AFromTiming && c.Disaggregated && ieffOK && rrOK {
+			s.timed, s.timedOK = timed(rowTiming{prefill: rm.AvgPrefillTime, prefillKnown: rm.AvgPrefillTimeKnown,
+				ttft: rm.AvgTTFT, ttftKnown: rm.AvgTTFTKnown, queue: rm.AvgQueueTime, queueKnown: rm.AvgQueueTimeKnown,
+				ranks: rm.Ranks()}, ieff, rr)
+		}
 		ps.add(s)
-		shares = append(shares, share{rate: s.rate, rateOK: s.rateOK, requests: rr, requestsOK: rrOK})
+		shares = append(shares, share{rate: s.rate, rateOK: s.rateOK, requests: rr, requestsOK: rrOK, multiRank: s.multiRank})
 	}
 	ks.prune(c.Now)
 
 	ks.noteImbalance(shares, allAdmitted, c.Now)
 	est.capacity(ks, c, sglang)
 	est.fixed(ks, c.Disaggregated, c.ALineOnly)
+	if c.AFromTiming {
+		switch est.ARefused {
+		case "":
+			est.ASource = ASourceLowLoad
+		case TooFewLowLoadMinutes:
+			est.fixedFromTiming(ks)
+		}
+	}
 	est.curveBound()
 	est.imbalance(ks, shares, serving)
 	return est

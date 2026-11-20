@@ -299,7 +299,7 @@ var identityCases = []struct {
 	code int
 }{
 	{"replicas-to-slo", []string{"replicas-to-slo"}, 0},
-	{"replicas-to-slo at a rate", []string{"replicas-to-slo", "--rate", "5", "--decode", "2"}, 0},
+	{"replicas-to-slo at a rate", []string{"replicas-to-slo", "--rate", "4", "--decode", "2"}, 0},
 	{"replicas-to-slo at cycle 90", []string{"replicas-to-slo", "--cycle", "90"}, 0},
 	{"replicas-to-slo, an assumed ratio", []string{"replicas-to-slo", "--tpot-percentile", "90", "--assume-tpot-ratio", "1.3",
 		"--assume-output-tokens", "500"}, 0},
@@ -780,7 +780,7 @@ func TestPrometheus_HelpListsTheWindowFlags(t *testing.T) {
 	slices.Sort(want)
 	assert.Equal(t, want, got)
 	assert.NotContains(t, want, "prometheus")
-	assert.Len(t, want, 15)
+	assert.Len(t, want, 18)
 }
 
 // queryOf is a registered query's PromQL in the sweep's namespace.

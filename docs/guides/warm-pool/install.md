@@ -30,20 +30,21 @@ Each pool Pod runs two containers, and only one is built here:
 
 | container | image | owner |
 | --- | --- | --- |
-| `inference-server` (pool of Pods) | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher` | Fast Model Actuation |
-| `inference-server` (pool of **groups**) | `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` — `--launcher-image` is required, and `create` refuses without it | **our fork**, [ev-shindin/llm-d-fast-model-actuation](https://github.com/ev-shindin/llm-d-fast-model-actuation) — see [pools of groups](groups.md#a-group-needs-a-patched-supervisor-image) |
-| `proxy` | the image `config/warmpool` pins, or `--proxy-image` | this repo (`make docker-build-warmpool-proxy`) |
+| `inference-server` (pool of Pods) | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0`, pinned by digest | Fast Model Actuation |
+| `inference-server` (pool of **groups**) | `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` — `--launcher-image` is required, and `create` refuses without it. Based on launcher v0.6.4, so it lacks v0.8.0's eviction fixes | **our fork**, [ev-shindin/llm-d-fast-model-actuation](https://github.com/ev-shindin/llm-d-fast-model-actuation) — see [pools of groups](groups.md#a-group-needs-a-patched-supervisor-image) |
+| `proxy` | the image `config/warmpool` names, `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy` (`:main`, or the release's tag in a release checkout), or `--proxy-image` | this repo, published with each release (`make docker-build-warmpool-proxy` to build your own) |
 
-A pool node must pull from `ghcr.io/llm-d-incubation`, or for a pool of groups
-from `ghcr.io/ev-shindin`. On an air-gapped or mirrored registry, mirror
-whichever applies. It is easy to miss: neither is built by this repo. A pool of
+A pool node must pull from `ghcr.io/llm-d-incubation`, and for a pool of groups
+also the fork's `ghcr.io/ev-shindin/fma-launcher`. On an air-gapped or mirrored
+registry, mirror whichever applies. It is easy to miss: the launchers are not
+built by this repo. A pool of
 groups needs the fork, because the stock launcher cannot start a multi-node
 follower at all. Why the stock launcher is required: see
 [Details](#why-the-launcher-image-is-required).
 
 #### Our own launcher image (optional, not yet the default)
 
-From v0.12.0 on, each release also publishes a launcher built here:
+Each release after v0.12.1 also publishes a launcher built here:
 
 ```
 ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher:<release>
@@ -63,7 +64,7 @@ To use it, look up the release's digest, verify its signature (cosign 3.0 or
 later), and pass it to `create` pinned by digest:
 
 ```bash
-V=<release, v0.12.0 or later>
+V=<release, later than v0.12.1>
 IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher
 D="$(docker buildx imagetools inspect "$IMAGE:$V" --format '{{json .Manifest}}' | jq -r .digest)"
 cosign verify "$IMAGE@$D" \
@@ -80,7 +81,7 @@ Every warm copy carries `--gpu-memory-utilization`. When the controller flag
 `--warm-pool-gpu-memory-utilization` is 0 and the workload sets none, the
 controller passes 0.9, because vLLM v0.34's own default is 1.0 and would leave
 no room for sleepers. A pool's `warmPoolGPUMemoryUtilization` overrides the
-flag for that pool (from v0.12.0; before, the key was ignored). A model already
+flag for that pool (in releases after v0.12.1; before, the key was ignored). A model already
 resident with the old value keeps it, and is not reused until it is evicted.
 What the image is and how it is built:
 [`warmpool/README.md`](../../../warmpool/README.md#the-image-built-from-it).
@@ -177,7 +178,7 @@ cluster-specific, and three fail in a way that looks like something else:
 | --- | --- | --- |
 | `warmpool-networkpolicy.yaml` | the `>>> EDIT THIS <<<` `namespaceSelector` — the namespace the scaling manager runs in | every read fails; the pool reports itself **empty** while holding accelerators |
 | `warmpool-scaledobject.yaml` | the two `>>> EDIT THIS <<<`, in `scalerAddress` and the `authenticationRef` name: the scaling manager's namespace. On a plaintext install, use the `.svc.cluster.local` address and delete the `authenticationRef` | applies cleanly, KEDA creates the HPA, the address never resolves, and the scaling manager never learns the pool exists |
-| `warmpool-deployment.yaml` | the proxy `image` — build your own with `make docker-build-warmpool-proxy` | `ImagePullBackOff`; the shipped digest is a personal registry namespace |
+| `warmpool-deployment.yaml` | the proxy `image`, only on a mirrored registry or to run your own build (`make docker-build-warmpool-proxy`) | `ImagePullBackOff` when nodes cannot reach `ghcr.io/llm-d-incubation` |
 | `warmpool-deployment.yaml` | `runtimeClassName`, and the `claimName` of your model cache | admission fails outright; or the second replica sits Pending forever if the claim is not **ReadWriteMany** |
 
 The `scalerAddress` one is the quiet one: the placeholder is a legal string, so

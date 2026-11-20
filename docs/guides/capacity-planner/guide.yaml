@@ -9,7 +9,7 @@ sample:
       A sample recording, from the source tree of the release you run: one P/D model, one prefill and one decode
       replica, an hour of a test run. Or put your own run.jsonl.gz from the record guide in recordings/ instead.
     run: |
-      export V=<release, v0.11.2 or later>
+      export V=<release, v0.12.0 or later>
       mkdir -p recordings
       curl -fsSL -o recordings/ols-sweep.jsonl.gz \
         https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz
@@ -31,7 +31,7 @@ get:
       off your network; never publish it beyond 127.0.0.1. Rootless Podman: --userns=keep-id in place of --user,
       and with SELinux mount with :ro,Z.
     run: |
-      export V=<release, v0.11.2 or later>
+      export V=<release, v0.12.0 or later>
       mkdir -p recordings
       docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
         ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V}
@@ -46,7 +46,7 @@ get:
       Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
       signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
     run: |
-      export V=<release, v0.11.2 or later> OS=linux ARCH=amd64
+      export V=<release, v0.12.0 or later> OS=linux ARCH=amd64
       B=capacity-planner-${V}-${OS}-${ARCH}
       URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
       curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
@@ -117,3 +117,17 @@ tunnel:
   run: |
     ssh -N -L 8080:127.0.0.1:8080 <user>@<host>
     # then open http://127.0.0.1:8080/ on your laptop
+
+fleet:
+  check:
+    note: |
+      From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw, with
+      what that load grown by a fifth does beside it, for its own shape and two it never saw. The sample learned no prefill
+      speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at 50%, 80% and 100%
+      of the knee and the load seen.
+    run: |
+      bin/capacity-planner at-replicas \
+        --recording internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz \
+        --assume-vp 200000 --assume-a 20ms --ttft 2s@p90 --tpot 30ms \
+        --shape measured --shape 1k/1k --shape 16k/200/0.3 \
+        --load 50% --load 80% --load 5r/s --load seen --load-seen-x 1.2

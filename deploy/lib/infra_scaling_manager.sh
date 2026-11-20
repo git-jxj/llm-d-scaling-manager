@@ -62,6 +62,7 @@ llmsm_apply_watch_namespace_rbac() {
     printf '%s
 ' "$rendered" | kubectl apply -f - > /dev/null
     llmsm_apply_watch_namespace_hpa_repair "$tmp_overlay"
+    llmsm_apply_watch_namespace_dset_role_writer "$tmp_overlay"
     kubectl apply -f - > /dev/null <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -141,6 +142,65 @@ roleRef:
   name: ${role}
 EOF
     log_success "  Role/$role and RoleBinding/$binding in $LLMSM_WATCH_NS (KEDA_HPA_REPAIR)"
+}
+
+# llmsm_watch_dset_role_writer_names echoes `role binding` -- the names of the
+# role writer grant this install copies into a namespace it manages from
+# outside. Suffixed like llmsm_watch_rbac_names.
+llmsm_watch_dset_role_writer_names() {
+    local suffix
+    suffix="$(llmsm_ns_suffix "$LLMSM_NS")"
+    printf 'scaling-manager-dset-role-writer-role-%s scaling-manager-dset-role-writer-rolebinding-%s' "$suffix" "$suffix"
+}
+
+# llmsm_apply_watch_namespace_dset_role_writer copies the role writer Role from
+# overlay $1 into $LLMSM_WATCH_NS, with a RoleBinding, when DSET_ROLE_WRITER is
+# true, and removes an earlier copy when it is not. Labelled with the grant key,
+# so llmsm_revoke_namespace and the undeploy take it with the manager Role.
+llmsm_apply_watch_namespace_dset_role_writer() {
+    local tmp_overlay="$1" role binding rendered state
+    read -r role binding <<< "$(llmsm_watch_dset_role_writer_names)"
+    if ! llmsm_dset_role_writer_on; then
+        local specs=("rolebinding $binding $LLMSM_WATCH_NS" "role $role $LLMSM_WATCH_NS")
+        state="$(llmsm_delete_hpa_repair_grant "${specs[@]}")"
+        case "${state%%|*}" in
+            forbidden) log_warning "DSET_ROLE_WRITER is not true, and the DisaggregatedSet grant an earlier install made in $LLMSM_WATCH_NS could not be deleted (Forbidden). A cluster admin runs:  $(llmsm_hpa_repair_delete_cmd "${specs[@]}")" ;;
+            failed) log_warning "DSET_ROLE_WRITER is not true, and the DisaggregatedSet grant an earlier install made in $LLMSM_WATCH_NS could not be deleted (${state#*|}). Delete it with:  $(llmsm_hpa_repair_delete_cmd "${specs[@]}")" ;;
+            deleted) log_info "DSET_ROLE_WRITER is not true: the DisaggregatedSet grant an earlier install made in $LLMSM_WATCH_NS is deleted$(llmsm_render_active && printf ' by admin.sh')" ;;
+        esac
+        return 0
+    fi
+    # The render from stdout alone: a notice kubectl prints on stderr is not
+    # YAML, and a render that fails says why (kc_err_line).
+    kc_capture kustomize "$tmp_overlay" \
+        || log_error "DSET_ROLE_WRITER=true, but the overlay could not be rendered to copy its role writer Role into $LLMSM_WATCH_NS: $(kc_err_line "$KC_ERR")"
+    rendered=$(printf '%s\n' "$KC_OUT" | LLMSM_TARGET_NS="$LLMSM_WATCH_NS" LLMSM_ROLE_NAME="$role" \
+            LLMSM_GRANT_KEY="$LLMSM_WATCH_GRANT_KEY" LLMSM_GRANT_VAL="$(llmsm_ns_suffix "$LLMSM_NS")" yq '
+            select(.kind == "Role" and .metadata.name == "scaling-manager-dset-role-writer-role")
+            | .metadata.name = strenv(LLMSM_ROLE_NAME)
+            | .metadata.namespace = strenv(LLMSM_TARGET_NS)
+            | .metadata.labels[strenv(LLMSM_GRANT_KEY)] = strenv(LLMSM_GRANT_VAL)') || true
+    [ -n "$rendered" ] || log_error "DSET_ROLE_WRITER=true, but the rendered overlay holds no role writer Role to copy into $LLMSM_WATCH_NS."
+    printf '%s\n' "$rendered" | kubectl apply -f - > /dev/null
+    kubectl apply -f - > /dev/null <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${binding}
+  namespace: ${LLMSM_WATCH_NS}
+  labels:
+    app.kubernetes.io/managed-by: llm-d-scaling-manager
+    ${LLMSM_WATCH_GRANT_KEY}: "$(llmsm_ns_suffix "$LLMSM_NS")"
+subjects:
+- kind: ServiceAccount
+  name: scaling-manager-controller-manager
+  namespace: ${LLMSM_NS}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ${role}
+EOF
+    log_success "  Role/$role and RoleBinding/$binding in $LLMSM_WATCH_NS (DSET_ROLE_WRITER)"
 }
 
 # LLMSM_WATCH_GRANT_KEY labels the manager Role and RoleBinding this install
@@ -2001,6 +2061,17 @@ EOF
         esac
     fi
 
+    # The DisaggregatedSet role writer's grant and its switch, only with
+    # DSET_ROLE_WRITER=true (config/components/dset-role-writer*), the same way.
+    if llmsm_dset_role_writer_on; then
+        log_info "DSET_ROLE_WRITER=true: granting get, list and patch on disaggregatedsets ($(llmsm_dset_role_writer_component)) and turning the role writer on"
+        llmsm_append_dset_role_writer_component "$tmp_overlay"
+    else
+        case "${LLMSM_APPLY_SCOPE:-all}" in
+            all|prereqs) llmsm_revoke_dset_role_writer ;;
+        esac
+    fi
+
     # Give this install its own ClusterRoleBinding names.
     #
     # Every overlay applies these under FIXED names, and an apply replaces a
@@ -3062,6 +3133,9 @@ deploy_scaling_manager_prerequisites_kube_like() {
     if [ "${DEPLOY_LWS:-true}" = "true" ]; then
         if kubectl get crd leaderworkersets.leaderworkerset.x-k8s.io &> /dev/null; then
             log_info "LeaderWorkerSet CRD already installed, skipping LWS deployment"
+            # An installed LWS is kept as it is: say when it is too old for KEDA
+            # to scale DisaggregatedSet roles.
+            llmsm_report_lws_dset
         else
             log_info "Installing LeaderWorkerSet version ${LWS_CHART_VERSION} into ${LWS_NAMESPACE} namespace"
             helm upgrade -i lws oci://registry.k8s.io/lws/charts/lws \

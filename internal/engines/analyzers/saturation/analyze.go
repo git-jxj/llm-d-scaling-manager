@@ -58,7 +58,7 @@ func (a *SaturationAnalyzer) analyze(ctx context.Context, input domain.AnalyzerI
 		case RestoredArgs:
 			msg = "learned state restored without the ITL baseline: the engine image changed, the arguments did not"
 		case RestoredPrior:
-			msg = "learned state restored as lower-only figures: the variant's engine arguments changed, so its k2 windows become previous figures (P2-prior) for the buckets they were measured in"
+			msg = "learned state restored as lower-only figures: the variant's engine arguments, or the vLLM defaults they resolve to, changed, so its k2 windows become previous figures (P2-prior) for the buckets they were measured in"
 		case RestoredIncomplete:
 			msg = "learned state restored under the unread configuration: the variant's engine configuration could not be read completely; its windows are its own only if it runs the same unread configuration, and lower-only figures otherwise"
 		case RestoredDiffers:
@@ -107,6 +107,11 @@ func (a *SaturationAnalyzer) analyze(ctx context.Context, input domain.AnalyzerI
 	a.beginITLCycle(input.Namespace, input.ModelID)
 	a.beginStartCycle(input.Namespace, input.ModelID)
 
+	if a.itlAdaptiveFloor {
+		// The band's floor adapted to a low-fill fleet, planner-only
+		// (itl_band_floor.go).
+		satConfig = a.adaptITLBandFloor(input, satConfig, a.now())
+	}
 	c := a.newCycle(ctx, input, satConfig)
 	c.observeFleetShape()
 	c.resolvePricing()
@@ -494,6 +499,9 @@ func (c *cycle) fitLines() {
 	// nothing to tie-break on here yet; that is a known gap, not a property.
 	sort.Strings(variants)
 	mixed := domain.RevisionsMixed(c.input.ReplicaMetrics)
+	// The rows as the ITL line reads them, a group's engines in place of its
+	// row (domain.EngineRows), and the group each engine settles as.
+	engineRows, engineGroups := domain.EngineRows(c.input.ReplicaMetrics), domain.EngineGroups(c.input.ReplicaMetrics)
 	for _, variant := range variants {
 		// Decode, and an aggregated variant (itlLineRole, issue ev-shindin/llm-scaling-manager#432); never
 		// prefill. ITL is the latency between GENERATED tokens, and
@@ -536,7 +544,14 @@ func (c *cycle) fitLines() {
 			params = rec.EngineParams
 		}
 		c.a.itlUnderArgs(variantKey, windowArgs(params))
-		rows, withheld := c.a.itlRows(c.input.ReplicaMetrics, variant, params)
+		// A LeaderWorkerSet group whose Pods each run an engine is read
+		// engine by engine (domain.EngineRows): its merged row's mean fill
+		// and mean ITL hide the spread the line is fitted from. A window that
+		// held the merged rows starts over the first cycle it reads the
+		// engines (itl_group_engines.go).
+		c.a.itlReadsEnginesFirst(variantKey, variant, readsEngines(c.input.ReplicaMetrics, variant),
+			c.logger.WithValues("namespace", c.input.Namespace))
+		rows, withheld := c.a.itlRows(engineRows, variant, params)
 		rollingOut := rec.InRollout() || mixed[variant]
 		if rollingOut {
 			rows = nil
@@ -563,10 +578,15 @@ func (c *cycle) fitLines() {
 		adm := itl.Admission{MinK: lo, MaxK: hi, MaxNumSeqs: atCap.perRank, MaxNumSeqsSource: atCap.source,
 			CapMaxPreemptionRate: c.cfg.ITLCapPreemptionRate(), Steady: c.tune.steadiness(),
 			SlopeHoldFor: c.a.Horizons().BucketRetention, Args: windowArgs(params),
-			TierHysteresis: c.a.tierHysteresisOn()}
+			TierHysteresis: c.a.tierHysteresisOn(), BaselineFromFloor: c.a.baselineFromFloorOn()}
 		// When each replica's settle began: the engine's settle tracker
 		// (itl_settle.go).
 		c.a.itlSettleAdmission(&adm, c.input.Namespace, c.input.ModelID)
+		if adm.Settle != nil {
+			// An engine of a group settles as its group, the row the
+			// settle tracker observes.
+			adm.Settle.Groups = engineGroups
+		}
 		// Readings at the cap sit above kSat, where a pinned fit through the
 		// default B prices under the truth: priced one-sided at the line's
 		// pricing k until B is learned, against a prior on B read within the
@@ -588,6 +608,9 @@ func (c *cycle) fitLines() {
 				c.a.noteOccupancy(c.occupancyInput(variantKey, variant, params), itlLogger)
 			}
 		}
+		// A decode variant's window is kept through a shape change; the
+		// floor below the band is not (itl_baseline_floor.go).
+		c.a.floorOnShapeChange(variantKey, role, adm, c.shapeChanging)
 		reading := c.a.noteITL(variantKey, rows, variant, adm, c.a.now(), itlLogger)
 		c.a.noteITLOneSided(variantKey, reading)
 		// The line as a learner: its report and learner-write (itl_learner.go).
@@ -720,6 +743,16 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 	// (decodeCapacityView), except on a replica at its sequence cap. The
 	// idle tests below read the raw row.
 	rows := decodeCapacityViews(c.input.ReplicaMetrics, c.rolesByVariant, c.atCapBatchCaps())
+	if c.a.decodeLandedNeedsBound && domain.HasPrefill(c.rolesByVariant) {
+		// A landed request is a backlog only where the replica can be at a
+		// bound (SwitchDecodeLandedNeedsABound).
+		caps := c.atCapBatchCaps()
+		for i := range rows {
+			v := rows[i].VariantName
+			rows[i] = landedWithoutBound(rows[i], c.input.ReplicaMetrics[i], c.rolesByVariant[v],
+				caps[v], c.cfg.KvCacheThreshold, engineParamsFor(c.a, c.input.Namespace, c.input.ModelID, v))
+		}
+	}
 	served := c.tune.servedBounds(rows, c.rolesByVariant, c.cfg.QueueLengthThreshold, c.cfg.KvCacheThreshold, c.fleetOutput,
 		c.stableInput, c.stableOutput, c.fleetHitRate)
 	if c.a.muUnreadAtTarget {
@@ -752,7 +785,7 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 		// it: see its comment for the run that decided that.
 		itlModel := c.itlModels[rm.VariantName]
 		engineParams := engineParamsFor(c.a, c.input.Namespace, c.input.ModelID, rm.VariantName)
-		fleetShape, muShape, residentBoundFleet, residentBound := c.pricingShapes(rm.PrefixCacheHitRate)
+		fleetShape, muShape, residentBoundFleet, residentBound := c.pricingShapes(rm.PrefixCacheHitRate, engineParams)
 		// Only a generating role is priced from the ITL line. ITL is the gap
 		// between two generated tokens, and a prefill replica emits one and
 		// hands the KV to decode, so tokenSec/avgOutput does not describe it.
@@ -847,8 +880,10 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 
 // pricingShapes is the shape a replica at this prefix-cache hit rate is
 // priced at: the fleet's, and the one mu is priced at, each with the KV a
-// running request is measured to hold and which bound held it there.
-func (c *cycle) pricingShapes(hitRate float64) (fleetShape, muShape shape.Shape, residentBoundFleet, residentBound string) {
+// running request is measured to hold and which bound held it there. params
+// is the replica's engine, whose kind decides how a reading above the context
+// is priced (residentRuleFor).
+func (c *cycle) pricingShapes(hitRate float64, params *capacity.EngineParams) (fleetShape, muShape shape.Shape, residentBoundFleet, residentBound string) {
 	// The spread of output lengths is priced into the KV a resident
 	// request holds (KVreq = ILeff + D*OL/2, issue ev-shindin/llm-scaling-manager#276): with lengths
 	// that vary, a long request stays resident longer, so fewer
@@ -880,8 +915,9 @@ func (c *cycle) pricingShapes(hitRate float64) (fleetShape, muShape shape.Shape,
 	// (prefix_cache_kv.go). With none, as before.
 	residentBound, residentBoundFleet = residentBoundOff, residentBoundOff
 	if c.a.kvHitsResident {
-		fleetShape, residentBoundFleet = withResidentKV(fleetShape, c.resident)
-		muShape, residentBound = withResidentKV(muShape, c.resident)
+		rule := c.a.residentRuleFor(params)
+		fleetShape, residentBoundFleet = withResidentKV(fleetShape, c.resident, rule)
+		muShape, residentBound = withResidentKV(muShape, c.resident, rule)
 	}
 	return fleetShape, muShape, residentBoundFleet, residentBound
 }

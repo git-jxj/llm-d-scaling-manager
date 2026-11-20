@@ -144,8 +144,9 @@ func rowShape(rm domain.ReplicaMetrics) shape.Shape {
 	return s
 }
 
-// meanTPOTCheck is the frozen line at each row's fill, clamped to the band as
-// an answer is, against the ITL the engine read there. The bound reads that
+// meanTPOTCheck is the frozen line at each row's fill, clamped as an answer
+// is (to the band's top, and below to whatif.LowestFill for the line),
+// against the ITL the engine read there. The bound reads that
 // figure. The line beside it prints the unclamped one too, and how many rows
 // the clamp moved each way: a figure in bound only through the clamp says so.
 func meanTPOTCheck(vs VariantState, band whatif.FillBand, rows []domain.ReplicaMetrics) string {
@@ -165,7 +166,7 @@ func meanTPOTCheck(vs VariantState, band whatif.FillBand, rows []domain.ReplicaM
 		case k > band.Hi:
 			above++
 		}
-		predicted := vs.Line.ITLAt(min(max(k, band.Lo), band.Hi))
+		predicted := vs.Line.ITLAt(min(max(k, whatif.LowestFill(band, vs.Tier, vs.Line, vs.BelowBandITL)), band.Hi))
 		errs = append(errs, 100*(predicted-rm.AvgITL)/rm.AvgITL)
 		raw = append(raw, 100*(vs.Line.ITLAt(k)-rm.AvgITL)/rm.AvgITL)
 	}
@@ -189,7 +190,8 @@ func saturatedRow(rm domain.ReplicaMetrics) bool {
 }
 
 // kneeCheck is the frozen line's knee on one replica, at each saturated row's
-// shape, in tokens per second, against the tokens the replica made. rows are
+// shape and the KV its running requests held (rowResidentKV, as the planner
+// prices decode), in tokens per second, against the tokens the replica made. rows are
 // off a ramp: a row's lengths are means over minutes, and the knee of a shape
 // that has already left is no prediction of the row.
 func kneeCheck(vs VariantState, band whatif.FillBand, rows []domain.ReplicaMetrics) string {
@@ -204,7 +206,7 @@ func kneeCheck(vs VariantState, band whatif.FillBand, rows []domain.ReplicaMetri
 		}
 		saturated++
 		s := rowShape(rm)
-		d := whatif.Decode{Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens, KVPerRequest: s.KVreq,
+		d := whatif.Decode{Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens, KVPerRequest: rowResidentKV(rm, s),
 			OutputTokens: s.AvgOutputTokens, ReplicaCap: vs.BatchCap * int64(max(vs.Ranks, 1)), Replicas: 1, Tier: vs.Tier}
 		switch v := whatif.KneeRate(d).(type) {
 		case whatif.Answer:

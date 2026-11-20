@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# OpenShift: the planner behind an oauth-proxy sidecar, reached through a
+# Route. The proxy logs the user in with the cluster's OAuth server (and so
+# with the cluster's SSO), then forwards to the planner on 127.0.0.1:8080.
+# Any user who can log in to the cluster may open it; the openshift-sar
+# overlay narrows that. No cluster-scoped object: a namespace admin applies it.
+# Before applying, create the proxy's cookie secret
+# (docs/guides/capacity-planner/in-cluster.md, "OpenShift").
+resources:
+  - ../base
+  - capacity-planner-service.yaml
+  - capacity-planner-route.yaml
+
+patches:
+  - path: oauth-proxy-statefulset.yaml
+  - path: oauth-proxy-serviceaccount.yaml
+  # OpenShift's restricted SCC assigns the user, group and fsGroup from the
+  # namespace's range and refuses fixed ones.
+  - target:
+      kind: StatefulSet
+      name: capacity-planner
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsGroup
+      - op: remove
+        path: /spec/template/spec/securityContext/fsGroup

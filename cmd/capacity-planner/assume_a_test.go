@@ -26,7 +26,7 @@ func TestAssumeA_AnswersWhatARefusalLeftOpen(t *testing.T) {
 
 	text, _ := runCmd(t, slices.Concat(q, []string{"--assume-a", "11ms"})...)
 	assert.NotContains(t, text, "NoFixedLatency", text)
-	assert.Contains(t, text, "end to end; UNVALIDATED; a ASSUMED")
+	assert.Regexp(t, `end to end; OUTSIDE VALIDATED REGION \(.+\); a ASSUMED`, text)
 	assert.Contains(t, text, "a 11.00 ms ASSUMED;", "no figure was learned to print beside it")
 	assert.Contains(t, text, "a 11ms (--assume-a)")
 	assert.Contains(t, text, string(assumedA))
@@ -83,7 +83,7 @@ func TestAssumeA_OverridesTheLearnedFigureAndPrintsIt(t *testing.T) {
 
 	text, _ := runCmd(t, slices.Concat(q, []string{"--assume-a", "111ms"})...)
 	assert.Contains(t, text, "a 111.00 ms ASSUMED, learned ")
-	assert.Contains(t, text, "UNVALIDATED; V_P ASSUMED; a ASSUMED")
+	assert.Contains(t, text, "); V_P ASSUMED; a ASSUMED")
 }
 
 // --assume-a asks about TTFT, as every TTFT flag does on question 2, and with
@@ -120,5 +120,6 @@ func TestAssumeA_Golden(t *testing.T) {
 	q1 := []string{"slo-to-rate", "--recording", saturatedRun, "--ttft", "10s@p95", "--assume-a", "11ms"}
 	checkGolden(t, "ttft-assume-a", 3, q2)
 	checkGolden(t, "ttft-assume-a-json", 3, append(slices.Clone(q2), "-o", "json"))
-	checkGolden(t, "ttft-assume-a-rate", 0, q1)
+	// No TPOT asked and no decode line: decode and the fleet are refused.
+	checkGolden(t, "ttft-assume-a-rate", 3, q1)
 }

@@ -774,6 +774,13 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 	// carries the queue's tokens through aggregation -- on that run it implied
 	// 481 replicas before the floor cut it to 2 -- so the queue is if anything
 	// over-visible on prefill, and the floor's job there is the cap.
+	//
+	// That holds where prefill binds. Where decode binds, prefill hands the
+	// queue on as fast as decode takes it, and decode sized for lambda alone
+	// drains it only by its target-fill headroom (issue
+	// llm-d-incubation/llm-d-scaling-manager#51). With
+	// SwitchDecodeOwesRouterBacklog on, decode is also charged the part
+	// prefill can hand on (decodeRouterBacklogRate, below).
 	queueOwner := domain.RolePrefill
 	if _, split := eppByRole[domain.RolePrefill]; !split {
 		// No prefill role: one role serves the queue end to end and takes it.
@@ -805,6 +812,16 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 	// read 23.53 by 30 s and by 120 s. grew lingers for up to
 	// BacklogGrowthLookback after the growth stops, so the full charge
 	// outlives it by up to a minute: an over-order, the cheap direction.
+	//
+	// decodeOwing is how a P/D decode is owed the router's queue
+	// (SwitchDecodeOwesRouterBacklog, decodeRouterBacklogRate): nothing, and
+	// decode is charged none of it, unless the switch is on. Decode is
+	// charged min(Q, rate x H) x share on top of its own queues, H its drain
+	// horizon, so the floor prices min(Q/H, rate) x share beside lambda.
+	var decodeOwing decodeOwedRead
+	decodeOwed := func(startSeconds map[string]float64) float64 {
+		return decodeOwing.owed(eppQueued, floor.DrainHorizon(floor.BacklogDrainSeconds, startSeconds[domain.RoleDecode]))
+	}
 	backlogFor := func(reps []capacity.ReplicaCapacity, startSeconds map[string]float64) map[string]float64 {
 		backlog := localBacklog(reps, startSeconds)
 		for role := range eppByRole {
@@ -816,6 +833,9 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 			if grew[role] {
 				backlog[role] = q
 			}
+		}
+		if owed := decodeOwed(startSeconds); owed > 0 {
+			backlog[domain.RoleDecode] += owed
 		}
 		return backlog
 	}
@@ -838,11 +858,14 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 	// more arrivals, but also more drain from the Ready replicas, and past
 	// the drain time it spreads the backlog over a longer horizon, so on its
 	// own it can order less. 5c is to err toward more replicas only.
-	tf := estimate(starts.sized)
-	startSeconds, startSources := starts.sized, starts.source
-	if !maps.Equal(starts.sized, starts.parent) {
-		tf, startSeconds, startSources = pickLargerFloor(tf, estimate(starts.parent), starts)
+	priceFloor := func() (floor.Floor, map[string]float64, map[string]string) {
+		tf := estimate(starts.sized)
+		if !maps.Equal(starts.sized, starts.parent) {
+			return pickLargerFloor(tf, estimate(starts.parent), starts)
+		}
+		return tf, starts.sized, starts.source
 	}
+	tf, startSeconds, startSources := priceFloor()
 
 	// Prefill with no mu, with SwitchPrefillKeepsRouterPrompts off: the
 	// scheduler queue's prompts were taken as not resident work for prefill,
@@ -911,6 +934,25 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 				"eppQueueSize", eppQueued, "droppedTokens", share,
 				"prefillDemandBefore", before, "prefillDemandAfter", before-share,
 				"modelTotalAfter", totalDemand)
+		}
+	}
+	// Decode's share of the router queue (SwitchDecodeOwesRouterBacklog):
+	// read from the first pricing, whose prefill term it is capped by, and
+	// from prefill's demand after the share above; priced by a second
+	// pricing. Decode's backlog moves no other role's term.
+	if a.decodeOwesRouterBacklog && roleDemand != nil && queueOwner == domain.RolePrefill && eppQueued > 0 {
+		var weigh bool
+		decodeOwing, weigh = decodeRouterBacklogRate(tf, variants, roleDemand, scaleUp)
+		if weigh {
+			// No prefill mu: decode's own evidence, smoothed and held over
+			// the cycles before (decodeAtMuWeight).
+			served := completedRateByRole(input, replicas, roleOf)[domain.RoleDecode].total
+			ev := readDecodeEvidence(input.ReplicaMetrics, variants, roleOf, served, tf.Terms[domain.RoleDecode].Mu)
+			decodeOwing.share, decodeOwing.served, decodeOwing.fill, decodeOwing.why =
+				a.decodeAtMuWeight(input.Namespace+"|"+input.ModelID, ev, cfg.KvCacheThreshold)
+		}
+		if decodeOwed(startSeconds) > 0 {
+			tf, startSeconds, startSources = priceFloor()
 		}
 	}
 	// Queued work priced by drain time where the swap below does not run
@@ -1061,7 +1103,7 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 		if startKnown {
 			startFrom = startSources[role]
 		}
-		logger.Info("throughput-demand-floor",
+		kv := []any{
 			"modelID", input.ModelID, "namespace", input.Namespace, "role", role,
 			"demandBeforeFloor", measured, "residentDemand", resident, "flooredTo", want,
 			"arrivalRate", tf.Lambda, "backlogRequests", term.Backlog, "drainSeconds", tf.DrainSeconds,
@@ -1107,7 +1149,20 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 			// terms.
 			"drainRegion", dp.region, "drainArrival", dp.arrival, "drainGrowth", dp.growth,
 			"drainMu", dp.mu, "drainFirstReadMu", dp.mu0, "drainBacklog", dp.backlog,
-			"drainHorizon", dp.horizon, "drainReplicas", dp.replicas)
+			"drainHorizon", dp.horizon, "drainReplicas", dp.replicas,
+		}
+		if a.decodeOwesRouterBacklog && role == domain.RoleDecode {
+			// The router's requests decode was charged on top of its own
+			// queues, why (empty where it is owed none, mu-suspect where the
+			// served share says decode's mu is wrong), and decode's smoothed
+			// served share and KV fill (decodeAtMuWeight; 0 where they were
+			// not read). Only with SwitchDecodeOwesRouterBacklog on: off, the
+			// line is as before the switch.
+			kv = append(kv, "routerBacklogOwed", decodeOwed(startSeconds),
+				"routerBacklogOwedBy", decodeOwing.why, "decodeServedShare", decodeOwing.served,
+				"decodeKvFill", decodeOwing.fill)
+		}
+		logger.Info("throughput-demand-floor", kv...)
 		if roleDemand != nil {
 			roleDemand[role] = want
 		}

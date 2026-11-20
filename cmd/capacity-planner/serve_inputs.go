@@ -32,10 +32,11 @@ const sideLine = "line"
 func inputsDoc(f *answerFlags, st *learnreplay.State, pv *pricedVariant, ps *learnreplay.PrefillState, pf *pricedFleet,
 	info whatifapi.SourceInfo) whatifapi.InputsResponse {
 	doc := whatifapi.InputsResponse{Model: st.ModelID, Namespace: st.Namespace, Source: info,
-		Fleet:   whatifapi.FleetInfo{Decode: whatifapi.RoleInfo{Variant: pv.state.Variant, Replicas: pv.decode.Replicas}},
+		Fleet: whatifapi.FleetInfo{Decode: whatifapi.RoleInfo{Variant: pv.state.Variant, Replicas: pv.decode.Replicas,
+			Engine: engineInfo(pv.state.Params)}},
 		Assumed: append([]string{}, pf.in.Assumed...)}
 	if ps != nil {
-		doc.Fleet.Prefill = &whatifapi.RoleInfo{Variant: ps.Variant, Replicas: ps.Pods}
+		doc.Fleet.Prefill = &whatifapi.RoleInfo{Variant: ps.Variant, Replicas: ps.Pods, Engine: engineInfo(variantParams(st, ps.Variant))}
 	}
 	doc.Observed = observedOf(pv, pf)
 	doc.Policy = policyOf(f, st, pf)
@@ -166,7 +167,7 @@ func termsOf(f *answerFlags, st *learnreplay.State, pv *pricedVariant, pf *price
 		add("itlB", pv.state.Tier, figure(pv.decode.Line.B, "s"))
 	}
 	add("capacityTokens", "", figure(pv.decode.CapacityTokens, "tokens"))
-	add("kvPerRequest", "", figure(pv.decode.KVPerRequest, "tokens"))
+	add("kvPerRequest", pv.kvSource, figure(pv.decode.KVPerRequest, "tokens"))
 	add("batchCap", pv.state.BatchCapSource, figure(float64(pv.perRank), "sequences per rank"))
 	add(whatifapi.TermMaxModelLen, "engine arguments", contextOf(st.Variants, pf.variant, pv.state.Variant))
 	// R_q at p90, a TPOT percentile's usual ask; a plan reads its own.

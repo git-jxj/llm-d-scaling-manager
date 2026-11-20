@@ -96,8 +96,11 @@ type ttftInputs struct {
 	// psOnsets is SwitchTTFTPSOnsets, decodeGateCharge
 	// SwitchTTFTDecodeGateCharge.
 	psOnsets, decodeGateCharge bool
-	flow                       whatif.FlowControl
-	mismatch                   bool
+	// acrossCounts is SwitchTTFTImbalanceAcrossCounts: f at an unlearned
+	// count read across counts (imbalanceAcross).
+	acrossCounts bool
+	flow         whatif.FlowControl
+	mismatch     bool
 }
 
 // imbalance is f at pods, whether it is assumed, and where it came from.
@@ -106,8 +109,11 @@ type ttftInputs struct {
 // with one pod, none (the model prices one pod as 1 exactly); otherwise
 // assumed, min(N_p, max(1.5, f_raw)). At another count: min(N', max(1.5, f)),
 // so a learned f is never carried unchanged to a new count, and one pod's
-// exact 1 never reaches two.
+// exact 1 never reaches two. With acrossCounts on, imbalanceAcross instead.
 func (in ttftInputs) imbalance(pods int) (f float64, assumed bool, source string) {
+	if in.acrossCounts {
+		return in.imbalanceAcross(pods)
+	}
 	f, assumed, source = in.imbalanceNow()
 	if pods == in.pods {
 		return f, assumed, source
@@ -126,6 +132,16 @@ func (in ttftInputs) imbalanceNow() (float64, bool, string) {
 		return 0, false, fSourceOnePod
 	}
 	return min(float64(in.pods), max(whatif.ImbalanceFloor, in.shares.largest)), true, fSourceAssumed
+}
+
+// imbalanceAcross is f at pods read across counts
+// (SwitchTTFTImbalanceAcrossCounts, whatif.ImbalanceReadings.At): none on one
+// pod; P1's f at a count it learned; else the curve fitted to the counts P1
+// learned and the current count's raw share, at least whatif.FreshImbalance
+// with no count learned, and at the current count at least the raw share.
+func (in ttftInputs) imbalanceAcross(pods int) (float64, bool, string) {
+	r := whatif.ImbalanceReadingsOf(in.est, in.pods, in.shares.largest).At(pods)
+	return r.F, r.Assumed, r.Source
 }
 
 // routing reads f at the current count against whatif.RoutingBoundShare of the pods:
@@ -287,6 +303,54 @@ type decodeTTFTWindow struct {
 	seen   time.Time
 	// transfer is the variant's transfer readings.
 	transfer prefill.TransferWindow
+	// backlog carries the variant's decode backlog past the queue's drain,
+	// and calm is the latest figure read off the window's calm cycles, at
+	// calmAt (SwitchTTFTLowLoadDecodeTTFT).
+	backlog prefill.DecodeBacklogCarry
+	calm    whatif.DecodeTTFT
+	calmAt  time.Time
+	// unreadLeft is how many more cycles the window holds one with an
+	// unread decode row (prefill.DecodeBacklogOf): while it does, the
+	// window reads as with the switch off, and no calm figure is held.
+	unreadLeft int
+}
+
+// lowLoad is the window's figure with SwitchTTFTLowLoadDecodeTTFT on, read at
+// now: the largest of the cycles that carry no backlog; with none, the
+// latest such figure, for prefill.HeldDecodeAge after the last cycle whose
+// window held it; past that, the largest of the rest, as with the switch
+// off. While the window holds a cycle with an unread decode row it is the
+// window's largest, as with the switch off, and the held figure is dropped:
+// that row's queue is in the fleet's mean and nothing says when it drains.
+// Waiting is 0 on what it returns: S1 does not refuse on it.
+func (w *decodeTTFTWindow) lowLoad(now time.Time) whatif.DecodeTTFT {
+	if w.unreadLeft > 0 {
+		w.calm, w.calmAt = whatif.DecodeTTFT{}, time.Time{}
+		largest := w.largest()
+		largest.Waiting = 0
+		return largest
+	}
+	var calm, loaded whatif.DecodeTTFT
+	for _, c := range w.cycles {
+		if c.Waiting > 0 {
+			if c.Seconds > loaded.Seconds {
+				loaded = c
+			}
+			continue
+		}
+		if c.Seconds > calm.Seconds {
+			calm = c
+		}
+	}
+	loaded.Waiting = 0
+	switch {
+	case calm.Seconds > 0:
+		w.calm, w.calmAt = calm, now
+		return calm
+	case loaded.Seconds > 0 && w.calm.Seconds > 0 && now.Sub(w.calmAt) <= prefill.HeldDecodeAge:
+		return w.calm
+	}
+	return loaded
 }
 
 // noteTransfer folds the cycle's decode rows into the transfer window under key
@@ -306,7 +370,18 @@ func (a *Analyzer) noteTransfer(key, accelerator, args string, rows []domain.Rep
 
 // noteDecodeTTFT folds the cycle's decode-engine TTFT into the variant's
 // window and returns the largest, as a pair from one cycle; zero with none.
+// With SwitchTTFTLowLoadDecodeTTFT on, cycle.Waiting is the cycle's decode
+// backlog, and the figure is read off the calm cycles (lowLoad); off, Waiting
+// is not read.
 func (a *Analyzer) noteDecodeTTFT(key string, cycle whatif.DecodeTTFT, now time.Time) whatif.DecodeTTFT {
+	return a.noteDecodeTTFTRead(key, cycle, false, now)
+}
+
+// noteDecodeTTFTRead is noteDecodeTTFT for a cycle whose decode rows may not
+// all say why their requests wait: unread is such a cycle, which with
+// SwitchTTFTLowLoadDecodeTTFT on keeps the window reading as off for as long
+// as it holds the cycle (decodeTTFTWindow.lowLoad).
+func (a *Analyzer) noteDecodeTTFTRead(key string, cycle whatif.DecodeTTFT, unread bool, now time.Time) whatif.DecodeTTFT {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	w := a.decodeTTFT[key]
@@ -315,10 +390,30 @@ func (a *Analyzer) noteDecodeTTFT(key string, cycle whatif.DecodeTTFT, now time.
 		a.decodeTTFT[key] = w
 	}
 	w.seen = now
+	if a.ttftLowLoadDecodeTTFT {
+		cycle.Waiting = w.backlog.Carry(cycle.Waiting, now)
+		switch {
+		case unread:
+			w.unreadLeft = whatif.TTFTWindowCycles
+		case w.unreadLeft > 0:
+			w.unreadLeft--
+		}
+	} else {
+		cycle.Waiting = 0
+	}
 	w.cycles = append(w.cycles, cycle)
 	if len(w.cycles) > whatif.TTFTWindowCycles {
 		w.cycles = w.cycles[1:]
 	}
+	if a.ttftLowLoadDecodeTTFT {
+		return w.lowLoad(now)
+	}
+	return w.largest()
+}
+
+// largest is the window's largest decode TTFT, as a pair from one cycle;
+// zero with none.
+func (w *decodeTTFTWindow) largest() whatif.DecodeTTFT {
 	var largest whatif.DecodeTTFT
 	for _, c := range w.cycles {
 		if c.Seconds > largest.Seconds {

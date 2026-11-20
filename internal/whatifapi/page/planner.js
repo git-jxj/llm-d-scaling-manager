@@ -23,6 +23,7 @@ const FLAG_WORDS = {
   TransferHeld: ["The KV transfer time was read on earlier cycles and held.", "a quiet reading of the transfer at this load"],
   DecodeSideOmitted: ["Decode's part of the TTFT (its admission wait and first token) is left out: the TTFT over-promises.", "a decode ITL line or the decode engine's TTFT"],
   DecodeTTFTUnmeasured: ["Decode's TTFT was not measured, so the KV pull and first token are left out (25% to 65% on the recordings).", "the decode engine's TTFT histogram"],
+  DecodeQueueUnread: ["The decode engine does not say why requests wait, so a decode TTFT measured while decode was queueing is not caught: the floor may be a queue.", "vLLM v0.20.0 or later, which reports the capacity wait"],
   DecodeEngineMeasured: ["Decode's part of the TTFT is the decode engine's measured TTFT, in place of the admission wait.", "a decode ITL line"],
   DecodeTermOmitted: ["The decode engine's TTFT has no fit: the older, smaller sum stands for it, and the TTFT over-promises.", "readings of the decode engine's TTFT across load"],
   DecodeStepSlopeAssumed: ["The decode term rises with an assumed slope from where it was measured.", "readings of the decode engine's TTFT across load"],
@@ -38,6 +39,8 @@ const FLAG_WORDS = {
   AssumedTPOTRatio: ["The TPOT percentile is the mean times a ratio R_q you assumed.", "the router's per-request TPOT histogram (recorder R1)"],
   CoarseTPOTBucket: ["R_q was read off a histogram bucket wider than a quarter of the mean: the bucket grid sets it.", "finer TPOT histogram buckets"],
   EngineTPOTHistogram: ["R_q comes from the engine's TPOT histogram, not the router's.", "the router's per-request TPOT histogram"],
+  MeanBoundedTPOTPercentile: ["R_q was read below its coarse histogram bucket's edge, at the most the window's mean allows: never below the true percentile, but still wide.", "finer TPOT histogram buckets"],
+  GlobalTPOTRatio: ["Too few windows were read at this fill: R_q is the one read over every fill.", "readings at this load"],
   BelowFittedBand: ["The fill is below the band the ITL line was fitted over: TPOT is read at the band's bottom, a safe floor.", "readings at lower fill"],
   KVBoundSlots: ["Decode slots are set by KV capacity, an approximation.", "nothing: a property of the fleet"],
   BorrowedLine: ["The ITL line was borrowed from another variant with the same engine configuration.", "this variant's own readings"],
@@ -46,12 +49,17 @@ const FLAG_WORDS = {
   LineNearGate: ["The ITL line sits near the tracker's gate; the answer does not care which side (informational).", "nothing"],
   ExtrapolatedFill: ["The fill is above the highest fill the ITL line was read at: extrapolated.", "readings at higher load"],
   AssumedShape: ["Priced at a prompt or output length you set, not the measured one.", "price at the current mix"],
+  ExtrapolatedShape: ["The request shape is outside the prompt and output lengths the source saw: the figures extrapolate the learned lines past the traffic they were fitted on.", "a source that served this shape"],
+  DecodeOnly: ["The prefill side is not priced: the report judged decode alone, gives no fleet rate at the SLO, and never calls the fleet over-provisioned.", "a learned or assumed prefill speed (--assume-vp)"],
+  TailPastPromptHistogram: ["A TTFT percentile above p95 on a prompt spread no histogram measured: the tail rests on the assumed spread.", "a source with a computed-prompt histogram"],
   EdgeBeyondContext: ["A bucket's edge is past the engines' context window (--max-model-len): they refuse prompts that long, and this \"if all traffic were\" line prices traffic they would not serve.", "an edge within the context window"],
   PullUnseen: ["The prefill load is past the pull table's highest bucket: the pull reads low.", "readings at higher prefill load"],
   OverheadMeasured: ["The fixed overhead comes from the prefill pods' histograms.", "nothing (informational)"],
   AssumedPoissonArrivals: ["Arrivals are taken as Poisson: on bursty traffic the TTFT over-promises.", "a stated arrival burstiness (Ca²)"],
   AssumedArrivalCV2: ["The arrival burstiness Ca² is a value you set.", "nothing: a stated assumption"],
   AssumedA: ["a, the fixed latency, is the value you typed, not a learned one.", "a low-load window that fits a"],
+  AFromEngineTiming: ["a, the fixed latency, was fitted from the engine's own prefill timing on a fleet too busy for low-load minutes, not from quiet minutes.", "a low-load window that fits a"],
+  AdaptedBandFloor: ["The decode ITL line was read over a KV-fill band whose floor the replay lowered to the fleet's fill, below the policy's floor.", "readings at the policy's fill floor or above"],
   PromptSpreadAbovePeak: ["The prompt cv is past the peak for this percentile: a larger cv can price a shorter floor and a higher rate.", "a measured prompt spread"],
   PromptSpreadClamped: ["The measured prompt spread was clamped at its stop.", "a prompt histogram with wider bounds"],
   RoutingBound: ["One prefill pod takes most of the work: more pods would mostly sit idle behind the router.", "fix the routing, not the replica count"],
@@ -234,6 +242,10 @@ async function start() {
   el("rectrunc").hidden = !s.recordingsTruncated;
   el("kprom").disabled = !s.prometheus;
   el("krec").disabled = s.recordings.length === 0;
+  el("upfield").hidden = !s.upload;
+  if (s.upload) {
+    el("uphint").textContent = `.jsonl or .jsonl.gz, at most ${mib(s.upload.maxBytes)}. The server keeps the last 4 until it restarts; everyone who opens this page sees them.`;
+  }
   // The page opens on a Prometheus window, the last hour ending now; a
   // server with recordings alone opens on its first.
   let kind = s.prometheus ? "prometheus" : s.recordings.length ? "recording" : "";
@@ -242,6 +254,11 @@ async function start() {
   const refused = linked.get("recording") || linked.get("namespace") ? sourceProblem(linked.toString(), s) : "";
   if (!refused) kind = linkSource() || kind;
   showScenarios();
+  if (!kind && s.upload) {
+    setStatus("Upload a recording to start.");
+    el("source").open = true;
+    return;
+  }
   if (!kind) {
     setStatus("This server reads no source: start it with --prometheus or --recordings.", true);
     el("source").open = true;
@@ -304,13 +321,23 @@ async function loadInputs() {
   const seq = ++state.seq;
   state.link = linkAtLoadStart(state.link, seq);
   el("load").disabled = true;
+  let tick = 0;
+  let source = null;
   try {
     const req = {source: sourceRequest()};
+    source = req.source;
     if (el("model").value.trim()) req.model = el("model").value.trim();
     if (el("pvariant").value.trim()) req.prefillVariant = el("pvariant").value.trim();
     if (el("dvariant").value.trim()) req.decodeVariant = el("dvariant").value.trim();
-    setStatus(req.source.kind === "prometheus" ? "Reading the Prometheus window (seconds to a minute)..." : "Replaying the recording...");
+    const loading = req.source.kind === "prometheus" ? "Reading the Prometheus window (seconds to a minute)" :
+      "Replaying the recording (a day-long one takes a minute or two; asking again starts a second load)";
+    setStatus(loading + "...");
+    const t0 = Date.now();
+    tick = setInterval(() => {
+      if (seq === state.seq) setStatus(`${loading}... ${Math.round((Date.now() - t0) / 1000)} s`);
+    }, 1000);
     const inputs = await api("POST", "v1/inputs", req);
+    clearInterval(tick);
     if (seq !== state.seq) return;
     setInputs(inputs);
     const end = linkAtLoadEnd(state.link, seq, state.seq, true);
@@ -319,12 +346,18 @@ async function loadInputs() {
     el("source").open = false;
     plan();
   } catch (e) {
+    clearInterval(tick);
     const end = linkAtLoadEnd(state.link, seq, state.seq, false);
     state.link = end.link;
     let opened = "";
     if (end.restore) {
       restorePage(end.restore);
       opened = " The scenario was not opened; the page keeps the one before.";
+    }
+    // An upload pushed out by newer ones is no longer offered.
+    if (source && source.kind === "recording" && source.name.startsWith("upload:") &&
+        e.message.startsWith("400:") && e.message.includes("no such upload")) {
+      forgetUpload(source.name);
     }
     setStatus("Could not load the inputs: " + e.message + opened, true);
     el("source").open = true;
@@ -333,13 +366,118 @@ async function loadInputs() {
   }
 }
 
+// PLAN_FIGURES are the elements a plan fills: the limits, the bars, the +1
+// steps, the points at the rate, the charts and the tables.
+const PLAN_FIGURES = ["fleet", "fleetn", "chosen", "bars", "barsdesc", "limits", "marginal", "ratenote", "limitsfor",
+  "ttftat", "tpotat", "rationote", "ttftchart", "ttftlegend", "ttftpoints", "buckettable",
+  "tpotchart", "tpotlegend", "tpotpoints", "curvetable", "flags", "flagcount"];
+
+// clearPlan takes the last plan off the page. A new source, or a plan that
+// failed, must not leave another scenario's figures on screen as if current.
+function clearPlan() {
+  state.plan = null;
+  for (const id of PLAN_FIGURES) el(id).textContent = "";
+  el("banner").hidden = true;
+}
+
+// mib is n bytes in MiB, for the upload's words.
+function mib(n) {
+  return `${Math.round(n / 1048576)} MiB`;
+}
+
+// uploadRecording sends the file picked to the server (POST v1/recordings),
+// showing how much of it has gone, then picks it as the recording and loads
+// it. The server names it; the file's own name is never sent. XMLHttpRequest,
+// not fetch: only it reports an upload's progress.
+function uploadRecording() {
+  const file = el("upfile").files[0];
+  if (!file) {
+    setStatus("Pick a file to upload.", true);
+    return;
+  }
+  const max = state.sources.upload.maxBytes;
+  if (file.size > max) {
+    setStatus(`${file.name} is ${mib(file.size)}, more than this server takes (${mib(max)}).`, true);
+    return;
+  }
+  el("upload").disabled = el("load").disabled = true;
+  const done = () => { el("upload").disabled = el("load").disabled = false; };
+  // A server taking another upload answers 503: tried again as api() does.
+  const send = attempt => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "v1/recordings");
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) setStatus(`Uploading ${file.name}: ${Math.floor(100 * e.loaded / e.total)}%`);
+    };
+    xhr.upload.onload = () => setStatus(`Checking ${file.name}: the server reads every line once...`);
+    xhr.onerror = () => { done(); setStatus(`Could not upload ${file.name}: the connection failed.`, true); };
+    xhr.onload = () => {
+      const wait = retryDelay(xhr.status, xhr.getResponseHeader("Retry-After"), attempt);
+      if (wait >= 0) {
+        setStatus(`The server is taking another upload; sending ${file.name} again in ${Math.round(wait / 1000)} s...`);
+        setTimeout(() => send(attempt + 1), wait);
+        return;
+      }
+      uploaded(xhr);
+    };
+    xhr.send(file);
+  };
+  const uploaded = xhr => {
+    done();
+    let doc = null;
+    try { doc = JSON.parse(xhr.responseText); } catch (e) { doc = null; }
+    if (xhr.status !== 200 && xhr.status !== 201) {
+      setStatus(`Could not upload ${file.name}: ${xhr.status}: ${(doc && doc.error) || xhr.statusText}`, true);
+      return;
+    }
+    if (!doc || typeof doc.name !== "string" || !doc.name) {
+      setStatus(`Could not upload ${file.name}: the server's answer was not the upload's name.`, true);
+      return;
+    }
+    const s = state.sources;
+    if (!s.recordings.includes(doc.name)) {
+      s.recordings.unshift(doc.name);
+      el("rec").insertAdjacentHTML("afterbegin", `<option>${esc(doc.name)}</option>`);
+    }
+    el("rec").value = doc.name;
+    el("cycle").value = 0;
+    el("krec").disabled = false;
+    el("krec").checked = true;
+    showKind();
+    setStatus(`Uploaded ${file.name} as ${doc.name}.`);
+    loadInputs();
+  };
+  send(0);
+}
+
+// forgetUpload removes an upload the server no longer keeps from the
+// recordings offered.
+function forgetUpload(name) {
+  const s = state.sources;
+  s.recordings = s.recordings.filter(n => n !== name);
+  const rec = el("rec");
+  for (const o of Array.from(rec.options)) {
+    if (o.value === name) o.remove();
+  }
+  el("krec").disabled = s.recordings.length === 0;
+}
+
 // setInputs starts a session from the inputs: the recorded replicas, the
 // policy's SLO and headroom, the observed mix. The rate starts at the
 // operating point the first plan returns: the source carries no rate.
 function setInputs(inputs) {
+  el("rrun").disabled = false;
+  state.reportGen = (state.reportGen || 0) + 1;
+  el("rresult").hidden = true;
+  el("rstatus").textContent = "";
   state.inputs = inputs;
+  state.day = null;
+  el("dayout").hidden = true;
+  el("dayrun").disabled = !inputs.fleet.prefill;
+  el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.priceFailed = false;
-  state.plan = null;
+  clearPlan();
   state.size = null;
   const p = inputs.policy || {};
   // With no policy objective the page sets one, and says so beside the
@@ -685,6 +823,7 @@ function enterPlan() {
 // returns, so the last move always lands.
 let planTimer = null;
 function schedule(ms) {
+  reportStale();
   clearTimeout(planTimer);
   planTimer = setTimeout(plan, ms);
 }
@@ -775,13 +914,16 @@ async function plan() {
     clearTimeout(slow);
     clearInterval(ticker);
     // A size a newer question cancelled is no error: the newer one follows.
-    // Any other failure leaves an older scenario's plan on screen, which the
-    // compare table must not set beside A as the current one.
+    // Any other failure clears the older scenario's plan off the page, its
+    // figures and the compare table's current column: they are not this
+    // scenario's.
     if (e.name !== "AbortError") {
-      setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message, true);
+      setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message +
+        ". Nothing is shown until a plan prices: type a rate, or change the replicas, targets or assumed terms, to price again.", true);
       if (!stale()) {
         state.priceFailed = true;
         if (sizing) state.abort = null;
+        clearPlan();
         renderCompare();
       }
     }
@@ -851,7 +993,7 @@ function render() {
   el("banner").textContent = p.banner;
   el("banner").hidden = !p.banner;
   fitRateSlider(lowerKnee(p.ttft.markers));
-  el("ratenote").textContent = p.limits.chosen.rateSource === "operating point" ? "started at the operating point: the source carries no request rate" : "";
+  el("ratenote").textContent = rateNote(p.limits.chosen.rateSource);
   el("limitsfor").textContent = `(priced at ${shapeOf(p)})`;
   renderSize();
   renderAtTarget();
@@ -916,7 +1058,7 @@ function renderSize() {
     el("sizetitle").textContent = `The fleet ${rate} needs`;
     el("sizeanswer").innerHTML = `<div class="v">${fleetText(f)}</div>` +
       `<div>The fewest replicas whose fleet limit reaches ${rate}` + (low ? " at the worst corner of V_P and f" : "") +
-      ` (the fewest decode first, then the fewest prefill with them). ` +
+      ` (the fewest in all; of two as few, the one with fewer decode replicas). ` +
       `Fleet limit <b>${figText(a.limit, fmtRate)}</b>, <span class="ok">headroom +${h != null ? fmtRate(h) : "refused"}</span> over the rate` +
       (low ? " at the worst corner" : "") + `; ${esc(rolesText(a.binding, "bind"))}${by ? ", " + esc(by) : ""}. ${flagChips(a.limit)}</div>` +
       lowNote(a.limit, z) + heldNote(a);
@@ -963,13 +1105,12 @@ function fewerLine(role, s, low) {
 }
 
 // heldNote says, where decode admission holds the prefill limit down, that
-// the answer is decode first and may not be the fewest replicas in all.
+// decode replicas are what lift it.
 function heldNote(a) {
   const held = (f => f && (f.flags || []).includes("HeldByDecodeAdmission"));
   if (!held(a.limit) && !held(a.plan.limits.prefill)) return "";
-  return `<div class="hint">Decode admission holds the prefill limit down here. The answer is the fewest decode replicas first, ` +
-    `then the fewest prefill: a fleet with more decode and fewer prefill replicas may serve the rate with fewer in all. ` +
-    `Try it in the first mode, though a large fleet at a high rate can take many minutes to price there.</div>`;
+  return `<div class="hint">Decode admission holds the prefill limit down here: more decode replicas lift it more than ` +
+    `more prefill replicas do, and the answer weighs the two.</div>`;
 }
 
 // UNMET_SAID are the refusals unmetAdvice says in the page's own words; the
@@ -1855,9 +1996,322 @@ function wire() {
   el("scenexport").onclick = exportScenario;
   el("scenimport").onchange = () => importScenario(el("scenimport").files[0]);
   el("pina").onclick = pinA;
+  el("rshapeadd").onclick = () => { addShapeRow("", "", ""); const last = el("rshapes").lastElementChild; if (last) last.querySelector("input").focus(); reportStale(); };
+  // Editing what the report asks hides an answer to something else.
+  el("rshapes").addEventListener("input", reportStale);
+  el("rloads").oninput = el("rgrowth").oninput = el("rloadstat").onchange = reportStale;
+  el("rrun").onclick = runReport;
+  addShapeRow("", "", "");
   el("unpin").onclick = unpin;
   el("kprom").onchange = el("krec").onchange = el("lasthour").onchange = showKind;
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
+  el("upload").onclick = uploadRecording;
+  el("dayrun").onclick = runDay;
+}
+
+// ---- The day plan ----
+
+// dayRequest is the day plan the knobs ask: the plan's SLO, headroom,
+// assumptions and stated lengths, and no fleet or rate, which are each
+// bucket's own.
+function dayRequest() {
+  const req = planRequest();
+  delete req.fleet;
+  delete req.views;
+  delete req.bucketEdges;
+  if (req.traffic) {
+    delete req.traffic.classes;
+    if (!Object.keys(req.traffic).length) delete req.traffic;
+  }
+  req.step = el("daystep").value;
+  if (el("daysize").value) req.sizeFor = el("daysize").value;
+  return req;
+}
+
+// runDay asks the day plan and draws it.
+async function runDay() {
+  if (!state.inputs || !state.k) return;
+  const inputsId = state.inputs.inputsId, t0 = performance.now();
+  el("dayrun").disabled = true;
+  el("dayout").classList.add("stale");
+  setStatus("Planning the day: each bucket sized on its own (seconds)...");
+  try {
+    const out = await api("POST", "v1/dayplan", dayRequest());
+    if (!state.inputs || inputsId !== state.inputs.inputsId) return;
+    state.day = out;
+    renderDay();
+    setStatus(`Planned ${out.buckets.length} buckets in ${((performance.now() - t0) / 1000).toFixed(1)} s; ${out.searched} fleets priced.`);
+  } catch (e) {
+    setStatus("Could not plan the day: " + e.message, true);
+  } finally {
+    el("dayrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+    el("dayout").classList.remove("stale");
+  }
+}
+
+// renderDay draws the day plan: the summary, the three charts on one time
+// axis, the legend, the table view and the notes.
+function renderDay() {
+  const d = state.day;
+  el("dayout").hidden = false;
+  el("daysum").innerHTML = daySummaryText(d).map(t => `<li>${esc(t)}</li>`).join("");
+  const g = dayPlanSVG(d), svg = el("daychart");
+  svg.setAttribute("viewBox", g.viewBox);
+  svg.innerHTML = g.markup;
+  el("daylegend").innerHTML = dayLegend();
+  el("dayrefused").innerHTML = dayRefusedHTML(d);
+  el("dayrefused").hidden = !(d.refused && d.refused.length);
+  el("daydesc").textContent = daySummaryText(d).join(" ");
+  el("daytable").innerHTML = dayHoursTable(d);
+  el("daybuckets").innerHTML = dayBucketsTable(d);
+  el("daynotes").innerHTML = d.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(d.banner)}</li>`;
+  dayHover(svg, g);
+}
+
+// dayHover is the crosshair across the three charts and the tooltip of the
+// bucket under it.
+function dayHover(svg, g) {
+  const xh = svg.querySelector(".xh"), tip = el("tip");
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) * g.W / r.width;
+    if (vx < g.L || vx > g.L + g.pw) { svg.onmouseleave(); return; }
+    const b = dayBucketAt(state.day, g.x0 + (vx - g.L) / g.pw * (g.x1 - g.x0));
+    if (!b) { svg.onmouseleave(); return; }
+    xh.setAttribute("x1", vx); xh.setAttribute("x2", vx); xh.setAttribute("visibility", "visible");
+    tip.innerHTML = dayTipHTML(state.day, b);
+    tip.hidden = false;
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 360) + "px";
+    tip.style.top = (e.clientY + 14) + "px";
+  };
+  svg.onmouseleave = () => { xh.setAttribute("visibility", "hidden"); tip.hidden = true; };
+}
+
+// ---- The fleet report (POST /v1/report) ----
+//
+// Every string the card shows is built in scenario.js (reportView) and put
+// here into text nodes, never into markup.
+
+// renumberShapes labels each shape row by its place, for a screen reader.
+function renumberShapes() {
+  Array.from(el("rshapes").children).forEach((row, i) => {
+    for (const box of row.querySelectorAll("input")) {
+      const part = box.dataset.part;
+      box.setAttribute("aria-label", `shape ${i + 1} ${part === "hit" ? "prefix hit rate" : part.toUpperCase() + " in tokens"}`);
+    }
+    row.querySelector("button").setAttribute("aria-label", `Remove shape ${i + 1}`);
+  });
+}
+
+// addShapeRow adds a request-shape row: IL, OL and hit boxes and a remove
+// button. A blank row is the measured shape.
+function addShapeRow(il, ol, hit) {
+  const rows = el("rshapes");
+  if (rows.children.length >= MAX_REPORT_SHAPES) {
+    el("rstatus").textContent = `At most ${MAX_REPORT_SHAPES} shapes.`;
+    return;
+  }
+  const row = document.createElement("div");
+  row.className = "rshape";
+  for (const [name, value, hint] of [["il", il, "IL"], ["ol", ol, "OL"], ["hit", hit, "hit"]]) {
+    const box = document.createElement("input");
+    box.type = "text";
+    box.value = value;
+    box.placeholder = hint;
+    box.dataset.part = name;
+    row.appendChild(box);
+  }
+  const drop = document.createElement("button");
+  drop.type = "button";
+  drop.textContent = "Remove";
+  drop.onclick = () => {
+    // Focus moves to the next row's IL box, or to "Add a shape".
+    const next = row.nextElementSibling || row.previousElementSibling;
+    row.remove();
+    renumberShapes();
+    reportStale();
+    (next ? next.querySelector("input") : el("rshapeadd")).focus();
+  };
+  row.appendChild(drop);
+  rows.appendChild(row);
+  renumberShapes();
+}
+
+// shapeRows is the shape rows as reportRequest reads them.
+function shapeRows() {
+  return Array.from(el("rshapes").children).map(row => {
+    const part = name => row.querySelector(`[data-part="${name}"]`).value;
+    return {il: part("il"), ol: part("ol"), hit: part("hit")};
+  });
+}
+
+// reportStale says a drawn report no longer matches the knobs: it is hidden
+// until the fleet is judged again.
+function reportStale() {
+  // Any answer still in flight is for the question before this change.
+  state.reportGen = (state.reportGen || 0) + 1;
+  if (el("rresult").hidden && !state.reportBusy) return;
+  el("rresult").hidden = true;
+  el("rstatus").textContent = "The knobs changed: judge the fleet again.";
+}
+
+// reportToken names the question on screen: the inputs and every change
+// since (reportStale). An answer to an older token is dropped.
+function reportToken() {
+  return (state.inputs ? state.inputs.inputsId : "") + "#" + (state.reportGen || 0);
+}
+
+// judgedText says what a report found, for the live region.
+function judgedText(r) {
+  const counts = {};
+  for (const s of r.shapes || []) {
+    const v = (s.verdict || {}).verdict || "NOT JUDGED";
+    counts[v] = (counts[v] || 0) + 1;
+  }
+  const n = (r.shapes || []).length;
+  return `Judged ${n} shape${n === 1 ? "" : "s"}: ` + Object.entries(counts).map(([v, c]) => `${c} ${v.toLowerCase()}`).join(", ") + ".";
+}
+
+// runReport asks the server to judge the fleet the knobs set, at the
+// shapes and loads asked, with the plan's headroom, SLO and assumed terms.
+// The button stays focusable while it runs (aria-disabled), so focus is not
+// lost; on an answer it moves to the verdicts.
+async function runReport() {
+  if (state.reportBusy) return;
+  if (!state.inputs || !state.k) {
+    el("rstatus").textContent = "Load a source first.";
+    return;
+  }
+  const plan = planRequest();
+  const asked = reportRequest({inputsId: state.inputs.inputsId, fleet: plan.fleet, shapes: shapeRows(),
+    loads: el("rloads").value, growth: el("rgrowth").value, loadStatistic: el("rloadstat").value, headroom: plan.headroom, slo: plan.slo, assume: plan.assume});
+  if (asked.problem) {
+    el("rstatus").textContent = asked.problem;
+    return;
+  }
+  const token = reportToken();
+  state.reportBusy = true;
+  el("rrun").setAttribute("aria-disabled", "true");
+  el("rstatus").textContent = "Judging the fleet... (many shapes and loads take up to half a minute)";
+  try {
+    const r = await api("POST", "v1/report", asked.body);
+    // An answer to a question since changed is dropped.
+    if (!reportCurrent(token, reportToken())) return;
+    renderReport(r);
+    el("rstatus").textContent = judgedText(r);
+    el("rverdicts").focus();
+  } catch (e) {
+    if (!reportCurrent(token, reportToken())) return;
+    const status = Number(String(e.message).split(":")[0]);
+    el("rresult").hidden = true;
+    el("rstatus").textContent = reportMissing(status, e.message)
+      ? "This server has no fleet report (POST /v1/report): it runs a release from before capacity-planner at-replicas. The rest of the page works."
+      : "The report failed: " + e.message;
+  } finally {
+    state.reportBusy = false;
+    el("rrun").removeAttribute("aria-disabled");
+    if (!reportCurrent(token, reportToken())) el("rstatus").textContent = "The knobs changed: judge the fleet again.";
+  }
+}
+
+// textNode is an element holding text, with a class.
+function textNode(tag, text, cls) {
+  const c = document.createElement(tag);
+  c.textContent = text;
+  if (cls) c.className = cls;
+  return c;
+}
+
+// shapeLabel is a shape's name, marked EXTRAPOLATED where it is.
+function shapeLabel(row) {
+  const span = textNode("span", row.label);
+  if (row.extrapolated) {
+    const x = textNode("span", " EXTRAPOLATED", "rextra");
+    if (row.why) x.title = row.why;
+    span.appendChild(x);
+  }
+  return span;
+}
+
+// flagsNode is a shape's flags: the common ones as phrases, the rest behind
+// a toggle, and every code in the tooltip.
+function flagsNode(f) {
+  const p = textNode("p", f.phrases.length ? "Rests on: " + f.phrases.join("; ") + "." : "");
+  p.title = f.codes;
+  if (f.more) {
+    const more = document.createElement("details");
+    more.className = "rmore";
+    more.appendChild(textNode("summary", `${f.more} more assumption${f.more === 1 ? "" : "s"}`));
+    more.appendChild(textNode("p", f.rest.join(", ")));
+    p.appendChild(more);
+  }
+  return p;
+}
+
+// renderReport draws a report: each shape's verdict in words first, the
+// shape-by-load matrix, each shape's detail (closed), and the accuracy notes
+// behind a toggle.
+function renderReport(r) {
+  const v = reportView(r);
+  const verdicts = el("rverdicts");
+  verdicts.replaceChildren();
+  el("rload").textContent = v.load;
+  for (const s of v.verdicts) {
+    const li = document.createElement("li");
+    li.appendChild(shapeLabel(s));
+    if (s.whatIf) li.appendChild(textNode("span", " if all traffic were this shape", "rwhatif"));
+    if (s.decodeOnly) li.appendChild(textNode("span", "decode only", "rmark unknown rscope"));
+    li.appendChild(textNode("b", " " + s.verdict + ": "));
+    if (s.needs) li.appendChild(textNode("span", s.needs, s.unmet ? "rneeds unmet" : "rneeds"));
+    li.appendChild(textNode("span", " " + s.rest, "rverdict"));
+    // Growth sits under the verdict it grows from, never in its place.
+    for (const g of s.growth) {
+      const p = textNode("div", "", "rgrowthline");
+      p.appendChild(textNode("span", g.lead + ": "));
+      p.appendChild(textNode("b", g.verdict + ": "));
+      if (g.needs) p.appendChild(textNode("span", g.needs, g.unmet ? "rneeds unmet" : "rneeds"));
+      p.appendChild(textNode("span", " " + g.rest));
+      li.appendChild(p);
+    }
+    verdicts.appendChild(li);
+  }
+  el("rlegendstats").textContent = v.legendStats;
+  const table = el("rmatrix");
+  table.replaceChildren();
+  const head = document.createElement("tr");
+  head.appendChild(textNode("th", "shape \\ load"));
+  for (const h of v.header) head.appendChild(textNode("th", h));
+  table.appendChild(head);
+  for (const row of v.rows) {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th");
+    th.appendChild(shapeLabel(row));
+    tr.appendChild(th);
+    for (const c of row.cells) {
+      // Each figure on its own unbroken line part, so a narrow page wraps between them.
+      const td = document.createElement("td");
+      td.className = c.cls;
+      c.parts.forEach((p, i) => {
+        if (i) td.appendChild(document.createTextNode(i === 2 ? " " : " · "));
+        td.appendChild(textNode("span", p, "rpart"));
+      });
+      if (c.word) td.appendChild(textNode("span", c.word, "rmark " + c.cls));
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  const detail = el("rdetail");
+  detail.replaceChildren();
+  for (const d of v.details) {
+    const box = document.createElement("details");
+    box.appendChild(textNode("summary", d.summary));
+    for (const line of d.lines) box.appendChild(textNode("p", line));
+    box.appendChild(flagsNode(d.flags));
+    detail.appendChild(box);
+  }
+  const notes = el("rnotes");
+  notes.replaceChildren();
+  for (const n of v.notes) notes.appendChild(textNode("li", n));
+  el("rresult").hidden = false;
 }
 
 document.addEventListener("DOMContentLoaded", start);

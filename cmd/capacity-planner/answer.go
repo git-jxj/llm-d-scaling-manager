@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,8 +17,8 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource"
@@ -41,11 +40,19 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
-	decode                                   int
-	batchCap                                 int64
-	inputTokens, outputTokens                float64
-	headroom, tpotRatio                      float64
-	seed                                     uint64
+	// regularOnly refuses a --recording that is no regular file rather than
+	// read it whole: the server's (openRecording).
+	regularOnly bool
+	// hint, when hintSet, is the words a refusal names a calm cycle in, set
+	// by a caller that prices for another source (the server, the report);
+	// else they follow the CLI's own source (hintSource).
+	hint                      hintSource
+	hintSet                   bool
+	decode                    int
+	batchCap                  int64
+	inputTokens, outputTokens float64
+	headroom, tpotRatio       float64
+	seed                      uint64
 	// ttft, ttftPercentile, assumeVP, assumePromptCV, arrivalCV2, prefill and
 	// prefillVariant are the TTFT half's flags (ttft.go); inputBucket only
 	// refuses per-bucket answers.
@@ -54,8 +61,14 @@ type answerFlags struct {
 	assumeRouterHop                                   time.Duration
 	prefill                                           int
 	set                                               map[string]bool
+	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
+	// report shape, at-replicas --shape).
+	prefixHit *float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
+	// flowControl is --flow-control, a TTFT flag (ttft.go): the router's flow
+	// control stated, on or off, in place of its inference from the queue series.
+	flowControl string
 	// priceRouterWait is --price-router-wait, a TTFT flag (ttft.go): opt-in,
 	// off by default.
 	priceRouterWait bool
@@ -67,6 +80,9 @@ type answerFlags struct {
 	// engineTPOT says R_q was read from the engine's TPOT histogram
 	// (tpotRatioFor).
 	engineTPOT bool
+	// imbalanceAcrossCounts is --imbalance-across-counts, a TTFT flag
+	// (ttft.go): opt-in, off by default, as in the SLO analyzer.
+	imbalanceAcrossCounts bool
 	// window is the --prometheus mode's flags, capture's own, and its
 	// namespace the --namespace both modes take; captured is the window
 	// read, once it is. question names the command, and warn is where a
@@ -105,6 +121,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.ttftPercentile, "ttft-percentile", "", "the TTFT percentile, in percent (90); on replicas-to-slo, default the policy's, else 90")
 	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, in place of the learned one (flagged)")
 	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, 0 to 3, in place of the measured one or the default 2 (flagged)")
+	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the queue series (flagged as stated)")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "Ca^2, the arrivals' squared coefficient of variation at the prefill queue, in place of Poisson's 1 (flagged)")
 	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the hop between the router and the engines (8ms), in place of the learned or default one (flagged)")
 	fs.IntVar(&f.prefill, "prefill", 0, "prefill replicas to price; 0 takes the recorded count")
@@ -115,6 +132,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.IntVar(&f.prefillRunningCap, "prefill-running-cap", 0, "with --ps-onsets, the most prompts a prefill pod computes at once (about max_num_batched_tokens over the prompt); 0 (unknown, the default) takes the lower of processor sharing at 1 and first come")
 	fs.BoolVar(&f.chargeDecodeGate, "charge-decode-gate", whatif.DefaultChargeDecodeGate, "experimental, unvalidated, slo-to-rate only: charge the time the decode flow-control gate is closed below its onset to the rate answer")
 	fs.StringVar(&f.inputBucket, "input-bucket", "", "not supported: per-bucket answers are the planner's M1")
+	fs.BoolVar(&f.imbalanceAcrossCounts, "imbalance-across-counts", whatif.DefaultImbalanceAcrossCounts, fmt.Sprintf("opt-in: at a prefill count P1 has not learned, price f off a curve fitted to the counts it learned, or %g with none, in place of max(%g, f) (flagged AssumedImbalance either way)", whatif.FreshImbalance, whatif.ImbalanceFloor))
 	f.window.registerWindow(fs)
 	fs.Lookup("prometheus").Usage = "answer from a window of this Prometheus (base URL), captured and generated in memory, in place of --recording"
 	fs.Lookup("from").Usage = "with --prometheus, the window's start: RFC 3339 or Unix seconds, to the millisecond (required)"
@@ -210,26 +228,33 @@ func (f *answerFlags) cycleNumber() (int, error) {
 // recording that fails inside the analyzers, or a replay cancelled, is an
 // internal one.
 func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error) {
-	name, data, err := f.recordingData(ctx)
+	name, src, err := f.recordingSource(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return f.stateOf(ctx, name, data)
+	defer func() { _ = src.Close() }()
+	return f.stateOf(ctx, name, src)
 }
 
-// stateOf is readState on a recording already read: data, gunzipped, and the
-// name its errors call it by.
-func (f *answerFlags) stateOf(ctx context.Context, name string, data []byte) (*learnreplay.State, error) {
-	rec, err := learnrec.Read(data)
-	if err != nil {
-		return nil, usagef("%s: not a learner recording: %v", name, err)
-	}
-	if len(rec.Events) == 0 || rec.Events[0].Kind != learnrec.KindStart {
-		return nil, usagef("%s: not a learner recording: no start line", name)
+// stateOf is readState on a recording already opened: src, and the name its
+// errors call it by. It checks the recording first (recordingSource.check),
+// which sums it, and that the file did not change under its passes
+// (recordingSource.unchanged), before any error a changed file would cause:
+// a file rewritten under the check pass itself reads short or mixed, and
+// that is the change, not the bytes it left.
+func (f *answerFlags) stateOf(ctx context.Context, name string, src *recordingSource) (*learnreplay.State, error) {
+	if err := src.check(name, f.recording); err != nil {
+		if cerr := src.unchanged(); cerr != nil {
+			return nil, cerr
+		}
+		return nil, err
 	}
 	cycle, _ := f.cycleNumber()
-	st, err := learnreplay.StateAt(ctx, data, learnreplay.Options{},
+	st, err := learnreplay.StateFrom(ctx, src.open, learnreplay.Options{},
 		learnreplay.StateQuery{Namespace: f.window.namespace, ModelID: f.model, Cycle: cycle})
+	if cerr := src.unchanged(); cerr != nil {
+		return nil, cerr
+	}
 	var q *learnreplay.QueryError
 	switch {
 	case errors.As(err, &q):
@@ -240,22 +265,24 @@ func (f *answerFlags) stateOf(ctx context.Context, name string, data []byte) (*l
 	return st, nil
 }
 
-// recordingData is the recording to answer from, gunzipped, and the name
-// errors call it by: the --recording file, or the window --prometheus
-// names, captured and generated in memory.
-func (f *answerFlags) recordingData(ctx context.Context) (string, []byte, error) {
+// recordingSource is the recording to answer from, and the name errors call
+// it by: the --recording file, read in passes, or the window --prometheus
+// names, captured and generated in memory. The caller closes it. With
+// regularOnly (the server), a --recording that is no regular file is
+// refused (openRecording).
+func (f *answerFlags) recordingSource(ctx context.Context) (string, *recordingSource, error) {
 	if f.prometheus() {
 		data, err := f.windowRecording(ctx)
-		return redactedURL(f.window.prometheus), data, err
+		if err != nil {
+			return "", nil, err
+		}
+		return redactedURL(f.window.prometheus), memoryRecording(data), nil
 	}
-	data, err := os.ReadFile(f.recording)
+	src, err := openRecording(f.recording, f.regularOnly)
 	if err != nil {
 		return "", nil, usageError{err}
 	}
-	if data, err = gunzipped(data); err != nil {
-		return "", nil, usagef("%s: %v", f.recording, err)
-	}
-	return f.recording, data, nil
+	return f.recording, src, nil
 }
 
 // windowRecording is the recording `capacity-planner capture` and then `capacity-planner
@@ -322,6 +349,18 @@ func (f *answerFlags) sourceLine(st *learnreplay.State) string {
 // rather than from a recording.
 func (f *answerFlags) prometheus() bool { return f.window.prometheus != "" }
 
+// hintSource is the words a calm cycle is named in: the caller's, when set,
+// else the CLI's flag for the source it read.
+func (f *answerFlags) hintSource() hintSource {
+	switch {
+	case f.hintSet:
+		return f.hint
+	case f.prometheus():
+		return hintCLIPrometheus
+	}
+	return hintCLIRecording
+}
+
 // pricedVariant is one decode variant as a question prices it: the state
 // read from the recording, the Decode built from it, and the flags every
 // answer on it carries.
@@ -338,12 +377,103 @@ type pricedVariant struct {
 	check whatif.LineCheck
 	// assumedIL and assumedOL say which lengths the flags assumed.
 	assumedIL, assumedOL bool
-	flags                []whatif.Flag
-	lines                whatif.LineResamples
+	// assumedHit says the prefix-hit rate was stated.
+	assumedHit bool
+	// kvSource says where the decode KV per request came from (residentKV).
+	kvSource string
+	// bandFloor is the ITL band floor the replay adapted to the fleet's fill
+	// (learnreplay.State.ITLBandFloor), and bandPolicyFloor the policy's it
+	// replaced; 0 where the policy's stood.
+	bandFloor, bandPolicyFloor float64
+	flags                      []whatif.Flag
+	lines                      whatif.LineResamples
+	// model is the model served, and stated the pricing flags set that put
+	// every figure outside the envelope (statedOutside).
+	model  string
+	stated []string
+}
+
+// Where the decode KV per request came from (pricedVariant.residentKV), as
+// the inputs carry it.
+const (
+	// kvMeasured is the KV a running request held on the recording's rows.
+	kvMeasured = "measured"
+	// kvMeasuredScaled is that reading scaled to the lengths asked.
+	kvMeasuredScaled = "measured, scaled to the shape asked"
+	// kvContext is no reading: the whole context, IL + D x OL/2.
+	kvContext = "context, no resident reading"
+	// kvDiscountFloor is a reading below the shape's prefix-hit discount,
+	// priced at the discount.
+	kvDiscountFloor = "measured below the prefix-hit discount, priced at it"
+	// kvAboveContext marks a reading above shape.AboveContextFactor times the
+	// whole context, priced as read: an engine's own KV beyond the context (an
+	// indexer's keys, a draft model's KV) is real, but a reader should see it.
+	kvAboveContext = ", above the context"
+	// kvSGLangContext is an SGLang reading above the whole context, priced at
+	// the context.
+	kvSGLangContext = "measured above the context on SGLang, priced at the context"
+)
+
+// residentKV is the KV one running request holds on the decode side, as the
+// decode line is priced at, and sets kvSource.
+//
+// A prefix-cache hit saves compute, but on the decode side the whole context
+// is resident: a hit saves KV only where another running request holds the
+// same blocks (saturation's prefix_cache_kv.go). So the shape's KVreq, IL x
+// (1 - hit) + D x OL/2, is never the price. The price is the measured KV per
+// running request (learnreplay.ResidentKV), which also counts what the engine
+// holds beyond the context (an indexer's keys, a draft model's KV) and so is
+// not capped at it. A shape the flags state scales the reading by the ratio
+// of its context to the measured one's, keeping the measured overhead factor.
+// With no reading, the whole context, IL + D x OL/2. The reading is priced by
+// shape.PriceResident, the rule the controller's analyzer shares
+// (saturation.SwitchKVPerRequestAboveContext).
+//
+// A reading is held above the discount, as the controller's analyzer holds
+// it (withResidentKV): below it is requests part way through their prefill,
+// or a spread of output lengths D under-states, not more sharing than the hit
+// rate allows, and pricing it would raise the knee.
+//
+// On SGLang a reading is held at the whole context: SGLang publishes the
+// busiest rank's usage and running count against the pod's whole capacity
+// (prefix_cache_kv.go), so on data-parallel attention it over-reads by about
+// the rank count, and the knee would come out that many times low.
+//
+// Not gated by count as the analyzer's reading is: few requests read a prefix
+// they truly share high, each carrying the whole of it, so a window of low
+// concurrency on a shared prefix prices the knee low, at most by 1/(1 - hit).
+// That errs towards more replicas; a reading above shape.AboveContextFactor
+// times the context says so in its source.
+func (pv *pricedVariant) residentKV() float64 {
+	d := pv.shape.OutputDispersion
+	whole := pv.shape.Context()
+	r, m := pv.state.Resident, pv.state.Shape
+	measured := shape.New(m.InputTokens, m.OutputTokens, 0).WithOutputDispersion(d).KVreq
+	var kv float64
+	switch {
+	case !r.Read() || !(measured > 0):
+		pv.kvSource = kvContext
+		return whole
+	case pv.assumedIL || pv.assumedOL:
+		pv.kvSource, kv = kvMeasuredScaled, r.PerRequest*whole/measured
+	default:
+		pv.kvSource, kv = kvMeasured, r.PerRequest
+	}
+	sglang := pv.state.Params != nil && pv.state.Params.Engine == inferenceengine.EngineSGLang
+	kv, how := pv.shape.PriceResident(kv, sglang)
+	switch how {
+	case shape.ResidentAtDiscount:
+		pv.kvSource = kvDiscountFloor
+	case shape.ResidentHeldAtContext:
+		pv.kvSource = kvSGLangContext
+	case shape.ResidentAboveContext:
+		pv.kvSource += kvAboveContext
+	}
+	return kv
 }
 
 // assumed reports a shape the flags assumed, in part or whole.
-func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL }
+func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL || pv.assumedHit }
 
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
@@ -359,7 +489,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.variant != "" && vs.Variant != f.variant {
 			continue
 		}
-		pv := pricedVariant{state: vs, cycle: st.Cycle}
+		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside()}
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
 			il, pv.assumedIL = f.inputTokens, true
@@ -369,7 +499,11 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		// A spread is a figure of the traffic the histogram counted, whatever
 		// length is asked: as the prompt's cv (prefillShape).
-		pv.shape = shape.New(il, ol, vs.Shape.PrefixHitRate).WithOutputDispersion(vs.Shape.OutputDispersion)
+		hit := vs.Shape.PrefixHitRate
+		if f.prefixHit != nil {
+			hit, pv.assumedHit = *f.prefixHit, true
+		}
+		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(vs.Shape.OutputDispersion)
 		replicas := vs.Replicas
 		if f.decode > 0 {
 			replicas = f.decode
@@ -381,14 +515,19 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		perRank := pv.perRank
 		pv.decode = whatif.Decode{
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
-			KVPerRequest: pv.shape.KVreq, OutputTokens: pv.shape.AvgOutputTokens,
+			KVPerRequest: pv.residentKV(), OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
+			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL},
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)
 		}
 		if vs.Shape.OutputDispersion == 0 {
 			pv.flags = append(pv.flags, whatif.OutputSpreadUnread)
+		}
+		if st.ITLBandFloor > 0 {
+			pv.bandFloor, pv.bandPolicyFloor = st.ITLBandFloor, st.ITLBandPolicyFloor
+			pv.flags = append(pv.flags, adaptedBandFloor)
 		}
 		switch vs.Tier {
 		case whatif.TierBorrowed:
@@ -600,13 +739,51 @@ func onRatio(r whatif.Result, ratio whatif.TPOTRatio, flags []whatif.Flag) whati
 func (f *answerFlags) ratioNote(st *learnreplay.State, r whatif.TPOTRatio) string {
 	switch {
 	case f.engineTPOT:
-		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st))
+		return fmt.Sprintf("R_q %s from %d engine TPOT windows, not the router's", num(r.Value), f.tpotWindowCount(st)) + worstNote(st.EngineTPOTWindows) + byFillNote(r)
 	case r.Assumed && len(st.TPOTWindows) == 0:
 		return fmt.Sprintf("R_q %s ASSUMED (no TPOT histogram)", num(r.Value))
 	case r.Assumed:
 		return fmt.Sprintf("R_q %s ASSUMED (the recording's %d TPOT windows not used)", num(r.Value), len(st.TPOTWindows))
 	}
-	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows))
+	return fmt.Sprintf("R_q %s from %d TPOT windows", num(r.Value), len(st.TPOTWindows)) + worstNote(st.TPOTWindows) + byFillNote(r)
+}
+
+// worstNote says R_q is the worst window where so few windows held requests
+// that the median's margin reaches the largest (whatif.WorstWindow).
+func worstNote(windows []whatif.TPOTWindow) string {
+	n := 0
+	for _, w := range windows {
+		if w.Count > 0 {
+			n++
+		}
+	}
+	if !whatif.WorstWindow(n) {
+		return ""
+	}
+	return fmt.Sprintf(" (the worst of %d)", n)
+}
+
+// byFillNote is R_q by fill for the human output: each fill bucket's ratio,
+// its own reading where the rise over fill raised it, and the global ratio
+// standing in where the bucket was thin; "" with one ratio at every fill.
+func byFillNote(r whatif.TPOTRatio) string {
+	if len(r.ByFill) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(r.ByFill))
+	for _, fr := range r.ByFill {
+		p := fmt.Sprintf("%.1f-%.1f %.3g", fr.Lo, fr.Hi, fr.Value)
+		switch {
+		case fr.Thin:
+			p += fmt.Sprintf(" (global, %d windows)", fr.Windows)
+		case fr.Learned != fr.Value:
+			p += fmt.Sprintf(" (own %.3g, raised)", fr.Learned)
+		case whatif.WorstWindow(fr.Windows):
+			p += fmt.Sprintf(" (the worst of %d)", fr.Windows)
+		}
+		parts = append(parts, p)
+	}
+	return ", by fill " + strings.Join(parts, ", ")
 }
 
 // num prints a ratio or fill with no trailing zeros.

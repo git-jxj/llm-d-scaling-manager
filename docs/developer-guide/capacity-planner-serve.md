@@ -200,17 +200,23 @@ cost). Each count is found by galloping up from one replica (1, 2, 4, 8, ...
 up to the bound) and then bisecting back, so the cost grows with the answer,
 not with the bound: a rate one replica of each serves prices one fleet.
 
-1. Decode: the fewest decode replicas whose own limit (TPOT, and the
+The search is `whatifapi.SmallestFleet`, which `at-replicas`' needed fleet
+runs too. Its answer is the fewest replicas in all; of two as few, the one with
+fewer decode replicas.
+
+1. Decode's floor: the fewest decode replicas whose own limit (TPOT, and the
    operating-point cap on decode's knee) reaches the rate, priced at one
    prefill replica, since the prefill count does not move it. With no TPOT
-   asked, one.
-2. Prefill: the fewest whose fleet limit reaches the rate at that decode
-   count.
-3. Only when no prefill count within the bound does: decode again, the
-   fewest above that count whose fleet limit reaches the rate with prefill at
-   its bound, then prefill again. This is the coupling: the lower knee and
-   decode admission hold the prefill limit down, so the fleet may need more
-   decode replicas than TPOT alone asks for.
+   asked, one. No fleet with fewer decode replicas reaches the rate.
+2. From the floor up, the fewest prefill replicas whose fleet limit reaches
+   the rate at each decode count, each search bounded by the count before
+   (more decode never needs more prefill). It stops once a decode count alone
+   reaches the best total found, or one prefill replica serves. This is the
+   coupling: decode admission holds the prefill limit down, and where it sets
+   most of a TTFT, the floor's prefill count can be several times what one
+   more decode replica needs (on the staircase at TTFT p95, 19 prefill + 5
+   decode against 5 + 6). Taking the fewest in all also makes the answer rise
+   with the rate.
 
 A limit reaches the rate when it is no more than a billionth under it: limits
 are bisections' answers, and on the worked recording the fleet limit wanders
@@ -242,8 +248,22 @@ request was turned away busy, the size asks once more, on its own slot. A
 caller never reruns its own call on a deadline error.
 
 Plan slots are a channel of `MaxPlans` tokens (the CPU count) and input slots
-one of `MaxInputs` (two); a request that finds none free is `errBusy`, a 503
-with `Retry-After: 1`. A plan whose client goes away stops between figures.
+one of `MaxInputs` (`--max-inputs`, two by default); a request that finds none
+free is `errBusy`, a 503 with `Retry-After: 1`. The inputs cache holds at most
+16 entries and `MaxInputsBytes` (`--inputs-cache-size`) in all, each weighed
+by `Resolved.Bytes`, an estimate: `heapEstimate` of `sizeOf`
+(`cmd/capacity-planner/sizeof.go`) of the replayed state, the series and the
+inputs document, a quarter over what `sizeOf` reaches for the allocator's
+rounding. A file rewritten during a resolve is refused after the last pass
+(`recordingSource.unchanged`): its size, modification time or file identity
+moved, so nothing is cached under the first pass's content id.
+
+A recording is never held whole. `recordingSource` opens the file once and
+reads it in passes, gunzipped as it goes: `check` (every line, and the
+content hash), then `learnreplay.StateFrom` (resolve the model, replay to the
+cycle, with no recording of its own) and `learnreplay.SeriesFrom`. Each pass
+holds one line (`learnrec.Scanner`). `TestServeResolvesALargeRecordingWithoutHoldingIt`
+holds it to that. A plan whose client goes away stops between figures.
 The HTTP server's timeouts are in `serve.go`: read 30 s, idle 2 minutes,
 write 10 minutes (`writeTimeout`).
 

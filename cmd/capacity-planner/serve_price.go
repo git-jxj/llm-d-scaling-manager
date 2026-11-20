@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -44,6 +43,17 @@ type servedSources struct {
 	// read one (whatifapi.Authenticator.NamespaceAllowed); nil with no auth.
 	allowed          []string
 	namespaceAllowed func(ctx context.Context, namespace string) error
+	// uploads is the recordings uploaded (--allow-upload), nil with none;
+	// maxUploadWeight bounds what one of them may keep loaded, in the
+	// weight the inputs cache counts (--inputs-cache-size).
+	uploads         *uploadStore
+	maxUploadWeight int
+	// onPass, when set, is called as each pass over a recording file opens,
+	// with the pass's count (recordingSource.onPass): a test's hook.
+	onPass func(pass int)
+	// onOpen, when set, is called with a recording's path after the path is
+	// checked and before the file is opened: a test's hook to swap the file.
+	onOpen func(path string)
 }
 
 // apiError is a CLI error as the API's: a usage or input error is the
@@ -61,22 +71,36 @@ func apiError(err error) error {
 func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest) (*whatifapi.Resolved, error) {
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
-		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate}
+		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
 		src = *req.Source
 	}
 	info := whatifapi.SourceInfo{Kind: src.Kind}
+	f.hint, f.hintSet = hintAPIPrometheus, true
+	if src.Kind == whatifapi.SourceRecording {
+		f.hint = hintAPIRecording
+	}
 	var hide string
+	uploaded := false
 	switch src.Kind {
 	case whatifapi.SourceRecording:
-		path, err := s.recordingPath(src)
+		path, release, err := s.recordingPath(src)
 		if err != nil {
 			return nil, err
 		}
-		f.recording, hide, info.Name = path, path, src.Name
+		if release != nil {
+			uploaded = true
+			defer release()
+		}
+		// The name was a regular file when checked; what is opened is judged
+		// again, as opened (openRecording).
+		f.recording, f.regularOnly, hide, info.Name = path, true, path, src.Name
 		if src.Cycle > 0 {
 			f.cycle = strconv.Itoa(src.Cycle)
+		}
+		if s.onOpen != nil {
+			s.onOpen(path)
 		}
 	case whatifapi.SourcePrometheus:
 		if err := s.windowOf(ctx, &f, src); err != nil {
@@ -85,10 +109,12 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	default:
 		return nil, whatifapi.InputErrorf("source.kind %q, want %s or %s", src.Kind, whatifapi.SourcePrometheus, whatifapi.SourceRecording)
 	}
-	name, data, err := f.recordingData(ctx)
+	name, data, err := f.recordingSource(ctx)
 	if err != nil {
 		return nil, hidePath(apiError(err), hide, info.Name)
 	}
+	defer func() { _ = data.Close() }()
+	data.onPass = s.onPass
 	st, err := f.stateOf(ctx, name, data)
 	if err != nil {
 		return nil, hidePath(apiError(err), hide, info.Name)
@@ -98,27 +124,62 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		info.From, info.To = &o.from, &o.to
 	}
 	info.Cycle, info.TotalCycles, info.FirstAt, info.LastAt = st.Cycle, st.Cycles, st.FirstAt, st.At
-	return s.resolved(&f, st, data, info)
+	res, err := s.resolved(&f, st, data, info)
+	// The series is the last pass: a file changed under it is refused, and
+	// nothing is kept under the content id its first pass summed.
+	if cerr := data.unchanged(); cerr != nil {
+		return nil, hidePath(apiError(cerr), hide, info.Name)
+	}
+	if err == nil && uploaded && s.maxUploadWeight > 0 && res.Bytes > s.maxUploadWeight {
+		return nil, whatifapi.TooLargeError{Err: fmt.Errorf("%s: loaded, it takes an estimated %s of memory, more than this server keeps for loaded sources "+
+			"(--inputs-cache-size %s): load a shorter recording, or ask whoever runs the planner to raise --inputs-cache-size",
+			info.Name, whatifapi.Quantity(int64(res.Bytes)), whatifapi.Quantity(int64(s.maxUploadWeight)))}
+	}
+	return res, err
 }
 
-// recordingPath is the recording a source names: a file name in the
-// recordings directory, never a path.
-func (s *servedSources) recordingPath(src whatifapi.SourceRequest) (string, error) {
-	switch {
-	case s.recordings == "":
-		return "", whatifapi.InputErrorf("source.kind recording: the server reads no recordings (--recordings)")
-	case src.Namespace != "" || src.From != "" || src.To != "":
-		return "", whatifapi.InputErrorf("source.namespace, from and to are a prometheus source's")
-	case src.Cycle < 0:
-		return "", whatifapi.InputErrorf("source.cycle %d, want a cycle from 1, or 0 for the last", src.Cycle)
-	case !recordingName(src.Name):
-		return "", whatifapi.InputErrorf("source.name %q: want a file name in the server's recordings directory, not a path", src.Name)
+// recordingPath is the recording a source names: an upload's name, looked
+// up and never joined to a path, or a file name in the recordings directory,
+// never a path. For an upload, release is non-nil and the caller calls it
+// when the load ends: until then the file is kept (uploadStore.load).
+func (s *servedSources) recordingPath(src whatifapi.SourceRequest) (path string, release func(), err error) {
+	if s.uploads != nil && strings.HasPrefix(src.Name, uploadPrefix) {
+		if err := recordingFields(src); err != nil {
+			return "", nil, err
+		}
+		path, release, ok := s.uploads.load(src.Name)
+		if !ok {
+			return "", nil, whatifapi.InputErrorf("source.name %q: no such upload: the server keeps the last %d uploads until it stops; upload it again",
+				src.Name, maxKeptUploads)
+		}
+		return path, release, nil
+	}
+	if s.recordings == "" {
+		return "", nil, whatifapi.InputErrorf("source.kind recording: the server reads no recordings (--recordings)")
+	}
+	if err := recordingFields(src); err != nil {
+		return "", nil, err
+	}
+	if !recordingName(src.Name) {
+		return "", nil, whatifapi.InputErrorf("source.name %q: want a file name in the server's recordings directory, not a path", src.Name)
 	}
 	path, ok := s.recordingFile(src.Name)
 	if !ok {
-		return "", whatifapi.InputErrorf("source.name %q: no such recording in the server's recordings directory", src.Name)
+		return "", nil, whatifapi.InputErrorf("source.name %q: no such recording in the server's recordings directory", src.Name)
 	}
-	return path, nil
+	return path, nil, nil
+}
+
+// recordingFields refuses the fields a recording source does not take, and a
+// negative cycle.
+func recordingFields(src whatifapi.SourceRequest) error {
+	switch {
+	case src.Namespace != "" || src.From != "" || src.To != "":
+		return whatifapi.InputErrorf("source.namespace, from and to are a prometheus source's")
+	case src.Cycle < 0:
+		return whatifapi.InputErrorf("source.cycle %d, want a cycle from 1, or 0 for the last", src.Cycle)
+	}
+	return nil
 }
 
 // recordingName reports whether name is one a recording source may give: a
@@ -142,7 +203,8 @@ const maxListedRecordings = 1000
 // reads a Prometheus and in which namespaces, and the recordings a recording
 // source may name: every name in --recordings that recordingPath accepts (a
 // regular file, a link followed, under a name that is no path and not
-// hidden), so that nothing listed is refused when picked.
+// hidden), so that nothing listed is refused when picked. The uploads kept
+// come first, newest first.
 func (s *servedSources) Sources(context.Context) (whatifapi.SourcesResponse, error) {
 	out := whatifapi.SourcesResponse{Prometheus: s.window.prometheus != "", Namespaces: slices.Clone(s.allowed), Recordings: []string{}}
 	if out.Prometheus {
@@ -150,6 +212,9 @@ func (s *servedSources) Sources(context.Context) (whatifapi.SourcesResponse, err
 		if out.Namespace == "" && len(s.allowed) > 0 {
 			out.Namespace = s.allowed[0]
 		}
+	}
+	if s.uploads != nil {
+		out.Recordings = append(out.Recordings, s.uploads.names()...)
 	}
 	if s.recordings == "" {
 		return out, nil
@@ -245,7 +310,7 @@ func hidePath(err error, path, name string) error {
 // resolved reads the fleet from st as the CLI would at the recorded counts,
 // and names the inputs by content: the recording's bytes, the cycle, the model
 // and the variants.
-func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []byte, info whatifapi.SourceInfo) (*whatifapi.Resolved, error) {
+func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *recordingSource, info whatifapi.SourceInfo) (*whatifapi.Resolved, error) {
 	variants, err := f.decodeVariants(st)
 	if err != nil {
 		return nil, apiError(err)
@@ -271,18 +336,27 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 	if err != nil {
 		return nil, apiError(err)
 	}
-	sum := sha256.Sum256(data)
+	sum := data.sum
 	prefill := ""
 	if ps != nil {
 		prefill = ps.Variant
 	}
 	content := strings.Join([]string{hex.EncodeToString(sum[:]), st.Namespace, st.ModelID, strconv.Itoa(st.Cycle), prefill,
 		variants[0].state.Variant, f.prefillVariant, f.variant}, "\x00")
-	return &whatifapi.Resolved{
+	series, err := seriesOf(data.open, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
+	if err != nil {
+		return nil, apiError(err)
+	}
+	pricer := &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
+		imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
+	res := &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
-		Pricer:  &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant},
-	}, nil
+		Pricer:  pricer,
+		Series:  series,
+	}
+	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(res.Inputs))
+	return res, nil
 }
 
 // servedState prices fleets from one replayed state. The state is read only,
@@ -290,6 +364,11 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data []b
 type servedState struct {
 	st                            *learnreplay.State
 	decodeVariant, prefillVariant string
+	// hint is the words a refusal names a calm cycle in: the source's.
+	hint hintSource
+	// imbalanceAcrossCounts is --imbalance-across-counts on at-replicas;
+	// the server prices at the shared default.
+	imbalanceAcrossCounts bool
 }
 
 // seconds is x seconds as a duration, to the nanosecond.
@@ -298,15 +377,26 @@ func seconds(x float64) time.Duration { return time.Duration(math.Round(x * floa
 // Fleet reads the fleet at k: the flags k stands for, checked as the CLI
 // checks them, and the fleet slo-to-rate would read with them.
 func (s *servedState) Fleet(k whatifapi.Knobs) (whatifapi.Fleet, error) {
-	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant,
+	sf, err := s.fleetAt(k)
+	if err != nil {
+		return nil, err
+	}
+	return sf, nil
+}
+
+// fleetAt is Fleet as the fleet itself, for the report, which reads the
+// variant and the prefill inputs it was priced from.
+func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
+	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant, hint: s.hint, hintSet: true,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{"ttft": true, "headroom": true}, warn: io.Discard,
 		decode: k.Decode, prefill: k.Prefill, headroom: k.Headroom, priceRouterWait: whatif.DefaultPriceRouterWait,
-		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate}
+		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: s.imbalanceAcrossCounts}
 	set := func(name string) { f.set[name] = true }
 	if k.PromptTokens > 0 {
 		f.inputTokens = k.PromptTokens
 		set("assume-input-tokens")
 	}
+	f.prefixHit = k.PrefixHit
 	if k.OutputTokens > 0 {
 		f.outputTokens = k.OutputTokens
 		set("assume-output-tokens")
@@ -416,11 +506,12 @@ func (sf *servedFleet) TPOTAt(rate float64) (mean, percentile whatif.Result) {
 	return a.slo.MeanTPOT, a.slo.PercentileTPOT
 }
 
-// decodeRate is slo-to-rate's decode rate at headroom, nil with no TPOT
-// target.
+// decodeRate is slo-to-rate's decode rate at headroom. With no TPOT target it
+// is nil, or decode's knee's refusal where the knee is refused
+// (kneeRefusal): the fleet's limit is then that refusal too.
 func (sf *servedFleet) decodeRate(tpotSeconds, headroom float64) whatif.Result {
 	if !(tpotSeconds > 0) {
-		return nil
+		return kneeRefusal(sf.pv)
 	}
 	target := whatif.TPOTTarget{Seconds: tpotSeconds, Percentile: sf.tpotQ, Ratio: sf.ratio.ratio}
 	return decodeRate(sf.pv, rateQuery(target, headroom, sf.ratio), sf.ratio)
@@ -470,3 +561,6 @@ func (sf *servedFleet) TPOTRatio() whatifapi.Ratio {
 
 // Assumed is the fleet's assumed inputs as read, in the CLI's words.
 func (sf *servedFleet) Assumed() []string { return sf.assumed }
+
+// Class is the class of the fleet's figures, as the CLI judges them.
+func (sf *servedFleet) Class() whatif.FigureClass { return sf.pf.class() }

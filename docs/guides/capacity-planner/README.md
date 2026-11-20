@@ -2,7 +2,7 @@
 
 ## Overview
 
-The capacity planner is a web page that answers four questions about one
+The capacity planner is a web page that answers five questions about one
 model's prefill/decode fleet:
 
 1. With this many prefill and decode replicas, what TTFT and TPOT do I get at
@@ -11,22 +11,26 @@ model's prefill/decode fleet:
    out first?
 3. What changes if I add a replica, or tighten a target?
 4. How many prefill and decode replicas does a given rate need?
+5. How many replicas did each hour of a day need, and how many did the fleet have?
 
 It reads what your fleet did, from a window of Prometheus or from a
 recording, and prices answers with the same model the `capacity-planner`
 command line uses. It is read only: it never changes a replica count, a policy
 or a ConfigMap. It runs on your machine, from one binary that serves both the
-page and its API. Nothing is installed in the cluster.
+page and its API. Nothing is installed in the cluster; to share one planner
+with a team, [run it in a cluster](in-cluster.md).
 
 This page gets you to a first plan in about five minutes. The rest of the
 capacity planner's pages:
 
 | Page | For |
 | --- | --- |
+| [Run it in a cluster](in-cluster.md) | one planner in a namespace that people open from their browser: port-forward on Kubernetes, a Route with login on OpenShift |
 | [Record a window](../record-for-capacity-planner/) | saving a window of Prometheus as a recording: with `capacity-planner`, or with only curl and jq |
 | [The HTTP API](api.md) | calling the API yourself: every endpoint, field, flag and error, the plan budget, and Kubernetes authentication |
 | [The metrics it needs](metrics.md) | every series it reads, and what your Prometheus must keep |
 | [Troubleshooting](troubleshooting.md) | every refusal and error, with its fix |
+| [How accurate each figure is](accuracy.md) | what `validated: error ...` and `OUTSIDE VALIDATED REGION` mean, and what was measured |
 
 ## Prerequisites
 
@@ -57,7 +61,7 @@ With an empty directory the page says "This server reads no source".
 ```bash
 # A sample recording, from the source tree of the release you run: one P/D model, one prefill and one decode
 # replica, an hour of a test run. Or put your own run.jsonl.gz from the record guide in recordings/ instead.
-export V=<release, v0.11.2 or later>
+export V=<release, v0.12.0 or later>
 mkdir -p recordings
 curl -fsSL -o recordings/ols-sweep.jsonl.gz \
   https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz
@@ -73,7 +77,7 @@ Run the image:
 # read them. -p 127.0.0.1:... keeps the port
 # off your network; never publish it beyond 127.0.0.1. Rootless Podman: --userns=keep-id in place of --user,
 # and with SELinux mount with :ro,Z.
-export V=<release, v0.11.2 or later>
+export V=<release, v0.12.0 or later>
 mkdir -p recordings
 docker run --rm --user "$(id -u):$(id -g)" -p 127.0.0.1:8080:8080 -v "$PWD/recordings:/recordings:ro" \
   ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:${V}
@@ -106,7 +110,7 @@ use:
 ```bash
 # Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
 # signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
-export V=<release, v0.11.2 or later> OS=linux ARCH=amd64
+export V=<release, v0.12.0 or later> OS=linux ARCH=amd64
 B=capacity-planner-${V}-${OS}-${ARCH}
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
 curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
@@ -241,7 +245,7 @@ kill %1
 - **Fleet, traffic, SLO.** The page starts from now: the replica counts the
   source saw, and the policy's SLO and headroom. The source carries no request
   rate, so the rate starts at the operating point, headroom times the lower
-  knee. Move the rate slider, step the replicas, pick a statistic, set a target.
+  knee (or the one knee that priced: see "One knee refused" below). Move the rate slider, step the replicas, pick a statistic, set a target.
   The critical rate is the total rate: regular and batch traffic are not
   priced apart yet.
 - **Targets the policy does not set.** A TTFT target is needed to read a
@@ -257,6 +261,15 @@ kill %1
   shown beside it, with the role that would set it then. The bar shows both
   roles and the fleet on one axis, with the rate you chose. "binds" marks the
   role whose limit sets the fleet figure.
+- **One knee refused.** The cap needs both knees. When the source cannot price
+  decode's knee (`NoLine`, `PinnedDefaultB`), the cap and the fleet limit are
+  refused, not shown at prefill's rate; with no TPOT target, decode's limit is
+  too, since nothing else bounds decode. The rate then starts at headroom
+  times the prefill knee, and the page says so under the rate: it is a place
+  to start, not an operating point. Type your own rate. The prefill curve,
+  the prefill limit and the TTFT figures stay. A refused prefill knee works
+  the same way, starting from the decode knee. A source with no prefill
+  variant at all keeps a cap from decode's knee alone.
 - **+1 prefill, +1 decode.** The fleet limit with one more replica of each role.
   Adding a replica of the role that does not bind changes nothing, and the page
   says so.
@@ -276,14 +289,84 @@ kill %1
   is flagged `AssumedShape`.
 - **TPOT percentile.** A percentile needs the ratio of that percentile to the
   mean. If the source did not learn it, type an assumed ratio; every figure
-  that rests on it is flagged `AssumedTPOTRatio`.
+  that rests on it is flagged `AssumedTPOTRatio`. A learned ratio is read per
+  KV-fill band of 0.2 where the source saw at least 5 windows in the band, so
+  the tail can widen as load rises. A band with fewer windows uses the ratio
+  read over every fill, and figures priced there are flagged
+  `GlobalTPOTRatio`. No window is read below its true percentile. Where
+  the router's histogram buckets are wide, it is read at the bucket's top, or
+  lower where the measured mean proves it, flagged
+  `MeanBoundedTPOTPercentile`; p90 and p99 in one wide bucket read the same.
+  The ratio is the median window's plus a margin; from 6 windows or fewer, in
+  all or in one fill band, it is the worst window, and the CLI says so.
+  Finer router TPOT buckets give a firmer figure.
 - **Flags and inputs.** Every figure carries the flags it rests on. The
   **Flags** drawer lists each once, in words, with what clears it. The
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
+- **Is this fleet the right size?** Below the graphs, judge the fleet the
+  knobs set at the load the source saw.
+  1. Add a row per request shape: IL and OL in tokens (`k` for 1024) and,
+     optionally, the prefix hit rate. A blank row is the measured shape.
+  2. Type the loads, comma separated: `80%` of each shape's knee, `5r/s`, or
+     `seen`. Set **Load seen times** to 1.5 to add a column and a line for 50%
+     more traffic; the verdict stays at the load seen.
+  3. Pick the load seen to judge at: its p95 over the window (the default,
+     the busy spells), its mean, or its peak.
+  4. Press **Judge the fleet**.
+
+  The answer reads top down:
+  - **The load judged**, and the mean, p95 and peak the source saw.
+  - **Verdicts**, one sentence per shape at that load: UNDER-PROVISIONED
+    (and which role to add), RIGHT-SIZED, or OVER-PROVISIONED (and which
+    role can lose a replica), with the fleet it needs in a box: "needs 3
+    prefill + 4 decode (has 2 + 2)", other fleets that also serve as "or 4 +
+    3", "at least" when prefill is not priced, or "no fleet up to 32
+    replicas serves this". With a growth set, a second line under each
+    says what the grown traffic does. A typed shape is a what-if, marked "if
+    all traffic were this shape". "decode only" marks a verdict the prefill
+    side could not price.
+  - **The matrix**, one row per shape and one column per load. A cell is the
+    TTFT and TPOT at your SLO's statistics, at that load's rate, and a word:
+    `ok` every target met, `MISS` a target missed (`MISS at onset` at the
+    flow-control onset), `SAT` saturated, `?` not
+    judged, `no SLO` no target set. The colour repeats the word. A TPOT
+    marked `≤` is the decode line's floor: the load sits below the fill
+    the line was fitted over, so the TPOT is at most that. A shape
+    outside the lengths the source saw is marked EXTRAPOLATED.
+  - **Each shape**, closed until you open it: the knees, how busy decode and
+    prefill are at the load, the numbers behind the verdict, and what the
+    figures rest on.
+  - **How accurate is this?** What no run has validated yet.
+
+  The report uses the knobs above: fleet, targets, headroom and typed terms.
+  Change a knob and the page asks you to judge again. A server from before
+  the report says so under the button; the rest of the page works. The same
+  report is `capacity-planner at-replicas` and `POST /v1/report`.
 
 A refused figure, or an error, is explained in
 [Troubleshooting](troubleshooting.md).
+
+### Why decode capacity can drop on prefix-heavy traffic
+
+A prefix-cache hit saves prefill work. It does not save decode memory, unless
+another running request holds the same blocks. A request that reuses an old
+prefix still keeps its whole context in the KV cache while it decodes. So the
+planner prices decode at the KV a running request was measured to hold, not at
+the prompt minus its cached part. On traffic with long, mostly cached prompts,
+fewer requests fit in the cache than the hit rate suggests, and the decode knee
+comes out lower than a planner that trusts the hit rate.
+
+The `kvPerRequest` term says where its figure came from:
+
+| Source | Meaning |
+| --- | --- |
+| `measured` | Tokens in use over running requests, on the decode rows. |
+| `measured, scaled to the shape asked` | That reading, scaled to the prompt and output you typed. |
+| `..., above the context` | Added to either one above when the reading is more than twice the whole context. The engine keeps extra KV per request, such as a draft model's. It is priced as read. |
+| `measured below the prefix-hit discount, priced at it` | The reading was below the hit-discounted figure, so the discounted figure is used. |
+| `measured above the context on SGLang, priced at the context` | SGLang reports its busiest rank against the whole pod, so the reading is held at the whole context. |
+| `context, no resident reading` | No usable reading. The whole context is priced: the prompt plus half the output, more where output lengths vary. |
 
 ## When a term is refused
 
@@ -294,6 +377,40 @@ prompt cv or the router hop. The learned value, or the reason it is missing,
 is shown under each box. A typed value flags every figure that rests on it.
 [Each reason and its fix](troubleshooting.md#refused-figures).
 
+A fleet whose load never goes quiet still gets two terms, each flagged:
+
+- **Prefill's fixed latency a, from the engines' own timing**
+  (`AFromEngineTiming`). A busy fleet has no quiet minutes to measure a from.
+  The planner then fits vLLM's prefill time against the tokens each request
+  computed, using the less busy minutes, and adds the time a request spends
+  on the prefill pod outside prefill and queueing. The assumed line gives the
+  figures it used. The value holds for the prompt length and cache hit rate
+  it was measured at. If even the shorter prompts compute more than 2,500
+  tokens, a is extrapolated from long prompts and may read low; the assumed
+  line says so.
+- **A lower KV-fill floor for the decode latency line** (`AdaptedBandFloor`).
+  The line is fitted over a range of KV fill. A fleet whose decode pods never
+  fill far enough above the default floor (0.15) never gets the 0.30 range a
+  fit needs. When at least 3 engines read below the floor, the planner lowers
+  it to the 10th percentile of the engines' fills over the last 30 minutes,
+  never under 0.05. It raises it back only after the fill has spread 0.35 for
+  2 minutes. The flag gives the floor used.
+
+**TTFT on a fleet that never goes quiet is not validated: prefill capacity
+V_P is a lower bound.** Such a fleet's prefill pods queue at every load, so
+the planner's prefill capacity is under what the fleet serves, and the decode
+side's share of TTFT is not priced. TTFT and prefill sizing can be wrong in
+either direction; decode TPOT is usable. Every TTFT answer on such a fleet
+says so.
+
+Limits of both:
+
+- The quiet-minute test per engine assumes a group's data-parallel ranks
+  share its load evenly, and context-parallel ranks (PCP, DCP) are not
+  counted as engines.
+- The lowered floor is the same on every replay of one recording, but a
+  different window of the same fleet can lower it to a different floor.
+
 ## Find the fleet a rate needs
 
 Above the controls, pick **What fleet does this traffic need?** Then set the
@@ -301,8 +418,8 @@ rate and the targets as before. The page finds the fewest replicas that serve
 that rate under your targets, and the replica counts become its answer: you
 read them, you do not set them.
 
-- **The answer.** The fewest decode replicas first, then the fewest prefill
-  replicas with them. Beside it: the fleet limit at that fleet, the headroom
+- **The answer.** The fewest replicas in all; of two fleets as few, the one
+  with fewer decode replicas. Beside it: the fleet limit at that fleet, the headroom
   over your rate, and the role and target that bind.
 - **Why not fewer.** One prefill replica fewer, and one decode replica fewer,
   each with the rate it would serve and how far short of yours that is.
@@ -316,9 +433,9 @@ read them, you do not set them.
   or when the fleet must hold the rate even if V_P reads high. If the worst
   corner puts the TTFT target under the floor, the page says so: no replica
   count helps, so raise the target or untick the box.
-- **Decode first.** When decode admission holds the prefill limit down, the
-  page notes it: one more decode and one fewer prefill replica may also work
-  and may be fewer in all. You can try such a fleet in the first mode.
+- **Decode admission.** When decode admission holds the prefill limit down,
+  the page notes it: there, decode replicas lift TTFT more than prefill
+  replicas do, and the answer has weighed the two.
 - **The rest of the page** is the fleet it found, exactly as the first mode
   would show it if you set those counts yourself.
 - **Search up to.** The most replicas of a role the page tries, 32 unless you
@@ -338,6 +455,211 @@ the fleet it found.
 Each plan has a time limit, 5 minutes unless the server was started with
 another `--plan-budget`. A plan past it is refused with `PlanBudgetExceeded`
 ([the plan budget](api.md#the-plan-budget)).
+
+## Check a fleet at N replicas
+
+To ask "is this fleet the right size for the traffic it saw?", run
+`capacity-planner at-replicas` on a recording or a Prometheus window
+(`--prometheus` and the capture flags, as for `replicas-to-slo`). Set the fleet
+with `--prefill` and `--decode`; without them it judges the recorded counts.
+
+<!-- guide:fleet.check start -->
+```bash
+# From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw, with
+# what that load grown by a fifth does beside it, for its own shape and two it never saw. The sample learned no prefill
+# speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at 50%, 80% and 100%
+# of the knee and the load seen.
+bin/capacity-planner at-replicas \
+  --recording internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz \
+  --assume-vp 200000 --assume-a 20ms --ttft 2s@p90 --tpot 30ms \
+  --shape measured --shape 1k/1k --shape 16k/200/0.3 \
+  --load 50% --load 80% --load 5r/s --load seen --load-seen-x 1.2
+```
+<!-- guide:fleet.check end -->
+
+It replays the recording once and answers, for each shape and load:
+
+- **Load judged.** The p95 of the arrival rate the window read, one reading
+  per cycle with traffic. The report prints the mean, p95 and peak, and the
+  busiest 2 minutes (a rolling mean). `--load-statistic mean|p95|peak` picks
+  the one judged; `--load-seen` states a load instead. The mean hides a busy
+  part: on the staircase sample it is 31.6 r/s, the p95 41.7 and the peak
+  43.2.
+- **Growth.** `--load "seen x1.5"` (also `seen×1.5`, `seen*1.5`) asks what
+  50% more traffic does: a column of its own and a short `x1.5 (...)` line
+  under the verdict. It never changes the verdict at the load seen.
+  `--load-seen-x 1.5` is an alias that adds the same column.
+- **Summary.** One row per shape (`--shape`, repeatable: `measured`, or
+  `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
+  repeatable: `80%` of that shape's fleet knee, `5r/s`, `seen`, or
+  `seen x1.5`). A cell
+  such as `637/16.4 @19.07 ok` is TTFT p90 637 ms and TPOT p90 16.4 ms at
+  19.07 r/s, and the SLO's own statistics are met there. The mark is `ok`
+  met, `MISS` missed, `MISS*` missed because the rate is past the prefill
+  flow-control onset (the router queues) though the figure is within, `SAT`
+  saturated, `?` not judged. A TPOT ending in `m` is the mean, where the
+  percentile is refused. A shape outside the lengths or prefix-hit rate the
+  recording saw is marked EXTRAPOLATED.
+- **Verdict per shape**, in one sentence:
+  - UNDER-PROVISIONED: the load is past headroom times the fleet knee, or a
+    target is missed there.
+  - OVER-PROVISIONED: a role has a replica to spare. One fewer of it must
+    hold every target at the load judged, and the role's own knee and
+    target at the window's peak too, since removing capacity is the costly
+    mistake.
+  - RIGHT-SIZED: the fleet holds, and no role has a replica to spare.
+  - NOT JUDGED: a figure the verdict needs is refused (the sentence says
+    which), there is no load, or the prefill side is not priced and decode
+    alone holds. With no prefill speed learned, decode alone is judged
+    ("(decode only)"): the report never calls such a fleet right-sized or
+    over-provisioned, and gives no fleet rate at the SLO.
+
+  UNDER and OVER name the fleet needed: the smallest that holds every
+  target at the load with headroom, found by the same search as
+  [`POST /v1/size`](api.md#the-size), for example "needs 3 prefill +
+  3 decode (has 2 + 2)". Other mixes of the same size that hold are listed
+  too. With the prefill side not priced it says "needs at least 3 decode".
+  Each role's standing is in the sentence ("decode: one fewer holds even
+  at the peak 43.2 r/s; prefill: no spare (1.9% under its operating
+  point)"), with any prefill imbalance f that no run learned at that pod
+  count. That f is assumed at 1.5. With `--imbalance-across-counts`
+  (opt-in), it is read off the pod counts that were learned, or 1.15 with
+  none. The `checks` lines give each fleet tried and its numbers.
+- **Per shape:** utilization at the load (decode KV fill, batch slots, wait
+  probability; prefill utilization pooled and on the busiest pod), the
+  prefill, decode and fleet knees in req/s and output tok/s with what binds
+  each, the operating point, the highest rate that holds the targets, and
+  the SLO against each load. `e2e mean (sum)` is TTFT mean + (OL - 1) x TPOT
+  mean, not a percentile.
+
+The targets are the policy's unless `--ttft` and `--tpot` set them. Exit 0
+means the report answered, whatever the verdict, saturated fleets included;
+exit 3 means a shape's verdict is NOT JUDGED. Scripts read the verdict from
+`-o json`
+(`shapes[].verdict.verdict`), which prints the same report as
+[`POST /v1/report`](api.md#the-report).
+
+The sample above prints (the start of it):
+
+```text
+ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-06 02:18-03:30Z, cycle 289 of 289
+load judged     41.70 r/s, the p95 of the 282 of 289 cycles with traffic
+load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/s; busiest 2m0s (8 cycles): 42.13 r/s
+SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
+cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
+mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
+summary                     50%                 80%                    5r/s               seen            seen x1.2
+  measured                  637/16.4 @19.07 ok  2490/16.4 @30.51 MISS  388/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  1k/1k EXTRAPOLATED        134/16.4 @18.27 ok  152/16.4 @29.24 ok     124/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  16k/200/0.3 EXTRAPOLATED  898/16.4 @13.36 ok  3673/16.4 @21.37 MISS  567/16.4 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+verdicts
+  measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.3x the fleet knee (38.1 r/s); needs 4 prefill + 4 decode (has 2 + 2) (prefill f 1.5 assumed at 4 pods).
+  1k/1k EXTRAPOLATED        UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 36.5 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (36.5 r/s); needs 1 prefill + 4 decode (has 2 + 2).
+  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.6x the fleet knee of 26.7 r/s, the fleet saturates; needs 5 prefill + 5 decode (has 2 + 2) (prefill f 1.5 assumed at 5 pods).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.9x the fleet knee (26.7 r/s); needs 6 prefill + 6 decode (has 2 + 2) (prefill f 1.5 assumed at 6 pods).
+```
+
+Read the not-validated lines at the end: the decode knee read 44% to 103%
+high on the goldens, and TTFT is not validated.
+## Plan replicas over a day
+
+How many prefill and decode replicas did your traffic need, hour by hour,
+and how many did the fleet have? The planner cuts the window into buckets (5
+minutes by default), reads each bucket's request rate, sizes it as **What
+fleet does this traffic need?** sizes one rate, and sets the replicas the fleet
+had beside it. Use a window of a day: a recording of a day, or 24 hours of
+Prometheus.
+
+On the page, load the source, set the SLO and headroom as usual, and press
+**Plan the day** under the graphs. Three charts share one time axis: the
+request rate (the mean of the bucket's cycles, and a wash up to their p95),
+then prefill replicas and decode replicas, each as needed against had. A
+bucket the fleet had fewer replicas than it needed is washed red; a bucket no
+fleet within the bound serves is hatched, in the panel of the role short.
+Hover a bucket for every value at that time; the table views list every hour
+and every bucket, with why a bucket was not sized.
+
+From the command line, on the sample recording (about an hour, so two hours
+in the table):
+
+```bash
+# --prometheus URL --namespace NS --kube-state-metrics in place of --recording reads the last 24 hours.
+capacity-planner day-plan --recording recordings/ols-sweep.jsonl.gz --model model-02 --assume-vp 30000 --ttft 500ms@p95 --tpot 4ms
+```
+
+```text
+Day plan for ns-01/model-02, 2026-11-01 21:50 to 2026-11-01 22:55 UTC, buckets of 5m0s, each sized for the p95 of its cycle rates (default; the mean where a bucket holds fewer than 20 cycles)
+SLO: TTFT p95 500ms, TPOT mean 4ms; headroom 0.85. TTFT model UNVALIDATED. ...
+
+REFUSED prefill's TTFT (TargetBelowFloor), in 4 buckets: target 0.5 s at or below the TTFT floor 0.6788 s
+  what to do: The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail.
+  what the plan did: Prefill is not sized: decode is sized alone, on its TPOT target and its knee times headroom.
+
+each hour: the need of its busiest bucket, the fewest pods it had, and the fleet it had judged whole at each bucket's rate
+hour (UTC)        rate mean  rate p95 need P need D  had P  had D
+2026-11-01 21:00       0.73      1.00      1      1      1      1  ok
+2026-11-01 22:00       6.88     29.68      4      2      1      1  UNDER (SLO risk)
+
+buckets: 11 sized (9 under, 0 over, 2 match; 11 for the p95, 0 for the mean, 0 for the max), 0 beyond the bound, 0 refused, 2 too little data, 0 no data
+needed: at the busiest bucket 4 prefill + 2 decode, at the quietest 1 prefill + 1 decode (the fewest replicas in all; another mix may serve too)
+replica-hours over the 11 sized buckets: needed 1.75 decode (prefill not priced in 4 of the 11), had 0.92 decode (prefill not priced in 4 of the 11)
+had over every bucket with data: 1.08 prefill + 1.08 decode replica-hours, 2.17 GPU-hours (GPUs per replica: 1 prefill, 1 decode)
+hours under (SLO risk): 22:00
+hours over (waste): none
+flags: RateFromDecodeRows, WindowShape, PrefillNotPriced, UnvalidatedTTFT, AssumedVP, ... (every flag the buckets carry)
+```
+
+It exits 3: four buckets of 4k-token prompts cannot meet a 500 ms TTFT at
+any replica count, so their prefill is not sized and their decode is sized
+alone. A higher `--ttft` sizes them.
+
+- **Needed.** The fewest replicas that serve the bucket's rate under the SLO
+  and headroom: the fewest in all, ties going to fewer decode replicas, as
+  **What fleet does this traffic need?** finds them. Another mix may serve the
+  rate too. An hour's need is its busiest bucket's.
+- **Sized for.** Each bucket is sized for the p95 of its cycles' rates when it
+  holds 20 cycles or more (5 minutes at a 15 s cycle), else for their mean,
+  which is less conservative, flagged `FewCyclesForP95`. `--size-for
+  mean|p95|max` sets it; the table and each bucket say which was used.
+  `--bucket 15m` sets the bucket.
+- **Shape.** Each bucket is priced at its own observed prompt and output
+  length. A bucket whose cycles read none is priced at the source's shape and
+  flagged `WindowShape`. `--assume-input-tokens` and `--assume-output-tokens`
+  price every bucket at one stated length, flagged `EXTRAPOLATED` when it lies
+  outside what the buckets observed.
+- **What the source cannot price.** A prefill rate V_P or a fixed latency a
+  it did not learn, a TTFT target under the TTFT at zero load, or a decode line
+  it did not fit refuses every rate alike. The plan says so at the top, with
+  what to do, and sizes what does price: decode alone when prefill is refused,
+  decode without its TPOT when the TPOT is refused. When the decode knee is
+  refused (a decode line it did not fit, or no KV capacity or batch cap),
+  nothing bounds decode, so, as when nothing prices, no bucket is sized and
+  no figure of a need is printed, as `at-replicas` refuses the same fleet. It
+  then exits 3.
+- **Beyond the bound.** A bucket whose rate no fleet within `--max-prefill`
+  and `--max-decode` (32 each) serves is not sized; its hour is UNDER. It
+  also exits 3.
+- **Too little data.** A bucket with fewer than 30 requests (`--min-requests`)
+  is not sized. A bucket no cycle fell in has no data. Neither counts as under
+  or over. A plan that sizes no bucket at all exits 3.
+- **Had.** The median serving pods of the priced prefill and decode variants
+  over the bucket; the rate is the model's (`OtherVariantsServed` where
+  another variant also served). The fleet it had is judged whole, at the
+  bucket's rate: UNDER (SLO risk) when its limit falls short, over (waste)
+  when one replica fewer of either role would still serve it. An hour is
+  UNDER when any of its buckets is, and over when every sized bucket is.
+  Replica-hours and GPU-hours needed and had are over the sized buckets, and
+  left out for prefill when any of them did not price it; the last line is
+  what the fleet ran over every bucket with data.
+- **Prefill not priced.** Decode is then sized on its own limit alone, a
+  lower bound: `at least`, and `>=` in the table.
+- **Steady state.** Each bucket is sized as if its rate held. It ignores the
+  time a replica takes to start: a fleet that follows the plan must start
+  replicas that long before the rate arrives.
+- **JSON.** `-o json` prints every bucket, as `POST /v1/dayplan` returns it
+  ([the day plan](api.md#the-day-plan)).
 
 ## Set your own prompt buckets
 

@@ -497,7 +497,7 @@ learner-golden-add: ## Commit a raw learner recording as a golden: RECORDING=<fi
 .PHONY: capacity-planner
 capacity-planner: ## Build the capacity planner command line (bin/capacity-planner), with the commit a generated recording carries; not in the manager image
 	go build -ldflags "$(LEARNREC_LDFLAGS)" -o bin/capacity-planner ./cmd/capacity-planner
-	@# The old name until v0.12.0: run as whatif, it prints a deprecation note.
+	@# The old name until v0.13.0: run as whatif, it prints a deprecation note.
 	ln -sf capacity-planner bin/whatif
 
 # The capacity planner binaries a release attaches, one per platform, named
@@ -518,7 +518,7 @@ capacity-planner-dist: ## Build the release's capacity planner binaries: make ca
 	done
 
 .PHONY: whatif
-whatif: capacity-planner ## Deprecated alias of capacity-planner; whatif will be removed in v0.12.0
+whatif: capacity-planner ## Deprecated alias of capacity-planner; whatif will be removed in v0.13.0
 
 .PHONY: learner-goldens
 learner-goldens: ## Rewrite every learner golden from a replay at this commit (only for a golden change the PR names)
@@ -952,7 +952,14 @@ weights: ## Download WEIGHTS_MODEL=<hf id> under WEIGHTS_PATH=<node dir> on ever
 	@test -n "$(WEIGHTS_IMAGE)" || { echo "weights: set WEIGHTS_IMAGE=<an image with huggingface_hub; the engine image>" >&2; exit 1; }
 	@test -n "$(prepull_namespace_given)" || { echo "weights: set NAMESPACE=<ns> (the Makefile default is not taken here)" >&2; exit 1; }
 	@bash deploy/weights.sh apply -n "$(NAMESPACE)" --model "$(WEIGHTS_MODEL)" --path "$(WEIGHTS_PATH)" --image "$(WEIGHTS_IMAGE)" \
-		$(if $(WEIGHTS_HF_TOKEN_SECRET),--hf-token-secret "$(WEIGHTS_HF_TOKEN_SECRET)",) $(if $(WEIGHTS_CAPACITY),--capacity "$(WEIGHTS_CAPACITY)",) $(if $(WEIGHTS_MEMORY),--memory "$(WEIGHTS_MEMORY)",) $(WEIGHTS_ARGS)
+		$(if $(WEIGHTS_HF_TOKEN_SECRET),--hf-token-secret "$(WEIGHTS_HF_TOKEN_SECRET)",) $(if $(WEIGHTS_CAPACITY),--capacity "$(WEIGHTS_CAPACITY)",) $(if $(WEIGHTS_MEMORY),--memory "$(WEIGHTS_MEMORY)",) $(if $(WEIGHTS_NODE_LABEL),--node-label "$(WEIGHTS_NODE_LABEL)",) $(WEIGHTS_ARGS)
+
+# The node label each node whose copy verifies gets; empty is llm-d.ai/<model name>-cache.
+WEIGHTS_NODE_LABEL ?=
+.PHONY: weights-label
+weights-label: ## Cluster admin: label each node whose copy verifies <key>=ready, unlabel the rest, once. NAMESPACE=<ns>[,<ns>]. In the cluster, continuously: deploy/weights.sh labeller.
+	@test -n "$(prepull_namespace_given)" || { echo "weights-label: set NAMESPACE=<ns>[,<ns>] (the Makefile default is not taken here)" >&2; exit 1; }
+	@bash deploy/weights.sh label -n "$(NAMESPACE)"
 
 weights-status: ## Per accelerator node: does it hold the weights, or is the download still running. NAMESPACE=<ns> [WEIGHTS_MODEL=<hf id>]
 	@test -n "$(prepull_namespace_given)" || { echo "weights-status: set NAMESPACE=<ns> (the Makefile default is not taken here)" >&2; exit 1; }
@@ -962,7 +969,7 @@ weights-delete: ## Drop the claim, volume and downloader for WEIGHTS_MODEL=<hf i
 	@test -n "$(prepull_namespace_given)" || { echo "weights-delete: set NAMESPACE=<ns> (the Makefile default is not taken here)" >&2; exit 1; }
 	@bash deploy/weights.sh delete -n "$(NAMESPACE)" $(if $(WEIGHTS_MODEL),--model "$(WEIGHTS_MODEL)",--all)
 
-## Keep the engines' compile caches (torch.compile, FlashInfer autotune,
+## Keep the engines' compile caches (torch.compile, FlashInfer autotune, FlashInfer kernels,
 ## Triton JIT, Python bytecode) on every accelerator node's local disk, behind a claim named
 ## engine-cache: a replica's start then never depends on a shared volume being
 ## writable, and the caches are warm from the second start on a node. Measured:
@@ -970,7 +977,7 @@ weights-delete: ## Drop the claim, volume and downloader for WEIGHTS_MODEL=<hf i
 ## ENGINE_CACHE_PATH is the directory on the node (the caches land under
 ## <dir>/engine-cache; defaults to WEIGHTS_PATH), ENGINE_CACHE_IMAGE any image
 ## with /bin/sh (defaults to WEIGHTS_IMAGE; the engine image). Model servers
-## mount the claim read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_DIR,
+## mount the claim read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_BASE,
 ## TRITON_CACHE_DIR and PYTHONPYCACHEPREFIX under it (`make workload-patch`
 ## writes that half for a model server that lacks it). Needs leave to create PersistentVolumes. What
 ## the node directory must be is in deploy/enginecache.sh --help; the nodes are
@@ -1671,6 +1678,24 @@ test-e2e-tools-install: kustomize ## Install with smt admin-setup, install and a
 
 .PHONY: test-e2e-tools-install-with-setup
 test-e2e-tools-install-with-setup: test-e2e-release-manifests-setup test-e2e-tools-install ## Prerequisites, then the tools-image install e2e (never deletes the cluster)
+
+# The capacity planner's in-cluster mode on plain Kubernetes
+# (test/capacity-planner/e2e.sh, docs/guides/capacity-planner/in-cluster.md):
+# the kubernetes overlay with PLANNER_E2E_IMG, opened with kubectl
+# port-forward by users the Role does and does not admit. Needs only kind and
+# the image: it makes its own small cluster, PLANNER_E2E_CLUSTER, if it is not
+# there, and never deletes it. Builds the image when the local daemon lacks it.
+PLANNER_E2E_IMG     ?= ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:e2e
+PLANNER_E2E_CLUSTER ?= capacity-planner-e2e
+.PHONY: test-e2e-capacity-planner-in-cluster
+test-e2e-capacity-planner-in-cluster: ## Deploy the planner's kubernetes overlay on kind and open it as permitted and refused users
+	@set -e; \
+	docker image inspect $(PLANNER_E2E_IMG) >/dev/null 2>&1 || $(MAKE) --no-print-directory docker-build-capacity-planner PLANNER_IMG=$(PLANNER_E2E_IMG); \
+	$(KIND) get clusters 2>/dev/null | grep -qx '$(PLANNER_E2E_CLUSTER)' || $(KIND) create cluster --name $(PLANNER_E2E_CLUSTER) --wait 120s; \
+	$(KIND) load docker-image $(PLANNER_E2E_IMG) --name $(PLANNER_E2E_CLUSTER); \
+	kc="$$(mktemp)"; trap 'rm -f "$$kc"' EXIT; \
+	$(KIND) get kubeconfig --name $(PLANNER_E2E_CLUSTER) > "$$kc"; \
+	KUBECONFIG="$$kc" PLANNER_IMG=$(PLANNER_E2E_IMG) bash test/capacity-planner/e2e.sh
 
 # The prerequisites only: kind with emulated GPUs, Prometheus, KEDA, the llm-d
 # CRDs and EPP, and the image loaded into the nodes. DEPLOY_SCALING_MANAGER=false
@@ -3294,6 +3319,7 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/compare-baked-release-files.sh
 	@bash -n hack/testdata/release-install/kubectl
 	@bash -n test/tools-install/e2e.sh
+	@bash -n test/tools-install/rv_snapshot.sh
 	@bash -n hack/check-controller-ready.sh
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
@@ -3328,6 +3354,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# the apply left a window where a new pod started active, and a
 	@# passive: false read through the yq alternative operator came back empty.
 	@bash hack/check-passive-keep.sh
+	@echo "Checking the tools-install e2e snapshot ignores a KEDA status write..."
+	@# Executes rv_snapshot against a stub kubectl. KEDA patches the status of a
+	@# ClusterTriggerAuthentication when it finalizes a ScaledObject, and the
+	@# second-install check failed on that write, which no install made.
+	@bash -n hack/check-tools-install-rv-snapshot.sh
+	@bash hack/check-tools-install-rv-snapshot.sh
 	@echo "Checking the controller readiness check..."
 	@# Executes it against a stub kubectl. `rollout status` passes at once for
 	@# a Deployment at 0 replicas, so an install over a controller at 0/0
@@ -3340,6 +3372,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# preStop hooks pod-wide, or reporting an unreadable workload as healthy all
 	@# parse perfectly and are all wrong about a running cluster.
 	@bash hack/check-workload-gaps.sh
+	@echo "Checking DisaggregatedSet discovery and the role report..."
+	@bash hack/check-disaggregatedset.sh
 	@echo "Checking the benchmark capture helpers..."
 	@# Executes them against a stub kubectl. A capture that replaces the run
 	@# already on disk, or that watches a cluster nobody named, parses perfectly
@@ -3397,6 +3431,10 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# a revoke under the wrong names, a Forbidden delete read as removed, or
 	@# an uninstall that leaves the grant all parse, and all exit 0.
 	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-keda-hpa-repair.sh
+	@echo "Checking the DisaggregatedSet role writer grant..."
+	@# The same handling for DSET_ROLE_WRITER, and what the install renders with
+	@# and without it: the grant, its binding and the switch on the Deployment.
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-dset-role-writer.sh
 	@echo "Checking the EPP /metrics authentication grant..."
 	@# Runs epp-metrics-auth against a stubbed kubectl. A grant that binds the
 	@# wrong ServiceAccount, reads a Forbidden list as no pools, or binds twice
@@ -3433,12 +3471,24 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# name, a missing ScaledObject (so the pool is never discovered), a worker
 	@# template carrying the proxy (so the group never becomes Ready).
 	@bash hack/check-warmpool-manifests.sh
+	@echo "Checking the capacity planner's in-cluster manifests (config/capacity-planner)..."
+	@# A Service on plain Kubernetes, a cluster-scoped object, a listen beyond
+	@# loopback, a wider Role or another subject, a proxy that passes the
+	@# Route's Host: all apply cleanly. Also its negative controls, and the
+	@# e2e script's syntax.
+	@bash -n test/capacity-planner/e2e.sh
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-capacity-planner-in-cluster.sh
 	@echo "Checking what prepull.sh actually emits..."
 	@# A holder that requests an accelerator, a selector that lands on every
 	@# node, two images sharing one DaemonSet name: all parse, all wrong.
 	@bash hack/check-prepull-manifests.sh
 	@echo "Checking what weights.sh and model_hostpath.sh actually emit..."
 	@bash hack/check-weights-manifests.sh
+	@echo "Checking the weights node gate (the verifier, label, the labeller, the workload-patch gate)..."
+	@# A probe that passes on a marker over a truncated file, a labeller that
+	@# removes a label another tool set, a required affinity that replaces the
+	@# GPU term it should be ANDed with: all parse, all wrong.
+	@bash hack/check-weights-node-gate.sh
 	@echo "Checking what enginecache.sh and engine_cache_claim.sh actually emit..."
 	@bash hack/check-enginecache-manifests.sh
 	@echo "Checking the tools entry point (the release's tools image runs it)..."
@@ -3581,6 +3631,19 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# Runs the release workflow step against a scratch repository. A backport
 	@# tagged after a newer release used to move latest back to the old line.
 	@bash hack/check-release-latest.sh
+	@echo "Checking the monthly upstream versions report and its issue step..."
+	@# Runs hack/upstream-versions.sh on fixture pins and stubbed API answers,
+	@# and the workflow issue step on a stubbed gh. A failed request, an empty
+	@# release list or a pin the inventory no longer finds all print a tidy
+	@# report; none of them may read as current. Also reads every location in
+	@# hack/upstream-pins.yaml, so a pin moved without its entry fails here.
+	@bash -n hack/upstream-versions.sh
+	@bash -n hack/check-upstream-versions.sh
+	@bash hack/check-upstream-versions.sh
+	@echo "Checking no tracked file names a personal registry namespace..."
+	@# The warm-pool proxy shipped from a personal GHCR namespace long after the
+	@# project moved. Allowed references are listed, with reasons, in the script.
+	@bash hack/check-personal-namespace.sh
 	@echo "Checking the release files: digest, names, labels, placeholders..."
 	@# Renders what a GitHub Release attaches and asserts the rules of
 	@# docs/proposals/install-from-release.md, then breaks a copy one rule at a

@@ -161,6 +161,19 @@ const (
 	LeaderWorkerSetKind       = "LeaderWorkerSet"
 	LeaderWorkerSetAPIVersion = "leaderworkerset.x-k8s.io/v1"
 
+	// DisaggregatedSet (LWS v0.10.0 and newer) runs each prefill/decode role
+	// as child LeaderWorkerSets. A role in scaling.mode External is scaled
+	// through its DisaggregatedSetRoleScaler, named <set>-<role>, which has a
+	// /scale subresource; that scaler is the scale target, never the child
+	// LeaderWorkerSet, which is replaced on every rollout. The objects are
+	// read as unstructured, so the LWS module needs no upgrade for them.
+	DisaggregatedSetKind            = "DisaggregatedSet"
+	DisaggregatedSetRoleScalerKind  = "DisaggregatedSetRoleScaler"
+	DisaggregatedSetAPIVersion      = "disaggregatedset.x-k8s.io/v1"
+	DisaggregatedSetNameLabelKey    = "disaggregatedset.x-k8s.io/name"
+	DisaggregatedSetRoleLabelKey    = "disaggregatedset.x-k8s.io/role"
+	DisaggregatedSetSubRoleLabelKey = "disaggregatedset.x-k8s.io/subrole"
+
 	// KEDA ScaledObject identity, used to recognize the HPA KEDA generates per
 	// ScaledObject (the child HPA inherits the ScaledObject's annotations).
 	ScaledObjectKind     = "ScaledObject"
@@ -175,6 +188,10 @@ const (
 	K8SEventOptimizationFailed                = "OptimizationFailed"
 	K8SEventUnattributedReadyPods             = "UnattributedReadyPods"
 	K8SEventThroughputAnalyzerRestartRequired = "ThroughputAnalyzerRestartRequired"
+	// K8SEventHeldNotInPool is a Warning on a variant whose pod template no
+	// InferencePool selects while another variant of its model is routed: it is
+	// held at its replica count and its replicas are not counted as supply.
+	K8SEventHeldNotInPool = "HeldNotInInferencePool"
 	// K8SEventConfigEntryRejected is a Warning on a scaling-policy ConfigMap
 	// one of whose entries was rejected.
 	K8SEventConfigEntryRejected = "ConfigEntryRejected"

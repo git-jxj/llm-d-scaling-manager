@@ -44,12 +44,12 @@
             "aboveBand": 0,
             "tooOld": 10,
             "past": 0,
-            "medianErrorPct": 3.0095802156512965,
-            "worstErrorPct": 4.353289520922821,
-            "signedErrorPct": -3.0095802156512965,
+            "medianErrorPct": 4.632585386172405,
+            "worstErrorPct": 8.10552975998107,
+            "signedErrorPct": -4.632585386172405,
             "fromCycle": 122,
             "toCycle": 131,
-            "rowKVPerRequest": 6501.878012338539,
+            "rowKVPerRequest": 6615.187416688883,
             "otherShape": true
           }
         },
@@ -59,6 +59,7 @@
         },
         "capacityTokens": 131072,
         "kvPerRequest": 1500,
+        "kvPerRequestSource": "measured below the prefix-hit discount, priced at it",
         "shape": {
           "inputTokens": 1000,
           "inputSource": "assumed",
@@ -80,6 +81,15 @@
           "ratio": 1.3,
           "ratioSource": "assumed",
           "windows": 0
+        },
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
         }
       },
       "results": {
@@ -105,7 +115,12 @@
               "AssumedShape",
               "OutputSpreadUnread",
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+            }
           }
         },
         "operatingRate": {
@@ -151,7 +166,12 @@
             "flags": [
               "AssumedShape",
               "OutputSpreadUnread"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+            }
           }
         },
         "percentileTPOT": {
@@ -174,7 +194,12 @@
               "AssumedTPOTRatio",
               "AssumedShape",
               "OutputSpreadUnread"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
           }
         }
       }

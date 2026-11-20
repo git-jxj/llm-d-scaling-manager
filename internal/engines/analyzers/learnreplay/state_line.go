@@ -31,11 +31,23 @@ type fillAt struct {
 type lineSamples struct {
 	steady, ramps, above map[string][]whatif.LineRow
 	fills                map[string][]fillAt
+	// below is each variant's latest mean ITLs read below the band, off a
+	// ramp, at most itl.BelowBandWindow of them: the readings the line's fit
+	// drops as idle, and the floor below the band is read from
+	// (whatif.BelowBand.LeastITL, itl.BelowBandFloor).
+	below map[string][]float64
 }
 
 func newLineSamples() *lineSamples {
 	return &lineSamples{steady: map[string][]whatif.LineRow{}, ramps: map[string][]whatif.LineRow{},
-		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}}
+		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}, below: map[string][]float64{}}
+}
+
+// leastBelowBand is the variant's floor below the band, in seconds
+// (itl.BelowBandFloor, the rule the tracker pins B at under
+// itl.Admission.BaselineFromFloor); 0 with too few readings.
+func (l *lineSamples) leastBelowBand(variant string) float64 {
+	return itl.BelowBandFloor(l.below[variant])
 }
 
 // rows is the variant's rows, of all three.
@@ -50,7 +62,7 @@ func (l *lineSamples) rows(variant string) []whatif.LineRow {
 func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 	policy, _ := in.Config.(*config.ScalingPolicy)
 	steady := policy.ITLSteadiness()
-	_, top := policy.ITLBand()
+	bottom, top := policy.ITLBand()
 	roles := rolesOf(in)
 	for _, rm := range in.ReplicaMetrics {
 		if !prefill.Serving(rm) || domain.CanonicalRole(roles[rm.VariantName]) == domain.RolePrefill {
@@ -62,6 +74,14 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 			s = s.WithOutputDispersion(shape.Dispersion(rm.AvgOutputTokens, rm.AvgOutputTokensSquared))
 		}
 		ramp := l.onRamp(rm.PodName, fillAt{k: k, kvReq: s.KVreq, at: at}, steady)
+		if !ramp && k > 0 && k < bottom && rm.ITLState() == domain.ITLFinite && rm.AvgITL > 0 && !math.IsInf(rm.AvgITL, 0) {
+			b := l.below[rm.VariantName]
+			b = append(b, rm.AvgITL)
+			if len(b) > itl.BelowBandWindow {
+				b = b[len(b)-itl.BelowBandWindow:]
+			}
+			l.below[rm.VariantName] = b
+		}
 		if !rm.GenerationTokenRateKnown || !(rm.GenerationTokenRate > 0) || !(k >= itl.DefaultGPSMinKForVerification) {
 			continue
 		}
@@ -72,9 +92,24 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 		case ramp:
 			kept = l.ramps
 		}
-		kept[rm.VariantName] = keepCycles(append(kept[rm.VariantName], whatif.LineRow{Cycle: cycle, At: at, K: k, KVPerRequest: s.KVreq,
+		kept[rm.VariantName] = keepCycles(append(kept[rm.VariantName], whatif.LineRow{Cycle: cycle, At: at, K: k, KVPerRequest: rowResidentKV(rm, s),
 			TokenRate: rm.GenerationTokenRate, Ramp: ramp, AboveBand: k > top}), shapeCycles)
 	}
+}
+
+// rowResidentKV is the KV a request held on the row, as the line check prices
+// the row at (whatif.LineRow.KVPerRequest): the row's tokens in use over its
+// running requests, read from the same scrape (state_resident.go), else the
+// row's shape s with no prefix-cache hit. A hit saves no decode-resident KV
+// unless another running request shares the block, and a check against the
+// discount prices more sequences than the row held. A reading is held above
+// the discount, as the planner holds its price (pricedVariant.residentKV).
+func rowResidentKV(rm domain.ReplicaMetrics, s shape.Shape) float64 {
+	if rm.RunningRequestsKnown && rm.KvUsageInstantKnown && rm.RunningRequests > 0 && rm.KvUsageInstant > 0 &&
+		rm.TotalKvCapacityTokens > 0 && rm.TotalKvCapacityTokens != math.MaxInt64 {
+		return max(rm.KvUsageInstant*float64(rm.TotalKvCapacityTokens)/float64(rm.RunningRequests), s.KVreq)
+	}
+	return shape.New(s.AvgInputTokens, s.AvgOutputTokens, 0).WithOutputDispersion(s.OutputDispersion).KVreq
 }
 
 // onRamp notes the pod's reading now and reports whether the row is on a ramp:

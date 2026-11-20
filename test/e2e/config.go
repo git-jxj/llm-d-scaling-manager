@@ -32,8 +32,10 @@ type E2EConfig struct {
 	// WarmPoolProxyImage: env WARMPOOL_PROXY_IMAGE. The warm-pool suite runs the
 	// REAL proxy next to an emulated supervisor, because the proxy is the piece
 	// whose behaviour is subtle -- readiness, the engine-range check, streaming
-	// -- and a stand-in would test the stand-in. Override it to test a build
-	// other than the published one.
+	// -- and a stand-in would test the stand-in. The default is this
+	// repository's :main, which deploy/kind-emulator/install.sh pre-loads (and
+	// builds from the checkout when it cannot pull it). Override it to test
+	// another build.
 	WarmPoolProxyImage string
 }
 
@@ -58,7 +60,7 @@ func LoadConfigFromEnv() E2EConfig {
 		PollIntervalVerySlowSec: testconfig.GetEnvInt("E2E_EVENTUALLY_POLL_VERY_SLOW", 15),
 
 		WarmPoolProxyImage: testconfig.GetEnv("WARMPOOL_PROXY_IMAGE",
-			"ghcr.io/ev-shindin/warmpool-proxy:v11"),
+			"ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:main"),
 	}
 
 	// OpenShift clusters typically don't have the HPAScaleToZero feature gate enabled, so native HPAs

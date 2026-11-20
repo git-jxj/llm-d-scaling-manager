@@ -99,7 +99,7 @@ Refusals, flags, the standalone mode and exit codes are in the
 | ITL line | `ITL(k) = A·k + B`, inter-token latency against fill `k`, fitted per variant (`internal/signals/itl`) |
 | Tier | Where a line came from: `ols` (full fit), `pinned-B` (slope fitted, intercept held from the last full fit, or 6 ms if none), `held` (last slope kept), `borrowed` (another variant's line) |
 | Line check | The token rate the line predicts at a replica's fill against its reported `generation_tokens` rate (`itl.GPSErrorPct`, 15%; the analyzers call it the GPS check) |
-| `KVreq` | KV tokens one in-flight request holds on average: `ILeff + D·OL/2`, `ILeff = IL·(1 − hit)`, `D` the spread of output lengths, 1 with no reading |
+| `KVreq` | KV tokens one in-flight request holds on average. On the decode side the planner prices the measured KV per running request (tokens in use over running requests), held at least at `ILeff + D·OL/2`; with no reading, the whole context `IL + D·OL/2`. `ILeff = IL·(1 − hit)` is the prefill side's prompt, `D` the spread of output lengths, 1 with no reading |
 | `V_P` | A prefill pod's prompt-token throughput while it has work |
 | `a` | The fixed latency one request pays on a prefill pod |
 | Batch cap | Most sequences an engine runs: flags, else the `llm-d.ai/max-num-seqs` annotation, else learned (ev-shindin/llm-scaling-manager#422, ev-shindin/llm-scaling-manager#429) |
@@ -120,7 +120,7 @@ closed form (Little's law, residence `OL·ITL(k)`):
 
 valid while the denominator is positive and `n` is under the cap.
 
-Corrections: `KVreq = ILeff + D·OL/2` with the output spread
+Corrections: on the decode side `KVreq` is the measured resident KV per running request, or the whole context `IL + D·OL/2` with no reading (a prefix hit saves decode KV only where running requests share the blocks). The analyzers price `KVreq = ILeff + D·OL/2` with the output spread
 `D = E[O²]/E[O]²` (ev-shindin/llm-scaling-manager#276), read from the output-length histogram, in the saturation
 analyzer, the slo analyzer (switch `slo-kv-per-request-output-dispersion`), the
 throughput analyzer (switch `throughput-kv-per-request-output-dispersion`, ev-shindin/llm-scaling-manager#433) and
@@ -166,7 +166,9 @@ percentile to the mean of per-request TPOT. `R_q` is above 1 because:
 
 **Learning `R_q`.** From the router's TPOT histogram, per window: the bucket
 holding the `q` quantile, read at its **upper edge**, over the window's mean
-(`_sum / _count`). `R_q` is the 90th percentile of those per-window ratios, and
+(`_sum / _count`). `R_q` is the 90th percentile of those per-window ratios (as
+built, the median plus a margin, and a coarse bucket bounded by the mean: see
+"R_q, as built" below), and
 never below 1. The histogram is model-wide, so it pools output lengths and
 variants: a per-bucket answer uses the pooled `R_q` and is flagged, unless a
 load generator's per-request log supplies the per-bucket ratio. The window mean
@@ -228,6 +230,103 @@ the case is held on built windows (`TestEngineTPOT_TheOrder`). A refusal priced 
 by default, because no default ratio has been measured; a stated default would
 be read as one.
 
+**R_q, as built.** Three changes to how `R_q` is
+read, one rule kept: an `R_q` never reads below the truth.
+
+- **A coarse bucket, bounded by the window's mean** (`whatif.readWindow`). Read
+  at its upper edge, a bucket gives every percentile inside it the same ratio:
+  on a 14 ms mean under the router's 10, 20 and 40 ms edges, p50, p90 and p99
+  all read 20/14, and the planner printed one TPOT for all three. A `q` bucket
+  wider than a quarter of the mean is now read at the lower of its upper edge
+  and the most the window's sum allows. Every request is at least its bucket's
+  lower edge, and the requests at or above the rank inside the `q` bucket are
+  at least the quantile, so `sum >= floorSum + (cum - rank)*(x - lower)` caps
+  the quantile `x`. That is a bound, not an estimate: it is never below the
+  true quantile. It separates p50 from p90 where the mean allows it, and leaves
+  p90 and p99 on the bucket's edge where it does not; the answer is flagged
+  `MeanBoundedTPOTPercentile` when it read below the edge. The bound needs the
+  sum of exactly the requests the buckets count, so it is skipped, and the
+  bucket's edge read, where that is not shown: the engine fall-back, whose sum
+  is its count times a step-time ITL (`TPOTWindow.SumMeasured` false), and a
+  window whose buckets hold more requests than `_count`, scraped a moment
+  apart. Reading inside the bucket linearly, as `histogram_quantile` does,
+  under-states the truth (8 of 595 readings on the property test's lognormal
+  draws, by up to 7.1%), and is not done.
+- **The median window plus a margin, not the 90th percentile** (`ratioRank`).
+  `R_q` is the lowest order statistic of the per-window ratios that is at or
+  above their median with 90% confidence: `P(Binomial(n, 1/2) <= k) >= 0.9`.
+  With 576 windows that is about the 304th; with 6 or fewer it is the largest,
+  the worst window. Each window's reading is at or above its own quantile, so
+  `R_q` is at or above the median window's true ratio with that confidence.
+  The 90th percentile it replaces priced a p50 at a p90-of-p50 across windows.
+- **R_q by fill** (`TPOTRatio.ByFill`, `whatif.FillRatio`). Each window
+  carries its cycle's fill, the mean over serving decode rows of the `k` the
+  ITL line pairs with (`learnreplay.decodeFill`), and `R_q` is read again per
+  fill bucket of 0.2 by the same reading and rank. A bucket keeps its window
+  count; under 5 windows (`whatif.MinFillRatioWindows`) it is priced at the
+  global `R_q` and an answer read there is flagged `GlobalTPOTRatio` (in
+  slo-to-rate, only where the TPOT target sets the rate). With no bucket
+  learned, `ByFill` is nil and the answer is the one-ratio answer.
+  - **Rising is imposed, not learned.** Each bucket is raised to the one below
+    it, a running maximum over fill; `learned` keeps the bucket's own reading,
+    and the human note prints both. Raising a ratio only prices a percentile
+    higher, so it is safe, and it keeps `ITL(k)·R_q(k)` strictly rising so
+    that slo-to-rate's bisection has one answer. Its cost is that one high
+    bucket lifts every bucket above it.
+  - **A step, not a line.** A fill reads its own bucket's value across
+    `[Lo, Hi)`, never a blend with the bucket below, so no fill reads under the
+    ratio its bucket priced. Where the product jumps past the target at a
+    bucket's edge, slo-to-rate answers on the side below it.
+  - **Small counts.** With 6 windows or fewer, in all or in one bucket, the
+    median's margin reaches the largest: `R_q` is the worst window, and the
+    human note says "(the worst of N)".
+  - **Checked.** A curve that falls, holds a ratio below 1, or does not tile
+    `[0, 1]` edge to edge is refused `InvalidInput`.
+  - **Used** by replicas-to-slo, slo-to-rate and the `/v1/plan` curves. The
+    frozen staircase file writes `byFill` beside the global `value`, and each
+    bucket's `percentileTPOT` at the operating fill, which the staircase
+    analyzer scores against (`staircase_analyze.py`); a file without them is
+    scored, as before, at the mean times the global ratio. The learned state
+    itself is replayed from the recording, not stored.
+
+**Measured.** Qwen3-32B P/D, 2 + 2 replicas, learned from each run's warm-up
+recording, against the client's per-step TPOT: q32j is 45 steps over three
+shapes, q132d 2 steps at 8000/200 (its other 2 steps are void: the fleet was
+short). The line is read at the real fill below the band (#167), on both
+sides. Mean error of the prediction over the measurement, before (main) and
+after, and the smallest margin over all steps after:
+
+| Run | Reading | Steps | Before | After | Smallest margin after |
+| --- | --- | --- | --- | --- | --- |
+| q32j | mean | 45 | +2% | +2% | -5.1% |
+| q32j | p50 | 45 | +89% | +12% | +3.4% |
+| q32j | p90 | 45 | +78% | +63% | +51.1% |
+| q32j | p99 | 45 | +69% | +66% | +48.3% |
+| q132d | mean | 2 | -4% | -4% | -4.1% |
+| q132d | p50 | 2 | +79% | +5% | +4.9% |
+| q132d | p90 | 2 | +67% | +54% | +53.1% |
+| q132d | p99 | 2 | +57% | +56% | +55.8% |
+
+No percentile step reads below its measurement. The mean, which this change
+does not touch, reads up to 5.1% low on 23 of the 45 q32j steps and on both
+q132d steps: that is the line's reading below the band, not R_q. The
+percentiles now separate: on the first q32j 8000/200 step p50, p90 and p99 read
+12.2, 19.1 and 20.6 ms, where before all three read 20.8; q132d's first step
+reads 12.7, 19.8 and 21.4, where before all three read 21.5. The gain is p50's,
+from the coarse-bucket bound and the median rank, not from R_q by fill.
+
+**p90 and p99 are still about 1.6 times the measurement** (+63% and +66% on
+q32j), and that is R_q: it prices p90 over the mean at about 1.70, against
+1.02 to 1.10 measured by the client. The router's 10, 20 and 40 ms edges cannot
+place a percentile inside a 10 ms bucket around a 12 to 30 ms mean, and the
+bound proves little above the median, so p90 and p99 sit near the bucket's
+edge. R_q by fill moved these runs little: the A steps show p50's ratio rising
+from 1.09 at the lowest fill to 1.25 near the knee, and p90's barely, because
+the same coarse edges set every fill's reading. It is built and tested, and
+not validated by these runs. Router TPOT edges a few percent apart around the
+target are what would firm up R_q; until then a percentile TPOT from the router
+histogram is a safe upper figure, not an estimate.
+
 **Inversion.** Question 1 inverts `ITL(k)·R_q = t`: `k* = (t/R_q − B)/A`, then
 the same clamps and cap as the mean. Question 2 reports TPOT at both the mean
 and percentile `q` (`--tpot-percentile`; else the mean only, since the scaling
@@ -261,7 +360,8 @@ optimised split, across the prefill and decode sides. The full model is
 
 **Decode, TPOT `t`.** For the mean, `k* = (t − B)/A` (`whatif.PriceTPOT`); for a
 per-request percentile, `k* = (t/R_q − B)/A`. `TargetBelowFloor` if
-`ITL(band.lo)·R_q ≥ t` (`R_q` = 1 for the mean). Clamp to the band and the batch cap (`whatif.ReachableFill`).
+`ITL(k_low)·R_q ≥ t` (`R_q` = 1 for the mean; `k_low` below). Clamp to the band's top and the batch cap.
+Below the band's bottom, `k*` stands, flagged `BelowFittedBand`.
 Rate `N_d·λ_rep(k*)`, **capped at the operating point**, because past it the
 admission wait is no longer small. `--headroom 1` lifts the cap.
 
@@ -270,7 +370,7 @@ below the lowest knee (with flow control on, also below the decode gate's
 onset) for the largest rate whose union-bound TTFT is at most `T`, decode
 admission priced at the same rate. When the prefill side alone would allow more,
 the answer is the rate decode admission holds it to, flagged. If own prefill,
-transfer and `ITL(band.lo)` alone exceed `T`, `TargetBelowFloor`.
+transfer and `ITL(k_low)` alone exceed `T`, `TargetBelowFloor`.
 
 **The fleet** carries the smaller of the two roles, then the operating-point cap.
 
@@ -286,8 +386,60 @@ transfer and `ITL(band.lo)` alone exceed `T`, `TargetBelowFloor`.
 3. **Answer.** TPOT from the closed-form fill, as the mean and, when a TPOT
    percentile is asked, as `ITL(k)·R_q`; TTFT at percentile `q`
    (`--ttft-percentile`, else the policy's, else 90). Floors are printed: TPOT
-   never beats `ITL(band.lo)` (times `R_q`); TTFT never beats
-   `a + I_q/V_P + ITL(band.lo)`.
+   never beats `ITL(k_low)` (times `R_q`); TTFT never beats
+   `a + I_q/V_P + ITL(k_low)`.
+
+**The lowest fill the line is read at, `k_low`** (`whatif.LowestFill`). The
+line is read below the band only when two things hold:
+
+- **Its intercept `B` is not a guess**: an `ols` line's own `B`; a `pinned-B` or
+  `held` line's `B`, which only a full fit of the variant's readings stores; or
+  an `above-band` line's `B`, the least ITL read above the band, which is an
+  upper bound on the engine's floor by construction, so reading below the band
+  from it errs high. The default intercept (`itl.DefaultBaselineSec`, 6 ms), a
+  `borrowed` line's donor `B` and a line of unknown tier are guesses. A
+  `pinned-B` or `held` line on the default `B` is refused (`PinnedDefaultB`).
+- **A floor was read below the band**: the 10th percentile of the variant's
+  latest mean ITLs (at most 240) read off a ramp at a fill under the band's
+  bottom, the readings the fit drops as idle, from at least 10 of them.
+
+Then `k_low` is the fill where the line reaches that floor, clamped to
+`[0, band.lo]`: below the band the line is read at the fill itself, never under
+what the engines were seen to do there. Otherwise `k_low` is the band's bottom,
+`analyzerTuning.itlBand.minObservableK`, 0.15 by default: with no evidence below
+the band the line is not extrapolated there.
+
+A fill below the band is flagged `BelowFittedBand` either way. Questions 1 and 2,
+the knee, the admission chain and TTFT's decode step all read the same `k_low`,
+so a rate from question 1 fed back to question 2 gives the target back. A
+`held` line is never refitted, so it has no bootstrap band, below the band or in
+it: its `B` and `A` are as old as the fit that stored them, and only the flags
+`HeldLine` and `BelowFittedBand` say so.
+
+Why: on the Qwen3-32B TP2 P/D staircases at 8000/200 the decode pods ran at a
+fill of 0.02 to 0.06. Read at 0.15, the held line (A 42.5 ms, B 10.4 ms) priced
+16.8 ms at every step; the clients measured 11.5 to 13.0 ms, so the mean read 29%
+to 46% high. Read at the planner's own closed-form fill, which came within 0.01
+of the measured KV fill, it reads -5% to +1% (31 steps; -4% on a second run, 4
+steps). `TestMeanTPOTAtTheFill_Q32jStaircase` freezes it. The floor read under
+the band was 10.82 and 10.83 ms on the two runs, at a fill of 0.009 and 0.016,
+under every step: the floor is a margin, not a change to these figures. One model and
+one engine back this; `throughput-sweep-restart` (below) is a held line that
+would still read 32.6% slow at the fill below the band, so the reading is not
+uniformly accurate there. Its learned window has no floor below the band, so
+the planner keeps reading it at the band's bottom.
+
+**Where the planner and the controller differ.** The controller's own pricing
+keeps the band's bottom as its floor (`whatif.PriceTPOT`,
+`whatif.ReachableFill`). Two cases follow:
+
+- A TPOT target between `B` and `ITL(band.lo)`: the planner answers a rate, the
+  controller marks the target infeasible and leaves the variant to saturation
+  scaling.
+- A batch cap that binds below the band (short requests): the planner reads the
+  knee at the slots' own fill, the controller at the band's bottom, so the
+  controller prices up to `ITL(band.lo)/ITL(slot fill)` less capacity a replica,
+  1.6x on the q32j line, and may scale to more replicas than the planner says.
 
 **Two headroom conventions.** The tool applies 0.85 in rate; saturation applies
 it in fill (`whatif.PricingK` = `KvCacheThreshold × ScaleUpThreshold`, 0.68). The rate is
@@ -482,8 +634,10 @@ as `OUT`. The file sits there so that the goldens gate makes a PR name it.
 
 Nothing here tunes the model. The error is predicted minus measured, so above 0 the
 line reads slow on TPOT and fast on the knee. A figure needs at least 5 rows. The bound
-reads the figure clamped to the band, as an answer is; the unclamped one is the line
-read at the row's own fill, and "rows clamped" is how many the clamp moved.
+reads the figure clamped as an answer is: to the band's top, and below the band to
+`k_low`. The unclamped one is the line read at the row's own fill, and "rows clamped" is how
+many rows sit outside the band. Where the line is read below the band the two columns
+coincide there, unless a row sits under the variant's floor below the band.
 
 | Golden | Tier at the freeze | Mean TPOT error | Unclamped | Rows | Rows clamped | Against ±10% | Knee error | Windows | Against ±15% |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -516,8 +670,9 @@ are SKIPPED for that refusal, or for no saturated window off a ramp:
 - **Mean TPOT:** 6 of the 8 lines the planner answers on are in bound, of 19 lines
   with a figure. Three of the six are synthetic, so the real runs are 3 of 5.
   `throughput-sweep-restart` reads 50.1% slow, and that is a low-fill tail: all 124
-  held-out rows sit below the band, so each is priced at the band's bottom. Unclamped it
-  still reads 32.6% slow. `e1` model-02 and `e1-tuned` model-02 are in bound only through
+  held-out rows sit below the band, and its learned window read no floor there, so
+  each is priced at the band's bottom. Unclamped it still reads 32.6% slow. `e1`
+  model-02 and `e1-tuned` model-02 are in bound only through
   the clamp: unclamped both read 39.1% fast. Those are lines the planner refuses.
 - **Decode knee:** four figures, all out, from 44.4% to 103.4% high. Two are
   synthetic. The other two are `ols-sweep-slo` runs, recorded before `QueueMin`, so
@@ -563,6 +718,166 @@ mutation-checked:
   concentrates). Decode admission is counted once.
 - Every `Unanswerable` reason has a case; NaN gives a reason, never 0 or +Inf.
 - `V_P` is never above the busy-minute median on a synthetic pod.
+
+### Calibration envelope, as built
+
+Every figure the planner prints carries the envelope's verdict
+(`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated: error
+LO..HI% (RANGE, n=N; SOURCE)` when a measured row's region holds it, `OUTSIDE
+VALIDATED REGION (why)` when none does. Validated means measured, not accurate.
+For an operator's reading:
+[how accurate each figure is](../guides/capacity-planner/accuracy.md).
+
+**The rows are data**, in `internal/signals/whatif/envelope.json`, embedded. A
+row is one figure kind on one shape class from one run. Its region holds every
+input that shapes the figure as the run priced it:
+
+- the prompts' spread (cv) and the arrivals (Ca²), each measured or stated, not
+  defaulted;
+- the flow-control state, known, not inferred from a missing series;
+- the topology, accelerator, prefill and decode counts, and prompt and output
+  lengths;
+- the statistic, and the band of knee shares measured, ends included;
+- the model, the tensor parallelism of each role, and the prefix hit rate.
+
+Every pricing input is held by an allow-list, so anything new reads outside
+until a run prices it:
+
+- **Flags.** A figure may carry only the flags the run's own figures carried
+  (`allowedFlags`, by source, written by the test). Any other flag puts it
+  outside.
+- **CLI flags.** Each flag of the two questions is either one the run's
+  pricing allows (it picks the source, the question or the output, or states
+  an input the class then holds to the run's), or one that types a term in
+  (`--batch-cap`, `--assume-vp`, `--assume-router-hop` and the rest). The
+  latter put every figure outside. `TestEnvelope_EveryFlagIsClassified` fails
+  on a flag in neither list.
+
+A row also says what kind of range its error is, and over how many independent
+readings:
+
+- p10-p90 with min-max, for 5 or more point readings;
+- min-max, under 5;
+- a bracket between ladder steps;
+- one-sided, where the run stopped short.
+
+The label always prints the count and the range's kind. The file lists the flags
+that put a figure outside every row (`AboveFlowControlOnset`, `AssumedVP`,
+`AssumedA`) and why each kind with no row has none. A new run adds rows under
+its own `source`; nothing in code changes.
+
+**A rate is judged by what bound it**, on the CLI and the API alike
+(`whatif.RateFigure`):
+
+- a TTFT bound: rate-at-ttft;
+- decode's TPOT: rate-at-tpot, never measured;
+- the operating-point cap alone: the cap, judged by the knee.
+
+Its knee share is the rate over the lower knee, and a share that is not known is
+outside any row that bounds one.
+
+**The q32 rows** come from the Qwen3-32B TP 2 staircase on H200: 2 prefill and 2
+decode Pods, buckets A, B and C, flow control off and on, one repeat, 47 steps.
+`cmd/capacity-planner/testdata/staircase-q32/` holds:
+
+- its warm-up recording, exported, so pseudonymised. The phases' own recordings
+  are not committed: no figure reads them.
+- the run's frozen file;
+- the client's figures for every step.
+
+`TestStaircaseQ32_TheErrorsAreFrozen` works in four steps:
+
+1. It replays the warm-up once, in about 35 s.
+2. It prices each bucket as `capacity-planner freeze` does, at the sent spread
+   (cv 0.0577), arrivals and flow control.
+3. It writes every step's model figure beside the client's to
+   `testdata/staircase-q32-validation.golden`.
+4. It draws the rows from those errors.
+
+How the rows are drawn:
+
+- **Spans.** A row's length, spread and Ca² spans reach 1.25x either way of what
+  was sent. That is a stated tolerance, not a measured one.
+- **Knee shares.** TTFT and TPOT rows span the shares of the steps they read.
+- **Rate rows.** A rate row spans its one target's share, ±0.025: half the
+  ladder's spacing there.
+- **Left out.** Readings leave out void steps (under the run's noise floor, or
+  with requests evicted). TTFT readings also leave out steps past the
+  flow-control onset.
+- **Knees and onsets.** A knee reading is the last step held and the first step
+  not held. A step held when its completions came within 3% of those due and
+  none failed; a void step counts, since the noise floor voids its percentiles,
+  not its count. Knees are read with flow control off, where every phase held to
+  the predicted knee: one-sided, at most +3%, since the 3% hold rule cannot see
+  a fleet short by less. A knee row is bounded to flow control off: with it on,
+  the router stopped buckets B and C near the prefill onset, 5% to 25% under
+  the knee; those crossings are the flow-control-onset rows.
+- **Rates.** A rate reading is where the client's percentile crossed the frozen
+  target over valid steps.
+
+At the ladder's rates, the golden shows the planner at this commit reproducing
+the run's frozen curve.
+
+<!-- envelope-table: begin (go test ./cmd/capacity-planner -run TestStaircaseQ32 -update) -->
+| Figure | Shape | Error | Range | Readings | Knee share | Flow control |
+| --- | --- | --- | --- | --- | --- | --- |
+| decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
+| flow-control-onset | 8000-token prompts, 200 out, Ca^2 1 | -4..+2% | bracket | 1 |  | on |
+| flow-control-onset | 8000-token prompts, 200 out, Ca^2 4 | -7..-4% | bracket | 1 |  | on |
+| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +2..+15% | p10-p90, min-max +1..+18% | 12 at 6 load levels | 0.400 to 0.900 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -2..+1% | p10-p90, min-max -3..+1% | 12 at 6 load levels | 0.096 to 0.215 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -4..-2% | p10-p90, min-max -5..-1% | 10 at 6 load levels | 0.096 to 0.203 | any |
+| prefill-knee | 8000-token prompts, 200 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
+| prefill-knee | 8000-token prompts, 200 out, Ca^2 4 | at most +3% | one-sided | 1 |  | off |
+| rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | at most +0% | one-sided | 2 | 0.740 to 0.875 | off, on |
+| rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | at most +2% | one-sided | 2 | 0.740 to 0.875 | off, on |
+| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -4..+18% | p10-p90, min-max -5..+18% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | +0..+14% | p10-p90, min-max -2..+16% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -3..+12% | p10-p90, min-max -4..+14% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft mean | 8000-token prompts, 200 out, Ca^2 1 | +29..+95% | p10-p90, min-max +27..+149% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | +18..+108% | p10-p90, min-max +15..+156% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | +18..+102% | p10-p90, min-max +5..+174% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft mean | 8000-token prompts, 200 out, Ca^2 4 | +30..+93% | p10-p90, min-max +22..+127% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+| ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | +45..+131% | p10-p90, min-max +33..+167% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +44..+145% | p10-p90, min-max +37..+186% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+<!-- envelope-table: end -->
+
+The TTFT readings are 6 load levels, each with flow control off and on (C on: 3
+levels, below its onset). The two phases share the model's figure, so the error
+grows with the knee share within a row: B's mean reads +27% at 0.40 of the knee
+and +63% to +149% at 0.90.
+
+**Negative controls.**
+
+- `TestStaircaseQ32_WithoutProcessorSharingTheErrorsMove` prices first come,
+  first served (`processorSharing` off, as `firstCome` does), and pins how many
+  lines of the frozen table move.
+- `TestStaircaseQ32_TheAssumedSpreadIsOutside` shows that the spread alone keeps
+  a TTFT priced at the default cv 2 out. With the rows' spread dropped, the same
+  figure would read validated. That is the bug the first draft shipped: +18..+108%
+  claimed where the error was about +430%.
+- The CLI goldens `ttft-q32-assumed-spread` and `ttft-q32-as-priced` show the
+  same question asked plainly (outside) and as the run was priced (validated).
+
+**What it does not cover.** These read outside:
+
+- aggregated variants;
+- prefill's own latency;
+- TPOT percentiles;
+- decode's rate at a TPOT target;
+- a rate the cap alone set;
+- p99;
+- any prefill count but 2;
+- any accelerator but H200.
+
+The `UnvalidatedTTFT` flag stays: it marks the TTFT model as not a bound, which
+a measured envelope does not change. The verdict is per figure.
+`capacity-planner at-replicas` and `/v1/report` take the same verdicts when they
+land.
 
 ## PR plan
 
@@ -755,6 +1070,7 @@ Every answer is an `Answer{Value, Band, Basis, Flags}` or an
 | `TargetBelowFloor` | The target is below what any number of replicas reaches |
 | `FlowControlUnknown` | Flow control on and the detector's thresholds unknown |
 | `AboveDecodeOnset` | A TTFT asked at or above the decode gate's onset with flow control on, where the gate is not work conserving and TTFT is not priced |
+| `DecodeTTFTUnderLoad` | No decode line, and the decode engine's TTFT that stands for it was read while requests waited on decode capacity, or within 90 s after (the TTFT is a one-minute mean, so it lags the queue): held at every rate, that queue would be the floor at zero load. The detail names the latest calm cycle in the source's own terms (`--cycle` or `--to` on the CLI, `source.cycle` or `source.to` in the API), and the CLI's JSON carries it as `decodeTTFTCalmCycle` from a recording, `decodeTTFTCalmAt` from a Prometheus window. A calm cycle reads a decode TTFT itself. Without vLLM's capacity series no backlog is read: the answer is flagged `DecodeQueueUnread`, and nothing is refused |
 | `Saturated` | Question 2's operating rate (`--rate`) or the decode admission chain at or above the knee, where no fill or admission wait exists; both saturate at the same rate. A TTFT at or above the prefill knee too |
 | `NoDecodeReplicas` | No decode replica read from the fleet |
 | `MalformedHistogram` | A TPOT histogram whose data cannot be read: a NaN, non-positive or falling edge, a negative or non-finite count, observations with no sum. Counts that dip, as `rate()` leaves them, are made monotone, not refused |
@@ -769,8 +1085,8 @@ do not support (`LineMismatch`), a rate held down by decode
 admission, flow control inferred off, above a
 flow-control onset, and UNVALIDATED on TTFT ([several priority bands is cut](#ttft-as-built)). The decode
 library's flags today: `AssumedTPOTRatio`, `CoarseTPOTBucket`,
-`BelowFittedBand` (a fill, or the knee, read at the band's bottom because it
-sits below the band the line was fitted over) and `KVBoundSlots` (admission
+`BelowFittedBand` (a fill, or the knee, below the band the line was fitted
+over: read at the fill for a measured intercept, at the band's bottom otherwise) and `KVBoundSlots` (admission
 slots set by the requests the band's top holds rather than the batch cap). The
 TTFT model's (P3) are listed in
 [its as-built section](slo-capacity-planner-ttft.md#as-built-p3).
@@ -1271,11 +1587,22 @@ roles[].inputs object
 roles[].inputs.batchCap number
 roles[].inputs.batchCapSource string
 roles[].inputs.capacityTokens number
+roles[].inputs.engine object
+roles[].inputs.engine.blockSize number
+roles[].inputs.engine.blockSizeSource string
+roles[].inputs.engine.engine string
+roles[].inputs.engine.gpuMemoryUtilization number
+roles[].inputs.engine.gpuMemoryUtilizationSource string
+roles[].inputs.engine.stepBudget number
+roles[].inputs.engine.stepBudgetSource string
+roles[].inputs.engine.vllmVersion string
+roles[].inputs.engine.vllmVersionFrom string
 roles[].inputs.fillBand object
 roles[].inputs.fillBand.hi number
 roles[].inputs.fillBand.lo number
 roles[].inputs.headroom number
 roles[].inputs.kvPerRequest number
+roles[].inputs.kvPerRequestSource string
 roles[].inputs.line object
 roles[].inputs.line.a number
 roles[].inputs.line.b number
@@ -1346,6 +1673,15 @@ roles[].results.knee.answer.sensitivity.hi number
 roles[].results.knee.answer.sensitivity.lo number
 roles[].results.knee.answer.sensitivity.refused string
 roles[].results.knee.answer.unit string
+roles[].results.knee.answer.validation object
+roles[].results.knee.answer.validation.errorHi number
+roles[].results.knee.answer.validation.errorLo number
+roles[].results.knee.answer.validation.label string
+roles[].results.knee.answer.validation.outside string
+roles[].results.knee.answer.validation.readings number
+roles[].results.knee.answer.validation.shape string
+roles[].results.knee.answer.validation.source string
+roles[].results.knee.answer.validation.validated boolean
 roles[].results.knee.answer.value number
 roles[].results.knee.refused object
 roles[].results.knee.refused.assumedTermDecides boolean
@@ -1374,6 +1710,15 @@ roles[].results.meanTPOT.answer.sensitivity.hi number
 roles[].results.meanTPOT.answer.sensitivity.lo number
 roles[].results.meanTPOT.answer.sensitivity.refused string
 roles[].results.meanTPOT.answer.unit string
+roles[].results.meanTPOT.answer.validation object
+roles[].results.meanTPOT.answer.validation.errorHi number
+roles[].results.meanTPOT.answer.validation.errorLo number
+roles[].results.meanTPOT.answer.validation.label string
+roles[].results.meanTPOT.answer.validation.outside string
+roles[].results.meanTPOT.answer.validation.readings number
+roles[].results.meanTPOT.answer.validation.shape string
+roles[].results.meanTPOT.answer.validation.source string
+roles[].results.meanTPOT.answer.validation.validated boolean
 roles[].results.meanTPOT.answer.value number
 roles[].results.meanTPOT.refused object
 roles[].results.meanTPOT.refused.assumedTermDecides boolean
@@ -1402,6 +1747,15 @@ roles[].results.operatingRate.answer.sensitivity.hi number
 roles[].results.operatingRate.answer.sensitivity.lo number
 roles[].results.operatingRate.answer.sensitivity.refused string
 roles[].results.operatingRate.answer.unit string
+roles[].results.operatingRate.answer.validation object
+roles[].results.operatingRate.answer.validation.errorHi number
+roles[].results.operatingRate.answer.validation.errorLo number
+roles[].results.operatingRate.answer.validation.label string
+roles[].results.operatingRate.answer.validation.outside string
+roles[].results.operatingRate.answer.validation.readings number
+roles[].results.operatingRate.answer.validation.shape string
+roles[].results.operatingRate.answer.validation.source string
+roles[].results.operatingRate.answer.validation.validated boolean
 roles[].results.operatingRate.answer.value number
 roles[].results.operatingRate.refused object
 roles[].results.operatingRate.refused.assumedTermDecides boolean
@@ -1430,6 +1784,15 @@ roles[].results.percentileTPOT.answer.sensitivity.hi number
 roles[].results.percentileTPOT.answer.sensitivity.lo number
 roles[].results.percentileTPOT.answer.sensitivity.refused string
 roles[].results.percentileTPOT.answer.unit string
+roles[].results.percentileTPOT.answer.validation object
+roles[].results.percentileTPOT.answer.validation.errorHi number
+roles[].results.percentileTPOT.answer.validation.errorLo number
+roles[].results.percentileTPOT.answer.validation.label string
+roles[].results.percentileTPOT.answer.validation.outside string
+roles[].results.percentileTPOT.answer.validation.readings number
+roles[].results.percentileTPOT.answer.validation.shape string
+roles[].results.percentileTPOT.answer.validation.source string
+roles[].results.percentileTPOT.answer.validation.validated boolean
 roles[].results.percentileTPOT.answer.value number
 roles[].results.percentileTPOT.refused object
 roles[].results.percentileTPOT.refused.assumedTermDecides boolean
@@ -1458,6 +1821,15 @@ roles[].results.rate.answer.sensitivity.hi number
 roles[].results.rate.answer.sensitivity.lo number
 roles[].results.rate.answer.sensitivity.refused string
 roles[].results.rate.answer.unit string
+roles[].results.rate.answer.validation object
+roles[].results.rate.answer.validation.errorHi number
+roles[].results.rate.answer.validation.errorLo number
+roles[].results.rate.answer.validation.label string
+roles[].results.rate.answer.validation.outside string
+roles[].results.rate.answer.validation.readings number
+roles[].results.rate.answer.validation.shape string
+roles[].results.rate.answer.validation.source string
+roles[].results.rate.answer.validation.validated boolean
 roles[].results.rate.answer.value number
 roles[].results.rate.refused object
 roles[].results.rate.refused.assumedTermDecides boolean
@@ -1506,6 +1878,15 @@ roles[].results.ttft.answer.sensitivity.hi number
 roles[].results.ttft.answer.sensitivity.lo number
 roles[].results.ttft.answer.sensitivity.refused string
 roles[].results.ttft.answer.unit string
+roles[].results.ttft.answer.validation object
+roles[].results.ttft.answer.validation.errorHi number
+roles[].results.ttft.answer.validation.errorLo number
+roles[].results.ttft.answer.validation.label string
+roles[].results.ttft.answer.validation.outside string
+roles[].results.ttft.answer.validation.readings number
+roles[].results.ttft.answer.validation.shape string
+roles[].results.ttft.answer.validation.source string
+roles[].results.ttft.answer.validation.validated boolean
 roles[].results.ttft.answer.value number
 roles[].results.ttft.refused object
 roles[].results.ttft.refused.assumedTermDecides boolean
@@ -1525,6 +1906,8 @@ roles[].ttft.decodeHeldPromptTokens number
 roles[].ttft.decodePerStep number
 roles[].ttft.decodePerTokenSeconds number
 roles[].ttft.decodeSide string
+roles[].ttft.decodeTTFTCalmAt string
+roles[].ttft.decodeTTFTCalmCycle number
 roles[].ttft.decodeTTFTPromptTokens number
 roles[].ttft.decodeTTFTSeconds number
 roles[].ttft.decodeTermRefused string
@@ -1537,6 +1920,16 @@ roles[].ttft.flowControl string
 roles[].ttft.imbalance number
 roles[].ttft.imbalanceSource string
 roles[].ttft.percentile number
+roles[].ttft.prefillEngine object
+roles[].ttft.prefillEngine.blockSize number
+roles[].ttft.prefillEngine.blockSizeSource string
+roles[].ttft.prefillEngine.engine string
+roles[].ttft.prefillEngine.gpuMemoryUtilization number
+roles[].ttft.prefillEngine.gpuMemoryUtilizationSource string
+roles[].ttft.prefillEngine.stepBudget number
+roles[].ttft.prefillEngine.stepBudgetSource string
+roles[].ttft.prefillEngine.vllmVersion string
+roles[].ttft.prefillEngine.vllmVersionFrom string
 roles[].ttft.promptCV number
 roles[].ttft.promptCVRead number
 roles[].ttft.promptCVSource string

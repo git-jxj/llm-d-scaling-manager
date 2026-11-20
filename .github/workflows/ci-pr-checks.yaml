@@ -511,6 +511,19 @@ jobs:
         if: needs.check-code-changes.outputs.has_code_changes != 'false'
         run: PLANNER_IMG=capacity-planner:pr-check PLANNER_VERSION=pr-check bash hack/check-capacity-planner-image.sh
 
+      # The same image in a cluster (config/capacity-planner/kubernetes): a
+      # small kind cluster of its own, opened with kubectl port-forward by
+      # users the Role does and does not admit (test/capacity-planner/e2e.sh).
+      - name: Install Kind
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: deploy/ci-pr-checks/install-kind.sh
+
+      - name: Run the capacity planner in-cluster e2e
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: |
+          docker tag capacity-planner:pr-check ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:e2e
+          make test-e2e-capacity-planner-in-cluster PLANNER_E2E_IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:e2e
+
       # The release binaries, built as release-files builds them (the go.mod
       # Go line at its latest patch, make capacity-planner-dist), so a broken
       # platform, ldflag or -trimpath fails here rather than on a tag.
@@ -1293,10 +1306,14 @@ jobs:
           mkdir -p "$d"
           kubectl get pods,deployments,jobs,configmaps,scaledobjects,hpa -A -o wide > "$d/objects.txt" 2>&1 || true
           kubectl get events -A --sort-by=.lastTimestamp > "$d/events.txt" 2>&1 || true
-          for ns in llm-d-sim scaling-manager-system smt-negative smt-upgrade; do
+          for ns in llm-d-sim scaling-manager-system smt-negative smt-upgrade smt-multi smt-models-a smt-models-b; do
             kubectl logs -n "$ns" deployment/scaling-manager-controller-manager --tail=2000 > "$d/controller-$ns.log" 2>&1 || true
           done
+          for ns in smt-multi smt-models-a smt-models-b; do
+            kubectl get roles,rolebindings,podmonitors.monitoring.coreos.com,scaledobjects,hpa,networkpolicies -n "$ns" -o yaml > "$d/rbac-$ns.yaml" 2>&1 || true
+          done
           kubectl logs -n keda-system deployment/keda-operator --tail=2000 > "$d/keda-operator.log" 2>&1 || true
+          kubectl logs -n keda-system deployment/keda-operator-metrics-apiserver --tail=2000 > "$d/keda-metrics-apiserver.log" 2>&1 || true
 
       - name: Upload the tools-install e2e logs
         if: ${{ (failure() || cancelled()) && steps.decide.outputs.run == 'true' }}

@@ -44,12 +44,12 @@
             "aboveBand": 0,
             "tooOld": 10,
             "past": 0,
-            "medianErrorPct": 3.0095802156512965,
-            "worstErrorPct": 4.353289520922821,
-            "signedErrorPct": -3.0095802156512965,
+            "medianErrorPct": 4.632585386172405,
+            "worstErrorPct": 8.10552975998107,
+            "signedErrorPct": -4.632585386172405,
             "fromCycle": 122,
             "toCycle": 131,
-            "rowKVPerRequest": 6501.878012338539,
+            "rowKVPerRequest": 6615.187416688883,
             "otherShape": true
           }
         },
@@ -59,6 +59,7 @@
         },
         "capacityTokens": 131072,
         "kvPerRequest": 1500,
+        "kvPerRequestSource": "measured below the prefix-hit discount, priced at it",
         "shape": {
           "inputTokens": 1000,
           "inputSource": "assumed",
@@ -78,6 +79,15 @@
         "tpot": {
           "targetSeconds": 0.004,
           "windows": 0
+        },
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
         }
       },
       "results": {
@@ -102,7 +112,12 @@
             "flags": [
               "AssumedShape",
               "OutputSpreadUnread"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (rate at a TPOT target: never measured)",
+              "outside": "rate at a TPOT target: never measured"
+            }
           }
         }
       }
@@ -112,6 +127,15 @@
       "variant": "variant-02",
       "ttft": {
         "decodeVariant": "variant-01",
+        "prefillEngine": {
+          "engine": "vllm",
+          "stepBudget": 65536,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        },
         "percentile": 0.95,
         "targetSeconds": 0.2,
         "replicas": 1,
@@ -181,6 +205,11 @@
               "lo": 0.25063609988609226,
               "hi": 1.6396930872300244,
               "refused": "TargetBelowFloor"
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721)",
+              "outside": "prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721"
             }
           }
         }
@@ -222,6 +251,11 @@
               "lo": 0.25063609988609226,
               "hi": 1.6396930872300244,
               "refused": "TargetBelowFloor"
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721)",
+              "outside": "prompt spread not measured (cv 2 assumed), measured at cv 0.0462 to 0.0721"
             }
           }
         }
@@ -229,5 +263,5 @@
     }
   ],
   "exitCode": 0,
-  "note": "estimate from 15 readings (cycles 197-220) of a 226-cycle recording, not a guarantee; see basis (-o json); TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED."
+  "note": "estimate from 15 readings (cycles 197-220) of a 226-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED."
 }

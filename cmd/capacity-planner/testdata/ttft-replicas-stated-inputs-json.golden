@@ -44,12 +44,12 @@
             "aboveBand": 0,
             "tooOld": 10,
             "past": 0,
-            "medianErrorPct": 3.0095802156512965,
-            "worstErrorPct": 4.353289520922821,
-            "signedErrorPct": -3.0095802156512965,
+            "medianErrorPct": 4.632585386172405,
+            "worstErrorPct": 8.10552975998107,
+            "signedErrorPct": -4.632585386172405,
             "fromCycle": 122,
             "toCycle": 131,
-            "rowKVPerRequest": 6501.878012338539,
+            "rowKVPerRequest": 6615.187416688883,
             "otherShape": true
           }
         },
@@ -59,6 +59,7 @@
         },
         "capacityTokens": 131072,
         "kvPerRequest": 1500,
+        "kvPerRequestSource": "measured below the prefix-hit discount, priced at it",
         "shape": {
           "inputTokens": 1000,
           "inputSource": "assumed",
@@ -74,7 +75,16 @@
         "ranks": 1,
         "replicas": 1,
         "replicasFrom": "--decode",
-        "headroom": 0.85
+        "headroom": 0.85,
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        }
       },
       "results": {
         "knee": {
@@ -99,7 +109,12 @@
               "AssumedShape",
               "OutputSpreadUnread",
               "ExtrapolatedFill"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals Ca^2 1.5, measured 0.8 to 1.25)",
+              "outside": "arrivals Ca^2 1.5, measured 0.8 to 1.25"
+            }
           }
         },
         "operatingRate": {
@@ -145,7 +160,12 @@
             "flags": [
               "AssumedShape",
               "OutputSpreadUnread"
-            ]
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals Ca^2 1.5, measured 0.8 to 1.25)",
+              "outside": "arrivals Ca^2 1.5, measured 0.8 to 1.25"
+            }
           }
         }
       }
@@ -155,6 +175,15 @@
       "variant": "variant-02",
       "ttft": {
         "decodeVariant": "variant-01",
+        "prefillEngine": {
+          "engine": "vllm",
+          "stepBudget": 65536,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        },
         "percentile": 0.9,
         "rate": 11.316587731453538,
         "rateSource": "headroom x decode knee",
@@ -216,6 +245,11 @@
             "sensitivity": {
               "lo": 25.5,
               "hi": 34.5
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (arrivals Ca^2 1.5, measured 0.8 to 1.25)",
+              "outside": "arrivals Ca^2 1.5, measured 0.8 to 1.25"
             }
           }
         },
@@ -267,6 +301,11 @@
             "sensitivity": {
               "lo": 0.17798500240601547,
               "hi": 0.28749906898418315
+            },
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 1, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 1, measured 0.0462 to 0.0721"
             }
           }
         }
@@ -274,5 +313,5 @@
     }
   ],
   "exitCode": 0,
-  "note": "estimate from 15 readings (cycles 197-220) of a 226-cycle recording, not a guarantee; see basis (-o json); TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: no recording has checked it at a stated Ca^2. Above Ca^2 1 it reads high at light load: on one pod at Ca^2 4 its p95 read +118% at utilization 0.3 and +10% at 0.85 against a simulation. V_P ASSUMED."
+  "note": "estimate from 15 readings (cycles 197-220) of a 226-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: the P2 recordings never checked it at a stated Ca^2; the measured envelope did only where a figure reads validated. Above Ca^2 1 it reads high at light load: on one pod at Ca^2 4 its p95 read +118% at utilization 0.3 and +10% at 0.85 against a simulation. V_P ASSUMED."
 }

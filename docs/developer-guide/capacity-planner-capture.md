@@ -134,7 +134,7 @@ present, absent and NaN.
 | Variant, role | `kube_pod_owner` and `kube_replicaset_owner` (the Deployment), `label_llm_d_ai_role` in `kube_pod_labels`; or `--role-of` |
 | `CurrentReplicas`, `PendingReplicas`, `DesiredReplicas`; parked variants | the variant's engine Pods in kube-state-metrics (those with a KV series at some step of the window, so a router Pod a name prefix also picks is not counted); `kube_deployment_spec_replicas` |
 | `GPUsPerReplica`, `AcceleratorName` | `kube_pod_container_resource_requests{resource="nvidia_com_gpu"}`; `kube_pod_info` joined to `kube_node_labels`; else `--gpus-per-replica`, `--accelerator` |
-| Engine parameters | `--engine`, `--engine-args`, `--batch-cap`, parsed by `capacity.ParseEngineArgs` |
+| Engine parameters | `--engine`, `--engine-args`, `--batch-cap`, parsed by `capacity.ParseEngineArgs`; the prefill role's from `--prefill-engine-args` when given (empty is the engine's defaults, and `--batch-cap` is then the decode role's only), else from `--engine-args` and `--batch-cap` like every role |
 
 ## What a capture cannot know
 
@@ -152,10 +152,19 @@ Each of these is either flagged in the capture or fixed by what it writes:
   no Ready time (`FlagNoReadiness`). A step at which kube-state-metrics
   lists no Pod is read the same way, its Pods attributed by `--role-of`
   alone, and the capture says at how many steps (`FlagKSMGaps`).
-- **LeaderWorkerSets.** kube-state-metrics has no owner for them. Use
-  `--role-of`. A replica spans several Pods, but GPUs per replica are read
-  from one Pod's request; a variant whose Pods a StatefulSet owns, or that
-  carry the LeaderWorkerSet labels, is flagged (`FlagMultiPodGroups`).
+- **LeaderWorkerSets.** kube-state-metrics has no owner for them: a Pod
+  is read from its labels instead (`workloadOf`). A DisaggregatedSet's Pod
+  is variant `<set>-<role>`, as the controller names the role's scaler; a
+  LeaderWorkerSet's is the LWS name; `--role-of` overrides both. One
+  replica is one group, keyed by the LWS name and group-index labels: its
+  GPUs are summed over the group's Pods (`fleet.replicaGPUs`), it counts
+  once in the variant's replicas and is pending while any of its Pods is
+  not Ready (`pod.replicaKey`), and the collector merges the rows of a
+  group whose every Pod runs an engine (`collector.collapseToGroups`).
+  Without those labels in kube-state-metrics a variant whose Pods a
+  StatefulSet owns is flagged (`FlagMultiPodGroups`). A given
+  `--gpus-per-replica` replaces what kube-state-metrics reads
+  (`FlagGPUsOverride`).
 
 ## Tests
 

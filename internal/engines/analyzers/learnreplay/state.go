@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -62,12 +63,19 @@ type State struct {
 	// Policy is the scaling policy the cycle was analyzed under; nil when
 	// the recorded config was no policy.
 	Policy *config.ScalingPolicy
+	// ITLBandFloor is the ITL band floor the saturation analyzer adapted for
+	// the cycle (saturation.SwitchITLAdaptiveBandFloor), and
+	// ITLBandPolicyFloor the policy's floor it replaced; both 0 where the
+	// policy's stood. Policy then carries the adapted floor, as the cycle was
+	// analyzed under it.
+	ITLBandFloor, ITLBandPolicyFloor float64
 	// Variants is each variant the cycle priced, by name.
 	Variants []VariantState
 	// TPOTWindows is the router's per-request TPOT histogram of every cycle
 	// up to Cycle that recorded one, oldest first, as bucket rates: the
 	// input to whatif.TPOTRatioFromWindows. Empty in a recording made before
-	// the recorder carried it.
+	// the recorder carried it. Each window carries the cycle's decode fill
+	// (decodeFill), for R_q by fill.
 	TPOTWindows []whatif.TPOTWindow
 	// EngineTPOTWindows is the decode engines' per-request TPOT histogram of
 	// every cycle up to Cycle that recorded one, pooled over the rows, oldest
@@ -88,6 +96,11 @@ type State struct {
 	Joint                             prefill.JointEstimate
 	JointPrefillPods, JointDecodePods int
 	JointRate                         float64
+	// ArrivalRates is the model's request arrival rate, in requests per
+	// second, at every cycle up to Cycle, oldest first, as the collector read
+	// it (QueryModelArrivalRate): 0 where it read none, which a failed query
+	// and an idle cycle both read as.
+	ArrivalRates []float64
 }
 
 // VariantState is one variant's learned state at the cycle: everything the
@@ -96,6 +109,13 @@ type VariantState struct {
 	Variant, Role string
 	// Replicas is the variant's replica count as the cycle priced it.
 	Replicas int
+	// Accelerator is the variant's accelerator as the cycle's input named
+	// it, "" where it named none.
+	Accelerator string
+	// GPUsPerReplica is the GPUs a replica requests, and TensorParallel the
+	// engine's tensor parallelism as its arguments set it; 0 where the cycle
+	// named none.
+	GPUsPerReplica, TensorParallel int
 	// Line is the ITL line the variant was priced on, zero with none; Tier
 	// is where it came from (whatif.TierOLS and the rest, "" with no line)
 	// and BorrowedFrom the donor of a borrowed one (namespace/variant).
@@ -144,8 +164,21 @@ type VariantState struct {
 	// parser could not read: the window is then unknown, not unset.
 	MaxModelLen           int64
 	MaxModelLenUnresolved bool
+	// Params is the engine parameters the capacity store holds for the
+	// variant, as the analyzers priced it: the vLLM release and where it was
+	// read from, and the step budget, memory share and block size that
+	// release's defaults resolve to where the arguments set none. Nil where
+	// the store holds none.
+	Params *capacity.EngineParams
 	// Shape is the traffic the variant served (shapeOf).
 	Shape MeasuredShape
+	// Resident is the KV a running request held, measured over the same
+	// window (residentOf); not read for a prefill variant.
+	Resident ResidentKV
+	// ShapeRange is the range of the per-cycle mean lengths over every cycle
+	// with traffic up to the one asked: what the recording saw, and what a
+	// stated shape is extrapolated past.
+	ShapeRange ShapeRange
 	// ReadingsFrom and ReadingsTo are the first and the last cycle of the
 	// LineReadings, 0 with none.
 	ReadingsFrom, ReadingsTo int
@@ -155,6 +188,11 @@ type VariantState struct {
 	// LineRows is the variant's rows of its latest cycles that have one, off
 	// a ramp and on one, for the line check (state_line.go).
 	LineRows []whatif.LineRow
+	// BelowBandITL is the floor below the band, in seconds: the 10th
+	// percentile of the variant's latest mean ITLs read off a ramp at a fill
+	// under the band's bottom (whatif.BelowBand.LeastITL). 0 with fewer than
+	// itl.BelowBandMinReadings, where the line is not read below the band.
+	BelowBandITL float64
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -185,8 +223,49 @@ type shapeSample struct {
 	il, ol, squared, hit, req float64
 }
 
+// PlannerSwitches is the replay switches the capacity planner's replay turns
+// on (StateAt), by package: the planner-only changes, off from every
+// analyzer's constructor, so the controller never runs them and no golden of
+// its replays moves. Each is the planner reading a busy or low-fill fleet
+// the controller's learners refuse:
+//
+//   - saturation.SwitchPrefillALowLoadPerRank: the low-load test of a per
+//     engine rank, for a row of an LWS group.
+//   - saturation.SwitchPrefillAEngineTiming: a from the engine's prefill
+//     timing where there are too few low-load minutes.
+//   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
+//     the fill a low-fill fleet has.
+func PlannerSwitches() map[string]map[string]bool {
+	return map[string]map[string]bool{PackageSaturation: {
+		saturation.SwitchPrefillALowLoadPerRank: true,
+		saturation.SwitchPrefillAEngineTiming:   true,
+		saturation.SwitchITLAdaptiveBandFloor:   true,
+	}}
+}
+
+// withPlannerSwitches is sw with every switch of PlannerSwitches it does not
+// set, so a caller's own setting of one wins (a test turns one off).
+func withPlannerSwitches(sw map[string]map[string]bool) map[string]map[string]bool {
+	out := make(map[string]map[string]bool, len(sw)+1)
+	for pkg, set := range sw {
+		out[pkg] = maps.Clone(set)
+	}
+	for pkg, set := range PlannerSwitches() {
+		if out[pkg] == nil {
+			out[pkg] = map[string]bool{}
+		}
+		for name, on := range set {
+			if _, ok := out[pkg][name]; !ok {
+				out[pkg][name] = on
+			}
+		}
+	}
+	return out
+}
+
 // StateAt replays recording through the analyzers (in Normal mode, whatever
-// opts.Mode says) and returns the state of the model q names after q's
+// opts.Mode says), with the planner's switches on where opts does not set
+// them (PlannerSwitches), and returns the state of the model q names after q's
 // cycle. A *QueryError is a model the recording does not hold or names
 // ambiguously, or a cycle past its last; any other error is a recording
 // that does not replay.
@@ -195,10 +274,17 @@ type shapeSample struct {
 // saturation Analyze events alone, so the last cycle is a cycle number like
 // any other: the replay stops there and the state is read once.
 func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) (*State, error) {
+	return StateFrom(ctx, BytesSource(recording), opts, q)
+}
+
+// StateFrom is StateAt of the recording src opens, read in two passes and
+// never held: one to resolve the model and its cycles, one to replay to the
+// cycle.
+func StateFrom(ctx context.Context, src Source, opts Options, q StateQuery) (*State, error) {
 	if q.Cycle < 0 {
 		return nil, queryErrorf("cycle %d, want 1 or more, or 0 for the last", q.Cycle)
 	}
-	ns, model, total, err := resolveModel(recording, q)
+	ns, model, total, err := resolveModel(src, q)
 	if err != nil {
 		return nil, err
 	}
@@ -210,6 +296,8 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		return nil, queryErrorf("cycle %d asked for, and the recording holds %d of %s/%s", cycle, total, ns, model)
 	}
 	opts.Mode = Normal
+	opts.Switches = withPlannerSwitches(opts.Switches)
+	opts.discardRecording = true
 	var (
 		st       *State
 		stateErr error
@@ -218,20 +306,21 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		windows  []whatif.TPOTWindow
 		engine   []whatif.TPOTWindow
 		shapes   = map[string][]shapeSample{}
+		resident = map[string][]residentSample{}
 		ttft     = newTTFTSamples()
 		lines    = newLineSamples()
 		cycleAt  = map[time.Time]int{}
+		arrivals []float64
+		ranges   = map[string]ShapeRange{}
 	)
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
 		}
-		var d saturation.AnalyzeEvent
-		if err := ev.DecodeData(&d); err != nil {
-			stateErr = err
-			return true
-		}
-		in, err := decodeInput(d.Input)
+		// The replay applied the event before asking: its data decoded in
+		// full there, so the input alone is read here.
+		raw, _ := learnrec.Raw(ev.Data).Member("Input")
+		in, err := decodeInput(raw)
 		if err != nil {
 			stateErr = err
 			return true
@@ -239,18 +328,26 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		if in.Namespace != ns || in.ModelID != model {
 			return false
 		}
+		// The cycle's policy as the saturation analyzer read it: with the
+		// band floor it adapted (saturation.SwitchITLAdaptiveBandFloor), so
+		// every reader of the band below reads the line's.
+		in.Config = r.analyzedPolicy(in)
 		n++
 		if n == 1 {
 			firstAt = ev.Now
 		}
 		cycleAt[ev.Now] = n
+		fill, fillOK := decodeFill(in.ReplicaMetrics, rolesOf(in))
+		arrivals = append(arrivals, in.ArrivalRate)
 		if w, ok := tpotWindow(in.RouterLatency); ok {
-			windows = append(windows, w)
+			windows = append(windows, withFill(w, fill, fillOK))
 		}
 		if w, ok := engineTPOTWindow(in.ReplicaMetrics, rolesOf(in)); ok {
-			engine = append(engine, w)
+			engine = append(engine, withFill(w, fill, fillOK))
 		}
 		noteShapes(shapes, in.ReplicaMetrics, n)
+		noteRanges(ranges, shapes, n)
+		noteResident(resident, in, n)
 		ttft.note(in, n, ev.Now)
 		args := func(variant string) string {
 			if rec := r.store.Get(in.Namespace, in.ModelID, variant); rec != nil {
@@ -267,12 +364,20 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		ttft.noteTerm(in, ev.Now, args)
 		if n == cycle {
 			st = r.stateOf(in, n, ev.Now, shapes)
+			for i := range st.Variants {
+				v := &st.Variants[i]
+				v.ShapeRange = ranges[v.Variant]
+				if domain.CanonicalRole(v.Role) != domain.RolePrefill {
+					v.Resident = residentOf(resident[v.Variant], v.Shape)
+				}
+			}
 			r.fillTTFT(st, in, ttft)
 			return true
 		}
 		return false
 	}
-	if _, err := Replay(ctx, recording, opts); err != nil {
+	// resolveModel read every line: the recording reads.
+	if _, err := replayFrom(ctx, src, opts); err != nil {
 		return nil, err
 	}
 	if stateErr != nil {
@@ -282,40 +387,37 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 		return nil, fmt.Errorf("learnreplay: the replay ended after %d of the %d cycles of %s/%s", n, cycle, ns, model)
 	}
 	st.FirstAt, st.TPOTWindows, st.EngineTPOTWindows, st.Cycles = firstAt, windows, engine, total
+	st.ArrivalRates = arrivals
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
+		st.Variants[i].BelowBandITL = lines.leastBelowBand(st.Variants[i].Variant)
 	}
 	return st, nil
 }
 
 // resolveModel is the model q names and how many saturation cycles the
 // recording holds of it, read from its Analyze events without replaying
-// them.
-func resolveModel(recording []byte, q StateQuery) (ns, model string, cycles int, err error) {
-	read, err := learnrec.Read(recording)
-	if err != nil {
-		return "", "", 0, err
-	}
+// them. It reads every line, so a recording that does not read is
+// learnrec.Read's error.
+func resolveModel(src Source, q StateQuery) (ns, model string, cycles int, err error) {
 	counts := map[[2]string]int{}
-	for _, ev := range read.Events {
+	err = scan(src, func(ev learnrec.RawEvent) (bool, error) {
 		if ev.Kind != saturation.KindAnalyze {
-			continue
+			return true, nil
 		}
-		// Two fields of the input are all the scan reads: encoding/json skips
-		// the rest, where learnrec's own decoder would hold every field to
-		// the type (the replay decodes the event in full).
-		var d struct {
-			Input struct{ Namespace, ModelID string }
+		id, err := analyzedModel(ev.Data)
+		if err != nil {
+			return false, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
 		}
-		if err := json.Unmarshal(ev.Data, &d); err != nil {
-			return "", "", 0, fmt.Errorf("learnreplay: seq %d %s: %w", ev.Seq, ev.Kind, err)
-		}
-		id := d.Input
 		if q.ModelID != "" && id.ModelID != q.ModelID || q.Namespace != "" && id.Namespace != q.Namespace {
-			continue
+			return true, nil
 		}
 		counts[[2]string{id.Namespace, id.ModelID}]++
+		return true, nil
+	})
+	if err != nil {
+		return "", "", 0, err
 	}
 	keys := make([]string, 0, len(counts))
 	for k, c := range counts {
@@ -333,6 +435,32 @@ func resolveModel(recording []byte, q StateQuery) (ns, model string, cycles int,
 	}
 	return ns, model, cycles, nil
 }
+
+// analyzedModel is the namespace and the model of a saturation Analyze
+// event's input: two fields of it are all a scan reads, where learnrec's own
+// decoder would hold every field to the type (the replay decodes the event in
+// full). The two are found in the data, which a recording read has checked is
+// JSON, without decoding the rest (learnrec.Raw.Member); data of another
+// shape is read by encoding/json, as it was, for its error.
+func analyzedModel(data json.RawMessage) (struct{ Namespace, ModelID string }, error) {
+	var id struct{ Namespace, ModelID string }
+	if in, ok := learnrec.Raw(data).Member("Input"); ok && len(in) > 0 && in[0] == '{' {
+		ns, nsOK := in.Member("Namespace")
+		model, modelOK := in.Member("ModelID")
+		if nsOK && modelOK && isString(ns) && isString(model) &&
+			json.Unmarshal(ns, &id.Namespace) == nil && json.Unmarshal(model, &id.ModelID) == nil {
+			return id, nil
+		}
+	}
+	var d struct {
+		Input struct{ Namespace, ModelID string }
+	}
+	err := json.Unmarshal(data, &d)
+	return d.Input, err
+}
+
+// isString reports whether the JSON value raw is a string.
+func isString(raw learnrec.Raw) bool { return len(raw) > 0 && raw[0] == '"' }
 
 // cyclesSpanned is the first and the last cycle readings were taken at: a
 // reading is stamped with the clock of the Analyze that offered it.
@@ -466,7 +594,7 @@ func tpotWindow(rl *domain.RouterLatency) (whatif.TPOTWindow, bool) {
 	if rl == nil || len(rl.TPOTBuckets) == 0 {
 		return whatif.TPOTWindow{}, false
 	}
-	w := whatif.TPOTWindow{Sum: rl.TPOTSumRate, Count: rl.TPOTCountRate,
+	w := whatif.TPOTWindow{Sum: rl.TPOTSumRate, Count: rl.TPOTCountRate, SumMeasured: true,
 		Buckets: make([]whatif.HistogramBucket, len(rl.TPOTBuckets))}
 	for i, b := range rl.TPOTBuckets {
 		w.Buckets[i] = whatif.HistogramBucket{UpperEdge: b.UpperBound, Count: b.Rate}
@@ -474,11 +602,31 @@ func tpotWindow(rl *domain.RouterLatency) (whatif.TPOTWindow, bool) {
 	return w, true
 }
 
+// analyzedPolicy is in's recorded config, or, where the saturation analyzer
+// adapted the ITL band floor for the cycle, a copy of its policy with that
+// floor (saturation.SwitchITLAdaptiveBandFloor).
+func (r *replayer) analyzedPolicy(in domain.AnalyzerInput) domain.AnalyzerConfig {
+	floor, _, ok := r.sat.ITLBandFloor(in.Namespace, in.ModelID)
+	if !ok {
+		return in.Config
+	}
+	var p config.ScalingPolicy
+	if rec, isPolicy := in.Config.(*config.ScalingPolicy); isPolicy && rec != nil {
+		p = *rec
+	}
+	_, hi := p.ITLBand()
+	p.AnalyzerTuning.ITLBand.MinObservableK, p.AnalyzerTuning.ITLBand.MaxObservableK = floor, hi
+	return &p
+}
+
 // stateOf reads the analyzers' learned state of the model in after its
 // saturation Analyze.
 func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, shapes map[string][]shapeSample) *State {
 	st := &State{Namespace: in.Namespace, ModelID: in.ModelID, Cycle: cycle, At: now}
 	st.Policy, _ = in.Config.(*config.ScalingPolicy)
+	if floor, policy, ok := r.sat.ITLBandFloor(in.Namespace, in.ModelID); ok {
+		st.ITLBandFloor, st.ITLBandPolicyFloor = floor, policy
+	}
 	res := r.results[resultKey(domain.SaturationAnalyzerName, in.Namespace, in.ModelID)]
 	if res == nil {
 		return st
@@ -493,6 +641,11 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 	minSettled := st.Policy.ITLSteadiness().MinSettledSamples
 	for _, vc := range res.VariantCapacities {
 		vs := VariantState{Variant: vc.VariantName, Role: vc.Role, Replicas: vc.ReplicaCount, MinSettled: minSettled}
+		for _, rs := range in.VariantStates {
+			if rs.VariantName == vc.VariantName {
+				vs.Accelerator, vs.GPUsPerReplica = rs.AcceleratorName, rs.GPUsPerReplica
+			}
+		}
 		if sr := vc.ServiceRate; sr != nil && sr.HasLine {
 			vs.Line = itl.Model{A: sr.LineSlope, B: sr.LineIntercept}
 		}
@@ -533,7 +686,9 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 		}
 		vs.Shape = shapeOf(shapes[vc.VariantName])
 		vs.CapacityTokens = whatif.CapacityTokens(params, vs.Ranks, live)
+		vs.Params = params
 		if params != nil {
+			vs.TensorParallel = params.TensorParallelSize
 			if params.MaxModelLen > 0 {
 				vs.MaxModelLen = params.MaxModelLen
 			}
@@ -579,5 +734,32 @@ func (vs *VariantState) refit() {
 	}
 	if got := itl.RefitAboveBand(vs.Readings.Above, vs.Readings.AboveSteady, vs.MinSettled); got.Tier != "" && sameLine(got.Model, vs.Line) {
 		vs.Tier, vs.LineReadings, vs.Refitted = whatif.TierAboveBand, got.Read, true
+	}
+}
+
+// ShapeRange is the range of a variant's per-cycle mean lengths and prefix-hit
+// rate, over the cycles with traffic; Cycles is how many, 0 with none.
+type ShapeRange struct {
+	ILMin, ILMax, OLMin, OLMax float64
+	HitMin, HitMax             float64
+	Cycles                     int
+}
+
+// noteRanges widens each variant's range by its sample of cycle n, if it has
+// one: the latest of its shape window.
+func noteRanges(ranges map[string]ShapeRange, shapes map[string][]shapeSample, n int) {
+	for v, s := range shapes {
+		if len(s) == 0 || s[len(s)-1].cycle != n {
+			continue
+		}
+		x, r := s[len(s)-1], ranges[v]
+		if r.Cycles == 0 {
+			r = ShapeRange{ILMin: x.il, ILMax: x.il, OLMin: x.ol, OLMax: x.ol, HitMin: x.hit, HitMax: x.hit}
+		}
+		r.ILMin, r.ILMax = min(r.ILMin, x.il), max(r.ILMax, x.il)
+		r.OLMin, r.OLMax = min(r.OLMin, x.ol), max(r.OLMax, x.ol)
+		r.HitMin, r.HitMax = min(r.HitMin, x.hit), max(r.HitMax, x.hit)
+		r.Cycles++
+		ranges[v] = r
 	}
 }

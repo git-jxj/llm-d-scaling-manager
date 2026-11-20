@@ -203,6 +203,7 @@ var valueRules = map[string]rule{
 	"HoldReasons": {class: classHoldReason},
 	"Effect":      {class: classVocab}, "KvCacheDtype": {class: classVocab}, "WeightDtype": {class: classVocab},
 	"Quantization": {class: classVocab}, "KVConnector": {class: classVocab},
+	"VLLMVersionFrom":     {class: classVocab},
 	"KVOffloadingBackend": {class: classVocab}, "MemoryLayout": {class: classVocab},
 
 	"Accelerator": {classAccelerator, "accelerator"}, "AcceleratorName": {classAccelerator, "accelerator"},
@@ -297,6 +298,10 @@ var vocabulary = withWords(saturation.LowerBoundRoles(), withWords(ttftWords(), 
 	"vllm", "sglang", "auto", "half", "float16", "bfloat16", "float", "float32", "fp8", "fp8_e4m3",
 	"fp8_e5m2", "int8", "awq", "gptq", "marlin", "awq_marlin", "gptq_marlin", "compressed-tensors",
 	"modelopt", "bitsandbytes", "NixlConnector", "LMCacheConnectorV1", "OffloadingConnector",
+	// Where a vLLM release was read from (capacity.EngineParams.VLLMVersionFrom):
+	// the controller's two, and the capacity planner's capture flags
+	// (whatifsource.VLLMVersionFromFlag, VLLMVersionFromEngineImage).
+	capacity.VLLMVersionFromAnnotation, capacity.VLLMVersionFromImageTag, "--vllm-version", "--engine-image",
 	"MultiConnector", "P2pNcclConnector", "native", "lmcache", "cpu",
 	// The tier's slo.flowControl.
 	string(config.SLOFlowControlEnabled), string(config.SLOFlowControlDisabled),
@@ -317,7 +322,7 @@ func withWords(words []string, set map[string]bool) map[string]bool {
 // model's included.
 func ttftWords() []string {
 	return slices.Concat(constants.SLOTTFTReasons, constants.SLOTTFTVPSources, constants.SLOTTFTFlags,
-		constants.SLOTTFTJointInputs, constants.SLOTTFTJointReasons)
+		constants.SLOTTFTJointInputs, constants.SLOTTFTJointReasons, constants.SLOTTFTJointFlags)
 }
 
 func setOf(names ...string) map[string]bool {

@@ -330,6 +330,7 @@ func wiKSM(srv *promtest.Server) {
 			srv.Add(k.PodCreated, promtest.Const(l(), unix(wiCreated)))
 			srv.Add(k.PodStarted, promtest.Const(l(), unix(wiCreated)))
 			srv.Add(k.PodGPUs, promtest.Const(map[string]string{"pod": v.pod(j)}, float64(v.gpus)))
+			srv.Add(k.PodContainers, promtest.Const(l("container", "vllm", "image_spec", wiImage, "image", wiImage), 1))
 		}
 	}
 	// The router's Pod: Ready, no GPU, no KV series; its own Deployment.
@@ -370,14 +371,19 @@ func wiPods() []client.Object {
 	return out
 }
 
+// wiImage is the engines' image. Its tag names the vLLM release, which the
+// controller reads off the Deployment and a capture off
+// kube_pod_container_info, so both resolve the release's defaults alike.
+const wiImage = "registry.example.com/vllm/vllm-openai:v0.34.0"
+
 // wiDeployment is a variant's Deployment, as a capture describes it from
-// its flags (whatifsource scaleTargetOf).
+// its flags and kube-state-metrics (whatifsource scaleTargetOf).
 func wiDeployment(v wiVariant) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: v.name, Namespace: wiNS},
 		Spec: appsv1.DeploymentSpec{Replicas: utils.Ptr(int32(v.pods)), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{"nvidia.com/gpu.product": wiAccel},
-			Containers: []corev1.Container{{Name: "vllm", Image: "vllm/vllm-openai", Command: []string{"vllm", "serve", v.model},
+			Containers: []corev1.Container{{Name: "vllm", Image: wiImage, Command: []string{"vllm", "serve", v.model},
 				Args: wiArgs, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
 					"nvidia.com/gpu": resource.MustParse(strconv.Itoa(v.gpus))}}}},
 		}}},
@@ -409,7 +415,7 @@ type atClock struct {
 	clk *clocktesting.FakePassiveClock
 }
 
-func (a atClock) Query(ctx context.Context, q string, _ time.Time, opts ...promv1.Option) (model.Value, promv1.Warnings, error) {
+func (a atClock) Query(ctx context.Context, q string, _ time.Time, opts ...promv1.Option) (model.Value, promv1.Warnings, promv1.Infos, error) {
 	return a.API.Query(ctx, q, a.clk.Now(), opts...)
 }
 

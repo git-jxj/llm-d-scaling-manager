@@ -641,6 +641,9 @@ func (e *Engine) shareTimingInputs(g allocation.ShareGroup,
 			entry, ok = e.Variants.FindByScaleTarget(ns, constants.LeaderWorkerSetKind, acc.GetName())
 		}
 		if !ok {
+			entry, ok = e.Variants.FindByScaleTarget(ns, constants.DisaggregatedSetRoleScalerKind, acc.GetName())
+		}
+		if !ok {
 			continue
 		}
 		if w := entry.Target.ScaleDownWindowSeconds; w != nil {
@@ -672,7 +675,9 @@ func applyUtilizationShareOverrides(decisions []domain.VariantDecision, override
 	for i := range decisions {
 		d := &decisions[i]
 		o, ok := overrides[utils.GetNamespacedKey(d.Namespace, d.VariantName)]
-		if !ok {
+		if !ok || d.HeldUnrouted {
+			// A held variant is never moved: BuildShareGroups plans no model
+			// that has one, so this only guards against a stale plan.
 			continue
 		}
 		action := domain.ActionNoChange

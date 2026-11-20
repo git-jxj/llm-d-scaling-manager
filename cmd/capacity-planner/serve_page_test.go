@@ -26,7 +26,7 @@ func TestServeSources(t *testing.T) {
 	dir := src.recordings
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".hidden.jsonl.gz"), []byte("x"), 0o644))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o755))
-	want := []string{"ols-sweep.jsonl.gz", "saturated.jsonl.gz", "short.jsonl.gz", "throughput-sweep.jsonl.gz"}
+	want := []string{"ols-sweep.jsonl.gz", "q32.jsonl.gz", "saturated.jsonl.gz", "short.jsonl.gz", "throughput-sweep.jsonl.gz"}
 	if runtime.GOOS != "windows" {
 		// A link to a recording elsewhere is listed and resolves; a link to
 		// nothing or to a directory is not, nor a name with a colon, which
@@ -39,7 +39,7 @@ func TestServeSources(t *testing.T) {
 		require.NoError(t, os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, "dangling.jsonl.gz")))
 		require.NoError(t, os.Symlink(filepath.Join(dir, "sub"), filepath.Join(dir, "dirlink")))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "c:colon.jsonl.gz"), []byte("x"), 0o644))
-		want = []string{"linked.jsonl.gz", "ols-sweep.jsonl.gz", "saturated.jsonl.gz", "short.jsonl.gz", "throughput-sweep.jsonl.gz"}
+		want = []string{"linked.jsonl.gz", "ols-sweep.jsonl.gz", "q32.jsonl.gz", "saturated.jsonl.gz", "short.jsonl.gz", "throughput-sweep.jsonl.gz"}
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sources", nil))
@@ -48,7 +48,7 @@ func TestServeSources(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	assert.Equal(t, whatifapi.SourcesResponse{SchemaVersion: whatifapi.SchemaVersion, Namespaces: []string{}, Recordings: want}, got)
 	for _, name := range got.Recordings {
-		_, err := src.recordingPath(whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: name})
+		_, _, err := src.recordingPath(whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: name})
 		assert.NoError(t, err, "listed %s, then refused it", name)
 	}
 

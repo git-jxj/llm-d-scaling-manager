@@ -383,6 +383,8 @@ main() {
     # false stops every path here, the check included, naming the variable.
     # The undeploy ignores it: it always removes the grant.
     [ "$UNDEPLOY" = "true" ] || llmsm_keda_hpa_repair_on || true
+    # DSET_ROLE_WRITER likewise.
+    [ "$UNDEPLOY" = "true" ] || llmsm_dset_role_writer_on || true
 
     # RENDER=<dir>: the cluster-admin phase, written to <dir> for an admin to
     # run instead of applied (deploy/lib/common.sh, "Render mode"). First, so
@@ -508,6 +510,8 @@ main() {
         # The EPPs of the managed pools must be able to authenticate a /metrics
         # scrape, or they answer 500. Never fatal: setup-prereqs grants it.
         llmsm_report_epp_metrics_auth
+        # DisaggregatedSet roles need LeaderWorkerSet v0.10.0 for KEDA. Never fatal.
+        llmsm_report_lws_dset
         llmsm_report_scaledobjects
         log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, LLMSM_SCOPE=${LLMSM_SCOPE:-<platform default>}, LLMSM_LIMITER=${LLMSM_LIMITER:-<unset: keeps the live limiter>}"
         exit 0

@@ -87,10 +87,32 @@ type FleetInfo struct {
 	Decode  RoleInfo  `json:"decode"`
 }
 
-// RoleInfo is one role's variant and its replica count at the cycle.
+// RoleInfo is one role's variant and its replica count at the cycle, and
+// the engine it runs.
 type RoleInfo struct {
-	Variant  string `json:"variant"`
-	Replicas int    `json:"replicas"`
+	Variant  string      `json:"variant"`
+	Replicas int         `json:"replicas"`
+	Engine   *EngineInfo `json:"engine,omitempty"`
+}
+
+// EngineInfo is the engine a variant runs: which one, for vLLM the release
+// and where it was read from (annotation, image tag, --vllm-version,
+// --engine-image, none; both absent in a recording made before the release
+// was read), and the figures that release's defaults decide where the
+// engine's flags set none, each with its source (flag, default, not
+// recorded). It is reported for reference: no figure of an answer reads it
+// yet. See docs/reference/vllm-versions.md.
+type EngineInfo struct {
+	Engine                     string  `json:"engine"`
+	Summary                    string  `json:"summary"`
+	VLLMVersion                string  `json:"vllmVersion,omitempty"`
+	VLLMVersionFrom            string  `json:"vllmVersionFrom,omitempty"`
+	StepBudget                 int64   `json:"stepBudget"`
+	StepBudgetSource           string  `json:"stepBudgetSource"`
+	GPUMemoryUtilization       float64 `json:"gpuMemoryUtilization"`
+	GPUMemoryUtilizationSource string  `json:"gpuMemoryUtilizationSource"`
+	BlockSize                  int64   `json:"blockSize"`
+	BlockSizeSource            string  `json:"blockSizeSource"`
 }
 
 // Observed is the traffic the source saw.
@@ -176,6 +198,10 @@ type Figure struct {
 	BoundBy         []string `json:"boundBy,omitempty"`
 	Flags           []string `json:"flags,omitempty"`
 	Refused         *Refusal `json:"refused,omitempty"`
+	// Validation is the envelope's verdict on the figure, on the figures a
+	// plan reads (the points A and B, the knees and the limits), not on a
+	// curve's points.
+	Validation *Validation `json:"validation,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.
@@ -484,11 +510,26 @@ type FleetLimit struct {
 // negative where the SLO is missed.
 type Chosen struct {
 	Rate float64 `json:"rate"`
-	// RateSource is "request", or "operating point" where the scenario gave
-	// no rate.
+	// RateSource is what set Rate: one of the RateSource constants.
 	RateSource string `json:"rateSource"`
 	Headroom   Figure `json:"headroom"`
 }
+
+// The values of Chosen.RateSource.
+const (
+	// RateSourceRequest is a rate the scenario gave.
+	RateSourceRequest = "request"
+	// RateSourceOperatingPoint is headroom times the lower of both knees,
+	// where the scenario gave no rate.
+	RateSourceOperatingPoint = "operating point"
+	// RateSourcePrefillKnee is headroom times the prefill knee, where the
+	// scenario gave no rate and the decode knee is refused: a rate to start
+	// from, not an operating point, which the decode knee would bound.
+	RateSourcePrefillKnee = "prefill knee; decode not priced"
+	// RateSourceDecodeKnee is headroom times the decode knee, where the
+	// scenario gave no rate and the prefill knee is refused.
+	RateSourceDecodeKnee = "decode knee; prefill not priced"
+)
 
 // Marginal is the fleet's limit with one more replica of each role.
 type Marginal struct {
@@ -525,6 +566,22 @@ type SourcesResponse struct {
 	// RecordingsTruncated whether the server listed only the first of them.
 	Recordings          []string `json:"recordings"`
 	RecordingsTruncated bool     `json:"recordingsTruncated,omitempty"`
+	// Upload is set when the server takes uploads (POST /v1/recordings).
+	Upload *UploadInfo `json:"upload,omitempty"`
+}
+
+// UploadInfo is what a server that takes uploads takes.
+type UploadInfo struct {
+	// MaxBytes is the largest upload, in bytes as sent.
+	MaxBytes int `json:"maxBytes"`
+}
+
+// UploadResponse is POST /v1/recordings: the name a recording source gives
+// the recording uploaded, which the server chose, and its size as sent.
+type UploadResponse struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Name          string `json:"name"`
+	Bytes         int    `json:"bytes"`
 }
 
 // SizeRequest is POST /v1/size: the fewest replicas per role whose fleet

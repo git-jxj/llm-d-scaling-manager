@@ -21,10 +21,76 @@
   },
   "roles": [
     {
+      "role": "decode",
+      "variant": "variant-01",
+      "inputs": {
+        "line": {
+          "a": 0,
+          "b": 0,
+          "tier": "",
+          "readings": 0,
+          "fromCycle": 0,
+          "toCycle": 0,
+          "resamples": 0,
+          "tierChanges": 0
+        },
+        "fillBand": {
+          "lo": 0.15,
+          "hi": 0.8
+        },
+        "capacityTokens": 1162240,
+        "kvPerRequest": 10777.874445030275,
+        "kvPerRequestSource": "context, no resident reading",
+        "shape": {
+          "inputTokens": 10770.115567753704,
+          "inputSource": "measured",
+          "outputTokens": 15.517663533820823,
+          "outputSource": "measured",
+          "outputDispersion": 1.0000058655298978,
+          "prefixHitRate": 0,
+          "fromCycle": 83,
+          "toCycle": 102,
+          "cycles": 20
+        },
+        "batchCap": 256,
+        "batchCapSource": "flags",
+        "ranks": 1,
+        "replicas": 1,
+        "replicasFrom": "recording",
+        "headroom": 0.85,
+        "engine": {
+          "engine": "vllm",
+          "stepBudget": 8192,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        }
+      },
+      "results": {
+        "rate": {
+          "refused": {
+            "reason": "NoLine",
+            "detail": "no ITL line learned by cycle 105"
+          }
+        }
+      }
+    },
+    {
       "role": "prefill",
       "variant": "variant-02",
       "ttft": {
         "decodeVariant": "variant-01",
+        "prefillEngine": {
+          "engine": "vllm",
+          "stepBudget": 65536,
+          "stepBudgetSource": "not recorded",
+          "gpuMemoryUtilization": 0.9,
+          "gpuMemoryUtilizationSource": "not recorded",
+          "blockSize": 128,
+          "blockSizeSource": "not recorded"
+        },
         "targetSeconds": 1,
         "assumed": []
       },
@@ -43,13 +109,13 @@
       "results": {
         "rate": {
           "refused": {
-            "reason": "NoPrefillCapacity",
-            "detail": "P1 refused V_P of variant-02: NoPrefillCapacity; pass --assume-vp for a flagged answer"
+            "reason": "NoLine",
+            "detail": "no ITL line learned by cycle 105"
           }
         }
       }
     }
   ],
   "exitCode": 3,
-  "note": "estimate from no readings of the line's own of a 105-cycle recording, not a guarantee; see basis (-o json); TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it."
+  "note": "estimate from no readings of the line's own of a 105-cycle recording, not a guarantee; see basis (-o json); TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it."
 }

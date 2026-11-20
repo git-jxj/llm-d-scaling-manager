@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/annotations"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/locator"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
@@ -54,13 +55,17 @@ const (
 	ksmPodNode        = `kube_pod_info{namespace="%[1]s"}`
 	ksmNodeLabels     = `kube_node_labels`
 	ksmDeployReplicas = `kube_deployment_spec_replicas{namespace="%[1]s"}`
+	// The image each container runs, and the Deployments' annotations:
+	// annotation_* only for the keys --metric-annotations-allowlist names.
+	ksmPodContainers    = `kube_pod_container_info{namespace="%[1]s"}`
+	ksmDeployAnnotation = `kube_deployment_annotations{namespace="%[1]s"}`
 )
 
 // KSM is the kube-state-metrics queries a capture of one namespace asks.
 type KSM struct {
 	PodLabels, PodOwner, ReplicaSetOwner, PodRunning, PodReady, PodReadyTime string
 	PodCreated, PodStarted, PodDeleted, PodGPUs, PodNode, NodeLabels         string
-	DeploymentReplicas                                                       string
+	DeploymentReplicas, PodContainers, DeploymentAnnotations                 string
 }
 
 // KSMQueries is the kube-state-metrics queries a capture of namespace
@@ -73,7 +78,8 @@ func KSMQueries(namespace string) KSM {
 		PodRunning: in(ksmPodRunning), PodReady: in(ksmPodReady), PodReadyTime: in(ksmPodReadyTime),
 		PodCreated: in(ksmPodCreated), PodStarted: in(ksmPodStarted), PodDeleted: in(ksmPodDeleted),
 		PodGPUs: in(ksmPodGPUs), PodNode: in(ksmPodNode), NodeLabels: ksmNodeLabels,
-		DeploymentReplicas: in(ksmDeployReplicas),
+		DeploymentReplicas: in(ksmDeployReplicas), PodContainers: in(ksmPodContainers),
+		DeploymentAnnotations: in(ksmDeployAnnotation),
 	}
 }
 
@@ -96,14 +102,37 @@ type pod struct {
 	// overlap is every --role-of that picked it; more than one is refused
 	// (ErrRoleOverlap).
 	overlap []string
-	// ownerKind is the kind kube-state-metrics says owns it.
-	ownerKind string
+	// ownerKind is the kind kube-state-metrics says owns it, and deployment
+	// the Deployment behind its ReplicaSet, "" for none.
+	ownerKind, deployment string
+	// images is the image of each of its containers, sorted.
+	images []string
 
 	running, ready, deleting bool
 	created, started, since  time.Time
 	revision                 string
 	gpus                     int
 	node                     string
+}
+
+// group is the LeaderWorkerSet group p runs in, "<set>/<index>" as the
+// collector keys it, or "" outside one or where kube-state-metrics does not
+// export the set-name and group-index labels.
+func (p *pod) group() string {
+	set, idx := p.labels[ksmLabelName(lwsv1.SetNameLabelKey)], p.labels[ksmLabelName(lwsv1.GroupIndexLabelKey)]
+	if set == "" || idx == "" {
+		return ""
+	}
+	return set + "/" + idx
+}
+
+// replicaKey is the replica p is part of: its LeaderWorkerSet group, else
+// the Pod itself.
+func (p *pod) replicaKey() string {
+	if g := p.group(); g != "" {
+		return g
+	}
+	return p.name
 }
 
 // fleet is the fleet at one step.
@@ -119,12 +148,30 @@ type fleet struct {
 	// node's accelerator.
 	replicas  map[string]int
 	nodeAccel map[string]string
+	// vllmVersion is the scaling-manager.llmd.ai/vllm-version annotation of
+	// each Deployment that kube-state-metrics exports it for.
+	vllmVersion map[string]string
+	// groupGPUs is the GPUs every Pod of each LeaderWorkerSet group
+	// requests, summed (pod.group).
+	groupGPUs map[string]int
+}
+
+// replicaGPUs is the GPUs of the replica p is part of: its group's, summed
+// over every Pod kube-state-metrics lists in it, else its own. Summed over
+// every Pod, not the engine Pods only: under Ray the workers report nothing
+// and still hold the group's GPUs.
+func (f *fleet) replicaGPUs(p *pod) int {
+	if g := p.group(); g != "" {
+		return f.groupGPUs[g]
+	}
+	return p.gpus
 }
 
 // fleetAt reads the fleet at the step api is set to.
 func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, roleOf []RoleOf) (*fleet, error) {
 	f := &fleet{namespace: namespace, ksm: ksm, roleOf: roleOf, pods: map[string]*pod{},
-		named: map[string]*pod{}, replicas: map[string]int{}, nodeAccel: map[string]string{}}
+		named: map[string]*pod{}, replicas: map[string]int{}, nodeAccel: map[string]string{},
+		vllmVersion: map[string]string{}, groupGPUs: map[string]int{}}
 	if !ksm {
 		return f, nil
 	}
@@ -134,7 +181,7 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 		if err != nil {
 			return nil
 		}
-		v, _, qerr := api.Query(ctx, q, time.Time{})
+		v, _, _, qerr := api.Query(ctx, q, time.Time{})
 		if qerr != nil {
 			err = fmt.Errorf("kube-state-metrics: %w", qerr)
 			return nil
@@ -146,6 +193,7 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 	runningV, readyV, readyTimeV := ask(k.PodRunning), ask(k.PodReady), ask(k.PodReadyTime)
 	createdV, startedV, deletedV := ask(k.PodCreated), ask(k.PodStarted), ask(k.PodDeleted)
 	gpusV, nodeV, nodeLabelsV, replicasV := ask(k.PodGPUs), ask(k.PodNode), ask(k.NodeLabels), ask(k.DeploymentReplicas)
+	containersV, annotationsV := ask(k.PodContainers), ask(k.DeploymentAnnotations)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +246,7 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 		rs := string(s.Metric["owner_name"])
 		if d := rsOwner[rs]; d != "" {
 			owner[name] = d
+			f.pods[name].deployment = d
 			// A Deployment's ReplicaSet is named <deployment>-<pod-template-hash>.
 			f.pods[name].revision = strings.TrimPrefix(rs, d+"-")
 		}
@@ -216,6 +265,11 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 	each(startedV, func(p *pod, v float64) { p.started = unixTime(v) })
 	each(deletedV, func(p *pod, v float64) { p.deleting = v > 0 })
 	each(gpusV, func(p *pod, v float64) { p.gpus = int(math.Round(v)) })
+	for _, p := range f.pods {
+		if g := p.group(); g != "" && !p.deleting {
+			f.groupGPUs[g] += p.gpus
+		}
+	}
 	gpuLabel := model.LabelName(ksmLabelName(acceleratorNodeLabel))
 	for _, s := range nodeLabelsV {
 		if accel := string(s.Metric[gpuLabel]); accel != "" {
@@ -225,6 +279,25 @@ func fleetAt(ctx context.Context, api *windowAPI, namespace string, ksm bool, ro
 	for _, s := range replicasV {
 		if d := string(s.Metric["deployment"]); d != "" && finite(float64(s.Value)) {
 			f.replicas[d] = int(math.Round(float64(s.Value)))
+		}
+	}
+	for _, s := range containersV {
+		p := f.pods[string(s.Metric["pod"])]
+		// image_spec is the image the spec names; image, which older
+		// kube-state-metrics export alone, the one the runtime reports.
+		image := string(s.Metric["image_spec"])
+		if image == "" {
+			image = string(s.Metric["image"])
+		}
+		if p != nil && image != "" && !slices.Contains(p.images, image) {
+			p.images = append(p.images, image)
+			slices.Sort(p.images)
+		}
+	}
+	versionLabel := model.LabelName(ksmAnnotationName(annotations.VLLMVersion))
+	for _, s := range annotationsV {
+		if d, v := string(s.Metric["deployment"]), string(s.Metric[versionLabel]); d != "" && v != "" {
+			f.vllmVersion[d] = v
 		}
 	}
 	for name, p := range f.pods {
@@ -271,8 +344,8 @@ func unixTime(v float64) time.Time {
 }
 
 // attribute sets p's variant and role: the --role-of that picks it, else
-// the Deployment kube-state-metrics says owns it, with the role its
-// llm-d.ai/role label names. Every --role-of that picks it is noted in
+// the workload kube-state-metrics shows it in, named as the controller names
+// the scale target (workloadOf). Every --role-of that picks it is noted in
 // p.overlap; more than one is refused by the caller.
 func (f *fleet) attribute(p *pod, deployment string) {
 	for _, r := range f.roleOf {
@@ -283,11 +356,39 @@ func (f *fleet) attribute(p *pod, deployment string) {
 			p.overlap = append(p.overlap, r.String())
 		}
 	}
-	if len(f.roleOf) > 0 || deployment == "" {
+	if len(f.roleOf) > 0 {
 		return
 	}
-	p.variant = deployment
-	p.role = p.labels[ksmLabelName(variantmeta.RoleLabel)]
+	p.variant, p.role = workloadOf(p, deployment)
+}
+
+// workloadOf is the variant and role of a Pod kube-state-metrics shows, as
+// the controller resolves its scale target (locator.resolveScaleTarget):
+//
+//   - a Deployment's Pod is the Deployment;
+//   - a DisaggregatedSet's Pod is the role's scaler, <set>-<role>, named
+//     from its disaggregatedset.x-k8s.io/name and /role labels (not for a
+//     subrole, which the controller does not resolve either);
+//   - a LeaderWorkerSet's Pod is the LWS, from its
+//     leaderworkerset.sigs.k8s.io/name label.
+//
+// The role is the llm-d.ai/role label, else the DisaggregatedSet's role.
+// Variant "" for a Pod in none of them.
+func workloadOf(p *pod, deployment string) (variant, role string) {
+	role = p.labels[ksmLabelName(variantmeta.RoleLabel)]
+	dsRole := p.labels[ksmLabelName(constants.DisaggregatedSetRoleLabelKey)]
+	if role == "" {
+		role = dsRole
+	}
+	switch set := p.labels[ksmLabelName(constants.DisaggregatedSetNameLabelKey)]; {
+	case deployment != "":
+		return deployment, role
+	case set != "" && dsRole != "" && p.labels[ksmLabelName(constants.DisaggregatedSetSubRoleLabelKey)] == "":
+		return set + "-" + dsRole, role
+	case p.labels[ksmLabelName(lwsv1.SetNameLabelKey)] != "":
+		return p.labels[ksmLabelName(lwsv1.SetNameLabelKey)], role
+	}
+	return "", role
 }
 
 // lookup is the Pod named name: kube-state-metrics' when it listed it, else
@@ -330,9 +431,10 @@ func (f *fleet) ResolveScaleTarget(context.Context, string, string) (autoscaling
 }
 
 // readLabels are the Pod labels the collector reads (GetPodLabels): the LWS
-// worker index and the FMA component and pairing.
-var readLabels = []string{lwsv1.WorkerIndexLabelKey, constants.ComponentLabelKey, constants.DualPodsPairLabelKey,
-	variantmeta.RoleLabel}
+// set, group and worker index it merges a group's engines by, and the FMA
+// component and pairing.
+var readLabels = []string{lwsv1.SetNameLabelKey, lwsv1.GroupIndexLabelKey, lwsv1.WorkerIndexLabelKey,
+	constants.ComponentLabelKey, constants.DualPodsPairLabelKey, variantmeta.RoleLabel}
 
 // GetPodLabels implements locator.PodLocator: the labels the collector reads,
 // where kube-state-metrics exports them; nil otherwise.
@@ -384,6 +486,16 @@ func (p *pod) object(namespace string) corev1.Pod {
 	o := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: p.name, Namespace: namespace}}
 	if p.revision != "" {
 		o.Labels = map[string]string{"pod-template-hash": p.revision}
+	}
+	// Its LeaderWorkerSet group, which the collector reads a group's Ready
+	// time over.
+	for _, k := range []string{lwsv1.SetNameLabelKey, lwsv1.GroupIndexLabelKey} {
+		if v := p.labels[ksmLabelName(k)]; v != "" {
+			if o.Labels == nil {
+				o.Labels = map[string]string{}
+			}
+			o.Labels[k] = v
+		}
 	}
 	if !p.created.IsZero() {
 		o.CreationTimestamp = metav1.NewTime(p.created)

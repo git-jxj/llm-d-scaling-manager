@@ -32,7 +32,7 @@ Three things decide whether a scale-up helps:
 
 None are scaling-manager settings; they are properties of the model server.
 `make workload-patch` writes the first two. It also writes the engine compile
-cache mount and variables (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR`,
+cache mount and variables (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`,
 `TRITON_CACHE_DIR`), but the storage behind them must exist first: a node
 directory from `make engine-cache`, or a claim you already have
 (`LLMSM_ENGINE_CACHE_CLAIM`). Applying that half is its own opt-in
@@ -61,7 +61,7 @@ Deployment has `.spec.template`.
 | 7 | `preStop` hook on the engine container and `terminationGracePeriodSeconds` above it | every scale-down cuts in-flight streams | `make workload-patch NAMESPACE=<ns>` names workloads without a drain ([below](#draining-before-scale-down)) |
 | 8 | Weights read from a mounted model cache | every scale-up is a download | `make workload-patch NAMESPACE=<ns>` reports `RE-DOWNLOADS ITS WEIGHTS` ([below](#weights-and-the-model-cache)) |
 | 9 | Fast start: image held on the GPU nodes, short probe period | each scale-up pays the pull | `make prepull-status NAMESPACE=<ns>` ([below](#the-rest-of-the-start-path)) |
-| 10 | Engine compile caches (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR`, `TRITON_CACHE_DIR`) and Python bytecode (`PYTHONPYCACHEPREFIX`, any Python engine) on a path that outlives the pod | every replica recompiles: about 14 s of torch.compile against about 3 s cached, and about 11 s of bytecode | `make engine-cache-status NAMESPACE=<ns>`; `make workload-patch` reports `COMPILES FROM NOTHING` or `RECOMPILES ITS PYTHON BYTECODE` ([below](#engine-caches-on-the-nodes-disk)) |
+| 10 | Engine compile caches (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR`) and Python bytecode (`PYTHONPYCACHEPREFIX`, any Python engine) on a path that outlives the pod | every replica recompiles: about 14 s of torch.compile against about 3 s cached, and about 11 s of bytecode | `make engine-cache-status NAMESPACE=<ns>`; `make workload-patch` reports `COMPILES FROM NOTHING` or `RECOMPILES ITS PYTHON BYTECODE` ([below](#engine-caches-on-the-nodes-disk)) |
 | 11 | A ScaledObject whose trigger is `external-push` with this `modelID` | nothing scales it — the controller has no watch of its own | `kubectl get scaledobject -n <ns> -o custom-columns='NAME:.metadata.name,MODEL:.spec.triggers[0].metadata.modelID,READY:.status.conditions[0].status'` |
 
 ## Weights and the model cache
@@ -124,7 +124,7 @@ LeaderWorkerSet), with or without a benchmark harness:
 |---|---|
 | **Nothing installed at container start.** | The container's command runs the engine and nothing else: no `apt`, `pip`, `curl` or clone before it. Anything the engine needs is in the image. A start that depends on a package mirror is as slow as the mirror that day, which is the one term that makes start time *vary* between otherwise identical replicas. |
 | **`startupProbe` period.** | `periodSeconds` of a few seconds; a probe that fires every 30 s reports a started engine up to 30 s late, every time. Keep the time budget by raising `failureThreshold` (period 5 with threshold 360 is the same 30 minutes as period 30 with threshold 60). The first probes fail on connection refused while the server binds; that is what the threshold is for. |
-| **Engine caches that outlive the pod.** | vLLM writes its torch.compile artefacts, the FlashInfer autotune table and Triton's JIT cache under `/tmp` unless told otherwise, so every replica recompiles from nothing. Point `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR` and `TRITON_CACHE_DIR` at a read-write path that outlives the pod and the second replica finds the first one's. The best home is the node's own disk -- [Engine caches on the node's disk](#engine-caches-on-the-nodes-disk), `make engine-cache` -- a shared RWX claim is the other. If the model claim is mounted read-only, use another claim rather than mounting it a second time: a CSI driver publishes a claim once per pod, and the second mount inherits read-only. And make the engine tolerate a cache path that turns out not to be writable -- a storage hiccup must cost one compile, not the replica; vLLM fails hard on a read-only cache directory unless the variable is unset first. The cache is keyed by a hash of the engine config, so a changed model, flag or version misses rather than hits stale. Python bytecode is the same kind of cache, for any Python engine: set `PYTHONPYCACHEPREFIX` beside them, one directory per image ([Python bytecode](#python-bytecode); about 11 s per start). |
+| **Engine caches that outlive the pod.** | vLLM keeps its torch.compile artefacts and its FlashInfer autotune results, FlashInfer its JIT kernels and Triton its JIT cache inside the container unless told otherwise, so every replica recompiles from nothing. Point `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE` and `TRITON_CACHE_DIR` at a read-write path that outlives the pod and the second replica finds the first one's. The best home is the node's own disk -- [Engine caches on the node's disk](#engine-caches-on-the-nodes-disk), `make engine-cache` -- a shared RWX claim is the other. If the model claim is mounted read-only, use another claim rather than mounting it a second time: a CSI driver publishes a claim once per pod, and the second mount inherits read-only. And make the engine tolerate a cache path that turns out not to be writable -- a storage hiccup must cost one compile, not the replica; vLLM fails hard on a read-only cache directory unless the variable is unset first. The cache is keyed by a hash of the engine config, so a changed model, flag or version misses rather than hits stale. Python bytecode is the same kind of cache, for any Python engine: set `PYTHONPYCACHEPREFIX` beside them, one directory per image ([Python bytecode](#python-bytecode); about 11 s per start). |
 | **The image is already on the node.** | An engine image is 10-20 GB; a node that has to pull it adds a minute or more before the container even starts, and the kubelet evicts unused images under disk pressure, so "it was pulled once" does not stay true. `make prepull IMAGES=<image> NAMESPACE=<ns>` holds the image open on every accelerator node (one DaemonSet per image, the image itself asleep, no accelerator requested), and `make prepull-status` says per node whether the kubelet has it -- see [Holding the image on the nodes](#holding-the-image-on-the-nodes). With the image held, a pinned tag should pull `IfNotPresent`: `Always` contacts the registry at every start for a digest that cannot have changed. |
 | **The weights** | are the [section above](#weights-and-the-model-cache) -- the download; for a large model, also [Weights on the node's disk](#weights-on-the-nodes-disk) -- the read. |
 
@@ -310,7 +310,8 @@ What it creates:
   other (the volume carries a `claimRef`);
 - one DaemonSet that downloads the model onto every accelerator node, then
   reports Ready. `weights-status` and the DaemonSet's `numberReady` both mean
-  "the download finished on this node". Placement is the image holder's:
+  "the download finished on this node, and its files are all there"
+  ([Gate replicas on the weights](#gate-replicas-on-the-weights)). Placement is the image holder's:
   `WEIGHTS_NODE_SELECTOR` / `WEIGHTS_TOLERATIONS` default to the `PREPULL_*`
   values.
 
@@ -412,9 +413,11 @@ says so when the cluster has SecurityContextConstraints:
   cannot even see the marker: on OpenShift one directory per project is
   not advice but the only thing that works, unless the disk is mounted
   with `context=` as above.
-- A node that joins later has no copy until the DaemonSet reaches it, and a
-  replica scheduled there meanwhile reads from a directory that is being
-  written. `weights-status` says which nodes are there yet. A cordoned node
+- A node that joins later has no copy until the DaemonSet reaches it. Without
+  the gate below, a replica scheduled there meanwhile reads from a directory
+  that is being written; with it, the replica waits for the copy (or, with a
+  required affinity, is not placed there).
+  `weights-status` says which nodes are there yet. A cordoned node
   or one under `DiskPressure` still counts for the DaemonSet (its controller
   tolerates both) and keeps evicting the downloader; `weights-status` lists
   it as `excluded` and leaves it out of the count, since no engine can start
@@ -429,9 +432,151 @@ The benchmark standup has the same measure under
 `BENCHMARK_MODEL_HOSTPATH=<dir>`; what the harness does with it is in
 [Benchmark the scaling manager](../guides/benchmarking/README.md#replica-start-time-in-the-harness).
 
+### Gate replicas on the weights
+
+Each node holds its own copy, so a replica can land on a node whose copy is
+missing, half-written, or gone (a disk that failed or was remounted empty). The
+gate has three parts:
+
+1. **The downloader verifies the files.** It writes its marker,
+   `.download-complete`, after the last file, and lists every file in it with
+   its size. Its readiness probe checks the marker, a `config.json` (or
+   `params.json`), and every listed file at its size, every 15 s. A copy that
+   stops verifying is downloaded again. A marker written by an earlier version
+   (empty) is upgraded in place when the files look whole, else the model is
+   downloaded again. A downloader applied before v0.12.0 checked only that the
+   marker exists. The labeller skips it and says so. Run `weights apply` for
+   that model again.
+2. **The labeller labels the nodes.** `weights label` sets
+   `llm-d.ai/<name>-cache=ready` on each node where every downloader for that
+   label is Ready, and removes it where one is not, or where its downloader is
+   gone. `weights labeller` runs it in the cluster every 30 s.
+3. **The model server uses the label.** `make workload-patch` writes a node
+   affinity on the label and a `wait-for-weights` init container into each
+   Deployment whose engine mounts a weights claim.
+
+```bash
+# cluster admin: run the labeller in the cluster, for these model namespaces (-A: all)
+smt weights labeller -n <ns>[,<ns>...] --image ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<release> --merge
+make weights-label NAMESPACE=<ns>[,<ns>]   # or once, from a checkout
+smt weights status -n <ns>                 # each model's node label, and how many nodes carry it
+smt weights labeller --remove -n <ns>      # stop watching one namespace; the others keep their labels
+smt weights labeller --delete && smt weights label --clear   # the whole cluster: remove it, then its labels
+```
+
+`--remove` re-applies the labeller without `<ns>` and deletes its RoleBinding
+there. On its next pass the labeller removes the labels only `<ns>`'s copies
+held. It needs `patch` on Deployments in the labeller's namespace and `delete`
+on RoleBindings in `<ns>`. Use `--delete` and `label --clear` only to remove the
+labeller for every namespace.
+
+**Health.** The labeller writes ConfigMap `weights-labeller-status` in its own
+namespace when its state changes:
+
+```bash
+kubectl get configmap weights-labeller-status -n scaling-manager-weights-labeller -o yaml
+```
+
+`state` is `ok`, `degraded` (a namespace could not be read, or a node could not
+be patched) or `failed` (nothing was changed this pass). `detail` says what, and
+`since` says when this state began. A namespace it cannot read keeps the labels
+it asked for when last read, unchanged; the other namespaces are labelled as
+usual. If the labeller has not read that namespace since it started, no label
+is removed anywhere until it can.
+
+**The label.** `llm-d.ai/<name>-cache=ready`, where `<name>` is the model id
+without its organisation, lower-cased: `Qwen/Qwen3-32B` is
+`llm-d.ai/qwen3-32b-cache`, `meta-llama/Llama-3.1-8B-Instruct` is
+`llm-d.ai/llama-3.1-8b-instruct-cache`. This is the label some clusters'
+node-preparation jobs already set, so a node prepared by either reads the same.
+Characters a label name does not allow become `-`; a name longer than 57
+characters keeps its first 48 and a hash of the whole id. `WEIGHTS_NODE_LABEL`
+(`--node-label` on `deploy/weights.sh apply`) replaces the whole key; it must be
+`<prefix>/<name>-cache`, and the labeller writes only under its
+`--label-prefix` (`llm-d.ai` unless set). The organisation is dropped, so
+`Qwen/Qwen3-8B` and `my-org/Qwen3-8B` share a key: a node holding either is
+labelled for both. `label` warns when that happens; give each its own key.
+
+**Labels it did not set.** The labeller records the labels it set in the node
+annotation `scaling-manager.llmd.ai/weights-node-labels` and removes only
+those. A label another tool set is left alone; if the downloader on that node
+is not Ready, `label` says so and changes nothing.
+
+**Required or preferred.** `LLMSM_WEIGHTS_NODE_AFFINITY` picks what the patch
+writes:
+
+| Value | Effect | Use when |
+| --- | --- | --- |
+| `preferred` (default) | labelled nodes first; a replica may still land on a node without the copy, and waits there until the download finishes | scale-out must not stall: the downloader runs on every GPU node, so the wait is bounded by the download |
+| `required` | replicas only on labelled nodes; with none free, they stay `Pending` | the download takes longer than an acceptable start, or some GPU nodes never get a copy |
+| `none` | no affinity; the init container still waits | something else places the replicas |
+
+The required term is added to every existing `nodeSelectorTerms` entry (terms
+are ORed), so a GPU product term the template already has stays. The patch
+replaces the whole list, so it carries the existing entries.
+
+**How the scaling manager counts those nodes.** With `required` and a declared
+`gpu-inventory`, node fit already counts only labelled nodes for that model:
+it reads the template's required node affinity
+([GPU limiter](gpu-limiter.md)). With `preferred`, a node without the copy
+counts as capacity: a replica placed there starts later, but it starts.
+
+**Rights.** `label` lists and patches nodes, which is cluster-scoped. The
+labeller runs in its own namespace (`scaling-manager-weights-labeller`, Pod
+Security `restricted`), with node `get`/`list`/`patch`, namespace `get` (a deleted namespace it watches is skipped, not an error), and read-only access to
+DaemonSets and pods in the namespaces it watches. In its own namespace it may
+`create` ConfigMaps, and `get` and `patch` its status ConfigMap. It must not run in a model
+namespace: anyone who can create pods there could use its ServiceAccount to
+patch nodes. The namespace owner needs none of this.
+
+The namespaces it watches are trusted. Anyone who can create pods in one can
+set a `<prefix>/<name>-cache` label on a node, or clear one the labeller set
+(never any other label), with a pod that looks like a downloader. So watch
+the model namespaces by name (`-n`), not `-A`, on a cluster whose namespaces
+are not all trusted.
+
+**Where it is installed.** `smt install --scope cluster` applies and updates
+it, watching every `--model-namespace` and every namespace it already watches.
+It applies a new one only when a model namespace has a weights DaemonSet
+(`weights apply`); otherwise it prints the command to add it later. Use
+`--no-weights-labeller` to leave it out, `--weights-labeller-image` for a
+mirror or a digest. The release flow cannot pin the tools image by digest
+for you: the tools image carries the release files, so its digest is known only
+after it is built. To pin it, pass `--weights-labeller-image` with the digest
+from the release notes. With `--dry-run`, `60-weights-labeller.yaml` watches
+exactly the `--model-namespace` list, and applying it replaces a running
+labeller's list. In GitOps, keep the full `-n` list in git and do not use
+`labeller --add`. `smt admin-setup -n <ns>` adds `<ns>` to a running labeller with
+namespaced rights only (a RoleBinding in `<ns>`, the Deployment in the
+labeller's namespace), or prints the command when there is no labeller or it
+lacks the rights; `smt weights labeller --add -n <ns>` does the same on its
+own. Without the cluster-wide install, run `smt weights labeller` as above; it
+refuses to drop a namespace the running labeller watches (`--merge` keeps them).
+
+**What it does not cover.**
+
+- A replica already running when its node's copy breaks keeps running; the
+  label goes, so no new replica lands there.
+- A replica waiting in `wait-for-weights` on a node the downloader never
+  reaches (outside its node selector) gets no copy. After
+  `LLMSM_WEIGHTS_WAIT_TIMEOUT` seconds (3600, `--weights-wait-timeout` on
+  `smt workload-patch`; `WEIGHTS_WAIT_SECONDS` in the emitted container) the
+  init container exits 1 with the reason in its log, and the pod shows
+  `Init:Error`, then `Init:CrashLoopBackOff`: the kubelet restarts the init
+  container on the same node, it does not reschedule the pod. Each restart
+  waits the full timeout again, plus the kubelet's back-off. Delete the pod
+  to place it again; use `required`, or the same node selector on the model
+  server and the downloader, so it does not happen.
+- The init container checks the marker and a config, not the file sizes. A
+  file truncated under its marker passes it. The downloader's probe catches it
+  within 15 s (the label goes), and its re-check removes the marker.
+- A LeaderWorkerSet gets no gate. `make workload-patch` says so for each
+  template that reads a node-local weights claim.
+- The gate is emitted, never applied by `--apply`.
+
 ### Engine caches on the node's disk
 
-The caches in the table above (torch.compile, FlashInfer autotune, Triton JIT,
+The caches in the table above (torch.compile, FlashInfer autotune, FlashInfer kernels, Triton JIT,
 Python bytecode) pay only if the next replica finds them, and a shared RWX claim can fail that.
 Measured on one cluster: nine starts of one decode pod spec, three per node on
 three nodes, were repeatable within 2.5 s per node but split by node into
@@ -528,7 +673,7 @@ containers:
         mountPath: /engine-cache
     env:
       - {name: VLLM_CACHE_ROOT,          value: /engine-cache/vllm}
-      - {name: FLASHINFER_WORKSPACE_DIR, value: /engine-cache/flashinfer}
+      - {name: FLASHINFER_WORKSPACE_BASE, value: /engine-cache/flashinfer/<image key>}
       - {name: TRITON_CACHE_DIR,         value: /engine-cache/triton}
       - {name: PYTHONPYCACHEPREFIX,      value: /engine-cache/pycache/<image key>}
 ```
@@ -592,8 +737,9 @@ kubectl delete pod -n <ns> <preparer pod>
 ```
 
 Each copy belongs to the user the preparer runs as (root on Kubernetes), not to
-the user that compiled it. An engine under another user can read what was
-seeded, but cannot change it. Any image with `/bin/sh` works: with GNU `cp` the
+the user that compiled it. The directories it copies are `1777`, so an engine
+under any user can read what was seeded and add files beside it, but cannot
+change or remove a seeded file. Any image with `/bin/sh` works: with GNU `cp` the
 copies keep their file times; with busybox `cp` they do not.
 
 With a seed, a node is Ready only once it carries it, so `engine-cache-status`
@@ -640,6 +786,26 @@ If a node does not, publish fails and says so. The seed stays stamped, so run
 `make engine-cache-status` to see which node, and read that node's preparer log
 to see why.
 
+Engines that run as a non-root user write some cache files readable only by
+that user (vLLM's `modelinfos/*.json`, for example). The publish pod runs as
+root and adds one capability, `DAC_OVERRIDE`, so it can read them. Pod Security
+"baseline" admits it. On OpenShift (not yet run there) `restricted-v2` does
+not: the publish pod needs an SCC whose `allowedCapabilities` lists
+`DAC_OVERRIDE`.
+
+If a file still cannot be read, publish skips it and the cache key that holds
+it (one compile, one Triton or FlashInfer build, or one image's bytecode),
+names it in its output, and still stamps the seed. A file that disappears
+while publish copies it fails the publish: an engine was writing that cache,
+so run publish again once it is done.
+
+On a seeded node, the copied directories are writable by every user (`1777`,
+as the cache directories themselves are), so an engine of any UID can add new
+keys beside them. Under `flashinfer/` they are writable and not sticky, and
+the files writable too, because FlashInfer rewrites and replaces its own build
+files. Nodes seeded before v0.12.1 keep `755` directories until they are wiped
+and reseeded (see the commands above).
+
 #### Python bytecode
 
 Engine images ship almost no compiled bytecode for their Python packages
@@ -682,9 +848,33 @@ its first CUDA context from 4.6 s to 2.3 s. The first start writes about 150 MB
   image that already ships its bytecode compiled (vLLM 0.32 does). The guard
   does the second by itself: it unsets the variable when every top-level
   module of the engine package has its `.pyc`.
-- **One user per image.** The first engine to start an image creates its key
-  directory as its own user, mode `755`. An engine of that image under another
-  user cannot write there; the guard then unsets the variable.
+- **A second user gets its own copy.** The first engine to start on a node
+  owns what it creates there (its key directory is `755`). An engine of the
+  same image under another user cannot write there, so the guard gives it a
+  directory of its own beside it (`<dir>.uid-<uid>`, else `<dir>/.uid-<uid>`)
+  and logs `... is another user's; using ...`. That user compiles once on each
+  node and is warm from its second start. The same holds for `vllm/` and
+  `triton/`.
+  - It costs one more copy per extra user on each node, as large as that
+    user's own cache (the bytecode alone is about 150 MB per image).
+    `make engine-cache-verify` checks the first user's keys, and lists every
+    other user's copy with its size.
+  - The guard takes only a real directory the user made itself, made `755`.
+    That keeps users out of each other's copies on one node; it does not make
+    the directory a trust boundary (see [What it costs](#what-it-costs)).
+    Where the node directory is group-writable and not sticky (OpenShift
+    makes it `2775`, group 0), another pod in that group can rename a copy.
+  - On a seeded node this holds only for directories a user made. The
+    directories the seed brought are `1777`, and the preparer makes the four
+    cache directories `1777` again on every start. So any engine that uses
+    the node's cache can add a file beside a seeded one, such as a `.pyc` for
+    a module the seed lacked, though it cannot change or remove a seeded
+    file. Users in one trust domain can share such a node; keep separate
+    trust domains on separate nodes or separate engine-cache directories.
+  - Seed and publish skip these copies and the `.writable` markers.
+  - On a filesystem that does not report file owners (SMB or Azure Files
+    with a fixed uid, some FUSE and NFSv4 mounts) every user shares the one
+    directory, as before; the guard logs `does not report file owners`.
 - **It is code, like the other caches.** The key comes from the public image
   name and `pycache/` is `1777`, so anyone who can run a pod that mounts the
   same node directory can create a key directory first and put bytecode in it
@@ -717,10 +907,74 @@ The guard goes in each container command, before the engine starts (on a
 LeaderWorkerSet, the leader's and the worker's):
 
 ```bash
-for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
+for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
   eval "d=\${$v:-}"
+  d=${d%/}
   [ -n "$d" ] || continue
-  if ! mkdir -p "$d" 2>/dev/null || ! touch "$d/.writable" 2>/dev/null; then
+  if [ "$v" = FLASHINFER_WORKSPACE_BASE ] && ! command -v find >/dev/null 2>&1; then
+    echo "engine cache $v=$d cannot be checked: this image has no find; using the engine default instead"
+    unset $v
+    continue
+  fi
+  # Does this filesystem report who owns a file? Some do not (SMB or Azure
+  # Files with a fixed uid, a FUSE mount, NFSv4 mapping users to nobody):
+  # a file this process just made reads as someone else's. There owners
+  # decide nothing, and the check is only that the directory is writable.
+  ecown=yes
+  if mkdir -p "$d" 2>/dev/null && ecf=`mktemp "$d/.own.XXXXXX" 2>/dev/null`; then
+    [ -O "$ecf" ] || ecown=no
+    rm -f "$ecf"
+  fi
+  # The directory itself, then a directory of this user's own beside it,
+  # else inside it. The first user to start an engine here wrote the
+  # marker, a plain file, and owns the directory: what that engine made
+  # under it is that user's. Another user's own directory is taken only
+  # if it is a real directory this user made (-O, not a link), made 755
+  # whatever the pod's umask, so no other user can write in it.
+  ecu=`id -u 2>/dev/null || :`
+  ecp=
+  ecbad=
+  ecmine=
+  for p in "$d" "$d.uid-$ecu" "$d/.uid-$ecu"; do
+    if [ "$p" = "$d" ]; then
+      if [ "$ecown" = no ]; then
+        touch "$d/.writable" 2>/dev/null || continue
+      elif [ -L "$d/.writable" ] || ! touch "$d/.writable" 2>/dev/null || [ ! -O "$d/.writable" ]; then
+        continue
+      fi
+      ecmine=yes
+    else
+      [ "$ecown" = yes ] && [ -n "$ecu" ] || break
+      # One made here and then refused (a filesystem that does not
+      # report owners, seen only now) is removed, not left empty.
+      ecnew=
+      if (umask 022; mkdir "$p") 2>/dev/null; then ecnew=yes; elif [ ! -d "$p" ]; then continue; fi
+      if [ ! -d "$p" ] || [ -L "$p" ] || [ ! -O "$p" ] || ! chmod go-w "$p" 2>/dev/null || ! touch "$p/.writable" 2>/dev/null; then
+        [ -z "$ecnew" ] || rmdir "$p" 2>/dev/null
+        continue
+      fi
+    fi
+    # FlashInfer: every entry of the tree, through a link at the top, but
+    # not another user's own directory in it. A find that fails fails it.
+    if [ "$v" = FLASHINFER_WORKSPACE_BASE ] && { ecf=`find "$p/" -path "$p/.uid-*" -prune -o ! -type l -exec sh -c 'for f in "$@"; do [ -w "$f" ] || [ ! -e "$f" ] || echo "$f"; done' sh {} + 2>/dev/null || echo find`; [ -n "$ecf" ]; }; then
+      ecbad=$p
+      continue
+    fi
+    ecp=$p
+    break
+  done
+  if [ "$ecp" = "$d" ]; then
+    [ "$ecown" = yes ] || echo "engine cache $v=$d: this filesystem does not report file owners; using it because it is writable"
+  elif [ -n "$ecp" ] && [ -n "$ecmine" ]; then
+    echo "engine cache $v=$d holds an entry this user cannot write; using $ecp, user $ecu's own"
+    eval "$v=\$ecp"
+  elif [ -n "$ecp" ]; then
+    echo "engine cache $v=$d is another user's; using $ecp, user $ecu's own"
+    eval "$v=\$ecp"
+  elif [ -n "$ecbad" ]; then
+    echo "engine cache $v=$d holds an entry this user cannot write; using the engine default instead"
+    unset $v
+  else
     echo "engine cache $v=$d is not writable; using the engine default instead"
     unset $v
   fi
@@ -771,6 +1025,99 @@ when its directory is not writable (then the faster choice), or when the image
 ships its bytecode, and the check leaves an empty `.writable` file in that
 directory. The last block is emitted for vLLM only
 ([Depends on the vLLM version](#depends-on-the-vllm-version)).
+The FlashInfer checks are explained in
+[FlashInfer kernels](#flashinfer-kernels). If your command carries an older
+copy of this guard, replace all of it.
+
+#### FlashInfer kernels
+
+FlashInfer reads one variable for where it keeps what it builds,
+`FLASHINFER_WORKSPACE_BASE`, and adds `.cache/flashinfer/` under it.
+`make workload-patch` writes
+`FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/<image key>`, with the
+same `<image key>` as the bytecode. Then:
+
+| what | where |
+|---|---|
+| kernels it compiles on first use | `/engine-cache/flashinfer/<image key>/.cache/flashinfer/<arch>/cached_ops/` |
+| the sources it generates for them | `/engine-cache/flashinfer/<image key>/.cache/flashinfer/<arch>/generated/` |
+| kernels it downloads (cubins, FlashInfer 0.3 and later) | `/engine-cache/flashinfer/<image key>/.cache/flashinfer/cubins/` |
+
+Newer FlashInfer releases put a version directory before `<arch>`. Unset, the
+same tree goes under `$HOME` in the container and is built again on every
+start.
+
+- **`FLASHINFER_CUBIN_DIR` is not set.** Its default is already the
+  `cubins/` directory above, so the base carries it. Setting it would also
+  override where an image that bundles its cubins keeps them.
+- **Before v0.12.1, `make workload-patch` set `FLASHINFER_WORKSPACE_DIR`.**
+  FlashInfer does not read that variable, so no engine cache held FlashInfer
+  kernels. [Upgrading from v0.12.0 to v0.12.1](upgrade-and-uninstall.md#upgrading-from-v0120-to-v0121)
+  has the steps. In short: `make workload-patch` reports such a workload as
+  `BUILDS ITS FLASHINFER KERNELS AGAIN` and writes `FLASHINFER_WORKSPACE_BASE`
+  under the same path, keyed by image, with the guard. That variable has no
+  volume of its own, so it is written to the file and never applied. Once the
+  workload sets `FLASHINFER_WORKSPACE_BASE`, the report is quiet.
+- **Replace the guard, do not rename it.** The guard from before v0.12.1 only
+  checks the top directory. The new one also checks the whole FlashInfer tree
+  (below). Renaming the variable in the old loop leaves that check out.
+  Replace the whole block with the one in the file.
+- **FlashInfer fails on an entry it cannot write.** When it builds a kernel
+  it takes a lock file and writes its build files and its ninja log under the
+  base, and an engine that cannot write there fails instead of compiling. On
+  a cache hit it writes nothing there (measured with FlashInfer 0.7.4). So the
+  guard, before the engine starts:
+  - checks every entry of the tree, following a symbolic link at the top. It
+    skips other users' own directories (`<base>/.uid-<uid>`). An entry this
+    user cannot write, or a `find` that fails, fails the check;
+  - unsets the variable when the image has no `find`, since it cannot check.
+
+  The tree belongs to the first user to start an engine on it, as for the
+  other caches. A tree that fails the check is not used: the guard tries the
+  user's own directory (`<base>.uid-<uid>`, else `<base>/.uid-<uid>`), and
+  only then the engine default. For the owner of the tree it logs
+  `holds an entry this user cannot write; using <dir>, user <uid>'s own`.
+  Each fallback to the default logs one line, and FlashInfer works under
+  `$HOME`: slower, never a lost replica.
+- **Two users on one node.** The second user's engines get their own
+  `flashinfer/<image key>.uid-<uid>` and log `is another user's`
+  ([A second user gets its own copy](#python-bytecode)). Each user builds
+  its kernels once per node.
+  `umask 000` in the engine command, so that every user could write every
+  tree, is not used: a umask applies to everything the engine writes, so the vLLM,
+  Triton and bytecode caches and any weights it downloads to a shared volume
+  would become writable by every user too.
+- **What it opens up.** `flashinfer/` is `1777`, like the other three
+  directories. Seed and publish copy FlashInfer files writable by every user,
+  because a copy belongs to the preparer and the tree check needs every entry
+  writable. So any user whose pod mounts the node directory can rewrite a seeded
+  FlashInfer kernel, and the next engine to start loads and runs it. A tree an
+  engine built itself keeps the modes its umask gave it. The preparer sets the
+  four directories back to `1777` at every start wherever it owns them: where
+  it runs as the engines' UID (OpenShift), or where the engines run as root.
+  There the `chmod 1770` lockdown in [What it costs](#what-it-costs) does not
+  hold.
+- **Filling it.** On each node the first start of each engine configuration
+  fills it. With a seed, run `make engine-cache-publish` once every
+  configuration has started, as for the other directories.
+- **Check it.** After an engine has started and served a request, its
+  FlashInfer tree is on the cache, not under `$HOME`. If the guard logged
+  `cannot be checked`, `is not writable`, or `holds an entry this user cannot
+  write; using the engine default`, the variable was unset and the tree is
+  not used:
+
+  ```bash
+  kubectl exec -n <ns> <engine pod> -- sh -c 'ls "$FLASHINFER_WORKSPACE_BASE/.cache/flashinfer"'
+  kubectl logs -n <ns> <engine pod> | grep 'engine cache FLASHINFER_WORKSPACE_BASE'
+  ```
+
+  Not every engine configuration uses FlashInfer: an empty or missing tree
+  can mean it compiled nothing, not that the cache failed.
+- **One directory per image.** FlashInfer 0.2 and 0.3 put no version in the
+  path, so two images with different FlashInfer builds would share one tree.
+  That is why the base is keyed by image. The warm pool and the benchmark
+  scenarios use a plain `flashinfer/` directory instead: each pins one engine
+  image. Do not point two images at one of them.
 
 #### Check the cache without a second start
 
@@ -944,7 +1291,11 @@ paths). Wipe `<dir>/engine-cache` on the nodes when a namespace or directory
 changes hands: `delete` keeps the caches, and a new tenant with the same
 namespace name and directory would load the old one's. 1777 is a trade-off so
 the engines need no `fsGroup`. A namespace that runs its engines as one UID can
-`chown` the four directories to it and `chmod 1770` them on each node.
+`chown` the four directories to it and `chmod 1770` them on each node. That
+holds only where the preparer does not run as that UID: the preparer sets the
+four directories back to `1777` at each start wherever it owns them (OpenShift,
+or engines that run as root). Seeded FlashInfer files are writable by every
+user ([FlashInfer kernels](#flashinfer-kernels)).
 
 Nothing cleans the cache. The bytecode alone grows about 150 MB per image per
 node, and an old image's key stays after the image is gone: delete
@@ -1199,6 +1550,28 @@ To patch a live LWS instead, use a JSON patch (`kubectl patch lws <name> -n <ns>
 — a `--type=merge` patch replaces the whole `containers` list. Both are reverted
 by the next `helm upgrade` if a chart owns the object.
 
+### On a DisaggregatedSet
+
+A DisaggregatedSet (`disaggregatedset.x-k8s.io`, LWS v0.10.0 or newer) holds one
+LeaderWorkerSet template per role under `spec.roles[].spec.leaderWorkerTemplate`.
+
+- **`make workload-patch` reports, and writes nothing.** For each serving role it
+  logs the same findings as above (drain, weights, engine caches), naming the
+  role and its index. It never writes or applies a patch: any template change
+  rolls every group of every role. Make the change in the role template, where
+  the set is owned, and roll it out the way you roll out a release.
+- **Drain each role as a LeaderWorkerSet**: a preStop on the leader and on every
+  worker of the role's template, with the worker's grace period at least the
+  leader's. The DisaggregatedSet controller deletes groups directly on
+  scale-down.
+- **To autoscale a role**, set `scaling.mode: External` on it and remove its
+  `spec.replicas`, keeping `spec.slices` at 1. The controller then creates a
+  `DisaggregatedSetRoleScaler` named `<set>-<role>`, seeded with the role's current
+  group count, and `make scaledobjects-plan` targets it. A role in the default
+  `Static` mode is listed with `apply: no` and this reason. See
+  [DisaggregatedSet roles](disaggregatedset.md), which also covers the role writer
+  for a role that must stay Static.
+
 ## Writing the patch: `make workload-patch`
 
 The sections above share one shape: a pod spec that is fine at a fixed replica
@@ -1351,6 +1724,8 @@ objects. Read what it prints first:
 | --- | --- | --- |
 | `LLMSM_WORKLOAD_PATCH_FILE` | `scaling-manager-workload-patch.yaml` | where the patch is written |
 | `LLMSM_WORKLOAD_PATCH_APPLY` | `false` | `true` also applies the drain half to the live workloads |
+| `LLMSM_WEIGHTS_NODE_AFFINITY` | `preferred` | the weights gate's node affinity: `preferred`, `required` or `none` ([Gate replicas on the weights](#gate-replicas-on-the-weights)) |
+| `LLMSM_WEIGHTS_WAIT_TIMEOUT` | `3600` | seconds the `wait-for-weights` init container waits for the node's copy before it exits 1 |
 | `LLMSM_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered |
 | `LLMSM_DRAIN_SLEEP_SECONDS` | `45` | the preStop sleep — the drain window itself |
 | `LLMSM_MODEL_PVC_NAME` | discovered, else `model-pvc` | the claim the emitted weights volume names. Setting it wins over discovery |
@@ -1359,7 +1734,7 @@ objects. Read what it prints first:
 | `LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE` | `false` | `true` also applies the engine-cache half where it cannot break the workload |
 | `LLMSM_ENGINE_CACHE_CLAIM` | `engine-cache` | the claim the emitted engine-cache volume names, `<claim>[:<subPath>]` — the one `make engine-cache` makes, or a shared RWX claim you already have (whoever can write it runs code in every engine; see above) |
 | `LLMSM_ENGINE_CACHE_VOLUME_NAME` | `engine-cache` | the volume name in the emitted patch |
-| `LLMSM_ENGINE_CACHE_PATH` | `/engine-cache` | where that volume is mounted, and the parent of the emitted `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR` and `TRITON_CACHE_DIR` |
+| `LLMSM_ENGINE_CACHE_PATH` | `/engine-cache` | where that volume is mounted, and the parent of the emitted `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE` and `TRITON_CACHE_DIR` |
 | `LLMSM_ENGINE_CACHE_AOT` | `true` | `false` leaves the `VLLM_USE_MEGA_AOT_ARTIFACT` block (vLLM 0.26 only) out of the emitted guard ([Depends on the vLLM version](#depends-on-the-vllm-version)) |
 
 The `*_NAME` and `*_PATH` variables affect the emitted file only — without the

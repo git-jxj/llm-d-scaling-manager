@@ -30,10 +30,18 @@ func Unmarshal(data []byte, v any) error {
 
 var nullJSON = []byte("null")
 
-// decode reads one JSON value, raw, into v. Objects and lists are split into
-// their raw members, so a Raw anywhere below keeps its bytes as written.
+// decode reads one JSON value, raw, into v, in one pass over it (decodeAt).
 func decode(raw []byte, v reflect.Value) error {
 	raw = bytes.TrimSpace(raw)
+	_, err := decodeAt(raw, 0, v)
+	return err
+}
+
+// decodeLeaf reads one JSON value, raw, into v: a value decodeAt does not
+// read member by member itself. Objects and lists are split into their raw
+// members (splitObject, splitList), so a Raw anywhere below keeps its bytes
+// as written.
+func decodeLeaf(raw []byte, v reflect.Value) error {
 	if bytes.Equal(raw, nullJSON) {
 		v.SetZero()
 		return nil
@@ -42,7 +50,7 @@ func decode(raw []byte, v reflect.Value) error {
 		v.SetBytes(bytes.Clone(raw))
 		return nil
 	}
-	if v.Kind() != reflect.Interface && v.Kind() != reflect.Pointer && v.Type().Implements(recordedValuerType) {
+	if isRecorded(v) {
 		return decodeRecorded(raw, v)
 	}
 	if v.Type() == timeType {
@@ -60,6 +68,14 @@ func decode(raw []byte, v reflect.Value) error {
 	switch v.Kind() {
 	case reflect.Bool:
 		var b bool
+		if len(raw) == 4 && string(raw) == "true" {
+			v.SetBool(true)
+			break
+		}
+		if len(raw) == 5 && string(raw) == "false" {
+			v.SetBool(false)
+			break
+		}
 		if err := json.Unmarshal(raw, &b); err != nil {
 			return fmt.Errorf("learnrec: want a bool for %s: %w", v.Type(), err)
 		}
@@ -83,6 +99,10 @@ func decode(raw []byte, v reflect.Value) error {
 		}
 		v.SetFloat(f)
 	case reflect.String:
+		if plainString(raw) {
+			v.SetString(string(raw[1 : len(raw)-1]))
+			break
+		}
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
 			return fmt.Errorf("learnrec: want a string for %s: %w", v.Type(), err)
@@ -106,9 +126,9 @@ func decode(raw []byte, v reflect.Value) error {
 		}
 		v.Set(reflect.ValueOf(tree))
 	case reflect.Slice:
-		var list []json.RawMessage
-		if err := json.Unmarshal(raw, &list); err != nil {
-			return fmt.Errorf("learnrec: want a list for %s: %w", v.Type(), err)
+		list, ok := splitList(raw)
+		if !ok {
+			return fmt.Errorf("learnrec: want a list for %s: %w", v.Type(), json.Unmarshal(raw, &[]json.RawMessage{}))
 		}
 		s := reflect.MakeSlice(v.Type(), len(list), len(list))
 		for i, item := range list {
@@ -118,8 +138,8 @@ func decode(raw []byte, v reflect.Value) error {
 		}
 		v.Set(s)
 	case reflect.Array:
-		var list []json.RawMessage
-		if err := json.Unmarshal(raw, &list); err != nil || len(list) != v.Len() {
+		list, ok := splitList(raw)
+		if !ok || len(list) != v.Len() {
 			return fmt.Errorf("learnrec: want a list of %d for %s", v.Len(), v.Type())
 		}
 		for i, item := range list {
@@ -128,36 +148,36 @@ func decode(raw []byte, v reflect.Value) error {
 			}
 		}
 	case reflect.Map:
-		var obj map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &obj); err != nil {
-			return fmt.Errorf("learnrec: want an object for %s: %w", v.Type(), err)
+		obj, ok := splitObject(raw)
+		if !ok {
+			return fmt.Errorf("learnrec: want an object for %s: %w", v.Type(), json.Unmarshal(raw, &map[string]json.RawMessage{}))
 		}
 		m := reflect.MakeMapWithSize(v.Type(), len(obj))
-		for k, item := range obj {
+		for _, item := range obj {
 			key := reflect.New(v.Type().Key()).Elem()
-			if err := decodeKey(k, key); err != nil {
+			if err := decodeKey(item.key, key); err != nil {
 				return err
 			}
 			val := reflect.New(v.Type().Elem()).Elem()
-			if err := decode(item, val); err != nil {
+			if err := decode(item.raw, val); err != nil {
 				return err
 			}
 			m.SetMapIndex(key, val)
 		}
 		v.Set(m)
 	case reflect.Struct:
-		var obj map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &obj); err != nil {
-			return fmt.Errorf("learnrec: want an object for %s: %w", v.Type(), err)
+		obj, ok := splitObject(raw)
+		if !ok {
+			return fmt.Errorf("learnrec: want an object for %s: %w", v.Type(), json.Unmarshal(raw, &map[string]json.RawMessage{}))
 		}
 		t := v.Type()
-		for name, item := range obj {
-			f, ok := t.FieldByName(name)
-			if !ok || len(f.Index) != 1 || !f.IsExported() {
-				return fmt.Errorf("learnrec: %s has no field %s", t, name)
+		for _, item := range obj {
+			f := fieldIndex(t, item.key)
+			if f < 0 {
+				return fieldError(t, item.key)
 			}
-			if err := decode(item, v.Field(f.Index[0])); err != nil {
-				return fmt.Errorf("%s.%s: %w", t, name, err)
+			if err := decode(item.raw, v.Field(f)); err != nil {
+				return wrapField(t, item.key, err)
 			}
 		}
 	default:

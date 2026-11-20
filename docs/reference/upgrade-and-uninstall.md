@@ -20,19 +20,19 @@ Pin a release tag or a digest, and deploy with the manifests from the **same**
 release. An image older than the manifests crash-loops on flags it does not
 know. Releases are listed on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases);
-the current one is `v0.11.2`.
+the current one is `v0.12.0`.
 A checked-out release deploys its own tag, so `IMG_TAG` below only makes that
 explicit. Each release's notes list its image digest; a digest names one build,
 and a tag could in principle be re-pushed.
 
 ```bash
-git checkout v0.11.2
-make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.11.2
-# or by digest (v0.11.2's, from its release notes)
+git checkout v0.12.0
+make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.12.0
+# or by digest (v0.12.0's, from its release notes)
 make deploy-scaling-manager NAMESPACE=<namespace> \
-  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:71a7296d067466d08342216048c026c1f09b5f1fb1bd18c6aa84a2454355990b
+  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:0fc4c191f847b2746a41e2a1cdbb93072d0f2a1e2f3974d36478df62a9b31672
 # out-of-reach shape (the cluster admin runs it): the controller runs in llmsm-<namespace>
-NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.11.2
+NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.12.0
 ```
 
 `IMG_TAG` sets the tag of the default `IMG`; `IMG` replaces the whole reference.
@@ -129,6 +129,211 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.12.0 to v0.12.1
+
+#### FlashInfer kernels now reach the engine cache
+
+Before v0.12.1, `make workload-patch` and the warm pool set
+`FLASHINFER_WORKSPACE_DIR`. FlashInfer does not read that variable; it reads
+`FLASHINFER_WORKSPACE_BASE`. So no engine cache held FlashInfer kernels, and
+every start built them again under `$HOME` in the container. Nodes prepared
+with `make engine-cache` need nothing. For each model server:
+
+1. Run `make workload-patch NAMESPACE=<ns>`. A workload that still sets the
+   old variable is reported as `BUILDS ITS FLASHINFER KERNELS AGAIN`. The file
+   sets `FLASHINFER_WORKSPACE_BASE` under the same path, keyed by image, and
+   carries the guard. This change is never applied for you.
+2. In your chart values, set `FLASHINFER_WORKSPACE_BASE` to the value in the
+   file and remove `FLASHINFER_WORKSPACE_DIR`.
+3. If your container command carries the engine-cache guard, replace the
+   whole guard with the one in the file. On a LeaderWorkerSet, do it in the
+   leader and the worker command. Do not only rename the variable in the old
+   loop: the new guard also checks the whole FlashInfer tree, and gives a
+   second user on the node its own copy of each cache. The old one does
+   neither.
+4. Roll the workload out. The first start of each engine configuration on
+   each node fills the tree. With a seed, run `make engine-cache-publish` once
+   after that.
+5. Run `make workload-patch NAMESPACE=<ns>` again. Silence for the workload is
+   the all-clear.
+
+Warm pools get the new variable and the guard when you apply them again.
+Their FlashInfer kernels then live on the pool's shared claim, beside the
+torch.compile and Triton caches. That is the trade the warm pool manifest
+already names: compiled code on a volume every pool engine can write.
+
+What this opens up, and what to do when two users run engines on one node:
+[FlashInfer kernels](workload-preparation.md#flashinfer-kernels).
+
+#### Seeded nodes and non-root engines
+
+`make engine-cache-publish` now works when non-root engines wrote to the node
+cache, and a node seeded from v0.12.1 restores its directories as `1777`, so a
+non-root engine can add to them. A node seeded before v0.12.1 keeps `755`
+directories, owned by root, until you wipe and reseed it: see "reseed the
+node" in
+[Engine caches on the node's disk](workload-preparation.md#engine-caches-on-the-nodes-disk).
+
+### Upgrading from v0.11.2 to v0.12.0
+
+#### The warm-pool launcher moves to v0.8.0
+
+Single-Pod warm pools now run FMA launcher v0.8.0; v0.11.2 ran v0.6.4. With
+v0.8.0, evicting a model stops every process of its engine, so its GPU memory
+is freed, and the launcher keeps answering health checks while it evicts. (If
+the engine's API server has already died, a `DELETE` still leaves its other
+processes behind, as before.)
+
+- **Existing pools stay on v0.6.4.** The controller does not update a pool's
+  Deployment. A pool picks up v0.8.0 only when you change its image.
+- **Do it in a quiet window.** The pool Deployment uses `strategy: Recreate`,
+  so the update restarts every pool Pod at once and drops every warm engine.
+  The pool is cold until the new Pods have pulled the image and loaded their
+  models again.
+
+To update one pool in place, with no need to remember its `create` flags:
+
+```bash
+IMAGE=ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:9c9d03f0d485be9b0529a1623813ebfea24066156233ee13f4177c96bcbbf656
+kubectl -n <namespace> set image deployment/llmsm-warm-pool-<pool> inference-server=$IMAGE
+kubectl -n <namespace> rollout status deployment/llmsm-warm-pool-<pool>
+# check: prints the v0.8.0 reference
+kubectl -n <namespace> get deployment llmsm-warm-pool-<pool> \
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="inference-server")].image}'
+```
+
+Or run `deploy/warmpool.sh create` again with the pool's flags, or re-apply
+the `config/warmpool/` overlay. If you passed `--launcher-image` for a
+single-Pod pool, drop it, or the pool keeps that image.
+
+To shorten the cold window, hold the image on the GPU nodes first:
+`make prepull IMAGES=$IMAGE NAMESPACE=<namespace>`
+([holding the image on the nodes](workload-preparation.md#holding-the-image-on-the-nodes)).
+
+- **Staying on v0.6.4 is safe.** The controller talks to both the same way.
+- **Group pools do not change.** They keep the v0.6.4-based headless image
+  given with `--launcher-image` ([pools of groups](../guides/warm-pool/groups.md#a-group-needs-a-patched-supervisor-image)).
+
+#### The weights labeller
+
+Only if you keep model weights on the nodes' disks (`smt weights apply`).
+
+- `smt install --scope cluster` now runs the weights labeller. It labels each
+  GPU node whose copy of the weights verifies. It patches nodes; its grants
+  are in the [security model](security-model.md#grants-made-after-install).
+  The install applies it only when a `--model-namespace` has a weights
+  DaemonSet. Otherwise it prints how to add it later. To leave it out, pass
+  `--no-weights-labeller`.
+- Run `smt weights apply` again for each model, with the same flags. Before
+  v0.12.0 the downloader's readiness probe checked only that the marker file
+  exists. The labeller does not trust those downloaders: it skips each one
+  and says so in its log. The new downloader keeps a whole copy already on
+  the node; it downloads again only a copy that is not whole.
+- Then run `smt workload-patch -n <namespace>`. It writes the node affinity and
+  the `wait-for-weights` init container into each model server that reads
+  node-local weights ([Gate replicas on the
+  weights](workload-preparation.md#gate-replicas-on-the-weights)).
+- To check the labeller:
+
+  ```bash
+  kubectl get configmap weights-labeller-status -n scaling-manager-weights-labeller -o yaml
+  ```
+
+#### Learned state after the vLLM-version change
+
+The scaling manager now reads which vLLM release each variant runs, and fills
+the flags an engine leaves unset with that release's defaults (see
+[vLLM versions](vllm-versions.md)).
+
+**Most variants keep their learned state.** A variant whose resolved values did
+not change restores as its own: one that passes the sizing flags, and an
+unknown image on an H100 or H200, for example.
+
+**These variants relearn**, each because a flag it leaves unset now resolves
+to a different value:
+
+- any engine on an A100 or on a GPU below 70 GiB without
+  `--max-num-batched-tokens`: 8192 becomes 2048. This includes private,
+  unknown and simulator images, since the rule is the same in every vLLM
+  release. This one also changes its estimate;
+- a `vllm-openai` tag v0.28 or later on a GPU of 160 GiB or more without
+  `--max-num-batched-tokens`: 8192 becomes 16384;
+- a wide-EP engine (expert parallel, DP above 1, `--all2all-backend`
+  `deepep_low_latency` or `nixl_ep`) without `--max-num-batched-tokens`: 256;
+- a `vllm-openai` tag v0.20 or later without `--gpu-memory-utilization`
+  (0.9 becomes 0.92), and a v0.34 tag without it (1.0) or without
+  `--block-size` (64).
+
+What you see for those:
+
+- **On the first restart, the restore logs "the variant's engine arguments,
+  or the vLLM defaults they resolve to, changed".** Their arguments did not
+  change on the cluster.
+- **They may run more replicas than before for up to about six and a half
+  hours.** The old k2 is kept as a lower-only previous figure (`P2-prior` in
+  the k2-decision log). Where it is below what the new arguments derive, the
+  variant is priced at the old figure: held 30 minutes, then relaxed over 6
+  hours of serving, or replaced once the variant saturates twice under the new
+  arguments. That is the safe direction, but it costs replicas.
+- **Their latency, SLO and throughput windows start again**, and their
+  `llmsm_engine_config` series get new label values.
+- **Nothing to do.** To keep a figure from changing, pass the flag on the
+  engine with the value you want.
+
+#### Supply counts only replicas an InferencePool selects
+
+The router sends traffic only to Pods its InferencePool selects. From v0.12.0
+the scaling manager counts only those Pods as supply. In a model that a pool
+selects:
+
+- a Pod no pool selects (a relabelled replica) is no longer counted;
+- a variant no pool selects, by its pod template or its running Pods, is
+  **held**: it is not counted, and nothing scales it, up or down, including
+  scale-to-zero, scale from zero, utilization-share plans and Kueue lender
+  releases. It keeps the replica count it had. A model whose routed variant
+  is parked at zero is still routed, so the parked variant is the one that
+  wakes.
+
+**A canary or role served outside the pool stops autoscaling.** If you route
+traffic to a variant some other way (an HTTPRoute to a plain Service), it is
+now held at its replica count.
+
+Before you upgrade, check that every variant you want scaled is selected by a
+pool. List the pools' selectors, in the API group your pools use:
+
+```bash
+# inference.networking.k8s.io (v1): the selector is under matchLabels
+kubectl get inferencepools.inference.networking.k8s.io -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.selector.matchLabels
+# inference.networking.x-k8s.io (v1alpha2): the selector is a flat map
+kubectl get inferencepools.inference.networking.x-k8s.io -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.selector
+```
+
+Compare them with each workload's pod template labels:
+
+```bash
+kubectl get deployments -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,LABELS:.spec.template.metadata.labels
+# only if LeaderWorkerSet is installed
+kubectl get leaderworkersets -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,LABELS:.spec.leaderWorkerTemplate.leaderTemplate.metadata.labels
+```
+
+A Pod relabelled after it started can differ from its template. List the
+running Pods' labels with `kubectl get pods -n <namespace> --show-labels`.
+
+After the upgrade, a held variant has a `HeldNotInInferencePool` Warning
+Event, and `llmsm_unrouted_replicas` is non-zero for it.
+
+To release a held variant, add labels to its pod template that a pool
+selects, or create a pool that selects it.
+
+To keep the counting from before v0.12.0 for every model, set
+`LLMSM_POOL_SELECTED_SUPPLY=false` on the controller, or
+`LLMSM_POOL_SELECTED_SUPPLY: "false"` in the settings ConfigMap, and restart
+the controller ([configuration](configuration-advanced.md)).
+
 ### Upgrading from v0.11.1 to v0.11.2
 
 The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
@@ -136,14 +341,14 @@ The `whatif` command is now `capacity-planner`. Nothing on the cluster changes.
 - Build it with `make capacity-planner` and run `bin/capacity-planner`. The
   subcommands and flags are the same. `go build ./cmd/whatif` and
   `go run ./cmd/whatif` are now `./cmd/capacity-planner`.
-- `make whatif` and `bin/whatif` still work for this release. whatif will be
-  removed in v0.12.0, so update your scripts now.
+- `make whatif` and `bin/whatif` still work through v0.12. whatif will be
+  removed in v0.13.0, so update your scripts now.
 - Errors and warnings on stderr now start with `capacity-planner:`, also when
   you run `bin/whatif`. `bin/whatif` also prints one deprecation line on
   stderr first. Keep stderr out of JSON output: do not use `2>&1` when you
   parse `-o json`.
 - The TTFT staircase reads `STAIRCASE_CAPACITY_PLANNER`. It still reads the
-  old `STAIRCASE_WHATIF` until v0.12.0.
+  old `STAIRCASE_WHATIF` until v0.13.0.
 - The developer pages moved: `whatif-capture.md` is now
   [capacity-planner-capture.md](../developer-guide/capacity-planner-capture.md)
   and `whatif-serve.md` is now
@@ -1332,6 +1537,7 @@ make undeploy-scaling-manager NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace>
 | the EPP `/metrics` authentication ClusterRoleBindings this install made (`llm-d.ai/applied-for=$NS`), and ClusterRole `scaling-manager-epp-metrics-auth` with the last of them | cluster-scoped: a namespace owner cannot read them, and the uninstall prints the cluster admin's `kubectl delete` command |
 | RoleBinding `scaling-manager-pod-writer-<suffix>` in every workload namespace, and Role `scaling-manager-pod-writer` where no other controller's binding uses it | made by `deploy/warmpool.sh create`, utilization-share activate, and the upgrade to this release |
 | `scaling-manager-utilization-share-history`, `scaling-manager-controller-status` and `scaling-manager-learned-state` | written by the controller, not rendered, so deleted by name. An uninstall and reinstall therefore starts learned state cold; upgrade in place to keep it |
+| the weights labeller (namespace `scaling-manager-weights-labeller`, ClusterRoles and bindings `scaling-manager-weights-labeller` and `-reader`, the RoleBinding in each watched namespace) and the node labels it set | only for `SCOPE=cluster`, where `smt install --scope cluster` applies it. Needs cluster rights; what fails is printed with its command (`deploy/weights.sh labeller --delete`, then `deploy/weights.sh label --clear`) |
 | the ScaledObjects **this installer created** | KEDA restores each workload to its pre-autoscaling replica count as they go. Keep them with `UNDEPLOY_SCALEDOBJECTS=false` |
 
 ### What it leaves
@@ -1350,6 +1556,7 @@ make undeploy-scaling-manager NAMESPACE=<namespace> LLMSM_NS=llmsm-<namespace>
 | Role `scaling-manager-pod-writer` and RoleBinding `scaling-manager-pod-writer-<suffix>` the uninstall could not read or delete | it may not list RoleBindings across the cluster, or delete them there. It lists each one with its `kubectl delete` command, or says it could not look | (cluster admin) see [Leftover pod-write grants](#leftover-pod-write-grants) |
 | Role `scaling-manager-pod-writer` in a namespace another controller also uses | that controller's binding still needs it | nothing; it goes with that controller |
 | Role `scaling-manager-pod-writer` and RoleBinding `scaling-manager-pod-writer-<suffix>` everywhere, when the controller Deployment is still there | the delete failed, or its result could not be read. A running controller still needs the grant | remove the Deployment, then run the uninstall again |
+| the replicas the DisaggregatedSet role writer last wrote (`DSET_ROLE_WRITER=true`) | they are the set's own spec; a model the writer parked stays at zero. The writer's grant itself is removed | remove the `scaling-manager.llmd.ai/role-writer` annotation and set each Static role's `replicas` back ([Turn it off](disaggregatedset.md#turn-it-off)) |
 | utilization-share transfer marks on pods | written while the optimizer acted | [Transfer marks left on pods](troubleshooting.md#transfer-marks-left-on-pods-after-a-downgrade); set `shadow: true` and wait a cycle **before** uninstalling to avoid them |
 
 ### Leftover pod-write grants

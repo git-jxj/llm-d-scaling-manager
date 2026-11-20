@@ -186,6 +186,13 @@ type Analyzer struct {
 	// whatif.DefaultPSOnsets and whatif.DefaultChargeDecodeGate; a replay
 	// turns them on.
 	ttftPSOnsets, ttftDecodeGateCharge bool
+	// ttftImbalanceAcrossCounts is SwitchTTFTImbalanceAcrossCounts
+	// (ttft_fleet.go): off from the constructor, at
+	// whatif.DefaultImbalanceAcrossCounts; a replay turns it on.
+	ttftImbalanceAcrossCounts bool
+	// ttftLowLoadDecodeTTFT is SwitchTTFTLowLoadDecodeTTFT (ttft_fleet.go):
+	// off from the constructor; only a replay turns it on.
+	ttftLowLoadDecodeTTFT bool
 	// ttftJointInputs is SwitchTTFTJointInputs (ttft_joint.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftJointInputs bool
@@ -286,6 +293,8 @@ func New(router RouterLatencySource, store *capacity.Store) *Analyzer {
 		decodeTTFT:           make(map[string]*decodeTTFTWindow),
 		decodeTerms:          make(map[string]*decodeTermWindow),
 		joint:                make(map[string]*jointWindow),
+
+		ttftImbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts,
 	}
 }
 

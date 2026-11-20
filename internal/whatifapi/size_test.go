@@ -428,6 +428,44 @@ func TestSizeBusyAndDecodeOnly(t *testing.T) {
 	assert.Contains(t, string(body), "no prefill variant")
 }
 
+// A decode line pinned on the default intercept prices no decode knee: with
+// no TPOT asked, nothing else bounds decode, so the size is refused for
+// decode, not answered on prefill's limit alone (1 prefill and 1 decode at
+// 3 r/s, whatever decode could carry). With TPOT asked, the same refusal.
+func TestSizePinnedDecodeLineRefusesDecode(t *testing.T) {
+	for name, c := range map[string]struct {
+		tpot *Objective
+		on   string
+	}{
+		"no tpot":            {&Objective{Statistic: statisticNone}, ""},
+		"no tpot, low end":   {&Objective{Statistic: statisticNone}, SizeOnLow},
+		"tpot mean":          {&Objective{Statistic: statisticMean, Target: f64(0.05)}, ""},
+		"tpot mean, low end": {&Objective{Statistic: statisticMean, Target: f64(0.05)}, SizeOnLow},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := &stubResolver{pinnedLine: true}
+			h := New(Config{Resolver: r, WhatifSchema: "schema-v3"}).Handler()
+			req := sizeAt(inputsOf(t, h), 3, 0.05)
+			req.SLO.TPOT, req.SizeOn = c.tpot, c.on
+			before := r.knees.Load()
+			out, _ := sizeOf(t, h, req)
+			assert.Zero(t, r.knees.Load()-before, "the fleet's limits carry the knee's refusal: the sizer reads no knee")
+			// The counter counts: a plan of the same fleet reads the knee
+			// for its markers, so the zero above is the sizer's, not a
+			// counter nothing reaches.
+			before = r.knees.Load()
+			_, _ = plan(t, h, PlanRequest{InputsID: req.InputsID, SLO: req.SLO,
+				Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(3)}}}})
+			assert.Positive(t, r.knees.Load()-before, "a plan reads decode's knee: the counter is live")
+			assert.Nil(t, out.Answer, "a decode count no rule bounds")
+			require.NotNil(t, out.Unmet)
+			assert.Equal(t, roleDecode, out.Unmet.Role)
+			assert.Equal(t, string(whatif.PinnedDefaultB), out.Unmet.Refused.Reason)
+			assert.NotNil(t, out.Unmet.AtBound.Limit.Refused, "the bound's limit is the refusal")
+		})
+	}
+}
+
 // A limit reaches the rate within a billionth of it, as the worked
 // recording's plateau wanders by up to 8e-13; a millionth short does not.
 func TestReachesTolerance(t *testing.T) {
@@ -441,15 +479,17 @@ func TestReachesTolerance(t *testing.T) {
 
 // A fleet with one replica fewer that serves the rate is the search's own
 // failure, a 500, never an answer. On this stub the prefill limit dips at
-// one decode replica, and at two with prefill at its bound: the search
-// lands on 2 prefill and 3 decode, though 2 and 2 serve the rate.
+// one decode replica on every count the search gallops through (1, 2, 4,
+// ... 32) but not at 3, and under 3 prefill replicas from two decode up: the
+// search lands on 3 prefill and 2 decode, though 3 and 1 serve the rate.
 func TestSizeOneFewerThatServesIsAnError(t *testing.T) {
-	r := &stubResolver{dip: func(p, d int) bool { return d == 1 || (d == 2 && p == defaultSizeBound) }}
+	galloped := func(p int) bool { return p&(p-1) == 0 }
+	r := &stubResolver{dip: func(p, d int) bool { return (d == 1 && galloped(p)) || (d >= 2 && p < 3) }}
 	h := New(Config{Resolver: r, WhatifSchema: "schema-v3"}).Handler()
 	code, body := post(t, h, "/v1/size", sizeAt(inputsOf(t, h), 6, 0.05))
 	assert.Equal(t, http.StatusInternalServerError, code, "%s", body)
 	assert.Contains(t, string(body), "does not hold")
-	assert.Contains(t, string(body), "2 prefill and 2 decode")
+	assert.Contains(t, string(body), "3 prefill and 1 decode")
 }
 
 // /v1/size sits behind the same authentication as the other endpoints: no

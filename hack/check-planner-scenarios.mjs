@@ -440,6 +440,189 @@ check("retryDelay reads an unreadable Retry-After as 1 s", retryDelay(503, "soon
 check("retryDelay waits at most 30 s", retryDelay(503, "3600", 0) === 30000, retryDelay(503, "3600", 0));
 check("retryDelay never retries a 200", retryDelay(200, "1", 0) === -1, retryDelay(200, "1", 0));
 check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDelay(500, "1", 0));
+
+
+// The fleet report: the body the page posts to v1/report from its controls,
+// the shapes and loads it refuses before asking, every string it draws, and a
+// server with no report route told apart from a dropped inputsId.
+{
+  const {reportShapeProblem, shapeText, reportShapes, parseReportLoads, reportRequest, reportView, reportMissing, reportCurrent,
+    refusalText, flagSummary} = ctx;
+  check("measured is a shape", reportShapeProblem("measured") === "");
+  check("IL/OL is a shape", reportShapeProblem("8k/200") === "");
+  check("IL/OL/hit is a shape", reportShapeProblem("1k/4k/0.3") === "");
+  check("one length is not a shape", reportShapeProblem("8k") !== "");
+  check("a hit of 1 is not a shape", reportShapeProblem("1k/1k/1") !== "");
+  check("a length past 1024k is refused", reportShapeProblem("2000k/200") !== "");
+  check("blank boxes are the measured shape", shapeText({il: "", ol: " ", hit: ""}) === "measured");
+  check("a row with a hit", shapeText({il: "1k", ol: "4k", hit: "0.3"}) === "1k/4k/0.3");
+  check("blank rows are one measured shape", JSON.stringify(reportShapes([{}, {il: "1k", ol: "1k"}, {}, {il: "1k", ol: "1k"}])) ===
+    JSON.stringify(["measured", "1k/1k"]), JSON.stringify(reportShapes([{}, {il: "1k", ol: "1k"}, {}])));
+  check("no rows is the measured shape", JSON.stringify(reportShapes([])) === JSON.stringify(["measured"]));
+  check("empty loads are the server's default", parseReportLoads("").loads.length === 0 && parseReportLoads("").problem === "");
+  check("loads are read in order", JSON.stringify(parseReportLoads("50%, 5r/s ,seen").loads) === JSON.stringify(["50%", "5r/s", "seen"]));
+  check("a share past 100% is refused", parseReportLoads("150%").problem !== "");
+  check("a load with no unit is refused", parseReportLoads("5").problem !== "");
+
+  const slo = {ttft: {statistic: "p95", target: 2}, tpot: {statistic: "mean", target: 0.03}};
+  const asked = reportRequest({inputsId: "sha256:x", fleet: {decode: 3}, shapes: [{}, {il: "1k", ol: "1k"}, {il: "16k", ol: "200", hit: "0.3"}, {}],
+    loads: "50%, 80%, 5r/s, seen", growth: "1.2", loadStatistic: "p95", headroom: 0.8, slo, assume: {vp: 200000}});
+  const want = {inputsId: "sha256:x", shapes: ["measured", "1k/1k", "16k/200/0.3"], fleet: {decode: 3}, loads: ["50%", "80%", "5r/s", "seen", "seen x1.2"],
+    loadStatistic: "p95", headroom: 0.8, slo, ttftStatistics: ["p95"], tpotStatistic: "mean", assume: {vp: 200000}};
+  check("the body carries every control", asked.problem === "" && JSON.stringify(asked.body) === JSON.stringify(want), JSON.stringify(asked));
+  check("the headroom knob is sent", reportRequest({inputsId: "i", headroom: 0.7}).body.headroom === 0.7);
+  check("a headroom of 1 is left to the policy", !("headroom" in reportRequest({inputsId: "i", headroom: 1}).body));
+  check("no rows asks for the measured shape", JSON.stringify(reportRequest({inputsId: "i"}).body) === JSON.stringify({inputsId: "i", shapes: ["measured"]}));
+  check("a growth of 1 is left out", !("loads" in reportRequest({inputsId: "i", growth: "1"}).body));
+  check("a bad growth is refused", reportRequest({inputsId: "i", growth: "-2"}).body === null);
+  check("a bad shape is refused before asking", reportRequest({inputsId: "i", shapes: [{il: "8k"}]}).body === null);
+  check("seven shapes are refused", reportRequest({inputsId: "i", shapes: [1, 2, 3, 4, 5, 6, 7].map(n => ({il: n + "k", ol: "1k"}))}).body === null);
+  check("a bad load is refused before asking", reportRequest({inputsId: "i", loads: "fast"}).body === null);
+
+  const row = (load, rate, ttft, tpot, mark) => ({load, rate, ttft: [{statistic: "p90", value: 0.001}, {statistic: "p95", ...ttft}], tpotMean: tpot,
+    tpotPercentile: {statistic: "p90", value: 0.0164}, cell: {mark}});
+  const knees = (knee, binds) => ({fleetKnee: {value: knee, binds}, headroom: 0.85, prefillKnee: {value: 49.8}, decodeKnee: {value: knee},
+    operating: {value: 0.85 * knee}, maxAtSLO: {value: 26.2}});
+  const v = reportView({slo, load: {rate: {value: 47.39}}, loads: ["50%", "seen x1.5"], notValidated: ["decode knee: not validated", "TTFT is UNVALIDATED"],
+    shapes: [
+      {label: "measured", flags: ["UnvalidatedTTFT", "AssumedPoissonArrivals", "SomethingRare"], capacity: knees(38.14, "decode"),
+        verdict: {verdict: "UNDER-PROVISIONED", reason: "TTFT p95 AboveDecodeOnset misses 2000.0 ms"}, utilization: {decode: {kvFill: {refused: {reason: "Saturated"}}, bandTop: 0.8}, prefill: {}},
+        table: [row("50%", 19.07, {value: 0.6367}, {value: 0.00699}, "met"), row("seen x1.5", 47.39, {refused: {reason: "Saturated"}}, {value: 0.0271}, "saturated")]},
+      {label: "1k/1k", source: "asked", extrapolated: true, extrapolatedWhy: "IL 1024 outside", capacity: knees(36.55, "decode"),
+        verdict: {verdict: "OVER-PROVISIONED", shrink: ["prefill", "decode"]}, utilization: {decode: {}, prefill: {}},
+        table: [row("50%", 18.27, {value: 1.5894}, {value: 0.007}, "missed")]}]});
+  check("a verdict past the knee says so in words", v.verdicts[0].text ===
+    "UNDER-PROVISIONED: at 47.4 r/s the load is 1.2x the fleet's 38.1 r/s knee; add decode replicas.", v.verdicts[0].text);
+  check("an over-provisioned verdict names the roles", v.verdicts[1].text ===
+    "OVER-PROVISIONED: if all 47.4 r/s were 1k/1k requests, one prefill or one decode replica fewer still meets every target with headroom.", v.verdicts[1].text);
+  check("a load all shapes price alike carries its rate in the header", v.header[1] === "seen x1.5 (47.4 r/s)", v.header[1]);
+  check("a load whose rate differs by shape keeps it in the cell", v.header[0] === "50%" && v.rows[0].cells[0].text.endsWith("@ 19.1 r/s"), v.rows[0].cells[0].text);
+  check("a cell shows the SLO's statistics, rounded", v.rows[0].cells[0].text.startsWith("TTFT 637 ms · TPOT 7.0 ms"), v.rows[0].cells[0].text);
+  check("a cell's figure and mark are the same statistic", v.rows[1].cells[0].text.startsWith("TTFT 1589 ms") && v.rows[1].cells[0].word === "MISS");
+  check("a saturated figure reads saturated", v.rows[0].cells[1].text.startsWith("TTFT saturated") && v.rows[0].cells[1].word === "SAT");
+  check("a load with no row says not priced", v.rows[1].cells[1].text === "not priced" && v.rows[1].cells[1].cls === "none");
+  check("the legend names the statistics and targets", v.legendStats === "Each cell is TTFT p95 · TPOT mean. Marks are judged against TTFT p95 2000 ms and TPOT mean 30 ms.",
+    v.legendStats);
+  check("an extrapolated shape is marked", v.rows[1].extrapolated && !v.rows[0].extrapolated && v.rows[1].why === "IL 1024 outside");
+  check("a refusal reads in words", v.details[0].lines.some(l => l.includes("At the load: decode saturated: no steady state at this load")),
+    JSON.stringify(v.details[0].lines));
+  check("common flags read as phrases, the rest counted", JSON.stringify(v.details[0].flags.phrases) ===
+    JSON.stringify(["TTFT is not validated", "assumes Poisson arrivals"]) && v.details[0].flags.more === 1 &&
+    v.details[0].flags.codes === "UnvalidatedTTFT, AssumedPoissonArrivals, SomethingRare");
+  check("the notes stay apart", v.notes.length === 2);
+  // Each verdict band, each said in its own words.
+  const one = (load, capacity, verdict, extra) => reportView(Object.assign({slo, load: {rate: {value: load}}, loads: [],
+    shapes: [Object.assign({label: "measured", capacity, verdict, utilization: {decode: {}, prefill: {}}, table: []}, extra || {})]})).verdicts[0].text;
+  check("between headroom and the knee the verdict says past 85%",
+    one(35, knees(38.14, "decode (prefill not priced)"), {verdict: "UNDER-PROVISIONED"}) ===
+    "UNDER-PROVISIONED: at 35 r/s the fleet is past 85% of its 38.1 r/s knee, set by decode; add decode replicas.",
+    one(35, knees(38.14, "decode (prefill not priced)"), {verdict: "UNDER-PROVISIONED"}));
+  check("past both roles' knees both are named", one(47.39, Object.assign(knees(38.14, "decode"), {prefillKnee: {value: 30}}), {verdict: "UNDER-PROVISIONED"}) ===
+    "UNDER-PROVISIONED: at 47.4 r/s the load is 1.2x the fleet's 38.1 r/s knee; add prefill and decode replicas.");
+  check("a missed TTFT is named, with no role guessed", one(31.6, knees(38.14, "decode"), {verdict: "UNDER-PROVISIONED",
+    reason: "2 prefill + 2 decode: 31.60 r/s within 0.85 x the fleet knee 38.14 r/s = 32.42 r/s; TTFT p95 7621.0 ms misses 2000.0 ms; TPOT mean 7.6 ms meets 30.0 ms"}) ===
+    "UNDER-PROVISIONED: at 31.6 r/s TTFT p95 7.6 s misses 2 s.");
+  check("a missed TPOT asks for decode", one(31.6, knees(38.14, "decode"), {verdict: "UNDER-PROVISIONED",
+    reason: "x; TPOT mean 41.2 ms misses 30.0 ms"}) === "UNDER-PROVISIONED: at 31.6 r/s TPOT mean 41 ms misses 30 ms; add decode replicas.");
+
+  // The TPOT percentile the SLO judges is the one shown and named.
+  const p90 = {ttft: {statistic: "p95", target: 2}, tpot: {statistic: "p90", target: 0.03}};
+  const vp = reportView({slo: p90, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "measured", capacity: knees(38.14, "decode"),
+    verdict: {}, utilization: {decode: {}, prefill: {}}, table: [row("10r/s", 10, {value: 0.5}, {value: 0.00699}, "met")]}]});
+  check("a p90 TPOT SLO shows the p90", vp.rows[0].cells[0].text === "TTFT 500 ms · TPOT 16 ms", vp.rows[0].cells[0].text);
+  check("a p90 TPOT SLO is named in the legend", vp.legendStats.startsWith("Each cell is TTFT p95 · TPOT p90."), vp.legendStats);
+  check("a rate load is not named twice", vp.header[0] === "10r/s", vp.header[0]);
+  check("a TTFT is read at the SLO's statistic, not the first one", v.rows[0].cells[0].text.startsWith("TTFT 637 ms"), v.rows[0].cells[0].text);
+  check("a cell's parts stay apart for wrapping", JSON.stringify(vp.rows[0].cells[0].parts) === JSON.stringify(["TTFT 500 ms", "TPOT 16 ms"]));
+
+  // A TPOT at the decode line's floor says so.
+  const vf = reportView({slo, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "measured", capacity: knees(38.14, "decode"),
+    verdict: {}, utilization: {decode: {}, prefill: {}}, table: [row("10r/s", 10, {value: 0.5}, {value: 0.00699, flags: ["BelowFittedBand"]}, "met")]}]});
+  check("a floor TPOT reads at most", vf.rows[0].cells[0].text.includes("TPOT ≤7.0 ms"), vf.rows[0].cells[0].text);
+  check("the legend explains the floor mark", vf.legendStats.includes("≤ marks a TPOT at the decode line's floor"), vf.legendStats);
+  check("no floor, no floor note", !v.legendStats.includes("floor"));
+  // Growth is a load of its own, and the verdict stays at the load seen.
+  check("growth with no loads adds to the default loads", JSON.stringify(reportRequest({inputsId: "i", growth: "1.5"}).body.loads) ===
+    JSON.stringify(["50%", "80%", "100%", "seen", "seen x1.5"]));
+  check("growth never sends loadSeenX", !("loadSeenX" in reportRequest({inputsId: "i", growth: "1.5"}).body));
+  check("growth past the most loads is refused", reportRequest({inputsId: "i", loads: "10%, 20%, 30%, 40%, 50%, 60%, 70%, 80%", growth: "2"}).body === null);
+  check("a grown load may be typed", parseReportLoads("seen x1.5, seen×2, seen*3").problem === "");
+  check("the load statistic is sent", reportRequest({inputsId: "i", loadStatistic: "peak"}).body.loadStatistic === "peak");
+  const vg = reportView({slo, load: {rate: {value: 41.7}, statistic: "p95", mean: 31.59, p95: 41.7, peak: 43.24, cyclesWithTraffic: 282},
+    loads: ["seen", "seen x1.5"], shapes: [
+      {label: "measured", capacity: knees(38.14, "decode"), utilization: {decode: {}, prefill: {}}, table: [],
+        verdict: {verdict: "UNDER-PROVISIONED", scope: "fleet", summary: "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates."},
+        growth: [{load: "seen x1.5", x: 1.5, rate: 62.55, verdict: {verdict: "UNDER-PROVISIONED", summary: "UNDER-PROVISIONED: at 1.5 x the p95 load (62.6 r/s), the fleet saturates."}}]},
+      {label: "8k/200", source: "asked", capacity: knees(38.14, "decode"), utilization: {decode: {}, prefill: {}}, table: [],
+        verdict: {verdict: "RIGHT-SIZED", scope: "decode only", summary: "RIGHT-SIZED: at the p95 load of 41.7 r/s every target holds."}}]});
+  check("the verdict is the server's summary", vg.verdicts[0].rest === "at the p95 load of 41.7 r/s, 1.1x the fleet knee of 38.1 r/s, the fleet saturates.",
+    vg.verdicts[0].rest);
+  check("growth is its own line beside the verdict", vg.verdicts[0].growth.length === 1 && vg.verdicts[0].growth[0].lead === "with 1.5× traffic (62.6 r/s)" &&
+    vg.verdicts[0].growth[0].verdict === "UNDER-PROVISIONED" && vg.verdicts[0].verdict === "UNDER-PROVISIONED", JSON.stringify(vg.verdicts[0].growth));
+  check("a decode-only verdict says so", vg.verdicts[1].decodeOnly && !vg.verdicts[0].decodeOnly);
+  check("a typed shape's verdict is a what-if", vg.verdicts[1].whatIf && !vg.verdicts[0].whatIf);
+  check("the load line names the statistic and the others", vg.load ===
+    "Judged at the p95 load of 41.7 r/s; the source saw mean 31.6, p95 41.7, peak 43.2 r/s over 282 busy cycles.", vg.load);
+  check("a missed-at-onset cell says so", S("REPORT_MARKS")["missed at onset"][1] === "MISS at onset");
+  // The fleet needed: a chip of its own, the sentence not repeating it.
+  const {neededText, verdictLine, roleLines, loadLine} = ctx;
+  const has = {prefill: 2, decode: 2};
+  check("the fleet needed reads in words", neededText({prefill: 3, decode: 4, maxReplicas: 32}, has) === "needs 3 prefill + 4 decode (has 2 + 2)");
+  check("alternatives follow it", neededText({prefill: 19, decode: 5, alternatives: [{prefill: 18, decode: 6}], maxReplicas: 32}, has) ===
+    "needs 19 prefill + 5 decode (has 2 + 2), or 18 + 6");
+  check("decode only needs at least", neededText({prefill: 0, decode: 3, decodeOnly: true, maxReplicas: 32}, has) ===
+    "needs at least 3 decode (has 2); prefill is not priced");
+  check("an unmet fleet names the bound", neededText({prefill: 0, decode: 0, unmet: "fleet", maxReplicas: 32}, has) ===
+    "no fleet up to 32 replicas serves this (fleet does not reach the load)");
+  check("no needed is no chip", neededText(undefined, has) === "");
+  const vl = verdictLine({verdict: "UNDER-PROVISIONED", needed: {prefill: 19, decode: 5, alternatives: [{prefill: 18, decode: 6}], maxReplicas: 32},
+    summary: "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.6x the fleet knee of 26.7 r/s, the fleet saturates; needs 19 prefill + 5 decode (has 2 + 2), or 18 + 6 (prefill f 1.5 assumed at 19 pods)."}, "", has);
+  check("the sentence does not repeat the fleet needed", vl.rest === "at the p95 load of 41.7 r/s, 1.6x the fleet knee of 26.7 r/s, the fleet saturates (prefill f 1.5 assumed at 19 pods).",
+    vl.rest);
+  check("the chip carries it", vl.needs === "needs 19 prefill + 5 decode (has 2 + 2), or 18 + 6");
+  const vs = verdictLine({verdict: "UNDER-PROVISIONED", needed: {prefill: 5, decode: 5, maxReplicas: 32},
+    summary: "UNDER-PROVISIONED: 1.6x the fleet knee (38.1 r/s); needs 5 prefill + 5 decode (has 2 + 2)."}, "", has);
+  check("a short growth sentence loses only the clause", vs.rest === "1.6x the fleet knee (38.1 r/s).", vs.rest);
+  check("each role says whether it has a replica to spare", JSON.stringify(roleLines({roles: [{role: "decode", spare: true, detail: "3 decode hold"},
+    {role: "prefill", spare: false}]})) === JSON.stringify(["Decode: has a replica to spare (3 decode hold).", "Prefill: no replica to spare."]));
+  check("a p95 that is the peak says so", loadLine({rate: {value: 12}, statistic: "p95", p95IsPeak: true, p95: 12, peak: 12, cyclesWithTraffic: 9})
+    .startsWith("Judged at the p95 load of 12 r/s (= peak: fewer than 20 cycles);"));
+  check("a half rounds up", ctx.roundRate(62.55) === "62.6");
+  check("a TTFT is never marked as a floor", ctx.reportView({slo, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "m", capacity: knees(38.14, "decode"), verdict: {},
+    utilization: {decode: {}, prefill: {}}, table: [Object.assign(row("10r/s", 10, {value: 0.5, flags: ["BelowFittedBand"]}, {value: 0.007}, "met"))]}]}).rows[0].cells[0].parts[0] === "TTFT 500 ms");
+  check("decode use reads in words", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8, slotsOccupied: {value: 48.2}, slots: 228, waitProbability: {value: 0.004}}) ===
+    "decode KV 17% full (of 80% usable), 48 of 228 batch slots busy, 0% of requests wait for a slot", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8}));
+  check("prefill use reads in words", ctx.prefillUse({pooled: {value: 0.6312}, worstPod: {value: 0.71}}) === "prefill 63% busy pooled, 71% on the busiest pod");
+  check("a verdict word is set apart from its sentence", v.verdicts[1].verdict === "OVER-PROVISIONED" && v.verdicts[1].rest.startsWith("if all 47.4 r/s were 1k/1k requests, one prefill"));
+  check("a refusal code in a reason reads in words", v.details[0].lines.includes("The numbers: TTFT p95 router-queued misses 2000.0 ms"),
+    JSON.stringify(v.details[0].lines));
+  check("a refusal with no words names its reason", refusalText({refused: {reason: "Odd"}}) === "not priced (Odd)");
+  check("no flags is no phrases", flagSummary(undefined).phrases.length === 0);
+  check("a no-target cell has a word", reportView({loads: ["50%"], shapes: [{label: "m", capacity: knees(1, "decode"), verdict: {},
+    utilization: {decode: {}, prefill: {}}, table: [row("50%", 1, {value: 0.1}, {value: 0.01}, "no target")]}]}).rows[0].cells[0].word === "no SLO");
+  check("a server with no report route", reportMissing(404, "404: POST /v1/report: no such endpoint; the server serves ..."));
+  check("a dropped inputsId is not a missing route", !reportMissing(404, "404: unknown inputsId: resolve the source"));
+  check("a 400 is not a missing route", !reportMissing(400, "no such endpoint"));
+  check("an answer for the inputs on the page is drawn", reportCurrent("sha256:a", "sha256:a"));
+  check("an answer for replaced inputs is dropped", !reportCurrent("sha256:a", "sha256:b"));
+}
+
+// rateNote: where a plan with no rate started, in words, for each of the
+// API's rateSource values; with one knee refused it is not called the
+// operating point, and asks for a rate.
+{
+  const {rateNote} = ctx;
+  check("a typed rate has no note", rateNote("request") === "");
+  check("the operating point is named", rateNote("operating point").includes("the operating point"));
+  for (const [source, knee, unpriced] of [["prefill knee; decode not priced", "prefill", "decode"],
+    ["decode knee; prefill not priced", "decode", "prefill"]]) {
+    const n = rateNote(source);
+    check(`${source}: names the knee`, n.includes(`headroom times the ${knee} knee`), n);
+    check(`${source}: names the knee not priced`, n.includes(`the ${unpriced} knee is not priced`), n);
+    check(`${source}: no operating point`, n.includes("there is no operating point"), n);
+    check(`${source}: asks for a rate`, n.includes("Type your request rate."), n);
+  }
+}
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -451,7 +634,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 217;
+const EXPECTED_CASES = 310;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

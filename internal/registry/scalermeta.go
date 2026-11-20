@@ -20,6 +20,13 @@ const (
 	// attributed to a model cannot be optimized against one.
 	ModelIDKey = "modelID"
 
+	// SourceKey marks an entry registered by something other than a KEDA
+	// call, with SourceRoleWriter its one value: a DisaggregatedSet role the
+	// role writer (internal/dsetwriter) registers and actuates itself. Such
+	// an entry has no ScaledObject, so the enricher leaves it alone.
+	SourceKey        = "scalingManagerSource"
+	SourceRoleWriter = "disaggregatedset-role-writer"
+
 	// VariantCostKey is the per-replica cost used by cost-aware optimization.
 	// Optional; a non-negative decimal string.
 	VariantCostKey = "variantCost"

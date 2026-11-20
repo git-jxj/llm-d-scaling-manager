@@ -299,10 +299,10 @@ is in its notes on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases):
 
 ```bash
-git checkout v0.11.2
-export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.11.2
+git checkout v0.12.0
+export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.12.0
 # or the exact build
-export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:71a7296d067466d08342216048c026c1f09b5f1fb1bd18c6aa84a2454355990b
+export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:0fc4c191f847b2746a41e2a1cdbb93072d0f2a1e2f3974d36478df62a9b31672
 ```
 
 `:main` is rebuilt on every push to `main`, so two runs against it a day apart
@@ -447,7 +447,7 @@ keeps what it wrote.
 
 **Engine caches.** The model PVC is mounted read-only, so the scenarios put the
 compile caches on the harness's `workload-pvc` at `/engine-cache` and point
-`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_DIR` and `TRITON_CACHE_DIR` there. A
+`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE` and `TRITON_CACHE_DIR` there. A
 guard unsets any that is not writable, so the engine compiles instead of failing.
 That fallback was the start-time variance: nine starts on three nodes split into
 51-56 s and 75-81 s, and the slow nodes had `workload-pvc` mounted read-only

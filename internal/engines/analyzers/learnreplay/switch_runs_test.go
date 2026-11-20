@@ -157,6 +157,19 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// recording's cycle reaches one. Their unit tests hold them (heldBy).
 	slo.SwitchTTFTPSOnsets:         nil,
 	slo.SwitchTTFTDecodeGateCharge: nil,
+	// f at an unlearned prefill pod count read across counts, off in
+	// production (whatif.DefaultImbalanceAcrossCounts). It moves no golden:
+	// it moves only a priced fleet's f, and no committed recording's cycle
+	// reaches a priced fleet. Its unit tests hold it (heldBy); the CLI's
+	// --imbalance-across-counts is held on the staircase recording.
+	slo.SwitchTTFTImbalanceAcrossCounts: nil,
+	// The decode engine's TTFT read off its calm cycles, off in production
+	// (llm-d-incubation/llm-d-scaling-manager#169). It moves no golden: the
+	// figure prices only a fleet with no decode line, and no committed
+	// recording's cycle reaches a priced fleet. Its unit tests hold it
+	// (heldBy), and TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases reads
+	// the figure it moves on the staircase recordings.
+	slo.SwitchTTFTLowLoadDecodeTTFT: nil,
 	// J1 of the joint prefill and decode TTFT sizing: the joint inputs in
 	// shadow, and the inverted V_P where P1 refused V_P. Base: main at
 	// 90d1489. Alone it moves no golden: it runs inside S1's pricing, which
@@ -1031,6 +1044,39 @@ func switchPackage(name string) string {
 // PR 4a's rows are learner4aSeams, 4b-1's learner4b1Seams and 4b-2's
 // learner4b2Seams, merged in.
 var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMoves, withMoves(staircaseSeamMoves, withMoves(startSeedSeamMoves, withSeams(learner4b2Seams, withSeams(learner4b1Seams, withSeams(learner4aSeams, map[string][]string{
+	// The capacity planner's switches (learnreplay.PlannerSwitches): off from
+	// the constructor, so every golden replay, the controller's, runs them
+	// off, and off alone from all on moves nothing. Only StateAt turns them
+	// on; their unit tests hold them (heldBy), and the planner's goldens
+	// (cmd/capacity-planner/testdata) move with them.
+	saturation.SwitchPrefillALowLoadPerRank: nil,
+	saturation.SwitchPrefillAEngineTiming:   nil,
+	saturation.SwitchITLAdaptiveBandFloor:   nil,
+	// llm-d-incubation/llm-d-scaling-manager#201: a decode's derived k2
+	// charged the prompt it computes, and a landed request a backlog only
+	// where the decode can be at a bound. Off from the constructor, so every
+	// golden replay runs them off, and off alone from all on moves nothing.
+	// Their unit tests hold them (heldBy).
+	saturation.SwitchK2DecodeBudgetAtComputedPrompt: nil,
+	saturation.SwitchDecodeLandedNeedsABound:        nil,
+	// llm-d-incubation/llm-d-scaling-manager#188 prices a resident reading
+	// above the whole context as read: off from the constructor, so every
+	// golden replay runs it off, and off alone from all on moves nothing. Its
+	// unit tests hold it (heldBy).
+	saturation.SwitchKVPerRequestAboveContext: nil,
+	// llm-d-incubation/llm-d-scaling-manager#51 charges a P/D decode the
+	// router's queue prefill can hand on: off from the constructor, so every
+	// golden replay runs it off, and off alone from all on moves nothing.
+	// Its unit tests hold it (heldBy).
+	saturation.SwitchDecodeOwesRouterBacklog: nil,
+	// llm-d-incubation/llm-d-scaling-manager#169 item 1: the ITL line's B
+	// pinned through the floor below the band while unlearned. Off from the
+	// constructor, so every golden replay runs it off, and off alone from
+	// all on moves nothing. On, it moves the variant and demand outputs of
+	// the fixtures whose lines sit on the default B;
+	// TestGoldens_ITLBaselineFromFloorReplicas holds what it moves on e1, the
+	// staircases and three-pods, and its unit tests hold it (heldBy).
+	saturation.SwitchITLBaselineFromFloor: nil,
 	// ev-shindin/llm-scaling-manager#275 (two switches) and ev-shindin/llm-scaling-manager#438, this file's own rows before learner PR
 	// 4b-1 (see replaySwitches).
 	saturation.SwitchZeroReplicaDataParallel: nil,
@@ -1265,6 +1311,78 @@ func withSeams(more, rows map[string][]string) map[string][]string {
 // test that holds the same on either side is a control, not a hold, and is
 // not listed here.
 var heldBy = map[string][]heldTest{
+	// llm-d-incubation/llm-d-scaling-manager#201: each runs the switch on
+	// and off and asserts both.
+	saturation.SwitchK2DecodeBudgetAtComputedPrompt: {
+		{"../saturation", "TestK2DecodeBudget_ADecodeIsNotChargedThePromptItDidNotCompute"},
+		{"../saturation", "TestK2DecodeBudget_ThroughAnalyze"},
+		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+	},
+	saturation.SwitchDecodeLandedNeedsABound: {
+		{"../saturation", "TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2"},
+		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+	},
+	// llm-d-incubation/llm-d-scaling-manager#188: each runs the switch on
+	// and off and asserts both.
+	saturation.SwitchKVPerRequestAboveContext: {
+		{"../saturation", "TestKVAboveContext_AReadingAboveTheContextIsPricedAsRead"},
+		{"../saturation", "TestKVAboveContext_ANoHitShapeIsReadAboveItsContext"},
+		{"../saturation", "TestKVAboveContext_TheCountGateTakesTheReading"},
+		{"../saturation", "TestKVAboveContext_FewLongRequestsBelowTheContextAreNoReading"},
+		{"../saturation", "TestKVAboveContext_RequestsPullingTheirKVHoldIt"},
+		{"../saturation", "TestKVAboveContext_AFewLongPromptsAreNoReading"},
+		{"../saturation", "TestKVAboveContext_ALaggingRunningCountIsNoReading"},
+		{"../saturation", "TestKVAboveContext_OffFromTheConstructor"},
+	},
+	// llm-d-incubation/llm-d-scaling-manager#51: the property case runs
+	// the switch on and off and asserts both; the rate is held on its own.
+	saturation.SwitchDecodeOwesRouterBacklog: {
+		{"../saturation", "TestDecodeRouterBacklog_DecodeBoundPDIsChargedTheQueue"},
+		{"../saturation", "TestDecodeRouterBacklog_PrefillBoundIsUnchanged"},
+		{"../saturation", "TestDecodeRouterBacklog_OffFromTheConstructor"},
+	},
+	// The capacity planner's switches: each runs the switch on and off and
+	// asserts both, and the first holds all three off from the constructor.
+	saturation.SwitchPrefillALowLoadPerRank: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
+		{"../saturation", "TestPrefillALowLoadPerRank_AQuietGroupThroughAnalyze"},
+	},
+	saturation.SwitchPrefillAEngineTiming: {
+		{"../saturation", "TestPrefillAEngineTiming_ABusyGroupLearnsA"},
+		{"../../../signals/prefill", "TestTiming_ABusyFleetLearnsAFromEngineTiming"},
+		{"../../../signals/prefill", "TestTiming_LongPromptsAreFlaggedNotRefused"},
+	},
+	saturation.SwitchITLBaselineFromFloor: {
+		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},
+		{"../saturation", "TestITLBaselineFromFloor_TheFitLineIsUnchangedOff"},
+		{"../../../signals/itl", "TestTracker_BaselineFromFloorPinsAnUnlearnedKey"},
+		{"../../../signals/itl", "TestTracker_ALearnedBaselineEndsTheFloor"},
+		{"../../../signals/itl", "TestTracker_TheFloorReadsSteadyRowsOnly"},
+		{"../../../signals/itl", "TestTracker_SweepForgetsTheFloor"},
+		{"../../../signals/itl", "TestTracker_ForgetFloorsDropsEveryFloor"},
+		{"../../../signals/itl", "TestTracker_ARolloutClearsTheFloor"},
+		{"../../../signals/itl", "TestTracker_AShapeMoveClearsTheFloor"},
+		{"../../../signals/itl", "TestTracker_TheFloorAgesOut"},
+		{"../../../signals/itl", "TestTracker_AHoldKeepsItsSlopesB"},
+		{"../../../signals/itl", "TestHeldSlope_PinsTheBItWasFittedThrough"},
+		{"../../../signals/itl", "TestTracker_AFloorSlopeIsExportedWithItsB"},
+		{"../../../signals/itl", "TestTracker_ARestoredFloorSlopeHoldsItsLine"},
+		{"../../../signals/itl", "TestTracker_ForgetFloorDropsOneKey"},
+		{"../../../signals/itl", "TestDwellTier_ComparesTheHeldSlopeThroughItsB"},
+		{"../saturation", "TestITLBaselineFromFloor_AForgetDropsTheFloors"},
+		{"../saturation", "TestITLBaselineFromFloor_AShapeChangeDropsADecodeFloor"},
+		{"../saturation", "TestITLBaselineFromFloor_ASnapshotKeepsTheFloorSlope"},
+		{"../../../signals/itl", "TestBelowBandPoint_ReadsOnlyUnderTheBandNow"},
+		{"../../../signals/itl", "TestFloorIntercept_NeedsTheGap"},
+		{".", "TestGoldens_ITLBaselineFromFloorReplicas"},
+	},
+	saturation.SwitchITLAdaptiveBandFloor: {
+		{"../saturation", "TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine"},
+		{"../saturation", "TestITLAdaptiveBandFloor_TheRule"},
+		{"../saturation", "TestITLAdaptiveBandFloor_ReleaseHasHysteresis"},
+		{"../saturation", "TestITLAdaptiveBandFloor_HeldThenReleasedThroughAnalyze"},
+	},
 	// llm-d-incubation/llm-d-scaling-manager#97: runs the switch on and off
 	// and asserts both (the share capped at one doubling on, whole off).
 	saturation.SwitchLowerBoundCapsRouterShare: {
@@ -1347,6 +1465,26 @@ var heldBy = map[string][]heldTest{
 	},
 	slo.SwitchTTFTDecodeGateCharge: {
 		{"../slo", "TestTTFT_TheOnsetSwitches"},
+	},
+	// It prices one fleet with the switch on and off and asserts both (f at
+	// three pods 1.5 off, the curve through two pods' f on).
+	slo.SwitchTTFTImbalanceAcrossCounts: {
+		{"../slo", "TestTTFT_TheImbalanceAcrossCountsSwitch"},
+		{"../slo", "TestTTFT_TheImbalanceAcrossCountsDefault"},
+	},
+	// The first and fourth run the switch on and off and assert both; the
+	// others hold the on side (the hold's age, unread rows) and the
+	// constructor's off. The staircase test replays the four staircase
+	// recordings both ways.
+	slo.SwitchTTFTLowLoadDecodeTTFT: {
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTSwitch"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTHoldAgesOut"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTOffFromTheConstructor"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTThroughAnalyze"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTMixedFleet"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadDropsTheHold"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadRows"},
+		{".", "TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases"},
 	},
 	// The first runs the switch on and off through Analyze and asserts both;
 	// the model row replays the staircase goldens with it on.

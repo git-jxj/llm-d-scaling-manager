@@ -20,6 +20,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource"
 )
 
@@ -52,8 +53,11 @@ type captureFlags struct {
 	step                          time.Duration
 	policy                        string
 	engine, engineArgs            string
-	batchCap, gpus                int
+	prefillEngineArgs             argsFlag
+	batchCap                      int
+	gpus                          gpusFlag
 	accelerator                   string
+	vllmVersion, engineImage      string
 	force                         bool
 	out                           string
 }
@@ -91,10 +95,13 @@ func runCapture(ctx context.Context, args []string, out, warn io.Writer) error {
 		if role == "" {
 			role = "both"
 		}
-		fmt.Fprintf(out, "  %s/%s  %s  %d GPU %s\n", v.ModelID, v.Name, role, v.GpuCount, v.Accelerator)
+		fmt.Fprintf(out, "  %s/%s  %s  %d GPU %s  %s\n", v.ModelID, v.Name, role, v.GpuCount, v.Accelerator, engineText(&v.Params))
 	}
 	for _, flag := range sum.Flags {
 		fmt.Fprintf(out, "  flag: %s\n", flag)
+	}
+	for _, note := range sum.Notes {
+		fmt.Fprintf(out, "  note: %s\n", note)
 	}
 	fmt.Fprintf(out, "wrote %s\n", f.out)
 	return nil
@@ -147,9 +154,16 @@ func (f *captureFlags) registerWindow(fs *flag.FlagSet) {
 	fs.DurationVar(&f.step, "step", 15*time.Second, "the interval between cycles, taken as the run's optimize interval")
 	fs.StringVar(&f.policy, "policy", "", "a scaling-policy entry (YAML), applied as the default entry; the defaults when absent")
 	fs.StringVar(&f.engine, "engine", "vllm", "the inference engine the variants run: vllm or sglang")
-	fs.StringVar(&f.engineArgs, "engine-args", "", "the engine's arguments, space-separated, for its parameters (kube-state-metrics has none)")
-	fs.IntVar(&f.gpus, "gpus-per-replica", 1, "GPUs per replica, where kube-state-metrics gives none")
+	fs.StringVar(&f.engineArgs, "engine-args", "", "the engine's arguments, space-separated, for its parameters (kube-state-metrics has none); "+
+		"the decode role's, and every role's without --prefill-engine-args")
+	fs.Var(&f.prefillEngineArgs, "prefill-engine-args", "the prefill role's engine arguments, space-separated, in place of --engine-args; "+
+		"given, even empty (the engine's defaults, not the decode role's arguments), --engine-args and --batch-cap are the decode role's only "+
+		"and --batch-cap never applies to prefill")
+	f.gpus = gpusFlag{n: 1}
+	fs.Var(&f.gpus, "gpus-per-replica", "GPUs per replica: the whole group's for a LeaderWorkerSet (32 for 4 Pods x 8), not one Pod's; 1 where kube-state-metrics gives none, and given, it replaces what kube-state-metrics gives")
 	fs.StringVar(&f.accelerator, "accelerator", "", "the accelerator, where kube-state-metrics gives none")
+	fs.StringVar(&f.vllmVersion, "vllm-version", "", "the vLLM release the engines run (0.34), where kube-state-metrics shows none; it sets the defaults of the flags the engine is not given")
+	fs.StringVar(&f.engineImage, "engine-image", "", "the engine container's image, where kube-state-metrics shows none; a vllm-openai tag names the vLLM release")
 	fs.BoolVar(&f.force, "force", false, fmt.Sprintf("capture past %d steps times queries, or %d samples held in memory", whatifsource.MaxStepQueries, whatifsource.MaxSamples))
 }
 
@@ -205,10 +219,18 @@ func (f captureFlags) options(cmd string, warn io.Writer) (whatifsource.Options,
 	default:
 		return opts, usagef("--engine %q is not vllm or sglang", f.engine)
 	}
-	if f.batchCap < 0 || f.gpus < 1 {
+	if f.batchCap < 0 || f.gpus.n < 1 {
 		return opts, usagef("--batch-cap must not be negative and --gpus-per-replica must be at least 1")
 	}
+	if f.vllmVersion != "" && !capacity.ParseVLLMVersion(f.vllmVersion).Known() {
+		return opts, usagef("--vllm-version %q is not a vLLM release such as 0.34", f.vllmVersion)
+	}
 	opts.EngineArgs = strings.Fields(f.engineArgs)
+	if f.prefillEngineArgs.set {
+		// Not nil when given, even empty: a prefill engine run with no
+		// arguments is not one run with the decode role's.
+		opts.PrefillEngineArgs = append([]string{}, strings.Fields(f.prefillEngineArgs.s)...)
+	}
 	if f.batchCap > 0 && hasFlag(opts.EngineArgs, batchFlag) {
 		fmt.Fprintf(warn, "capacity-planner: warning: --batch-cap %d and %s in --engine-args both set the batch cap, "+
 			"and may disagree; give one of them\n", f.batchCap, batchFlag)
@@ -235,7 +257,9 @@ func (f captureFlags) options(cmd string, warn io.Writer) (whatifsource.Options,
 	opts.Namespace = f.namespace
 	opts.From, opts.To, opts.Step = from, to, f.step
 	opts.KubeStateMetrics = f.ksm
-	opts.BatchCap, opts.GPUsPerReplica, opts.Accelerator = f.batchCap, f.gpus, f.accelerator
+	opts.BatchCap, opts.GPUsPerReplica, opts.Accelerator = f.batchCap, f.gpus.n, f.accelerator
+	opts.GPUsPerReplicaSet = f.gpus.set
+	opts.VLLMVersion, opts.EngineImage = f.vllmVersion, f.engineImage
 	opts.Force = f.force
 	return opts, nil
 }
@@ -340,4 +364,47 @@ func (b bearer) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Header.Set("Authorization", "Bearer "+b.token)
 	}
 	return b.base.RoundTrip(req)
+}
+
+// argsFlag is a string flag that says whether it was given: an empty
+// --prefill-engine-args is a role run with no arguments, not one that
+// takes --engine-args.
+type argsFlag struct {
+	s   string
+	set bool
+}
+
+func (a *argsFlag) String() string {
+	if a == nil {
+		return ""
+	}
+	return a.s
+}
+
+func (a *argsFlag) Set(s string) error {
+	a.s, a.set = s, true
+	return nil
+}
+
+// gpusFlag is --gpus-per-replica: its count, and whether it was given, which
+// makes it replace what kube-state-metrics reads.
+type gpusFlag struct {
+	n   int
+	set bool
+}
+
+func (g *gpusFlag) String() string {
+	if g == nil {
+		return ""
+	}
+	return strconv.Itoa(g.n)
+}
+
+func (g *gpusFlag) Set(s string) error {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return err
+	}
+	g.n, g.set = n, true
+	return nil
 }

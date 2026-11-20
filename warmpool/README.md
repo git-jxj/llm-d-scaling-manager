@@ -50,7 +50,7 @@ image whose vLLM matches the workload:
 | --- | --- | --- |
 | v0.26 | pool of Pods | FMA's `launcher`, pinned in `config/warmpool/warmpool-deployment.yaml` (the default; nothing to pass) |
 | v0.26 | pool of groups | `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless`, with `--launcher-image` ([groups](../docs/guides/warm-pool/groups.md)) |
-| v0.34.0 | either | `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher`, from v0.12.0, with `--launcher-image`. Not yet run on a GPU |
+| v0.34.0 | either | `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher`, from the release that carries it, with `--launcher-image`. Not yet run on a GPU |
 | any other | either | none published; build one from FMA's launcher on that vLLM |
 
 ## What is copied, and from where
@@ -116,11 +116,11 @@ Build it locally with `make docker-build-warmpool-launcher` (it pulls about
 any PR that touches this directory.
 
 > **Not the default yet, and not yet run on a GPU.** Pools still run FMA's
-> images: a SINGLE-POD pool runs upstream `launcher:v0.6.4` (vLLM v0.26.0),
+> images: a SINGLE-POD pool runs upstream `launcher:v0.8.0` (vLLM v0.26.0),
 > pinned by digest in `config/warmpool/warmpool-deployment.yaml`, and a GROUP
 > pool runs `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` given with
-> `--launcher-image`. That image's `launcher.py` is the old fork copy, not this
-> one. To try this image, pass it with `--launcher-image`. Moving the default
+> `--launcher-image`. That image's `launcher.py` is the old fork copy (v0.6.4
+> plus the follower fix, without v0.8.0's eviction fixes), not this one. To try this image, pass it with `--launcher-image`. Moving the default
 > waits for GPU checks on vLLM v0.34: switch time, output across sleep and
 > wake, eviction, sleeper host memory, and `--gpu-memory-utilization`.
 

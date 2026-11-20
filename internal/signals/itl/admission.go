@@ -144,6 +144,18 @@ type Admission struct {
 	// first built it, before its review exempted them (aboveBandSettling).
 	// Only negative controls set it.
 	AboveBandWaitsAfterRestart bool
+	// BaselineFromFloor pins a key with no learned B through the floor read
+	// below the band in place of DefaultBaselineSec, once the key holds
+	// BelowBandMinReadings readings there (Reading.PinnedAtFloor): the
+	// BelowBandFloor quantile, read at its own fill, and the line through
+	// it and the mean of the pinned fit's readings (floorIntercept). A
+	// reading below the band is kept only from a replica past its settle
+	// whose fill held still (the steady gate), so a load step is not read as
+	// the floor. OneSidedAboveKSat is set against the pinned fit as it is
+	// against the default. A learned B ends it. Without it, as before, the
+	// default. The saturation analyzer sets it under its own switch (issue
+	// llm-d-incubation/llm-d-scaling-manager#169).
+	BaselineFromFloor bool
 	// TierHysteresis latches the key's tier: the full fit is taken at the
 	// set values (DefaultMinSamples, DefaultMinKSpread), kept down to the
 	// clear values (DefaultClearMinSamples, DefaultClearKSpread), and within

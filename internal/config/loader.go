@@ -148,6 +148,7 @@ func setLoaderDefaults(v *viper.Viper) {
 	v.SetDefault("LLMSM_SCALE_TO_ZERO", DefaultScaleToZeroEnabled)
 	v.SetDefault("LLMSM_LIMITED_MODE", false)
 	v.SetDefault("LLMSM_STICKY_SCALE_DOWN", true)
+	v.SetDefault("LLMSM_POOL_SELECTED_SUPPLY", true)
 	v.SetDefault("LLMSM_PASSIVE", false)
 	v.SetDefault("SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY", 10)
 	// Matches config/base/manager/manager-configmap.yaml so a deployment without
@@ -243,6 +244,7 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string, setti
 			v.GetString("LEARNED_STATE_BUCKET_RETENTION"), v.GetDuration("LEARNED_STATE_BUCKET_RETENTION")),
 		learnedStateSnapshot: v.GetBool("LEARNED_STATE_SNAPSHOT"),
 		kedaHPARepair:        v.GetBool("KEDA_HPA_REPAIR"),
+		dsetRoleWriter:       v.GetBool("DSET_ROLE_WRITER"),
 	}
 
 	cfg.tls = tlsConfig{
@@ -258,6 +260,8 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string, setti
 		scaleToZeroEnabled:          v.GetBool("LLMSM_SCALE_TO_ZERO"),
 		limitedModeEnabled:          v.GetBool("LLMSM_LIMITED_MODE"),
 		stickyScaleDownEnabled:      v.GetBool("LLMSM_STICKY_SCALE_DOWN"),
+		poolSelectedSupply:          v.GetBool("LLMSM_POOL_SELECTED_SUPPLY"),
+		poolGroup:                   v.GetString("POOL_GROUP"),
 		passive:                     v.GetBool("LLMSM_PASSIVE"),
 		scaleFromZeroMaxConcurrency: v.GetInt("SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY"),
 	}

@@ -34,6 +34,13 @@ type Resolved struct {
 	// the model and the variants): the server hashes it into the inputsId.
 	Content string
 	Pricer  Pricer
+	// Series is every cycle of the source, oldest first, for a day plan
+	// (POST /v1/dayplan); nil where the source carries none.
+	Series []SeriesSample
+	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
+	// the Series and the Inputs), its weight in the inputs cache
+	// (Config.MaxInputsBytes); 0 weighs nothing.
+	Bytes int
 }
 
 // Pricer builds the fleet a scenario prices. It must be safe to call from
@@ -53,6 +60,9 @@ type Knobs struct {
 	// of the observed ones (the CLI's --assume-input-tokens and
 	// --assume-output-tokens, flagged AssumedShape); 0 is the observed one.
 	PromptTokens, OutputTokens float64
+	// PrefixHit is a stated prefix-cache hit rate in [0, 1), nil the
+	// observed one (flagged AssumedShape).
+	PrefixHit *float64
 	// TTFTPercentile and TPOTPercentile are q in (0, 1); 0 is the mean.
 	TTFTPercentile, TPOTPercentile float64
 	Assume                         Assume
@@ -80,12 +90,15 @@ type Fleet interface {
 	// mean asked), each banded, as replicas-to-slo --rate prints them.
 	TPOTAt(rate float64) (mean, percentile whatif.Result)
 	// Limits is slo-to-rate's rates at the targets: decode's at the TPOT
-	// target (nil with no TPOT target), the prefill role's at the TTFT target,
-	// and the fleet's at headroom and at headroom 1, each spanned.
+	// target, the prefill role's at the TTFT target, and the fleet's at
+	// headroom and at headroom 1, each spanned. With no TPOT target, decode's
+	// is nil, unless DecodeKnee is refused: then nothing bounds decode, and
+	// decode's limit and the fleet's are that refusal.
 	Limits(ttftSeconds, tpotSeconds, headroom float64) LimitSet
 	// PlainLimits is Limits' decode, prefill and fleet rates at headroom with
 	// no span over V_P and f, a fifth of the cost: the marginal steps' and a
-	// bucket line's.
+	// bucket line's. A refused decode knee with no TPOT target is decode's
+	// limit and the fleet's, as in Limits.
 	PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (decode, prefill, fleet whatif.Result)
 	// TPOTRatio is R_q as resolved for the percentile asked: its value and
 	// source, or its refusal; the zero Ratio with the mean asked.
@@ -93,6 +106,9 @@ type Fleet interface {
 	// Assumed is every assumed input of the fleet as read, in words, as the
 	// CLI's assumed row names them.
 	Assumed() []string
+	// Class is the class the envelope judges the fleet's figures by
+	// (whatif.FigureClass): its pods, accelerator, shape and flow control.
+	Class() whatif.FigureClass
 }
 
 // LimitSet is slo-to-rate's rates at one set of targets. Notes is what the

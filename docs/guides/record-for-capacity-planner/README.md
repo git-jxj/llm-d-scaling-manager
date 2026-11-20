@@ -33,10 +33,18 @@ is the reference for both.
   checkout of that release and Go 1.26 or later (`make capacity-planner`).
   Record with the binary, not the image: the image is for serving.
 - [ ] For Path 2: bash, `jq`, and `curl` 7.76 or later (for `--fail-with-body`;
-  `curl --version` says which), plus `kubectl get` on the model Deployments.
+  `curl --version` says which), plus `kubectl get` on the model workloads
+  (Deployments, LeaderWorkerSets, or their Pods).
 - [ ] kube-state-metrics in the same Prometheus, for readiness and roles,
   with `--metric-labels-allowlist=pods=[llm-d.ai/role],nodes=[nvidia.com/gpu.product]`
-  so it exports each Pod's role and each node's accelerator.
+  so it exports each Pod's role and each node's accelerator, and, optionally,
+  `--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]`
+  so it exports the [vLLM release](#the-vllm-release) annotation.
+  For a LeaderWorkerSet or DisaggregatedSet fleet, add
+  `leaderworkerset.sigs.k8s.io/name`, `leaderworkerset.sigs.k8s.io/group-index`,
+  `leaderworkerset.sigs.k8s.io/worker-index`, `disaggregatedset.x-k8s.io/name`
+  and `disaggregatedset.x-k8s.io/role` to the `pods=[...]` list: they say which
+  Pods form one replica, and which role each serves.
   Without it, see [Without kube-state-metrics](#without-kube-state-metrics).
 
 <!-- guide:prerequisites start -->
@@ -66,14 +74,17 @@ export NAMESPACE=<model namespace>
 export FROM=2026-11-01T12:00:00Z
 export TO=2026-11-01T13:00:00Z
 
-# The engine arguments the Deployment ran with. kube-state-metrics does not export them.
+# The engine arguments the Deployments ran with. kube-state-metrics does not export them.
+# For a P/D fleet, set PREFILL_ENGINE_ARGS to the prefill Deployment's; leave it unset and prefill takes ENGINE_ARGS.
 kubectl -n ${NAMESPACE} get deploy <decode deployment> \
   -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
 export ENGINE_ARGS="<those arguments, space-separated>"
+# P/D only: export PREFILL_ENGINE_ARGS="<the prefill Deployment's arguments, space-separated>"
 
 # Replays the window through the controller's own queries. Exit 0 done, 2 your input (a flag, nothing found), 1 a failed query.
 bin/capacity-planner capture --prometheus ${PROM_URL} --namespace ${NAMESPACE} --kube-state-metrics \
   --from ${FROM} --to ${TO} --engine vllm --engine-args "${ENGINE_ARGS}" \
+  ${PREFILL_ENGINE_ARGS+--prefill-engine-args "${PREFILL_ENGINE_ARGS}"} \
   -o run.capture.jsonl.gz
 
 # Plays the capture through the analyzers. The result is an ordinary learner recording.
@@ -125,7 +136,7 @@ returns millions of samples, and the usual failure is Prometheus'
 
 This saves the raw samples of every series the planner reads, nothing else,
 for one namespace. It needs read access to Prometheus' query API, and to read
-the model Deployments; no checkout of this repository, no Go.
+the model workloads; no checkout of this repository, no Go.
 
 <!-- guide:manual start -->
 ```bash
@@ -180,7 +191,7 @@ llm_d_epp_flow_control_requests_total
 kube_pod_info kube_pod_owner kube_replicaset_owner kube_pod_labels kube_pod_status_phase
 kube_pod_status_ready kube_pod_status_ready_time kube_pod_created kube_pod_start_time
 kube_pod_deletion_timestamp kube_pod_container_resource_requests kube_node_labels
-kube_deployment_spec_replicas
+kube_deployment_spec_replicas kube_pod_container_info kube_deployment_annotations
 "
 rm -rf planner-export
 mkdir -p planner-export
@@ -201,28 +212,31 @@ done
 echo "failed=${failed}"
 
 # What loading the export needs and Prometheus does not hold: the window, the engine, and the engine
-# arguments of the decode and prefill Deployments (leave PREFILL_DEPLOYMENT empty without one).
+# arguments of the decode and prefill workloads (leave PREFILL_WORKLOAD empty without one).
+# A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet; for a DisaggregatedSet, the role's), or pod/NAME (a leader Pod).
 # ENGINE is vllm or sglang; ENGINE_CONTAINER is the engine's container name.
-# It stops, and writes no window.txt, when a Deployment or its container is not found.
+# It stops, and writes no window.txt, when a workload or its container is not found.
 export ENGINE=vllm
 export ENGINE_CONTAINER=vllm
-export DECODE_DEPLOYMENT=<decode deployment>
-export PREFILL_DEPLOYMENT=
+export DECODE_WORKLOAD=deploy/<decode deployment>
+export PREFILL_WORKLOAD=
 engine_args() {
-  out=$(kubectl -n "${NAMESPACE}" get deploy "$1" -o json | jq -r --arg c "${ENGINE_CONTAINER}" '
-    [.spec.template.spec.containers[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
+  out=$(kubectl -n "${NAMESPACE}" get "$1" -o json | jq -r --arg c "${ENGINE_CONTAINER}" '
+    [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
+      // .spec.leaderWorkerTemplate.workerTemplate.spec // .spec)
+     | .containers[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
      | gsub("\n"; " ")
      | if test("^[[{]") then (try (fromjson | tojson) catch .) else . end]
     | join(" ")')
-  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in Deployment $1" >&2; return 1; }
+  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" >&2; return 1; }
   echo "${out}"
 }
 rm -f planner-export/window.txt
 (
-  [ -n "${DECODE_DEPLOYMENT}" ] || { echo "set DECODE_DEPLOYMENT" >&2; exit 1; }
-  decode_args=$(engine_args "${DECODE_DEPLOYMENT}") || exit 1
+  [ -n "${DECODE_WORKLOAD}" ] || { echo "set DECODE_WORKLOAD" >&2; exit 1; }
+  decode_args=$(engine_args "${DECODE_WORKLOAD}") || exit 1
   prefill_args=
-  if [ -n "${PREFILL_DEPLOYMENT}" ]; then prefill_args=$(engine_args "${PREFILL_DEPLOYMENT}") || exit 1; fi
+  if [ -n "${PREFILL_WORKLOAD}" ]; then prefill_args=$(engine_args "${PREFILL_WORKLOAD}") || exit 1; fi
   {
     echo "NAMESPACE=${NAMESPACE}"
     echo "FROM=${FROM}"
@@ -232,7 +246,7 @@ rm -f planner-export/window.txt
     echo "CAPTURE_FROM=$(( FROM + 300 ))"
     echo "ENGINE=${ENGINE}"
     echo "DECODE_ARGS=${decode_args}"
-    echo "PREFILL_ARGS=${prefill_args}"
+    if [ -n "${PREFILL_WORKLOAD}" ]; then echo "PREFILL_ARGS=${prefill_args}"; fi
   } > planner-export/window.txt
 ) && cat planner-export/window.txt || echo "window.txt NOT written: fix the above, then run this step again"
 if grep -E '^[A-Z]+_ARGS=.*([$]|sh -c)' planner-export/window.txt 2>/dev/null; then
@@ -256,7 +270,8 @@ for f in planner-export/*.json; do
 done | awk '{n[$2] += $1} END {for (m in n) print n[m], m}' | sort -n
 
 # One file to send. It holds your metric labels (Pod, node, model names) and engine arguments, no request content.
-tar czf planner-export.tgz planner-export
+# COPYFILE_DISABLE=1 keeps macOS tar from adding a ._ file beside each answer.
+COPYFILE_DISABLE=1 tar czf planner-export.tgz planner-export
 ```
 <!-- guide:manual end -->
 
@@ -277,8 +292,18 @@ example `DECODE_ARGS=--max-num-seqs 256 --tensor-parallel-size 2`. `capacity-pla
 splits these on whitespace: a JSON value is written compact (no spaces between
 its tokens), but a space inside one of its strings still splits it.
 
+**A LeaderWorkerSet or DisaggregatedSet fleet.** Set `DECODE_WORKLOAD` (and
+`PREFILL_WORKLOAD`) to the role's LeaderWorkerSet, `lws/<name>`, which reads
+its leader template, or to a leader Pod, `pod/<name>`, which reads the
+arguments that Pod ran with. A DisaggregatedSet runs one LeaderWorkerSet per
+role and revision: `kubectl -n <namespace> get lws` lists them. Where the
+arguments are built at start, in a script or from environment variables,
+neither shows them: copy them from the engine's startup log instead (vLLM
+prints them on its `non-default args` line) into `window.txt`. Each Pod's
+own rank flags, such as `--data-parallel-rank`, can stay as the leader's.
+
 Send `planner-export.tgz`. It holds metric labels (Pod, node and model names)
-and `window.txt`: the window, the engine and the Deployments' engine
+and `window.txt`: the window, the engine and the workloads' engine
 arguments, which loading it needs and Prometheus does not hold. No request
 content.
 
@@ -303,22 +328,26 @@ ${PROMTOOL} --version | head -1
 tar tzvf planner-export.tgz | awk '$1 !~ /^[-d]/ || $NF !~ /^planner-export\/[A-Za-z0-9_.:-]*$/'
 
 # Merges the answers into one OpenMetrics file, and prints the lookback to serve them with.
-# It reads only the *.json answers. window.txt is read as data, never sourced, and checked.
+# It reads only the *.json answers, and skips macOS ._ files. window.txt is read as data, never sourced, and checked.
 tar xzf planner-export.tgz --no-same-owner
 python3 hack/promjson-to-openmetrics.py -o planner-export.om planner-export/*.json
+unset PREFILL_ARGS
 while IFS='=' read -r k v; do
   case "${k}" in NAMESPACE|FROM|TO|FROM_ISO|TO_ISO|CAPTURE_FROM|ENGINE|DECODE_ARGS|PREFILL_ARGS) export "${k}=${v}" ;; esac
 done < planner-export/window.txt
+[ -n "${PREFILL_ARGS:-}" ] || unset PREFILL_ARGS
 case "${FROM}:${TO}:${CAPTURE_FROM}" in *[!0-9:]*|:*|*::*|*:) echo "STOP: FROM, TO and CAPTURE_FROM in window.txt must be Unix seconds" ;; esac
 case "${ENGINE}" in vllm|sglang) ;; *) echo "STOP: ENGINE in window.txt must be vllm or sglang" ;; esac
 echo "namespace ${NAMESPACE}, engine ${ENGINE}, decode arguments: ${DECODE_ARGS}"
+echo "prefill arguments: ${PREFILL_ARGS-none, prefill takes the decode arguments}"
 
 # Writes TSDB blocks.
 ${PROMTOOL} tsdb create-blocks-from openmetrics planner-export.om planner-tsdb
 
 # Serve the blocks. A retention longer than their age, or Prometheus deletes them on start.
-# LOOKBACK is the one the converter printed, four scrape intervals: it ends a series about when the original did (see Limits).
-export LOOKBACK=<the lookback the converter printed, e.g. 60s>
+# LOOKBACK is the one the converter printed: four scrape intervals of the slowest metric, often kube-state-metrics'.
+# A deleted Pod stays visible that long (see Limits).
+export LOOKBACK=<the lookback the converter printed, e.g. 240s>
 touch empty.yml
 prometheus --config.file=empty.yml --storage.tsdb.path=planner-tsdb \
   --storage.tsdb.retention.time=10y --query.lookback-delta="${LOOKBACK}" \
@@ -326,9 +355,11 @@ prometheus --config.file=empty.yml --storage.tsdb.path=planner-tsdb \
 until curl -sf http://127.0.0.1:9091/-/ready >/dev/null; do sleep 1; done
 
 # Then capture as in the first path, against the local copy, from 5 minutes into the export.
-# capacity-planner takes one set of engine arguments: the decode Deployment's. PREFILL_ARGS is there to read.
+# Each role is priced with its own engine arguments: DECODE_ARGS, and PREFILL_ARGS when window.txt has them.
+# With no PREFILL_ARGS line or an empty one (an older export wrote one empty), prefill takes DECODE_ARGS.
 bin/capacity-planner capture --prometheus http://127.0.0.1:9091 --namespace "${NAMESPACE}" --kube-state-metrics \
   --from "${CAPTURE_FROM}" --to "${TO}" --engine "${ENGINE}" --engine-args "${DECODE_ARGS}" \
+  ${PREFILL_ARGS+--prefill-engine-args "${PREFILL_ARGS}"} \
   -o run.capture.jsonl.gz
 ```
 <!-- guide:load end -->
@@ -341,12 +372,13 @@ sample at all, so a broken export is not read as a window with less load.
 
 - **A series' end is blurred by up to the lookback.** Prometheus marks a series
   stale when its target goes away; the query API does not return those marks.
-  The local copy instead holds the last value for `--query.lookback-delta`, so
-  keep it short: four scrape intervals, which the converter prints from the
-  samples (`60s` at 15 s, `120s` at 30 s). In a test of
-  this path, the copy's capture matched the original's on every step but the
-  three, 45 s, after a Pod left, where the copy still listed it; with the
-  default `5m` lookback, 19 steps differed.
+  The local copy instead holds the last value for `--query.lookback-delta`:
+  four times the slowest metric's scrape interval, which the converter prints
+  (`240s` with kube-state-metrics at 60 s). The slowest, because a lookback
+  sized for engines at 5 s (`20s`) loses kube-state-metrics, scraped every
+  60 s, at three steps in four. The cost: a deleted Pod's series stays
+  visible for that long, so a fleet that scales down shows phantom replicas
+  for up to the lookback the converter printed.
 - **The window must start 5 minutes before the one you want answered.** Some
   inputs are 5-minute rates.
 
@@ -436,6 +468,7 @@ capacity-planner capture  --prometheus URL --namespace NS (--kube-state-metrics 
                           [--step 15s] [--policy FILE]
                           [--engine vllm|sglang] [--engine-args "ARGS"] [--batch-cap N]
                           [--gpus-per-replica 1] [--accelerator NAME]
+                          [--vllm-version 0.34] [--engine-image IMAGE]
                           [--bearer-token-file FILE] [--ca-file FILE] [--insecure-skip-verify]
                           [--timeout 2m30s] [--force]
 capacity-planner generate -in run.capture.jsonl.gz -o run.jsonl.gz
@@ -454,6 +487,7 @@ capacity-planner generate -in run.capture.jsonl.gz -o run.jsonl.gz
 | `--engine-args` | The engine's arguments, space-separated, parsed for its parameters (kube-state-metrics has none). |
 | `--batch-cap` | The engine's batch cap (`--max-num-seqs`, or `--max-running-requests`). Warned about when `--engine-args` sets it too. |
 | `--gpus-per-replica`, `--accelerator` | Stand-ins where kube-state-metrics gives no GPU request or node label. |
+| `--vllm-version`, `--engine-image` | The vLLM release the engines run, as `0.34`, or their image, whose `vllm-openai` tag names it. Stand-ins where kube-state-metrics shows neither; see [The vLLM release](#the-vllm-release). |
 | `--bearer-token-file` | A file holding a bearer token. Sent over https only, to Prometheus' own host only, never on a redirect elsewhere. Refused with an http URL, or when the file is empty. |
 | `--ca-file` | A PEM file of the CAs that sign an https Prometheus' certificate, trusted in place of the system's. Refused with an http URL. |
 | `--insecure-skip-verify` | Do not verify the certificate. Warned about on stderr. Refused with an http URL. |
@@ -468,6 +502,51 @@ its owner only (mode 0600).
 What a capture cannot know, and flags: engine parameters (always from flags),
 rollouts (never seen), readiness without kube-state-metrics (every Pod reads as
 Ready), and LeaderWorkerSets (use `--role-of`). The `flag:` lines name each.
+
+## The vLLM release
+
+vLLM changes the defaults of `--max-num-batched-tokens`,
+`--gpu-memory-utilization` and `--block-size` between releases. The planner
+records which release each variant runs and shows the values those defaults
+resolve to, the ones the controller uses. They key the learned state, and
+the answers report them for reference: no figure of an answer reads them
+yet. See [vLLM versions](../../reference/vllm-versions.md) for the values.
+
+With `--kube-state-metrics` the capture reads the release from what the
+workload ran: the Deployment's `scaling-manager.llmd.ai/vllm-version`
+annotation, else a `vllm-openai` image tag. kube-state-metrics exports the
+image by default; the annotation needs
+`--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]`.
+kube-state-metrics exports no LeaderWorkerSet annotations, so an annotated
+LeaderWorkerSet reads as unknown.
+
+Where neither is there (llm-d's own images, a digest, no kube-state-metrics),
+give the release yourself:
+
+```bash
+bin/capacity-planner capture ... --vllm-version 0.34
+```
+
+What the workload shows wins over the flags, as in the controller. The
+capture prints the release and where it came from on each variant's line,
+and every answer repeats it:
+
+```
+engine          vLLM 0.34 (from image tag); for reference, not priced yet: step budget 8192 (default), GPU memory 1 (default), block size 64 (default)
+```
+
+The capture adds a `flag:` line when:
+
+- a flag names another release than the workload shows (the workload's is used);
+- a variant ran more than one release in the window (the one most Pods ran is used);
+- no annotation, tag or flag names the release (`vLLM release unknown`): give
+  `--vllm-version`, or allowlist the annotation.
+
+A recording made before the planner read releases says `vLLM release not recorded`.
+
+A capture now keys learned state by the engine's real image, as the
+controller does (for SGLang too, though SGLang has no release to read). Learned
+state from a capture made before this release is not reused.
 
 ## Load on Prometheus
 
@@ -532,6 +611,10 @@ capacity-planner slo-to-rate     --recording run.jsonl.gz --tpot 4ms --ttft 200m
   `Saturated` in it means the rate has no 15% to spare.
 - **`Saturated` means the rate is at or above the knee.** It is a refusal, exit
   `3`, not a figure.
+- **`slo-to-rate` with no `--tpot` still needs a decode line.** Decode's knee
+  is then all that bounds decode. When the recording has no usable line
+  (`NoLine`, `PinnedDefaultB`), the `decode` and `fleet` rows are refused, exit
+  `3`; the `prefill` row is still priced.
 - **The `line check` row** compares the token rate the latency line predicts
   with the rate the decode rows reported. `MISMATCH` (a median error above
   15%, flagged `LineMismatch`): do not size from it. `at another shape`: the

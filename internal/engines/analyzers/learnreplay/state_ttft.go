@@ -61,8 +61,21 @@ type DecodeTTFTState struct {
 	// cycles, the largest, each a mean over the rows weighted by their
 	// request rate, with the mean effective prompt of the same cycle (the
 	// pair is never split). A cycle with no reading holds an empty slot, so a
-	// figure ages out when the rows stop carrying one. Zero when unread.
+	// figure ages out when the rows stop carrying one. Zero when unread. Its
+	// Waiting is the largest decode backlog (decodeBacklog) any cycle of the
+	// window carries, a backlog carried for prefill.DecodeTTFTLag after it drains.
 	EngineTTFT whatif.DecodeTTFT
+	// CalmCycle is the latest cycle, through this one, that read a decode
+	// TTFT and closed a run of whatif.TTFTWindowCycles such cycles carrying no
+	// decode backlog (idle cycles between them neither count nor break the
+	// run): the cycle to answer at instead, read at CalmAt. 0 when no cycle
+	// did.
+	CalmCycle int
+	CalmAt    time.Time
+	// BacklogUnread says a decode row of the window did not say why its
+	// requests wait (no capacity series): there a backlog cannot be told
+	// from KV pulls in flight, and none is read.
+	BacklogUnread bool
 	// TransferSeconds is prefill.TransferReading's Figure, the one S1 prices
 	// (slo.SwitchTTFTQuietTransfer): the fleet's quiet cycles inside
 	// prefill.HeldDecodeAge of the cycle, else every row's over the same age; 0
@@ -113,16 +126,19 @@ type ttftSamples struct {
 	prompts    map[string]*whatif.PromptWindow
 	shares     map[string]*shareWindow
 	engineTTFT map[string][]whatif.DecodeTTFT
-	transfers  map[string]*prefill.TransferWindow
-	terms      map[string]*prefill.DecodeTermWindow
+	// backlogs is each decode variant's latest backlog (backlogTrack.note).
+	backlogs  map[string]*backlogTrack
+	transfers map[string]*prefill.TransferWindow
+	terms     map[string]*prefill.DecodeTermWindow
 	// joint is the model's joint TTFT readings (noteJoint).
 	joint *prefill.JointWindow
 }
 
 func newTTFTSamples() *ttftSamples {
 	return &ttftSamples{prompts: map[string]*whatif.PromptWindow{}, shares: map[string]*shareWindow{},
-		engineTTFT: map[string][]whatif.DecodeTTFT{}, transfers: map[string]*prefill.TransferWindow{},
-		terms: map[string]*prefill.DecodeTermWindow{}, joint: prefill.NewJointWindow()}
+		engineTTFT: map[string][]whatif.DecodeTTFT{}, backlogs: map[string]*backlogTrack{},
+		transfers: map[string]*prefill.TransferWindow{},
+		terms:     map[string]*prefill.DecodeTermWindow{}, joint: prefill.NewJointWindow()}
 }
 
 // noteJoint folds one cycle's prefill and decode rows into the model's joint
@@ -183,6 +199,52 @@ func rolesOf(in domain.AnalyzerInput) map[string]string {
 type decodeRows struct {
 	ttftWeighted, ttftWeight, ttftPlain float64
 	ttftRows                            int
+	// waiting is the largest decodeBacklog of the cycle's serving rows, and
+	// unread says a row did not say why its requests wait.
+	waiting int
+	unread  bool
+}
+
+// backlogTrack is one decode variant's backlog over the cycles: the latest
+// backlog, carried for prefill.DecodeTTFTLag (the rule the slo analyzer
+// reads too), the cycles in a row since the last tainted one, the latest
+// cycle that closed a calm window, and the latest cycle whose rows did not
+// say why they wait.
+type backlogTrack struct {
+	carry        prefill.DecodeBacklogCarry
+	calmRun      int
+	calm         int
+	calmAt       time.Time
+	unreadCycle  int
+	unreadInView bool
+}
+
+// note folds one cycle's backlog in and returns the backlog the cycle's TTFT
+// carries: the cycle's own, or the latest one read within
+// prefill.DecodeTTFTLag before it (prefill.DecodeBacklogCarry). read says the
+// cycle has a decode TTFT: only such a cycle counts toward a calm window, so
+// a calm cycle is one the planner can answer at with a calm decode figure,
+// never an idle one; an idle cycle clears nothing. The window must be whole:
+// the first cycles of a window that begins during a backlog's tail cannot
+// see it.
+func (b *backlogTrack) note(d *decodeRows, cycle int, at time.Time, read bool) int {
+	if d.unread {
+		b.unreadCycle = cycle
+	}
+	b.unreadInView = b.unreadCycle > 0 && cycle-b.unreadCycle < whatif.TTFTWindowCycles
+	carried := b.carry.Carry(d.waiting, at)
+	if carried > 0 {
+		b.calmRun = 0
+		return carried
+	}
+	if !read {
+		return 0
+	}
+	b.calmRun++
+	if b.calmRun >= whatif.TTFTWindowCycles {
+		b.calm, b.calmAt = cycle, at
+	}
+	return 0
 }
 
 // prefillRows is one prefill variant's readings in one cycle.
@@ -231,6 +293,8 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 		if d == nil {
 			continue
 		}
+		n, known := prefill.DecodeBacklog(rm)
+		d.waiting, d.unread = max(d.waiting, n), d.unread || !known
 		if rm.AvgTTFTKnown && positive(rm.AvgTTFT) {
 			d.ttftRows++
 			d.ttftPlain += rm.AvgTTFT
@@ -266,8 +330,24 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 				slot.Seconds = d.ttftWeighted / d.ttftWeight
 			}
 		}
+		b := t.backlogs[v]
+		if b == nil {
+			b = &backlogTrack{}
+			t.backlogs[v] = b
+		}
+		slot.Waiting = b.note(d, cycle, at, slot.Seconds > 0)
 		t.engineTTFT[v] = keepLast(t.engineTTFT[v], slot, whatif.TTFTWindowCycles)
 	}
+}
+
+// windowBacklog is the largest backlog any cycle of the window carries, so
+// a figure the queue raised is caught whichever slot is the largest.
+func windowBacklog(samples []whatif.DecodeTTFT) int {
+	var n int
+	for _, d := range samples {
+		n = max(n, d.Waiting)
+	}
+	return n
 }
 
 // noteTerm folds one cycle, read at now, into each decode variant's readings
@@ -358,6 +438,13 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 	for i := range st.Variants {
 		vs := &st.Variants[i]
 		vs.DecodeTTFT.EngineTTFT = largestTTFT(t.engineTTFT[vs.Variant])
+		if vs.DecodeTTFT.EngineTTFT.Seconds > 0 {
+			vs.DecodeTTFT.EngineTTFT.Waiting = windowBacklog(t.engineTTFT[vs.Variant])
+		}
+		if b := t.backlogs[vs.Variant]; b != nil {
+			vs.DecodeTTFT.CalmCycle, vs.DecodeTTFT.CalmAt = b.calm, b.calmAt
+			vs.DecodeTTFT.BacklogUnread = b.unreadInView
+		}
 		var est prefill.DecodeTermEstimate
 		if w := t.terms[vs.Variant]; w != nil {
 			est = w.Estimate()

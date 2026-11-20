@@ -277,7 +277,7 @@ func persistedEntryOK(k string, pe PersistedInFlightEntry) bool {
 		return false
 	}
 	switch pe.TargetKind {
-	case "", constants.DeploymentKind, constants.LeaderWorkerSetKind:
+	case "", constants.DeploymentKind, constants.LeaderWorkerSetKind, constants.DisaggregatedSetRoleScalerKind:
 	default:
 		return false
 	}

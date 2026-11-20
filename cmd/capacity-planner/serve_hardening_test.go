@@ -58,6 +58,8 @@ func TestServeParityWithoutHeadroomAndMarginal(t *testing.T) {
 	} {
 		want := wantOf(cliRole(t, "fleet", append(slices.Clone(question), c.flag, "2")...).Results.Rate)
 		want.Sensitivity = nil
+		// A marginal step is another fleet's figure: the plan judges none.
+		want.Validation = nil
 		sameFigure(t, c.what, want, c.step.Limit)
 	}
 }
@@ -157,6 +159,30 @@ func TestServePlanBudgetBounds(t *testing.T) {
 	f := serveFlags{recordings: t.TempDir(), listen: "127.0.0.1:0", auth: whatifapi.AuthNone, planBudget: writeTimeout}
 	_, err := f.handler(newFlags("serve", io.Discard), io.Discard)
 	require.ErrorAs(t, err, new(usageError))
+}
+
+// --max-inputs and --inputs-cache-size take 0 and "" as the defaults, and
+// refuse a negative count and a size that is not a whole number of bytes.
+func TestServeInputsFlags(t *testing.T) {
+	for _, c := range []struct {
+		n    int
+		size string
+		ok   bool
+	}{
+		{0, "", true}, {1, "1", true}, {4, "1Gi", true}, {2, "256Mi", true},
+		{-1, "", false}, {0, "0", false}, {0, "-1Mi", false}, {0, "0.5", false}, {0, "lots", false}, {0, "1Pi", false},
+	} {
+		f := serveFlags{recordings: t.TempDir(), listen: "127.0.0.1:0", auth: whatifapi.AuthNone, maxInputs: c.n, inputsCache: c.size}
+		_, err := f.handler(newFlags("serve", io.Discard), io.Discard)
+		if c.ok {
+			assert.NoError(t, err, "--max-inputs %d --inputs-cache-size %q", c.n, c.size)
+		} else {
+			assert.ErrorAs(t, err, new(usageError), "--max-inputs %d --inputs-cache-size %q", c.n, c.size)
+		}
+	}
+	n, err := bytesFlag("inputs-cache-size", whatifapi.Quantity(whatifapi.DefaultInputsBytes))
+	require.NoError(t, err)
+	assert.Equal(t, whatifapi.DefaultInputsBytes, n, "the flag's default is the server's")
 }
 
 // The server bounds how long a client may take to send a request and hold an

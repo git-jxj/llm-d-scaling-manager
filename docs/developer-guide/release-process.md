@@ -11,10 +11,10 @@ instead.
 
 | Step | Where | What |
 |------|--------|------|
-| 1. Release PR | PR to `main` | `newTag: vX.Y.Z`; merge it |
+| 1. Release PR | PR to `main` | `newTag: vX.Y.Z` (controller and planner) and the proxy image `:vX.Y.Z`; merge it |
 | 2. Tag | Your clone | Tag the merge commit of the release PR, check it, push the tag |
 | 3. Wait | GitHub Actions | The release run must succeed |
-| 4. Reset PR | PR to `main` | `newTag: main` again, only after the run succeeded |
+| 4. Reset PR | PR to `main` | `newTag: main` (controller and planner) and the proxy image `:main` again, only after the run succeeded |
 | 5. Publish | GitHub | Publish the draft GitHub Release the run made, with the release notes; verify the signatures |
 | 6. Docs PR | PR to `main` | Point the install, upgrade and benchmark docs at the release and its digest |
 
@@ -51,7 +51,16 @@ instead.
    others. The planner replays recordings with the controller's learners, so
    it is never released apart from the controller
    ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
-7. **The warm-pool launcher image**, under the same tag:
+   `config/capacity-planner` (the planner in a cluster) names the image by
+   `newTag`, like the controller: `:main` between releases (published by
+   `ci-main-image.yaml`), the release's tag on a release commit.
+7. **The warm-pool proxy image** at
+   `ghcr.io/<repository owner>/llm-d-scaling-manager/warmpool-proxy:<tag>`
+   (`Dockerfile.warmpool-proxy`), the sidecar in every warm-pool Pod.
+   `config/warmpool` and `deploy/warmpool.sh` name it by tag, like the
+   controller's `newTag`: `:main` between releases (published by
+   `ci-main-image.yaml`), the release's tag on a release commit.
+8. **The warm-pool launcher image**, under the same tag:
    `ghcr.io/<repository owner>/llm-d-scaling-manager/warmpool-launcher:<tag>`
    (`Dockerfile.warmpool-launcher`: the launcher in `warmpool/supervisor/` on
    the vLLM base). Jobs `release-warmpool-launcher-build` (the reusable
@@ -60,12 +69,13 @@ instead.
    Nothing installs it by default yet, so the release files do not wait for it
    ([warmpool/README.md](../../warmpool/README.md#the-image-built-from-it)).
    PRs that touch the launcher build both platforms with the same workflow,
-   without pushing; before v0.12.0, dispatch it with **push**
-   ([Prerequisites](#prerequisites)).
+   without pushing; before the first release that carries these jobs,
+   dispatch it with **push** ([Prerequisites](#prerequisites)).
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line
-has a tag on `main`, and only when `newTag` on the tagged commit equals the tag. See [Patch releases](#patch-releases).
+has a tag on `main`, and only when both `newTag`s and the proxy image tag on
+the tagged commit equal the tag. See [Patch releases](#patch-releases).
 
 ---
 
@@ -76,8 +86,8 @@ has a tag on `main`, and only when `newTag` on the tagged commit equals the tag.
   access ([first release](#the-first-release-to-a-new-package)).
 - [ ] The commit you will tag passed its PR checks, including the e2e runs. The
   release reruns the PR checks, not the e2e suites.
-- [ ] Before the first release that carries the warm-pool launcher jobs
-  (v0.12.0): `ci-warmpool-launcher.yaml` dispatched on `main` with **push**
+- [ ] Before the first release that carries the warm-pool launcher jobs:
+  `ci-warmpool-launcher.yaml` dispatched on `main` with **push**
   checked, and both legs green. The PR job builds both platforms but never
   pushes, so this is the first push by digest.
 
@@ -89,12 +99,18 @@ The workflow checks where a tag is, not who reviewed it. Review on `main` and
 ## Pre-release checklist
 
 1. **Open the release PR to `main`.** It sets `newTag: vX.Y.Z` in
-   `config/base/manager/kustomization.yaml`. The release fails before it builds
-   anything if `newTag` is not the tag.
+   `config/base/manager/kustomization.yaml`, and the proxy image in
+   `config/warmpool/warmpool-deployment.yaml` to
+   `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:vX.Y.Z`,
+   then runs `make warmpool-render` (it copies the image into
+   `deploy/warmpool.sh`; the PR checks fail if it was not run). It sets the
+   same `newTag: vX.Y.Z` in `config/capacity-planner/base/kustomization.yaml`
+   (the PR checks fail when it differs from the controller's). The release
+   fails before it builds anything if any of the three is not the tag.
 2. **Bump dependency pins**, if the release moves one (for example
-   [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)): the
-   [Makefile](../../Makefile), `test/e2e/fixtures/model_service_builder.go` and
-   `test/utils/resources/llmdsim.go`. Same PR.
+   [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)), in
+   every file `hack/upstream-versions.sh` lists for it. Same PR. See
+   [Upstream dependencies](upstream-dependencies.md).
 3. **Draft the release notes** for the GitHub Release: user-facing and notable
    changes, and the upgrade steps. You paste them when you publish.
 4. **Merge the PR, then tag right away.** From the merge until the release run
@@ -119,6 +135,8 @@ REMOTE=<remote for llm-d-incubation/llm-d-scaling-manager>
 git fetch "$REMOTE"
 git tag -m "llm-d-scaling-manager vX.Y.Z" vX.Y.Z <merge commit of the release PR>
 git show vX.Y.Z:config/base/manager/kustomization.yaml | grep -x '  newTag: vX.Y.Z' \
+  && git show vX.Y.Z:config/warmpool/warmpool-deployment.yaml | grep -E 'image: .*/warmpool-proxy:vX\.Y\.Z$' \
+  && git show vX.Y.Z:config/capacity-planner/base/kustomization.yaml | grep -x '    newTag: vX.Y.Z' \
   && git merge-base --is-ancestor vX.Y.Z "$REMOTE/main" && git push "$REMOTE" vX.Y.Z
 ```
 
@@ -139,7 +157,9 @@ Do not merge anything that changes `newTag` yet. If the run fails, see
 ### 3. Set `newTag` back to `main`
 
 Once the run has succeeded, open a second PR to `main` that sets `newTag: main`
-again, and merge it. Until it merges, an install from `main` deploys the release
+and the proxy image back to `warmpool-proxy:main` (then `make warmpool-render`),
+and `newTag: main` in `config/capacity-planner/base/kustomization.yaml`, and
+merge it. Until it merges, an install from `main` deploys the release
 image instead of `:main`. Merged earlier, a re-tag after a failed run would fail
 the pin check.
 
@@ -162,7 +182,8 @@ GHCR, `docker pull ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:<tag>`
 must succeed; a `401` or `denied` means the package is still private
 ([first release](#the-first-release-to-a-new-package)). The same holds for
 the capacity planner image (`release-capacity-planner`, package
-`llm-d-scaling-manager/capacity-planner`). Keep the draft's first line: it names
+`llm-d-scaling-manager/capacity-planner`) and the warm-pool proxy image
+(`release-warmpool-proxy`, package `llm-d-scaling-manager/warmpool-proxy`). Keep the draft's first line: it names
 the two supported installs, the attached files and `make deploy-scaling-manager`.
 
 ### 5. Point the docs at the release
@@ -240,7 +261,11 @@ branch's tags are refused.
    bug, open the fix against the release branch alone and say why in the PR.
    PRs to `release-*` run the same checks as PRs to `main`.
 2. **Release PR to `release-0.10`**, not to `main`. It sets
-   `newTag: v0.10.2` and moves every version reference on the branch to
+   `newTag: v0.10.2` and the proxy image `:v0.10.2` (a line released before
+   the proxy job existed has no proxy pin to set, and one before
+   `config/capacity-planner` no planner pin; do not backport the
+   `ci-release.yaml` planner pin step to such a line, where it fails every
+   tag), and moves every version reference on the branch to
    `v0.10.2`; list them with
    `git grep -n 'v0\.10\.[0-9]' -- docs deploy hack/benchmark`. It adds
    "Upgrading from v0.10.1 to v0.10.2" to
@@ -308,6 +333,14 @@ created by the first release that carries the `release-capacity-planner` job:
 the same two settings apply. The warm-pool launcher image is a fourth,
 `llm-d-scaling-manager/warmpool-launcher`, created by the first release that
 carries the `release-warmpool-launcher` job: the same two settings apply.
+
+The warm-pool proxy image is a fourth, `llm-d-scaling-manager/warmpool-proxy`.
+It is created by the first push to `main` after `ci-main-image.yaml` gained
+the proxy build, or by the first release with the `release-warmpool-proxy`
+job, whichever runs first. **After that first push, make the package Public**
+and give this repository **Write**, as above. Until then every warm-pool Pod
+fails with `ImagePullBackOff`, because `config/warmpool` and
+`deploy/warmpool.sh` name this package by default.
 
 ---
 
@@ -441,8 +474,16 @@ re-run from the **Actions** tab.
    job's shape and runs its tag, platform and sign steps. The PR checks'
    `capacity-planner-image` job runs the same script on every code change.
    Verify it as the controller image, with `$IMAGE/capacity-planner`.
-10. **Release files** (job `release-files`, after the image, signing, tools
-   and capacity planner jobs). Downloads `release-dist`, pulls the pushed
+10. **Warm-pool proxy image** (job `release-warmpool-proxy`, after the image
+   job, which already refused a commit whose proxy image tag is not the
+   release's). Builds `Dockerfile.warmpool-proxy` for `linux/amd64`, scans it,
+   pushes `linux/amd64,linux/arm64` to `<image>/warmpool-proxy:<version>` (and
+   `:latest` as for the tools image), fails if the pushed index lacks a
+   platform, and signs the digest. `hack/check-release-latest.sh` checks the
+   job's shape and runs its pin, tag, platform and sign steps. Verify it as
+   the controller image, with `$IMAGE/warmpool-proxy`.
+11. **Release files** (job `release-files`, after the image, signing, tools,
+   capacity planner and warm-pool proxy jobs). Downloads `release-dist`, pulls the pushed
    tools image by digest, and refuses the upload unless its baked `SHA256SUMS`
    and every bundle of what it bakes equal the artifact's, in both platforms
    (`hack/compare-baked-release-files.sh`). Then uploads them all, the planner
@@ -476,6 +517,7 @@ Design and rules: [install-from-release.md](../proposals/install-from-release.md
 | `scaling-manager-metrics-reader.yaml` | optional, Kubernetes: binds the scraping Prometheus account to the metrics-reader ClusterRole |
 | `scaling-manager-preflight.yaml` | the preflight Job (`manager preflight check`, image by digest), its ServiceAccount, and its read-only Role and ClusterRole; reads pods and PodMonitors in the controller's namespace only, and no Secret ([preflight.md](../reference/preflight.md)) |
 | `scaling-manager-preflight-cluster.yaml` | the same for the cluster-wide install in `scaling-manager-system` (`--scope=cluster`): lists pods, Deployments and PodMonitors in every namespace. Applies as is |
+| `scaling-manager-dset-role-writer.yaml`, `-dset-role-writer-cluster.yaml` | optional: the DisaggregatedSet role writer's grant, `get`, `list` and `patch` on `disaggregatedsets` (a Role in `__NAMESPACE__`, or a ClusterRole for `scaling-manager-system`), copied from `config/components/dset-role-writer*`. The only files that grant more than `get` on them; `smt --dset-role-writer` applies them |
 
 `make test-e2e-release-manifests` installs the namespaced files on kind with
 `kubectl` only and checks them, and `RELEASE_E2E_SCOPE=cluster` does the same

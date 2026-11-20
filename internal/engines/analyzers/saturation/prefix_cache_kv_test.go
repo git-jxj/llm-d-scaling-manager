@@ -395,23 +395,23 @@ func TestKVHitsResident_ResidentKVMovesOnlyKVreq(t *testing.T) {
 	s := shape.New(1000, 100, 0.5).WithOutputDispersion(2) // 600, 1100 with no hit
 	reading := func(perSeq float64) residentReading { return residentReading{tokens: perSeq * 10, running: 10} }
 
-	got, bound := withResidentKV(s, residentReading{})
+	got, bound := withResidentKV(s, residentReading{}, residentRule{})
 	assert.InDelta(t, 600, got.KVreq, 1e-9, "no reading: the shape's 500 + 2 x 100/2")
 	assert.Equal(t, residentBoundNoReading, bound)
-	got, bound = withResidentKV(s, reading(700))
+	got, bound = withResidentKV(s, reading(700), residentRule{})
 	assert.InDelta(t, 700, got.KVreq, 1e-9)
 	assert.Equal(t, residentBoundNone, bound)
 	assert.InDelta(t, 500, got.ILeff, 1e-9, "ILeff stays the discounted prompt")
 	assert.InDelta(t, 2, got.OutputDispersion, 1e-12)
-	got, _ = withResidentKV(s, reading(5000))
+	got, _ = withResidentKV(s, reading(5000), residentRule{})
 	assert.InDelta(t, 1100, got.KVreq, 1e-9, "1000 + 2 x 100/2")
-	got, _ = withResidentKV(s, reading(100))
+	got, _ = withResidentKV(s, reading(100), residentRule{})
 	assert.InDelta(t, 600, got.KVreq, 1e-9)
 
 	// A literal's dispersion of 0 reads as 1.
-	got, _ = withResidentKV(shape.Shape{AvgInputTokens: 1000, AvgOutputTokens: 100, PrefixHitRate: 0.5, KVreq: 550}, reading(5000))
+	got, _ = withResidentKV(shape.Shape{AvgInputTokens: 1000, AvgOutputTokens: 100, PrefixHitRate: 0.5, KVreq: 550}, reading(5000), residentRule{})
 	assert.InDelta(t, 1050, got.KVreq, 1e-9)
-	got, bound = withResidentKV(shape.Shape{}, reading(700))
+	got, bound = withResidentKV(shape.Shape{}, reading(700), residentRule{})
 	assert.Equal(t, shape.Shape{}, got)
 	assert.Equal(t, residentBoundNoReading, bound)
 }
@@ -443,7 +443,7 @@ func TestKVHitsResident_TheReadingStaysInsideTheBounds(t *testing.T) {
 		r := residentReading{
 			tokens: rng.Float64() * 2e6, running: rng.IntN(500), capTokens: rng.Float64() * 2e6, minK: 0.15 * rng.Float64(),
 		}
-		got, bound := withResidentKV(s, r)
+		got, bound := withResidentKV(s, r, residentRule{})
 		noHit := noHitShape(s)
 		require.GreaterOrEqual(t, got.KVreq, s.KVreq, "case %d (%s): under the discount", i, bound)
 		require.LessOrEqual(t, got.KVreq, noHit.KVreq*(1+1e-12), "case %d (%s): over no discount", i, bound)

@@ -1,0 +1,298 @@
+# Upstream components this repository pins, and where each pin lives.
+#
+# hack/upstream-versions.sh reads every location listed here, compares the
+# value with the latest stable GitHub release of `repo`, and reports
+# components that are behind. The monthly workflow
+# .github/workflows/upstream-versions.yaml runs it and keeps one issue open
+# while anything is behind (docs/developer-guide/upstream-dependencies.md).
+#
+# This file holds no versions. It says where the real pins are, so it cannot
+# drift from them. Every location of one component must carry the same
+# version; a component whose files disagree is reported, and fails --check.
+# When a location is added, moved or renamed, update it here: a location that
+# yields nothing is reported as "pin not found" and fails --check.
+#
+# Each component:
+#   name       label in the report
+#   repo       GitHub owner/repo whose releases are compared
+#   tagPrefix  release tag prefix, for repositories that release several
+#              things (kube-prometheus-stack-92.7.0); stripped before comparing
+#   note       why it is pinned here, or why its pins are split
+#   pins       locations. `file` is relative to the repository root, and the
+#              version is read with ONE of:
+#                regex  extended regex; group 1 of every matching line is a pin
+#                yq     yq expression; every non-null result is a pin
+#              A pin with `from: OWNER/REPO` and `at: COMPONENT` is read from
+#              `file` in that GitHub repository, at the version we pin for the
+#              component named by `at` (listed above it). It is for a version
+#              we get through another pin rather than set ourselves.
+#   hold       a pin kept behind on purpose:
+#                version  the pin being held; when the pin moves and this
+#                         does not, the report says "hold is stale"
+#                reason   why, in one line
+#                until    review date, YYYY-MM-DD. Until then the component
+#                         reads "held", not "behind", and does not keep the
+#                         monthly issue open; after it, "behind" again.
+#              Renew the date, or move the pin, when it comes up.
+#   tracked    true with no pins: we depend on it without pinning it, and the
+#              report shows the latest release for reference only
+#
+# Deliberately left out: Envoy (the llm-d-router-standalone chart picks its
+# image; we pin the chart, not Envoy), build and CI tooling pinned by checksum
+# in the workflows (yq, helm, golangci-lint, promtool), the reusable
+# llm-d/llm-d-infra workflows (pinned by commit, not by release), and
+# developer conveniences nothing installs for a user: cert-manager in
+# deploy/kubernetes/create-kind-cluster-with-nvidia.sh and the Grafana images
+# in deploy/grafana/benchmark-grafana.yaml. KEDA_TESTED_VERSION in
+# deploy/lib/scaler_runtime.sh is a minor (2.21), not a release; it moves with
+# the KEDA pin by hand (docs/developer-guide/upstream-dependencies.md).
+
+components:
+  # --- llm-d ----------------------------------------------------------------
+  - name: llm-d-router (EPP)
+    repo: llm-d/llm-d-router
+    note: >-
+      Chart and EPP image the e2e and the EPP installer deploy. The benchmark
+      scenarios pin the router separately, below.
+    pins:
+      - file: Makefile
+        regex: '^LLM_D_ROUTER_VERSION[[:space:]]*[?]=[[:space:]]*(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/install-epp.sh
+        regex: 'LLM_D_ROUTER_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+      - file: .github/workflows/ci-pr-checks.yaml
+        regex: 'LLM_D_ROUTER_VERSION:[[:space:]]*"?(v[0-9][0-9a-z.+-]*)'
+      - file: .github/workflows/ci-e2e-openshift.yaml
+        regex: 'LLM_D_ROUTER_VERSION:[[:space:]]*"?(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d-router (EPP, benchmarks)
+    repo: llm-d/llm-d-router
+    note: >-
+      routerEndpointPicker in the benchmark scenarios. Pinned apart from the
+      e2e router because the scenarios need noEndpointRequestTTL (v0.11.0+).
+    pins:
+      - file: hack/benchmark/scenarios/guides/workload-autoscaling.yaml
+        yq: '.scenario[].common.images.routerEndpointPicker.tag'
+      - file: hack/benchmark/scenarios/guides/pd-disaggregation.yaml
+        yq: '.scenario[].common.images.routerEndpointPicker.tag'
+      - file: hack/benchmark/scenarios/guides/two-model-shapes-pd.yaml
+        yq: '.shared.images.routerEndpointPicker.tag'
+
+  - name: llm-d routing sidecar (benchmarks)
+    repo: llm-d/llm-d-router
+    note: >-
+      Built from llm-d-router. Held with the llm-d-modelservice chart: the two
+      must agree on the sidecar flags, so move both pins together.
+    pins:
+      - file: hack/benchmark/scenarios/guides/pd-disaggregation.yaml
+        yq: '.scenario[].common.images.routingSidecar.tag'
+      - file: hack/benchmark/scenarios/guides/two-model-shapes-pd.yaml
+        yq: '.shared.images.routingSidecar.tag'
+
+  - name: llm-d (vendored router values)
+    repo: llm-d/llm-d
+    note: The base EPP Helm values are copied from the llm-d guides at this release.
+    pins:
+      - file: deploy/lib/epp-base.values.yaml
+        regex: 'Vendored from llm-d/llm-d@(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d (optimized-baseline plugins)
+    repo: llm-d/llm-d
+    note: >-
+      The optimized-baseline overrides take their layout from the current
+      guide but keep the plugin set of an older one.
+    pins:
+      - file: deploy/lib/epp-optimized-baseline.values.yaml
+        regex: 'Plugins from llm-d/llm-d@(v[0-9][0-9a-z.+-]*)'
+    hold:
+      version: v0.8.1
+      reason: >-
+        the newer guide replaces the plugin set (prefix-cache-affinity-filter +
+        token-load-scorer, calibrated per model and GPU), which changes routing;
+        see the file's header
+      until: "2027-02-01"
+
+  - name: llm-d-fast-model-actuation (FMA)
+    repo: llm-d-incubation/llm-d-fast-model-actuation
+    note: Warm-pool launcher image, and the controllers the benchmark installs.
+    pins:
+      - file: Makefile
+        regex: '^FMA_VERSION[[:space:]]*[?]=[[:space:]]*(v[0-9][0-9a-z.+-]*)'
+      - file: hack/benchmark/fma_fixups.sh
+        regex: 'FMA_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+      - file: deploy/warmpool.sh
+        regex: 'llm-d-fast-model-actuation/launcher:(v[0-9][0-9a-z.+-]*)'
+      - file: config/warmpool/warmpool-deployment.yaml
+        regex: 'llm-d-fast-model-actuation/launcher:(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d-inference-sim
+    repo: llm-d/llm-d-inference-sim
+    note: The emulated model server every e2e runs against.
+    pins:
+      - file: test/utils/resources/llmdsim.go
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: test/e2e/fixtures/model_service_conventions.go
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/kind-emulator/install.sh
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: hack/benchmark/two_model_pool.sh
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: config/samples/simulator/nodeSelector/decode/deployment.yaml
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: config/samples/simulator/nodeSelector/prefill/deployment.yaml
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+      - file: config/samples/simulator/nodeSelector/decode-lws/lws.yaml
+        regex: 'llm-d-inference-sim:(v[0-9][0-9a-z.+-]*)'
+
+  - name: llm-d-benchmark
+    repo: llm-d/llm-d-benchmark
+    note: Benchmark harness checkout and load-generator image.
+    pins:
+      - file: Makefile
+        regex: '^BENCHMARK_REPO_REF[[:space:]]*[?]=.*,(v[0-9][0-9a-z.+-]*)\)'
+      - file: hack/benchmark/staircase.sh
+        regex: 'llm-d-benchmark:(v[0-9][0-9a-z.+-]*)'
+      - file: hack/benchmark/scenarios/guides/workload-autoscaling.yaml
+        yq: '.scenario[].common.images.benchmark.tag'
+
+  - name: llm-d-modelservice chart
+    repo: llm-d-incubation/llm-d-modelservice
+    tagPrefix: llm-d-modelservice-
+    note: >-
+      Pinned by the harness patch to the chart that renders the routing
+      sidecar flags the sidecar pin above accepts. A newer chart has not been
+      run against that sidecar yet: try it in the P/D benchmark, then move both.
+    pins:
+      - file: hack/benchmark/patch_harness.sh
+        regex: '^MODELSERVICE_CHART = "(v[0-9][0-9a-z.+-]*)"'
+
+  # --- model servers --------------------------------------------------------
+  - name: vLLM (harness default)
+    repo: vllm-project/vllm
+    note: >-
+      The engine most of the repository runs: every benchmark scenario that
+      does not pin its own, and the prepull, engine-cache and start-time
+      measurements. It is the llm-d-benchmark default at the ref we pin, so
+      moving the llm-d-benchmark pin moves it. The warm pool's FMA launcher
+      image carries its own vLLM (the same release at FMA v0.6.4), which moves
+      with the FMA pin.
+    pins:
+      - from: llm-d/llm-d-benchmark
+        at: llm-d-benchmark
+        file: config/templates/values/defaults.yaml
+        yq: 'explode(.) | .images.vllm.tag'
+
+  - name: vLLM (P/D benchmark)
+    repo: vllm-project/vllm
+    note: Engine for the P/D benchmark scenario, pinned apart from the harness default.
+    pins:
+      - file: hack/benchmark/scenarios/guides/two-model-shapes-pd.yaml
+        yq: '.shared.images.vllm.tag'
+
+  - name: vLLM (two-variant benchmark)
+    repo: vllm-project/vllm
+    note: Engine for the two-variant benchmark scenario.
+    pins:
+      - file: hack/benchmark/scenarios/guides/two-variant-scaling-manager.yaml
+        yq: '.shared.images.vllmOpenai.tag'
+
+  - name: SGLang
+    repo: sgl-project/sglang
+    tracked: true
+    note: Supported model server; no image is pinned here.
+
+  - name: guidellm
+    repo: vllm-project/guidellm
+    tracked: true
+    note: Load generator inside the llm-d-benchmark image; pinned through it.
+
+  # --- Kubernetes add-ons ---------------------------------------------------
+  - name: gateway-api-inference-extension
+    repo: kubernetes-sigs/gateway-api-inference-extension
+    note: InferencePool CRDs the EPP installer applies.
+    pins:
+      - file: Makefile
+        regex: '^GAIE_VERSION[[:space:]]*[?]=[[:space:]]*(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/install-epp.sh
+        regex: 'GAIE_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+      - file: deploy/lib/infra_epp.sh
+        regex: 'GAIE_VERSION:-"?(v[0-9][0-9a-z.+-]*)'
+      - file: .github/workflows/ci-e2e-openshift.yaml
+        regex: 'GAIE_VERSION:[[:space:]]*"?(v[0-9][0-9a-z.+-]*)'
+
+  - name: gateway-api-inference-extension (Go module)
+    repo: kubernetes-sigs/gateway-api-inference-extension
+    note: >-
+      The Go API the controller is built against. Apart from the CRD pin above:
+      the two have moved separately. Dependabot skips sigs.k8s.io minor bumps.
+    pins:
+      - file: go.mod
+        regex: '^[[:space:]]*sigs\.k8s\.io/gateway-api-inference-extension (v[0-9][0-9a-z.+-]*)'
+
+  - name: Gateway API
+    repo: kubernetes-sigs/gateway-api
+    note: Gateway API CRDs the EPP installer applies when absent.
+    pins:
+      - file: deploy/lib/infra_epp.sh
+        regex: 'GATEWAY_API_VERSION:-"?(v[0-9][0-9a-z.+-]*)'
+
+  - name: KEDA
+    repo: kedacore/charts
+    note: >-
+      Helm chart the installer deploys, the Go module the controller builds
+      against, and the chart version the install-flow check mocks. Compared
+      with chart releases, so "behind" means a chart you can install exists.
+      The chart and the module release together today; a chart-only patch
+      with no module tag would read "pins disagree" until the module catches
+      up, and is fine to leave.
+    pins:
+      - file: deploy/install.sh
+        regex: '^KEDA_CHART_VERSION=\$\{KEDA_CHART_VERSION:-([0-9][0-9a-z.+-]*)\}'
+      - file: go.mod
+        regex: '^[[:space:]]*github\.com/kedacore/keda/v2 (v[0-9][0-9a-z.+-]*)'
+      - file: hack/check-install-flow.sh
+        regex: '^KEDA_CHART_VERSION="([0-9][0-9a-z.+-]*)"'
+
+  - name: LeaderWorkerSet
+    repo: kubernetes-sigs/lws
+    note: >-
+      Helm chart the installer deploys for multi-node models, and the Go
+      module the controller builds against. Dependabot skips sigs.k8s.io
+      minor bumps. The chart may lead the module: KEDA scales DisaggregatedSet
+      roles from chart v0.10.0, and the controller reads those objects
+      unstructured, so the module need not follow.
+    pins:
+      - file: deploy/install.sh
+        regex: '^LWS_CHART_VERSION=\$\{LWS_CHART_VERSION:-"?([0-9][0-9a-z.+-]*)'
+      - file: go.mod
+        regex: '^[[:space:]]*sigs\.k8s\.io/lws (v[0-9][0-9a-z.+-]*)'
+
+  - name: Kueue
+    repo: kubernetes-sigs/kueue
+    note: The e2e installs either the full release or its CRDs; both are one Kueue.
+    pins:
+      - file: deploy/ci-pr-checks/install-kueue.sh
+        regex: '^PINNED_VERSION=(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/ci-pr-checks/install-kueue-crds.sh
+        regex: 'KUEUE_VERSION:-(v[0-9][0-9a-z.+-]*)\}'
+
+  - name: Kubernetes (kind node image)
+    repo: kubernetes/kubernetes
+    note: >-
+      The Kubernetes version of the kind clusters the e2e and the emulator
+      create. A kindest/node image for a new release ships with a kind
+      release; check kind's release notes for it before moving.
+    pins:
+      - file: Makefile
+        regex: '^K8S_VERSION[[:space:]]*[?]=[[:space:]]*(v[0-9][0-9a-z.+-]*)'
+      - file: deploy/kind-emulator/setup.sh
+        regex: '^DEFAULT_K8S_VERSION="(v[0-9][0-9a-z.+-]*)"'
+      - file: deploy/kubernetes/create-kind-cluster-with-nvidia.sh
+        regex: 'kindest/node:(v[0-9][0-9a-z.+-]*)'
+
+  - name: kube-prometheus-stack
+    repo: prometheus-community/helm-charts
+    tagPrefix: kube-prometheus-stack-
+    note: Monitoring stack the installer deploys when asked to.
+    pins:
+      - file: deploy/install.sh
+        regex: '^KUBE_PROMETHEUS_STACK_CHART_VERSION=\$\{KUBE_PROMETHEUS_STACK_CHART_VERSION:-([0-9][0-9a-z.+-]*)\}'

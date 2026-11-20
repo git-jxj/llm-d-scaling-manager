@@ -45,6 +45,14 @@ func workedTTFT(args ...string) []string {
 		"--assume-vp", "30000"}, workedShape)
 }
 
+// q32TTFT is a question on the q32 staircase's warm-up (q32Recording) at
+// bucket B's fleet and shape: 2 prefill and 2 decode pods, 8000 tokens in and
+// 200 out. The command comes first in args, then its flags.
+func q32TTFT(args ...string) []string {
+	return slices.Concat(args[:1], []string{"--recording", q32Recording, "--prefill", "2", "--decode", "2",
+		"--assume-input-tokens", "8000", "--assume-output-tokens", "200"}, args[1:])
+}
+
 // pullTTFT is the throughput sweep's fleet (outputSpreadRun) priced with its
 // KV pull a stage: two prefill pods, a narrow prompt spread, V_P and a
 // assumed.
@@ -77,8 +85,10 @@ func TestTTFTGolden(t *testing.T) {
 		// engine's TTFT in its place. Decode's TPOT refuses, and so exit 3.
 		{"ttft-replicas-short", []string{"replicas-to-slo", "--recording", shortRun, "--assume-vp", "130000"}, 3},
 		{"ttft-replicas-short-json", []string{"replicas-to-slo", "--recording", shortRun, "--assume-vp", "130000", "-o", "json"}, 3},
-		// No TPOT asked, so nothing refuses.
-		{"ttft-rate-short", []string{"slo-to-rate", "--recording", shortRun, "--assume-vp", "130000", "--ttft", "1s@p90"}, 0},
+		// No TPOT asked, and the recording learned no decode line: the
+		// prefill rate prices, but the decode knee does not, so decode and
+		// the fleet are refused.
+		{"ttft-rate-short", []string{"slo-to-rate", "--recording", shortRun, "--assume-vp", "130000", "--ttft", "1s@p90"}, 3},
 		// Saturated: at the knee, a refusal and not a number.
 		{"ttft-replicas-saturated", []string{"replicas-to-slo", "--recording", shortRun, "--assume-vp", "130000",
 			"--rate", "1000"}, 3},
@@ -96,6 +106,18 @@ func TestTTFTGolden(t *testing.T) {
 		// committed recording prices a decode line with D fitted.
 		{"ttft-replicas-pull", pullTTFT(), 0},
 		{"ttft-replicas-pull-json", slices.Concat(pullTTFT(), []string{"-o", "json"}), 0},
+		// The q32 staircase's warm-up at bucket B's fleet and shape. Asked
+		// plainly, the spread is the default cv 2 and the arrivals assumed
+		// Poisson, which the run never priced: every prefill figure is
+		// outside. Asked as the run was priced (the spread and the arrivals
+		// it sent, and flow control stated off), they read validated. The JSON
+		// case leaves flow control to the recording, as the API does (its
+		// parity case): its TTFT reads outside, its mean TPOT validated.
+		{"ttft-q32-assumed-spread", q32TTFT("replicas-to-slo", "--ttft-percentile", "90"), 0},
+		{"ttft-q32-as-priced", q32TTFT("replicas-to-slo", "--ttft-percentile", "90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "--flow-control", "off"), 0},
+		{"ttft-q32-as-priced-json", q32TTFT("replicas-to-slo", "--ttft-percentile", "90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "-o", "json"), 0},
+		{"ttft-q32-rate-as-priced", q32TTFT("slo-to-rate", "--ttft", "7599.1ms@p90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "--flow-control", "off"), 0},
+		{"ttft-q32-rate-assumed-spread", q32TTFT("slo-to-rate", "--ttft", "7599.1ms@p90"), 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { checkGolden(t, c.name, c.code, c.args) })
@@ -103,14 +125,14 @@ func TestTTFTGolden(t *testing.T) {
 }
 
 // The text carries the page's words, and the JSON its flags and its note: on
-// both questions, UNVALIDATED always and V_P ASSUMED when --assume-vp
+// both questions, the envelope's verdict always and V_P ASSUMED when --assume-vp
 // supplied V_P.
 func TestTTFT_SaysUnvalidatedAndAssumedInTextAndJSON(t *testing.T) {
 	for _, q := range [][]string{workedTTFT("replicas-to-slo", "--ttft-percentile", "90"), workedTTFT("slo-to-rate", "--ttft", "1s@p90")} {
 		text, code := runCmd(t, q...)
 		require.Equal(t, 0, code, text)
-		assert.Contains(t, text, "UNVALIDATED; V_P ASSUMED")
-		assert.Contains(t, text, "TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read "+
+		assert.Regexp(t, `OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED`, text)
+		assert.Contains(t, text, "TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read "+
 			"1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it.")
 		assert.Contains(t, text, "UnvalidatedTTFT")
 		assert.Contains(t, text, "AssumedVP")
@@ -122,7 +144,7 @@ func TestTTFT_SaysUnvalidatedAndAssumedInTextAndJSON(t *testing.T) {
 		out, code := runCmd(t, slices.Concat(q, []string{"-o", "json"})...)
 		require.Equal(t, 0, code, out)
 		w := decodeOutput(t, out)
-		assert.Contains(t, w.Note, "UNVALIDATED")
+		assert.Contains(t, w.Note, "validated only where its figure says so")
 		assert.Contains(t, w.Note, "V_P ASSUMED")
 		assert.Contains(t, w.Note, "is not a bound")
 		i := slices.IndexFunc(w.Roles, func(r wireRole) bool { return r.Role == rolePrefill })
@@ -151,7 +173,7 @@ func TestTTFT_TheNoteFollowsTheSpread(t *testing.T) {
 		pf.fleet.Prefill.PromptCV, pf.fleet.Prefill.PromptCVAssumed = whatif.AssumedPromptCV, true
 		return pf
 	}
-	want := "TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the assumed prompt cv 2 it read " +
+	want := "TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read " +
 		"1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it."
 	assert.Equal(t, want, footerNote([]*pricedFleet{assumed(false)}))
 	assert.Equal(t, want+" V_P ASSUMED.", footerNote([]*pricedFleet{assumed(false), assumed(true)}))
@@ -159,7 +181,7 @@ func TestTTFT_TheNoteFollowsTheSpread(t *testing.T) {
 	assert.Equal(t, want, footerNote([]*pricedFleet{{refused: &whatif.Unanswerable{}}}))
 	// A measured spread has only the sent spread's row: no word of 4.1x.
 	got := footerNote([]*pricedFleet{{}})
-	assert.Equal(t, "TTFT is UNVALIDATED until a fresh frozen run passes, and is not a bound: at the sent spread (cv 0.06) "+
+	assert.Equal(t, "TTFT is not a bound, and is validated only where its figure says so: at the sent spread (cv 0.06) "+
 		"it read up to 33% under the router's percentile on the P2 recordings.", got)
 }
 
@@ -389,7 +411,7 @@ func TestTTFT_VPOrder(t *testing.T) {
 		assert.False(t, pf.fleet.Prefill.VPAssumed)
 		assert.Equal(t, whatif.DefaultVPMargin, pf.fleet.Prefill.VPMargin)
 		assert.Equal(t, "learned", pf.in.VPSource)
-		assert.Equal(t, "UNVALIDATED", pf.verdict())
+		assert.Regexp(t, `^OUTSIDE VALIDATED REGION \(.+\)$`, pf.verdict(pf.kneeValidation(pf.knee())))
 	})
 	t.Run("--assume-vp overrides, with the learned figure beside it", func(t *testing.T) {
 		st := learnedState()
@@ -404,7 +426,7 @@ func TestTTFT_VPOrder(t *testing.T) {
 		require.NotNil(t, pf.in.VPLearned)
 		assert.Equal(t, 100000.0, *pf.in.VPLearned)
 		assert.Contains(t, pf.inputsText, "V_P 130000 ASSUMED, learned 100000")
-		assert.Equal(t, "UNVALIDATED; V_P ASSUMED", pf.verdict())
+		assert.Regexp(t, `^OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED$`, pf.verdict(pf.kneeValidation(pf.knee())))
 	})
 	refusedVP := func() *learnreplay.State {
 		st := learnedState()
@@ -419,7 +441,7 @@ func TestTTFT_VPOrder(t *testing.T) {
 		assert.Zero(t, pf.fleet.Prefill.VPMargin)
 		assert.Nil(t, pf.in.VPLearned, "P1 learned none")
 		assert.Contains(t, pf.inputsText, "V_P 5000 ASSUMED;")
-		assert.Equal(t, "UNVALIDATED; V_P ASSUMED", pf.verdict())
+		assert.Regexp(t, `^OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED$`, pf.verdict(pf.kneeValidation(pf.knee())))
 	})
 	t.Run("refused with neither", func(t *testing.T) {
 		pf := fleetOf(t, refusedVP(), answerFlags{})
@@ -730,11 +752,11 @@ func TestTTFT_ThePrefillKneeBindsTheOperatingRate(t *testing.T) {
 	assert.NotContains(t, w.Roles[0].Results.Knee.Answer.Flags, string(whatif.UnvalidatedTTFT), "decode's own knee rests on no V_P")
 
 	text, _ := runCmd(t, low...)
-	assert.Contains(t, text, "0.85 x prefill knee (scaleUpThreshold); UNVALIDATED; V_P ASSUMED")
+	assert.Regexp(t, `0\.85 x prefill knee \(scaleUpThreshold\); prefill knee OUTSIDE VALIDATED REGION \(.+\); V_P ASSUMED`, text)
 	var tpotRows int
 	for line := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(line, "mean TPOT") || strings.HasPrefix(line, "TPOT p90") {
-			assert.Contains(t, line, "at the prefill knee's rate; UNVALIDATED; V_P ASSUMED")
+			assert.Contains(t, line, "at the prefill knee's rate; OUTSIDE VALIDATED REGION (")
 			tpotRows++
 		}
 	}
@@ -763,7 +785,7 @@ func TestTTFT_TheKneeRowSpellsTheKnee(t *testing.T) {
 	k, ok := pf.knee().(whatif.Answer)
 	require.True(t, ok)
 	// s(2000) / s(4000) = 1.2e-6 / 1.4e-6, so V_P 85714 at the prompt.
-	assert.Equal(t, "N_p 1 x V_P 85714 x (1 - 0.05 margin) / (f 1 x 4000 tokens); UNVALIDATED", pf.kneeBasis(k.Value))
+	assert.Regexp(t, `^N_p 1 x V_P 85714 x \(1 - 0\.05 margin\) / \(f 1 x 4000 tokens\); OUTSIDE VALIDATED REGION \(.+\)$`, pf.kneeBasis(k.Value))
 	assert.InDelta(t, 100000*(1.2/1.4)*0.95/4000, k.Value, 1e-9)
 }
 
@@ -887,7 +909,9 @@ func TestTTFT_NoVPOnTheTextPath(t *testing.T) {
 	text, code = runCmd(t, "slo-to-rate", "--recording", shortRun, "--ttft", "1s")
 	require.Equal(t, 3, code, text)
 	assert.Contains(t, text, "prefill  refused: NoPrefillCapacity")
-	assert.Contains(t, text, "fleet    refused: NoPrefillCapacity")
+	// The recording learned no decode line either, and no TPOT is asked:
+	// decode's knee refusal is the fleet's, named first, as at-replicas does.
+	assert.Contains(t, text, "fleet    refused: NoLine")
 }
 
 // The fleet row is the smallest of the role rates and the operating point of
@@ -980,7 +1004,7 @@ func TestTTFT_EachFlagAsks(t *testing.T) {
 		{"--prefill-variant", "variant-02"}, {"--assume-prompt-cv", "1"}, {"--arrival-cv2", "2"}} {
 		text, _ := runCmd(t, slices.Concat([]string{"replicas-to-slo", "--recording", shortRun}, flag)...)
 		assert.Contains(t, text, "TTFT p90", "%v", flag)
-		assert.Contains(t, text, "UNVALIDATED", "%v", flag)
+		assert.Contains(t, text, "TTFT is not a bound", "%v", flag)
 	}
 }
 
@@ -1222,9 +1246,16 @@ func TestTTFT_SeveralVariants(t *testing.T) {
 	for _, r := range w.Roles {
 		roles = append(roles, r.Role+":"+r.Variant)
 	}
-	assert.Equal(t, []string{"prefill:m-pre", "fleet:m-dc2", "prefill:m-pre", "fleet:m-dec"}, roles)
-	assert.Contains(t, w.Roles[0].TTFT.Assumed, "the whole rate on prefill variant m-pre (--prefill-variant; the model has 2)")
-	assert.Equal(t, "m-dc2", w.Roles[0].TTFT.DecodeVariant)
+	// m-dc2 serves no decode traffic, so it learned no line: with no TPOT
+	// asked its decode knee is refused, and that is its decode row and its
+	// fleet's.
+	assert.Equal(t, []string{"decode:m-dc2", "prefill:m-pre", "fleet:m-dc2", "prefill:m-pre", "fleet:m-dec"}, roles)
+	require.NotNil(t, w.Roles[0].Results.Rate.Refused, out)
+	require.NotNil(t, w.Roles[2].Results.Rate.Refused, out)
+	assert.Equal(t, w.Roles[0].Results.Rate.Refused.Reason, w.Roles[2].Results.Rate.Refused.Reason)
+	assert.NotNil(t, w.Roles[4].Results.Rate.Answer, "m-dec's line prices: its fleet is answered")
+	assert.Contains(t, w.Roles[1].TTFT.Assumed, "the whole rate on prefill variant m-pre (--prefill-variant; the model has 2)")
+	assert.Equal(t, "m-dc2", w.Roles[1].TTFT.DecodeVariant)
 
 	// Question 2 labels by decode variant and repeats the prefill role.
 	out, _ = runCmd(t, slices.Concat([]string{"replicas-to-slo"}, window, []string{"--assume-vp", "100000", "--prefill-variant", "m-prb", "-o", "json"})...)
