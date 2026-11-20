@@ -626,7 +626,15 @@ sources.recordings[] string
 sources.schemaVersion number
 sources.upload object
 sources.upload.maxBytes number
+sources.uploads array
+sources.uploads[] object
+sources.uploads[].bytes number
+sources.uploads[].fileName string
+sources.uploads[].name string
+sources.uploads[].uploadedAt string
 upload object
 upload.bytes number
+upload.fileName string
 upload.name string
 upload.schemaVersion number
+upload.uploadedAt string

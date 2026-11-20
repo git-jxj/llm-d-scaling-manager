@@ -238,13 +238,14 @@ async function start() {
   }
   const s = state.sources;
   el("ns").innerHTML = s.namespaces.map(n => `<option${n === s.namespace ? " selected" : ""}>${esc(n)}</option>`).join("");
-  el("rec").innerHTML = s.recordings.map(n => `<option>${esc(n)}</option>`).join("");
+  s.uploads = s.uploads || [];
+  el("rec").innerHTML = s.recordings.map(n => `<option value="${esc(n)}">${esc(recordingLabel(n, s.uploads))}</option>`).join("");
   el("rectrunc").hidden = !s.recordingsTruncated;
   el("kprom").disabled = !s.prometheus;
   el("krec").disabled = s.recordings.length === 0;
   el("upfield").hidden = !s.upload;
   if (s.upload) {
-    el("uphint").textContent = `.jsonl or .jsonl.gz, at most ${mib(s.upload.maxBytes)}. The server keeps the last 4 until it restarts; everyone who opens this page sees them.`;
+    el("uphint").textContent = `.jsonl or .jsonl.gz, at most ${mib(s.upload.maxBytes)}. The server keeps the last 4 until it restarts; everyone who opens this page sees them, with their file names.`;
   }
   // The page opens on a Prometheus window, the last hour ending now; a
   // server with recordings alone opens on its first.
@@ -387,8 +388,9 @@ function mib(n) {
 
 // uploadRecording sends the file picked to the server (POST v1/recordings),
 // showing how much of it has gone, then picks it as the recording and loads
-// it. The server names it; the file's own name is never sent. XMLHttpRequest,
-// not fetch: only it reports an upload's progress.
+// it. The server names it by its bytes; the file's own name is sent as a
+// label (?filename=), listed beside it and never used on disk.
+// XMLHttpRequest, not fetch: only it reports an upload's progress.
 function uploadRecording() {
   const file = el("upfile").files[0];
   if (!file) {
@@ -405,7 +407,7 @@ function uploadRecording() {
   // A server taking another upload answers 503: tried again as api() does.
   const send = attempt => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "v1/recordings");
+    xhr.open("POST", "v1/recordings?filename=" + encodeURIComponent(file.name));
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = e => {
       if (e.lengthComputable) setStatus(`Uploading ${file.name}: ${Math.floor(100 * e.loaded / e.total)}%`);
@@ -436,16 +438,20 @@ function uploadRecording() {
       return;
     }
     const s = state.sources;
-    if (!s.recordings.includes(doc.name)) {
-      s.recordings.unshift(doc.name);
-      el("rec").insertAdjacentHTML("afterbegin", `<option>${esc(doc.name)}</option>`);
+    s.uploads = [{name: doc.name, fileName: doc.fileName, bytes: doc.bytes, uploadedAt: doc.uploadedAt},
+      ...s.uploads.filter(u => u.name !== doc.name)];
+    s.recordings = [doc.name, ...s.recordings.filter(n => n !== doc.name)];
+    const rec = el("rec");
+    for (const o of Array.from(rec.options)) {
+      if (o.value === doc.name) o.remove();
     }
+    rec.insertAdjacentHTML("afterbegin", `<option value="${esc(doc.name)}">${esc(recordingLabel(doc.name, s.uploads))}</option>`);
     el("rec").value = doc.name;
     el("cycle").value = 0;
     el("krec").disabled = false;
     el("krec").checked = true;
     showKind();
-    setStatus(`Uploaded ${file.name} as ${doc.name}.`);
+    setStatus(`Uploaded ${file.name} as ${recordingLabel(doc.name, s.uploads)}.`);
     loadInputs();
   };
   send(0);
@@ -456,6 +462,7 @@ function uploadRecording() {
 function forgetUpload(name) {
   const s = state.sources;
   s.recordings = s.recordings.filter(n => n !== name);
+  s.uploads = (s.uploads || []).filter(u => u.name !== name);
   const rec = el("rec");
   for (const o of Array.from(rec.options)) {
     if (o.value === name) o.remove();

@@ -79,7 +79,7 @@ targets, here about 11 r/s, so 6 r/s holds.
 | `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
 | `POST /v1/report` | One fleet judged at the load the source saw, for each request shape and load asked: utilization, knees, the SLO against load, a shape-by-load summary and a verdict per shape. The same report as `capacity-planner at-replicas -o json`. |
 | `POST /v1/dayplan` | The prefill and decode replicas each bucket of the source's window needed, against the replicas it had: [the day plan](#the-day-plan). |
-| `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. With `--allow-upload`, also the uploads (first, newest first) and `upload.maxBytes`. |
+| `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. With `--allow-upload`, also the uploads (first, newest first), `uploads[]` with each one's `fileName`, `bytes` and `uploadedAt`, and `upload.maxBytes`. |
 | `POST /v1/recordings` | Uploads a recording, with `--allow-upload` only: [Upload a recording](#upload-a-recording). |
 | `GET /` | The page, with its files under `/page/`. |
 
@@ -129,11 +129,12 @@ Start the server with `--allow-upload`. On the page, pick the file under
 
 ```bash
 curl -sS -X POST --data-binary @qwen3-32b.jsonl.gz \
-  -H 'Content-Type: application/octet-stream' http://localhost:8080/v1/recordings
+  -H 'Content-Type: application/octet-stream' 'http://localhost:8080/v1/recordings?filename=qwen3-32b.jsonl.gz'
 ```
 
 ```json
-{"schemaVersion": 1, "name": "upload:3f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f70.jsonl.gz", "bytes": 95114025}
+{"schemaVersion": 1, "name": "upload:3f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f70.jsonl.gz", "bytes": 95114025,
+ "fileName": "qwen3-32b.jsonl.gz", "uploadedAt": "2026-11-20T14:05:00Z"}
 ```
 
 Load it as any recording, with `"source": {"kind": "recording", "name": "upload:3f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f703f9a2b1c4d5e6f70.jsonl.gz"}`.
@@ -147,8 +148,16 @@ Load it as any recording, with `"source": {"kind": "recording", "name": "upload:
   recordings](in-cluster.md#real-names-in-recordings)).
 - **Where it goes.** A directory of the server's own, mode 0700, under
   `TMPDIR` (else `/tmp`). The name is `upload:` and the SHA-256 of the
-  file's bytes; the file name you send is not read. The last 4 uploads are
-  kept; an older one is deleted, once no load is reading it. All are deleted
+  file's bytes. The optional `filename` is a label only: the page and
+  `GET /v1/sources` show it beside the upload, its size and time, so
+  people can tell uploads apart. Of its last path element, letters,
+  digits, up to two accents after a letter, and ` ._-+()[],=@` are kept,
+  anything else becomes `_`; trimmed, at most 80 characters. It names no
+  file, and everyone who can open the planner sees it. It is not tied to
+  who uploaded: the same bytes sent again, by anyone, under another name
+  take that name; sent with none, they keep theirs. Either way they count
+  as uploaded now, and newest. The last 4 uploads are kept; an
+  older one is deleted, once no load is reading it. All are deleted
   when the server stops. A server that starts deletes what a stopped one left
   in the same `TMPDIR`, as after a container restart.
 - **Send** `.jsonl` or `.jsonl.gz` bytes as `application/octet-stream` or

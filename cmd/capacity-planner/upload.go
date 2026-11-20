@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
@@ -63,6 +64,11 @@ type uploadStore struct {
 	// first.
 	paths map[string]string
 	order []string
+	// listed is what GET /v1/sources says of each upload, by its name: the
+	// file name it was last sent under, held here alone, never on disk.
+	listed map[string]whatifapi.UploadedRecording
+	// now is the clock an upload's time is read from.
+	now func() time.Time
 	// loading counts the loads reading each file, by path; a file pushed
 	// out by newer uploads while it loads is removed when its last load
 	// ends (evicted).
@@ -87,7 +93,8 @@ func newUploadStore(maxBytes int64, warn io.Writer) (*uploadStore, error) {
 			// directory between its making and its lock.
 			if _, err = os.Stat(dir); err == nil {
 				return &uploadStore{dir: dir, lock: lock, maxBytes: maxBytes, warn: warn,
-					paths: map[string]string{}, loading: map[string]int{}, evicted: map[string]bool{}}, nil
+					paths: map[string]string{}, listed: map[string]whatifapi.UploadedRecording{}, now: time.Now,
+					loading: map[string]int{}, evicted: map[string]bool{}}, nil
 			}
 			_ = lock.Close()
 		}
@@ -184,20 +191,25 @@ func (u *uploadStore) remove(path string) {
 	}
 }
 
-// names is the uploads kept, newest first.
-func (u *uploadStore) names() []string {
+// list is the uploads kept, newest first, each with the file name it was
+// last sent under, its size and when.
+func (u *uploadStore) list() []whatifapi.UploadedRecording {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	out := slices.Clone(u.order)
-	slices.Reverse(out)
+	out := make([]whatifapi.UploadedRecording, 0, len(u.order))
+	for _, name := range slices.Backward(u.order) {
+		out = append(out, u.listed[name])
+	}
 	return out
 }
 
 // Upload writes body to a new file in the store, then reads it as a
 // recording (check, every line, with the bounds above). A file that is not a
 // recording, or is past a bound, is removed and refused; one whose bytes were
-// kept before is removed and answered with the name they have.
-func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.UploadResponse, bool, error) {
+// kept before is removed and answered with the name they have. fileName is
+// the label it is listed with, kept in memory alone; an upload of bytes kept
+// before relabels them, unless it gives no name.
+func (u *uploadStore) Upload(ctx context.Context, body io.Reader, fileName string) (whatifapi.UploadResponse, bool, error) {
 	var none whatifapi.UploadResponse
 	f, err := os.CreateTemp(u.dir, "upload-*")
 	if err != nil {
@@ -233,20 +245,23 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 		ext = ".jsonl.gz"
 	}
 	name := uploadPrefix + hex.EncodeToString(h.Sum(nil)) + ext
-	out := whatifapi.UploadResponse{Name: name, Bytes: int(n)}
-	if u.touch(name) {
-		return out, false, nil
+	// Cleaned again: the store takes no caller's word for it.
+	listed := whatifapi.UploadedRecording{Name: name, FileName: whatifapi.UploadFileName(fileName), Bytes: int(n)}
+	if l, ok := u.touch(listed); ok {
+		return uploadResponse(l), false, nil
 	}
 	if err := u.check(ctx, name, path); err != nil {
 		return none, false, err
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.touchLocked(name) {
-		return out, false, nil
+	if l, ok := u.touchLocked(listed); ok {
+		return uploadResponse(l), false, nil
 	}
 	kept = true
 	u.paths[name] = path
+	listed.UploadedAt = u.now().UTC().Format(time.RFC3339)
+	u.listed[name] = listed
 	u.order = append(u.order, name)
 	for len(u.order) > maxKeptUploads {
 		old := u.order[0]
@@ -258,25 +273,38 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 			u.remove(p)
 		}
 		delete(u.paths, old)
+		delete(u.listed, old)
 	}
-	return out, true, nil
+	return uploadResponse(listed), true, nil
 }
 
-// touch moves the upload named name to the newest place, as if it were
-// uploaded again, and reports whether it is kept.
-func (u *uploadStore) touch(name string) bool {
+// uploadResponse is POST /v1/recordings' answer for the upload l.
+func uploadResponse(l whatifapi.UploadedRecording) whatifapi.UploadResponse {
+	return whatifapi.UploadResponse{Name: l.Name, Bytes: l.Bytes, FileName: l.FileName, UploadedAt: l.UploadedAt}
+}
+
+// touch moves the upload l names to the newest place, as uploaded again
+// now, under l's file name unless l has none, and reports whether it is
+// kept, with what is listed of it.
+func (u *uploadStore) touch(l whatifapi.UploadedRecording) (whatifapi.UploadedRecording, bool) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.touchLocked(name)
+	return u.touchLocked(l)
 }
 
 // touchLocked is touch with u.mu held.
-func (u *uploadStore) touchLocked(name string) bool {
-	if _, ok := u.paths[name]; !ok {
-		return false
+func (u *uploadStore) touchLocked(l whatifapi.UploadedRecording) (whatifapi.UploadedRecording, bool) {
+	if _, ok := u.paths[l.Name]; !ok {
+		return l, false
 	}
-	u.order = append(slices.DeleteFunc(u.order, func(n string) bool { return n == name }), name)
-	return true
+	u.order = append(slices.DeleteFunc(u.order, func(n string) bool { return n == l.Name }), l.Name)
+	kept := u.listed[l.Name]
+	if l.FileName != "" {
+		kept.FileName = l.FileName
+	}
+	kept.UploadedAt = u.now().UTC().Format(time.RFC3339)
+	u.listed[l.Name] = kept
+	return kept, true
 }
 
 // storeError is errNoUploadStore, the disk error err said on the server's

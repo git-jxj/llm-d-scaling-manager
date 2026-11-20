@@ -610,6 +610,28 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
 // rateNote: where a plan with no rate started, in words, for each of the
 // API's rateSource values; with one knee refused it is not called the
 // operating point, and asks for a rate.
+// recordingLabel: a file in --recordings is shown by its name; an upload by
+// the file name it was sent under, its size and time, then its hash's start.
+{
+  const {recordingLabel} = ctx;
+  const h = "upload:8c5f4000f4e3ba32a4f009eee168c4183045004ee9e1b9cad279681b93b11367.jsonl.gz";
+  const ups = [{name: h, fileName: "Qwen3-32B run.jsonl.gz", bytes: 3774873, uploadedAt: "2026-11-17T15:25:09Z"}];
+  let l = recordingLabel("ols-sweep.jsonl.gz", ups);
+  check("a recording file is shown by its name", l === "ols-sweep.jsonl.gz", l);
+  l = recordingLabel(h, ups);
+  check("an upload is shown by its file name, size, time and hash", l === "\u2068Qwen3-32B run.jsonl.gz\u2069 (3.6 MiB, 2026-11-17 15:25Z) · upload 8c5f4000f4e3", l);
+  l = recordingLabel(h, [{name: h, bytes: 116332, uploadedAt: "2026-11-20T12:05:00Z"}]);
+  check("an upload sent with no file name is unnamed, in KiB", l === "\u2068unnamed\u2069 (114 KiB, 2026-11-20 12:05Z) · upload 8c5f4000f4e3", l);
+  l = recordingLabel(h, [{name: h, fileName: "a\u0000b", bytes: 10}]);
+  check("control characters in a file name are blanked, a missing time left out", l === "\u2068a b\u2069 (1 KiB) · upload 8c5f4000f4e3", l);
+  l = recordingLabel(h, [{name: h, fileName: "x".repeat(300), bytes: 1, uploadedAt: "now"}]);
+  check("a long file name is cut to a typed name's length", l.startsWith("\u2068" + "x".repeat(MAX_NAME) + "\u2069 (1 KiB)"), l);
+  l = recordingLabel(h, [{name: h, fileName: "f", bytes: 1048500}]);
+  check("just under 1 MiB reads as MiB, not 1024 KiB", l.includes("(1.0 MiB)"), l);
+  l = recordingLabel(h, null);
+  check("an upload the server does not list is shown by its name", l === h, l);
+  check("the label is text: esc escapes it", esc(recordingLabel(h, [{name: h, fileName: "<b>", bytes: 1}])).startsWith("\u2068&lt;b&gt;"));
+}
 {
   const {rateNote} = ctx;
   check("a typed rate has no note", rateNote("request") === "");
@@ -634,7 +656,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 310;
+const EXPECTED_CASES = 318;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

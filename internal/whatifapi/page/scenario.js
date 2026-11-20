@@ -246,6 +246,25 @@ function scenarioTitle(clauses) {
   return cleanName(parts.join(", "));
 }
 
+// recordingLabel is how the source picker shows the recording named name: a
+// file in --recordings by its name; an upload, one of uploads (GET
+// /v1/sources), by the file name it was sent under, its size and when it was
+// sent (UTC), then the start of its hash, which names it. The file name is
+// the client's: cleaned here as a typed name is, isolated so that a
+// right-to-left name cannot reorder what follows it, and shown as text
+// alone.
+function recordingLabel(name, uploads) {
+  const u = Array.isArray(uploads) ? uploads.find(x => x && x.name === name) : undefined;
+  if (!u) return name;
+  const bytes = Number(u.bytes) || 0;
+  const kib = Math.max(1, Math.round(bytes / 1024));
+  const size = kib < 1024 ? `${kib} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
+  const when = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(String(u.uploadedAt || ""));
+  const hash = name.startsWith("upload:") ? name.slice(7, 19) : name;
+  const file = cleanName(u.fileName || "") || "unnamed";
+  return `\u2068${file}\u2069 (${size}${when ? `, ${when[1]} ${when[2]}Z` : ""}) · upload ${hash}`;
+}
+
 // sourceProblem is why a link's source cannot be opened against a server
 // that lists sources (GET /v1/sources), or "" where it can. No source is
 // substituted for one the server does not read.

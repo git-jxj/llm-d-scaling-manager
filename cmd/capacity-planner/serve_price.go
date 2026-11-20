@@ -214,7 +214,10 @@ func (s *servedSources) Sources(context.Context) (whatifapi.SourcesResponse, err
 		}
 	}
 	if s.uploads != nil {
-		out.Recordings = append(out.Recordings, s.uploads.names()...)
+		out.Uploads = s.uploads.list()
+		for _, l := range out.Uploads {
+			out.Recordings = append(out.Recordings, l.Name)
+		}
 	}
 	if s.recordings == "" {
 		return out, nil

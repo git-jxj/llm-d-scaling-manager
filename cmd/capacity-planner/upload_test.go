@@ -10,10 +10,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -302,7 +304,7 @@ func newUploads(t *testing.T, warn io.Writer) *uploadStore {
 func TestServeUploadKeptWhileItLoads(t *testing.T) {
 	up := newUploads(t, io.Discard)
 	lines := olsSweepLines(t)
-	first, created, err := up.Upload(t.Context(), bytes.NewReader(lines))
+	first, created, err := up.Upload(t.Context(), bytes.NewReader(lines), "")
 	require.NoError(t, err)
 	require.True(t, created)
 	firstPath, ok := up.path(first.Name)
@@ -313,7 +315,7 @@ func TestServeUploadKeptWhileItLoads(t *testing.T) {
 			return
 		}
 		for i := range maxKeptUploads {
-			_, created, err := up.Upload(t.Context(), bytes.NewReader(append(bytes.Clone(lines), bytes.Repeat([]byte("\n"), i+1)...)))
+			_, created, err := up.Upload(t.Context(), bytes.NewReader(append(bytes.Clone(lines), bytes.Repeat([]byte("\n"), i+1)...)), "")
 			require.NoError(t, err)
 			require.True(t, created)
 		}
@@ -324,7 +326,7 @@ func TestServeUploadKeptWhileItLoads(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first.Name, res.Inputs.Source.Name)
 	assert.NoFileExists(t, firstPath, "removed once its load ended")
-	assert.Len(t, up.names(), maxKeptUploads)
+	assert.Len(t, up.list(), maxKeptUploads)
 	entries, err := os.ReadDir(up.dir)
 	require.NoError(t, err)
 	assert.Len(t, entries, maxKeptUploads)
@@ -352,7 +354,7 @@ func TestServeUploadCheckStopsWhenTheClientLeaves(t *testing.T) {
 	up := newUploads(t, io.Discard)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, _, err := up.Upload(ctx, strings.NewReader("hello, planner\n"))
+	_, _, err := up.Upload(ctx, strings.NewReader("hello, planner\n"), "")
 	require.ErrorIs(t, err, context.Canceled)
 	assert.False(t, whatifapi.IsInputError(err), "%v", err)
 	entries, err := os.ReadDir(up.dir)
@@ -382,7 +384,7 @@ func (r *removedAtEOF) Read(p []byte) (int, error) {
 func TestServeUploadCheckErrorNamesNoPath(t *testing.T) {
 	var log bytes.Buffer
 	up := newUploads(t, &log)
-	_, _, err := up.Upload(t.Context(), &removedAtEOF{data: olsSweepLines(t), dir: up.dir})
+	_, _, err := up.Upload(t.Context(), &removedAtEOF{data: olsSweepLines(t), dir: up.dir}, "")
 	require.Error(t, err)
 	t.Logf("err: %v", err)
 	assert.NotContains(t, err.Error(), up.dir)
@@ -398,18 +400,73 @@ func TestServeUploadAgainIsNewest(t *testing.T) {
 	for i := range maxKeptUploads + 1 {
 		if i == maxKeptUploads {
 			// The oldest again, before one more arrives.
-			again, created, err := up.Upload(t.Context(), bytes.NewReader(lines))
+			again, created, err := up.Upload(t.Context(), bytes.NewReader(lines), "")
 			require.NoError(t, err)
 			require.False(t, created)
 			require.Equal(t, names[0], again.Name)
 		}
-		out, created, err := up.Upload(t.Context(), bytes.NewReader(append(bytes.Clone(lines), bytes.Repeat([]byte("\n"), i)...)))
+		out, created, err := up.Upload(t.Context(), bytes.NewReader(append(bytes.Clone(lines), bytes.Repeat([]byte("\n"), i)...)), "")
 		require.NoError(t, err)
 		require.True(t, created)
 		names = append(names, out.Name)
 	}
-	kept := up.names()
+	kept := make([]string, 0, maxKeptUploads)
+	for _, l := range up.list() {
+		require.NotEmpty(t, l.Name, "every upload kept is listed, after one is pushed out")
+		kept = append(kept, l.Name)
+	}
+	require.Len(t, kept, maxKeptUploads)
 	assert.Contains(t, kept, names[0], "uploaded again, it was kept")
 	assert.NotContains(t, kept, names[1], "the oldest not uploaded again went")
 	assert.Equal(t, []string{names[maxKeptUploads], names[0]}, kept[:2], "newest first")
+}
+
+// An upload is listed with the file name it was sent under, its size and
+// when, beside its name, which stays the hash: the store keeps the file name
+// in memory and names no file by it. The same bytes sent again under another
+// name are relabelled, and under none keep their label. Before, uploads were
+// listed by hash alone.
+func TestServeUploadListsItsFileName(t *testing.T) {
+	h, f := uploadServer(t, serveFlags{allowUpload: true})
+	at := time.Date(2026, 11, 20, 14, 5, 0, 0, time.FixedZone("IST", 2*3600))
+	f.uploads.now = func() time.Time { return at }
+	post := func(target string, body []byte) whatifapi.UploadResponse {
+		t.Helper()
+		code, out := send(t, h, http.MethodPost, target, "application/gzip", body)
+		require.Contains(t, []int{http.StatusOK, http.StatusCreated}, code, "%s", out)
+		var up whatifapi.UploadResponse
+		require.NoError(t, json.Unmarshal(out, &up))
+		return up
+	}
+	sweep := olsSweepBytes(t)
+	first := post(whatifapi.UploadPath+"?filename="+url.QueryEscape(`C:\runs\..\ols <sweep>.jsonl.gz`), sweep)
+	assert.True(t, strings.HasPrefix(first.Name, uploadPrefix), first.Name)
+	assert.Equal(t, "ols _sweep_.jsonl.gz", first.FileName)
+	assert.Equal(t, "2026-11-20T12:05:00Z", first.UploadedAt)
+	assert.Equal(t, len(sweep), first.Bytes)
+	files := uploadFiles(t, f)
+	require.NotEmpty(t, files)
+	for _, file := range files {
+		assert.NotContains(t, file, "sweep", "no file is named by the client's name")
+	}
+
+	second := post(whatifapi.UploadPath, olsSweepLines(t))
+	s := sourcesOf(t, h)
+	require.GreaterOrEqual(t, len(s.Recordings), 2)
+	assert.Equal(t, []string{second.Name, first.Name}, s.Recordings[:2])
+	assert.Equal(t, []whatifapi.UploadedRecording{
+		{Name: second.Name, Bytes: second.Bytes, UploadedAt: "2026-11-20T12:05:00Z"},
+		{Name: first.Name, FileName: "ols _sweep_.jsonl.gz", Bytes: len(sweep), UploadedAt: "2026-11-20T12:05:00Z"},
+	}, s.Uploads)
+
+	at = at.Add(time.Hour)
+	again := post(whatifapi.UploadPath+"?filename=renamed.jsonl.gz", sweep)
+	assert.Equal(t, first.Name, again.Name)
+	assert.Equal(t, "renamed.jsonl.gz", again.FileName)
+	assert.Equal(t, "2026-11-20T13:05:00Z", again.UploadedAt)
+	post(whatifapi.UploadPath, sweep)
+	s = sourcesOf(t, h)
+	require.Len(t, s.Uploads, 2)
+	assert.Equal(t, whatifapi.UploadedRecording{Name: first.Name, FileName: "renamed.jsonl.gz", Bytes: len(sweep), UploadedAt: "2026-11-20T13:05:00Z"},
+		s.Uploads[0], "sent again, newest first, its label kept when the upload gives none")
 }
