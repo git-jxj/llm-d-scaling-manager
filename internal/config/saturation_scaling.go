@@ -1002,6 +1002,7 @@ func (c *ScalingPolicy) ResetUnusableFields() []IgnoredField {
 		})
 		c.ShapeChangeHoldSeconds = 0
 	}
+	ignored = append(ignored, c.resetInvalidAnalyzerDefinitions()...)
 	return ignored
 }
 

@@ -445,8 +445,9 @@ it, the PRC of each variant another analyzer decided, and the holds:
     blocks scale-down of the roles it reports variants for, or of every role
     when it reports none. An entry from `listedInGrace` has no `Result`, so
     it always holds every role: a model-level analyzer whose query fails
-    holds a P/D model it could never size
-    ([#343](https://github.com/ev-shindin/llm-scaling-manager/issues/343)).
+    holds a P/D model it could never size, and an external analyzer with
+    demand rules (`external.DemandRule`) whose query fails holds a role it
+    has no rule for.
   - *Saturation's hold kept.* A role saturation holds (`HeldRoleDemand`)
     whose held figure the pricing dropped -- another frame prices it, or
     another analyzer's demand replaced it -- is held against scale-down:

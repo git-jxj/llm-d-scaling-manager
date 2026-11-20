@@ -25,6 +25,8 @@ type fakeSource struct {
 	results          map[string]*source.MetricResult
 	err              error
 	resultOnlyErrors bool
+	// refreshed is every query Refresh was asked for, in order.
+	refreshed []string
 }
 
 func newFakeSource() *fakeSource {
@@ -34,6 +36,7 @@ func newFakeSource() *fakeSource {
 func (f *fakeSource) QueryList() *source.QueryList { return f.ql }
 
 func (f *fakeSource) Refresh(_ context.Context, spec source.RefreshSpec) (map[string]*source.MetricResult, error) {
+	f.refreshed = append(f.refreshed, spec.Queries...)
 	if f.err != nil {
 		return nil, f.err
 	}

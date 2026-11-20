@@ -35,8 +35,12 @@
 .kueue.controllerNamespace
 .kueue.releaseToNonReclaimingLenders
 .kueue.resources
+.match.role
 .namespaceQuotas
+.queries
+.query
 .quotas
+.threshold
 /
 /bin/bash
 /bin/sh
@@ -79,7 +83,6 @@
 99
 :8081
 :coverage
-:demand
 A
 A-Za-z0-9_.-
 A100
@@ -152,6 +155,7 @@ Deployments
 DisaggregatedSet
 Discarding
 E1-const
+E2-query
 ENABLE_SCALE_TO_ZERO
 EPP
 EffectiveMaxBatchedTokens
@@ -161,6 +165,7 @@ ErrImagePull
 Error
 Events
 Every
+External
 ExtrapolatedFill
 FMA
 Failed
@@ -314,6 +319,7 @@ Optimization
 Optimizer
 OutputSpreadUnread
 OverheadMeasured
+P
 P/D
 P0-store
 P1
@@ -597,6 +603,7 @@ analysis
 analyzer
 analyzer-in-grace
 analyzer-result
+analyzerDefinitions
 analyzerTuning
 analyzers
 and
@@ -642,6 +649,7 @@ autoscaling.keda.sh/paused
 autoscalings
 available
 averages
+avg
 avgITLObs
 avgInputTokens
 avgOutputTokens
@@ -970,6 +978,7 @@ default
 defaultPolicy
 defaults
 defect
+defined
 definition
 delay
 deleted
@@ -1062,6 +1071,7 @@ duplicate
 duration
 during
 dwell
+e
 e.g
 each
 earlier
@@ -1081,6 +1091,7 @@ emit
 emitted
 emitting
 empty
+emptyIsMissing
 enable
 enable_chunked_prefill
 enable_dp_attention
@@ -1309,6 +1320,7 @@ gpusInUseByScalingManager
 gpusPerReplica
 grace
 grants
+greater
 greedy-by-score
 grid
 group
@@ -1735,6 +1747,7 @@ loaded
 localQueueDemand
 locator.New
 logVerbosity
+logged
 long
 longer
 longestQueuedRun
@@ -1805,6 +1818,7 @@ measured
 measuredRate
 measuredSeconds
 measures
+median
 medianErrPct
 medianSeconds
 medium
@@ -1830,6 +1844,7 @@ mi355
 mid-rollout
 mid-run
 milliseconds
+min
 min-max
 minKSpread
 minReplicas
@@ -2161,6 +2176,7 @@ pendingRestores
 pendingSince
 pendingVariants
 per
+per-Pod
 per-model
 per-replica
 per-request
@@ -2406,6 +2422,7 @@ recordings
 recovered
 redirected
 redistribution
+reduce
 refilled
 refresh
 refreshInterval
@@ -2549,6 +2566,8 @@ row
 rows
 rows-instant-kv
 rows-ready-since
+rule
+rules
 run
 running
 running-request
@@ -2670,6 +2689,7 @@ served
 served-siblings
 servedBound
 server
+serves
 service
 serviceable
 serving
@@ -2927,6 +2947,7 @@ taken-by-another-borrower
 takes
 target
 targetFill
+targetReduce
 targetReplicas
 target_model_name
 targets
@@ -3028,6 +3049,7 @@ too
 too-few-readings
 took
 top
+top-level
 topology
 totalAvail
 totalDecisions
@@ -3090,6 +3112,7 @@ unexported
 unit
 unknown
 unknownPeaks
+unless
 unlikely
 unlimited
 unmark
