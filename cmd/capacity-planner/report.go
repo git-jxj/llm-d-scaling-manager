@@ -186,6 +186,9 @@ func (r *reporter) shapeReport(ctx context.Context, np, nd int) (whatifapi.Repor
 	if w := r.pv.itlBWords(); w != "" {
 		r.addAssumed(w)
 	}
+	if w := r.pv.itlBNotUsed(); w != "" {
+		r.addAssumed(w)
+	}
 	rs := whatifapi.ReportShape{Label: r.sh.Label, InputTokens: r.pv.shape.AvgInputTokens, OutputTokens: r.pv.shape.AvgOutputTokens,
 		PrefixHitRate: r.pv.shape.PrefixHitRate, Source: measuredText(r.pv), Flags: []string{}, Assumed: []string{}}
 	if !r.sh.Measured {

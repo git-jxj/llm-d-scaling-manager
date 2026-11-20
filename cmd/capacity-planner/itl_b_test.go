@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -44,6 +46,20 @@ func TestAssumeITLB_PricesALineOnTheDefaultIntercept(t *testing.T) {
 	require.NotNil(t, knee.Validation)
 	assert.False(t, knee.Validation.Validated, "an assumed B is outside the validated region")
 	assert.NotEmpty(t, knee.Validation.Outside)
+	// The stated B is in the figures' class as stated, not only the arrivals:
+	// it alone puts them outside.
+	f := answerFlags{recording: pinnedRecording, cycle: "last", assumeITLB: "2ms", warn: io.Discard,
+		set: map[string]bool{"assume-itl-b": true}}
+	st, err := f.readState(context.Background())
+	require.NoError(t, err)
+	vars, err := f.decodeVariants(st)
+	require.NoError(t, err)
+	require.Len(t, vars, 1)
+	assert.Contains(t, vars[0].class().Stated, "--assume-itl-b")
+	f.assumeITLB = "12ms"
+	vars, err = f.decodeVariants(st)
+	require.NoError(t, err)
+	assert.NotContains(t, vars[0].class().Stated, "--assume-itl-b", "not used, not stated")
 	require.NotNil(t, after.Results.MeanTPOT.Answer)
 	assert.Contains(t, after.Results.MeanTPOT.Answer.Flags, string(assumedITLB))
 	assert.NotEqual(t, 3, code)
@@ -76,6 +92,7 @@ func TestAssumeITLB_PricesALineOnTheDefaultIntercept(t *testing.T) {
 	assert.Contains(t, above.Results.Knee.Refused.Detail, "is above the floor")
 	require.NotNil(t, above.Inputs.Line.AssumedB)
 	assert.False(t, above.Inputs.Line.AssumedB.Applied)
+	assert.NotContains(t, above.Results.Knee.Refused.Flags, string(assumedITLB))
 }
 
 // A Decode whose B the caller stated is priced even on the default
@@ -100,12 +117,7 @@ func TestAssumeITLB_FloorSaysWhatItRead(t *testing.T) {
 	a := r.Inputs.Line.AssumedB
 	require.NotNil(t, a)
 	assert.Equal(t, itlBFromFloor, a.Source)
-	if !a.Applied {
-		assert.NotEmpty(t, a.Why)
-		require.NotNil(t, r.Results.Knee.Refused)
-		assert.Contains(t, r.Results.Knee.Refused.Detail, a.Why)
-		return
-	}
+	require.True(t, a.Applied, a.Why)
 	assert.Positive(t, a.FloorSeconds)
 	assert.Positive(t, a.FloorFill)
 	assert.Greater(t, a.FloorSeconds, a.Seconds, "B is under the floor it was read through")
@@ -140,12 +152,12 @@ func TestAssumeITLB_LeavesOtherLines(t *testing.T) {
 		vs  learnreplay.VariantState
 		why string
 	}{
-		"ols":          {learnreplay.VariantState{Tier: whatif.TierOLS, Line: itl.Model{A: 0.04, B: 0.009}}, "is not the default"},
-		"learned B":    {learnreplay.VariantState{Tier: whatif.TierPinnedB, Line: itl.Model{A: 0.04, B: 0.009}}, "is not the default"},
+		"ols":          {learnreplay.VariantState{Tier: whatif.TierOLS, Line: itl.Model{A: 0.04, B: 0.009}}, "not refused on the default intercept"},
+		"learned B":    {learnreplay.VariantState{Tier: whatif.TierPinnedB, Line: itl.Model{A: 0.04, B: 0.009}}, "not refused on the default intercept"},
 		"held":         {learnreplay.VariantState{Tier: whatif.TierHeld, Line: itl.Model{A: 0.04, B: itl.DefaultBaselineSec}}, "held line has no readings"},
 		"borrowed":     {learnreplay.VariantState{Tier: whatif.TierBorrowed, Line: itl.Model{A: 0.04, B: itl.DefaultBaselineSec}}, "borrowed line has no readings"},
 		"no line":      {learnreplay.VariantState{}, "no ITL line"},
-		"not refitted": {learnreplay.VariantState{Tier: whatif.TierPinnedB, Line: itl.Model{A: 0.04, B: itl.DefaultBaselineSec}}, "no readings"},
+		"not refitted": {learnreplay.VariantState{Tier: whatif.TierPinnedB, Line: itl.Model{A: 0.04, B: itl.DefaultBaselineSec}}, "does not reproduce"},
 	} {
 		pv := pricedVariant{state: c.vs}
 		f.assumeIntercept(&pv)

@@ -397,6 +397,10 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 			pf.assume("%s", w)
 			pf.stated = append(pf.stated, "--assume-itl-b")
 		}
+		// Asked and not used: said where the asker reads, not dropped.
+		if w := pv.itlBNotUsed(); w != "" {
+			pf.assume("%s", w)
+		}
 		if domain.CanonicalRole(pv.state.Role) == domain.RoleBoth {
 			pf.refused = aggregatedRefusal(pv.state.Variant)
 			return pf

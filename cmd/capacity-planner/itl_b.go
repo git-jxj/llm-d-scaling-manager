@@ -104,11 +104,15 @@ func (f *answerFlags) assumeIntercept(pv *pricedVariant) {
 		a.Why = "no ITL line to state B for"
 		return
 	case !whatif.OnDefaultB(vs.Tier, vs.Line):
-		a.Why = fmt.Sprintf("the %s line's B, %s, is not the default", vs.Tier, ms(vs.Line.B))
+		a.Why = fmt.Sprintf("the %s line is not refused on the default intercept (its B is %s); a stated B is used only there",
+			vs.Tier, ms(vs.Line.B))
 		return
-	case vs.Tier != whatif.TierPinnedB || !vs.Refitted || len(vs.LineReadings) == 0:
+	case vs.Tier != whatif.TierPinnedB:
 		a.Why = fmt.Sprintf("a %s line has no readings of its own at this cycle to refit through a stated B; "+
 			"ask at a cycle where the line is pinned-B", vs.Tier)
+		return
+	case !vs.Refitted || len(vs.LineReadings) == 0:
+		a.Why = "the replay does not reproduce this pinned-B line from its readings, so it cannot be refitted through a stated B"
 		return
 	}
 	if floor {
@@ -169,8 +173,8 @@ func (pv pricedVariant) itlBWords() string {
 			"the slope refitted through it on the same readings; the bands hold B fixed",
 			ms(a.Seconds), ms(a.FloorSeconds), a.FloorFill, ms(itl.DefaultBaselineSec))
 	}
-	return fmt.Sprintf("ITL B %s, stated, in place of the %s default; the slope refitted through it on the same readings",
-		ms(a.Seconds), ms(itl.DefaultBaselineSec))
+	return fmt.Sprintf("ITL B %s, stated, in place of the %s default; the slope refitted through it on the same readings; "+
+		"the bands hold B fixed", ms(a.Seconds), ms(itl.DefaultBaselineSec))
 }
 
 // itlBNotUsed is why a stated B was not used, in the words of the question's
@@ -180,6 +184,8 @@ func (pv pricedVariant) itlBNotUsed() string {
 	switch {
 	case !a.Asked || a.Applied:
 		return ""
+	case pv.api && a.Source == itlBFromFloor:
+		return "ITL B not assumed (assume.itlBFromFloor): " + a.Why
 	case pv.api:
 		return "ITL B not assumed (assume.itlB): " + a.Why
 	}
@@ -200,6 +206,9 @@ func (pv pricedVariant) itlBRowText() string {
 func (pv pricedVariant) pinnedDefaultBHint() string {
 	if w := pv.itlBNotUsed(); w != "" {
 		return "; " + w
+	}
+	if pv.state.Tier != whatif.TierPinnedB {
+		return fmt.Sprintf("; a %s line cannot take a stated B: answer at a cycle where the line is pinned-B", pv.state.Tier)
 	}
 	floor := ""
 	if pv.state.Tier == whatif.TierPinnedB && pv.state.Refitted {
