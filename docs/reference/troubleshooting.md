@@ -28,7 +28,7 @@ LOGS="kubectl logs -n $NS -l app.kubernetes.io/name=scaling-manager --tail=-1"
 | one replica full while others idle | `LLMSMLoadImbalanced`; `llmsm_load_imbalanced == 1`; log `WARNING: load imbalanced` | the router's scorer weights (`prefix-cache-scorer` above `queue-scorer`, `active-request-scorer`, `kv-cache-utilization-scorer`), prefix caching off on the engines | [uneven load](#one-replica-is-saturated-while-others-idle) |
 | replicas never move, though `llmsm_desired_replicas` does | `llmsm_passive_mode{mode=~"hold\|observe\|observe-unsafe"} == 1`; `Passive mode entered` in the log; `PassiveRecommendation` Events | the model is passive: `LLMSM_PASSIVE`, or `passive: true` on a scaling-policy entry | [passive](#a-passive-model-does-not-scale) |
 | desired is not current | `llmsm_desired_replicas != llmsm_current_replicas` for many cycles | HPA stabilization window, KEDA not reaching the scaler, Pods Pending (GPUs, ResourceQuota), slow starts | [actuation stuck](#desired-is-not-current-actuation-stuck) |
-| a DisaggregatedSet role never moves | `RoleWriterRefused`, `RoleReplicasConflict` or `RoleReplicasWriteFailed` on the set; no `RoleReplicasWritten` | the role writer off or without its grant, the set refused (no model-id, bad bounds, slices above 1), another field manager owns `replicas`, a passive model, the 5-minute scale-down window | [DisaggregatedSet role](#a-disaggregatedset-role-is-not-scaled) |
+| a DisaggregatedSet role never moves | `RoleWriterRefused`, `RoleReplicasConflict`, `RoleReplicasWriteFailed` or `RoleScaleDownRefused` on the set; no `RoleReplicasWritten` | the role writer off or without its grant, the set refused (no model-id, bad bounds, slices above 1), another field manager owns `replicas`, a scale-down the cluster refuses until a drain, a passive model, the 5-minute scale-down window | [DisaggregatedSet role](#a-disaggregatedset-role-is-not-scaled) |
 | replicas dropped under Kueue borrowing | fewer replicas with no scale-down asked for; `llmsm_model_scaling_blocked{reason=~"lender-reclaimed\|borrow-unplaced\|released-to-lender"}`; `BorrowedCapacityReleased` Event | Kueue preempted, a borrowed replica did not place and was released, a waiting lender was handed it back (opt-in), demand fell | [replicas dropped](#replicas-dropped-under-kueue-borrowing) |
 | a lender's replica Pending after Kueue preempted | the lender's new pod `Pending` with no node; a borrower's Workload evicted with reason `Preempted`; later `reason="borrow-unplaced"` | Kueue preempts by priority, not by node: the GPUs it freed form no node the replica fits | [replicas dropped](#replicas-dropped-under-kueue-borrowing) |
 | a Kueue-backed quota was never read | `LLMSMKueueNeverRead`; `llmsm_kueue_never_read == 1`; log `external quota source unreadable and never read` | Kueue CRDs absent, the controller may not list ClusterQueues, Kueue down at start | [never read](#a-kueue-backed-quota-was-never-read) |
@@ -1545,6 +1545,10 @@ log is from before the upgrade and no longer applies.
      [Ownership](disaggregatedset.md#ownership-of-replicas).
    - `RoleReplicasWriteFailed`: the set refused the write; the message has the
      API's answer.
+   - `RoleScaleDownRefused`: the cluster refused a lower count, typically
+     an admission policy that wants a drain first. The writer holds the
+     role there. See
+     [When the cluster refuses a scale-down](disaggregatedset.md#when-the-cluster-refuses-a-scale-down).
 2. No events at all: check the writer runs. The controller log says
    `DisaggregatedSet role writer is on` at start. If it says
    `may not list DisaggregatedSets`, the grant is missing: install with

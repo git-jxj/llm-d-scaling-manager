@@ -19,6 +19,11 @@
 // nothing for a passive model (the external scaler's resolver decides), and it
 // holds a scale-down for the HPA's default stabilization window.
 //
+// A lower count is not done when it is written. The writer checks that the
+// role's child LeaderWorkerSets follow it, and reports a scale-down the
+// cluster refuses -- denied on the set, or on the children -- instead of
+// lowering the role again (scaledown.go).
+//
 // External roles are never written: their count is the role scaler's, and the
 // set controller ignores spec.replicas for them. KEDA plus the role scaler is
 // the preferred path; this one exists for sets that cannot take it.
@@ -156,6 +161,14 @@ type Writer struct {
 	// it, as the HPA's stabilization window does. Zero is
 	// DefaultScaleDownWindow; negative is no window.
 	ScaleDownWindow time.Duration
+	// FollowTimeout is how long the child LeaderWorkerSets of a role may take
+	// to follow a lower count before the scale-down is reported as refused.
+	// Zero is DefaultFollowTimeout.
+	FollowTimeout time.Duration
+	// DeniedRetry is the first wait before a scale-down the API server denied
+	// is asked for again; it doubles with each denial, up to MaxDeniedRetry.
+	// Zero is DefaultDeniedRetry.
+	DeniedRetry time.Duration
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 
@@ -172,6 +185,11 @@ type Writer struct {
 	noResolverLogged bool
 	// listFailed is the last list failure logged for each namespace.
 	listFailed map[string]string
+	// scaleDowns is each role's lower count the writer wrote or tried, until
+	// the cluster applies it or the count is raised (scaledown.go).
+	scaleDowns map[roleKey]*scaleDown
+	// childFailed is the last failed read of each set's children logged.
+	childFailed map[types.NamespacedName]string
 }
 
 type roleKey struct {
@@ -444,7 +462,11 @@ func (w *Writer) reconcile(ctx context.Context, set *unstructured.Unstructured, 
 		w.clearWarning(key)
 		return
 	}
-	plan := w.stabilize(key, roles, Plan(roles, decided, lo, hi))
+	held := w.followScaleDowns(ctx, set, roles, logger)
+	plan := holdRefused(roles, w.stabilize(key, roles, Plan(roles, decided, lo, hi)), held, lo)
+	for role, why := range held {
+		logger.V(1).Info("Holding a role at its count: the cluster refused a lower one", "role", role, "reason", why)
+	}
 	changed := map[string]int32{}
 	for _, r := range roles {
 		if plan[r.Name] != r.Current {
@@ -469,10 +491,24 @@ func (w *Writer) reconcile(ctx context.Context, set *unstructured.Unstructured, 
 					"Apply the set server-side without replicas, or set "+OptInAnnotation+"=force: "+err.Error())
 			return
 		}
+		if isDenial(err) {
+			if lowered := w.recordDenied(key, roles, plan, err.Error()); len(lowered) > 0 {
+				// A scale-down the cluster gates (a drain first, say): bounded
+				// retries, and the roles it did not lower go on alone.
+				logger.Info("The API server denied a role scale-down; the role writer holds those roles and asks again later",
+					"roles", lowered, "replicas", changed, "error", err.Error())
+				w.event(set, corev1.EventTypeWarning, EventScaleDownRefused,
+					fmt.Sprintf("the API server denied writing role replicas %v, which lowers %v: %v. "+
+						"The writer holds those roles at their count, writes any other change without them, and asks again later",
+						changed, lowered, err))
+				return
+			}
+		}
 		logger.Error(err, "Could not write the role replicas", "replicas", plan)
 		w.warn(set, EventFailed, fmt.Sprintf("could not write role replicas %v: %v", changed, err))
 		return
 	}
+	w.recordWrite(key, roles, plan)
 	logger.Info("Wrote DisaggregatedSet role replicas", "replicas", changed)
 	w.clearWarning(key)
 	w.event(set, corev1.EventTypeNormal, EventScaled, fmt.Sprintf("role replicas %v", changed))
@@ -560,13 +596,19 @@ func (w *Writer) stabilize(set types.NamespacedName, roles []Role, plan map[stri
 	return out
 }
 
-// dropHistory forgets the scale-down history of every role of set.
+// dropHistory forgets the scale-down history and records of every role of
+// set.
 func (w *Writer) dropHistory(set types.NamespacedName) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for k := range w.history {
 		if k.set == set {
 			delete(w.history, k)
+		}
+	}
+	for k := range w.scaleDowns {
+		if k.set == set {
+			delete(w.scaleDowns, k)
 		}
 	}
 }
@@ -579,6 +621,11 @@ func (w *Writer) forget(seen map[roleKey]bool) {
 	for k := range w.history {
 		if !seen[k] {
 			delete(w.history, k)
+		}
+	}
+	for k := range w.scaleDowns {
+		if !seen[k] {
+			delete(w.scaleDowns, k)
 		}
 	}
 }
