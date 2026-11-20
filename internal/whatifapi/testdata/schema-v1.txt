@@ -624,3 +624,9 @@ sources.recordings array
 sources.recordingsTruncated boolean
 sources.recordings[] string
 sources.schemaVersion number
+sources.upload object
+sources.upload.maxBytes number
+upload object
+upload.bytes number
+upload.name string
+upload.schemaVersion number

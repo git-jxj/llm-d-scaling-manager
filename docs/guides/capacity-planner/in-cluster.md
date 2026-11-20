@@ -9,7 +9,7 @@ the recordings you copy into it, and it never changes the cluster.
 | Step | Who | How often |
 | --- | --- | --- |
 | [Install it](#install-it) | an admin of one namespace; no cluster admin needed | once, and again on each upgrade |
-| [Load recordings](#load-recordings) | anyone who may create Pods in that namespace: its admin, or a user with `edit` there | each time there is new data |
+| [Load recordings](#load-recordings) | anyone who may create Pods in that namespace: its admin, or a user with `edit` there; or, [if the admin turns it on](#or-let-people-upload-from-the-page), anyone who can open it | each time there is new data |
 | [Open it](#open-it) | anyone you allow: by default, everyone who can log in to the cluster | any time |
 
 - **Plain Kubernetes.** Nothing is exposed. Each person runs
@@ -113,6 +113,75 @@ kubectl -n ${NS} delete pod capacity-planner-loader
   write.
 - The loader stops by itself after an hour. A stopped loader stays until it
   is deleted: delete it before you load again.
+
+### Or let people upload from the page
+
+For the namespace admin. Off by default. Turned on, everyone who can open
+the planner can upload a recording from the page, and everyone sees every
+upload. Uploads are kept as sent (no renaming of real names) in the Pod's
+`/tmp`, the last 4. A restart loses them: a new Pod starts with an empty
+`/tmp`, and a planner container that restarts in the same Pod deletes the
+uploads it finds there as it starts. Use the loader for recordings that
+should stay.
+
+```bash
+# On OpenShift, see below. Keep the directory, and apply it again after each upgrade, with the new V.
+# To also narrow who can open it, put both patches in this one file.
+cd "$(mktemp -d)"
+cat > kustomization.yaml <<EOF
+resources:
+  - ${SRC}/kubernetes?ref=${V}
+patches:
+  - target:
+      kind: StatefulSet
+      name: capacity-planner
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --allow-upload
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: {name: uploads, mountPath: /tmp}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: uploads, emptyDir: {sizeLimit: 2Gi}}
+EOF
+kubectl apply -n ${NS} -k .
+```
+
+On OpenShift, use `oc`, put `openshift` (or `openshift-sar`) in place of
+`kubernetes`, and add these two patches under `patches:`. The Route and the
+oauth-proxy each stop waiting for an answer after 30 s, and checking a large
+upload takes longer; the planner allows an upload 15 minutes. These patches
+were rendered with `kubectl kustomize`, not run on a live OpenShift cluster.
+
+```yaml
+  - target:
+      kind: Route
+      name: capacity-planner
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value: {haproxy.router.openshift.io/timeout: 16m}
+  - target:
+      kind: StatefulSet
+      name: capacity-planner
+    patch: |-
+      - op: test
+        path: /spec/template/spec/containers/1/name
+        value: oauth-proxy
+      - op: add
+        path: /spec/template/spec/containers/1/args/-
+        value: --upstream-timeout=16m
+```
+
+- The largest upload is 256 MiB; a day-long recording of a 16-replica P/D
+  fleet is about 95 MB compressed. To change it, add
+  `--upload-max-size=<size>` the same way, and keep `sizeLimit` at least
+  (5 + `--max-inputs`) times it: 4 kept, 1 arriving, and up to `--max-inputs`
+  pushed out but still loading (2 by default, so 7 times).
+- The planner refuses a file that is not a learner recording, and says why.
+  [Upload a recording](api.md#upload-a-recording) has the details.
 
 ## Open it
 

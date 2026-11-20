@@ -48,7 +48,7 @@ func TestServeSources(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	assert.Equal(t, whatifapi.SourcesResponse{SchemaVersion: whatifapi.SchemaVersion, Namespaces: []string{}, Recordings: want}, got)
 	for _, name := range got.Recordings {
-		_, err := src.recordingPath(whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: name})
+		_, _, err := src.recordingPath(whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: name})
 		assert.NoError(t, err, "listed %s, then refused it", name)
 	}
 

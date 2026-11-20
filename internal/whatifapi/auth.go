@@ -32,6 +32,9 @@ const (
 // ["/whatif/*"], verbs ["get"]) grants the read-only API.
 const authPathPrefix = "/whatif"
 
+// verbGet is the verb every request but an upload is authorized as.
+const verbGet = "get"
+
 // CheckListen refuses a bind the mode does not cover: without Kubernetes
 // authentication the API binds a loopback address only, since it can read
 // Prometheus as the server does.
@@ -228,7 +231,8 @@ func (a *Authenticator) allowed(ctx context.Context, u authnv1.UserInfo, res *au
 }
 
 // Wrap wraps next: no token, or one TokenReview does not authenticate, is
-// 401; a user not allowed get on authPathPrefix plus the path is 403; a review
+// 401; a user not allowed get (post, for an upload: authVerb) on
+// authPathPrefix plus the path is 403; a review
 // that fails is 500, with its error logged and not returned.
 func (a *Authenticator) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -248,25 +252,34 @@ func (a *Authenticator) Wrap(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, errors.New("the bearer token is not authenticated"))
 			return
 		}
-		path := authPathPrefix + r.URL.Path
-		allowed, err := a.allowed(r.Context(), u.user, nil, &authzv1.NonResourceAttributes{Path: path, Verb: "get"})
+		path, verb := authPathPrefix+r.URL.Path, authVerb(r)
+		allowed, err := a.allowed(r.Context(), u.user, nil, &authzv1.NonResourceAttributes{Path: path, Verb: verb})
 		if err != nil {
 			a.logf("capacity-planner: subject access review: %v", err)
 			writeError(w, http.StatusInternalServerError, errReview)
 			return
 		}
 		if !allowed {
-			writeError(w, http.StatusForbidden, fmt.Errorf("%s may not get %s", u.user.Username, path))
+			writeError(w, http.StatusForbidden, fmt.Errorf("%s may not %s %s", u.user.Username, verb, path))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u.user)))
 	})
 }
 
+// authVerb is the verb a request is authorized as: post for an upload, which
+// writes to the server, and get for every other request, which reads.
+func authVerb(r *http.Request) string {
+	if r.Method == http.MethodPost && r.URL.Path == UploadPath {
+		return "post"
+	}
+	return verbGet
+}
+
 // namespaceResource is what a user must be allowed in a namespace to read it
 // through the server's Prometheus: get on the Pods its models run in.
 func namespaceResource(namespace string) *authzv1.ResourceAttributes {
-	return &authzv1.ResourceAttributes{Namespace: namespace, Verb: "get", Resource: "pods"}
+	return &authzv1.ResourceAttributes{Namespace: namespace, Verb: verbGet, Resource: "pods"}
 }
 
 // NamespaceAllowed reports, as an error, whether the request's user may read

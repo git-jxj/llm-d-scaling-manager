@@ -68,7 +68,7 @@ func TestSchemaIsPinned(t *testing.T) {
 	walked := map[string]reflect.Type{
 		"inputsRequest": reflect.TypeFor[InputsRequest](), "inputs": reflect.TypeFor[InputsResponse](),
 		"planRequest": reflect.TypeFor[PlanRequest](), "plan": reflect.TypeFor[PlanResponse](), "error": reflect.TypeFor[ErrorResponse](),
-		"sources": reflect.TypeFor[SourcesResponse](), "sizeRequest": reflect.TypeFor[SizeRequest](), "size": reflect.TypeFor[SizeResponse](),
+		"sources": reflect.TypeFor[SourcesResponse](), "upload": reflect.TypeFor[UploadResponse](), "sizeRequest": reflect.TypeFor[SizeRequest](), "size": reflect.TypeFor[SizeResponse](),
 		"reportRequest": reflect.TypeFor[ReportRequest](), "report": reflect.TypeFor[ReportResponse](),
 	}
 	for typ, name := range namedTypes {
