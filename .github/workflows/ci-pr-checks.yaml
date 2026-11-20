@@ -475,6 +475,19 @@ jobs:
         if: needs.check-code-changes.outputs.has_code_changes != 'false'
         run: PLANNER_IMG=capacity-planner:pr-check PLANNER_VERSION=pr-check bash hack/check-capacity-planner-image.sh
 
+      # The same image in a cluster (config/capacity-planner/kubernetes): a
+      # small kind cluster of its own, opened with kubectl port-forward by
+      # users the Role does and does not admit (test/capacity-planner/e2e.sh).
+      - name: Install Kind
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: deploy/ci-pr-checks/install-kind.sh
+
+      - name: Run the capacity planner in-cluster e2e
+        if: needs.check-code-changes.outputs.has_code_changes != 'false'
+        run: |
+          docker tag capacity-planner:pr-check ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:e2e
+          make test-e2e-capacity-planner-in-cluster PLANNER_E2E_IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:e2e
+
       # The release binaries, built as release-files builds them (the go.mod
       # Go line at its latest patch, make capacity-planner-dist), so a broken
       # platform, ldflag or -trimpath fails here rather than on a tag.

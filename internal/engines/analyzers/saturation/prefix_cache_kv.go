@@ -170,6 +170,13 @@ func minResidentSequences(s shape.Shape) int {
 	return minResidentOf(noHitShape(s))
 }
 
+// MinResidentSequences is the fewest running requests a resident reading is
+// taken from for shape s (minResidentSequences): the capacity planner's own
+// reading (learnreplay.ResidentKV) takes the same gate.
+func MinResidentSequences(s shape.Shape) int {
+	return minResidentSequences(s)
+}
+
 // minResidentOf is the fewest running requests a reading is taken from for a
 // shape whose KV per request with no hit is noHit. Each resident request is
 // caught at its own age, so its generated part is spread over [0, OL] (D x OL

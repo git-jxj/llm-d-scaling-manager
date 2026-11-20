@@ -260,6 +260,12 @@ func (r Reading) SlopeAge(now time.Time) time.Duration {
 // light load, or above the band (SlopeHeld says so, SlopeFittedAt when the A
 // was fitted). Both holds end once the A is older than adm.SlopeHoldFor or was
 // fitted under other engine arguments than adm.Args.
+//
+// rows may be the engines of a LeaderWorkerSet group (domain.EngineRows),
+// which carry only domain.EngineReading's fields and their group's identity:
+// a ReplicaMetrics field newly read here, in Admission or in the settle must
+// be kept there too, or it reads zero on every engine
+// (TestEngineRows_CarryEveryFieldTheLineReads).
 func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm Admission, now time.Time) Reading {
 	var r Reading
 	lo, hi := adm.band()

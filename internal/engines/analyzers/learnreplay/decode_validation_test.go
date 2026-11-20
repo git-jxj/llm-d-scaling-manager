@@ -190,7 +190,8 @@ func saturatedRow(rm domain.ReplicaMetrics) bool {
 }
 
 // kneeCheck is the frozen line's knee on one replica, at each saturated row's
-// shape, in tokens per second, against the tokens the replica made. rows are
+// shape and the KV its running requests held (rowResidentKV, as the planner
+// prices decode), in tokens per second, against the tokens the replica made. rows are
 // off a ramp: a row's lengths are means over minutes, and the knee of a shape
 // that has already left is no prediction of the row.
 func kneeCheck(vs VariantState, band whatif.FillBand, rows []domain.ReplicaMetrics) string {
@@ -205,7 +206,7 @@ func kneeCheck(vs VariantState, band whatif.FillBand, rows []domain.ReplicaMetri
 		}
 		saturated++
 		s := rowShape(rm)
-		d := whatif.Decode{Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens, KVPerRequest: s.KVreq,
+		d := whatif.Decode{Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens, KVPerRequest: rowResidentKV(rm, s),
 			OutputTokens: s.AvgOutputTokens, ReplicaCap: vs.BatchCap * int64(max(vs.Ranks, 1)), Replicas: 1, Tier: vs.Tier}
 		switch v := whatif.KneeRate(d).(type) {
 		case whatif.Answer:

@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: capacity-planner
+  labels:
+    app.kubernetes.io/name: capacity-planner
+    app.kubernetes.io/part-of: llm-d-scaling-manager
+spec:
+  # A StatefulSet of one, so the Pod is always capacity-planner-0 and the
+  # viewer Role can name it: port-forward to that Pod and to no other. It
+  # also replaces the Pod by deleting it first, as the ReadWriteOnce
+  # recordings claim needs. Keep it at 1: the Role names only -0.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: capacity-planner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: capacity-planner
+        app.kubernetes.io/part-of: llm-d-scaling-manager
+    spec:
+      serviceAccountName: capacity-planner
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # The image's own user. The loader Pod runs as the same user, so the
+      # recordings it writes (0600, as the record guide writes them) are
+      # readable here. fsGroup makes the volume writable by that user only
+      # where the volume's driver applies it: some CSI drivers (NFS with
+      # fsGroupPolicy ReadWriteOnceWithFSType) skip it, and the loader can
+      # then write only a volume root it already may. The openshift overlay
+      # removes the three IDs: OpenShift assigns them from the namespace's range.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: planner
+          image: ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner
+          # Loopback only, with no authentication of its own. Nothing outside
+          # the Pod reaches 127.0.0.1: on plain Kubernetes a user reaches it
+          # with kubectl port-forward, which RBAC gates (pods/portforward); on
+          # OpenShift the oauth-proxy sidecar in this Pod does. The server also
+          # refuses a request whose Host is not a loopback name. There is no
+          # probe: the kubelet probes the Pod IP, which the server does not bind.
+          args:
+            - serve
+            - --listen=127.0.0.1:8080
+            - --auth=none
+            - --recordings=/recordings
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: recordings
+              mountPath: /recordings
+              readOnly: true
+      volumes:
+        - name: recordings
+          persistentVolumeClaim:
+            claimName: capacity-planner-recordings
+            readOnly: true

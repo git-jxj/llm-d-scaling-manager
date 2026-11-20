@@ -483,6 +483,9 @@ type SaturationAnalyzer struct {
 	// last logged as withheld for (itl_per_token.go), so the line is logged
 	// once per change rather than every cycle.
 	itlWithheldLogged map[string]itlWithheldReasons
+	// itlReadsEngines is the ITL window keys whose rows were last read a
+	// group's engines one by one (itl_group_engines.go).
+	itlReadsEngines map[string]bool
 	// k2Pending is the readings held for each k2 key whose window they would
 	// start, until a later cycle confirms them (k2_confirm.go), and
 	// analyzeSeq numbers the Analyze calls, the cycles a confirmation is
@@ -506,6 +509,19 @@ type SaturationAnalyzer struct {
 	// prefillAQuadratic is SwitchPrefillAQuadratic (a's curved fit): on
 	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	prefillAQuadratic bool
+	// prefillALowLoadPerRank is SwitchPrefillALowLoadPerRank and
+	// prefillAEngineTiming SwitchPrefillAEngineTiming: off from the
+	// constructor, planner-only; the capacity planner's replay turns them on
+	// (learnreplay.PlannerSwitches).
+	prefillALowLoadPerRank, prefillAEngineTiming bool
+	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
+	// off from the constructor, planner-only. itlFills is each model's
+	// decode engine fills over the horizon, and itlBandFloors the floor
+	// adapted for its latest cycle; both under mu, and empty while the
+	// switch is off.
+	itlAdaptiveFloor bool
+	itlFills         map[string][]engineFill
+	itlBandFloors    map[string]bandFloor
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
 	// (SetSwitchesForReplay).
@@ -776,6 +792,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		joinedFromFirstServed:  true,
 		itlPerToken:            true,
 		itlWithheldLogged:      make(map[string]itlWithheldReasons),
+		itlReadsEngines:        make(map[string]bool),
 		k2Pending:              make(map[string]*k2PendingReadings),
 		prefillObserve:         true,
 		prefillBusyMinutes:     true,
@@ -794,6 +811,8 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillObserver:        prefill.NewObserver(),
 		prefillBounds:          make(map[string]stashedBound),
 		prefillEstimates:       make(map[string]stashedEstimate),
+		itlFills:               make(map[string][]engineFill),
+		itlBandFloors:          make(map[string]bandFloor),
 	}
 }
 
@@ -1126,6 +1145,12 @@ func (a *SaturationAnalyzer) evictStaleHistory() Evicted {
 	for key := range a.itlWithheldLogged {
 		if a.variantIsStale(key, now, variantTimeout) {
 			delete(a.itlWithheldLogged, key)
+		}
+	}
+	// So does how its rows were last read (itl_group_engines.go).
+	for key := range a.itlReadsEngines {
+		if a.variantIsStale(key, now, variantTimeout) {
+			delete(a.itlReadsEngines, key)
 		}
 	}
 	// So does an aggregated variant's shape state (itl_aggregated_shape.go).

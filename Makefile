@@ -1676,6 +1676,24 @@ test-e2e-tools-install: kustomize ## Install with smt admin-setup, install and a
 .PHONY: test-e2e-tools-install-with-setup
 test-e2e-tools-install-with-setup: test-e2e-release-manifests-setup test-e2e-tools-install ## Prerequisites, then the tools-image install e2e (never deletes the cluster)
 
+# The capacity planner's in-cluster mode on plain Kubernetes
+# (test/capacity-planner/e2e.sh, docs/guides/capacity-planner/in-cluster.md):
+# the kubernetes overlay with PLANNER_E2E_IMG, opened with kubectl
+# port-forward by users the Role does and does not admit. Needs only kind and
+# the image: it makes its own small cluster, PLANNER_E2E_CLUSTER, if it is not
+# there, and never deletes it. Builds the image when the local daemon lacks it.
+PLANNER_E2E_IMG     ?= ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:e2e
+PLANNER_E2E_CLUSTER ?= capacity-planner-e2e
+.PHONY: test-e2e-capacity-planner-in-cluster
+test-e2e-capacity-planner-in-cluster: ## Deploy the planner's kubernetes overlay on kind and open it as permitted and refused users
+	@set -e; \
+	docker image inspect $(PLANNER_E2E_IMG) >/dev/null 2>&1 || $(MAKE) --no-print-directory docker-build-capacity-planner PLANNER_IMG=$(PLANNER_E2E_IMG); \
+	$(KIND) get clusters 2>/dev/null | grep -qx '$(PLANNER_E2E_CLUSTER)' || $(KIND) create cluster --name $(PLANNER_E2E_CLUSTER) --wait 120s; \
+	$(KIND) load docker-image $(PLANNER_E2E_IMG) --name $(PLANNER_E2E_CLUSTER); \
+	kc="$$(mktemp)"; trap 'rm -f "$$kc"' EXIT; \
+	$(KIND) get kubeconfig --name $(PLANNER_E2E_CLUSTER) > "$$kc"; \
+	KUBECONFIG="$$kc" PLANNER_IMG=$(PLANNER_E2E_IMG) bash test/capacity-planner/e2e.sh
+
 # The prerequisites only: kind with emulated GPUs, Prometheus, KEDA, the llm-d
 # CRDs and EPP, and the image loaded into the nodes. DEPLOY_SCALING_MANAGER=false
 # keeps the installer from installing the scaling manager itself.
@@ -3450,6 +3468,13 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# name, a missing ScaledObject (so the pool is never discovered), a worker
 	@# template carrying the proxy (so the group never becomes Ready).
 	@bash hack/check-warmpool-manifests.sh
+	@echo "Checking the capacity planner's in-cluster manifests (config/capacity-planner)..."
+	@# A Service on plain Kubernetes, a cluster-scoped object, a listen beyond
+	@# loopback, a wider Role or another subject, a proxy that passes the
+	@# Route's Host: all apply cleanly. Also its negative controls, and the
+	@# e2e script's syntax.
+	@bash -n test/capacity-planner/e2e.sh
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-capacity-planner-in-cluster.sh
 	@echo "Checking what prepull.sh actually emits..."
 	@# A holder that requests an accelerator, a selector that lands on every
 	@# node, two images sharing one DaemonSet name: all parse, all wrong.
