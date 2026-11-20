@@ -159,6 +159,10 @@ type inputsEntry struct {
 	// series is the source's cycles, for a day plan; nil where the
 	// Resolver gave none.
 	series []SeriesSample
+	// latency and config are the source's for a backtest (Resolved.Latency,
+	// Resolved.Config).
+	latency []LatencySample
+	config  RunConfig
 	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
 	bytes int
 }
@@ -216,6 +220,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/size", s.handleSize)
 	mux.HandleFunc("POST /v1/report", s.handleReport)
 	mux.HandleFunc("POST /v1/dayplan", s.handleDayPlan)
+	mux.HandleFunc("POST /v1/backtest", s.handleBacktest)
 	mux.HandleFunc("GET /v1/sources", s.handleSources)
 	mux.HandleFunc("POST "+UploadPath, s.handleUpload)
 	mux.HandleFunc("GET /{$}", servePage)
@@ -279,7 +284,8 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	// The entry kept is the first caller's, but each caller is answered with
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.
-	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, bytes: res.Bytes})
+	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
+		config: res.Config, bytes: res.Bytes})
 	body, err := marshal(doc)
 	if err != nil {
 		writeErr(w, err)

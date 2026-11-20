@@ -343,7 +343,7 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 	}
 	content := strings.Join([]string{hex.EncodeToString(sum[:]), st.Namespace, st.ModelID, strconv.Itoa(st.Cycle), prefill,
 		variants[0].state.Variant, f.prefillVariant, f.variant}, "\x00")
-	series, err := seriesOf(data.open, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
+	series, latency, err := seriesAndLatencyOf(data.open, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
 	if err != nil {
 		return nil, apiError(err)
 	}
@@ -354,8 +354,10 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 		Content: content,
 		Pricer:  pricer,
 		Series:  series,
+		Latency: latency,
 	}
-	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(res.Inputs))
+	res.Config = runConfigOf(st, variants[0].state.Variant, prefill)
+	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(latency) + sizeOf(res.Inputs))
 	return res, nil
 }
 

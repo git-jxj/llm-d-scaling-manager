@@ -13,29 +13,12 @@ import (
 	"github.com/go-logr/logr"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // defaultDayWindow is day-plan's Prometheus window when --from and --to are
 // left out: the last day, ending now.
 const defaultDayWindow = 24 * time.Hour
-
-// seriesOf is every cycle of st's model in the recording data, as the API's
-// day plan reads them, counted for the variants v names.
-func seriesOf(src learnreplay.Source, st *learnreplay.State, v learnreplay.SeriesVariants) ([]whatifapi.SeriesSample, error) {
-	cycles, err := learnreplay.SeriesFrom(src, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID}, v)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]whatifapi.SeriesSample, len(cycles))
-	for i, c := range cycles {
-		out[i] = whatifapi.SeriesSample{At: c.At, Rate: c.ArrivalRate, RateKnown: c.RateKnown, Prefill: c.PrefillPods, Decode: c.DecodePods,
-			PrefillGPUs: c.PrefillGPUs, DecodeGPUs: c.DecodeGPUs, PromptTokens: c.PromptTokens, OutputTokens: c.OutputTokens,
-			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods}
-	}
-	return out, nil
-}
 
 // dayPlanFlags are day-plan's flags.
 type dayPlanFlags struct {
