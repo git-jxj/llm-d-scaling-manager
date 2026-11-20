@@ -164,14 +164,64 @@ const residentSpreadTolerance = 0.05
 // whatever the shape: one request is one age, not a fleet's.
 const minResidentFloor = 2
 
+// minAboveContextSequences is the fewest requests a reading above the whole
+// context is taken from (SwitchKVPerRequestAboveContext). The shape is the
+// mean of the requests that completed, not of the ones running now, and a
+// few running requests can be the long tail of a mixed workload: three
+// 40,000-token prompts in a shape of 10,000 read 40,500 a request, four
+// times the context, with no KV held beyond prompt and output. Below this
+// count one or two long prompts are a quarter of the sample. Above it the
+// spread is not bounded either: k prompts L times the shape's among n lift
+// the reading by about k x (L - 1) / n, and nothing in the scrape tells them
+// apart. A running count that lags the KV it is read against (6 of 20 at
+// the scrape) is caught the same way only when it is small. On a day-long
+// P/D recording every reading came from 12 or more requests.
+const minAboveContextSequences = 8
+
 // residentReading is the KV the fleet's running requests hold, summed, how
 // many they are, the summed capacity of the replicas they run on, and the
-// band's lower edge they were read at.
+// band's lower edge they were read at. holding is the requests that hold KV
+// without running, where the replica says (holdingNotRunning).
 type residentReading struct {
 	tokens    float64
 	running   int
+	holding   int
 	capTokens float64
 	minK      float64
+}
+
+// holders is the requests the tokens in use are spread over under rule:
+// the running ones, and with rule.aboveContext also those that hold KV
+// without running (residentReading.holding). Off, the running ones, as
+// before.
+func (r residentReading) holders(rule residentRule) int {
+	if rule.aboveContext {
+		return r.running + r.holding
+	}
+	return r.running
+}
+
+// perHolder is the KV a request holds under rule (holders), or 0 with none.
+func (r residentReading) perHolder(rule residentRule) float64 {
+	n := r.holders(rule)
+	if n <= 0 {
+		return 0
+	}
+	return r.tokens / float64(n)
+}
+
+// holdingNotRunning is the requests on rm that hold KV and are not running:
+// on the decode side of a prefill/decode split, those waiting for their KV
+// from prefill (WAITING_FOR_REMOTE_KVS) and those whose KV has landed and wait
+// for the next step. vLLM allocates their blocks before the pull, and counts
+// them in num_requests_waiting, not running (the file comment). They are the
+// waiting queue less the requests waiting for capacity, which hold none; 0
+// where the replica does not split its queue by reason.
+func holdingNotRunning(rm domain.ReplicaMetrics) int {
+	if !rm.CapacityQueueKnown {
+		return 0
+	}
+	return max(0, rm.QueueLength-rm.CapacityQueueLength)
 }
 
 // perSeq is the KV a running request holds, or 0 with none running.
@@ -256,6 +306,7 @@ func fleetResidentKVPerRequest(replicas []domain.ReplicaMetrics, rolesByVariant 
 		}
 		r.tokens += rm.KvUsageInstant * float64(rm.TotalKvCapacityTokens)
 		r.running += rm.RunningRequests
+		r.holding += holdingNotRunning(rm)
 		r.capTokens += float64(rm.TotalKvCapacityTokens)
 	}
 	return r
@@ -300,7 +351,7 @@ func (a *SaturationAnalyzer) residentRuleFor(params *capacity.EngineParams) resi
 // requests, a reading just above it is taken where one just below is not.
 func countGateKV(s shape.Shape, r residentReading, rule residentRule) float64 {
 	if rule.aboveContext {
-		if m := r.perSeq(); m > s.Context() && m > s.KVreq && !math.IsInf(m, 0) {
+		if m := r.perHolder(rule); m > s.Context() && m > s.KVreq && !math.IsInf(m, 0) {
 			return m
 		}
 	}
@@ -325,7 +376,11 @@ func countGateKV(s shape.Shape, r residentReading, rule residentRule) float64 {
 // on an engine that over-reads there (rule.heldAtContext), held at the
 // context (residentBoundUpper). A shape with no hit is read as well: its
 // discount is its context, and an engine can hold more than that. The count
-// gate is then taken at the KV a request is read to hold (countGateKV).
+// gate is then taken at the KV a request is read to hold (countGateKV). The
+// tokens are spread over the requests that hold KV without running as well
+// (residentReading.holders): a decode pulling 30 prompts beside 4 running
+// would read 8 times the context over the running 4. A reading above the
+// context needs minAboveContextSequences of them.
 func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.Shape, string) {
 	if !(s.KVreq > 0) {
 		return s, residentBoundNoReading
@@ -338,14 +393,18 @@ func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.
 	if byBand := math.Ceil(r.minK * r.capTokens / countGateKV(s, r, rule)); byBand > need {
 		need = byBand
 	}
-	if !(float64(r.running) >= need) {
+	n := r.holders(rule)
+	if !(float64(n) >= need) {
 		return s, residentBoundNoReading
 	}
-	measured := r.perSeq()
+	measured := r.perHolder(rule)
 	if !(measured > 0) || math.IsInf(measured, 0) {
 		return s, residentBoundNoReading
 	}
 	if rule.aboveContext {
+		if measured > s.Context() && n < minAboveContextSequences {
+			return s, residentBoundNoReading
+		}
 		kv, how := s.PriceResident(measured, rule.heldAtContext)
 		s.KVreq = kv
 		switch how {

@@ -90,29 +90,93 @@ func TestKVAboveContext_TheCountGateTakesTheReading(t *testing.T) {
 // 1000 out. The discount is 10,500 and the context 100,500. Two requests at a
 // fill of 0.222 read 55,500 each, below the context: the shared prefix spread
 // over two requests, not KV the engine holds beyond the prompt. The gate stays
-// at the discount, asks for 8, and there is no reading. Two requests reading
-// 220,000 each, over twice the context, are taken on and priced as read; off,
-// the gate at the discount reads nothing.
+// at the discount, asks for 8, and there is no reading. Eight requests reading
+// 220,000 each in a 2,000,000-token cache, over twice the context, are taken
+// on and priced as read; off, the gate at the discount asks for 29 and reads
+// nothing.
 func TestKVAboveContext_FewLongRequestsBelowTheContextAreNoReading(t *testing.T) {
-	row := func(running int, perSeq float64) domain.ReplicaMetrics {
-		rm := hitRow("pod-1", 100_000, 1000, 500_000, float64(running)*perSeq/500_000, running)
+	row := func(capTokens int64, running int, perSeq float64) domain.ReplicaMetrics {
+		rm := hitRow("pod-1", 100_000, 1000, capTokens, float64(running)*perSeq/float64(capTokens), running)
 		rm.PrefixCacheHitRate = 0.9
 		return rm
 	}
-	two := hitMu(t, row(2, 55_500), aboveOn(t))
+	two := hitMu(t, row(500_000, 2, 55_500), aboveOn(t))
 	assert.Equal(t, residentBoundNoReading, two["residentKVBound"])
 	assert.InDelta(t, 10_500, two["kvReqPerSeq"], 1e-6, "the discount, not 55,500")
-	eight := hitMu(t, row(8, 21_750), aboveOn(t))
+	eight := hitMu(t, row(500_000, 8, 21_750), aboveOn(t))
 	assert.Equal(t, residentBoundNone, eight["residentKVBound"])
 	assert.InDelta(t, 21_750, eight["kvReqPerSeq"], 1e-6)
 
-	above := hitMu(t, row(2, 220_000), aboveOn(t))
+	above := hitMu(t, row(2_000_000, 8, 220_000), aboveOn(t))
 	assert.Equal(t, residentBoundAboveContext, above["residentKVBound"])
 	assert.InDelta(t, 220_000, above["kvReqPerSeq"], 1e-6)
-	off := hitMu(t, row(2, 220_000), nil)
+	off := hitMu(t, row(2_000_000, 8, 220_000), nil)
 	assert.Equal(t, residentBoundNoReading, off["residentKVBound"])
 	assert.InDelta(t, 10_500, off["kvReqPerSeq"], 1e-6)
 }
+
+// The review's three readings above the context that are not KV held beyond
+// prompt and output. The shape is 10,000 in, 1000 out, no hit: a context of
+// 10,500. Off, a shape with no hit takes no reading at all.
+
+// noHitRow is a replica of that shape: running requests, the tokens in use
+// over capTokens.
+func noHitRow(capTokens int64, running int, tokens float64) domain.ReplicaMetrics {
+	rm := hitRow("pod-1", 10_000, 1000, capTokens, tokens/float64(capTokens), running)
+	rm.PrefixCacheHitRate = 0
+	return rm
+}
+
+// A P/D decode pulling 30 prompts from prefill beside 4 running: vLLM
+// allocates the pulled prompts' blocks first and counts the 30 as waiting.
+// 342,000 tokens over the 4 read 85,500 a request, 8.1 times the context;
+// over the 34 that hold them, 10,059, under the context and priced there.
+func TestKVAboveContext_RequestsPullingTheirKVHoldIt(t *testing.T) {
+	rm := noHitRow(1_000_000, 4, 342_000)
+	rm.QueueLength, rm.CapacityQueueLength, rm.CapacityQueueKnown = 30, 0, true
+	on := hitMu(t, rm, aboveOn(t))
+	assert.Equal(t, residentBoundLower, on["residentKVBound"])
+	assert.InDelta(t, 10_500, on["kvReqPerSeq"], 1e-6, "not 85,500")
+	off := hitMu(t, rm, nil)
+	assert.Equal(t, residentBoundNoHit, off["residentKVBound"])
+
+	// Requests waiting for capacity hold no KV: with all 30 of them waiting
+	// for capacity the 4 running are the ones read, at 85,500 each, and 4 are
+	// fewer than minAboveContextSequences: no reading.
+	rm.CapacityQueueLength = 30
+	capWait := hitMu(t, rm, aboveOn(t))
+	assert.Equal(t, residentBoundNoReading, capWait["residentKVBound"])
+}
+
+// Three running requests with 40,000-token prompts in a shape whose mean is
+// 10,000: 121,500 tokens, 40,500 a request, four times the context. They are
+// the long tail of the workload, not KV held beyond it, and three are fewer
+// than minAboveContextSequences: no reading.
+func TestKVAboveContext_AFewLongPromptsAreNoReading(t *testing.T) {
+	on := hitMu(t, noHitRow(500_000, 3, 121_500), aboveOn(t))
+	assert.Equal(t, residentBoundNoReading, on["residentKVBound"])
+	assert.InDelta(t, 10_500, on["kvReqPerSeq"], 1e-6, "not 40,500")
+	off := hitMu(t, noHitRow(500_000, 3, 121_500), nil)
+	assert.Equal(t, residentBoundNoHit, off["residentKVBound"])
+
+	// Eight such requests are read as they are: the scrape cannot tell a
+	// long tail from KV held beyond the prompt (minAboveContextSequences).
+	eight := hitMu(t, noHitRow(500_000, 8, 324_000), aboveOn(t))
+	assert.Equal(t, residentBoundAboveContext, eight["residentKVBound"])
+}
+
+// A running count that lags the KV it is read against: 20 requests hold
+// 210,000 tokens, the scrape reads 6 running, 35,000 a request. Six are
+// fewer than minAboveContextSequences: no reading.
+func TestKVAboveContext_ALaggingRunningCountIsNoReading(t *testing.T) {
+	on := hitMu(t, noHitRow(500_000, 6, 210_000), aboveOn(t))
+	assert.Equal(t, residentBoundNoReading, on["residentKVBound"])
+	assert.InDelta(t, 10_500, on["kvReqPerSeq"], 1e-6, "not 35,000")
+	off := hitMu(t, noHitRow(500_000, 6, 210_000), nil)
+	assert.Equal(t, residentBoundNoHit, off["residentKVBound"])
+}
+
+// A reading below the discount keeps the gate at the discount, on or off:
 
 // A reading below the discount keeps the gate at the discount, on or off:
 // 2000 tokens over 10 requests, 200 each, reads nothing at a gate of 28.

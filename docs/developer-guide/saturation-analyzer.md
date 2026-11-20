@@ -259,7 +259,19 @@ prefix read at most the context each, so they stay no reading. A reading above
 the context is KV the engine holds beyond prompt and output; at the discounted
 `KVreq` it passes only from a fill of `minK x R`, and at the context only
 from `minK x reading / context`, so neither gate would ever take it on a
-recording that reads three times the context at a fill of 0.15-0.35. The switch is off from the constructor: the controller keeps the
+recording that reads three times the context at a fill of 0.15-0.35. Not every
+reading above the context is KV held beyond prompt and output, so with the
+switch on two more rules apply. The tokens are spread over the requests that
+hold KV without running as well: on the decode side of a P/D split, those
+pulling their KV from prefill or waiting for the next step after it landed
+(the waiting queue less the requests waiting for capacity). A decode pulling
+30 prompts beside 4 running would otherwise read 8 times the context. And a
+reading above the context needs at least 8 such requests
+(`minAboveContextSequences`): a few long prompts in a mixed workload, or a
+running count that lags the KV, read several times the context with nothing
+held beyond it. Above 8 the scrape cannot tell a long tail from extra KV, so
+k prompts L times the shape's among n still lift the reading by about
+`k x (L - 1) / n`. The switch is off from the constructor: the controller keeps the
 bound until a GPU check on a prefix-heavy P/D workload clears the change.
 
 `KVreq` is the single most load-bearing quantity in the analyzer. Everything

@@ -1291,6 +1291,9 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestKVAboveContext_ANoHitShapeIsReadAboveItsContext"},
 		{"../saturation", "TestKVAboveContext_TheCountGateTakesTheReading"},
 		{"../saturation", "TestKVAboveContext_FewLongRequestsBelowTheContextAreNoReading"},
+		{"../saturation", "TestKVAboveContext_RequestsPullingTheirKVHoldIt"},
+		{"../saturation", "TestKVAboveContext_AFewLongPromptsAreNoReading"},
+		{"../saturation", "TestKVAboveContext_ALaggingRunningCountIsNoReading"},
 		{"../saturation", "TestKVAboveContext_OffFromTheConstructor"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
