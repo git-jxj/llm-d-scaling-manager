@@ -2291,14 +2291,16 @@ those the load generator sent
 | 5003, 3.39 | 3.23 / 5.79 / 6.63 | 0.92 | 2.22 / 2.81 / 3.14 | 2.64 / 3.33 / 3.73 (3.558, 3.30) |
 | 5003, 3.54 | 3.62 / 6.66 / 7.79 | 1.31 | 2.60 / 3.22 / 3.54 | 2.12 / 2.62 / 2.88 (3.367, 4.61) |
 
-All 36 readings are at or above the client (1.46x to 3.73x): the floor rule
+All 36 readings are at or above the client (1.46x to 3.73x; one, seed 5003
+at the sent 3.027 r/s, is just under the onset, where the switch does not
+apply): the floor rule
 (at least 0.9 of the client) holds everywhere. They read long for the same
 reason as below the onset: the learned prefill throughput is a lower bound.
 That slack is larger than the router's measured wait, so the floor alone
 cannot tell a wait that moves from one that adds; the off/on pair above is
 what says it moves.
 Bucket C's frozen p95 target (22.7 s) now answers 3.44 r/s, past the onset
-(3.10 r/s), where v1.0.0's client p95 was 6.6 to 12.6 s.
+(3.10 r/s); at 3.39 to 3.54 r/s v1.0.0's client p95 was 6.6 to 12.6 s.
 
 On v0.11.0 the same figure reads short at a step its fleet held: C at
 3.24 r/s, 0.80 / 0.84 / 0.57 of the client

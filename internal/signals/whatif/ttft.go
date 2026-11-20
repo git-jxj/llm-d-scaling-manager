@@ -303,7 +303,7 @@ type TTFTFleet struct {
 	// sharing at a prompt spread up to MaxPSPromptCV, a rate up to
 	// MaxRouterWaitKneeShare of the prefill knee), so a rate answer may stand
 	// past the onset. Opt-in, off by default (DefaultRouterWaitInPrefill),
-	// and for llm-d-router v1.0.0 or later only.
+	// and measured on llm-d-router v1.0.0 only.
 	//
 	// On v1.0.0 the gate moves the wait from the pods to the router rather
 	// than adding to it: on the Qwen3-32B flow-control A/B, at six bursty

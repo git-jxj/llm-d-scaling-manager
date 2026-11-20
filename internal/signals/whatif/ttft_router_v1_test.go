@@ -45,7 +45,7 @@ var routerV1Steps = []abStep{
 }
 
 // routerV1Fleet is bucket C's frozen fleet at the arrivals' Ca^2, flow
-// control on, the router's wait taken as inside the prefill price.
+// control on, with RouterWaitInPrefill set to inPrefill.
 func routerV1Fleet(ca2 float64, inPrefill bool) TTFTFleet {
 	fl := fcFleet(q32Fleet("C"), false)
 	fl.Prefill.ArrivalCV2 = ca2

@@ -491,7 +491,7 @@ func (f *answerFlags) onsetNotes(pf *pricedFleet) {
 			pf.assume("--router-wait-in-prefill not applied: prompt cv %s is past %s, where processor sharing is not validated",
 				num(pf.fleet.Prefill.PromptCV), num(whatif.MaxPSPromptCV))
 		default:
-			pf.assume("the router's wait past the prefill onset inside the prefill price, router v1.0.0 or later (--router-wait-in-prefill)")
+			pf.assume("the router's wait past the prefill onset inside the prefill price, measured on router v1.0.0 (--router-wait-in-prefill)")
 		}
 	}
 }
