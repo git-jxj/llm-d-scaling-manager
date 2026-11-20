@@ -108,9 +108,14 @@ func (w *Writer) deniedRetry(tries int) time.Duration {
 //     changed it, or the writer raised it) is dropped.
 //   - A denied write is held until its retry is due.
 //   - A written one is followed when the children run no more than it asked
-//     for. Until then, a rollout that defers the scale-down restarts the
-//     clock; past FollowTimeout without one, it is refused: reported once,
-//     and held until the children follow or the count is raised.
+//     for. Until then, a rollout restarts the clock (the set defers a
+//     scale-down through one by default, and surges through one otherwise);
+//     past FollowTimeout without one, it is refused: reported once, and held
+//     until the children follow or the count is raised.
+//
+// The records live in memory. So that a restart or a leader change does not
+// lose a refusal, the first pass that sees a role compares its children with
+// its count and starts a record when they run more.
 func (w *Writer) followScaleDowns(ctx context.Context, set *unstructured.Unstructured, roles []Role, logger logr.Logger) map[string]string {
 	key := types.NamespacedName{Namespace: set.GetNamespace(), Name: set.GetName()}
 	now := w.now()
@@ -118,20 +123,30 @@ func (w *Writer) followScaleDowns(ctx context.Context, set *unstructured.Unstruc
 	var children map[string]childReplicas
 	var childErr error
 	read := false
+	readChildren := func() {
+		if !read {
+			children, childErr = w.readChildren(ctx, set)
+			read = true
+			w.childReadFailure(key, childErr, logger)
+		}
+	}
 	for _, r := range roles {
 		k := roleKey{key, r.Name}
-		w.mu.Lock()
-		sd := w.scaleDowns[k]
-		w.mu.Unlock()
+		sd, first := w.scaleDownOf(k)
+		if sd == nil && first && r.Current > 0 {
+			readChildren()
+			if c := children[r.Name]; childErr == nil && c.replicas > r.Current {
+				sd = &scaleDown{from: c.replicas, to: r.Current, since: now}
+				w.putScaleDown(k, sd)
+			}
+		}
 		if sd == nil {
 			continue
 		}
 		if sd.denied {
 			if r.Current != sd.from {
 				w.dropScaleDown(k)
-				continue
-			}
-			if now.Before(sd.retry) {
+			} else if now.Before(sd.retry) {
 				held[r.Name] = sd.reason
 			}
 			continue
@@ -140,11 +155,7 @@ func (w *Writer) followScaleDowns(ctx context.Context, set *unstructured.Unstruc
 			w.dropScaleDown(k)
 			continue
 		}
-		if !read {
-			children, childErr = w.readChildren(ctx, set)
-			read = true
-			w.childReadFailure(key, childErr, logger)
-		}
+		readChildren()
 		if childErr != nil {
 			// Unknown is neither followed nor refused: keep the record and
 			// the clock, and hold a refusal already reported.
@@ -154,43 +165,74 @@ func (w *Writer) followScaleDowns(ctx context.Context, set *unstructured.Unstruc
 			continue
 		}
 		c := children[r.Name]
-		if c.replicas <= sd.to {
+		switch {
+		case c.replicas <= sd.to:
 			if sd.refused {
 				logger.Info("The cluster applied the role's scale-down it had refused: the role writer may lower it again",
 					"role", r.Name, "replicas", sd.to)
 			}
 			w.dropScaleDown(k)
 			continue
-		}
-		if c.revisions > 1 && scaleDownDeferred(set) {
-			w.mu.Lock()
+		case c.revisions > 1:
 			sd.since = now
-			w.mu.Unlock()
-			if sd.refused {
-				held[r.Name] = sd.reason
-			}
-			continue
+		case !sd.refused && now.Sub(sd.since) >= w.followTimeout():
+			waited := now.Sub(sd.since).Round(time.Second)
+			sd.refused = true
+			sd.reason = fmt.Sprintf("role %s: spec.replicas is %d, and %s later its child LeaderWorkerSets still run %d groups. "+
+				"The cluster has not applied the decrease; an admission policy or webhook that wants a drain first does this%s. "+
+				"The writer will not lower this role again until the children follow or the count is raised",
+				r.Name, sd.to, waited, c.replicas, conditionsSay(set))
+			logger.Info("The cluster refused a role scale-down", "role", r.Name,
+				"written", sd.to, "running", c.replicas, "waited", waited)
+			w.event(set, corev1.EventTypeWarning, EventScaleDownRefused, sd.reason)
 		}
+		w.putScaleDown(k, sd)
 		if sd.refused {
 			held[r.Name] = sd.reason
-			continue
 		}
-		if now.Sub(sd.since) < w.followTimeout() {
-			continue
-		}
-		reason := fmt.Sprintf("role %s: the writer set %d groups %s ago, and its child LeaderWorkerSets still run %d. "+
-			"Something in the cluster refuses the decrease, such as an admission policy that requires a drain first%s. "+
-			"The writer will not lower this role again until the children follow or the count is raised",
-			r.Name, sd.to, now.Sub(sd.since).Round(time.Second), c.replicas, conditionsSay(set))
-		w.mu.Lock()
-		sd.refused, sd.reason = true, reason
-		w.mu.Unlock()
-		logger.Info("The cluster refused a role scale-down the writer wrote", "role", r.Name,
-			"written", sd.to, "running", c.replicas, "waited", now.Sub(sd.since).Round(time.Second))
-		w.event(set, corev1.EventTypeWarning, EventScaleDownRefused, reason)
-		held[r.Name] = reason
 	}
 	return held
+}
+
+// scaleDownOf returns a copy of role k's record, nil when it has none, and
+// whether this is the first time the writer looks at k.
+func (w *Writer) scaleDownOf(k roleKey) (*scaleDown, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.followed == nil {
+		w.followed = map[roleKey]bool{}
+	}
+	first := !w.followed[k]
+	w.followed[k] = true
+	sd := w.scaleDowns[k]
+	if sd == nil {
+		return nil, first
+	}
+	cp := *sd
+	return &cp, first
+}
+
+// putScaleDown stores role k's record.
+func (w *Writer) putScaleDown(k roleKey, sd *scaleDown) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.scaleDowns == nil {
+		w.scaleDowns = map[roleKey]*scaleDown{}
+	}
+	w.scaleDowns[k] = sd
+}
+
+// settleDenied drops the denied record of every role plan no longer lowers:
+// the engines want its count again, so the next denial starts a new backoff.
+func (w *Writer) settleDenied(set types.NamespacedName, roles []Role, plan map[string]int32) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, r := range roles {
+		k := roleKey{set, r.Name}
+		if sd := w.scaleDowns[k]; sd != nil && sd.denied && plan[r.Name] >= r.Current {
+			delete(w.scaleDowns, k)
+		}
+	}
 }
 
 // recordWrite updates the scale-down records after an accepted write of plan:
@@ -347,12 +389,18 @@ func (w *Writer) childReadFailure(set types.NamespacedName, err error, logger lo
 	if meta.IsNoMatchError(err) {
 		kind = noMatch
 	}
-	same := w.childFailed[set] == kind
+	// A plain error (a timeout) has no reason: kind "" must not match an
+	// absent entry.
+	prev, logged := w.childFailed[set]
+	same := logged && prev == kind
 	w.childFailed[set] = kind
 	w.mu.Unlock()
 	if !same {
-		logger.Error(err, "Could not read the child LeaderWorkerSets of the set: the role writer cannot tell whether the cluster applied a scale-down it wrote. "+
-			"It needs list on leaderworkersets, which the controller's role grants")
+		msg := "Could not read the child LeaderWorkerSets of the set: the role writer cannot tell whether the cluster applied a scale-down it wrote"
+		if apierrors.IsForbidden(err) {
+			msg += ". It needs list on leaderworkersets, which the controller's manager role grants"
+		}
+		logger.Error(err, msg)
 	}
 }
 
@@ -361,13 +409,6 @@ func (w *Writer) dropScaleDown(k roleKey) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.scaleDowns, k)
-}
-
-// scaleDownDeferred reports whether set holds a scale-down through a rollout:
-// spec.scalingPolicy.scaleDownDuringRollout is Deferred, the default.
-func scaleDownDeferred(set *unstructured.Unstructured) bool {
-	p, _, _ := unstructured.NestedString(set.Object, "spec", "scalingPolicy", "scaleDownDuringRollout")
-	return p != "Immediate"
 }
 
 // conditionsSay is the set's status conditions that report a problem, as

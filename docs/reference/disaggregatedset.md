@@ -156,35 +156,39 @@ webhook denies any lower `replicas` until a drain tool has taken the group out
 of the router and waited for it to go idle. The role writer does not drain.
 Pick how scale-down works on such a cluster:
 
-- **Let the drain tool act on the writer's count.** Keep the writer on. When
-  it lowers a role and the cluster refuses, the set keeps the lower count as a
-  request. Your drain tool drains the groups above it and lets the decrease
-  through; the set controller then applies it. Scale-up works as usual.
 - **Scale up only.** Set `scaling-manager.llmd.ai/min-replicas` to the count
   you run. The writer never goes below it; your drain tool scales down.
+- **Let the drain tool act on the writer's count.** Works when the policy
+  guards the child LeaderWorkerSets, not the set: the set then keeps the lower
+  count as a request. Your drain tool drains the groups above it and lets the
+  decrease through; the set controller applies it. Scale-up works as usual.
 - **Leave the set to your own tooling.** Remove the
   `scaling-manager.llmd.ai/role-writer` annotation.
 
 What the writer does when a lower count is refused:
 
-- **Refused on the set itself.** The write fails. The writer records
-  `RoleScaleDownRefused` with the API server's message and keeps the role at
-  its count. Changes to other roles are still written. It asks again after 5
-  minutes, then 10, 20, and so on, at most once an hour, until the cluster
-  accepts or the engines ask for more groups.
+- **Refused on the set itself.** The write fails and the set keeps its count.
+  The writer records `RoleScaleDownRefused` with the API server's message and
+  keeps the role at its count. Changes to other roles are still written. It
+  asks again after 5 minutes, then 10, 20, and so on, at most once an hour,
+  until the cluster accepts or the engines want the count back.
 - **Refused on the set's child LeaderWorkerSets.** The set takes the lower
   count, but its controller cannot apply it, so the groups keep running. If
   the children still run more groups 2 minutes after the write, the writer
   records `RoleScaleDownRefused` once and does not lower the role again until
-  the children follow or the count goes up. While a rollout holds the
-  scale-down (`Deferred`), the 2 minutes do not run.
+  the children follow, the count goes up, or someone else changes it. While a
+  rollout runs, the 2 minutes do not count.
 
 To see it: `kubectl get events --field-selector reason=RoleScaleDownRefused -n <namespace>`,
 or the controller log line `The cluster refused a role scale-down`.
 
-The writer reads the child LeaderWorkerSets with the `list` on
-`leaderworkersets` the controller already has. If that read fails, it logs it
-once and reports no refusal.
+The writer keeps this state in memory. After a restart it compares each
+role's children with the set once, so a refusal from before is reported
+again 2 minutes later.
+
+It reads the child LeaderWorkerSets with the `list` on `leaderworkersets`
+that the controller's manager role has. If that read fails, the writer logs
+it once, reports nothing new, and keeps holding a role it already reported.
 
 ## Events
 

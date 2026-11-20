@@ -190,6 +190,9 @@ type Writer struct {
 	scaleDowns map[roleKey]*scaleDown
 	// childFailed is the last failed read of each set's children logged.
 	childFailed map[types.NamespacedName]string
+	// followed is every role whose children the writer has compared with
+	// its count once, at first sight.
+	followed map[roleKey]bool
 }
 
 type roleKey struct {
@@ -270,7 +273,9 @@ func (w *Writer) listFailure(ctx context.Context, ns string, err error) {
 	if meta.IsNoMatchError(err) {
 		kind = noMatch
 	}
-	if w.listFailed[ns] == kind {
+	// A plain error (a timeout) has no reason: kind "" must not match an
+	// absent entry.
+	if prev, logged := w.listFailed[ns]; logged && prev == kind {
 		return
 	}
 	w.listFailed[ns] = kind
@@ -463,7 +468,9 @@ func (w *Writer) reconcile(ctx context.Context, set *unstructured.Unstructured, 
 		return
 	}
 	held := w.followScaleDowns(ctx, set, roles, logger)
-	plan := holdRefused(roles, w.stabilize(key, roles, Plan(roles, decided, lo, hi)), held, lo)
+	stable := w.stabilize(key, roles, Plan(roles, decided, lo, hi))
+	w.settleDenied(key, roles, stable)
+	plan := holdRefused(roles, stable, held, lo)
 	for role, why := range held {
 		logger.V(1).Info("Holding a role at its count: the cluster refused a lower one", "role", role, "reason", why)
 	}
@@ -611,6 +618,11 @@ func (w *Writer) dropHistory(set types.NamespacedName) {
 			delete(w.scaleDowns, k)
 		}
 	}
+	for k := range w.followed {
+		if k.set == set {
+			delete(w.followed, k)
+		}
+	}
 }
 
 // forget drops the history of the roles a pass did not see: sets deleted or
@@ -626,6 +638,11 @@ func (w *Writer) forget(seen map[roleKey]bool) {
 	for k := range w.scaleDowns {
 		if !seen[k] {
 			delete(w.scaleDowns, k)
+		}
+	}
+	for k := range w.followed {
+		if !seen[k] {
+			delete(w.followed, k)
 		}
 	}
 }
