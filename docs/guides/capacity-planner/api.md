@@ -79,6 +79,7 @@ targets, here about 11 r/s, so 6 r/s holds.
 | `POST /v1/size` | The fewest prefill and decode replicas whose fleet limit reaches a rate under the SLO, with the plan at that fleet; or why no fleet within the bound does. |
 | `POST /v1/report` | One fleet judged at the load the source saw, for each request shape and load asked: utilization, knees, the SLO against load, a shape-by-load summary and a verdict per shape. The same report as `capacity-planner at-replicas -o json`. |
 | `POST /v1/dayplan` | The prefill and decode replicas each bucket of the source's window needed, against the replicas it had: [the day plan](#the-day-plan). |
+| `POST /v1/backtest` | The planner fitted on one window, predicting another step by step beside what the fleet measured: [the backtest](#the-backtest). |
 | `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. With `--allow-upload`, also the uploads (first, newest first), `uploads[]` with each one's `fileName`, `bytes` and `uploadedAt`, and `upload.maxBytes`. |
 | `POST /v1/recordings` | Uploads a recording, with `--allow-upload` only: [Upload a recording](#upload-a-recording). |
 | `GET /` | The page, with its files under `/page/`. |
@@ -408,6 +409,45 @@ curl -s http://127.0.0.1:8080/v1/dayplan -H 'Content-Type: application/json' -d 
   "assume": {"vp": 30000}}' | jq '.summary'
 ```
 
+## The backtest
+
+`POST /v1/backtest` fits the planner on one source and predicts another from
+its inputs alone: each step's rate, prompt and output lengths, prompt spread
+and serving replicas. Each prediction is set beside the latency the source
+measured, the router's histograms where recorded, else the engines'. The task
+is in [Check the planner](check.md).
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `inputsId` | required | The source fitted on, from `POST /v1/inputs`. |
+| `testInputsId` | | The source tested on. Without it, `inputsId`'s source is split. |
+| `split`, `fitUntil` | `60%` | Where to split one source: a share of its span, or an RFC 3339 time. The fit is the source read at the split's cycle, resolved as `POST /v1/inputs` resolves it; the test is every cycle after it. |
+| `step`, `settle` | `5m`, `2m` | A step's length (`1m` to `1h`), and how long after a change of replicas, and after the test's start, a step is not judged. |
+| `ttft` | | A target (`statistic`, `target` seconds) to judge each step by, predicted and measured. |
+| `arrivalCV2` | Poisson | The test's Ca^2: 1 is random arrivals, higher is burstier. |
+| `measured` | `auto` | `router`, `engine`, or `auto`. |
+| `assume` | | Terms the fit did not learn, as a plan's `assume`. Every figure they move is flagged. |
+| `allowConfigMismatch` | false | A test of another model is a 400. A test whose recorded configuration differs from the fit's is a 400 with `reason` `ConfigMismatch`, naming each field: the roles, the flow-control series (read over each side's cycles), and per role the accelerator, GPUs, vLLM release and every engine setting the capacity fingerprint holds (parallelism, dtypes, batch and context limits, speculative decoding, KV connector, prefix caching, checkpoint, image). A setting a side could not read is not compared. True prices it, with the difference in `config.differences` and the notes. A test that is the fit's own source, or starts before the fit ends, is a 400. |
+
+| Key | What it is |
+| --- | --- |
+| `verdict`, `verdictLines`, `excluded` | The answer, whole and a sentence a line (the span, TTFT, TPOT, the benchmark conditions), and what was not judged. |
+| `backtestId`, `banner`, `notes`, `step`, `settle`, `ttft` | The answer's id, its standing in one line, what it rests on, the step and settle in seconds, and the target asked. |
+| `fit`, `test`, `split` | Each side's source, span and cycles, and how one source was split. |
+| `config` | `match`, `differences[]` (`field`, `fit`, `test`), `notCompared` (what a side does not record, the router's version always), `allowed`. |
+| `measured`, `measuredNote` | The latency scored against, and what its figures are. |
+| `assumed` | The inputs the test did not give: random arrivals, a prompt-length spread not read. |
+| `steps[]` | `start`, `cycles`, `excluded` (`warmUp`, `scaling`, `noTraffic`, `noMeasurement`, `notPriced`, `otherVariants`) with `detail`, the inputs (`rate`, `prefill`, `decode`, `promptTokens`, `outputTokens`, `promptCV`), `requests`, `kneeShare` and `load` (TTFT's band), `decodeKneeShare` and `decodeLoad` (TPOT's), `ttft[]` and `tpot[]` per statistic (`mean`, `p50`, `p90`, `p95`): `predicted` (a figure, with its validation), `bound` (the planner's own upper estimate: the top of its span over V_P and f, or of its band; absent with none), `measured`, `ratio` (predicted over measured), `inRegion`, `aboveHistogram` (measured above the top bucket while predicted under it: `ratio` is over the top bound, and counts as read low), `unscored` (`fewRequests`, `aboveHistogram`, `refused`, `notMeasured`, `notComparable`); and `target` with a target. Each step's inputs are read over the window its measurement covers: the cycles of the measurement's rate window (the router's, recorded with it; else one minute) ending at the step's last cycle. A source with no prefill variant is a 400: a backtest prices a P/D fleet. |
+| `summary` | `steps`, `judged`, `excluded` counts, and per statistic over `all` judged steps and `inRegion`: `steps`, `bias` (the median ratio), `medianError` and `p90Error` (of \|ln ratio\| as a share: 0.5 is a factor of 1.5), `coverage` over `coverageSteps` (measured at or under the bound, where there is one), `within` (within 20%), `low` (read more than 20% low); `unscored` by reason, `refused` by the refusal's reason, `pastKnee` (the measured range where it refused as saturated), and `outside` by the envelope's reason; `byLoad[]` the same per load band (`steps` by TTFT's band, `decodeSteps` by TPOT's); `target` the agreement on the target. |
+
+A measured percentile needs 50 requests in the step at p50, 100 at p90 and
+200 at p95 (50 for the mean): fewer is `fewRequests`, not scored.
+
+```bash
+curl -s http://127.0.0.1:8080/v1/backtest -H 'Content-Type: application/json' -d '{
+  "inputsId": "'"$ID"'", "split": "60%", "step": "5m"}' | jq -r '.verdict, .excluded'
+```
+
 ## Errors
 
 Every error, whatever its status, has the same shape. An error a client can
@@ -419,7 +459,7 @@ act on also has a `reason`:
 
 | Status | When |
 | --- | --- |
-| 400 | A field asked wrongly; the message names it. |
+| 400 | A field asked wrongly; the message names it. With `reason` `ConfigMismatch`: a backtest whose test ran another configuration than its fit; the message names each field, and `allowConfigMismatch` scores it anyway. |
 | 401 | `--auth=kubernetes` and no token, or a token TokenReview does not accept. |
 | 403 | A Host that is not a loopback name with `--auth=none`; a namespace not in `--allowed-namespaces`; with `--auth=kubernetes`, a user not allowed the path or the namespace; an upload without `--allow-upload`. |
 | 404 | An unknown path, or an `inputsId` the server no longer holds: resolve the inputs again. |

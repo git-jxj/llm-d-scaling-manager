@@ -42,6 +42,15 @@ type SeriesSample struct {
 	// OtherPods is the serving pods of prefill and decode variants other
 	// than the priced ones.
 	OtherPods int
+	// PromptComputedRate, PromptRequestRate and PromptBuckets are the
+	// prefill pods' computed prompt tokens and requests a second and their
+	// pooled computed-token histogram (learnreplay.CycleSample), for a
+	// backtest's prompt spread; zero and nil with none.
+	PromptComputedRate, PromptRequestRate float64
+	PromptBuckets                         map[float64]float64
+	// FlowControlSeries says the cycle read the router's flow-control queue
+	// series.
+	FlowControlSeries bool
 }
 
 // The day plan's defaults and bounds.

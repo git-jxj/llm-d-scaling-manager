@@ -37,6 +37,13 @@ type Resolved struct {
 	// Series is every cycle of the source, oldest first, for a day plan
 	// (POST /v1/dayplan); nil where the source carries none.
 	Series []SeriesSample
+	// Latency is each cycle's measured latency, Latency[i] the cycle of
+	// Series[i], for a backtest (POST /v1/backtest); nil where the source
+	// carries none. Nothing that prices a fleet reads it.
+	Latency []LatencySample
+	// Config is the configuration the source says the fleet ran, which a
+	// backtest compares between its fit and its test.
+	Config RunConfig
 	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
 	// the Series and the Inputs), its weight in the inputs cache
 	// (Config.MaxInputsBytes); 0 weighs nothing.

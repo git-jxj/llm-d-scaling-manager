@@ -70,6 +70,7 @@ func TestSchemaIsPinned(t *testing.T) {
 		"planRequest": reflect.TypeFor[PlanRequest](), "plan": reflect.TypeFor[PlanResponse](), "error": reflect.TypeFor[ErrorResponse](),
 		"sources": reflect.TypeFor[SourcesResponse](), "upload": reflect.TypeFor[UploadResponse](), "sizeRequest": reflect.TypeFor[SizeRequest](), "size": reflect.TypeFor[SizeResponse](),
 		"reportRequest": reflect.TypeFor[ReportRequest](), "report": reflect.TypeFor[ReportResponse](),
+		"backtestRequest": reflect.TypeFor[BacktestRequest](), "backtest": reflect.TypeFor[BacktestResponse](),
 	}
 	for typ, name := range namedTypes {
 		walked[name] = typ

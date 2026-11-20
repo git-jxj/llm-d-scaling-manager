@@ -30,6 +30,9 @@
 //	                                 [--listen 127.0.0.1:8080] [--auth none|kubernetes --tls-cert-file F --tls-key-file F [--token-audiences A,...]]
 //	                                 [--listen-all-in-container (in a container: --listen 0.0.0.0:PORT, no auth)]
 //	                                 [--allow-upload [--upload-max-size 256Mi]]
+//	capacity-planner backtest        (--recording FILE [--split 60% | --fit-until T] | --fit FILE --test FILE)
+//	                                 [--step 5m] [--settle 2m] [--ttft-target 500ms@p90] [--arrival-cv2 C]
+//	                                 [--measured auto|router|engine] [--assume-vp V] [--assume-a D] [--allow-config-mismatch] [-o json]
 //	capacity-planner version         (the release and commit; the controller of the recordings is released under the same tag)
 //
 // capture writes the window's cycle inputs (internal/whatifsource);
@@ -49,6 +52,10 @@
 // at-replicas judges one fleet at the load the window saw: the utilization
 // there, the knees, the SLO against load and a verdict (report.go); POST
 // /v1/report answers the same.
+//
+// backtest fits on one window and predicts another from its inputs alone,
+// beside what the fleet measured there (backtest.go, POST /v1/backtest;
+// docs/guides/capacity-planner/check.md).
 //
 // serve runs the capacity planner's HTTP API on the same code paths
 // (serve.go, internal/whatifapi; docs/developer-guide/capacity-planner-serve.md).
@@ -239,7 +246,7 @@ func exitCode(err error) int {
 	return 1
 }
 
-const usage = "usage: capacity-planner at-replicas|capture|day-plan|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
+const usage = "usage: capacity-planner at-replicas|backtest|capture|day-plan|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
 
 // command is one subcommand: it parses its own flags from args and writes
 // what it reports to out, and its warnings to warn (stderr).
@@ -248,6 +255,7 @@ type command func(ctx context.Context, args []string, out, warn io.Writer) error
 // commands is every subcommand, by name.
 var commands = map[string]command{
 	"at-replicas":     runAtReplicas,
+	"backtest":        runBacktest,
 	"capture":         runCapture,
 	"day-plan":        runDayPlan,
 	"freeze":          runFreeze,

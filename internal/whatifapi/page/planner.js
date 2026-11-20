@@ -484,6 +484,13 @@ function setInputs(inputs) {
   el("dayout").hidden = true;
   el("dayrun").disabled = !inputs.fleet.prefill;
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
+  state.bt = null;
+  el("btout").hidden = true;
+  el("btrun").disabled = !inputs.fleet.prefill;
+  el("btrun").title = inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
+  const loaded = inputs.source && inputs.source.name;
+  el("bttest").innerHTML = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded)
+    .map(n => `<option>${esc(n)}</option>`).join("");
   state.priceFailed = false;
   clearPlan();
   state.size = null;
@@ -2023,6 +2030,81 @@ function wire() {
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
+  el("btrun").onclick = runBacktest;
+  const btStale = () => { if (state.bt) el("btout").classList.add("stale"); };
+  el("btsplit").oninput = () => { el("btsplitout").textContent = el("btsplit").value + "%"; btStale(); };
+  el("btstep").onchange = el("bttest").onchange = el("btallow").onchange = btStale;
+  el("btsplitmode").onchange = el("btothermode").onchange = () => {
+    const other = el("btothermode").checked;
+    document.querySelector('[data-btmode="split"]').hidden = other;
+    document.querySelector('[data-btmode="other"]').hidden = !other;
+    btStale();
+  };
+}
+
+// ---- Check the planner (POST /v1/backtest) ----
+
+// runBacktest fits the planner on the first part of the source (or on the
+// source, testing another recording) and draws predicted against measured.
+async function runBacktest() {
+  if (!state.inputs) return;
+  const inputsId = state.inputs.inputsId, t0 = performance.now();
+  el("btrun").disabled = true;
+  el("btout").classList.add("stale");
+  setStatus("Checking the planner: fitting, then pricing each step of the test (seconds to a minute)...");
+  try {
+    const req = {inputsId, step: el("btstep").value};
+    if (el("btallow").checked) req.allowConfigMismatch = true;
+    if (el("btothermode").checked) {
+      const name = el("bttest").value;
+      if (!name) throw new Error("pick a test recording");
+      const test = await api("POST", "v1/inputs", {model: state.inputs.model, source: {kind: "recording", name},
+        decodeVariant: state.inputs.fleet.decode.variant,
+        prefillVariant: state.inputs.fleet.prefill ? state.inputs.fleet.prefill.variant : undefined});
+      req.testInputsId = test.inputsId;
+    } else {
+      req.split = el("btsplit").value + "%";
+    }
+    const out = await api("POST", "v1/backtest", req);
+    if (!state.inputs || inputsId !== state.inputs.inputsId) return;
+    state.bt = out;
+    renderBacktest();
+    setStatus(`Checked ${out.steps.length} steps in ${((performance.now() - t0) / 1000).toFixed(1)} s.`);
+  } catch (e) {
+    setStatus("Could not check the planner: " + e.message, true);
+  } finally {
+    el("btrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+    el("btout").classList.remove("stale");
+  }
+}
+
+// renderBacktest draws the check: the verdict and what was not judged, the
+// two charts on one time axis, the legend, the scores and the notes.
+function renderBacktest() {
+  const bt = state.bt;
+  el("btout").hidden = false;
+  const lines = btSummaryText(bt);
+  el("btsum").innerHTML = lines.map((t, i) => `<li>${i === 0 ? "<b>" + esc(t) + "</b>" : esc(t)}</li>`).join("");
+  const g = btSVG(bt), svg = el("btchart");
+  svg.setAttribute("viewBox", g.viewBox);
+  svg.innerHTML = g.markup;
+  el("btlegend").innerHTML = btLegend();
+  el("btdesc").textContent = lines.join(" ");
+  el("btscores").innerHTML = btScoreTable(bt);
+  el("btsteps").innerHTML = btStepTable(bt);
+  el("btnotes").innerHTML = bt.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(bt.banner)}</li>`;
+  const xh = svg.querySelector(".xh"), tip = el("tip");
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) * g.W / r.width;
+    const s = vx < g.L || vx > g.L + g.pw ? null : btStepAt(bt, g.x0 + (vx - g.L) / g.pw * (g.x1 - g.x0));
+    if (!s) { svg.onmouseleave(); return; }
+    xh.setAttribute("x1", vx); xh.setAttribute("x2", vx); xh.setAttribute("visibility", "visible");
+    tip.innerHTML = btTipHTML(bt, s);
+    tip.hidden = false;
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 360) + "px";
+    tip.style.top = (e.clientY + 14) + "px";
+  };
+  svg.onmouseleave = () => { xh.setAttribute("visibility", "hidden"); tip.hidden = true; };
 }
 
 // ---- The day plan ----

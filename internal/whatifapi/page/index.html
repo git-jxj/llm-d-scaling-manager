@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="page/planner.css">
 <script src="page/scenario.js" defer></script>
 <script src="page/dayplan.js" defer></script>
+<script src="page/backtest.js" defer></script>
 <script src="page/planner.js" defer></script>
 </head>
 <body>
@@ -270,6 +271,37 @@
       <details><summary>Table view: the hours</summary><div id="daytable"></div></details>
       <details><summary>Table view: every bucket, with why a bucket was not sized</summary><div id="daybuckets"></div></details>
       <ul class="daynotes" id="daynotes"></ul>
+    </div>
+  </section>
+
+  <section class="card dayplan backtest" id="backtest" aria-labelledby="bttitle">
+    <h2 id="bttitle">Check the planner against a period it did not see</h2>
+    <p class="hint">Learns from the first part of the source, then predicts the latency of the rest from that period's traffic and
+      replica counts only, never from its measured latency, and compares with what the fleet measured. Or learn from the source and
+      test on another recording of the same configuration. Load a recording of a few hours in Source first.</p>
+    <div class="row">
+      <fieldset class="kind">
+        <legend>Test on</legend>
+        <label><input type="radio" name="btmode" value="split" id="btsplitmode" checked> the rest of this source</label>
+        <label><input type="radio" name="btmode" value="other" id="btothermode"> another recording</label>
+      </fieldset>
+      <div class="field" data-btmode="split"><label for="btsplit">Fit on the first <output id="btsplitout">60%</output></label>
+        <input id="btsplit" type="range" min="10" max="90" step="5" value="60"></div>
+      <div class="field" data-btmode="other" hidden><label for="bttest">Test recording</label>
+        <select id="bttest"></select></div>
+      <div class="field"><label for="btstep">Step</label>
+        <select id="btstep"><option selected>5m</option><option>15m</option><option>30m</option></select></div>
+      <label class="check"><input type="checkbox" id="btallow"> Test another configuration anyway</label>
+      <button type="button" id="btrun" disabled>Run</button>
+    </div>
+    <div id="btout" hidden>
+      <ul class="daysum" id="btsum"></ul>
+      <div class="legend" id="btlegend"></div>
+      <svg id="btchart" viewBox="0 0 960 420" role="img" aria-labelledby="bttitle btdesc"></svg>
+      <p class="sr" id="btdesc"></p>
+      <details><summary>Table view: the scores</summary><div id="btscores"></div></details>
+      <details><summary>Table view: every step</summary><div id="btsteps"></div></details>
+      <ul class="daynotes" id="btnotes"></ul>
     </div>
   </section>
 
