@@ -853,10 +853,15 @@ its first CUDA context from 4.6 s to 2.3 s. The first start writes about 150 MB
   - The guard takes only a real directory the user made itself, made `755`.
     That keeps users out of each other's copies on one node; it does not make
     the directory a trust boundary (see [What it costs](#what-it-costs)).
+    Where the node directory is group-writable and not sticky (OpenShift
+    makes it `2775`, group 0), another pod in that group can rename a copy.
   - On a seeded node this holds only for directories a user made. The
-    directories the seed brought are `1777`, so any user can add a file in
-    them, such as a `.pyc` for a module the seed lacked. To keep users apart
-    there, use the `1770` variant in [What it costs](#what-it-costs).
+    directories the seed brought are `1777`, and the preparer makes the four
+    cache directories `1777` again on every start. So any engine that uses
+    the node's cache can add a file beside a seeded one, such as a `.pyc` for
+    a module the seed lacked, though it cannot change or remove a seeded
+    file. Users in one trust domain can share such a node; keep separate
+    trust domains on separate nodes or separate engine-cache directories.
   - Seed and publish skip these copies and the `.writable` markers.
   - On a filesystem that does not report file owners (SMB or Azure Files
     with a fixed uid, some FUSE and NFSv4 mounts) every user shares the one
@@ -923,11 +928,15 @@ for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_DIR TRITON_CACHE_DIR PYTHONPYCACHE
   ecp=
   if [ "$ecown" = yes ]; then
     for p in "$d.uid-$ecu" "$d/.uid-$ecu"; do
-      (umask 022; mkdir -p "$p") 2>/dev/null || continue
+      # One made here and then refused (a filesystem that does not
+      # report owners, seen only now) is removed, not left empty.
+      ecnew=
+      if (umask 022; mkdir "$p") 2>/dev/null; then ecnew=yes; elif [ ! -d "$p" ]; then continue; fi
       if [ -d "$p" ] && [ ! -L "$p" ] && [ -O "$p" ] && chmod go-w "$p" 2>/dev/null && touch "$p/.writable" 2>/dev/null; then
         ecp=$p
         break
       fi
+      [ -z "$ecnew" ] || rmdir "$p" 2>/dev/null
     done
   fi
   if [ -n "$ecp" ]; then
