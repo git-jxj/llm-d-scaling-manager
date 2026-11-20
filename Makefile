@@ -966,7 +966,7 @@ weights-delete: ## Drop the claim, volume and downloader for WEIGHTS_MODEL=<hf i
 	@test -n "$(prepull_namespace_given)" || { echo "weights-delete: set NAMESPACE=<ns> (the Makefile default is not taken here)" >&2; exit 1; }
 	@bash deploy/weights.sh delete -n "$(NAMESPACE)" $(if $(WEIGHTS_MODEL),--model "$(WEIGHTS_MODEL)",--all)
 
-## Keep the engines' compile caches (torch.compile, FlashInfer autotune,
+## Keep the engines' compile caches (torch.compile, FlashInfer autotune, FlashInfer kernels,
 ## Triton JIT, Python bytecode) on every accelerator node's local disk, behind a claim named
 ## engine-cache: a replica's start then never depends on a shared volume being
 ## writable, and the caches are warm from the second start on a node. Measured:
@@ -974,7 +974,7 @@ weights-delete: ## Drop the claim, volume and downloader for WEIGHTS_MODEL=<hf i
 ## ENGINE_CACHE_PATH is the directory on the node (the caches land under
 ## <dir>/engine-cache; defaults to WEIGHTS_PATH), ENGINE_CACHE_IMAGE any image
 ## with /bin/sh (defaults to WEIGHTS_IMAGE; the engine image). Model servers
-## mount the claim read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_DIR,
+## mount the claim read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_BASE,
 ## TRITON_CACHE_DIR and PYTHONPYCACHEPREFIX under it (`make workload-patch`
 ## writes that half for a model server that lacks it). Needs leave to create PersistentVolumes. What
 ## the node directory must be is in deploy/enginecache.sh --help; the nodes are
