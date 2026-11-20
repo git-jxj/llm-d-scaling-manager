@@ -83,6 +83,7 @@ jobs:
     outputs:
       has_code_changes: ${{ steps.set-output.outputs.has_code_changes }}
       release_install: ${{ steps.set-output.outputs.release_install }}
+      warmpool_launcher: ${{ steps.set-output.outputs.warmpool_launcher }}
     steps:
       - name: Checkout source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -137,6 +138,22 @@ jobs:
               - 'Makefile'
               - '.github/workflows/ci-pr-checks.yaml'
 
+      # What the warm-pool launcher image is built from (warmpool-launcher-image).
+      - name: Check for warm-pool launcher changes
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
+        id: launcher-filter
+        with:
+          filters: |
+            warmpool_launcher:
+              - 'warmpool/supervisor/**'
+              - 'Dockerfile.warmpool-launcher'
+              - 'Dockerfile.warmpool-launcher.dockerignore'
+              # make test-warmpool-launcher, which the job runs.
+              - 'Makefile'
+              - '.github/workflows/ci-warmpool-launcher.yaml'
+              - '.github/workflows/ci-pr-checks.yaml'
+
       - name: Set output
         id: set-output
         run: |
@@ -155,6 +172,25 @@ jobs:
           else
             echo "release_install=true" >> $GITHUB_OUTPUT
           fi
+          # The launcher image pulls a ~10 GB vLLM base, so it is built on a PR
+          # that touches it (an empty filter result builds it, failing closed)
+          # and on dispatch. Not nightly: the base is pinned by digest, so a
+          # rebuild of an unchanged tree checks nothing new. Not on every push:
+          # the release builds the same Dockerfile, with the same import check,
+          # for both platforms (ci-warmpool-launcher.yaml, which can also be
+          # dispatched alone as a dry run).
+          case "${{ github.event_name }}" in
+            pull_request)
+              if [ -n "${{ steps.launcher-filter.outputs.warmpool_launcher }}" ]; then
+                echo "warmpool_launcher=${{ steps.launcher-filter.outputs.warmpool_launcher }}" >> $GITHUB_OUTPUT
+              else
+                echo "warmpool_launcher=true" >> $GITHUB_OUTPUT
+              fi ;;
+            workflow_dispatch)
+              echo "warmpool_launcher=true" >> $GITHUB_OUTPUT ;;
+            *)
+              echo "warmpool_launcher=false" >> $GITHUB_OUTPUT ;;
+          esac
 
   lint-and-test:
     runs-on: ubuntu-latest
@@ -515,6 +551,46 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: 'true'
           exit-code: '1'
+
+  # The warm-pool launcher (warmpool/supervisor/, Dockerfile.warmpool-launcher).
+  # Its unit tests stub vLLM, so they cannot see a vLLM module move or a
+  # changed call; the image build checks both against the real vLLM base.
+  # Cheap, so it runs on every push and at a release tag too, not only on the
+  # PRs that touch the launcher: a tag cut from a commit that skipped the PR
+  # path still ships the image with its unit tests run.
+  warmpool-launcher-tests:
+    runs-on: ubuntu-latest
+    needs: check-code-changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.check-code-changes.outputs.warmpool_launcher != 'false') }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the launcher test dependencies
+        run: |
+          python3 -m venv /tmp/launcher-venv
+          /tmp/launcher-venv/bin/pip install --quiet -r warmpool/supervisor/tests/requirements.txt
+
+      - name: Run the launcher unit tests (make test-warmpool-launcher)
+        run: PATH="/tmp/launcher-venv/bin:$PATH" make test-warmpool-launcher
+
+  # The image, both platforms, through the same reusable workflow the release
+  # calls (ci-warmpool-launcher.yaml), build-only: so the arm64 runner, its disk
+  # and the import check on aarch64 run on every PR that touches the launcher,
+  # not first at a release tag. Nothing is pushed. packages: write is granted
+  # only because the called job declares it for the release's push; with
+  # push: false nothing logs in, and a fork PR's token is read-only anyway.
+  warmpool-launcher-image:
+    needs: check-code-changes
+    if: ${{ !cancelled() && needs.check-code-changes.outputs.warmpool_launcher != 'false' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ci-warmpool-launcher.yaml
+    with:
+      push: false
 
   docs-check:
     runs-on: ubuntu-latest

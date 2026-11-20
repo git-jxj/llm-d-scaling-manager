@@ -165,6 +165,15 @@ create options:
                        the stock launcher sends every rank to vLLM's API server,
                        which has no follower path, so an engine spanning Pods
                        cannot start. Build one from the fork carrying that fix.
+                       Releases after v0.12.1 also publish one built here
+                       (vLLM v0.34.0, follower fix included, signed):
+                       ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher
+                       Not yet run on a GPU, so not the default; pin its digest.
+                       The pool's engines run THIS image's vLLM, not the
+                       workload's: use an image whose vLLM matches the
+                       workload's (that one only for vLLM v0.34.0 workloads).
+                       Which image when: warmpool/README.md, "Which launcher
+                       image to use".
   --no-network-policy  do not create the ingress boundary. For clusters where
                        policy is managed centrally -- NOT a convenience: without
                        one, :8001 accepts caller-supplied argv from anything that

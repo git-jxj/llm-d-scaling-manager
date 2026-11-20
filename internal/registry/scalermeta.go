@@ -497,7 +497,7 @@ func ParsePoolMeta(metadata map[string]string) (PoolMeta, error) {
 	}
 	if raw := metadata[WarmPoolGPUMemoryUtilizationKey]; raw != "" {
 		v, err := strconv.ParseFloat(raw, 64)
-		if err != nil || v <= 0 || v > 1 {
+		if err != nil || !(v > 0 && v <= 1) { // NaN fails both comparisons
 			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a fraction above 0 and at most 1, got %q",
 				WarmPoolGPUMemoryUtilizationKey, raw)
 		}

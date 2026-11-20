@@ -30,13 +30,24 @@ sha256:e836bcf5bfa1268b5ec1c8027ba9732e2cafff11ab554dd8dbac67b110c65faf
 This image is based on launcher v0.6.4, not on the v0.8.0 that single-Pod pools
 run. It does not have v0.8.0's eviction fixes: an evicted rank's worker
 processes can keep their GPU memory, and a `DELETE` can stall that Pod's
-launcher, health checks included, for up to 10 s. A fork based on v0.8.0 is
-planned.
+launcher, health checks included, for up to 10 s.
 
-It is `vllm/vllm-openai:v0.26.0` with the fork's `launcher.py` on top, and that
-file is byte-identical to the readable copy in `warmpool/supervisor/` (checked by
-extracting it from the published image). Pin the digest to keep the image fixed,
-or build your own from the [fork](https://github.com/ev-shindin/llm-d-fast-model-actuation).
+It is `vllm/vllm-openai:v0.26.0` with the fork's `launcher.py` on top. Pin the
+digest to keep the image fixed, or build your own from the
+[fork](https://github.com/ev-shindin/llm-d-fast-model-actuation).
+
+There is a second choice, built and released by this repo:
+`ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher:<release>`.
+It carries the same follower fix on FMA's v0.8.0 launcher, so it has the
+eviction fixes, runs vLLM v0.34.0, and is signed. **Use it only for workloads
+that run vLLM v0.34.0:** the pool's engines run the launcher's vLLM, not the
+workload's, and the fork image above runs v0.26.0. So: a v0.26 workload takes
+the fork image, and a v0.34.0 workload takes this one, which has **not** run a
+group on a GPU yet. The copy in `warmpool/supervisor/` is the source of this
+new image, not of the fork image. Which image fits which workload:
+[the table in `warmpool/README.md`](../../../warmpool/README.md#which-launcher-image-to-use);
+how to get and verify it:
+[our own launcher image](install.md#our-own-launcher-image-optional-not-yet-the-default).
 
 It is refused rather than warned about because the failure is silent: the group
 schedules, goes Ready, holds every accelerator, and every admission times out
@@ -69,6 +80,9 @@ spans 4 Pod(s), this warm unit is 2
 That holds even when the device totals agree: sixteen GPUs across two Pods and
 across four are a different engine. Run both layouts and you need a pool for
 each, just as two accelerators need two pools.
+
+Data parallelism across Pods (`--data-parallel-size` above 1 with `--nnodes`
+above 1) is declined permanently too: a pool of groups cannot start it.
 
 ### What is different once a pool holds groups
 
