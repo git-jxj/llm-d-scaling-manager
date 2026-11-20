@@ -1393,13 +1393,18 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFT_TheImbalanceAcrossCountsSwitch"},
 		{"../slo", "TestTTFT_TheImbalanceAcrossCountsDefault"},
 	},
-	// Each runs the switch on and off and asserts both; the staircase test
-	// replays the four staircase recordings both ways.
+	// The first and fourth run the switch on and off and assert both; the
+	// others hold the on side (the hold's age, unread rows) and the
+	// constructor's off. The staircase test replays the four staircase
+	// recordings both ways.
 	slo.SwitchTTFTLowLoadDecodeTTFT: {
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTSwitch"},
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTHoldAgesOut"},
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTOffFromTheConstructor"},
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTThroughAnalyze"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTMixedFleet"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadDropsTheHold"},
+		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadRows"},
 		{".", "TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases"},
 	},
 	// The first runs the switch on and off through Analyze and asserts both;

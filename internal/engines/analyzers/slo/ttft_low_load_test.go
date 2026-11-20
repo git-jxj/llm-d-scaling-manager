@@ -178,6 +178,47 @@ func TestTTFT_TheLowLoadDecodeTTFTMixedFleet(t *testing.T) {
 	assert.InDelta(t, 12, last.decodeTTFT.Seconds, 1e-12)
 }
 
+// A calm window, both pods saying why they wait, then pod B loses its
+// capacity series and queues 300 at 15 s. The calm 0.12 s is not held over
+// it: from the first such cycle the fleet reads its mean, 7.56 s, as off. Once
+// B reports again and is calm, the calm figure returns after the window and
+// the backlog's lag.
+func TestTTFT_TheLowLoadDecodeTTFTUnreadDropsTheHold(t *testing.T) {
+	r := newTTFTRig(ttftEstimate(), nil)
+	r.in.VariantStates = append(r.in.VariantStates, decState)
+	require.NoError(t, r.a.SetSwitchesForReplay(map[string]bool{SwitchTTFTLowLoadDecodeTTFT: true}))
+	var last ttftInputs
+	onTTFTPriced = func(in ttftInputs, _ float64, _ whatif.TTFTTarget) { last = in }
+	t.Cleanup(func() { onTTFTPriced = nil })
+	cycle := func(bTTFT float64, bKnown bool) float64 {
+		dec := decodeRows("dec", 2)
+		dec[0].AvgTTFT, dec[0].AvgTTFTKnown, dec[0].CapacityQueueKnown = 0.12, true, true
+		dec[1].AvgTTFT, dec[1].AvgTTFTKnown, dec[1].CapacityQueueKnown = bTTFT, true, bKnown
+		if !bKnown {
+			dec[1].QueueLength = 300
+		}
+		r.in.ReplicaMetrics = append(prefillRows("pre", 4000), dec...)
+		r.one(t)
+		r.now = r.now.Add(15 * time.Second)
+		return last.decodeTTFT.Seconds
+	}
+	for range whatif.TTFTWindowCycles {
+		cycle(0.12, true)
+	}
+	assert.InDelta(t, 0.12, last.decodeTTFT.Seconds, 1e-12)
+	for i := range int(prefill.HeldDecodeAge/(15*time.Second)) + whatif.TTFTWindowCycles {
+		assert.InDelta(t, 7.56, cycle(15, false), 1e-12, "unread cycle %d: the mean, not a held 0.12 s", i)
+	}
+	// B reports again, calm: within the window the unread cycles' 7.56 s
+	// stands; past it and the lag, the calm figure.
+	assert.InDelta(t, 7.56, cycle(0.12, true), 1e-12)
+	var got float64
+	for range whatif.TTFTWindowCycles + int(prefill.DecodeTTFTLag/(15*time.Second)) {
+		got = cycle(0.12, true)
+	}
+	assert.InDelta(t, 0.12, got, 1e-12)
+}
+
 // Rows that do not say why their requests wait cannot say they are calm: the
 // switch on reads such a fleet as before.
 func TestTTFT_TheLowLoadDecodeTTFTUnreadRows(t *testing.T) {
