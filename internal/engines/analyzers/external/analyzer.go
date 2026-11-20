@@ -270,6 +270,7 @@ func validateBody(body Body) error {
 		return errors.New("exactly one of query and demand rules is required")
 	}
 	measured := len(body.Target) > 0
+	served := func(role string) bool { return targetRuleFor(body.Target, role) >= 0 }
 	if body.Query != "" && !measured && len(body.Demand) == 0 {
 		// The original form, checked exactly as it always was: a NaN
 		// threshold is let through and sizes nothing (see the reference).
@@ -278,6 +279,9 @@ func validateBody(body Body) error {
 		}
 	} else if !(body.Threshold >= 0) || math.IsInf(body.Threshold, 0) {
 		return fmt.Errorf("threshold must be > 0, got %v", body.Threshold)
+	} else if body.Query != "" && body.Threshold == 0 &&
+		!(served(domain.RolePrefill) && served(domain.RoleDecode) && served(domain.RoleBoth)) {
+		return errors.New("threshold is required unless a target rule serves every role")
 	}
 	seen := map[string]bool{}
 	for i, rule := range body.Demand {
@@ -290,7 +294,7 @@ func validateBody(body Body) error {
 			return fmt.Errorf("demand rule %d: query is required", i)
 		case !(rule.Threshold >= 0) || math.IsInf(rule.Threshold, 0):
 			return fmt.Errorf("demand rule %d: threshold must be > 0, got %v", i, rule.Threshold)
-		case rule.Threshold == 0 && body.Threshold == 0 && !measured:
+		case rule.Threshold == 0 && body.Threshold == 0 && !served(rule.Role):
 			return fmt.Errorf("demand rule %d: role %q has no threshold and no target", i, rule.Role)
 		}
 		seen[rule.Role] = true
@@ -409,9 +413,11 @@ func (a *Analyzer) Analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 				p = body.Threshold
 			}
 		}
-		if !(p > 0) {
+		if !(p > 0) && measured != nil {
 			// No target this cycle: missing, not 0. Left out, so no need is
-			// read and no 0 is published for it.
+			// read and no 0 is published for it. Only with target rules: a
+			// constant threshold is used as it always was, even a NaN one
+			// (which sizes nothing, as documented).
 			ctrl.LoggerFrom(ctx).V(logging.VERBOSE).Info("external analyzer has no per-replica target for a variant this cycle",
 				"analyzer", a.def.Label, "namespace", input.Namespace, "modelID", input.ModelID, "variant", vs.VariantName)
 			continue
@@ -432,7 +438,7 @@ func (a *Analyzer) Analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 		})
 	}
 	if len(body.Target) > 0 && len(vcs) == 0 && len(input.VariantStates) > 0 {
-		return nil, fmt.Errorf("external analyzer %q: no target query answered for any variant, and no threshold is set", a.def.Label)
+		return nil, fmt.Errorf("external analyzer %q: no target query answered for any variant, and none has a threshold", a.def.Label)
 	}
 
 	return &domain.AnalyzerResult{
@@ -484,7 +490,7 @@ func (a *Analyzer) queryDemand(ctx context.Context, qName string, input domain.A
 			return 0, fmt.Errorf("external analyzer %q: demand query: %w", a.def.Label, ErrEmptyResult)
 		}
 		if !orZero {
-			reportEmptyOnce(ctx, a.def.Label, qName)
+			reportEmptyOnce(ctx, a.def.Label, qName, input.Namespace, input.ModelID)
 		}
 		return 0, nil
 	}
@@ -641,16 +647,16 @@ func seriesPodName(labels map[string]string) string {
 // Analyzer's, or the line would be logged every cycle.
 var reportedEmpty sync.Map
 
-// reportEmptyOnce logs, once per analyzer and query, that a demand query
+// reportEmptyOnce logs, once per query and model, that a demand query
 // returned no series and is read as 0 demand: a renamed metric or a label
 // typo reads that way too, and lets the model scale down.
-func reportEmptyOnce(ctx context.Context, label, qName string) {
-	if _, seen := reportedEmpty.LoadOrStore(qName, struct{}{}); seen {
+func reportEmptyOnce(ctx context.Context, label, qName, namespace, modelID string) {
+	if _, seen := reportedEmpty.LoadOrStore(qName+"/"+namespace+"/"+modelID, struct{}{}); seen {
 		return
 	}
 	ctrl.LoggerFrom(ctx).Info("External analyzer demand query returned no series, read as 0 demand; "+
-		"set emptyIsMissing: true to read it as missing instead (logged once per query)",
-		"analyzer", label, "query", qName)
+		"set emptyIsMissing: true to read it as missing instead (logged once per query and model)",
+		"analyzer", label, "query", qName, "namespace", namespace, "modelID", modelID)
 }
 
 // modelEngine returns the model's inference engine from its variant states.

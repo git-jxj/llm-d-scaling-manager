@@ -166,6 +166,17 @@ var _ = Describe("external.Analyzer demand rules per role", func() {
 		Expect(res).To(BeNil())
 	})
 
+	It("names an engine body's rule queries after the engine", func() {
+		_, err := external.New(external.Definition{Label: "queue-depth", Bodies: map[string]external.Body{"vllm": {
+			Threshold: 1,
+			Demand:    []external.DemandRule{{Role: domain.RoleDecode, Query: "d"}},
+			Target:    []external.TargetRule{{Queries: []external.TargetQuery{{Query: "t"}}}},
+		}}}, fs)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fs.ql.Get("external:queue-depth:demand@decode:vllm")).NotTo(BeNil())
+		Expect(fs.ql.Get("external:queue-depth:target@any:0:vllm")).NotTo(BeNil())
+	})
+
 	It("registers one query per rule", func() {
 		_, err := external.New(roleDef(), fs)
 		Expect(err).NotTo(HaveOccurred())
@@ -192,6 +203,13 @@ var _ = Describe("external.Analyzer demand rules per role", func() {
 		Entry("an unknown reduction", external.Body{Query: "q", Threshold: 1, TargetReduce: "p99"}, `targetReduce "p99"`),
 		Entry("a target rule with no query", external.Body{Query: "q",
 			Target: []external.TargetRule{{}}}, "at least one query"),
+		Entry("a role with no threshold whose target serves another role", external.Body{
+			Demand: []external.DemandRule{{Role: "prefill", Query: "p"}},
+			Target: []external.TargetRule{{Role: "decode", Queries: []external.TargetQuery{{Query: "t"}}}}},
+			"no threshold and no target"),
+		Entry("a model-level query with no threshold and a target for one role", external.Body{Query: "q",
+			Target: []external.TargetRule{{Role: "decode", Queries: []external.TargetQuery{{Query: "t"}}}}},
+			"threshold is required unless a target rule serves every role"),
 	)
 })
 
@@ -358,6 +376,29 @@ var _ = Describe("external.Analyzer measured targets", func() {
 		Expect(vcs["b"].PerReplicaCapacity).To(Equal(8.0), "the fallback answered for b")
 	})
 
+	It("runs no fallback once every variant has a target", func() {
+		a, err := external.New(def(0, ""), fs)
+		Expect(err).NotTo(HaveOccurred())
+		fs.results["external:kv:demand"] = values(1)
+		fs.results[primary] = podValues(map[string]float64{"a-1": 10, "b-1": 4})
+
+		_, err = a.Analyze(context.Background(), input())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fs.refreshed).To(Equal([]string{"external:kv:demand", primary}))
+	})
+
+	It("drops a target series of a Pod that is gone", func() {
+		a, err := external.New(def(0, ""), fs)
+		Expect(err).NotTo(HaveOccurred())
+		a.DropSeries = func(_ context.Context, _ string, labels map[string]string) bool { return labels["pod"] == "a-2" }
+		fs.results["external:kv:demand"] = values(1)
+		fs.results[primary] = podValues(map[string]float64{"a-1": 10, "a-2": 1000, "b-1": 4})
+
+		res, err := a.Analyze(context.Background(), input())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(byVariant(res)["a"].PerReplicaCapacity).To(Equal(10.0))
+	})
+
 	It("falls back past a query that failed", func() {
 		a, err := external.New(def(0, ""), fs)
 		Expect(err).NotTo(HaveOccurred())
@@ -456,5 +497,26 @@ var _ = Describe("external.Analyzer measured targets", func() {
 		vcs := byVariant(res)
 		Expect(vcs["p1"].PerReplicaCapacity).To(Equal(2.0))
 		Expect(vcs["d1"].PerReplicaCapacity).To(Equal(5.0))
+	})
+})
+
+var _ = Describe("external.Analyzer without the new settings", func() {
+	// A definition written before the rule form runs as it did: its constant
+	// threshold is used even when it is NaN, so the variant is still reported
+	// (and sizes nothing), rather than left out.
+	It("keeps a variant whose constant threshold is NaN", func() {
+		fs := newFakeSource()
+		d := agnosticDef()
+		d.Bodies[""] = external.Body{Query: d.Bodies[""].Query, Threshold: math.NaN()}
+		a, err := external.New(d, fs)
+		Expect(err).NotTo(HaveOccurred())
+		fs.results[agnosticQueryName] = values(3)
+
+		res, err := a.Analyze(context.Background(), domain.AnalyzerInput{ModelID: "m", Namespace: "ns",
+			VariantStates: []domain.VariantReplicaState{{VariantName: "v1", CurrentReplicas: 2}}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.VariantCapacities).To(HaveLen(1))
+		Expect(res.VariantCapacities[0].Reason).To(Equal("E1-const"))
+		Expect(math.IsNaN(res.VariantCapacities[0].PerReplicaCapacity)).To(BeTrue())
 	})
 })

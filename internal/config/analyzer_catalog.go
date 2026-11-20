@@ -170,7 +170,13 @@ func validateExternalBody(query, threshold string, r ExternalAnalyzerRules) erro
 			return fmt.Errorf("threshold %q: %w", threshold, err)
 		}
 	}
-	measured := len(r.Target) > 0
+	// served reports whether a target rule measures role: one that names it,
+	// or one with no match.
+	served := func(role string) bool {
+		return slices.ContainsFunc(r.Target, func(t ExternalTargetRule) bool {
+			return t.Match.Role == role || t.Match.Role == ""
+		})
+	}
 	seen := map[string]bool{}
 	for i, rule := range r.Demand {
 		at := fmt.Sprintf("demand[%d]", i)
@@ -188,12 +194,13 @@ func validateExternalBody(query, threshold string, r ExternalAnalyzerRules) erro
 			if err := checkThreshold(rule.Threshold); err != nil {
 				return fmt.Errorf("%s.threshold %q: %w", at, rule.Threshold, err)
 			}
-		} else if threshold == "" && !measured {
-			return fmt.Errorf("%s: no threshold for role %q: set threshold on the rule or the body, or add a target", at, rule.Match.Role)
+		} else if threshold == "" && !served(rule.Match.Role) {
+			return fmt.Errorf("%s: no threshold for role %q: set threshold on the rule or the body, or add a target rule for the role", at, rule.Match.Role)
 		}
 	}
-	if query != "" && threshold == "" && !measured {
-		return errors.New("threshold is required: set it, or add a target")
+	// A model-level query serves every role, so every role needs a target.
+	if query != "" && threshold == "" && !(served(domain.RolePrefill) && served(domain.RoleDecode) && served(domain.RoleBoth)) {
+		return errors.New("threshold is required: set it, or add a target rule with no match")
 	}
 	seenTarget := map[string]bool{}
 	for i, rule := range r.Target {
@@ -222,7 +229,7 @@ func validateExternalBody(query, threshold string, r ExternalAnalyzerRules) erro
 	default:
 		return fmt.Errorf("targetReduce %q: must be one of avg, median, min, max", r.TargetReduce)
 	}
-	if r.TargetReduce != "" && !measured {
+	if r.TargetReduce != "" && len(r.Target) == 0 {
 		return errors.New("targetReduce is set but there is no target to reduce")
 	}
 	return nil
@@ -245,6 +252,9 @@ func checkRole(role string, optional bool) error {
 // checkThreshold accepts a finite number greater than 0.
 func checkThreshold(s string) error {
 	v, err := strconv.ParseFloat(s, 64)
+	if errors.Is(err, strconv.ErrRange) {
+		return errors.New("out of range")
+	}
 	if err != nil {
 		return errors.New("not a number")
 	}

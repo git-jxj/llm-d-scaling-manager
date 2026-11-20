@@ -2443,7 +2443,9 @@ analyzerDefinitions:
   for a model that is not split. One definition can carry all three, so it
   serves P/D and aggregated models alike.
 - A role with no rule is not sized by this analyzer. A model none of whose
-  roles has a rule is skipped: no query runs for it.
+  roles has a rule is skipped: no query runs for it. If the policy lists
+  this analyzer without `saturation`, a role with no rule holds where it
+  is, and the other role does not grow either.
 - If any rule's query fails, the analyzer reports nothing for the model that
   cycle. For up to three cycles no role of the model scales down, including a
   role it has no rule for.
@@ -2457,7 +2459,7 @@ a `target:` query that returns one series per Pod:
 analyzerDefinitions:
   kv-tokens:
     query: sum(my_kv_tokens_in_use{namespace="{{.namespace}}",model_name="{{.modelID}}"})
-    threshold: "50000"             # optional: used where no target query answers
+    threshold: "50000"             # used where no target query answers; recommended
     target:
       - queries:                   # tried in order; the first that answers wins
           - query: avg by (pod) (epp_kv_capacity{namespace="{{.namespace}}"})
@@ -2468,7 +2470,8 @@ analyzerDefinitions:
 ```
 
 - Each series must keep a `pod` (or `pod_name`) label: that is how its value
-  is matched to a variant. A Pod the scaling manager does not count, and a
+  is matched to a variant. The value is what one replica serves: for an LWS
+  group, the group's figure, reported on each of its Pods. A Pod the scaling manager does not count, and a
   value of 0 or less, or not a number, are skipped.
 - A variant's Pods are reduced to one value with `targetReduce`.
 - The queries are tried in order for each variant, and stop once every
@@ -2477,7 +2480,9 @@ analyzerDefinitions:
   answered (`e`).
 - A variant no query answers for, such as one with no Pod running, uses the
   `threshold` of its role's rule, then the definition's. With neither, it is
-  not sized this cycle. If no variant has a value, the analyzer reports
+  not sized this cycle, so a variant at zero replicas cannot grow: set a
+  `threshold` too. Every role needs a threshold or a target rule that serves
+  it, or the definition is refused. If no variant has a value, the analyzer reports
   nothing for the model, as when a query fails.
 - On a P/D model, a target rule can name a role (`match: { role: decode }`).
   A rule with no `match` serves every role no other target rule names.
@@ -2487,7 +2492,8 @@ analyzerDefinitions:
 By default, a demand query that matches no series reads as 0 demand. A
 renamed metric or a label typo reads that way too, and listed alone the
 analyzer then lets the model scale down. The first time a query returns
-nothing, the log says `External analyzer demand query returned no series`.
+nothing for a model, the log says `External analyzer demand query returned
+no series` (once per query and model).
 
 Set `emptyIsMissing: true` to read an empty result as missing instead:
 
@@ -2513,7 +2519,7 @@ set `orZero: true` on its demand rule: its empty result reads as 0 even with
 | Field | Meaning |
 |---|---|
 | `query` | PromQL for the model's **total** demand. Every series it returns is summed, after series of Pods that are gone are dropped. `{{.namespace}}` and `{{.modelID}}` are escaped and filled in. Set `query` or `demand`, not both. |
-| `threshold` | What one scale-target replica (a Pod, or an LWS group) can serve, in the query's unit. A string, greater than 0. Required unless every demand rule sets its own, or `target` is set. |
+| `threshold` | What one scale-target replica (a Pod, or an LWS group) can serve, in the query's unit. A string, greater than 0. Required unless every role has its own (a demand rule's `threshold`) or a target rule that serves it. |
 | `demand` | One rule per role: `match.role` (`prefill`, `decode` or `both`), `query`, and optionally `threshold` and `orZero`. |
 | `target` | Rules that measure the threshold per Pod: an optional `match.role`, and `queries`, each a `query` and an optional `e`. |
 | `targetReduce` | How a variant's Pods' targets become one value: `avg` (default), `median`, `min` or `max`. Needs `target`. |
@@ -2544,7 +2550,9 @@ What to know before you rely on one:
   if it cannot run, it is dropped with a warning and a `ConfigFieldIgnored`
   Event that name the analyzer and the field, for example
   `analyzerDefinitions="queue-depth": this analyzer is not defined: demand[0].match.role: "prefil" is not a role`.
-  The other definitions and the rest of the entry still apply. A definition
+  The other definitions and the rest of the entry still apply. A policy that
+  lists the dropped name runs without it, as if it were not defined, until
+  the definition is fixed. A definition
   without those fields is checked when it is built, as before: an empty
   query, a threshold that does not parse or is 0 or less, or a name a
   built-in analyzer already uses is logged and skipped. A threshold of

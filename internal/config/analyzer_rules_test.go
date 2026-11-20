@@ -97,6 +97,15 @@ func TestInvalidExternalAnalyzerRulesAreRefusedOnRead(t *testing.T) {
 		{"NaN body threshold", `
     threshold: "NaN"
     demand: [{match: {role: decode}, query: sum(d)}]`, `threshold "NaN": must be a finite number greater than 0`},
+		{"out-of-range threshold", `
+    threshold: "1e400"
+    demand: [{match: {role: decode}, query: sum(d)}]`, `threshold "1e400": out of range`},
+		{"a target for another role only", `
+    demand: [{match: {role: prefill}, query: sum(p)}]
+    target: [{match: {role: decode}, queries: [{query: t}]}]`, `demand[0]: no threshold for role "prefill"`},
+		{"a model-level query with a target for one role only", `
+    query: sum(q)
+    target: [{match: {role: decode}, queries: [{query: t}]}]`, "threshold is required: set it, or add a target rule with no match"},
 		{"bad reduce", `
     query: sum(q)
     threshold: "1"
@@ -108,6 +117,7 @@ func TestInvalidExternalAnalyzerRulesAreRefusedOnRead(t *testing.T) {
     targetReduce: max`, "targetReduce is set but there is no target to reduce"},
 		{"target with no queries", `
     query: sum(q)
+    threshold: "1"
     target: [{match: {role: decode}}]`, "target[0].queries: at least one query is required"},
 		{"two catch-all targets", `
     query: sum(q)
@@ -184,4 +194,19 @@ func TestExternalAnalyzerSampleIsValid(t *testing.T) {
 	require.Contains(t, p.AnalyzerDefinitions, "queue-depth")
 	assert.True(t, p.AnalyzerDefinitions["queue-depth"].UsesRules())
 	assert.Len(t, p.AnalyzerDefinitions, 3)
+}
+
+// A misspelled key inside a rule is reported like any other unknown key.
+func TestExternalAnalyzerRuleTypoIsReported(t *testing.T) {
+	entry := `
+analyzerDefinitions:
+  q:
+    threshold: "1"
+    emptyIsMissing: true
+    demand:
+      - match: { role: decode }
+        query: sum(d)
+        orzero: true
+`
+	assert.Equal(t, []string{"orzero (line 9)"}, UnknownScalingPolicyKeys(entry))
 }

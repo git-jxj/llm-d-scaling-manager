@@ -2,11 +2,13 @@ package steadystate
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/collector/source"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
@@ -169,4 +171,46 @@ func TestExternalEmptyIsMissingHoldsForTheGrace(t *testing.T) {
 			assert.Positive(t, req.CompositeSignal.SpareCapacity)
 		})
 	}
+}
+
+// TestExternalSampleRunsAsConfigured: the sample's P/D definition, read as the
+// ConfigMap read reads it and converted as the engine converts it
+// (toExternalDefinition), runs with each role's own query and threshold, and
+// reads an empty result as missing. A field the conversion dropped or
+// swapped would pass every test that builds external.Body directly.
+func TestExternalSampleRunsAsConfigured(t *testing.T) {
+	raw, err := os.ReadFile("../../../config/samples/analyzers/external-analyzers.yaml")
+	require.NoError(t, err)
+	var cm struct {
+		Data map[string]string `yaml:"data"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &cm))
+	p, err := config.DecodeScalingPolicy(cm.Data[config.GlobalDefaultsKey])
+	require.NoError(t, err)
+	require.Empty(t, p.ResetUnusableFields())
+
+	def, err := toExternalDefinition("queue-depth", p.AnalyzerDefinitions["queue-depth"])
+	require.NoError(t, err)
+	src := newCannedSource()
+	a, err := external.New(def, src)
+	require.NoError(t, err)
+	input := domain.AnalyzerInput{ModelID: "m", Namespace: "ns", VariantStates: []domain.VariantReplicaState{
+		{VariantName: "p", Role: domain.RolePrefill, CurrentReplicas: 2},
+		{VariantName: "d", Role: domain.RoleDecode, CurrentReplicas: 4},
+	}}
+
+	src.values["external:queue-depth:demand@prefill"] = []float64{12}
+	src.values["external:queue-depth:demand@decode"] = []float64{16}
+	res, err := a.Analyze(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]float64{domain.RolePrefill: 12, domain.RoleDecode: 16}, res.RoleDemand)
+	prc := map[string]float64{}
+	for _, vc := range res.VariantCapacities {
+		prc[vc.VariantName] = vc.PerReplicaCapacity
+	}
+	assert.Equal(t, map[string]float64{"p": 4, "d": 8}, prc, "prefill's own threshold, decode the body's")
+
+	src.values["external:queue-depth:demand@decode"] = nil
+	_, err = a.Analyze(context.Background(), input)
+	assert.ErrorIs(t, err, external.ErrEmptyResult, "emptyIsMissing carried over")
 }

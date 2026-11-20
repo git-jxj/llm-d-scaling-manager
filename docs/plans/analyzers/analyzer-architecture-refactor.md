@@ -623,7 +623,8 @@ with one addition we already have:
   but an empty one can shrink a model it sizes alone, unless the definition sets
   `emptyIsMissing` ([#47](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/47)). Heavy expressions should be precomputed as
   Prometheus recording rules.
-- **Load-time validation is deliberately minimal** — `external.New` rejects an empty query or a
+- **Load-time validation is deliberately minimal** (a definition using the rule form of #46/#47 is
+  also checked when the ConfigMap is read, `config.ExternalAnalyzerDef.ValidateRules`) — `external.New` rejects an empty query or a
   non-positive threshold (bad def skipped, logged); we do **not** pull in the full
   `github.com/prometheus/prometheus` PromQL parser just to syntax-check, since the timeout and the
   error path contain a bad query's blast radius.
