@@ -39,13 +39,13 @@ import (
 // (k2ITLDistrust): not one borrowed from a sibling, held from an earlier fit,
 // priced one-sided at a prior, fitted above the band, a full fit resting
 // below the spread that earns B, or pinned at the default intercept
-// (itl.DefaultBaselineSec) rather than a B the key measured, or read through
+// (itl.DefaultBaselineSec) rather than a B the key measured or read through
 // its floor below the band. Only a decode variant's line bounds: an
 // aggregated line is report-only for mu (itlLineReportOnly), and does not
 // price k2 either. A line in step time (SwitchITLPerToken off on a
 // speculating engine) is not set against a per-token target. A TPOT target at
-// or under the line's B is met at no fill, and one met below the ITL band's
-// lower edge is read off the line where it was not fitted. In each of these
+// or under the line's B is met at no fill, and one met outside the ITL band
+// is read off the line where it was not fitted. In each of these
 // cases the batch is N_steady, as before, and the k2-decision line says why.
 //
 // It lowers the derived k2 against the figure with the switch off. The lower
@@ -58,6 +58,15 @@ import (
 // Off from the constructor: on, a decode is priced at less capacity where its
 // line is learned, and the default changes only after review.
 const SwitchK2BatchAtITLTarget = "k2-batch-held-at-itl-target"
+
+// Which bound held the derived k2's batch (k2BatchBound on the k2-decision
+// line): the steady batch at the budget, or the ITL target. On a line a lower
+// bound priced, k2BoundLower: the bound's fields are the derived figure's.
+const (
+	k2BoundSteady = "steady"
+	k2BoundITL    = "itl"
+	k2BoundLower  = "lower-bound"
+)
 
 // Where the ITL target the derived k2's batch is held at came from
 // (itlBatchBound.source).
@@ -80,6 +89,7 @@ const (
 	itlBoundPerStep        = "per-step-line"
 	itlBoundUnderIntercept = "target-under-intercept"
 	itlBoundBelowBand      = "target-below-band"
+	itlBoundAboveBandFill  = "target-above-band"
 	itlBoundResting        = "resting-fit"
 	itlBoundNotDecode      = "not-decode"
 )
@@ -108,9 +118,10 @@ func (b itlBatchBound) applies() bool {
 
 // k2ITLDistrust says why the line r is not one the derived k2's batch may be
 // held at (SwitchK2BatchAtITLTarget), or "" when it is: a line the key fitted
-// this cycle, with an intercept it measured. A B read through the floor is
-// read at the floor's fill, not at none, so it errs high and the slope low:
-// the bound it gives is looser, towards N_steady.
+// this cycle, with an intercept it measured or read through its floor. A B
+// read through the floor may err high and the slope low; the line then reads
+// ITL low past its readings and high before them, so a target above the
+// readings' ITL gives a looser bound and one below it a tighter.
 func k2ITLDistrust(r itl.Reading) string {
 	switch {
 	case r.Model.IsZero() || r.Tier == "":
@@ -136,6 +147,9 @@ func (c *cycle) k2ITLBound(variant string) itlBatchBound {
 	if !c.a.k2AtITLTarget {
 		return itlBatchBound{}
 	}
+	if domain.CanonicalRole(c.rolesByVariant[variant]) != domain.RoleDecode {
+		return itlBatchBound{on: true, why: itlBoundNotDecode}
+	}
 	why, ok := c.itlDistrust[variant]
 	if !ok {
 		why = itlBoundNoLine
@@ -143,16 +157,13 @@ func (c *cycle) k2ITLBound(variant string) itlBatchBound {
 	if why != "" {
 		return itlBatchBound{on: true, why: why}
 	}
-	if domain.CanonicalRole(c.rolesByVariant[variant]) != domain.RoleDecode {
-		return itlBatchBound{on: true, why: itlBoundNotDecode}
-	}
 	tpot := sloTPOTTarget(c.cfg)
 	params := engineParamsFor(c.a, c.input.Namespace, c.input.ModelID, variant)
 	if tpot > 0 && params.SpeculatesPerStep() && !c.a.itlPerToken {
 		return itlBatchBound{on: true, why: itlBoundPerStep}
 	}
-	lo, _ := c.cfg.ITLBand()
-	return itlBoundFor(c.itlModels[variant], tpot, pricingK(c.cfg), lo)
+	lo, hi := c.cfg.ITLBand()
+	return itlBoundFor(c.itlModels[variant], tpot, pricingK(c.cfg), lo, hi)
 }
 
 // sloTPOTTarget is the policy's TPOT objective in seconds, or 0 with none.
@@ -165,9 +176,9 @@ func sloTPOTTarget(cfg *config.ScalingPolicy) float64 {
 
 // itlBoundFor is the bound line m gives at a TPOT target of tpot seconds, or,
 // with none (0), at the fill kPrice, with the switch on. A target the line
-// reaches under lo, the ITL band's lower edge, is no bound: the line was not
-// fitted there.
-func itlBoundFor(m itl.Model, tpot, kPrice, lo float64) itlBatchBound {
+// reaches outside the ITL band [lo, hi] is no bound: the line was not fitted
+// there.
+func itlBoundFor(m itl.Model, tpot, kPrice, lo, hi float64) itlBatchBound {
 	if !itl.ValidModel(m.A, m.B) {
 		return itlBatchBound{on: true, why: itlBoundNoLine}
 	}
@@ -184,6 +195,9 @@ func itlBoundFor(m itl.Model, tpot, kPrice, lo float64) itlBatchBound {
 	if fill < lo {
 		return itlBatchBound{on: true, fill: fill, target: tpot, source: itlTargetSLO, why: itlBoundBelowBand}
 	}
+	if hi > 0 && fill > hi {
+		return itlBatchBound{on: true, fill: fill, target: tpot, source: itlTargetSLO, why: itlBoundAboveBandFill}
+	}
 	return itlBatchBound{on: true, fill: min(fill, 1), target: tpot, source: itlTargetSLO}
 }
 
@@ -194,11 +208,14 @@ func itlBoundFor(m itl.Model, tpot, kPrice, lo float64) itlBatchBound {
 // none. N_itl is the bound's fill of the rank's KV over the KV a request is
 // priced at: the resident reading where it prices k2, else I + D x O/2.
 func k2BatchBoundFields(params *capacity.EngineParams, batchCap pricedBatchCap, avgInput, avgOutput, dispersion float64,
-	ranks int, kvTokens, atSteady int64, itlHeld bool) []any {
+	ranks int, kvTokens, atSteady int64, itlHeld, borrowed bool) []any {
 	b := batchCap.itl
-	bound := "steady"
+	bound := k2BoundSteady
 	if itlHeld {
-		bound = "itl"
+		bound = k2BoundITL
+	}
+	if borrowed {
+		bound = k2BoundLower
 	}
 	out := []any{"nSteady", derivedBatch(params, batchCap.perRank, avgInput, avgOutput, batchCap.budget),
 		"k2AtSteady", atSteady, "k2BatchBound", bound, "itlTargetSource", b.source, "itlBoundWhy", b.why}

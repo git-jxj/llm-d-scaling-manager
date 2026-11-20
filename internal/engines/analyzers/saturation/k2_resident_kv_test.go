@@ -46,6 +46,13 @@ type residentSwitches struct{ aboveContext, atResident bool }
 func residentRun(t *testing.T, rows []domain.ReplicaMetrics, variants []string, sw residentSwitches,
 	edits ...func(*SaturationAnalyzer)) (map[string]domain.VariantCapacity, map[string]any, *capacity.Store) {
 	t.Helper()
+	return residentRunIn(t, rows, variants, sw, nil, edits...)
+}
+
+// residentRunIn is residentRun with editIn applied to each cycle's input.
+func residentRunIn(t *testing.T, rows []domain.ReplicaMetrics, variants []string, sw residentSwitches,
+	editIn func(*domain.AnalyzerInput), edits ...func(*SaturationAnalyzer)) (map[string]domain.VariantCapacity, map[string]any, *capacity.Store) {
+	t.Helper()
 	ctx, logs := observedCtx(t)
 	store := capacity.NewStore()
 	states := make([]domain.VariantReplicaState, 0, len(variants))
@@ -67,6 +74,9 @@ func residentRun(t *testing.T, rows []domain.ReplicaMetrics, variants []string, 
 		edit(a)
 	}
 	in := makeAnalyzerInput(rows, states)
+	if editIn != nil {
+		editIn(&in)
+	}
 	var res *domain.AnalyzerResult
 	for range 3 {
 		var err error

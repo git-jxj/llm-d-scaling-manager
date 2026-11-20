@@ -51,41 +51,45 @@ func TestK2BatchAtITLTarget_OnlyALearnedLineBounds(t *testing.T) {
 // The line 0.05 x k + 0.012 s a token: a TPOT target of 20 ms is reached at a
 // fill of 0.16, inside a band from 0.15. With no target set, the bound is the band's pricing point,
 // at the line's ITL there. A target at or under B is met at no fill, and is
-// no bound; a target past the line's fill of 1 is held at 1.
+// no bound; nor is one the line reaches outside the band [0.15, 0.8].
 func TestK2BatchAtITLTarget_TheTarget(t *testing.T) {
 	line := itl.Model{A: 0.05, B: 0.012}
-	slo := itlBoundFor(line, 0.020, 0.68, 0.15)
+	slo := itlBoundFor(line, 0.020, 0.68, 0.15, 0.8)
 	assert.True(t, slo.applies())
 	assert.InDelta(t, 0.16, slo.fill, 1e-12)
 	assert.Equal(t, itlTargetSLO, slo.source)
 
-	none := itlBoundFor(line, 0, 0.68, 0.15)
+	none := itlBoundFor(line, 0, 0.68, 0.15, 0.8)
 	assert.True(t, none.applies())
 	assert.InDelta(t, 0.68, none.fill, 1e-12)
 	assert.InDelta(t, 0.046, none.target, 1e-12)
 	assert.Equal(t, itlTargetPricingPoint, none.source)
 
-	under := itlBoundFor(line, 0.010, 0.68, 0.15)
+	under := itlBoundFor(line, 0.010, 0.68, 0.15, 0.8)
 	assert.False(t, under.applies())
 	assert.Equal(t, itlBoundUnderIntercept, under.why)
 
-	far := itlBoundFor(line, 1, 0.68, 0.15)
-	assert.InDelta(t, 1, far.fill, 1e-12)
+	far := itlBoundFor(line, 1, 0.68, 0.15, 0.8)
+	assert.False(t, far.applies(), "past the band: not fitted there")
+	assert.Equal(t, itlBoundAboveBandFill, far.why)
+	edge := itlBoundFor(line, 0.012+0.05*0.8, 0.68, 0.15, 0.8)
+	assert.True(t, edge.applies())
+	assert.InDelta(t, 0.8, edge.fill, 1e-9)
 
-	assert.False(t, itlBoundFor(itl.Model{}, 0.020, 0.68, 0.15).applies(), "no line")
+	assert.False(t, itlBoundFor(itl.Model{}, 0.020, 0.68, 0.15, 0.8).applies(), "no line")
 
 	// 15 ms is reached at a fill of 0.06, under the band's lower edge of
 	// 0.15: the line was not fitted there, and it is no bound.
-	below := itlBoundFor(line, 0.015, 0.68, 0.15)
+	below := itlBoundFor(line, 0.015, 0.68, 0.15, 0.8)
 	assert.False(t, below.applies())
 	assert.Equal(t, itlBoundBelowBand, below.why)
 	assert.False(t, itlBatchBound{fill: 0.5}.applies(), "the zero value is the switch off")
 }
 
-// residentITL prices residentRow(0.3) as a decode replica of variant-d with
+// residentITL prices rm (residentRow) as a decode replica of variant-d with
 // the resident line and the ITL bound given, and returns its capacity and
 // its P3 k2-decision line.
-func residentITL(t *testing.T, resident residentKVLine, bound itlBatchBound) (*capacity.ReplicaCapacity, map[string]any) {
+func residentITL(t *testing.T, rm domain.ReplicaMetrics, resident residentKVLine, bound itlBatchBound) (*capacity.ReplicaCapacity, map[string]any) {
 	t.Helper()
 	ctx, logs := observedCtx(t)
 	store := capacity.NewStore()
@@ -94,7 +98,7 @@ func residentITL(t *testing.T, resident residentKVLine, bound itlBatchBound) (*c
 	}, time.Now())
 	a := NewSaturationAnalyzer(store)
 	cfg := &config.ScalingPolicy{KvCacheThreshold: 0.8, ScaleUpThreshold: 0.85, QueueLengthThreshold: 5}
-	rc := a.computeReplicaCapacity(residentRow(0.3), cfg, tuningOf(cfg), "test-model", "test-ns", 1, domain.RoleDecode, "H200",
+	rc := a.computeReplicaCapacity(rm, cfg, tuningOf(cfg), "test-model", "test-ns", 1, domain.RoleDecode, "H200",
 		outputKeys{k2: 100, mu: 100}, 100, 1000, 0, whatif.DerivedMu{}, servedRates{}, false, false, replicaRouting{},
 		false, resident, bound, logr.FromContextOrDiscard(ctx))
 	require.NotNil(t, rc)
@@ -120,35 +124,45 @@ func TestK2BatchAtITLTarget_HoldsTheBatch(t *testing.T) {
 		return itlBatchBound{on: true, fill: fill, target: 0.02, source: itlTargetSLO}
 	}
 
-	rc, line := residentITL(t, read, at(0.2))
+	rc, line := residentITL(t, residentRow(0.3), read, at(0.2))
 	assert.Equal(t, int64(200_000), rc.EffectiveCapacity)
 	assert.Equal(t, "itl", line["k2BatchBound"])
 	assert.InDelta(t, 256, line["nSteady"], 1e-9)
 	assert.InDelta(t, 0.2*1_000_000/3000.0, line["nITL"], 1e-9)
 	assert.EqualValues(t, int64(residentAtCtx), line["k2AtSteady"])
 
-	rc, line = residentITL(t, residentKVLine{}, at(0.2))
+	rc, line = residentITL(t, residentRow(0.3), residentKVLine{}, at(0.2))
 	assert.Equal(t, int64(200_000), rc.EffectiveCapacity, "at the context too")
 	assert.InDelta(t, 0.2*1_000_000/1050.0, line["nITL"], 1e-9, "N_itl at the context's KV a request")
 
-	rc, line = residentITL(t, read, at(0.5))
+	rc, line = residentITL(t, residentRow(0.3), read, at(0.5))
 	assert.Equal(t, int64(500_000), rc.EffectiveCapacity)
 	assert.Equal(t, "itl", line["k2BatchBound"])
-	rc, line = residentITL(t, residentKVLine{}, at(0.5))
+	rc, line = residentITL(t, residentRow(0.3), residentKVLine{}, at(0.5))
 	assert.Equal(t, int64(residentAtCtx), rc.EffectiveCapacity)
 	assert.Equal(t, "steady", line["k2BatchBound"])
 
-	rc, line = residentITL(t, read, itlBatchBound{on: true, why: itlBoundDefaultB})
+	rc, line = residentITL(t, residentRow(0.3), read, itlBatchBound{on: true, why: itlBoundDefaultB})
 	assert.Equal(t, int64(768_000), rc.EffectiveCapacity, "a default intercept bounds nothing")
 	assert.Equal(t, itlBoundDefaultB, line["itlBoundWhy"])
 	assert.Equal(t, "steady", line["k2BatchBound"])
 	assert.NotContains(t, line, "nITL")
 
-	rc, line = residentITL(t, read, itlBatchBound{})
+	rc, line = residentITL(t, residentRow(0.3), read, itlBatchBound{})
 	assert.Equal(t, int64(768_000), rc.EffectiveCapacity, "off")
 	for _, k := range []string{"nSteady", "nITL", "k2BatchBound", "itlBoundWhy", "itlTargetSource", "k2AtSteady"} {
 		assert.NotContains(t, line, k, "off: the line as before")
 	}
+
+	// A pod of four data-parallel ranks: the steady batch's figure is four
+	// ranks' (1,075,200, over k1), the bound is still 0.2 of the pod's KV,
+	// and N_itl is a rank's: 0.2 x 1,000,000 / 4 / 1050.
+	four := residentRow(0.3)
+	four.EngineRanks = 4
+	rc, line = residentITL(t, four, residentKVLine{}, at(0.2))
+	assert.Equal(t, int64(200_000), rc.EffectiveCapacity)
+	assert.EqualValues(t, int64(4*residentAtCtx), line["k2AtSteady"])
+	assert.InDelta(t, 0.2*1_000_000/4/1050.0, line["nITL"], 1e-9)
 }
 
 // itlSLOCycle runs one cycle of the rig with the policy's TPOT objective set
@@ -250,11 +264,17 @@ func TestK2BatchAtITLTarget_ABorrowedLineDoesNotBound(t *testing.T) {
 		a.publishLine(a.itlPhysicsKey("test-ns", "test-model", "variant-d", "H200", 1, ""),
 			"a fitted line", itl.Model{A: 0.05, B: 0.012}, time.Now())
 	}
-	_, p3, _ := residentRun(t, []domain.ReplicaMetrics{residentRow(0.3)}, []string{"variant-d"}, residentSwitches{}, lend)
+	// The line reaches 16 ms at a fill of 0.08, under the band; 22 ms at
+	// 0.2, which would hold k2 at 200,000, under the context's 268,800.
+	slo := func(in *domain.AnalyzerInput) {
+		in.Config.(*config.ScalingPolicy).SLO = &config.SLOPolicy{
+			TPOT: &config.SLOObjective{Target: config.SLODuration{Duration: 22 * time.Millisecond}}}
+	}
+	_, p3, _ := residentRunIn(t, []domain.ReplicaMetrics{residentRow(0.3)}, []string{"variant-d"}, residentSwitches{}, slo, lend)
 	require.NotNil(t, p3)
 	assert.Equal(t, itlBoundBorrowed, p3["itlBoundWhy"])
 	assert.Equal(t, "steady", p3["k2BatchBound"])
-	assert.EqualValues(t, int64(residentAtCtx), p3["k2"])
+	assert.EqualValues(t, int64(residentAtCtx), p3["k2"], "trusted, the line would hold it at 200,000")
 }
 
 // toFloat reads a numeric log field.

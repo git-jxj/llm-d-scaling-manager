@@ -1278,7 +1278,7 @@ func (a *SaturationAnalyzer) k2Chain(
 					// The bound's fields on the borrowed line too: a prior
 					// above the bound prices the replica here.
 					bl = logger.WithValues(k2BatchBoundFields(engineParams, batchCap, avgInput, avgOutput, outputDispersion,
-						ranks, kvCeiling, atSteady, itlHeld)...)
+						ranks, kvCeiling, atSteady, itlHeld, true)...)
 				}
 				logBorrowedK2(bl, b, modelID, namespace, variantName, historyKey, min(k1, atCtx), capacity.K2SrcDerived)
 				return b.k2, b.source(), b
@@ -1304,7 +1304,7 @@ func (a *SaturationAnalyzer) k2Chain(
 				// Only with SwitchK2BatchAtITLTarget on: off, the line is
 				// the one before the switch.
 				kv = append(kv, k2BatchBoundFields(engineParams, batchCap, avgInput, avgOutput, outputDispersion,
-					ranks, kvCeiling, atSteady, itlHeld)...)
+					ranks, kvCeiling, atSteady, itlHeld, false)...)
 			}
 			logger.V(perReplicaLogLevel).Info("k2-decision", kv...)
 			return k2Derived, capacity.K2SrcDerived, k2Borrow{}

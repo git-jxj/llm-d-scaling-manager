@@ -1336,6 +1336,8 @@ var heldBy = map[string][]heldTest{
 	// off.
 	saturation.SwitchK2BatchAtITLTarget: {
 		{"../saturation", "TestK2BatchAtITLTarget_ThroughAnalyze"},
+		{"../saturation", "TestK2BatchAtITLTarget_AnAggregatedLineDoesNotBound"},
+		{"../saturation", "TestK2BatchAtITLTarget_ABorrowedLineDoesNotBound"},
 	},
 	// The follow-up to PR #205: each fails with the switch off.
 	saturation.SwitchK2DerivedAtResidentKV: {
