@@ -1218,6 +1218,7 @@ float
 floor
 floor-trust-reads-completions
 floorExcessGPUs
+floorK
 floorTrust
 floorTrust.lagFraction
 floorTrust.lagFraction/trustFraction

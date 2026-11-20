@@ -265,10 +265,16 @@ func (a *SaturationAnalyzer) noteITL(key string, replicas []domain.ReplicaMetric
 		// k) priced higher there than the fit through the default B, which it
 		// replaced. priorBeyondReadings says the pricing k was past every
 		// such reading, where that line's bound no longer holds.
-		logger.V(logging.DEFAULT).Info("itl-fit", "variant", variantName, "tier", "pinned-B",
+		kv := []any{"variant", variantName, "tier", "pinned-B",
 			"a", r.Model.A, "b", r.Model.B, "held", r.Held, "baselineLearned", r.BaselineStored,
 			"slopeHeld", r.SlopeHeld, "tierHeld", r.TierHeld, "slopeAge", r.SlopeAge(now), "pinnedAtBPrior", r.PinnedAtBPrior,
-			"priorBeyondReadings", r.PriorBeyondReadings, "pinnedAtFloor", r.PinnedAtFloor, "floor", r.Floor)
+			"priorBeyondReadings", r.PriorBeyondReadings}
+		if adm.BaselineFromFloor {
+			// Only with SwitchITLBaselineFromFloor on: off, the line is as
+			// it was.
+			kv = append(kv, "pinnedAtFloor", r.PinnedAtFloor, "floor", r.Floor, "floorK", r.FloorK)
+		}
+		logger.V(logging.DEFAULT).Info("itl-fit", kv...)
 	case r.Declined:
 		logger.V(logging.DEFAULT).Info("itl-fit-declined", "variant", variantName, "held", r.Held)
 	}

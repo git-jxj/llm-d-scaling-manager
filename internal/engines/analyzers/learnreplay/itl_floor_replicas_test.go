@@ -107,20 +107,25 @@ type floorTable struct {
 // floorReplicaTables is each fixture's table as measured, frozen.
 //
 // The floor moves B toward what the engines read, either way. On e1 it pins
-// B at 9.5-11.9 ms, above the 6 ms default: mu rises and the decode role
+// B at 9.3-12.3 ms, above the 6 ms default: mu rises and the decode role
 // asks for one replica fewer on 18 cycles (e1-tuned 2). On the staircases
-// and three-pods it pins 0.1-2.9 ms, under the default and where the b-on
-// line's own full fits learned 1.4-2.4 ms: mu falls (b-off 31.2 -> 20.4
+// and three-pods it pins 0.4-3.8 ms, under the default and where the b-on
+// line's own full fits learned 1.4-2.4 ms: mu falls (b-off 31.2 -> 21.1
 // r/s), which the staircases' demand absorbs without a replica more, and
 // three-pods asks for one more on 36 cycles. a-off never reads a line.
+//
+// Round 1 of the review aged the floor out at DefaultObservationMaxAge and
+// cleared it with the window: the staircases pin it on fewer cycles (b-off
+// 194 -> 130, b-on 190 -> 167, c-on 196 -> 147), where the floor was older
+// than the readings it was paired with. No replica count moved.
 var floorReplicaTables = []floorTable{
 	{"e1", 762, 552, 18, 18, 0, 1449, 1431, 5.277, 5.270},
-	{"e1-tuned", 748, 545, 2, 2, 0, 1388, 1386, 4.779, 4.805},
+	{"e1-tuned", 748, 545, 2, 2, 0, 1388, 1386, 4.779, 4.808},
 	{"ttft-staircase-a-off", 128, 0, 0, 0, 0, 125, 125, 0, 0},
-	{"ttft-staircase-b-off", 289, 194, 0, 0, 0, 283, 283, 31.239, 20.396},
-	{"ttft-staircase-b-on", 289, 190, 0, 0, 0, 284, 284, 32.655, 22.046},
-	{"ttft-staircase-c-on", 292, 196, 0, 0, 0, 286, 286, 28.938, 22.271},
-	{"ttft-three-pods", 203, 145, 36, 0, 36, 451, 487, 4.715, 4.049},
+	{"ttft-staircase-b-off", 289, 130, 0, 0, 0, 283, 283, 31.239, 21.146},
+	{"ttft-staircase-b-on", 289, 167, 0, 0, 0, 284, 284, 32.655, 22.481},
+	{"ttft-staircase-c-on", 292, 147, 0, 0, 0, 286, 286, 28.938, 22.161},
+	{"ttft-three-pods", 203, 145, 36, 0, 36, 451, 487, 4.715, 4.041},
 }
 
 // median is the median of xs, 0 with none.

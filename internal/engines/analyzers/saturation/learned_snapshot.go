@@ -1758,6 +1758,9 @@ func (a *SaturationAnalyzer) forgetLearnedState() {
 	// The held slopes too: they are exported, so one kept here would be
 	// written back and undo the deletion.
 	a.itlTracker.ForgetSlopes()
+	// The readings below the band B is pinned through
+	// (SwitchITLBaselineFromFloor).
+	a.itlTracker.ForgetFloors()
 	// The prefill observation (prefill_observe.go), so a forget resets V_P,
 	// a and f with the rest. Its lock is its own; it never calls back here.
 	a.prefillObserver.Forget("")

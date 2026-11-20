@@ -3,6 +3,7 @@ package itl
 import (
 	"math"
 	"slices"
+	"time"
 )
 
 // The floor below the band: a low quantile of the mean ITLs a variant's
@@ -16,8 +17,10 @@ import (
 
 const (
 	// BelowBandWindow is how many of a variant's latest readings below the
-	// band its floor is read from: an hour of one replica at the 15 s cycle,
-	// so a floor read under an older engine ages out.
+	// band its floor is read from: an hour of one replica at the 15 s cycle.
+	// The capacity planner's replay bounds them by this count alone; the
+	// tracker ages them out at DefaultObservationMaxAge too (pruneBelowBand),
+	// and drops them with the key's window on a rollout or a shape move.
 	BelowBandWindow = 240
 	// BelowBandMinReadings is the fewest readings a floor is read from;
 	// fewer is no floor.
@@ -50,15 +53,21 @@ func BelowBandFloor(xs []float64) float64 {
 	return s[i]
 }
 
-// belowBandPoint is the floor of readings, as BelowBandFloor reads it, and
-// the fill it was read at: the reading at belowBandIndex by ITL. ok is false
-// with too few.
-func belowBandPoint(readings []Observation) (Observation, bool) {
-	i := belowBandIndex(len(readings))
+// belowBandPoint is the floor of the readings under lo, the band's bottom
+// now, as BelowBandFloor reads it, and the fill it was read at: the reading
+// at belowBandIndex by ITL. A reading kept under an older, higher bottom is
+// not below this band, and is not read. ok is false with too few.
+func belowBandPoint(readings []Observation, lo float64) (Observation, bool) {
+	s := make([]Observation, 0, len(readings))
+	for _, o := range readings {
+		if o.K < lo {
+			s = append(s, o)
+		}
+	}
+	i := belowBandIndex(len(s))
 	if i < 0 {
 		return Observation{}, false
 	}
-	s := slices.Clone(readings)
 	slices.SortStableFunc(s, func(a, b Observation) int {
 		switch {
 		case a.ITLSec < b.ITLSec:
@@ -70,6 +79,19 @@ func belowBandPoint(readings []Observation) (Observation, bool) {
 	})
 	return s[i], true
 }
+
+// pruneBelowBand is xs without the readings older than
+// DefaultObservationMaxAge at now. That is the main window's horizon, the
+// readings the pinned fit takes: the floor and the fit's mean set one line,
+// so both are read over the same stretch. The hour BelowBandWindow holds at
+// one replica would let a floor outlive every reading it is paired with.
+func pruneBelowBand(xs []Observation, now time.Time) []Observation {
+	return slices.DeleteFunc(xs, func(o Observation) bool { return now.Sub(o.Timestamp) > DefaultObservationMaxAge })
+}
+
+// floorMinGap is how far above the floor's fill the pinned fit's mean fill
+// must sit, as a multiple of it (floorIntercept).
+const floorMinGap = 2.0
 
 // keepBelowBand is xs with x appended, holding the latest BelowBandWindow.
 func keepBelowBand(xs []Observation, x Observation) []Observation {
@@ -87,8 +109,16 @@ func keepBelowBand(xs []Observation, x Observation) []Observation {
 // (floor.ITLSec*kbar - ITLbar*floor.K) / (kbar - floor.K). On readings of a
 // true line that is its B: pinned at the floor's ITL itself, as if read at
 // no fill, B is high by A times the floor's fill and the slope low, so the
-// line prices under the truth past its readings. ok is false when the
-// readings give no mean above the floor's fill, or the intercept is not in
+// line prices under the truth past its readings.
+//
+// The intercept's gain on an error e in the readings' mean is
+// floor.K / (kbar - floor.K), and on an error d in the floor's ITL
+// kbar / (kbar - floor.K): a floor read just under the band against readings
+// just above it turns a 0.4 ms error into several. So the mean must sit at
+// floorMinGap times the floor's fill or more, where the first gain is at
+// most 1 and the second at most 2: B errs by no more than the readings do.
+//
+// ok is false when the mean is under that, or the intercept is not in
 // (0, floor.ITLSec].
 func floorIntercept(pinned []Observation, floor Observation) (float64, bool) {
 	var k, y float64
@@ -105,7 +135,7 @@ func floorIntercept(pinned []Observation, floor Observation) (float64, bool) {
 		return 0, false
 	}
 	kbar, ybar := k/float64(n), y/float64(n)
-	if !(kbar > floor.K) {
+	if !(kbar >= floorMinGap*floor.K) || !(kbar > floor.K) {
 		return 0, false
 	}
 	b := (floor.ITLSec*kbar - ybar*floor.K) / (kbar - floor.K)
@@ -113,26 +143,4 @@ func floorIntercept(pinned []Observation, floor Observation) (float64, bool) {
 		return 0, false
 	}
 	return b, true
-}
-
-// floorBaseline is the intercept a key with no learned B is pinned at under
-// Admission.BaselineFromFloor: through the floor at its fill and the mean of
-// the readings the pinned fit takes (floorIntercept), remembered for the
-// key; with too few readings to fit, the one last remembered, which a held
-// slope was kept against. ok is false with neither, and the default stands.
-func (t *Tracker) floorBaseline(key string, obs, steady []Observation, floor Observation, haveFloor bool, held float64) (float64, bool) {
-	if !haveFloor {
-		return 0, false
-	}
-	if pinned, ok := pinnedReadings(obs, steady); ok {
-		if b, ok := floorIntercept(pinned, floor); ok {
-			t.mu.Lock()
-			if st := t.belowBand[key]; st != nil {
-				st.b = b
-			}
-			t.mu.Unlock()
-			return b, true
-		}
-	}
-	return held, held > 0
 }

@@ -973,7 +973,10 @@ admission sets `itl.Admission.BaselineFromFloor`:
 
 - **Readings.** The tracker keeps each key's steady readings below the band
   (`k < MinK`, the replica past its settle and its fill still), the latest
-  `itl.BelowBandWindow` of them.
+  `itl.BelowBandWindow` of them, for `itl.DefaultObservationMaxAge` (30 min):
+  the horizon of the readings the floor is paired with. A rollout or a shape
+  move clears them with the window, a sweep or a forget with the key, and a
+  reading at or above the band's bottom now is not read.
 - **Floor.** `itl.BelowBandFloor`, the 10th percentile by ITL once there are
   `itl.BelowBandMinReadings`. The capacity planner reads the same floor
   (`whatif.BelowBand.LeastITL`).
@@ -981,15 +984,21 @@ admission sets `itl.Admission.BaselineFromFloor`:
   through it and the mean of the pinned fit's readings (`floorIntercept`),
   which on a true line is its B. Pinned at the floor's ITL as if read at no
   fill, B would be high by `A x k_floor` and the line under the truth past
-  its readings. With too few readings to fit, the last such B stands, which a
-  held slope was kept against.
+  its readings. The readings' mean must sit at twice the floor's fill or
+  more (`floorMinGap`): there B errs by no more than the readings do; closer,
+  a 0.4 ms error in their mean moved B by 2.8 ms.
+- **Holds.** A held slope keeps the B it was fitted through (`heldSlope.pin`):
+  a slope fitted through the default holds through the default though a
+  floor is read since. A slope fitted through the floor's B is not exported
+  in the learned-state snapshot, which carries no B.
 - **Ends.** A learned B ends it; the one-sided rule is set against the pinned
-  fit as against the default. `itl-fit` logs `pinnedAtFloor` and `floor`.
+  fit as against the default. With the switch on, `itl-fit` logs
+  `pinnedAtFloor`, `floor` and `floorK`; off, the line is as it was.
 
 `TestGoldens_ITLBaselineFromFloorReplicas` holds what it moves. On e1 the
-floor pins 9.5-11.9 ms, and decode asks for one replica fewer on 18 of 762
-cycles. On the staircases and three-pods it pins 0.1-2.9 ms, under the
-default (b-on's own full fits learned 1.4-2.4 ms): mu falls 14-35 %,
+floor pins 9.3-12.3 ms, and decode asks for one replica fewer on 18 of 762
+cycles. On the staircases and three-pods it pins 0.4-3.8 ms, under the
+default (b-on's own full fits learned 1.4-2.4 ms): mu falls 14-32 %,
 and three-pods asks for one replica more on 36 of 203 cycles.
 
 #### When a replica's settle starts (learner PR 4a)
