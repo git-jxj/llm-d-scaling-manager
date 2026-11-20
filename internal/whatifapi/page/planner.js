@@ -478,7 +478,8 @@ function setInputs(inputs) {
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.bt = null;
   el("btout").hidden = true;
-  el("btrun").disabled = false;
+  el("btrun").disabled = !inputs.fleet.prefill;
+  el("btrun").title = inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
   const loaded = inputs.source && inputs.source.name;
   el("bttest").innerHTML = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded)
     .map(n => `<option>${esc(n)}</option>`).join("");
@@ -2041,7 +2042,9 @@ async function runBacktest() {
     if (el("btothermode").checked) {
       const name = el("bttest").value;
       if (!name) throw new Error("pick a test recording");
-      const test = await api("POST", "v1/inputs", {model: state.inputs.model, source: {kind: "recording", name}});
+      const test = await api("POST", "v1/inputs", {model: state.inputs.model, source: {kind: "recording", name},
+        decodeVariant: state.inputs.fleet.decode.variant,
+        prefillVariant: state.inputs.fleet.prefill ? state.inputs.fleet.prefill.variant : undefined});
       req.testInputsId = test.inputsId;
     } else {
       req.split = el("btsplit").value + "%";
@@ -2054,7 +2057,7 @@ async function runBacktest() {
   } catch (e) {
     setStatus("Could not check the planner: " + e.message, true);
   } finally {
-    el("btrun").disabled = !state.inputs;
+    el("btrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
     el("btout").classList.remove("stale");
   }
 }

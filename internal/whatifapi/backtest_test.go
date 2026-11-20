@@ -329,3 +329,31 @@ func TestBacktest_JudgesATTFTTarget(t *testing.T) {
 	assert.Zero(t, a.FalseAlarms)
 	assert.Positive(t, a.MissedMisses, "the stub predicts under 0.15 s at a low rate")
 }
+
+// A source with no prefill variant is refused: a backtest prices a P/D
+// fleet. A step in which another variant also served is not judged: the
+// rate and the latency are the whole model's.
+func TestBacktest_PricesAPDFleetOfItsOwnVariants(t *testing.T) {
+	r := &stubResolver{noPrefillRole: true}
+	s, l := btSeries(120, 0, 1)
+	fs, fl := btEarlier(btSeries(120, 0, 1))
+	_, err := backtestQuestionOf(btEntry(t, r, "fit", fs, fl, btConfig("H100")), btEntry(t, r, "t", s, l, btConfig("H100")), BacktestRequest{},
+		time.Time{}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no prefill variant")
+
+	pd := &stubResolver{}
+	s, l = btSeries(240, 0, 1)
+	for i := 120; i < 140; i++ { // 10:30 to 10:35
+		s[i].OtherPods = 1
+	}
+	fs, fl = btEarlier(btSeries(240, 0, 1))
+	out := btRun(t, btEntry(t, pd, "fit", fs, fl, btConfig("H100")), btEntry(t, pd, "t", s, l, btConfig("H100")), BacktestRequest{})
+	assert.Positive(t, out.Summary.Excluded.OtherVariants)
+	for _, st := range out.Steps {
+		if st.Start.Format("15:04") == "10:30" {
+			assert.Equal(t, ExcludedOtherVariants, st.Excluded)
+		}
+	}
+	assert.Contains(t, out.Excluded, "other variants serving")
+}

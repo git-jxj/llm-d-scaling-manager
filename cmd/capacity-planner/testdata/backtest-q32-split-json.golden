@@ -3,11 +3,11 @@
   "whatifSchema": "schema-v3",
   "backtestId": "sha256:8796c929aec8874cf1be7f35cc9a60b67f210b24dce81a4337695fb6ea8d179d",
   "banner": "The planner's figures are a model, not a bound: this check measures how far off they are on this fleet.",
-  "verdict": "Over the 1 h 13 min the planner did not see: p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps it gave a figure for; its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90. p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps it gave a figure for; it leans low (median ratio 0.94). 5 had too few requests to measure a p90. None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.",
+  "verdict": "Over the 1 h 13 min the planner did not see: p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90. p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps scored (a figure, and enough measured requests); it leans low (median ratio 0.94). 5 had too few requests to measure a p90. None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.",
   "verdictLines": [
     "Over the 1 h 13 min the planner did not see:",
-    "p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps it gave a figure for; its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90.",
-    "p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps it gave a figure for; it leans low (median ratio 0.94). 5 had too few requests to measure a p90.",
+    "p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90.",
+    "p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps scored (a figure, and enough measured requests); it leans low (median ratio 0.94). 5 had too few requests to measure a p90.",
     "None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet."
   ],
   "excluded": "Judged 15 of 16 five-minute steps; not judged: 1 warm-up.",
@@ -51,7 +51,7 @@
       "decode": 2,
       "promptTokens": 2011.6171558279852,
       "outputTokens": 31.35001119353058,
-      "promptCV": 1.7000000000000002,
+      "promptCV": 1.7,
       "requests": 307.2413793103449,
       "kneeShare": 0.06709288314920739,
       "load": "below 0.8 of the knee",
@@ -101,7 +101,7 @@
               "lo": 0.10265809230662985,
               "hi": 0.12413677773755143
             },
-            "floor": 0.09624653243968162,
+            "floor": 0.09624653243968165,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -136,7 +136,7 @@
               "lo": 0.7347340816801919,
               "hi": 0.8932223495334913
             },
-            "floor": 0.7355990477814425,
+            "floor": 0.7355990477814416,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -168,9 +168,9 @@
             "unit": "s",
             "sensitivity": {
               "lo": 1.0766300311634578,
-              "hi": 1.296770825510162
+              "hi": 1.2967708255100932
             },
-            "floor": 1.0989753213380145,
+            "floor": 1.0989753213380147,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -190,7 +190,7 @@
               "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.296770825510162,
+          "bound": 1.2967708255100932,
           "measured": 0.2515,
           "ratio": 4.62295665625736,
           "inRegion": false
@@ -296,7 +296,7 @@
       "decode": 2,
       "promptTokens": 2003.734034855726,
       "outputTokens": 31.361373883799843,
-      "promptCV": 1.7000000000000002,
+      "promptCV": 1.7,
       "requests": 321.72413793103453,
       "kneeShare": 0.06923481556899429,
       "load": "below 0.8 of the knee",
@@ -346,7 +346,7 @@
               "lo": 0.10303936419556846,
               "hi": 0.12491704566909133
             },
-            "floor": 0.09624653243968162,
+            "floor": 0.09624653243968165,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -381,7 +381,7 @@
               "lo": 0.7360959530819767,
               "hi": 0.8962298316249776
             },
-            "floor": 0.7355990477814425,
+            "floor": 0.7355990477814416,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -415,7 +415,7 @@
               "lo": 1.078025612408842,
               "hi": 1.3000231670209195
             },
-            "floor": 1.0989753213380145,
+            "floor": 1.0989753213380147,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -681,7 +681,6 @@
             }
           },
           "bound": 1.054247180291338,
-          "measured": 0.3991095890410959,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -772,7 +771,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -926,7 +924,6 @@
             }
           },
           "bound": 1.4033848769432973,
-          "measured": 0.39926829268292685,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1017,7 +1014,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1171,7 +1167,6 @@
             }
           },
           "bound": 1.3950151899039807,
-          "measured": 0.3989864864864865,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1262,7 +1257,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019499999999999997,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1416,7 +1410,6 @@
             }
           },
           "bound": 2.4662096695145737,
-          "measured": 0.7049999999999996,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1507,7 +1500,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1661,7 +1653,6 @@
             }
           },
           "bound": 3.1185556566738613,
-          "measured": 0.7424999999999997,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1752,7 +1743,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1906,7 +1896,6 @@
             }
           },
           "bound": 3.083690103377146,
-          "measured": 0.5940298507462686,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1997,7 +1986,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2011,7 +1999,7 @@
       "decode": 2,
       "promptTokens": 6823.67357517895,
       "outputTokens": 31.47183876527625,
-      "promptCV": 0.8500000000000001,
+      "promptCV": 0.85,
       "requests": 87.93103448275863,
       "kneeShare": 0.06377908171598119,
       "load": "below 0.8 of the knee",
@@ -2091,10 +2079,10 @@
             "value": 1.8531233580500293,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.7273342310714428,
+              "lo": 1.7273342310714423,
               "hi": 2.0362169185515646
             },
-            "floor": 1.7975396793564977,
+            "floor": 1.7975396793564975,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2114,7 +2102,6 @@
             }
           },
           "bound": 2.0362169185515646,
-          "measured": 0.8200000000000001,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2127,7 +2114,7 @@
               "lo": 2.1759673626442018,
               "hi": 2.563865877824652
             },
-            "floor": 2.2581500536108257,
+            "floor": 2.2581500536108243,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2147,7 +2134,6 @@
             }
           },
           "bound": 2.563865877824652,
-          "measured": 0.9899999999999997,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2216,7 +2202,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019000000000000003,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2238,7 +2223,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019500000000000003,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2355,7 +2339,6 @@
             }
           },
           "bound": 2.2367019168558038,
-          "measured": 0.595,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2388,7 +2371,6 @@
             }
           },
           "bound": 2.756089393479229,
-          "measured": 0.8179999999999994,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2457,7 +2439,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2479,7 +2460,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019499999999999997,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2596,7 +2576,6 @@
             }
           },
           "bound": 2.228619764797474,
-          "measured": 0.5958823529411764,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2629,7 +2608,6 @@
             }
           },
           "bound": 2.743424468613978,
-          "measured": 0.7149999999999995,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2698,7 +2676,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019000000000000003,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2720,7 +2697,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3471,7 +3447,6 @@
             }
           },
           "bound": 2.224546465889728,
-          "measured": 0.7266666666666665,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -3504,7 +3479,6 @@
             }
           },
           "bound": 2.737140791537711,
-          "measured": 1.028125,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3573,7 +3547,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -3595,7 +3568,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3712,7 +3684,6 @@
             }
           },
           "bound": 2.2190670311370613,
-          "measured": 0.7666666666666672,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -3745,7 +3716,6 @@
             }
           },
           "bound": 2.7287361086241524,
-          "measured": 1.0468749999999996,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3814,7 +3784,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019000000000000003,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -3836,7 +3805,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3851,7 +3819,8 @@
       "noMeasurement": 0,
       "scaling": 0,
       "warmUp": 1,
-      "notPriced": 0
+      "notPriced": 0,
+      "otherVariants": 0
     },
     "ttft": [
       {
@@ -4585,7 +4554,7 @@
   },
   "notes": [
     "Fitted on the fit window alone. Each step of the test is priced from its own inputs (request rate, prompt and output lengths, prompt-length spread, the replicas each role served), read over the same window its measurement covers, and never from its measured latency.",
-    "Each step is measured at its last cycle, over the source's rate window (the router's five minutes, the engines' one): a step shorter than the window is measured over the window. A step whose window reaches before the test, or over a change of replicas, is not judged. A percentile is scored with 50 requests or more at p50, 100 at p90 and 200 at p95 (50 for the mean); measured percentiles are interpolated inside the histogram's buckets.",
+    "Each step is measured at its last cycle, over the rate window its histogram was read over (the router's, recorded with it; the engines' one minute): a step shorter than the window is measured over the window, so neighbouring steps share requests and are not independent. A step whose window reaches before the test, or over a change of replicas, is not judged. A percentile is scored with 50 requests or more at p50, 100 at p90 and 200 at p95 (50 for the mean); measured percentiles are interpolated inside the histogram's buckets.",
     "Median ratio is the middle step's predicted over measured; typical and worst-10% miss the median and p90 of the factor between them; under the upper bound the share measured at or under the planner's own upper estimate, where it gives one; within, the share inside 20%. A measured figure above the histogram's top bucket counts as read low.",
     "In region: the figure falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md)."
   ]

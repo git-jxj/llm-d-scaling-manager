@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"math"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -208,9 +208,9 @@ func runConfigOf(st *learnreplay.State, decodeVariant, prefillVariant string) wh
 	c := whatifapi.RunConfig{}
 	add := func(name, value string) { c.Fields = append(c.Fields, whatifapi.ConfigField{Name: name, Value: value}) }
 	add("model", st.ModelID)
-	roles := "decode"
+	roles := roleDecodeWord
 	if prefillVariant != "" {
-		roles = "prefill+decode"
+		roles = rolePrefill + "+" + roleDecodeWord
 	}
 	add("roles", roles)
 	fc := "absent (off)"
@@ -254,9 +254,9 @@ func runConfigOf(st *learnreplay.State, decodeVariant, prefillVariant string) wh
 			add(name+" "+strings.ReplaceAll(label, "_", "-"), v)
 		}
 	}
-	role("decode", decodeVariant)
+	role(roleDecodeWord, decodeVariant)
 	if prefillVariant != "" {
-		role("prefill", prefillVariant)
+		role(rolePrefill, prefillVariant)
 	}
 	return c
 }
@@ -274,8 +274,6 @@ func btMs(x *float64) string {
 	switch {
 	case x == nil:
 		return "-"
-	case math.IsInf(*x, 1):
-		return ">top"
 	case *x >= 1:
 		return fmt.Sprintf("%.1fs", *x)
 	}
@@ -293,7 +291,7 @@ func pointText(ps []whatifapi.BacktestPoint, stat string) string {
 		pred := btMs(p.Predicted.Value)
 		if r := p.Predicted.Refused; r != nil {
 			pred = "no figure"
-			if r.Reason == "Saturated" {
+			if r.Reason == string(whatif.Saturated) {
 				pred = "overloaded"
 			}
 		}
@@ -301,7 +299,11 @@ func pointText(ps []whatifapi.BacktestPoint, stat string) string {
 		if p.InRegion {
 			mark = "*"
 		}
-		return pred + "/" + btMs(p.Measured) + mark
+		meas := btMs(p.Measured)
+		if p.AboveHistogram || p.Unscored == whatifapi.UnscoredAboveHistogram {
+			meas = ">top"
+		}
+		return pred + "/" + meas + mark
 	}
 	return "-"
 }
@@ -332,7 +334,8 @@ func factorText(x *float64) string {
 
 // excludedWords is a reason a step was not judged, in words.
 var excludedWords = map[string]string{whatifapi.ExcludedNoTraffic: "no traffic", whatifapi.ExcludedNoMeasurement: "no measured requests",
-	whatifapi.ExcludedScaling: "replicas changing", whatifapi.ExcludedWarmUp: "warm-up", whatifapi.ExcludedNotPriced: "not priced"}
+	whatifapi.ExcludedScaling: "replicas changing", whatifapi.ExcludedWarmUp: "warm-up", whatifapi.ExcludedNotPriced: "not priced",
+	whatifapi.ExcludedOtherVariants: "other variants serving"}
 
 // writeBacktestText is the backtest's human output: the verdict first, what
 // was not judged, the windows and the configuration, the steps, the scores
@@ -420,7 +423,7 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 			steps  int
 			scores []whatifapi.BacktestScore
 		}{{"TTFT", l.Steps, l.TTFT}, {"TPOT", l.DecodeSteps, l.TPOT}} {
-			fmt.Fprintf(&b, "  %s (%d steps):", part.name, part.steps)
+			fmt.Fprintf(&b, "  %s (%s):", part.name, stepsWords(part.steps))
 			for _, sc := range part.scores {
 				if sc.Statistic == backtestMean || sc.Statistic == backtestP90 {
 					fmt.Fprintf(&b, " %s %d %s %s", sc.Statistic, sc.All.Steps, ratioText(sc.All.Bias), shareText(sc.All.Within))
@@ -440,6 +443,14 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 	fmt.Fprintf(&b, "%s\n", bt.Banner)
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// stepsWords is n steps, singular or plural.
+func stepsWords(n int) string {
+	if n == 1 {
+		return "1 step"
+	}
+	return strconv.Itoa(n) + " steps"
 }
 
 // unscoredText is why a statistic's other judged steps were not scored.

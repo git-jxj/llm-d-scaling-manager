@@ -37,9 +37,9 @@ The first lines are the answer. For example:
 
 ```text
 Over the 1 h 54 min the planner did not see:
-p90 TTFT: within 20% of measured in 11 of the 15 five-minute steps it gave a figure for; no overall lean (median ratio 1.05);
+p90 TTFT: within 20% of measured in 11 of the 15 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 1.05);
 it read 2 more than 20% low. For 7 more it gave no figure, calling the fleet overloaded; the fleet measured p90 250 ms to 370 ms there.
-p90 TPOT: within 20% of measured in 2 of the 15 five-minute steps it gave a figure for; its errors are wide; it leans low (median ratio 0.87).
+p90 TPOT: within 20% of measured in 2 of the 15 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans low (median ratio 0.87).
 None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this
 check is the evidence for this fleet.
 Judged 22 of 23 five-minute steps; not judged: 1 warm-up.
@@ -47,9 +47,10 @@ Judged 22 of 23 five-minute steps; not judged: 1 warm-up.
 
 How to read it:
 
-- **Within 20% in 11 of the 15 steps it gave a figure for**: the count that
-  matters. It covers only the steps the planner gave a figure for. The other
-  steps, and why they have none, follow in the same line.
+- **Within 20% in 11 of the 15 steps scored**: the count that matters. A
+  step is scored when the planner gave a figure and the fleet measured
+  enough requests to read the statistic (100 for a p90). The other steps,
+  and why they were not scored, follow in the same line.
 - **Median ratio**: the planner's figure over the measured one, at the
   middle step. Above 1 it leans high at the middle; below 1 it leans low. A
   median near 1 can still hide steps it read low, so check that count too.
@@ -73,7 +74,9 @@ The prediction uses each step's request rate, prompt and output lengths, the
 spread of prompt lengths, and the replicas each role ran. Unless you give
 `--arrival-cv2` (1 is random arrivals, higher is burstier), it assumes random
 arrivals. It is compared with the router's TTFT and TPOT histograms in the
-same recording, over the same five minutes the inputs are read over. Without
+same recording, over the window its histogram covers (the router's rate
+window, five minutes on a default router); the inputs are read over the
+same window. Without
 router histograms it uses the engines' own, and leaves out what they cannot
 compare: on a P/D fleet the engines' TTFT covers prefill alone.
 
@@ -82,7 +85,8 @@ compare: on a P/D fleet the engines' TTFT covers prefill alone.
 Size from the planner when, below the load it thinks the fleet can carry:
 
 - the p90 TTFT is within 20% in most of the steps it gave a figure for;
-- the median ratio is between about 0.95 and 1.2;
+- the median ratio is between about 0.95 and 1.2 (leaning a little high
+  costs replicas, leaning low costs the SLO);
 - it read few steps more than 20% low;
 - it gave no figure only where the fleet really was overloaded.
 
@@ -99,8 +103,8 @@ Size from the planner when, below the load it thinks the fleet can carry:
   a period of the same configuration. `--allow-config-mismatch` scores it
   anyway and prints the difference.
 - **Reads high near the knee**: expected. Close to the load it thinks the
-  fleet can carry, the planner's tail rises faster than most fleets', so it
-  leans high there. Judge it by the steps below 0.8 of that load (the
+  fleet can carry, the planner's tail rose faster than the fleets' on every
+  run we measured, so it leans high there. Judge it by the steps below 0.8 of that load (the
   by-load lines).
 - **Reads high everywhere**: check the `assumed:` lines. An assumed prompt
   spread or arrival pattern can move every figure.
@@ -115,7 +119,7 @@ Size from the planner when, below the load it thinks the fleet can carry:
 | --- | --- | --- |
 | `--recording` with `--split` or `--fit-until` | `--split 60%` | One recording, cut in two. |
 | `--fit`, `--test` | | Two recordings. They must not overlap in time. |
-| `--step` | `5m` | A step, from `1m` to `1h`. |
+| `--step` | `5m` | A step, from `1m` to `1h`. A step shorter than the router's five-minute window shares requests with its neighbours. |
 | `--settle` | `2m` | How long after a change of replicas, and after the test starts, a measurement is not judged. |
 | `--arrival-cv2` | random | How bursty arrivals are, when you know it: 1 is random. |
 | `--ttft-target` | | Judge each step against a target too: `500ms@p90`. The summary counts the steps predicted to meet it that measured a miss. |

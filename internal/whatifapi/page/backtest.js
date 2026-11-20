@@ -190,6 +190,13 @@ function btFmt(v) {
   return Number((v * 1000).toPrecision(2)) + " ms";
 }
 
+// btMeasured is a point's measured figure in words: above the top bucket
+// where the histogram could not say.
+function btMeasured(p) {
+  if (p.aboveHistogram || p.unscored === "aboveHistogram") return "above the top bucket";
+  return btFmt(p.measured);
+}
+
 // btLegend is the charts' legend.
 function btLegend() {
   const sw = cls => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="line ${cls}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
@@ -220,7 +227,7 @@ function btTipHTML(bt, s) {
     for (const p of s[key] || []) {
       const pred = p.predicted.value != null ? btFmt(p.predicted.value) : p.predicted.refused && p.predicted.refused.reason === "Saturated" ?
         "no figure (overloaded)" : "no figure (" + (p.predicted.refused ? p.predicted.refused.reason : "-") + ")";
-      h += `<br>${key.toUpperCase()} ${esc(p.statistic)}: predicted ${esc(pred)}, measured ${esc(btFmt(p.measured))}`;
+      h += `<br>${key.toUpperCase()} ${esc(p.statistic)}: predicted ${esc(pred)}, measured ${esc(btMeasured(p))}`;
     }
   }
   return h;
@@ -254,7 +261,7 @@ function btStepTable(bt) {
     const p = btPoint(s, key, stat);
     if (!p) return "-";
     const pred = p.predicted.value != null ? btFmt(p.predicted.value) : p.predicted.refused ? "no figure" : "-";
-    return `${pred} / ${btFmt(p.measured)}`;
+    return `${pred} / ${btMeasured(p)}`;
   };
   let h = `<table class="t"><thead><tr><th>step (UTC)</th><th>rate</th><th>prefill + decode</th><th>TTFT p50</th><th>TTFT p90</th>` +
     `<th>TPOT p50</th><th>TPOT p90</th><th>judged</th></tr></thead><tbody>`;
