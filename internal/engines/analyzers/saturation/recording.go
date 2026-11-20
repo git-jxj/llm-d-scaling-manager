@@ -128,6 +128,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor,
+// SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
 // SwitchITLOneSidedAtCap,
 // SwitchPrefillBoundHeldConfidence, SwitchThroughputFloorRaisesVariants,
 // SwitchQueuePricedAsDrain, SwitchFloorTrustReadsCompletions,
@@ -246,6 +247,13 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// The planner's ITL band floor on a low-fill fleet
 		// (itl_band_floor.go). Off from the constructor.
 		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,
+		// Issue llm-d-incubation/llm-d-scaling-manager#201: a decode's
+		// derived k2 charges its budget the prompt it computes
+		// (decode_budget.go), and a landed request is a decode's backlog
+		// only where the replica can be at a bound (pd_decode_queue.go).
+		// Both off from the constructor.
+		SwitchK2DecodeBudgetAtComputedPrompt: &a.k2DecodeBudget,
+		SwitchDecodeLandedNeedsABound:        &a.decodeLandedNeedsBound,
 		// Issue ev-shindin/llm-scaling-manager#467: the ITL line priced one-sided at the sequence cap
 		// while B is unlearned (itl_one_sided.go).
 		SwitchITLOneSidedAtCap: &a.itlOneSidedAtCap,

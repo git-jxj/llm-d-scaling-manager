@@ -332,12 +332,12 @@ func TestBatchCapReaders_AtCapBatchCap(t *testing.T) {
 	a := NewSaturationAnalyzer(capacity.NewStore())
 	stated := declaredParams(96)
 	stated.MaxNumSeqs, stated.MaxNumSeqsSet = 64, true
-	assert.Equal(t, pricedBatchCap{64, batchCapFromFlags}, a.atCapBatchCap(stated, true))
-	assert.Equal(t, pricedBatchCap{64, batchCapFromFlags}, a.atCapBatchCap(stated, false), "the flags either way")
-	assert.Equal(t, pricedBatchCap{96, batchCapDeclared}, a.atCapBatchCap(declaredParams(96), true))
-	assert.Equal(t, pricedBatchCap{0, batchCapNone}, a.atCapBatchCap(declaredParams(96), false), "the reader's switch off")
-	assert.Equal(t, pricedBatchCap{0, batchCapNone}, a.atCapBatchCap(deploymentParams(), true), "the default is no cap")
-	assert.Equal(t, pricedBatchCap{0, batchCapNone}, a.atCapBatchCap(nil, true))
+	assert.Equal(t, pricedBatchCap{perRank: 64, source: batchCapFromFlags}, a.atCapBatchCap(stated, true))
+	assert.Equal(t, pricedBatchCap{perRank: 64, source: batchCapFromFlags}, a.atCapBatchCap(stated, false), "the flags either way")
+	assert.Equal(t, pricedBatchCap{perRank: 96, source: batchCapDeclared}, a.atCapBatchCap(declaredParams(96), true))
+	assert.Equal(t, pricedBatchCap{perRank: 0, source: batchCapNone}, a.atCapBatchCap(declaredParams(96), false), "the reader's switch off")
+	assert.Equal(t, pricedBatchCap{perRank: 0, source: batchCapNone}, a.atCapBatchCap(deploymentParams(), true), "the default is no cap")
+	assert.Equal(t, pricedBatchCap{perRank: 0, source: batchCapNone}, a.atCapBatchCap(nil, true))
 	a.batchCapDeclared = false
-	assert.Equal(t, pricedBatchCap{0, batchCapNone}, a.atCapBatchCap(declaredParams(96), true), "the declared cap's switch off")
+	assert.Equal(t, pricedBatchCap{perRank: 0, source: batchCapNone}, a.atCapBatchCap(declaredParams(96), true), "the declared cap's switch off")
 }
