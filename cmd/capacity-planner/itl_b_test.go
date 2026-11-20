@@ -64,6 +64,14 @@ func TestAssumeITLB_PricesALineOnTheDefaultIntercept(t *testing.T) {
 	text, _ := runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "--assume-itl-b", "12ms")
 	assert.Contains(t, text, "ITL B           ITL B 12.0 ms, stated, in place of the 6 ms default")
 	assert.Contains(t, text, "AssumedITLB (12.0 ms, stated)")
+
+	// Stating the default itself is a statement too: priced on the same line,
+	// flagged, not refused as an unmeasured B.
+	out, _ = runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "--assume-itl-b", "6ms", "-o", "json")
+	same := role(t, decodeOutput(t, out), roleDecode)
+	require.NotNil(t, same.Results.Knee.Answer, "a stated 6 ms prices: %+v", same.Results.Knee.Refused)
+	assert.Contains(t, same.Results.Knee.Answer.Flags, string(assumedITLB))
+	assert.InDelta(t, was.A, same.Inputs.Line.A, 1e-12, "the line on the default, refitted through it, is itself")
 }
 
 // --assume-itl-b floor takes B from the floor read below the band, through
