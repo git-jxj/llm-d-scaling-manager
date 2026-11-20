@@ -1315,13 +1315,20 @@ cmd_keys() {
             log_warning "cannot read pod ${pod}: $(tr '\n' ' ' < "$err_file")"
             rc=1; continue
         fi
-        if [ "$owner" = external ]; then
-            echo "${pod}: engine caches managed elsewhere (${OWNER_ANNOTATION}=external); its keys are in that manager's store, not on the node caches, so there is nothing here for engine-cache-verify" >&2
-            continue
-        fi
         if ! root="$(kubectl get pod -n "$NAMESPACE" "$pod" -o jsonpath="{.spec.containers[?(@.name==\"${CONTAINER}\")].env[?(@.name==\"VLLM_CACHE_ROOT\")].value}" 2>"$err_file")"; then
             log_warning "cannot read pod ${pod}: $(tr '\n' ' ' < "$err_file")"
             rc=1; continue
+        fi
+        if [ "$owner" = external ]; then
+            case "$root" in
+                /engine-cache|/engine-cache/*)
+                    # Annotated, but still on our node cache: the conflict
+                    # make workload-patch reports. Its key is read as before.
+                    log_warning "${pod}: ${OWNER_ANNOTATION}=external, but VLLM_CACHE_ROOT=${root} is still our engine cache -- revert the earlier make workload-patch (make workload-patch says how); its key is read from the node cache meanwhile" ;;
+                *)
+                    echo "${pod}: engine caches managed elsewhere (${OWNER_ANNOTATION}=external); its keys are in that manager's store, not on the node caches, so there is nothing here for engine-cache-verify" >&2
+                    continue ;;
+            esac
         fi
         if ! log="$(kubectl logs -n "$NAMESPACE" "$pod" -c "$CONTAINER" 2>"$err_file")"; then
             log_warning "cannot read the log of ${pod} (container ${CONTAINER}): $(tr '\n' ' ' < "$err_file")"
@@ -1575,15 +1582,29 @@ cmd_verify() {
     done
     # No engine-cache DaemonSet, and pods whose engine caches another
     # component owns: their keys are managed elsewhere, which is the answer,
-    # not "no node cache here". Any other namespace without one still fails.
-    if [ -z "$(kubectl get daemonset -n "$NAMESPACE" "$CLAIM" -o jsonpath='{.metadata.annotations.scaling-manager\.llmd\.ai/engine-cache-path}' 2>/dev/null || true)" ]; then
-        local ext
-        ext="$(kubectl get pods -n "$NAMESPACE" -o json 2>/dev/null \
-            | jq -r --arg a "$OWNER_ANNOTATION" '[.items[]? | select((.metadata.annotations // {})[$a] == "external") | .metadata.name] | join(" ")' 2>/dev/null || true)"
-        if [ -n "$ext" ]; then
+    # not "no node cache here" -- but only when every engine pod is annotated
+    # so: an engine pod of ours there still fails, as does a namespace whose
+    # DaemonSet or pods cannot be read (Forbidden is not absent).
+    local dspath ext="" mine=""
+    if dspath="$(kubectl get daemonset -n "$NAMESPACE" "$CLAIM" --ignore-not-found -o jsonpath='{.metadata.annotations.scaling-manager\.llmd\.ai/engine-cache-path}' 2>/dev/null)" \
+       && [ -z "$dspath" ]; then
+        if ext="$(kubectl get pods -n "$NAMESPACE" -o json 2>/dev/null \
+            | jq -r --arg a "$OWNER_ANNOTATION" '
+                [ .items[]?
+                  | select(any(.spec.containers[]?; ((.image // "") | ascii_downcase | test("vllm|sglang"))
+                               or ((.command // []) + (.args // []) | join(" ") | test("vllm serve|sglang")))) ]
+                | [ (map(select((.metadata.annotations // {})[$a] == "external") | .metadata.name) | join(" ")),
+                    (map(select((.metadata.annotations // {})[$a] != "external") | .metadata.name) | join(" ")) ]
+                | join("|")')"; then
+            mine="${ext#*|}"; ext="${ext%%|*}"
+        else
+            ext=""
+        fi
+        if [ -n "$ext" ] && [ -z "$mine" ]; then
             echo "engine caches in ${NAMESPACE} are managed elsewhere (${OWNER_ANNOTATION}=external on ${ext}); there is no engine-cache DaemonSet here, so no node cache of ours to verify"
             return 0
         fi
+        [ -z "$ext" ] || log_warning "engine pods ${ext} keep their caches elsewhere (${OWNER_ANNOTATION}=external), but ${mine} do not, and there is no engine-cache DaemonSet for them"
     fi
     ec_nodes verdict
     local pods_file err_file

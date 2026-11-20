@@ -1360,13 +1360,14 @@ next planned rollout.
   emitted, never applied, as the [FlashInfer half](#flashinfer-kernels) is.
 - The drain half, the weights half and the [weights gate](#gate-replicas-on-the-weights)
   do not change.
-- The emitted file still carries the writable guard, for whoever owns the
-  container command. Restored files must be writable by the engine's user, or
-  FlashInfer fails instead of compiling.
-- `make engine-cache-keys` prints no key for an annotated pod, and says its
-  caches are managed elsewhere. `make engine-cache-verify` in a namespace with
-  no engine-cache DaemonSet says the same, and exits 0, when annotated pods run
-  there.
+- The emitted file, when one is written, still carries the writable guard,
+  for whoever owns the container command. Restored files must be writable by
+  the engine's user, or FlashInfer fails instead of compiling.
+
+`make engine-cache-keys` prints no key for an annotated pod, and says its
+caches are managed elsewhere. `make engine-cache-verify` in a namespace with
+no engine-cache DaemonSet says the same and exits 0, when every engine pod
+there is annotated; an engine pod of ours there still fails it.
 
 `ours`, or no annotation, is today's behaviour. Any other value (`External`,
 `yes`) is treated as `ours`, with a warning that names it.
@@ -1389,10 +1390,14 @@ downloader with scratch space has the same shape.
 
 **Patched before it was annotated.** The pod spec still carries our
 `engine-cache` volume, or cache variables under `/engine-cache`. The report
-flags a conflict, and nothing more of ours is written until you revert:
+flags a conflict, gives no all-clear, and writes nothing more of ours until
+you revert. `--apply-engine-cache` is refused for it, with a non-zero exit.
 
-1. Remove the `engine-cache` volume, its mounts, and every cache variable that
-   points under `/engine-cache`, in the chart that owns the pod spec.
+1. Remove the `engine-cache` volume, its mounts, every cache variable that
+   points under `/engine-cache`, and our engine-cache guard if the container
+   command carries one, in the chart that owns the pod spec. (If you set
+   `LLMSM_ENGINE_CACHE_VOLUME_NAME` or `LLMSM_ENGINE_CACHE_PATH` when you
+   patched, set them again now: the conflict is found by those names.)
 2. Delete the copies the manager stored while our patch was applied. They lack
    the moved caches, and are restored until the manager replaces them.
 3. Run `make workload-patch` again.

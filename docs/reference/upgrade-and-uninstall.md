@@ -134,8 +134,8 @@ changed, and there is no compatibility path. Reinstall.
 #### Engine caches another component owns
 
 `make workload-patch` now reads the pod-template annotation
-`scaling-manager.llmd.ai/engine-cache-owner`. Nothing changes for a workload
-without it.
+`scaling-manager.llmd.ai/engine-cache-owner`. A workload without it gets the
+same patch as before; the report may add a line suggesting the annotation.
 
 If another component owns the engine's compile caches (a cache-manager
 sidecar):

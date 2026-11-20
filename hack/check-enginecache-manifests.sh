@@ -1702,7 +1702,17 @@ PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns ext-0 > "$T/keys-o
     && ok "keys: engine-cache-owner=ours reads the key as before" || fail "keys ours: out=$(tr '\n' ' ' < "$T/keys-ours.out") err=$(tr '\n' ' ' < "$T/keys-ours.err")"
 # verify, with no engine-cache DaemonSet: pods owned externally are the
 # answer (exit 0, managed elsewhere); without them it still fails
-printf '{"items":[{"metadata":{"name":"ext-0","annotations":{"scaling-manager.llmd.ai/engine-cache-owner":"external"}}},{"metadata":{"name":"other"}}]}' > "$T/ext-pods.json"
+printf '{"items":[{"metadata":{"name":"ext-0","annotations":{"scaling-manager.llmd.ai/engine-cache-owner":"external"}},"spec":{"containers":[{"name":"vllm","image":"quay.io/x/vllm-openai:v0.11"}]}},{"metadata":{"name":"other"},"spec":{"containers":[{"name":"proxy","image":"quay.io/x/proxy:1"}]}}]}' > "$T/ext-pods.json"
+# ...and an engine pod of ours beside it: no DaemonSet for that one, so it fails
+jq -c '.items += [{"metadata":{"name":"mine-0"},"spec":{"containers":[{"name":"vllm","image":"quay.io/x/vllm-openai:v0.11"}]}}]' "$T/ext-pods.json" > "$T/ext-pods-mixed.json"
+if STUB_DS_PATH="" STUB_ENGINE_PODS_FILE="$T/ext-pods-mixed.json" PATH="$STUB_PATH" bash deploy/enginecache.sh verify -n check-ns --keys "$K1" > "$T/ecv-mixed.out" 2>&1; then fail "verify: an engine pod of ours with no DaemonSet must fail beside an external one"; else
+    grep -q 'but mine-0 do not, and there is no engine-cache DaemonSet for them' "$T/ecv-mixed.out" && grep -q 'no engine-cache DaemonSet in check-ns' "$T/ecv-mixed.out" \
+        && ok "verify: no DaemonSet, an external pod and one of ours: still fails, naming both" || fail "verify mixed: $(tr '\n' ' ' < "$T/ecv-mixed.out")"; fi
+# keys: an annotated pod still on our node cache is the conflict, and its key is read
+printf external > "$T/engine-owner/ext-0"; printf /engine-cache/vllm > "$T/engine-root/ext-0"
+PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns ext-0 > "$T/keys-extc.out" 2> "$T/keys-extc.err"
+[ "$(cat "$T/keys-extc.out")" = "$K1@rank_0_0+rank_1_0" ] && grep -q 'VLLM_CACHE_ROOT=/engine-cache/vllm is still our engine cache' "$T/keys-extc.err" \
+    && ok "keys: an annotated pod still on our node cache is the conflict, and its key is read" || fail "keys external conflict: out=$(tr '\n' ' ' < "$T/keys-extc.out") err=$(tr '\n' ' ' < "$T/keys-extc.err")"
 STUB_DS_PATH="" STUB_ENGINE_PODS_FILE="$T/ext-pods.json" PATH="$STUB_PATH" bash deploy/enginecache.sh verify -n check-ns --keys "$K1" > "$T/ecv-ext.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && grep -q 'engine caches in check-ns are managed elsewhere (scaling-manager.llmd.ai/engine-cache-owner=external on ext-0)' "$T/ecv-ext.out" && ! grep -q 'ABSENT' "$T/ecv-ext.out" \
     && ok "verify: no DaemonSet, a pod owned externally: managed elsewhere, exit 0, no key reported missing" || fail "verify external: rc=$rc $(tr '\n' ' ' < "$T/ecv-ext.out")"

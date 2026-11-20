@@ -4058,6 +4058,38 @@ ext_doc >/dev/null
 assert_contains "$(cat "$WORK/ext.err")" "shared-rwx is not the node-local claim make engine-cache makes. If it is a shared ReadWriteMany claim"
 [ "$FAILED" -eq "$before" ] && ok
 
+CASE="engine-cache-owner external, patched before it was annotated, in the driver: no all-clear, and --apply-engine-cache refused"
+reset; LIST_FIXTURE="$(serving_list)"; f_engine_cache_on_claim; ext_owner external
+before=$FAILED
+dir="$(mktemp -d)"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "0" "return code, report only"
+assert_contains "$(cat "$dir/log")" "still carrying our earlier engine-cache patch: ns1/w"
+assert_not_contains "$(cat "$dir/log")" "already drain on scale-down"
+assert_not_contains "$(cat "$dir/log")" "left to an external owner"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true LLMSM_WORKLOAD_PATCH_FILE="$dir/p2.yaml" \
+    llmsm_workload_patch >"$dir/log2" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "1" "return code, applying"
+assert_contains "$(cat "$dir/log2")" "is refused for ns1/w: the engine caches are owned externally, and the pod spec still carries our earlier engine-cache patch"
+assert_not_contains "$(cat "$dir/log2")" "the pod spec sets every cache variable"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, FLASHINFER_WORKSPACE_BASE the only variable of ours: --apply-engine-cache emits it, never sends the volume alone"
+reset; LIST_FIXTURE="$(serving_list)"; f_ext_manager; ext_drop FLASHINFER_WORKSPACE_BASE
+PVC_FIXTURE='{"items":[{"metadata":{"name":"engine-cache"},"spec":{"accessModes":["ReadWriteMany"]},"status":{"phase":"Bound"}}]}'
+before=$FAILED
+dir="$(mktemp -d)"
+DRIVER_RC=0
+LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_contains "$(cat "$dir/log")" "the only cache variable of ours is FLASHINFER_WORKSPACE_BASE"
+assert_contains "$(cat "$dir/p.yaml")" "- name: FLASHINFER_WORKSPACE_BASE"
+assert_contains "$PATCH_BODY" "preStop"
+assert_not_contains "$PATCH_BODY" "engine-cache"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="engine-cache-owner external, every variable covered, --apply-engine-cache: refused, non-zero exit"
 reset; LIST_FIXTURE="$(serving_list)"; f_ext_manager
 before=$FAILED

@@ -973,7 +973,7 @@ so_cache_owner_read() {
              | "\($k.c)|\([ $shared[] | select(.name as $n | $k.sh | index($n)) | .name ] | first)|\($k.what)" ] | first // "") as $shape
         | [ (if $a | has($ann) then "v:" + ($a[$ann] | tostring) else "-" end),
             ([ $vs[] as $v | select([ $e.env[]? | select(.name == $v) ] | length > 0) | $v ] | join(" ")),
-            ([ $s.volumes[]? | select(.name == $evol) | (.persistentVolumeClaim.claimName // "volume") ] | first // ""),
+            ([ $s.volumes[]? | select(.name == $evol and .persistentVolumeClaim != null) | .persistentVolumeClaim.claimName ] | first // ""),
             ([ $e.env[]? | select(.name as $n | $vs | index($n)) | select((.value // "") | under($emount)) | .name ] | unique | join(" ")),
             ([ $cands[0] // empty | "\(.what)|\(.mode)|\(.c)|\(.vol)" ] | first // ""),
             ([ $cands[0] // empty | .vol as $v | select([ $e.volumeMounts[]? | select(.name == $v) ] | length > 0) | $v ] | first // ""),
@@ -999,8 +999,13 @@ so_cache_owner_read() {
 so_cache_owner_plan() {
     local v
     eemit="" ext_fidir=0
-    case "$(printf '%s %s' "$image" "$argv" | tr '[:upper:]' '[:lower:]')" in
-        *vllm*)
+    # vLLM as so_workload_gaps tells it: the image names it, or the command
+    # runs `vllm serve` (a model path that merely contains vllm is not one).
+    local isvllm=0
+    case "$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')" in *vllm*) isvllm=1 ;; esac
+    case "$(printf '%s' "$argv" | tr '[:upper:]' '[:lower:]')" in *"vllm serve"*) isvllm=1 ;; esac
+    case "$isvllm" in
+        1)
             for v in $SO_CACHE_OWNER_VLLM_VARS; do
                 case " $ccov " in *" $v "*) continue ;; esac
                 if [ "$v" = FLASHINFER_WORKSPACE_BASE ]; then
@@ -1059,14 +1064,16 @@ so_cache_owner_report() {
             fi
             [ "${ext_fidir:-0}" -eq 0 ] \
                 || log_warning "    FLASHINFER_WORKSPACE_DIR: left to the owner, but FlashInfer does not read it, so its kernels are built again on every start. The owner should set FLASHINFER_WORKSPACE_BASE instead."
-            if [ -z "$ours" ]; then
-                [ -n "$cours_vol$cours_env" ] \
-                    || log_info "    every cache variable is set in the pod spec: deferred to the owner, nothing of ours is patched. The writable guard is still offered, for the owner's command: $doc"
+            if [ -n "$cours_vol$cours_env" ]; then
+                # A conflict is a gap, never an all-clear (ext_conflict_names).
+                ext_conflict_names="${ext_conflict_names:-}${ext_conflict_names:+; }$who"
+            elif [ -z "$ours" ]; then
+                log_info "    every cache variable is set in the pod spec: deferred to the owner, nothing of ours is patched. The writable guard is offered for the owner's command in the emitted file, when one is written, and in $doc"
                 ext_full_names="${ext_full_names:-}${ext_full_names:+; }$who"
             fi
             if [ -n "$cours_vol" ] || [ -n "$cours_env" ]; then
                 log_warning "    CONFLICT: the pod spec still carries what an earlier make workload-patch wrote${cours_vol:+ (the volume ${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache})}${cours_env:+ (${cours_env} under $emount)}, so the manager publishes copies without those caches. To revert:"
-                log_warning "      1. remove the volume ${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}, its mounts, and every cache variable that points under $emount, in the chart that owns the pod spec;"
+                log_warning "      1. remove the volume ${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}, its mounts, and every cache variable that points under $emount, in the chart that owns the pod spec; and, if the container command carries our engine-cache guard, the guard too (the emitted file offers the current one to the owner);"
                 log_warning "      2. delete the copies the manager stored while that was applied: they lack the moved caches, and are restored until the manager replaces them."
                 claim="${cours_vol:-}"
                 case "$claim" in
@@ -1307,6 +1314,16 @@ so_workload_weights_can_apply() {
 # prepared" either.
 so_workload_enginecache_can_apply() {
     local ns="$1" name="$2" doc="$3" claim ds ready want d_resource d_spec d_paths
+    # Engine caches owned externally can leave FLASHINFER_WORKSPACE_BASE as
+    # the only variable of ours. The trim never applies it without
+    # VLLM_CACHE_ROOT beside it, so the volume would go live with nothing
+    # pointing into it: emitted only, like the FlashInfer half.
+    so_workload_doc_shape "$doc" || return 1
+    if [ "$(yq eval "[$d_spec.volumes[]? | select(.name == \"${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}\")] | length" "$doc" 2>/dev/null)" != 0 ] \
+       && [ "$(yq eval "[$d_spec.containers[].env[]? | select(.name == \"VLLM_CACHE_ROOT\" or .name == \"TRITON_CACHE_DIR\" or .name == \"PYTHONPYCACHEPREFIX\")] | length" "$doc" 2>/dev/null)" = 0 ]; then
+        log_warning "  $ns/$name: the engine-cache volume is emitted, NOT applied -- the only cache variable of ours is FLASHINFER_WORKSPACE_BASE, which is applied only beside VLLM_CACHE_ROOT; put it in the chart with the volume."
+        return 1
+    fi
     so_workload_volume_can_apply "$ns" "$name" "$doc" "${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}" engine-cache LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE || return 1
     claim="${LLMSM_ENGINE_CACHE_CLAIM:-engine-cache}"; claim="${claim%%:*}"
     if [ "$claim" = "engine-cache" ]; then
@@ -1728,7 +1745,8 @@ llmsm_workload_patch() {
     # ext_full_names: workloads whose engine caches are owned externally with
     # every cache variable set (so_cache_owner_report); ext_rc: 1 when the
     # engine-cache half was asked for and refused for them.
-    local ext_full_names="" ext_rc=0
+    # ext_conflict_names: the same, still carrying our earlier patch.
+    local ext_full_names="" ext_conflict_names="" ext_rc=0
 
     # The tool check this path never had. `make workload-patch` sources the
     # libraries directly instead of going through deploy/install.sh, so
@@ -1835,9 +1853,15 @@ llmsm_workload_patch() {
     # Asked to apply the engine-cache half where it has nothing to carry: the
     # caches are owned externally and the pod spec sets every variable. Said
     # once, and the run is non-zero, since what was asked for did not happen.
-    if [ "$apply" = "true" ] && [ "${LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE:-false}" = "true" ] && [ -n "$ext_full_names" ]; then
-        log_warning "LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true is refused for $ext_full_names: the engine caches are owned externally ($SO_CACHE_OWNER_ANNOTATION=external) and the pod spec sets every cache variable, so there is no engine-cache half to apply. Nothing of it was sent."
-        ext_rc=1
+    if [ "$apply" = "true" ] && [ "${LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE:-false}" = "true" ]; then
+        if [ -n "$ext_full_names" ]; then
+            log_warning "LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true is refused for $ext_full_names: the engine caches are owned externally ($SO_CACHE_OWNER_ANNOTATION=external) and the pod spec sets every cache variable, so there is no engine-cache half to apply. Nothing of it was sent."
+            ext_rc=1
+        fi
+        if [ -n "$ext_conflict_names" ]; then
+            log_warning "LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true is refused for $ext_conflict_names: the engine caches are owned externally, and the pod spec still carries our earlier engine-cache patch (the CONFLICT above). Nothing of it was sent; revert it first."
+            ext_rc=1
+        fi
     fi
 
     if [ "$found" -eq 0 ]; then
@@ -1856,7 +1880,10 @@ llmsm_workload_patch() {
             log_warning "Nothing was written: all $scanned workload(s) were skipped (see above)."
             return 0
         fi
-        if [ "$((scanned - skipped - lws_undrained - dset_gaps))" -gt 0 ]; then
+        if [ -n "$ext_conflict_names" ]; then
+            # Not an all-clear: the earlier patch is still in the pod spec.
+            log_warning "Engine caches owned externally, but still carrying our earlier engine-cache patch: $ext_conflict_names. Revert it as the CONFLICT above says; nothing else was found to patch."
+        elif [ "$((scanned - skipped - lws_undrained - dset_gaps))" -gt 0 ]; then
             log_success "$((scanned - skipped - lws_undrained - dset_gaps)) model server(s) already drain on scale-down and keep their weights on a volume; no vLLM among them compiles from nothing, and none recompiles its Python bytecode."
         fi
         [ "$lws_undrained" -gt 0 ] && log_warning "  $lws_undrained LeaderWorkerSet(s) keep their caches but do not drain on scale-down (see above); that is set by hand."
