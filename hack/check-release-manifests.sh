@@ -737,7 +737,7 @@ expect_wf "release-sign builds and signs a capacity planner binary for linux and
     'linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64' '.jobs."release-sign".env.CAPACITY_PLANNER_PLATFORMS'
 expect_wf "the windows binary (.exe) is signed, verified before the tools build, and attached" \
     'release-files,release-sign,release-tools' \
-    '[.jobs | to_entries[] | select(.value.steps[]? | (.run // "") | test("dist/capacity-planner-v[*][.]exe ")) | .key] | unique | join(",")'
+    '[.jobs | to_entries[] | select(.value.steps[]? | (.run // "") | test("dist/capacity-planner-v[*][.]exe ")) | .key] | unique | sort | join(",")'
 expect_wf "the planner is scanned by govulncheck, then built, then signed" \
     'Scan the capacity planner for called vulnerabilities (blocking),Build the capacity planner binaries,Sign the release files' \
     '[.jobs."release-sign".steps[].name | select(. == "Scan the capacity planner for called vulnerabilities (blocking)" or . == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
