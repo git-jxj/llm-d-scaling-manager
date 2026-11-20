@@ -104,6 +104,10 @@ when no variant of the model names a tier.
   another model's already takes the whole contended budget; a larger value
   only risks overflowing the fair-share arithmetic that every model in the GPU
   budget shares.
+- An external analyzer definition that uses `demand`, `target`,
+  `targetReduce` or `emptyIsMissing` and cannot run. The whole definition is
+  dropped, not one field; see
+  [External analyzers](#external-analyzers-analyzerdefinitions).
 
 The scaling manager acts as if the entry did not set the field. The model then
 gets the value of the layer below: the tier, then `default`, then the built-in
@@ -2412,43 +2416,140 @@ data:
       - name: queue-depth
 ```
 
-A full example, with a body per inference engine, is
+A full example, with a body per inference engine and the optional settings
+below, is
 [`config/samples/analyzers/external-analyzers.yaml`](../../config/samples/analyzers/external-analyzers.yaml).
+
+#### Size a P/D model: one demand query per role
+
+A single `query` gives demand for the whole model, so it cannot size a P/D
+model: prefill and decode replicas serve different things. Give one demand
+query per role instead, with `demand:` in place of `query:`:
+
+```yaml
+analyzerDefinitions:
+  queue-depth:
+    demand:
+      - match: { role: prefill }
+        query: sum(prefill_queue{namespace="{{.namespace}}",model_name="{{.modelID}}"})
+        threshold: "3"             # optional: this role's own threshold
+      - match: { role: decode }
+        query: sum(decode_queue{namespace="{{.namespace}}",model_name="{{.modelID}}"})
+    threshold: "5"                 # used by a rule that sets none
+```
+
+- `role` is the role the scaling manager resolved for the variant (its
+  `llm-d.ai/role` label), not a metric label: `prefill`, `decode`, or `both`
+  for a model that is not split. One definition can carry all three, so it
+  serves P/D and aggregated models alike.
+- A role with no rule is not sized by this analyzer. A model none of whose
+  roles has a rule is skipped: no query runs for it.
+- If any rule's query fails, the analyzer reports nothing for the model that
+  cycle. For up to three cycles no role of the model scales down, including a
+  role it has no rule for.
+
+#### Measure the per-replica target
+
+A `threshold` is a constant. To measure what one replica serves instead, add
+a `target:` query that returns one series per Pod:
+
+```yaml
+analyzerDefinitions:
+  kv-tokens:
+    query: sum(my_kv_tokens_in_use{namespace="{{.namespace}}",model_name="{{.modelID}}"})
+    threshold: "50000"             # optional: used where no target query answers
+    target:
+      - queries:                   # tried in order; the first that answers wins
+          - query: avg by (pod) (epp_kv_capacity{namespace="{{.namespace}}"})
+            e: epp                 # a name for the log line
+          - query: avg by (pod) (vllm_kv_capacity{namespace="{{.namespace}}"})
+            e: vllm
+    targetReduce: avg              # avg (default), median, min or max
+```
+
+- Each series must keep a `pod` (or `pod_name`) label: that is how its value
+  is matched to a variant. A Pod the scaling manager does not count, and a
+  value of 0 or less, or not a number, are skipped.
+- A variant's Pods are reduced to one value with `targetReduce`.
+- The queries are tried in order for each variant, and stop once every
+  variant has a value. With verbose logging, the log line
+  `external analyzer measured a per-replica target` names the one that
+  answered (`e`).
+- A variant no query answers for, such as one with no Pod running, uses the
+  `threshold` of its role's rule, then the definition's. With neither, it is
+  not sized this cycle. If no variant has a value, the analyzer reports
+  nothing for the model, as when a query fails.
+- On a P/D model, a target rule can name a role (`match: { role: decode }`).
+  A rule with no `match` serves every role no other target rule names.
+
+#### Treat an empty result as missing
+
+By default, a demand query that matches no series reads as 0 demand. A
+renamed metric or a label typo reads that way too, and listed alone the
+analyzer then lets the model scale down. The first time a query returns
+nothing, the log says `External analyzer demand query returned no series`.
+
+Set `emptyIsMissing: true` to read an empty result as missing instead:
+
+```yaml
+analyzerDefinitions:
+  queue-depth:
+    query: sum(my_queue_depth{namespace="{{.namespace}}",model_name="{{.modelID}}"})
+    threshold: "5"
+    emptyIsMissing: true
+```
+
+The analyzer then reports nothing for the model that cycle, as when the query
+fails: for up to three cycles no role of the model scales down, and after
+that the analyzer no longer counts until its query returns a series again. A
+series with the value 0 is still 0 demand.
+
+Some signals have no series at all when there is no load. For such a role,
+set `orZero: true` on its demand rule: its empty result reads as 0 even with
+`emptyIsMissing` on.
+
+#### Fields
 
 | Field | Meaning |
 |---|---|
-| `query` | PromQL for the model's **total** demand. Every series it returns is summed, after series of Pods that are gone are dropped. `{{.namespace}}` and `{{.modelID}}` are escaped and filled in. |
-| `threshold` | What one scale-target replica (a Pod, or an LWS group) can serve, in the query's unit. A string, greater than 0. |
-| `engines` | Optional: a `query`/`threshold` pair per inference engine (`vllm`, `sglang`). The model's engine picks the body; the top-level pair is ignored when `engines` is set. A model whose engine has no body is not sized by this analyzer. |
+| `query` | PromQL for the model's **total** demand. Every series it returns is summed, after series of Pods that are gone are dropped. `{{.namespace}}` and `{{.modelID}}` are escaped and filled in. Set `query` or `demand`, not both. |
+| `threshold` | What one scale-target replica (a Pod, or an LWS group) can serve, in the query's unit. A string, greater than 0. Required unless every demand rule sets its own, or `target` is set. |
+| `demand` | One rule per role: `match.role` (`prefill`, `decode` or `both`), `query`, and optionally `threshold` and `orZero`. |
+| `target` | Rules that measure the threshold per Pod: an optional `match.role`, and `queries`, each a `query` and an optional `e`. |
+| `targetReduce` | How a variant's Pods' targets become one value: `avg` (default), `median`, `min` or `max`. Needs `target`. |
+| `emptyIsMissing` | `true` reads a demand query that returns no series as missing, not 0. Default `false`. |
+| `engines` | Optional: a body per inference engine (`vllm`, `sglang`), each with the fields above. The model's engine picks the body. A model whose engine has no body is not sized by this analyzer. |
 
 What to know before you rely on one:
 
 - **Units are yours to get right.** Use a `sum(...)` query. `count()` and
   `avg()` count engine instances, not Pods; collapse them by Pod first
   (`count(count by (pod) (...))`).
-- **Model-level only**. It reports demand for the whole
-  model, not per role, so it **cannot size a P/D model**; the log says
-  `listed analyzer reports no per-role demand`. It can still hold one: when
-  its query fails, no role of the model scales down for up to three cycles.
-- **The threshold is a constant.** It does not learn per-replica capacity;
-  a target query is planned.
-- **An empty result is 0 demand.** If the query matches nothing, the
-  analyzer asks for 0 replicas. Listed alone, that lets the model scale
-  down; beside saturation, saturation's larger need wins. Treating an empty
-  result as missing is planned. A query that
-  **fails** is no reading instead: for three cycles no role of the model
-  scales down, then it stops counting.
+- **A single `query` cannot size a P/D model.** It reports demand for the
+  whole model, not per role; the log says `listed analyzer reports no
+  per-role demand`. It can still hold one: when its query fails, no role of
+  the model scales down for up to three cycles. Use `demand:` rules.
+- **An empty result is 0 demand** unless you set `emptyIsMissing`. Beside
+  saturation, saturation's larger need wins; listed alone, it lets the model
+  scale down. A query that **fails** is no reading: for three cycles no role
+  of the model scales down, then it stops counting.
 - **Its own `scaleUpThreshold`/`scaleDownBoundary` decide nothing**, as for
   every analyzer other than saturation (see
   [Per-analyzer threshold overrides](#engine-post-step-formula)).
 - **Where it is read.** Only from the `default` entry in the controller's
   namespace. On any other entry, or in a namespace-local ConfigMap, it is
   logged and ignored; a policy there can still list it by name.
-- **Bad definitions are skipped.** An empty query, a threshold that does not
-  parse or is 0 or less, or a name a built-in analyzer already uses is logged
-  and skipped; the other definitions still run. A threshold of `"NaN"` is
-  accepted and then sizes nothing, so check the value. Changes apply on the next cycle,
-  with no restart.
+- **Bad definitions are skipped.** A definition that uses `demand`, `target`,
+  `targetReduce` or `emptyIsMissing` is checked when the ConfigMap is read;
+  if it cannot run, it is dropped with a warning and a `ConfigFieldIgnored`
+  Event that name the analyzer and the field, for example
+  `analyzerDefinitions="queue-depth": this analyzer is not defined: demand[0].match.role: "prefil" is not a role`.
+  The other definitions and the rest of the entry still apply. A definition
+  without those fields is checked when it is built, as before: an empty
+  query, a threshold that does not parse or is 0 or less, or a name a
+  built-in analyzer already uses is logged and skipped. A threshold of
+  `"NaN"` is accepted there and then sizes nothing, so check the value.
+  Changes apply on the next cycle, with no restart.
 - **Who may edit it.** The query runs as written against the shared
   Prometheus, so treat write access to that ConfigMap as privileged.
 
