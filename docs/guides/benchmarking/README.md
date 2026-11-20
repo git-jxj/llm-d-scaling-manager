@@ -299,8 +299,8 @@ is in its notes on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases):
 
 ```bash
-git checkout v0.12.0
-export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.12.0
+git checkout v0.12.1
+export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.12.1
 # or the exact build
 export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:0fc4c191f847b2746a41e2a1cdbb93072d0f2a1e2f3974d36478df62a9b31672
 ```
