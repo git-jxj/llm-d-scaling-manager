@@ -245,7 +245,8 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader, fileName strin
 		ext = ".jsonl.gz"
 	}
 	name := uploadPrefix + hex.EncodeToString(h.Sum(nil)) + ext
-	listed := whatifapi.UploadedRecording{Name: name, FileName: fileName, Bytes: int(n)}
+	// Cleaned again: the store takes no caller's word for it.
+	listed := whatifapi.UploadedRecording{Name: name, FileName: whatifapi.UploadFileName(fileName), Bytes: int(n)}
 	if l, ok := u.touch(listed); ok {
 		return uploadResponse(l), false, nil
 	}

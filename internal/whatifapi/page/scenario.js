@@ -257,7 +257,8 @@ function recordingLabel(name, uploads) {
   const u = Array.isArray(uploads) ? uploads.find(x => x && x.name === name) : undefined;
   if (!u) return name;
   const bytes = Number(u.bytes) || 0;
-  const size = bytes < 1048576 ? `${Math.max(1, Math.round(bytes / 1024))} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
+  const kib = Math.max(1, Math.round(bytes / 1024));
+  const size = kib < 1024 ? `${kib} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
   const when = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(String(u.uploadedAt || ""));
   const hash = name.startsWith("upload:") ? name.slice(7, 19) : name;
   const file = cleanName(u.fileName || "") || "unnamed";

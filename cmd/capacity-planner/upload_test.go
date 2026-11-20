@@ -444,12 +444,15 @@ func TestServeUploadListsItsFileName(t *testing.T) {
 	assert.Equal(t, "ols _sweep_.jsonl.gz", first.FileName)
 	assert.Equal(t, "2026-11-20T12:05:00Z", first.UploadedAt)
 	assert.Equal(t, len(sweep), first.Bytes)
-	for _, file := range uploadFiles(t, f) {
+	files := uploadFiles(t, f)
+	require.NotEmpty(t, files)
+	for _, file := range files {
 		assert.NotContains(t, file, "sweep", "no file is named by the client's name")
 	}
 
 	second := post(whatifapi.UploadPath, olsSweepLines(t))
 	s := sourcesOf(t, h)
+	require.GreaterOrEqual(t, len(s.Recordings), 2)
 	assert.Equal(t, []string{second.Name, first.Name}, s.Recordings[:2])
 	assert.Equal(t, []whatifapi.UploadedRecording{
 		{Name: second.Name, Bytes: second.Bytes, UploadedAt: "2026-11-20T12:05:00Z"},

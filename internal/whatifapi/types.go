@@ -598,7 +598,7 @@ type UploadResponse struct {
 	Name          string `json:"name"`
 	Bytes         int    `json:"bytes"`
 	FileName      string `json:"fileName,omitempty"`
-	UploadedAt    string `json:"uploadedAt,omitempty"`
+	UploadedAt    string `json:"uploadedAt"`
 }
 
 // SizeRequest is POST /v1/size: the fewest replicas per role whose fleet

@@ -147,8 +147,9 @@ Load it as any recording, with `"source": {"kind": "recording", "name": "upload:
   `TMPDIR` (else `/tmp`). The name is `upload:` and the SHA-256 of the
   file's bytes. The optional `filename` is a label only: the page and
   `GET /v1/sources` show it beside the upload, its size and time, so
-  people can tell uploads apart. Letters, digits and ` ._-+()[],=@` are
-  kept, anything else becomes `_`, at most 80 characters. It names no
+  people can tell uploads apart. Of its last path element, letters,
+  digits, up to two accents after a letter, and ` ._-+()[],=@` are kept,
+  anything else becomes `_`; trimmed, at most 80 characters. It names no
   file, and everyone who can open the planner sees it. It is not tied to
   who uploaded: the same bytes sent again, by anyone, under another name
   take that name; sent with none, they keep theirs. Either way they count

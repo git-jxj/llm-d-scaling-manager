@@ -626,6 +626,8 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("control characters in a file name are blanked, a missing time left out", l === "\u2068a b\u2069 (1 KiB) · upload 8c5f4000f4e3", l);
   l = recordingLabel(h, [{name: h, fileName: "x".repeat(300), bytes: 1, uploadedAt: "now"}]);
   check("a long file name is cut to a typed name's length", l.startsWith("\u2068" + "x".repeat(MAX_NAME) + "\u2069 (1 KiB)"), l);
+  l = recordingLabel(h, [{name: h, fileName: "f", bytes: 1048500}]);
+  check("just under 1 MiB reads as MiB, not 1024 KiB", l.includes("(1.0 MiB)"), l);
   l = recordingLabel(h, null);
   check("an upload the server does not list is shown by its name", l === h, l);
   check("the label is text: esc escapes it", esc(recordingLabel(h, [{name: h, fileName: "<b>", bytes: 1}])).startsWith("\u2068&lt;b&gt;"));
@@ -654,7 +656,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 317;
+const EXPECTED_CASES = 318;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);
