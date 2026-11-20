@@ -510,11 +510,26 @@ type FleetLimit struct {
 // negative where the SLO is missed.
 type Chosen struct {
 	Rate float64 `json:"rate"`
-	// RateSource is "request", or "operating point" where the scenario gave
-	// no rate.
+	// RateSource is what set Rate: one of the RateSource constants.
 	RateSource string `json:"rateSource"`
 	Headroom   Figure `json:"headroom"`
 }
+
+// The values of Chosen.RateSource.
+const (
+	// RateSourceRequest is a rate the scenario gave.
+	RateSourceRequest = "request"
+	// RateSourceOperatingPoint is headroom times the lower of both knees,
+	// where the scenario gave no rate.
+	RateSourceOperatingPoint = "operating point"
+	// RateSourcePrefillKnee is headroom times the prefill knee, where the
+	// scenario gave no rate and the decode knee is refused: a rate to start
+	// from, not an operating point, which the decode knee would bound.
+	RateSourcePrefillKnee = "prefill knee; decode not priced"
+	// RateSourceDecodeKnee is headroom times the decode knee, where the
+	// scenario gave no rate and the prefill knee is refused.
+	RateSourceDecodeKnee = "decode knee; prefill not priced"
+)
 
 // Marginal is the fleet's limit with one more replica of each role.
 type Marginal struct {

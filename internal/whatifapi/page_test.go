@@ -431,3 +431,43 @@ func TestPageScriptsDeclareEachFunctionOnce(t *testing.T) {
 	}
 	require.Greater(t, len(seen), 100, "found too few functions")
 }
+
+// A new source, or a plan that fails, takes the last plan off the page: every
+// element a plan fills is emptied (clearPlan), and the status says what to do.
+// Before, setInputs dropped state.plan alone and a failed plan set the status
+// alone, so a recording whose plan failed showed the previous recording's
+// limits and charts as its own. The note under the rate comes from rateNote
+// (scenario.js, run under node by hack/check-planner-scenarios.sh).
+func TestPageClearsAStalePlan(t *testing.T) {
+	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
+	m := regexp.MustCompile(`(?s)const PLAN_FIGURES = \[(.*?)\];`).FindStringSubmatch(js)
+	require.NotNil(t, m, "PLAN_FIGURES is found")
+	ids := regexp.MustCompile(`"([a-z0-9]+)"`).FindAllStringSubmatch(m[1], -1)
+	require.Greater(t, len(ids), 15, "found too few ids")
+	seen := map[string]bool{}
+	for _, id := range ids {
+		assert.Contains(t, html, `id="`+id[1]+`"`, "clearPlan empties #%s", id[1])
+		seen[id[1]] = true
+	}
+	for _, id := range []string{"limits", "fleet", "chosen", "bars", "marginal", "ttftchart", "tpotchart", "ttftpoints", "tpotpoints", "curvetable", "ratenote"} {
+		assert.True(t, seen[id], "clearPlan leaves #%s", id)
+	}
+	setInputs := between(t, js, "function setInputs(", "\n}\n")
+	assert.Contains(t, setInputs, "clearPlan();", "a new source clears the last plan")
+	failed := between(t, js, `if (e.name !== "AbortError") {`, "\n    }\n")
+	assert.Contains(t, failed, "clearPlan();", "a failed plan clears the last plan")
+	assert.Contains(t, failed, "Nothing is shown until a plan prices: type a rate")
+	assert.Contains(t, js, `el("ratenote").textContent = rateNote(p.limits.chosen.rateSource);`)
+	assert.Contains(t, pageText(t, "scenario.js"), "function rateNote(source)")
+}
+
+// between is s from the first start up to the end that follows it; both
+// must be found.
+func between(t *testing.T, s, start, end string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(s, start)
+	require.True(t, ok, "%q is found", start)
+	body, _, ok := strings.Cut(rest, end)
+	require.True(t, ok, "%q is found after %q", end, start)
+	return start + body
+}

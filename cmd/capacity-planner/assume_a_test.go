@@ -120,5 +120,6 @@ func TestAssumeA_Golden(t *testing.T) {
 	q1 := []string{"slo-to-rate", "--recording", saturatedRun, "--ttft", "10s@p95", "--assume-a", "11ms"}
 	checkGolden(t, "ttft-assume-a", 3, q2)
 	checkGolden(t, "ttft-assume-a-json", 3, append(slices.Clone(q2), "-o", "json"))
-	checkGolden(t, "ttft-assume-a-rate", 0, q1)
+	// No TPOT asked and no decode line: decode and the fleet are refused.
+	checkGolden(t, "ttft-assume-a-rate", 3, q1)
 }

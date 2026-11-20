@@ -11,9 +11,10 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
-// rateAnswer is question 1's answer for one decode variant: nil result with
-// no TPOT asked. fleet is its P/D fleet when a TTFT was asked, ttft the
-// prefill role's rate and fleetRate the fleet's.
+// rateAnswer is question 1's answer for one decode variant: with no TPOT
+// asked, result is nil, or decode's knee's refusal (kneeRefusal). fleet is
+// its P/D fleet when a TTFT was asked, ttft the prefill role's rate and
+// fleetRate the fleet's.
 type rateAnswer struct {
 	pv              pricedVariant
 	result          whatif.Result
@@ -82,6 +83,10 @@ func sloToRate(ctx context.Context, args []string, out, warn io.Writer) error {
 		if asksTPOT {
 			a.result = decodeRate(pv, query, r)
 			results = append(results, a.result)
+		} else {
+			// No TPOT asked: decode's knee alone bounds decode. Refused, it
+			// is decode's row and the fleet's.
+			a.result = kneeRefusal(pv)
 		}
 		if ttft != nil {
 			a.fleet = fleets[i]
@@ -114,6 +119,8 @@ func sloToRate(ctx context.Context, args []string, out, warn io.Writer) error {
 			in.Headroom = &h
 			if asksTPOT {
 				in.TPOT = f.tpotInputs(st, target.Seconds, target.Percentile, target.Ratio)
+			}
+			if a.result != nil {
 				w.Roles = append(w.Roles, wireRole{Role: "decode", Variant: a.pv.state.Variant, Inputs: in,
 					Results: wireResults{Rate: validated(toWire(a.result, unitRate), a.pv.rateValidation(a.result))}})
 			}
@@ -156,6 +163,21 @@ func decodeRate(pv pricedVariant, query whatif.RateQuery, r resolvedRatio) whati
 	res := withRatioRefusal(whatif.RateForTPOT(pv.decode, query), r.refused)
 	res = pv.band(res, func(d whatif.Decode) whatif.Result { return whatif.RateForTPOT(d, query) })
 	return pv.qualify(onRatio(res, r.ratio, r.flags))
+}
+
+// kneeRefusal is decode's knee's refusal, nil where the knee prices: decode's
+// limit, and the fleet's, with no TPOT asked. The knee is then all that bounds
+// decode; refused (no usable decode line, such as NoLine or PinnedDefaultB),
+// nothing does, and a fleet limit read off prefill alone would claim a bound
+// no rule gives, as at-replicas refuses the fleet. It is DecodeKnee's
+// refusal: band passes a refusal through, so it is not banded. Unbanded, it
+// is the line's checks and one closed form, no resample sweep, so the sizer
+// reads it with each fleet's limits rather than once a search.
+func kneeRefusal(pv pricedVariant) whatif.Result {
+	if u, ok := whatif.KneeRate(pv.decode).(whatif.Unanswerable); ok {
+		return pv.qualify(u)
+	}
+	return nil
 }
 
 // priceTTFT prices the prefill role's rate at the target, and the fleet's.

@@ -85,8 +85,10 @@ func TestTTFTGolden(t *testing.T) {
 		// engine's TTFT in its place. Decode's TPOT refuses, and so exit 3.
 		{"ttft-replicas-short", []string{"replicas-to-slo", "--recording", shortRun, "--assume-vp", "130000"}, 3},
 		{"ttft-replicas-short-json", []string{"replicas-to-slo", "--recording", shortRun, "--assume-vp", "130000", "-o", "json"}, 3},
-		// No TPOT asked, so nothing refuses.
-		{"ttft-rate-short", []string{"slo-to-rate", "--recording", shortRun, "--assume-vp", "130000", "--ttft", "1s@p90"}, 0},
+		// No TPOT asked, and the recording learned no decode line: the
+		// prefill rate prices, but the decode knee does not, so decode and
+		// the fleet are refused.
+		{"ttft-rate-short", []string{"slo-to-rate", "--recording", shortRun, "--assume-vp", "130000", "--ttft", "1s@p90"}, 3},
 		// Saturated: at the knee, a refusal and not a number.
 		{"ttft-replicas-saturated", []string{"replicas-to-slo", "--recording", shortRun, "--assume-vp", "130000",
 			"--rate", "1000"}, 3},
@@ -907,7 +909,9 @@ func TestTTFT_NoVPOnTheTextPath(t *testing.T) {
 	text, code = runCmd(t, "slo-to-rate", "--recording", shortRun, "--ttft", "1s")
 	require.Equal(t, 3, code, text)
 	assert.Contains(t, text, "prefill  refused: NoPrefillCapacity")
-	assert.Contains(t, text, "fleet    refused: NoPrefillCapacity")
+	// The recording learned no decode line either, and no TPOT is asked:
+	// decode's knee refusal is the fleet's, named first, as at-replicas does.
+	assert.Contains(t, text, "fleet    refused: NoLine")
 }
 
 // The fleet row is the smallest of the role rates and the operating point of
@@ -1242,9 +1246,16 @@ func TestTTFT_SeveralVariants(t *testing.T) {
 	for _, r := range w.Roles {
 		roles = append(roles, r.Role+":"+r.Variant)
 	}
-	assert.Equal(t, []string{"prefill:m-pre", "fleet:m-dc2", "prefill:m-pre", "fleet:m-dec"}, roles)
-	assert.Contains(t, w.Roles[0].TTFT.Assumed, "the whole rate on prefill variant m-pre (--prefill-variant; the model has 2)")
-	assert.Equal(t, "m-dc2", w.Roles[0].TTFT.DecodeVariant)
+	// m-dc2 serves no decode traffic, so it learned no line: with no TPOT
+	// asked its decode knee is refused, and that is its decode row and its
+	// fleet's.
+	assert.Equal(t, []string{"decode:m-dc2", "prefill:m-pre", "fleet:m-dc2", "prefill:m-pre", "fleet:m-dec"}, roles)
+	require.NotNil(t, w.Roles[0].Results.Rate.Refused, out)
+	require.NotNil(t, w.Roles[2].Results.Rate.Refused, out)
+	assert.Equal(t, w.Roles[0].Results.Rate.Refused.Reason, w.Roles[2].Results.Rate.Refused.Reason)
+	assert.NotNil(t, w.Roles[4].Results.Rate.Answer, "m-dec's line prices: its fleet is answered")
+	assert.Contains(t, w.Roles[1].TTFT.Assumed, "the whole rate on prefill variant m-pre (--prefill-variant; the model has 2)")
+	assert.Equal(t, "m-dc2", w.Roles[1].TTFT.DecodeVariant)
 
 	// Question 2 labels by decode variant and repeats the prefill role.
 	out, _ = runCmd(t, slices.Concat([]string{"replicas-to-slo"}, window, []string{"--assume-vp", "100000", "--prefill-variant", "m-prb", "-o", "json"})...)

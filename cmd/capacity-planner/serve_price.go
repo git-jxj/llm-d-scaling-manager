@@ -442,11 +442,12 @@ func (sf *servedFleet) TPOTAt(rate float64) (mean, percentile whatif.Result) {
 	return a.slo.MeanTPOT, a.slo.PercentileTPOT
 }
 
-// decodeRate is slo-to-rate's decode rate at headroom, nil with no TPOT
-// target.
+// decodeRate is slo-to-rate's decode rate at headroom. With no TPOT target it
+// is nil, or decode's knee's refusal where the knee is refused
+// (kneeRefusal): the fleet's limit is then that refusal too.
 func (sf *servedFleet) decodeRate(tpotSeconds, headroom float64) whatif.Result {
 	if !(tpotSeconds > 0) {
-		return nil
+		return kneeRefusal(sf.pv)
 	}
 	target := whatif.TPOTTarget{Seconds: tpotSeconds, Percentile: sf.tpotQ, Ratio: sf.ratio.ratio}
 	return decodeRate(sf.pv, rateQuery(target, headroom, sf.ratio), sf.ratio)

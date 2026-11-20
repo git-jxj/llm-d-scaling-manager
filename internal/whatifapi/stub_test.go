@@ -43,14 +43,30 @@ type stubResolver struct {
 	refuseFrom2 whatif.Reason
 	// pinnedLine, when set, is a decode line pinned on the default
 	// intercept (PinnedDefaultB): decode's knee, TPOT and TPOT limit are
-	// refused, and with no TPOT asked the fleet's limit is prefill's alone,
-	// as the CLI's is with no decode line to read decode's knee from.
+	// refused, and with no TPOT asked decode's limit and the fleet's are the
+	// knee's refusal, as Fleet.Limits says.
 	pinnedLine bool
+	// noPrefillRole, when set, is a source with no prefill variant: the
+	// inputs carry no prefill role, and every prefill figure is refused
+	// NoPrefillReplicas, as the CLI refuses a role the recording does not
+	// hold.
+	noPrefillRole bool
 	// knees counts the DecodeKnee calls.
 	knees atomic.Int64
 }
 
 var pinnedB = whatif.Unanswerable{Reason: whatif.PinnedDefaultB, Detail: "stub: a pinned-b line on the default intercept"}
+
+var noPrefillVariant = whatif.Unanswerable{Reason: whatif.NoPrefillReplicas, Detail: "stub: no prefill variant"}
+
+// prefillRefusal is the refusal of every prefill figure of a refused prefill
+// role: no V_P, or no prefill role at all.
+func (f *stubFleet) prefillRefusal() whatif.Unanswerable {
+	if f.r.noPrefillRole {
+		return noPrefillVariant
+	}
+	return noVP
+}
 
 func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved, error) {
 	switch req.Model {
@@ -66,7 +82,7 @@ func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved,
 		Policy: PolicyInfo{TTFT: &PolicyObjective{Statistic: "p90", Seconds: 0.2}, TPOT: &PolicyObjective{Statistic: "mean", Seconds: 0.012},
 			Headroom: 0.85, FlowControl: "off, inferred"},
 		Terms: []Term{}, Assumed: []string{"Poisson arrivals"}}
-	if req.Model == "decode-only" {
+	if req.Model == "decode-only" || r.noPrefillRole {
 		in.Fleet.Prefill = nil
 	}
 	// ctx-16k is a source whose engines' arguments set a 16k context window.
@@ -98,7 +114,7 @@ func (r *stubResolver) Fleet(k Knobs) (Fleet, error) {
 		}
 	}
 	r.fleets.Add(1)
-	return &stubFleet{k: k, refusePrefill: r.refusePrefill, r: r}, nil
+	return &stubFleet{k: k, refusePrefill: r.refusePrefill || r.noPrefillRole, r: r}, nil
 }
 
 // stubFleet is one synthetic fleet.
@@ -125,7 +141,7 @@ func (f *stubFleet) decodeKnee() float64 { return 12 * float64(f.k.Decode) }
 
 func (f *stubFleet) PrefillKnee() whatif.Result {
 	if f.refusePrefill {
-		return noVP
+		return f.prefillRefusal()
 	}
 	return whatif.Answer{Value: f.prefillKnee(), Flags: []whatif.Flag{whatif.UnvalidatedTTFT}}
 }
@@ -143,7 +159,7 @@ func (f *stubFleet) Onsets() whatif.Result { return nil }
 func (f *stubFleet) TTFTAt(rate float64) whatif.Result {
 	time.Sleep(f.r.ttftDelay)
 	if f.refusePrefill {
-		return noVP
+		return f.prefillRefusal()
 	}
 	if rate >= min(f.prefillKnee(), f.decodeKnee()) {
 		return whatif.Unanswerable{Reason: whatif.Saturated, Detail: fmt.Sprintf("%g r/s at or above the knee", rate)}
@@ -188,12 +204,9 @@ func (f *stubFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (dec
 		f.r.onPlainLimits(n)
 	}
 	knee := min(f.prefillKnee(), f.decodeKnee())
-	if f.r.pinnedLine {
-		knee = f.prefillKnee()
-	}
 	switch {
 	case f.refusePrefill:
-		prefill = noVP
+		prefill = f.prefillRefusal()
 	case f.r.refuseFrom2 != "" && f.k.Prefill > 1:
 		prefill = whatif.Unanswerable{Reason: f.r.refuseFrom2, Detail: "stub: refused from 2 prefill replicas on"}
 	default:
@@ -203,14 +216,16 @@ func (f *stubFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (dec
 		decode = whatif.Answer{Value: min(headroom*f.decodeKnee(), (tpotSeconds-0.005)*1000),
 			Basis: whatif.Basis{BoundBy: []whatif.Bound{whatif.BoundTPOT}, Uncapped: (tpotSeconds - 0.005) * 1000}}
 	}
-	if tpotSeconds > 0 && f.r.pinnedLine {
+	if f.r.pinnedLine {
+		// With a TPOT target or none: the line prices neither TPOT nor the
+		// knee. Decode's refusal is the fleet's first, as the CLI's is.
 		decode = pinnedB
-	}
-	if u, ok := prefill.(whatif.Unanswerable); ok {
-		return decode, prefill, u
 	}
 	if u, ok := decode.(whatif.Unanswerable); ok {
 		return u, prefill, u
+	}
+	if u, ok := prefill.(whatif.Unanswerable); ok {
+		return decode, prefill, u
 	}
 	// A percentile with no ratio refuses decode's limit, and the fleet's.
 	if tpotSeconds > 0 && f.k.TPOTPercentile != 0 && f.k.Assume.TPOTRatio == nil {

@@ -326,9 +326,13 @@ func TestServeParity(t *testing.T) {
 				if i := slices.IndexFunc(w.Roles, func(r wireRole) bool { return r.Role == roleDecode }); i >= 0 {
 					require.NotNil(t, out.Limits.Decode)
 					sameFigure(t, "decode limit", wantOf(w.Roles[i].Results.Rate), *out.Limits.Decode)
-					sameFigure(t, "TPOT point B", wantOf(w.Roles[i].Results.Rate), out.TPOT.AtTarget.Rate)
+					// With no TPOT asked, a decode row is the decode knee's
+					// refusal, and there is no TPOT line.
+					if out.TPOT != nil {
+						sameFigure(t, "TPOT point B", wantOf(w.Roles[i].Results.Rate), out.TPOT.AtTarget.Rate)
+					}
 				} else {
-					assert.Nil(t, out.Limits.Decode, "no TPOT asked, no decode limit")
+					assert.Nil(t, out.Limits.Decode, "no TPOT asked and the decode knee priced, no decode limit")
 				}
 				// A golden with no TTFT asked has no prefill or fleet role: the
 				// API always asks one, at its own target, which the CLI did not.
