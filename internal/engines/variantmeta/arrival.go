@@ -138,8 +138,11 @@ func ExplainMissing(pods []corev1.Pod, notBefore, stalledBefore time.Time) Arriv
 		if p.Spec.NodeName != "" {
 			f.nodes[p.Spec.NodeName]++
 		}
-		if f.detail == "" || !created.Before(f.newest) {
-			f.newest, f.detail = created, detail
+		if f.pods == 1 || created.After(f.newest) {
+			f.newest = created
+			if detail != "" {
+				f.detail = detail
+			}
 		}
 	}
 	for _, reason := range notArrivingOrder {
@@ -262,6 +265,10 @@ func busiestNode(nodes map[string]int) string {
 	}
 	return best
 }
+
+// CutDetail bounds a cause's detail as ExplainMissing does, for a caller
+// that writes one itself.
+func CutDetail(s string) string { return cut(s) }
 
 // cut bounds s to maxCauseMessage bytes, on a rune boundary.
 func cut(s string) string {

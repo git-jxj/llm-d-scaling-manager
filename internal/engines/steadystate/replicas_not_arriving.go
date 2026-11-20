@@ -70,11 +70,12 @@ type notArrivingTracker struct {
 type notArrivingVariant struct {
 	namespace, name string
 	// since is when the shortfall was first seen, or when a replica last
-	// arrived while it lasted. Kept in memory only: after a restart a
-	// shortfall waits out the threshold again.
+	// arrived beyond maxReady while it lasted: no replica has arrived since.
+	// Kept in memory only: after a restart a shortfall waits out the
+	// threshold again.
 	since time.Time
-	// lastReady is the Ready count of the previous cycle.
-	lastReady int
+	// maxReady is the most Ready replicas seen while the shortfall lasted.
+	maxReady int
 	// metAt is when a reported shortfall was first seen met; zero while it
 	// is not.
 	metAt time.Time
@@ -249,39 +250,38 @@ func (e *Engine) observeArrival(
 		if v == nil {
 			return
 		}
-		if !v.reported {
-			delete(t.variants, key)
-			return
-		}
-		// Reported: the replicas must stay arrived for notArrivingClearHold
-		// before the report lifts, or a replica that passes its probe once
-		// between crashes would lift it and restart the clock every time.
+		// The replicas must stay for notArrivingClearHold, reported or not,
+		// or a replica that passes its probe once between crashes would lift
+		// the report or restart the clock every time it did.
 		if v.metAt.IsZero() {
 			v.metAt = now
 		}
 		if now.Sub(v.metAt) < notArrivingClearHold {
 			return
 		}
-		metrics.ClearReplicasNotArriving(va.Namespace, va.Name)
-		e.recordArrivalEvent(va, corev1.EventTypeNormal, constants.K8SEventReplicasArrived,
-			fmt.Sprintf("%d of %d replicas Ready; they were short since %s",
-				ready, ask, v.since.UTC().Format(time.RFC3339)))
+		if v.reported {
+			e.liftReport(va, v, ready, ask)
+		}
 		delete(t.variants, key)
 		return
 	}
 	if v == nil {
-		v = &notArrivingVariant{namespace: va.Namespace, name: va.Name, since: now, lastReady: ready}
+		v = &notArrivingVariant{namespace: va.Namespace, name: va.Name, since: now, maxReady: ready}
 		t.variants[key] = v
 	}
 	v.metAt = time.Time{}
 	// The clock times no progress, not the shortfall: a replica arriving
-	// restarts it, so a rollout or a scale-up that lands one replica per
-	// start time is never reported. A rising ask does not restart it, or an
-	// optimizer ordering more into a storm would postpone the report forever.
-	if ready > v.lastReady {
-		v.since = now
+	// beyond the most Ready this shortfall has seen restarts it, so a rollout
+	// or a scale-up that lands one replica per start time is never reported,
+	// and a replica that comes and goes is. A rising ask does not restart it,
+	// or an optimizer ordering more into a storm would postpone the report
+	// forever.
+	if ready > v.maxReady {
+		v.maxReady, v.since = ready, now
+		if v.reported {
+			e.liftReport(va, v, ready, ask)
+		}
 	}
-	v.lastReady = ready
 	role := variantmeta.RoleFromScaleTarget(st)
 	limit, _ := t.threshold(va.Namespace, va.Spec.ModelID, role)
 	if now.Sub(v.since) < limit {
@@ -294,7 +294,7 @@ func (e *Engine) observeArrival(
 		// A listing that failed once does not change what is reported.
 		return
 	case err != nil:
-		cause.Detail = "its pods could not be listed: " + err.Error()
+		cause.Detail = variantmeta.CutDetail("its pods could not be listed: " + err.Error())
 	default:
 		// Pods that ended count from one threshold before the clock started:
 		// the rejections that started it, not last week's evictions. Pods on
@@ -302,13 +302,9 @@ func (e *Engine) observeArrival(
 		cause = variantmeta.ExplainMissing(pods, v.since.Add(-limit), now.Add(-limit))
 	}
 	if cause.Reason == "" {
-		// Every missing replica has a pod younger than the threshold: on its
-		// way. Lift a report, keeping the event history so a flip back to
-		// the same cause is not announced again inside the interval.
-		if v.reported {
-			metrics.ClearReplicasNotArriving(va.Namespace, va.Name)
-			v.reported = false
-		}
+		// Every missing replica has a pod younger than the threshold, on its
+		// way. A report already made stands: those pods have not served yet.
+		// It lifts when a replica arrives, or changes if they stall.
 		return
 	}
 	metrics.SetReplicasNotArriving(va.Namespace, va.Name, role, cause.Reason, ask-ready)
@@ -320,9 +316,20 @@ func (e *Engine) observeArrival(
 		v.lastEvent, v.reason = now, cause.Reason
 		ctrl.LoggerFrom(ctx).Info("Replicas asked for have not arrived",
 			"namespace", va.Namespace, "variant", va.Name, "role", role, "ready", ready, "asked", ask,
-			"since", v.since.UTC().Format(time.RFC3339), "reason", cause.Reason, "pods", cause.Pods,
+			"noneArrivedSince", v.since.UTC().Format(time.RFC3339), "reason", cause.Reason, "pods", cause.Pods,
 			"node", cause.Node, "detail", cause.Detail)
 	}
+}
+
+// liftReport ends a variant's report because a replica arrived: its series
+// goes, and a ReplicasArrived event says so. The event history is kept, so a
+// report made again with the same cause inside notArrivingEventEvery is not
+// announced twice.
+func (e *Engine) liftReport(va *llmdvariant.Variant, v *notArrivingVariant, ready, ask int) {
+	metrics.ClearReplicasNotArriving(va.Namespace, va.Name)
+	v.reported = false
+	e.recordArrivalEvent(va, corev1.EventTypeNormal, constants.K8SEventReplicasArrived,
+		fmt.Sprintf("%d of %d replicas Ready: a replica arrived", ready, ask))
 }
 
 // recordArrivalEvent records straight on the recorder rather than through
@@ -339,7 +346,7 @@ func (e *Engine) recordArrivalEvent(va *llmdvariant.Variant, eventType, reason, 
 // and no pod count, so the ConfigMap is rewritten only when the counts, the
 // cause or the pods' message change, not every cycle.
 func notArrivingLine(va *llmdvariant.Variant, role string, ready, ask int, since time.Time, c variantmeta.ArrivalCause) string {
-	line := fmt.Sprintf("%s/%s (%s): %d/%d Ready since %s: %s",
+	line := fmt.Sprintf("%s/%s (%s): %d/%d Ready, none arrived since %s: %s",
 		va.Namespace, va.Name, role, ready, ask, since.UTC().Format(time.RFC3339), c.Reason)
 	if c.Node != "" {
 		line += " on node " + c.Node
@@ -353,7 +360,7 @@ func notArrivingLine(va *llmdvariant.Variant, role string, ready, ask int, since
 // notArrivingMessage is the Warning event's text: the shortfall, then the
 // cause in the pods' words.
 func notArrivingMessage(ready, ask int, since time.Time, limit time.Duration, c variantmeta.ArrivalCause) string {
-	head := fmt.Sprintf("%d of %d replicas Ready since %s, longer than the %s a replica should take: ",
+	head := fmt.Sprintf("%d of %d replicas Ready and none has arrived since %s, longer than the %s a replica should take: ",
 		ready, ask, since.UTC().Format(time.RFC3339), limit.Round(time.Second))
 	on := ""
 	if c.Node != "" {

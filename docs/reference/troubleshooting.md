@@ -545,7 +545,7 @@ is not reported.
    ```
    A line reads like this:
    ```
-   models/decode (decode): 1/2 Ready since 2026-11-20T10:00:00Z: admission-rejected on node gpu-node-7: UnexpectedAdmissionError: Allocate failed due to no healthy devices present; cannot allocate unhealthy devices rdma/ib
+   models/decode (decode): 1/2 Ready, none arrived since 2026-11-20T10:00:00Z: admission-rejected on node gpu-node-7: UnexpectedAdmissionError: Allocate failed due to no healthy devices present; cannot allocate unhealthy devices rdma/ib
    ```
 2. **Act on the reason.**
 
@@ -566,14 +566,17 @@ is not reported.
 **What the scaling manager does.** It counts only Ready replicas as supply.
 Pods that are rejected, unschedulable, gated or failing are not counted as on
 their way either, and neither is a pod that has not become Ready in twice its
-role's start time, so the controller orders replacements. That last rule
+role's start time (at least 5 minutes), so the controller orders replacements.
+On a cold node, where pulling the image or the weights takes longer than
+usual, that can order one replica too many; it is removed once both arrive. That last rule
 applies only once the start time is measured or declared on the ScaledObject,
 and not to LeaderWorkerSet groups of more than one pod. It
 does not cordon, taint or steer pods away from a node: node health is the
 platform's to judge, for every workload on the node at once.
 
-The report lifts on its own a minute after the replicas arrive (a
-`ReplicasArrived` event). It restarts its clock when the controller restarts.
+The report lifts when a replica arrives (a `ReplicasArrived` event); the
+variant must then keep what it asked for for a minute before its record is
+dropped. It restarts its clock when the controller restarts.
 
 ## GPUs held or quota spent
 

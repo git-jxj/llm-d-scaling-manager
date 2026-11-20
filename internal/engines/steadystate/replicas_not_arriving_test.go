@@ -135,13 +135,13 @@ func TestReplicasNotArrivingAdmissionStorm(t *testing.T) {
 	events := drain(recorder)
 	require.Len(t, events, 1)
 	assert.True(t, strings.HasPrefix(events[0], "Warning "+constants.K8SEventReplicasNotArriving+" "), events[0])
-	for _, want := range []string{"1 of 2 replicas Ready since 2026-11-20T10:00:00Z", "169 pods rejected by the kubelet at admission",
+	for _, want := range []string{"1 of 2 replicas Ready and none has arrived since 2026-11-20T10:00:00Z", "169 pods rejected by the kubelet at admission",
 		"on node gpu-node-7", "cannot allocate unhealthy devices rdma/ib", "platform"} {
 		assert.Contains(t, events[0], want)
 	}
 	assert.Equal(t, []string{"decode/decode/admission-rejected=1"}, notArrivingSeries(t, registry))
 	line := status.Data()[controllerstatus.KeyReplicasNotArriving]
-	assert.Equal(t, "ns/decode (decode): 1/2 Ready since 2026-11-20T10:00:00Z: admission-rejected on node gpu-node-7: "+
+	assert.Equal(t, "ns/decode (decode): 1/2 Ready, none arrived since 2026-11-20T10:00:00Z: admission-rejected on node gpu-node-7: "+
 		"UnexpectedAdmissionError: Allocate failed due to no healthy devices present; cannot allocate unhealthy devices rdma/ib", line)
 
 	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(7*time.Minute))
@@ -161,8 +161,7 @@ func TestReplicasNotArrivingAdmissionStorm(t *testing.T) {
 	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(26*time.Minute))
 	events = drain(recorder)
 	require.Len(t, events, 1)
-	assert.Equal(t, "Normal "+constants.K8SEventReplicasArrived+
-		" 2 of 2 replicas Ready; they were short since 2026-11-20T10:00:00Z", events[0])
+	assert.Equal(t, "Normal "+constants.K8SEventReplicasArrived+" 2 of 2 replicas Ready: a replica arrived", events[0])
 	assert.Empty(t, notArrivingSeries(t, registry))
 	assert.NotContains(t, status.Data(), controllerstatus.KeyReplicasNotArriving)
 }
@@ -297,4 +296,103 @@ func TestReplicasNotArrivingScaleTargetGone(t *testing.T) {
 	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(7*time.Minute))
 	assert.Empty(t, notArrivingSeries(t, registry))
 	assert.Empty(t, e.notArriving.variants)
+}
+
+// A replica that comes Ready and crashes again is no progress: the clock runs
+// from the most Ready the shortfall has seen, and a one-cycle flap neither
+// restarts it nor drops the record.
+func TestReplicasNotArrivingFlappingReplicaIsReported(t *testing.T) {
+	t0 := time.Now()
+	c, d := stormFixture(t, 0, t0)
+	require.NoError(t, c.Create(context.Background(), &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "decode-crash", Namespace: "ns", Labels: decodeLabels,
+			CreationTimestamp: metav1.NewTime(t0.Add(-time.Hour))},
+		Spec: corev1.PodSpec{NodeName: "gpu-node-4"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "vllm", RestartCount: 3, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+		}}},
+	}))
+	recorder := record.NewFakeRecorder(100)
+	d.Spec.Replicas = ptr.To(int32(3))
+	e := &Engine{Recorder: recorder, client: c, cycleScaleTargets: targetsOf(d)}
+	groups := map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}
+	for minute := 0; minute <= 7; minute++ {
+		d.Status.ReadyReplicas = 1
+		if minute%2 == 1 {
+			d.Status.ReadyReplicas = 2 // Ready for one cycle, then OOM-killed
+		}
+		e.reportReplicasNotArriving(context.Background(), groups, nil, nil, t0.Add(time.Duration(minute)*time.Minute))
+	}
+	d.Status.ReadyReplicas = 1
+	e.reportReplicasNotArriving(context.Background(), groups, nil, nil, t0.Add(8*time.Minute))
+	events := drain(recorder)
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0], "crash-looping on node gpu-node-4")
+}
+
+// More replicas asked for while none arrives does not restart the clock (the
+// report comes at 5 minutes, the ask then 7), or
+// ordering into a storm would postpone the report forever.
+func TestReplicasNotArrivingRisingAskKeepsTheClock(t *testing.T) {
+	t0 := time.Now()
+	c, d := stormFixture(t, 0, t0)
+	recorder := record.NewFakeRecorder(100)
+	e := &Engine{Recorder: recorder, client: c, cycleScaleTargets: targetsOf(d)}
+	groups := map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}
+	for minute := 0; minute <= 6; minute++ {
+		d.Spec.Replicas = ptr.To(int32(2 + minute))
+		e.reportReplicasNotArriving(context.Background(), groups, nil, nil, t0.Add(time.Duration(minute)*time.Minute))
+	}
+	events := drain(recorder)
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0], "1 of 7 replicas Ready and none has arrived since")
+}
+
+// A replica arriving while others are still short lifts the report at once,
+// with a ReplicasArrived event: the counts it published are no longer true.
+func TestReplicasNotArrivingProgressLiftsTheReport(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+	t0 := time.Now()
+	c, d := stormFixture(t, 0, t0)
+	d.Spec.Replicas = ptr.To(int32(4))
+	recorder := record.NewFakeRecorder(100)
+	status := controllerstatus.New(nil, nil, "ctrl")
+	e := &Engine{Recorder: recorder, client: c, Status: status, cycleScaleTargets: targetsOf(d)}
+	groups := map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}
+	ctx := context.Background()
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0)
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(6*time.Minute))
+	require.Len(t, drain(recorder), 1)
+	require.Equal(t, []string{"decode/decode/no-pods=3"}, notArrivingSeries(t, registry))
+
+	d.Status.ReadyReplicas = 2
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(7*time.Minute))
+	events := drain(recorder)
+	require.Len(t, events, 1)
+	assert.Equal(t, "Normal "+constants.K8SEventReplicasArrived+" 2 of 4 replicas Ready: a replica arrived", events[0])
+	assert.Empty(t, notArrivingSeries(t, registry))
+	assert.NotContains(t, status.Data(), controllerstatus.KeyReplicasNotArriving)
+}
+
+// A pod listing that fails keeps the cause already reported, rather than
+// announcing "unknown" and then the old cause again.
+func TestReplicasNotArrivingListErrorKeepsTheCause(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+	t0 := time.Now()
+	c, d := stormFixture(t, 0, t0)
+	recorder := record.NewFakeRecorder(100)
+	e := &Engine{Recorder: recorder, client: c, cycleScaleTargets: targetsOf(d)}
+	groups := map[string][]llmdvariant.Variant{"m|ns": {decodeVariant()}}
+	ctx := context.Background()
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0)
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(6*time.Minute))
+	require.Len(t, drain(recorder), 1)
+
+	e.client = nil // ListPods fails
+	e.reportReplicasNotArriving(ctx, groups, nil, nil, t0.Add(7*time.Minute))
+	assert.Empty(t, drain(recorder))
+	assert.Equal(t, []string{"decode/decode/no-pods=1"}, notArrivingSeries(t, registry))
 }
