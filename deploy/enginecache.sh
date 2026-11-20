@@ -1591,8 +1591,11 @@ cmd_verify() {
         if ext="$(kubectl get pods -n "$NAMESPACE" -o json 2>/dev/null \
             | jq -r --arg a "$OWNER_ANNOTATION" '
                 [ .items[]?
-                  | select(any(.spec.containers[]?; ((.image // "") | ascii_downcase | test("vllm|sglang"))
-                               or ((.command // []) + (.args // []) | join(" ") | test("vllm serve|sglang")))) ]
+                  | select((.status.phase // "") != "Succeeded" and (.status.phase // "") != "Failed")
+                  | select(any(.spec.containers[]?;
+                               ((.image // "") | ascii_downcase | test("vllm|sglang"))
+                               or ((.command // []) + (.args // []) | map(tostring) | join(" ") | ascii_downcase
+                                   | test("vllm serve|vllm\\.entrypoints|sglang\\.launch_server|sglang serve")))) ]
                 | [ (map(select((.metadata.annotations // {})[$a] == "external") | .metadata.name) | join(" ")),
                     (map(select((.metadata.annotations // {})[$a] != "external") | .metadata.name) | join(" ")) ]
                 | join("|")')"; then

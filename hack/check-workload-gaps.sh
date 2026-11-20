@@ -4090,6 +4090,32 @@ assert_contains "$PATCH_BODY" "preStop"
 assert_not_contains "$PATCH_BODY" "engine-cache"
 [ "$FAILED" -eq "$before" ] && ok
 
+CASE="engine-cache-owner external, FLASHINFER_WORKSPACE_BASE and TRITON_CACHE_DIR ours: the report says the first is emitted only"
+reset; f_ext_manager; ext_drop FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR
+before=$FAILED
+doc="$(ext_doc)"
+assert_eq "$(ext_envnames "$doc")" "FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR" "env the document writes"
+assert_contains "$(cat "$WORK/ext.err")" "FLASHINFER_WORKSPACE_BASE is in the emitted file only: without VLLM_CACHE_ROOT beside it"
+# With VLLM_CACHE_ROOT ours too, it goes live, and nothing says otherwise.
+reset; f_ext_manager; ext_drop VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE
+ext_doc >/dev/null
+assert_contains "$(cat "$WORK/ext.err")" "FLASHINFER_WORKSPACE_BASE: not set in the pod spec"
+assert_not_contains "$(cat "$WORK/ext.err")" "in the emitted file only"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, a weights downloader listed before the manager: the store is the manager one"
+reset; f_ext_manager
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.volumes += [{"name":"scratch","emptyDir":{}}]
+    | .spec.template.spec.containers[0].volumeMounts += [{"name":"scratch","mountPath":"/scratch"}]
+    | .spec.template.spec.initContainers = [{"name":"download","image":"quay.io/x/dl:1",
+        "volumeMounts":[{"name":"scratch","mountPath":"/scratch"},{"name":"model-storage","mountPath":"/model-cache"}]}]
+      + .spec.template.spec.initContainers')"
+before=$FAILED
+ext_doc >/dev/null
+assert_contains "$(cat "$WORK/ext.err")" "store: claim jit-store, mounted read-write by cache-sync"
+assert_not_contains "$(cat "$WORK/ext.err")" "mounts the store"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="engine-cache-owner external, every variable covered, --apply-engine-cache: refused, non-zero exit"
 reset; LIST_FIXTURE="$(serving_list)"; f_ext_manager
 before=$FAILED

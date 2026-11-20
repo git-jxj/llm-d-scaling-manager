@@ -1365,7 +1365,8 @@ next planned rollout.
   the engine's user, or FlashInfer fails instead of compiling.
 
 `make engine-cache-keys` prints no key for an annotated pod, and says its
-caches are managed elsewhere. `make engine-cache-verify` in a namespace with
+caches are managed elsewhere; one whose `VLLM_CACHE_ROOT` is still under
+`/engine-cache` is the conflict below, and its key is printed. `make engine-cache-verify` in a namespace with
 no engine-cache DaemonSet says the same and exits 0, when every engine pod
 there is annotated; an engine pod of ours there still fails it.
 

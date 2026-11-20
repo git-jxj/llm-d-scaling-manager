@@ -916,9 +916,9 @@ SO_CACHE_OWNER_VLLM_VARS="VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE
 #   cown_raw   the annotation value, for the warning on an unknown one
 #   ccov       the cache variables the engine container sets (value or
 #              valueFrom), space-separated; FLASHINFER_WORKSPACE_DIR included
-#   cours_vol  the claim of our engine-cache volume when the template has one
-#              ("volume" when it is not a claim): the trace of a patch applied
-#              before the annotation
+#   cours_vol  the claim of our engine-cache volume (a claim named by
+#              LLMSM_ENGINE_CACHE_VOLUME_NAME) when the template has one: the
+#              trace of a patch applied before the annotation
 #   cours_env  the cache variables whose value lies under our mount path
 #   cstore     the manager store as the pod spec shows it, "<what>|<mode>|
 #              <container>|<volume>", or empty
@@ -967,16 +967,20 @@ so_cache_owner_read() {
              | { c: $c.name, sh: $sh, vol: $st[0].name,
                  mode: (if $st[0].readOnly == true then "read-only" else "read-write" end),
                  what: ([ $stores[] | select(.name == $st[0].name) | what ] | first) } ]) as $cands
+        # The candidates whose shared emptyDir holds a cache variable: the
+        # manager, ahead of a weights downloader that only shares scratch.
         | ([ $cands[] | . as $k
              | ([ $shared[] | select(.name as $n | $k.sh | index($n)) | .mountPath ]) as $paths
              | select([ $vals[] as $v | $paths[] as $m | $v | under($m) ] | any)
-             | "\($k.c)|\([ $shared[] | select(.name as $n | $k.sh | index($n)) | .name ] | first)|\($k.what)" ] | first // "") as $shape
+             | . + { ed: ([ $shared[] | select(.name as $n | $k.sh | index($n)) | .name ] | first) } ]) as $hold
+        | ([ $hold[0] // empty | "\(.c)|\(.ed)|\(.what)" ] | first // "") as $shape
+        | ($hold[0] // $cands[0]) as $pick
         | [ (if $a | has($ann) then "v:" + ($a[$ann] | tostring) else "-" end),
             ([ $vs[] as $v | select([ $e.env[]? | select(.name == $v) ] | length > 0) | $v ] | join(" ")),
             ([ $s.volumes[]? | select(.name == $evol and .persistentVolumeClaim != null) | .persistentVolumeClaim.claimName ] | first // ""),
             ([ $e.env[]? | select(.name as $n | $vs | index($n)) | select((.value // "") | under($emount)) | .name ] | unique | join(" ")),
-            ([ $cands[0] // empty | "\(.what)|\(.mode)|\(.c)|\(.vol)" ] | first // ""),
-            ([ $cands[0] // empty | .vol as $v | select([ $e.volumeMounts[]? | select(.name == $v) ] | length > 0) | $v ] | first // ""),
+            ([ $pick // empty | "\(.what)|\(.mode)|\(.c)|\(.vol)" ] | first // ""),
+            ([ $pick // empty | .vol as $v | select([ $e.volumeMounts[]? | select(.name == $v) ] | length > 0) | $v ] | first // ""),
             $shape
           ] | map(gsub("[\u001f\n\r]"; " ")) | join("\u001f")' 2>/dev/null)" || return 1
     IFS=$'\037' read -r owner ccov cours_vol cours_env cstore cstore_eng cshape <<< "$rec"
@@ -1057,6 +1061,13 @@ so_cache_owner_report() {
             for v in $eemit; do
                 ours="${ours:+$ours }$v"
                 log_warning "    $v: not set in the pod spec; patched under $emount. A value set only in the image counts as not set: set it in the pod spec, under the owner's directory, to leave it to the owner."
+                # The trim applies it only beside VLLM_CACHE_ROOT.
+                if [ "$v" = FLASHINFER_WORKSPACE_BASE ]; then
+                    case " $eemit " in
+                        *" VLLM_CACHE_ROOT "*) : ;;
+                        *) log_warning "    FLASHINFER_WORKSPACE_BASE is in the emitted file only: without VLLM_CACHE_ROOT beside it, LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE never applies it. Put it in the chart." ;;
+                    esac
+                fi
             done
             if [ "${want_pyc:-0}" -eq 1 ]; then
                 ours="${ours:+$ours }PYTHONPYCACHEPREFIX"
