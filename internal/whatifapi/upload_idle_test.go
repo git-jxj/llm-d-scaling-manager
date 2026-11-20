@@ -3,6 +3,7 @@ package whatifapi
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -144,5 +145,10 @@ func TestUploadPastTheCapIs408(t *testing.T) {
 	t.Logf("answered %d after %s", resp.StatusCode, time.Since(start))
 	assert.Equal(t, http.StatusRequestTimeout, resp.StatusCode, "%s", body)
 	assert.Contains(t, string(body), "longer than 500ms")
-	assert.ErrorIs(t, <-u.done, context.DeadlineExceeded, "the check was stopped at the cap")
+	// The check is stopped either by the cap's own deadline or by the
+	// request ending once the 408 is written, whichever the scheduler runs
+	// first: both mean it did not run on past the cap.
+	err = <-u.done
+	assert.True(t, errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled),
+		"the check was stopped at the cap: %v", err)
 }
