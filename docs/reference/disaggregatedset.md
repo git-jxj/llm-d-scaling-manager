@@ -111,6 +111,9 @@ It holds what KEDA and the HPA hold on the other path:
 - **During a rollout.** A replica change does not start a roll. A scale-up
   lands in the rollout's pace; a scale-down waits for the old revision to drain
   (`Deferred`, the default).
+- **A refused scale-down.** A lower count counts as done only once the
+  set's child LeaderWorkerSets run it. See
+  [When the cluster refuses a scale-down](#when-the-cluster-refuses-a-scale-down).
 - **Role order.** The write lists the roles in the set's own order. LWS before
   v1.0.0 hashes `spec.roles` in order into the revision, so a reordered list
   would roll every group.
@@ -146,10 +149,54 @@ spec:
 
 `jsonPointers` take no wildcard, so they cannot name every role.
 
+## When the cluster refuses a scale-down
+
+Some clusters remove a group only after it is drained: an admission policy or
+webhook denies any lower `replicas` until a drain tool has taken the group out
+of the router and waited for it to go idle. The role writer does not drain.
+Pick how scale-down works on such a cluster:
+
+- **Let the drain tool act on the writer's count.** Works when the policy
+  guards the child LeaderWorkerSets, not the set: the set then keeps the lower
+  count as a request. Your drain tool drains the groups above it and lets the
+  decrease through; the set controller applies it. Scale-up works as usual.
+  A drain that takes longer than 2 minutes shows as `RoleScaleDownRefused`
+  until it ends; that is expected here.
+- **Leave the set to your own tooling.** Remove the
+  `scaling-manager.llmd.ai/role-writer` annotation.
+
+What the writer does when a lower count is refused:
+
+- **Refused on the set itself.** The write fails and the set keeps its count.
+  The writer records `RoleScaleDownRefused` with the API server's message and
+  keeps the role at its count. Changes to other roles are written without it
+  on the next pass. It
+  asks again after 5 minutes, then 10, 20, and so on, at most once an hour,
+  until the cluster accepts or the engines want the count back.
+- **Refused on the set's child LeaderWorkerSets.** The set takes the lower
+  count, but its controller cannot apply it, so the groups keep running. If
+  the children still run more groups 2 minutes after the write, the writer
+  records `RoleScaleDownRefused` once and does not lower the role again until
+  the children follow, the count goes up, or someone else changes it. While a
+  rollout runs, the 2 minutes do not count.
+
+To see it: `kubectl get events --field-selector reason=RoleScaleDownRefused -n <namespace>`,
+or the controller log line `The cluster refused a role scale-down`.
+
+The writer keeps this state in memory. After a restart it compares each
+role's children with the set once, so a refusal on the children from before
+is reported again 2 minutes later. A refusal on the set itself is found again
+at the next write.
+
+It reads the child LeaderWorkerSets with the `list` on `leaderworkersets`
+that the controller's manager role has. If that read fails, the writer logs
+it once, reports nothing new, and keeps holding a role it already reported.
+
 ## Events
 
 On the DisaggregatedSet. A warning is recorded once, and again only after a
-pass that went right.
+pass that went right. A scale-down refused on the set itself is recorded at
+each try.
 
 | reason | type | meaning |
 | --- | --- | --- |
@@ -157,6 +204,7 @@ pass that went right.
 | `RoleReplicasConflict` | Warning | another field manager owns `replicas`; see [Ownership](#ownership-of-replicas) |
 | `RoleWriterRefused` | Warning | the set is not scaled: no `model-id`, `spec.slices` above 1, or a bad `min-replicas` or `max-replicas` |
 | `RoleReplicasWriteFailed` | Warning | the write failed for another reason, such as the set's validation |
+| `RoleScaleDownRefused` | Warning | the cluster refused a lower count; see [When the cluster refuses a scale-down](#when-the-cluster-refuses-a-scale-down) |
 
 ## Turn it off
 
