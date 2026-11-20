@@ -187,6 +187,11 @@ func run(ctx context.Context, args []string, out, warn io.Writer) error {
 	if len(args) == 0 {
 		return usageError{errors.New(usage)}
 	}
+	switch args[0] {
+	case "help", "-h", "-help", "--help":
+		_, err := fmt.Fprintln(out, usage)
+		return err
+	}
 	cmd, ok := commands[args[0]]
 	if !ok {
 		return usagef("unknown command %q; %s", args[0], usage)
