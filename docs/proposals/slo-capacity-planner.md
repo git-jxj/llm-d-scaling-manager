@@ -1094,6 +1094,11 @@ TTFT model's (P3) are listed in
 Exit codes: `0` every role answered; `3` a role refused (output still printed);
 `2` usage or input error; `1` internal error. `whatif.ExitCode` applies them:
 `2` if any result is `InvalidInput`, else `3` if any is refused, else `0`.
+A command stopped by SIGINT or SIGTERM exits `130` or `143` and says so on
+stderr; one that has not stopped 5 s after the signal is cut off, and a second
+signal stops it at once (`execute` in `cmd/capacity-planner/main.go`). `serve`
+is not cut off at 5 s: it stops within its `--shutdown-timeout`. After `130` or
+`143`, stdout or a file being written may be incomplete.
 
 ### Recording mode, as built (D3)
 
