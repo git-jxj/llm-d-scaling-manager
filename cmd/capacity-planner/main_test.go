@@ -65,6 +65,9 @@ func TestRun_HelpIsNotAnError(t *testing.T) {
 	out, err := runCLI("help", "day-plan")
 	require.NoError(t, err)
 	require.Contains(t, out, "-bucket")
+	_, err = runCLI("help", "day-pln")
+	require.ErrorContains(t, err, `unknown command "day-pln"`)
+	require.Equal(t, 2, exitCode(err))
 }
 
 func captureArgs(prom, out string, extra ...string) []string {

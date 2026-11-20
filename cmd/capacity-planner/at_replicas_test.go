@@ -598,12 +598,8 @@ func TestNoRoleHint(t *testing.T) {
 	pv := func(role string) pricedVariant {
 		return pricedVariant{state: learnreplay.VariantState{Variant: "v-" + role, Role: role}}
 	}
-	if got := noRoleHint([]pricedVariant{pv("both"), pv("")}); !strings.Contains(got, "--role-of") {
-		t.Errorf("both roles: hint %q, want one naming --role-of", got)
-	}
+	assert.Contains(t, noRoleHint([]pricedVariant{pv("both"), pv("")}), "--role-of")
 	for _, vs := range [][]pricedVariant{{pv("decode"), pv("decode")}, {pv("both"), pv("decode")}} {
-		if got := noRoleHint(vs); got != "" {
-			t.Errorf("roles %s, %s: hint %q, want none", vs[0].state.Role, vs[1].state.Role, got)
-		}
+		assert.Empty(t, noRoleHint(vs), "roles %s, %s", vs[0].state.Role, vs[1].state.Role)
 	}
 }

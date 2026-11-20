@@ -23,7 +23,7 @@ Find the message you see; the sections follow the order you meet them.
 | You see | Fix |
 | --- | --- |
 | "This server reads no source" | The recordings directory is empty, or holds no recording (with the image, the directory you mounted at `/recordings`). Put a `run.jsonl.gz` from [Record a window](../record-for-capacity-planner/), or [the sample](README.md#get-the-planner), in it and reload the page. |
-| "the model has 2 decode variants (a, b)" | The page prices one P/D fleet. Open **Source**, type one name in **Decode variant** (or **Prefill variant**), and press **Load**. |
+| "the model has 2 decode variants (a, b)" | The page prices one P/D fleet. Open **Source**, type one name in **Decode variant** (or **Prefill variant**), and press **Load**. If it adds that all were recorded as serving both roles, the recording has no roles: record again with `--role-of`, or with a role label such as `llm-d.ai/role` on the Pods. |
 | Refused figures everywhere | A term was not learned. See [Refused figures](#refused-figures). |
 | "Pricing..." for several seconds | A new replica count, statistic or view prices whole curves; a rate move is fast. A size takes about 20 to 45 s. |
 | A scenario, link or import is refused | It names a recording or namespace this server does not read, or fails the page's checks; the status line gives the reason. Start the server on the same source. |
