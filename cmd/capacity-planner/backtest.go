@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +17,7 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -180,7 +183,8 @@ func seriesAndLatencyOf(src learnreplay.Source, st *learnreplay.State, v learnre
 		out[i] = whatifapi.SeriesSample{At: c.At, Rate: c.ArrivalRate, RateKnown: c.RateKnown, Prefill: c.PrefillPods, Decode: c.DecodePods,
 			PrefillGPUs: c.PrefillGPUs, DecodeGPUs: c.DecodeGPUs, PromptTokens: c.PromptTokens, OutputTokens: c.OutputTokens,
 			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods,
-			PromptComputedRate: c.PromptComputedRate, PromptRequestRate: c.PromptRequestRate, PromptBuckets: c.PromptBuckets}
+			PromptComputedRate: c.PromptComputedRate, PromptRequestRate: c.PromptRequestRate, PromptBuckets: c.PromptBuckets,
+			FlowControlSeries: c.FlowControlSeries}
 	}
 	ls := make([]whatifapi.LatencySample, len(lat))
 	for i, l := range lat {
@@ -191,46 +195,63 @@ func seriesAndLatencyOf(src learnreplay.Source, st *learnreplay.State, v learnre
 }
 
 // runConfigOf is what the state says of the configuration the fleet ran:
-// the model, the flow-control state the fleet was priced at, and each
-// priced role's accelerator, parallelism, GPUs and the engine flags that
-// move its latency or its capacity. A value the state does not carry is "".
+// the model, the roles priced, the flow-control series, and each priced
+// role's accelerator and GPUs and every engine setting the capacity
+// fingerprint holds as identity (capacity.FingerprintFields: parallelism,
+// dtypes, batch and context limits, speculative decoding, KV connector and
+// offload, prefix caching, checkpoint, image). A value the state does not
+// carry, or one the parser could not read (EngineParams.Unresolved), is ""
+// and not compared: a default standing in for an unknown would make two
+// different engines compare equal. A priced variant the state does not hold
+// reads "not found".
 func runConfigOf(st *learnreplay.State, decodeVariant, prefillVariant string) whatifapi.RunConfig {
 	c := whatifapi.RunConfig{}
 	add := func(name, value string) { c.Fields = append(c.Fields, whatifapi.ConfigField{Name: name, Value: value}) }
 	add("model", st.ModelID)
-	// The router's flow-control queue series, the one rule the planner
-	// infers the gate from (domain.AnalyzerInput.FlowControlSeries).
+	roles := "decode"
+	if prefillVariant != "" {
+		roles = "prefill+decode"
+	}
+	add("roles", roles)
 	fc := "absent (off)"
 	if st.FlowControlSeries {
 		fc = "present (on)"
 	}
-	add("flow-control series", fc)
+	add(whatifapi.ConfigFlowControl, fc)
 	role := func(name, variant string) {
-		for _, v := range st.Variants {
-			if v.Variant != variant {
+		i := slices.IndexFunc(st.Variants, func(v learnreplay.VariantState) bool { return v.Variant == variant })
+		if i < 0 {
+			add(name+" variant", "not found")
+			return
+		}
+		v := st.Variants[i]
+		add(name+" accelerator", v.Accelerator)
+		add(name+" GPUs per replica", intWords(v.GPUsPerReplica))
+		p := v.Params
+		if p == nil {
+			return
+		}
+		if w := engineOf(p); w != nil {
+			add(name+" vLLM release", w.VLLMVersion)
+		}
+		unresolved := map[string]bool{}
+		for _, f := range p.Unresolved {
+			unresolved[strings.ReplaceAll(strings.TrimLeft(f, "-"), "-", "_")] = true
+		}
+		values := p.FingerprintValues()
+		for j, label := range capacity.FingerprintFields() {
+			if j >= len(values) || label == "unresolved" {
 				continue
 			}
-			add(name+" accelerator", v.Accelerator)
-			add(name+" GPUs per replica", intWords(v.GPUsPerReplica))
-			add(name+" tensor parallel", intWords(v.TensorParallel))
-			p := v.Params
-			if p == nil {
-				return
+			v := values[j]
+			switch {
+			case unresolved[label]:
+				v = ""
+			case v == "":
+				// The parser read the engine's flags and found none set.
+				v = "none"
 			}
-			add(name+" engine", string(p.Engine))
-			if w := engineOf(p); w != nil {
-				add(name+" vLLM release", w.VLLMVersion)
-			}
-			add(name+" weights dtype", p.WeightDtype)
-			add(name+" quantization", orNone(p.Quantization))
-			add(name+" KV cache dtype", p.KvCacheDtype)
-			add(name+" max-num-seqs", strconv.FormatInt(p.MaxNumSeqs, 10))
-			add(name+" max-num-batched-tokens", strconv.FormatInt(p.EffectiveMaxBatchedTokens, 10))
-			add(name+" max-model-len", strconv.FormatInt(p.MaxModelLen, 10))
-			add(name+" block size", strconv.FormatInt(p.BlockSize, 10))
-			add(name+" gpu-memory-utilization", strconv.FormatFloat(p.GpuMemoryUtilization, 'f', -1, 64))
-			add(name+" enforce-eager", strconv.FormatBool(p.EnforceEager))
-			return
+			add(name+" "+strings.ReplaceAll(label, "_", "-"), v)
 		}
 	}
 	role("decode", decodeVariant)
@@ -248,40 +269,39 @@ func intWords(n int) string {
 	return strconv.Itoa(n)
 }
 
-// orNone is s, or "none" for "".
-func orNone(s string) string {
-	if s == "" {
-		return statNone
-	}
-	return s
-}
-
-// btMs is seconds as ms, or "-".
+// btMs is seconds in ms under one second, in seconds above, or "-".
 func btMs(x *float64) string {
-	if x == nil {
+	switch {
+	case x == nil:
 		return "-"
-	}
-	if math.IsInf(*x, 1) {
+	case math.IsInf(*x, 1):
 		return ">top"
-	}
-	if *x >= 10 {
+	case *x >= 1:
 		return fmt.Sprintf("%.1fs", *x)
 	}
 	return fmt.Sprintf("%.0fms", *x*1000)
 }
 
 // pointText is a step's statistic, predicted/measured, with * where the
-// prediction is inside the validated region.
+// prediction is inside the validated region and "over" where it gave no
+// figure, calling the fleet overloaded.
 func pointText(ps []whatifapi.BacktestPoint, stat string) string {
 	for _, p := range ps {
 		if p.Statistic != stat {
 			continue
 		}
+		pred := btMs(p.Predicted.Value)
+		if r := p.Predicted.Refused; r != nil {
+			pred = "no figure"
+			if r.Reason == "Saturated" {
+				pred = "overloaded"
+			}
+		}
 		mark := ""
 		if p.InRegion {
 			mark = "*"
 		}
-		return btMs(p.Predicted.Value) + "/" + btMs(p.Measured) + mark
+		return pred + "/" + btMs(p.Measured) + mark
 	}
 	return "-"
 }
@@ -302,12 +322,27 @@ func ratioText(x *float64) string {
 	return fmt.Sprintf("%.2f", *x)
 }
 
+// factorText is an error share e^x - 1 as the factor e^x, or "-".
+func factorText(x *float64) string {
+	if x == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.2fx", 1+*x)
+}
+
+// excludedWords is a reason a step was not judged, in words.
+var excludedWords = map[string]string{whatifapi.ExcludedNoTraffic: "no traffic", whatifapi.ExcludedNoMeasurement: "no measured requests",
+	whatifapi.ExcludedScaling: "replicas changing", whatifapi.ExcludedWarmUp: "warm-up", whatifapi.ExcludedNotPriced: "not priced"}
+
 // writeBacktestText is the backtest's human output: the verdict first, what
 // was not judged, the windows and the configuration, the steps, the scores
 // and the notes.
 func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n%s\n\n", bt.Verdict, bt.Excluded)
+	for _, l := range bt.VerdictLines {
+		fmt.Fprintf(&b, "%s\n", l)
+	}
+	fmt.Fprintf(&b, "%s\n\n", bt.Excluded)
 	at := func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04") }
 	fmt.Fprintf(&b, "fit:  %s, %s to %s UTC, %d cycles\n", bt.Fit.Source, at(bt.Fit.From), at(bt.Fit.To), bt.Fit.Cycles)
 	fmt.Fprintf(&b, "test: %s, %s to %s UTC, %d cycles", bt.Test.Source, at(bt.Test.From), at(bt.Test.To), bt.Test.Cycles)
@@ -317,7 +352,7 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 	b.WriteString("\n")
 	switch {
 	case bt.Config.Match:
-		fmt.Fprintf(&b, "configuration: the same in every field both record (not compared: %s)\n", strings.Join(bt.Config.NotCompared, ", "))
+		fmt.Fprintf(&b, "configuration: identical where both recordings record it; not compared: %s\n", strings.Join(bt.Config.NotCompared, "; "))
 	default:
 		b.WriteString("CONFIGURATION DIFFERS (priced anyway, --allow-config-mismatch):\n")
 		for _, d := range bt.Config.Differences {
@@ -328,16 +363,16 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 	for _, a := range bt.Assumed {
 		fmt.Fprintf(&b, "assumed: %s\n", a)
 	}
-	if t := bt.TTFT; t != nil {
-		fmt.Fprintf(&b, "TTFT target: %s %s\n", whatifapi.ReportStatisticName(t.Percentile), fmtSeconds(t.Seconds))
+	if t := bt.TTFT; t != nil && t.Target != nil {
+		fmt.Fprintf(&b, "TTFT target: %s %s\n", t.Statistic, fmtSeconds(*t.Target))
 	}
-	b.WriteString("\neach step: predicted/measured (* inside the validated region)\n")
-	const layout = "%-16s %7s %5s  %-17s %-17s %-17s %-17s %s\n"
+	b.WriteString("\neach step: predicted/measured (* inside the conditions our accuracy benchmarks cover)\n")
+	const layout = "%-16s %7s %5s  %-19s %-19s %-17s %-17s %s\n"
 	fmt.Fprintf(&b, layout, "step (UTC)", "rate", "P+D", "TTFT p50", "TTFT p90", "TPOT p50", "TPOT p90", "")
 	for _, s := range bt.Steps {
 		status := "judged"
 		if s.Excluded != "" {
-			status = "not judged: " + s.Excluded
+			status = "not judged: " + excludedWords[s.Excluded]
 			if s.Excluded == whatifapi.ExcludedNotPriced {
 				status += " (" + s.Detail + ")"
 			}
@@ -348,29 +383,47 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 		fmt.Fprintf(&b, layout, at(s.Start), fmt.Sprintf("%.2f", s.Rate), fmt.Sprintf("%d+%d", s.Prefill, s.Decode),
 			pointText(s.TTFT, "p50"), pointText(s.TTFT, "p90"), pointText(s.TPOT, "p50"), pointText(s.TPOT, "p90"), status)
 	}
-	b.WriteString("\nscore over the judged steps: all | inside the validated region\n")
-	const sl = "%-10s %6s %6s %8s %8s %9s %7s | %6s %6s %7s\n"
-	fmt.Fprintf(&b, sl, "", "steps", "bias", "med err", "p90 err", "coverage", "within", "steps", "bias", "within")
+	b.WriteString("\nscore over the steps with a figure\n")
+	const sl = "%-10s %6s %7s %7s %8s %10s %13s %12s %s\n"
+	fmt.Fprintf(&b, sl, "", "steps", "median", "within", "read", "typical", "worst-10%", "under upper", "")
+	fmt.Fprintf(&b, sl, "", "", "ratio", "20%", ">20% low", "miss", "miss", "bound", "")
+	region := 0
 	for _, part := range []struct {
 		name   string
 		scores []whatifapi.BacktestScore
 	}{{"TTFT", bt.Summary.TTFT}, {"TPOT", bt.Summary.TPOT}} {
 		for _, sc := range part.scores {
-			a, r := sc.All, sc.InRegion
-			fmt.Fprintf(&b, sl, part.name+" "+sc.Statistic, strconv.Itoa(a.Steps), ratioText(a.Bias), shareText(a.MedianError),
-				shareText(a.P90Error), shareText(a.Coverage), shareText(a.Within), strconv.Itoa(r.Steps), ratioText(r.Bias), shareText(r.Within))
+			a := sc.All
+			region += sc.InRegion.Steps
+			fmt.Fprintf(&b, sl, part.name+" "+sc.Statistic, strconv.Itoa(a.Steps), ratioText(a.Bias), shareText(a.Within), strconv.Itoa(a.Low),
+				factorText(a.MedianError), factorText(a.P90Error), shareText(a.Coverage), unscoredText(sc))
 		}
 	}
-	b.WriteString("\nby load (the step's rate over the fit's knee at its fleet: TTFT by the lower knee, TPOT by decode's), judged steps: steps, bias, within\n")
-	for _, l := range bt.Summary.ByLoad {
-		fmt.Fprintf(&b, "%-24s %3d+%-3d steps", l.Load, l.Steps, l.DecodeSteps)
+	if region > 0 {
+		b.WriteString("\ninside the conditions our accuracy benchmarks cover: steps, median ratio, within 20%\n")
 		for _, part := range []struct {
 			name   string
 			scores []whatifapi.BacktestScore
-		}{{"TTFT", l.TTFT}, {"TPOT", l.TPOT}} {
+		}{{"TTFT", bt.Summary.TTFT}, {"TPOT", bt.Summary.TPOT}} {
 			for _, sc := range part.scores {
-				if sc.Statistic == "mean" || sc.Statistic == "p90" {
-					fmt.Fprintf(&b, "  %s %s %d %s %s", part.name, sc.Statistic, sc.All.Steps, ratioText(sc.All.Bias), shareText(sc.All.Within))
+				if r := sc.InRegion; r.Steps > 0 {
+					fmt.Fprintf(&b, "%-10s %3d %6s %6s\n", part.name+" "+sc.Statistic, r.Steps, ratioText(r.Bias), shareText(r.Within))
+				}
+			}
+		}
+	}
+	b.WriteString("\nby load (the step's rate over the load the planner thinks the fleet can carry): steps, median ratio, within 20%\n")
+	for _, l := range bt.Summary.ByLoad {
+		fmt.Fprintf(&b, "%-24s", l.Load)
+		for _, part := range []struct {
+			name   string
+			steps  int
+			scores []whatifapi.BacktestScore
+		}{{"TTFT", l.Steps, l.TTFT}, {"TPOT", l.DecodeSteps, l.TPOT}} {
+			fmt.Fprintf(&b, "  %s (%d steps):", part.name, part.steps)
+			for _, sc := range part.scores {
+				if sc.Statistic == backtestMean || sc.Statistic == backtestP90 {
+					fmt.Fprintf(&b, " %s %d %s %s", sc.Statistic, sc.All.Steps, ratioText(sc.All.Bias), shareText(sc.All.Within))
 				}
 			}
 		}
@@ -388,3 +441,23 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 	_, err := io.WriteString(out, b.String())
 	return err
 }
+
+// unscoredText is why a statistic's other judged steps were not scored.
+func unscoredText(sc whatifapi.BacktestScore) string {
+	var parts []string
+	for _, r := range slices.Sorted(maps.Keys(sc.Refused)) {
+		parts = append(parts, fmt.Sprintf("%d refused %s", sc.Refused[r], r))
+	}
+	for _, k := range slices.Sorted(maps.Keys(sc.Unscored)) {
+		if k != whatifapi.UnscoredRefused {
+			parts = append(parts, fmt.Sprintf("%d %s", sc.Unscored[k], k))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// backtestMean and backtestP90 are the statistics the by-load lines print.
+const (
+	backtestMean = "mean"
+	backtestP90  = "p90"
+)

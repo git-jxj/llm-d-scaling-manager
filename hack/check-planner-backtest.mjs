@@ -18,7 +18,7 @@ const [scen, day, bt, golden] = [
 ];
 const ctx = vm.createContext({URLSearchParams});
 for (const f of [scen, day, bt]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
-const {btSVG, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, dayTime} = ctx;
+const {btSVG, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, dayTime} = ctx;
 const answer = JSON.parse(fs.readFileSync(golden, "utf8"));
 const copy = x => JSON.parse(JSON.stringify(x));
 
@@ -66,9 +66,9 @@ try {
 
   // The summary leads with the verdict, then what was not judged.
   const lines = btSummaryText(answer);
-  check("the verdict comes first", lines[0] === answer.verdict, lines[0]);
-  check("what was not judged comes second", lines[1] === answer.excluded, lines[1]);
-  check("the legend names the band and the greyed steps", /upper bound/.test(btLegend()) && /not judged/.test(btLegend()));
+  check("the verdict comes first, a sentence a line", lines[0] === answer.verdictLines[0] && answer.verdictLines.length >= 2, lines[0]);
+  check("what was not judged follows the verdict", lines[answer.verdictLines.length] === answer.excluded, lines[answer.verdictLines.length]);
+  check("the legend names the band and the greyed steps", /own range/.test(btLegend()) && /not judged/.test(btLegend()));
 
   // The tooltip of a step says its inputs and each figure.
   const s0 = answer.steps[1];
@@ -80,7 +80,7 @@ try {
 
   // Everything taken from the answer is escaped.
   const evil = copy(answer);
-  evil.verdict = "<script>alert(1)</script>";
+  evil.verdictLines = ["<script>alert(1)</script>"];
   evil.fit.source = "<img src=x onerror=alert(1)>";
   evil.steps[0].excluded = "\"><script>x</script>";
   evil.steps[0].detail = "<b>bold</b>";
@@ -88,12 +88,19 @@ try {
   check("an excluded reason is escaped in the chart and the tooltip", !/<script>/.test(ge), ge.slice(0, 200));
   check("the summary is text, escaped where it is put", btSummaryText(evil)[0] === "<script>alert(1)</script>");
 
+  // A step the planner calls overloaded is marked along the panel's top.
+  const sat = copy(answer);
+  const js = sat.steps.findIndex(s => !s.excluded);
+  for (const p of sat.steps[js].ttft) p.predicted = {refused: {reason: "Saturated", detail: "past the knee"}};
+  check("an overloaded step is marked", /data-saturated="ttft"/.test(btSVG(sat).markup));
+  check("the step table has a row a step", (btStepTable(answer).match(/<tr>/g) || []).length === 1 + answer.steps.length);
+
   // A step with a refused prediction draws no predicted point and says why.
   const refused = copy(answer);
   for (const p of refused.steps[3].ttft) {
     p.predicted = {refused: {reason: "Saturated", detail: "past the knee"}};
   }
-  check("a refused prediction is named in the tooltip", /Saturated/.test(btTipHTML(refused, refused.steps[3])));
+  check("a refused prediction is named in the tooltip", /overloaded/.test(btTipHTML(refused, refused.steps[3])));
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }

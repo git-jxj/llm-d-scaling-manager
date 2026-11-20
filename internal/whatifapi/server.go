@@ -453,6 +453,8 @@ func writeBody(w http.ResponseWriter, body []byte) {
 // for anything else.
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
+	case errors.As(err, new(ConfigMismatchError)):
+		writeErrorReason(w, http.StatusBadRequest, err, ReasonConfigMismatch)
 	case IsInputError(err):
 		writeError(w, http.StatusBadRequest, err)
 	case errors.Is(err, errUnknownInputs):

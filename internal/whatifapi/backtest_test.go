@@ -32,7 +32,7 @@ func btRate(i int) float64 { return 2 + 0.05*float64(i%240) }
 func btRouter(r, scale float64) *domain.RouterLatency {
 	b := []domain.LatencyBucket{{UpperBound: scale, Rate: 0.5 * r}, {UpperBound: 2 * scale, Rate: 0.9 * r},
 		{UpperBound: 4 * scale, Rate: r}, {UpperBound: math.Inf(1), Rate: r}}
-	return &domain.RouterLatency{WindowSeconds: 60, TTFTBuckets: b, TTFTSumRate: 1.2 * scale * r, TTFTCountRate: r,
+	return &domain.RouterLatency{WindowSeconds: 300, TTFTBuckets: b, TTFTSumRate: 1.2 * scale * r, TTFTCountRate: r,
 		TPOTBuckets: []domain.LatencyBucket{{UpperBound: scale / 10, Rate: 0.5 * r}, {UpperBound: scale / 5, Rate: 0.9 * r},
 			{UpperBound: math.Inf(1), Rate: r}}, TPOTSumRate: 0.012 * r, TPOTCountRate: r}
 }
@@ -52,6 +52,16 @@ func btSeries(n, scaleAt int, latencyX float64) ([]SeriesSample, []LatencySample
 		r := btRate(i)
 		s[i] = SeriesSample{At: at, Rate: r, RateKnown: true, Prefill: 2, Decode: d, PromptTokens: 1000, OutputTokens: 100, HasShape: true}
 		l[i] = LatencySample{At: at, Router: btRouter(r, 0.1*latencyX)}
+	}
+	return s, l
+}
+
+// btEarlier is s and l a day earlier: a fit that does not overlap a test of
+// the same synthetic window.
+func btEarlier(s []SeriesSample, l []LatencySample) ([]SeriesSample, []LatencySample) {
+	for i := range s {
+		s[i].At = s[i].At.Add(-24 * time.Hour)
+		l[i].At = l[i].At.Add(-24 * time.Hour)
 	}
 	return s, l
 }
@@ -83,7 +93,7 @@ func btRun(t *testing.T, fit, test *inputsEntry, req BacktestRequest) *BacktestR
 // predictedOf is every step's predicted figures, as JSON.
 func predictedOf(t *testing.T, out *BacktestResponse) string {
 	t.Helper()
-	var p []any
+	p := make([]any, 0, 18*len(out.Steps))
 	for _, s := range out.Steps {
 		for _, x := range append(append([]BacktestPoint{}, s.TTFT...), s.TPOT...) {
 			p = append(p, x.Statistic, x.Predicted, x.Bound)
@@ -102,7 +112,7 @@ func TestBacktest_MeasuredLatencyDoesNotReachThePrediction(t *testing.T) {
 	var mu sync.Mutex
 	var knobs []Knobs
 	r.onFleet = func(k Knobs) { mu.Lock(); knobs = append(knobs, k); mu.Unlock() }
-	fitS, fitL := btSeries(240, 0, 1)
+	fitS, fitL := btEarlier(btSeries(240, 0, 1))
 	fit := btEntry(t, r, "fit", fitS, fitL, btConfig("H100"))
 	s1, l1 := btSeries(240, 0, 1)
 	s3, l3 := btSeries(240, 0, 3)
@@ -131,7 +141,8 @@ func TestBacktest_MeasuredLatencyDoesNotReachThePrediction(t *testing.T) {
 func TestBacktest_RefusesAnotherConfiguration(t *testing.T) {
 	r := &stubResolver{}
 	s, l := btSeries(120, 0, 1)
-	fit := btEntry(t, r, "fit", s, l, btConfig("H100"))
+	fs, fl := btEarlier(btSeries(120, 0, 1))
+	fit := btEntry(t, r, "fit", fs, fl, btConfig("H100"))
 	test := btEntry(t, r, "test", s, l, btConfig("H200"))
 	_, err := backtestQuestionOf(fit, test, BacktestRequest{}, time.Time{}, "")
 	require.Error(t, err)
@@ -150,15 +161,23 @@ func TestBacktest_RefusesAnotherConfiguration(t *testing.T) {
 	q, err := backtestQuestionOf(fit, unrecorded, BacktestRequest{}, time.Time{}, "")
 	require.NoError(t, err)
 	assert.True(t, q.config.Match)
-	assert.Contains(t, q.config.NotCompared, "decode accelerator (not recorded on both)")
-	assert.Contains(t, q.config.NotCompared, "router version (not recorded)")
+	assert.Contains(t, q.config.NotCompared, "decode accelerator (not read on both sides)")
+	assert.Contains(t, q.config.NotCompared[0], "router's version")
+
+	// The test is the fit's own source, or overlaps it in time: refused.
+	_, err = backtestQuestionOf(fit, fit, BacktestRequest{}, time.Time{}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the fit's own source")
+	_, err = backtestQuestionOf(btEntry(t, r, "other", s, l, btConfig("H100")), test, BacktestRequest{AllowConfigMismatch: true}, time.Time{}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "overlaps the fit")
 }
 
 // The test's first minutes, a step near a change of replicas and a step
 // with no traffic are not judged, each counted by its reason.
 func TestBacktest_ExcludesWarmUpScalingAndIdle(t *testing.T) {
 	r := &stubResolver{}
-	fitS, fitL := btSeries(240, 0, 1)
+	fitS, fitL := btEarlier(btSeries(240, 0, 1))
 	s, l := btSeries(240, 160, 1) // the decode pods go to 3 at 10:40
 	for i := 200; i < 220; i++ {  // 10:50 to 10:55 is idle
 		s[i].Rate = 0
@@ -177,7 +196,7 @@ func TestBacktest_ExcludesWarmUpScalingAndIdle(t *testing.T) {
 	assert.Equal(t, BacktestExcluded{WarmUp: 1, Scaling: 1, NoTraffic: 1}, e)
 	assert.Equal(t, 12, out.Summary.Steps)
 	assert.Equal(t, 9, out.Summary.Judged)
-	assert.Contains(t, out.Excluded, "Judged 9 of 12 5-minute steps; not judged: 1 warm-up, 1 replicas changing, 1 no traffic.")
+	assert.Contains(t, out.Excluded, "Judged 9 of 12 five-minute steps; not judged: 1 warm-up, 1 replicas changing, 1 no traffic.")
 }
 
 // The measured figures are the histogram's: the median at its first
@@ -186,7 +205,8 @@ func TestBacktest_ExcludesWarmUpScalingAndIdle(t *testing.T) {
 func TestBacktest_ScoresAgainstTheHistogram(t *testing.T) {
 	r := &stubResolver{}
 	s, l := btSeries(240, 0, 1)
-	out := btRun(t, btEntry(t, r, "fit", s, l, btConfig("H100")), btEntry(t, r, "t", s, l, btConfig("H100")), BacktestRequest{})
+	fs, fl := btEarlier(btSeries(240, 0, 1))
+	out := btRun(t, btEntry(t, r, "fit", fs, fl, btConfig("H100")), btEntry(t, r, "t", s, l, btConfig("H100")), BacktestRequest{})
 	st := out.Steps[3]
 	require.Empty(t, st.Excluded)
 	want := map[string]float64{"mean": 0.12, "p50": 0.1, "p90": 0.2, "p95": 0.3}
@@ -203,7 +223,7 @@ func TestBacktest_ScoresAgainstTheHistogram(t *testing.T) {
 	for _, sc := range out.Summary.TPOT {
 		if sc.Statistic != "mean" {
 			assert.Zero(t, sc.All.Steps, sc.Statistic)
-			assert.Positive(t, sc.Unscored[UnscoredRefused+":NoTPOTHistogram"], sc.Statistic)
+			assert.Positive(t, sc.Refused["NoTPOTHistogram"], sc.Statistic)
 		}
 	}
 	mean := out.Summary.TTFT[0]
@@ -211,8 +231,9 @@ func TestBacktest_ScoresAgainstTheHistogram(t *testing.T) {
 	assert.Equal(t, out.Summary.Judged, mean.All.Steps+mean.Unscored[UnscoredRefused])
 	require.NotNil(t, mean.All.Bias)
 	assert.Zero(t, mean.InRegion.Steps, "the stub's class is in no region")
-	assert.Contains(t, out.Verdict, "it did not see")
-	assert.Contains(t, out.Verdict, "TTFT was within 20% of what the fleet measured in")
+	assert.Contains(t, out.Verdict, "the planner did not see")
+	assert.Contains(t, out.Verdict, "TTFT: within 20% of measured in")
+	assert.Equal(t, out.Verdict, strings.Join(out.VerdictLines, " "))
 	// Every step is banded by the stub's knee, 20 r/s at 1000 tokens, a
 	// little less at the prompt on the shape grid.
 	for _, st := range out.Steps {
@@ -295,8 +316,9 @@ func TestBacktest_SplitsOneSourceOverHTTP(t *testing.T) {
 func TestBacktest_JudgesATTFTTarget(t *testing.T) {
 	r := &stubResolver{}
 	s, l := btSeries(240, 0, 1)
+	fs, fl := btEarlier(btSeries(240, 0, 1))
 	target := 0.15
-	out := btRun(t, btEntry(t, r, "fit", s, l, btConfig("H100")), btEntry(t, r, "t", s, l, btConfig("H100")),
+	out := btRun(t, btEntry(t, r, "fit", fs, fl, btConfig("H100")), btEntry(t, r, "t", s, l, btConfig("H100")),
 		BacktestRequest{TTFT: &Objective{Statistic: "p90", Target: &target}})
 	a := out.Summary.Target
 	require.NotNil(t, a)

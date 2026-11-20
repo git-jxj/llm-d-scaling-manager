@@ -1,48 +1,52 @@
-Over the 73 min it did not see, the planner's p90 TTFT was within 20% of what the fleet measured in 0% of the 10 5-minute steps it priced (median ratio 2.66, it reads high, on the safe side), and gave no figure for 1 it judged past the knee; p90 TPOT was within 20% of what the fleet measured in 100% of the 11 5-minute steps it priced (median ratio 0.94, it reads slightly low). 0 of the judged 5-minute steps were inside the planner's validated region (the envelope of measured runs).
-Judged 14 of 16 5-minute steps; not judged: 1 warm-up, 1 no traffic.
+Over the 1 h 13 min the planner did not see:
+p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps it gave a figure for; its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90.
+p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps it gave a figure for; it leans low (median ratio 0.94). 5 had too few requests to measure a p90.
+None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
+Judged 15 of 16 five-minute steps; not judged: 1 warm-up.
 
 fit:  warmup.jsonl.gz, 2026-11-14 07:09 to 2026-11-14 08:22 UTC, 291 cycles
 test: warmup.jsonl.gz, 2026-11-14 08:22 to 2026-11-14 09:35 UTC, 289 cycles (one recording split: 50%)
-configuration: the same in every field both record (not compared: router version (not recorded), decode vLLM release (not recorded on both), prefill vLLM release (not recorded on both))
-measured: measured by the router (server side, the same scrape as the inputs): TTFT from the request's arrival at the router, its queue included; TPOT per streamed request
+configuration: identical where both recordings record it; not compared: the router's version and settings (scorers, flow-control limits): no recording carries them; only whether the flow-control series is present is read; decode vLLM release (not read on both sides); prefill vLLM release (not read on both sides)
+measured: the router's histograms (server side, the same scrape as the inputs): TTFT from the request's arrival at the router, its queue included; TPOT per streamed request. Each step is priced at the inputs of the same window its histogram covers
 
-each step: predicted/measured (* inside the validated region)
-step (UTC)          rate   P+D  TTFT p50          TTFT p90          TPOT p50          TPOT p90          
-2026-11-14 08:20    0.98   2+2  109ms/154ms       791ms/197ms       13ms/15ms         18ms/19ms         not judged: warmUp
-2026-11-14 08:25    1.10   2+2  111ms/153ms       797ms/195ms       13ms/15ms         18ms/19ms         judged
-2026-11-14 08:30    0.57   2+2  278ms/176ms       761ms/348ms       13ms/15ms         18ms/19ms         judged
-2026-11-14 08:35    0.58   2+2  444ms/306ms       1036ms/390ms      13ms/15ms         18ms/19ms         judged
-2026-11-14 08:40    0.52   2+2  442ms/304ms       1032ms/388ms      13ms/15ms         18ms/19ms         judged
-2026-11-14 08:45    0.43   2+2  359ms/355ms       1635ms/564ms      13ms/15ms         18ms/19ms         judged
-2026-11-14 08:50    0.42   2+2  419ms/460ms       2041ms/591ms      13ms/15ms         18ms/19ms         judged
-2026-11-14 08:55    0.35   2+2  411ms/467ms       2022ms/593ms      13ms/15ms         18ms/19ms         judged
-2026-11-14 09:00    0.30   2+2  720ms/489ms       1801ms/597ms      13ms/15ms         18ms/19ms         judged
-2026-11-14 09:05    0.29   2+2  857ms/510ms       2029ms/598ms      13ms/15ms         18ms/19ms         judged
-2026-11-14 09:10    0.27   2+2  854ms/507ms       2024ms/593ms      13ms/15ms         18ms/19ms         judged
-2026-11-14 09:15    3.09   2+2  1888ms/10.9s      6102ms/17.5s      13ms/15ms         18ms/19ms         judged
-2026-11-14 09:20    4.13   2+2  -/12.1s           -/17.8s           13ms/15ms         18ms/19ms         judged
-2026-11-14 09:25    2.02   2+2  1165ms/11.8s      3006ms/17.8s      13ms/14ms         18ms/19ms         judged
-2026-11-14 09:30    0.26   2+2  853ms/4671ms      2021ms/15.4s      13ms/15ms         18ms/19ms         judged
-2026-11-14 09:35    0.00   2+2  -                 -                 -                 -                 not judged: noTraffic
+each step: predicted/measured (* inside the conditions our accuracy benchmarks cover)
+step (UTC)          rate   P+D  TTFT p50            TTFT p90            TPOT p50          TPOT p90          
+2026-11-14 08:20    1.06   2+2  110ms/154ms         796ms/196ms         13ms/15ms         18ms/19ms         not judged: warm-up
+2026-11-14 08:25    1.10   2+2  111ms/152ms         797ms/194ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 08:30    0.57   2+2  278ms/305ms         761ms/389ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 08:35    0.58   2+2  444ms/305ms         1.0s/389ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 08:40    0.52   2+2  442ms/305ms         1.0s/389ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 08:45    0.43   2+2  359ms/477ms         1.6s/596ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 08:50    0.42   2+2  419ms/462ms         2.0s/598ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 08:55    0.35   2+2  411ms/460ms         2.0s/579ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 09:00    0.30   2+2  699ms/516ms         1.9s/820ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 09:05    0.29   2+2  857ms/508ms         2.0s/595ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 09:10    0.27   2+2  854ms/509ms         2.0s/596ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 09:15    3.09   2+2  1.9s/11.7s          6.1s/17.7s          13ms/15ms         18ms/19ms         judged
+2026-11-14 09:20    4.13   2+2  overloaded/12.2s    overloaded/17.9s    13ms/14ms         18ms/19ms         judged
+2026-11-14 09:25    2.02   2+2  1.2s/11.1s          3.0s/17.6s          13ms/14ms         18ms/19ms         judged
+2026-11-14 09:30    0.26   2+2  853ms/515ms         2.0s/727ms          13ms/15ms         18ms/19ms         judged
+2026-11-14 09:35    0.24   2+2  851ms/516ms         2.0s/767ms          13ms/15ms         18ms/19ms         judged
 
-score over the judged steps: all | inside the validated region
-            steps   bias  med err  p90 err  coverage  within |  steps   bias  within
-TTFT mean      13   1.78      81%     499%       77%      0% |      0      -       -
-TTFT p50       13   1.01      47%     480%       62%     23% |      0      -       -
-TTFT p90       10   2.66     214%     493%       70%      0% |      0      -       -
-TTFT p95        4   1.49     254%     415%       50%      0% |      0      -       -
-TPOT mean      14   0.98       2%      11%        0%    100% |      0      -       -
-TPOT p50       14   0.88      14%      14%        0%    100% |      0      -       -
-TPOT p90       11   0.94       6%       6%        0%    100% |      0      -       -
-TPOT p95        5   1.02       2%       2%      100%    100% |      0      -       -
+score over the steps with a figure
+            steps  median  within     read    typical     worst-10%  under upper 
+                    ratio     20% >20% low       miss          miss        bound 
+TTFT mean      14    1.73      0%        2      1.80x         4.50x          92% 1 refused Saturated
+TTFT p50       14    1.13     21%        4      1.45x         6.20x          69% 1 refused Saturated
+TTFT p90        9    2.66      0%        2      2.90x         5.84x          88% 1 refused Saturated, 5 fewRequests
+TTFT p95        3    0.43      0%        2      4.88x         5.84x          50% 1 refused Saturated, 11 fewRequests
+TPOT mean      15    0.98    100%        0      1.02x         1.11x            - 
+TPOT p50       15    0.88    100%        0      1.14x         1.14x            - 
+TPOT p90       10    0.94    100%        0      1.06x         1.06x            - 5 fewRequests
+TPOT p95        4    1.02    100%        0      1.02x         1.02x            - 11 fewRequests
 
-by load (the step's rate over the fit's knee at its fleet: TTFT by the lower knee, TPOT by decode's), judged steps: steps, bias, within
-below 0.8 of the knee     13+14  steps  TTFT mean 13 1.78 0%  TTFT p90 10 2.66 0%  TPOT mean 14 0.98 100%  TPOT p90 11 0.94 100%
-0.8 to 1.0 of the knee     0+0   steps  TTFT mean 0 - -  TTFT p90 0 - -  TPOT mean 0 - -  TPOT p90 0 - -
-past the knee              1+0   steps  TTFT mean 0 - -  TTFT p90 0 - -  TPOT mean 0 - -  TPOT p90 0 - -
+by load (the step's rate over the load the planner thinks the fleet can carry): steps, median ratio, within 20%
+below 0.8 of the knee     TTFT (14 steps): mean 14 1.73 0% p90 9 2.66 0%  TPOT (15 steps): mean 15 0.98 100% p90 10 0.94 100%
+0.8 to 1.0 of the knee    TTFT (0 steps): mean 0 - - p90 0 - -  TPOT (0 steps): mean 0 - - p90 0 - -
+past the knee             TTFT (1 steps): mean 0 - - p90 0 - -  TPOT (0 steps): mean 0 - - p90 0 - -
 
-note: Fitted on the fit window alone; each step of the test is priced from its own inputs (rate, prompt and output lengths, the replicas each role served) and never from its measured latency.
-note: Each step's rate is the mean of its cycles' rates; its measured figures average the cycles' histograms, each over the source's rate window, so a step's measurement reaches back that window before the step. A percentile is scored with 50 requests or more at p50, 100 at p90 and 200 at p95 (50 for the mean).
-note: Bias is the median of predicted over measured; error the median and p90 of |ln ratio| as a share; coverage the share of steps measured at or under the prediction's upper bound (the top of its span over V_P and f for TTFT, of its band for TPOT); within, the share inside 20%.
-note: In region: the prediction is inside the validated envelope (docs/guides/capacity-planner/accuracy.md); all: every judged step.
-TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.
+note: Fitted on the fit window alone. Each step of the test is priced from its own inputs (request rate, prompt and output lengths, prompt-length spread, the replicas each role served), read over the same window its measurement covers, and never from its measured latency.
+note: Each step is measured at its last cycle, over the source's rate window (the router's five minutes, the engines' one): a step shorter than the window is measured over the window. A step whose window reaches before the test, or over a change of replicas, is not judged. A percentile is scored with 50 requests or more at p50, 100 at p90 and 200 at p95 (50 for the mean); measured percentiles are interpolated inside the histogram's buckets.
+note: Median ratio is the middle step's predicted over measured; typical and worst-10% miss the median and p90 of the factor between them; under the upper bound the share measured at or under the planner's own upper estimate, where it gives one; within, the share inside 20%. A measured figure above the histogram's top bucket counts as read low.
+note: In region: the figure falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md).
+The planner's figures are a model, not a bound: this check measures how far off they are on this fleet.

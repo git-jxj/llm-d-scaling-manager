@@ -1,10 +1,16 @@
 {
   "schemaVersion": 1,
   "whatifSchema": "schema-v3",
-  "backtestId": "sha256:9922b79c7f221f7becfcac62c517b0eb79511cb9fe63e40d82959c9df0be83b2",
-  "banner": "TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.",
-  "verdict": "Over the 73 min it did not see, the planner's p90 TTFT was within 20% of what the fleet measured in 0% of the 10 5-minute steps it priced (median ratio 2.66, it reads high, on the safe side), and gave no figure for 1 it judged past the knee; p90 TPOT was within 20% of what the fleet measured in 100% of the 11 5-minute steps it priced (median ratio 0.94, it reads slightly low). 0 of the judged 5-minute steps were inside the planner's validated region (the envelope of measured runs).",
-  "excluded": "Judged 14 of 16 5-minute steps; not judged: 1 warm-up, 1 no traffic.",
+  "backtestId": "sha256:8796c929aec8874cf1be7f35cc9a60b67f210b24dce81a4337695fb6ea8d179d",
+  "banner": "The planner's figures are a model, not a bound: this check measures how far off they are on this fleet.",
+  "verdict": "Over the 1 h 13 min the planner did not see: p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps it gave a figure for; its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90. p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps it gave a figure for; it leans low (median ratio 0.94). 5 had too few requests to measure a p90. None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.",
+  "verdictLines": [
+    "Over the 1 h 13 min the planner did not see:",
+    "p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps it gave a figure for; its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90.",
+    "p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps it gave a figure for; it leans low (median ratio 0.94). 5 had too few requests to measure a p90.",
+    "None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet."
+  ],
+  "excluded": "Judged 15 of 16 five-minute steps; not judged: 1 warm-up.",
   "fit": {
     "inputsId": "sha256:506e9482b0ed83830ee594a50e7488c03daa4267a2613d1f21dc606bb7667634",
     "source": "warmup.jsonl.gz",
@@ -24,42 +30,42 @@
     "match": true,
     "differences": [],
     "notCompared": [
-      "router version (not recorded)",
-      "decode vLLM release (not recorded on both)",
-      "prefill vLLM release (not recorded on both)"
+      "the router's version and settings (scorers, flow-control limits): no recording carries them; only whether the flow-control series is present is read",
+      "decode vLLM release (not read on both sides)",
+      "prefill vLLM release (not read on both sides)"
     ]
   },
   "step": 300,
   "settle": 120,
   "measured": "router",
-  "measuredNote": "measured by the router (server side, the same scrape as the inputs): TTFT from the request's arrival at the router, its queue included; TPOT per streamed request",
+  "measuredNote": "the router's histograms (server side, the same scrape as the inputs): TTFT from the request's arrival at the router, its queue included; TPOT per streamed request. Each step is priced at the inputs of the same window its histogram covers",
   "assumed": [],
   "steps": [
     {
       "start": "2026-11-14T08:20:00Z",
       "cycles": 10,
       "excluded": "warmUp",
-      "detail": "within 2m0s of the test's first cycle",
-      "rate": 0.984,
+      "detail": "its measurement window (5m0s) starts within 2m0s of the test's first cycle",
+      "rate": 1.065,
       "prefill": 2,
       "decode": 2,
-      "promptTokens": 2012.007782788886,
-      "outputTokens": 31.342587245733597,
+      "promptTokens": 2011.6171558279852,
+      "outputTokens": 31.35001119353058,
       "promptCV": 1.7000000000000002,
-      "requests": 162.5312583430345,
-      "kneeShare": 0.06199004414912683,
+      "requests": 307.2413793103449,
+      "kneeShare": 0.06709288314920739,
       "load": "below 0.8 of the knee",
-      "decodeKneeShare": 0.0033089565546331285,
+      "decodeKneeShare": 0.003581340173459636,
       "decodeLoad": "below 0.8 of the knee",
       "ttft": [
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.28314228938183306,
+            "value": 0.28442862136009983,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.26395126932056673,
-              "hi": 0.3131644396439434
+              "lo": 0.26490313853158515,
+              "hi": 0.31529910809530487
             },
             "floor": 0.26850002211963475,
             "flags": [
@@ -81,19 +87,19 @@
               "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.3131644396439434,
-          "measured": 0.16039027467310293,
-          "ratio": 1.7653332782110096,
+          "bound": 0.31529910809530487,
+          "measured": 0.15973311976091337,
+          "ratio": 1.7806490087079574,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.10913789308169392,
+            "value": 0.11029538190384484,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.10175682491647695,
-              "hi": 0.12230244899577655
+              "lo": 0.10265809230662985,
+              "hi": 0.12413677773755143
             },
             "floor": 0.09624653243968162,
             "flags": [
@@ -116,19 +122,19 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.12230244899577655,
-          "measured": 0.1540890269151139,
-          "ratio": 0.7082781640370596,
+          "bound": 0.12413677773755143,
+          "measured": 0.15361010830324912,
+          "ratio": 0.7180216401260874,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.7911172728458598,
+            "value": 0.795548859327949,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7314824709645789,
-              "hi": 0.8860492273470808
+              "lo": 0.7347340816801919,
+              "hi": 0.8932223495334913
             },
             "floor": 0.7355990477814425,
             "flags": [
@@ -150,19 +156,19 @@
               "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.8860492273470808,
-          "measured": 0.197360248447205,
-          "ratio": 4.0084934989200125,
+          "bound": 0.8932223495334913,
+          "measured": 0.19649819494584841,
+          "ratio": 4.048631894797755,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.1580052306107291,
+            "value": 1.162673599048726,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.073297292049992,
-              "hi": 1.2890102083937371
+              "lo": 1.0766300311634578,
+              "hi": 1.296770825510162
             },
             "floor": 1.0989753213380145,
             "flags": [
@@ -184,10 +190,10 @@
               "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.2890102083937371,
-          "measured": 0.2677215189873422,
-          "inRegion": false,
-          "unscored": "fewRequests"
+          "bound": 1.296770825510162,
+          "measured": 0.2515,
+          "ratio": 4.62295665625736,
+          "inRegion": false
         }
       ],
       "tpot": [
@@ -208,9 +214,8 @@
               "outside": "prompt 2021 tokens, measured 800 to 1250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010837501620463054,
-          "ratio": 0.9937452684002636,
+          "measured": 0.010835162774926079,
+          "ratio": 0.9939597752548598,
           "inRegion": false
         },
         {
@@ -232,7 +237,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -256,7 +260,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
           "measured": 0.019,
           "ratio": 0.9411017305909729,
           "inRegion": false
@@ -279,10 +282,9 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.019500000000000003,
-          "inRegion": false,
-          "unscored": "fewRequests"
+          "measured": 0.0195,
+          "ratio": 1.019178534909875,
+          "inRegion": false
         }
       ]
     },
@@ -295,7 +297,7 @@
       "promptTokens": 2003.734034855726,
       "outputTokens": 31.361373883799843,
       "promptCV": 1.7000000000000002,
-      "requests": 310.59801235506205,
+      "requests": 321.72413793103453,
       "kneeShare": 0.06923481556899429,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.0036956740381522434,
@@ -331,8 +333,8 @@
             }
           },
           "bound": 0.3162042344086607,
-          "measured": 0.1586039004865331,
-          "ratio": 1.7967559003608722,
+          "measured": 0.15648108103198008,
+          "ratio": 1.8211306577131012,
           "inRegion": false
         },
         {
@@ -366,8 +368,8 @@
             }
           },
           "bound": 0.12491704566909133,
-          "measured": 0.15305526036131772,
-          "ratio": 0.723829053804721,
+          "measured": 0.15235690235690236,
+          "ratio": 0.7271468674759966,
           "inRegion": false
         },
         {
@@ -400,8 +402,8 @@
             }
           },
           "bound": 0.8962298316249776,
-          "measured": 0.19549946865037193,
-          "ratio": 4.07880997272968,
+          "measured": 0.19424242424242427,
+          "ratio": 4.105206087210324,
           "inRegion": false
         },
         {
@@ -434,8 +436,8 @@
             }
           },
           "bound": 1.3000231670209195,
-          "measured": 0.22634782608695556,
-          "ratio": 5.145303622267674,
+          "measured": 0.19947811447811448,
+          "ratio": 5.83837626751481,
           "inRegion": false
         }
       ],
@@ -457,9 +459,8 @@
               "outside": "prompt 2021 tokens, measured 800 to 1250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010829275464656996,
-          "ratio": 0.9945001391611074,
+          "measured": 0.010824707155704017,
+          "ratio": 0.9949198441770601,
           "inRegion": false
         },
         {
@@ -481,7 +482,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -505,7 +505,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
           "measured": 0.019,
           "ratio": 0.9411017305909729,
           "inRegion": false
@@ -528,9 +527,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.0195,
-          "ratio": 1.019178534909875,
+          "measured": 0.019499999999999997,
+          "ratio": 1.0191785349098752,
           "inRegion": false
         }
       ]
@@ -544,7 +542,7 @@
       "promptTokens": 2736.658031249494,
       "outputTokens": 31.601708646498352,
       "promptCV": 0.9,
-      "requests": 243.2525244483311,
+      "requests": 158.27586206896552,
       "kneeShare": 0.04819980730097294,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.002566902270954347,
@@ -580,8 +578,8 @@
             }
           },
           "bound": 0.39180012913584816,
-          "measured": 0.19834606066760216,
-          "ratio": 1.8157063830526572,
+          "measured": 0.28878969641179236,
+          "ratio": 1.2470604487702528,
           "inRegion": false
         },
         {
@@ -615,8 +613,8 @@
             }
           },
           "bound": 0.3039818624833676,
-          "measured": 0.17609471294193968,
-          "ratio": 1.5793353875507599,
+          "measured": 0.3047945205479452,
+          "ratio": 0.912459355272596,
           "inRegion": false
         },
         {
@@ -649,8 +647,8 @@
             }
           },
           "bound": 0.8318122345909531,
-          "measured": 0.3479299156391955,
-          "ratio": 2.1868431684318574,
+          "measured": 0.38863013698630144,
+          "ratio": 1.9578207830430467,
           "inRegion": false
         },
         {
@@ -683,9 +681,9 @@
             }
           },
           "bound": 1.054247180291338,
-          "measured": 0.3783776768332253,
-          "ratio": 2.551301922392758,
-          "inRegion": false
+          "measured": 0.3991095890410959,
+          "inRegion": false,
+          "unscored": "fewRequests"
         }
       ],
       "tpot": [
@@ -706,9 +704,8 @@
               "outside": "prompt 2708 tokens, measured 800 to 1250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010844773371987068,
-          "ratio": 0.9930789318690976,
+          "measured": 0.010886541546685124,
+          "ratio": 0.9892688059317288,
           "inRegion": false
         },
         {
@@ -730,7 +727,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -754,7 +750,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
           "measured": 0.019000000000000003,
           "ratio": 0.9411017305909727,
           "inRegion": false
@@ -777,10 +772,9 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
           "measured": 0.0195,
-          "ratio": 1.019178534909875,
-          "inRegion": false
+          "inRegion": false,
+          "unscored": "fewRequests"
         }
       ]
     },
@@ -793,7 +787,7 @@
       "promptTokens": 4031.455274629611,
       "outputTokens": 31.675203186982515,
       "promptCV": 0.75,
-      "requests": 167.4044866149327,
+      "requests": 177.93103448275863,
       "kneeShare": 0.07233609201215123,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.003846182013909917,
@@ -829,8 +823,8 @@
             }
           },
           "bound": 0.5768799814555444,
-          "measured": 0.2920172920358628,
-          "ratio": 1.8072991833593222,
+          "measured": 0.2924626517905444,
+          "ratio": 1.8045470428175832,
           "inRegion": false
         },
         {
@@ -864,8 +858,8 @@
             }
           },
           "bound": 0.4889371632626805,
-          "measured": 0.30555737246792436,
-          "ratio": 1.4524675053295755,
+          "measured": 0.30487804878048785,
+          "ratio": 1.4557038668372306,
           "inRegion": false
         },
         {
@@ -898,8 +892,8 @@
             }
           },
           "bound": 1.1408607535347146,
-          "measured": 0.3900032704422639,
-          "ratio": 2.6563082761442582,
+          "measured": 0.38878048780487806,
+          "ratio": 2.6646628302988473,
           "inRegion": false
         },
         {
@@ -932,7 +926,7 @@
             }
           },
           "bound": 1.4033848769432973,
-          "measured": 0.41096156549647844,
+          "measured": 0.39926829268292685,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -955,9 +949,8 @@
               "outside": "prompt 4001 tokens, measured 800 to 1250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010894153281882618,
-          "ratio": 0.9885776046979059,
+          "measured": 0.010894581835095236,
+          "ratio": 0.9885387176515897,
           "inRegion": false
         },
         {
@@ -979,7 +972,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -1003,7 +995,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
           "measured": 0.019,
           "ratio": 0.9411017305909729,
           "inRegion": false
@@ -1026,7 +1017,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
           "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
@@ -1042,7 +1032,7 @@
       "promptTokens": 4002.5222984744014,
       "outputTokens": 31.406945237107067,
       "promptCV": 0.75,
-      "requests": 166.2640336542621,
+      "requests": 160.34482758620692,
       "kneeShare": 0.06522750608099874,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.0034682114242333426,
@@ -1078,8 +1068,8 @@
             }
           },
           "bound": 0.5742100561456343,
-          "measured": 0.28737693480208615,
-          "ratio": 1.830118261547491,
+          "measured": 0.2856090154126568,
+          "ratio": 1.8414466909209957,
           "inRegion": false
         },
         {
@@ -1113,8 +1103,8 @@
             }
           },
           "bound": 0.4859040722396146,
-          "measured": 0.30419103313840157,
-          "ratio": 1.452560814075381,
+          "measured": 0.3047297297297298,
+          "ratio": 1.4499929991137972,
           "inRegion": false
         },
         {
@@ -1147,8 +1137,8 @@
             }
           },
           "bound": 1.1355100193330758,
-          "measured": 0.38754385964912286,
-          "ratio": 2.664108985799595,
+          "measured": 0.38851351351351354,
+          "ratio": 2.657459889993694,
           "inRegion": false
         },
         {
@@ -1181,7 +1171,7 @@
             }
           },
           "bound": 1.3950151899039807,
-          "measured": 0.39796296296296296,
+          "measured": 0.3989864864864865,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1204,9 +1194,8 @@
               "outside": "prompt 4001 tokens, measured 800 to 1250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010891474094933195,
-          "ratio": 0.9888207842890165,
+          "measured": 0.010893663853853982,
+          "ratio": 0.98862201928557,
           "inRegion": false
         },
         {
@@ -1228,7 +1217,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -1252,9 +1240,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
-          "measured": 0.019,
-          "ratio": 0.9411017305909729,
+          "measured": 0.019000000000000003,
+          "ratio": 0.9411017305909727,
           "inRegion": false
         },
         {
@@ -1275,8 +1262,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.0195,
+          "measured": 0.019499999999999997,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1291,7 +1277,7 @@
       "promptTokens": 4872.898766668621,
       "outputTokens": 31.403590884493028,
       "promptCV": 1.3,
-      "requests": 142.62312334982073,
+      "requests": 120,
       "kneeShare": 0.0645764850578121,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.0034320490352978362,
@@ -1327,8 +1313,8 @@
             }
           },
           "bound": 0.7070719765804124,
-          "measured": 0.356357088273609,
-          "ratio": 1.798342495478096,
+          "measured": 0.44559392949153775,
+          "ratio": 1.4381975448779998,
           "inRegion": false
         },
         {
@@ -1362,8 +1348,8 @@
             }
           },
           "bound": 0.3997657626265481,
-          "measured": 0.3552483069977427,
-          "ratio": 1.0094025755151939,
+          "measured": 0.4769230769230769,
+          "ratio": 0.7518792303874418,
           "inRegion": false
         },
         {
@@ -1396,8 +1382,8 @@
             }
           },
           "bound": 1.8094678456858397,
-          "measured": 0.5644626168224299,
-          "ratio": 2.897222773320237,
+          "measured": 0.5958974358974358,
+          "ratio": 2.7443882950812943,
           "inRegion": false
         },
         {
@@ -1430,7 +1416,7 @@
             }
           },
           "bound": 2.4662096695145737,
-          "measured": 0.5966004672897197,
+          "measured": 0.7049999999999996,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1453,9 +1439,8 @@
               "outside": "prompt 4863 tokens, measured 800 to 1250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010909913970653605,
-          "ratio": 0.9871494849166206,
+          "measured": 0.010922634336636827,
+          "ratio": 0.9859998627337951,
           "inRegion": false
         },
         {
@@ -1477,7 +1462,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -1501,9 +1485,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
-          "measured": 0.019,
-          "ratio": 0.9411017305909729,
+          "measured": 0.019000000000000003,
+          "ratio": 0.9411017305909727,
           "inRegion": false
         },
         {
@@ -1524,7 +1507,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
           "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
@@ -1540,7 +1522,7 @@
       "promptTokens": 6011.597671277665,
       "outputTokens": 31.599781019356875,
       "promptCV": 1.35,
-      "requests": 120.4338478886345,
+      "requests": 130.34482758620692,
       "kneeShare": 0.07794026183327182,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.004145838273583028,
@@ -1576,8 +1558,8 @@
             }
           },
           "bound": 0.8692198290526599,
-          "measured": 0.4402631292042332,
-          "ratio": 1.7783449344975482,
+          "measured": 0.4571019186429141,
+          "ratio": 1.712833995514284,
           "inRegion": false
         },
         {
@@ -1611,8 +1593,8 @@
             }
           },
           "bound": 0.47263123605745955,
-          "measured": 0.4599718111346019,
-          "ratio": 0.9113988872677279,
+          "measured": 0.46216216216216216,
+          "ratio": 0.9070794434605913,
           "inRegion": false
         },
         {
@@ -1645,8 +1627,8 @@
             }
           },
           "bound": 2.273163721741599,
-          "measured": 0.5909372797744892,
-          "ratio": 3.454403451174604,
+          "measured": 0.5983783783783783,
+          "ratio": 3.41144642326951,
           "inRegion": false
         },
         {
@@ -1679,7 +1661,7 @@
             }
           },
           "bound": 3.1185556566738613,
-          "measured": 0.6762500000000005,
+          "measured": 0.7424999999999997,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1702,9 +1684,8 @@
               "outside": "prompt 5911 tokens, measured 800 to 1250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010922070150140087,
-          "ratio": 0.9860507951853079,
+          "measured": 0.010930059890002878,
+          "ratio": 0.9853300041352759,
           "inRegion": false
         },
         {
@@ -1726,7 +1707,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -1750,7 +1730,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
           "measured": 0.019000000000000003,
           "ratio": 0.9411017305909727,
           "inRegion": false
@@ -1773,7 +1752,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
           "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
@@ -1789,7 +1767,7 @@
       "promptTokens": 6009.749850688852,
       "outputTokens": 31.670820753317823,
       "promptCV": 1.35,
-      "requests": 115.45681414033106,
+      "requests": 103.44827586206897,
       "kneeShare": 0.06375255459648241,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.0033911584932854095,
@@ -1825,8 +1803,8 @@
             }
           },
           "bound": 0.8564490288879872,
-          "measured": 0.45507687325044316,
-          "ratio": 1.7036737050870658,
+          "measured": 0.4312884716497502,
+          "ratio": 1.797642537915188,
           "inRegion": false
         },
         {
@@ -1860,8 +1838,8 @@
             }
           },
           "bound": 0.45976941169817775,
-          "measured": 0.46711267605633805,
-          "ratio": 0.8800829289126545,
+          "measured": 0.4597014925373134,
+          "ratio": 0.8942713886066438,
           "inRegion": false
         },
         {
@@ -1894,8 +1872,8 @@
             }
           },
           "bound": 2.2407802079197108,
-          "measured": 0.5925774647887325,
-          "ratio": 3.412324789774394,
+          "measured": 0.5791044776119403,
+          "ratio": 3.491713241967451,
           "inRegion": false
         },
         {
@@ -1928,7 +1906,7 @@
             }
           },
           "bound": 3.083690103377146,
-          "measured": 0.7430487804878043,
+          "measured": 0.5940298507462686,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1951,9 +1929,8 @@
               "outside": "prompt 5911 tokens, measured 800 to 1250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010924777175907088,
-          "ratio": 0.9858064638944122,
+          "measured": 0.010916320084805307,
+          "ratio": 0.9865701878425112,
           "inRegion": false
         },
         {
@@ -1975,7 +1952,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -1999,7 +1975,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
           "measured": 0.019000000000000003,
           "ratio": 0.9411017305909727,
           "inRegion": false
@@ -2022,8 +1997,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.019499999999999997,
+          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2032,26 +2006,26 @@
     {
       "start": "2026-11-14T09:00:00Z",
       "cycles": 19,
-      "rate": 0.29684210526315796,
+      "rate": 0.2990000000000001,
       "prefill": 2,
       "decode": 2,
-      "promptTokens": 6874.341207117298,
-      "outputTokens": 31.479006350417016,
-      "promptCV": 0.8,
-      "requests": 96.84478168573794,
-      "kneeShare": 0.06331878557967505,
+      "promptTokens": 6823.67357517895,
+      "outputTokens": 31.47183876527625,
+      "promptCV": 0.8500000000000001,
+      "requests": 87.93103448275863,
+      "kneeShare": 0.06377908171598119,
       "load": "below 0.8 of the knee",
-      "decodeKneeShare": 0.003369627761976302,
+      "decodeKneeShare": 0.0033941232829410237,
       "decodeLoad": "below 0.8 of the knee",
       "ttft": [
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.8831213227975313,
+            "value": 0.8833207583219996,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.8243039937637645,
-              "hi": 0.9653094118310697
+              "lo": 0.8244528523704661,
+              "hi": 0.9656002230897316
             },
             "floor": 0.85731917426772,
             "flags": [
@@ -2068,25 +2042,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.8, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.8, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.85, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.85, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.9653094118310697,
-          "measured": 0.5117637100486093,
-          "ratio": 1.7256427242831442,
+          "bound": 0.9656002230897316,
+          "measured": 0.6027313297882382,
+          "ratio": 1.4655298549560098,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.719811296882039,
+            "value": 0.6990793686258724,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6707989454536544,
-              "hi": 0.7930916992848537
+              "lo": 0.6513802864573002,
+              "hi": 0.7706248197078847
             },
-            "floor": 0.6873757720349243,
+            "floor": 0.6669120725259257,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2106,21 +2080,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.7930916992848537,
-          "measured": 0.4887599709934735,
-          "ratio": 1.4727296415435192,
+          "bound": 0.7706248197078847,
+          "measured": 0.5164383561643836,
+          "ratio": 1.3536550108670737,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 1.8009673509092323,
+            "value": 1.8531233580500293,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.678391531472633,
-              "hi": 1.9807753702813704
+              "lo": 1.7273342310714428,
+              "hi": 2.0362169185515646
             },
-            "floor": 1.7457343931282834,
+            "floor": 1.7975396793564977,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2135,25 +2109,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.8, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.8, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.85, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.85, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.9807753702813704,
-          "measured": 0.5971283538796228,
+          "bound": 2.0362169185515646,
+          "measured": 0.8200000000000001,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.2461430210142925,
+            "value": 2.3369105252842988,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.091229582117471,
-              "hi": 2.4647371493277195
+              "lo": 2.1759673626442018,
+              "hi": 2.563865877824652
             },
-            "floor": 2.1689738140888273,
+            "floor": 2.2581500536108257,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2168,12 +2142,12 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.8, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.8, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.85, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.85, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.4647371493277195,
-          "measured": 0.8827027027027022,
+          "bound": 2.563865877824652,
+          "measured": 0.9899999999999997,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2196,9 +2170,8 @@
               "outside": "output 32 tokens, measured 160 to 250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010943053720085926,
-          "ratio": 0.9841600189577415,
+          "measured": 0.01096636755633774,
+          "ratio": 0.9820677540934016,
           "inRegion": false
         },
         {
@@ -2220,7 +2193,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -2244,7 +2216,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
           "measured": 0.019000000000000003,
           "inRegion": false,
           "unscored": "fewRequests"
@@ -2267,7 +2238,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
           "measured": 0.019500000000000003,
           "inRegion": false,
           "unscored": "fewRequests"
@@ -2283,7 +2253,7 @@
       "promptTokens": 8054.697294671378,
       "outputTokens": 31.400826451218162,
       "promptCV": 0.75,
-      "requests": 87.82390801693795,
+      "requests": 94.13793103448276,
       "kneeShare": 0.07186018993508728,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.003815785591101058,
@@ -2318,8 +2288,8 @@
             }
           },
           "bound": 1.1203713618495774,
-          "measured": 0.5771459226018923,
-          "ratio": 1.7729165973677576,
+          "measured": 0.5632544194282914,
+          "ratio": 1.816641911700599,
           "inRegion": false
         },
         {
@@ -2352,8 +2322,8 @@
             }
           },
           "bound": 0.9461986136792978,
-          "measured": 0.5101430429128739,
-          "ratio": 1.6799098643809096,
+          "measured": 0.5083333333333333,
+          "ratio": 1.6858904853140273,
           "inRegion": false
         },
         {
@@ -2385,7 +2355,7 @@
             }
           },
           "bound": 2.2367019168558038,
-          "measured": 0.598257477243173,
+          "measured": 0.595,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2418,7 +2388,7 @@
             }
           },
           "bound": 2.756089393479229,
-          "measured": 0.8473972602739731,
+          "measured": 0.8179999999999994,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2441,9 +2411,8 @@
               "outside": "output 32 tokens, measured 160 to 250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010959533876186513,
-          "ratio": 0.9826801101474205,
+          "measured": 0.010958205356031373,
+          "ratio": 0.982799245561475,
           "inRegion": false
         },
         {
@@ -2465,7 +2434,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -2489,8 +2457,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
-          "measured": 0.019000000000000003,
+          "measured": 0.019,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2512,8 +2479,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.0195,
+          "measured": 0.019499999999999997,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2528,7 +2494,7 @@
       "promptTokens": 7975.749800362662,
       "outputTokens": 31.588420031638016,
       "promptCV": 0.75,
-      "requests": 83.26162708099311,
+      "requests": 76.55172413793103,
       "kneeShare": 0.06642746079910129,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.0035273069553477133,
@@ -2563,8 +2529,8 @@
             }
           },
           "bound": 1.1163440185879785,
-          "measured": 0.5594607312166655,
-          "ratio": 1.8240398455022793,
+          "measured": 0.5618409130133719,
+          "ratio": 1.8163124865005178,
           "inRegion": false
         },
         {
@@ -2597,8 +2563,8 @@
             }
           },
           "bound": 0.9416251166940699,
-          "measured": 0.5072096128170894,
-          "ratio": 1.6838230570623545,
+          "measured": 0.5088235294117647,
+          "ratio": 1.6784822074019006,
           "inRegion": false
         },
         {
@@ -2630,7 +2596,7 @@
             }
           },
           "bound": 2.228619764797474,
-          "measured": 0.592977303070761,
+          "measured": 0.5958823529411764,
           "inRegion": false,
           "unscored": "fewRequests"
         },
@@ -2663,7 +2629,7 @@
             }
           },
           "bound": 2.743424468613978,
-          "measured": 0.7231111111111123,
+          "measured": 0.7149999999999995,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2686,9 +2652,8 @@
               "outside": "output 32 tokens, measured 160 to 250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.010955589841065143,
-          "ratio": 0.9830338770302373,
+          "measured": 0.010949576918926136,
+          "ratio": 0.9835737066698987,
           "inRegion": false
         },
         {
@@ -2710,7 +2675,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
           "measured": 0.015,
           "ratio": 0.8772260057400376,
           "inRegion": false
@@ -2734,7 +2698,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
           "measured": 0.019000000000000003,
           "inRegion": false,
           "unscored": "fewRequests"
@@ -2757,7 +2720,6 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
           "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
@@ -2773,7 +2735,7 @@
       "promptTokens": 8047.139401952468,
       "outputTokens": 9.868193980284868,
       "promptCV": 0.75,
-      "requests": 454.2061736342345,
+      "requests": 1039.6551724137933,
       "kneeShare": 0.7620637324387604,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.012632130646155903,
@@ -2807,9 +2769,8 @@
               "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.534552198327169,
-          "measured": 10.331521682378623,
-          "ratio": 0.2453222551572519,
+          "measured": 11.393436724167085,
+          "ratio": 0.22245721459540183,
           "inRegion": false
         },
         {
@@ -2841,9 +2802,8 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 1.8877789800518523,
-          "measured": 10.943150475022987,
-          "ratio": 0.17250781521834888,
+          "measured": 11.699766355140188,
+          "ratio": 0.16135185291306894,
           "inRegion": false
         },
         {
@@ -2874,9 +2834,8 @@
               "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 6.1023896445664265,
-          "measured": 17.472302365839585,
-          "ratio": 0.34926076236508585,
+          "measured": 17.71590909090909,
+          "ratio": 0.34445817108521204,
           "inRegion": false
         },
         {
@@ -2907,9 +2866,8 @@
               "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 8.100812748254487,
-          "measured": 18.73615118291979,
-          "ratio": 0.4323626912041216,
+          "measured": 18.857954545454543,
+          "ratio": 0.42957006438469114,
           "inRegion": false
         }
       ],
@@ -2931,9 +2889,8 @@
               "outside": "output 10 tokens, measured 160 to 250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.011898565916210321,
-          "ratio": 0.9051272256216143,
+          "measured": 0.011950214385999186,
+          "ratio": 0.9012152927760941,
           "inRegion": false
         },
         {
@@ -2955,9 +2912,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
-          "measured": 0.014593587336688819,
-          "ratio": 0.9016556232900929,
+          "measured": 0.01453784830738139,
+          "ratio": 0.9051126279409294,
           "inRegion": false
         },
         {
@@ -2979,9 +2935,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
-          "measured": 0.01892564004900337,
-          "ratio": 0.9447993745485029,
+          "measured": 0.018916282964276068,
+          "ratio": 0.9452667268192767,
           "inRegion": false
         },
         {
@@ -3002,9 +2957,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.019467146638042693,
-          "ratio": 1.0208985322946524,
+          "measured": 0.019463587296387905,
+          "ratio": 1.0210852258684513,
           "inRegion": false
         }
       ]
@@ -3012,16 +2966,16 @@
     {
       "start": "2026-11-14T09:20:00Z",
       "cycles": 19,
-      "rate": 4.130526315789473,
+      "rate": 4.13,
       "prefill": 2,
       "decode": 2,
-      "promptTokens": 8013.938888371913,
-      "outputTokens": 7.502914800433935,
+      "promptTokens": 8014.918932963609,
+      "outputTokens": 7.503671386299662,
       "promptCV": 0.75,
-      "requests": 1166.7515052663448,
-      "kneeShare": 1.0200013937611951,
+      "requests": 1241.3793103448277,
+      "kneeShare": 1.0198714241646405,
       "load": "past the knee",
-      "decodeKneeShare": 0.011833720652205051,
+      "decodeKneeShare": 0.011832212787697891,
       "decodeLoad": "below 0.8 of the knee",
       "ttft": [
         {
@@ -3029,10 +2983,10 @@
           "predicted": {
             "refused": {
               "reason": "Saturated",
-              "detail": "4.130526315789473 r/s at or above the prefill knee 4.049530070305493 r/s"
+              "detail": "4.13 r/s at or above the prefill knee 4.049530070305493 r/s"
             }
           },
-          "measured": 11.528160062671473,
+          "measured": 11.556810666080093,
           "inRegion": false,
           "unscored": "refused"
         },
@@ -3041,10 +2995,10 @@
           "predicted": {
             "refused": {
               "reason": "Saturated",
-              "detail": "4.130526315789473 r/s at or above the prefill knee 4.049530070305493 r/s"
+              "detail": "4.13 r/s at or above the prefill knee 4.049530070305493 r/s"
             }
           },
-          "measured": 12.063495895702559,
+          "measured": 12.167577413479053,
           "inRegion": false,
           "unscored": "refused"
         },
@@ -3053,10 +3007,10 @@
           "predicted": {
             "refused": {
               "reason": "Saturated",
-              "detail": "4.130526315789473 r/s at or above the prefill knee 4.049530070305493 r/s"
+              "detail": "4.13 r/s at or above the prefill knee 4.049530070305493 r/s"
             }
           },
-          "measured": 17.823921871978342,
+          "measured": 17.923875432525953,
           "inRegion": false,
           "unscored": "refused"
         },
@@ -3065,10 +3019,10 @@
           "predicted": {
             "refused": {
               "reason": "Saturated",
-              "detail": "4.130526315789473 r/s at or above the prefill knee 4.049530070305493 r/s"
+              "detail": "4.13 r/s at or above the prefill knee 4.049530070305493 r/s"
             }
           },
-          "measured": 18.911960935989168,
+          "measured": 18.961937716262973,
           "inRegion": false,
           "unscored": "refused"
         }
@@ -3091,9 +3045,8 @@
               "outside": "output 7 tokens, measured 160 to 250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.01207301735495953,
-          "ratio": 0.8920484117577456,
+          "measured": 0.01216451232367092,
+          "ratio": 0.8853388997484561,
           "inRegion": false
         },
         {
@@ -3115,9 +3068,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
-          "measured": 0.014512925771051226,
-          "ratio": 0.9066669459818681,
+          "measured": 0.014491682070240295,
+          "ratio": 0.9079960505842354,
           "inRegion": false
         },
         {
@@ -3139,9 +3091,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
-          "measured": 0.018919424027797456,
-          "ratio": 0.9451097906023375,
+          "measured": 0.018927911275415897,
+          "ratio": 0.9446860047602158,
           "inRegion": false
         },
         {
@@ -3162,9 +3113,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.019470236309890733,
-          "ratio": 1.0207365290500727,
+          "measured": 0.019482439926062845,
+          "ratio": 1.0200971493388735,
           "inRegion": false
         }
       ]
@@ -3178,7 +3128,7 @@
       "promptTokens": 7998.414909107737,
       "outputTokens": 7.54262006686218,
       "promptCV": 0.75,
-      "requests": 1003.9610264155863,
+      "requests": 524.4827586206898,
       "kneeShare": 0.49981108051071005,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.005798643748741049,
@@ -3213,8 +3163,8 @@
             }
           },
           "bound": 2.0407427190460723,
-          "measured": 11.4306497921754,
-          "ratio": 0.12289508527889624,
+          "measured": 10.679724569931018,
+          "ratio": 0.1315362275313498,
           "inRegion": false
         },
         {
@@ -3247,8 +3197,8 @@
             }
           },
           "bound": 1.7546256078856837,
-          "measured": 11.781534860803154,
-          "ratio": 0.09885271703488004,
+          "measured": 11.086387434554974,
+          "ratio": 0.10505105821951634,
           "inRegion": false
         },
         {
@@ -3280,8 +3230,8 @@
             }
           },
           "bound": 4.649571680174613,
-          "measured": 17.827574601750054,
-          "ratio": 0.1686353176954273,
+          "measured": 17.5625,
+          "ratio": 0.171180566929825,
           "inRegion": false
         },
         {
@@ -3313,8 +3263,8 @@
             }
           },
           "bound": 6.1695850472783835,
-          "measured": 18.91378730087503,
-          "ratio": 0.2034513274513979,
+          "measured": 18.781249999999996,
+          "ratio": 0.20488706201644818,
           "inRegion": false
         }
       ],
@@ -3336,9 +3286,8 @@
               "outside": "output 7 tokens, measured 160 to 250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.01195503609144873,
-          "ratio": 0.9008518146021137,
+          "measured": 0.0116954354713378,
+          "ratio": 0.9208477942534823,
           "inRegion": false
         },
         {
@@ -3360,9 +3309,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
-          "measured": 0.014419513607411696,
-          "ratio": 0.9125404950786337,
+          "measured": 0.014379157427937916,
+          "ratio": 0.9151016081467007,
           "inRegion": false
         },
         {
@@ -3384,9 +3332,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
-          "measured": 0.018904748118123912,
-          "ratio": 0.9458434870172165,
+          "measured": 0.018875831485587583,
+          "ratio": 0.9472924620502815,
           "inRegion": false
         },
         {
@@ -3407,9 +3354,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.019465402431962937,
-          "ratio": 1.0209900103636553,
+          "measured": 0.019437915742793792,
+          "ratio": 1.0224337677824553,
           "inRegion": false
         }
       ]
@@ -3423,7 +3369,7 @@
       "promptTokens": 8015.392079417556,
       "outputTokens": 25.539211292321163,
       "promptCV": 0.75,
-      "requests": 149.77760936300692,
+      "requests": 73.44827586206897,
       "kneeShare": 0.0637110962311083,
       "load": "below 0.8 of the knee",
       "decodeKneeShare": 0.002642130727488127,
@@ -3458,8 +3404,8 @@
             }
           },
           "bound": 1.1143079548002601,
-          "measured": 6.101589474875301,
-          "ratio": 0.16701719357050673,
+          "measured": 0.5856390279438183,
+          "ratio": 1.7400997914892657,
           "inRegion": false
         },
         {
@@ -3492,8 +3438,8 @@
             }
           },
           "bound": 0.9392970547315362,
-          "measured": 4.671052631578949,
-          "ratio": 0.18251426522489786,
+          "measured": 0.5145161290322581,
+          "ratio": 1.6569621257218294,
           "inRegion": false
         },
         {
@@ -3525,9 +3471,9 @@
             }
           },
           "bound": 2.224546465889728,
-          "measured": 15.370192307692301,
-          "ratio": 0.13151334268424444,
-          "inRegion": false
+          "measured": 0.7266666666666665,
+          "inRegion": false,
+          "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
@@ -3558,7 +3504,7 @@
             }
           },
           "bound": 2.737140791537711,
-          "measured": 17.68509615384615,
+          "measured": 1.028125,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3581,9 +3527,8 @@
               "outside": "output 25 tokens, measured 160 to 250"
             }
           },
-          "bound": 0.010769715956615349,
-          "measured": 0.011398405335531357,
-          "ratio": 0.9448440935017248,
+          "measured": 0.010964291180476869,
+          "ratio": 0.9822537343583155,
           "inRegion": false
         },
         {
@@ -3605,9 +3550,8 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.013158390086100563,
-          "measured": 0.01468543046357616,
-          "ratio": 0.8960166417141758,
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
           "inRegion": false
         },
         {
@@ -3629,10 +3573,9 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.017880932881228485,
-          "measured": 0.01893708609271523,
-          "ratio": 0.9442283144135344,
-          "inRegion": false
+          "measured": 0.019,
+          "inRegion": false,
+          "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
@@ -3652,8 +3595,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "bound": 0.019873981430742562,
-          "measured": 0.019468543046357617,
+          "measured": 0.0195,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3662,21 +3604,250 @@
     {
       "start": "2026-11-14T09:35:00Z",
       "cycles": 1,
-      "excluded": "noTraffic",
-      "detail": "no requests arrived",
-      "rate": 0,
+      "rate": 0.24300000000000002,
       "prefill": 2,
       "decode": 2,
-      "requests": 3.3698666004137934,
-      "ttft": [],
-      "tpot": []
+      "promptTokens": 8017.039393221928,
+      "outputTokens": 26.512622201765563,
+      "promptCV": 0.75,
+      "requests": 67.24137931034484,
+      "kneeShare": 0.06000696272929968,
+      "load": "below 0.8 of the knee",
+      "decodeKneeShare": 0.002588183876731997,
+      "decodeLoad": "below 0.8 of the knee",
+      "ttft": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 1.0172286781918132,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.9495561288764381,
+              "hi": 1.1116202332865492
+            },
+            "floor": 0.9890769231619101,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 1.1116202332865492,
+          "measured": 0.5885588761385477,
+          "ratio": 1.7283380124444099,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.8505272555220792,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 0.7928238831316626,
+              "hi": 0.9361896709752179
+            },
+            "floor": 0.8149775552744316,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "PromptSpreadAbovePeak",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (p50, measured mean, p90, p95)",
+              "outside": "p50, measured mean, p90, p95"
+            }
+          },
+          "bound": 0.9361896709752179,
+          "measured": 0.5160714285714286,
+          "ratio": 1.6480804951292882,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 2.018045927478463,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 1.8805196191208213,
+              "hi": 2.2190670311370613
+            },
+            "floor": 1.9564163094446154,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.2190670311370613,
+          "measured": 0.7666666666666672,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 2.487489816048226,
+            "unit": "s",
+            "sensitivity": {
+              "lo": 2.3162824205837484,
+              "hi": 2.7287361086241524
+            },
+            "floor": 2.4044488084580644,
+            "flags": [
+              "UnvalidatedTTFT",
+              "AssumedPromptSpread",
+              "SpreadBeyondProcessorSharing",
+              "FlowControlInferredOff",
+              "BelowFittedBand",
+              "KVBoundSlots",
+              "AssumedPoissonArrivals",
+              "AssumedArrivalCV2",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+            }
+          },
+          "bound": 2.7287361086241524,
+          "measured": 1.0468749999999996,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ],
+      "tpot": [
+        {
+          "statistic": "mean",
+          "predicted": {
+            "value": 0.010769715956615349,
+            "unit": "s",
+            "floor": 0.010769715956615349,
+            "flags": [
+              "BelowFittedBand",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (output 26 tokens, measured 160 to 250)",
+              "outside": "output 26 tokens, measured 160 to 250"
+            }
+          },
+          "measured": 0.010966679067381005,
+          "ratio": 0.98203985823279,
+          "inRegion": false
+        },
+        {
+          "statistic": "p50",
+          "predicted": {
+            "value": 0.013158390086100563,
+            "unit": "s",
+            "floor": 0.013158390086100563,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "measured": 0.015,
+          "ratio": 0.8772260057400376,
+          "inRegion": false
+        },
+        {
+          "statistic": "p90",
+          "predicted": {
+            "value": 0.017880932881228485,
+            "unit": "s",
+            "floor": 0.017880932881228485,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "MeanBoundedTPOTPercentile",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "measured": 0.019000000000000003,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        },
+        {
+          "statistic": "p95",
+          "predicted": {
+            "value": 0.019873981430742562,
+            "unit": "s",
+            "floor": 0.019873981430742562,
+            "flags": [
+              "BelowFittedBand",
+              "CoarseTPOTBucket",
+              "AssumedShape",
+              "HeldLine"
+            ],
+            "validation": {
+              "validated": false,
+              "label": "OUTSIDE VALIDATED REGION (TPOT percentiles: never scored against a client)",
+              "outside": "TPOT percentiles: never scored against a client"
+            }
+          },
+          "measured": 0.0195,
+          "inRegion": false,
+          "unscored": "fewRequests"
+        }
+      ]
     }
   ],
   "summary": {
     "steps": 16,
-    "judged": 14,
+    "judged": 15,
     "excluded": {
-      "noTraffic": 1,
+      "noTraffic": 0,
       "noMeasurement": 0,
       "scaling": 0,
       "warmUp": 1,
@@ -3686,87 +3857,127 @@
       {
         "statistic": "mean",
         "all": {
-          "steps": 13,
-          "bias": 1.7783449344975482,
-          "medianError": 0.8072991833593222,
-          "p90Error": 4.987407515489401,
-          "coverage": 0.7692307692307693,
-          "within": 0
+          "steps": 14,
+          "bias": 1.734218901966838,
+          "medianError": 0.8010914818070589,
+          "p90Error": 3.4952464311789955,
+          "coverage": 0.9230769230769231,
+          "within": 0,
+          "coverageSteps": 13,
+          "low": 2
         },
         "inRegion": {
-          "steps": 0
+          "steps": 0,
+          "coverageSteps": 0,
+          "low": 0
         },
         "unscored": {
-          "refused": 1,
-          "refused:Saturated": 1
+          "refused": 1
+        },
+        "refused": {
+          "Saturated": 1
+        },
+        "pastKnee": {
+          "lo": 11.556810666080093,
+          "hi": 11.556810666080093
         },
         "outside": {
-          "prompt cv": 13
+          "prompt cv": 14
         }
       },
       {
         "statistic": "p50",
         "all": {
-          "steps": 13,
-          "bias": 1.0094025755151939,
-          "medianError": 0.47272964154351915,
-          "p90Error": 4.796838819935587,
-          "coverage": 0.6153846153846154,
-          "within": 0.23076923076923078
+          "steps": 14,
+          "bias": 1.1330571830698348,
+          "medianError": 0.45284562693249264,
+          "p90Error": 5.197635675983014,
+          "coverage": 0.6923076923076923,
+          "within": 0.21428571428571427,
+          "coverageSteps": 13,
+          "low": 4
         },
         "inRegion": {
-          "steps": 0
+          "steps": 0,
+          "coverageSteps": 0,
+          "low": 0
         },
         "unscored": {
-          "refused": 1,
-          "refused:Saturated": 1
+          "refused": 1
+        },
+        "refused": {
+          "Saturated": 1
+        },
+        "pastKnee": {
+          "lo": 12.167577413479053,
+          "hi": 12.167577413479053
         },
         "outside": {
-          "p": 13
+          "p": 14
         }
       },
       {
         "statistic": "p90",
         "all": {
-          "steps": 10,
-          "bias": 2.6602086309719266,
-          "medianError": 2.1442431666300177,
-          "p90Error": 4.929955917099777,
-          "coverage": 0.7,
-          "within": 0
+          "steps": 9,
+          "bias": 2.6646628302988473,
+          "medianError": 1.9031101130494592,
+          "p90Error": 4.841784601694579,
+          "coverage": 0.875,
+          "within": 0,
+          "coverageSteps": 8,
+          "low": 2
         },
         "inRegion": {
-          "steps": 0
+          "steps": 0,
+          "coverageSteps": 0,
+          "low": 0
         },
         "unscored": {
-          "fewRequests": 3,
-          "refused": 1,
-          "refused:Saturated": 1
+          "fewRequests": 5,
+          "refused": 1
+        },
+        "refused": {
+          "Saturated": 1
+        },
+        "pastKnee": {
+          "lo": 17.923875432525953,
+          "hi": 17.923875432525953
         },
         "outside": {
-          "prompt cv": 10
+          "prompt cv": 9
         }
       },
       {
         "statistic": "p95",
         "all": {
-          "steps": 4,
-          "bias": 1.4918323067984398,
-          "medianError": 2.541201701585118,
-          "p90Error": 4.145303622267674,
+          "steps": 3,
+          "bias": 0.42957006438469114,
+          "medianError": 3.880737661803754,
+          "p90Error": 4.8383762675148105,
           "coverage": 0.5,
-          "within": 0
+          "within": 0,
+          "coverageSteps": 2,
+          "low": 2
         },
         "inRegion": {
-          "steps": 0
+          "steps": 0,
+          "coverageSteps": 0,
+          "low": 0
         },
         "unscored": {
-          "fewRequests": 9,
-          "refused": 1,
-          "refused:Saturated": 1
+          "fewRequests": 11,
+          "refused": 1
+        },
+        "refused": {
+          "Saturated": 1
+        },
+        "pastKnee": {
+          "lo": 18.961937716262973,
+          "hi": 18.961937716262973
         },
         "outside": {
-          "prompt cv": 4
+          "prompt cv": 3
         }
       }
     ],
@@ -3774,161 +3985,197 @@
       {
         "statistic": "mean",
         "all": {
-          "steps": 14,
-          "bias": 0.9849832414260768,
-          "medianError": 0.015246054146745668,
-          "p90Error": 0.1100604825241739,
-          "coverage": 0,
-          "within": 1
+          "steps": 15,
+          "bias": 0.9835737066698987,
+          "medianError": 0.016700622656654805,
+          "p90Error": 0.10961277290314336,
+          "within": 1,
+          "coverageSteps": 0,
+          "low": 0
         },
         "inRegion": {
-          "steps": 0
+          "steps": 0,
+          "coverageSteps": 0,
+          "low": 0
         },
         "unscored": {},
+        "refused": {},
         "outside": {
-          "output": 7,
+          "output": 8,
           "prompt": 7
         }
       },
       {
         "statistic": "p50",
         "all": {
-          "steps": 14,
+          "steps": 15,
           "bias": 0.8772260057400376,
           "medianError": 0.13995708455586528,
           "p90Error": 0.13995708455586528,
-          "coverage": 0,
-          "within": 1
+          "within": 1,
+          "coverageSteps": 0,
+          "low": 0
         },
         "inRegion": {
-          "steps": 0
+          "steps": 0,
+          "coverageSteps": 0,
+          "low": 0
         },
         "unscored": {},
+        "refused": {},
         "outside": {
-          "TPOT percentiles: never scored against a client": 14
+          "TPOT percentiles: never scored against a client": 15
         }
       },
       {
         "statistic": "p90",
         "all": {
-          "steps": 11,
-          "bias": 0.9411017305909729,
-          "medianError": 0.06258438115084691,
+          "steps": 10,
+          "bias": 0.9411017305909728,
+          "medianError": 0.06258438115084704,
           "p90Error": 0.06258438115084716,
-          "coverage": 0,
-          "within": 1
+          "within": 1,
+          "coverageSteps": 0,
+          "low": 0
         },
         "inRegion": {
-          "steps": 0
+          "steps": 0,
+          "coverageSteps": 0,
+          "low": 0
         },
         "unscored": {
-          "fewRequests": 3
+          "fewRequests": 5
         },
+        "refused": {},
         "outside": {
-          "TPOT percentiles: never scored against a client": 11
+          "TPOT percentiles: never scored against a client": 10
         }
       },
       {
         "statistic": "p95",
         "all": {
-          "steps": 5,
-          "bias": 1.0207365290500727,
-          "medianError": 0.020736529050072727,
-          "p90Error": 0.02099001036365533,
-          "coverage": 1,
-          "within": 1
+          "steps": 4,
+          "bias": 1.0205911876036624,
+          "medianError": 0.020591068028937322,
+          "p90Error": 0.022433767782455316,
+          "within": 1,
+          "coverageSteps": 0,
+          "low": 0
         },
         "inRegion": {
-          "steps": 0
+          "steps": 0,
+          "coverageSteps": 0,
+          "low": 0
         },
         "unscored": {
-          "fewRequests": 9
+          "fewRequests": 11
         },
+        "refused": {},
         "outside": {
-          "TPOT percentiles: never scored against a client": 5
+          "TPOT percentiles: never scored against a client": 4
         }
       }
     ],
     "byLoad": [
       {
         "load": "below 0.8 of the knee",
-        "steps": 13,
-        "decodeSteps": 14,
+        "steps": 14,
+        "decodeSteps": 15,
         "ttft": [
           {
             "statistic": "mean",
             "all": {
-              "steps": 13,
-              "bias": 1.7783449344975482,
-              "medianError": 0.8072991833593222,
-              "p90Error": 4.987407515489401,
-              "coverage": 0.7692307692307693,
-              "within": 0
+              "steps": 14,
+              "bias": 1.734218901966838,
+              "medianError": 0.8010914818070589,
+              "p90Error": 3.4952464311789955,
+              "coverage": 0.9230769230769231,
+              "within": 0,
+              "coverageSteps": 13,
+              "low": 2
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {
-              "prompt cv": 13
+              "prompt cv": 14
             }
           },
           {
             "statistic": "p50",
             "all": {
-              "steps": 13,
-              "bias": 1.0094025755151939,
-              "medianError": 0.47272964154351915,
-              "p90Error": 4.796838819935587,
-              "coverage": 0.6153846153846154,
-              "within": 0.23076923076923078
+              "steps": 14,
+              "bias": 1.1330571830698348,
+              "medianError": 0.45284562693249264,
+              "p90Error": 5.197635675983014,
+              "coverage": 0.6923076923076923,
+              "within": 0.21428571428571427,
+              "coverageSteps": 13,
+              "low": 4
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {
-              "p": 13
+              "p": 14
             }
           },
           {
             "statistic": "p90",
             "all": {
-              "steps": 10,
-              "bias": 2.6602086309719266,
-              "medianError": 2.1442431666300177,
-              "p90Error": 4.929955917099777,
-              "coverage": 0.7,
-              "within": 0
+              "steps": 9,
+              "bias": 2.6646628302988473,
+              "medianError": 1.9031101130494592,
+              "p90Error": 4.841784601694579,
+              "coverage": 0.875,
+              "within": 0,
+              "coverageSteps": 8,
+              "low": 2
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {
-              "fewRequests": 3
+              "fewRequests": 5
             },
+            "refused": {},
             "outside": {
-              "prompt cv": 10
+              "prompt cv": 9
             }
           },
           {
             "statistic": "p95",
             "all": {
-              "steps": 4,
-              "bias": 1.4918323067984398,
-              "medianError": 2.541201701585118,
-              "p90Error": 4.145303622267674,
+              "steps": 3,
+              "bias": 0.42957006438469114,
+              "medianError": 3.880737661803754,
+              "p90Error": 4.8383762675148105,
               "coverage": 0.5,
-              "within": 0
+              "within": 0,
+              "coverageSteps": 2,
+              "low": 2
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {
-              "fewRequests": 9
+              "fewRequests": 11
             },
+            "refused": {},
             "outside": {
-              "prompt cv": 4
+              "prompt cv": 3
             }
           }
         ],
@@ -3936,78 +4183,94 @@
           {
             "statistic": "mean",
             "all": {
-              "steps": 14,
-              "bias": 0.9849832414260768,
-              "medianError": 0.015246054146745668,
-              "p90Error": 0.1100604825241739,
-              "coverage": 0,
-              "within": 1
+              "steps": 15,
+              "bias": 0.9835737066698987,
+              "medianError": 0.016700622656654805,
+              "p90Error": 0.10961277290314336,
+              "within": 1,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {
-              "output": 7,
+              "output": 8,
               "prompt": 7
             }
           },
           {
             "statistic": "p50",
             "all": {
-              "steps": 14,
+              "steps": 15,
               "bias": 0.8772260057400376,
               "medianError": 0.13995708455586528,
               "p90Error": 0.13995708455586528,
-              "coverage": 0,
-              "within": 1
+              "within": 1,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {
-              "TPOT percentiles: never scored against a client": 14
+              "TPOT percentiles: never scored against a client": 15
             }
           },
           {
             "statistic": "p90",
             "all": {
-              "steps": 11,
-              "bias": 0.9411017305909729,
-              "medianError": 0.06258438115084691,
+              "steps": 10,
+              "bias": 0.9411017305909728,
+              "medianError": 0.06258438115084704,
               "p90Error": 0.06258438115084716,
-              "coverage": 0,
-              "within": 1
+              "within": 1,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {
-              "fewRequests": 3
+              "fewRequests": 5
             },
+            "refused": {},
             "outside": {
-              "TPOT percentiles: never scored against a client": 11
+              "TPOT percentiles: never scored against a client": 10
             }
           },
           {
             "statistic": "p95",
             "all": {
-              "steps": 5,
-              "bias": 1.0207365290500727,
-              "medianError": 0.020736529050072727,
-              "p90Error": 0.02099001036365533,
-              "coverage": 1,
-              "within": 1
+              "steps": 4,
+              "bias": 1.0205911876036624,
+              "medianError": 0.020591068028937322,
+              "p90Error": 0.022433767782455316,
+              "within": 1,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {
-              "fewRequests": 9
+              "fewRequests": 11
             },
+            "refused": {},
             "outside": {
-              "TPOT percentiles: never scored against a client": 5
+              "TPOT percentiles: never scored against a client": 4
             }
           }
         ]
@@ -4020,45 +4283,65 @@
           {
             "statistic": "mean",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p50",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p90",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p95",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           }
         ],
@@ -4066,45 +4349,65 @@
           {
             "statistic": "mean",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p50",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p90",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p95",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           }
         ]
@@ -4117,56 +4420,96 @@
           {
             "statistic": "mean",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {
-              "refused": 1,
-              "refused:Saturated": 1
+              "refused": 1
+            },
+            "refused": {
+              "Saturated": 1
+            },
+            "pastKnee": {
+              "lo": 11.556810666080093,
+              "hi": 11.556810666080093
             },
             "outside": {}
           },
           {
             "statistic": "p50",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {
-              "refused": 1,
-              "refused:Saturated": 1
+              "refused": 1
+            },
+            "refused": {
+              "Saturated": 1
+            },
+            "pastKnee": {
+              "lo": 12.167577413479053,
+              "hi": 12.167577413479053
             },
             "outside": {}
           },
           {
             "statistic": "p90",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {
-              "refused": 1,
-              "refused:Saturated": 1
+              "refused": 1
+            },
+            "refused": {
+              "Saturated": 1
+            },
+            "pastKnee": {
+              "lo": 17.923875432525953,
+              "hi": 17.923875432525953
             },
             "outside": {}
           },
           {
             "statistic": "p95",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {
-              "refused": 1,
-              "refused:Saturated": 1
+              "refused": 1
+            },
+            "refused": {
+              "Saturated": 1
+            },
+            "pastKnee": {
+              "lo": 18.961937716262973,
+              "hi": 18.961937716262973
             },
             "outside": {}
           }
@@ -4175,45 +4518,65 @@
           {
             "statistic": "mean",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p50",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p90",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           },
           {
             "statistic": "p95",
             "all": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "inRegion": {
-              "steps": 0
+              "steps": 0,
+              "coverageSteps": 0,
+              "low": 0
             },
             "unscored": {},
+            "refused": {},
             "outside": {}
           }
         ]
@@ -4221,9 +4584,9 @@
     ]
   },
   "notes": [
-    "Fitted on the fit window alone; each step of the test is priced from its own inputs (rate, prompt and output lengths, the replicas each role served) and never from its measured latency.",
-    "Each step's rate is the mean of its cycles' rates; its measured figures average the cycles' histograms, each over the source's rate window, so a step's measurement reaches back that window before the step. A percentile is scored with 50 requests or more at p50, 100 at p90 and 200 at p95 (50 for the mean).",
-    "Bias is the median of predicted over measured; error the median and p90 of |ln ratio| as a share; coverage the share of steps measured at or under the prediction's upper bound (the top of its span over V_P and f for TTFT, of its band for TPOT); within, the share inside 20%.",
-    "In region: the prediction is inside the validated envelope (docs/guides/capacity-planner/accuracy.md); all: every judged step."
+    "Fitted on the fit window alone. Each step of the test is priced from its own inputs (request rate, prompt and output lengths, prompt-length spread, the replicas each role served), read over the same window its measurement covers, and never from its measured latency.",
+    "Each step is measured at its last cycle, over the source's rate window (the router's five minutes, the engines' one): a step shorter than the window is measured over the window. A step whose window reaches before the test, or over a change of replicas, is not judged. A percentile is scored with 50 requests or more at p50, 100 at p90 and 200 at p95 (50 for the mean); measured percentiles are interpolated inside the histogram's buckets.",
+    "Median ratio is the middle step's predicted over measured; typical and worst-10% miss the median and p90 of the factor between them; under the upper bound the share measured at or under the planner's own upper estimate, where it gives one; within, the share inside 20%. A measured figure above the histogram's top bucket counts as read low.",
+    "In region: the figure falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md)."
   ]
 }

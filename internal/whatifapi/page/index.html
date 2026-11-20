@@ -274,10 +274,10 @@
   </section>
 
   <section class="card dayplan backtest" id="backtest" aria-labelledby="bttitle">
-    <h2 id="bttitle">Check the planner: predicted against measured, on time it did not see</h2>
-    <p class="hint">Fits the planner on the first part of the source and predicts the rest from that part's traffic and fleet alone,
-      then sets each prediction beside the latency the fleet measured. Or fit on the source and test on another recording of the same
-      configuration. Load a recording of a few hours in Source first.</p>
+    <h2 id="bttitle">Check the planner against a period it did not see</h2>
+    <p class="hint">Learns from the first part of the source, then predicts the latency of the rest from that period's traffic and
+      replica counts only, never from its measured latency, and compares with what the fleet measured. Or learn from the source and
+      test on another recording of the same configuration. Load a recording of a few hours in Source first.</p>
     <div class="row">
       <fieldset class="kind">
         <legend>Test on</legend>
@@ -290,6 +290,7 @@
         <select id="bttest"></select></div>
       <div class="field"><label for="btstep">Step</label>
         <select id="btstep"><option>1m</option><option selected>5m</option><option>15m</option></select></div>
+      <label class="check"><input type="checkbox" id="btallow"> Test another configuration anyway</label>
       <button type="button" id="btrun" disabled>Run</button>
     </div>
     <div id="btout" hidden>
@@ -298,6 +299,7 @@
       <svg id="btchart" viewBox="0 0 960 420" role="img" aria-labelledby="bttitle btdesc"></svg>
       <p class="sr" id="btdesc"></p>
       <details><summary>Table view: the scores</summary><div id="btscores"></div></details>
+      <details><summary>Table view: every step</summary><div id="btsteps"></div></details>
       <ul class="daynotes" id="btnotes"></ul>
     </div>
   </section>

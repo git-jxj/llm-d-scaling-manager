@@ -479,7 +479,9 @@ function setInputs(inputs) {
   state.bt = null;
   el("btout").hidden = true;
   el("btrun").disabled = false;
-  el("bttest").innerHTML = (state.sources ? state.sources.recordings : []).map(n => `<option>${esc(n)}</option>`).join("");
+  const loaded = inputs.source && inputs.source.name;
+  el("bttest").innerHTML = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded)
+    .map(n => `<option>${esc(n)}</option>`).join("");
   state.priceFailed = false;
   clearPlan();
   state.size = null;
@@ -2012,11 +2014,14 @@ function wire() {
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
   el("btrun").onclick = runBacktest;
-  el("btsplit").oninput = () => { el("btsplitout").textContent = el("btsplit").value + "%"; };
+  const btStale = () => { if (state.bt) el("btout").classList.add("stale"); };
+  el("btsplit").oninput = () => { el("btsplitout").textContent = el("btsplit").value + "%"; btStale(); };
+  el("btstep").onchange = el("bttest").onchange = el("btallow").onchange = btStale;
   el("btsplitmode").onchange = el("btothermode").onchange = () => {
     const other = el("btothermode").checked;
     document.querySelector('[data-btmode="split"]').hidden = other;
     document.querySelector('[data-btmode="other"]').hidden = !other;
+    btStale();
   };
 }
 
@@ -2032,6 +2037,7 @@ async function runBacktest() {
   setStatus("Checking the planner: fitting, then pricing each step of the test (seconds to a minute)...");
   try {
     const req = {inputsId, step: el("btstep").value};
+    if (el("btallow").checked) req.allowConfigMismatch = true;
     if (el("btothermode").checked) {
       const name = el("bttest").value;
       if (!name) throw new Error("pick a test recording");
@@ -2066,6 +2072,7 @@ function renderBacktest() {
   el("btlegend").innerHTML = btLegend();
   el("btdesc").textContent = lines.join(" ");
   el("btscores").innerHTML = btScoreTable(bt);
+  el("btsteps").innerHTML = btStepTable(bt);
   el("btnotes").innerHTML = bt.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(bt.banner)}</li>`;
   const xh = svg.querySelector(".xh"), tip = el("tip");
   svg.onmousemove = e => {

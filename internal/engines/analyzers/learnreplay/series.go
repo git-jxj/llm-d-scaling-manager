@@ -49,6 +49,9 @@ type CycleSample struct {
 	// prompt's spread as the traffic carried it: lengths, not latency.
 	PromptComputedRate, PromptRequestRate float64
 	PromptBuckets                         map[float64]float64
+	// FlowControlSeries says the cycle read the router's flow-control queue
+	// series (domain.AnalyzerInput.FlowControlSeries).
+	FlowControlSeries bool
 }
 
 // SeriesVariants names the variants a series counts: the prefill and the
@@ -129,7 +132,7 @@ func seriesScan(src Source, q StateQuery, v SeriesVariants, withLatency bool) ([
 // sampleOf is one cycle's sample of in, read at at, of the variants v
 // names.
 func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSample {
-	s := CycleSample{At: at, ArrivalRate: in.ArrivalRate}
+	s := CycleSample{At: at, ArrivalRate: in.ArrivalRate, FlowControlSeries: in.FlowControlSeries()}
 	roles := rolesOf(in)
 	counted := func(variant, role string) bool {
 		switch role {

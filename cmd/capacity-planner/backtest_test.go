@@ -64,7 +64,7 @@ func TestBacktestRefusesAnotherConfiguration(t *testing.T) {
 	err := run(t.Context(), []string{"backtest", "--fit", q32Recording, "--test", stair("ttft-staircase-b-off")}, &out, &out)
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), out.String())
-	assert.Contains(t, err.Error(), "decode tensor parallel is 2 in the fit and 1 in the test")
+	assert.Contains(t, err.Error(), "decode tensor-parallel-size is 2 in the fit and 1 in the test")
 	assert.Contains(t, err.Error(), "--allow-config-mismatch")
 }
 

@@ -51,6 +51,10 @@ type ConfigField struct {
 	Value string `json:"value"`
 }
 
+// ConfigFlowControl is the field a RunConfig names the flow-control series
+// by; a backtest reads it over each side's cycles, not at one.
+const ConfigFlowControl = "flow-control series"
+
 // RunConfig is what the source says of the configuration the fleet ran: the
 // model, each role's accelerator, parallelism and the engine flags that move
 // its latency, and the router's flow-control state.
@@ -97,7 +101,19 @@ const (
 	UnscoredAboveHistogram = "aboveHistogram"
 	UnscoredRefused        = "refused"
 	UnscoredNotMeasured    = "notMeasured"
+	// UnscoredNotComparable is a measured figure that is not the one
+	// predicted: on a P/D fleet the engines' TTFT (the prefill pods'
+	// alone), and the engines' mean inter-token latency for a mean TPOT.
+	UnscoredNotComparable = "notComparable"
 )
+
+// statP90 is the statistic a verdict leads with.
+const statP90 = "p90"
+
+// backtestBanner is the backtest's standing in one line.
+const backtestBanner = "The planner's figures are a model, not a bound: this check measures how far off they are on this fleet."
+
+const ()
 
 // The backtest's statistics, in order: the mean, p50, p90 and p95.
 var backtestStats = []float64{0, 0.5, 0.9, 0.95}
@@ -141,10 +157,13 @@ type BacktestResponse struct {
 	Banner        string `json:"banner"`
 	// Verdict is the answer in one plain sentence, and Excluded what was
 	// not judged and why, in one more.
-	Verdict  string         `json:"verdict"`
-	Excluded string         `json:"excluded"`
-	Fit      BacktestWindow `json:"fit"`
-	Test     BacktestWindow `json:"test"`
+	Verdict string `json:"verdict"`
+	// VerdictLines is the verdict a sentence a line: the span, TTFT,
+	// TPOT, and where the steps sit against the benchmarks.
+	VerdictLines []string       `json:"verdictLines"`
+	Excluded     string         `json:"excluded"`
+	Fit          BacktestWindow `json:"fit"`
+	Test         BacktestWindow `json:"test"`
 	// Split is how one source was split ("60%", or the time), "" with two.
 	Split    string         `json:"split,omitempty"`
 	Config   BacktestConfig `json:"config"`
@@ -155,7 +174,7 @@ type BacktestResponse struct {
 	MeasuredNote string `json:"measuredNote"`
 	// Assumed is every input of the prediction the test did not give.
 	Assumed []string        `json:"assumed"`
-	TTFT    *ReportTarget   `json:"ttftTarget,omitempty"`
+	TTFT    *Objective      `json:"ttft,omitempty"`
 	Steps   []BacktestStep  `json:"steps"`
 	Summary BacktestSummary `json:"summary"`
 	Notes   []string        `json:"notes"`
@@ -234,7 +253,12 @@ type BacktestPoint struct {
 	Measured  *float64 `json:"measured,omitempty"`
 	Ratio     *float64 `json:"ratio,omitempty"`
 	InRegion  bool     `json:"inRegion"`
-	Unscored  string   `json:"unscored,omitempty"`
+	// AboveHistogram says the measured figure was above the histogram's
+	// top bucket while the prediction was under it: Ratio is then the
+	// prediction over the top bound, no lower than the truth's, and never
+	// within.
+	AboveHistogram bool   `json:"aboveHistogram,omitempty"`
+	Unscored       string `json:"unscored,omitempty"`
 }
 
 // BacktestJudged is a step judged against a TTFT target.
@@ -293,10 +317,16 @@ type BacktestScore struct {
 	All       BacktestStats `json:"all"`
 	InRegion  BacktestStats `json:"inRegion"`
 	// Unscored counts the judged steps whose pair was not scored, by
-	// reason; a refused prediction by its reason too ("refused:Saturated").
+	// reason (UnscoredRefused and the rest); Refused the refused ones by
+	// the refusal's reason (Saturated, NoPrefillCapacity, ...).
 	Unscored map[string]int `json:"unscored"`
+	Refused  map[string]int `json:"refused"`
+	// PastKnee is the measured figure's range over the steps refused as
+	// saturated, where the source measured one: what the fleet did where
+	// the planner gave no figure.
+	PastKnee *Band `json:"pastKnee,omitempty"`
 	// Outside counts the scored steps outside the validated region, by the
-	// envelope's first reason, its words before the first figure.
+	// envelope's reason, its words before the first figure.
 	Outside map[string]int `json:"outside"`
 }
 
@@ -312,6 +342,11 @@ type BacktestStats struct {
 	P90Error    *float64 `json:"p90Error,omitempty"`
 	Coverage    *float64 `json:"coverage,omitempty"`
 	Within      *float64 `json:"within,omitempty"`
+	// CoverageSteps is the steps whose prediction carried an interval,
+	// those Coverage is over; Low the steps read more than
+	// BacktestTolerance low, those above the histogram included.
+	CoverageSteps int `json:"coverageSteps"`
+	Low           int `json:"low"`
 }
 
 // BacktestAgreement is how often the predicted and the measured TTFT agreed
@@ -332,12 +367,6 @@ const (
 	judgedMissed  = "missed"
 	judgedUnknown = "unknown"
 )
-
-// backtestSide is one side's inputs.
-type backtestSide struct {
-	e      *inputsEntry
-	config RunConfig
-}
 
 // handleBacktest is POST /v1/backtest.
 func (s *Server) handleBacktest(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +427,7 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 		doc.InputsID = contentID("inputs", res.Content)
 		fit = &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
 			config: res.Config, bytes: res.Bytes}
-		s.inputs.add(doc.InputsID, fit)
+		fit = s.inputs.add(doc.InputsID, fit)
 	}
 	q, err := backtestQuestionOf(fit, test, req, cutoff, split)
 	if err != nil {
@@ -537,6 +566,8 @@ type backtestQuestion struct {
 	assumed     []string
 	testIndices []int
 	assume      Assume
+	// targetAsked is the target as the answer names it.
+	targetAsked *Objective
 }
 
 // backtestQuestionOf checks req against fit and test, and refuses a test
@@ -577,7 +608,11 @@ func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time
 		if err != nil {
 			return nil, err
 		}
+		if !slices.Contains(backtestStats, pq) {
+			return nil, InputErrorf("ttft.statistic %q: a backtest judges the mean, p50, p90 or p95", stat)
+		}
 		q.target = &ReportTarget{Seconds: *o.Target, Percentile: pq}
+		q.targetAsked = &Objective{Statistic: statisticName(pq), Target: o.Target}
 	}
 	if len(test.series) == 0 {
 		return nil, InputErrorf("the test source carries no cycles")
@@ -585,15 +620,32 @@ func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time
 	if len(test.latency) != len(test.series) {
 		return nil, InputErrorf("the test source carries no measured latency to score against")
 	}
+	if fit.id == test.id && cutoff.IsZero() {
+		return nil, InputErrorf("the test is the fit's own source: a backtest scores a period the planner did not see; split it, or test another recording")
+	}
 	if fit.doc.Model != test.doc.Model {
 		return nil, InputErrorf("the fit is model %q and the test model %q: a backtest compares one model", fit.doc.Model, test.doc.Model)
 	}
-	q.config = compareConfig(fit.config, test.config)
+	fitIdx := []int{}
+	for i, x := range fit.series {
+		if cutoff.IsZero() || !x.At.After(cutoff) {
+			if c := fit.doc.Source.Cycle; c == 0 || i < c {
+				fitIdx = append(fitIdx, i)
+			}
+		}
+	}
+	testIdx := []int{}
+	for i, x := range test.series {
+		if cutoff.IsZero() || x.At.After(cutoff) {
+			testIdx = append(testIdx, i)
+		}
+	}
+	q.config = compareConfig(withFlowControl(fit.config, fit.series, fitIdx), withFlowControl(test.config, test.series, testIdx))
 	if !q.config.Match {
 		if !req.AllowConfigMismatch {
-			return nil, InputErrorf("the test ran another configuration than the fit: %s. A backtest across configurations scores the "+
-				"difference, not the planner; give allowConfigMismatch (--allow-config-mismatch) to price it anyway, with the difference as a caveat",
-				mismatchWords(q.config.Differences))
+			return nil, ConfigMismatchError{InputError: InputError{Err: fmt.Errorf("the test ran another configuration than the fit: %s. "+
+				"A backtest across configurations scores the difference, not the planner; give allowConfigMismatch (--allow-config-mismatch) "+
+				"to price it anyway, with the difference as a caveat", mismatchWords(q.config.Differences))}, Differences: q.config.Differences}
 		}
 		q.config.Allowed = true
 	}
@@ -610,20 +662,45 @@ func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time
 	if int(span/q.step)+1 > maxBacktestSteps {
 		return nil, InputErrorf("the test spans %s: at a step of %s that is more than %d steps; ask a longer step", span, q.step, maxBacktestSteps)
 	}
-	// The test's prompt spread is an input: its lengths, never its latency.
-	if f := test.doc.Observed.PromptCV; f.Value != nil && !slices.Contains(f.Flags, string(whatif.AssumedPromptSpread)) {
-		v := *f.Value
-		q.promptCV = &v
+	if cutoff.IsZero() {
+		// Two sources: the fit's cycles must not reach into the test's time.
+		fw := windowOf(fit, nil, time.Time{})
+		t0, t1 := test.series[q.testIndices[0]].At, test.series[q.testIndices[len(q.testIndices)-1]].At
+		if fw.Cycles > 0 && !fw.To.Before(t0) && !t1.Before(fw.From) {
+			return nil, InputErrorf("the test (%s to %s) overlaps the fit (%s to %s) in time: a backtest scores a period the planner did not see",
+				t0.UTC().Format(time.RFC3339), t1.UTC().Format(time.RFC3339), fw.From.UTC().Format(time.RFC3339), fw.To.UTC().Format(time.RFC3339))
+		}
+	}
+	// The test's prompt spread is an input, its lengths, never its latency:
+	// pooled over the test's cycles, for a step whose own reads none.
+	if whole := stepInputsOf(seriesAt(test.series, q.testIndices)); whole.promptCV != nil {
+		q.promptCV = whole.promptCV
 	}
 	if a := req.Assume; a != nil {
 		q.assume = *a
 		q.assumed = append(q.assumed, "terms typed in for the fit (assume): every figure they move is flagged")
 	}
 	if q.cv2 == nil {
-		q.assumed = append(q.assumed, "arrivals Poisson (Ca^2 1): the source does not measure burstiness; give arrivalCV2 (--arrival-cv2) when known")
+		q.assumed = append(q.assumed, "random (Poisson) arrivals: the recording does not measure how bursty arrivals are; "+
+			"state it with --arrival-cv2 (arrivalCV2) when known")
 	}
 	return q, nil
 }
+
+// ReasonConfigMismatch is the reason of a backtest refused because its test
+// ran another configuration than its fit.
+const ReasonConfigMismatch = "ConfigMismatch"
+
+// ConfigMismatchError is a backtest refused because its test ran another
+// configuration than its fit: a 400 with ReasonConfigMismatch, so that a
+// caller can offer allowConfigMismatch without reading the words.
+type ConfigMismatchError struct {
+	InputError
+	Differences []ConfigMismatch
+}
+
+// Unwrap is the InputError, so that IsInputError holds.
+func (e ConfigMismatchError) Unwrap() error { return e.InputError }
 
 // mismatchWords is the differences in words.
 func mismatchWords(ds []ConfigMismatch) string {
@@ -635,11 +712,39 @@ func mismatchWords(ds []ConfigMismatch) string {
 }
 
 // notRecordedConfig is what no recording carries, compared never.
-var notRecordedConfig = []string{"router version (not recorded)"}
+var notRecordedConfig = []string{"the router's version and settings (scorers, flow-control limits): no recording carries them; " +
+	"only whether the flow-control series is present is read"}
+
+// withFlowControl is c with its flow-control series read over the cycles
+// idx of series: present when most cycles read it, so that one missed
+// scrape at the cycle a state was read at is no change of configuration.
+func withFlowControl(c RunConfig, series []SeriesSample, idx []int) RunConfig {
+	if len(idx) == 0 {
+		return c
+	}
+	on := 0
+	for _, i := range idx {
+		if series[i].FlowControlSeries {
+			on++
+		}
+	}
+	v := "absent (off)"
+	if 2*on > len(idx) {
+		v = "present (on)"
+	}
+	out := RunConfig{Fields: slices.Clone(c.Fields)}
+	for i := range out.Fields {
+		if out.Fields[i].Name == ConfigFlowControl {
+			out.Fields[i].Value = v
+		}
+	}
+	return out
+}
 
 // compareConfig is the fit's configuration against the test's: a field
-// recorded on both sides that differs is a mismatch; one recorded on one
-// side only is not compared.
+// recorded on both sides that differs is a mismatch, and so is a structural
+// one (the roles, a variant not found); a field one side does not carry, or
+// whose value one side could not read, is not compared.
 func compareConfig(fit, test RunConfig) BacktestConfig {
 	c := BacktestConfig{Match: true, Differences: []ConfigMismatch{}, NotCompared: slices.Clone(notRecordedConfig)}
 	tv := map[string]string{}
@@ -652,7 +757,7 @@ func compareConfig(fit, test RunConfig) BacktestConfig {
 		t, ok := tv[f.Name]
 		switch {
 		case !ok || f.Value == "" || t == "":
-			c.NotCompared = append(c.NotCompared, f.Name+" (not recorded on both)")
+			c.NotCompared = append(c.NotCompared, f.Name+" (not read on both sides)")
 		case f.Value != t:
 			c.Match = false
 			c.Differences = append(c.Differences, ConfigMismatch{Field: f.Name, Fit: f.Value, Test: t})
@@ -660,16 +765,36 @@ func compareConfig(fit, test RunConfig) BacktestConfig {
 	}
 	for _, f := range test.Fields {
 		if !seen[f.Name] {
-			c.NotCompared = append(c.NotCompared, f.Name+" (not recorded on both)")
+			c.NotCompared = append(c.NotCompared, f.Name+" (not read on both sides)")
 		}
 	}
 	return c
 }
 
-// stepOf is one step's cycles, by index into the test.
+// stepOf is one step: its start, its cycles (by index into the test), the
+// last of them (anchor: -1 with none), whose measurement window ends at the
+// step's end, and the cycles in that window (window), whose inputs the step
+// is priced at, so that the prediction and the measurement cover the same
+// requests.
 type stepOf struct {
-	start time.Time
-	idx   []int
+	start         time.Time
+	idx           []int
+	anchor        int
+	window        []int
+	windowStart   time.Time
+	windowSeconds float64
+}
+
+// defaultMeasureWindow is the rate window a measurement is read over when
+// the source does not say: the engines' histograms are over a minute.
+const defaultMeasureWindow = 60.0
+
+// measureWindowOf is the window, seconds, the latency at l was read over.
+func measureWindowOf(l LatencySample, source string) float64 {
+	if source == MeasuredRouter && l.Router != nil && l.Router.WindowSeconds > 0 {
+		return l.Router.WindowSeconds
+	}
+	return defaultMeasureWindow
 }
 
 // run prices and scores every step.
@@ -680,25 +805,47 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 	start := first.UTC().Truncate(q.step)
 	steps := make([]stepOf, int(last.UTC().Truncate(q.step).Sub(start)/q.step)+1)
 	for i := range steps {
-		steps[i].start = start.Add(time.Duration(i) * q.step)
+		steps[i].start, steps[i].anchor = start.Add(time.Duration(i)*q.step), -1
 	}
 	for _, i := range q.testIndices {
 		k := int(test.series[i].At.UTC().Truncate(q.step).Sub(start) / q.step)
 		steps[k].idx = append(steps[k].idx, i)
+		steps[k].anchor = i
 	}
+	// Every cycle of the test's source, in time order: a step's window may
+	// reach before the split, into cycles whose inputs (never latency) it
+	// reads.
+	all := make([]int, len(test.series))
+	for i := range all {
+		all[i] = i
+	}
+	slices.SortStableFunc(all, func(a, b int) int { return test.series[a].At.Compare(test.series[b].At) })
 	// A change of replicas: the cycle at which either role's serving pods
-	// moved.
+	// moved, across the split too.
 	var changes []time.Time
-	for j := 1; j < len(q.testIndices); j++ {
-		a, b := test.series[q.testIndices[j-1]], test.series[q.testIndices[j]]
+	for j := 1; j < len(all); j++ {
+		a, b := test.series[all[j-1]], test.series[all[j]]
 		if a.Prefill != b.Prefill || a.Decode != b.Decode {
 			changes = append(changes, b.At)
 		}
 	}
 	source := q.measuredSource()
-	cycle := sampleStep(seriesAt(test.series, q.testIndices), q.step).Seconds()
-	out := &BacktestResponse{Banner: banner, Split: q.split, Config: q.config, Step: q.step.Seconds(), Settle: q.settle.Seconds(),
-		Measured: source, MeasuredNote: measuredNote(source), Assumed: append([]string{}, q.assumed...), TTFT: q.target,
+	for k := range steps {
+		st := &steps[k]
+		if st.anchor < 0 {
+			continue
+		}
+		at := test.series[st.anchor].At
+		st.windowSeconds = measureWindowOf(test.latency[st.anchor], source)
+		st.windowStart = at.Add(-time.Duration(st.windowSeconds * float64(time.Second)))
+		for _, i := range all {
+			if x := test.series[i].At; x.After(st.windowStart) && !x.After(at) {
+				st.window = append(st.window, i)
+			}
+		}
+	}
+	out := &BacktestResponse{Banner: backtestBanner, Split: q.split, Config: q.config, Step: q.step.Seconds(), Settle: q.settle.Seconds(),
+		Measured: source, MeasuredNote: measuredNote(source, q.pd()), Assumed: append([]string{}, q.assumed...), TTFT: q.targetAsked,
 		Steps: []BacktestStep{}, Notes: []string{}}
 	out.Fit = windowOf(q.fit, nil, q.cutoff)
 	out.Test = windowOf(test, q.testIndices, time.Time{})
@@ -708,7 +855,11 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		out.Steps = append(out.Steps, q.stepOf(p, st, changes, first, source, cycle))
+		s := q.stepOf(p, st, changes, first)
+		if st.anchor >= 0 {
+			scoreStep(&s, measuredOf(test.latency[st.anchor], source, st.windowSeconds, q.pd()), q.target)
+		}
+		out.Steps = append(out.Steps, s)
 	}
 	out.Summary = summarize(out.Steps, q.target != nil)
 	unread := 0
@@ -720,12 +871,13 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 	if unread > 0 {
 		from := "the fit's"
 		if q.promptCV != nil {
-			from = "the test's whole window's"
+			from = "the test window's, pooled"
 		}
-		out.Assumed = append(out.Assumed, fmt.Sprintf("the prompt spread of %d judged steps was not read (no computed-token histogram): %s is priced", unread, from))
+		out.Assumed = append(out.Assumed, fmt.Sprintf("the prompt-length spread of %d judged steps was not read (no computed-token histogram): %s is priced", unread, from))
 	}
-	out.Verdict, out.Excluded = verdictOf(out, q.step)
-	out.Notes = append(out.Notes, backtestNotes(q, out)...)
+	out.VerdictLines, out.Excluded = verdictOf(out, q.step)
+	out.Verdict = strings.Join(out.VerdictLines, " ")
+	out.Notes = append(out.Notes, backtestNotes(q)...)
 	out.BacktestID = contentID("backtest", struct {
 		Fit, Test    string
 		Cutoff       time.Time
@@ -733,9 +885,14 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 		Measured     string
 		Target       *ReportTarget
 		CV2          *float64
-	}{q.fit.id, q.test.id, q.cutoff, q.step, q.settle, source, q.target, q.cv2})
+		Assume       Assume
+		Allowed      bool
+	}{q.fit.id, q.test.id, q.cutoff, q.step, q.settle, source, q.target, q.cv2, q.assume, q.config.Allowed})
 	return out, nil
 }
+
+// pd says the test is a P/D fleet: its inputs name a prefill variant.
+func (q *backtestQuestion) pd() bool { return q.test.doc.Fleet.Prefill != nil }
 
 // seriesAt is the samples at idx.
 func seriesAt(series []SeriesSample, idx []int) []SeriesSample {
@@ -750,6 +907,10 @@ func seriesAt(series []SeriesSample, idx []int) []SeriesSample {
 // cutoff when not zero.
 func windowOf(e *inputsEntry, idx []int, cutoff time.Time) BacktestWindow {
 	w := BacktestWindow{InputsID: e.id, Source: e.doc.Source.Name}
+	if c := e.doc.Source.Cycle; idx == nil && cutoff.IsZero() && c > 0 && c <= len(e.series) {
+		// A source read at an earlier cycle: its fit ends there.
+		cutoff = e.series[c-1].At
+	}
 	if w.Source == "" && e.doc.Source.From != nil {
 		w.Source = fmt.Sprintf("prometheus %s %s to %s", e.doc.Namespace, e.doc.Source.From.UTC().Format(time.RFC3339),
 			e.doc.Source.To.UTC().Format(time.RFC3339))
@@ -787,26 +948,29 @@ func (q *backtestQuestion) measuredSource() string {
 }
 
 // measuredNote says what a measured source's figures are.
-func measuredNote(source string) string {
+func measuredNote(source string, pd bool) string {
 	if source == MeasuredRouter {
-		return "measured by the router (server side, the same scrape as the inputs): TTFT from the request's arrival at the router, " +
-			"its queue included; TPOT per streamed request"
+		return "the router's histograms (server side, the same scrape as the inputs): TTFT from the request's arrival at the router, " +
+			"its queue included; TPOT per streamed request. Each step is priced at the inputs of the same window its histogram covers"
 	}
-	return "measured by the engines (vLLM histograms, the same scrape as the inputs), no router series in the source: on a P/D fleet the TTFT " +
-		"is the prefill pods' alone (no router, KV transfer or decode step) and reads low against a prediction of the whole TTFT; " +
-		"the TPOT mean is the decode pods' mean inter-token latency, per token, not per request"
+	w := "the engines' vLLM histograms (the same scrape as the inputs): the source carries no router series. The engines' mean " +
+		"inter-token latency is per token, not the per-request TPOT predicted: the mean TPOT is not scored"
+	if pd {
+		w += "; on a P/D fleet the engines' TTFT is the prefill pods' alone (no router, KV transfer or decode step): TTFT is not scored"
+	}
+	return w
 }
 
-// stepOf judges one step: its inputs, why it is not judged, or each
-// statistic predicted and measured.
-func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, first time.Time, source string, cycle float64) BacktestStep {
+// stepOf predicts one step: its inputs, read over the cycles of its
+// measurement window, why it is not judged, and each statistic predicted.
+// It reads no latency: scoreStep sets the measurement beside it.
+func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, first time.Time) BacktestStep {
 	out := BacktestStep{Start: st.start, Cycles: len(st.idx), TTFT: []BacktestPoint{}, TPOT: []BacktestPoint{}}
-	if len(st.idx) == 0 {
+	if st.anchor < 0 || len(st.window) == 0 {
 		out.Excluded, out.Detail = ExcludedNoMeasurement, "no cycle in the step"
 		return out
 	}
-	samples := seriesAt(q.test.series, st.idx)
-	in := stepInputsOf(samples)
+	in := stepInputsOf(seriesAt(q.test.series, st.window))
 	out.Rate, out.Prefill, out.Decode = in.rate, in.prefill, in.decode
 	if in.hasShape {
 		out.PromptTokens, out.OutputTokens = ptr(in.prompt), ptr(in.output)
@@ -814,19 +978,16 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 	if in.promptCV != nil {
 		out.PromptCV = ptr(*in.promptCV)
 	}
-	m := measuredOf(q.test.latency, st.idx, source, cycle)
-	out.Requests = m.requests
-	end := st.start.Add(q.step)
+	end := q.test.series[st.anchor].At
 	switch {
 	case !(in.rate > 0):
 		out.Excluded, out.Detail = ExcludedNoTraffic, "no requests arrived"
 		return out
-	case st.start.Before(first.Add(q.settle)):
-		out.Excluded, out.Detail = ExcludedWarmUp, fmt.Sprintf("within %s of the test's first cycle", q.settle)
-	case slices.ContainsFunc(changes, func(c time.Time) bool { return c.Before(end) && c.After(st.start.Add(-q.settle)) }):
-		out.Excluded, out.Detail = ExcludedScaling, fmt.Sprintf("the replicas changed in the step or within %s before it", q.settle)
-	case !(m.requests > 0):
-		out.Excluded, out.Detail = ExcludedNoMeasurement, "the source measured no request in the step"
+	case st.windowStart.Before(first.Add(q.settle)) || (q.settle == 0 && st.windowStart.Before(first)):
+		out.Excluded, out.Detail = ExcludedWarmUp, fmt.Sprintf("its measurement window (%s) starts within %s of the test's first cycle",
+			time.Duration(st.windowSeconds*float64(time.Second)), q.settle)
+	case slices.ContainsFunc(changes, func(c time.Time) bool { return !c.After(end) && c.After(st.windowStart.Add(-q.settle)) }):
+		out.Excluded, out.Detail = ExcludedScaling, fmt.Sprintf("the replicas changed in its measurement window or within %s before it", q.settle)
 	case in.prefill == 0 || in.decode == 0:
 		out.Excluded, out.Detail = ExcludedNotPriced, fmt.Sprintf("%d prefill and %d decode pods served: a P/D fleet is priced with both", in.prefill, in.decode)
 	}
@@ -846,13 +1007,33 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		out.DecodeLoad = loadBand(*out.DecodeKneeShare)
 	}
 	for i, q := range backtestStats {
-		out.TTFT = append(out.TTFT, pointOf(q, pred.ttft[i], pred.ttftBound[i], m.ttft[i], m.requests))
-		out.TPOT = append(out.TPOT, pointOf(q, pred.tpot[i], pred.tpotBound[i], m.tpot[i], m.requests))
-	}
-	if q.target != nil {
-		out.Target = q.judge(pred, m)
+		out.TTFT = append(out.TTFT, predictedPoint(q, pred.ttft[i], pred.ttftBound[i]))
+		out.TPOT = append(out.TPOT, predictedPoint(q, pred.tpot[i], pred.tpotBound[i]))
 	}
 	return out
+}
+
+// scoreStep sets beside a step's predictions what the fleet measured: the
+// step is not judged when it measured no request, and each statistic is
+// scored where both are figures. It reads the predictions from the step,
+// so a step predicted elsewhere scores as one predicted here.
+func scoreStep(out *BacktestStep, m measured, target *ReportTarget) {
+	if out.Excluded == ExcludedNoTraffic {
+		return
+	}
+	out.Requests = m.requests
+	if out.Excluded == "" && !(m.requests > 0) {
+		out.Excluded, out.Detail = ExcludedNoMeasurement, "the source measured no request in the step"
+	}
+	for i := range out.TTFT {
+		out.TTFT[i] = scoredPoint(out.TTFT[i], m.ttft[i], m.requests, m.ttftTop, m.ttftWhy[i])
+	}
+	for i := range out.TPOT {
+		out.TPOT[i] = scoredPoint(out.TPOT[i], m.tpot[i], m.tpotRequests, m.tpotTop, m.tpotWhy[i])
+	}
+	if target != nil {
+		out.Target = judgeTarget(target, out.TTFT, m)
+	}
 }
 
 // stepInputs is what a step gives the prediction: never its latency.
@@ -976,11 +1157,9 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		tf = validate(tf, whatif.FigureTTFT, q, class, share)
 		var tb *float64
 		if tf.Value != nil {
-			b := *tf.Value
 			if span := figureOf(fl.TTFTAt(in.rate), unitSeconds, true); span.Sensitivity != nil && span.Sensitivity.Hi != nil {
-				b = max(b, *span.Sensitivity.Hi)
+				tb = ptr(max(*tf.Value, *span.Sensitivity.Hi))
 			}
-			tb = &b
 		}
 		mean, pct := fl.TPOTAt(in.rate)
 		r, kind := mean, whatif.FigureMeanTPOT
@@ -994,12 +1173,8 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		}
 		pf = validate(pf, kind, q, class, kneeShare)
 		var pb *float64
-		if pf.Value != nil {
-			b := *pf.Value
-			if pf.Band != nil {
-				b = max(b, pf.Band.Hi)
-			}
-			pb = &b
+		if pf.Value != nil && pf.Band != nil {
+			pb = ptr(max(*pf.Value, pf.Band.Hi))
 		}
 		if out.knee == nil {
 			var ks []float64
@@ -1021,95 +1196,72 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 	return out, nil
 }
 
-// measured is one step's measured figures at each statistic, NaN where the
-// histogram cannot say (+Inf: above its top bucket), and the requests it
-// holds.
+// measured is one step's measured figures at each statistic of
+// backtestStats: +Inf where the histogram cannot say (above its top
+// bucket), nil with none, and why a figure is not comparable ("" where it
+// is). requests and tpotRequests are the requests each histogram holds
+// over its window; ttftTop and tpotTop each histogram's top finite bound.
 type measured struct {
-	ttft, tpot []*float64
-	requests   float64
+	ttft, tpot             []*float64
+	ttftWhy, tpotWhy       []string
+	requests, tpotRequests float64
+	ttftTop, tpotTop       float64
 }
 
-// measuredOf is the step's latency from the cycles at idx: each bucket's
-// rate averaged over the cycles that carry the histogram, the mean from the
-// sum and count rates (the engines' weighted means). requests is the
-// TTFT histogram's total rate over the step's cycles.
-func measuredOf(lat []LatencySample, idx []int, source string, cycle float64) measured {
-	var ttftB, tpotB [][]domain.LatencyBucket
-	var ttftSum, ttftCount, tpotSum, tpotCount float64
-	var ttftMeans, itlMeans []float64
-	for _, i := range idx {
-		l := lat[i]
-		if source == MeasuredRouter {
-			r := l.Router
-			if r == nil {
-				continue
-			}
-			if len(r.TTFTBuckets) > 0 {
-				ttftB = append(ttftB, r.TTFTBuckets)
-			}
-			if len(r.TPOTBuckets) > 0 {
-				tpotB = append(tpotB, r.TPOTBuckets)
-			}
-			ttftSum, ttftCount = ttftSum+r.TTFTSumRate, ttftCount+r.TTFTCountRate
-			tpotSum, tpotCount = tpotSum+r.TPOTSumRate, tpotCount+r.TPOTCountRate
-			continue
+// measuredOf is the latency the cycle l read, over its window of
+// windowSeconds: the router's histograms and means, or the engines'. On a
+// P/D fleet the engines' TTFT is the prefill pods' alone, and the engines'
+// TPOT mean is a mean inter-token latency: neither is the figure the
+// planner predicts, so each is marked not comparable rather than scored.
+func measuredOf(l LatencySample, source string, windowSeconds float64, pd bool) measured {
+	n := len(backtestStats)
+	m := measured{ttft: make([]*float64, n), tpot: make([]*float64, n), ttftWhy: make([]string, n), tpotWhy: make([]string, n)}
+	var tb, pb []domain.LatencyBucket
+	var ttftMean, tpotMean *float64
+	switch {
+	case source == MeasuredRouter && l.Router != nil:
+		r := l.Router
+		tb, pb = r.TTFTBuckets, r.TPOTBuckets
+		if r.TTFTCountRate > 0 {
+			ttftMean = ptr(r.TTFTSumRate / r.TTFTCountRate)
 		}
-		if len(l.EngineTTFT) > 0 {
-			ttftB = append(ttftB, l.EngineTTFT)
+		if r.TPOTCountRate > 0 {
+			tpotMean = ptr(r.TPOTSumRate / r.TPOTCountRate)
 		}
-		if len(l.EngineTPOT) > 0 {
-			tpotB = append(tpotB, l.EngineTPOT)
-		}
+	case source == MeasuredEngine:
+		tb, pb = l.EngineTTFT, l.EngineTPOT
 		if l.EngineTTFTMean > 0 {
-			ttftMeans = append(ttftMeans, l.EngineTTFTMean)
+			ttftMean = ptr(l.EngineTTFTMean)
 		}
-		if l.EngineITLMean > 0 {
-			itlMeans = append(itlMeans, l.EngineITLMean)
+		for i := range n {
+			if pd {
+				m.ttftWhy[i] = UnscoredNotComparable
+			}
 		}
+		m.tpotWhy[0] = UnscoredNotComparable
 	}
-	m := measured{}
-	th, tok := averaged(ttftB)
-	ph, pok := averaged(tpotB)
+	th, tok := histOf(tb)
+	ph, pok := histOf(pb)
 	if tok {
-		m.requests = th.total * cycle * float64(len(idx))
+		m.requests, m.ttftTop = th.total*windowSeconds, th.top()
 	}
-	for _, q := range backtestStats {
-		var t, p *float64
+	if pok {
+		m.tpotRequests, m.tpotTop = ph.total*windowSeconds, ph.top()
+	}
+	for i, q := range backtestStats {
 		switch {
-		case q == 0 && source == MeasuredRouter:
-			if ttftCount > 0 {
-				t = ptr(ttftSum / ttftCount)
-			}
-			if tpotCount > 0 {
-				p = ptr(tpotSum / tpotCount)
-			}
 		case q == 0:
-			if len(ttftMeans) > 0 {
-				t = ptr(meanOf(ttftMeans))
-			}
-			if len(itlMeans) > 0 {
-				p = ptr(meanOf(itlMeans))
-			}
+			m.ttft[i], m.tpot[i] = ttftMean, tpotMean
 		default:
 			if tok {
-				t = ptr(th.quantile(q))
+				m.ttft[i] = ptr(th.quantile(q))
 			}
 			if pok {
-				p = ptr(ph.quantile(q))
+				m.tpot[i] = ptr(ph.quantile(q))
 			}
 		}
-		m.ttft, m.tpot = append(m.ttft, t), append(m.tpot, p)
 	}
 	return m
-}
-
-// meanOf is the mean of xs.
-func meanOf(xs []float64) float64 {
-	var s float64
-	for _, x := range xs {
-		s += x
-	}
-	return s / float64(len(xs))
 }
 
 // latencyHist is a cumulative latency histogram, repaired to be monotone,
@@ -1119,25 +1271,15 @@ type latencyHist struct {
 	total   float64
 }
 
-// averaged is the per-bound mean of the histograms hs, repaired as
-// Prometheus's histogram_quantile repairs one; ok false with no +Inf bucket
-// or no request.
-func averaged(hs [][]domain.LatencyBucket) (latencyHist, bool) {
-	if len(hs) == 0 {
-		return latencyHist{}, false
-	}
-	sum := map[float64]float64{}
-	for _, h := range hs {
-		for _, b := range h {
-			if math.IsNaN(b.UpperBound) || !whatif.Finite(b.Rate) || b.Rate < 0 {
-				continue
-			}
-			sum[b.UpperBound] += b.Rate
+// histOf is the histogram bs, repaired as Prometheus's histogram_quantile
+// repairs one; ok false with no +Inf bucket or no request.
+func histOf(in []domain.LatencyBucket) (latencyHist, bool) {
+	bs := make([]domain.LatencyBucket, 0, len(in))
+	for _, b := range in {
+		if math.IsNaN(b.UpperBound) || !whatif.Finite(b.Rate) || b.Rate < 0 {
+			continue
 		}
-	}
-	bs := make([]domain.LatencyBucket, 0, len(sum))
-	for b, r := range sum {
-		bs = append(bs, domain.LatencyBucket{UpperBound: b, Rate: r / float64(len(hs))})
+		bs = append(bs, b)
 	}
 	slices.SortFunc(bs, func(x, y domain.LatencyBucket) int { return cmp.Compare(x.UpperBound, y.UpperBound) })
 	if len(bs) == 0 || !math.IsInf(bs[len(bs)-1].UpperBound, 1) {
@@ -1151,6 +1293,14 @@ func averaged(hs [][]domain.LatencyBucket) (latencyHist, bool) {
 		return latencyHist{}, false
 	}
 	return latencyHist{buckets: bs, total: total}, true
+}
+
+// top is the highest finite bound, 0 with none.
+func (h latencyHist) top() float64 {
+	if len(h.buckets) < 2 {
+		return 0
+	}
+	return h.buckets[len(h.buckets)-2].UpperBound
 }
 
 // quantile is the q-quantile by linear interpolation inside its bucket, as
@@ -1187,28 +1337,43 @@ func minRequestsFor(q float64) float64 {
 	return max(50, math.Round(10/(1-q)))
 }
 
-// pointOf is one statistic predicted and measured, scored where both are
-// figures.
-func pointOf(q float64, pred Figure, bound, meas *float64, requests float64) BacktestPoint {
-	p := BacktestPoint{Statistic: statisticName(q), Predicted: pred, Bound: bound,
+// predictedPoint is one statistic as predicted, before any measurement.
+func predictedPoint(q float64, pred Figure, bound *float64) BacktestPoint {
+	return BacktestPoint{Statistic: statisticName(q), Predicted: pred, Bound: bound,
 		InRegion: pred.Validation != nil && pred.Validation.Validated}
+}
+
+// scoredPoint is p with the measured figure meas beside it, from a
+// histogram of requests requests whose top finite bound is top, scored
+// where both are figures. A measured figure above the top bucket is a miss
+// the planner read low wherever its own figure is under the top bound: it
+// is scored at the top bound, a ratio no lower than the truth's, and never
+// within. why is a measurement not comparable.
+func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why string) BacktestPoint {
+	q, _ := parseStatistic("", p.Statistic)
+	pred := p.Predicted
 	switch {
+	case why != "":
+		p.Unscored = why
+		return p
 	case meas == nil:
 		p.Unscored = UnscoredNotMeasured
 		return p
-	case math.IsInf(*meas, 1) && pred.Value != nil:
-		p.Unscored = UnscoredAboveHistogram
-		return p
-	case math.IsInf(*meas, 1):
-		p.Unscored = UnscoredRefused
-		return p
 	}
-	p.Measured = meas
+	if !math.IsInf(*meas, 1) {
+		// JSON holds no +Inf: a figure above the top bucket is AboveHistogram,
+		// or unscored aboveHistogram, with no measured value.
+		p.Measured = meas
+	}
 	switch {
 	case pred.Value == nil:
 		p.Unscored = UnscoredRefused
 	case requests < minRequestsFor(q):
 		p.Unscored = UnscoredFewRequests
+	case math.IsInf(*meas, 1) && top > 0 && *pred.Value < top:
+		p.Ratio, p.AboveHistogram = ptr(*pred.Value/top), true
+	case math.IsInf(*meas, 1):
+		p.Unscored = UnscoredAboveHistogram
 	case *meas > 0 && *pred.Value > 0:
 		p.Ratio = ptr(*pred.Value / *meas)
 	default:
@@ -1217,25 +1382,32 @@ func pointOf(q float64, pred Figure, bound, meas *float64, requests float64) Bac
 	return p
 }
 
-// judge is the step against the TTFT target, predicted and measured.
-func (q *backtestQuestion) judge(pred prediction, m measured) *BacktestJudged {
-	i := slices.Index(backtestStats, q.target.Percentile)
+// judgeTarget is the step against the TTFT target, predicted (from its
+// points) and measured; a measured figure above the top bucket is a miss
+// only where the target is under that bucket.
+func judgeTarget(target *ReportTarget, points []BacktestPoint, m measured) *BacktestJudged {
+	i := slices.Index(backtestStats, target.Percentile)
 	j := &BacktestJudged{Predicted: judgedUnknown, Measured: judgedUnknown}
-	read := func(v *float64) string {
-		switch {
-		case v == nil:
-			return judgedUnknown
-		case *v <= q.target.Seconds:
-			return judgedMet
-		}
-		return judgedMissed
-	}
-	if i < 0 {
+	if i < 0 || i >= len(points) {
 		return j
 	}
-	j.Predicted = read(pred.ttft[i].Value)
-	if m.requests >= minRequestsFor(q.target.Percentile) {
-		j.Measured = read(m.ttft[i])
+	if v := points[i].Predicted.Value; v != nil {
+		j.Predicted = judgedMissed
+		if *v <= target.Seconds {
+			j.Predicted = judgedMet
+		}
+	}
+	v := m.ttft[i]
+	switch {
+	case v == nil || m.ttftWhy[i] != "" || m.requests < minRequestsFor(target.Percentile):
+	case math.IsInf(*v, 1):
+		if target.Seconds < m.ttftTop {
+			j.Measured = judgedMissed
+		}
+	case *v <= target.Seconds:
+		j.Measured = judgedMet
+	default:
+		j.Measured = judgedMissed
 	}
 	return j
 }
@@ -1317,7 +1489,7 @@ func loadBand(share float64) string {
 
 // scoresOf is each statistic's TTFT and TPOT score over the judged steps.
 func scoresOf(steps []BacktestStep) (ttft, tpot []BacktestScore) {
-	ttft, tpot = []BacktestScore{}, []BacktestScore{}
+	ttft, tpot = make([]BacktestScore, 0, len(backtestStats)), make([]BacktestScore, 0, len(backtestStats))
 	for i, q := range backtestStats {
 		ttft = append(ttft, scoreOf(q, steps, func(st BacktestStep) []BacktestPoint { return st.TTFT }, i))
 		tpot = append(tpot, scoreOf(q, steps, func(st BacktestStep) []BacktestPoint { return st.TPOT }, i))
@@ -1327,7 +1499,7 @@ func scoresOf(steps []BacktestStep) (ttft, tpot []BacktestScore) {
 
 // scoreOf is statistic i's score over the judged steps.
 func scoreOf(q float64, steps []BacktestStep, points func(BacktestStep) []BacktestPoint, i int) BacktestScore {
-	sc := BacktestScore{Statistic: statisticName(q), Unscored: map[string]int{}, Outside: map[string]int{}}
+	sc := BacktestScore{Statistic: statisticName(q), Unscored: map[string]int{}, Refused: map[string]int{}, Outside: map[string]int{}}
 	var all, in []BacktestPoint
 	for _, st := range steps {
 		ps := points(st)
@@ -1336,9 +1508,17 @@ func scoreOf(q float64, steps []BacktestStep, points func(BacktestStep) []Backte
 		}
 		p := ps[i]
 		if p.Ratio == nil {
-			sc.Unscored[p.Unscored]++
+			if p.Unscored != "" {
+				sc.Unscored[p.Unscored]++
+			}
 			if r := p.Predicted.Refused; r != nil {
-				sc.Unscored[UnscoredRefused+":"+r.Reason]++
+				sc.Refused[r.Reason]++
+				if m := p.Measured; r.Reason == string(whatif.Saturated) && m != nil && whatif.Finite(*m) {
+					if sc.PastKnee == nil {
+						sc.PastKnee = &Band{Lo: *m, Hi: *m}
+					}
+					sc.PastKnee.Lo, sc.PastKnee.Hi = min(sc.PastKnee.Lo, *m), max(sc.PastKnee.Hi, *m)
+				}
 			}
 			continue
 		}
@@ -1346,7 +1526,7 @@ func scoreOf(q float64, steps []BacktestStep, points func(BacktestStep) []Backte
 		switch {
 		case p.InRegion:
 			in = append(in, p)
-		case p.Predicted.Validation != nil:
+		case p.Predicted.Validation != nil && p.Predicted.Validation.Outside != "":
 			sc.Outside[outsideKey(p.Predicted.Validation.Outside)]++
 		}
 	}
@@ -1376,18 +1556,27 @@ func statsOf(ps []BacktestPoint) BacktestStats {
 	for i, p := range ps {
 		ratios[i] = *p.Ratio
 		errs[i] = math.Abs(math.Log(*p.Ratio))
-		if p.Bound != nil && *p.Measured <= *p.Bound {
-			covered++
+		if p.Bound != nil {
+			s.CoverageSteps++
+			if !p.AboveHistogram && *p.Measured <= *p.Bound {
+				covered++
+			}
 		}
-		if math.Abs(*p.Ratio-1) <= BacktestTolerance {
+		if !p.AboveHistogram && math.Abs(*p.Ratio-1) <= BacktestTolerance {
 			within++
+		}
+		if p.AboveHistogram || *p.Ratio < 1-BacktestTolerance {
+			s.Low++
 		}
 	}
 	n := float64(len(ps))
 	s.Bias = ptr(median(ratios))
 	s.MedianError = ptr(math.Expm1(median(errs)))
 	s.P90Error = ptr(math.Expm1(nearestRank(errs, 0.9)))
-	s.Coverage, s.Within = ptr(float64(covered)/n), ptr(float64(within)/n)
+	s.Within = ptr(float64(within) / n)
+	if s.CoverageSteps > 0 {
+		s.Coverage = ptr(float64(covered) / float64(s.CoverageSteps))
+	}
 	return s
 }
 
@@ -1409,85 +1598,168 @@ func nearestRank(xs []float64, q float64) float64 {
 	return s[max(int(math.Ceil(q*float64(len(s))))-1, 0)]
 }
 
-// biasWords is a median ratio in words.
-func biasWords(r float64) string {
-	switch {
-	case r > 1.2:
-		return "it reads high, on the safe side"
+// leanWords is a statistic's lean in words: its median ratio, and how wide
+// its errors are. It never calls a lean safe: a median above 1 can hide
+// steps it read low, which the verdict counts beside it.
+func leanWords(a BacktestStats) string {
+	lean := "no overall lean"
+	switch r := *a.Bias; {
 	case r > 1.05:
-		return "it reads slightly high"
-	case r >= 0.95:
-		return "on target"
-	case r >= 1/1.2:
-		return "it reads slightly low"
+		lean = "it leans high"
+	case r < 0.95:
+		lean = "it leans low"
 	}
-	return "it reads low, the unsafe side"
+	if *a.Within < 0.5 {
+		lean = "its errors are wide; " + lean
+	}
+	return fmt.Sprintf("%s (median ratio %.2f)", lean, *a.Bias)
 }
 
-// durationWords is d in hours or minutes.
+// durationWords is d in hours and minutes, or minutes.
 func durationWords(d time.Duration) string {
-	if d >= 90*time.Minute {
-		return strconv.FormatFloat(math.Round(d.Hours()*10)/10, 'f', -1, 64) + " h"
+	m := int(math.Round(d.Minutes()))
+	switch {
+	case m < 60:
+		return strconv.Itoa(m) + " min"
+	case m%60 == 0:
+		return strconv.Itoa(m/60) + " h"
 	}
-	return strconv.Itoa(int(math.Round(d.Minutes()))) + " min"
+	return fmt.Sprintf("%d h %d min", m/60, m%60)
 }
 
-// stepWords is the step in words, "minutes" or "5-minute steps".
+// numberWords are the step lengths a verdict names in words.
+var numberWords = map[int]string{1: "one", 2: "two", 5: "five", 10: "ten", 15: "fifteen", 30: "thirty"}
+
+// stepWords is the step in words: "one-minute steps", "five-minute steps".
 func stepWords(step time.Duration) string {
-	if step == time.Minute {
-		return "minutes"
+	m := int(step.Minutes())
+	n, ok := numberWords[m]
+	if !ok {
+		n = strconv.Itoa(m)
 	}
-	return strconv.Itoa(int(step.Minutes())) + "-minute steps"
+	return n + "-minute steps"
 }
 
-// verdictOf is the answer in one sentence, and what was not judged in one
-// more. It says only what the judged steps say, and names the region.
-func verdictOf(out *BacktestResponse, step time.Duration) (string, string) {
-	s := out.Summary
-	span := out.Test.To.Sub(out.Test.From) + step/time.Duration(max(out.Test.Cycles, 1))
-	unit := stepWords(step)
-	part := func(name string, scores []BacktestScore) string {
-		var sc *BacktestScore
-		for _, stat := range []string{"p90", "p50", statisticMean} {
-			i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == stat })
-			if i >= 0 && scores[i].All.Steps > 0 {
-				sc = &scores[i]
-				break
-			}
+// secondsWords is x seconds in ms under one second, else in seconds.
+func secondsWords(x float64) string {
+	if x < 1 {
+		return fmt.Sprintf("%.0f ms", x*1000)
+	}
+	return fmt.Sprintf("%.1f s", x)
+}
+
+// backtestHint is what to do about a statistic no step priced, by the
+// refusal's reason.
+func backtestHint(reason string) string {
+	switch reason {
+	case string(whatif.Saturated):
+		return "every step was at or past the load the planner thinks the fleet can carry"
+	case string(whatif.NoPrefillCapacity), string(whatif.NoFixedLatency), string(whatif.PinnedDefaultB), string(whatif.NoLine):
+		return "the fitted part held too few busy minutes to learn from; fit on more (a larger split, or a longer recording)"
+	}
+	return "see the refusal in the steps"
+}
+
+// verdictPart is one figure's sentence: its p90 (else p50, else mean)
+// within 20% in how many of the steps it priced, its lean, the steps it
+// read more than 20% low, and the steps it gave no figure for and why.
+func verdictPart(name string, scores []BacktestScore, unit string) (line string, quoted *BacktestScore) {
+	for _, stat := range []string{statP90, "p50", statisticMean} {
+		i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == stat })
+		if i >= 0 && scores[i].All.Steps > 0 {
+			quoted = &scores[i]
+			break
 		}
-		if sc == nil {
-			var why []string
-			if i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == "p90" }); i >= 0 {
-				for k, n := range scores[i].Unscored {
-					if r, ok := strings.CutPrefix(k, UnscoredRefused+":"); ok {
-						why = append(why, fmt.Sprintf("%s in %d", r, n))
-					}
+	}
+	if quoted == nil {
+		var why []string
+		hint := ""
+		if i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 }); i >= 0 {
+			for r, n := range scores[i].Refused {
+				why = append(why, fmt.Sprintf("%s in %d", r, n))
+				if hint == "" || r != string(whatif.Saturated) {
+					hint = backtestHint(r)
 				}
 			}
-			slices.Sort(why)
-			if len(why) == 0 {
-				return fmt.Sprintf("%s: not scored in any step", name)
+			if n := scores[i].Unscored[UnscoredNotComparable]; n > 0 && len(why) == 0 {
+				return fmt.Sprintf("%s was not scored: the source measured no %s comparable with the prediction (see measured).", name, name), nil
 			}
-			return fmt.Sprintf("%s: no figure in any judged step (refused: %s)", name, strings.Join(why, ", "))
 		}
-		a := sc.All
-		w := fmt.Sprintf("%s %s was within %.0f%% of what the fleet measured in %.0f%% of the %d %s it priced (median ratio %.2f, %s)",
-			sc.Statistic, name, BacktestTolerance*100, *a.Within*100, a.Steps, unit, *a.Bias, biasWords(*a.Bias))
-		if n := sc.Unscored[UnscoredRefused+":"+string(whatif.Saturated)]; n > 0 {
-			w += fmt.Sprintf(", and gave no figure for %d it judged past the knee", n)
+		slices.Sort(why)
+		if len(why) == 0 {
+			return fmt.Sprintf("The planner's %s was not scored in any step.", name), nil
 		}
-		return w
+		return fmt.Sprintf("The planner gave no %s figure for any step: %s (refused: %s).", name, hint, strings.Join(why, ", ")), nil
 	}
-	region := 0
-	for _, sc := range s.TTFT {
-		if sc.Statistic == "p90" {
-			region = sc.InRegion.Steps
+	sc := quoted
+	a := sc.All
+	w := fmt.Sprintf("%s %s: within %.0f%% of measured in %d of the %d %s it gave a figure for; %s",
+		sc.Statistic, name, BacktestTolerance*100, int(math.Round(*a.Within*float64(a.Steps))), a.Steps, unit, leanWords(a))
+	if a.Low > 0 {
+		w += fmt.Sprintf("; it read %d more than 20%% low", a.Low)
+	}
+	w += "."
+	if n := sc.Refused[string(whatif.Saturated)]; n > 0 {
+		w += fmt.Sprintf(" For %d more it gave no figure, calling the fleet overloaded", n)
+		switch b := sc.PastKnee; {
+		case b == nil:
+		case secondsWords(b.Lo) == secondsWords(b.Hi):
+			w += fmt.Sprintf("; the fleet measured %s %s there", sc.Statistic, secondsWords(b.Lo))
+		default:
+			w += fmt.Sprintf("; the fleet measured %s %s to %s there", sc.Statistic, secondsWords(b.Lo), secondsWords(b.Hi))
+		}
+		w += "."
+	}
+	other := 0
+	for r, n := range sc.Refused {
+		if r != string(whatif.Saturated) {
+			other += n
 		}
 	}
-	verdict := fmt.Sprintf("Over the %s it did not see, the planner's %s; %s. %d of the judged %s were inside the planner's validated region "+
-		"(the envelope of measured runs).", durationWords(span), part("TTFT", s.TTFT), part("TPOT", s.TPOT), region, unit)
+	if other > 0 {
+		w += fmt.Sprintf(" %d more were refused for another reason (see the steps).", other)
+	}
+	if n := sc.Unscored[UnscoredFewRequests]; n > 0 {
+		w += fmt.Sprintf(" %d had too few requests to measure a %s.", n, sc.Statistic)
+	}
+	if n := sc.Unscored[UnscoredAboveHistogram]; n > 0 {
+		w += fmt.Sprintf(" %d measured above the histogram's top bucket, beyond what it can tell.", n)
+	}
+	return w, quoted
+}
+
+// verdictOf is the answer, one sentence a figure and one on the region,
+// and what was not judged in one more. It says only what the judged steps
+// say: each share is over the steps the planner gave a figure for, with
+// the steps it did not, and why, beside it.
+func verdictOf(out *BacktestResponse, step time.Duration) ([]string, string) {
+	s := out.Summary
+	span := out.Test.To.Sub(out.Test.From)
+	if out.Test.Cycles > 1 {
+		span += span / time.Duration(out.Test.Cycles-1)
+	}
+	unit := stepWords(step)
+	lines := []string{fmt.Sprintf("Over the %s the planner did not see:", durationWords(span))}
 	if s.Judged == 0 {
-		verdict = fmt.Sprintf("Over the %s it did not see, no step could be judged: see what was not judged.", durationWords(span))
+		lines = append(lines, "no step could be judged; see what was not judged.")
+	} else {
+		ttft, tq := verdictPart("TTFT", s.TTFT, unit)
+		tpot, pq := verdictPart("TPOT", s.TPOT, unit)
+		lines = append(lines, ttft, tpot)
+		region, scored := 0, 0
+		for _, sc := range []*BacktestScore{tq, pq} {
+			if sc != nil {
+				region, scored = region+sc.InRegion.Steps, scored+sc.All.Steps
+			}
+		}
+		switch {
+		case scored == 0:
+		case region == 0:
+			lines = append(lines, "None of these figures falls within the conditions our own accuracy benchmarks cover "+
+				"(docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.")
+		default:
+			lines = append(lines, fmt.Sprintf("%d of these %d figures fall within the conditions our own accuracy benchmarks cover.", region, scored))
+		}
 	}
 	e := s.Excluded
 	var parts []string
@@ -1505,21 +1777,22 @@ func verdictOf(out *BacktestResponse, step time.Duration) (string, string) {
 		excluded += "; not judged: " + strings.Join(parts, ", ")
 	}
 	excluded += "."
-	return verdict, excluded
+	return lines, excluded
 }
 
 // backtestNotes is what the answer rests on, in words.
-func backtestNotes(q *backtestQuestion, out *BacktestResponse) []string {
+func backtestNotes(q *backtestQuestion) []string {
 	notes := []string{
-		"Fitted on the fit window alone; each step of the test is priced from its own inputs (rate, prompt and output lengths, " +
-			"the replicas each role served) and never from its measured latency.",
-		fmt.Sprintf("Each step's rate is the mean of its cycles' rates; its measured figures average the cycles' histograms, each over the "+
-			"source's rate window, so a step's measurement reaches back that window before the step. A percentile is scored with %0.f requests "+
-			"or more at p50, %0.f at p90 and %0.f at p95 (50 for the mean).", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95)),
-		fmt.Sprintf("Bias is the median of predicted over measured; error the median and p90 of |ln ratio| as a share; coverage the share of "+
-			"steps measured at or under the prediction's upper bound (the top of its span over V_P and f for TTFT, of its band for TPOT); "+
-			"within, the share inside %.0f%%.", BacktestTolerance*100),
-		"In region: the prediction is inside the validated envelope (docs/guides/capacity-planner/accuracy.md); all: every judged step.",
+		"Fitted on the fit window alone. Each step of the test is priced from its own inputs (request rate, prompt and output lengths, " +
+			"prompt-length spread, the replicas each role served), read over the same window its measurement covers, and never from its measured latency.",
+		fmt.Sprintf("Each step is measured at its last cycle, over the source's rate window (the router's five minutes, the engines' one): "+
+			"a step shorter than the window is measured over the window. A step whose window reaches before the test, or over a change of "+
+			"replicas, is not judged. A percentile is scored with %0.f requests or more at p50, %0.f at p90 and %0.f at p95 (50 for the mean); "+
+			"measured percentiles are interpolated inside the histogram's buckets.", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95)),
+		fmt.Sprintf("Median ratio is the middle step's predicted over measured; typical and worst-10%% miss the median and p90 of the factor "+
+			"between them; under the upper bound the share measured at or under the planner's own upper estimate, where it gives one; "+
+			"within, the share inside %.0f%%. A measured figure above the histogram's top bucket counts as read low.", BacktestTolerance*100),
+		"In region: the figure falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md).",
 	}
 	if q.config.Allowed {
 		notes = append(notes, "CONFIGURATION DIFFERS, priced anyway: "+mismatchWords(q.config.Differences)+". The score includes that difference.")

@@ -413,20 +413,21 @@ is in [Check the planner](check.md).
 | `split`, `fitUntil` | `60%` | Where to split one source: a share of its span, or an RFC 3339 time. The fit is the source read at the split's cycle, resolved as `POST /v1/inputs` resolves it; the test is every cycle after it. |
 | `step`, `settle` | `5m`, `2m` | A step's length (`1m` to `1h`), and how long after a change of replicas, and after the test's start, a step is not judged. |
 | `ttft` | | A target (`statistic`, `target` seconds) to judge each step by, predicted and measured. |
-| `arrivalCV2` | Poisson | The test's Ca². |
+| `arrivalCV2` | Poisson | The test's Ca^2: 1 is random arrivals, higher is burstier. |
 | `measured` | `auto` | `router`, `engine`, or `auto`. |
 | `assume` | | Terms the fit did not learn, as a plan's `assume`. Every figure they move is flagged. |
-| `allowConfigMismatch` | false | A test whose recorded configuration (model, accelerator, parallelism, engine flags, flow-control series) differs from the fit's is a 400 naming each field; true prices it, with the difference in `config.differences` and the notes. |
+| `allowConfigMismatch` | false | A test whose recorded configuration differs from the fit's is a 400 with `reason` `ConfigMismatch`, naming each field: the model, the roles, the flow-control series (read over each side's cycles), and per role the accelerator, GPUs, vLLM release and every engine setting the capacity fingerprint holds (parallelism, dtypes, batch and context limits, speculative decoding, KV connector, prefix caching, checkpoint, image). A setting a side could not read is not compared. True prices it, with the difference in `config.differences` and the notes. A test that is the fit's own source, or overlaps it in time, is a 400. |
 
 | Key | What it is |
 | --- | --- |
-| `verdict`, `excluded` | The answer in one sentence, and what was not judged, in one more. |
+| `verdict`, `verdictLines`, `excluded` | The answer, whole and a sentence a line (the span, TTFT, TPOT, the benchmark conditions), and what was not judged. |
+| `backtestId`, `banner`, `notes`, `step`, `settle`, `ttft` | The answer's id, its standing in one line, what it rests on, the step and settle in seconds, and the target asked. |
 | `fit`, `test`, `split` | Each side's source, span and cycles, and how one source was split. |
 | `config` | `match`, `differences[]` (`field`, `fit`, `test`), `notCompared` (what a side does not record, the router's version always), `allowed`. |
 | `measured`, `measuredNote` | The latency scored against, and what its figures are. |
-| `assumed` | The inputs the test did not give: Poisson arrivals, a prompt spread not read. |
-| `steps[]` | `start`, `cycles`, `excluded` (`warmUp`, `scaling`, `noTraffic`, `noMeasurement`, `notPriced`) with `detail`, the inputs (`rate`, `prefill`, `decode`, `promptTokens`, `outputTokens`, `promptCV`), `requests`, `kneeShare` and `load` (TTFT's band), `decodeKneeShare` and `decodeLoad` (TPOT's), `ttft[]` and `tpot[]` per statistic (`mean`, `p50`, `p90`, `p95`): `predicted` (a figure, with its validation), `bound` (the top of its span over V_P and f, or of its band), `measured`, `ratio` (predicted over measured), `inRegion`, `unscored` (`fewRequests`, `aboveHistogram`, `refused`, `notMeasured`); and `target` with a target. |
-| `summary` | `steps`, `judged`, `excluded` counts, and per statistic over `all` judged steps and `inRegion`: `steps`, `bias` (the median ratio), `medianError` and `p90Error` (of \|ln ratio\| as a share), `coverage` (measured at or under the bound), `within` (within 20%); `unscored` and `outside` counts; `byLoad[]` the same per load band; `target` the agreement on the target. |
+| `assumed` | The inputs the test did not give: random arrivals, a prompt-length spread not read. |
+| `steps[]` | `start`, `cycles`, `excluded` (`warmUp`, `scaling`, `noTraffic`, `noMeasurement`, `notPriced`) with `detail`, the inputs (`rate`, `prefill`, `decode`, `promptTokens`, `outputTokens`, `promptCV`), `requests`, `kneeShare` and `load` (TTFT's band), `decodeKneeShare` and `decodeLoad` (TPOT's), `ttft[]` and `tpot[]` per statistic (`mean`, `p50`, `p90`, `p95`): `predicted` (a figure, with its validation), `bound` (the planner's own upper estimate: the top of its span over V_P and f, or of its band; absent with none), `measured`, `ratio` (predicted over measured), `inRegion`, `aboveHistogram` (measured above the top bucket while predicted under it: `ratio` is over the top bound, and counts as read low), `unscored` (`fewRequests`, `aboveHistogram`, `refused`, `notMeasured`, `notComparable`); and `target` with a target. Each step's inputs are read over the window its measurement covers: the cycles of the router's rate window (five minutes) ending at the step's last cycle. |
+| `summary` | `steps`, `judged`, `excluded` counts, and per statistic over `all` judged steps and `inRegion`: `steps`, `bias` (the median ratio), `medianError` and `p90Error` (of \|ln ratio\| as a share: 0.5 is a factor of 1.5), `coverage` over `coverageSteps` (measured at or under the bound, where there is one), `within` (within 20%), `low` (read more than 20% low); `unscored` by reason, `refused` by the refusal's reason, `pastKnee` (the measured range where it refused as saturated), and `outside` by the envelope's reason; `byLoad[]` the same per load band (`steps` by TTFT's band, `decodeSteps` by TPOT's); `target` the agreement on the target. |
 
 A measured percentile needs 50 requests in the step at p50, 100 at p90 and
 200 at p95 (50 for the mean): fewer is `fewRequests`, not scored.
