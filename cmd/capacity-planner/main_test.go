@@ -52,6 +52,24 @@ func runCLI(args ...string) (string, error) {
 	return out.String(), err
 }
 
+// TestRun_HelpIsNotAnError: a new user's first try, --help before any
+// command, prints the commands and exits 0, as -h after a command does.
+func TestRun_HelpIsNotAnError(t *testing.T) {
+	for _, h := range []string{"help", "-h", "-help", "--help"} {
+		t.Run(h, func(t *testing.T) {
+			out, err := runCLI(h)
+			require.NoError(t, err)
+			require.Contains(t, out, "usage: capacity-planner at-replicas|")
+		})
+	}
+	out, err := runCLI("help", "day-plan")
+	require.NoError(t, err)
+	require.Contains(t, out, "-bucket")
+	_, err = runCLI("help", "day-pln")
+	require.ErrorContains(t, err, `unknown command "day-pln"`)
+	require.Equal(t, 2, exitCode(err))
+}
+
 func captureArgs(prom, out string, extra ...string) []string {
 	return append([]string{"capture", "--prometheus", prom, "--namespace", "llm", "--role-of", "decode=app=m-dec",
 		"--from", cliFrom.Format(time.RFC3339), "--to", cliFrom.Add(time.Minute).Format(time.RFC3339), "-o", out}, extra...)

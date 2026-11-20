@@ -135,8 +135,10 @@ func TestExport_EveryRecordedStringIsClassified(t *testing.T) {
 	// each sighting's Pod and variant. 144 with S1: SLOTTFTReading's six, and
 	// SLOPolicy.FlowControl. 146 with J1: the joint reading's reason and flags.
 	// 148 with EngineParams.VLLMVersionFrom, on the filing and the record. 149
-	// with ReplicaMetrics.GroupEngines: each engine's PodName, a pod.
-	assert.Len(t, values, 149, "string value sites")
+	// with ReplicaMetrics.GroupEngines: each engine's PodName, a pod. 155 with
+	// the external analyzer's rule form: a demand rule's query, threshold and
+	// role, and a target query, its token and the reduction.
+	assert.Len(t, values, 155, "string value sites")
 	// 51 since learner PR 5c: LearnedState.StartSamples and StartAdmittedAt,
 	// keyed like StartSeconds, and AnalyzerResult.RoleStartSeeded, by role.
 	// 52 since 5d: LearnedState.StartCounted. 53 since ev-shindin/llm-scaling-manager#495's

@@ -18,6 +18,9 @@ IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager:$(IMG_TAG)
 # The warm-pool proxy ships as its own image because it runs in the pool's Pod,
 # not the controller's. Pin a digest in the manifest; this tag is for building.
 WARMPOOL_PROXY_IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager/warmpool-proxy:$(IMG_TAG)
+# The warm-pool launcher (Dockerfile.warmpool-launcher): the vendored launcher
+# in warmpool/supervisor/ on the vLLM image, released under the same tag.
+WARMPOOL_LAUNCHER_IMG ?= $(IMAGE_TAG_BASE)/llm-d-scaling-manager/warmpool-launcher:$(IMG_TAG)
 # The operator tools (Dockerfile.tools): prepull, weights, engine-cache,
 # workload-patch, the ScaledObject plan and utilization share without a
 # checkout. The release publishes it.
@@ -3468,6 +3471,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# name, a missing ScaledObject (so the pool is never discovered), a worker
 	@# template carrying the proxy (so the group never becomes Ready).
 	@bash hack/check-warmpool-manifests.sh
+	@echo "Checking warmpool.sh create refuses a pool that fits no node beside a CPU KV tier..."
+	@bash hack/check-warmpool-ram.sh
 	@echo "Checking the capacity planner's in-cluster manifests (config/capacity-planner)..."
 	@# A Service on plain Kubernetes, a cluster-scoped object, a listen beyond
 	@# loopback, a wider Role or another subject, a proxy that passes the
@@ -3672,6 +3677,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@python3 hack/check-add-variant.py
 	@echo "Checking the pod spec the warm pool planner reads..."
 	@python3 hack/check-warmpool-plan.py
+	@echo "Checking warm-pool sizing subtracts the host RAM serving engines hold..."
+	@python3 hack/check-warmpool-sizing.py
 	@echo "Checking for mangled line continuations..."
 	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
 	@# the \n becomes a literal argument. It shipped once, in the limiter path,
@@ -3725,6 +3732,23 @@ docker-build-warmpool-proxy: ## Build the warm-pool proxy image. WARMPOOL_PROXY_
 .PHONY: docker-push-warmpool-proxy
 docker-push-warmpool-proxy: ## Push the warm-pool proxy image.
 	$(CONTAINER_TOOL) push ${WARMPOOL_PROXY_IMG}
+
+# BuildKit reads Dockerfile.warmpool-launcher.dockerignore. The build pulls the
+# vLLM base (about 10 GB) and imports the launcher against it, so a vLLM module
+# the launcher imports that has moved fails here.
+.PHONY: docker-build-warmpool-launcher
+docker-build-warmpool-launcher: ## Build the warm-pool launcher image (pulls the ~10 GB vLLM base). WARMPOOL_LAUNCHER_IMG=<ref>
+	DOCKER_BUILDKIT=1 $(CONTAINER_TOOL) build -t ${WARMPOOL_LAUNCHER_IMG} -f Dockerfile.warmpool-launcher .
+
+.PHONY: docker-push-warmpool-launcher
+docker-push-warmpool-launcher: ## Push the warm-pool launcher image.
+	$(CONTAINER_TOOL) push ${WARMPOOL_LAUNCHER_IMG}
+
+# The launcher's own unit tests. They stub vLLM, so they need only the packages
+# in warmpool/supervisor/tests/requirements.txt (pip install -r it first).
+.PHONY: test-warmpool-launcher
+test-warmpool-launcher: ## Run the warm-pool launcher's Python unit tests (needs warmpool/supervisor/tests/requirements.txt installed)
+	cd warmpool/supervisor && python3 -m pytest -v -p no:cacheprovider tests
 
 # BuildKit reads Dockerfile.tools.dockerignore; the default .dockerignore
 # excludes deploy/, which is all this image carries.

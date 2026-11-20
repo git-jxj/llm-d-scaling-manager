@@ -320,8 +320,8 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 		for i, pv := range variants {
 			names[i] = pv.state.Variant
 		}
-		return nil, whatifapi.InputErrorf("the model has %d decode variants (%s) at cycle %d; a plan prices one P/D fleet: name one with decodeVariant",
-			len(variants), strings.Join(names, ", "), st.Cycle)
+		return nil, whatifapi.InputErrorf("the model has %d decode variants (%s) at cycle %d; a plan prices one P/D fleet: name one with decodeVariant%s",
+			len(variants), strings.Join(names, ", "), st.Cycle, noRoleHint(variants))
 	}
 	ps, err := f.prefillState(st)
 	if err != nil {

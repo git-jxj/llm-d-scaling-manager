@@ -695,20 +695,53 @@ func toExternalDefinition(label string, def config.ExternalAnalyzerDef) (externa
 	bodies := make(map[string]external.Body)
 	if len(def.Engines) > 0 {
 		for engine, body := range def.Engines {
-			th, err := strconv.ParseFloat(body.Threshold, 64)
+			b, err := toExternalBody(body.Query, body.Threshold, body.ExternalAnalyzerRules)
 			if err != nil {
-				return external.Definition{}, fmt.Errorf("engine %q: threshold %q: %w", engine, body.Threshold, err)
+				return external.Definition{}, fmt.Errorf("engine %q: %w", engine, err)
 			}
-			bodies[engine] = external.Body{Query: body.Query, Threshold: th}
+			bodies[engine] = b
 		}
 	} else {
-		th, err := strconv.ParseFloat(def.Threshold, 64)
+		b, err := toExternalBody(def.Query, def.Threshold, def.ExternalAnalyzerRules)
 		if err != nil {
-			return external.Definition{}, fmt.Errorf("threshold %q: %w", def.Threshold, err)
+			return external.Definition{}, err
 		}
-		bodies[""] = external.Body{Query: def.Query, Threshold: th}
+		bodies[""] = b
 	}
 	return external.Definition{Label: label, Bodies: bodies}, nil
+}
+
+// toExternalBody converts one catalog body. A body without the rule form
+// (config.ExternalAnalyzerRules) needs a threshold that parses, as it always
+// has; in the rule form a threshold may be left out where a role rule or a
+// target supplies P, which external.New checks.
+func toExternalBody(query, threshold string, rules config.ExternalAnalyzerRules) (external.Body, error) {
+	parse := func(s string) (float64, error) {
+		if s == "" && rules.IsSet() {
+			return 0, nil
+		}
+		return strconv.ParseFloat(s, 64)
+	}
+	th, err := parse(threshold)
+	if err != nil {
+		return external.Body{}, fmt.Errorf("threshold %q: %w", threshold, err)
+	}
+	b := external.Body{Query: query, Threshold: th, TargetReduce: rules.TargetReduce, EmptyIsMissing: rules.EmptyIsMissing}
+	for i, r := range rules.Demand {
+		rth, err := parse(r.Threshold)
+		if err != nil {
+			return external.Body{}, fmt.Errorf("demand[%d].threshold %q: %w", i, r.Threshold, err)
+		}
+		b.Demand = append(b.Demand, external.DemandRule{Role: r.Match.Role, Query: r.Query, Threshold: rth, OrZero: r.OrZero})
+	}
+	for _, r := range rules.Target {
+		t := external.TargetRule{Role: r.Match.Role}
+		for _, q := range r.Queries {
+			t.Queries = append(t.Queries, external.TargetQuery{Query: q.Query, E: q.E})
+		}
+		b.Target = append(b.Target, t)
+	}
+	return b, nil
 }
 
 // StartOptimizeLoop starts the optimization loop for the saturation engine.

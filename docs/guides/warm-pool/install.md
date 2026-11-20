@@ -42,6 +42,50 @@ groups needs the fork, because the stock launcher cannot start a multi-node
 follower at all. Why the stock launcher is required: see
 [Details](#why-the-launcher-image-is-required).
 
+#### Our own launcher image (optional, not yet the default)
+
+Each release after v0.12.1 also publishes a launcher built here:
+
+```
+ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher:<release>
+```
+
+- It is FMA's launcher (v0.8.0) with the follower fix, so it serves pools of
+  Pods and pools of groups alike.
+- It runs **vLLM v0.34.0**. The FMA images above run v0.26.0.
+- It is signed with cosign, like the controller image.
+
+**Use it only for workloads that run vLLM v0.34.0.** A warm copy runs in the
+launcher's image, not the workload's, so its vLLM is the launcher's. A copy on
+another vLLM is a different engine: different defaults, a different KV cache
+size, and a compile cache the workload's replicas never filled.
+
+To use it, look up the release's digest, verify its signature (cosign 3.0 or
+later), and pass it to `create` pinned by digest:
+
+```bash
+V=<release, later than v0.12.1>
+IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher
+D="$(docker buildx imagetools inspect "$IMAGE:$V" --format '{{json .Manifest}}' | jq -r .digest)"
+cosign verify "$IMAGE@$D" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/$V"
+deploy/warmpool.sh create ... --launcher-image "$IMAGE@$D"
+```
+
+The digest you verify is the digest you deploy. Which image fits which
+workload: [the table in `warmpool/README.md`](../../../warmpool/README.md#which-launcher-image-to-use).
+
+It has not run on a GPU yet; the default stays on FMA's images until it has.
+Every warm copy carries `--gpu-memory-utilization`. When the controller flag
+`--warm-pool-gpu-memory-utilization` is 0 and the workload sets none, the
+controller passes 0.9, because vLLM v0.34's own default is 1.0 and would leave
+no room for sleepers. A pool's `warmPoolGPUMemoryUtilization` overrides the
+flag for that pool (in releases after v0.12.1; before, the key was ignored). A model already
+resident with the old value keeps it, and is not reused until it is evicted.
+What the image is and how it is built:
+[`warmpool/README.md`](../../../warmpool/README.md#the-image-built-from-it).
+
 ## Turning it on during installation
 
 The installer can create pools in the same pass that creates ScaledObjects. It
@@ -319,9 +363,11 @@ both halves:
 
 You could substitute your own: the launcher's source is vendored at
 `warmpool/supervisor/`, and any image offering the same instance API over vLLM
-would do. FMA's is used because it is the one proven on this cluster. This repo
-does not build that image, so the vendored source is for reading, not shipping;
-if FMA publishes a newer launcher, the copy here may differ from the one running.
+would do. FMA's is the default because it is the one proven on this cluster.
+This repo now builds an image from the vendored source
+([above](#our-own-launcher-image-optional-not-yet-the-default)), but the default
+manifests still run FMA's, so the copy here differs from the one running until
+that default moves.
 
 This is the live FMA dependency the [FMA post-mortem](../../proposals/fma-post-mortem.md)
 warns about: FMA was dropped as an *actuation strategy*, but its launcher still

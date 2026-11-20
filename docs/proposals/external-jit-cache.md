@@ -1,7 +1,11 @@
 # Workloads that bring their own JIT cache
 
-**Status:** proposal, 2026-11-16; nothing built. Depends on: PR #146 (FlashInfer
-cache fix, not merged).
+**Status:** proposal, 2026-11-16. Built (#214): the annotation, the
+per-variable rule over the four variables on main, the report, the conflict
+and its revert, the refusal, and `engine-cache-keys` / `-verify`; see
+[An external cache manager](../reference/workload-preparation.md#an-external-cache-manager).
+Not built: the five variables of the cache-variable PR (#213), the bytecode
+offer for images before vLLM v0.32, and the start-time decisions.
 
 **What you do.** If another component owns your engine's compile caches:
 

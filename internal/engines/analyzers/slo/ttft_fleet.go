@@ -99,8 +99,11 @@ type ttftInputs struct {
 	// acrossCounts is SwitchTTFTImbalanceAcrossCounts: f at an unlearned
 	// count read across counts (imbalanceAcross).
 	acrossCounts bool
-	flow         whatif.FlowControl
-	mismatch     bool
+	// aFromJoint is a taken from the joint window's a₀, P1 having refused
+	// it (SwitchTTFTSizesPrefill, withJointFixedLatency).
+	aFromJoint bool
+	flow       whatif.FlowControl
+	mismatch   bool
 }
 
 // imbalance is f at pods, whether it is assumed, and where it came from.

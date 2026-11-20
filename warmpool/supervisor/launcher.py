@@ -13,38 +13,72 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Vendored by llm-d-scaling-manager. Upstream base: llm-d-fast-model-actuation
+# v0.8.0, commit 3f67d2c4c5c51baa6016fc24630222decd94971f,
+# inference_server/launcher/launcher.py. Three changes on top, nothing else:
+#   1. the follower-rank branch in vllm_kickoff (a multi-node engine's rank > 0
+#      runs vLLM's headless executor), first carried in fork commit 65ba31b;
+#   2. the vLLM v0.34 module layout in the vllm imports below;
+#   3. _wait_procs, around psutil.wait_procs: psutil 7.2 re-raises EINVAL from
+#      its pidfd wait for a PID being reaped (giampaolo/psutil#2715).
+# This file runs only in the image built by Dockerfile.warmpool-launcher.
+# See warmpool/README.md before changing it.
+
 
 """
 vLLM Launcher
 """
 
 import asyncio
+import errno
 import logging
 import multiprocessing
 import os
 import re
 import signal
 import stat
+import subprocess
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from http import HTTPStatus  # HTTP Status Codes
-from typing import Dict, List, Optional
+from typing import Dict, Generator, List, Optional
 
+import psutil
 import uvloop
 from fastapi import FastAPI, Header, HTTPException, Path, Query
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 from gputranslator import GpuTranslator
 from pydantic import BaseModel
-from vllm.entrypoints.openai.api_server import run_server
+# vLLM v0.34 moved three of these (v0.26 paths in brackets):
+# run_server [entrypoints.openai.api_server, now a deprecated re-export],
+# make_arg_parser and validate_parsed_serve_args [entrypoints.openai.cli_args],
+# cli_env_setup [entrypoints.serve.utils.api_utils]. The image build imports
+# this file, so a further move fails the build, not a Pod.
+from vllm.entrypoints.launchers.api_server.entry import run_server
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
+from vllm.entrypoints.common.cli_args import (
+    make_arg_parser,
+    propagate_flash_late_interaction,
+    validate_parsed_serve_args,
+)
 from vllm.usage.usage_lib import UsageContext
 from vllm.v1.executor.multiproc_executor import MultiprocExecutor
-from vllm.entrypoints.serve.utils.api_utils import cli_env_setup
+from vllm.entrypoints.common.startup import cli_env_setup
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
 MAX_LOG_RESPONSE_BYTES = 1 * 1024 * 1024  # 1 MB default for API response
+
+# How often, in seconds, stop_async checks whether the processes of an
+# instance's process group that it is waiting for are gone.
+PROCESS_POLL_INTERVAL = 0.1
+
 _MAX_BROADCASTER_EVENTS = 1000
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
@@ -157,6 +191,86 @@ class HalfMade(Exception):
         self.instance_id = instance_id
 
 
+def dump_process_group(subject: str, pgpid: int, when: str) -> set[psutil.Process]:
+    members = []
+    ans: set[psutil.Process] = set()
+    for proc in psutil.process_iter(attrs=["pid", "ppid", "name", "cmdline"]):
+        pid = proc.info["pid"]
+        ppid = proc.info["ppid"]
+        pname = proc.info["name"]
+        cmdline = proc.info["cmdline"]
+        if isinstance(cmdline, list) and len(cmdline) > 4:
+            # 4 is enough to resolve the mysteries that we have had
+            cmdline = cmdline[:4] + ["..."]
+        try:
+            proc_pg = os.getpgid(pid)
+            if proc_pg == pgpid:
+                members.append([pid, ppid, pname, cmdline])
+                ans.add(proc)
+        except OSError as exn:
+            logger.debug(
+                f"Failed to os.getpgid({pid} {ppid} {pname}), errno={exn.errno}"
+            )
+        except Exception as exn:
+            logger.debug(f"Failed to os.getpgid({pid} {ppid} {pname}), exn={exn}")
+    logger.debug(
+        "Members of process group for "
+        + subject
+        + f" ({pgpid}) "
+        + when
+        + f" are: {members}"
+    )
+    return ans
+
+
+def _wait_procs(procs, timeout: float) -> list[psutil.Process]:
+    """psutil.wait_procs(procs, timeout), returning the processes still alive.
+
+    psutil 7.2.x waits through pidfd_open(), and re-raises its EINVAL
+    (giampaolo/psutil#2715, fixed after 7.2.2). The kernel returns EINVAL, not
+    ESRCH, for a PID whose task is being or has been reaped -- and these PIDs
+    are reaped by their own parents (the engine's API server and EngineCore)
+    while the launcher waits on them. EINVAL therefore means the process is
+    gone; re-check the rest and keep waiting for what is left.
+    """
+    deadline = time.monotonic() + timeout
+    alive = list(procs)
+    while True:
+        try:
+            _, alive = psutil.wait_procs(alive, timeout=max(0.0, deadline - time.monotonic()))
+            return alive
+        except OSError as err:
+            if err.errno != errno.EINVAL:
+                raise
+            alive = [p for p in alive if p.is_running()]
+            remaining = deadline - time.monotonic()
+            if not alive or remaining <= 0:
+                return alive
+            # psutil counts a zombie as running, so EINVAL can come straight
+            # back for it: pause, or this spins a core until the deadline.
+            time.sleep(min(PROCESS_POLL_INTERVAL, remaining))
+
+
+async def _await_procs(procs: set[psutil.Process], timeout: float) -> None:
+    """psutil.wait_procs(procs, timeout), but sleeping on the event loop.
+
+    Apart from the vLLM process itself, these are not children of the launcher,
+    so there is no sentinel fd to watch for them and waiting means polling.
+    psutil.wait_procs polls too, only it sleeps on the calling thread between
+    checks.  Here a zero timeout makes each check non-blocking, and the sleeping
+    is done on the loop.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    alive = list(procs)
+    while True:
+        alive = _wait_procs(alive, 0)
+        remaining = deadline - loop.time()
+        if not alive or remaining <= 0:
+            return
+        await asyncio.sleep(min(PROCESS_POLL_INTERVAL, remaining))
+
+
 class VllmInstance:
     """Represents a single vLLM instance"""
 
@@ -166,6 +280,7 @@ class VllmInstance:
         config: VllmConfig,
         gpu_translator: GpuTranslator,
         log_dir: str = "",
+        debug_gpu_memory: bool = False,
     ):
         """
         Initialize VllmInstance object
@@ -189,7 +304,7 @@ class VllmInstance:
                 config.env_vars = {}
             config.env_vars["CUDA_VISIBLE_DEVICES"] = ",".join(cuda_indices)
             logger.info(
-                "Set CUDA_VISIBLE_DEVICES to %s based on UUIDs.",
+                "Set CUDA_VISIBLE_DEVICES to '%s' based on UUIDs.",
                 config.env_vars["CUDA_VISIBLE_DEVICES"],
             )
 
@@ -203,6 +318,7 @@ class VllmInstance:
             log_dir or "/tmp",
             f"launcher-{os.getpid()}-vllm-{instance_id}.log",
         )
+        self.debug_gpu_memory = debug_gpu_memory
 
     def _make_state(self, status: str) -> dict:
         return {
@@ -224,17 +340,20 @@ class VllmInstance:
         open(self._log_file_path, "wb").close()
 
         self.process = multiprocessing.Process(
-            target=vllm_kickoff, args=(self.config, self._log_file_path)
+            target=vllm_kickoff,
+            args=(self.config, self._log_file_path, self.debug_gpu_memory),
         )
         self.process.start()
 
         return self._make_state("started")
 
-    def stop(self, timeout: int = 10) -> dict:
-        """
-        Stop existing vLLM instance
-        :param timeout: waits for the process to stop, defaults to 10
-        :return: a dictionary with the status "terminated"
+    def _stop_steps(self) -> Generator[Optional[set[psutil.Process]], None, dict]:
+        """The stop sequence, shared by stop() and stop_async().
+
+        This is a generator so that the sequence is written once while each of
+        those does the waiting its own way.  Where it needs a wait it yields what
+        to wait for: None for the vLLM process, or a set of processes from its
+        process group.  It returns the final state.
         """
         if self.process is None:
             raise HalfMade(self.instance_id)
@@ -242,23 +361,148 @@ class VllmInstance:
             self._cleanup_log_file()
             return self._make_state("not_running")
 
+        vllm_pid = self.process.pid
+        assert vllm_pid is not None
+
+        dump_process_group(self.instance_id, vllm_pid, "before process.terminate")
+        # psutil.Process hashes according to (PID, create time)
+        termd: set[psutil.Process] = {psutil.Process(vllm_pid)}
+        killd: set[psutil.Process] = set()
+
         # Graceful termination — send SIGTERM to the vLLM process,
         # which will propagate shutdown to the EngineCore via vLLM's
         # own cleanup logic.
-        self.process.terminate()
-        self.process.join(timeout=timeout)
-
-        # Force kill the entire process group (vLLM server + EngineCore)
-        # if graceful shutdown did not complete in time.
-        if self.process.is_alive():
-            try:
-                os.killpg(self.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            self.process.join()
-
+        try:
+            self.process.terminate()
+        except psutil.Error as exn:
+            logger.error(f"For instance {self.instance_id}, terminate threw {exn}")
+        yield None
+        rounds = 1
+        while rounds < 3:
+            remains = dump_process_group(
+                self.instance_id, vllm_pid, f"after {rounds} rounds of stopping"
+            )
+            for proc in remains:
+                try:
+                    if proc.pid == 1:
+                        logger.error(
+                            f"Somehow PID 1 got into the process group ({vllm_pid}) of"
+                            f" instance {self.instance_id}, excepting it from stopping"
+                        )
+                    elif proc in killd:
+                        logger.info(
+                            f"Stopping pid {proc.pid} with SIGKILL AGAIN because"
+                            " once was not enough"
+                        )
+                        proc.kill()
+                    elif proc in termd:
+                        logger.info(
+                            f"Stopping pid {proc.pid} with SIGKILL because"
+                            " SIGTERM was not enough"
+                        )
+                        killd.add(proc)
+                        proc.kill()
+                    else:
+                        logger.info(
+                            f"Stopping pid {proc.pid} with SIGTERM because it remains"
+                        )
+                        termd.add(proc)
+                        proc.terminate()
+                except psutil.Error as exn:
+                    logger.error(
+                        f"For instance {self.instance_id},"
+                        f" terminate/kill({proc.pid} threw {exn})"
+                    )
+            yield remains
+            rounds = rounds + 1
+        finals = dump_process_group(self.instance_id, vllm_pid, "at end of stopping")
+        if len(finals) > 0:
+            logger.error(
+                f"Giving up on stopping processes for instance {self.instance_id},"
+                f" {finals} remain"
+            )
         self._cleanup_log_file()
         return self._make_state("terminated")
+
+    async def _await_exit(self, timeout: float) -> None:
+        """Wait for the vLLM process to exit, using the event loop's own poll.
+
+        The kernel makes the sentinel fd readable when the child exits, and the
+        loop is already watching fds; so waiting means adding this one to what the
+        loop polls, rather than blocking the loop in a poll of our own the way
+        process.join() does (it polls the very same fd internally, on the calling
+        thread).  The caller must have removed any other reader for this fd first
+        --- asyncio allows only one --- which stop_instance_async does by way of
+        cancel_sentinel_watcher().
+
+        Returns when the child has exited or *timeout* has elapsed, whichever
+        comes first.
+        """
+        loop = asyncio.get_running_loop()
+        exited = loop.create_future()
+
+        def on_readable():
+            if not exited.done():
+                exited.set_result(True)
+
+        # If the child is already gone the fd is readable now, and the loop calls
+        # on_readable on its next pass; no need to special-case that.
+        loop.add_reader(self.process.sentinel, on_readable)
+        try:
+            await asyncio.wait_for(exited, timeout)
+        except TimeoutError:
+            pass
+        finally:
+            loop.remove_reader(self.process.sentinel)
+
+    def stop(self, timeout: int = 10) -> dict:
+        """
+        Stop existing vLLM instance, blocking the caller.
+
+        The waits block the calling thread; use stop_async() from anything that
+        must not block, such as a request handler.
+        :param timeout: how long each wait for processes to exit may take,
+                        defaults to 10
+        :return: a dictionary with the status "terminated"
+        """
+        steps = self._stop_steps()
+        try:
+            procs = next(steps)
+            while True:
+                if procs is None:
+                    self.process.join(timeout=timeout)
+                else:
+                    _wait_procs(procs, timeout)
+                procs = next(steps)
+        except StopIteration as done:
+            return done.value
+
+    async def stop_async(self, timeout: int = 10) -> dict:
+        """
+        Stop existing vLLM instance without blocking the event loop.
+
+        Same sequence as stop(); only the waiting differs.  The wait for the vLLM
+        process is the loop polling its sentinel fd, and the waits for the rest
+        of its process group poll psutil between sleeps on the loop.
+        :param timeout: how long each wait for processes to exit may take,
+                        defaults to 10
+        :return: a dictionary with the status "terminated"
+        """
+        steps = self._stop_steps()
+        try:
+            procs = next(steps)
+            while True:
+                if procs is None:
+                    await self._await_exit(timeout)
+                    # Reap the child if it has exited.  A zero timeout makes
+                    # this a WNOHANG waitpid, which returns at once if the child
+                    # is still alive rather than blocking the loop.
+                    self.process.join(timeout=0)
+                else:
+                    await _await_procs(procs, timeout)
+                procs = next(steps)
+        except StopIteration as done:
+            return done.value
 
     def _on_sentinel_exit(self):
         """Handle process exit detected by the sentinel fd.
@@ -312,35 +556,43 @@ class VllmInstance:
         return self._make_state("running" if self.process.is_alive() else "stopped")
 
     def get_log_bytes(
-        self, start: int = 0, end: int | None = None
-    ) -> tuple[bytes, int]:
+        self, start: int | None = 0, end: int | None = None
+    ) -> tuple[int, bytes, int]:
         """
         Retrieve log bytes from the child process.
-        :param start: First byte to read (inclusive, 0-based).
-        :param end: Last byte to read (inclusive, must be >= start).
+        :param start: First byte to read (inclusive, 0-based) or None for suffix.
+        :param end: if start is None then suffix length otherwise
+                    Last byte to read (inclusive, must be >= start).
                     None means up to start + MAX_LOG_RESPONSE_BYTES - 1
-                    or EOF, whichever comes first.
-        :return: (content_bytes, current_total_log_length)
+                    or EOF, whichever comes first; may not be None if start is None.
+        :return: (read_start, content_bytes, current_total_log_length)
         :raises LogRangeNotAvailable: If start is beyond available content
         """
         try:
             total = os.path.getsize(self._log_file_path)
         except FileNotFoundError:
-            total = 0
+            raise LogRangeNotAvailable(start, 0)
 
-        if start >= total:
+        if start is not None and start >= total:
             raise LogRangeNotAvailable(start, total)
 
-        if end is None:
+        if start is None:
+            if end is None:
+                raise LogRangeNotAvailable(None, total)
+            read_start = max(total - end, 0)
+            read_end = total - 1
+        elif end is None:
+            read_start = start
             read_end = min(start + MAX_LOG_RESPONSE_BYTES - 1, total - 1)
         else:
+            read_start = start
             read_end = min(end, total - 1)
 
-        nbytes = read_end - start + 1
+        nbytes = read_end - read_start + 1
         with open(self._log_file_path, "rb") as f:
-            f.seek(start)
+            f.seek(read_start)
             data = f.read(nbytes)
-        return (data, total)
+        return (read_start, data, total)
 
 
 # Multi-instance vLLM process manager
@@ -352,8 +604,12 @@ class VllmMultiProcessManager:
         node_name: Optional[str] = None,
         namespace: Optional[str] = None,
         log_dir: str = "",
+        debug_gpu_memory: bool = False,
     ):
         self.instances: Dict[str, VllmInstance] = {}
+        # Per-instance-id locks, reference counted; see _instance_lock.
+        self._instance_locks: Dict[str, asyncio.Lock] = {}
+        self._instance_lock_users: Dict[str, int] = {}
         self.broadcaster = EventBroadcaster()
         # Monotonically increasing counter owned by the manager.
         # The manager stamps every event before handing it to the
@@ -367,6 +623,7 @@ class VllmMultiProcessManager:
             mock_gpu_count=mock_gpu_count,
         )
         self.log_dir = log_dir
+        self.debug_gpu_memory = debug_gpu_memory
 
     @property
     def revision(self) -> int:
@@ -388,13 +645,12 @@ class VllmMultiProcessManager:
         loop = asyncio.get_running_loop()
         loop.create_task(self.broadcaster._notify())
 
-    def create_instance(
-        self, vllm_config: VllmConfig, instance_id: Optional[str] = None
-    ) -> dict:
-        """Create and start a new vLLM instance"""
-        if instance_id is None:
-            instance_id = str(uuid.uuid4())
+    def create_instance(self, vllm_config: VllmConfig, instance_id: str) -> dict:
+        """Create and start a new vLLM instance, without taking its id's lock.
 
+        For callers with no event loop, such as the synchronous tests.  Request
+        handling should use create_instance_async instead.
+        """
         if instance_id in self.instances:
             logger.warning(
                 "Rejecting request to create vLLM instance: id=%s already exists",
@@ -405,7 +661,11 @@ class VllmMultiProcessManager:
         logger.info("Accepted request to create vLLM instance with id=%s", instance_id)
 
         instance = VllmInstance(
-            instance_id, vllm_config, self.gpu_translator, self.log_dir
+            instance_id,
+            vllm_config,
+            self.gpu_translator,
+            self.log_dir,
+            self.debug_gpu_memory,
         )
         self.instances[instance_id] = instance
 
@@ -428,20 +688,56 @@ class VllmMultiProcessManager:
             pass  # No running event loop (e.g. in sync tests)
         return result
 
-    def stop_instance(self, instance_id: str, timeout: int = 10) -> dict:
-        """Stop a specific vLLM instance"""
+    @asynccontextmanager
+    async def _instance_lock(self, instance_id: str):
+        """Serialize the operations that create and destroy one instance.
+
+        Stopping an instance awaits, so other requests are served meanwhile.
+        Without this lock a create of the same id could run in the middle of the
+        stop: it would be rejected as a duplicate, because the instance being
+        stopped is still in self.instances, and then the stop would remove that
+        entry anyway.  The lock is per instance id, so operations on different
+        instances still proceed concurrently.
+
+        Entries are reference-counted rather than left to accumulate: instance
+        ids are one-shot, so a plain dict would grow without bound.  The count
+        is safe to keep unguarded because it is only touched between awaits.
+        """
+        lock = self._instance_locks.setdefault(instance_id, asyncio.Lock())
+        self._instance_lock_users[instance_id] = (
+            self._instance_lock_users.get(instance_id, 0) + 1
+        )
+        try:
+            async with lock:
+                yield
+        finally:
+            self._instance_lock_users[instance_id] -= 1
+            if self._instance_lock_users[instance_id] == 0:
+                del self._instance_lock_users[instance_id]
+                del self._instance_locks[instance_id]
+
+    def _stop_begin(self, instance_id: str) -> VllmInstance:
+        """What stopping an instance does before the waiting.
+
+        Shared by stop_instance and stop_instance_async.
+        """
         if instance_id not in self.instances:
             raise KeyError(f"Instance {instance_id} not found")
 
         instance = self.instances[instance_id]
         instance.cancel_sentinel_watcher()
-        instance.stop(timeout)
+        return instance
 
+    def _stop_end(self, instance: VllmInstance) -> dict:
+        """What stopping an instance does after the waiting.
+
+        Shared by stop_instance and stop_instance_async.
+        """
         revision = self._next_revision()
         instance.last_revision = revision
         result = instance.get_status()
 
-        del self.instances[instance_id]
+        del self.instances[instance.instance_id]
 
         event = WatchEvent(type="DELETED", object=result)
         self.broadcaster._append(event)
@@ -451,6 +747,113 @@ class VllmMultiProcessManager:
         except RuntimeError:
             pass  # No running event loop (e.g. in sync tests)
         return result
+
+    def stop_instance(self, instance_id: str, timeout: int = 10) -> dict:
+        """Stop a specific vLLM instance, blocking the caller.
+
+        Kept for callers with no event loop, such as the synchronous tests.
+        Request handling should use stop_instance_async instead.
+        """
+        instance = self._stop_begin(instance_id)
+        instance.stop(timeout)
+        return self._stop_end(instance)
+
+    async def stop_instance_async(self, instance_id: str, timeout: int = 10) -> dict:
+        """Stop a specific vLLM instance without blocking the event loop.
+
+        Waiting for a child to exit takes seconds of wall clock in the good case
+        and up to the timeout in the bad one.  Doing that with process.join()
+        blocks the calling thread, so on the event loop the launcher answers
+        nothing meanwhile -- health probes included -- and the liveness probe the
+        controller injects allows each of those only a second before it counts as
+        a failure.  stop_async() does its waiting on the loop instead.
+        """
+        async with self._instance_lock(instance_id):
+            instance = self._stop_begin(instance_id)
+            try:
+                await instance.stop_async(timeout)
+            except (Exception, asyncio.CancelledError):
+                # _stop_begin cancelled the sentinel watcher; since the instance
+                # stays tracked, put it back so its eventual exit is still noticed.
+                # That includes being cancelled midway, which CancelledError
+                # reports and which is not an Exception.
+                instance.start_sentinel_watcher(self._on_instance_stopped)
+                raise
+            return self._stop_end(instance)
+
+    async def create_instance_async(
+        self, vllm_config: VllmConfig, instance_id: Optional[str] = None
+    ) -> dict:
+        """Create and start a new vLLM instance, under its id's lock.
+
+        :param instance_id: the id to give the instance, or None to generate one.
+            A generated id is locked like any other, since nothing guarantees
+            that it differs from every id currently locked.
+        """
+        if instance_id is None:
+            instance_id = str(uuid.uuid4())
+        async with self._instance_lock(instance_id):
+            return self.create_instance(vllm_config, instance_id)
+
+    async def stop_all_instances_async(self, timeout: int = 10) -> dict:
+        """Stop every instance, concurrently, and return once there are none.
+
+        That includes instances created while this is in progress.  It works in
+        passes: each pass stops, concurrently, the instances that exist when it
+        begins, and passes repeat until there are no instances left.  So if
+        instances keep being created, this keeps stopping them.
+
+        A pass in which any stop fails is the last: once all of that pass's
+        stops have settled, this raises an ExceptionGroup of the failures.  The
+        instances that failed to stop are still there, so another pass would not
+        get to "none left" either.
+
+        The synchronous version stops instances one after another, so N
+        instances cost up to N times the timeout with the launcher unresponsive
+        throughout.
+        """
+        results: list[dict] = []
+        while self.instances:
+            instance_ids = list(self.instances.keys())
+            settled = await asyncio.gather(
+                *(
+                    self.stop_instance_async(instance_id, timeout)
+                    for instance_id in instance_ids
+                ),
+                return_exceptions=True,
+            )
+            failures: list[Exception] = []
+            for instance_id, outcome in zip(instance_ids, settled):
+                if isinstance(outcome, KeyError):
+                    continue  # Instance was already removed
+                if isinstance(outcome, BaseException) and not isinstance(
+                    outcome, Exception
+                ):
+                    # Cancellation or the like: not a failure to stop, so do
+                    # not dress it up as one.
+                    raise outcome
+                if isinstance(outcome, Exception):
+                    logger.error(f"Failed to stop instance {instance_id}: {outcome}")
+                    failures.append(outcome)
+                    continue
+                results.append(outcome)
+
+            if failures:
+                # Every instance in the pass got its chance to stop -- that is
+                # why this is raised after they all settled rather than at the
+                # first failure -- but the caller must not be told the bulk
+                # delete succeeded when it did not.
+                raise ExceptionGroup(  # noqa: F821 (builtin since 3.11)
+                    f"failed to stop {len(failures)} of {len(instance_ids)}"
+                    " instance(s)",
+                    failures,
+                )
+
+        return {
+            "status": "all_stopped",
+            "stopped_instances": results,
+            "total_stopped": len(results),
+        }
 
     def stop_all_instances(self, timeout: int = 10) -> dict:
         """Stop all running vLLM instances"""
@@ -502,15 +905,16 @@ class VllmMultiProcessManager:
     def get_instance_log_bytes(
         self,
         instance_id: str,
-        start: int = 0,
+        start: int | None = 0,
         end: int | None = None,
-    ) -> tuple[bytes, int]:
+    ) -> tuple[int, bytes, int]:
         """
         Get log bytes from a specific instance.
         :param instance_id: ID of the instance
-        :param start: First byte to read (inclusive, 0-based)
-        :param end: Last byte to read (inclusive), or None for default limit
-        :return: (content_bytes, total_file_size)
+        :param start: First byte to read (inclusive, 0-based), or None for suffix
+        :param end: if start is None then suffix length otherwise
+                    Last byte to read (inclusive) or None for default limit
+        :return: (read_start, content_bytes, total_file_size)
         :raises LogRangeNotAvailable: If start is beyond available content
         """
         if instance_id not in self.instances:
@@ -530,7 +934,10 @@ async def lifespan(application: FastAPI):
     """Manage application lifecycle: clean up all vLLM instances on shutdown."""
     yield
     logger.info("Launcher shutting down, stopping all vLLM instances...")
-    vllm_manager.stop_all_instances()
+    try:
+        await vllm_manager.stop_all_instances_async()
+    except Exception as e:
+        logger.error(f"Failed to stop all vLLM instances on shutdown: {e}")
 
 
 # Create FastAPI application
@@ -542,26 +949,33 @@ app = FastAPI(
 )
 
 
-_RANGE_RE = re.compile(r"^bytes=(\d+)-(\d+)?$")
+_RANGE_RE = re.compile(r"^bytes=(\d+)?-(\d+)?$")
 
 
-def parse_range_header(range_header: str) -> tuple[int, int | None]:
+def parse_range_header(range_header: str) -> tuple[int | None, int | None]:
     """Parse an HTTP Range header value.
 
-    Accepts ``bytes=START-END`` (both inclusive) or ``bytes=START-``
-    (open-ended).  Returns ``(start, end)`` where *end* may be ``None``.
+    Accepts ``bytes=START-END`` (both inclusive) or ``bytes=START-`` (open-ended)
+    or ``bytes=-SUFFIX``.
+    Returns ``(start, end_or_suffix)`` where either may be ``None``.
 
     Raises :class:`ValueError` for unsupported or malformed values
-    (e.g. suffix ranges like ``bytes=-500``).
+    (e.g. suffix ranges like ``bytes=-0``).
     """
     m = _RANGE_RE.match(range_header)
     if m is None:
         raise ValueError(f"Unsupported or malformed Range header: {range_header}")
-    start = int(m.group(1))
+    start = int(m.group(1)) if m.group(1) else None
     # group(2) is the end value; absent in open-ended ranges like "bytes=100-"
     end = int(m.group(2)) if m.group(2) else None
-    if end is not None and end < start:
-        raise ValueError(f"Range end ({end}) must be >= start ({start})")
+    if start is None:
+        if end is None:
+            raise ValueError("Range must specify start or end_or_suffix")
+        if end <= 0:
+            raise ValueError(f"Range suffix must be positive, not {end}")
+    else:
+        if end is not None and end < start:
+            raise ValueError(f"Range end ({end}) must be >= start ({start})")
     return (start, end)
 
 
@@ -595,6 +1009,7 @@ async def index():
                 "get_all_instances": "GET /v2/vllm/instances",
                 "get_instance_logs": "GET /v2/vllm/instances/{instance_id}/log",
                 "watch_instances": "GET /v2/vllm/instances/watch",
+                "get_gpu_debug": "GET /v2/gpu-debug",
             },
         },
         status_code=HTTPStatus.OK,
@@ -631,8 +1046,13 @@ async def watch_instances(
             # Initial state: emit a CREATED event for every existing instance
             # and start streaming from the current revision.
             start_revision = vllm_manager.revision
-            for instance in vllm_manager.instances.values():
-                state = instance.get_status()
+            # Take every instance's state before the first yield: each yield
+            # lets other requests run, and those can create, stop and delete
+            # instances meanwhile.  This is the state as of start_revision.
+            states = [
+                instance.get_status() for instance in vllm_manager.instances.values()
+            ]
+            for state in states:
                 initial = WatchEvent(
                     type="CREATED",
                     object=state,
@@ -659,11 +1079,13 @@ async def create_vllm_instance(vllm_config: VllmConfig):
     """Create a new vLLM instance with random instance ID"""
 
     try:
-        result = vllm_manager.create_instance(vllm_config)
+        result = await vllm_manager.create_instance_async(vllm_config)
         return JSONResponse(content=result, status_code=HTTPStatus.CREATED)
     except Exception as e:
         logger.error(f"Failed to create vLLM instance: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return PlainTextResponse(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, content=str(e)
+        )
 
 
 @app.put("/v2/vllm/instances/{instance_id}")
@@ -673,13 +1095,15 @@ async def create_id_vllm_instance(
 ):
     """Create a new vLLM instance with instance ID"""
     try:
-        result = vllm_manager.create_instance(vllm_config, instance_id)
+        result = await vllm_manager.create_instance_async(vllm_config, instance_id)
         return JSONResponse(content=result, status_code=HTTPStatus.CREATED)
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=HTTPStatus.CONFLICT, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create vLLM instance {instance_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return PlainTextResponse(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, content=str(e)
+        )
 
 
 @app.delete("/v2/vllm/instances/{instance_id}")
@@ -688,24 +1112,63 @@ async def delete_vllm_instance(
 ):
     """Delete a specific vLLM instance"""
     try:
-        result = vllm_manager.stop_instance(instance_id)
+        result = await vllm_manager.stop_instance_async(instance_id)
         return JSONResponse(content=result, status_code=HTTPStatus.OK)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Instance {instance_id} not found")
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail=f"Instance {instance_id} not found"
+        )
     except Exception as e:
         logger.error(f"Failed to delete vLLM instance {instance_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return PlainTextResponse(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, content=str(e)
+        )
 
 
 @app.delete("/v2/vllm/instances")
 async def delete_all_vllm_instances():
     """Delete all vLLM instances"""
     try:
-        result = vllm_manager.stop_all_instances()
+        result = await vllm_manager.stop_all_instances_async()
         return JSONResponse(content=result, status_code=HTTPStatus.OK)
     except Exception as e:
         logger.error(f"Failed to delete all vLLM instances: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return PlainTextResponse(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, content=str(e)
+        )
+
+
+@app.get("/v2/gpu-debug")
+async def get_gpu_debug():
+    try:
+        cp = subprocess.run(
+            "nvidia-smi --query-gpu=index,uuid,memory.used --format=csv; nvidia-smi",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("Timeout trying to use nvidia-smi")
+        return PlainTextResponse(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            content="debugging commands timed out",
+        )
+    except Exception as exn:
+        logger.error(f"Failed to use nvidia-smi, exception {exn}")
+        return PlainTextResponse(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            content=f"Running debug commands threw exception {exn}",
+        )
+    else:
+        return JSONResponse(
+            status_code=HTTPStatus.OK,
+            content=dict(
+                stdout=cp.stdout,
+                stderr=cp.stderr,
+                returncode=cp.returncode,
+            ),
+        )
 
 
 @app.get("/v2/vllm/instances")
@@ -739,11 +1202,13 @@ async def get_vllm_instance_status(
         result = vllm_manager.get_instance_status(instance_id)
         return JSONResponse(content=result, status_code=HTTPStatus.OK)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Instance {instance_id} not found")
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail=f"Instance {instance_id} not found"
+        )
 
 
 @app.get("/v2/vllm/instances/{instance_id}/log")
-async def get_vllm_instance_logs(
+async def get_vllm_instance_log(
     instance_id: str = Path(..., description="Instance ID"),
     range: str | None = Header(None, alias="Range"),
 ):
@@ -754,9 +1219,11 @@ async def get_vllm_instance_logs(
 
     Without a Range header the full log (up to 1 MB) is returned with
     200 OK.  With ``Range: bytes=START-END`` or ``Range: bytes=START-``
+    or ``Range: bytes=-SUFFIX``
     the requested slice is returned with 206 Partial Content.  In both
     cases the response includes a ``Content-Range`` header indicating the byte range
-    and current total log length.
+    and current total log length
+    --- except in the case of empty log, when no ``Content-Range`` header is returned.
     """
     try:
         if range is None:
@@ -766,16 +1233,20 @@ async def get_vllm_instance_logs(
             try:
                 start, end = parse_range_header(range)
             except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc))
+                raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc))
             partial = True
 
-        data, total = vllm_manager.get_instance_log_bytes(instance_id, start, end)
+        read_start, data, total = vllm_manager.get_instance_log_bytes(
+            instance_id, start, end
+        )
 
-        actual_end = start + len(data) - 1
+        actual_end = read_start + len(data) - 1
         headers = {
             "Accept-Ranges": "bytes",
-            "Content-Range": f"bytes {start}-{actual_end}/{total}",
         }
+        if actual_end >= 0:
+            headers["Content-Range"] = f"bytes {read_start}-{actual_end}/{total}"
+        # There is no valid Content-Range when the file's length is zero
         if partial:
             status_code = HTTPStatus.PARTIAL_CONTENT
         else:
@@ -788,7 +1259,9 @@ async def get_vllm_instance_logs(
             headers=headers,
         )
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Instance {instance_id} not found")
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail=f"Instance {instance_id} not found"
+        )
     except LogRangeNotAvailable as e:
         return Response(
             content=b"",
@@ -800,7 +1273,9 @@ async def get_vllm_instance_logs(
         raise
     except Exception as e:
         logger.error(f"Failed to get logs for instance {instance_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return PlainTextResponse(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, content=str(e)
+        )
 
 
 ######################################################################
@@ -836,11 +1311,13 @@ def _close_inherited_sockets():
 
 
 # Function to be executed by the child process
-def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str):
+def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str, debug_gpu_memory: bool):
     """
     Child function to kickoff vllm instance
     :param vllm_config: vLLM configuration parameters and env variables
     :param log_file_path: Path to the log file for capturing stdout/stderr
+    :param debug_gpu_memory: bool indicating whether to first give evidence of
+                             GPU memory usage
     """
 
     # Isolate this process tree into its own process group so that
@@ -869,10 +1346,32 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str):
     sys.stdout = os.fdopen(1, "w")
     sys.stderr = os.fdopen(2, "w")
 
-    logger.info(f"VLLM process (PID: {os.getpid()}) started.")
     # Set env vars in the current process
     if vllm_config.env_vars:
         set_env_vars(vllm_config.env_vars)
+
+    if debug_gpu_memory:
+        try:
+            cp = subprocess.run(
+                "nvidia-smi --query-gpu=index,uuid,memory.used --format=csv"
+                "; nvidia-smi",
+                shell=True,
+                timeout=20,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("nvidia-smi timed out")
+        except Exception as exn:
+            logger.warning(f"Running nvidia-smi threw exception {exn}")
+        else:
+            logger.info(
+                f"Ran nvidia-smi; got returncode={cp.returncode}"
+                f", stdout={cp.stdout}, stderr={cp.stderr}"
+            )
+
+    cvd = os.getenv("CUDA_VISIBLE_DEVICES", "<unset>")
+    logger.info(
+        f"VLLM process (PID: {os.getpid()}, CUDA_VISIBLE_DEVICES: {cvd}) starting."
+    )
 
     # prepare args
     receive_args = vllm_config.options.split()
@@ -900,15 +1399,56 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str):
     # vLLM's own CLI has always had this branch (entrypoints/cli/serve.py,
     # run_headless); the launcher simply never reached it. This mirrors it.
     #
-    # Verified on two H100 nodes with vLLM 0.26.0: with the follower on this
+    # Verified on two H100 nodes with vLLM 0.26.0 (not yet on 0.34): with the follower on this
     # path the pair forms, the leader serves, and one /sleep to the LEADER
     # releases the GPU on BOTH ranks -- 78,015 MiB down to 2,745 MiB each --
     # waking in 0.36 s.
+    #
+    # The checks and the signal handler are run_headless's too (v0.34.0). What
+    # is NOT mirrored is its other branch: --headless on a node whose rank
+    # within its data-parallel group is 0, where vLLM starts that node's
+    # data-parallel engine cores (CoreEngineProcManager) and no API server.
+    # The pool adds --headless to every rank > 0 and declines to warm a group
+    # with data parallelism across Pods (policy.doesNotFit), the one shape where
+    # that lands on such a node. A request for it is refused here rather than
+    # served by an API server nobody would talk to.
     if getattr(args, "headless", False):
+        if (getattr(args, "api_server_count", None) or 1) > 1:
+            raise ValueError("api_server_count can't be set in headless mode")
         engine_args = AsyncEngineArgs.from_cli_args(args)
+        # As vLLM's run_headless does since v0.34, so a follower's workers score
+        # late-interaction models on the same path as the leader's.
+        propagate_flash_late_interaction(args, engine_args)
         engine_config = engine_args.create_engine_config(
             usage_context=UsageContext.OPENAI_API_SERVER, headless=True
         )
+        if getattr(engine_args, "data_parallel_hybrid_lb", False) is True:
+            raise ValueError(
+                "data_parallel_hybrid_lb is not applicable in headless mode"
+            )
+        if engine_config.parallel_config.node_rank_within_dp == 0:
+            raise ValueError(
+                "--headless on data-parallel rank 0 of its node (headless "
+                "data-parallel engines) is not supported by this launcher; only "
+                "a follower rank (node rank within its data-parallel group > 0) is"
+            )
+
+        # A stop sends SIGTERM. As run_headless does, exit through SystemExit
+        # rather than the default action (or a handler inherited from the
+        # launcher through fork). This child ends in os._exit, which runs no
+        # finalizer, so the executor is shut down explicitly below; the stop's
+        # process-group sweep remains the backstop.
+        shutdown_requested = False
+
+        def _on_signal(signum, frame):
+            nonlocal shutdown_requested
+            if not shutdown_requested:
+                shutdown_requested = True
+                raise SystemExit
+
+        signal.signal(signal.SIGTERM, _on_signal)
+        signal.signal(signal.SIGINT, _on_signal)
+
         if engine_config.parallel_config.node_rank_within_dp > 0:
             logger.info(
                 "Starting a headless multiproc executor for rank %d, head node %s:%s",
@@ -920,9 +1460,15 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str):
             # Inline: this call IS the process. Returning would end the child and
             # take the rank with it, leaving the leader waiting at a rendezvous
             # nobody attends.
-            executor.start_worker_monitor(inline=True)
+            try:
+                executor.start_worker_monitor(inline=True)
+            finally:
+                executor.shutdown()
             return
 
+    # vLLM's serve CLI copies a positional model tag into args.model first
+    # (serve.py); the launcher takes options only, and the pool always passes
+    # --model, so there is no positional tag to copy.
     uvloop.run(run_server(args))
 
 
@@ -974,6 +1520,13 @@ if __name__ == "__main__":
         choices=["critical", "error", "warning", "info", "debug"],
         help="Logging level (default: info)",
     )
+    parser.add_argument(
+        "--debug-gpu-memory",
+        type=bool,
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Log info on accelerator memory usage",
+    )
 
     args = parser.parse_args()
 
@@ -984,8 +1537,10 @@ if __name__ == "__main__":
     namespace = os.getenv("NAMESPACE")
 
     logger.info(
-        "Launcher starting with args: mock_gpus=%s, mock_gpu_count=%d, "
-        "host=%s, port=%d, log_level=%s, node_name=%s, namespace=%s",
+        "Launcher starting with args: mock_gpus=%s, mock_gpu_count=%d"
+        ", host=%s, port=%d, log_level=%s, node_name=%s, namespace=%s"
+        ", debug_gpu_memory=%s"
+        "",
         args.mock_gpus,
         args.mock_gpu_count,
         args.host,
@@ -993,6 +1548,7 @@ if __name__ == "__main__":
         args.log_level,
         node_name,
         namespace,
+        args.debug_gpu_memory,
     )
 
     # Reinitialize the global manager with mock mode settings
@@ -1001,6 +1557,7 @@ if __name__ == "__main__":
         mock_gpu_count=args.mock_gpu_count,
         node_name=node_name,
         namespace=namespace,
+        debug_gpu_memory=args.debug_gpu_memory,
     )
 
     uvicorn.run(

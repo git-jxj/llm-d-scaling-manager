@@ -73,9 +73,9 @@ Code: `internal/engines/steadystate/composite.go` (`buildComposite`) and
   role, rather than quietly sizing on saturation.
 - **Missing is not zero.** An analyzer that missed a cycle blocks scale-down
   for its grace window instead of letting the others shrink the fleet. One
-  exception today: the external PromQL analyzer reads an empty query result
-  as 0 demand, a present reading
-  ([#344](https://github.com/ev-shindin/llm-scaling-manager/issues/344)).
+  exception: the external PromQL analyzer reads an empty query result as 0
+  demand, a present reading, unless its definition sets `emptyIsMissing`
+  ([#47](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/47)).
 - **Saturation's units, for now.** The optimizers, the warm pool and rescale
   all read demand in saturation's units. Converting into that unit let the
   composite land without changing any of them.
@@ -103,13 +103,14 @@ Code: `internal/engines/steadystate/composite.go` (`buildComposite`) and
   grow in the other frame, while scale-down stays capped by every frame. A
   mixed-accelerator fleet can therefore end above the cheapest fleet that would
   satisfy every analyzer. Not measured.
-- **Model-level analyzers cannot size P/D**
-  ([#343](https://github.com/ev-shindin/llm-scaling-manager/issues/343)). An
-  analyzer with no per-role demand (the external PromQL analyzer today) sizes
-  no prefill or decode variant; only a log line says so. It still takes part
-  in the grace veto: when its query fails, every role of the model is held
-  against scale-down for up to three cycles, although it could never size
-  any of them.
+- **Model-level analyzers cannot size P/D.** An analyzer with no per-role
+  demand (an external PromQL analyzer with one `query` rather than `demand`
+  rules, [#46](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/46))
+  sizes no prefill or decode variant; only a log line says so. It still takes
+  part in the grace veto: when its query fails, every role of the model is
+  held against scale-down for up to three cycles, although it could never
+  size any of them. An external analyzer with demand rules whose query fails
+  holds every role the same way, including a role it has no rule for.
 - **Only saturation's variants exist**
   ([#345](https://github.com/ev-shindin/llm-scaling-manager/issues/345)). A
   variant saturation does not report is not in the composite.

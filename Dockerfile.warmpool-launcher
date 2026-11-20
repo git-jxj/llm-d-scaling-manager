@@ -1,0 +1,65 @@
+# The warm-pool launcher: the supervisor container of a pool Pod. It is
+# llm-d-fast-model-actuation's launcher (vendored in warmpool/supervisor/, see
+# warmpool/README.md) on the vLLM image the engines run, so the launcher and
+# the engines it starts share one vLLM.
+#
+# The base is the vLLM project's own v0.34.0 build, from the registry its
+# release pipeline pushes to, pinned by digest. It is byte-identical to
+# vllm/vllm-openai:v0.34.0 (same index digest; the image label
+# ai.vllm.image.tag says so), without going through Docker Hub. The tag is
+# the vLLM commit of v0.34.0. To move vLLM, change BASE_IMAGE and VLLM_VERSION
+# together: the build fails when they disagree.
+#
+# The digest fixes the content, not its availability: vLLM does not document
+# how long this registry keeps a release. If it drops this tag, the same
+# digest is vllm/vllm-openai:v0.34.0 on Docker Hub; mirror it to a registry
+# this project may use (not docker.io) and point BASE_IMAGE there.
+ARG BASE_IMAGE=public.ecr.aws/q9t5s3a7/vllm-release-repo:62d4bc3c7e33b1b6c906e233e6af2d3506c482ca@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
+FROM ${BASE_IMAGE}
+ARG VLLM_VERSION=0.34.0
+
+LABEL org.opencontainers.image.source="https://github.com/llm-d-incubation/llm-d-scaling-manager"
+LABEL org.opencontainers.image.description="Warm-pool launcher - starts, lists and stops vLLM engines in a pool Pod"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+WORKDIR /app
+
+# As upstream: torch reads the user name through getpwuid() at import, which
+# fails for an arbitrary UID with no /etc/passwd entry (OpenShift restricted
+# SCC). Seeding USER avoids it. See https://github.com/vllm-project/vllm/issues/44548
+ENV USER=vllm
+
+# gputranslator.py needs nvidia-ml-py (the base already has 13.615.71) and
+# the kubernetes client (the base has none). uv, as vLLM's own image installs,
+# and the base sets UV_OVERRIDE=/etc/uv-overrides.txt, so its overrides apply.
+#
+# Every package the base already has is a CONSTRAINT: the install adds
+# packages and never moves one vLLM runs on. Without it, kubernetes 34.1.0
+# (urllib3<2.4) silently downgraded the base's urllib3 2.8.0 to 2.3.0. A
+# client version that needs a base package moved fails the build instead.
+# 35.0.0 is the newest that installs that way with no extra package. Its own
+# new dependencies (oauthlib, websocket-client, ...) resolve at build time;
+# the released image is pinned by its digest.
+#
+# psutil is the base's (7.2.2). That psutil re-raises EINVAL from its pidfd
+# wait (giampaolo/psutil#2715; fixed upstream, unreleased), which the
+# launcher's _wait_procs absorbs. build_check.py prints the version and fails
+# on psutil >= 7.2 without that wrapper.
+RUN uv pip freeze --system > /tmp/base-constraints.txt \
+    && uv pip install --system --no-cache --constraint /tmp/base-constraints.txt \
+        nvidia-ml-py==13.615.71 kubernetes==35.0.0 \
+    && rm -f /tmp/base-constraints.txt
+
+COPY warmpool/supervisor/launcher.py warmpool/supervisor/gputranslator.py /app/
+
+# The import check. The unit tests stub vLLM, so they cannot see a vLLM module
+# move or a changed call; this imports the launcher against the real vLLM and
+# checks the parameters of every vLLM call it makes, so either fails the build
+# rather than a pool Pod. It also proves the base is the vLLM the launcher was
+# ported to. The check script is bind-mounted, so no layer of the image holds
+# it, and the import writes no bytecode into /app.
+RUN --mount=type=bind,source=warmpool/supervisor/build_check.py,target=/tmp/wp-check/build_check.py \
+    cd /app && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app python3 /tmp/wp-check/build_check.py "${VLLM_VERSION}"
+
+# Started by the pool Pod's own command: python3 /app/launcher.py ...
+ENTRYPOINT []

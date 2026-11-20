@@ -90,7 +90,8 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 		for i, pv := range variants {
 			names[i] = pv.state.Variant
 		}
-		return usagef("the model has %d decode variants (%s); name one with --variant", len(names), strings.Join(names, ", "))
+		return usagef("the model has %d decode variants (%s); name one with --variant%s", len(names), strings.Join(names, ", "),
+			noRoleHint(variants))
 	}
 	if _, err := f.prefillState(st); err != nil {
 		return err

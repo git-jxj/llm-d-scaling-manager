@@ -226,6 +226,43 @@ func variantSelecting(warmPool string) policy.VariantDemand {
 	}
 }
 
+func TestAPoolsOwnGPUUtilisationReachesItsWarmCopies(t *testing.T) {
+	// warmPoolGPUMemoryUtilization was read into PoolSpec and then never used:
+	// every pool ran at the controller-wide value whatever its trigger said.
+	const flag = "--gpu-memory-utilization"
+	const controllers = "--model m " + flag + " 0.9"
+	variant := func(warmPool string) policy.VariantDemand {
+		return policy.VariantDemand{
+			Model:    pool.ModelRef{Namespace: "workload", Variant: "qwen-" + warmPool, EngineOptions: controllers},
+			WarmPool: warmPool,
+		}
+	}
+	pools := []PoolSpec{{Name: "small", GPUMemoryUtilization: 0.6}, {Name: "plain"}}
+	// One slice for every pool, as the reconciler passes it.
+	shared := []policy.VariantDemand{variant("small"), variant("plain")}
+
+	got := map[string][]policy.VariantDemand{}
+	for _, spec := range pools {
+		got[spec.Name] = VariantsFor(shared, spec, pools)
+	}
+	if len(got["small"]) != 1 || len(got["plain"]) != 1 {
+		t.Fatalf("want one variant per pool, got %+v", got)
+	}
+	if want := "--model m " + flag + " 0.6"; got["small"][0].Model.EngineOptions != want {
+		t.Errorf("pool value not applied: %q, want %q", got["small"][0].Model.EngineOptions, want)
+	}
+	if got["plain"][0].Model.EngineOptions != controllers {
+		t.Errorf("a pool with no value of its own must keep the controller's: %q", got["plain"][0].Model.EngineOptions)
+	}
+	// The shared slice is the reconciler's for the whole pass: a pool's value
+	// written into it would reach every later reader of that slice.
+	for _, v := range shared {
+		if v.Model.EngineOptions != controllers {
+			t.Errorf("VariantsFor modified the caller's slice: %s now %q", v.Model.Variant, v.Model.EngineOptions)
+		}
+	}
+}
+
 func TestOnePoolNeedsNoSelection(t *testing.T) {
 	// The common case by a wide margin, and the reason the metadata key is not
 	// boilerplate: with one pool there is nothing to disambiguate, so a

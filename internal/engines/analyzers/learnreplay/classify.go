@@ -227,6 +227,9 @@ var valueRules = map[string]rule{
 	"Error": {class: classText}, "Issues": {class: classText}, "Caveats": {class: classText},
 
 	"Query": {class: classRedact}, "DecodeErr": {class: classRedact}, "Err": {class: classRedact},
+	// An external analyzer's target query names which fallback answered with a
+	// word the operator chose; how it reduces Pods is the code's own word.
+	"E": {class: classRedact}, "TargetReduce": {class: classVocab},
 	"Threshold": {class: classRedact},
 }
 
@@ -289,7 +292,7 @@ var vocabulary = withWords(saturation.LowerBoundRoles(), withWords(ttftWords(), 
 	"k1-bound", "pinned-default", "slo-pinned-default", "no-output-length", "declined", "infeasible",
 	"input-invalid",
 	"itl-line", "k2", "mu", "deployment", "live", "store", "unobserved", "whole", "partial", "none",
-	"tpot", "ttft", "mean", "p50", "p90", "p95", "p99",
+	"tpot", "ttft", "mean", "p50", "p90", "p95", "p99", "avg", "median", "min", "max",
 	// Freshness, limiter scopes and types, optimizer types, toleration operators and effects.
 	"fresh", "stale-ok", "unavailable", "namespace", "cluster", "quota", "gpu-inventory", "kueue",
 	"utilization-share", "utilizationShare", "Exists", "Equal", "In", "NotIn", "DoesNotExist", "Gt", "Lt",

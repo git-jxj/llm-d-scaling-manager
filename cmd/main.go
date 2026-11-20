@@ -369,7 +369,10 @@ func main() {
 			"for about three sleepers on an 80GiB GPU rather than the sixteen the warm set "+
 			"allows. Lowering it trades KV cache for warm-set size, and costs one extra "+
 			"compile (~9s) per model because the value is part of the torch.compile cache key. "+
-			"0 inherits the workload's value. Defaults to 0.90, which leaves room for three 8B "+
+			"0 inherits the workload's value; a workload that names none gets 0.90 on every vLLM "+
+			"(vLLM 0.34 would otherwise take the whole card), which on older vLLM no longer "+
+			"shares the workload's compile cache. A pool's trigger key "+
+			"warmPoolGPUMemoryUtilization overrides this per pool. Defaults to 0.90, which leaves room for three 8B "+
 			"sleepers' GPU residue beside an awake one at a cost of ~6% of KV cache -- the pool "+
 			"only pays when it holds several models per GPU, and an inherited 0.95 leaves room "+
 			"for none.")

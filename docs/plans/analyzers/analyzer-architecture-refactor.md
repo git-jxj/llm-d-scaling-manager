@@ -212,11 +212,13 @@ discovery, **the wrapper supplies no metadata** — only `D` and `P` per variant
 cluster `scaling-manager-analyzers` ConfigMap; a policy entry's `name` resolves **built-in registry first
 (internal), then catalog (external)**.
 
-> **As built** (§10): a demand query and a constant `P`, per inference engine, model-level demand
-> only ([#343](https://github.com/ev-shindin/llm-scaling-manager/issues/343)). No target query,
-> pod→ScaledObject reduction, fallbacks or `orZero`, and an empty result reads as 0 demand
-> ([#344](https://github.com/ev-shindin/llm-scaling-manager/issues/344)). The catalog is `analyzerDefinitions` on the cluster `default` scaling entry,
-> not a ConfigMap of its own.
+> **As built** (§10): a demand query and a constant `P`, per inference engine. Later added:
+> per-role demand rules
+> ([#46](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/46)), and a per-Pod
+> target query with fallbacks and `targetReduce`, `orZero`, and an opt-in `emptyIsMissing`
+> ([#47](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/47)); without it an
+> empty result still reads as 0 demand. The catalog is `analyzerDefinitions` on the cluster
+> `default` scaling entry, not a ConfigMap of its own.
 
 ---
 
@@ -618,10 +620,11 @@ with one addition we already have:
   holds the roles it covers against scale-down. A query that returns an **empty** result reads as
   **0 demand**, which is a present reading of zero need. Listed alone, that votes for scale-down;
   beside another analyzer, the larger need wins. So a bad definition cannot drive runaway scale-up,
-  but an empty one can shrink a model it sizes alone; treating empty as missing is
-  [#344](https://github.com/ev-shindin/llm-scaling-manager/issues/344). Heavy expressions should be precomputed as
+  but an empty one can shrink a model it sizes alone, unless the definition sets
+  `emptyIsMissing` ([#47](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/47)). Heavy expressions should be precomputed as
   Prometheus recording rules.
-- **Load-time validation is deliberately minimal** — `external.New` rejects an empty query or a
+- **Load-time validation is deliberately minimal** (a definition using the rule form of #46/#47 is
+  also checked when the ConfigMap is read, `config.ExternalAnalyzerDef.ValidateRules`) — `external.New` rejects an empty query or a
   non-positive threshold (bad def skipped, logged); we do **not** pull in the full
   `github.com/prometheus/prometheus` PromQL parser just to syntax-check, since the timeout and the
   error path contain a bad query's blast radius.

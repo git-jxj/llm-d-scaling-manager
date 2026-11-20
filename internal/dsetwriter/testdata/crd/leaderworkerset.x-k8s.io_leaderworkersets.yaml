@@ -1,0 +1,39 @@
+# A stand-in for the LeaderWorkerSet CRD: the envtest of the role writer only
+# needs the child LeaderWorkerSets of a DisaggregatedSet to exist, carry their
+# labels and have a spec.replicas that an admission policy can compare.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: leaderworkersets.leaderworkerset.x-k8s.io
+spec:
+  group: leaderworkerset.x-k8s.io
+  names:
+    kind: LeaderWorkerSet
+    listKind: LeaderWorkerSetList
+    plural: leaderworkersets
+    singular: leaderworkerset
+    shortNames:
+      - lws
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                replicas:
+                  type: integer
+                  format: int32
+                  minimum: 0
+                  default: 1
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+      subresources:
+        status: {}
