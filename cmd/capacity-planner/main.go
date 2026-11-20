@@ -33,6 +33,12 @@
 //	capacity-planner backtest        (--recording FILE [--split 60% | --fit-until T] | --fit FILE --test FILE)
 //	                                 [--step 5m] [--settle 2m] [--ttft-target 500ms@p90] [--arrival-cv2 C]
 //	                                 [--measured auto|router|engine] [--assume-vp V] [--assume-a D] [--allow-config-mismatch] [-o json]
+//	capacity-planner strip-latency   -in FILE -o FILE
+//	capacity-planner predict         --fit FILE --window FILE -o prediction.json [--csv FILE] [--step 5m] [--settle 2m]
+//	                                 [--measure-window 5m] [--model M] [--variant V] [--prefill-variant V]
+//	                                 [--arrival-cv2 C] [--assume-vp V] [--assume-a D] [--allow-config-mismatch]
+//	capacity-planner compare         --prediction FILE --measured FILE [--ttft-target 500ms@p90] [--measured-by auto|router|engine]
+//	                                 [--model M] [--variant V] [--prefill-variant V] [-o json]
 //	capacity-planner version         (the release and commit; the controller of the recordings is released under the same tag)
 //
 // capture writes the window's cycle inputs (internal/whatifsource);
@@ -56,6 +62,11 @@
 // backtest fits on one window and predicts another from its inputs alone,
 // beside what the fleet measured there (backtest.go, POST /v1/backtest;
 // docs/guides/capacity-planner/check.md).
+//
+// strip-latency, predict and compare are the backtest in two steps: a
+// window's load is predicted to a file carrying hashes of its inputs and of
+// itself (predict.go, strip.go; POST /v1/predict and /v1/compare), and
+// compared later with the same window measured.
 //
 // serve runs the capacity planner's HTTP API on the same code paths
 // (serve.go, internal/whatifapi; docs/developer-guide/capacity-planner-serve.md).
@@ -246,7 +257,7 @@ func exitCode(err error) int {
 	return 1
 }
 
-const usage = "usage: capacity-planner at-replicas|backtest|capture|day-plan|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
+const usage = "usage: capacity-planner at-replicas|backtest|capture|compare|day-plan|freeze|generate|joint-ttft|predict|replicas-to-slo|serve|slo-to-rate|strip-latency|version [flags]; -h after a command lists its flags"
 
 // command is one subcommand: it parses its own flags from args and writes
 // what it reports to out, and its warnings to warn (stderr).
@@ -256,6 +267,9 @@ type command func(ctx context.Context, args []string, out, warn io.Writer) error
 var commands = map[string]command{
 	"at-replicas":     runAtReplicas,
 	"backtest":        runBacktest,
+	"compare":         runCompare,
+	"predict":         runPredict,
+	"strip-latency":   runStripLatency,
 	"capture":         runCapture,
 	"day-plan":        runDayPlan,
 	"freeze":          runFreeze,

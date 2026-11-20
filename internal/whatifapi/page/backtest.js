@@ -190,6 +190,31 @@ function btFmt(v) {
   return Number((v * 1000).toPrecision(2)) + " ms";
 }
 
+// btPredictionCSV is a prediction file as CSV: a comment line with its
+// hashes, then a row a step with each statistic predicted: the columns of
+// the CLI's predict --csv, its times and numbers written as JavaScript
+// writes them.
+function btPredictionCSV(p) {
+  const stats = ["mean", "p50", "p90", "p95"];
+  const head = ["start", "excluded", "rate", "prefill", "decode"];
+  for (const k of ["ttft", "tpot"]) for (const s of stats) head.push(`${k}_${s}_seconds`);
+  const cell = v => v == null ? "" : String(Number(v.toPrecision(6)));
+  const quote = s => /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  const lines = [`# ${p.kind} model=${p.model} window=${p.window.from}..${p.window.to} predictionHash=${p.predictionHash} ` +
+    `inputsHash=${p.inputsHash} planner=${p.plannerVersion} madeAt=${p.madeAt}`, head.join(",")];
+  for (const s of p.steps) {
+    const row = [s.start, s.excluded || "", s.rate.toFixed(3), String(s.prefill), String(s.decode)];
+    for (const k of ["ttft", "tpot"]) {
+      for (const stat of stats) {
+        const q = btPoint(s, k, stat);
+        row.push(q && q.predicted.value != null ? cell(q.predicted.value) : "");
+      }
+    }
+    lines.push(row.map(quote).join(","));
+  }
+  return lines.join("\n") + "\n";
+}
+
 // btMeasured is a point's measured figure in words: above the top bucket
 // where the histogram could not say.
 function btMeasured(p) {

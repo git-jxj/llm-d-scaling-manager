@@ -248,7 +248,7 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, err
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed}
-	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlanBudget: f.planBudget,
+	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), PlanBudget: f.planBudget,
 		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes}
 	if f.allowUpload {
 		// Built last, so that no check refusing the flags leaves its

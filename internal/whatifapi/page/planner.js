@@ -489,8 +489,12 @@ function setInputs(inputs) {
   el("btrun").disabled = !inputs.fleet.prefill;
   el("btrun").title = inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
   const loaded = inputs.source && inputs.source.name;
-  el("bttest").innerHTML = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded)
-    .map(n => `<option>${esc(n)}</option>`).join("");
+  const others = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded).map(n => `<option>${esc(n)}</option>`).join("");
+  el("bttest").innerHTML = others;
+  el("bpwindow").innerHTML = others;
+  el("bcmeasured").innerHTML = (state.sources ? state.sources.recordings : []).map(n => `<option>${esc(n)}</option>`).join("");
+  el("bprun").disabled = !inputs.fleet.prefill;
+  el("bpout").textContent = "";
   state.priceFailed = false;
   clearPlan();
   state.size = null;
@@ -2031,6 +2035,8 @@ function wire() {
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
   el("btrun").onclick = runBacktest;
+  el("bprun").onclick = runPredict;
+  el("bcrun").onclick = runCompare;
   const btStale = () => { if (state.bt) el("btout").classList.add("stale"); };
   el("btsplit").oninput = () => { el("btsplitout").textContent = el("btsplit").value + "%"; btStale(); };
   el("btstep").onchange = el("bttest").onchange = el("btallow").onchange = btStale;
@@ -2075,6 +2081,80 @@ async function runBacktest() {
   } finally {
     el("btrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
     el("btout").classList.remove("stale");
+  }
+}
+
+// btInputsOf resolves a recording of the loaded model and variants.
+async function btInputsOf(name) {
+  return api("POST", "v1/inputs", {model: state.inputs.model, source: {kind: "recording", name},
+    decodeVariant: state.inputs.fleet.decode.variant,
+    prefillVariant: state.inputs.fleet.prefill ? state.inputs.fleet.prefill.variant : undefined});
+}
+
+// btDownload offers text as a file to save.
+function btDownload(link, name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type}));
+  state.btBlobs = (state.btBlobs || []).concat([a.href]);
+  a.download = name;
+  a.textContent = name;
+  link.append(" ", a);
+}
+
+// runPredict predicts the chosen window on the loaded source and offers
+// the prediction file, as JSON and as CSV.
+async function runPredict() {
+  if (!state.inputs) return;
+  const name = el("bpwindow").value;
+  if (!name) { setStatus("Pick the window to predict.", true); return; }
+  el("bprun").disabled = true;
+  el("bpout").textContent = "";
+  for (const u of state.btBlobs || []) URL.revokeObjectURL(u);
+  state.btBlobs = [];
+  setStatus("Predicting the window from its load alone (seconds to a minute)...");
+  try {
+    const win = await btInputsOf(name);
+    const req = {inputsId: state.inputs.inputsId, windowInputsId: win.inputsId, step: el("btstep").value};
+    if (el("btallow").checked) req.allowConfigMismatch = true;
+    const p = await api("POST", "v1/predict", req);
+    const base = "prediction-" + p.predictionHash.slice(0, 12);
+    const out = el("bpout");
+    out.textContent = `Predicted ${p.steps.filter(s => !s.excluded).length} of ${p.steps.length} steps. Save:`;
+    btDownload(out, base + ".json", JSON.stringify(p, null, 2) + "\n", "application/json");
+    btDownload(out, base + ".csv", btPredictionCSV(p), "text/csv");
+    setStatus("Prediction ready: keep the file, and compare it later with the same window measured.");
+  } catch (e) {
+    setStatus("Could not predict: " + e.message, true);
+  } finally {
+    el("bprun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+  }
+}
+
+// runCompare scores a saved prediction against the chosen window measured,
+// and draws it as a check.
+async function runCompare() {
+  const file = el("bcfile").files[0];
+  if (!file) { setStatus("Choose the prediction file.", true); return; }
+  if (!state.inputs) { setStatus("Load a source first: its model names the window.", true); return; }
+  el("bcrun").disabled = true;
+  setStatus("Comparing the prediction with the window measured...");
+  try {
+    let prediction;
+    try {
+      prediction = JSON.parse(await file.text());
+    } catch (e) {
+      throw new Error("the file is not JSON: " + e.message);
+    }
+    const measured = await btInputsOf(el("bcmeasured").value);
+    const out = await api("POST", "v1/compare", {prediction, inputsId: measured.inputsId});
+    state.bt = out;
+    renderBacktest();
+    el("btout").classList.remove("stale");
+    setStatus(`Compared ${out.steps.length} steps.`);
+  } catch (e) {
+    setStatus("Could not compare: " + e.message, true);
+  } finally {
+    el("bcrun").disabled = false;
   }
 }
 

@@ -572,11 +572,23 @@ type backtestQuestion struct {
 	assume      Assume
 	// targetAsked is the target as the answer names it.
 	targetAsked *Objective
+	// source is the latency scored against; measureWindow, when above 0,
+	// the seconds each step's window spans, for a prediction made with no
+	// latency to read it from; predictionHash the prediction a comparison
+	// scores, which has no fit.
+	source         string
+	measureWindow  float64
+	predictionHash string
 }
 
 // backtestQuestionOf checks req against fit and test, and refuses a test
 // whose configuration differs from the fit's unless the request allows it.
 func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time.Time, split string) (*backtestQuestion, error) {
+	return questionOf(fit, test, req, cutoff, split, false)
+}
+
+// questionOf is backtestQuestionOf; predictOnly asks no latency of the test.
+func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time.Time, split string, predictOnly bool) (*backtestQuestion, error) {
 	q := &backtestQuestion{fit: fit, test: test, cutoff: cutoff, split: split, step: DefaultBacktestStep,
 		settle: DefaultBacktestSettle, measured: MeasuredAuto, cv2: req.ArrivalCV2}
 	var err error
@@ -600,28 +612,13 @@ func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time
 	if c := req.ArrivalCV2; c != nil && !(*c > 0 && *c <= 100) {
 		return nil, InputErrorf("arrivalCV2 %g, want above 0 and at most 100", *c)
 	}
-	if o := req.TTFT; o != nil {
-		if o.Target == nil || !(*o.Target > 0) {
-			return nil, InputErrorf("ttft.target: want seconds above 0")
-		}
-		stat := o.Statistic
-		if stat == "" {
-			stat = statisticMean
-		}
-		pq, err := parseStatistic("ttft.statistic", stat)
-		if err != nil {
-			return nil, err
-		}
-		if !slices.Contains(backtestStats, pq) {
-			return nil, InputErrorf("ttft.statistic %q: a backtest judges the mean, p50, p90 or p95", stat)
-		}
-		q.target = &ReportTarget{Seconds: *o.Target, Percentile: pq}
-		q.targetAsked = &Objective{Statistic: statisticName(pq), Target: o.Target}
+	if q.target, q.targetAsked, err = targetOf(req.TTFT); err != nil {
+		return nil, err
 	}
 	if len(test.series) == 0 {
 		return nil, InputErrorf("the test source carries no cycles")
 	}
-	if len(test.latency) != len(test.series) {
+	if len(test.latency) != len(test.series) && !predictOnly {
 		return nil, InputErrorf("the test source carries no measured latency to score against")
 	}
 	if fit.id == test.id && cutoff.IsZero() {
@@ -712,6 +709,29 @@ type ConfigMismatchError struct {
 
 // Unwrap is the InputError, so that IsInputError holds.
 func (e ConfigMismatchError) Unwrap() error { return e.InputError }
+
+// targetOf reads a backtest's TTFT target: the target, and the target as
+// the answer names it; nil with none.
+func targetOf(o *Objective) (*ReportTarget, *Objective, error) {
+	if o == nil {
+		return nil, nil, nil
+	}
+	if o.Target == nil || !(*o.Target > 0) {
+		return nil, nil, InputErrorf("ttft.target: want seconds above 0")
+	}
+	stat := o.Statistic
+	if stat == "" {
+		stat = statisticMean
+	}
+	pq, err := parseStatistic("ttft.statistic", stat)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !slices.Contains(backtestStats, pq) {
+		return nil, nil, InputErrorf("ttft.statistic %q: a backtest judges the mean, p50, p90 or p95", stat)
+	}
+	return &ReportTarget{Seconds: *o.Target, Percentile: pq}, &Objective{Statistic: statisticName(pq), Target: o.Target}, nil
+}
 
 // mismatchWords is the differences in words.
 func mismatchWords(ds []ConfigMismatch) string {
@@ -808,8 +828,11 @@ func measureWindowOf(l LatencySample, source string) float64 {
 	return defaultMeasureWindow
 }
 
-// run prices and scores every step.
-func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
+// layout is the test's steps, each with its anchor and its measurement
+// window, the changes of replicas, and the test's first cycle. A window is
+// q.measureWindow seconds when set (a prediction made with no latency to
+// read it from), else the one the anchor's latency was read over.
+func (q *backtestQuestion) layout() ([]stepOf, []time.Time, time.Time) {
 	test := q.test
 	first := test.series[q.testIndices[0]].At
 	last := test.series[q.testIndices[len(q.testIndices)-1]].At
@@ -840,14 +863,16 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 			changes = append(changes, b.At)
 		}
 	}
-	source := q.measuredSource()
 	for k := range steps {
 		st := &steps[k]
 		if st.anchor < 0 {
 			continue
 		}
 		at := test.series[st.anchor].At
-		st.windowSeconds = measureWindowOf(test.latency[st.anchor], source)
+		st.windowSeconds = q.measureWindow
+		if !(st.windowSeconds > 0) {
+			st.windowSeconds = measureWindowOf(test.latency[st.anchor], q.source)
+		}
 		st.windowStart = at.Add(-time.Duration(st.windowSeconds * float64(time.Second)))
 		for _, i := range all {
 			if x := test.series[i].At; x.After(st.windowStart) && !x.After(at) {
@@ -855,23 +880,50 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 			}
 		}
 	}
+	return steps, changes, first
+}
+
+// predictSteps prices every step of the test from its inputs alone.
+func (q *backtestQuestion) predictSteps(ctx context.Context) ([]stepOf, []BacktestStep, error) {
+	steps, changes, first := q.layout()
+	p := &predictor{pricer: q.fit.pricer, fleets: map[predictKey]Fleet{}, cv2: q.cv2, promptCV: q.promptCV,
+		headroom: q.fit.doc.Policy.Headroom, assume: q.assume}
+	out := make([]BacktestStep, 0, len(steps))
+	for _, st := range steps {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, q.stepOf(p, st, changes, first))
+	}
+	return steps, out, nil
+}
+
+// run prices and scores every step.
+func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
+	test := q.test
+	q.source = q.measuredSource()
+	source := q.source
+	steps, predicted, err := q.predictSteps(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := &BacktestResponse{Banner: backtestBanner, Split: q.split, Config: q.config, Step: q.step.Seconds(), Settle: q.settle.Seconds(),
 		Measured: source, MeasuredNote: measuredNote(source, q.pd()), Assumed: append([]string{}, q.assumed...), TTFT: q.targetAsked,
 		Steps: []BacktestStep{}, Notes: []string{}}
 	out.Fit = windowOf(q.fit, nil, q.cutoff)
 	out.Test = windowOf(test, q.testIndices, time.Time{})
-	p := &predictor{pricer: q.fit.pricer, fleets: map[predictKey]Fleet{}, cv2: q.cv2, promptCV: q.promptCV,
-		headroom: q.fit.doc.Policy.Headroom, assume: q.assume}
-	for _, st := range steps {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		s := q.stepOf(p, st, changes, first)
-		if st.anchor >= 0 {
+	for k, s := range predicted {
+		if st := steps[k]; st.anchor >= 0 {
 			scoreStep(&s, measuredOf(test.latency[st.anchor], source, st.windowSeconds, q.pd()), q.target)
 		}
 		out.Steps = append(out.Steps, s)
 	}
+	q.finish(out)
+	return out, nil
+}
+
+// finish adds the summary, the verdict and the notes to a scored answer.
+func (q *backtestQuestion) finish(out *BacktestResponse) {
 	out.Summary = summarize(out.Steps, q.target != nil)
 	unread := 0
 	for _, st := range out.Steps {
@@ -898,8 +950,15 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 		CV2          *float64
 		Assume       Assume
 		Allowed      bool
-	}{q.fit.id, q.test.id, q.cutoff, q.step, q.settle, source, q.target, q.cv2, q.assume, q.config.Allowed})
-	return out, nil
+	}{q.fitID(), q.test.id, q.cutoff, q.step, q.settle, q.source, q.target, q.cv2, q.assume, q.config.Allowed})
+}
+
+// fitID is the fit's inputs id, or the prediction's for a comparison.
+func (q *backtestQuestion) fitID() string {
+	if q.fit == nil {
+		return q.predictionHash
+	}
+	return q.fit.id
 }
 
 // pd says the test is a P/D fleet: its inputs name a prefill variant.
