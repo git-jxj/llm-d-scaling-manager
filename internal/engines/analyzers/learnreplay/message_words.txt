@@ -164,6 +164,7 @@ Every
 ExtrapolatedFill
 FMA
 Failed
+FailedCreate
 FitNotSettled
 Fix
 FlowControlInferredOff
@@ -298,6 +299,7 @@ NoShortPrompts
 NoStepSpread
 NoTPOTHistogram
 NoTraffic
+NodeAffinity
 NonPositiveDecodeBase
 NonPositiveDecodePlane
 NonPositiveHop
@@ -312,6 +314,7 @@ OUTSIDE
 OnePod
 Optimization
 Optimizer
+OutOf
 OutputSpreadUnread
 OverheadMeasured
 P/D
@@ -385,6 +388,7 @@ ReplicaSet
 ReplicaSets
 Replicas
 Resolved
+ResourceQuota
 Restored
 Retention
 Retrying
@@ -422,6 +426,7 @@ SingularFit
 Skipping
 SpreadBeyondProcessorSharing
 StartOptimizeLoop
+Starting
 StatefulSet
 Successfully
 T
@@ -458,6 +463,7 @@ UP
 URL
 Unable
 Unexpected
+UnexpectedAdmissionError
 Unmarshal
 Until
 Unusable
@@ -553,6 +559,7 @@ adding
 address
 addressable
 admission
+admission-rejected
 admission.maxTokensOverCompletions
 admission.siblingMuTolerance
 admit
@@ -561,6 +568,7 @@ admitted
 adopted-raw
 affectedPods
 after
+afterSeconds
 again
 against
 age
@@ -580,6 +588,7 @@ all2all_backend
 allMark
 allMarkAt
 all_metrics
+allocate
 allocation
 allocation.NewLimiterFromConfig
 allocation.NewNoOpLimiter
@@ -621,6 +630,7 @@ args
 arguments
 arrivalRate
 arrivals
+arrived
 arriving
 arrivingPromptTokens
 arrivingRead
@@ -873,6 +883,7 @@ constrains
 constraint
 constraints
 container
+container-config
 contains
 contamination-heterogeneity
 context_length
@@ -897,7 +908,10 @@ counter
 counting
 counts
 covers
+crash-loop
+crash-looping
 create
+created
 creation
 crept
 critical
@@ -995,7 +1009,9 @@ derivedMu
 derivedOK
 derivedRate
 desiredReplicas
+detail
 detected
+device
 device_memory_utilization
 did
 differ
@@ -1152,6 +1168,7 @@ excluded
 exclusive
 exist
 exists
+exit
 expect
 expected
 expects
@@ -1337,6 +1354,7 @@ has
 have
 head
 headroom
+health
 health-probe-bind-address
 held
 heldAt
@@ -1400,6 +1418,7 @@ if
 ignored
 ignoring
 image
+image-pull
 image_spec
 imbalanced
 immutable
@@ -1596,6 +1615,7 @@ kube_pod_status_phase
 kube_pod_status_ready
 kube_pod_status_ready_time
 kube_replicaset_owner
+kubelet
 kueue
 kueue-gate
 kueue-lender-release
@@ -1973,6 +1993,7 @@ no-listed-analyzer-sizes-role
 no-node-fits
 no-output-length
 no-overhead
+no-pods
 no-prefill-capacity
 no-prefill-reading
 no-pull
@@ -2005,6 +2026,7 @@ nominal
 nominal-lent-out
 non-nil
 none
+noneArrivedSince
 none|
 noout
 nor
@@ -2040,6 +2062,8 @@ occupancy-unknown
 of
 off
 offered
+offers
+often
 ok
 ok|
 old
@@ -2100,6 +2124,7 @@ over-state
 over-stated
 overMax
 overQuotaGPUs
+overdue
 overflows
 overhead
 overlap
@@ -2198,6 +2223,8 @@ planning
 planningFrom
 plans
 plateauCycles
+platform
+plugin
 pod
 pod-template-hash
 pod/
@@ -2427,6 +2454,7 @@ released-to-lender
 releasing
 relieve
 remaining
+remediation
 remove
 removed
 removedNamespaces
@@ -2492,6 +2520,7 @@ rest
 rest-client-timeout
 restart
 restarted
+restarting
 restore
 restored
 restoredKeys
@@ -2598,6 +2627,7 @@ saturation.TakeRestoreOutcomes
 saturation.borrowLine
 saturation.publishLine
 saturation/capacity
+say
 says
 sc
 scale
@@ -2637,6 +2667,8 @@ scheduler
 scheduler-queue-demand
 scheduler-queue-prefill-share-capped
 scheduler-queue-prefill-share-dropped
+scheduling
+scheduling-gated
 scope
 scope/quotas/namespaceQuotas/exclude/kueue
 score
@@ -3097,6 +3129,7 @@ unreadable
 unresolved
 unrouted
 unroutedReady
+unschedulable
 unservable
 unsigned
 unsizable
