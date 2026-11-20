@@ -36,12 +36,14 @@ another recording, pick **another recording** and choose it.
 The first lines are the answer. For example:
 
 ```text
-Over the 1 h 54 min the planner did not see:
-p90 TTFT: within 20% of measured in 11 of the 15 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 1.05);
-it read 2 more than 20% low. For 7 more it gave no figure, calling the fleet overloaded; the fleet measured p90 250 ms to 370 ms there.
-p90 TPOT: within 20% of measured in 2 of the 15 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans low (median ratio 0.87).
-None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this
-check is the evidence for this fleet.
+Over the 1 h 52 min the planner did not see:
+p90 TTFT: within 20% of measured in 11 of the 15 five-minute steps scored (a figure, and enough measured requests);
+it leans high (median ratio 1.09). For 7 more it gave no figure, calling the fleet overloaded; the fleet measured
+p90 358 ms to 374 ms there.
+p90 TPOT: within 20% of measured in 2 of the 15 five-minute steps scored (a figure, and enough measured requests);
+its errors are wide; it leans high (median ratio 1.24); it read 5 more than 20% low. For 7 more it gave no figure, ...
+None of these figures falls within the conditions our own accuracy benchmarks cover
+(docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
 Judged 22 of 23 five-minute steps; not judged: 1 warm-up.
 ```
 
