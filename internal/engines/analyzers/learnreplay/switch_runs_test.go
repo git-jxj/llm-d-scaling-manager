@@ -1333,7 +1333,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestK2DerivedAtResidentKV_PricesTheReadingAboveTheContext"},
 		{"../saturation", "TestK2DerivedAtResidentKV_HeldAtK1"},
 		{"../saturation", "TestK2DerivedAtResidentKV_TheGate"},
-		{"../saturation", "TestK2DerivedAtResidentKV_OffFromTheConstructor"},
+		{"../saturation", "TestK2DerivedAtResidentKV_TheStoreKeepsTheContext"},
 	},
 	// llm-d-incubation/llm-d-scaling-manager#188: each runs the switch on
 	// and off and asserts both.

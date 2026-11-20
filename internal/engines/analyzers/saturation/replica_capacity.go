@@ -779,11 +779,19 @@ func (a *SaturationAnalyzer) computeK2(
 	logger logr.Logger,
 ) k2Decision {
 	var refused string
+	var atContext int64
 	chain, chainSrc, borrowed := a.k2Chain(historyKey, modelID, namespace, variantName, queueLen, tokensInUse,
 		avgOutput, avgInput, outputDispersion, queueThreshold, engineParams, batchCap, ranks, k1, kvCeiling, role, downstreamSaturated,
-		adm, borrowDisabled, &refused, logger)
+		adm, borrowDisabled, &refused, &atContext, logger)
 	k2, src, recordable := a.unadmittedPrice(chain, chainSrc, historyKey, modelID, namespace, variantName,
 		queueLen, tokensInUse, queueThreshold, kvCeiling, downstreamSaturated, adm, refused == k2ReasonObsUnconfirmed, logger)
+	if atContext > 0 && recordable == chain {
+		// A derived k2 the resident reading raised prices this cycle only
+		// (SwitchK2DerivedAtResidentKV): the capacity store keeps the figure
+		// at the context, which the zero-replica estimate, a sibling's
+		// lookup and the fallback path read with no reading behind them.
+		recordable = atContext
+	}
 	if src != chainSrc {
 		// Priced at the unadmitted reading, not at the chain's lower bound.
 		borrowed = k2Borrow{}
@@ -897,6 +905,10 @@ func (a *SaturationAnalyzer) k2Chain(
 	// refused receives the P1-obs-* label of a saturated reading this call
 	// does not record, for replica-capacity-summary at the default level.
 	refused *string,
+	// atContext receives the derived k2 priced at the context where the
+	// resident reading raised it (SwitchK2DerivedAtResidentKV), and stays 0
+	// otherwise.
+	atContext *int64,
 	logger logr.Logger,
 ) (int64, capacity.K2Source, k2Borrow) {
 	// adm.serving() (Ready, not a bridge, not mid-rollout) is the one
@@ -1245,8 +1257,8 @@ func (a *SaturationAnalyzer) k2Chain(
 		// above the context (batchCap.resident, k2_resident_kv.go): the
 		// figure only rises, and never above k1.
 		if k2Derived := estimateCapacityAtCapBudget(engineParams, batchCap.perRank, avgInput, avgOutput, outputDispersion, batchCap.budget) * int64(max(ranks, 1)); k2Derived > 0 {
-			atContext := k2Derived
-			k2Derived = k2AtResidentKV(engineParams, batchCap, avgInput, avgOutput, ranks, k1, atContext)
+			atCtx := k2Derived
+			k2Derived = k2AtResidentKV(engineParams, batchCap, avgInput, avgOutput, ranks, k1, atCtx)
 			if b, ok := borrow(min(k1, k2Derived)); ok {
 				logBorrowedK2(logger, b, modelID, namespace, variantName, historyKey, min(k1, k2Derived), capacity.K2SrcDerived)
 				return b.k2, b.source(), b
@@ -1259,7 +1271,10 @@ func (a *SaturationAnalyzer) k2Chain(
 			if batchCap.resident.known() {
 				// Only where SwitchK2DerivedAtResidentKV gave a reading:
 				// off, the line is the one before the switch.
-				kv = append(kv, "residentKVPerRequest", batchCap.resident.perRequest, "k2AtContext", atContext)
+				kv = append(kv, "residentKVPerRequest", batchCap.resident.perRequest, "k2AtContext", atCtx)
+				if k2Derived > atCtx {
+					*atContext = atCtx
+				}
 			}
 			logger.V(perReplicaLogLevel).Info("k2-decision", kv...)
 			return k2Derived, capacity.K2SrcDerived, k2Borrow{}

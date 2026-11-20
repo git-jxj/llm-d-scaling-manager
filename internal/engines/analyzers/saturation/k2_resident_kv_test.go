@@ -39,15 +39,22 @@ func residentRow(fill float64) domain.ReplicaMetrics {
 // one's.
 type residentSwitches struct{ aboveContext, atResident bool }
 
-// residentK2 runs three cycles of rm and returns the decode's per-replica
-// capacity, its reason, and the last P3 k2-decision line.
-func residentK2(t *testing.T, rm domain.ReplicaMetrics, sw residentSwitches) (float64, string, map[string]any) {
+// residentRun runs three cycles of rows, decode replicas of the variants
+// named, and returns each variant's capacity, the last P3 k2-decision line,
+// and the capacity store.
+func residentRun(t *testing.T, rows []domain.ReplicaMetrics, variants []string, sw residentSwitches) (
+	map[string]domain.VariantCapacity, map[string]any, *capacity.Store) {
 	t.Helper()
 	ctx, logs := observedCtx(t)
 	store := capacity.NewStore()
-	store.Update("test-ns", "test-model", "variant-d", capacity.Record{
-		AcceleratorName: "H200", GpuCount: 1, EngineParams: deploymentParams(),
-	}, time.Now())
+	states := make([]domain.VariantReplicaState, 0, len(variants))
+	for _, v := range variants {
+		store.Update("test-ns", "test-model", v, capacity.Record{
+			AcceleratorName: "H200", GpuCount: 1, EngineParams: deploymentParams(),
+		}, time.Now())
+		states = append(states, domain.VariantReplicaState{VariantName: v, Role: domain.RoleDecode,
+			AcceleratorName: "H200", CurrentReplicas: 1, GPUsPerReplica: 1})
+	}
 	a := NewSaturationAnalyzer(store)
 	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{
 		"kv-per-request-above-context": sw.aboveContext,
@@ -55,9 +62,7 @@ func residentK2(t *testing.T, rm domain.ReplicaMetrics, sw residentSwitches) (fl
 	}))
 	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	a.now = func() time.Time { return clock }
-	in := makeAnalyzerInput([]domain.ReplicaMetrics{rm}, []domain.VariantReplicaState{
-		{VariantName: "variant-d", Role: domain.RoleDecode, AcceleratorName: "H200", CurrentReplicas: 1, GPUsPerReplica: 1},
-	})
+	in := makeAnalyzerInput(rows, states)
 	var res *domain.AnalyzerResult
 	for range 3 {
 		var err error
@@ -72,13 +77,21 @@ func residentK2(t *testing.T, rm domain.ReplicaMetrics, sw residentSwitches) (fl
 		}
 	}
 	require.NotNil(t, p3, "a P3 k2-decision line")
+	out := map[string]domain.VariantCapacity{}
 	for _, vc := range res.VariantCapacities {
-		if vc.VariantName == "variant-d" {
-			return vc.PerReplicaCapacity, vc.Reason, p3
-		}
+		out[vc.VariantName] = vc
 	}
-	t.Fatal("no decode capacity")
-	return 0, "", nil
+	return out, p3, store
+}
+
+// residentK2 runs one pod of variant-d, and returns its per-replica
+// capacity, its reason, and the last P3 k2-decision line.
+func residentK2(t *testing.T, rm domain.ReplicaMetrics, sw residentSwitches) (float64, string, map[string]any) {
+	t.Helper()
+	out, p3, _ := residentRun(t, []domain.ReplicaMetrics{rm}, []string{"variant-d"}, sw)
+	vc, ok := out["variant-d"]
+	require.True(t, ok, "no decode capacity")
+	return vc.PerReplicaCapacity, vc.Reason, p3
 }
 
 // 100 requests hold 300,000 tokens, 3000 each: 2.9x the context, priced as
@@ -102,6 +115,30 @@ func TestK2DerivedAtResidentKV_PricesTheReadingAboveTheContext(t *testing.T) {
 		assert.NotContains(t, line, "residentKVPerRequest", "%+v: the line as before", sw)
 		assert.NotContains(t, line, "k2AtContext", "%+v", sw)
 	}
+}
+
+// The raised figure prices the cycle only: the capacity store keeps the
+// derived k2 at the context, which the zero-replica estimate, a sibling's
+// lookup and the fallback path read with no reading behind them.
+func TestK2DerivedAtResidentKV_TheStoreKeepsTheContext(t *testing.T) {
+	out, _, store := residentRun(t, []domain.ReplicaMetrics{residentRow(0.3)}, []string{"variant-d"},
+		residentSwitches{aboveContext: true, atResident: true})
+	require.Equal(t, 768_000.0, out["variant-d"].PerReplicaCapacity, "premise: the reading prices the cycle")
+	rec := store.Get("test-ns", "test-model", "variant-d")
+	require.NotNil(t, rec)
+	assert.Equal(t, int64(residentAtCtx), rec.EffectiveCapacity)
+}
+
+// Two decode variants read together: variant-d's engine holds 3000 a
+// request, variant-e's about its context (1067). The pooled reading, 1840 a
+// request, is not either's, so neither is priced at it.
+func TestK2DerivedAtResidentKV_APooledReadingOfTwoVariantsIsNotTaken(t *testing.T) {
+	e := hitRow("pod-2", 1000, 100, residentCap, 0.16, 150)
+	e.VariantName = "variant-e"
+	rows := []domain.ReplicaMetrics{residentRow(0.3), e}
+	on, _, _ := residentRun(t, rows, []string{"variant-d", "variant-e"}, residentSwitches{aboveContext: true, atResident: true})
+	assert.Equal(t, residentAtCtx, on["variant-d"].PerReplicaCapacity)
+	assert.Equal(t, residentAtCtx, on["variant-e"].PerReplicaCapacity)
 }
 
 // 100 requests hold 400,000 tokens, 4000 each: priced at the reading the
@@ -136,30 +173,34 @@ func TestK2DerivedAtResidentKV_TheGate(t *testing.T) {
 		a.kvHitsResident, a.kvAboveContext, a.k2AtResidentKV = true, true, true
 		return a
 	}
-	assert.Equal(t, residentKVLine{perRequest: 3000}, all().k2ResidentKV(read, residentBoundAboveContext, false),
+	assert.Equal(t, residentKVLine{perRequest: 3000}, all().k2ResidentKV(read, residentBoundAboveContext, false, residentReading{variant: "variant-d"}, "variant-d"),
 		"a ratio: all of it per request, none held once")
-	assert.Equal(t, residentKVLine{perRequest: 3000}, all().k2ResidentKV(read, residentBoundNone, false))
+	assert.Equal(t, residentKVLine{perRequest: 3000}, all().k2ResidentKV(read, residentBoundNone, false, residentReading{variant: "variant-d"}, "variant-d"))
 
 	for name, a := range map[string]*SaturationAnalyzer{
 		"switch off":        func() *SaturationAnalyzer { a := all(); a.k2AtResidentKV = false; return a }(),
 		"#199's off":        func() *SaturationAnalyzer { a := all(); a.kvAboveContext = false; return a }(),
 		"hits-resident off": func() *SaturationAnalyzer { a := all(); a.kvHitsResident = false; return a }(),
 	} {
-		assert.Zero(t, a.k2ResidentKV(read, residentBoundAboveContext, false), name)
+		assert.Zero(t, a.k2ResidentKV(read, residentBoundAboveContext, false, residentReading{variant: "variant-d"}, "variant-d"), name)
 	}
-	assert.Zero(t, all().k2ResidentKV(read, residentBoundAboveContext, true), "a shape change outstanding")
+	assert.Zero(t, all().k2ResidentKV(read, residentBoundAboveContext, true, residentReading{variant: "variant-d"}, "variant-d"), "a shape change outstanding")
 	for _, b := range []string{residentBoundUpper, residentBoundLower, residentBoundNoReading, residentBoundNoHit, residentBoundOff} {
-		assert.Zero(t, all().k2ResidentKV(read, b, false), b)
+		assert.Zero(t, all().k2ResidentKV(read, b, false, residentReading{variant: "variant-d"}, "variant-d"), b)
 	}
 	below := read
 	below.KVreq = 900
-	assert.Zero(t, all().k2ResidentKV(below, residentBoundNone, false), "below the context")
+	assert.Zero(t, all().k2ResidentKV(below, residentBoundNone, false, residentReading{variant: "variant-d"}, "variant-d"), "below the context")
 	atCtx := read
 	atCtx.KVreq = read.Context()
-	assert.Zero(t, all().k2ResidentKV(atCtx, residentBoundNone, false), "at the context")
+	assert.Zero(t, all().k2ResidentKV(atCtx, residentBoundNone, false, residentReading{variant: "variant-d"}, "variant-d"), "at the context")
 	inf := read
 	inf.KVreq = math.Inf(1)
-	assert.Zero(t, all().k2ResidentKV(inf, residentBoundAboveContext, false), "not finite")
+	assert.Zero(t, all().k2ResidentKV(inf, residentBoundAboveContext, false, residentReading{variant: "variant-d"}, "variant-d"), "not finite")
+	assert.Zero(t, all().k2ResidentKV(read, residentBoundAboveContext, false,
+		residentReading{variant: "variant-d", mixed: true}, "variant-d"), "a reading of two variants")
+	assert.Zero(t, all().k2ResidentKV(read, residentBoundAboveContext, false,
+		residentReading{variant: "variant-e"}, "variant-d"), "another variant's reading")
 }
 
 // k2AtResidentKV prices the batch the budget switch prices, at the reading:

@@ -20,7 +20,10 @@ import (
 // tokens, so its k2 is that many times too low against demand, and the
 // fleet is ordered that many times the replicas. On a day-long P/D
 // recording the resident KV per running request was 2.7-3.8x the context
-// (p5-p95).
+// (p5-p95). With SwitchKVPerRequestAboveContext the reading is per request
+// holding KV, the running ones and those pulling or holding landed KV, a
+// little lower; the derived batch counts running requests only, so k2 errs
+// low by that share.
 //
 // On, the derived k2 prices each request at the fleet's resident reading
 // (fleetResidentKVPerRequest), as SwitchKVPerRequestAboveContext prices it
@@ -38,12 +41,18 @@ import (
 //     sharing, which the derived k2 has never priced; this switch leaves it.
 //   - No shape change is outstanding: the requests resident then belong to
 //     two shapes, and the derived k2 prices no spread either.
+//   - Every replica read is of the variant being priced. The reading pools
+//     the model's generating replicas, and a variant whose engine holds only
+//     its context would otherwise be priced at a sibling's extra KV, and
+//     ordered too few replicas. (The derived mu pools them still.)
 //
-// It only raises k2, and never above k1: the figure is the larger of the k2
-// priced at the context and the k2 priced at the reading, the latter held
-// at k1 (k2AtResidentKV). Anywhere else it is priced at the context, as
-// before. The prefill role has no derived k2, and the zero-replica estimate
-// has no reading; neither moves.
+// It only raises k2, and never raises it above k1: the figure is the larger
+// of the k2 priced at the context and the k2 priced at the reading, the
+// latter held at k1 (k2AtResidentKV). The raised figure prices the cycle
+// only: the capacity store keeps the figure at the context, so the
+// zero-replica estimate, a sibling's lookup and the fallback path, which
+// read the store with no reading behind them, do not move. Anywhere else it is priced at the context, as
+// before. The prefill role has no derived k2 and does not move.
 //
 // The reading reaches the derived k2 as a line in the resident requests
 // (residentKVLine), held once plus per request, with nothing held once: the
@@ -68,8 +77,10 @@ const SwitchK2DerivedAtResidentKV = "k2-derived-at-resident-kv"
 // shares), plus perRequest for each. The fleet's resident reading is a ratio
 // and cannot tell the two apart, so it is all perRequest, held 0; a fit of
 // the KV in use against the running count (issue
-// llm-d-incubation/llm-d-scaling-manager#52) gives both. The zero value is
-// no reading: the derived k2 prices the context.
+// llm-d-incubation/llm-d-scaling-manager#52) gives both. Both are per
+// engine rank: a fit against a replica's running count gives a replica's
+// held part, which is divided by its ranks before it lands here. The zero
+// value is no reading: the derived k2 prices the context.
 type residentKVLine struct {
 	held       float64
 	perRequest float64
@@ -85,13 +96,17 @@ func (l residentKVLine) kvAt(n float64) float64 {
 	return l.held + l.perRequest*n
 }
 
-// k2ResidentKV is the KV line the derived k2 prices a replica at under
-// SwitchK2DerivedAtResidentKV: fleetShape's KVreq as withResidentKV priced
-// it, with bound the bound it reported, all of it per request. It is the
-// zero value, the context, unless every condition the switch's comment
-// lists holds.
-func (a *SaturationAnalyzer) k2ResidentKV(fleetShape shape.Shape, bound string, shapeChanging bool) residentKVLine {
+// k2ResidentKV is the KV line the derived k2 prices a replica of variant at
+// under SwitchK2DerivedAtResidentKV: fleetShape's KVreq as withResidentKV
+// priced it from read, with bound the bound it reported, all of it per
+// request. It is the zero value, the context, unless every condition the
+// switch's comment lists holds.
+func (a *SaturationAnalyzer) k2ResidentKV(fleetShape shape.Shape, bound string, shapeChanging bool,
+	read residentReading, variant string) residentKVLine {
 	if !a.k2AtResidentKV || !a.kvHitsResident || !a.kvAboveContext || shapeChanging {
+		return residentKVLine{}
+	}
+	if read.mixed || read.variant != variant {
 		return residentKVLine{}
 	}
 	if bound != residentBoundNone && bound != residentBoundAboveContext {
