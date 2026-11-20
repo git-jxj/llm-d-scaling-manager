@@ -20,7 +20,7 @@ the build, as the recordings it makes carry it. `capacity-planner` is not in
 the manager image. Each release ships it as its own image,
 `ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>`
 (`Dockerfile.capacity-planner`: distroless, nonroot, entry point the binary),
-and as binaries for linux and darwin.
+and as binaries for linux, darwin and windows.
 `make capacity-planner-image-check` builds the image and runs
 `hack/check-capacity-planner-image.sh` against it, as the PR check does.
 

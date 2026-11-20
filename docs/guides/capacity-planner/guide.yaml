@@ -57,6 +57,18 @@ get:
         --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
       mkdir -p bin && install -m 0755 ${B} bin/capacity-planner
       bin/capacity-planner version
+  windows:
+    note: |
+      On Windows (amd64), from Git Bash, which has curl and sha256sum. cosign as above, when you have it.
+      The planner commands below run as written in Git Bash.
+    run: |
+      export V=<release, v0.12.2 or later>
+      B=capacity-planner-${V}-windows-amd64.exe
+      URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
+      curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
+      grep " ${B}$" SHA256SUMS | sha256sum -c -
+      mkdir -p bin && cp ${B} bin/capacity-planner.exe
+      bin/capacity-planner.exe version
   checkout:
     note: Or from a clone of the release you run, with Go 1.26 or later.
     run: |

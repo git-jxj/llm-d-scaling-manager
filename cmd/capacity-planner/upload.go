@@ -51,9 +51,10 @@ var errNoUploadStore = errors.New("the server could not store the upload")
 // its bytes; nothing the client sends names a file.
 type uploadStore struct {
 	dir string
-	// lock is the directory held open, and locked where the system can
-	// (lockUploadDir), for as long as the server runs: a server starting
-	// later tells a live store's directory from one a stopped server left.
+	// lock is held for as long as the server runs (lockUploadDir: the
+	// directory locked, or on Windows a file in it opened unshared): a
+	// server starting later tells a live store's directory from one a
+	// stopped server left.
 	lock *os.File
 	// maxBytes is --upload-max-size.
 	maxBytes int64
@@ -103,7 +104,7 @@ func newUploadStore(maxBytes int64, warn io.Writer) (*uploadStore, error) {
 		// filesystem's, such as NFS, which may not lock a directory.
 		if err != nil && !lockHeld(err) && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("cannot lock the upload directory (%w): the uploads need a local filesystem; "+
-				"point TMPDIR at one, in a Pod an emptyDir", err)
+				"point TMPDIR (TMP on Windows) at one, in a Pod an emptyDir", err)
 		}
 	}
 	return nil, errors.New("the upload directory was removed as it was made")
@@ -126,10 +127,11 @@ func sweepUploadDirs(tmp string, warn io.Writer) {
 			}
 			continue
 		}
-		if err := os.RemoveAll(dir); err != nil && warn != nil {
+		// Held again by its owner, which had not locked it yet (Windows,
+		// where the lock goes before the removal): it is kept, rightly.
+		if err := removeLockedDir(dir, lock); err != nil && !lockHeld(err) && warn != nil {
 			fmt.Fprintf(warn, "capacity-planner: removing a stopped server's uploads: %v\n", err)
 		}
-		_ = lock.Close()
 	}
 }
 
@@ -138,11 +140,10 @@ func (u *uploadStore) Close() error {
 	if u == nil {
 		return nil
 	}
-	err := os.RemoveAll(u.dir)
-	if u.lock != nil {
-		_ = u.lock.Close()
+	if u.lock == nil {
+		return os.RemoveAll(u.dir)
 	}
-	return err
+	return removeLockedDir(u.dir, u.lock)
 }
 
 // path is the file of the upload named name.

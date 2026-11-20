@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -85,14 +86,23 @@ func sourcesOf(t *testing.T, h http.Handler) whatifapi.SourcesResponse {
 	return s
 }
 
-// uploadFiles is the files in the store's directory.
+// uploadFiles is the uploads' files in the store's directory.
 func uploadFiles(t *testing.T, f *serveFlags) []string {
 	t.Helper()
-	entries, err := os.ReadDir(f.uploads.dir)
+	return storeFiles(t, f.uploads.dir)
+}
+
+// storeFiles is the uploads' files in a store's directory dir: not the
+// file Windows locks it by (lockUploadDir).
+func storeFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		names = append(names, e.Name())
+		if strings.HasPrefix(e.Name(), "upload-") {
+			names = append(names, e.Name())
+		}
 	}
 	return names
 }
@@ -327,9 +337,7 @@ func TestServeUploadKeptWhileItLoads(t *testing.T) {
 	assert.Equal(t, first.Name, res.Inputs.Source.Name)
 	assert.NoFileExists(t, firstPath, "removed once its load ended")
 	assert.Len(t, up.list(), maxKeptUploads)
-	entries, err := os.ReadDir(up.dir)
-	require.NoError(t, err)
-	assert.Len(t, entries, maxKeptUploads)
+	assert.Len(t, storeFiles(t, up.dir), maxKeptUploads)
 }
 
 // A disk error storing an upload is a 500 that names no server path; the
@@ -338,6 +346,8 @@ func TestServeUploadDiskErrorNamesNoPath(t *testing.T) {
 	h, f := uploadServer(t, serveFlags{allowUpload: true})
 	var log bytes.Buffer
 	f.uploads.warn = &log
+	// Windows removes no directory a file in is open: the lock goes first.
+	require.NoError(t, f.uploads.lock.Close())
 	require.NoError(t, os.RemoveAll(f.uploads.dir))
 	code, body := send(t, h, http.MethodPost, whatifapi.UploadPath, "application/gzip", olsSweepBytes(t))
 	assert.Equal(t, http.StatusInternalServerError, code, "%s", body)
@@ -357,9 +367,7 @@ func TestServeUploadCheckStopsWhenTheClientLeaves(t *testing.T) {
 	_, _, err := up.Upload(ctx, strings.NewReader("hello, planner\n"), "")
 	require.ErrorIs(t, err, context.Canceled)
 	assert.False(t, whatifapi.IsInputError(err), "%v", err)
-	entries, err := os.ReadDir(up.dir)
-	require.NoError(t, err)
-	assert.Empty(t, entries)
+	assert.Empty(t, storeFiles(t, up.dir))
 }
 
 // removedAtEOF is data whose reader removes dir once it is read, as Close
@@ -382,6 +390,9 @@ func (r *removedAtEOF) Read(p []byte) (int, error) {
 // An error checking an upload names the upload, never the server's file:
 // here the store's directory goes between the write and the check.
 func TestServeUploadCheckErrorNamesNoPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows removes no directory with a file open in it, as the upload is here")
+	}
 	var log bytes.Buffer
 	up := newUploads(t, &log)
 	_, _, err := up.Upload(t.Context(), &removedAtEOF{data: olsSweepLines(t), dir: up.dir}, "")

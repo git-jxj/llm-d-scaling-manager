@@ -384,7 +384,7 @@ jobs:
         run: |
           set -euo pipefail
           n=0
-          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/SHA256SUMS; do
+          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/capacity-planner-v*.exe dist/SHA256SUMS; do
             [ -f "$f" ] && [ -f "$f.sigstore.json" ] || { echo "::error::$f or its bundle is missing from the artifact"; exit 1; }
             cosign verify-blob "$f" --bundle "$f.sigstore.json" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -1010,8 +1010,8 @@ jobs:
       id-token: write
     env:
       # The capacity planner binaries the release attaches, one per platform
-      # (make capacity-planner-dist). A missing one fails the job.
-      CAPACITY_PLANNER_PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+      # (make capacity-planner-dist), .exe on windows. A missing one fails the job.
+      CAPACITY_PLANNER_PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
     steps:
       - name: Checkout source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -1106,6 +1106,11 @@ jobs:
           set -euo pipefail
           go version
           go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/capacity-planner/...
+          # The windows binary's own files and standard library too: the
+          # tool built for this runner, then run with GOOS=windows (go run
+          # would build it for windows).
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          GOOS=windows "$RUNNER_TEMP/bin/govulncheck" ./cmd/capacity-planner/...
 
       - name: Build the capacity planner binaries
         env:
@@ -1117,6 +1122,7 @@ jobs:
           names=()
           for p in $CAPACITY_PLANNER_PLATFORMS; do
             f="capacity-planner-$VERSION-$(printf '%s' "$p" | tr / -)"
+            case "$p" in windows/*) f="$f.exe" ;; esac
             [ -s "dist/$f" ] || { echo "::error::dist/$f was not built"; exit 1; }
             names+=("$f")
           done
@@ -1132,7 +1138,7 @@ jobs:
         run: |
           set -euo pipefail
           n=0
-          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/SHA256SUMS; do
+          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/capacity-planner-v*.exe dist/SHA256SUMS; do
             [ -f "$f" ] || { echo "::error::$f was not rendered"; exit 1; }
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
             n=$((n + 1))
@@ -1246,7 +1252,7 @@ jobs:
             exit 0
           fi
           gh release upload "$VERSION" --clobber dist/*.yaml dist/scaling-manager-tools-*.tar.gz \
-            dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/SHA256SUMS dist/*.sigstore.json
+            dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/capacity-planner-v*.exe dist/SHA256SUMS dist/*.sigstore.json
           gh release view "$VERSION" --json assets --jq '.assets[].name'
 
       - name: Summarise
