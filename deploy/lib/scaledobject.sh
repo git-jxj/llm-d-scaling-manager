@@ -2632,13 +2632,16 @@ CACHEENV
             # each on its own; the owner's entries are not written at all.
             echo "        # Engine caches owned externally ($SO_CACHE_OWNER_ANNOTATION=external):"
             echo "        # only the cache variables the pod spec does not set are ours."
-            local ev
+            local ev evalue
             for ev in $eemit; do
                 case "$ev" in
-                    VLLM_CACHE_ROOT) printf '        - name: VLLM_CACHE_ROOT\n          value: %s/vllm\n' "$emount" ;;
-                    FLASHINFER_WORKSPACE_BASE) printf '        - name: FLASHINFER_WORKSPACE_BASE\n          value: %s\n' "$(so_flashinfer_base "${emount}/flashinfer" "${image}")" ;;
-                    TRITON_CACHE_DIR) printf '        - name: TRITON_CACHE_DIR\n          value: %s/triton\n' "$emount" ;;
+                    VLLM_CACHE_ROOT) evalue="${emount}/vllm" ;;
+                    FLASHINFER_WORKSPACE_BASE) evalue="$(so_flashinfer_base "${emount}/flashinfer" "${image}")" ;;
+                    TRITON_CACHE_DIR) evalue="${emount}/triton" ;;
+                    *) continue ;;
                 esac
+                echo "        - name: ${ev}"
+                echo "          value: ${evalue}"
             done
         elif [ "$want_engine" -eq 1 ]; then
             cat <<ENGINEENV
