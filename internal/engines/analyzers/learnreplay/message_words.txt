@@ -2288,6 +2288,7 @@ prefill-catchup
 prefill-demand-held
 prefill-knee
 prefill-latency
+prefill-queue-by-capacity
 prefill-required
 prefill-spare
 prefill-throughput-bound-reading

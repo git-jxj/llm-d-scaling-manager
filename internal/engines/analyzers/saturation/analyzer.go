@@ -526,6 +526,9 @@ type SaturationAnalyzer struct {
 	// constructor, planner-only; the capacity planner's replay turns them on
 	// (learnreplay.PlannerSwitches).
 	prefillALowLoadPerRank, prefillAEngineTiming bool
+	// prefillQueueByCapacity is SwitchPrefillQueueByCapacity: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillQueueByCapacity bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor

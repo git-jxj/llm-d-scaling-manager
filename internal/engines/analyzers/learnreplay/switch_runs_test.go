@@ -1057,6 +1057,7 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// (cmd/capacity-planner/testdata) move with them.
 	saturation.SwitchPrefillALowLoadPerRank: nil,
 	saturation.SwitchPrefillAEngineTiming:   nil,
+	saturation.SwitchPrefillQueueByCapacity: nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	// llm-d-incubation/llm-d-scaling-manager#201: a decode's derived k2
 	// charged the prompt it computes, and a landed request a backlog only
@@ -1364,7 +1365,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestDecodeRouterBacklog_OffFromTheConstructor"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
-	// asserts both, and the first holds all three off from the constructor.
+	// asserts both, and the first holds all four off from the constructor.
 	saturation.SwitchPrefillALowLoadPerRank: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
@@ -1374,6 +1375,13 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPrefillAEngineTiming_ABusyGroupLearnsA"},
 		{"../../../signals/prefill", "TestTiming_ABusyFleetLearnsAFromEngineTiming"},
 		{"../../../signals/prefill", "TestTiming_LongPromptsAreFlaggedNotRefused"},
+	},
+	saturation.SwitchPrefillQueueByCapacity: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_ADeferredWaitIsNotAQueue"},
+		{"../../../signals/prefill", "TestCapacity_ACapacityQueueIsStillAQueue"},
+		{"../saturation", "TestPrefillQueueByCapacity_DeferredWaitsThroughAnalyze"},
+		{"../../../signals/prefill", "TestCapacity_AMinuteWithNoCapacityQueueEndsTheRun"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},

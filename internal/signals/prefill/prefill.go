@@ -192,6 +192,12 @@ type Cycle struct {
 	// low-load fit has too few minutes (timing.go;
 	// saturation.SwitchPrefillAEngineTiming).
 	AFromTiming bool
+	// QueueByCapacity reads a row as queued, for V_P's busy minutes and its
+	// peak under a queue, by the part of its waiting count that waits for
+	// scheduling capacity (domain.ReplicaMetrics.CapacityQueueLength) where
+	// the engine publishes it, not by the whole count (queuedForCapacity;
+	// saturation.SwitchPrefillQueueByCapacity).
+	QueueByCapacity bool
 	// Now is the cycle's time.
 	Now time.Time
 }
@@ -328,7 +334,8 @@ type sample struct {
 	// rate is the computed-token rate, valid when rateOK.
 	rate   float64
 	rateOK bool
-	// queued: the queue was above zero on some sample of the minute.
+	// queued: the queue was above zero on some sample of the minute; with
+	// Cycle.QueueByCapacity, its capacity part (queuedForCapacity).
 	queued bool
 	// busy: above zero on every sample, with decode not back-pressuring and
 	// the pod's KV not full.
@@ -476,7 +483,7 @@ func (o *Observer) Observe(c Cycle) Estimate {
 			s.prompt = ieff
 		}
 		s.rate, s.rateOK = computedRate(rm, sglang)
-		s.queued = rm.QueueLength > 0
+		s.queued = queuedForCapacity(rm, c.QueueByCapacity)
 		// A pod QueueMin does not name reads zero, which is not busy.
 		qmin := c.QueueMin[rm.PodName]
 		s.busy = finitePositive(qmin) && s.queued && !c.DownstreamSaturated && !c.KVFull[rm.PodName]
@@ -615,6 +622,31 @@ func requestRate(rm domain.ReplicaMetrics) (float64, bool) {
 		return 0, false
 	}
 	return rm.RequestRate, true
+}
+
+// queuedForCapacity is whether the row held requests waiting for the pod's
+// compute, the reading V_P's busy minutes and peak rest on. With byCapacity
+// and the engine's capacity series read (domain.ReplicaMetrics.
+// CapacityQueueKnown), it is the capacity part of the waiting count only.
+// The rest is deferred: requests skipped for a transient reason, such as a
+// cached prefix still loading. On a prefill pod that loads long prefixes,
+// deferred requests wait at almost any load, so a whole-count test reads the
+// load the pod served as its capacity, and the knee priced from it follows
+// the traffic. Otherwise, or without the series, it is the whole count, as
+// before this switch.
+//
+// The capacity series is the minute's peak, while a busy minute's other test,
+// Cycle.QueueMin, is the least whole count: so with byCapacity a busy minute
+// is one whose capacity queue was above zero on some sample and whose whole
+// count never emptied, a weaker test than a capacity queue on every sample.
+// The peak under a queue, which needs no QueueMin, is not weakened. The test
+// is per row: a pod without the series keeps its whole count. The low-load
+// test of a keeps the whole count on purpose: a deferred wait is latency.
+func queuedForCapacity(rm domain.ReplicaMetrics, byCapacity bool) bool {
+	if byCapacity && rm.CapacityQueueKnown {
+		return rm.CapacityQueueLength > 0
+	}
+	return rm.QueueLength > 0
 }
 
 // effectivePrompt is the row's effective prompt length over the minute the

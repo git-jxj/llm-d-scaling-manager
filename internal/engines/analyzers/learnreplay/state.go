@@ -227,19 +227,22 @@ type shapeSample struct {
 // PlannerSwitches is the replay switches the capacity planner's replay turns
 // on (StateAt), by package: the planner-only changes, off from every
 // analyzer's constructor, so the controller never runs them and no golden of
-// its replays moves. Each is the planner reading a busy or low-fill fleet
-// the controller's learners refuse:
+// its replays moves. Each is a change to how the planner reads a fleet that
+// the controller's learners do not make:
 //
 //   - saturation.SwitchPrefillALowLoadPerRank: the low-load test of a per
 //     engine rank, for a row of an LWS group.
 //   - saturation.SwitchPrefillAEngineTiming: a from the engine's prefill
 //     timing where there are too few low-load minutes.
+//   - saturation.SwitchPrefillQueueByCapacity: a prefill queue for V_P
+//     counted by its capacity part only, so deferred waits are not a queue.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
 		saturation.SwitchPrefillAEngineTiming:   true,
+		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 	}}
 }
