@@ -33,7 +33,8 @@ type abStep struct {
 // fleet 2+2 throughout), and every one past bucket C's prefill onset
 // (3.098 r/s). With flow control off at seed 5001 and 3.39 r/s the client
 // read 3.93 / 7.48 / 12.54 s, against 3.87 / 9.02 / 11.81 s with it on: the
-// router held each request 1.49 s on average and the TTFT did not grow.
+// router held each request 1.49 s on average, and the mean and p95 did not
+// grow (the p90 rose 21%).
 var routerV1Steps = []abStep{
 	{5001, 3.17, 3.450, 3.57, [3]float64{3.61, 7.01, 8.75}, 1.2797, 0},
 	{5001, 3.39, 3.475, 3.87, [3]float64{3.87, 9.02, 11.81}, 1.4930, 0},
@@ -60,6 +61,14 @@ func routerV1Fleet(ca2 float64, inPrefill bool) TTFTFleet {
 // figure reads short at a step its fleet held (C at 3.24 r/s: 0.80, 0.84
 // and 0.57 of the client, TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep),
 // because that router's gate adds time: the switch is for v1.0.0 only.
+//
+// What the floor does not show: the switch does not move the figure, so the
+// floor checks hold with it off too, and the figure's slack over the client
+// (1.46x to 3.73x, the learned V_P being a lower bound) is larger than the
+// router's measured wait. A model that added the wait would pass as well.
+// The floor says the switch's figure is safe at these steps; the off/on pair
+// in routerV1Steps' comment, not this test, is the evidence that the wait
+// moves.
 func TestRouterV1_TheWaitIsInsidePrefill(t *testing.T) {
 	onset := mustOnsets(t, routerV1Fleet(4, true)).Prefill
 	knee := mustTTFT(t, ttftAt(t, routerV1Fleet(4, true), 3, 0)).PrefillKnee
@@ -143,5 +152,45 @@ func TestRouterV1_TheGateStageTakesWithBoth(t *testing.T) {
 	want := mustTTFT(t, ttftAt(t, gate, 3.3, 0))
 	if got.Seconds != want.Seconds || got.Parts.RouterWait != want.Parts.RouterWait || !(got.Parts.RouterWait > 0) {
 		t.Errorf("both: %.4f s, router wait %g; want the gate stage's %.4f s, router wait %g", got.Seconds, got.Parts.RouterWait, want.Seconds, want.Parts.RouterWait)
+	}
+}
+
+// RouterWaitInPrefill takes only where PriceRouterWait would: with flow
+// control on, processor sharing, a prompt spread up to MaxPSPromptCV and a
+// rate up to MaxRouterWaitKneeShare of the knee. Elsewhere past the onset
+// the wait keeps AboveFlowControlOnset, and with flow control off there is
+// no onset and no flag.
+func TestRouterV1_TakesOnlyWhereThePriceIsValidated(t *testing.T) {
+	fl := routerV1Fleet(4, true)
+	knee := mustTTFT(t, ttftAt(t, fl, 3, 0)).PrefillKnee
+	past := (MaxRouterWaitKneeShare + 1) / 2 * knee
+	wide := routerV1Fleet(4, true)
+	wide.Prefill.PromptCV = 2 * MaxPSPromptCV
+	firstCome := routerV1Fleet(4, true)
+	firstCome.ProcessorSharing = false
+	off := routerV1Fleet(4, true)
+	off.FlowControl = FlowControl{State: FlowControlOff}
+	for _, c := range []struct {
+		name        string
+		fl          TTFTFleet
+		rate        float64
+		above, wait bool
+	}{
+		{"inside the share", fl, 3.4, false, true},
+		{"past the share", fl, past, true, false},
+		{"a spread past processor sharing", wide, 3.2, true, false},
+		{"first come", firstCome, 3.2, true, false},
+		{"flow control off", off, 3.4, false, false},
+	} {
+		r := ttftAt(t, c.fl, c.rate, 0.9)
+		got, ok := r.(TTFT)
+		if !ok {
+			t.Errorf("%s at %.3f r/s: %v, want a TTFT", c.name, c.rate, r)
+			continue
+		}
+		if got.HasFlag(AboveFlowControlOnset) != c.above || got.HasFlag(FlowControlWaitPriced) != c.wait {
+			t.Errorf("%s at %.3f r/s: flags %v, want AboveFlowControlOnset %v, FlowControlWaitPriced %v",
+				c.name, c.rate, got.Flags, c.above, c.wait)
+		}
 	}
 }

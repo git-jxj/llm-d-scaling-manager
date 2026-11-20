@@ -454,6 +454,7 @@ func TestAtReplicas_RefusesABadQuestion(t *testing.T) {
 		{"ttft without a unit", atStair("--ttft", "2"), "--ttft"},
 		{"tpot percentile 100", atStair("--tpot-percentile", "100"), "--tpot-percentile"},
 		{"a flag it does not read", atStair("--ps-onsets"), "--ps-onsets"},
+		{"the router-wait switch it does not read", atStair("--router-wait-in-prefill"), "--router-wait-in-prefill"},
 		{"a load statistic it does not know", atStair("--load-statistic", "p99"), "--load-statistic"},
 		{"a load statistic and a stated load", atStair("--load-statistic", "peak", "--load-seen", "20"), "--load-statistic"},
 		{"a growth of 0", atStair("--load", "seen x0"), "--load"},

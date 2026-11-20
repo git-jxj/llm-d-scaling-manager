@@ -132,7 +132,8 @@ Past the onset on router v1.0.0, `--router-wait-in-prefill` takes the
 router's wait as part of the prefill time, so the figure stands and a rate
 answer can pass the onset (up to 0.9 of the prefill knee). On six bursty
 steps (Ca² 4, up to 0.88 of the knee) it read 1.5x to 3.7x the client's
-TTFT, never under. It is off by default and reads `OUTSIDE VALIDATED REGION`:
+TTFT, never under; that margin comes from the learned V_P being a lower
+bound, not from the switch. It is off by default and reads `OUTSIDE VALIDATED REGION`:
 no Poisson step past the onset has run on v1.0.0. Do not use it on router
 v0.11.0, where the wait adds to TTFT and this reads short.
 

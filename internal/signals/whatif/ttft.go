@@ -178,8 +178,9 @@ const DefaultPriceRouterWait = false
 const DefaultRouterWaitInPrefill = false
 
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
-// at which TTFTFleet.PriceRouterWait takes; past it the wait keeps
-// AboveFlowControlOnset.
+// at which TTFTFleet.PriceRouterWait or RouterWaitInPrefill takes; past it
+// the wait keeps AboveFlowControlOnset. The router v1.0.0 steps behind
+// RouterWaitInPrefill reached 0.88 of the knee.
 //
 // Carried over from the switch's earlier form, which took the gate as
 // moving the wait rather than adding to it, and was bounded by a paired
@@ -307,9 +308,11 @@ type TTFTFleet struct {
 	// On v1.0.0 the gate moves the wait from the pods to the router rather
 	// than adding to it: on the Qwen3-32B flow-control A/B, at six bursty
 	// steps past the prefill onset that the fleet held, the router held each
-	// request 0.5 to 2.0 s on average, and at the same arrivals the client's
-	// TTFT with flow control on matched it off. The price reads at least the
-	// client there (TestRouterV1_TheWaitIsInsidePrefill). On v0.11.0 the gate
+	// request 0.5 to 2.0 s on average, and at the one step also run with flow
+	// control off at the same arrivals the client's mean and p95 did not grow
+	// (its p90 rose 21%). The price reads at least the client there
+	// (TestRouterV1_TheWaitIsInsidePrefill), though by a margin that would
+	// also cover a wait that adds. On v0.11.0 the gate
 	// adds time and this reads short; PriceRouterWait prices that router's
 	// gate. With both set, PriceRouterWait takes.
 	RouterWaitInPrefill bool
