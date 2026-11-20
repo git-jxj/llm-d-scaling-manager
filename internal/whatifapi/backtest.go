@@ -670,12 +670,16 @@ func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time
 		return nil, InputErrorf("the test spans %s: at a step of %s that is more than %d steps; ask a longer step", span, q.step, maxBacktestSteps)
 	}
 	if cutoff.IsZero() {
-		// Two sources: the fit's cycles must not reach into the test's time.
+		// Two sources: the fit must end before the test starts. A fit that
+		// reaches into the test's time saw its latency; one recorded after
+		// it may open with learned state (an ITL line) the controller
+		// learned during the test.
 		fw := windowOf(fit, nil, time.Time{})
-		t0, t1 := test.series[q.testIndices[0]].At, test.series[q.testIndices[len(q.testIndices)-1]].At
-		if fw.Cycles > 0 && !fw.To.Before(t0) && !t1.Before(fw.From) {
-			return nil, InputErrorf("the test (%s to %s) overlaps the fit (%s to %s) in time: a backtest scores a period the planner did not see",
-				t0.UTC().Format(time.RFC3339), t1.UTC().Format(time.RFC3339), fw.From.UTC().Format(time.RFC3339), fw.To.UTC().Format(time.RFC3339))
+		t0 := test.series[q.testIndices[0]].At
+		if fw.Cycles > 0 && !fw.To.Before(t0) {
+			return nil, InputErrorf("the fit (%s to %s) does not end before the test starts (%s): a backtest scores a later period "+
+				"the planner did not see, and a fit recorded after it may carry what was learned from it",
+				fw.From.UTC().Format(time.RFC3339), fw.To.UTC().Format(time.RFC3339), t0.UTC().Format(time.RFC3339))
 		}
 	}
 	// The test's prompt spread is an input, its lengths, never its latency:
