@@ -226,10 +226,12 @@ count. On a DisaggregatedSet they meet in three places:
 - **A release gate label.** Some deployments keep a Ready pod out of the
   InferencePool with a label (for example `<prefix>/production-released=false`)
   while it drains or before it is released. Such a group is Ready and serves
-  nothing. Pool-selected supply ([pool-selected-supply.md](pool-selected-supply.md),
-  on by default) leaves it out: the role's template is selected, so the role is
-  not held, and each relabelled group is counted out through its leader, during
-  a rollout too. `internal/engines/variantmeta/routing_dset_test.go` and
+  nothing. In the controller, pool-selected supply
+  ([pool-selected-supply.md](pool-selected-supply.md), on by default) leaves it
+  out: when the template carries the label as `true`, the role is selected and
+  not held, and each relabelled group is counted out through its leader, its
+  metric row dropped, during a rollout too. The capacity planner does not read
+  InferencePools, so a planner capture still counts such a group. `internal/engines/variantmeta/routing_dset_test.go` and
   `internal/engines/steadystate/pool_routing_dset_test.go` cover it.
 - **Drain on scale-in.** The DisaggregatedSet controller deletes groups directly
   on scale-down. The engine must drain in its own `preStop`, on the leader and
@@ -248,9 +250,9 @@ count. On a DisaggregatedSet they meet in three places:
 
 ## Follow-ups
 
-1. **Release-gated pods as supply** (decided: its own PR). The collector will
-   count only pods the variant's InferencePool selects. It is the right answer
-   for any gated deployment, not only this one.
+1. **Release-gated pods as supply** (done: pool-selected supply, #158; tested
+   for DisaggregatedSet groups, #216). Only pods the variant's InferencePool
+   selects count. It is the right answer for any gated deployment.
 2. **Group keys during a rollout** (accepted for now). Two revisions of one role
    each have a group 0. Code that keys groups by `group-index` alone merges them
    while a rollout runs. Readings are held while rolling out; the held-GPU and

@@ -94,9 +94,11 @@ func dsetDecodePod(group, worker, released string) *corev1.Pod {
 // supply, and stays out across a failed pool read: the verdict is kept for
 // routingVerdictTTL, as for any variant, so one failed read does not hand the
 // optimizer a group the router does not reach. Past the TTL it lapses to
-// "counted as before". Supply is what the analyzer would size from: the rows
-// left after dropUnroutedRows, and ReplicaCount and PendingReplicas after
-// applyRouting.
+// "counted as before". Supply here is the rows left after dropUnroutedRows,
+// and ReplicaCount and PendingReplicas after applyRouting for the two ways an
+// analyzer fills them: from those rows, and from scale-target status when no
+// row reported. A group's row is named for its leader, or for its lowest
+// worker when the leader did not report; either way it goes.
 func TestDisaggregatedSetReleaseLabelSurvivesAFailedPoolRead(t *testing.T) {
 	t.Cleanup(decision.DefaultHeld.Reset)
 	scheme := runtime.NewScheme()
@@ -122,7 +124,7 @@ func TestDisaggregatedSetReleaseLabelSurvivesAFailedPoolRead(t *testing.T) {
 	// cycle routes one cycle and returns the decode role's supply: its routed
 	// rows (one per group, named for the leader) and its capacity after
 	// applyRouting, as an analyzer counting from rows would leave it.
-	cycle := func(at time.Time, readFails bool) (rows []string, vc domain.VariantCapacity, m domain.VariantMetadata) {
+	cycle := func(at time.Time, readFails bool, group1Row string) (rows []string, vc, status domain.VariantCapacity, m domain.VariantMetadata) {
 		t.Helper()
 		pools := func(context.Context, string) ([]map[string]string, error) {
 			if readFails {
@@ -135,7 +137,7 @@ func TestDisaggregatedSetReleaseLabelSurvivesAFailedPoolRead(t *testing.T) {
 		e.resolveRouting(context.Background(), "m", "ns", metas, results, nil, at)
 		all := []domain.ReplicaMetrics{
 			{PodName: "glm-decode-abc12-0-0", VariantName: "v-decode"},
-			{PodName: "glm-decode-abc12-1-0", VariantName: "v-decode"},
+			{PodName: group1Row, VariantName: "v-decode"},
 		}
 		for _, r := range dropUnroutedRows(all, metas) {
 			rows = append(rows, r.PodName)
@@ -144,12 +146,14 @@ func TestDisaggregatedSetReleaseLabelSurvivesAFailedPoolRead(t *testing.T) {
 		vc = domain.VariantCapacity{ReplicaCount: len(rows), ObservedReplicas: len(rows),
 			PendingReplicas: max(0, m.CurrentReplicas-len(rows)), PerReplicaCapacity: 10}
 		applyRouting(&vc, m)
-		return rows, vc, m
+		status = domain.VariantCapacity{ReplicaCount: m.CurrentReplicas, PerReplicaCapacity: 10}
+		applyRouting(&status, m)
+		return rows, vc, status, m
 	}
 
-	check := func(name string, at time.Time, readFails bool, wantRows []string, wantCount int) {
+	check := func(name string, at time.Time, readFails bool, group1Row string, wantRows []string, wantCount int) {
 		t.Helper()
-		rows, vc, m := cycle(at, readFails)
+		rows, vc, status, m := cycle(at, readFails, group1Row)
 		if m.HeldUnrouted {
 			t.Fatalf("%s: the role is held; its template is selected", name)
 		}
@@ -157,10 +161,16 @@ func TestDisaggregatedSetReleaseLabelSurvivesAFailedPoolRead(t *testing.T) {
 			t.Fatalf("%s: rows %v ReplicaCount %d PendingReplicas %d, want rows %v, %d and 0",
 				name, rows, vc.ReplicaCount, vc.PendingReplicas, wantRows, wantCount)
 		}
+		if status.ReplicaCount != wantCount || status.PendingReplicas != 0 {
+			t.Fatalf("%s, counted from status: ReplicaCount %d PendingReplicas %d, want %d and 0",
+				name, status.ReplicaCount, status.PendingReplicas, wantCount)
+		}
 	}
-	check("good read", t0, false, []string{"glm-decode-abc12-0-0"}, 1)
-	check("failed read within the TTL", t0.Add(time.Minute), true, []string{"glm-decode-abc12-0-0"}, 1)
-	check("good read again", t0.Add(2*time.Minute), false, []string{"glm-decode-abc12-0-0"}, 1)
-	check("failed read past the TTL", t0.Add(2*time.Minute+routingVerdictTTL+time.Second), true,
-		[]string{"glm-decode-abc12-0-0", "glm-decode-abc12-1-0"}, 2)
+	leader, worker := "glm-decode-abc12-1-0", "glm-decode-abc12-1-1"
+	check("good read", t0, false, leader, []string{"glm-decode-abc12-0-0"}, 1)
+	check("good read, the leader did not report", t0, false, worker, []string{"glm-decode-abc12-0-0"}, 1)
+	check("failed read within the TTL", t0.Add(time.Minute), true, leader, []string{"glm-decode-abc12-0-0"}, 1)
+	check("good read again", t0.Add(2*time.Minute), false, leader, []string{"glm-decode-abc12-0-0"}, 1)
+	check("failed read past the TTL", t0.Add(2*time.Minute+routingVerdictTTL+time.Second), true, leader,
+		[]string{"glm-decode-abc12-0-0", leader}, 2)
 }

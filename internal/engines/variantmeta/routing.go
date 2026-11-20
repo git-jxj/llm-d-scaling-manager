@@ -339,14 +339,38 @@ func markHeld(m *domain.VariantMetadata, st scaletarget.ScaleTargetAccessor, pod
 }
 
 // markUnroutedPods counts the live Pods of a selected variant that no pool
-// selects.
+// selects. On a LeaderWorkerSet a group is judged and counted by its leader,
+// and its live workers are named too, uncounted: the collector names a
+// group's row for its leader, but for its lowest worker when the leader did
+// not report, and that row must go as well.
 func markUnroutedPods(m *domain.VariantMetadata, st scaletarget.ScaleTargetAccessor, pods []corev1.Pod, sels []map[string]string) {
+	var groups map[string]bool
 	for p := range leaderPods(st, pods) {
 		if poolutil.AnySelects(sels, p.Labels) {
 			continue
 		}
 		countUnrouted(m, p)
+		if st.GetGroupSize() > 1 {
+			if groups == nil {
+				groups = map[string]bool{}
+			}
+			groups[routingGroupKey(p)] = true
+		}
 	}
+	for i := range pods {
+		p := &pods[i]
+		if p.DeletionTimestamp != nil || p.Labels[lwsv1.WorkerIndexLabelKey] == "0" || !groups[routingGroupKey(p)] {
+			continue
+		}
+		m.UnroutedPods = append(m.UnroutedPods, p.Name)
+	}
+}
+
+// routingGroupKey is the LeaderWorkerSet group of p: its set name and group
+// index. The set name tells apart a DisaggregatedSet role's revisions, each a
+// child LeaderWorkerSet with its own group 0.
+func routingGroupKey(p *corev1.Pod) string {
+	return p.Labels[lwsv1.SetNameLabelKey] + "/" + p.Labels[lwsv1.GroupIndexLabelKey]
 }
 
 func countUnrouted(m *domain.VariantMetadata, p *corev1.Pod) {
