@@ -239,6 +239,7 @@ func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
 		saturation.SwitchPrefillAEngineTiming:   true,
+		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 	}}
 }

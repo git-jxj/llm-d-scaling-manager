@@ -83,6 +83,17 @@ const SwitchPrefillALowLoadPerRank = "prefill-a-low-load-per-rank"
 // SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillAEngineTiming = "prefill-a-engine-timing"
 
+// SwitchPrefillQueueByCapacity is the replay switch for what V_P counts as a
+// queue (prefill.Cycle.QueueByCapacity). On, a prefill row is queued, for
+// its busy minutes and its peak under a queue, only by the part of its
+// waiting count that waits for scheduling capacity, where vLLM publishes it.
+// The rest is deferred, such as a cached prefix still loading, and on a pod
+// that loads long prefixes it waits at almost any load: counted, V_P reads
+// the load the pods served, and the knee priced from it follows the traffic.
+// Off, the whole count, as P1 shipped. Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillQueueByCapacity = "prefill-queue-by-capacity"
+
 // prefillKVFull is the pods of rows whose KV cache is full (kvFull at
 // kvCacheThreshold), nil when none is. A full prefill pod can hold a queue
 // it cannot schedule, so its minute is not a busy one.
@@ -287,7 +298,8 @@ func (c *cycle) observePrefill() {
 			Key: key, Engine: engine, Disaggregated: true, Rows: rows[variant],
 			QueueMin: queueMin, KVFull: kvFullPods, DownstreamSaturated: c.decodeSaturated,
 			Bound: bounds[variant], Settle: view, ALineOnly: !a.prefillAQuadratic,
-			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming, Now: now,
+			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
+			QueueByCapacity: a.prefillQueueByCapacity, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)
 		c.logger.V(perReplicaLogLevel).Info("prefill-capacity-observed",

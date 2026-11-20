@@ -128,7 +128,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchITLAggregatedSizes, SwitchPrefillCapacityObserve,
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
-// SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor,
+// SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity, SwitchITLAdaptiveBandFloor,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
 // SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
 // SwitchPrefillBoundHeldConfidence, SwitchThroughputFloorRaisesVariants,
@@ -254,6 +254,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// Off from the constructor.
 		SwitchPrefillALowLoadPerRank: &a.prefillALowLoadPerRank,
 		SwitchPrefillAEngineTiming:   &a.prefillAEngineTiming,
+		// The planner's V_P queue: the capacity part of the waiting count
+		// only, where vLLM publishes it (prefill.queuedForCapacity). Off
+		// from the constructor.
+		SwitchPrefillQueueByCapacity: &a.prefillQueueByCapacity,
 		// The planner's ITL band floor on a low-fill fleet
 		// (itl_band_floor.go). Off from the constructor.
 		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,

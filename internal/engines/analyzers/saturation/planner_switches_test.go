@@ -24,7 +24,7 @@ import (
 func TestPlannerSwitches_OffFromTheConstructor(t *testing.T) {
 	a := NewSaturationAnalyzer(capacity.NewStore())
 	fields := a.switchFields()
-	for _, name := range []string{SwitchPrefillALowLoadPerRank, SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor} {
+	for _, name := range []string{SwitchPrefillALowLoadPerRank, SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity, SwitchITLAdaptiveBandFloor} {
 		require.Contains(t, fields, name)
 		assert.False(t, *fields[name], "%s is planner-only: off from the constructor", name)
 	}
