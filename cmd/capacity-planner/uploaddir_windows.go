@@ -19,11 +19,8 @@ const uploadDirLocks = true
 const uploadDirLockName = "lock"
 
 // lockHeld reports whether err is lockUploadDir's on a directory another
-// server holds, or whose lock a sweeping server is removing (access denied
-// on a file pending delete, where Windows deletes the POSIX way).
-func lockHeld(err error) bool {
-	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED)
-}
+// server holds.
+func lockHeld(err error) bool { return errors.Is(err, windows.ERROR_SHARING_VIOLATION) }
 
 // lockUploadDir opens dir's lock file, made when missing, shared with no
 // one: an error when another server holds it. The system closes it when the
@@ -43,8 +40,9 @@ func lockUploadDir(dir string) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
-// removeLockedDir removes dir, which lock holds, and lets the lock go:
-// Windows removes no file that is open, so the lock goes first.
+// removeLockedDir lets lock go, then removes dir: Windows removes no file
+// that is open. A server starting between the two can take the lock
+// again; the removal then fails on it, and the directory is that server's.
 func removeLockedDir(dir string, lock *os.File) error {
 	_ = lock.Close()
 	return os.RemoveAll(dir)

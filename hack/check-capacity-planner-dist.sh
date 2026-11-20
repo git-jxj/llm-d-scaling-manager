@@ -21,9 +21,9 @@ trap 'rm -rf "$T"' EXIT
 FAILED=0
 PASSED=0
 # One ok or FAIL per case: the five platforms' build settings, the host
-# binary's version line, and the windows-only files vetted and their tests
-# built (no other PR check compiles them). A run that stops early fails on
-# the count.
+# binary's version line, and the planner vetted for windows with its tests
+# built (the dist build compiles its windows files, not their tests). A run
+# that stops early fails on the count.
 EXPECT_CASES=7
 ok()   { printf '  ok   %s\n' "$1"; PASSED=$((PASSED + 1)); }
 fail() { printf '  FAIL %s\n' "$1"; FAILED=$((FAILED + 1)); }

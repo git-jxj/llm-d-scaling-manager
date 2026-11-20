@@ -935,8 +935,11 @@ jobs:
           set -euo pipefail
           go version
           go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/capacity-planner/...
-          # The windows binary's own files and standard library too.
-          GOOS=windows go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/capacity-planner/...
+          # The windows binary's own files and standard library too: the
+          # tool built for this runner, then run with GOOS=windows (go run
+          # would build it for windows).
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          GOOS=windows "$RUNNER_TEMP/bin/govulncheck" ./cmd/capacity-planner/...
 
       - name: Build the capacity planner binaries
         env:

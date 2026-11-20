@@ -388,10 +388,10 @@ func (r *removedAtEOF) Read(p []byte) (int, error) {
 // An error checking an upload names the upload, never the server's file:
 // here the store's directory goes between the write and the check.
 func TestServeUploadCheckErrorNamesNoPath(t *testing.T) {
-	var log bytes.Buffer
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows removes no directory with a file open in it, as the upload is here")
 	}
+	var log bytes.Buffer
 	up := newUploads(t, &log)
 	_, _, err := up.Upload(t.Context(), &removedAtEOF{data: olsSweepLines(t), dir: up.dir})
 	require.Error(t, err)

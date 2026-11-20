@@ -741,6 +741,8 @@ expect_wf "the windows binary (.exe) is signed, verified before the tools build,
 expect_wf "the planner is scanned by govulncheck, then built, then signed" \
     'Scan the capacity planner for called vulnerabilities (blocking),Build the capacity planner binaries,Sign the release files' \
     '[.jobs."release-sign".steps[].name | select(. == "Scan the capacity planner for called vulnerabilities (blocking)" or . == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
+expect_wf "govulncheck runs over the windows build too, built for the runner (go run would build it for windows)" 'true' \
+    '.jobs."release-sign".steps[] | select(.name == "Scan the capacity planner for called vulnerabilities (blocking)") | .run | (test("GOBIN=\"[$]RUNNER_TEMP/bin\" go install golang.org/x/vuln/cmd/govulncheck@v[0-9]+[.][0-9]+[.][0-9]+") and test("GOOS=windows \"[$]RUNNER_TEMP/bin/govulncheck\" [.]/cmd/capacity-planner/") and (test("GOOS=windows go run") | not)) | tostring'
 expect_wf "govulncheck runs pinned, over the planner" 'true' \
     '.jobs."release-sign".steps[] | select(.name == "Scan the capacity planner for called vulnerabilities (blocking)") | .run | test("go run golang.org/x/vuln/cmd/govulncheck@v[0-9]+[.][0-9]+[.][0-9]+ [.]/cmd/capacity-planner/") | tostring'
 yq -r '.jobs."release-sign".steps[] | select(.name == "Read the Go line from go.mod") | .run' "$WF" > "$WORK/wf-goline.sh"

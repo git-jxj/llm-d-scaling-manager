@@ -50,9 +50,10 @@ var errNoUploadStore = errors.New("the server could not store the upload")
 // its bytes; nothing the client sends names a file.
 type uploadStore struct {
 	dir string
-	// lock is the directory held open, and locked where the system can
-	// (lockUploadDir), for as long as the server runs: a server starting
-	// later tells a live store's directory from one a stopped server left.
+	// lock is held for as long as the server runs (lockUploadDir: the
+	// directory locked, or on Windows a file in it opened unshared): a
+	// server starting later tells a live store's directory from one a
+	// stopped server left.
 	lock *os.File
 	// maxBytes is --upload-max-size.
 	maxBytes int64
