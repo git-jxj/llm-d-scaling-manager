@@ -339,7 +339,8 @@ func PredictionCSV(p *Prediction) string {
 	fmt.Fprintf(&b, "# %s model=%s window=%s..%s predictionHash=%s inputsHash=%s planner=%s madeAt=%s\n", p.Kind, p.Model,
 		p.Window.From.UTC().Format(time.RFC3339), p.Window.To.UTC().Format(time.RFC3339), p.PredictionHash, p.InputsHash, p.PlannerVersion,
 		p.MadeAt.UTC().Format(time.RFC3339))
-	head := []string{"start", "excluded", "rate", "prefill", "decode"}
+	head := make([]string, 0, 5+2*len(backtestStats))
+	head = append(head, "start", "excluded", "rate", "prefill", "decode")
 	for _, k := range []string{"ttft", "tpot"} {
 		for _, q := range backtestStats {
 			head = append(head, k+"_"+statisticName(q)+"_seconds")
@@ -353,7 +354,8 @@ func PredictionCSV(p *Prediction) string {
 		return strconv.FormatFloat(*v, 'g', 6, 64)
 	}
 	for _, s := range p.Steps {
-		row := []string{s.Start.UTC().Format(time.RFC3339), s.Excluded, strconv.FormatFloat(s.Rate, 'f', 3, 64), strconv.Itoa(s.Prefill), strconv.Itoa(s.Decode)}
+		row := make([]string, 0, len(head))
+		row = append(row, s.Start.UTC().Format(time.RFC3339), s.Excluded, strconv.FormatFloat(s.Rate, 'f', 3, 64), strconv.Itoa(s.Prefill), strconv.Itoa(s.Decode))
 		for _, pts := range [][]BacktestPoint{s.TTFT, s.TPOT} {
 			for i := range backtestStats {
 				v := ""

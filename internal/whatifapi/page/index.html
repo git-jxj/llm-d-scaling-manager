@@ -302,6 +302,22 @@
       <details><summary>Table view: every step</summary><div id="btsteps"></div></details>
       <ul class="daynotes" id="btnotes"></ul>
     </div>
+    <details class="blind" id="blind">
+      <summary>Blind: predict now, compare later</summary>
+      <p class="hint">Predict a window from its load alone, a recording with its latency taken out
+        (<code>capacity-planner strip-latency</code>), and keep the prediction file. Later, compare it with the same window
+        measured. The file carries a hash of its inputs and of itself: an edited file, or another window, is refused.</p>
+      <div class="row">
+        <div class="field"><label for="bpwindow">Window to predict</label><select id="bpwindow"></select></div>
+        <button type="button" id="bprun" disabled>Predict</button>
+        <span id="bpout"></span>
+      </div>
+      <div class="row">
+        <div class="field"><label for="bcfile">Prediction file</label><input id="bcfile" type="file" accept=".json,application/json"></div>
+        <div class="field"><label for="bcmeasured">The same window, measured</label><select id="bcmeasured"></select></div>
+        <button type="button" id="bcrun">Compare</button>
+      </div>
+    </details>
   </section>
 
   <section class="card report" id="reportcard" aria-labelledby="reporttitle">

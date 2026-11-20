@@ -82,6 +82,45 @@ same window. Without
 router histograms it uses the engines' own, and leaves out what they cannot
 compare: on a P/D fleet the engines' TTFT covers prefill alone.
 
+## Check it blind: predict now, compare later
+
+To show that the planner never saw the latency it is scored against, split
+the check in two. You share only the load of a period, the planner predicts
+it, and you keep the prediction. Later you compare it with what the fleet
+measured.
+
+1. Take the latency out of a recording of the period to predict. What is
+   left is the load: request rates, prompt and output lengths, and replica
+   counts.
+
+   ```bash
+   capacity-planner strip-latency -in day2.jsonl.gz -o day2-load.jsonl.gz
+   ```
+
+2. Predict it from a fit recording of an earlier period:
+
+   ```bash
+   capacity-planner predict --fit day1.jsonl.gz --window day2-load.jsonl.gz -o prediction.json --csv prediction.csv
+   ```
+
+   The file holds every step's predicted TTFT and TPOT (mean, p50, p90,
+   p95), the planner's version, the time it was made, a hash of the inputs
+   it was priced from, and a hash of the file itself. Given a window that
+   still carries its latency, `predict` says so and does not read it: the
+   file is the same.
+
+3. Later, compare it with the period measured:
+
+   ```bash
+   capacity-planner compare --prediction prediction.json --measured day2.jsonl.gz
+   ```
+
+   It prints the same answer as `backtest`. A prediction file edited after
+   it was made, or a measured recording of another period or another load,
+   is refused. The hash shows an edit; it is not a signature.
+
+On the page: **Blind: predict now, compare later**, under the check.
+
 ## Is it good enough?
 
 Size from the planner when, below the load it thinks the fleet can carry:

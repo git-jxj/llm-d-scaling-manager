@@ -80,6 +80,8 @@ targets, here about 11 r/s, so 6 r/s holds.
 | `POST /v1/report` | One fleet judged at the load the source saw, for each request shape and load asked: utilization, knees, the SLO against load, a shape-by-load summary and a verdict per shape. The same report as `capacity-planner at-replicas -o json`. |
 | `POST /v1/dayplan` | The prefill and decode replicas each bucket of the source's window needed, against the replicas it had: [the day plan](#the-day-plan). |
 | `POST /v1/backtest` | The planner fitted on one window, predicting another step by step beside what the fleet measured: [the backtest](#the-backtest). |
+| `POST /v1/predict` | A window predicted from its load alone, as a prediction file to keep: [predict and compare](#predict-and-compare). |
+| `POST /v1/compare` | A prediction file scored against the same window measured: [predict and compare](#predict-and-compare). |
 | `GET /v1/sources` | What the server reads: whether it reads a Prometheus, the namespaces it may read and the default one, and the file names in `--recordings` (sorted, at most 1000, `recordingsTruncated` true past that). A listed file that is not a learner recording is refused when loaded. Every user the API answers sees all of these. With `--allow-upload`, also the uploads (first, newest first) and `upload.maxBytes`. |
 | `POST /v1/recordings` | Uploads a recording, with `--allow-upload` only: [Upload a recording](#upload-a-recording). |
 | `GET /` | The page, with its files under `/page/`. |
@@ -436,6 +438,30 @@ A measured percentile needs 50 requests in the step at p50, 100 at p90 and
 curl -s http://127.0.0.1:8080/v1/backtest -H 'Content-Type: application/json' -d '{
   "inputsId": "'"$ID"'", "split": "60%", "step": "5m"}' | jq -r '.verdict, .excluded'
 ```
+
+## Predict and compare
+
+The backtest in two steps, for a check where the planner never holds the
+latency it is scored against. The task is in
+[Check it blind](check.md#check-it-blind-predict-now-compare-later).
+
+`POST /v1/predict` takes `inputsId` (the fit), `windowInputsId` (the window
+to predict, its latency taken out or not: none is read), and the backtest's
+`step`, `settle`, `arrivalCV2`, `assume` and `allowConfigMismatch`, plus
+`measureWindow` (default `5m`, the router's rate window, which each step's
+inputs are read over). It answers the prediction file: `kind`, `format`,
+`plannerVersion`, `whatifSchema`, `madeAt`, `model`, `fit`, `window`,
+`step`, `settle`, `measureWindow`, `arrivalCV2`, `config`, `assumed`,
+`notes`, `steps[]` (a backtest's steps, predicted only), `inputsHash` (the
+SHA-256 of every step's inputs) and `predictionHash` (the SHA-256 of the
+file with this field empty).
+
+`POST /v1/compare` takes `prediction` (the file, as JSON), `inputsId` (the
+same window measured, latency included), and optionally `ttft` and
+`measured`. It answers a backtest. A file that does not match its own hash,
+an unknown field, a measured window whose cycles or load differ from the
+predicted one, a window measured over another rate window, or one with no
+latency is a 400.
 
 ## Errors
 

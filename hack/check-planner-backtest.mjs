@@ -18,7 +18,7 @@ const [scen, day, bt, golden] = [
 ];
 const ctx = vm.createContext({URLSearchParams});
 for (const f of [scen, day, bt]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
-const {btSVG, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, dayTime} = ctx;
+const {btSVG, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, btPredictionCSV, dayTime} = ctx;
 const answer = JSON.parse(fs.readFileSync(golden, "utf8"));
 const copy = x => JSON.parse(JSON.stringify(x));
 
@@ -94,6 +94,15 @@ try {
   for (const p of sat.steps[js].ttft) p.predicted = {refused: {reason: "Saturated", detail: "past the knee"}};
   check("an overloaded step is marked", /data-saturated="ttft"/.test(btSVG(sat).markup));
   check("the step table has a row a step", (btStepTable(answer).match(/<tr>/g) || []).length === 1 + answer.steps.length);
+
+  // A prediction as CSV: its hashes, a header and a row a step, with each
+  // statistic predicted and none measured.
+  const pred = {kind: "capacity-planner-prediction", model: "m", window: {from: "a", to: "b"}, predictionHash: "ph", inputsHash: "ih",
+    plannerVersion: "v", madeAt: "t", steps: answer.steps};
+  const csv = btPredictionCSV(pred).trim().split(String.fromCharCode(10));
+  check("the CSV holds the hashes", /predictionHash=ph/.test(csv[0]) && /inputsHash=ih/.test(csv[0]), csv[0]);
+  check("the CSV has a row a step", csv.length === 2 + answer.steps.length, csv.length);
+  check("the CSV has 13 columns", csv[1].split(",").length === 13, csv[1]);
 
   // A step with a refused prediction draws no predicted point and says why.
   const refused = copy(answer);
