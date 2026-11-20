@@ -117,6 +117,8 @@ try {
   check("the issue is offered as a link", /class="scissue"/.test(sh) && /target="_blank"/.test(sh));
   const evilURL = selfCheckHTML(Object.assign({}, sc, {issueUrl: "java" + "script:alert(1)"}));
   check("an issue link that is not GitHub's is not drawn", !/scissue/.test(evilURL));
+  const elsewhere = selfCheckHTML(Object.assign({}, sc, {issueUrl: "https" + "://evil.example/github.com/x"}));
+  check("an issue link to another host is not drawn", !/scissue/.test(elsewhere));
   check("an ok self-check says no why", !/scwhy/.test(selfCheckHTML({status: "ok", line: "fine", why: "w"})));
 
   // A step with a refused prediction draws no predicted point and says why.

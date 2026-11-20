@@ -1,4 +1,4 @@
-Self-check: on the last 1 h 13 min of this recording, fitted on what came before, p90 TTFT within 20% in 0 of 9 steps (median ratio 2.67); p90 TPOT within 20% in 10 of 10 steps (median ratio 0.94). [inconsistent]
+Self-check: tested on the last 1 h 13 min of this recording, each part predicted from a fit on what came before it, p90 TTFT within 20% in 0 of 9 steps (median ratio 2.67); p90 TPOT within 20% in 10 of 10 steps (median ratio 0.94). [inconsistent]
   why: the planner and this recording disagree: p90 TTFT: median ratio 2.67, within 20% in 0% of 9 steps
   Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
   to report it, review and file this issue (nothing is sent until you do; it holds no name and no recording):

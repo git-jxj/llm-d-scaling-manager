@@ -308,7 +308,8 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 		sc.Line = "Self-check not run: " + sc.Why + "."
 		return
 	}
-	sc.Line = fmt.Sprintf("Self-check: on the last %s of this recording, fitted on what came before, %s.", durationWords(span), strings.Join(parts, "; "))
+	sc.Line = fmt.Sprintf("Self-check: tested on the last %s of this recording, each part predicted from a fit on what came before it, %s.",
+		durationWords(span), strings.Join(parts, "; "))
 	switch {
 	case len(bad) > 0:
 		sc.Status = SelfCheckInconsistent
@@ -379,7 +380,9 @@ func selfCheckIssueURL(sc *SelfCheck, e *inputsEntry, info SelfCheckInfo) string
 	}
 	fmt.Fprintf(&b, "fleet: %s; flow control %s\n", fleet, e.doc.Policy.FlowControl)
 	fmt.Fprintf(&b, "engine: %s; router: not recorded\n", engineWords(e.doc.Fleet))
-	fmt.Fprintf(&b, "folds: %d, span %s\n", len(sc.Folds), durationWords(sc.Folds[len(sc.Folds)-1].TestTo.Sub(sc.Folds[0].FitTo)))
+	if n := len(sc.Folds); n > 0 {
+		fmt.Fprintf(&b, "folds: %d, span %s\n", n, durationWords(sc.Folds[n-1].TestTo.Sub(sc.Folds[0].FitTo)))
+	}
 	v := url.Values{}
 	v.Set("template", selfCheckIssueTemplate)
 	v.Set("title", "planner self-check: "+sc.Status)
@@ -413,11 +416,21 @@ func engineWords(f FleetInfo) string {
 		if r == nil || r.Engine == nil {
 			return name + " not recorded"
 		}
+		// A release is digits and dots; anything else, which a build may
+		// name, is not written.
 		rel := r.Engine.VLLMVersion
-		if rel == "" {
+		switch {
+		case rel == "":
 			rel = "release not recorded"
+		case strings.Trim(rel, "0123456789.") != "":
+			rel = "release not a plain version"
 		}
-		return fmt.Sprintf("%s %s %s", name, r.Engine.Engine, rel)
+		// An engine is a word: vllm, sglang; anything else is not written.
+		engine := r.Engine.Engine
+		if engine == "" || strings.Trim(engine, "abcdefghijklmnopqrstuvwxyz") != "" || len(engine) > 12 {
+			engine = "other"
+		}
+		return fmt.Sprintf("%s %s %s", name, engine, rel)
 	}
 	return role("prefill", f.Prefill) + ", " + role("decode", &f.Decode)
 }

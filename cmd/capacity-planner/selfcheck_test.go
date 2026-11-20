@@ -46,4 +46,11 @@ func TestSelfCheckGolden(t *testing.T) {
 		assert.NotContains(t, body, name)
 	}
 	assert.Contains(t, body, "planner: vtest")
+
+	// --no-self-check: no self-check, in either output.
+	out, code = runCmd(t, append(selfCheckQ32, "-o", "json", "--no-self-check")...)
+	require.Equal(t, 0, code, out)
+	var off whatifapi.ReportResponse
+	require.NoError(t, json.Unmarshal([]byte(out), &off))
+	assert.Nil(t, off.SelfCheck)
 }

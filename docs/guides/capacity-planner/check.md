@@ -91,8 +91,8 @@ quarter after each from its traffic and replicas alone, and compares with
 what the fleet measured. The result comes first, in one line:
 
 ```text
-Self-check: on the last 1 h 13 min of this recording, fitted on what came before, p90 TTFT within 20% in 0 of 9 steps
-(median ratio 2.67); p90 TPOT within 20% in 10 of 10 steps (median ratio 0.94). [inconsistent]
+Self-check: tested on the last 1 h 13 min of this recording, each part predicted from a fit on what came before it,
+p90 TTFT within 20% in 0 of 9 steps (median ratio 2.67); p90 TPOT within 20% in 10 of 10 steps (median ratio 0.94). [inconsistent]
   Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
 ```
 
@@ -100,26 +100,29 @@ On the page it is a badge beside the source, with the same lines under it.
 
 | Badge | Means |
 | --- | --- |
-| ok | The planner predicted this recording well: you can size from its figures. |
-| weak | It mostly held, over few steps or loosely. Size with care. |
+| ok | The planner predicted this recording well, over 12 steps or more with 70% of them within 20%: you can size from its figures. |
+| weak | It held, but over fewer than 12 steps or with fewer than 70% of them within 20%. Size with care. |
 | inconsistent | The planner and this recording disagree: the median ratio is outside 0.8 to 1.25, fewer than half the steps are within 20%, or the planner called the fleet overloaded in half the steps where it served. The line says which figures not to trust. |
-| not run | The recording is shorter than an hour, carries no latency, is not a P/D fleet, or too few steps could be scored; the line says which. |
+| not run | The recording is shorter than an hour, carries no latency, or is not a P/D fleet; fewer than 6 steps could be scored for each figure (the refusals are named); or, on the server, it ran out of its time budget. The line says which. |
 
 On **inconsistent**, the answer offers an issue to file: a link to a new
 GitHub issue, prefilled with diagnostics. It holds the planner's version,
 the checks that failed and their numbers, the refusals, the token-size
-class of the traffic, the fleet's roles and replica counts, and the engine
-release. It holds no model, namespace, variant or pod name, no request rate,
+class of the traffic, the fleet's roles and replica counts, flow control on
+or off, the engine and its release, and the number of folds and the span
+they tested. Its numbers are ratios, step counts and the latencies the fleet
+measured. It holds no model, namespace, variant or pod name, no request rate,
 and no recording. Nothing is sent until you read it and submit it.
 
 What to do on inconsistent: do not size the figures it names from this
 recording; record a longer window with busy minutes early in it, then check
 again; if it stays inconsistent, file the issue.
 
-The self-check adds no replay: the replay that reads the answer reads the
-fits at the cuts on the way. Measured on recordings of 1 to 2.5 hours, an
-answer took 2.0 to 2.4 s without it and 2.4 s with it on a 2-hour recording,
-and 35 s against 38.6 s on the 2.5-hour q32 warm-up. `--no-self-check` (and
+The fits at the cuts are read in the same replay that reads the answer's
+state; on the CLI the self-check adds one replay of the recording's traffic
+and latency, which it scores against. Measured with `at-replicas`, on and
+off: 38.6 s against 35.0 s on the 2.4-hour q32 warm-up, and 245 s against
+256 s on a 1.7-hour 0.6B staircase recording (run-to-run noise). `--no-self-check` (and
 `selfCheck: false` on `POST /v1/inputs`, or `serve --no-self-check`) turns it
 off.
 

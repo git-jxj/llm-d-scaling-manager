@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -92,15 +93,66 @@ func TestSelfCheck_FindsAnInconsistency(t *testing.T) {
 			require.NotEmpty(t, sc.IssueURL)
 			assert.True(t, strings.HasPrefix(sc.IssueURL, selfCheckIssueRepo+"?"), sc.IssueURL)
 			assert.Len(t, sc.Folds, 2)
-			assert.True(t, strings.HasPrefix(sc.Line, "Self-check: on the last "), sc.Line)
+			assert.True(t, strings.HasPrefix(sc.Line, "Self-check: tested on the last "), sc.Line)
 		})
 	}
-	// The same fleet, measured as it predicts, is not inconsistent: no issue.
-	e, folds := scEntry(t, 1, 1)
-	sc := selfCheckEntry(context.Background(), e, folds, SelfCheckInfo{})
-	assert.NotEqual(t, SelfCheckNotRun, sc.Status, sc.Why)
-	if sc.Status != SelfCheckInconsistent {
-		assert.Empty(t, sc.IssueURL)
+}
+
+// judge, figure by figure, at each rule's edges: ok, weak, inconsistent and
+// not run, what each says to trust, and the issue only when inconsistent.
+func TestSelfCheck_JudgeAtTheEdges(t *testing.T) {
+	e, _ := scEntry(t, 1, 1)
+	fig := func(steps, within int, bias float64) *SelfCheckFigure {
+		return &SelfCheckFigure{Statistic: statP90, Steps: steps, Within: within, Bias: &bias, Judged: steps, Refused: map[string]int{}}
+	}
+	over := func(overloaded, judged int) *SelfCheckFigure {
+		return &SelfCheckFigure{Statistic: statP90, Judged: judged, Overloaded: overloaded, PastKnee: &Band{Lo: 1, Hi: 2}, Refused: map[string]int{}}
+	}
+	for name, c := range map[string]struct {
+		ttft, tpot *SelfCheckFigure
+		status     string
+		failed     string
+		trust      string
+	}{
+		"ok":                      {fig(12, 9, 1), fig(12, 12, 1), SelfCheckOK, "", ""},
+		"bias at 0.80 holds":      {fig(12, 12, 0.8), nil, SelfCheckOK, "", ""},
+		"bias at 1.25 holds":      {fig(12, 12, 1.25), nil, SelfCheckOK, "", ""},
+		"bias under 0.80":         {fig(12, 12, 0.79), nil, SelfCheckInconsistent, "ttft-bias", "Do not trust prefill sizing and the TTFT figures from this recording."},
+		"bias over 1.25":          {fig(12, 12, 1.26), nil, SelfCheckInconsistent, "ttft-bias", "Do not trust prefill sizing"},
+		"within 50% holds":        {fig(12, 6, 1), nil, SelfCheckWeak, "", ""},
+		"within under 50%":        {fig(12, 5, 1), nil, SelfCheckInconsistent, "ttft-within", "Do not trust prefill sizing"},
+		"within under 70% weak":   {fig(20, 13, 1), nil, SelfCheckWeak, "", ""},
+		"within at 70% ok":        {fig(20, 14, 1), nil, SelfCheckOK, "", ""},
+		"11 steps weak":           {fig(11, 11, 1), nil, SelfCheckWeak, "", ""},
+		"6 steps judged":          {fig(6, 6, 1), nil, SelfCheckWeak, "", ""},
+		"5 steps not judged":      {fig(5, 5, 1), nil, SelfCheckNotRun, "ttft-scored", ""},
+		"overloaded in half":      {over(5, 10), nil, SelfCheckInconsistent, "ttft-overloaded", "Do not trust prefill sizing"},
+		"overloaded under half":   {over(4, 10), nil, SelfCheckNotRun, "ttft-scored", ""},
+		"tpot only, ttft holds":   {fig(12, 12, 1), fig(12, 2, 2), SelfCheckInconsistent, "tpot-within", "Do not trust decode sizing and the TPOT figures from this recording; prefill sizing and the TTFT figures held."},
+		"tpot loose, ttft broken": {fig(12, 0, 3), fig(12, 7, 1), SelfCheckInconsistent, "ttft-bias", "prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sc := &SelfCheck{TTFT: c.ttft, TPOT: c.tpot, Folds: []SelfCheckFold{}, Checks: []SelfCheckRule{}}
+			sc.judge(e, time.Hour, SelfCheckInfo{PlannerVersion: "vtest"})
+			require.Equal(t, c.status, sc.Status, "%s: %s", sc.Line, sc.Why)
+			if c.failed != "" {
+				assert.True(t, slices.ContainsFunc(sc.Checks, func(r SelfCheckRule) bool { return r.Name == c.failed && !r.Passed }), "%+v", sc.Checks)
+			}
+			if c.trust == "" {
+				assert.Empty(t, sc.Trust)
+			} else {
+				assert.Contains(t, sc.Trust, c.trust)
+			}
+			assert.Equal(t, c.status == SelfCheckInconsistent, sc.IssueURL != "", "an issue only when inconsistent")
+			switch c.status {
+			case SelfCheckOK:
+				assert.Empty(t, sc.Why)
+			case SelfCheckWeak:
+				assert.Contains(t, sc.Why, "few or loose agreements")
+			case SelfCheckNotRun:
+				assert.True(t, strings.HasPrefix(sc.Line, "Self-check not run: "), sc.Line)
+			}
+		})
 	}
 }
 
@@ -111,6 +163,10 @@ func TestSelfCheck_IssueHoldsNoName(t *testing.T) {
 	secrets := []string{"secret-model-xyz", "secret-ns", "secret-prefill-variant", "secret-decode-variant", "secret-recording.jsonl.gz"}
 	e.doc.Model, e.doc.Namespace, e.doc.Source.Name = secrets[0], secrets[1], secrets[4]
 	e.doc.Fleet.Prefill.Variant, e.doc.Fleet.Decode.Variant = secrets[2], secrets[3]
+	// A release a build named, and a fold that is not backtested, whose
+	// error text carries a name: neither reaches the issue.
+	e.doc.Fleet.Decode.Engine = &EngineInfo{Engine: "secret-engine", VLLMVersion: "0.34.0+secret-build"}
+	folds = append([]FoldFit{{Cycle: 1, At: e.series[len(e.series)-1].At.Add(time.Hour), Pricer: folds[0].Pricer}}, folds...)
 	sc := selfCheckEntry(context.Background(), e, folds, SelfCheckInfo{PlannerVersion: "vtest"})
 	require.NotEmpty(t, sc.IssueURL)
 	u, err := url.Parse(sc.IssueURL)

@@ -13,9 +13,9 @@ import (
 
 // Every answer read from a recording also checks the planner on it
 // (whatifapi.SelfCheckOf): the replay that reads the answer's state also
-// reads the states at the folds' cuts (learnreplay.StatesFrom), so the
-// self-check adds no replay, only the folds' pricing. --no-self-check, and
-// selfCheck false on the API, turn it off.
+// reads the states at the folds' cuts (learnreplay.StatesFrom); the
+// self-check adds one replay of the series and latency it scores against.
+// --no-self-check, and selfCheck false on the API, turn it off.
 
 // defaultSelfCheck is whether an answer self-checks when not told: true.
 // The package's tests turn it off, so that the answers' goldens pin the
