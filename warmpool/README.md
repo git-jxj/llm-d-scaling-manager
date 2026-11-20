@@ -98,8 +98,9 @@ copy:
   is pulled from the registry vLLM's release pipeline pushes to
   (`public.ecr.aws/q9t5s3a7/vllm-release-repo`), not Docker Hub; the digest is
   the same as `vllm/vllm-openai:v0.34.0`.
-- **On top:** `nvidia-ml-py` and `kubernetes` at pinned versions, and the two
-  files above.
+- **On top:** `nvidia-ml-py` and `kubernetes` at pinned versions, installed
+  with every package of the base as a constraint, so none of vLLM's own
+  packages moves, and the two files above.
 - **Checked at build time:** the build imports the launcher against the real
   vLLM, and checks the vLLM version. A vLLM module the launcher imports that
   has moved fails the build, not a pool Pod. The unit tests cannot catch that:

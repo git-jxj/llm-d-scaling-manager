@@ -29,19 +29,26 @@ WORKDIR /app
 # SCC). Seeding USER avoids it. See https://github.com/vllm-project/vllm/issues/44548
 ENV USER=vllm
 
-# gputranslator.py needs both; vLLM ships neither. uv, as vLLM's own image
-# installs, so the image's pins (/etc/uv-overrides.txt) still apply. Only
-# these two are pinned: their own dependencies (urllib3, google-auth, ...)
-# resolve at build time, so two builds of one tag can differ in those. The
-# released image is pinned by its digest.
+# gputranslator.py needs nvidia-ml-py (the base already has 13.615.71) and
+# the kubernetes client (the base has none). uv, as vLLM's own image installs,
+# and the base sets UV_OVERRIDE=/etc/uv-overrides.txt, so its overrides apply.
 #
-# psutil is the base's, not pinned here: vLLM requires it unpinned, and 7.2.2
-# is the newest release (2026-01-28), so v0.34.0 should ship it (FMA's
-# v0.8.0 image, built on vLLM v0.26.0 in 2026-11, does). That psutil
-# re-raises EINVAL from its pidfd wait (giampaolo/psutil#2715; fixed upstream,
-# unreleased), which the launcher's _wait_procs absorbs. build_check.py prints
-# the version and fails on psutil >= 7.2 without that wrapper.
-RUN uv pip install --system --no-cache nvidia-ml-py==13.615.71 kubernetes==34.1.0
+# Every package the base already has is a CONSTRAINT: the install adds
+# packages and never moves one vLLM runs on. Without it, kubernetes 34.1.0
+# (urllib3<2.4) silently downgraded the base's urllib3 2.8.0 to 2.3.0. A
+# client version that needs a base package moved fails the build instead.
+# 35.0.0 is the newest that installs that way with no extra package. Its own
+# new dependencies (oauthlib, websocket-client, ...) resolve at build time;
+# the released image is pinned by its digest.
+#
+# psutil is the base's (7.2.2). That psutil re-raises EINVAL from its pidfd
+# wait (giampaolo/psutil#2715; fixed upstream, unreleased), which the
+# launcher's _wait_procs absorbs. build_check.py prints the version and fails
+# on psutil >= 7.2 without that wrapper.
+RUN uv pip freeze --system > /tmp/base-constraints.txt \
+    && uv pip install --system --no-cache --constraint /tmp/base-constraints.txt \
+        nvidia-ml-py==13.615.71 kubernetes==35.0.0 \
+    && rm -f /tmp/base-constraints.txt
 
 COPY warmpool/supervisor/launcher.py warmpool/supervisor/gputranslator.py /app/
 
