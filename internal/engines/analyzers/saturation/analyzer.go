@@ -542,6 +542,11 @@ type SaturationAnalyzer struct {
 	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): off
 	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
 	decodeLandedNeedsBound bool
+	// k2AtITLTarget is SwitchK2BatchAtITLTarget (issue
+	// llm-d-incubation/llm-d-scaling-manager#258, k2_itl_bound.go): on from
+	// the constructor; a replay turns it off (SetSwitchesForReplay). It
+	// bounds nothing without a TPOT objective.
+	k2AtITLTarget bool
 	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
 	// (itl_baseline_floor.go): off from the constructor; only a replay
 	// turns it on.
@@ -827,6 +832,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		k2FirstReadingWaits:    true,
 		joinedFromFirstServed:  true,
 		itlPerToken:            true,
+		k2AtITLTarget:          true,
 		itlWithheldLogged:      make(map[string]itlWithheldReasons),
 		itlReadsEngines:        make(map[string]bool),
 		k2Pending:              make(map[string]*k2PendingReadings),

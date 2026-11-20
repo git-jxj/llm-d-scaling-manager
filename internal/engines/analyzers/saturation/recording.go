@@ -130,6 +130,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
+// SwitchK2BatchAtITLTarget,
 // SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
 // SwitchPrefillBoundHeldConfidence, SwitchThroughputFloorRaisesVariants,
 // SwitchQueuePricedAsDrain, SwitchFloorTrustReadsCompletions,
@@ -264,6 +265,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// Both off from the constructor.
 		SwitchK2DecodeBudgetAtComputedPrompt: &a.k2DecodeBudget,
 		SwitchDecodeLandedNeedsABound:        &a.decodeLandedNeedsBound,
+		// Issue llm-d-incubation/llm-d-scaling-manager#258: the derived k2's
+		// batch held where the variant's ITL line reaches the policy's TPOT
+		// objective (k2_itl_bound.go). On from the constructor.
+		SwitchK2BatchAtITLTarget: &a.k2AtITLTarget,
 		// The ITL line's B pinned at the floor read below the band while
 		// unlearned (itl_baseline_floor.go). Off from the constructor.
 		SwitchITLBaselineFromFloor: &a.itlBaselineFromFloor,

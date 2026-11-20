@@ -1945,9 +1945,12 @@ ships, because enforcing will need an explicit `slo.mode: enforce`. Use it to
 see whether a tier meets an SLO before anything sizes a fleet from one.
 Experimental: its figures have not been checked against a live router yet.
 
-One thing about turning it on **can** change scaling: a tier that lists
+Two things about turning it on **can** change scaling. A tier that lists
 `analyzers:` replaces the list it would inherit, and with it saturation's
-`score` and `parameters:`, unless it writes them out (step 3 below).
+`score` and `parameters:`, unless it writes them out (step 3 below). And a
+`tpot` target bounds how many requests saturation packs onto a decode
+replica, so a decode role may be sized larger
+([how a TPOT target bounds decode packing](#how-a-tpot-target-bounds-decode-packing)).
 
 **Before you start**
 
@@ -2192,6 +2195,33 @@ got over a whole run, score their own per-request records.
   that carry `usage`. `llmsm_slo_window_requests` is the judged count; nothing
   publishes the share of the model's traffic it is.
 
+#### How a TPOT target bounds decode packing
+
+Saturation sizes a decode replica by how many requests it can hold. Where the
+flags give a small `--max-num-batched-tokens`, that count can be large, and
+packing a replica to it raises the time per output token: on a GPU run, one
+decode replica carried the requests three had held, and TPOT p90 rose from 12
+to 15-16 ms.
+
+With a `tpot` target set and `slo` listed, saturation holds each decode
+replica at the fill where the variant's ITL line (below) reaches the target.
+It sizes decode to the lower of that and the count the batch flags allow, so
+a model with a TPOT target is not packed past it.
+
+- **Only on a line the variant measured.** A line borrowed from another
+  variant, held from an earlier fit, or resting on the default intercept
+  (`pinned-default`) bounds nothing; nor does a target the line reaches
+  outside the ITL band. Saturation then sizes as before.
+- **Decode only.** Prefill and aggregated variants are not bound.
+- **The mean, not the busiest replica.** The line is fitted on the mean fill,
+  so a replica above the mean runs above the target.
+- **Where to read it.** At `--v=3`, each decode replica's `k2-decision` line
+  carries `k2BatchBound` (`itl` when the target bound it, `steady` when the
+  flags did), `nSteady` and `nITL` (requests per engine rank under each), and
+  `itlBoundWhy` when the target bound nothing.
+- **No target, no bound.** Without a `tpot` target, or with `slo` unlisted,
+  nothing changes.
+
 **Details: what the TPOT target would ask of each variant**
 
 Phase 0 also works out, per decode or aggregated variant, what running at the
@@ -2382,7 +2412,9 @@ post-merge. Either way saturation alone sizes the model.
 >   then does not grow either, since decode grown against a frozen prefill
 >   is capacity prefill cannot feed. Add `saturation` to the list to keep
 >   saturation sizing the model.
-> - **`slo` listed beside `saturation`.** No change: `slo` only observes.
+> - **`slo` listed beside `saturation`.** `slo` only observes, but a `tpot`
+>   target bounds how far saturation packs a decode replica
+>   ([how a TPOT target bounds decode packing](#how-a-tpot-target-bounds-decode-packing)).
 > - **Dashboards and alerts on `llmsm_analyzer_*`.** These series gain
 >   `analyzer_name="CompositeSignal"`. A panel or alert that sums across
 >   `analyzer_name` now counts demand at least twice; filter it on
