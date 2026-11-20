@@ -29,6 +29,9 @@ type sizesPrefillRun struct {
 	outputs map[string][]byte
 }
 
+// sloAnalyzeKind is the kind of the slo analyzer's rows in a replay output.
+const sloAnalyzeKind = "slo.Analyze"
+
 // csvRows is a replay output's rows, header dropped.
 func csvRows(t *testing.T, b []byte) [][]string {
 	t.Helper()
@@ -50,10 +53,9 @@ func replaySizesPrefill(t *testing.T, raw []byte, on bool) sizesPrefillRun {
 	run.outputs, err = Outputs(rep.Recording)
 	require.NoError(t, err)
 
-	const sloKind = "slo.Analyze"
 	demand := map[string]float64{}
 	for _, row := range csvRows(t, run.outputs[OutputResults]) {
-		if row[0] != sloKind {
+		if row[0] != sloAnalyzeKind {
 			continue
 		}
 		var r struct {
@@ -65,7 +67,7 @@ func replaySizesPrefill(t *testing.T, raw []byte, on bool) sizesPrefillRun {
 		}
 	}
 	for _, row := range csvRows(t, run.outputs[OutputVariantCapacities]) {
-		if row[0] != sloKind {
+		if row[0] != sloAnalyzeKind {
 			continue
 		}
 		var vc struct {
@@ -148,7 +150,7 @@ func TestGoldens_TTFTSizesPrefillOnTheStaircases(t *testing.T) {
 		assert.Zero(t, off.reasons[constants.SLOTTFTReasonPriced], "%s: off prices nothing", c.fixture)
 		assert.Equal(t, c.reasons, on.reasons, c.fixture)
 		assert.Equal(t, c.sized, on.sized, c.fixture)
-		assert.InDelta(t, c.largest, on.largest, 0, c.fixture)
+		assert.Equal(t, c.largest, on.largest, c.fixture)
 		for f, b := range off.outputs {
 			if !slices.Contains(sloOutputs, f) {
 				d, err := compareOutput(f, b, on.outputs[f])
@@ -159,7 +161,7 @@ func TestGoldens_TTFTSizesPrefillOnTheStaircases(t *testing.T) {
 			offRows, onRows := csvRows(t, b), csvRows(t, on.outputs[f])
 			require.Len(t, onRows, len(offRows), "%s: %s", c.fixture, f)
 			for i := range offRows {
-				if offRows[i][0] != "slo.Analyze" {
+				if offRows[i][0] != sloAnalyzeKind {
 					assert.Equal(t, offRows[i], onRows[i], "%s: %s row %d is not the slo analyzer's", c.fixture, f, i)
 				}
 			}

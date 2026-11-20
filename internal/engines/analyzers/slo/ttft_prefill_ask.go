@@ -33,8 +33,10 @@ import (
 // prefill demand and target series and its TTFT readings.
 //
 // a₀ comes from the joint window, which is kept only for a model of one
-// prefill and one decode variant (noteJoint); with more, P1's a alone
-// prices, as off.
+// prefill and one decode variant and with SwitchTTFTJointInputs on
+// (noteJoint); otherwise P1's a alone prices, as off. A model of several
+// prefill variants is not sized: each variant's ask is priced with the others
+// at their current count, and no one prices the asks together.
 const SwitchTTFTSizesPrefill = "slo-ttft-sizes-prefill"
 
 // reasonTTFTSized is the Reason of a prefill variant sized on TTFT.
@@ -115,15 +117,13 @@ func prefillAsk(in ttftInputs, rate float64, target whatif.TTFTTarget) (int, boo
 	return 0, false
 }
 
-// sizePrefill sets the capacity of the model's prefill variants from their
-// asks (prefillAsk): only when every prefill variant with a Ready pod has
-// one, since the role's demand is the model's whole arrival rate and a
-// variant left out would leave its share unpriced. Each variant's capacity
-// per replica is the arrival rate over the role's count with it at its ask,
-// so the need the engine reads (role demand over it, TotalReplicas) is that
-// count; with one prefill variant, its ask. Requests per second, this role's
-// own unit; decode keeps its tokens. A variant's demand is the arrival rate's
-// share by Ready pods.
+// sizePrefill sets the capacity of the model's one prefill variant with a
+// Ready pod from its ask (prefillAsk): per replica, the arrival rate over
+// the ask, so the need the engine reads (role demand over it,
+// TotalReplicas) is the ask; the role's demand and the variant's are the
+// arrival rate. Requests per second, this role's own unit; decode keeps its
+// tokens. A model with several prefill variants serving is not sized
+// (SwitchTTFTSizesPrefill).
 //
 // On a P/D model this analyzer's model-level supply then adds requests per
 // second to decode's tokens per second: only the per-role figures mean
@@ -132,34 +132,29 @@ func sizePrefill(result *domain.AnalyzerResult, asks map[string]int, fleet fleet
 	if !(arrival > 0) || !whatif.Finite(arrival) {
 		return
 	}
-	readyPrefill := 0
+	variant := ""
 	for _, vs := range fleet.variants {
-		if domain.CanonicalRole(vs.Role) != domain.RolePrefill {
+		if domain.CanonicalRole(vs.Role) != domain.RolePrefill || fleet.ready[vs.VariantName] == 0 {
 			continue
 		}
-		pods := fleet.ready[vs.VariantName]
-		if pods == 0 {
-			continue
-		}
-		if asks[vs.VariantName] < 1 {
+		if variant != "" {
 			return
 		}
-		readyPrefill += pods
+		variant = vs.VariantName
 	}
-	if readyPrefill == 0 {
+	ask := asks[variant]
+	if variant == "" || ask < 1 {
 		return
 	}
 	for i := range result.VariantCapacities {
 		vc := &result.VariantCapacities[i]
-		ask, ok := asks[vc.VariantName]
-		if !ok || ask < 1 || domain.CanonicalRole(vc.Role) != domain.RolePrefill {
+		if vc.VariantName != variant || domain.CanonicalRole(vc.Role) != domain.RolePrefill {
 			continue
 		}
-		ready := fleet.ready[vc.VariantName]
-		rate := arrival / float64(ask+readyPrefill-ready)
+		rate := arrival / float64(ask)
 		vc.PerReplicaCapacity = rate
 		vc.Reason = reasonTTFTSized
-		vc.TotalDemand = arrival * float64(ready) / float64(readyPrefill)
+		vc.TotalDemand = arrival
 		if vc.ObservedReplicas > 0 {
 			vc.Utilization = vc.TotalDemand / (float64(vc.ObservedReplicas) * rate)
 		}

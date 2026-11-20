@@ -1499,6 +1499,7 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFT_TheSizesPrefillSwitch"},
 		{"../slo", "TestTTFT_TheSizesPrefillOffFromTheConstructor"},
 		{"../slo", "TestTTFT_WithJointFixedLatency"},
+		{"../slo", "TestTTFT_PrefillAsk"},
 		{"../slo", "TestTTFT_SizePrefill"},
 		{".", "TestGoldens_TTFTSizesPrefillOnTheStaircases"},
 	},

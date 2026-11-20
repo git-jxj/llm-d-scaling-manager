@@ -189,58 +189,60 @@ func TestTTFT_PrefillAsk(t *testing.T) {
 	}
 }
 
-// The asks size every prefill variant, or none: the role's demand is the
-// whole arrival rate. Each variant's capacity is the arrival rate over the
-// role's count with it at its ask.
+// The ask sizes the model's one serving prefill variant: its capacity is the
+// arrival rate over the ask. Two serving prefill variants size none, a
+// variant with no Ready pod does not count, and the decode side is left as
+// it was.
 func TestTTFT_SizePrefill(t *testing.T) {
 	fleet := fleetReading{
 		variants: []domain.VariantReplicaState{
-			{VariantName: "a", Role: domain.RolePrefill}, {VariantName: "b", Role: domain.RolePrefill},
-			{VariantName: "d", Role: domain.RoleDecode}, {VariantName: "idle", Role: domain.RolePrefill},
+			{VariantName: "a", Role: domain.RolePrefill}, {VariantName: "idle", Role: domain.RolePrefill},
+			{VariantName: "d", Role: domain.RoleDecode},
 		},
-		ready: map[string]int{"a": 3, "b": 1, "d": 2},
+		ready: map[string]int{"a": 3, "d": 2},
 	}
 	newResult := func() *domain.AnalyzerResult {
 		return &domain.AnalyzerResult{
 			RoleDemand: map[string]float64{domain.RoleDecode: 500},
 			VariantCapacities: []domain.VariantCapacity{
 				{VariantName: "a", Role: domain.RolePrefill, ObservedReplicas: 3, Reason: domain.ReasonNoData},
-				{VariantName: "b", Role: domain.RolePrefill, ObservedReplicas: 1, Reason: domain.ReasonNoData},
-				{VariantName: "d", Role: domain.RoleDecode, ObservedReplicas: 2, PerReplicaCapacity: 100, Reason: "slo-own"},
 				{VariantName: "idle", Role: domain.RolePrefill, Reason: domain.ReasonNoData},
+				{VariantName: "d", Role: domain.RoleDecode, ObservedReplicas: 2, PerReplicaCapacity: 100, Reason: "slo-own"},
 			},
 		}
 	}
 
 	res := newResult()
-	sizePrefill(res, map[string]int{"a": 5, "b": 1}, fleet, 40)
+	sizePrefill(res, map[string]int{"a": 5}, fleet, 40)
 	assert.InDelta(t, 40, res.RoleDemand[domain.RolePrefill], 0)
 	assert.InDelta(t, 500, res.RoleDemand[domain.RoleDecode], 0, "decode keeps its own")
-	a, b := res.VariantCapacities[0], res.VariantCapacities[1]
+	a := res.VariantCapacities[0]
 	assert.Equal(t, reasonTTFTSized, a.Reason)
-	assert.InDelta(t, 40.0/6, a.PerReplicaCapacity, 1e-12, "a at 5 beside b's 1")
-	assert.InDelta(t, 40.0/4, b.PerReplicaCapacity, 1e-12, "b at 1 beside a's 3")
-	assert.InDelta(t, 30, a.TotalDemand, 1e-12)
-	assert.InDelta(t, 10, b.TotalDemand, 1e-12)
-	assert.InDelta(t, 30/(3*40.0/6), a.Utilization, 1e-12)
-	assert.InDelta(t, 1, b.Utilization, 1e-12)
-	assert.Equal(t, newResult().VariantCapacities[2], res.VariantCapacities[2])
-	assert.Equal(t, newResult().VariantCapacities[3], res.VariantCapacities[3], "no Ready pod, no ask, not sized")
+	assert.InDelta(t, 8, a.PerReplicaCapacity, 1e-12, "40 r/s over the 5 it asks for")
+	assert.InDelta(t, 40, a.TotalDemand, 1e-12)
+	assert.InDelta(t, 40/(3*8.0), a.Utilization, 1e-12)
+	assert.Equal(t, newResult().VariantCapacities[1:], res.VariantCapacities[1:], "no Ready pod, and decode, as they were")
 
-	for _, asks := range []map[string]int{nil, {"a": 5}, {"a": 5, "b": 0}} {
+	for _, asks := range []map[string]int{nil, {"a": 0}, {"idle": 5}} {
 		res = newResult()
 		sizePrefill(res, asks, fleet, 40)
-		assert.Equal(t, newResult(), res, "asks %v: a variant with Ready pods and no ask sizes none", asks)
+		assert.Equal(t, newResult(), res, "asks %v", asks)
 	}
 	for _, arrival := range []float64{0, math.NaN(), math.Inf(1)} {
 		res = newResult()
-		sizePrefill(res, map[string]int{"a": 5, "b": 1}, fleet, arrival)
+		sizePrefill(res, map[string]int{"a": 5}, fleet, arrival)
 		assert.Equal(t, newResult(), res, "arrival %g", arrival)
 	}
+
+	two := fleet
+	two.ready = map[string]int{"a": 3, "idle": 1, "d": 2}
+	res = newResult()
+	sizePrefill(res, map[string]int{"a": 5, "idle": 1}, two, 40)
+	assert.Equal(t, newResult(), res, "two serving prefill variants: their asks were never priced together")
 
 	// No role demand yet (no output length): the prefill role still gets its own.
 	res = newResult()
 	res.RoleDemand = nil
-	sizePrefill(res, map[string]int{"a": 5, "b": 1}, fleet, 40)
+	sizePrefill(res, map[string]int{"a": 5}, fleet, 40)
 	assert.Equal(t, map[string]float64{domain.RolePrefill: 40}, res.RoleDemand)
 }
