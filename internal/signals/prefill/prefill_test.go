@@ -322,6 +322,31 @@ func TestCapacity_ACapacityQueueIsStillAQueue(t *testing.T) {
 	}
 }
 
+// With Cycle.QueueByCapacity, a minute with no capacity queue ends a run of
+// queued minutes, deferred requests waiting or not: three minutes at 20k
+// whose middle one waited for nothing but a prefix are no peak on, and a
+// 20k peak off.
+func TestCapacity_AMinuteWithNoCapacityQueueEndsTheRun(t *testing.T) {
+	for _, byCap := range []bool{false, true} {
+		o := NewObserver()
+		var est Estimate
+		for i, capacity := range []int{2, 0, 2} {
+			rm := queued("p-0", 20000, 3)
+			rm.CapacityQueueKnown, rm.CapacityQueueLength = true, capacity
+			c := cycle(t0.Add(time.Duration(i)*minute), rm)
+			c.QueueByCapacity = byCap
+			est = o.Observe(c)
+		}
+		if byCap {
+			assert.Equal(t, NoPrefillCapacity, est.VPRefused)
+			assert.Equal(t, 1, est.VPLongestQueuedRun)
+			continue
+		}
+		assert.Equal(t, SourcePeakUnderQueue, est.VPSource)
+		assert.Equal(t, 20000.0, est.VP)
+	}
+}
+
 // QueueMins takes a row's queue minimum only where QueueMinKnown is set, a
 // zero included, and is nil when no row read one.
 func TestQueueMins_TakesOnlyAReading(t *testing.T) {

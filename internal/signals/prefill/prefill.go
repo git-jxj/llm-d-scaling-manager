@@ -633,7 +633,13 @@ func requestRate(rm domain.ReplicaMetrics) (float64, bool) {
 // deferred requests wait at almost any load, so a whole-count test reads the
 // load the pod served as its capacity, and the knee priced from it follows
 // the traffic. Otherwise, or without the series, it is the whole count, as
-// P1 shipped.
+// before this switch.
+//
+// The capacity series is the minute's peak, while a busy minute's other test,
+// Cycle.QueueMin, is the least whole count: so with byCapacity a busy minute
+// is one whose capacity queue was above zero on some sample and whose whole
+// count never emptied, a weaker test than a capacity queue on every sample.
+// The peak under a queue, which needs no QueueMin, is not weakened.
 func queuedForCapacity(rm domain.ReplicaMetrics, byCapacity bool) bool {
 	if byCapacity && rm.CapacityQueueKnown {
 		return rm.CapacityQueueLength > 0

@@ -19,7 +19,7 @@ import (
 // The capacity planner's switches, through Analyze: off from the
 // constructor, so the controller never runs them (TestPlannerSwitches_OffFromTheConstructor).
 
-// TestPlannerSwitches_OffFromTheConstructor holds the three planner-only
+// TestPlannerSwitches_OffFromTheConstructor holds the four planner-only
 // switches off in a new analyzer: the controller's behaviour is P1's.
 func TestPlannerSwitches_OffFromTheConstructor(t *testing.T) {
 	a := NewSaturationAnalyzer(capacity.NewStore())
@@ -312,4 +312,50 @@ func TestITLAdaptiveBandFloor_HeldThenReleasedThroughAnalyze(t *testing.T) {
 	}
 	_, ok = cycle(0.20, 0.55)
 	assert.False(t, ok, "released on the release spread's cycle %d in a row", adaptiveBandReleaseCycles)
+}
+
+// deferredPrefillCycle runs one cycle of a P/D model whose prefill pod
+// computes 10k tok/s with three requests waiting all minute, none of them for
+// capacity: deferred, as while a cached prefix loads. It returns the
+// variant's estimate.
+func (h *observeHarness) deferredPrefillCycle() prefill.Estimate {
+	h.t.Helper()
+	states := []domain.VariantReplicaState{
+		{VariantName: "decode", Role: domain.RoleDecode, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+		{VariantName: "prefill", Role: domain.RolePrefill, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+	}
+	dec := makeReplicaMetrics("decode-0", "decode", 5000, 16000, 0, 4000, 500)
+	pre := makeReplicaMetrics("prefill-0", "prefill", 0, 16000, 3, 2000, 1)
+	pre.RequestRate, pre.RequestRateKnown = 5, true
+	pre.PrefillComputedTokenRate, pre.PrefillComputedTokenRateKnown = 10000, true
+	pre.QueueMin, pre.QueueMinKnown = 2, true
+	pre.CapacityQueueLength, pre.CapacityQueueKnown = 0, true
+	_, err := h.a.Analyze(h.ctx, makeAnalyzerInput([]domain.ReplicaMetrics{dec, pre}, states))
+	require.NoError(h.t, err)
+	h.clock = h.clock.Add(time.Minute)
+	est, _, ok := h.a.PrefillEstimate("test-ns", "test-model", "prefill")
+	require.True(h.t, ok)
+	return est
+}
+
+// Through Analyze: on, a prefill pod whose waiting requests are all deferred
+// never queued for compute, and V_P is refused; off, its minutes are busy and
+// V_P is the load it served.
+func TestPrefillQueueByCapacity_DeferredWaitsThroughAnalyze(t *testing.T) {
+	run := func(on bool) prefill.Estimate {
+		h := newObserveHarness(t, &capacity.EngineParams{Engine: inferenceengine.EngineVLLM})
+		require.NoError(t, h.a.SetSwitchesForReplay(map[string]bool{SwitchPrefillQueueByCapacity: on}))
+		var est prefill.Estimate
+		for range 10 {
+			est = h.deferredPrefillCycle()
+		}
+		return est
+	}
+	on := run(true)
+	assert.Equal(t, prefill.NoPrefillCapacity, on.VPRefused, "%+v", on)
+	assert.Zero(t, on.VP)
+
+	off := run(false)
+	assert.Empty(t, off.VPRefused, "%+v", off)
+	assert.Equal(t, 10000.0, off.VP)
 }

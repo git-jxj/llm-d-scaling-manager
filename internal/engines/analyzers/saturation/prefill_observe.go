@@ -90,7 +90,7 @@ const SwitchPrefillAEngineTiming = "prefill-a-engine-timing"
 // The rest is deferred, such as a cached prefix still loading, and on a pod
 // that loads long prefixes it waits at almost any load: counted, V_P reads
 // the load the pods served, and the knee priced from it follows the traffic.
-// Off, the whole count, as P1 shipped. Planner-only, as
+// Off, the whole count, as before this switch. Planner-only, as
 // SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillQueueByCapacity = "prefill-queue-by-capacity"
 
