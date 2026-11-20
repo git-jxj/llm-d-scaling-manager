@@ -377,8 +377,9 @@ type ReportStat struct {
 
 // ReportVerdict is the fleet judged at the load: Verdict, Summary in one
 // plain sentence, why in numbers (Reason), the roles that can lose a replica
-// (Shrink) or one more replica of which makes the fleet hold (Grow), and each
-// fleet checked. Scope is ScopeDecodeOnly when the prefill side does not
+// (Shrink), the roles Needed has more of than the fleet (Grow), and each
+// fleet checked. On OVER-PROVISIONED, Shrink and Grow can name the same
+// role: Needed may trade a role with no spare for more of one with a spare. Scope is ScopeDecodeOnly when the prefill side does not
 // price: such a verdict is never OVER-PROVISIONED.
 type ReportVerdict struct {
 	Verdict string `json:"verdict"`
@@ -387,7 +388,9 @@ type ReportVerdict struct {
 	Reason  string `json:"reason"`
 	// Needed is the smallest fleet that holds every target at the load with
 	// headroom, on an UNDER-PROVISIONED or OVER-PROVISIONED verdict; nil on
-	// the others.
+	// the others. A role it cuts holds its own check at the peak too, as
+	// Spare asks, so Needed cuts a role with no spare only in trade for
+	// more of the other role (Grow).
 	Needed *ReportNeeded `json:"needed,omitempty"`
 	// Roles is each role's own standing at the load: whether it has a
 	// replica to spare, and why.
@@ -399,7 +402,8 @@ type ReportVerdict struct {
 
 // ReportNeeded is the smallest fleet that holds every target at the load
 // with headroom, found by POST /v1/size's search (SmallestFleet) on the
-// report's own check. DecodeOnly is a prefill side that does not price:
+// report's own check, a role it cuts holding its own check at the peak.
+// DecodeOnly is a prefill side that does not price:
 // Decode is then the fewest decode replicas, and Prefill is 0. Alternatives
 // are the other mixes of the same total that also hold. Unmet says no fleet
 // within MaxReplicas of each role holds, and which role fell short; the

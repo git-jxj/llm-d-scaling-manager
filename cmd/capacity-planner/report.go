@@ -1108,7 +1108,8 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 //   - RIGHT-SIZED otherwise.
 //
 // Each role's standing is reported (Roles), and on UNDER and OVER the
-// smallest fleet that holds (Needed). Summary says it in one plain sentence.
+// smallest fleet that holds (Needed), a role it cuts holding at the peak
+// as a spare must. Summary says it in one plain sentence.
 func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict, error) {
 	v := whatifapi.ReportVerdict{Scope: whatifapi.ScopeFleet, Roles: []whatifapi.ReportRole{}, Shrink: []string{}, Grow: []string{},
 		Checks: []whatifapi.ReportCheck{check(base)}}
@@ -1274,6 +1275,13 @@ func (r *reporter) marginWords(op float64) string {
 // headroom, the fewest replicas in all (ties to fewer decode), by POST
 // /v1/size's search (whatifapi.SmallestFleet) on the report's own check,
 // and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
+// A role it cuts, below np prefill or nd decode, must also hold its own
+// check at the peak, the test roles judges a spare by: removing capacity
+// is the costly mistake. Both tests being monotone in each count, it then
+// never cuts a role roles says has no spare unless it trades the role for
+// more of the other, which v.Grow names and the sentence says. Such a trade is not capped at the
+// fleet's count of the other role: an under-provisioned fleet needs more
+// of it anyway.
 // With the prefill side not priced, it is the fewest decode replicas whose
 // own check holds. It fills v.Needed and adds the fleets tried to nothing:
 // the checks list the fleets the verdict rests on. notes are the assumed f
@@ -1285,9 +1293,41 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 	at := func(n whatifapi.FleetCounts) (fleetEval, error) {
 		return r.evaluateAt(n.Prefill, n.Decode, r.load, false)
 	}
+	// cutHolds is whether each role n cuts holds its own check at the peak.
+	// True for a fleet that cuts no role, or with the peak no higher than
+	// the load. It is monotone in each count, as the search takes holding
+	// to be.
+	shrinkAt := max(r.load, r.peak)
+	cutHolds := func(n whatifapi.FleetCounts) (bool, error) {
+		cutP, cutD := n.Prefill < np, n.Decode < nd
+		if !(shrinkAt > r.load) || (!cutP && !cutD) {
+			return true, nil
+		}
+		e, err := r.evaluateAt(n.Prefill, n.Decode, shrinkAt, false)
+		if err != nil {
+			return false, err
+		}
+		return (!cutP || e.prefillOK) && (!cutD || e.decodeOK), nil
+	}
+	// decodeHolds is decode's own check, which the prefill count does not
+	// move: at the load, and at the peak on a cut.
 	decodeHolds := func(n whatifapi.FleetCounts) (bool, error) {
 		e, err := at(n)
+		if err != nil || !e.decodeOK {
+			return false, err
+		}
+		if n.Decode >= nd || !(shrinkAt > r.load) {
+			return true, nil
+		}
+		e, err = r.evaluateAt(n.Prefill, n.Decode, shrinkAt, false)
 		return err == nil && e.decodeOK, err
+	}
+	holds := func(n whatifapi.FleetCounts) (bool, error) {
+		e, err := at(n)
+		if err != nil || !e.holds {
+			return false, err
+		}
+		return cutHolds(n)
 	}
 	if !base.prefillPriced {
 		d, ok, err := whatifapi.SmallestCount(1, bound, func(d int) (bool, error) {
@@ -1306,11 +1346,7 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 		}
 		return fmt.Sprintf("needs at least %d decode (has %d)", d, nd), nil, nil
 	}
-	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, decodeHolds,
-		func(n whatifapi.FleetCounts) (bool, error) {
-			e, err := at(n)
-			return err == nil && e.holds, err
-		})
+	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, decodeHolds, holds)
 	switch {
 	case err != nil:
 		return "", nil, err
@@ -1332,15 +1368,27 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 		notes = append(notes, e.fAssumed)
 	}
 	words := []string{fmt.Sprintf("needs %d prefill + %d decode (has %d + %d)", n.Prefill, n.Decode, np, nd)}
+	// A role the roles say has no spare is cut only in trade for more of
+	// the other: say so, or the sentence reads as cutting what it just
+	// said it cannot.
+	for _, rr := range v.Roles {
+		cut, other, grown := n.Prefill < np, roleDecodeWord, n.Decode > nd
+		if rr.Role == roleDecodeWord {
+			cut, other, grown = n.Decode < nd, rolePrefill, n.Prefill > np
+		}
+		if !rr.Spare && cut && grown {
+			words[0] += fmt.Sprintf(", trading %s for %s", rr.Role, other)
+		}
+	}
 	for _, alt := range []whatifapi.FleetCounts{{Prefill: n.Prefill - 1, Decode: n.Decode + 1}, {Prefill: n.Prefill + 1, Decode: n.Decode - 1}} {
 		if alt.Prefill < 1 || alt.Decode < 1 || alt.Prefill > bound || alt.Decode > bound {
 			continue
 		}
-		e, err := at(alt)
+		ok, err := holds(alt)
 		if err != nil {
 			return "", nil, err
 		}
-		if e.holds {
+		if ok {
 			out.Alternatives = append(out.Alternatives, alt)
 			words = append(words, fmt.Sprintf("or %d + %d", alt.Prefill, alt.Decode))
 		}

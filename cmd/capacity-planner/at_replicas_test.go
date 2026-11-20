@@ -604,3 +604,69 @@ func TestNoRoleHint(t *testing.T) {
 		assert.Empty(t, noRoleHint(vs), "roles %s, %s", vs[0].state.Role, vs[1].state.Role)
 	}
 }
+
+// The fleet needed never cuts a role the verdict says has no spare: four
+// prefill and four decode replicas at the staircase's p95 (41.7 r/s) have a
+// decode replica to spare even at the peak (43.2 r/s), and no prefill to
+// spare, since three prefill replicas hold at the p95 but miss at the peak.
+// The fleet needed was once found at the p95 alone, and said "needs 3
+// prefill + 3 decode (has 4 + 4)" right after "prefill: no spare".
+func TestAtReplicas_NeededKeepsARoleWithNoSpare(t *testing.T) {
+	v := stairReport(t, stairQuery(4, 4, 0)).Shapes[0].Verdict
+	require.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
+	assert.Equal(t, []string{roleDecode}, v.Shrink)
+	require.NotNil(t, v.Needed, v.Summary)
+	assert.Equal(t, whatifapi.ReportNeeded{Prefill: 4, Decode: 3, MaxReplicas: whatifapi.DefaultSizeBound},
+		whatifapi.ReportNeeded{Prefill: v.Needed.Prefill, Decode: v.Needed.Decode, MaxReplicas: v.Needed.MaxReplicas}, v.Summary)
+	assert.Contains(t, v.Summary, "prefill: no spare: one fewer misses at the peak 43.2 r/s")
+	assert.Contains(t, v.Summary, "needs 4 prefill + 3 decode (has 4 + 4)")
+	for _, alt := range v.Needed.Alternatives {
+		assert.GreaterOrEqual(t, alt.Prefill, 4, "alternative %d + %d: %s", alt.Prefill, alt.Decode, v.Summary)
+	}
+}
+
+// Across fleets over-provisioned at the staircase's p95, the fleet needed
+// and the roles agree: a role with no spare is cut only in trade for more
+// of the other role, and the fleet needed is smaller than the one judged.
+// Spares are judged one role at a time, so with two the fewest in all may
+// cut only one of them. The 16k-prompt shape is judged at TTFT p95, where
+// decode admission sets most of its TTFT. Every fleet here is
+// over-provisioned: one that is not fails rather than skips.
+func TestAtReplicas_NeededAgreesWithSpare(t *testing.T) {
+	for _, c := range []struct {
+		shape  string
+		np, nd int
+	}{{"measured", 3, 4}, {"measured", 4, 4}, {"measured", 4, 5}, {"measured", 5, 4}, {"measured", 5, 5},
+		{"measured", 4, 7}, {"16k/200/0.3", 5, 7}, {"16k/200/0.3", 6, 7}, {"16k/200/0.3", 8, 10}} {
+		np, nd := c.np, c.nd
+		t.Run(fmt.Sprintf("%s %d+%d", c.shape, np, nd), func(t *testing.T) {
+			q := stairQuery(np, nd, 0)
+			if c.shape != "measured" {
+				sh, err := whatifapi.ParseReportShape(c.shape)
+				require.NoError(t, err)
+				q.TTFT.Percentile = 0.95
+				q.Shapes = []whatifapi.ReportShapeAsk{sh}
+			}
+			v := stairReport(t, q).Shapes[0].Verdict
+			require.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
+			require.NotNil(t, v.Needed, v.Summary)
+			has := map[string]int{rolePrefill: np, roleDecode: nd}
+			got := map[string]int{rolePrefill: v.Needed.Prefill, roleDecode: v.Needed.Decode}
+			assert.Less(t, v.Needed.Prefill+v.Needed.Decode, np+nd, v.Summary)
+			for _, r := range v.Roles {
+				other := rolePrefill
+				if r.Role == rolePrefill {
+					other = roleDecode
+				}
+				if r.Spare || got[r.Role] >= has[r.Role] {
+					continue
+				}
+				// A role with no spare is cut: only in trade for more of
+				// the other, and the sentence says so.
+				assert.Greater(t, got[other], has[other], "%s has no spare but is cut: %s", r.Role, v.Summary)
+				assert.Contains(t, v.Grow, other, v.Summary)
+				assert.Contains(t, v.Summary, "trading "+r.Role+" for "+other)
+			}
+		})
+	}
+}
