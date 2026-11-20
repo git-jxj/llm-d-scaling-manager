@@ -106,7 +106,7 @@ Options:
 
 The default image tag is the `newTag` in `config/base/manager/kustomization.yaml`:
 `main` on a checkout of `main`, the release tag on a checkout of a release. So
-`git checkout v0.12.0` installs `:v0.12.0` without `-i`. See
+`git checkout v0.12.1` installs `:v0.12.1` without `-i`. See
 [Pin the version](upgrade-and-uninstall.md#pin-the-version).
 
 `--check` is what `make check-prereqs` runs. Run it before a real install. It
@@ -184,12 +184,12 @@ yourself, or when a GitOps tool owns the manifests. Otherwise use Method 1.
 ```bash
 # Use the manifests of the release you install. A release checkout already
 # names its own image, so the image line below only makes it explicit.
-git checkout v0.12.0
+git checkout v0.12.1
 
 # Set the controller image: the release tag, or its digest from the release notes
 cd config/base/manager
-kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.12.0
-# kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:0fc4c191f847b2746a41e2a1cdbb93072d0f2a1e2f3974d36478df62a9b31672
+kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.12.1
+# kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:a8bcc05b69d6b29204750baa235bc5ebf45e062a8c28f3e741ce2bda42f6c440
 
 # Apply the overlay for your scope and platform
 kubectl apply -k ../../overlays/cluster-scoped/kubernetes
