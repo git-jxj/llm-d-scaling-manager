@@ -71,6 +71,8 @@ func TestSchemaIsPinned(t *testing.T) {
 		"sources": reflect.TypeFor[SourcesResponse](), "upload": reflect.TypeFor[UploadResponse](), "sizeRequest": reflect.TypeFor[SizeRequest](), "size": reflect.TypeFor[SizeResponse](),
 		"reportRequest": reflect.TypeFor[ReportRequest](), "report": reflect.TypeFor[ReportResponse](),
 		"backtestRequest": reflect.TypeFor[BacktestRequest](), "backtest": reflect.TypeFor[BacktestResponse](),
+		"predictRequest": reflect.TypeFor[PredictRequest](), "prediction": reflect.TypeFor[Prediction](),
+		"compareRequest": reflect.TypeFor[CompareRequest](),
 	}
 	for typ, name := range namedTypes {
 		walked[name] = typ

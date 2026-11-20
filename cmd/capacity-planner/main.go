@@ -166,7 +166,7 @@ func exitCode(err error) int {
 	return 1
 }
 
-const usage = "usage: capacity-planner at-replicas|backtest|capture|day-plan|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
+const usage = "usage: capacity-planner at-replicas|backtest|capture|compare|day-plan|freeze|generate|joint-ttft|predict|replicas-to-slo|serve|slo-to-rate|strip-latency|version [flags]; -h after a command lists its flags"
 
 // command is one subcommand: it parses its own flags from args and writes
 // what it reports to out, and its warnings to warn (stderr).
@@ -176,6 +176,9 @@ type command func(ctx context.Context, args []string, out, warn io.Writer) error
 var commands = map[string]command{
 	"at-replicas":     runAtReplicas,
 	"backtest":        runBacktest,
+	"compare":         runCompare,
+	"predict":         runPredict,
+	"strip-latency":   runStripLatency,
 	"capture":         runCapture,
 	"day-plan":        runDayPlan,
 	"freeze":          runFreeze,

@@ -208,9 +208,9 @@ func runConfigOf(st *learnreplay.State, decodeVariant, prefillVariant string) wh
 	c := whatifapi.RunConfig{}
 	add := func(name, value string) { c.Fields = append(c.Fields, whatifapi.ConfigField{Name: name, Value: value}) }
 	add("model", st.ModelID)
-	roles := "decode"
+	roles := roleDecodeWord
 	if prefillVariant != "" {
-		roles = "prefill+decode"
+		roles = rolePrefill + "+" + roleDecodeWord
 	}
 	add("roles", roles)
 	fc := "absent (off)"
@@ -254,9 +254,9 @@ func runConfigOf(st *learnreplay.State, decodeVariant, prefillVariant string) wh
 			add(name+" "+strings.ReplaceAll(label, "_", "-"), v)
 		}
 	}
-	role("decode", decodeVariant)
+	role(roleDecodeWord, decodeVariant)
 	if prefillVariant != "" {
-		role("prefill", prefillVariant)
+		role(rolePrefill, prefillVariant)
 	}
 	return c
 }

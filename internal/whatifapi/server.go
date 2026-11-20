@@ -58,6 +58,8 @@ type Config struct {
 	// WhatifSchema names the CLI schema the answer, refusal and flag shapes
 	// follow ("schema-v3").
 	WhatifSchema string
+	// PlannerVersion is the planner's release, stamped on a prediction.
+	PlannerVersion string
 	// MaxPlans and MaxInputs are how many plans and how many inputs are
 	// priced at once; past them a request is 503 with Retry-After. 0 is the
 	// default: GOMAXPROCS plans, DefaultMaxInputs inputs.
@@ -113,11 +115,12 @@ func (e BudgetError) Error() string {
 // inputsId, a response per scenarioId and per sizeId, a curve set per fleet,
 // and the limits per fleet and targets.
 type Server struct {
-	resolver     Resolver
-	whatifSchema string
-	inputs       *lru[*inputsEntry]
-	plans        *lru[[]byte]
-	sizes        *lru[[]byte]
+	resolver       Resolver
+	whatifSchema   string
+	plannerVersion string
+	inputs         *lru[*inputsEntry]
+	plans          *lru[[]byte]
+	sizes          *lru[[]byte]
 	// searches is each size's search, by sizeId, kept before its answer's
 	// plan is priced: a size whose plan failed is not searched again.
 	searches *lru[*SizeResponse]
@@ -191,7 +194,7 @@ func New(c Config) *Server {
 	if uploadMax <= 0 {
 		uploadMax = DefaultUploadBytes
 	}
-	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newWeighedLRU(defaultInputs, inputsBytes, entryBytes),
+	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, plannerVersion: c.PlannerVersion, inputs: newWeighedLRU(defaultInputs, inputsBytes, entryBytes),
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
@@ -221,6 +224,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/report", s.handleReport)
 	mux.HandleFunc("POST /v1/dayplan", s.handleDayPlan)
 	mux.HandleFunc("POST /v1/backtest", s.handleBacktest)
+	mux.HandleFunc("POST /v1/predict", s.handlePredict)
+	mux.HandleFunc("POST /v1/compare", s.handleCompare)
 	mux.HandleFunc("GET /v1/sources", s.handleSources)
 	mux.HandleFunc("POST "+UploadPath, s.handleUpload)
 	mux.HandleFunc("GET /{$}", servePage)
