@@ -1571,7 +1571,10 @@ pages.
 
 **On this release the slo analyzer only observes**, so neither alert means the
 autoscaler failed: the fleet is sized by the saturation analyzer, and a miss
-says that tier's thresholds do not meet the SLO. It is a tuning finding to act
+says that tier's thresholds do not meet the SLO. A `tpot` target does bound
+how far saturation packs decode, but only on a decode line the variant
+measured: read `itlBoundWhy` on the `k2-itl-bound` line
+([TPOT and decode packing](scaling-policy.md#how-a-tpot-target-bounds-decode-packing)). It is a tuning finding to act
 on in working hours, not an outage. Set up in
 [`slo` (observe only)](scaling-policy.md#slo-observe-only).
 

@@ -1523,6 +1523,7 @@ itlReadsEngines
 itlRefused
 itlResidualPct
 itlSamples
+itlTargetClamp
 itlTargetFill
 itlTargetSec
 itlTargetSource
@@ -1557,6 +1558,7 @@ k2-decision
 k2-decode-budget-at-computed-prompt
 k2-first-reading-waits-for-a-second
 k2-held-dropped
+k2-itl-bound
 k2-key-bucket-held
 k2-key-bucket-moved
 k2-obs-admitted
@@ -1565,7 +1567,6 @@ k2-unsettled-joined
 k2-unsettled-window
 k2-waits-after-a-rollout
 k2-waits-after-controller-restart
-k2AtSteady
 k2BatchBound
 k2Borrows
 k2ComputeBound
@@ -1581,6 +1582,7 @@ k2Settle.maxRise
 k2Settle.rateFraction
 k2Source
 k2Stash
+k2Unbounded
 k2WindowArgs
 k2stash|
 k2|
@@ -2910,7 +2912,6 @@ status
 stay
 stayed
 stays
-steady
 steadyFor
 steadyGate.carry
 steadyGate.idleRows
@@ -2968,9 +2969,6 @@ taken
 taken-by-another-borrower
 takes
 target
-target-above-band
-target-below-band
-target-under-intercept
 targetFill
 targetReduce
 targetReplicas

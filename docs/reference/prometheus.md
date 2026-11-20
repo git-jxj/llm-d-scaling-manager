@@ -1265,8 +1265,9 @@ is computed from them.
 - **Runbook.** The SLO alerts, and an empty SLO dashboard row, are worked
   through in [A model misses, or is never judged against, its SLO](troubleshooting.md#a-model-misses-or-is-never-judged-against-its-slo).
   All three carry `component: slo`: the analyzer only observes on this
-  release, so route on it if a tuning finding should go to a ticket queue
-  rather than page.
+  release (a `tpot` target only bounds how far saturation packs decode), so
+  route on it if a tuning finding should go to a ticket queue rather than
+  page.
 - **Labels.** Every series also carries `controller_instance` when
   `CONTROLLER_INSTANCE` is set. Prometheus scrapes the model's namespace as
   `exported_namespace`; `namespace` is then the controller's. **In PromQL, match

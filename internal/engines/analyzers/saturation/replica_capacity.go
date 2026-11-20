@@ -86,7 +86,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	// derived k2 then prices no spread (replicaOutputDispersion).
 	shapeChanging bool,
 	// itlBound is the fill at which the variant's ITL line reaches the TPOT
-	// objective, the bound on the derived k2's batch (k2ITLBound).
+	// objective, the bound on its k2 (k2ITLBound).
 	itlBound itlBatchBound,
 	logger logr.Logger,
 ) *capacity.ReplicaCapacity {
@@ -787,6 +787,14 @@ func (a *SaturationAnalyzer) computeK2(
 		// Priced at the unadmitted reading, not at the chain's lower bound.
 		borrowed = k2Borrow{}
 	}
+	// Whatever priced it, a decode replica is held where its variant's ITL
+	// line reaches the policy's TPOT objective (SwitchK2BatchAtITLTarget,
+	// k2_itl_bound.go), and so is the figure the store keeps.
+	unbounded := k2
+	k2, held := itlBoundedK2(k2, batchCap.itl, kvCeiling)
+	recordable, _ = itlBoundedK2(recordable, batchCap.itl, kvCeiling)
+	logITLBound(logger, modelID, namespace, variantName, src, engineParams, batchCap, avgInput, avgOutput,
+		outputDispersion, ranks, kvCeiling, unbounded, k2, held)
 	return k2Decision{k2: k2, src: src, recordable: recordable, borrowed: borrowed, refused: refused}
 }
 
@@ -1238,38 +1246,17 @@ func (a *SaturationAnalyzer) k2Chain(
 		// it computes (decodeStepBudget, issue
 		// llm-d-incubation/llm-d-scaling-manager#201); the zero value charges
 		// the whole prompt, as before.
-		//
-		// Under SwitchK2BatchAtITLTarget the batch is also held where the
-		// variant's own ITL line reaches the policy's TPOT objective
-		// (batchCap.itl, k2_itl_bound.go): k2 is then at most the bound's
-		// fill of the replica's KV, and the lower bound is judged against
-		// that.
 		if k2Derived := estimateCapacityAtCapBudget(engineParams, batchCap.perRank, avgInput, avgOutput, outputDispersion, batchCap.budget) * int64(max(ranks, 1)); k2Derived > 0 {
-			atSteady := k2Derived
-			k2Derived, itlHeld := itlBoundedK2(k2Derived, batchCap.itl, kvCeiling)
 			if b, ok := borrow(min(k1, k2Derived)); ok {
-				bl := logger
-				if batchCap.itl.on {
-					// The bound's fields on the borrowed line too: a prior
-					// above the bound prices the replica here.
-					bl = logger.WithValues(k2BatchBoundFields(engineParams, batchCap, avgInput, avgOutput, outputDispersion,
-						ranks, kvCeiling, atSteady, itlHeld, true)...)
-				}
-				logBorrowedK2(bl, b, modelID, namespace, variantName, historyKey, min(k1, k2Derived), capacity.K2SrcDerived)
+				logBorrowedK2(logger, b, modelID, namespace, variantName, historyKey, min(k1, k2Derived), capacity.K2SrcDerived)
 				return b.k2, b.source(), b
 			}
-			kv := []any{"modelID", modelID, "namespace", namespace, "variant", variantName,
+			logger.V(perReplicaLogLevel).Info("k2-decision",
+				"modelID", modelID, "namespace", namespace, "variant", variantName,
 				"priority", capacity.K2SrcDerived.String(), "historyKey", historyKey,
 				"avgInputTokens", avgInput, "avgOutputTokens", avgOutput, "outputDispersion", outputDispersion,
 				"engineParams", engineParams, "engineRanks", max(ranks, 1),
-				"batchCap", batchCap.perRank, "batchCapSource", batchCap.source, "k2", k2Derived}
-			if batchCap.itl.on {
-				// Only with SwitchK2BatchAtITLTarget on: off, the line is
-				// the one before the switch.
-				kv = append(kv, k2BatchBoundFields(engineParams, batchCap, avgInput, avgOutput, outputDispersion,
-					ranks, kvCeiling, atSteady, itlHeld, false)...)
-			}
-			logger.V(perReplicaLogLevel).Info("k2-decision", kv...)
+				"batchCap", batchCap.perRank, "batchCapSource", batchCap.source, "k2", k2Derived)
 			return k2Derived, capacity.K2SrcDerived, k2Borrow{}
 		}
 	}

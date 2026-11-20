@@ -9,6 +9,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
@@ -19,7 +20,7 @@ import (
 )
 
 // Issue llm-d-incubation/llm-d-scaling-manager#258: where the policy sets a
-// TPOT objective, the derived k2's batch is held where the variant's own ITL
+// TPOT objective, a decode replica's k2 is held where its variant's own ITL
 // line reaches it. The tests set the switch by its name, so they run on a
 // commit that predates it, and fail there.
 
@@ -28,6 +29,15 @@ import (
 func tpotPolicy(cfg *config.ScalingPolicy, target time.Duration) {
 	cfg.SLO = &config.SLOPolicy{TPOT: &config.SLOObjective{Target: config.SLODuration{Duration: target}}}
 	cfg.Analyzers = []config.AnalyzerScoreConfig{{Name: "saturation"}, {Name: "slo"}}
+}
+
+// lastLine is the last line logged as msg, nil with none.
+func lastLine(logs *observer.ObservedLogs, msg string) map[string]any {
+	all := logs.FilterMessage(msg).All()
+	if len(all) == 0 {
+		return nil
+	}
+	return all[len(all)-1].ContextMap()
 }
 
 // The target is read only with the SLO analyzer listed, as the TTFT pricing
@@ -42,8 +52,8 @@ func TestK2BatchAtITLTarget_TheTargetNeedsTheSLOAnalyzer(t *testing.T) {
 	assert.Zero(t, sloTPOTTarget(nil))
 }
 
-// A line the key fitted itself, with an intercept it measured, bounds the
-// batch; any other names why not.
+// A line the key fitted itself, with an intercept it measured, bounds k2; any
+// other names why not.
 func TestK2BatchAtITLTarget_OnlyALearnedLineBounds(t *testing.T) {
 	line := itl.Model{A: 0.05, B: 0.012}
 	cases := map[string]struct {
@@ -69,32 +79,37 @@ func TestK2BatchAtITLTarget_OnlyALearnedLineBounds(t *testing.T) {
 
 // The line 0.05 x k + 0.012 s a token: a TPOT objective of 20 ms is reached
 // at a fill of 0.16, inside a band of [0.15, 0.8]. No objective is no bound:
-// the band's pricing point is not a latency. A target at or under B is met at
-// no fill; one the line reaches outside the band is read off it where it was
-// not fitted. Each is no bound.
+// the band's pricing point is not a latency. A target the line reaches under
+// the band, or at or under B, is held at the band's lower edge, so a tighter
+// target never asks for fewer replicas; one past the band at its upper edge.
 func TestK2BatchAtITLTarget_TheTarget(t *testing.T) {
 	line := itl.Model{A: 0.05, B: 0.012}
 	slo := itlBoundFor(line, 0.020, 0.15, 0.8)
 	assert.True(t, slo.applies())
 	assert.InDelta(t, 0.16, slo.fill, 1e-12)
 	assert.Equal(t, itlTargetSLO, slo.source)
+	assert.Empty(t, slo.clamp)
 
 	none := itlBoundFor(line, 0, 0.15, 0.8)
 	assert.False(t, none.applies())
 	assert.Equal(t, itlBoundNoTarget, none.why)
 
-	for target, why := range map[float64]string{
-		0.010: itlBoundUnderIntercept,
-		0.015: itlBoundBelowBand,
-		1:     itlBoundAboveBandFill,
+	for target, want := range map[float64]struct {
+		fill  float64
+		clamp string
+	}{
+		0.010: {0.15, itlClampLow},
+		0.012: {0.15, itlClampLow},
+		0.015: {0.15, itlClampLow},
+		1:     {0.8, itlClampHigh},
 	} {
 		b := itlBoundFor(line, target, 0.15, 0.8)
-		assert.False(t, b.applies(), "%g s", target)
-		assert.Equal(t, why, b.why, "%g s", target)
+		assert.True(t, b.applies(), "%g s", target)
+		assert.InDelta(t, want.fill, b.fill, 1e-12, "%g s", target)
+		assert.Equal(t, want.clamp, b.clamp, "%g s", target)
 	}
-	edge := itlBoundFor(line, 0.012+0.05*0.8, 0.15, 0.8)
-	assert.True(t, edge.applies())
-	assert.InDelta(t, 0.8, edge.fill, 1e-9)
+	tighter, looser := itlBoundFor(line, 0.0119, 0.15, 0.8), itlBoundFor(line, 0.0199, 0.15, 0.8)
+	assert.LessOrEqual(t, tighter.fill, looser.fill, "a tighter target never holds k2 higher")
 
 	assert.False(t, itlBoundFor(itl.Model{}, 0.020, 0.15, 0.8).applies(), "no line")
 	assert.False(t, itlBatchBound{fill: 0.5}.applies(), "the zero value is the switch off")
@@ -115,10 +130,11 @@ func boundRow() domain.ReplicaMetrics {
 }
 
 // priceBound prices rm as a decode replica of variant-d under params with the
-// bound given, the budget switch as stated, and returns its capacity and its
-// P3 k2-decision line.
+// bound given and the budget switch as stated, edits applied to the analyzer
+// first, and returns its capacity, its P3 k2-decision line (nil with none)
+// and its k2-itl-bound line (nil with none).
 func priceBound(t *testing.T, rm domain.ReplicaMetrics, params *capacity.EngineParams, budget bool,
-	bound itlBatchBound) (*capacity.ReplicaCapacity, map[string]any) {
+	bound itlBatchBound, edits ...func(*SaturationAnalyzer)) (*capacity.ReplicaCapacity, map[string]any, map[string]any) {
 	t.Helper()
 	ctx, logs := observedCtx(t)
 	store := capacity.NewStore()
@@ -127,6 +143,9 @@ func priceBound(t *testing.T, rm domain.ReplicaMetrics, params *capacity.EngineP
 	}, time.Now())
 	a := NewSaturationAnalyzer(store)
 	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchK2DecodeBudgetAtComputedPrompt: budget}))
+	for _, edit := range edits {
+		edit(a)
+	}
 	cfg := &config.ScalingPolicy{KvCacheThreshold: 0.8, ScaleUpThreshold: 0.85, QueueLengthThreshold: 5}
 	rc := a.computeReplicaCapacity(rm, cfg, tuningOf(cfg), "test-model", "test-ns", 1, domain.RoleDecode, "H200",
 		outputKeys{k2: rm.AvgOutputTokens, mu: rm.AvgOutputTokens}, rm.AvgOutputTokens, rm.AvgInputTokens, 0,
@@ -138,47 +157,70 @@ func priceBound(t *testing.T, rm domain.ReplicaMetrics, params *capacity.EngineP
 			p3 = f
 		}
 	}
-	require.NotNil(t, p3, "a P3 k2-decision line")
-	return rc, p3
+	return rc, p3, lastLine(logs, "k2-itl-bound")
+}
+
+// at is a bound at fill, from a 20 ms objective.
+func at(fill float64) itlBatchBound {
+	return itlBatchBound{on: true, fill: fill, target: 0.02, source: itlTargetSLO}
 }
 
 // A bound at a fill of 0.2 holds k2 at 200,000, 190 requests a rank at the
 // context where N_steady is 256. One at 0.5 leaves the steady batch's 268,800,
-// under it, alone. One that does not apply leaves it, and says why. Off, the
-// line is as before. On a pod of four data-parallel ranks the bound is still
+// under it, alone. One that does not apply leaves it, and says why. Off,
+// nothing is logged. On a pod of four data-parallel ranks the bound is still
 // 0.2 of the pod's KV and N_itl a rank's.
 func TestK2BatchAtITLTarget_HoldsTheBatch(t *testing.T) {
-	at := func(fill float64) itlBatchBound {
-		return itlBatchBound{on: true, fill: fill, target: 0.02, source: itlTargetSLO}
-	}
-	rc, line := priceBound(t, boundRow(), deploymentParams(), false, at(0.2))
+	rc, _, line := priceBound(t, boundRow(), deploymentParams(), false, at(0.2))
 	assert.Equal(t, int64(200_000), rc.EffectiveCapacity)
 	assert.Equal(t, k2BoundITL, line["k2BatchBound"])
 	assert.InDelta(t, 256, line["nSteady"], 1e-9)
 	assert.InDelta(t, 0.2*float64(boundKV)/1050, line["nITL"], 1e-9)
-	assert.EqualValues(t, int64(boundAtSteady), line["k2AtSteady"])
+	assert.EqualValues(t, int64(boundAtSteady), line["k2Unbounded"])
+	assert.Equal(t, capacity.K2SrcDerived.String(), line["priority"])
 
-	rc, line = priceBound(t, boundRow(), deploymentParams(), false, at(0.5))
+	rc, _, line = priceBound(t, boundRow(), deploymentParams(), false, at(0.5))
 	assert.Equal(t, int64(boundAtSteady), rc.EffectiveCapacity)
-	assert.Equal(t, k2BoundSteady, line["k2BatchBound"])
+	assert.Equal(t, k2BoundNone, line["k2BatchBound"])
 
-	rc, line = priceBound(t, boundRow(), deploymentParams(), false, itlBatchBound{on: true, why: itlBoundDefaultB})
+	rc, _, line = priceBound(t, boundRow(), deploymentParams(), false, itlBatchBound{on: true, why: itlBoundDefaultB})
 	assert.Equal(t, int64(boundAtSteady), rc.EffectiveCapacity, "a default intercept bounds nothing")
 	assert.Equal(t, itlBoundDefaultB, line["itlBoundWhy"])
 	assert.NotContains(t, line, "nITL")
 
-	rc, line = priceBound(t, boundRow(), deploymentParams(), false, itlBatchBound{})
+	rc, p3, line := priceBound(t, boundRow(), deploymentParams(), false, itlBatchBound{})
 	assert.Equal(t, int64(boundAtSteady), rc.EffectiveCapacity, "off")
-	for _, k := range []string{"nSteady", "nITL", "k2BatchBound", "itlBoundWhy", "itlTargetSource", "k2AtSteady"} {
-		assert.NotContains(t, line, k, "off: the line as before")
-	}
+	assert.Nil(t, line, "off: no k2-itl-bound line")
+	assert.NotNil(t, p3)
 
 	four := boundRow()
 	four.EngineRanks = 4
-	rc, line = priceBound(t, four, deploymentParams(), false, at(0.2))
+	rc, _, line = priceBound(t, four, deploymentParams(), false, at(0.2))
 	assert.Equal(t, int64(200_000), rc.EffectiveCapacity)
-	assert.EqualValues(t, int64(4*boundAtSteady), line["k2AtSteady"])
+	assert.EqualValues(t, int64(4*boundAtSteady), line["k2Unbounded"])
 	assert.InDelta(t, 0.2*float64(boundKV)/4/1050, line["nITL"], 1e-9)
+}
+
+// A measured window holds k2 too: a replica whose window records 900,000
+// tokens (P2-hist) is priced at 200,000 under a bound at 0.2, and the window
+// is not changed.
+func TestK2BatchAtITLTarget_AMeasuredWindowIsHeldToo(t *testing.T) {
+	_, p3, _ := priceBound(t, boundRow(), deploymentParams(), false, itlBatchBound{})
+	require.NotNil(t, p3)
+	key, ok := p3["historyKey"].(string)
+	require.True(t, ok)
+	var a *SaturationAnalyzer
+	window := func(x *SaturationAnalyzer) { a = x; setDonor(x, key, 900_000) }
+	rc, _, line := priceBound(t, boundRow(), deploymentParams(), false, at(0.2), window)
+	assert.Equal(t, capacity.K2SrcHistorical.String(), line["priority"])
+	assert.EqualValues(t, int64(900_000), line["k2Unbounded"])
+	assert.Equal(t, int64(200_000), rc.EffectiveCapacity)
+	assert.InDelta(t, 900_000, a.computeCapacityHistory[key].Average(), 1e-9, "the window itself is not changed")
+
+	rc, _, _ = priceBound(t, boundRow(), deploymentParams(), false, itlBatchBound{}, func(x *SaturationAnalyzer) {
+		setDonor(x, key, 900_000)
+	})
+	assert.Equal(t, int64(800_000), rc.EffectiveCapacity, "off: the window, held at k1")
 }
 
 // asked is the decode replicas the optimizer orders for demand d at a
@@ -206,10 +248,7 @@ func TestK2BatchAtITLTarget_TheLiveShape(t *testing.T) {
 	const demand = 6_000_000.0
 	ask := func(budget bool, tpot float64) (int, int64) {
 		b := itlBoundFor(line, tpot, 0.15, 0.8)
-		if tpot == 0 {
-			b = itlBatchBound{on: true, why: itlBoundNoTarget}
-		}
-		rc, _ := priceBound(t, budgetRow(), budgetParams(), budget, b)
+		rc, _, _ := priceBound(t, budgetRow(), budgetParams(), budget, b)
 		return asked(demand, float64(rc.EffectiveCapacity), 1), rc.EffectiveCapacity
 	}
 	n, k2 := ask(true, 0)
@@ -242,41 +281,40 @@ func itlSLOCycle(r *restartRig, ctx context.Context, rows []domain.ReplicaMetric
 
 // itlBoundRun runs 40 cycles of three steady replicas whose ITL reads
 // 8 ms + 40 ms x k, so v, in role, fits its own line, with the switch on or
-// off and a TPOT objective of tpot, and returns the last cycle's P3
-// k2-decision line and its itl-fit line.
-func itlBoundRun(t *testing.T, on bool, tpot time.Duration, role string) (map[string]any, map[string]any) {
+// off and a TPOT objective of tpot, and returns the last cycle's
+// k2-itl-bound line (nil with none), its P3 k2-decision line and its itl-fit
+// line.
+func itlBoundRun(t *testing.T, on bool, tpot time.Duration, role string) (bound, p3, fit map[string]any) {
 	t.Helper()
 	r := itlRig(t, map[string]bool{SwitchK2BatchAtITLTarget: on})
 	r.a.capacityStore.Update("test-ns", "test-model", "v", capacity.Record{GpuCount: 1, EngineParams: deploymentParams(),
 		LearnedFrom: "deployment"}, r.now)
-	var p3, fit map[string]any
 	for range 40 {
 		ctx, logs := observedCtx(t)
 		itlSLOCycle(r, ctx, itlSettleFleet(), tpot, role)
-		p3, fit = nil, nil
+		bound, p3 = lastLine(logs, "k2-itl-bound"), nil
 		for _, e := range logs.FilterMessage("k2-decision").All() {
 			if f := e.ContextMap(); f["priority"] == capacity.K2SrcDerived.String() {
 				p3 = f
 			}
 		}
-		if fits := logs.FilterMessage("itl-fit").All(); len(fits) > 0 {
-			fit = fits[len(fits)-1].ContextMap()
-		}
+		fit = lastLine(logs, "itl-fit")
 	}
 	require.NotNil(t, p3, "a P3 k2-decision line")
-	return p3, fit
+	return bound, p3, fit
 }
 
 // Through Analyze: v fits its own line, 8 ms + 40 ms x k, from its replicas'
 // readings. With a TPOT objective of 16 ms the line reaches it at a fill of
 // 0.2, so k2 is held at 0.2 of a replica's 376,480 tokens, 75,296, under the
-// 256-request steady batch's figure, 320,000. Off, k2 is that figure and the
-// line carries no bound. With no objective there is no bound, and the line
-// says so.
+// 256-request steady batch's figure, 320,000. Off, k2 is that figure and
+// nothing is logged. With no objective there is no bound, and the line says
+// so.
 func TestK2BatchAtITLTarget_ThroughAnalyze(t *testing.T) {
-	on, fit := itlBoundRun(t, true, 16*time.Millisecond, domain.RoleDecode)
+	on, _, fit := itlBoundRun(t, true, 16*time.Millisecond, domain.RoleDecode)
 	require.NotNil(t, fit, "premise: v fits a line")
 	require.Equal(t, itl.TierOLS, fit["tier"], "premise: a full fit, its own B")
+	require.NotNil(t, on)
 	require.Equal(t, "", on["itlBoundWhy"], "the line bounds: %v", on)
 	assert.Equal(t, itlTargetSLO, on["itlTargetSource"])
 	assert.Equal(t, k2BoundITL, on["k2BatchBound"])
@@ -285,23 +323,25 @@ func TestK2BatchAtITLTarget_ThroughAnalyze(t *testing.T) {
 	assert.InDelta(t, 0.2, fill, 0.02, "the fitted line reaches 16 ms near 0.2")
 	assert.EqualValues(t, int64(fill*376_480), on["k2"])
 
-	off, _ := itlBoundRun(t, false, 16*time.Millisecond, domain.RoleDecode)
-	assert.NotContains(t, off, "k2BatchBound")
-	assert.Equal(t, on["k2AtSteady"], off["k2"], "off: the steady batch's figure")
+	off, offP3, _ := itlBoundRun(t, false, 16*time.Millisecond, domain.RoleDecode)
+	assert.Nil(t, off, "off: no k2-itl-bound line")
+	assert.Equal(t, on["k2Unbounded"], offP3["k2"], "off: the steady batch's figure")
 
-	none, _ := itlBoundRun(t, true, 0, domain.RoleDecode)
+	none, noneP3, _ := itlBoundRun(t, true, 0, domain.RoleDecode)
+	require.NotNil(t, none)
 	assert.Equal(t, itlBoundNoTarget, none["itlBoundWhy"])
-	assert.Equal(t, k2BoundSteady, none["k2BatchBound"])
-	assert.Equal(t, off["k2"], none["k2"])
+	assert.Equal(t, k2BoundNone, none["k2BatchBound"])
+	assert.Equal(t, offP3["k2"], noneP3["k2"])
 }
 
-// An aggregated variant's line is report-only for its mu
-// (itlLineReportOnly), and does not bound its k2 either.
-func TestK2BatchAtITLTarget_AnAggregatedLineDoesNotBound(t *testing.T) {
-	p3, fit := itlBoundRun(t, true, 16*time.Millisecond, domain.RoleBoth)
+// An aggregated variant is not bound: its line is report-only for its mu
+// (itlLineReportOnly).
+func TestK2BatchAtITLTarget_AnAggregatedVariantIsNotBound(t *testing.T) {
+	bound, _, fit := itlBoundRun(t, true, 16*time.Millisecond, domain.RoleBoth)
 	require.NotNil(t, fit, "premise: v fits a line")
-	assert.Equal(t, itlBoundNotDecode, p3["itlBoundWhy"])
-	assert.Equal(t, k2BoundSteady, p3["k2BatchBound"])
+	require.NotNil(t, bound)
+	assert.Equal(t, itlBoundNotDecode, bound["itlBoundWhy"])
+	assert.Equal(t, k2BoundNone, bound["k2BatchBound"])
 }
 
 // A line borrowed from a sibling's configuration is not the variant's own.
@@ -324,16 +364,11 @@ func TestK2BatchAtITLTarget_ABorrowedLineDoesNotBound(t *testing.T) {
 	tpotPolicy(in.Config.(*config.ScalingPolicy), 22*time.Millisecond)
 	_, err := a.Analyze(ctx, in)
 	require.NoError(t, err)
-	var p3 map[string]any
-	for _, e := range logs.FilterMessage("k2-decision").All() {
-		if f := e.ContextMap(); f["priority"] == capacity.K2SrcDerived.String() {
-			p3 = f
-		}
-	}
-	require.NotNil(t, p3)
-	assert.Equal(t, itlBoundBorrowed, p3["itlBoundWhy"])
-	assert.Equal(t, k2BoundSteady, p3["k2BatchBound"])
-	assert.EqualValues(t, int64(boundAtSteady), p3["k2"], "trusted, the line would hold it at 200,000")
+	line := lastLine(logs, "k2-itl-bound")
+	require.NotNil(t, line)
+	assert.Equal(t, itlBoundBorrowed, line["itlBoundWhy"])
+	assert.Equal(t, k2BoundNone, line["k2BatchBound"])
+	assert.EqualValues(t, int64(boundAtSteady), line["k2"], "trusted, the line would hold it at 200,000")
 }
 
 // The switch is on from the constructor, and a replay names it.
