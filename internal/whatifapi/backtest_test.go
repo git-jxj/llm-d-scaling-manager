@@ -170,7 +170,7 @@ func TestBacktest_RefusesAnotherConfiguration(t *testing.T) {
 	assert.Contains(t, err.Error(), "the fit's own source")
 	_, err = backtestQuestionOf(btEntry(t, r, "other", s, l, btConfig("H100")), test, BacktestRequest{AllowConfigMismatch: true}, time.Time{}, "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "overlaps the fit")
+	assert.Contains(t, err.Error(), "does not end before the test starts")
 }
 
 // The test's first minutes, a step near a change of replicas and a step

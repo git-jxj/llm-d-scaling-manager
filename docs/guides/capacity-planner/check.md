@@ -159,7 +159,7 @@ Size from the planner when, below the load it thinks the fleet can carry:
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--recording` with `--split` or `--fit-until` | `--split 60%` | One recording, cut in two. |
-| `--fit`, `--test` | | Two recordings. They must not overlap in time. |
+| `--fit`, `--test` | | Two recordings. The fit must end before the test starts. |
 | `--step` | `5m` | A step, from `1m` to `1h`. A step shorter than the router's five-minute window shares requests with its neighbours. |
 | `--settle` | `2m` | How long after a change of replicas, and after the test starts, a measurement is not judged. |
 | `--arrival-cv2` | random | How bursty arrivals are, when you know it: 1 is random. |
