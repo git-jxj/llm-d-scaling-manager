@@ -124,3 +124,25 @@ func TestUploadCheckOutlivesTheIdleTime(t *testing.T) {
 		t.Fatal("the check did not see the client leave")
 	}
 }
+
+// A check still running when the upload's time is up is stopped and
+// answered 408, as the API guide says: before, the request's context ended
+// at the cap and the answer was 503, "the request ended before it was
+// priced".
+func TestUploadPastTheCapIs408(t *testing.T) {
+	u := &checkingUploader{check: time.Minute, done: make(chan error, 1)}
+	s := New(Config{Resolver: &stubResolver{}, Uploader: u})
+	s.uploadIdle, s.uploadDeadline = 5*time.Second, 500*time.Millisecond
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	start := time.Now()
+	resp, err := http.Post(srv.URL+UploadPath, "application/octet-stream", strings.NewReader("abc"))
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	t.Logf("answered %d after %s", resp.StatusCode, time.Since(start))
+	assert.Equal(t, http.StatusRequestTimeout, resp.StatusCode, "%s", body)
+	assert.Contains(t, string(body), "longer than 500ms")
+	assert.ErrorIs(t, <-u.done, context.DeadlineExceeded, "the check was stopped at the cap")
+}

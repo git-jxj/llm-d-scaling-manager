@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
@@ -91,6 +92,12 @@ func newUploadStore(maxBytes int64, warn io.Writer) (*uploadStore, error) {
 			_ = lock.Close()
 		}
 		_ = os.RemoveAll(dir)
+		// Held by a server sweeping it: make another. Any other error is the
+		// filesystem's, such as NFS, which may not lock a directory.
+		if err != nil && !lockHeld(err) && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("cannot lock the upload directory (%w): the uploads need a local filesystem; "+
+				"point TMPDIR at one, in a Pod an emptyDir", err)
+		}
 	}
 	return nil, errors.New("the upload directory was removed as it was made")
 }
@@ -227,7 +234,7 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 	}
 	name := uploadPrefix + hex.EncodeToString(h.Sum(nil)) + ext
 	out := whatifapi.UploadResponse{Name: name, Bytes: int(n)}
-	if _, ok := u.path(name); ok {
+	if u.touch(name) {
 		return out, false, nil
 	}
 	if err := u.check(ctx, name, path); err != nil {
@@ -235,7 +242,7 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if _, ok := u.paths[name]; ok {
+	if u.touchLocked(name) {
 		return out, false, nil
 	}
 	kept = true
@@ -253,6 +260,23 @@ func (u *uploadStore) Upload(ctx context.Context, body io.Reader) (whatifapi.Upl
 		delete(u.paths, old)
 	}
 	return out, true, nil
+}
+
+// touch moves the upload named name to the newest place, as if it were
+// uploaded again, and reports whether it is kept.
+func (u *uploadStore) touch(name string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.touchLocked(name)
+}
+
+// touchLocked is touch with u.mu held.
+func (u *uploadStore) touchLocked(name string) bool {
+	if _, ok := u.paths[name]; !ok {
+		return false
+	}
+	u.order = append(slices.DeleteFunc(u.order, func(n string) bool { return n == name }), name)
+	return true
 }
 
 // storeError is errNoUploadStore, the disk error err said on the server's
@@ -283,8 +307,22 @@ var errUploadBound = errors.New("past the upload's bound")
 
 // check reads the upload at path as serve reads a recording, under the
 // upload's bounds: past one is a TooLargeError, a file that is no recording
-// an InputError naming the upload by name.
+// an InputError naming the upload by name. An error names the upload, never
+// its file: one that would still name the store (its directory removed as
+// the server stops) is the server's (storeError).
 func (u *uploadStore) check(ctx context.Context, name, path string) error {
+	err := u.checkFile(ctx, name, path)
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	if err = hidePath(err, path, name); strings.Contains(err.Error(), u.dir) {
+		return u.storeError(err)
+	}
+	return err
+}
+
+// checkFile is check, its errors as they come.
+func (u *uploadStore) checkFile(ctx context.Context, name, path string) error {
 	rs, err := openRecording(path, true)
 	if err != nil {
 		return err

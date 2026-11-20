@@ -152,8 +152,8 @@ Load it as any recording, with `"source": {"kind": "recording", "name": "upload:
   `application/gzip`. Another type is a 415: a page on another site cannot
   send these types without asking the server first, and the server never
   answers that.
-- **The same file twice** is a 200 with the name it already has; a new one is
-  a 201.
+- **The same file twice** is a 200 with the name it already has, and counts
+  as the newest upload again; a new one is a 201.
 - **An upload may take 15 minutes** to arrive and be checked; other requests
   still have 30 s. An upload that sends nothing for 60 s is stopped with a
   408, so a stalled client does not hold the one upload slot.

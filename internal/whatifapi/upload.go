@@ -97,18 +97,24 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer func() { <-s.uploadSlots }()
 	// A recorder in a test has no connection to set deadlines on.
 	rc := http.NewResponseController(w)
-	end := time.Now().Add(uploadDeadline)
+	end := time.Now().Add(s.uploadDeadline)
 	_ = rc.SetReadDeadline(end)
 	_ = rc.SetWriteDeadline(end.Add(time.Minute))
+	// The check stops at end too, not only the body's reads.
+	ctx, cancel := context.WithDeadline(r.Context(), end)
+	defer cancel()
 	in := &idleReader{r: http.MaxBytesReader(w, r.Body, s.uploadMax), rc: rc, idle: s.uploadIdle, end: end}
-	out, created, err := s.uploader.Upload(r.Context(), in)
+	out, created, err := s.uploader.Upload(ctx, in)
+	// A context ended once end has passed is the cap, not a client gone: as
+	// a read cut off, 408.
+	pastEnd := !time.Now().Before(end) && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled))
 	switch {
 	case errors.As(err, new(*http.MaxBytesError)):
 		err = tooLarge
-	case errors.Is(err, os.ErrDeadlineExceeded):
+	case errors.Is(err, os.ErrDeadlineExceeded), pastEnd:
 		// The rest of the body is never read: the connection is not reused.
 		w.Header().Set("Connection", "close")
-		writeError(w, http.StatusRequestTimeout, fmt.Errorf("the upload was stopped: nothing arrived for %s, or it took longer than %s", s.uploadIdle, uploadDeadline))
+		writeError(w, http.StatusRequestTimeout, fmt.Errorf("the upload was stopped: nothing arrived for %s, or it took longer than %s", s.uploadIdle, s.uploadDeadline))
 		return
 	}
 	if err != nil {

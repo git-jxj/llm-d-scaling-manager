@@ -359,3 +359,57 @@ func TestServeUploadCheckStopsWhenTheClientLeaves(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, entries)
 }
+
+// removedAtEOF is data whose reader removes dir once it is read, as Close
+// does to the store's directory when the server stops mid-upload.
+type removedAtEOF struct {
+	data []byte
+	dir  string
+}
+
+func (r *removedAtEOF) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		_ = os.RemoveAll(r.dir)
+		return 0, io.EOF
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	return n, nil
+}
+
+// An error checking an upload names the upload, never the server's file:
+// here the store's directory goes between the write and the check.
+func TestServeUploadCheckErrorNamesNoPath(t *testing.T) {
+	var log bytes.Buffer
+	up := newUploads(t, &log)
+	_, _, err := up.Upload(t.Context(), &removedAtEOF{data: olsSweepLines(t), dir: up.dir})
+	require.Error(t, err)
+	t.Logf("err: %v", err)
+	assert.NotContains(t, err.Error(), up.dir)
+	assert.NotContains(t, err.Error(), os.TempDir())
+}
+
+// The same bytes uploaded again move that upload to the newest place: it is
+// not the next pushed out.
+func TestServeUploadAgainIsNewest(t *testing.T) {
+	up := newUploads(t, io.Discard)
+	lines := olsSweepLines(t)
+	names := make([]string, 0, maxKeptUploads+1)
+	for i := range maxKeptUploads + 1 {
+		if i == maxKeptUploads {
+			// The oldest again, before one more arrives.
+			again, created, err := up.Upload(t.Context(), bytes.NewReader(lines))
+			require.NoError(t, err)
+			require.False(t, created)
+			require.Equal(t, names[0], again.Name)
+		}
+		out, created, err := up.Upload(t.Context(), bytes.NewReader(append(bytes.Clone(lines), bytes.Repeat([]byte("\n"), i)...)))
+		require.NoError(t, err)
+		require.True(t, created)
+		names = append(names, out.Name)
+	}
+	kept := up.names()
+	assert.Contains(t, kept, names[0], "uploaded again, it was kept")
+	assert.NotContains(t, kept, names[1], "the oldest not uploaded again went")
+	assert.Equal(t, []string{names[maxKeptUploads], names[0]}, kept[:2], "newest first")
+}

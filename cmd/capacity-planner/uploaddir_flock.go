@@ -3,12 +3,17 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
 
 // uploadDirLocks reports whether lockUploadDir locks: here it does.
 const uploadDirLocks = true
+
+// lockHeld reports whether err is lockUploadDir's on a directory another
+// server holds.
+func lockHeld(err error) bool { return errors.Is(err, syscall.EWOULDBLOCK) }
 
 // lockUploadDir opens dir and takes an exclusive lock on it, without
 // waiting: an error when another server holds it. The system drops the lock

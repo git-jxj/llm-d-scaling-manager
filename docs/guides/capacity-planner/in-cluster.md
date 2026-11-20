@@ -177,8 +177,9 @@ were rendered with `kubectl kustomize`, not run on a live OpenShift cluster.
 
 - The largest upload is 256 MiB; a day-long recording of a 16-replica P/D
   fleet is about 95 MB compressed. To change it, add
-  `--upload-max-size=<size>` the same way, and keep `sizeLimit` at least 5
-  times it (4 kept, 1 arriving).
+  `--upload-max-size=<size>` the same way, and keep `sizeLimit` at least
+  (5 + `--max-inputs`) times it: 4 kept, 1 arriving, and up to `--max-inputs`
+  pushed out but still loading (2 by default, so 7 times).
 - The planner refuses a file that is not a learner recording, and says why.
   [Upload a recording](api.md#upload-a-recording) has the details.
 
