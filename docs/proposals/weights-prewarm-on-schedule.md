@@ -326,28 +326,30 @@ reads them. Some deployments throw them away on purpose, to give the RAM to a
 CPU KV tier that pins host memory:
 
 - vLLM's `--release-weight-page-cache` drops the cached pages of the weight
-  files that engine read.
+  files that engine read, after its load.
 - A launch step calls `posix_fadvise(POSIX_FADV_DONTNEED)` on every file under
   the model mount. One such walk took 11-40 s per pod and freed 250-350 GiB
   per node.
 
-Either one, run by the starting engine or by **any other engine on the node**
-that mounts the same files, defeats the prewarm:
+The starting pod's own release cannot hurt it: its launch-step walk runs
+before the reader lines, and the vLLM flag drops pages only after that engine
+has read them. The harm is **another pod on the node** releasing the same
+files after the reader read them and before this engine loads them: the
+engine then reads cold, and the reader's read was wasted disk time. No start
+is slower than cold.
 
-- a release after the reader finished, but before the engine loaded, means
-  the engine reads cold and the reader's read was wasted disk time;
-- a release after every start means no start on that node is ever "warm from
-  an earlier start" (the 8.9 s row in §1).
+A release after every start does not hurt the reader either: it makes every
+start on that node cold (no "warm from an earlier start", the 8.9 s row in
+§1), which is the case the reader is for.
 
 The pages are shared by every pod reading those files, so the reader cannot
 protect them. **Check needed before alpha:** `make workload-patch` reads the
-engine command and args of every workload in the namespace that can schedule
-to the same nodes, and does not offer the reader where any of them carries
-`--release-weight-page-cache` or a `DONTNEED` / `fadvise` call in its
-command. It says which workload it found. A release hidden inside an image
-script, or run by a workload in another namespace, is not visible to that
-check: there, the reader's `done` line followed by a load at the cold figure
-(20 s, not 10 s, on Qwen3-32B) is the sign, and the operator turns the reader
+engine command and args of every workload in the namespace, and does not
+offer the reader where any of them carries `--release-weight-page-cache` or a
+`DONTNEED` / `fadvise` call in its command. It says which workload it found.
+A release hidden inside an image script, or run by a workload in another
+namespace, is not visible to that check: there, a `done` line with a load
+near the cold figure (see §7) is the sign, and the operator turns the reader
 off.
 
 ## 7. Configuration and operator experience
@@ -435,6 +437,8 @@ start:
 - `container_memory_working_set_bytes` for the engine container and pod,
   every 2 s from start to 60 s after `/health`;
 - `<defunct>` entries in the container after the read;
+- one start with the files dropped (`DONTNEED`) right after the reader's
+  `done` line, no slower than cold (§6);
 - whether the uncapped reader slows the engine's other reads where the image
   layers or the engine-cache volume share the NVMe with the weights (import
   and compile-cache-load seconds against the cold arm).
