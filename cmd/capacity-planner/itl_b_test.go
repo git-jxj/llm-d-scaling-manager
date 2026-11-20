@@ -20,11 +20,13 @@ import (
 var pinnedRecording = stair("ttft-three-pods")
 
 // A line on the default intercept is refused, and the refusal says how to
-// state B. --assume-itl-b 12ms prices it: B is 12 ms, the slope is refitted
-// on the same readings, so the new line and the default one cross at the
-// readings' mean fill, inside the fill they were read at; every figure is
-// flagged AssumedITLB and is outside the validated region, and the ITL B row
-// and the JSON say what was assumed. Before #225 no flag priced it.
+// state B. --assume-itl-b 2ms (under the 2.5 ms floor this recording's decode
+// Pods read below the band) prices it: B is 2 ms, the slope is refitted on the
+// same readings, so the new line and the default one cross at the readings'
+// mean fill, inside the fill they were read at; every figure is flagged
+// AssumedITLB and is outside the validated region, and the ITL B row and the
+// JSON say what was assumed. A B above that floor contradicts the readings and
+// is not used. Before #225 no flag priced it.
 func TestAssumeITLB_PricesALineOnTheDefaultIntercept(t *testing.T) {
 	out, code := runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "-o", "json")
 	before := role(t, decodeOutput(t, out), roleDecode)
@@ -34,19 +36,20 @@ func TestAssumeITLB_PricesALineOnTheDefaultIntercept(t *testing.T) {
 	assert.Equal(t, 3, code)
 	assert.Nil(t, before.Inputs.Line.AssumedB)
 
-	out, code = runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "--assume-itl-b", "12ms", "-o", "json")
+	out, code = runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "--assume-itl-b", "2ms", "-o", "json")
 	after := role(t, decodeOutput(t, out), roleDecode)
 	knee := after.Results.Knee.Answer
 	require.NotNil(t, knee, "the stated B prices the knee: %+v", after.Results.Knee.Refused)
 	assert.Contains(t, knee.Flags, string(assumedITLB))
 	require.NotNil(t, knee.Validation)
 	assert.False(t, knee.Validation.Validated, "an assumed B is outside the validated region")
+	assert.NotEmpty(t, knee.Validation.Outside)
 	require.NotNil(t, after.Results.MeanTPOT.Answer)
 	assert.Contains(t, after.Results.MeanTPOT.Answer.Flags, string(assumedITLB))
 	assert.NotEqual(t, 3, code)
 
 	line, was := after.Inputs.Line, before.Inputs.Line
-	assert.InDelta(t, 0.012, line.B, 1e-12)
+	assert.InDelta(t, 0.002, line.B, 1e-12)
 	assert.Equal(t, whatif.TierPinnedB, line.Tier)
 	a := line.AssumedB
 	require.NotNil(t, a)
@@ -54,24 +57,38 @@ func TestAssumeITLB_PricesALineOnTheDefaultIntercept(t *testing.T) {
 	assert.True(t, a.Applied)
 	assert.InDelta(t, was.A, a.DefaultA, 1e-12, "the slope it had on the default")
 	// Both lines run through the readings' mean (itl.FitPinnedB): they cross
-	// there, at the fill (0.006 - 0.012) / (A' - A).
+	// there, at the fill (0.006 - 0.002) / (A' - A).
 	require.NotNil(t, line.ObservedFill)
-	cross := (itl.DefaultBaselineSec - 0.012) / (line.A - was.A)
+	cross := (itl.DefaultBaselineSec - 0.002) / (line.A - was.A)
 	assert.GreaterOrEqual(t, cross, line.ObservedFill.Lo)
 	assert.LessOrEqual(t, cross, line.ObservedFill.Hi)
-	assert.Less(t, line.A, was.A, "a higher B, a lower slope")
+	assert.Greater(t, line.A, was.A, "a lower B, a steeper slope")
 
-	text, _ := runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "--assume-itl-b", "12ms")
-	assert.Contains(t, text, "ITL B           ITL B 12.0 ms, stated, in place of the 6 ms default")
-	assert.Contains(t, text, "AssumedITLB (12.0 ms, stated)")
+	text, _ := runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "--assume-itl-b", "2ms")
+	assert.Contains(t, text, "ITL B           2.0 ms, stated, in place of the 6.0 ms default")
+	assert.Contains(t, text, "AssumedITLB (2.0 ms, stated)")
 
-	// Stating the default itself is a statement too: priced on the same line,
-	// flagged, not refused as an unmeasured B.
-	out, _ = runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "--assume-itl-b", "6ms", "-o", "json")
-	same := role(t, decodeOutput(t, out), roleDecode)
-	require.NotNil(t, same.Results.Knee.Answer, "a stated 6 ms prices: %+v", same.Results.Knee.Refused)
-	assert.Contains(t, same.Results.Knee.Answer.Flags, string(assumedITLB))
-	assert.InDelta(t, was.A, same.Inputs.Line.A, 1e-12, "the line on the default, refitted through it, is itself")
+	// Above the floor: not used, said so, still refused and not outside on
+	// its account.
+	out, _ = runCmd(t, "replicas-to-slo", "--recording", pinnedRecording, "--assume-itl-b", "12ms", "-o", "json")
+	above := role(t, decodeOutput(t, out), roleDecode)
+	require.NotNil(t, above.Results.Knee.Refused)
+	assert.Contains(t, above.Results.Knee.Refused.Detail, "is above the floor")
+	require.NotNil(t, above.Inputs.Line.AssumedB)
+	assert.False(t, above.Inputs.Line.AssumedB.Applied)
+}
+
+// A Decode whose B the caller stated is priced even on the default
+// intercept itself; without AssumedB it is refused as PinnedDefaultB.
+func TestAssumeITLB_StatedDefaultIsPriced(t *testing.T) {
+	d := whatif.Decode{Line: itl.Model{A: 0.04, B: itl.DefaultBaselineSec}, Band: whatif.DefaultBand(), CapacityTokens: 500000,
+		KVPerRequest: 2000, OutputTokens: 500, ReplicaCap: 256, Replicas: 2, Tier: whatif.TierPinnedB}
+	u, ok := whatif.KneeRate(d).(whatif.Unanswerable)
+	require.True(t, ok)
+	assert.Equal(t, whatif.PinnedDefaultB, u.Reason)
+	d.AssumedB = true
+	_, ok = whatif.KneeRate(d).(whatif.Answer)
+	assert.True(t, ok, "a stated B prices")
 }
 
 // --assume-itl-b floor takes B from the floor read below the band, through
@@ -106,7 +123,7 @@ func TestAssumeITLB_Parse(t *testing.T) {
 	_, b, err = parseAssumeITLB("12ms")
 	require.NoError(t, err)
 	assert.Equal(t, "12ms", b.String())
-	for _, bad := range []string{"0s", "-1ms", "2s", "12", "Floor", "nan"} {
+	for _, bad := range []string{"0s", "-1ms", "100ns", "2s", "12", "Floor", "nan", ""} {
 		_, _, err := parseAssumeITLB(bad)
 		assert.Error(t, err, bad)
 	}
@@ -123,8 +140,8 @@ func TestAssumeITLB_LeavesOtherLines(t *testing.T) {
 		vs  learnreplay.VariantState
 		why string
 	}{
-		"ols":          {learnreplay.VariantState{Tier: whatif.TierOLS, Line: itl.Model{A: 0.04, B: 0.009}}, "was measured"},
-		"learned B":    {learnreplay.VariantState{Tier: whatif.TierPinnedB, Line: itl.Model{A: 0.04, B: 0.009}}, "was measured"},
+		"ols":          {learnreplay.VariantState{Tier: whatif.TierOLS, Line: itl.Model{A: 0.04, B: 0.009}}, "is not the default"},
+		"learned B":    {learnreplay.VariantState{Tier: whatif.TierPinnedB, Line: itl.Model{A: 0.04, B: 0.009}}, "is not the default"},
 		"held":         {learnreplay.VariantState{Tier: whatif.TierHeld, Line: itl.Model{A: 0.04, B: itl.DefaultBaselineSec}}, "held line has no readings"},
 		"borrowed":     {learnreplay.VariantState{Tier: whatif.TierBorrowed, Line: itl.Model{A: 0.04, B: itl.DefaultBaselineSec}}, "borrowed line has no readings"},
 		"no line":      {learnreplay.VariantState{}, "no ITL line"},
@@ -136,7 +153,8 @@ func TestAssumeITLB_LeavesOtherLines(t *testing.T) {
 		assert.False(t, pv.itlB.Applied, name)
 		assert.Contains(t, pv.itlB.Why, c.why, name)
 		assert.Equal(t, c.vs.Line, pv.state.Line, "%s: the line is not changed", name)
-		assert.Contains(t, pv.itlBWords(), "ITL B not assumed (--assume-itl-b)", name)
+		assert.Contains(t, pv.itlBNotUsed(), "ITL B not assumed (--assume-itl-b)", name)
+		assert.Empty(t, pv.itlBWords(), "%s: nothing assumed", name)
 	}
 	floor := &answerFlags{assumeITLB: "floor"}
 	pv := pricedVariant{state: learnreplay.VariantState{Tier: whatif.TierPinnedB, Line: itl.Model{A: 0.04, B: itl.DefaultBaselineSec},
@@ -160,15 +178,22 @@ func TestAssumeITLB_API(t *testing.T) {
 	slo := &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p90", Target: fp(2)},
 		TPOT: &whatifapi.Objective{Statistic: "mean", Target: fp(0.05)}}
 	plan, _ := apiPlan(t, h, whatifapi.PlanRequest{InputsID: in.InputsID, SLO: slo,
-		Assume: &whatifapi.Assume{A: fp(0.02), ITLB: fp(0.012)}})
+		Assume: &whatifapi.Assume{A: fp(0.02), ITLB: fp(0.002)}})
 	require.NotNil(t, plan.Limits.Decode)
 	require.NotNil(t, plan.Limits.Decode.Value, "decode prices: %+v", plan.Limits.Decode.Refused)
 	assert.True(t, slices.ContainsFunc(plan.Flags, func(u whatifapi.FlagUse) bool { return u.Flag == string(assumedITLB) }), "%+v", plan.Flags)
-	assert.True(t, slices.ContainsFunc(plan.Assumed, func(s string) bool { return strings.HasPrefix(s, "ITL B 12.0 ms, stated") }), "%v", plan.Assumed)
+	assert.True(t, slices.ContainsFunc(plan.Assumed, func(s string) bool { return strings.HasPrefix(s, "ITL B 2.0 ms, stated") }), "%v", plan.Assumed)
+	// Prefill refused (no assume.a): decode still prices on the stated B, and
+	// the plan still lists it as assumed.
+	alone, _ := apiPlan(t, h, whatifapi.PlanRequest{InputsID: in.InputsID, SLO: slo, Assume: &whatifapi.Assume{ITLB: fp(0.002)}})
+	require.NotNil(t, alone.Limits.Decode)
+	require.NotNil(t, alone.Limits.Decode.Value, "%+v", alone.Limits.Decode.Refused)
+	assert.True(t, slices.ContainsFunc(alone.Assumed, func(s string) bool { return strings.HasPrefix(s, "ITL B 2.0 ms, stated") }), "%v", alone.Assumed)
 	for name, a := range map[string]whatifapi.Assume{
-		"both":      {ITLB: fp(0.012), ITLBFromFloor: true},
-		"too large": {ITLB: fp(2)},
-		"zero":      {ITLB: fp(0)},
+		"both":            {ITLB: fp(0.012), ITLBFromFloor: true},
+		"too large":       {ITLB: fp(2)},
+		"zero":            {ITLB: fp(0)},
+		"sub-microsecond": {ITLB: fp(1e-10)},
 	} {
 		code, body := apiPost(t, h, "/v1/plan", whatifapi.PlanRequest{InputsID: in.InputsID, SLO: slo, Assume: &a})
 		assert.Equal(t, http.StatusBadRequest, code, "%s: %s", name, body)

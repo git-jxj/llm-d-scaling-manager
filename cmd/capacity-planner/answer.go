@@ -534,7 +534,10 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
 			KVPerRequest: pv.residentKV(), OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
-			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL}, AssumedB: pv.itlB.Applied,
+			// A typed B is a guess: the line is not read below the band from
+			// it. A B from the floor puts the line through the floor itself.
+			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
+			AssumedB:  pv.itlB.Applied,
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)

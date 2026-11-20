@@ -522,7 +522,7 @@ const REFUSAL_WORDS = {
   NoFixedLatency: "no prefill fixed latency learned (assume a to price it)",
   NoTPOTHistogram: "no TPOT histogram to read a percentile from",
   TPOTBucketTooWide: "the TPOT histogram is too coarse for a percentile",
-  PinnedDefaultB: "the decode line rests on a default, not a measurement",
+  PinnedDefaultB: "the decode line rests on a default, not a measurement (type ITL B under Assume a term to price it)",
   NoLine: "no decode line learned",
   NoTraffic: "no traffic to judge",
 };
@@ -536,6 +536,7 @@ function refusalText(f) {
 // REPORT_FLAG_WORDS are the flags a report carries most, in a short phrase.
 // The rest are counted, and their codes kept for a tooltip.
 const REPORT_FLAG_WORDS = {
+  AssumedITLB: "assumes the decode ITL B",
   UnvalidatedTTFT: "TTFT is not validated",
   AssumedVP: "assumes the prefill speed you typed",
   AssumedA: "assumes the prefill fixed latency you typed",

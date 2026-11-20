@@ -538,7 +538,9 @@ function showLearned(inputs) {
   let refused = false;
   for (const a of ASSUMABLE) {
     el("a-" + a.box).value = "";
-    const t = inputs.terms.find(x => x.name === a.term) || (a.refusedAs && inputs.terms.find(x => x.name === a.refusedAs));
+    // A line refused for any other reason (NoLine) has no B to state.
+    const t = inputs.terms.find(x => x.name === a.term) ||
+      (a.refusedAs && inputs.terms.find(x => x.name === a.refusedAs && x.refused && x.refused.reason === "PinnedDefaultB"));
     let text = "not read";
     if (t && t.refused) {
       text = "refused: " + t.refused.reason;

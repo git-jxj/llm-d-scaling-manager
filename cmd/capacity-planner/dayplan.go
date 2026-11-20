@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -48,8 +49,10 @@ type dayPlanFlags struct {
 	assumeVP, assumePromptCV                 float64
 	assumeA, assumeRouterHop                 time.Duration
 	inputTokens, outputTokens                float64
-	// assumeITLB is --assume-itl-b, as answerFlags' (itl_b.go).
-	assumeITLB string
+	// assumeITLB is --assume-itl-b, as answerFlags' (itl_b.go), and
+	// assumeITLBSet says it was given, empty or not.
+	assumeITLB    string
+	assumeITLBSet bool
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -92,6 +95,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if f.output != outputText && f.output != outputJSON {
 		return usagef("-o %q, want text or json", f.output)
 	}
+	fs.Visit(func(fl *flag.Flag) { f.assumeITLBSet = f.assumeITLBSet || fl.Name == "assume-itl-b" })
 	// The analyzers the replay runs log through controller-runtime, which
 	// the CLI never shows.
 	ctrllog.SetLogger(logr.Discard())
@@ -218,7 +222,7 @@ func (f *dayPlanFlags) request() (whatifapi.DayPlanRequest, error) {
 	if f.assumeRouterHop > 0 {
 		a.RouterHop, typed = ptrTo(f.assumeRouterHop.Seconds()), true
 	}
-	if f.assumeITLB != "" {
+	if f.assumeITLBSet {
 		floor, b, err := parseAssumeITLB(f.assumeITLB)
 		if err != nil {
 			return req, err

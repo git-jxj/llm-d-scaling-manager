@@ -9,6 +9,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
@@ -1440,7 +1441,7 @@ func refusalWords(res whatif.Result) string {
 	case whatif.NoLine:
 		return "the recording learned no usable decode latency line"
 	case whatif.PinnedDefaultB:
-		return "the decode latency line rests on the 6 ms default intercept B, which no engine measured; " +
+		return "the decode latency line rests on the " + ms(itl.DefaultBaselineSec) + " default intercept B, which no engine measured; " +
 			"--assume-itl-b (API assume.itlB or assume.itlBFromFloor) states one"
 	case whatif.NoCapacity, whatif.NoBatchCap:
 		return "the decode replicas' capacity is not known"

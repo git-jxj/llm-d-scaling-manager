@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
@@ -18,7 +19,9 @@ import (
 // fit. --assume-itl-b states B, and the slope is fitted again through it on
 // the same readings (itl.Refit), so the line still runs through what the
 // replicas read and only its extrapolation moves. Every figure on it is
-// flagged AssumedITLB and outside the validated region (flagsOutside).
+// flagged AssumedITLB and outside the validated region (pricedVariant.stated).
+// A line the tracker priced one-sided past the cap is not refitted: its price
+// is set by the cap, not by B.
 
 // assumedITLB is a decode figure priced on a line whose intercept B the
 // caller stated (--assume-itl-b, the API's assume.itlB or
@@ -67,8 +70,8 @@ func parseAssumeITLB(s string) (floor bool, b time.Duration, err error) {
 		return true, 0, nil
 	}
 	d, perr := time.ParseDuration(s)
-	if perr != nil || d <= 0 || d > maxAssumedITLB {
-		return false, 0, usagef("--assume-itl-b %q, want floor or a duration above 0 and at most %s (12ms)", s, maxAssumedITLB)
+	if perr != nil || d < time.Microsecond || d > maxAssumedITLB {
+		return false, 0, usagef("--assume-itl-b %q, want floor, or a duration from 1us to %s, such as 12ms", s, maxAssumedITLB)
 	}
 	return false, d, nil
 }
@@ -101,7 +104,7 @@ func (f *answerFlags) assumeIntercept(pv *pricedVariant) {
 		a.Why = "no ITL line to state B for"
 		return
 	case !whatif.OnDefaultB(vs.Tier, vs.Line):
-		a.Why = fmt.Sprintf("the %s line's B, %s, was measured", vs.Tier, ms(vs.Line.B))
+		a.Why = fmt.Sprintf("the %s line's B, %s, is not the default", vs.Tier, ms(vs.Line.B))
 		return
 	case vs.Tier != whatif.TierPinnedB || !vs.Refitted || len(vs.LineReadings) == 0:
 		a.Why = fmt.Sprintf("a %s line has no readings of its own at this cycle to refit through a stated B; "+
@@ -116,15 +119,24 @@ func (f *answerFlags) assumeIntercept(pv *pricedVariant) {
 			return
 		}
 		a.Seconds = b
+	} else if vs.BelowBandITL > 0 && a.Seconds > vs.BelowBandITL {
+		// Every reading below the band is B + A k, so at least B.
+		a.Why = fmt.Sprintf("B %s is above the floor the decode Pods read below the band, %s at fill %.2f",
+			ms(a.Seconds), ms(vs.BelowBandITL), vs.BelowBandFill)
+		return
 	}
 	got := itl.Refit(vs.Readings.All, vs.Readings.Steady, a.Seconds, vs.MinSettled, vs.OneSided)
-	if got.Tier != whatif.TierPinnedB || !itl.ValidModel(got.Model.A, got.Model.B) ||
-		math.Abs(got.Model.B-a.Seconds) > 1e-12 {
+	switch {
+	case got.PinnedAtBPrior || got.PinnedAtLeastITL:
+		a.Why = "the line is priced one-sided past the cap, at a prior, not through B"
+		return
+	case got.Tier != whatif.TierPinnedB || !itl.ValidModel(got.Model.A, got.Model.B) || math.Abs(got.Model.B-a.Seconds) > 1e-12:
 		a.Why = fmt.Sprintf("no slope fits the line's readings through B %s: it is at or above what they read", ms(a.Seconds))
 		return
 	}
 	a.Applied, a.DefaultA = true, vs.Line.A
 	vs.Line, vs.LineReadings, vs.Baseline = got.Model, got.Read, a.Seconds
+	pv.stated = append(pv.stated, "--assume-itl-b")
 }
 
 // floorB is the intercept of the line through the floor read below the band
@@ -146,29 +158,48 @@ func floorB(vs learnreplay.VariantState) (float64, string) {
 func ms(s float64) string { return fmt.Sprintf("%.1f ms", s*1000) }
 
 // itlBWords is the variant's assumed B as the answer's assumed list names
-// it, in the words of the question's source; empty when none was asked.
+// it; empty when none was asked or it was not applied (itlBRowText says why).
 func (pv pricedVariant) itlBWords() string {
 	a := pv.itlB
 	switch {
-	case !a.Asked:
-		return ""
-	case !a.Applied && pv.api:
-		return "ITL B not assumed (assume.itlB): " + a.Why
 	case !a.Applied:
-		return "ITL B not assumed (--assume-itl-b): " + a.Why
+		return ""
 	case a.Source == itlBFromFloor:
-		return fmt.Sprintf("ITL B %s, from the floor read below the band (%s at fill %.2f), in place of the 6 ms default; "+
-			"the slope refitted through it on the same readings", ms(a.Seconds), ms(a.FloorSeconds), a.FloorFill)
+		return fmt.Sprintf("ITL B %s, from the floor read below the band (%s at fill %.2f), in place of the %s default; "+
+			"the slope refitted through it on the same readings; the bands hold B fixed",
+			ms(a.Seconds), ms(a.FloorSeconds), a.FloorFill, ms(itl.DefaultBaselineSec))
 	}
-	return fmt.Sprintf("ITL B %s, stated, in place of the 6 ms default; the slope refitted through it on the same readings",
-		ms(a.Seconds))
+	return fmt.Sprintf("ITL B %s, stated, in place of the %s default; the slope refitted through it on the same readings",
+		ms(a.Seconds), ms(itl.DefaultBaselineSec))
+}
+
+// itlBNotUsed is why a stated B was not used, in the words of the question's
+// source; empty when it was used or not asked.
+func (pv pricedVariant) itlBNotUsed() string {
+	a := pv.itlB
+	switch {
+	case !a.Asked || a.Applied:
+		return ""
+	case pv.api:
+		return "ITL B not assumed (assume.itlB): " + a.Why
+	}
+	return "ITL B not assumed (--assume-itl-b): " + a.Why
+}
+
+// itlBRowText is the ITL B row: what was assumed, or why nothing was; empty
+// when the flag was not set.
+func (pv pricedVariant) itlBRowText() string {
+	if w := pv.itlBWords(); w != "" {
+		return strings.TrimPrefix(w, "ITL B ")
+	}
+	return strings.TrimPrefix(pv.itlBNotUsed(), "ITL B ")
 }
 
 // pinnedDefaultBHint is what a PinnedDefaultB refusal adds: how to state B,
 // in the words of the question's source, or why the stated B was not used.
 func (pv pricedVariant) pinnedDefaultBHint() string {
-	if pv.itlB.Asked {
-		return "; " + pv.itlBWords()
+	if w := pv.itlBNotUsed(); w != "" {
+		return "; " + w
 	}
 	floor := ""
 	if pv.state.Tier == whatif.TierPinnedB && pv.state.Refitted {

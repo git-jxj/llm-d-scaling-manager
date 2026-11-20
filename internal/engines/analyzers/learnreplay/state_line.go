@@ -44,9 +44,11 @@ func newLineSamples() *lineSamples {
 }
 
 // leastBelowBand is the variant's floor below the band, in seconds
-// (itl.BelowBandFloor, the rule the tracker pins B at under
-// itl.Admission.BaselineFromFloor), and the fill it was read at
-// (itl.BelowBandPoint); both 0 with too few readings.
+// (itl.BelowBandFloor), and the fill it was read at (itl.BelowBandPoint);
+// both 0 with too few readings. The tracker's floor under
+// itl.Admission.BaselineFromFloor is read by the same quantile, but over its
+// last DefaultObservationMaxAge only; this one keeps the latest
+// itl.BelowBandWindow readings of any age.
 func (l *lineSamples) leastBelowBand(variant string) (itlSec, fill float64) {
 	p, ok := itl.BelowBandPoint(l.below[variant])
 	if !ok {

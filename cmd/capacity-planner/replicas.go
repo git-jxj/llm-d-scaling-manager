@@ -340,7 +340,7 @@ func checkRow(b *strings.Builder, layout, label string, pv pricedVariant) {
 // itlBRow prints what --assume-itl-b did to the line, none when it was not
 // set.
 func itlBRow(b *strings.Builder, layout, label string, pv pricedVariant) {
-	if s := pv.itlBWords(); s != "" {
+	if s := pv.itlBRowText(); s != "" {
 		fmt.Fprintf(b, layout, label, s)
 	}
 }

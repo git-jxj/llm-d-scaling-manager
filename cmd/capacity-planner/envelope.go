@@ -44,10 +44,13 @@ var (
 		"assume-input-tokens", "assume-output-tokens", "assume-prompt-cv", "arrival-cv2", "flow-control", "headroom", "rate",
 		"seed", "o", "output", "ttft", "ttft-percentile", "tpot", "tpot-percentile",
 		"prometheus", "bearer-token-file", "ca-file", "insecure-skip-verify", "timeout", "kube-state-metrics", "role-of",
-		"from", "to", "step", "force"}
+		"from", "to", "step", "force",
+		// Set, it states nothing until it applies: assumeIntercept then adds
+		// --assume-itl-b to the variant's stated inputs, which puts its figures outside.
+		"assume-itl-b"}
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
-		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "assume-itl-b"}
+		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts"}
 )
 
 // statedOutside is the flags in flagsOutside that were set, as --name.

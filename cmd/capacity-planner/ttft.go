@@ -391,6 +391,12 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		in: wireTTFT{Percentile: q.q, TargetSeconds: q.seconds, Assumed: []string{}}}
 	if pv != nil {
 		pf.in.DecodeVariant = pv.state.Variant
+		// Before any refusal: decode is priced on a stated B whether or not
+		// prefill prices.
+		if w := pv.itlBWords(); w != "" {
+			pf.assume("%s", w)
+			pf.stated = append(pf.stated, "--assume-itl-b")
+		}
 		if domain.CanonicalRole(pv.state.Role) == domain.RoleBoth {
 			pf.refused = aggregatedRefusal(pv.state.Variant)
 			return pf
@@ -430,11 +436,6 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.promptAssumed = f.set["assume-input-tokens"]
 	pf.hint = f.hintSource()
 	pf.decodeSide()
-	if pv != nil {
-		if w := pv.itlBWords(); w != "" {
-			pf.assume("%s", w)
-		}
-	}
 	if pf.fleet.Decode != nil && pf.pv.state.Shape.OutputDispersion == 0 {
 		pf.assume("%s", outputSpreadUnreadWords)
 	}
