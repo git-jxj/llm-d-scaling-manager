@@ -1,6 +1,7 @@
 package prefill
 
 import (
+	"cmp"
 	"math"
 	"slices"
 	"time"
@@ -81,16 +82,17 @@ type share struct {
 }
 
 // minuteImbalance is the de-biased imbalance of one cycle's shares, and
-// whether the cycle gives one.
-func minuteImbalance(shares []share) (float64, bool) {
+// whether the cycle gives one, with the cycle's computed tokens per second
+// per pod.
+func minuteImbalance(shares []share) (f, load float64, ok bool) {
 	n := len(shares)
 	if n < 2 {
-		return 0, false
+		return 0, 0, false
 	}
 	var total, busiest, requests float64
 	for _, s := range shares {
 		if !s.rateOK || !s.requestsOK {
-			return 0, false
+			return 0, 0, false
 		}
 		total += s.rate
 		requests += s.requests
@@ -98,11 +100,11 @@ func minuteImbalance(shares []share) (float64, bool) {
 	}
 	perPod := requests * 60 / float64(n)
 	if !(total > 0) || !(perPod >= MinRequestsPerPodMinute) || !isFinite(perPod) {
-		return 0, false
+		return 0, 0, false
 	}
 	raw := float64(n) * busiest / total
-	f := math.Max(1, raw-poissonMaxExcess(n, perPod))
-	return f, isFinite(f)
+	f = math.Max(1, raw-poissonMaxExcess(n, perPod))
+	return f, total / float64(n), isFinite(f)
 }
 
 // noteImbalance folds the cycle's imbalance into the key's minutes, when
@@ -111,15 +113,15 @@ func (ks *keyState) noteImbalance(shares []share, allAdmitted bool, now time.Tim
 	if !allAdmitted {
 		return
 	}
-	f, ok := minuteImbalance(shares)
+	f, load, ok := minuteImbalance(shares)
 	if !ok {
 		return
 	}
 	if n := len(ks.f); n > 0 && now.Sub(ks.f[n-1].at) < SampleSpacing {
-		ks.f[n-1].f, ks.f[n-1].pods, ks.f[n-1].multiRank = f, len(shares), multiRank(shares)
+		ks.f[n-1].f, ks.f[n-1].pods, ks.f[n-1].load, ks.f[n-1].multiRank = f, len(shares), load, multiRank(shares)
 		return
 	}
-	ks.f = append(ks.f, fSample{at: now, f: f, pods: len(shares), multiRank: multiRank(shares)})
+	ks.f = append(ks.f, fSample{at: now, f: f, pods: len(shares), load: load, multiRank: multiRank(shares)})
 	if len(ks.f) > maxSamples {
 		ks.f = ks.f[len(ks.f)-maxSamples:]
 	}
@@ -129,17 +131,16 @@ func (ks *keyState) noteImbalance(shares []share, allAdmitted bool, now time.Tim
 // the cycle's own shares when there are too few: serving is how many of
 // the variant's replicas served this cycle, admitted or not. It sets the
 // per-count figures too (imbalanceByPods), whether or not F is refused.
-func (est *Estimate) imbalance(ks *keyState, shares []share, serving int) {
+// With busy (Cycle.FBusyMinutes), each median is of the busiest minutes
+// only (busiestMinutes). FSamples and FSamplesByPods still count every
+// minute kept, so what is refused, and when, does not change.
+func (est *Estimate) imbalance(ks *keyState, shares []share, serving int, busy bool) {
 	est.FPodsLast = serving
 	est.FSamples = len(ks.f)
-	est.FByPods, est.FSamplesByPods = imbalanceByPods(ks.f)
+	est.FByPods, est.FSamplesByPods = imbalanceByPods(ks.f, busy)
 	est.FMultiRank = slices.ContainsFunc(ks.f, func(s fSample) bool { return s.multiRank })
 	if len(ks.f) >= MinImbalanceMinutes {
-		fs := make([]float64, len(ks.f))
-		for i, s := range ks.f {
-			fs[i] = s.f
-		}
-		est.F = median(fs)
+		est.F = median(minuteFs(ks.f, busy))
 		return
 	}
 	switch {
@@ -154,23 +155,78 @@ func (est *Estimate) imbalance(ks *keyState, shares []share, serving int) {
 
 // imbalanceByPods is the median f at each pod count, of the minutes taken at
 // that count only, for the counts with at least MinImbalanceMinutes, and how
-// many minutes each count kept. Both nil when no minute was kept.
-func imbalanceByPods(fs []fSample) (map[int]float64, map[int]int) {
+// many minutes each count kept. Both nil when no minute was kept. With busy,
+// each count's median is of its own busiest minutes (busiestMinutes).
+func imbalanceByPods(fs []fSample, busy bool) (map[int]float64, map[int]int) {
 	if len(fs) == 0 {
 		return nil, nil
 	}
-	byPods := map[int][]float64{}
+	byPods := map[int][]fSample{}
 	for _, s := range fs {
-		byPods[s.pods] = append(byPods[s.pods], s.f)
+		byPods[s.pods] = append(byPods[s.pods], s)
 	}
 	f, samples := map[int]float64{}, make(map[int]int, len(byPods))
 	for pods, xs := range byPods {
 		samples[pods] = len(xs)
 		if len(xs) >= MinImbalanceMinutes {
-			f[pods] = median(xs)
+			f[pods] = median(minuteFs(xs, busy))
 		}
 	}
 	return f, samples
+}
+
+// BusyMinuteShare is the share of the busiest minute's computed tokens per
+// pod a minute must carry to be one of the busiest (busiestMinutes).
+const BusyMinuteShare = 0.5
+
+// minuteFs is the f of each minute of fs, or with busy of its busiest
+// minutes only (busiestMinutes).
+func minuteFs(fs []fSample, busy bool) []float64 {
+	if busy {
+		fs = busiestMinutes(fs)
+	}
+	out := make([]float64, len(fs))
+	for i, s := range fs {
+		out[i] = s.f
+	}
+	return out
+}
+
+// busiestMinutes is the minutes of fs at or above BusyMinuteShare of the
+// busiest one's computed tokens per pod; short of MinImbalanceMinutes of
+// them, the MinImbalanceMinutes busiest, so a window that gives f still
+// gives one. Busy is prefill work, not requests: on a window of short and
+// long prompts, the minutes with the most requests are the short prompts',
+// and they need not be the ones near the knee the long prompts are priced
+// at.
+//
+// f is read for the knee, where the shares are most even: the router spreads
+// a light load unevenly and a heavy one nearly evenly. On the public
+// staircase the busiest pod's raw share fell from about 1.5 at 10 requests/s
+// to 1.01-1.06 near capacity, and a median over every minute of a window
+// that was light for much of it read 1.23, which put the prefill knee about
+// 20% low (issue llm-d-incubation/llm-d-scaling-manager#266).
+//
+// What it gives up: f also prices the worst pod's queue below the knee, where
+// the shares are less even than the busiest minutes say. The queue is short
+// there, so the price moves little, but it moves down.
+func busiestMinutes(fs []fSample) []fSample {
+	peak := 0.0
+	for _, s := range fs {
+		peak = math.Max(peak, s.load)
+	}
+	busy := make([]fSample, 0, len(fs))
+	for _, s := range fs {
+		if s.load >= BusyMinuteShare*peak {
+			busy = append(busy, s)
+		}
+	}
+	if len(busy) >= MinImbalanceMinutes {
+		return busy
+	}
+	busy = slices.Clone(fs)
+	slices.SortStableFunc(busy, func(a, b fSample) int { return cmp.Compare(b.load, a.load) })
+	return busy[:min(MinImbalanceMinutes, len(busy))]
 }
 
 // anyRate reports whether any share read a computed-token rate.

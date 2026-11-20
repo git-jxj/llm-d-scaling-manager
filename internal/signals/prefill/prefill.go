@@ -198,6 +198,10 @@ type Cycle struct {
 	// the engine publishes it, not by the whole count (queuedForCapacity;
 	// saturation.SwitchPrefillQueueByCapacity).
 	QueueByCapacity bool
+	// FBusyMinutes takes f, and f at each pod count, from the busiest
+	// minutes only (busiestMinutes), not from every minute
+	// (saturation.SwitchPrefillFBusyMinutes).
+	FBusyMinutes bool
 	// Now is the cycle's time.
 	Now time.Time
 }
@@ -378,6 +382,9 @@ type fSample struct {
 	at   time.Time
 	f    float64
 	pods int
+	// load is the minute's computed tokens per second per pod, on average:
+	// the prefill work the busiest minutes are chosen by (busiestMinutes).
+	load float64
 	// multiRank: a row of the minute ran more than one engine rank (a
 	// data-parallel pod, or an LWS group collapsed to one row), so f is of
 	// rows, not of engines.
@@ -523,7 +530,7 @@ func (o *Observer) Observe(c Cycle) Estimate {
 		}
 	}
 	est.curveBound()
-	est.imbalance(ks, shares, serving)
+	est.imbalance(ks, shares, serving, c.FBusyMinutes)
 	return est
 }
 

@@ -94,6 +94,16 @@ const SwitchPrefillAEngineTiming = "prefill-a-engine-timing"
 // SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillQueueByCapacity = "prefill-queue-by-capacity"
 
+// SwitchPrefillFBusyMinutes is the replay switch for which minutes f is the
+// median of (prefill.Cycle.FBusyMinutes). On, the busiest: those at or above
+// half the busiest minute's computed tokens per pod. The shares are uneven at light
+// load and even out near capacity, so a median over every minute reads a
+// fleet that spent much of its window light as more uneven than it is at
+// the knee f prices (issue llm-d-incubation/llm-d-scaling-manager#266).
+// Off, every minute, as before this switch. Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillFBusyMinutes = "prefill-f-busy-minutes"
+
 // prefillKVFull is the pods of rows whose KV cache is full (kvFull at
 // kvCacheThreshold), nil when none is. A full prefill pod can hold a queue
 // it cannot schedule, so its minute is not a busy one.
@@ -299,7 +309,7 @@ func (c *cycle) observePrefill() {
 			QueueMin: queueMin, KVFull: kvFullPods, DownstreamSaturated: c.decodeSaturated,
 			Bound: bounds[variant], Settle: view, ALineOnly: !a.prefillAQuadratic,
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
-			QueueByCapacity: a.prefillQueueByCapacity, Now: now,
+			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)
 		c.logger.V(perReplicaLogLevel).Info("prefill-capacity-observed",

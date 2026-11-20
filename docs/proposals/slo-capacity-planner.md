@@ -644,7 +644,7 @@ coincide there, unless a row sits under the variant's floor below the band.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `ols-sweep` | pinned-B | -3.9% | -3.9% | 87 | 7 | in | SKIPPED: 2 windows | | |
 | `ols-sweep-slo` | held | +10.5% | +10.5% | 33 | 0 | **out** | +70.1% | 7 | **out** |
-| `ols-sweep-slo-restart` | pinned-B | -8.5% | -8.5% | 54 | 3 | in | +103.4% | 5 | **out** |
+| `ols-sweep-slo-restart` | held | -9.2% | -9.2% | 54 | 3 | in | +102.2% | 5 | **out** |
 | `throughput-sweep` | held | +3.5% | +3.5% | 33 | 0 | in | SKIPPED: none off a ramp | | |
 | `throughput-sweep-restart` | held | +50.1% | +32.6% | 124 | 124, all below | **out** | SKIPPED: none off a ramp | | |
 | `mu-paths` variant-01 (synthetic) | ols | -4.9% | 0.0% | 76 | 38 above | in | +76.3% | 38 | **out** |
@@ -822,29 +822,29 @@ the run's frozen curve.
 <!-- envelope-table: begin (go test ./cmd/capacity-planner -run TestStaircaseQ32 -update) -->
 | Figure | Shape | Error | Range | Readings | Knee share | Flow control |
 | --- | --- | --- | --- | --- | --- | --- |
-| decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
+| decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +15% | one-sided | 1 |  | off |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 1 | -4..+2% | bracket | 1 |  | on |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 4 | -7..-4% | bracket | 1 |  | on |
-| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +2..+15% | p10-p90, min-max +1..+18% | 12 at 6 load levels | 0.400 to 0.900 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -2..+1% | p10-p90, min-max -3..+1% | 12 at 6 load levels | 0.096 to 0.215 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -4..-2% | p10-p90, min-max -5..-1% | 10 at 6 load levels | 0.096 to 0.203 | any |
+| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | -15..+0% | p10-p90, min-max -17..+0% | 12 at 6 load levels | 0.358 to 0.805 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -4..-2% | p10-p90, min-max -4..-2% | 12 at 6 load levels | 0.084 to 0.190 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -6..-4% | p10-p90, min-max -6..-4% | 10 at 6 load levels | 0.084 to 0.179 | any |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 4 | at most +3% | one-sided | 1 |  | off |
-| rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
-| rate-at-ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | at most +6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | at most +6% | one-sided | 1 | 0.825 to 0.875 | off, on |
 | rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
 | rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
 | rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | at most +0% | one-sided | 2 | 0.740 to 0.875 | off, on |
 | rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | at most +2% | one-sided | 2 | 0.740 to 0.875 | off, on |
-| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -4..+18% | p10-p90, min-max -5..+18% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | +0..+14% | p10-p90, min-max -2..+16% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -3..+12% | p10-p90, min-max -4..+14% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -8..+2% | p10-p90, min-max -9..+3% | 12 at 6 load levels | 0.358 to 0.805 | off, on |
+| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -4..+3% | p10-p90, min-max -6..+4% | 12 at 6 load levels | 0.358 to 0.805 | off, on |
+| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -6..+2% | p10-p90, min-max -7..+3% | 12 at 6 load levels | 0.358 to 0.805 | off, on |
 | ttft mean | 8000-token prompts, 200 out, Ca^2 1 | +29..+95% | p10-p90, min-max +27..+149% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
 | ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | +18..+108% | p10-p90, min-max +15..+156% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
 | ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | +18..+102% | p10-p90, min-max +5..+174% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
 | ttft mean | 8000-token prompts, 200 out, Ca^2 4 | +30..+93% | p10-p90, min-max +22..+127% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
 | ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | +45..+131% | p10-p90, min-max +33..+167% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
-| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +44..+145% | p10-p90, min-max +37..+186% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +43..+145% | p10-p90, min-max +37..+186% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
 <!-- envelope-table: end -->
 
 The TTFT readings are 6 load levels, each with flow control off and on (C on: 3

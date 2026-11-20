@@ -190,9 +190,10 @@ const goldenDir = "../../internal/engines/analyzers/learnreplay/testdata/goldens
 // the page quotes, not a pass mark. ols-sweep, the worked example, holds its
 // line, at another shape: its synthetic rows hold 8 requests at every fill, so
 // a row reads more KV a request than the window it is priced from. The
-// staircase's B off reads the opposite: its line predicts half the
-// tokens read. It is the line the planner refuses, PinnedDefaultB, so no
-// answer rests on it, and the check prints all the same.
+// staircase's B off and C on read ok: their lines hold the slope the
+// plateau was fitted at (saturation.SwitchITLHoldSteadySlope). Without the
+// hold, the ramp-down's readings set a steeper slope, and the lines
+// predicted about half the tokens read (51.8% and 63.0% off).
 func TestLineCheck_OnTheGoldens(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -202,8 +203,8 @@ func TestLineCheck_OnTheGoldens(t *testing.T) {
 	}{
 		{"ols-sweep", checkOtherShape, 10, 4.6},
 		{"ttft-three-pods", checkOK, 57, 2.6},
-		{"ttft-staircase-b-off", checkMismatch, 36, 51.8},
-		{"ttft-staircase-c-on", checkMismatch, 26, 63.0},
+		{"ttft-staircase-b-off", checkOK, 36, 2.8},
+		{"ttft-staircase-c-on", checkOK, 26, 4.2},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

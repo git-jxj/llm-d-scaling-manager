@@ -872,6 +872,18 @@ reading, it took each load step whole: on the issue ev-shindin/llm-scaling-manag
 0.077 to 0.207 on the cycle the load stepped, and the derived mu fell from 6.4
 to 2.65 requests/s for two and a half minutes.
 
+The capacity planner's replay sets `itl.Admission.HoldsSteadySlope`
+(`saturation.SwitchITLHoldSteadySlope`, off in the controller). A key whose
+last `A` was fitted on steady readings then holds it instead of refitting on
+every reading. After a load stops, the window's last readings are the
+ramp-down's: each minute's ITL still covers the load that stopped while its
+mean fill falls, so they read a steep slope. On the public staircase they
+raised `A` from 31 to 42 ms per unit of fill once the plateau's steady
+readings had aged out, and the decode knee read about 25% low (issue #266).
+The hold ends at `SlopeHoldFor` or a change of engine arguments, like any
+held slope, and a fleet whose load keeps moving keeps its last steady `A`
+until then.
+
 A saturated fleet has few steady readings: `k` swings between above the band
 and its dips into it by more than `DefaultMaxKDrift`, and on a two-namespace
 run the steady readings numbered 0 on almost every cycle. So the pinned fit
