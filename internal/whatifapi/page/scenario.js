@@ -715,6 +715,24 @@ function reportMissing(status, error) {
   return status === 405 || (status === 404 && String(error || "").includes("no such endpoint"));
 }
 
+// rateNote is what the page says under the rate a plan started at, from its
+// limits.chosen.rateSource: nothing for a rate typed. With one knee refused
+// the rate is a place to start, not an operating point, and the note says so.
+function rateNote(source) {
+  switch (source) {
+  case "operating point":
+    return "started at the operating point: the source carries no request rate";
+  case "prefill knee; decode not priced":
+    return "started at headroom times the prefill knee: the decode knee is not priced, so there is no operating point " +
+      "and the fleet limit is refused. Type your request rate.";
+  case "decode knee; prefill not priced":
+    return "started at headroom times the decode knee: the prefill knee is not priced, so there is no operating point " +
+      "and the fleet limit is refused. Type your request rate.";
+  default:
+    return "";
+  }
+}
+
 // reportCurrent reports whether an answer is for the inputs on the page:
 // one asked for inputs since replaced is dropped.
 function reportCurrent(askedFor, current) {

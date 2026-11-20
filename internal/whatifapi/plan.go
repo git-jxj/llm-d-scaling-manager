@@ -41,11 +41,12 @@ type curveSet struct {
 	// The curves stop past it.
 	lowerKnee float64
 	kneeOK    bool
-	// capRefused is decode's knee's refusal, nil where it prices. The cap
-	// is headroom times the lower of both knees: with decode's unpriced,
-	// nothing bounds decode, so there is no cap and no operating point, and
-	// the prefill knee alone would claim one, as at-replicas refuses the
-	// fleet.
+	// capRefused is the knee refusal that leaves no operating-point cap,
+	// nil where the cap prices. The cap is headroom times the lower of both
+	// knees: with one refused, the other alone would claim a bound no rule
+	// gives, as at-replicas refuses the fleet. Decode's refusal is named
+	// first. A source with no prefill role at all has no prefill knee to
+	// read: its cap is decode's alone.
 	capRefused whatif.Result
 	ttft       []Point
 	tpot       []Point
@@ -55,16 +56,21 @@ type curveSet struct {
 }
 
 // priceCurves prices a fleet's curve set, stopping with ctx's error once ctx
-// ends: a client gone is no reason to price the rest of a grid.
-func priceCurves(ctx context.Context, fl Fleet, tpotAsked bool) (*curveSet, error) {
+// ends: a client gone is no reason to price the rest of a grid. prefillRole
+// is false for a source with no prefill variant: its prefill knee is absent,
+// not refused.
+func priceCurves(ctx context.Context, fl Fleet, tpotAsked, prefillRole bool) (*curveSet, error) {
 	cs := &curveSet{prefillKnee: fl.PrefillKnee(), decodeKnee: fl.DecodeKnee(), onsets: fl.Onsets()}
 	for _, k := range []whatif.Result{cs.prefillKnee, cs.decodeKnee} {
 		if v, ok := valueOf(k); ok && (!cs.kneeOK || v < cs.lowerKnee) {
 			cs.lowerKnee, cs.kneeOK = v, true
 		}
 	}
-	if isRefusal(cs.decodeKnee) {
+	switch {
+	case isRefusal(cs.decodeKnee):
 		cs.capRefused = cs.decodeKnee
+	case prefillRole && isRefusal(cs.prefillKnee):
+		cs.capRefused = cs.prefillKnee
 	}
 	cs.ttft, cs.tpot = []Point{}, []Point{}
 	if !cs.kneeOK {
@@ -103,6 +109,21 @@ func priceCurves(ctx context.Context, fl Fleet, tpotAsked bool) (*curveSet, erro
 	return cs, nil
 }
 
+// rateSource is what sets a plan's rate where the scenario gave none, with a
+// knee answered: the operating point, or with the cap refused, headroom times
+// the one knee that priced. That is a rate to start from, not an operating
+// point: the limits and the cap stay refused.
+func (cs *curveSet) rateSource() string {
+	switch {
+	case cs.capRefused == nil:
+		return RateSourceOperatingPoint
+	case isRefusal(cs.decodeKnee):
+		return RateSourcePrefillKnee
+	default:
+		return RateSourceDecodeKnee
+	}
+}
+
 // noFloor is the floor of a line with no answered point: r's refusal.
 func noFloor(r whatif.Result) Figure {
 	if u, ok := r.(whatif.Unanswerable); ok {
@@ -123,8 +144,8 @@ func firstRefusal(points []Point, fallback whatif.Result) whatif.Result {
 }
 
 // markers are a curve set's markers at headroom: the cap is headroom times the
-// lower knee, as the CLI's fleet row caps it, and decode's knee's refusal
-// where that knee is refused.
+// lower knee, as the CLI's fleet row caps it, and the refused knee's refusal
+// where one is (capRefused).
 func (cs *curveSet) markers(headroom float64) Markers {
 	m := Markers{}
 	pk, dk := figureOf(cs.prefillKnee, unitRate, false), figureOf(cs.decodeKnee, unitRate, false)
@@ -188,7 +209,7 @@ func (p *planner) curves(ctx context.Context, k Knobs, fl Fleet) (*curveSet, err
 		if p.s.onCurves != nil {
 			p.s.onCurves()
 		}
-		cs, err := priceCurves(ctx, fl, p.sc.TPOT != nil)
+		cs, err := priceCurves(ctx, fl, p.sc.TPOT != nil, p.e.doc.Fleet.Prefill != nil)
 		if err != nil {
 			return nil, err
 		}
@@ -303,15 +324,12 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	rate, rateSource := 0.0, "request"
+	rate, rateSource := 0.0, RateSourceRequest
 	switch {
 	case sc.Rate != nil:
 		rate = *sc.Rate
-	case cs.capRefused != nil:
-		return nil, InputErrorf("the decode knee is refused (%s), so no operating point is priced: give traffic.classes.critical.rate",
-			reasonOf(cs.capRefused))
 	case cs.kneeOK:
-		rate, rateSource = sc.Headroom*cs.lowerKnee, "operating point"
+		rate, rateSource = sc.Headroom*cs.lowerKnee, cs.rateSource()
 	default:
 		return nil, InputErrorf("no knee answered to set the operating point (prefill: %s; decode: %s): give traffic.classes.critical.rate",
 			reasonOf(cs.prefillKnee), reasonOf(cs.decodeKnee))

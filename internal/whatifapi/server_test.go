@@ -175,8 +175,69 @@ func TestPlanRefusalShape(t *testing.T) {
 				assert.Equal(t, "NoPrefillCapacity", out.Limits.Fleet.Refused.Reason)
 				assert.Nil(t, out.Limits.Fleet.Value)
 				assert.NotNil(t, out.Limits.Chosen.Headroom.Refused, "a headroom under a refused limit is refused")
+				// The cap is the lower of both knees: decode's alone is no cap.
+				if oc := out.TTFT.Markers.OperatingCap; assert.NotNil(t, oc) && assert.NotNil(t, oc.Refused, "the cap off decode's knee alone") {
+					assert.Equal(t, "NoPrefillCapacity", oc.Refused.Reason)
+				}
 			}
 		}
+	}
+}
+
+// A plan with no rate starts at headroom times the knee that priced when the
+// other is refused: a 200 whose rateSource names the knee, with the cap and
+// the fleet limit refused for the other knee's reason, and the priced role's
+// curve and limit kept. Only a source with no prefill role at all (absent,
+// not refused) keeps a cap off decode's knee alone. Before, a refused decode
+// knee was a 400, and a refused prefill knee priced the cap and called the
+// rate the operating point.
+func TestPlanStartsOffTheKneeThatPrices(t *testing.T) {
+	for name, c := range map[string]struct {
+		r          *stubResolver
+		rate       float64
+		source     string
+		capRefused string
+		fleet      string
+	}{
+		"decode knee refused":  {&stubResolver{pinnedLine: true}, 0.85 * 10, RateSourcePrefillKnee, "PinnedDefaultB", "PinnedDefaultB"},
+		"prefill knee refused": {&stubResolver{refusePrefill: true}, 0.85 * 12, RateSourceDecodeKnee, "NoPrefillCapacity", "NoPrefillCapacity"},
+		"no prefill role":      {&stubResolver{noPrefillRole: true}, 0.85 * 12, RateSourceOperatingPoint, "", "NoPrefillReplicas"},
+		"both knees priced":    {&stubResolver{}, 0.85 * 10, RateSourceOperatingPoint, "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := New(Config{Resolver: c.r, WhatifSchema: "schema-v3"}).Handler()
+			id := inputsOf(t, h)
+			for _, tpot := range []*Objective{nil, {Statistic: "mean"}, {Statistic: "none"}} {
+				out, body := plan(t, h, PlanRequest{InputsID: id, SLO: &SLORequest{TPOT: tpot}})
+				assert.Empty(t, apitest.CheckFigures(body), "%s", body)
+				assert.Equal(t, c.source, out.Limits.Chosen.RateSource)
+				assert.InDelta(t, c.rate, out.Limits.Chosen.Rate, 1e-9)
+				oc := out.TTFT.Markers.OperatingCap
+				require.NotNil(t, oc)
+				if c.capRefused == "" {
+					require.NotNil(t, oc.Value, "the cap: %+v", oc.Refused)
+					assert.InDelta(t, c.rate, *oc.Value, 1e-9)
+				} else {
+					assert.Nil(t, oc.Value, "a cap off one knee alone")
+					if assert.NotNil(t, oc.Refused) {
+						assert.Equal(t, c.capRefused, oc.Refused.Reason)
+					}
+				}
+				if c.fleet == "" {
+					assert.NotNil(t, out.Limits.Fleet.Value)
+				} else {
+					assert.Nil(t, out.Limits.Fleet.Value, "the fleet limit off one role alone")
+					if assert.NotNil(t, out.Limits.Fleet.Refused) {
+						assert.Equal(t, c.fleet, out.Limits.Fleet.Refused.Reason)
+					}
+				}
+				assert.NotEmpty(t, out.TTFT.Line.Curve, "the curve up to the knee that priced")
+				if c.source == RateSourcePrefillKnee {
+					assert.NotNil(t, out.Limits.Prefill.Value, "the prefill limit stays")
+					assert.NotNil(t, out.TTFT.Line.AtRate.Figure.Value, "the TTFT at the rate stays")
+				}
+			}
+		})
 	}
 }
 

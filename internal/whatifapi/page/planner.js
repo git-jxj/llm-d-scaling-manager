@@ -341,6 +341,20 @@ async function loadInputs() {
   }
 }
 
+// PLAN_FIGURES are the elements a plan fills: the limits, the bars, the +1
+// steps, the points at the rate, the charts and the tables.
+const PLAN_FIGURES = ["fleet", "fleetn", "chosen", "bars", "barsdesc", "limits", "marginal", "ratenote", "limitsfor",
+  "ttftat", "tpotat", "rationote", "ttftchart", "ttftlegend", "ttftpoints", "buckettable",
+  "tpotchart", "tpotlegend", "tpotpoints", "curvetable", "flags", "flagcount"];
+
+// clearPlan takes the last plan off the page. A new source, or a plan that
+// failed, must not leave another scenario's figures on screen as if current.
+function clearPlan() {
+  state.plan = null;
+  for (const id of PLAN_FIGURES) el(id).textContent = "";
+  el("banner").hidden = true;
+}
+
 // setInputs starts a session from the inputs: the recorded replicas, the
 // policy's SLO and headroom, the observed mix. The rate starts at the
 // operating point the first plan returns: the source carries no rate.
@@ -355,7 +369,7 @@ function setInputs(inputs) {
   el("dayrun").disabled = !inputs.fleet.prefill;
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.priceFailed = false;
-  state.plan = null;
+  clearPlan();
   state.size = null;
   const p = inputs.policy || {};
   // With no policy objective the page sets one, and says so beside the
@@ -792,13 +806,16 @@ async function plan() {
     clearTimeout(slow);
     clearInterval(ticker);
     // A size a newer question cancelled is no error: the newer one follows.
-    // Any other failure leaves an older scenario's plan on screen, which the
-    // compare table must not set beside A as the current one.
+    // Any other failure clears the older scenario's plan off the page, its
+    // figures and the compare table's current column: they are not this
+    // scenario's.
     if (e.name !== "AbortError") {
-      setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message, true);
+      setStatus((sizing ? "Could not size the fleet: " : "Could not price the plan: ") + e.message +
+        ". Nothing is shown until a plan prices: type a rate, or change the replicas, targets or assumed terms, to price again.", true);
       if (!stale()) {
         state.priceFailed = true;
         if (sizing) state.abort = null;
+        clearPlan();
         renderCompare();
       }
     }
@@ -868,7 +885,7 @@ function render() {
   el("banner").textContent = p.banner;
   el("banner").hidden = !p.banner;
   fitRateSlider(lowerKnee(p.ttft.markers));
-  el("ratenote").textContent = p.limits.chosen.rateSource === "operating point" ? "started at the operating point: the source carries no request rate" : "";
+  el("ratenote").textContent = rateNote(p.limits.chosen.rateSource);
   el("limitsfor").textContent = `(priced at ${shapeOf(p)})`;
   renderSize();
   renderAtTarget();

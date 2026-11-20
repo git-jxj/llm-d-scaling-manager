@@ -245,7 +245,7 @@ kill %1
 - **Fleet, traffic, SLO.** The page starts from now: the replica counts the
   source saw, and the policy's SLO and headroom. The source carries no request
   rate, so the rate starts at the operating point, headroom times the lower
-  knee. Move the rate slider, step the replicas, pick a statistic, set a target.
+  knee (or the one knee that priced: see "One knee refused" below). Move the rate slider, step the replicas, pick a statistic, set a target.
   The critical rate is the total rate: regular and batch traffic are not
   priced apart yet.
 - **Targets the policy does not set.** A TTFT target is needed to read a
@@ -260,10 +260,16 @@ kill %1
   the lower knee. When the cap is what sets it, the figure without headroom is
   shown beside it, with the role that would set it then. The bar shows both
   roles and the fleet on one axis, with the rate you chose. "binds" marks the
-  role whose limit sets the fleet figure. With no TPOT target, decode's knee
-  is all that bounds decode: when the source cannot price it (`NoLine`,
-  `PinnedDefaultB`), decode, the fleet and the cap are refused, not shown at
-  prefill's rate. With no operating point to start from, type a rate.
+  role whose limit sets the fleet figure.
+- **One knee refused.** The cap needs both knees. When the source cannot price
+  decode's knee (`NoLine`, `PinnedDefaultB`), the cap and the fleet limit are
+  refused, not shown at prefill's rate; with no TPOT target, decode's limit is
+  too, since nothing else bounds decode. The rate then starts at headroom
+  times the prefill knee, and the page says so under the rate: it is a place
+  to start, not an operating point. Type your own rate. The prefill curve,
+  the prefill limit and the TTFT figures stay. A refused prefill knee works
+  the same way, starting from the decode knee. A source with no prefill
+  variant at all keeps a cap from decode's knee alone.
 - **+1 prefill, +1 decode.** The fleet limit with one more replica of each role.
   Adding a replica of the role that does not bind changes nothing, and the page
   says so.

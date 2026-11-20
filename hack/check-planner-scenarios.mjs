@@ -606,6 +606,23 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("an answer for the inputs on the page is drawn", reportCurrent("sha256:a", "sha256:a"));
   check("an answer for replaced inputs is dropped", !reportCurrent("sha256:a", "sha256:b"));
 }
+
+// rateNote: where a plan with no rate started, in words, for each of the
+// API's rateSource values; with one knee refused it is not called the
+// operating point, and asks for a rate.
+{
+  const {rateNote} = ctx;
+  check("a typed rate has no note", rateNote("request") === "");
+  check("the operating point is named", rateNote("operating point").includes("the operating point"));
+  for (const [source, knee, unpriced] of [["prefill knee; decode not priced", "prefill", "decode"],
+    ["decode knee; prefill not priced", "decode", "prefill"]]) {
+    const n = rateNote(source);
+    check(`${source}: names the knee`, n.includes(`headroom times the ${knee} knee`), n);
+    check(`${source}: names the knee not priced`, n.includes(`the ${unpriced} knee is not priced`), n);
+    check(`${source}: no operating point`, n.includes("there is no operating point"), n);
+    check(`${source}: asks for a rate`, n.includes("Type your request rate."), n);
+  }
+}
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -617,7 +634,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 300;
+const EXPECTED_CASES = 310;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

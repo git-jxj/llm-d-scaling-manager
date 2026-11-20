@@ -19,11 +19,13 @@ import (
 // are that refusal, never prefill's rate alone: slo-to-rate refuses both rows
 // and exits 3, and /v1/plan refuses limits.decode, limits.fleet (with and
 // without headroom), both +1 steps and the operating-point cap, while the
-// prefill limit still prices. With no rate given, the plan is a 400 naming
-// the knee: there is no operating point to start at. Before, each fleet
-// figure was the prefill limit, read as bounded, and a plan with no rate
-// chose headroom times the prefill knee as its operating point (9.33 r/s on
-// ttft-three-pods).
+// prefill limit still prices. With no rate given, with a TPOT asked or not,
+// the plan starts at headroom times the prefill knee and names it so
+// (rateSource), not as an operating point. Before, each fleet figure was the
+// prefill limit, read as bounded, and a plan with no rate called headroom
+// times the prefill knee its operating point (9.33 r/s on ttft-three-pods)
+// and priced the cap there; round 1 of the fix made that plan a 400, which
+// the page, asking a TPOT on every load, showed as a failure.
 func TestFleetLimitRefusesAnUnpricedDecodeKnee(t *testing.T) {
 	for name, c := range map[string]struct{ recording, reason string }{
 		"pinned line": {"ttft-three-pods", "PinnedDefaultB"},
@@ -50,10 +52,32 @@ func TestFleetLimitRefusesAnUnpricedDecodeKnee(t *testing.T) {
 			req := whatifapi.PlanRequest{InputsID: in.InputsID, Assume: &whatifapi.Assume{A: fp(0.02)},
 				SLO: &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p90", Target: fp(2)},
 					TPOT: &whatifapi.Objective{Statistic: "none"}}}
-			code, body := apiPost(t, h, "/v1/plan", req)
-			assert.Equal(t, http.StatusBadRequest, code, "no rate given: an operating point chosen off prefill's knee alone: %s", body)
-			assert.Contains(t, string(body), "decode knee is refused ("+c.reason+")")
-			assert.Contains(t, string(body), "traffic.classes.critical.rate")
+			// No rate given, with or without a TPOT asked (the page always
+			// asks one): a plan, started at headroom times the prefill knee
+			// and named so, with the cap and the fleet still refused and
+			// prefill's curve, limit and TTFT kept.
+			for _, tpot := range []*whatifapi.Objective{{Statistic: "none"}, {Statistic: "mean", Target: fp(0.05)}, {Statistic: "p90", Target: fp(0.05)}} {
+				first := req
+				first.SLO = &whatifapi.SLORequest{TTFT: req.SLO.TTFT, TPOT: tpot}
+				start, _ := apiPlan(t, h, first)
+				pk := start.TTFT.Markers.PrefillKnee
+				require.NotNil(t, pk.Value, "the prefill knee prices")
+				assert.Equal(t, whatifapi.RateSourcePrefillKnee, start.Limits.Chosen.RateSource, tpot.Statistic)
+				assert.InDelta(t, start.Scenario.Headroom**pk.Value, start.Limits.Chosen.Rate, 1e-9, tpot.Statistic)
+				if oc := start.TTFT.Markers.OperatingCap; assert.NotNil(t, oc) {
+					assert.Nil(t, oc.Value, "TPOT %s: a cap off prefill's knee alone", tpot.Statistic)
+					if assert.NotNil(t, oc.Refused) {
+						assert.Equal(t, c.reason, oc.Refused.Reason)
+					}
+				}
+				assert.Nil(t, start.Limits.Fleet.Value, "TPOT %s: the fleet limit off prefill alone", tpot.Statistic)
+				if assert.NotNil(t, start.Limits.Fleet.Refused) {
+					assert.Equal(t, c.reason, start.Limits.Fleet.Refused.Reason)
+				}
+				assert.NotNil(t, start.Limits.Prefill.Value, "the prefill limit stays")
+				assert.NotEmpty(t, start.TTFT.Line.Curve, "the prefill curve stays")
+				assert.NotNil(t, start.TTFT.Line.AtRate.Figure.Value, "the TTFT at the starting rate stays")
+			}
 
 			req.Traffic = &whatifapi.Traffic{Classes: &whatifapi.Classes{Critical: &whatifapi.ClassRate{Rate: fp(3)}}}
 			plan, _ := apiPlan(t, h, req)

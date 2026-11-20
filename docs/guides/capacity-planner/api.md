@@ -143,7 +143,7 @@ is the model's own, which the source does not carry.
 | --- | --- | --- |
 | `inputsId` | required | From `POST /v1/inputs`. |
 | `fleet.prefill`, `fleet.decode` | the recorded counts | 1 to 64. |
-| `traffic.classes.critical.rate` | the operating point | Requests per second over the model: in v1 the total rate. `regular` and `batch` must be 0. Required (a 400 without it) when the decode knee is refused or neither knee is answered: there is no operating point then. |
+| `traffic.classes.critical.rate` | the operating point | Requests per second over the model: in v1 the total rate. `regular` and `batch` must be 0. With one knee refused, the default is headroom times the other knee, a rate to start from (see `limits.chosen.rateSource`). Required (a 400 without it) only when neither knee is answered. |
 | `traffic.mix` | `"observed"` | Or `{"promptTokens": N, "outputTokens": N}`, priced as the CLI's `--assume-input-tokens` and `--assume-output-tokens` and flagged `AssumedShape`. |
 | `traffic.arrivalCV2` | Poisson | As `--arrival-cv2`. |
 | `slo.ttft` | the policy's | `statistic` `mean` or `pNN`, `target` in seconds. A TTFT target is required. `bucketTargets` sets a target per bucket of the per-bucket view, keyed by bucket name. |
@@ -181,9 +181,9 @@ is the model's own, which the source does not carry.
 | `scenario` | The request with its defaults applied. |
 | `ttft.line` | The mix line: its curve (65 rates, crowded toward the lower knee), its floor, point A (`atRate`, the TTFT at the chosen rate) and point B (`atTarget`, the rate at the target). |
 | `ttft.perBucket` | With the per-bucket view, one line per bucket, each with its own knees, target and points. No limit reads it. |
-| `ttft.markers` | The prefill and decode knees, the operating-point cap (headroom times the lower knee, or the decode knee's refusal when that knee is refused), and the flow-control onsets when flow control is on. |
+| `ttft.markers` | The prefill and decode knees, the operating-point cap (headroom times the lower knee; with one knee refused, that knee's refusal, decode's first; a source with no prefill variant at all keeps a cap from the decode knee alone), and the flow-control onsets when flow control is on. |
 | `tpot` | The TPOT line at the statistic asked (`pNN` is the mean times R_q, with R_q's source in `ratio`), its curve, floor and points. Absent with `"statistic": "none"`, or when neither the request nor the policy sets a TPOT target. |
-| `limits` | `prefill`, `decode`, and `fleet` (the operating-point cap applied, with `withoutHeadroom`, `capApplied` and `binding`, the role with the lower limit); and `chosen`, the chosen rate and its headroom under the fleet limit. With no TPOT asked, `decode` is absent, unless the decode knee is refused: then `decode` and `fleet` are that refusal. |
+| `limits` | `prefill`, `decode`, and `fleet` (the operating-point cap applied, with `withoutHeadroom`, `capApplied` and `binding`, the role with the lower limit); and `chosen`, the chosen rate, its headroom under the fleet limit, and `rateSource`: `request`, `operating point`, or with one knee refused `prefill knee; decode not priced` or `decode knee; prefill not priced`. With no TPOT asked, `decode` is absent, unless the decode knee is refused: then `decode` and `fleet` are that refusal. |
 | `marginal` | The fleet limit with one more prefill replica, and with one more decode replica: the limit, the change, and which role binds. |
 | `flags` | Every flag in the plan once, with the places it qualifies. |
 | `assumed` | Every assumed input, in the CLI's words. |
