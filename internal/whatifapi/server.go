@@ -60,6 +60,10 @@ type Config struct {
 	WhatifSchema string
 	// PlannerVersion is the planner's release, stamped on a prediction.
 	PlannerVersion string
+	// SelfCheck is whether inputs self-check when the request does not say
+	// (InputsRequest.SelfCheck): the CLI's serve sets it unless
+	// --no-self-check.
+	SelfCheck bool
 	// MaxPlans and MaxInputs are how many plans and how many inputs are
 	// priced at once; past them a request is 503 with Retry-After. 0 is the
 	// default: GOMAXPROCS plans, DefaultMaxInputs inputs.
@@ -118,6 +122,7 @@ type Server struct {
 	resolver       Resolver
 	whatifSchema   string
 	plannerVersion string
+	selfCheck      bool
 	inputs         *lru[*inputsEntry]
 	plans          *lru[[]byte]
 	sizes          *lru[[]byte]
@@ -194,7 +199,7 @@ func New(c Config) *Server {
 	if uploadMax <= 0 {
 		uploadMax = DefaultUploadBytes
 	}
-	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, plannerVersion: c.PlannerVersion, inputs: newWeighedLRU(defaultInputs, inputsBytes, entryBytes),
+	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, plannerVersion: c.PlannerVersion, selfCheck: c.SelfCheck, inputs: newWeighedLRU(defaultInputs, inputsBytes, entryBytes),
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
@@ -278,6 +283,11 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { <-s.inputSlots }()
+	check := s.selfCheck
+	if req.SelfCheck != nil {
+		check = *req.SelfCheck
+	}
+	req.SelfCheck = &check
 	res, err := s.resolver.Resolve(r.Context(), req)
 	if err != nil {
 		writeErr(w, err)
@@ -286,6 +296,9 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	doc := res.Inputs
 	doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 	doc.InputsID = contentID("inputs", res.Content)
+	if check && doc.Source.Kind == SourceRecording || check && doc.Source.Kind == SourcePrometheus {
+		doc.SelfCheck = SelfCheckOf(r.Context(), res, SelfCheckInfo{PlannerVersion: s.plannerVersion})
+	}
 	// The entry kept is the first caller's, but each caller is answered with
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.

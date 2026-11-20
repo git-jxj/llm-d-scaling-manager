@@ -44,6 +44,11 @@ type Resolved struct {
 	// Config is the configuration the source says the fleet ran, which a
 	// backtest compares between its fit and its test.
 	Config RunConfig
+	// Folds is the source read at earlier cycles, for the self-check
+	// (SelfCheckOf); nil where none was asked. PlannerVersion is what the
+	// self-check stamps an issue with.
+	Folds          []FoldFit
+	PlannerVersion string
 	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
 	// the Series and the Inputs), its weight in the inputs cache
 	// (Config.MaxInputsBytes); 0 weighs nothing.

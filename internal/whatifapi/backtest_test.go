@@ -250,6 +250,12 @@ type btResolver struct {
 	stubResolver
 	mu     sync.Mutex
 	cycles []int
+	// folds, when set, reads the self-check's folds where asked, and
+	// lastSelfCheck is what the last request asked.
+	folds         bool
+	lastSelfCheck *bool
+	// n is the window's cycles; 0 is 240.
+	n int
 }
 
 func (r *btResolver) Resolve(ctx context.Context, req InputsRequest) (*Resolved, error) {
@@ -264,8 +270,16 @@ func (r *btResolver) Resolve(ctx context.Context, req InputsRequest) (*Resolved,
 	r.mu.Lock()
 	r.cycles = append(r.cycles, cycle)
 	r.mu.Unlock()
-	res.Series, res.Latency = btSeries(240, 0, 1)
+	res.Series, res.Latency = btSeries(max(r.n, 240), 0, 1)
 	res.Config = btConfig("H100")
+	r.mu.Lock()
+	r.lastSelfCheck = req.SelfCheck
+	r.mu.Unlock()
+	if r.folds && req.SelfCheck != nil && *req.SelfCheck {
+		for _, c := range SelfCheckCycles(len(res.Series)) {
+			res.Folds = append(res.Folds, FoldFit{Cycle: c, At: res.Series[c-1].At, Pricer: &r.stubResolver})
+		}
+	}
 	res.Content += " cycle " + time.Duration(cycle).String()
 	res.Inputs.Source.Cycle = cycle
 	return res, nil

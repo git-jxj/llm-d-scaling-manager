@@ -52,6 +52,13 @@ input[type=number] { width: 80px; font-variant-numeric: tabular-nums; }
 .chip.assumed::before, .chip.flagged::before { content: "\26A0"; color: var(--warning); }
 .chip.refused::before { content: "\2715"; color: var(--critical); }
 .chip b { color: var(--text-primary); font-weight: 600; }
+/* The self-check's badge and its lines, under the source. */
+.chip.sc-ok::before { content: "\25CF"; color: var(--good); }
+.chip.sc-weak::before, .chip.sc-notRun::before { content: "\26A0"; color: var(--warning); }
+.chip.sc-inconsistent::before { content: "\2715"; color: var(--critical); }
+.selfcheckbox { font-size: 13px; margin: 4px 0 8px; }
+.selfcheckbox p { margin: 2px 0; }
+.selfcheckbox .scwhy, .selfcheckbox .sctrust { color: var(--text-secondary); }
 .banner { border: 1px solid var(--warning); border-left-width: 4px; border-radius: 8px; padding: 8px 12px; font-size: 13px;
   margin-bottom: 8px; background: var(--surface-1); }
 .banner::before { content: "\26A0  "; color: var(--warning); }

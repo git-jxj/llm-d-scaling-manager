@@ -107,6 +107,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	}
 	rep.SchemaVersion = whatifapi.SchemaVersion
 	rep.Source.Recording = f.recording
+	rep.SelfCheck = f.checked
 	if f.output == outputJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")

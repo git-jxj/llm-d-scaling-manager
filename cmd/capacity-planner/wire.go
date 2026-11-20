@@ -38,6 +38,8 @@ type wireOutput struct {
 	// Error is a usage or internal error met before any answer, with -o
 	// json: the output then holds only it, the question and the exit code.
 	Error *wireError `json:"error,omitempty"`
+	// SelfCheck is the planner checked on the recording beside the answer.
+	SelfCheck *whatifapi.SelfCheck `json:"selfCheck,omitempty"`
 }
 
 // wireError is an error met before any answer.
@@ -517,7 +519,8 @@ func newWireOutput(question string, f *answerFlags, st *learnreplay.State, varia
 			FirstCycle: 1, LastCycle: st.Cycle, TotalCycles: st.Cycles, FirstAt: st.FirstAt, LastAt: st.At},
 		Bands: &wireBands{Method: "block bootstrap", BlockCycles: r.Block, Resamples: r.Resamples, Seed: r.Seed,
 			LoPercent: 10, HiPercent: 90},
-		Note: footer(st, variants),
+		Note:      footer(st, variants),
+		SelfCheck: f.checked,
 	}
 	if o := f.captured; o != nil {
 		roles := "role-of"

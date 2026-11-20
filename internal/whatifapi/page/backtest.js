@@ -215,6 +215,33 @@ function btPredictionCSV(p) {
   return lines.join("\n") + "\n";
 }
 
+// SC_BADGE is a self-check's status as its badge says it.
+const SC_BADGE = {ok: "self-check ok", weak: "self-check weak", inconsistent: "self-check: inconsistent", notRun: "self-check not run"};
+
+// selfCheckBadge is the badge of a source's self-check: its words and its
+// class.
+function selfCheckBadge(sc) {
+  if (!sc) return null;
+  return {text: SC_BADGE[sc.status] || "self-check " + sc.status, cls: "sc-" + (SC_BADGE[sc.status] ? sc.status : "notRun")};
+}
+
+// selfCheckHTML is a source's self-check, shown with every answer: the line,
+// and short of ok why and what to trust, and for an inconsistent source a
+// link to review and file the prefilled issue. Every string is escaped.
+function selfCheckHTML(sc) {
+  if (!sc) return "";
+  let h = `<p class="scline">${esc(sc.line)}</p>`;
+  if (sc.status === "weak" || sc.status === "inconsistent") h += `<p class="scwhy">${esc(sc.why)}</p>`;
+  if (sc.trust) h += `<p class="sctrust">${esc(sc.trust)}</p>`;
+  // The link is GitHub's, over TLS: a five-letter scheme (the page names no
+  // scheme in its text), then the host.
+  if (sc.issueUrl && /^[a-z]{5}:\/\/github\.com\//.test(sc.issueUrl) && sc.issueUrl.indexOf("s://") === 4) {
+    h += `<p><a class="scissue" href="${esc(sc.issueUrl)}" target="_blank" rel="noopener noreferrer">Review the issue to file</a> ` +
+      `<span class="hint">It opens a prefilled GitHub issue with no name and no recording; nothing is sent until you submit it.</span></p>`;
+  }
+  return h;
+}
+
 // btMeasured is a point's measured figure in words: above the top bucket
 // where the histogram could not say.
 function btMeasured(p) {

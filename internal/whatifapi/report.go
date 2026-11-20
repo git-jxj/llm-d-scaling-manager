@@ -186,6 +186,8 @@ type ReportResponse struct {
 	// they read off where a run measured them.
 	NotValidated []string `json:"notValidated"`
 	ExitCode     int      `json:"exitCode"`
+	// SelfCheck is the planner checked on the source the report reads.
+	SelfCheck *SelfCheck `json:"selfCheck,omitempty"`
 }
 
 // ReportShape is the fleet's answer at one request shape.
@@ -499,6 +501,7 @@ func (s *Server) report(ctx context.Context, req ReportRequest) (*ReportResponse
 		return nil, err
 	}
 	out.SchemaVersion = SchemaVersion
+	out.SelfCheck = e.doc.SelfCheck
 	return out, nil
 }
 

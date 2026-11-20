@@ -18,7 +18,8 @@ const [scen, day, bt, golden] = [
 ];
 const ctx = vm.createContext({URLSearchParams});
 for (const f of [scen, day, bt]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
-const {btSVG, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, btPredictionCSV, dayTime} = ctx;
+const {btSVG, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, btPredictionCSV, selfCheckBadge, selfCheckHTML,
+  dayTime} = ctx;
 const answer = JSON.parse(fs.readFileSync(golden, "utf8"));
 const copy = x => JSON.parse(JSON.stringify(x));
 
@@ -103,6 +104,20 @@ try {
   check("the CSV holds the hashes", /predictionHash=ph/.test(csv[0]) && /inputsHash=ih/.test(csv[0]), csv[0]);
   check("the CSV has a row a step", csv.length === 2 + answer.steps.length, csv.length);
   check("the CSV has 13 columns", csv[1].split(",").length === 13, csv[1]);
+
+  // The self-check: a badge a status, its lines escaped, and the issue a
+  // link to GitHub only.
+  const sc = {status: "inconsistent", line: "<b>x</b>", why: "<i>y</i>", trust: "Do not trust <s>",
+    issueUrl: "https" + "://github.com/llm-d-incubation/llm-d-scaling-manager/issues/new?template=planner-self-check.yml&diagnostics=a%3Cb"};
+  check("an inconsistent self-check is a red badge", selfCheckBadge(sc).cls === "sc-inconsistent");
+  check("an unknown status is not run", selfCheckBadge({status: "odd"}).cls === "sc-notRun");
+  check("no self-check, no badge", selfCheckBadge(null) === null && selfCheckHTML(null) === "");
+  const sh = selfCheckHTML(sc);
+  check("the self-check's lines are escaped", !/<b>x|<i>y|<s>/.test(sh), sh);
+  check("the issue is offered as a link", /class="scissue"/.test(sh) && /target="_blank"/.test(sh));
+  const evilURL = selfCheckHTML(Object.assign({}, sc, {issueUrl: "java" + "script:alert(1)"}));
+  check("an issue link that is not GitHub's is not drawn", !/scissue/.test(evilURL));
+  check("an ok self-check says no why", !/scwhy/.test(selfCheckHTML({status: "ok", line: "fine", why: "w"})));
 
   // A step with a refused prediction draws no predicted point and says why.
   const refused = copy(answer);

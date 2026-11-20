@@ -82,6 +82,47 @@ same window. Without
 router histograms it uses the engines' own, and leaves out what they cannot
 compare: on a P/D fleet the engines' TTFT covers prefill alone.
 
+## The self-check beside every answer
+
+You do not have to run the check yourself. Every answer the planner reads
+from a recording checks the planner on that recording too: it learns from
+the first half of the recording and the first three quarters, predicts the
+quarter after each from its traffic and replicas alone, and compares with
+what the fleet measured. The result comes first, in one line:
+
+```text
+Self-check: on the last 1 h 13 min of this recording, fitted on what came before, p90 TTFT within 20% in 0 of 9 steps
+(median ratio 2.67); p90 TPOT within 20% in 10 of 10 steps (median ratio 0.94). [inconsistent]
+  Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
+```
+
+On the page it is a badge beside the source, with the same lines under it.
+
+| Badge | Means |
+| --- | --- |
+| ok | The planner predicted this recording well: you can size from its figures. |
+| weak | It mostly held, over few steps or loosely. Size with care. |
+| inconsistent | The planner and this recording disagree: the median ratio is outside 0.8 to 1.25, fewer than half the steps are within 20%, or the planner called the fleet overloaded in half the steps where it served. The line says which figures not to trust. |
+| not run | The recording is shorter than an hour, carries no latency, is not a P/D fleet, or too few steps could be scored; the line says which. |
+
+On **inconsistent**, the answer offers an issue to file: a link to a new
+GitHub issue, prefilled with diagnostics. It holds the planner's version,
+the checks that failed and their numbers, the refusals, the token-size
+class of the traffic, the fleet's roles and replica counts, and the engine
+release. It holds no model, namespace, variant or pod name, no request rate,
+and no recording. Nothing is sent until you read it and submit it.
+
+What to do on inconsistent: do not size the figures it names from this
+recording; record a longer window with busy minutes early in it, then check
+again; if it stays inconsistent, file the issue.
+
+The self-check adds no replay: the replay that reads the answer reads the
+fits at the cuts on the way. Measured on recordings of 1 to 2.5 hours, an
+answer took 2.0 to 2.4 s without it and 2.4 s with it on a 2-hour recording,
+and 35 s against 38.6 s on the 2.5-hour q32 warm-up. `--no-self-check` (and
+`selfCheck: false` on `POST /v1/inputs`, or `serve --no-self-check`) turns it
+off.
+
 ## Check it blind: predict now, compare later
 
 To show that the planner never saw the latency it is scored against, split

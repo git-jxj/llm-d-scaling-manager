@@ -467,6 +467,14 @@ function forgetUpload(name) {
 // policy's SLO and headroom, the observed mix. The rate starts at the
 // operating point the first plan returns: the source carries no rate.
 function setInputs(inputs) {
+  const badge = selfCheckBadge(inputs.selfCheck);
+  el("sccheck").hidden = !badge;
+  el("scbox").hidden = !badge;
+  if (badge) {
+    el("sccheck").textContent = badge.text;
+    el("sccheck").className = "chip selfcheck " + badge.cls;
+    el("scbox").innerHTML = selfCheckHTML(inputs.selfCheck);
+  }
   el("rrun").disabled = false;
   state.reportGen = (state.reportGen || 0) + 1;
   el("rresult").hidden = true;
