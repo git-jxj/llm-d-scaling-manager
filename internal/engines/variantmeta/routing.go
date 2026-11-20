@@ -61,7 +61,8 @@ type ModelRouting struct {
 //   - a variant that is not selected is HeldUnrouted: the router sends it
 //     nothing, whatever its size, so it is held rather than sized;
 //   - in a selected variant, a live Pod whose own labels no pool selects (a
-//     relabelled Pod) is counted in UnroutedReplicas and named in UnroutedPods.
+//     relabelled Pod) is counted in UnroutedReplicas and named in UnroutedPods
+//     -- on an LWS by its leader, the group's live workers named too, uncounted.
 //
 // metas are the running variants; parked are the model's variants at zero
 // replicas, which get no metadata but count towards Routed and are named in
@@ -339,14 +340,49 @@ func markHeld(m *domain.VariantMetadata, st scaletarget.ScaleTargetAccessor, pod
 }
 
 // markUnroutedPods counts the live Pods of a selected variant that no pool
-// selects.
+// selects. On a LeaderWorkerSet a group is judged and counted by its leader,
+// and its live workers are named too, uncounted: the collector names a
+// group's row for its leader, but for its lowest worker when the leader did
+// not report, and that row must go as well.
 func markUnroutedPods(m *domain.VariantMetadata, st scaletarget.ScaleTargetAccessor, pods []corev1.Pod, sels []map[string]string) {
+	var groups map[string]bool
 	for p := range leaderPods(st, pods) {
 		if poolutil.AnySelects(sels, p.Labels) {
 			continue
 		}
 		countUnrouted(m, p)
+		if st.GetGroupSize() > 1 {
+			if groups == nil {
+				groups = map[string]bool{}
+			}
+			if key := routingGroupKey(p); key != "" {
+				groups[key] = true
+			}
+		}
 	}
+	if len(groups) == 0 {
+		return
+	}
+	for i := range pods {
+		p := &pods[i]
+		key := routingGroupKey(p)
+		if p.DeletionTimestamp != nil || p.Labels[lwsv1.WorkerIndexLabelKey] == "0" || key == "" || !groups[key] {
+			continue
+		}
+		m.UnroutedPods = append(m.UnroutedPods, p.Name)
+	}
+}
+
+// routingGroupKey is the LeaderWorkerSet group of p, as the collector keys
+// it: its set name and group index, "" when either is missing. The set name
+// tells apart a DisaggregatedSet role's revisions, each a child
+// LeaderWorkerSet with its own group 0.
+func routingGroupKey(p *corev1.Pod) string {
+	set, idx := p.Labels[lwsv1.SetNameLabelKey], p.Labels[lwsv1.GroupIndexLabelKey]
+	if set == "" || idx == "" {
+		return ""
+	}
+	return set + "/" + idx
 }
 
 func countUnrouted(m *domain.VariantMetadata, p *corev1.Pod) {

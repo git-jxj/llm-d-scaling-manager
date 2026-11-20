@@ -137,7 +137,8 @@ type VariantMetadata struct {
 	// scale-target units (an LWS group counts once, by its leader); stuck
 	// Pods are left to StuckReplicas so nothing is subtracted twice.
 	// UnroutedReady is the Ready part of it. UnroutedPods names every live
-	// unselected Pod, so its metric rows can be dropped.
+	// Pod of an unrouted replica -- on an LWS the group's leader and its live
+	// workers -- so its metric rows can be dropped; only leaders are counted.
 	UnroutedReplicas int      `learnrec:"omitzero"`
 	UnroutedReady    int      `learnrec:"omitzero"`
 	UnroutedPods     []string `learnrec:"omitzero"`
