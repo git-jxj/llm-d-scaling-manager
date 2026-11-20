@@ -654,7 +654,9 @@ func TestTTFT_TheSpreadIsTheWindowsNotTheCycles(t *testing.T) {
 		assert.Equal(t, cli.Spread(), got, "S1 and the CLI, cycle %d", i)
 	}
 	alone := whatif.ReadPromptSpread(whatif.PoolComputedBuckets(nil, minute(0)), 1800)
-	assert.InDelta(t, 0.484, alone.CV, 0.001, "this minute alone")
+	// 1800 in (1000, 2000]: at most 20% at 1000 and 80% at 2000.
+	assert.InDelta(t, math.Sqrt((3000.0*1800-1000*2000)/(1800*1800)-1), alone.CV, 1e-9, "this minute alone")
+	assert.InDelta(t, 0.222, alone.CV, 0.001, "this minute alone")
 	assert.False(t, cli.Spread().Assumed)
 	assert.Greater(t, cli.Spread().CV, 1.0, "the window holds the long prompts")
 }

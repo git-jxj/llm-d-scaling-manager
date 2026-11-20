@@ -3,6 +3,7 @@ package whatif
 import (
 	"math"
 	"math/rand/v2"
+	"slices"
 	"testing"
 	"time"
 
@@ -83,9 +84,104 @@ func TestReadPromptSpread(t *testing.T) {
 	over := rowsSpread(withBuckets([]domain.LengthBucket{bucket(100, 99), bucket(100000, 100), bucket(inf, 100)}), 1000)
 	assert.Equal(t, PromptSpread{CV: 3, Clamped: true}, over)
 
-	// Constant 3000-token prompts read about 1.3 in the 2000-5000 bucket.
+	// Constant 3000-token prompts read 0.47 in the 2000-5000 bucket: 2/3 of
+	// them at 2000 and 1/3 at 5000 also have that mean, and that spread.
 	coarse := rowsSpread(withBuckets([]domain.LengthBucket{bucket(2000, 0), bucket(5000, 1), bucket(inf, 1)}), 3000)
-	assert.InDelta(t, 1.33, coarse.CV, 0.01)
+	assert.InDelta(t, math.Sqrt((7000.0*3000-2000*5000)/(3000.0*3000)-1), coarse.CV, 1e-9)
+	assert.InDelta(t, 0.471, coarse.CV, 0.001)
+}
+
+// upperEdgeCV is the reading before the mean bounded it: every request at its
+// bucket's upper bound.
+func upperEdgeCV(pooled map[float64]float64, mean float64) float64 {
+	bounds := make([]float64, 0, len(pooled))
+	for b := range pooled {
+		if !math.IsInf(b, 1) {
+			bounds = append(bounds, b)
+		}
+	}
+	slices.Sort(bounds)
+	var second, below float64
+	for _, u := range bounds {
+		second += max(pooled[u]-below, 0) * u * u
+		below = max(below, pooled[u])
+	}
+	return math.Sqrt(max(second/pooled[math.Inf(1)]/(mean*mean)-1, 0))
+}
+
+// The staircase's fixed 8k prompts (issue #266): every one in the (5000,
+// 10000] bucket at a mean of 8000. Every request at the upper bound read cv
+// 0.75 (sqrt(10000^2/8000^2 - 1)), which set SpreadBeyondProcessorSharing.
+// With the mean held, the most spread the bucket can hold is 40% at 5000 and
+// 60% at 10000: cv 0.31.
+func TestReadPromptSpread_TheMeanBoundsTheSpread(t *testing.T) {
+	pooled := map[float64]float64{2000: 0, 5000: 0, 10000: 100, math.Inf(1): 100}
+	got := ReadPromptSpread(pooled, 8000)
+	assert.False(t, got.Assumed)
+	assert.False(t, got.Clamped)
+	assert.InDelta(t, math.Sqrt((0.4*5000*5000+0.6*10000*10000)/(8000.0*8000)-1), got.CV, 1e-9)
+	assert.InDelta(t, 0.306, got.CV, 0.001)
+	assert.InDelta(t, 0.75, upperEdgeCV(pooled, 8000), 1e-9)
+}
+
+// A mean below every request at its bucket's lower bound is two populations
+// as well; it reads every request at its upper bound, high, as before.
+func TestReadPromptSpread_AMeanBelowTheLowerEdges(t *testing.T) {
+	pooled := map[float64]float64{1000: 0, 2000: 3, math.Inf(1): 3}
+	got := ReadPromptSpread(pooled, 900)
+	assert.False(t, got.Assumed)
+	assert.InDelta(t, upperEdgeCV(pooled, 900), got.CV, 1e-12)
+	assert.InDelta(t, math.Sqrt(2000.0*2000/(900*900)-1), got.CV, 1e-12)
+}
+
+// Over random prompts, narrow and wide, the reading is never below the true
+// cv and never above every request at its upper bound.
+func TestReadPromptSpread_BetweenTheTruthAndTheUpperEdges(t *testing.T) {
+	r := rand.New(rand.NewPCG(3, 5))
+	bounds := []float64{128, 256, 512, 1000, 2000, 5000, 10000, 20000, 50000}
+	tighter := 0
+	for i := range 2000 {
+		xs := make([]float64, 0, 300)
+		center := 50 + r.Float64()*30000
+		width := []float64{0.001, 0.05, 0.3, 1, 3}[i%5]
+		for range 300 {
+			x := center * (1 + width*(r.Float64()-0.5))
+			if r.Float64() < 0.05 {
+				x *= 1 + 4*r.Float64()
+			}
+			xs = append(xs, min(max(x, 1), 49999))
+		}
+		pooled := map[float64]float64{}
+		var sum, sq float64
+		for _, x := range xs {
+			sum += x
+			sq += x * x
+			for _, u := range bounds {
+				if x <= u {
+					pooled[u]++
+				}
+			}
+			pooled[math.Inf(1)]++
+		}
+		for _, u := range bounds {
+			pooled[u] += 0
+		}
+		n := float64(len(xs))
+		mean := sum / n
+		truth := math.Sqrt(max(sq/n/(mean*mean)-1, 0))
+		got := ReadPromptSpread(pooled, mean)
+		require.False(t, got.Assumed, "case %d", i)
+		if got.Clamped {
+			continue
+		}
+		old := upperEdgeCV(pooled, mean)
+		require.GreaterOrEqual(t, got.CV, truth*(1-1e-9)-1e-12, "case %d", i)
+		require.LessOrEqual(t, got.CV, old*(1+1e-9)+1e-12, "case %d", i)
+		if got.CV < old*0.9 {
+			tighter++
+		}
+	}
+	assert.Greater(t, tighter, 500, "the mean tightens the reading on narrow prompts")
 }
 
 // A mean above what the buckets allow proves two populations, so the reading
@@ -130,7 +226,7 @@ func TestReadPromptSpread_TheFloorPastTheCheck(t *testing.T) {
 // The reviewed worked example, at the default 15 s cycle over a one-minute
 // rate: 98% of prompts at 1800 tokens, 2% at 20000, 40 requests a minute, true
 // cv 1.2. One cycle's histogram misses the long prompts in 45% of minutes and
-// reads 0.48 with no flag. The window misses them about 1% of the time at 15 s
+// reads 0.33 with no flag. The window misses them about 1.5% of the time at 15 s
 // a cycle, when it spans under 6 minutes, and at 60 s a cycle not at all. A
 // restart has no such span: at the minimum the window has counted 200 requests,
 // and the long prompts are in them all but about 1.8% of the time.
@@ -160,7 +256,7 @@ func TestPromptWindow_ARareLongPrompt(t *testing.T) {
 			ComputedTokensBuckets: []domain.LengthBucket{
 				bucket(2000, rate(n-l)), bucket(20000, rate(n)), bucket(math.Inf(1), rate(n))}}}
 	}
-	// missed is a read with no long prompt in it, the 0.48; low is under 1.
+	// missed is a read with no long prompt in it, the 0.33; low is under 1.
 	const missed, low = 0.5, 1.0
 	for _, tc := range []struct {
 		name      string
@@ -168,7 +264,10 @@ func TestPromptWindow_ARareLongPrompt(t *testing.T) {
 		maxMissed float64
 		maxLow    float64
 	}{
-		{"15 s cycle", 1, 0.02, 0.15},
+		// The window's own prompts read under 1 in about 18% of its 15 s
+		// cycles: its few long prompts are the cv. Every request at its
+		// upper bound padded that to 11%.
+		{"15 s cycle", 1, 0.02, 0.2},
 		{"60 s cycle", 4, 0, 0.02},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -305,7 +404,7 @@ func TestPromptWindow(t *testing.T) {
 	for i := range PromptWindowMinCycles {
 		w.Note([]domain.ReplicaMetrics{row(900, 1, bucket(1000, 1), bucket(inf, 1))}, 30+i, at(30+i))
 	}
-	assert.InDelta(t, math.Sqrt(1e6/(900.0*900)-1), w.Spread().CV, 1e-9)
+	assert.InDelta(t, math.Sqrt(1000.0*900/(900*900)-1), w.Spread().CV, 1e-9)
 
 	copied := w.Clone()
 	w.Note([]domain.ReplicaMetrics{row(9000, 1)}, 40, at(40))
