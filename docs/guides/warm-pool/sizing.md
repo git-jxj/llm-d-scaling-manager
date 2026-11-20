@@ -57,6 +57,40 @@ first**.
 Watch `memory.current`, not `anon`: a sleeper's anonymous memory barely moves,
 so `anon` reports it as costing nothing.
 
+### Nodes where engines pin a CPU KV tier
+
+Sleepers and a CPU KV-offload tier use the same host RAM. An engine with
+`cpu_bytes_to_use` in `--kv-transfer-config`, or an LMCache CPU size, pins that
+much per rank, usually in `/dev/shm`. On such a node the pool gets only what is
+left.
+
+Check what is left before you size:
+
+```bash
+deploy/warmpool.sh sizing --params 8B --dtype bf16 -n <models' namespace>
+```
+
+- `-n` reads the GPU workloads in that namespace and subtracts, per node, the
+  largest of: their memory requests, the CPU tier times ranks, and a
+  memory-backed `/dev/shm` `sizeLimit`. A value it cannot read (a shell
+  variable, an env from a ConfigMap) is listed, not guessed.
+- `--reserved-ram-gib N` states the held RAM by hand instead.
+
+`create` checks the same: it refuses a pool whose memory limit fits no node
+once the held RAM is taken off, and prints the numbers. On a dry run it checks
+only when you state the node with `--ram-gib` (and `--reserved-ram-gib`).
+
+If nothing fits, place the pool on nodes without the tier, hold fewer or
+smaller models, or keep a replica up instead. The pool sleeps at level 1 only:
+level 2 holds no host RAM, but it is not built (see
+[sleep levels](../../proposals/warm-pool-sleep-levels.md)).
+
+**Do not copy a model's start wrapper into a pool Pod.** Pool engines are
+started by the pool's launcher, not by the model's own command. A wrapper that
+clears `/dev/shm` (to free a crashed engine's KV-offload region) is safe in a
+Pod with one engine. In a pool Pod it deletes the shared memory of every other
+engine in that Pod.
+
 ## Tuning
 
 Everything else is trigger metadata on the pool's ScaledObject. Edits apply on

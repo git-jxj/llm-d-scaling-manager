@@ -3468,6 +3468,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# name, a missing ScaledObject (so the pool is never discovered), a worker
 	@# template carrying the proxy (so the group never becomes Ready).
 	@bash hack/check-warmpool-manifests.sh
+	@echo "Checking warmpool.sh create refuses a pool that fits no node beside a CPU KV tier..."
+	@bash hack/check-warmpool-ram.sh
 	@echo "Checking the capacity planner's in-cluster manifests (config/capacity-planner)..."
 	@# A Service on plain Kubernetes, a cluster-scoped object, a listen beyond
 	@# loopback, a wider Role or another subject, a proxy that passes the
@@ -3672,6 +3674,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@python3 hack/check-add-variant.py
 	@echo "Checking the pod spec the warm pool planner reads..."
 	@python3 hack/check-warmpool-plan.py
+	@echo "Checking warm-pool sizing subtracts the host RAM serving engines hold..."
+	@python3 hack/check-warmpool-sizing.py
 	@echo "Checking for mangled line continuations..."
 	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
 	@# the \n becomes a literal argument. It shipped once, in the limiter path,

@@ -89,6 +89,10 @@ NETWORK_POLICY=1
 # A GROUP pool needs one carrying the follower fix -- see the --group-size check
 # in cmd_create for why the stock image cannot serve one.
 LAUNCHER_IMAGE=""
+# Host RAM per node, and the part serving engines hold, stated by hand for the
+# create check. Empty: read from the cluster (never on a dry run).
+NODE_RAM_GIB=""
+RESERVED_RAM_GIB=""
 
 usage() {
   cat <<'USAGE'
@@ -100,9 +104,11 @@ Warm pool lifecycle.
   warmpool.sh monitor -n NS --name NAME --monitoring-namespace NS
                                               scrape an EXISTING pool: adds the
                                               PodMonitor and admits the scraper
-  warmpool.sh sizing --params 744B [--dtype fp8]
+  warmpool.sh sizing --params 744B [--dtype fp8] [-n NS]
                                               should this model be warmed on THIS
                                               cluster? Reads the nodes and answers.
+                                              -n NS subtracts the host RAM that
+                                              namespace's engines hold (a CPU KV tier)
 
 create options:
   --name NAME          pool name (llm-d.ai/warm-pool). Default: default
@@ -165,6 +171,12 @@ create options:
                        the stock launcher sends every rank to vLLM's API server,
                        which has no follower path, so an engine spanning Pods
                        cannot start. Build one from the fork carrying that fix.
+  --ram-gib N          host RAM per node, stated by hand. With it (or on any
+                       real apply) create refuses a pool whose memory limit
+                       fits no node after what serving engines hold
+  --reserved-ram-gib N host RAM per node that serving engines hold (a CPU KV
+                       tier), stated by hand. Default: read from the GPU
+                       workloads in -n NS
   --no-network-policy  do not create the ingress boundary. For clusters where
                        policy is managed centrally -- NOT a convenience: without
                        one, :8001 accepts caller-supplied argv from anything that
@@ -470,6 +482,49 @@ cmd_create() {
     log_info "  the Pod's LeaderWorkerSet worker index, --master-addr from the leader,"
     log_info "  and --headless on everything but rank 0. Nothing here has to say it,"
     log_info "  and a worker template that hard-coded a rank would fight the fan-out."
+  fi
+
+  # HOST RAM THE SERVING ENGINES ALREADY HOLD.
+  #
+  # The memory limit is the warm-set budget, and level-1 sleepers live in host
+  # RAM. Where the engines pin a CPU KV tier that RAM is taken: a pool sized
+  # from capacity is Pending there, or evicted under memory pressure with every
+  # resident model in it. Refused only when the pool fits NO candidate node.
+  # A dry run reads no cluster, so it checks only a node stated by hand.
+  local ram_flag
+  for ram_flag in "--ram-gib=$NODE_RAM_GIB" "--reserved-ram-gib=$RESERVED_RAM_GIB"; do
+    if [ -n "${ram_flag#*=}" ] && ! printf '%s' "${ram_flag#*=}" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; then
+      log_error "${ram_flag%%=*} must be a number of GiB, such as 2016 or 1250, got '${ram_flag#*=}'"
+    fi
+  done
+  if [ "$APPLY" -eq 1 ] || [ -n "$NODE_RAM_GIB" ]; then
+    local fit_out fit_rc=0
+    local fit_args=(--check-pool-gib "${memory%Gi}")
+    if [ -n "$NODE_RAM_GIB" ]; then
+      fit_args+=(--ram-gib "$NODE_RAM_GIB")
+    else
+      fit_args+=(-n "$NAMESPACE")
+      if [ -n "$ACCELERATOR" ]; then
+        fit_args+=(-l "${ACCELERATOR_LABEL}=${ACCELERATOR}")
+      fi
+    fi
+    if [ -n "$RESERVED_RAM_GIB" ]; then
+      fit_args+=(--reserved-ram-gib "$RESERVED_RAM_GIB")
+    fi
+    fit_out="$(python3 "$HERE/lib/warmpool_sizing.py" "${fit_args[@]}" 2>&1)" || fit_rc=$?
+    case "$fit_rc" in
+      0)
+        while IFS= read -r line; do log_info "Host RAM: ${line}"; done <<< "$fit_out"
+        ;;
+      3)
+        log_error "Nothing was created: a pool Pod with ${memory} fits no node once the host RAM serving workloads hold is taken off:
+${fit_out}
+Level-1 sleepers and a CPU KV tier compete for the same RAM. Hold fewer or smaller models (--models, --model-size), put the pool on nodes without the tier, or keep a replica up instead. If the held figure is wrong, state it with --reserved-ram-gib."
+        ;;
+      *)
+        log_warning "Could not check host RAM on the nodes, so the pool is created unchecked: ${fit_out}"
+        ;;
+    esac
   fi
 
   # THE RUNTIME CLASS, ADOPTED RATHER THAN GUESSED.
@@ -1845,6 +1900,8 @@ while [ $# -gt 0 ]; do
     --cache-claim)   CACHE_CLAIM="$2"; shift 2 ;;
     --dry-run)       APPLY=0; shift ;;
     --launcher-image) LAUNCHER_IMAGE="$2"; shift 2 ;;
+    --ram-gib)       NODE_RAM_GIB="$2"; shift 2 ;;
+    --reserved-ram-gib) RESERVED_RAM_GIB="$2"; shift 2 ;;
     --no-network-policy) NETWORK_POLICY=0; shift ;;
     -h|--help)       usage; exit 0 ;;
     *) usage; log_error "unknown option: $1" ;;
