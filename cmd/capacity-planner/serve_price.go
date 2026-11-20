@@ -48,6 +48,12 @@ type servedSources struct {
 	// weight the inputs cache counts (--inputs-cache-size).
 	uploads         *uploadStore
 	maxUploadWeight int
+	// onPass, when set, is called as each pass over a recording file opens,
+	// with the pass's count (recordingSource.onPass): a test's hook.
+	onPass func(pass int)
+	// onOpen, when set, is called with a recording's path after the path is
+	// checked and before the file is opened: a test's hook to swap the file.
+	onOpen func(path string)
 }
 
 // apiError is a CLI error as the API's: a usage or input error is the
@@ -84,9 +90,14 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 			return nil, err
 		}
 		uploaded = up
-		f.recording, hide, info.Name = path, path, src.Name
+		// The name was a regular file when checked; what is opened is judged
+		// again, as opened (openRecording).
+		f.recording, f.regularOnly, hide, info.Name = path, true, path, src.Name
 		if src.Cycle > 0 {
 			f.cycle = strconv.Itoa(src.Cycle)
+		}
+		if s.onOpen != nil {
+			s.onOpen(path)
 		}
 	case whatifapi.SourcePrometheus:
 		if err := s.windowOf(ctx, &f, src); err != nil {
@@ -100,6 +111,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		return nil, hidePath(apiError(err), hide, info.Name)
 	}
 	defer func() { _ = data.Close() }()
+	data.onPass = s.onPass
 	st, err := f.stateOf(ctx, name, data)
 	if err != nil {
 		return nil, hidePath(apiError(err), hide, info.Name)
@@ -110,6 +122,11 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	}
 	info.Cycle, info.TotalCycles, info.FirstAt, info.LastAt = st.Cycle, st.Cycles, st.FirstAt, st.At
 	res, err := s.resolved(&f, st, data, info)
+	// The series is the last pass: a file changed under it is refused, and
+	// nothing is kept under the content id its first pass summed.
+	if cerr := data.unchanged(); cerr != nil {
+		return nil, hidePath(apiError(cerr), hide, info.Name)
+	}
 	if err == nil && uploaded && s.maxUploadWeight > 0 && res.Bytes > s.maxUploadWeight {
 		return nil, whatifapi.TooLargeError{Err: fmt.Errorf("%s: loaded, it takes %s of memory, more than this server keeps for loaded sources "+
 			"(--inputs-cache-size %s): load a shorter recording, or ask whoever runs the planner to raise --inputs-cache-size",
@@ -328,13 +345,14 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 	}
 	pricer := &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
 		imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
-	return &whatifapi.Resolved{
+	res := &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
 		Pricer:  pricer,
 		Series:  series,
-		Bytes:   sizeOf(pricer) + sizeOf(series),
-	}, nil
+	}
+	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(res.Inputs))
+	return res, nil
 }
 
 // servedState prices fleets from one replayed state. The state is read only,

@@ -37,9 +37,9 @@ type Resolved struct {
 	// Series is every cycle of the source, oldest first, for a day plan
 	// (POST /v1/dayplan); nil where the source carries none.
 	Series []SeriesSample
-	// Bytes is about how much memory the Pricer and the Series keep alive,
-	// the entry's weight in the inputs cache (Config.MaxInputsBytes); 0
-	// weighs nothing.
+	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
+	// the Series and the Inputs), its weight in the inputs cache
+	// (Config.MaxInputsBytes); 0 weighs nothing.
 	Bytes int
 }
 

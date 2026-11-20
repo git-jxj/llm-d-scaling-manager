@@ -40,6 +40,9 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
+	// regularOnly refuses a --recording that is no regular file rather than
+	// read it whole: the server's (openRecording).
+	regularOnly bool
 	// hint, when hintSet, is the words a refusal names a calm cycle in, set
 	// by a caller that prices for another source (the server, the report);
 	// else they follow the CLI's own source (hintSource).
@@ -235,14 +238,23 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 
 // stateOf is readState on a recording already opened: src, and the name its
 // errors call it by. It checks the recording first (recordingSource.check),
-// which sums it.
+// which sums it, and that the file did not change under its passes
+// (recordingSource.unchanged), before any error a changed file would cause:
+// a file rewritten under the check pass itself reads short or mixed, and
+// that is the change, not the bytes it left.
 func (f *answerFlags) stateOf(ctx context.Context, name string, src *recordingSource) (*learnreplay.State, error) {
 	if err := src.check(name, f.recording); err != nil {
+		if cerr := src.unchanged(); cerr != nil {
+			return nil, cerr
+		}
 		return nil, err
 	}
 	cycle, _ := f.cycleNumber()
 	st, err := learnreplay.StateFrom(ctx, src.open, learnreplay.Options{},
 		learnreplay.StateQuery{Namespace: f.window.namespace, ModelID: f.model, Cycle: cycle})
+	if cerr := src.unchanged(); cerr != nil {
+		return nil, cerr
+	}
 	var q *learnreplay.QueryError
 	switch {
 	case errors.As(err, &q):
@@ -255,7 +267,9 @@ func (f *answerFlags) stateOf(ctx context.Context, name string, src *recordingSo
 
 // recordingSource is the recording to answer from, and the name errors call
 // it by: the --recording file, read in passes, or the window --prometheus
-// names, captured and generated in memory. The caller closes it.
+// names, captured and generated in memory. The caller closes it. With
+// regularOnly (the server), a --recording that is no regular file is
+// refused (openRecording).
 func (f *answerFlags) recordingSource(ctx context.Context) (string, *recordingSource, error) {
 	if f.prometheus() {
 		data, err := f.windowRecording(ctx)
@@ -264,7 +278,7 @@ func (f *answerFlags) recordingSource(ctx context.Context) (string, *recordingSo
 		}
 		return redactedURL(f.window.prometheus), memoryRecording(data), nil
 	}
-	src, err := openRecording(f.recording)
+	src, err := openRecording(f.recording, f.regularOnly)
 	if err != nil {
 		return "", nil, usageError{err}
 	}

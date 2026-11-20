@@ -99,7 +99,7 @@ Any other path is a 404.
 | `--shutdown-timeout` | How long requests in flight may run after Ctrl-C. Default 10s. |
 | `--plan-budget` | How long one plan may be priced. Default 5m; 0 is the default too. At most 9m. See [The plan budget](#the-plan-budget). |
 | `--max-inputs N` | How many sources are loaded at once. Default 2. Each holds its replay's memory while it loads. Past it, `POST /v1/inputs` is a 503 with `Retry-After`. |
-| `--inputs-cache-size SIZE` | The most memory the loaded sources kept may take in all, such as `256Mi` (the default). At most 16 are kept. The least used is dropped first; the newest is always kept. |
+| `--inputs-cache-size SIZE` | The most memory the loaded sources kept may take in all, such as `256Mi` (the default). Each source's memory is an estimate, not a measure. At most 16 are kept. The least used is dropped first; the newest is always kept. |
 | `--allow-upload` | Lets people upload a recording from the page, or with `POST /v1/recordings`. Off by default. See [Upload a recording](#upload-a-recording). |
 | `--upload-max-size SIZE` | With `--allow-upload`, the largest upload, such as `256Mi` (the default). |
 

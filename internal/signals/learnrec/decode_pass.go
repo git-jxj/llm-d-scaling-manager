@@ -104,6 +104,11 @@ func decodeMap(b []byte, i int, v reflect.Value) (int, error) {
 		val := reflect.New(t.Elem()).Elem()
 		end, err := decodeAt(b, i, val)
 		if err != nil {
+			// decodeLeaf's error, as it reads the members in order, unless
+			// a later value of a key replaces the one that failed.
+			if !repeatsAKey(b, start) {
+				return end, err
+			}
 			end := skipValue(b, start)
 			return end, decodeLeaf(b[start:end], v)
 		}
@@ -154,6 +159,11 @@ func decodeStruct(b []byte, i int, v reflect.Value) (int, error) {
 		i = skipSpace(b, skipSpace(b, kend)+1)
 		end, err := decodeAt(b, i, v.Field(f))
 		if err != nil {
+			// decodeLeaf's error, as it reads the fields in order, unless a
+			// later value of a key replaces the one that failed.
+			if !repeatsAKey(b, start) {
+				return end, wrapField(t, name, err)
+			}
 			return again()
 		}
 		i = skipSpace(b, end)
@@ -163,6 +173,22 @@ func decodeStruct(b []byte, i int, v reflect.Value) (int, error) {
 		i = skipSpace(b, i+1)
 	}
 	return i + 1, nil
+}
+
+// repeatsAKey reports whether the object at b[start] gives a key twice. A
+// member that fails is read again (decodeLeaf) only then: with every key
+// once, decodeLeaf meets the same failure, and a read again at every level a
+// failure passes up through doubles at each, 2^depth reads of the deepest.
+func repeatsAKey(b []byte, start int) bool {
+	ms, ok := members(b[start:skipValue(b, start)])
+	if !ok {
+		return false
+	}
+	seen := make(map[string]bool, len(ms))
+	for _, m := range ms {
+		seen[m.key] = true
+	}
+	return len(seen) != len(ms)
 }
 
 // fieldError is a field the data names and t does not have.

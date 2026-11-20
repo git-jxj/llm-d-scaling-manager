@@ -153,7 +153,7 @@ var errUploadBound = errors.New("past the upload's bound")
 // upload's bounds: past one is a TooLargeError, a file that is no recording
 // an InputError naming the upload by name.
 func (u *uploadStore) check(ctx context.Context, name, path string) error {
-	rs, err := openRecording(path)
+	rs, err := openRecording(path, true)
 	if err != nil {
 		return err
 	}

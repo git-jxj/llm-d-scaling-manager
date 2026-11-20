@@ -251,8 +251,12 @@ Plan slots are a channel of `MaxPlans` tokens (the CPU count) and input slots
 one of `MaxInputs` (`--max-inputs`, two by default); a request that finds none
 free is `errBusy`, a 503 with `Retry-After: 1`. The inputs cache holds at most
 16 entries and `MaxInputsBytes` (`--inputs-cache-size`) in all, each weighed
-by `Resolved.Bytes`: `sizeOf` (`cmd/capacity-planner/sizeof.go`) of the
-replayed state and the series.
+by `Resolved.Bytes`, an estimate: `heapEstimate` of `sizeOf`
+(`cmd/capacity-planner/sizeof.go`) of the replayed state, the series and the
+inputs document, a quarter over what `sizeOf` reaches for the allocator's
+rounding. A file rewritten during a resolve is refused after the last pass
+(`recordingSource.unchanged`): its size, modification time or file identity
+moved, so nothing is cached under the first pass's content id.
 
 A recording is never held whole. `recordingSource` opens the file once and
 reads it in passes, gunzipped as it goes: `check` (every line, and the
