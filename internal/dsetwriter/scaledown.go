@@ -133,7 +133,7 @@ func (w *Writer) followScaleDowns(ctx context.Context, set *unstructured.Unstruc
 	for _, r := range roles {
 		k := roleKey{key, r.Name}
 		sd, first := w.scaleDownOf(k)
-		if sd == nil && first && r.Current > 0 {
+		if sd == nil && first {
 			readChildren()
 			if c := children[r.Name]; childErr == nil && c.replicas > r.Current {
 				sd = &scaleDown{from: c.replicas, to: r.Current, since: now}
@@ -179,7 +179,8 @@ func (w *Writer) followScaleDowns(ctx context.Context, set *unstructured.Unstruc
 			waited := now.Sub(sd.since).Round(time.Second)
 			sd.refused = true
 			sd.reason = fmt.Sprintf("role %s: spec.replicas is %d, and %s later its child LeaderWorkerSets still run %d groups. "+
-				"The cluster has not applied the decrease; an admission policy or webhook that wants a drain first does this%s. "+
+				"The cluster has not applied the decrease: an admission policy or webhook that wants a drain first does this, "+
+				"and so does a drain tool still at work%s. "+
 				"The writer will not lower this role again until the children follow or the count is raised",
 				r.Name, sd.to, waited, c.replicas, conditionsSay(set))
 			logger.Info("The cluster refused a role scale-down", "role", r.Name,
@@ -413,8 +414,9 @@ func (w *Writer) dropScaleDown(k roleKey) {
 
 // conditionsSay is the set's status conditions that report a problem, as
 // "; the set's conditions say: <type> <reason>: <message>", or "" when none
-// does. A condition whose status is not True is taken as one, as is any
-// condition whose type or reason names an error or a failure.
+// does. A condition reports one when its type, reason or message names an
+// error, a failure or a denial: a status of False alone is not one, since
+// conditions such as Progressing are False in steady state.
 func conditionsSay(set *unstructured.Unstructured) string {
 	conds, _, _ := unstructured.NestedSlice(set.Object, "status", "conditions")
 	var says []string
@@ -427,8 +429,8 @@ func conditionsSay(set *unstructured.Unstructured) string {
 		status, _ := m["status"].(string)
 		reason, _ := m["reason"].(string)
 		msg, _ := m["message"].(string)
-		bad := strings.ToLower(typ + " " + reason)
-		if status == "True" && !strings.Contains(bad, "error") && !strings.Contains(bad, "fail") {
+		text := strings.ToLower(typ + " " + reason + " " + msg)
+		if !strings.Contains(text, "error") && !strings.Contains(text, "fail") && !strings.Contains(text, "denied") {
 			continue
 		}
 		if len(msg) > 300 {

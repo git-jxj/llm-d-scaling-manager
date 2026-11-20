@@ -384,6 +384,23 @@ func TestScaleDownRefusedAcrossARestart(t *testing.T) {
 	assert.Equal(t, n, r.applies, "and the role is held")
 }
 
+// A park at zero whose children never followed is found at first sight too.
+func TestScaleDownRefusedParkFoundAtFirstSight(t *testing.T) {
+	r := newFollowRig(t)
+	r.update(func(live *unstructured.Unstructured) {
+		roles, _, _ := unstructured.NestedSlice(live.Object, "spec", "roles")
+		for _, x := range roles {
+			if m := x.(map[string]any); m["name"] != "encode" {
+				require.NoError(t, unstructured.SetNestedField(m, int64(0), "spec", "replicas"))
+			}
+		}
+		require.NoError(t, unstructured.SetNestedSlice(live.Object, roles, "spec", "roles"))
+	})
+	r.passAt(0, 0)
+	r.passAt(DefaultFollowTimeout, 0)
+	assert.Equal(t, 2, countReason(drain(r.rec), EventScaleDownRefused), "prefill and decode")
+}
+
 // A passive model and an opted-out set drop their records.
 func TestScaleDownRecordsDroppedWhenPassiveOrGone(t *testing.T) {
 	r := newFollowRig(t)
@@ -445,6 +462,7 @@ func TestConditionsSay(t *testing.T) {
 	require.NoError(t, unstructured.SetNestedSlice(s.Object, []any{
 		map[string]any{"type": "Available", "status": "True", "reason": "Ok", "message": "fine"},
 		map[string]any{"type": "Progressing", "status": "False", "reason": "UpdateFailed", "message": "admission denied"},
+		map[string]any{"type": "Ready", "status": "False", "reason": "Idle", "message": "steady"},
 	}, "status", "conditions"))
 	assert.Equal(t, "; the set's conditions say: Progressing=False UpdateFailed: admission denied", conditionsSay(s))
 }

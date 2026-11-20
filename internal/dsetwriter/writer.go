@@ -645,6 +645,15 @@ func (w *Writer) forget(seen map[roleKey]bool) {
 			delete(w.followed, k)
 		}
 	}
+	sets := map[types.NamespacedName]bool{}
+	for k := range seen {
+		sets[k.set] = true
+	}
+	for set := range w.childFailed {
+		if !sets[set] {
+			delete(w.childFailed, set)
+		}
+	}
 }
 
 // register records role of set in the registry, as a KEDA call records a

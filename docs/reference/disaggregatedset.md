@@ -156,12 +156,12 @@ webhook denies any lower `replicas` until a drain tool has taken the group out
 of the router and waited for it to go idle. The role writer does not drain.
 Pick how scale-down works on such a cluster:
 
-- **Scale up only.** Set `scaling-manager.llmd.ai/min-replicas` to the count
-  you run. The writer never goes below it; your drain tool scales down.
 - **Let the drain tool act on the writer's count.** Works when the policy
   guards the child LeaderWorkerSets, not the set: the set then keeps the lower
   count as a request. Your drain tool drains the groups above it and lets the
   decrease through; the set controller applies it. Scale-up works as usual.
+  A drain that takes longer than 2 minutes shows as `RoleScaleDownRefused`
+  until it ends; that is expected here.
 - **Leave the set to your own tooling.** Remove the
   `scaling-manager.llmd.ai/role-writer` annotation.
 
@@ -169,7 +169,8 @@ What the writer does when a lower count is refused:
 
 - **Refused on the set itself.** The write fails and the set keeps its count.
   The writer records `RoleScaleDownRefused` with the API server's message and
-  keeps the role at its count. Changes to other roles are still written. It
+  keeps the role at its count. Changes to other roles are written without it
+  on the next pass. It
   asks again after 5 minutes, then 10, 20, and so on, at most once an hour,
   until the cluster accepts or the engines want the count back.
 - **Refused on the set's child LeaderWorkerSets.** The set takes the lower
@@ -183,8 +184,9 @@ To see it: `kubectl get events --field-selector reason=RoleScaleDownRefused -n <
 or the controller log line `The cluster refused a role scale-down`.
 
 The writer keeps this state in memory. After a restart it compares each
-role's children with the set once, so a refusal from before is reported
-again 2 minutes later.
+role's children with the set once, so a refusal on the children from before
+is reported again 2 minutes later. A refusal on the set itself is found again
+at the next write.
 
 It reads the child LeaderWorkerSets with the `list` on `leaderworkersets`
 that the controller's manager role has. If that read fails, the writer logs
