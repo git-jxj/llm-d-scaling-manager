@@ -40,17 +40,24 @@ func refLogSeries(t *testing.T, k, y float64) float64 {
 
 // logSeries is the sum's log to within float64 precision on both sides of
 // asymptoticSeriesFrom, where it moves from the direct sum to the expansion,
-// and at the y a long-prompt TTFT tail asks for. The direct sum's own error
+// and at the y a long-prompt TTFT tail asks for, including k at y/4, where
+// the expansion's first terms alternate in sign. The direct sum's own error
 // grows with y (each term's Lgamma is good to a unit in the last place of a
-// number near y ln y), so the bound is relative to that.
+// number near y ln y), so its bound is relative to that; the expansion is
+// held to a few units in the last place of the log, tight enough that a
+// wrong term of order up to y^-4 at y = 1000 fails.
 func TestLogSeriesMatchesAHighPrecisionSum(t *testing.T) {
-	for _, k := range []float64{0.05, 0.25, 1, 2.5, 7.3, 16} {
-		for _, y := range []float64{1, 10, 63.9, 64, 64.5, 100, 1000, 18000, 1e5} {
-			if y < 4*k && y >= asymptoticSeriesFrom {
-				continue
+	for _, k := range []float64{0.001, 0.01, 0.05, 0.25, 1, 2.5, 7.3, 16, 40, 250} {
+		for _, y := range []float64{1, 10, 63.9, 64, 64.5, 100, 160, 200, 300, 999.9, 1000, 18000, 1e5} {
+			if y < 4*k && y > 1000 {
+				continue // the direct sum, slow and checked at smaller y
 			}
 			got, want := logSeries(k, y), refLogSeries(t, k, y)
 			tol := 4e-15 * max(1, math.Abs(want))
+			if y >= asymptoticSeriesFrom && y >= 4*k {
+				ulp := math.Nextafter(math.Abs(want), math.Inf(1)) - math.Abs(want)
+				tol = 1e-14 + 4*ulp
+			}
 			if math.Abs(got-want) > tol {
 				t.Errorf("logSeries(%g, %g) = %.17g, want %.17g (diff %.3g, tol %.3g)", k, y, got, want, got-want, tol)
 			}

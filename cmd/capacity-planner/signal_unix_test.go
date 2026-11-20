@@ -4,7 +4,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -21,8 +20,10 @@ import (
 // signal tests start the command as a process and signal it.
 const mainEnv = "CAPACITY_PLANNER_TEST_MAIN"
 
-// startedLine is what test-spin writes to stderr once it runs.
-const startedLine = "test-spin: started"
+// startedLine is what a command the signal tests start writes to stderr
+// once it runs, and so once main has taken the signals: a SIGTERM before
+// that kills the process outright.
+const startedLine = "test: command started"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(mainEnv) == "1" {
@@ -34,6 +35,11 @@ func TestMain(m *testing.M) {
 				time.Sleep(time.Second)
 			}
 		}
+		atReplicas := commands["at-replicas"]
+		commands["at-replicas"] = func(ctx context.Context, args []string, out, warn io.Writer) error {
+			fmt.Fprintln(warn, startedLine)
+			return atReplicas(ctx, args, out, warn)
+		}
 		main()
 		return
 	}
@@ -41,8 +47,9 @@ func TestMain(m *testing.M) {
 }
 
 // startMain starts the test binary as the command with args, and returns it
-// once it has written ready to stderr, with stderr so far and the rest.
-func startMain(t *testing.T, ready string, args ...string) (*exec.Cmd, *bytes.Buffer, chan error) {
+// once it has written startedLine to stderr, with its stderr and a channel
+// that gets cmd.Wait's error once stderr is read to the end.
+func startMain(t *testing.T, args ...string) (*exec.Cmd, *lockedBuffer, chan error) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], args...)
 	cmd.Env = append(os.Environ(), mainEnv+"=1")
@@ -55,35 +62,34 @@ func startMain(t *testing.T, ready string, args ...string) (*exec.Cmd, *bytes.Bu
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
-	stderr := &bytes.Buffer{}
+	stderr := &lockedBuffer{}
 	seen := make(chan struct{})
 	waited := make(chan error, 1)
 	go func() {
 		sc := bufio.NewScanner(pipe)
 		once := false
 		for sc.Scan() {
-			stderr.WriteString(sc.Text() + "\n")
-			if !once && strings.Contains(sc.Text(), ready) {
+			_, _ = stderr.Write([]byte(sc.Text() + "\n"))
+			if !once && sc.Text() == startedLine {
 				once = true
 				close(seen)
 			}
 		}
 		waited <- cmd.Wait()
 	}()
-	if ready == "" {
-		return cmd, stderr, waited
-	}
 	select {
 	case <-seen:
+	case err := <-waited:
+		t.Fatalf("exited (%v) before %q; stderr: %s", err, startedLine, stderr.String())
 	case <-time.After(30 * time.Second):
-		t.Fatalf("no %q on stderr within 30s", ready)
+		t.Fatalf("no %q on stderr within 30s", startedLine)
 	}
 	return cmd, stderr, waited
 }
 
 // exitAfterSignal sends sig and returns the exit code and how long the
 // process took to exit, failing the test past limit.
-func exitAfterSignal(t *testing.T, cmd *exec.Cmd, waited chan error, sig os.Signal, limit time.Duration, stderr *bytes.Buffer) (int, time.Duration) {
+func exitAfterSignal(t *testing.T, cmd *exec.Cmd, waited chan error, sig os.Signal, limit time.Duration, stderr *lockedBuffer) (int, time.Duration) {
 	t.Helper()
 	sent := time.Now()
 	if err := cmd.Process.Signal(sig); err != nil {
@@ -106,7 +112,7 @@ func exitAfterSignal(t *testing.T, cmd *exec.Cmd, waited chan error, sig os.Sign
 // 143 within the grace and says it cut the command off. On v0.12.1 the
 // signal was caught and ignored, and at-replicas needed kill -9.
 func TestSignal_SIGTERMStopsACommandThatIgnoresIt(t *testing.T) {
-	cmd, stderr, waited := startMain(t, startedLine, "test-spin")
+	cmd, stderr, waited := startMain(t, "test-spin")
 	code, took := exitAfterSignal(t, cmd, waited, syscall.SIGTERM, 20*time.Second, stderr)
 	if code != 143 {
 		t.Fatalf("exit %d, want 143; stderr: %s", code, stderr.String())
@@ -117,16 +123,13 @@ func TestSignal_SIGTERMStopsACommandThatIgnoresIt(t *testing.T) {
 	t.Logf("exited %s after SIGTERM", took)
 }
 
-// SIGTERM stops at-replicas itself during its replay, before the grace:
-// exit 143, and the stopped line alone.
+// SIGTERM stops at-replicas itself, signalled as it starts its replay and
+// so well before it could answer: exit 143 before the grace, and the stopped
+// line alone.
 func TestSignal_SIGTERMStopsAtReplicas(t *testing.T) {
-	cmd, stderr, waited := startMain(t, "", atStair()...)
-	time.Sleep(300 * time.Millisecond)
+	cmd, stderr, waited := startMain(t, atStair()...)
 	code, took := exitAfterSignal(t, cmd, waited, syscall.SIGTERM, 20*time.Second, stderr)
-	if code == 0 {
-		t.Skip("the report finished before the signal")
-	}
-	if code != 143 || stderr.String() != "capacity-planner: stopped by SIGTERM\n" {
+	if code != 143 || stderr.String() != startedLine+"\ncapacity-planner: stopped by SIGTERM\n" {
 		t.Fatalf("exit %d, stderr %q; want 143 and the stopped line alone", code, stderr.String())
 	}
 	t.Logf("exited %s after SIGTERM", took)

@@ -97,7 +97,7 @@ func logSeries(k, y float64) float64 {
 	if y == 0 {
 		return -math.Log(k)
 	}
-	if y >= asymptoticSeriesFrom && y >= 4*k {
+	if k > 0 && y >= asymptoticSeriesFrom && y >= 4*k {
 		return logSeriesLarge(k, y)
 	}
 	ly := math.Log(y)

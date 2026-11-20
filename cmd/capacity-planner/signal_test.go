@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -114,33 +116,89 @@ func TestExecute_ASecondSignalStopsAtOnce(t *testing.T) {
 }
 
 // A real verb stops on its own once the signal ends its context: at-replicas
-// on the staircase, interrupted during its replay or its pricing, returns
-// well inside a grace of a minute, exits 130 and says it was stopped, and
-// writes no JSON error object for an answer it never reached.
+// on the staircase, interrupted as it starts (it takes seconds to answer),
+// returns well inside a grace of a minute, exits 130 and says it was
+// stopped, and writes no JSON error object for an answer it never reached.
 func TestExecute_AtReplicasStopsOnSIGINT(t *testing.T) {
-	for _, after := range []time.Duration{100 * time.Millisecond, 1500 * time.Millisecond} {
-		t.Run(after.String(), func(t *testing.T) {
-			e := startExecute(atStair("-o", "json"), time.Minute)
-			time.Sleep(after)
-			sent := time.Now()
-			e.sigs <- os.Interrupt
-			code := e.exitWithin(t, 45*time.Second)
-			if code == 0 {
-				t.Skipf("the report finished within %s, before the signal", after)
-			}
-			if code != 130 {
-				t.Fatalf("exit %d, want 130; stderr: %s", code, e.err.String())
-			}
-			if el := time.Since(sent); el > 30*time.Second {
-				t.Fatalf("stopped %s after SIGINT, want promptly", el)
-			}
-			if got := e.err.String(); got != "capacity-planner: stopped by SIGINT\n" {
-				t.Fatalf("stderr %q, want only the stopped line", got)
-			}
-			if got := e.out.String(); got != "" {
-				t.Fatalf("stdout %q, want nothing for a stopped run", got)
-			}
-		})
+	started := make(chan struct{})
+	withCommand(t, "test-at-replicas", func(ctx context.Context, args []string, out, warn io.Writer) error {
+		close(started)
+		return runAtReplicas(ctx, args, out, warn)
+	})
+	e := startExecute(append([]string{"test-at-replicas"}, atStair("-o", "json")[1:]...), time.Minute)
+	<-started
+	sent := time.Now()
+	e.sigs <- os.Interrupt
+	if code := e.exitWithin(t, 45*time.Second); code != 130 {
+		t.Fatalf("exit %d, want 130; stderr: %s", code, e.err.String())
+	}
+	if el := time.Since(sent); el > 30*time.Second {
+		t.Fatalf("stopped %s after SIGINT, want promptly", el)
+	}
+	if got := e.err.String(); got != "capacity-planner: stopped by SIGINT\n" {
+		t.Fatalf("stderr %q, want only the stopped line", got)
+	}
+	if got := e.out.String(); got != "" {
+		t.Fatalf("stdout %q, want nothing for a stopped run", got)
+	}
+}
+
+// The report reads its context at every fleet it prices, so a report whose
+// context ends while it prices (the serve path, POST /v1/report, runs the
+// same buildReport) stops with the context's error, not an answer. The
+// staircase report prices for seconds; the context ends 200 ms in.
+func TestBuildReport_StopsWhenItsContextEnds(t *testing.T) {
+	st := stairReplay.state(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	start := time.Now()
+	rep, err := buildReport(ctx, st, &servedState{st: st, decodeVariant: "variant-01"}, stairQuery(2, 2, 0))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("report %v, error %v; want context.Canceled", rep != nil, err)
+	}
+	if el := time.Since(start); el > 30*time.Second {
+		t.Fatalf("stopped %s in, want promptly", el)
+	}
+	// A context already ended prices nothing.
+	done, stop := context.WithCancel(t.Context())
+	stop()
+	if _, err := buildReport(done, st, &servedState{st: st, decodeVariant: "variant-01"}, stairQuery(2, 2, 0)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error %v on an ended context, want context.Canceled", err)
+	}
+}
+
+// A command that still returns its own error after the signal exits as it
+// would have: the error printed and its code, not the signal's.
+func TestExecute_AnErrorAfterTheSignalIsTheCommands(t *testing.T) {
+	withCommand(t, "test-own-error", func(ctx context.Context, _ []string, _, _ io.Writer) error {
+		<-ctx.Done()
+		return usagef("refused for its own reason")
+	})
+	e := startExecute([]string{"test-own-error"}, time.Minute)
+	e.sigs <- syscall.SIGTERM
+	if code := e.exitWithin(t, 10*time.Second); code != 2 {
+		t.Fatalf("exit %d, want the usage error's 2", code)
+	}
+	if got := e.err.String(); got != "capacity-planner: refused for its own reason\n" {
+		t.Fatalf("stderr %q, want the command's error alone", got)
+	}
+}
+
+// With -o json a stopped run writes no JSON error object, however its
+// context error is wrapped; any other error still does.
+func TestAsJSONError_PassesAStoppedRunThrough(t *testing.T) {
+	args := []string{"-o", "json"}
+	for _, err := range []error{context.Canceled, fmt.Errorf("pricing 2 + 2: %w", context.Canceled)} {
+		var out bytes.Buffer
+		if got := asJSONError(reportQuestion, args, &out, err); got != err || out.Len() != 0 {
+			t.Errorf("%v: returned %v and wrote %q; want it back and nothing written", err, got, out.String())
+		}
+	}
+	var out bytes.Buffer
+	got := asJSONError(reportQuestion, args, &out, context.DeadlineExceeded)
+	var s exitStatus
+	if !errors.As(got, &s) || !strings.Contains(out.String(), `"exitCode": 1`) {
+		t.Errorf("DeadlineExceeded: returned %v and wrote %q; want a JSON error object, exit 1", got, out.String())
 	}
 }
 

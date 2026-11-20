@@ -136,12 +136,6 @@ const stopGrace = 5 * time.Second
 // stopGrace does not cut them; a second signal still does.
 var selfStopping = map[string]bool{"serve": true}
 
-// interrupted is the cause a command's context ends with when a signal
-// stops it.
-type interrupted struct{ sig os.Signal }
-
-func (e interrupted) Error() string { return "stopped by " + signalName(e.sig) }
-
 // signalName is SIGINT or SIGTERM by that name, any other signal as Go
 // names it.
 func signalName(sig os.Signal) string {
@@ -162,8 +156,8 @@ func signalName(sig os.Signal) string {
 // SIGTERM). A command that still returns its own answer or error after the
 // signal (serve, shut down cleanly) exits as it would have.
 func execute(args []string, out, warn io.Writer, sigs <-chan os.Signal, grace time.Duration) int {
-	ctx, cancel := context.WithCancelCause(context.Background())
-	defer cancel(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- run(ctx, args, out, warn) }()
 	var sig os.Signal
@@ -172,7 +166,7 @@ func execute(args []string, out, warn io.Writer, sigs <-chan os.Signal, grace ti
 		return finish(err, warn)
 	case sig = <-sigs:
 	}
-	cancel(interrupted{sig})
+	cancel()
 	var cut <-chan time.Time
 	if len(args) == 0 || !selfStopping[args[0]] {
 		t := time.NewTimer(grace)
