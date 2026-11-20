@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -97,7 +98,7 @@ func runPredict(ctx context.Context, args []string, out, warn io.Writer) error {
 		}
 	}
 	fmt.Fprintf(out, "predicted %d of %d steps of %s (%s to %s UTC) from its load alone\nwrote %s (prediction %s, inputs %s)\n",
-		priced, len(p.Steps), p.Window.Source, p.Window.From.UTC().Format("2006-01-02 15:04"), p.Window.To.UTC().Format("2006-01-02 15:04"),
+		priced, len(p.Steps), filepath.Base(window), p.Window.From.UTC().Format("2006-01-02 15:04"), p.Window.To.UTC().Format("2006-01-02 15:04"),
 		dst, p.PredictionHash[:12], p.InputsHash[:12])
 	return nil
 }

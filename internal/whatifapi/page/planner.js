@@ -2079,6 +2079,7 @@ async function btInputsOf(name) {
 function btDownload(link, name, text, type) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([text], {type}));
+  state.btBlobs = (state.btBlobs || []).concat([a.href]);
   a.download = name;
   a.textContent = name;
   link.append(" ", a);
@@ -2092,10 +2093,14 @@ async function runPredict() {
   if (!name) { setStatus("Pick the window to predict.", true); return; }
   el("bprun").disabled = true;
   el("bpout").textContent = "";
+  for (const u of state.btBlobs || []) URL.revokeObjectURL(u);
+  state.btBlobs = [];
   setStatus("Predicting the window from its load alone (seconds to a minute)...");
   try {
     const win = await btInputsOf(name);
-    const p = await api("POST", "v1/predict", {inputsId: state.inputs.inputsId, windowInputsId: win.inputsId, step: el("btstep").value});
+    const req = {inputsId: state.inputs.inputsId, windowInputsId: win.inputsId, step: el("btstep").value};
+    if (el("btallow").checked) req.allowConfigMismatch = true;
+    const p = await api("POST", "v1/predict", req);
     const base = "prediction-" + p.predictionHash.slice(0, 12);
     const out = el("bpout");
     out.textContent = `Predicted ${p.steps.filter(s => !s.excluded).length} of ${p.steps.length} steps. Save:`;
@@ -2128,6 +2133,7 @@ async function runCompare() {
     const out = await api("POST", "v1/compare", {prediction, inputsId: measured.inputsId});
     state.bt = out;
     renderBacktest();
+    el("btout").classList.remove("stale");
     setStatus(`Compared ${out.steps.length} steps.`);
   } catch (e) {
     setStatus("Could not compare: " + e.message, true);

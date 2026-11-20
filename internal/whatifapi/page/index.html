@@ -306,7 +306,8 @@
       <summary>Blind: predict now, compare later</summary>
       <p class="hint">Predict a window from its load alone, a recording with its latency taken out
         (<code>capacity-planner strip-latency</code>), and keep the prediction file. Later, compare it with the same window
-        measured. The file carries a hash of its inputs and of itself: an edited file, or another window, is refused.</p>
+        measured. The file carries a hash of its inputs and of itself: a file edited and not rehashed, or a window of another load, is
+        refused. The hash shows an edit; it does not sign the file.</p>
       <div class="row">
         <div class="field"><label for="bpwindow">Window to predict</label><select id="bpwindow"></select></div>
         <button type="button" id="bprun" disabled>Predict</button>

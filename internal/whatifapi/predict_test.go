@@ -50,7 +50,9 @@ func TestPredict_SameWithAndWithoutLatency(t *testing.T) {
 	assert.Equal(t, PredictionKind, p.Kind)
 	assert.Equal(t, 300.0, p.MeasureWindow)
 	assert.NotEmpty(t, p.InputsHash)
-	assert.Equal(t, predictionHash(*p), p.PredictionHash)
+	h, err := predictionHash(*p)
+	require.NoError(t, err)
+	assert.Equal(t, h, p.PredictionHash)
 	for _, s := range p.Steps {
 		assert.Zero(t, s.Requests)
 		for _, x := range append(append([]BacktestPoint{}, s.TTFT...), s.TPOT...) {
@@ -78,6 +80,19 @@ func TestCompare_ScoresAsTheBacktest(t *testing.T) {
 	assert.Equal(t, want.Summary, got.Summary)
 	assert.Equal(t, want.Steps, got.Steps)
 	assert.Equal(t, want.VerdictLines, got.VerdictLines)
+	assert.Equal(t, want.Assumed, got.Assumed)
+
+	// A measured recording that starts before the window and ends after it
+	// is compared over the window alone.
+	s, l := btSeries(240, 0, 1)
+	before, bl := btEarlier(btSeries(240, 0, 1))
+	for i := range before {
+		before[i].At, bl[i].At = before[i].At.Add(23*time.Hour), bl[i].At.Add(23*time.Hour) // the hour before the window
+	}
+	wide := btEntry(t, r, "wide", append(before, s...), append(bl, l...), btConfig("H100"))
+	got, err = compareEntry(context.Background(), read, wide, CompareRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, want.Summary, got.Summary)
 	assert.Positive(t, got.Summary.Judged)
 }
 
@@ -106,7 +121,8 @@ func TestCompare_RefusesAnEditedFileOrAnotherWindow(t *testing.T) {
 
 	// Rehashed by hand, the edited file reads: the hash shows an edit made
 	// with no care to hide it; it does not sign the file.
-	edited.PredictionHash = predictionHash(edited)
+	edited.PredictionHash, err = predictionHash(edited)
+	require.NoError(t, err)
 	eb, err = json.Marshal(edited)
 	require.NoError(t, err)
 	_, err = ReadPrediction(eb)

@@ -8,22 +8,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
-// strip-latency writes a recording or a capture with every measured
-// latency taken out: what a user shares so that a prediction is made from
-// the traffic and the fleet alone (capacity-planner predict). The lengths,
-// rates, replica counts and the rest are kept as they are.
+// strip-latency writes a recording with nothing in it but the load: what a
+// user shares so that a prediction is made from the traffic and the fleet
+// alone (capacity-planner predict). It keeps the start line and each
+// cycle's input (saturation.Analyze's Data.Input: request rates, lengths,
+// replicas, the engines' settings), with every measured latency taken out
+// of it, and drops every other event and every analyzer output: those
+// carry figures learned from latency (ITL lines, SLO attainment,
+// capacities). The router's rate window is kept: it is no latency, and the
+// prediction prices each step over it.
 
-// latencyKeys are the keys a recording or a capture carries a measured
-// latency under, at any depth: the router's (RouterLatency, with its flow
-// control wait), and each engine row's TTFT, inter-token, service, queue,
+// latencyKeys are the keys a cycle's input carries a measured latency
+// under, at any depth: each engine row's TTFT, inter-token, service, queue,
 // prefill and KV-transfer times, means and histograms, with their presence
-// bits.
+// bits, and the router's histograms and flow-control wait.
 var latencyKeys = map[string]bool{
-	"RouterLatency": true, "FlowControlWaitBuckets": true,
-	"TTFTBuckets": true, "TPOTBuckets": true, "QueueTimeBuckets": true,
+	"TTFTBuckets": true, "TPOTBuckets": true, "QueueTimeBuckets": true, "FlowControlWaitBuckets": true,
+	"TTFTSumRate": true, "TTFTCountRate": true, "TPOTSumRate": true, "TPOTCountRate": true,
 	"AvgTTFT": true, "AvgTTFTKnown": true,
 	"AvgITL": true, "AvgITLKnown": true, "AvgITLEmpty": true,
 	"AvgServiceTime": true, "AvgServiceTimeKnown": true,
@@ -32,15 +37,13 @@ var latencyKeys = map[string]bool{
 	"AvgKVTransferTime": true, "AvgKVTransferTimeKnown": true,
 }
 
-// latencyKinds are the events a recording carries a latency-derived
-// figure in, dropped whole: the decode ITL line each cycle published or
-// borrowed, fitted from the inter-token latencies.
-var latencyKinds = map[string]bool{"saturation.publishLine": true, "saturation.borrowLine": true}
+// keptKinds are the events a stripped recording keeps.
+var keptKinds = map[string]bool{"start": true, "saturation.Analyze": true}
 
 // runStripLatency is `capacity-planner strip-latency`.
-func runStripLatency(_ context.Context, args []string, out, _ io.Writer) error {
+func runStripLatency(_ context.Context, args []string, out, warn io.Writer) error {
 	fs := newFlags("strip-latency", out)
-	in := fs.String("in", "", "the recording or capture to strip, gzipped or not (required)")
+	in := fs.String("in", "", "the recording to strip, gzipped or not (required)")
 	dst := fs.String("o", "", "where to write it; a name ending in .gz is gzipped (required)")
 	if ok, err := parse(fs, args); !ok {
 		return err
@@ -48,28 +51,52 @@ func runStripLatency(_ context.Context, args []string, out, _ io.Writer) error {
 	if *in == "" || *dst == "" {
 		return usagef("-in and -o are required")
 	}
-	b, err := readMaybeGzipped(*in)
+	f, err := os.Open(*in)
 	if err != nil {
 		return usageError{err}
 	}
-	var n int
+	defer func() { _ = f.Close() }()
+	br := bufio.NewReader(f)
+	var r io.Reader = br
+	if magic, _ := br.Peek(2); len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+		zr, err := gzip.NewReader(br)
+		if err != nil {
+			return usageError{fmt.Errorf("%s: %w", *in, err)}
+		}
+		defer func() { _ = zr.Close() }()
+		r = zr
+	}
+	var st stripStats
 	err = writeFileAtomic(*dst, func(w io.Writer) error {
 		var err error
-		n, err = stripLatency(bytes.NewReader(b), w, strings.HasSuffix(*dst, ".gz"))
+		st, err = stripLatency(r, w, strings.HasSuffix(*dst, ".gz"))
 		return err
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "wrote %s: %d lines, every measured latency taken out\n", *dst, n)
+	if st.torn {
+		fmt.Fprintln(warn, progName+": strip-latency: the last line was cut off mid-write and is left out, as the planner reads it")
+	}
+	fmt.Fprintf(out, "wrote %s: the start line and %d cycles kept, %d other events dropped, every measured latency taken out\n",
+		*dst, max(st.kept-1, 0), st.dropped)
 	return nil
 }
 
-// stripLatency copies the JSON lines of r to w with every latencyKeys key
-// removed at any depth and every latencyKinds event dropped, gzipped when
-// gz; n is the lines written. A line that is not JSON is an error: a file
-// half stripped is worse than none.
-func stripLatency(r io.Reader, w io.Writer, gz bool) (n int, err error) {
+// stripStats is what a strip kept and dropped, and whether the last line
+// was cut off.
+type stripStats struct {
+	kept, dropped int
+	torn          bool
+}
+
+// stripLatency copies the start line and each cycle's input of the
+// recording r to w, every latencyKeys key removed at any depth, the router's
+// latency down to its rate window, and the events renumbered from 1; gzipped
+// when gz. A line that is not JSON is an error, but for the last, which a
+// recording cut off mid-write has (the planner drops it too).
+func stripLatency(r io.Reader, w io.Writer, gz bool) (stripStats, error) {
+	var st stripStats
 	dst := w
 	var zw *gzip.Writer
 	if gz {
@@ -79,51 +106,61 @@ func stripLatency(r io.Reader, w io.Writer, gz bool) (n int, err error) {
 	bw := bufio.NewWriter(dst)
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1<<20), 1<<30)
-	line, dropped := 0, 0
+	line := 0
+	var pending error
 	for sc.Scan() {
 		line++
+		if pending != nil {
+			return st, pending
+		}
 		raw := bytes.TrimSpace(sc.Bytes())
 		if len(raw) == 0 {
 			continue
 		}
-		var v any
+		var ev map[string]any
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.UseNumber()
-		if err := dec.Decode(&v); err != nil {
-			return n, usagef("line %d: not JSON: %v", line, err)
+		if err := dec.Decode(&ev); err != nil {
+			pending = usagef("line %d: not JSON: %v", line, err)
+			continue
 		}
-		if m, ok := v.(map[string]any); ok {
-			if k, _ := m["Kind"].(string); latencyKinds[k] {
-				dropped++
-				continue
-			}
-			// A recording numbers its events in sequence: the events after a
-			// dropped one move up.
-			if seq, ok := m["Seq"].(json.Number); ok && dropped > 0 {
-				if n, err := seq.Int64(); err == nil {
-					m["Seq"] = n - int64(dropped)
-				}
-			}
+		kind, _ := ev["Kind"].(string)
+		if !keptKinds[kind] {
+			st.dropped++
+			continue
 		}
-		b, err := json.Marshal(dropLatency(v))
+		if kind != "start" {
+			data, _ := ev["Data"].(map[string]any)
+			input, ok := data["Input"].(map[string]any)
+			if !ok {
+				return st, usagef("line %d: a %s event with no input", line, kind)
+			}
+			if rl, ok := input["RouterLatency"].(map[string]any); ok {
+				input["RouterLatency"] = map[string]any{"WindowSeconds": rl["WindowSeconds"]}
+			}
+			ev["Data"] = map[string]any{"Input": dropLatency(input)}
+		}
+		st.kept++
+		ev["Seq"] = st.kept
+		b, err := json.Marshal(ev)
 		if err != nil {
-			return n, err
+			return st, err
 		}
 		if _, err := bw.Write(append(b, '\n')); err != nil {
-			return n, err
+			return st, err
 		}
-		n++
 	}
 	if err := sc.Err(); err != nil {
-		return n, usagef("line %d: %v", line+1, err)
+		return st, usagef("line %d: %v", line+1, err)
 	}
+	st.torn = pending != nil
 	if err := bw.Flush(); err != nil {
-		return n, err
+		return st, err
 	}
 	if zw != nil {
-		return n, zw.Close()
+		return st, zw.Close()
 	}
-	return n, nil
+	return st, nil
 }
 
 // dropLatency is v with every latencyKeys key removed, at any depth.

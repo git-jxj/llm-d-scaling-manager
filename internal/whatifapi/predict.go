@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -110,7 +111,7 @@ type stepInputsRecord struct {
 }
 
 // inputsHash is the hash of the steps' inputs.
-func inputsHash(steps []BacktestStep, windowSeconds float64) string {
+func inputsHash(steps []BacktestStep, windowSeconds float64) (string, error) {
 	recs := make([]stepInputsRecord, len(steps))
 	for i, s := range steps {
 		recs[i] = stepInputsRecord{Start: s.Start, Cycles: s.Cycles, Rate: s.Rate, Prefill: s.Prefill, Decode: s.Decode,
@@ -118,21 +119,21 @@ func inputsHash(steps []BacktestStep, windowSeconds float64) string {
 	}
 	b, err := json.Marshal(recs)
 	if err != nil {
-		panic(err)
+		return "", fmt.Errorf("hashing the inputs: %w", err)
 	}
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // predictionHash is the hash of p with its PredictionHash empty.
-func predictionHash(p Prediction) string {
+func predictionHash(p Prediction) (string, error) {
 	p.PredictionHash = ""
 	b, err := json.Marshal(p)
 	if err != nil {
-		panic(err)
+		return "", fmt.Errorf("hashing the prediction: %w", err)
 	}
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // measureWindowOfRequest reads a MeasureWindow, the default when empty.
@@ -161,6 +162,15 @@ func Predict(ctx context.Context, fit, window *Resolved, req PredictRequest, inf
 // predictEntries is Predict on inputs entries. The window's latency, kept
 // or taken out, is never read: the entry it prices from has none.
 func predictEntries(ctx context.Context, fit, window *inputsEntry, req PredictRequest, info PredictInfo) (*Prediction, error) {
+	if req.MeasureWindow == "" {
+		// The router's rate window is no latency: a stripped window keeps it.
+		for _, l := range window.latency {
+			if l.Router != nil && l.Router.WindowSeconds > 0 {
+				req.MeasureWindow = time.Duration(l.Router.WindowSeconds * float64(time.Second)).String()
+				break
+			}
+		}
+	}
 	mw, err := measureWindowOfRequest(req.MeasureWindow)
 	if err != nil {
 		return nil, err
@@ -187,17 +197,22 @@ func predictEntries(ctx context.Context, fit, window *inputsEntry, req PredictRe
 		ArrivalCV2: q.cv2, Config: q.config, Assumed: append([]string{}, q.assumed...), Steps: steps}
 	// The window's own id names its bytes, latency included: left out, so
 	// that a window with its latency taken out predicts the same file.
-	p.Window.InputsID = ""
+	p.Window.InputsID, p.Window.Source = "", ""
 	p.Notes = []string{
 		"Predicted from the window's load alone: each step's request rate, prompt and output lengths, prompt-length spread and " +
 			"replicas, read over the measurement window ending at the step's last cycle. The window's latency, if the file carried any, was not read.",
-		"Compare it with the same window measured (capacity-planner compare, POST /v1/compare). The hashes refuse an edited file or another window.",
+		"Compare it with the same window measured (capacity-planner compare, POST /v1/compare). The hashes refuse a file edited and not " +
+			"rehashed, and a window of another load; they show an edit, they do not sign the file.",
 	}
 	if q.config.Allowed {
 		p.Notes = append(p.Notes, "CONFIGURATION DIFFERS, priced anyway: "+mismatchWords(q.config.Differences)+".")
 	}
-	p.InputsHash = inputsHash(steps, q.measureWindow)
-	p.PredictionHash = predictionHash(p)
+	if p.InputsHash, err = inputsHash(steps, q.measureWindow); err != nil {
+		return nil, err
+	}
+	if p.PredictionHash, err = predictionHash(p); err != nil {
+		return nil, err
+	}
 	return &p, nil
 }
 
@@ -216,9 +231,22 @@ func ReadPrediction(b []byte) (*Prediction, error) {
 		return nil, InputErrorf("not a prediction file: kind %q, want %q", p.Kind, PredictionKind)
 	case p.Format != PredictionFormat:
 		return nil, InputErrorf("prediction format %d, this planner reads %d", p.Format, PredictionFormat)
-	case p.PredictionHash == "" || predictionHash(p) != p.PredictionHash:
+	case dec.More():
+		return nil, InputErrorf("not a prediction file: data after the prediction")
+	case !(p.Step >= minBacktestStep.Seconds() && p.Step <= maxBacktestStep.Seconds()),
+		!(p.Settle >= 0 && p.Settle <= maxBacktestSettle.Seconds()),
+		!(p.MeasureWindow >= 15 && p.MeasureWindow <= 3600),
+		len(p.Steps) == 0 || len(p.Steps) > maxBacktestSteps+1, len(p.PredictionHash) < 12 || len(p.InputsHash) < 12:
+		return nil, InputErrorf("not a prediction file: its step, settle, measure window or steps are out of range")
+	}
+	h, err := predictionHash(p)
+	if err != nil {
+		return nil, InputError{Err: err}
+	}
+	if h != p.PredictionHash {
 		return nil, InputErrorf("the prediction file does not match its own hash: it was changed after it was made; compare only an unedited prediction")
-	case p.InputsHash != inputsHash(p.Steps, p.MeasureWindow):
+	}
+	if h, err = inputsHash(p.Steps, p.MeasureWindow); err != nil || h != p.InputsHash {
 		return nil, InputErrorf("the prediction's steps do not match its inputs hash: it was changed after it was made")
 	}
 	return &p, nil
@@ -254,7 +282,17 @@ func compareEntry(ctx context.Context, p *Prediction, e *inputsEntry, req Compar
 	if len(e.latency) != len(e.series) || len(e.series) == 0 || !HasLatency(e.latency) {
 		return nil, InputErrorf("the measured window carries no latency to compare with: give the recording of that period, latency included")
 	}
-	q := &backtestQuestion{test: e, step: time.Duration(p.Step * float64(time.Second)), settle: time.Duration(p.Settle * float64(time.Second)),
+	// The window alone, as predict saw it: a measured recording that starts
+	// before the window or ends after it holds cycles the prediction's
+	// steps did not read.
+	var idx []int
+	for i, x := range e.series {
+		if !x.At.Before(p.Window.From) && !x.At.After(p.Window.To) {
+			idx = append(idx, i)
+		}
+	}
+	e = &inputsEntry{id: e.id, doc: e.doc, series: seriesAt(e.series, idx), latency: latencyAt(e.latency, idx), config: e.config}
+	q := &backtestQuestion{test: e, step: secondsDuration(p.Step), settle: secondsDuration(p.Settle),
 		measureWindow: p.MeasureWindow, cv2: p.ArrivalCV2, config: p.Config, assumed: p.Assumed, predictionHash: p.PredictionHash,
 		measured: MeasuredAuto}
 	if req.Measured != "" {
@@ -279,13 +317,22 @@ func compareEntry(ctx context.Context, p *Prediction, e *inputsEntry, req Compar
 			len(q.testIndices), p.Window.From.UTC().Format(time.RFC3339), p.Window.To.UTC().Format(time.RFC3339), p.Window.Cycles)
 	}
 	slices.SortStableFunc(q.testIndices, func(a, b int) int { return e.series[a].At.Compare(e.series[b].At) })
+	if whole := stepInputsOf(seriesAt(e.series, q.testIndices)); whole.promptCV != nil {
+		q.promptCV = whole.promptCV
+	}
 	q.fit = &inputsEntry{pricer: noPricer{}}
 	var inputs []BacktestStep
 	_, inputs, err = q.predictSteps(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if h := inputsHash(inputs, p.MeasureWindow); h != p.InputsHash {
+	if len(inputs) != len(p.Steps) {
+		return nil, InputErrorf("the measured window has %d steps, the prediction %d: it is not the window predicted", len(inputs), len(p.Steps))
+	}
+	if h, err := inputsHash(inputs, p.MeasureWindow); err != nil || h != p.InputsHash {
+		if err != nil {
+			return nil, err
+		}
 		return nil, InputErrorf("the measured window's load is not the one predicted (its inputs hash %s, the prediction's %s): "+
 			"compare the prediction with the recording of the window it was made for", h[:12], p.InputsHash[:12])
 	}
@@ -302,6 +349,11 @@ func compareEntry(ctx context.Context, p *Prediction, e *inputsEntry, req Compar
 		s = cloneStep(s)
 		if st := steps[k]; st.anchor >= 0 {
 			l := e.latency[st.anchor]
+			if mw := measureWindowOf(l, q.source); mw != p.MeasureWindow {
+				return nil, InputErrorf("the window was measured over %s, the prediction priced over %s: predict with measureWindow %s "+
+					"(--measure-window), which is no latency, and compare again",
+					secondsDuration(mw), secondsDuration(p.MeasureWindow), secondsDuration(mw))
+			}
 			if q.source == MeasuredRouter && l.Router != nil && l.Router.WindowSeconds > 0 && l.Router.WindowSeconds != p.MeasureWindow {
 				return nil, InputErrorf("the window was measured over %s, the prediction priced over %s: predict again with measureWindow %s",
 					time.Duration(l.Router.WindowSeconds*float64(time.Second)), time.Duration(p.MeasureWindow*float64(time.Second)),
@@ -315,10 +367,31 @@ func compareEntry(ctx context.Context, p *Prediction, e *inputsEntry, req Compar
 	return out, nil
 }
 
-// HasLatency says any cycle of lat carries a measured latency.
+// secondsDuration is x seconds as a duration, to the nanosecond.
+func secondsDuration(x float64) time.Duration {
+	return time.Duration(math.Round(x * float64(time.Second)))
+}
+
+// latencyAt is the samples of lat at idx; nil with none.
+func latencyAt(lat []LatencySample, idx []int) []LatencySample {
+	if len(lat) == 0 {
+		return nil
+	}
+	out := make([]LatencySample, len(idx))
+	for i, j := range idx {
+		out[i] = lat[j]
+	}
+	return out
+}
+
+// HasLatency says any cycle of lat carries a measured latency: a router
+// histogram or mean, or an engine's. The router's rate window alone is none.
 func HasLatency(lat []LatencySample) bool {
 	for _, l := range lat {
-		if l.Router != nil || len(l.EngineTTFT) > 0 || len(l.EngineTPOT) > 0 || l.EngineTTFTMean > 0 || l.EngineITLMean > 0 {
+		if r := l.Router; r != nil && (len(r.TTFTBuckets) > 0 || len(r.TPOTBuckets) > 0 || r.TTFTCountRate > 0 || r.TPOTCountRate > 0) {
+			return true
+		}
+		if len(l.EngineTTFT) > 0 || len(l.EngineTPOT) > 0 || l.EngineTTFTMean > 0 || l.EngineITLMean > 0 {
 			return true
 		}
 	}
