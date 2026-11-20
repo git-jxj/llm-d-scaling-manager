@@ -940,6 +940,8 @@ decodeBaseNet
 decodeFixed
 decodeFromITL
 decodeHeldPrompt
+decodeKvFill
+decodeOwing
 decodePerStep
 decodePerToken
 decodePerTokenNet
@@ -1869,6 +1871,7 @@ mu-margin-clamp
 mu-reread-takes-latest
 mu-sample-weighs-the-fleet
 mu-sample-written
+mu-suspect
 mu-swap-freeze
 mu-unknown-age-resolves-safe
 mu-unread-replica-at-target

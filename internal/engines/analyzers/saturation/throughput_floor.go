@@ -941,8 +941,16 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 	// from prefill's demand after the share above; priced by a second
 	// pricing. Decode's backlog moves no other role's term.
 	if a.decodeOwesRouterBacklog && roleDemand != nil && queueOwner == domain.RolePrefill && eppQueued > 0 {
-		served := completedRateByRole(input, replicas, roleOf)[domain.RoleDecode].total
-		decodeOwing = decodeRouterBacklogRate(tf, variants, roleDemand, served, scaleUp)
+		var weigh bool
+		decodeOwing, weigh = decodeRouterBacklogRate(tf, variants, roleDemand, scaleUp)
+		if weigh {
+			// No prefill mu: decode's own evidence, smoothed and held over
+			// the cycles before (decodeAtMuWeight).
+			served := completedRateByRole(input, replicas, roleOf)[domain.RoleDecode].total
+			ev := readDecodeEvidence(input.ReplicaMetrics, variants, roleOf, served, tf.Terms[domain.RoleDecode].Mu)
+			decodeOwing.share, decodeOwing.served, decodeOwing.fill, decodeOwing.why =
+				a.decodeAtMuWeight(input.Namespace+"|"+input.ModelID, ev, cfg.KvCacheThreshold)
+		}
 		if decodeOwed(startSeconds) > 0 {
 			tf, startSeconds, startSources = priceFloor()
 		}
@@ -1145,12 +1153,14 @@ func (a *SaturationAnalyzer) applyThroughputFloor(
 		}
 		if a.decodeOwesRouterBacklog && role == domain.RoleDecode {
 			// The router's requests decode was charged on top of its own
-			// queues, why (empty where it is owed none), and decode's served
-			// share (decodeRouterBacklogRate; 0 where it was not read).
-			// Only with SwitchDecodeOwesRouterBacklog on: off, the line is
-			// as before the switch.
+			// queues, why (empty where it is owed none, mu-suspect where the
+			// served share says decode's mu is wrong), and decode's smoothed
+			// served share and KV fill (decodeAtMuWeight; 0 where they were
+			// not read). Only with SwitchDecodeOwesRouterBacklog on: off, the
+			// line is as before the switch.
 			kv = append(kv, "routerBacklogOwed", decodeOwed(startSeconds),
-				"routerBacklogOwedBy", decodeOwing.why, "decodeServedShare", decodeOwing.served)
+				"routerBacklogOwedBy", decodeOwing.why, "decodeServedShare", decodeOwing.served,
+				"decodeKvFill", decodeOwing.fill)
 		}
 		logger.Info("throughput-demand-floor", kv...)
 		if roleDemand != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
@@ -34,6 +35,9 @@ func flowControlCases() []propCase {
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-decode-owes-backlog", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPD.owingBacklog(), nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound-owes-backlog", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcPDPrefillBound.owingBacklog(), nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound-decode-full-owes-backlog", family: familyDirect, tuning: tunedDefault, check: checkPrefillBoundDecodeFull},
+		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-decode-owes-backlog-completions-high", family: familyDirect, tuning: tunedDefault, check: checkCompletionsHigh(fcPD)},
+		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound-owes-backlog-completions-high", family: familyDirect, tuning: tunedDefault, check: checkCompletionsHigh(fcPDPrefillBound)},
+		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-pd-prefill-bound-owes-backlog-twice-the-context", family: familyDirect, tuning: tunedDefault, check: checkTwiceTheContext},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-aggregated", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcAggregated, nil)},
 		{class: classKnownTruth, learner: "floor", name: "flow-control-unlearned-mu-dp8", family: familyDirect, tuning: tunedDefault, check: checkFlowControlFloor(fcDP8, nil)},
 		{class: classKnownTruth, learner: "k2", name: "above-k1-leaves-capacity", family: familyDirect, tuning: tunedDefault, check: checkK2AboveK1Capacity},
@@ -59,6 +63,10 @@ type fcShape struct {
 	// the router's queue prefill can hand on. Off, the constructor's
 	// default, decode-bound P/D under-orders (the ledgered pd-decode case).
 	owesBacklog bool
+	// switches are more replay switches both runs set on. One this build
+	// does not know (ReplaySwitchNames) is left out, so a case can name a
+	// switch another change adds, and runs it once both are in.
+	switches []string
 }
 
 // owingBacklog is s with SwitchDecodeOwesRouterBacklog on.
@@ -241,8 +249,18 @@ func runFlowControlLogged(ctx context.Context, s fcShape, g fcGen, learned bool,
 	rig.a = NewSaturationAnalyzer(store)
 	rig.a.now = func() time.Time { return rig.clock }
 	rig.ctx = ctx
+	on := map[string]bool{}
 	if s.owesBacklog {
-		if err := rig.a.SetSwitchesForReplay(map[string]bool{SwitchDecodeOwesRouterBacklog: true}); err != nil {
+		on[SwitchDecodeOwesRouterBacklog] = true
+	}
+	known := ReplaySwitchNames()
+	for _, name := range s.switches {
+		if slices.Contains(known, name) {
+			on[name] = true
+		}
+	}
+	if len(on) > 0 {
+		if err := rig.a.SetSwitchesForReplay(on); err != nil {
 			return fcOutcome{}, err
 		}
 	}
@@ -457,6 +475,90 @@ func checkPrefillBoundDecodeFull(seed uint64) error {
 		return violation(kindNotLearned, "%s: no order", msg)
 	}
 	return holds(on.replicas <= off.replicas*(1+propTruthTol), kindOverPriced, "%s: on over off", msg)
+}
+
+// fcCompletionsHigh multiplies each decode row's completions by f: a
+// completion rate read f times high.
+func fcCompletionsHigh(f float64) func(*domain.ReplicaMetrics) {
+	return func(rm *domain.ReplicaMetrics) {
+		rm.RequestRate *= f
+		rm.GenerationTokenRate *= f
+	}
+}
+
+// checkCompletionsHigh: shape s with SwitchDecodeOwesRouterBacklog on and
+// decode's completions read 1.10 and 1.20 times high. A decode charged on
+// its served share alone took the whole queue at 1.10 where prefill binds
+// (in review, seeds 3 and 5 at 2.4x the truth). The order stays within
+// propTruthTol of the larger of the learned order (decode-bound) or the same
+// reading with the switch off (prefill-bound), and the truth.
+func checkCompletionsHigh(s fcShape) func(uint64) error {
+	return func(seed uint64) error {
+		g := fcGenFor(s, seed)
+		for _, f := range []float64{1.10, 1.20} {
+			on, err := runFlowControl(s.owingBacklog(), g, false, fcCompletionsHigh(f))
+			if err != nil {
+				return err
+			}
+			ref, err := runFlowControl(s, g, false, fcCompletionsHigh(f))
+			if err != nil {
+				return err
+			}
+			if !s.prefillBound {
+				if ref, err = runFlowControl(s.owingBacklog(), g, true, nil); err != nil {
+					return err
+				}
+			}
+			truth := fcTruth(s, on, g)
+			msg := fmt.Sprintf("%s, completions x%.2f, rho %.2f, router queue %.0f: decode ordered %.3f replicas on, reference %.3f, truth %.3f",
+				s.name, f, g.rho, on.queue, on.replicas, ref.replicas, truth)
+			if math.IsNaN(on.replicas) {
+				return violation(kindNotLearned, "%s: no order", msg)
+			}
+			if !(on.replicas <= max(ref.replicas, truth)*(1+propTruthTol)) {
+				return violation(kindOverPriced, "%s: over both", msg)
+			}
+		}
+		return nil
+	}
+}
+
+// switchKVAboveContext is the replay switch that prices a resident reading
+// above the context as read (llm-d-incubation/llm-d-scaling-manager#188), by
+// name: it is not in this build until both changes are, and fcShape.switches
+// leaves out a name the build does not know.
+const switchKVAboveContext = "kv-per-request-above-context"
+
+// checkTwiceTheContext: prefill-bound P/D whose decode rows report their
+// running count (RunningRequestsKnown, which fcRow does not set), each
+// request reading twice the context, 2,500 tokens. With the switch that
+// prices that reading on, decode's mu halves and its served share doubles,
+// past what a right mu allows: in review, the two switches together
+// ordered 27 decode replicas against a truth of 3.2. With
+// SwitchDecodeOwesRouterBacklog on as well, decode orders what it orders
+// with that switch alone, within propTruthTol, or the truth.
+func checkTwiceTheContext(seed uint64) error {
+	g := fcGenFor(fcPDPrefillBound, seed)
+	twice := func(rm *domain.ReplicaMetrics) {
+		rm.RunningRequests, rm.RunningRequestsKnown = int(float64(rm.TokensInUse)/(2*fcKVReq)), true
+	}
+	base := fcPDPrefillBound
+	base.switches = []string{switchKVAboveContext}
+	ref, err := runFlowControl(base, g, false, twice)
+	if err != nil {
+		return err
+	}
+	on, err := runFlowControl(base.owingBacklog(), g, false, twice)
+	if err != nil {
+		return err
+	}
+	truth := fcTruth(fcPDPrefillBound, on, g)
+	msg := fmt.Sprintf("prefill-bound P/D at twice the context, rho %.2f, router queue %.0f: decode ordered %.3f replicas with both switches, %.3f with the KV one, truth %.3f",
+		g.rho, on.queue, on.replicas, ref.replicas, truth)
+	if math.IsNaN(on.replicas) {
+		return violation(kindNotLearned, "%s: no order", msg)
+	}
+	return holds(on.replicas <= max(ref.replicas, truth)*(1+propTruthTol), kindOverPriced, "%s: over both", msg)
 }
 
 // checkK2AboveK1Capacity: each flow-control shape saturated at 0.85-0.95 of
