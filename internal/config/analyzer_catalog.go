@@ -199,7 +199,8 @@ func validateExternalBody(query, threshold string, r ExternalAnalyzerRules) erro
 		}
 	}
 	// A model-level query serves every role, so every role needs a target.
-	if query != "" && threshold == "" && !(served(domain.RolePrefill) && served(domain.RoleDecode) && served(domain.RoleBoth)) {
+	everyRoleServed := served(domain.RolePrefill) && served(domain.RoleDecode) && served(domain.RoleBoth)
+	if query != "" && threshold == "" && !everyRoleServed {
 		return errors.New("threshold is required: set it, or add a target rule with no match")
 	}
 	seenTarget := map[string]bool{}

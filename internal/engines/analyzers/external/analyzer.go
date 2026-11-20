@@ -271,16 +271,17 @@ func validateBody(body Body) error {
 	}
 	measured := len(body.Target) > 0
 	served := func(role string) bool { return targetRuleFor(body.Target, role) >= 0 }
-	if body.Query != "" && !measured && len(body.Demand) == 0 {
+	everyRoleServed := served(domain.RolePrefill) && served(domain.RoleDecode) && served(domain.RoleBoth)
+	switch {
+	case body.Query != "" && !measured && len(body.Demand) == 0:
 		// The original form, checked exactly as it always was: a NaN
 		// threshold is let through and sizes nothing (see the reference).
 		if body.Threshold <= 0 {
 			return fmt.Errorf("threshold must be > 0, got %v", body.Threshold)
 		}
-	} else if !(body.Threshold >= 0) || math.IsInf(body.Threshold, 0) {
+	case !(body.Threshold >= 0) || math.IsInf(body.Threshold, 0):
 		return fmt.Errorf("threshold must be > 0, got %v", body.Threshold)
-	} else if body.Query != "" && body.Threshold == 0 &&
-		!(served(domain.RolePrefill) && served(domain.RoleDecode) && served(domain.RoleBoth)) {
+	case body.Query != "" && body.Threshold == 0 && !everyRoleServed:
 		return errors.New("threshold is required unless a target rule serves every role")
 	}
 	seen := map[string]bool{}
