@@ -61,7 +61,7 @@ Deployment has `.spec.template`.
 | 7 | `preStop` hook on the engine container and `terminationGracePeriodSeconds` above it | every scale-down cuts in-flight streams | `make workload-patch NAMESPACE=<ns>` names workloads without a drain ([below](#draining-before-scale-down)) |
 | 8 | Weights read from a mounted model cache | every scale-up is a download | `make workload-patch NAMESPACE=<ns>` reports `RE-DOWNLOADS ITS WEIGHTS` ([below](#weights-and-the-model-cache)) |
 | 9 | Fast start: image held on the GPU nodes, short probe period | each scale-up pays the pull | `make prepull-status NAMESPACE=<ns>` ([below](#the-rest-of-the-start-path)) |
-| 10 | Engine compile caches (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR`) and Python bytecode (`PYTHONPYCACHEPREFIX`, any Python engine) on a path that outlives the pod | every replica recompiles: about 14 s of torch.compile against about 3 s cached, and about 11 s of bytecode | `make engine-cache-status NAMESPACE=<ns>`; `make workload-patch` reports `COMPILES FROM NOTHING` or `RECOMPILES ITS PYTHON BYTECODE` ([below](#engine-caches-on-the-nodes-disk)) |
+| 10 | Engine compile caches (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR`, and the [JIT caches beyond vLLM's own](#jit-caches-beyond-vllms-own)) and Python bytecode (`PYTHONPYCACHEPREFIX`, any Python engine) on a path that outlives the pod | every replica recompiles: about 14 s of torch.compile against about 3 s cached, and about 11 s of bytecode | `make engine-cache-status NAMESPACE=<ns>`; `make workload-patch` reports `COMPILES FROM NOTHING` or `RECOMPILES ITS PYTHON BYTECODE` ([below](#engine-caches-on-the-nodes-disk)) |
 | 11 | A ScaledObject whose trigger is `external-push` with this `modelID` | nothing scales it — the controller has no watch of its own | `kubectl get scaledobject -n <ns> -o custom-columns='NAME:.metadata.name,MODEL:.spec.triggers[0].metadata.modelID,READY:.status.conditions[0].status'` |
 
 ## Weights and the model cache
@@ -676,7 +676,13 @@ containers:
       - {name: FLASHINFER_WORKSPACE_BASE, value: /engine-cache/flashinfer/<image key>}
       - {name: TRITON_CACHE_DIR,         value: /engine-cache/triton}
       - {name: PYTHONPYCACHEPREFIX,      value: /engine-cache/pycache/<image key>}
+      - {name: DG_JIT_CACHE_DIR,         value: /engine-cache/deepgemm/<image key>}
+      - {name: TRTLLM_DG_CACHE_DIR,      value: /engine-cache/trtllm-deepgemm/<image key>}
+      - {name: TORCHINDUCTOR_CACHE_DIR,  value: /engine-cache/inductor/<image key>}
+      - {name: CUDA_CACHE_PATH,          value: /engine-cache/cuda/<image key>}
 ```
+
+The last four are the [JIT caches beyond vLLM's own](#jit-caches-beyond-vllms-own).
 
 A hostPath is a bind mount with no storage driver in its path, so no driver
 publishes it read-only. (The filesystem under it can still go read-only, from an
@@ -907,7 +913,7 @@ The guard goes in each container command, before the engine starts (on a
 LeaderWorkerSet, the leader's and the worker's):
 
 ```bash
-for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do
+for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do
   eval "d=\${$v:-}"
   d=${d%/}
   [ -n "$d" ] || continue
@@ -1118,6 +1124,39 @@ start.
   That is why the base is keyed by image. The warm pool and the benchmark
   scenarios use a plain `flashinfer/` directory instead: each pins one engine
   image. Do not point two images at one of them.
+
+#### JIT caches beyond vLLM's own
+
+Four more caches are built at run time, outside `VLLM_CACHE_ROOT`. Each stays
+in the container unless its variable is set, so every start that uses it builds
+it again.
+
+| variable | what | used by |
+|---|---|---|
+| `DG_JIT_CACHE_DIR` | DeepGEMM kernels | FP8 block-quantised models on Hopper and later (most FP8 MoE checkpoints) |
+| `TRTLLM_DG_CACHE_DIR` | the TensorRT-LLM copy of DeepGEMM that FlashInfer ships | the same models, on FlashInfer's MoE path |
+| `TORCHINDUCTOR_CACHE_DIR` | Inductor kernels compiled outside vLLM's own compile (vLLM points Inductor under `VLLM_CACHE_ROOT` while it compiles) | any model |
+| `CUDA_CACHE_PATH` | the driver's PTX JIT cache | kernels shipped as PTX only |
+
+`make workload-patch` sets each one the pod spec does not set, under the engine
+cache, keyed by image: `/engine-cache/<dir>/<image key>`, with `<dir>` one of
+`deepgemm`, `trtllm-deepgemm`, `inductor`, `cuda`. A value the pod spec sets,
+`valueFrom` included, is left alone.
+
+- **A workload patched before these variables** keeps `VLLM_CACHE_ROOT` on its
+  volume. `make workload-patch` reports `BUILDS ITS JIT KERNELS AGAIN` and emits
+  the missing ones beside `VLLM_CACHE_ROOT`, env only. Like the FlashInfer
+  half, that is emitted and never applied: put it in your chart values.
+- **Nodes prepared before these variables** lack the four directories. Run
+  `make engine-cache` again: it makes them, 1777 like the others. Until then
+  the guard falls back to the engine default for each.
+- **Seed and publish** copy `deepgemm/`, `trtllm-deepgemm/` and `inductor/`.
+  `cuda/` stays on its node: the driver keeps one index file per cache, and two
+  nodes' indexes merged file by file are not one valid index.
+- **How much it buys** depends on the model. A model without FP8 block
+  quantisation builds no DeepGEMM kernel, and its `deepgemm/` stays empty.
+  Measured on an FP8 MoE at DP=8 on 8xH200: a cold JIT cache, DeepGEMM most of
+  it, added 311 s to a start (463 s against 152 s warm, weights not loaded).
 
 #### Check the cache without a second start
 
@@ -1734,7 +1773,7 @@ objects. Read what it prints first:
 | `LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE` | `false` | `true` also applies the engine-cache half where it cannot break the workload |
 | `LLMSM_ENGINE_CACHE_CLAIM` | `engine-cache` | the claim the emitted engine-cache volume names, `<claim>[:<subPath>]` — the one `make engine-cache` makes, or a shared RWX claim you already have (whoever can write it runs code in every engine; see above) |
 | `LLMSM_ENGINE_CACHE_VOLUME_NAME` | `engine-cache` | the volume name in the emitted patch |
-| `LLMSM_ENGINE_CACHE_PATH` | `/engine-cache` | where that volume is mounted, and the parent of the emitted `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE` and `TRITON_CACHE_DIR` |
+| `LLMSM_ENGINE_CACHE_PATH` | `/engine-cache` | where that volume is mounted, and the parent of the emitted `VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR` and the JIT cache variables |
 | `LLMSM_ENGINE_CACHE_AOT` | `true` | `false` leaves the `VLLM_USE_MEGA_AOT_ARTIFACT` block (vLLM 0.26 only) out of the emitted guard ([Depends on the vLLM version](#depends-on-the-vllm-version)) |
 
 The `*_NAME` and `*_PATH` variables affect the emitted file only — without the

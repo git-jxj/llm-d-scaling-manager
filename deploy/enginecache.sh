@@ -18,6 +18,14 @@
 # on vLLM v0.26.0, ~11 s of every start. One key per image (`make
 # workload-patch` derives it from the image reference): a .pyc is checked
 # against its source's mtime and size only, so two images must not share one.
+# Four more hold the JIT caches outside vLLM's own, each keyed by image the
+# same way: deepgemm/ (DG_JIT_CACHE_DIR, DeepGEMM's kernels, for FP8
+# block-quantised models on Hopper and later), trtllm-deepgemm/
+# (TRTLLM_DG_CACHE_DIR, the copy FlashInfer ships), inductor/
+# (TORCHINDUCTOR_CACHE_DIR, Inductor outside vLLM's compile) and cuda/
+# (CUDA_CACHE_PATH, the driver's PTX JIT cache). Seed and publish copy the
+# first three; cuda/ stays on its node, since the driver keeps one index file
+# per cache and two nodes' indexes merged file by file are not one valid index.
 # This puts the caches on the node: one static hostPath PersistentVolume, one
 # claim bound to it, and one DaemonSet that prepares the directory on every
 # selected node and then reports Ready. The model servers mount the claim
@@ -161,8 +169,8 @@
 # line names the UID it was judged for, the summary warns and names the UIDs
 # it assumed, and the verdict says which ("VERIFIED for uid 1000",
 # "VERIFIED for root"); a plain VERIFIED needs ENGINE_CACHE_UID. It checks the
-# torch.compile cache only: the flashinfer/, triton/ and pycache/ directories
-# beside vllm/ are not read.
+# torch.compile cache only: the flashinfer/, triton/, pycache/ and JIT cache
+# directories beside vllm/ are not read.
 #
 # The claim is named engine-cache, one per namespace (the caches inside are
 # keyed by a hash of the engine config, so every model and flag set in the
@@ -182,7 +190,7 @@
 # not have -- ask the cluster admin to run apply, or to create the volume.
 # Nothing here uses a hostPath volume in a Pod (the preparer mounts the
 # claim), so Pod Security "baseline" admits it and "restricted" does not. The
-# node directory is cluster-shared, WORLD-writable state (1777 on the four
+# node directory is cluster-shared, WORLD-writable state (1777 on the
 # cache directories, so any UID the engines run as can write; sticky, so one
 # UID's files are not another's to remove), what is written there is charged
 # to no quota, and what is written there is CODE: torch.compile artefacts,
@@ -196,7 +204,7 @@
 # namespace or a directory changes hands -- delete keeps the caches, and a
 # new tenant of the same name and DIR would load the old one's. 1777 is a
 # trade-off, taken so the engines need no fsGroup; a namespace that runs
-# its engines under one UID and wants the separation can chown the four
+# its engines under one UID and wants the separation can chown the cache
 # directories to it and chmod them 1770 on each node. The preparer runs as
 # its own ServiceAccount, engine-cache-preparer. The publish pods (same
 # ServiceAccount) add one capability, DAC_OVERRIDE, to read what a non-root
@@ -211,7 +219,7 @@
 # relabel a hostPath: prepare DIR/engine-cache on each node as weights.sh
 # --help says (chgrp 0, chmod 2775, chcon -t container_file_t, or a
 # MachineConfig mount with context=...:container_file_t:s0). The preparer
-# then creates the four directories inside it as that UID, owns them, and
+# then creates the cache directories inside it as that UID, owns them, and
 # its chmod 1777 takes (the setgid bit is not inherited by a mode set
 # outright; the files carry the project's SELinux level either way). `status`
 # says when the preparer died on a permission error.
@@ -292,11 +300,11 @@ check_image() {
 # dash has.
 preparer_script() {
     cat <<'SCRIPT'
-for d in vllm flashinfer triton pycache; do
+for d in vllm flashinfer triton pycache deepgemm trtllm-deepgemm inductor cuda; do
   mkdir -p "/engine-cache/$d" || exit 1
   chmod 1777 "/engine-cache/$d" 2>/dev/null || true
 done
-# A directory the merge makes is 1777, as the four above are: the copies are
+# A directory the merge makes is 1777, as the ones above are: the copies are
 # this pod's, and an engine of any UID must still add to the tree it finds --
 # a new key under torch_compile_cache/, a .pyc under pycache/<key>/, the
 # guard's .writable marker. Sticky, so no engine removes a seeded copy. Files
@@ -341,7 +349,8 @@ rm -f /tmp/.ec-cp-check /tmp/.ec-cp-check.2
 # keydepth REL sets kd to the depth of the cache key REL is in or above:
 # vllm/torch_compile_cache/<hash>, vllm/torch_compile_cache/torch_aot_compile/<hash>,
 # vllm/modelinfos/<file>, and else one entry under the cache directory:
-# triton/<hash>, flashinfer/<image key>, pycache/<image key>, vllm/<other>.
+# triton/<hash>, flashinfer/<image key>, pycache/<image key>, vllm/<other>,
+# deepgemm/, trtllm-deepgemm/ and inductor/<image key>.
 keydepth() {
   case "$1/" in
     vllm/torch_compile_cache/torch_aot_compile/*) kd=4 ;;
@@ -444,7 +453,7 @@ elif [ -d /seed ] && [ "$seeded_from" != "$want" ]; then
   # Ready -- not Ready on the stamp it merged before.
   rm -f "/engine-cache/$SEED_MARKER" || exit 1
   complete=1; added=""; links=""; private=""; private_eg=""; unread=""; skip=0
-  for d in vllm flashinfer triton pycache; do
+  for d in vllm flashinfer triton pycache deepgemm trtllm-deepgemm inductor; do
     [ -d "$seed_dir/$d" ] || continue
     if [ "$d" = flashinfer ]; then dmode=a+rwx; fmode=a+rw; else dmode=1777; fmode=a+r; fi
     merge "$seed_dir/$d" "/engine-cache/$d" "$d" .
@@ -463,7 +472,7 @@ fi
 # another user's entries; this preparer could not reopen them anyway, with
 # every capability dropped it changes the modes of its own files only.
 touch "/engine-cache/$MARKER" || exit 1
-echo "engine cache: prepared on $NODE_NAME: /engine-cache/{vllm,flashinfer,triton,pycache}"
+echo "engine cache: prepared on $NODE_NAME: /engine-cache/{vllm,flashinfer,triton,pycache,deepgemm,trtllm-deepgemm,inductor,cuda}"
 trap 'exit 0' TERM; while :; do sleep 3600 & wait; done
 SCRIPT
 }
@@ -629,7 +638,7 @@ $(seed_volume_yaml)
           # and world-writable, so whoever can write here writes what every
           # engine on the node will load; see the header), then a marker,
           # then the pod stays, Ready, so the DaemonSet's numberReady is the
-          # count of prepared nodes. The preparer creates the four
+          # count of prepared nodes. The preparer creates the cache
           # directories itself, so it owns them and the chmod takes, on
           # Kubernetes as root and on OpenShift as the project UID inside
           # the directory the admin prepared.
@@ -724,7 +733,7 @@ cmd_apply() {
     # an existing claim keeps its size (deploy/lib/nodedir.sh says why)
     nodedir_claim_capacity "$NAMESPACE" "$CLAIM" "$CAPACITY_GIVEN" "enginecache.sh delete -n ${NAMESPACE}"
     render | kubectl apply -f - >/dev/null
-    log_info "preparing ${NODE_PATH}/${SUBDIR} on $(accelerator_selector_text "$NODE_SELECTOR"); claim ${CLAIM}${SEED_CLAIM:+, seeded from ${SEED_CLAIM}${SEED_SUBPATH:+:$SEED_SUBPATH}} -- mount it read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_BASE, TRITON_CACHE_DIR and PYTHONPYCACHEPREFIX (pycache/<image key>) under it"
+    log_info "preparing ${NODE_PATH}/${SUBDIR} on $(accelerator_selector_text "$NODE_SELECTOR"); claim ${CLAIM}${SEED_CLAIM:+, seeded from ${SEED_CLAIM}${SEED_SUBPATH:+:$SEED_SUBPATH}} -- mount it read-write and point VLLM_CACHE_ROOT, FLASHINFER_WORKSPACE_BASE, TRITON_CACHE_DIR, PYTHONPYCACHEPREFIX, DG_JIT_CACHE_DIR, TRTLLM_DG_CACHE_DIR, TORCHINDUCTOR_CACHE_DIR and CUDA_CACHE_PATH under it (\`make workload-patch\` writes them)"
     if kubectl api-resources --api-group=security.openshift.io 2>/dev/null | grep -q securitycontextconstraints; then
         log_warning "OpenShift: the preparer and the engines run as the project UID (GID 0) under restricted-v2 and the kubelet does not relabel a hostPath; on each node, before this takes: mkdir -p ${NODE_PATH}/${SUBDIR} && chgrp 0 ${NODE_PATH}/${SUBDIR} && chmod 2775 ${NODE_PATH}/${SUBDIR} && chcon -t container_file_t ${NODE_PATH}/${SUBDIR} (oc debug node/<n> -- chroot /host ...), or a MachineConfig mount with context=system_u:object_r:container_file_t:s0. Not yet run on OpenShift"
     fi
@@ -978,7 +987,8 @@ rm -f /tmp/.ec-cp-check /tmp/.ec-cp-check.2
 # keydepth REL sets kd to the depth of the cache key REL is in or above:
 # vllm/torch_compile_cache/<hash>, vllm/torch_compile_cache/torch_aot_compile/<hash>,
 # vllm/modelinfos/<file>, and else one entry under the cache directory:
-# triton/<hash>, flashinfer/<image key>, pycache/<image key>, vllm/<other>.
+# triton/<hash>, flashinfer/<image key>, pycache/<image key>, vllm/<other>,
+# deepgemm/, trtllm-deepgemm/ and inductor/<image key>.
 keydepth() {
   case "$1/" in
     vllm/torch_compile_cache/torch_aot_compile/*) kd=4 ;;
@@ -1057,7 +1067,7 @@ merge_report() {
   [ -z "$unread" ] || echo "engine cache: ${#unread} entr(y/ies) this pod may not read were skipped (named above), each with the new cache key that held it"
 }
 complete=1; added=""; links=""; private=""; private_eg=""; unread=""; skip=0
-for d in vllm flashinfer triton pycache; do
+for d in vllm flashinfer triton pycache deepgemm trtllm-deepgemm inductor; do
   [ -d "/engine-cache/$d" ] || continue
   (umask 022; mkdir -p "$dst/$d") || exit 1
   if [ "$d" = flashinfer ]; then dmode=a+rwx; fmode=a+rw; else dmode=a+rx; fmode=a+r; fi

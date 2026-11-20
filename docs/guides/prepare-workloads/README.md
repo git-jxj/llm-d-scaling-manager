@@ -12,7 +12,7 @@ The recommended configuration puts three things on each GPU node's own disk:
 | --- | --- | --- |
 | **The engine image**, held by a small pod | a node without it pulls 10-20 GB before the container starts | at least 67-80 s of pull, Qwen3-32B on vLLM v0.26.0 |
 | **The weights**, on the node's local NVMe | a shared volume removes the download, not the read, and replicas that start together share its bandwidth | a 700 GB model: 1403 s from the shared volume on two nodes, about 104 s from local NVMe |
-| **The engine's compile caches** (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR`) and Python bytecode (`PYTHONPYCACHEPREFIX`) | otherwise every replica compiles from nothing | about 11 s of compile (14 s cold, 3 s cached), and on vLLM 0.26 about 11 s of bytecode per start (0.32 ships its own bytecode) |
+| **The engine's compile caches** (`VLLM_CACHE_ROOT`, `FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR`, and DeepGEMM, Inductor and CUDA: [JIT caches beyond vLLM's own](../../reference/workload-preparation.md#jit-caches-beyond-vllms-own)) and Python bytecode (`PYTHONPYCACHEPREFIX`) | otherwise every replica compiles from nothing | about 11 s of compile (14 s cold, 3 s cached), and on vLLM 0.26 about 11 s of bytecode per start (0.32 ships its own bytecode) |
 
 Together, on Qwen3-32B and one H200: 102.6 s to Ready unprepared, 48.3 s
 prepared, plus the pull a new node would have paid. Every number and how it was
