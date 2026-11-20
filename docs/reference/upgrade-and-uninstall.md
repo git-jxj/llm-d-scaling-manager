@@ -129,6 +129,25 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.12.1
+
+#### Engine caches another component owns
+
+`make workload-patch` now reads the pod-template annotation
+`scaling-manager.llmd.ai/engine-cache-owner`. Nothing changes for a workload
+without it.
+
+If another component owns the engine's compile caches (a cache-manager
+sidecar):
+
+1. Add `scaling-manager.llmd.ai/engine-cache-owner: external` to the pod
+   template, with your next planned rollout: it restarts every replica.
+2. Run `make workload-patch NAMESPACE=<ns>`. If an earlier run's
+   `engine-cache` volume or `/engine-cache` variables are still in the pod
+   spec, the report flags a conflict and says how to revert it.
+
+What it changes: [An external cache manager](workload-preparation.md#an-external-cache-manager).
+
 ### Upgrading from v0.12.0 to v0.12.1
 
 #### FlashInfer kernels now reach the engine cache

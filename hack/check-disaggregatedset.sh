@@ -233,6 +233,30 @@ assert_eq "$(grep -c 'drain: ' "$err")" "1" "drain findings"
 assert_eq "$(grep -c 'caches: ' "$err")" "2" "cache findings"
 [ "$FAILED" -eq "$before" ] && ok
 
+CASE="workload report: a role whose engine caches are owned externally is judged on the variables its template leaves unset"
+reset
+DSET_OBJ="$(printf '%s' "$DSET_OBJ" | jq -c '
+    .spec.roles[1].spec.leaderWorkerTemplate.workerTemplate.metadata.annotations = {"scaling-manager.llmd.ai/engine-cache-owner": "external"}
+    | (.spec.roles[1].spec.leaderWorkerTemplate.workerTemplate.spec.containers[] | select(.name == "vllm") | .env) =
+        [ {name: "VLLM_CACHE_ROOT", value: "/var/cache/jit/vllm"},
+          {name: "FLASHINFER_WORKSPACE_BASE", value: "/var/cache/jit/flashinfer"},
+          {name: "TRITON_CACHE_DIR", value: "/var/cache/jit/triton"},
+          {name: "PYTHONPYCACHEPREFIX", value: "/var/cache/jit/pycache"} ]')"
+before=$FAILED
+err="$WORK/report-ext.err"
+out="$(so_workload_report_dsets serving 2>"$err")"
+# decode still lacks a preStop, so it is still a role with a gap -- but not
+# a cache one: every variable is the owner's. prefill is as before.
+assert_eq "$out" "2 2" "roles checked, roles with a gap"
+assert_eq "$(grep -c 'caches: ' "$err")" "1" "cache findings"
+assert_contains "$(grep -A3 'role prefill' "$err")" "caches: Every start compiles from nothing"
+# One variable left unset: named, as the owner's to set.
+DSET_OBJ="$(printf '%s' "$DSET_OBJ" | jq -c '(.spec.roles[1].spec.leaderWorkerTemplate.workerTemplate.spec.containers[] | select(.name == "vllm") | .env) |= map(select(.name != "TRITON_CACHE_DIR"))')"
+out="$(so_workload_report_dsets serving 2>"$err")"
+assert_eq "$(grep -c 'caches: ' "$err")" "2" "cache findings, one variable unset"
+assert_contains "$(cat "$err")" "caches: Engine caches owned externally (scaling-manager.llmd.ai/engine-cache-owner=external), but the pod spec does not set TRITON_CACHE_DIR"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="workload report: an unreadable listing is not a clean one"
 reset
 LIST_RC=1

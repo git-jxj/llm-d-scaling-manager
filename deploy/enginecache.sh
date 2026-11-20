@@ -249,6 +249,9 @@ SEED_MARKER=".seeded"
 SEED_CLAIM=""
 SEED_SUBPATH=""
 SA_NAME="engine-cache-preparer"
+# The pod-template annotation that leaves the engine caches to another
+# component (make workload-patch reads it too); keys and verify say so.
+OWNER_ANNOTATION="scaling-manager.llmd.ai/engine-cache-owner"
 KEYS=""
 CONTAINER="vllm"
 PODS=()
@@ -1302,9 +1305,20 @@ normalize_key() {
 cmd_keys() {
     [ -n "$NAMESPACE" ] || log_error "keys needs -n NAMESPACE"
     [ "${#PODS[@]}" -gt 0 ] || log_error "keys needs the engine pod(s): enginecache.sh keys -n NAMESPACE POD [POD...]"
-    local pod root log found path base rest pairs="" warned all rc=0 err_file line
+    local pod root log found path base rest pairs="" warned all rc=0 err_file line owner
     err_file="$(mktemp)"
     for pod in "${PODS[@]}"; do
+        # A pod whose engine caches another component owns (the pod-template
+        # annotation, which the pod carries) keeps its keys in that
+        # component's store, not on the node caches: no key of ours to print.
+        if ! owner="$(kubectl get pod -n "$NAMESPACE" "$pod" -o jsonpath='{.metadata.annotations.scaling-manager\.llmd\.ai/engine-cache-owner}' 2>"$err_file")"; then
+            log_warning "cannot read pod ${pod}: $(tr '\n' ' ' < "$err_file")"
+            rc=1; continue
+        fi
+        if [ "$owner" = external ]; then
+            echo "${pod}: engine caches managed elsewhere (${OWNER_ANNOTATION}=external); its keys are in that manager's store, not on the node caches, so there is nothing here for engine-cache-verify" >&2
+            continue
+        fi
         if ! root="$(kubectl get pod -n "$NAMESPACE" "$pod" -o jsonpath="{.spec.containers[?(@.name==\"${CONTAINER}\")].env[?(@.name==\"VLLM_CACHE_ROOT\")].value}" 2>"$err_file")"; then
             log_warning "cannot read pod ${pod}: $(tr '\n' ' ' < "$err_file")"
             rc=1; continue
@@ -1559,6 +1573,18 @@ cmd_verify() {
         k="$(normalize_key "$k")" || exit 1
         keys+=("$k")
     done
+    # No engine-cache DaemonSet, and pods whose engine caches another
+    # component owns: their keys are managed elsewhere, which is the answer,
+    # not "no node cache here". Any other namespace without one still fails.
+    if [ -z "$(kubectl get daemonset -n "$NAMESPACE" "$CLAIM" -o jsonpath='{.metadata.annotations.scaling-manager\.llmd\.ai/engine-cache-path}' 2>/dev/null || true)" ]; then
+        local ext
+        ext="$(kubectl get pods -n "$NAMESPACE" -o json 2>/dev/null \
+            | jq -r --arg a "$OWNER_ANNOTATION" '[.items[]? | select((.metadata.annotations // {})[$a] == "external") | .metadata.name] | join(" ")' 2>/dev/null || true)"
+        if [ -n "$ext" ]; then
+            echo "engine caches in ${NAMESPACE} are managed elsewhere (${OWNER_ANNOTATION}=external on ${ext}); there is no engine-cache DaemonSet here, so no node cache of ours to verify"
+            return 0
+        fi
+    fi
     ec_nodes verdict
     local pods_file err_file
     pods_file="$(mktemp)"; err_file="$(mktemp)"

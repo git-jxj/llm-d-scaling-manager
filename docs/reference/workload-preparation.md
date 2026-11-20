@@ -38,6 +38,8 @@ directory from `make engine-cache`, or a claim you already have
 (`LLMSM_ENGINE_CACHE_CLAIM`). Applying that half is its own opt-in
 ([Engine caches on the node's disk](#engine-caches-on-the-nodes-disk)). The
 rest of the start path is a checklist, below.
+If another component owns the caches, see
+[An external cache manager](#an-external-cache-manager).
 
 > Part of the [deployment guide](../../deploy/). For what to watch once it is
 > running, see [Watching what the scaling manager decides](monitoring.md).
@@ -1317,6 +1319,98 @@ The benchmark standup has the same measure under
 `BENCHMARK_ENGINE_CACHE_HOSTPATH=<dir>` (default `BENCHMARK_MODEL_HOSTPATH`).
 That, and the harness's own steps on the engine's start path, are in
 [Benchmark the scaling manager](../guides/benchmarking/README.md#replica-start-time-in-the-harness).
+
+### An external cache manager
+
+Use this when another component owns the engine's compile caches: usually a
+sidecar that restores them before the engine starts and publishes them to a
+shared store after it has served.
+
+1. Annotate the **pod template**, not the Deployment:
+   ```yaml
+   spec:
+     template:
+       metadata:
+         annotations:
+           scaling-manager.llmd.ai/engine-cache-owner: external
+   ```
+   On a LeaderWorkerSet or a DisaggregatedSet role, annotate each template
+   the manager runs in. Each template is decided on its own annotation.
+2. Run `make workload-patch NAMESPACE=<ns>` and read the report.
+
+Adding the annotation changes the pod template, so it **restarts every
+replica**, and each restart of a large model is a cold start. Add it with your
+next planned rollout.
+
+**What `external` changes.** The cache variables are `VLLM_CACHE_ROOT`,
+`FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR` and `PYTHONPYCACHEPREFIX`.
+
+- A variable the engine container sets in the pod spec is the owner's. The
+  patch writes no variable, mount or volume for it.
+- A variable it does not set is patched as before, under `/engine-cache`, and
+  the report names it. A value set only inside the image counts as not set:
+  repeat it in the pod spec, under the owner's directory, to leave it to the
+  owner.
+- `FLASHINFER_WORKSPACE_DIR` without `FLASHINFER_WORKSPACE_BASE` is left to the
+  owner, with a warning: FlashInfer reads only `FLASHINFER_WORKSPACE_BASE`.
+- When every variable is set, the report says the caches are deferred to the
+  owner. `LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true` (`--apply-engine-cache`)
+  then refuses and the run exits non-zero: there is nothing of ours to apply.
+- `FLASHINFER_WORKSPACE_BASE` written without `VLLM_CACHE_ROOT` beside it is
+  emitted, never applied, as the [FlashInfer half](#flashinfer-kernels) is.
+- The drain half, the weights half and the [weights gate](#gate-replicas-on-the-weights)
+  do not change.
+- The emitted file still carries the writable guard, for whoever owns the
+  container command. Restored files must be writable by the engine's user, or
+  FlashInfer fails instead of compiling.
+- `make engine-cache-keys` prints no key for an annotated pod, and says its
+  caches are managed elsewhere. `make engine-cache-verify` in a namespace with
+  no engine-cache DaemonSet says the same, and exits 0, when annotated pods run
+  there.
+
+`ours`, or no annotation, is today's behaviour. Any other value (`External`,
+`yes`) is treated as `ours`, with a warning that names it.
+
+**What the report shows:**
+
+```
+ns/qwen-decode: engine caches owned externally (scaling-manager.llmd.ai/engine-cache-owner=external)
+    store: claim jit-store, mounted read-write by cache-sync in every pod, ...
+    TRITON_CACHE_DIR: not set in the pod spec; patched under /engine-cache. ...
+```
+
+The store line reads `not visible in the pod spec; check who can write it` when
+the store is mounted somewhere the pod spec does not show.
+
+**Without the annotation**, a container that shares the engine's cache
+`emptyDir` and also mounts storage (a claim, hostPath, NFS, CSI or ephemeral
+volume) gets a suggestion to add it. The patch does not change: a weights
+downloader with scratch space has the same shape.
+
+**Patched before it was annotated.** The pod spec still carries our
+`engine-cache` volume, or cache variables under `/engine-cache`. The report
+flags a conflict, and nothing more of ours is written until you revert:
+
+1. Remove the `engine-cache` volume, its mounts, and every cache variable that
+   points under `/engine-cache`, in the chart that owns the pod spec.
+2. Delete the copies the manager stored while our patch was applied. They lack
+   the moved caches, and are restored until the manager replaces them.
+3. Run `make workload-patch` again.
+
+If that volume was a shared ReadWriteMany claim rather than the node-local one
+`make engine-cache` makes: several pods compiling into one claim have lost
+files, and left a pod Running and never Ready.
+
+**Trust.** Compiled caches are code. With a shared store, one bad copy reaches
+every node that starts that key, and stays until it is replaced.
+
+- Whoever can write the store runs code in every later pod of that key. Where
+  every pod publishes, every pod can write it; the report says so.
+- Prefer a publisher you control as the only writer, with serving pods
+  mounting the store read-only.
+- The engine container should never mount the store itself. The report warns
+  when it does.
+- Pin images by digest, so the cached code is tied to the image you checked.
 
 ## The engine's memory budget (`gpuMemoryUtilization`)
 

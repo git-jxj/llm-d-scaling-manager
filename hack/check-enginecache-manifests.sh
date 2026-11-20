@@ -940,11 +940,18 @@ case "\$1 \$2" in
   "get nodes")   if [ -n "\${STUB_SELECTOR:-}" ]; then want -l "\$STUB_SELECTOR"; else refuse -l; fi
                  [ -n "\${STUB_NODES_ERROR:-}" ] && { echo "\$STUB_NODES_ERROR" >&2; exit 1; }
                  if [ -n "\${STUB_NODES_FILE:-}" ]; then jq --arg s "\${STUB_SELECTOR:-}" '.items |= map(select((.metadata.labels // {}) as \$l | all(\$s | split(",")[]; index("=") as \$i | \$l[.[:\$i]] == .[\$i+1:])))' "\$STUB_NODES_FILE"; else cat "$T/nodes.json"; fi ;;
-  "get pods")    want -n check-ns; want -l "$LBL"
+  "get pods")    want -n check-ns
+                 # every pod of the namespace (verify asks which are owned externally)
+                 case "\$ARGV" in *" -l "*) ;; *) cat "\${STUB_ENGINE_PODS_FILE:-/dev/null}"; exit 0 ;; esac
+                 want -l "$LBL"
                  [ -z "\${STUB_PODS_ERROR:-}" ] || { echo "\$STUB_PODS_ERROR" >&2; exit 1; }
                  cat "\${STUB_PODS_FILE:-$T/pods.json}" ;;
   "get pod")     want -n check-ns
-                 case "\$ARGV" in *"VLLM_CACHE_ROOT"*) cat "$T/engine-root/\$5" 2>/dev/null; exit 0 ;; *) echo "stub kubectl: unexpected pod read:\$ARGV" >&2; exit 2 ;; esac ;;
+                 case "\$ARGV" in
+                   *"VLLM_CACHE_ROOT"*) cat "$T/engine-root/\$5" 2>/dev/null; exit 0 ;;
+                   *"engine-cache-owner}"*) cat "$T/engine-owner/\$5" 2>/dev/null; exit 0 ;;
+                   *) echo "stub kubectl: unexpected pod read:\$ARGV" >&2; exit 2 ;;
+                 esac ;;
   "exec -n")     want -n check-ns; exec bash "$T/exec-stub.sh" "\$@" ;;
   "get daemonset")
       want -n check-ns
@@ -1675,6 +1682,33 @@ if PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns no-compile > "$
     grep -q 'no compile cache directory in its log' "$T/keys4.out" && ok "keys: a log with no cache directory is a failure, not an empty answer" || fail "keys no line: $(tail -1 "$T/keys4.out")"; fi
 if STUB_ENGINE_LOG_ERROR='Error from server (Forbidden): pods "pd-decode-0" is forbidden: cannot get resource "pods/log"' PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns pd-decode-0 > "$T/keys5.out" 2>&1; then fail "keys must fail when the log cannot be read"; else
     grep -q 'cannot read the log of pd-decode-0 (container vllm): Error from server (Forbidden)' "$T/keys5.out" && ok "keys: a log that cannot be read (Forbidden) is a failure that says so" || fail "keys log Forbidden: $(tail -1 "$T/keys5.out")"; fi
+# engine caches owned externally (scaling-manager.llmd.ai/engine-cache-owner):
+# the pod keeps its keys in the manager store, so keys prints none for it, and
+# says so; a pod beside it is read as before
+mkdir -p "$T/engine-owner"
+printf external > "$T/engine-owner/ext-0"
+cp "$T/engine-logs/pd-decode-0" "$T/engine-logs/ext-0"; printf /var/cache/jit/vllm > "$T/engine-root/ext-0"
+PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns ext-0 pd-prefill-0 > "$T/keys-ext.out" 2> "$T/keys-ext.err"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$T/keys-ext.out")" = "$K2@rank_0_0" ] \
+    && grep -q '^ext-0: engine caches managed elsewhere (scaling-manager.llmd.ai/engine-cache-owner=external)' "$T/keys-ext.err" && ! grep -q 'compiled under' "$T/keys-ext.err" \
+    && ok "keys: a pod whose engine caches are owned externally gives no key and says they are managed elsewhere; the pod beside it gives its key" \
+    || fail "keys external: rc=$rc out=$(tr '\n' ' ' < "$T/keys-ext.out") err=$(tr '\n' ' ' < "$T/keys-ext.err")"
+PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns ext-0 > "$T/keys-ext1.out" 2> "$T/keys-ext1.err"; rc=$?
+[ "$rc" = 0 ] && [ ! -s "$T/keys-ext1.out" ] && grep -q 'managed elsewhere' "$T/keys-ext1.err" && ! grep -q 'engine-cache-verify NAMESPACE' "$T/keys-ext1.err" \
+    && ok "keys: only an externally owned pod: no key, no verify line, exit 0" || fail "keys external only: rc=$rc out=$(tr '\n' ' ' < "$T/keys-ext1.out") err=$(tr '\n' ' ' < "$T/keys-ext1.err")"
+printf ours > "$T/engine-owner/ext-0"
+PATH="$STUB_PATH" bash deploy/enginecache.sh keys -n check-ns ext-0 > "$T/keys-ours.out" 2> "$T/keys-ours.err"
+[ "$(cat "$T/keys-ours.out")" = "$K1@rank_0_0+rank_1_0" ] && ! grep -q 'managed elsewhere' "$T/keys-ours.err" \
+    && ok "keys: engine-cache-owner=ours reads the key as before" || fail "keys ours: out=$(tr '\n' ' ' < "$T/keys-ours.out") err=$(tr '\n' ' ' < "$T/keys-ours.err")"
+# verify, with no engine-cache DaemonSet: pods owned externally are the
+# answer (exit 0, managed elsewhere); without them it still fails
+printf '{"items":[{"metadata":{"name":"ext-0","annotations":{"scaling-manager.llmd.ai/engine-cache-owner":"external"}}},{"metadata":{"name":"other"}}]}' > "$T/ext-pods.json"
+STUB_DS_PATH="" STUB_ENGINE_PODS_FILE="$T/ext-pods.json" PATH="$STUB_PATH" bash deploy/enginecache.sh verify -n check-ns --keys "$K1" > "$T/ecv-ext.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -q 'engine caches in check-ns are managed elsewhere (scaling-manager.llmd.ai/engine-cache-owner=external on ext-0)' "$T/ecv-ext.out" && ! grep -q 'ABSENT' "$T/ecv-ext.out" \
+    && ok "verify: no DaemonSet, a pod owned externally: managed elsewhere, exit 0, no key reported missing" || fail "verify external: rc=$rc $(tr '\n' ' ' < "$T/ecv-ext.out")"
+if STUB_DS_PATH="" STUB_ENGINE_PODS_FILE="/dev/null" PATH="$STUB_PATH" bash deploy/enginecache.sh verify -n check-ns --keys "$K1" > "$T/ecv-noext.out" 2>&1; then fail "verify: no DaemonSet and no pod owned externally must fail"; else
+    grep -q 'no engine-cache DaemonSet in check-ns' "$T/ecv-noext.out" && ! grep -q 'managed elsewhere' "$T/ecv-noext.out" \
+        && ok "verify: no DaemonSet and no pod owned externally still fails, as before" || fail "verify no external: $(tr '\n' ' ' < "$T/ecv-noext.out")"; fi
 
 # ---------------------------------------------------------------------------
 # 4. The Makefile: the targets' argv and the standup's step.
