@@ -2237,6 +2237,94 @@ least 0.9 of the client's, and the router wait's priced mean is within a
 factor of two of the EPP's `flow_control_request_queue_duration_seconds`
 mean, with no step below the onset moved. Until then it stays opt-in.
 
+## As built: router v1.0.0, the wait inside prefill
+
+In short: on router v1.0.0 the gate moves time from the prefill pods to the
+router; it does not add any. So past the onset the processor-sharing figure
+stands. A new opt-in switch, `TTFTFleet.RouterWaitInPrefill`
+(`--router-wait-in-prefill`), says so. It is off by default, and the gate
+stage above stays the switch for v0.11.0.
+
+### What was measured
+
+The flow-control A/B (issue #132, 2026-11-16) ran router v0.11.0 and v1.0.0
+on one Qwen3-32B fleet: TP 2, 2 prefill and 2 decode pods on H200,
+8000-token prompts, 200-token outputs, Ca² 4, flow control on with a 30 s
+TTL. Each router ran 3.17, 3.39 and 3.54 r/s for 600 s with seeds 5001 and
+5003, so both saw the same arrivals. There was no warm-up or freeze. The
+fleet priced below is the earlier staircase's frozen bucket C on the same
+model, shape and hardware: prefill onset 3.10 r/s, prefill knee 4.05 r/s.
+
+On v1.0.0 every step held: no TTL evictions, the fleet stayed 2+2, and the
+one-pod jam of v0.11.0 never appeared. The router held each request 0.54 to
+2.03 s on average. That wait did not reach the client: at seed 5001 and
+3.39 r/s the client read 3.93 / 7.48 / 12.54 s (mean / p90 / p95) with flow
+control off and 3.87 / 9.02 / 11.81 s with it on. The scrape-lag credit in
+v1.0.0's utilization detector holds the gate's score near 1, so the router
+feeds the pods about as fast as they free, and requests wait at the router
+instead of on the pod.
+
+### The model
+
+With `RouterWaitInPrefill`, past the prefill onset and up to 0.9 of the
+prefill knee, the figure is the processor-sharing price, unchanged, flagged
+`FlowControlWaitPriced` in place of `AboveFlowControlOnset`. The router's
+wait is taken as part of the prefill stretch, so `TTFTParts.RouterWait` and
+`BurstWait` are 0. A rate answer may stand past the onset, up to the same
+0.9 of the knee. With both switches on, the gate stage wins; the CLI refuses
+both at once.
+
+### Against the measurement
+
+Model over client, mean / p90 / p95, priced at the rate and Ca² asked and at
+those the load generator sent
+(`TestRouterV1_TheWaitIsInsidePrefill`):
+
+| Seed, r/s asked | Client, s | Router wait, s | At asked | At sent (r/s, Ca²) |
+| --- | --- | --- | --- | --- |
+| 5001, 3.17 | 3.61 / 7.01 / 8.75 | 1.28 | 1.46 / 1.69 / 1.73 | 2.03 / 2.36 / 2.42 (3.450, 3.57) |
+| 5001, 3.39 | 3.87 / 9.02 / 11.81 | 1.49 | 1.86 / 1.80 / 1.76 | 2.10 / 2.04 / 2.00 (3.475, 3.87) |
+| 5001, 3.54 | 4.56 / 10.34 / 12.60 | 2.03 | 2.07 / 2.07 / 2.19 | 2.31 / 2.32 / 2.46 (3.574, 4.22) |
+| 5003, 3.17 | 2.48 / 4.74 / 5.40 | 0.54 | 2.13 / 2.50 / 2.80 | 1.76 / 2.05 / 2.28 (3.027, 3.84) |
+| 5003, 3.39 | 3.23 / 5.79 / 6.63 | 0.92 | 2.22 / 2.81 / 3.14 | 2.64 / 3.33 / 3.73 (3.558, 3.30) |
+| 5003, 3.54 | 3.62 / 6.66 / 7.79 | 1.31 | 2.60 / 3.22 / 3.54 | 2.12 / 2.62 / 2.88 (3.367, 4.61) |
+
+All 36 readings are at or above the client (1.46x to 3.73x): the floor rule
+(at least 0.9 of the client) holds everywhere. They read long for the same
+reason as below the onset: the learned prefill throughput is a lower bound.
+Bucket C's frozen p95 target (22.7 s) now answers 3.44 r/s, past the onset
+(3.10 r/s), where v1.0.0's client p95 was 6.6 to 12.6 s.
+
+On v0.11.0 the same figure reads short at a step its fleet held: C at
+3.24 r/s, 0.80 / 0.84 / 0.57 of the client
+(`TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep`). The switch is for
+v1.0.0 only.
+
+### Why it stays opt-in
+
+- Bursty traffic only: no Poisson step past the onset has run on v1.0.0.
+- One fleet, one shape, two seeds, and rates up to 0.88 of the knee; the 0.9
+  share is carried over, not measured.
+- The planner cannot read the router's version, so a default would also
+  apply to fleets on v0.11.0, where it reads short.
+- The SLO analyzer and the planner API do not have the switch. Turning it on
+  there would let the analyzer publish a rate past the onset.
+
+**What would make it the default:** a staircase on router v1.0.0, flow
+control on, at Ca² 1 and 4, with several seeds per rate from the onset to
+0.9 of the knee, and an off control at the same arrivals. The default flips
+if every held step reads at least 0.9 of the client at the mean, p90 and p95.
+
+### What is left of #56 and #132
+
+- #56 items 3 to 5 (onsets on processor sharing, the decode gate's closed
+  share, the router hop per token) are built behind their own switches or
+  learned, above. Item 2, the wait's price, is this switch on v1.0.0 and the
+  gate stage on v0.11.0.
+- #132's gate stage modelled v0.11.0's stale-score bursts. v0.11.0 is no
+  longer the pinned router, and its collapses were a cliff that a wait
+  cannot price. It stays as built, opt-in.
+
 ## As built: the onsets on processor sharing, and the decode gate's closed share
 
 In short: two switches, both off by default. The analyzer can only take the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"io"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,43 @@ func TestTTFT_PriceRouterWaitFlag(t *testing.T) {
 	assert.False(t, pf.fleet.PriceRouterWait, "the default")
 	pf = fleetOf(t, learnedState(), answerFlags{priceRouterWait: true})
 	assert.True(t, pf.fleet.PriceRouterWait, "with the flag")
+}
+
+// --router-wait-in-prefill is whatif.TTFTFleet.RouterWaitInPrefill: opt-in,
+// off by default, on with the flag, and refused beside --price-router-wait,
+// which prices the same wait the other router's way. The output names it, so
+// it is told apart from --price-router-wait, which leaves the same flag.
+func TestTTFT_RouterWaitInPrefillFlag(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want bool
+	}{{nil, whatif.DefaultRouterWaitInPrefill}, {[]string{"--router-wait-in-prefill"}, true}} {
+		var f answerFlags
+		fs := flag.NewFlagSet("t", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		f.register(fs)
+		require.NoError(t, fs.Parse(c.args))
+		assert.Equal(t, c.want, f.routerWaitInPrefill, "%v", c.args)
+	}
+	require.False(t, whatif.DefaultRouterWaitInPrefill, "opt-in: off by default")
+
+	pf := fleetOf(t, learnedState(), answerFlags{})
+	require.Nil(t, pf.refused)
+	assert.False(t, pf.fleet.RouterWaitInPrefill, "the default")
+	pf = fleetOf(t, learnedState(), answerFlags{routerWaitInPrefill: true})
+	assert.True(t, pf.fleet.RouterWaitInPrefill, "with the flag")
+
+	args := q32TTFT("slo-to-rate", "--ttft", "22.71s@p95", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "4", "--flow-control", "on")
+	out, code := runCmd(t, slices.Concat(args, []string{"--router-wait-in-prefill"})...)
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "(--router-wait-in-prefill)")
+	assert.Contains(t, out, "FlowControlWaitPriced")
+	err := run(context.Background(), slices.Concat(args, []string{"--router-wait-in-prefill", "--price-router-wait"}), io.Discard, io.Discard)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "set one")
+	out, code = runCmd(t, q32TTFT("slo-to-rate", "--ttft", "22.71s@p95", "--assume-prompt-cv", "0.0577", "--flow-control", "off", "--router-wait-in-prefill")...)
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "--router-wait-in-prefill not applied: flow control is not on")
 }
 
 // The planner API and the CLI read one fleet: on the KV-pull recording with

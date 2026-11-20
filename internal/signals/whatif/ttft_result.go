@@ -160,6 +160,9 @@ const (
 	// the client. The stage's parameters are derived, not fitted; its waits'
 	// shape (exponential, not the uniform a fixed cycle gives) is chosen to
 	// cover the measured tail, and the fit there may be partly coincidence.
+	// With the opt-in TTFTFleet.RouterWaitInPrefill instead (router v1.0.0)
+	// the wait is taken as inside the processor-sharing prefill price: the
+	// figure is that price, and TTFTParts.RouterWait and BurstWait are 0.
 	FlowControlWaitPriced Flag = "FlowControlWaitPriced"
 	// HeldByDecodeAdmission is a TTFT rate the prefill side alone would
 	// set higher: decode admission's wait holds it down.
