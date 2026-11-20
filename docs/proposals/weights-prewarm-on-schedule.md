@@ -319,6 +319,46 @@ how the page cache works and is **not measured**; measurement A checks it.
 | several models start on one node | each reader takes part of the device (no cap), so each `P` shrinks and each gain is smaller. No start is slower than cold, since the engines would contend for the same device moments later. |
 | download not finished | `skip reason=not-downloaded` (the marker is missing). |
 
+### A page-cache release on the same node
+
+Everything above assumes the pages the reader brings in stay until the engine
+reads them. Some deployments throw them away on purpose, to give the RAM to a
+CPU KV tier that pins host memory:
+
+- vLLM's `--release-weight-page-cache` drops the cached pages of the weight
+  files that engine read, after its load.
+- A launch step calls `posix_fadvise(POSIX_FADV_DONTNEED)` on every file under
+  the model mount. One such walk was reported at 11-40 s per pod, freeing
+  250-350 GiB per node (not measured here).
+
+A walk that finishes before the reader lines cannot hurt the pod that runs
+it. The vLLM flag drops pages only after that engine has read them, but a
+reader still running then reads the dropped ranges back and refills the RAM
+the release meant to free.
+
+The harm to a start is **another pod on the node** releasing the same files
+after the reader read them and before this engine loads them. Two replicas of
+one workload are such pods to each other. The engine then reads those files
+cold, and the reader's read was wasted disk time. If the reader is still
+reading other files then, the two share the disk, so that start can be slower
+than cold. Measurement A checks this.
+
+A release that is over before this pod starts does not hurt the reader: it
+makes the start cold (no "warm from an earlier start", the 8.9 s row in §1),
+which is the case the reader is for.
+
+The pages are shared by every pod reading those files, so the reader cannot
+protect them. **Check needed before alpha:** `make workload-patch` reads the
+command and args of every container, init containers included, of every
+workload in the namespace that mounts the same weights claim. It does not
+offer the reader where any of them carries `--release-weight-page-cache` for
+this model, or a `DONTNEED` / `fadvise` / `vmtouch -e` call in its command. It
+says which workload it found.
+A release hidden inside an image script, or run by a workload in another
+namespace, is not visible to that check: there, a `done` line with a load
+near the cold figure (see §7), with `fincore` showing the files gone again,
+is the sign, and the operator turns the reader off.
+
 ## 7. Configuration and operator experience
 
 ```bash
@@ -328,7 +368,8 @@ make workload-patch NAMESPACE=<ns> LLMSM_WORKLOAD_PATCH_APPLY=true \
 
 - `make workload-patch` emits the reader lines beside the engine-cache guard,
   for the chart's command (leader and worker on a LeaderWorkerSet), and offers
-  it only where the weights volume is a claim made by `make weights`.
+  it only where the weights volume is a claim made by `make weights`, and
+  not where the page-cache release check (§6) finds a release.
 - `LLMSM_WORKLOAD_PATCH_APPLY_PREWARM=true` applies `LLMSM_WEIGHTS_PREWARM=on` live.
   Applying rolls the workload, like any pod-template change.
 - Options, as env on the engine container: `LLMSM_WEIGHTS_PREWARM_RATE` (MB/s,
@@ -395,7 +436,8 @@ resident as root. Not `drop_caches`, which affects every tenant.
 **A. Qwen3-32B, TP=1, one H200, prepared node whose page cache is already
 full of other files** (fill it with an unrelated read first). Three starts per
 arm: cold (reader off); reader on, files cold; reader on with
-`LLMSM_WEIGHTS_PREWARM_RATE=2000`; warm (reader off, files warm). Record per
+`LLMSM_WEIGHTS_PREWARM_RATE=2000`; warm (reader off, files warm); reader on,
+files dropped (`DONTNEED`) when the engine begins loading (§6). Record per
 start:
 
 - pod created to `/health`; the engine's weight-load seconds;
@@ -422,6 +464,7 @@ cold start, every file resident on both nodes.
 - A: no reader-on start slower than the slowest cold start (overlap no worse).
 - A: a start with files resident logs `skip reason=resident` within 2 s.
 - A: no change in the pod's QoS class, requests or limits; one `<defunct>` at most.
+- A: the dropped arm no slower than the slowest cold start.
 
 **Acceptance (beta to GA):** B: a gain of at least 20 s, and within 30 % of
 §1.3's prediction for the measured `R`. A kind e2e (no GPU): stand-in
@@ -431,7 +474,7 @@ safetensors files, the command lines, residency asserted after start.
 
 | stage | scope |
 | --- | --- |
-| **alpha** | the emitted lines and the env switch; Deployments and LeaderWorkerSets; read-all only; residency check failing closed; `MemAvailable` and cgroup budget; logs. Measurement A. |
+| **alpha** | the emitted lines and the env switch; Deployments and LeaderWorkerSets; read-all only; residency check failing closed; `MemAvailable` and cgroup budget; logs; the page-cache release check (§6). Measurement A. |
 | **beta** | the share layout for `--enable-ep-weight-filter`; measurement B. |
 | **GA** | both met; the kind e2e in CI; the user-facing section in [workload-preparation](../reference/workload-preparation.md#weights-on-the-nodes-disk). Still off by default. |
 
