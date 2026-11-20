@@ -70,7 +70,8 @@ import (
 //     90% of them shared, holds 2 requests at a fill of 0.22 and reads 55,500
 //     a request where the shape says 10,500 -- a KV-bound mu 5x low. With
 //     SwitchKVPerRequestAboveContext on, KVreq here is the reading where it
-//     is higher (countGateKV).
+//     is above the whole context (countGateKV); this case reads below it and
+//     stays no reading.
 //
 // The count gate costs the issue's own case some of its reach. Where the hits
 // are on blocks no running request shares, a request holds IL + D*OL/2 and a
@@ -282,15 +283,24 @@ func (a *SaturationAnalyzer) residentRuleFor(params *capacity.EngineParams) resi
 
 // countGateKV is the KV a request is taken to hold by the count gate, minK x
 // the capacity read / countGateKV (the file comment): s's own KVreq, or with
-// rule.aboveContext the reading itself where it is higher. A gate at the
-// discounted KVreq asks a cache filled to fill k for k x C / KVreq requests,
-// and one that holds R times that per request has k / R x C / KVreq: it
-// passes only from a fill of minK x R. A reading R times the shape is the
-// case SwitchKVPerRequestAboveContext prices, and at R above 1 / minK no fill
-// passes, so the gate would keep the switch from ever seeing it.
+// rule.aboveContext the reading itself where it is above s's whole context.
+//
+// The count gate is there for few requests sharing a prefix, which each read
+// a large share of it. That share is at most the prompt, so on its own it
+// lifts a reading to the context and no further: a reading at or below the
+// context keeps the gate at KVreq, on or off, and few long requests sharing a
+// prefix stay no reading. A reading above the context is KV the engine holds
+// beyond the prompt and output, the case SwitchKVPerRequestAboveContext
+// prices. A gate at KVreq asks a cache filled to k for k x C / KVreq
+// requests, and one that holds R times that per request has k / R x C /
+// KVreq: it passes only from a fill of minK x R, so at R above 1 / minK no
+// fill passes. A gate at the context fails the same way, from a fill of minK
+// x m / context. Above the context the gate is taken at the reading, so only
+// the fill gate applies there. The rule steps at the context: with few
+// requests, a reading just above it is taken where one just below is not.
 func countGateKV(s shape.Shape, r residentReading, rule residentRule) float64 {
 	if rule.aboveContext {
-		if m := r.perSeq(); m > s.KVreq && !math.IsInf(m, 0) {
+		if m := r.perSeq(); m > s.Context() && m > s.KVreq && !math.IsInf(m, 0) {
 			return m
 		}
 	}

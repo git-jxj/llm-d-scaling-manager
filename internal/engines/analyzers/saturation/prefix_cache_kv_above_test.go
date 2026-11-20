@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
@@ -82,6 +83,35 @@ func TestKVAboveContext_TheCountGateTakesTheReading(t *testing.T) {
 	off := hitMu(t, cachingRow(0.3, 10), nil)
 	assert.InDelta(t, 550, off["kvReqPerSeq"], 1e-9)
 	assert.Equal(t, "no-reading", off["residentKVBound"])
+}
+
+// The count gate's own case (TestKVHitsResident_FewLongRequestsSharingAPrefixAreNoReading)
+// with the switch on: a 500,000-token cache, 100,000-token prompts 90% shared,
+// 1000 out. The discount is 10,500 and the context 100,500. Two requests at a
+// fill of 0.222 read 55,500 each, below the context: the shared prefix spread
+// over two requests, not KV the engine holds beyond the prompt. The gate stays
+// at the discount, asks for 8, and there is no reading. Two requests reading
+// 220,000 each, over twice the context, are taken on and priced as read; off,
+// the gate at the discount reads nothing.
+func TestKVAboveContext_FewLongRequestsBelowTheContextAreNoReading(t *testing.T) {
+	row := func(running int, perSeq float64) domain.ReplicaMetrics {
+		rm := hitRow("pod-1", 100_000, 1000, 500_000, float64(running)*perSeq/500_000, running)
+		rm.PrefixCacheHitRate = 0.9
+		return rm
+	}
+	two := hitMu(t, row(2, 55_500), aboveOn(t))
+	assert.Equal(t, residentBoundNoReading, two["residentKVBound"])
+	assert.InDelta(t, 10_500, two["kvReqPerSeq"], 1e-6, "the discount, not 55,500")
+	eight := hitMu(t, row(8, 21_750), aboveOn(t))
+	assert.Equal(t, residentBoundNone, eight["residentKVBound"])
+	assert.InDelta(t, 21_750, eight["kvReqPerSeq"], 1e-6)
+
+	above := hitMu(t, row(2, 220_000), aboveOn(t))
+	assert.Equal(t, residentBoundAboveContext, above["residentKVBound"])
+	assert.InDelta(t, 220_000, above["kvReqPerSeq"], 1e-6)
+	off := hitMu(t, row(2, 220_000), nil)
+	assert.Equal(t, residentBoundNoReading, off["residentKVBound"])
+	assert.InDelta(t, 10_500, off["kvReqPerSeq"], 1e-6)
 }
 
 // A reading below the discount keeps the gate at the discount, on or off:
