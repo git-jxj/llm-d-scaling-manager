@@ -44,7 +44,7 @@ func refLogSeries(t *testing.T, k, y float64) float64 {
 // the expansion's first terms alternate in sign. The direct sum's own error
 // grows with y (each term's Lgamma is good to a unit in the last place of a
 // number near y ln y), so its bound is relative to that; the expansion is
-// held to a few units in the last place of the log, tight enough that a
+// held to 1e-14 plus four units in the last place of the log, tight enough that a
 // wrong term of order up to y^-4 at y = 1000 fails.
 func TestLogSeriesMatchesAHighPrecisionSum(t *testing.T) {
 	for _, k := range []float64{0.001, 0.01, 0.05, 0.25, 1, 2.5, 7.3, 16, 40, 250} {
