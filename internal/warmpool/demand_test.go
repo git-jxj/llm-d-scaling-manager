@@ -799,3 +799,25 @@ func TestAnEngineThatSpansPodsIsNotWarmedAndSaysWhy(t *testing.T) {
 		t.Fatal("TP and PP multiply into the GPU count")
 	}
 }
+
+func TestUnderscoreFlagsAreKeptInTheDashedForm(t *testing.T) {
+	// vLLM accepts --gpu_memory_utilization as --gpu-memory-utilization. Dropped
+	// as unknown, the warm copy would run at the pool default (0.9) instead of
+	// the workload's 0.8, with a different compile-cache key.
+	got, err := EngineOptionsFrom(specWith(nil, []string{
+		"--model", "m",
+		"--gpu_memory_utilization", "0.8",
+		"--max_model_len=4096",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--gpu-memory-utilization 0.8", "--max-model-len=4096"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("EngineOptionsFrom = %q, want it to contain %q", got, want)
+		}
+	}
+	if got := withGPUMemoryUtilization(got, 0); strings.Count(got, "--gpu-memory-utilization") != 1 || !strings.Contains(got, "--gpu-memory-utilization 0.8") {
+		t.Errorf("withGPUMemoryUtilization(inherit) = %q, want the workload's 0.8 once", got)
+	}
+}

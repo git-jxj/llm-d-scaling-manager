@@ -35,6 +35,7 @@ import logging
 import multiprocessing
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -242,8 +243,12 @@ def _wait_procs(procs, timeout: float) -> list[psutil.Process]:
             if err.errno != errno.EINVAL:
                 raise
             alive = [p for p in alive if p.is_running()]
-            if not alive or time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if not alive or remaining <= 0:
                 return alive
+            # psutil counts a zombie as running, so EINVAL can come straight
+            # back for it: pause, or this spins a core until the deadline.
+            time.sleep(min(PROCESS_POLL_INTERVAL, remaining))
 
 
 async def _await_procs(procs: set[psutil.Process], timeout: float) -> None:
@@ -1398,7 +1403,17 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str, debug_gpu_memory: 
     # path the pair forms, the leader serves, and one /sleep to the LEADER
     # releases the GPU on BOTH ranks -- 78,015 MiB down to 2,745 MiB each --
     # waking in 0.36 s.
+    #
+    # The checks and the signal handler are run_headless's too (v0.34.0). What
+    # is NOT mirrored is its other branch: --headless on a node whose rank
+    # within its data-parallel group is 0, where vLLM starts that node's
+    # data-parallel engine cores (CoreEngineProcManager) and no API server.
+    # The pool never asks for that (it adds --headless only to ranks > 0 of a
+    # group with no data parallelism across Pods), so it is refused here
+    # rather than served by an API server nobody would talk to.
     if getattr(args, "headless", False):
+        if (getattr(args, "api_server_count", None) or 1) > 1:
+            raise ValueError("api_server_count can't be set in headless mode")
         engine_args = AsyncEngineArgs.from_cli_args(args)
         # As vLLM's run_headless does since v0.34, so a follower's workers score
         # late-interaction models on the same path as the leader's.
@@ -1406,6 +1421,31 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str, debug_gpu_memory: 
         engine_config = engine_args.create_engine_config(
             usage_context=UsageContext.OPENAI_API_SERVER, headless=True
         )
+        if getattr(engine_args, "data_parallel_hybrid_lb", False) is True:
+            raise ValueError(
+                "data_parallel_hybrid_lb is not applicable in headless mode"
+            )
+        if engine_config.parallel_config.node_rank_within_dp == 0:
+            raise ValueError(
+                "--headless on data-parallel rank 0 of its node (headless "
+                "data-parallel engines) is not supported by this launcher; only "
+                "a follower rank (node rank within its data-parallel group > 0) is"
+            )
+
+        # A stop sends SIGTERM. As run_headless does: exit through SystemExit,
+        # so the executor's finalizer shuts its workers down, rather than
+        # dying on the default action and leaving them to the group sweep.
+        shutdown_requested = False
+
+        def _on_signal(signum, frame):
+            nonlocal shutdown_requested
+            if not shutdown_requested:
+                shutdown_requested = True
+                raise SystemExit
+
+        signal.signal(signal.SIGTERM, _on_signal)
+        signal.signal(signal.SIGINT, _on_signal)
+
         if engine_config.parallel_config.node_rank_within_dp > 0:
             logger.info(
                 "Starting a headless multiproc executor for rank %d, head node %s:%s",
@@ -1420,6 +1460,9 @@ def vllm_kickoff(vllm_config: VllmConfig, log_file_path: str, debug_gpu_memory: 
             executor.start_worker_monitor(inline=True)
             return
 
+    # vLLM's serve CLI copies a positional model tag into args.model first
+    # (serve.py); the launcher takes options only, and the pool always passes
+    # --model, so there is no positional tag to copy.
     uvloop.run(run_server(args))
 
 

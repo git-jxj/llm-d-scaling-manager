@@ -554,6 +554,13 @@ func normaliseOptions(options string) string {
 	out := make([]string, 0, len(fields)+1)
 	for i := 0; i < len(fields); i++ {
 		name, inline, hasInline := strings.Cut(fields[i], "=")
+		// vLLM's parser takes --gpu_memory_utilization for
+		// --gpu-memory-utilization. Matched in the dashed form, or a workload
+		// writing underscores loses the flag here and its warm copy runs at
+		// the pool's default rather than at the workload's value.
+		if rest, ok := strings.CutPrefix(name, "--"); ok {
+			name = "--" + strings.ReplaceAll(rest, "_", "-")
+		}
 		if !strings.HasPrefix(name, "-") {
 			// A bare word: the launcher, the module, or a value whose flag was
 			// dropped. Either way it is not ours to pass on.

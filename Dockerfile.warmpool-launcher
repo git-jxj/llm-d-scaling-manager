@@ -49,9 +49,10 @@ COPY warmpool/supervisor/launcher.py warmpool/supervisor/gputranslator.py /app/
 # move or a changed call; this imports the launcher against the real vLLM and
 # checks the parameters of every vLLM call it makes, so either fails the build
 # rather than a pool Pod. It also proves the base is the vLLM the launcher was
-# ported to. The check script is not left in the image.
-COPY warmpool/supervisor/build_check.py /app/
-RUN cd /app && python3 build_check.py "${VLLM_VERSION}" && rm -f build_check.py
+# ported to. The check script is bind-mounted, so no layer of the image holds
+# it, and the import writes no bytecode into /app.
+RUN --mount=type=bind,source=warmpool/supervisor/build_check.py,target=/tmp/wp-check/build_check.py \
+    cd /app && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app python3 /tmp/wp-check/build_check.py "${VLLM_VERSION}"
 
 # Started by the pool Pod's own command: python3 /app/launcher.py ...
 ENTRYPOINT []

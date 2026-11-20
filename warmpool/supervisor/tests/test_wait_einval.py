@@ -72,3 +72,15 @@ def test_other_errors_still_raise():
     ):
         with pytest.raises(OSError):
             launcher._wait_procs([_proc(running=True)], 1)
+
+
+def test_repeated_einval_for_a_zombie_pauses_between_retries():
+    # psutil counts a zombie as running, so EINVAL can repeat for it until the
+    # deadline. Each retry must sleep, not spin a core.
+    zombie = _proc(running=True)
+    sleeps = MagicMock()
+    with patch.object(launcher.psutil, "wait_procs", side_effect=_einval()):
+        with patch.object(launcher.time, "sleep", sleeps):
+            assert launcher._wait_procs([zombie], 0.3) == [zombie]
+    assert sleeps.call_count >= 1
+    assert all(0 < c.args[0] <= launcher.PROCESS_POLL_INTERVAL for c in sleeps.call_args_list)

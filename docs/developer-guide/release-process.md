@@ -330,9 +330,12 @@ repository has **Write** on it, as above. Until then `docker pull` of the
 tools image fails with `401 Unauthorized` (or `denied`) for every operator.
 The capacity planner image is a third, `llm-d-scaling-manager/capacity-planner`,
 created by the first release that carries the `release-capacity-planner` job:
-the same two settings apply. The warm-pool launcher image is a fourth,
-`llm-d-scaling-manager/warmpool-launcher`, created by the first release that
-carries the `release-warmpool-launcher` job: the same two settings apply.
+the same two settings apply.
+
+The warm-pool launcher image is a fifth, `llm-d-scaling-manager/warmpool-launcher`.
+The dispatch of `ci-warmpool-launcher.yaml` with **push** in
+[Prerequisites](#prerequisites) creates it, private. Right after that
+dispatch, make it Public and give this repository **Write**, as above.
 
 The warm-pool proxy image is a fourth, `llm-d-scaling-manager/warmpool-proxy`.
 It is created by the first push to `main` after `ci-main-image.yaml` gained

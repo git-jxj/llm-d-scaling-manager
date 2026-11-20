@@ -28,9 +28,16 @@ jobs:
   # (The e2e jobs in that workflow run only on pull_request and skip here.)
   checks:
     uses: ./.github/workflows/ci-pr-checks.yaml
+    # packages: write only because ci-pr-checks' warmpool-launcher-image job
+    # declares it (its called workflow pushes when the release asks it to), and
+    # GitHub refuses to start a run whose nested job asks for more than its
+    # caller grants, even when that job would be skipped. It is skipped here
+    # (not a pull_request), and every other job in ci-pr-checks takes that
+    # workflow's own `contents: read`.
     permissions:
       contents: read
       pull-requests: read
+      packages: write
 
   release:
     needs: checks

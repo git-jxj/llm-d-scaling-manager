@@ -31,7 +31,7 @@ import launcher  # noqa: E402
 from launcher import VllmConfig, vllm_kickoff  # noqa: E402
 
 
-def _kickoff(parsed_args, node_rank):
+def _kickoff(parsed_args, node_rank, hybrid_lb=False):
     """Run vllm_kickoff with vLLM and the fd plumbing replaced by mocks.
 
     Returns the mocks the assertions need.
@@ -46,6 +46,7 @@ def _kickoff(parsed_args, node_rank):
         )
     )
     engine_args = MagicMock()
+    engine_args.data_parallel_hybrid_lb = hybrid_lb
     engine_args.create_engine_config.return_value = engine_config
     m = SimpleNamespace(
         executor_cls=MagicMock(),
@@ -53,6 +54,7 @@ def _kickoff(parsed_args, node_rank):
         run_server=MagicMock(),
         uvloop_run=MagicMock(),
         propagate=MagicMock(),
+        signal=MagicMock(),
         engine_config=engine_config,
     )
     m.engine_args_cls.from_cli_args.return_value = engine_args
@@ -86,6 +88,7 @@ def _kickoff(parsed_args, node_rank):
             patch.object(launcher, "propagate_flash_late_interaction", m.propagate)
         )
         stack.enter_context(patch.object(launcher.uvloop, "run", m.uvloop_run))
+        stack.enter_context(patch.object(launcher.signal, "signal", m.signal))
         vllm_kickoff(
             VllmConfig(options="--model m --headless"), "/dev/null", False
         )
@@ -102,6 +105,15 @@ def test_follower_rank_runs_the_headless_executor_inline():
     assert kwargs["headless"] is True
     m.run_server.assert_not_called()
     m.uvloop_run.assert_not_called()
+    # SIGTERM and SIGINT exit through SystemExit, as run_headless's do.
+    assert {c.args[0] for c in m.signal.call_args_list} == {
+        launcher.signal.SIGTERM,
+        launcher.signal.SIGINT,
+    }
+    handler = m.signal.call_args_list[0].args[1]
+    with pytest.raises(SystemExit):
+        handler(launcher.signal.SIGTERM, None)
+    handler(launcher.signal.SIGTERM, None)  # a second signal does not raise again
     # As vLLM's run_headless does (order not checked here).
     m.propagate.assert_called_once_with(
         SimpleNamespace(headless=True), m.engine_args_cls.from_cli_args.return_value
@@ -111,8 +123,7 @@ def test_follower_rank_runs_the_headless_executor_inline():
 @pytest.mark.parametrize(
     "parsed_args,node_rank",
     [
-        (SimpleNamespace(headless=True), 0),  # the leader of a group
-        (SimpleNamespace(headless=False), 0),  # an ordinary engine
+        (SimpleNamespace(headless=False), 0),  # an ordinary engine, or a group's leader
         (SimpleNamespace(), 0),  # no --headless flag at all
     ],
 )
@@ -121,3 +132,22 @@ def test_leader_and_single_pod_engines_run_the_api_server(parsed_args, node_rank
     m.executor_cls.assert_not_called()
     m.uvloop_run.assert_called_once()
     m.run_server.assert_called_once_with(parsed_args)
+
+
+def test_headless_on_data_parallel_rank_zero_is_refused_not_served():
+    # vLLM would start this node's headless data-parallel engines; the launcher
+    # does not, and must not fall through to an API server either.
+    with pytest.raises(ValueError, match="not supported by this launcher"):
+        _kickoff(SimpleNamespace(headless=True), node_rank=0)
+
+
+@pytest.mark.parametrize(
+    "parsed_args,hybrid_lb",
+    [
+        (SimpleNamespace(headless=True, api_server_count=2), False),
+        (SimpleNamespace(headless=True), True),
+    ],
+)
+def test_headless_rejects_what_run_headless_rejects(parsed_args, hybrid_lb):
+    with pytest.raises(ValueError):
+        _kickoff(parsed_args, node_rank=1, hybrid_lb=hybrid_lb)
