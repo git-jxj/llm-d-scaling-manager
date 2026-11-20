@@ -107,6 +107,11 @@ func (a *SaturationAnalyzer) analyze(ctx context.Context, input domain.AnalyzerI
 	a.beginITLCycle(input.Namespace, input.ModelID)
 	a.beginStartCycle(input.Namespace, input.ModelID)
 
+	if a.itlAdaptiveFloor {
+		// The band's floor adapted to a low-fill fleet, planner-only
+		// (itl_band_floor.go).
+		satConfig = a.adaptITLBandFloor(input, satConfig, a.now())
+	}
 	c := a.newCycle(ctx, input, satConfig)
 	c.observeFleetShape()
 	c.resolvePricing()
@@ -494,6 +499,9 @@ func (c *cycle) fitLines() {
 	// nothing to tie-break on here yet; that is a known gap, not a property.
 	sort.Strings(variants)
 	mixed := domain.RevisionsMixed(c.input.ReplicaMetrics)
+	// The rows as the ITL line reads them, a group's engines in place of its
+	// row (domain.EngineRows), and the group each engine settles as.
+	engineRows, engineGroups := domain.EngineRows(c.input.ReplicaMetrics), domain.EngineGroups(c.input.ReplicaMetrics)
 	for _, variant := range variants {
 		// Decode, and an aggregated variant (itlLineRole, issue ev-shindin/llm-scaling-manager#432); never
 		// prefill. ITL is the latency between GENERATED tokens, and
@@ -536,7 +544,14 @@ func (c *cycle) fitLines() {
 			params = rec.EngineParams
 		}
 		c.a.itlUnderArgs(variantKey, windowArgs(params))
-		rows, withheld := c.a.itlRows(c.input.ReplicaMetrics, variant, params)
+		// A LeaderWorkerSet group whose Pods each run an engine is read
+		// engine by engine (domain.EngineRows): its merged row's mean fill
+		// and mean ITL hide the spread the line is fitted from. A window that
+		// held the merged rows starts over the first cycle it reads the
+		// engines (itl_group_engines.go).
+		c.a.itlReadsEnginesFirst(variantKey, variant, readsEngines(c.input.ReplicaMetrics, variant),
+			c.logger.WithValues("namespace", c.input.Namespace))
+		rows, withheld := c.a.itlRows(engineRows, variant, params)
 		rollingOut := rec.InRollout() || mixed[variant]
 		if rollingOut {
 			rows = nil
@@ -567,6 +582,11 @@ func (c *cycle) fitLines() {
 		// When each replica's settle began: the engine's settle tracker
 		// (itl_settle.go).
 		c.a.itlSettleAdmission(&adm, c.input.Namespace, c.input.ModelID)
+		if adm.Settle != nil {
+			// An engine of a group settles as its group, the row the
+			// settle tracker observes.
+			adm.Settle.Groups = engineGroups
+		}
 		// Readings at the cap sit above kSat, where a pinned fit through the
 		// default B prices under the truth: priced one-sided at the line's
 		// pricing k until B is learned, against a prior on B read within the

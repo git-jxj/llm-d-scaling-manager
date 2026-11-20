@@ -131,6 +131,44 @@ changed, and there is no compatibility path. Reinstall.
 
 ### Upgrading from v0.11.2 to v0.12.0
 
+#### The warm-pool launcher moves to v0.8.0
+
+Single-Pod warm pools now run FMA launcher v0.8.0; v0.11.2 ran v0.6.4. With
+v0.8.0, evicting a model stops every process of its engine, so its GPU memory
+is freed, and the launcher keeps answering health checks while it evicts. (If
+the engine's API server has already died, a `DELETE` still leaves its other
+processes behind, as before.)
+
+- **Existing pools stay on v0.6.4.** The controller does not update a pool's
+  Deployment. A pool picks up v0.8.0 only when you change its image.
+- **Do it in a quiet window.** The pool Deployment uses `strategy: Recreate`,
+  so the update restarts every pool Pod at once and drops every warm engine.
+  The pool is cold until the new Pods have pulled the image and loaded their
+  models again.
+
+To update one pool in place, with no need to remember its `create` flags:
+
+```bash
+IMAGE=ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:9c9d03f0d485be9b0529a1623813ebfea24066156233ee13f4177c96bcbbf656
+kubectl -n <namespace> set image deployment/llmsm-warm-pool-<pool> inference-server=$IMAGE
+kubectl -n <namespace> rollout status deployment/llmsm-warm-pool-<pool>
+# check: prints the v0.8.0 reference
+kubectl -n <namespace> get deployment llmsm-warm-pool-<pool> \
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="inference-server")].image}'
+```
+
+Or run `deploy/warmpool.sh create` again with the pool's flags, or re-apply
+the `config/warmpool/` overlay. If you passed `--launcher-image` for a
+single-Pod pool, drop it, or the pool keeps that image.
+
+To shorten the cold window, hold the image on the GPU nodes first:
+`make prepull IMAGES=$IMAGE NAMESPACE=<namespace>`
+([holding the image on the nodes](workload-preparation.md#holding-the-image-on-the-nodes)).
+
+- **Staying on v0.6.4 is safe.** The controller talks to both the same way.
+- **Group pools do not change.** They keep the v0.6.4-based headless image
+  given with `--launcher-image` ([pools of groups](../guides/warm-pool/groups.md#a-group-needs-a-patched-supervisor-image)).
+
 #### The weights labeller
 
 Only if you keep model weights on the nodes' disks (`smt weights apply`).

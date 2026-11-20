@@ -17,13 +17,15 @@ It reads what your fleet did, from a window of Prometheus or from a
 recording, and prices answers with the same model the `capacity-planner`
 command line uses. It is read only: it never changes a replica count, a policy
 or a ConfigMap. It runs on your machine, from one binary that serves both the
-page and its API. Nothing is installed in the cluster.
+page and its API. Nothing is installed in the cluster; to share one planner
+with a team, [run it in a cluster](in-cluster.md).
 
 This page gets you to a first plan in about five minutes. The rest of the
 capacity planner's pages:
 
 | Page | For |
 | --- | --- |
+| [Run it in a cluster](in-cluster.md) | one planner in a namespace that people open from their browser: port-forward on Kubernetes, a Route with login on OpenShift |
 | [Record a window](../record-for-capacity-planner/) | saving a window of Prometheus as a recording: with `capacity-planner`, or with only curl and jq |
 | [The HTTP API](api.md) | calling the API yourself: every endpoint, field, flag and error, the plan budget, and Kubernetes authentication |
 | [The metrics it needs](metrics.md) | every series it reads, and what your Prometheus must keep |
@@ -336,6 +338,27 @@ kill %1
 A refused figure, or an error, is explained in
 [Troubleshooting](troubleshooting.md).
 
+### Why decode capacity can drop on prefix-heavy traffic
+
+A prefix-cache hit saves prefill work. It does not save decode memory, unless
+another running request holds the same blocks. A request that reuses an old
+prefix still keeps its whole context in the KV cache while it decodes. So the
+planner prices decode at the KV a running request was measured to hold, not at
+the prompt minus its cached part. On traffic with long, mostly cached prompts,
+fewer requests fit in the cache than the hit rate suggests, and the decode knee
+comes out lower than a planner that trusts the hit rate.
+
+The `kvPerRequest` term says where its figure came from:
+
+| Source | Meaning |
+| --- | --- |
+| `measured` | Tokens in use over running requests, on the decode rows. |
+| `measured, scaled to the shape asked` | That reading, scaled to the prompt and output you typed. |
+| `..., above the context` | Added to either one above when the reading is more than twice the whole context. The engine keeps extra KV per request, such as a draft model's. It is priced as read. |
+| `measured below the prefix-hit discount, priced at it` | The reading was below the hit-discounted figure, so the discounted figure is used. |
+| `measured above the context on SGLang, priced at the context` | SGLang reports its busiest rank against the whole pod, so the reading is held at the whole context. |
+| `context, no resident reading` | No usable reading. The whole context is priced: the prompt plus half the output, more where output lengths vary. |
+
 ## When a term is refused
 
 A source that did not see enough load cannot learn every term, and the page
@@ -344,6 +367,40 @@ not learn** and type a value: the prefill rate V_P, the fixed latency a, the
 prompt cv or the router hop. The learned value, or the reason it is missing,
 is shown under each box. A typed value flags every figure that rests on it.
 [Each reason and its fix](troubleshooting.md#refused-figures).
+
+A fleet whose load never goes quiet still gets two terms, each flagged:
+
+- **Prefill's fixed latency a, from the engines' own timing**
+  (`AFromEngineTiming`). A busy fleet has no quiet minutes to measure a from.
+  The planner then fits vLLM's prefill time against the tokens each request
+  computed, using the less busy minutes, and adds the time a request spends
+  on the prefill pod outside prefill and queueing. The assumed line gives the
+  figures it used. The value holds for the prompt length and cache hit rate
+  it was measured at. If even the shorter prompts compute more than 2,500
+  tokens, a is extrapolated from long prompts and may read low; the assumed
+  line says so.
+- **A lower KV-fill floor for the decode latency line** (`AdaptedBandFloor`).
+  The line is fitted over a range of KV fill. A fleet whose decode pods never
+  fill far enough above the default floor (0.15) never gets the 0.30 range a
+  fit needs. When at least 3 engines read below the floor, the planner lowers
+  it to the 10th percentile of the engines' fills over the last 30 minutes,
+  never under 0.05. It raises it back only after the fill has spread 0.35 for
+  2 minutes. The flag gives the floor used.
+
+**TTFT on a fleet that never goes quiet is not validated: prefill capacity
+V_P is a lower bound.** Such a fleet's prefill pods queue at every load, so
+the planner's prefill capacity is under what the fleet serves, and the decode
+side's share of TTFT is not priced. TTFT and prefill sizing can be wrong in
+either direction; decode TPOT is usable. Every TTFT answer on such a fleet
+says so.
+
+Limits of both:
+
+- The quiet-minute test per engine assumes a group's data-parallel ranks
+  share its load evenly, and context-parallel ranks (PCP, DCP) are not
+  counted as engines.
+- The lowered floor is the same on every replay of one recording, but a
+  different window of the same fleet can lower it to a different floor.
 
 ## Find the fleet a rate needs
 
@@ -567,8 +624,11 @@ alone. A higher `--ttft` sizes them.
   it did not learn, a TTFT target under the TTFT at zero load, or a decode line
   it did not fit refuses every rate alike. The plan says so at the top, with
   what to do, and sizes what does price: decode alone when prefill is refused,
-  decode without its TPOT when the TPOT is refused. When nothing prices, no
-  bucket is sized and no figure of a need is printed. It then exits 3.
+  decode without its TPOT when the TPOT is refused. When the decode knee is
+  refused (a decode line it did not fit, or no KV capacity or batch cap),
+  nothing bounds decode, so, as when nothing prices, no bucket is sized and
+  no figure of a need is printed, as `at-replicas` refuses the same fleet. It
+  then exits 3.
 - **Beyond the bound.** A bucket whose rate no fleet within `--max-prefill`
   and `--max-decode` (32 each) serves is not sized; its hour is UNDER. It
   also exits 3.

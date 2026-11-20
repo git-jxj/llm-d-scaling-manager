@@ -121,7 +121,7 @@ in both).
 | get, list, watch | workloads (kueue.x-k8s.io) | managed namespace | cohort borrowing; granted cluster-wide below only when a policy counts borrowing |
 | get, list, watch | leaderworkersets; get leaderworkersets/scale | managed namespace | LWS scale targets |
 | get | disaggregatedsets, disaggregatedsetrolescalers, disaggregatedsetrolescalers/scale | managed namespace | DisaggregatedSet role scale targets |
-| get, list, **patch** | disaggregatedsets | managed namespace (`dset-role-writer-role`, **only with `DSET_ROLE_WRITER=true`**) | the [role writer](disaggregatedset.md): writing the replicas of Static roles. `patch` reaches every field of every set in the namespace. Not in the manager Role; the installer adds this Role and its binding only when asked, and removes them otherwise |
+| get, list, **patch** | disaggregatedsets | managed namespace (`dset-role-writer-role`, **only with `DSET_ROLE_WRITER=true` or `smt --dset-role-writer`**) | the [role writer](disaggregatedset.md): writing the replicas of Static roles. `patch` reaches every field of every set in the namespace. Not in the manager Role; the installer adds this Role and its binding only when asked, and removes them otherwise |
 | get, list, watch | servicemonitors | managed namespace | preflight of what is scraped |
 | get, list, watch, create, update, patch, delete | leases | own namespace (`leader-election-role`) | leader election |
 | create, patch | events | own namespace (`leader-election-role`) | |
@@ -194,7 +194,7 @@ cluster-wide. The differences that matter for review:
 | get, list | resourcequotas | **every namespace** | the GPU bound Kueue borrowing checks in each managed namespace |
 | get, list, watch | **deployments**, replicasets, statefulsets | **every namespace** | scale targets, the owners of GPU pods for the Kueue managed check, and the `kueue-controller-manager` Deployment (Kueue's version and whether it runs) |
 | get, list, **patch** | **horizontalpodautoscalers** | **every namespace** (ClusterRole `keda-hpa-repair-role-<suffix>`, **only with `KEDA_HPA_REPAIR=true`**) | the KEDA HPA repair. `patch` reaches every HPA in the cluster, including its `minReplicas`, `maxReplicas` and metrics, not only the annotation the repair writes: RBAC cannot narrow a patch to one key. The repair writes only to HPAs whose owner is a ScaledObject naming this scaler. Not part of `manager-role`: the installer adds it only when asked, and removes it otherwise |
-| get, list, **patch** | **disaggregatedsets** | **every namespace** (ClusterRole `dset-role-writer-role-<suffix>`, **only with `DSET_ROLE_WRITER=true`**) | the [DisaggregatedSet role writer](disaggregatedset.md). `patch` reaches every field of every set in the cluster, templates included, not only the replicas the writer applies. The writer applies only `spec.roles[].spec.replicas` of Static roles of sets annotated `scaling-manager.llmd.ai/role-writer`. Not part of `manager-role`: the installer adds it only when asked, and removes it otherwise |
+| get, list, **patch** | **disaggregatedsets** | **every namespace** (ClusterRole `dset-role-writer-role-<suffix>` from make, `scaling-manager-dset-role-writer-role` from the release files, **only with `DSET_ROLE_WRITER=true` or `smt --dset-role-writer`**) | the [DisaggregatedSet role writer](disaggregatedset.md). `patch` reaches every field of every set in the cluster, templates included, not only the replicas the writer applies. The writer applies only `spec.roles[].spec.replicas` of Static roles of sets annotated `scaling-manager.llmd.ai/role-writer`. Not part of `manager-role`: the installer adds it only when asked, and removes it otherwise |
 | get | leases, by name: `c1f6bfd2.kueue.x-k8s.io` | **every namespace** | Kueue's leader-election Lease, whether Kueue runs. `resourceNames` narrows the name, not the namespace |
 
 `node-reader` and `kueue-reader` are not rendered at this scope; `manager-role`
@@ -279,7 +279,7 @@ delete it when they go
 | `9090` | gRPC over **mutual TLS** when the install can turn it on, else plaintext ([when](install-options.md#external-scaler-mutual-tls)) | Service `scaling-manager-external-scaler` (ClusterIP); NetworkPolicy `scaling-manager-external-scaler` admits only KEDA's namespace, where the admin phase wrote it (below) | with TLS, only a client certificate the install's CA signed for `scaling-manager-keda-client`; in plaintext, **none** | the KEDA external scaler |
 | `8443` | HTTPS | Service `scaling-manager-controller-manager-metrics-service` (ClusterIP) | TokenReview + SubjectAccessReview on `get /metrics` | self-signed certificate unless `--metrics-cert-path` is set (OpenShift sets it, from the service CA) |
 | `8081` | HTTP | no Service; the kubelet's probes | none | `/healthz`, `/readyz` |
-| `8001` (warm pool only) | HTTP, **plaintext** | the warm-pool pod's launcher (supervisor); also `8002` (proxy control) and `9001`-`9016` (engine instances) | **none** | the supervisor starts engine processes with **caller-supplied argv and env**, in a pod that mounts the shared model cache (`model-pvc`) **read-write**. The only protection is the pool's NetworkPolicy, see below |
+| `8001` (warm pool only) | HTTP, **plaintext** | the warm-pool pod's launcher (supervisor); also `8002` (proxy control) and `9001`-`9016` (engine instances) | **none** | the supervisor starts engine processes with **caller-supplied argv and env**, in a pod that mounts the shared model cache (`model-pvc`) **read-write**. The launcher image runs as **root** (upstream publishes it that way), so the pool Pod does not set `runAsNonRoot`. The only protection is the pool's NetworkPolicy, see below |
 
 **The warm-pool NetworkPolicy.** `deploy/warmpool.sh` renders one per pool,
 `llmsm-warm-pool-<pool>`, in the pool's namespace:
@@ -290,6 +290,11 @@ delete it when they go
   controller pods (`app.kubernetes.io/name=scaling-manager`,
   `control-plane=controller-manager`) in the namespace given as
   `--scaling-manager-namespace`. Anyone who can start a pod with those labels there passes.
+  On `:8001` the launcher serves `/health`, `/v2/vllm/instances` (list, watch,
+  create, delete, log) and, since launcher v0.7.0, `GET /v2/gpu-debug`, which runs a fixed
+  `nvidia-smi` command and returns its output. It takes no input and changes
+  nothing, but it shows the Pod's GPUs, their memory use and any processes
+  `nvidia-smi` can see, so the same rule keeps it to the controller.
 - A pool whose unit spans several pods (`GROUP_SIZE` > 1) also admits **all
   ports, `:8001` included,** from any pod carrying that pool's labels, so the
   ranks can reach each other.
@@ -442,7 +447,7 @@ answers at that address. Set `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` to
 | Image | Default | Recommendation |
 | --- | --- | --- |
 | Controller | from a checkout of `main`: `ghcr.io/llm-d-incubation/llm-d-scaling-manager:main`, a **floating** tag rebuilt on every push to main. The installer sets `imagePullPolicy: Always` for it; a kustomize or GitOps render keeps the manifest's `IfNotPresent`, so a node keeps whichever `:main` it pulled first. From a checkout of a release tag: that release's image, signed with cosign | install a release: `git checkout v0.12.0`, which deploys `:v0.12.0`, or pin its digest from the [release notes](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases), `IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:<digest>` (the digest form has not been verified end to end through the installer yet) ([upgrade and uninstall](upgrade-and-uninstall.md#pin-the-version)). A floating tag means any pod restart can run different code. A registry host with a port (`host:5000/...`) is not parsed correctly by the installer yet; use a Kustomize overlay for that until it is fixed |
-| Warm-pool launcher | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.6.4@sha256:...` | pinned by digest in `config/warmpool/` |
+| Warm-pool launcher | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher:v0.8.0@sha256:...` (single-Pod pools) | pinned by digest in `config/warmpool/`. Not cosign-signed upstream, so the digest is the only integrity check |
 | Warm-pool proxy | from a checkout of `main`: `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-proxy:main`, a **floating** tag rebuilt on every push to main. From a checkout of a release tag: that release's image, signed with cosign | install a release, or pin the digest from the release run's summary with `--proxy-image` |
 
 `LLMSM_IMAGE_PULL_SECRET` names an existing pull Secret for a private registry; the

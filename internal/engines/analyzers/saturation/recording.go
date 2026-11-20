@@ -126,7 +126,9 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchITLFitsAggregated, SwitchITLAggregatedShapeTerm,
 // SwitchITLAggregatedSizes, SwitchPrefillCapacityObserve,
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
-// SwitchPrefillAQuadratic, SwitchITLOneSidedAtCap,
+// SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
+// SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor,
+// SwitchITLOneSidedAtCap,
 // SwitchPrefillBoundHeldConfidence, SwitchThroughputFloorRaisesVariants,
 // SwitchQueuePricedAsDrain, SwitchFloorTrustReadsCompletions,
 // SwitchPrefillKeepsRouterPrompts, SwitchPrefillBusyShareBound and
@@ -236,6 +238,14 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// a's curved fit: the quadratic where the prompt clusters carry it
 		// (prefill/fixed.go).
 		SwitchPrefillAQuadratic: &a.prefillAQuadratic,
+		// The planner's a on a busy fleet: the low-load test per engine
+		// rank, and a from the engine's prefill timing (prefill/timing.go).
+		// Off from the constructor.
+		SwitchPrefillALowLoadPerRank: &a.prefillALowLoadPerRank,
+		SwitchPrefillAEngineTiming:   &a.prefillAEngineTiming,
+		// The planner's ITL band floor on a low-fill fleet
+		// (itl_band_floor.go). Off from the constructor.
+		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,
 		// Issue ev-shindin/llm-scaling-manager#467: the ITL line priced one-sided at the sequence cap
 		// while B is unlearned (itl_one_sided.go).
 		SwitchITLOneSidedAtCap: &a.itlOneSidedAtCap,

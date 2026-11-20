@@ -13,7 +13,11 @@ import (
 // drives for one role of a DisaggregatedSet. LeaderWorkerSet v0.9.x serves
 // DisaggregatedSet without it. Only messages use it: the capability itself is
 // read from the API server, never from a version string.
-const LWSRoleScalerRelease = "v0.10.0"
+const LWSRoleScalerRelease = "v" + lwsRoleScalerChart
+
+// lwsRoleScalerChart is LWSRoleScalerRelease as the LeaderWorkerSet Helm
+// chart versions it: without the leading "v".
+const lwsRoleScalerChart = "0.10.0"
 
 // RoleScalerUnservedMessage says what an LWS without
 // DisaggregatedSetRoleScaler cannot do.
@@ -26,10 +30,10 @@ const RoleScalerUnservedMessage = "LeaderWorkerSet in this cluster serves Disagg
 const RoleScalerUnservedFix = "upgrade LeaderWorkerSet to " + LWSRoleScalerRelease + " or later, the way it was installed " +
 	"(on OpenShift, through its operator). If it was installed with the upstream Helm chart, apply the new CRDs first, " +
 	"because helm upgrade never updates them: " +
-	"helm pull oci://registry.k8s.io/lws/charts/lws --version 0.10.0 --untar && " +
+	"helm pull oci://registry.k8s.io/lws/charts/lws --version " + lwsRoleScalerChart + " --untar && " +
 	"kubectl apply --server-side --force-conflicts -f lws/crds && " +
-	"helm upgrade lws oci://registry.k8s.io/lws/charts/lws --version 0.10.0 -n lws-system " +
-	"(the release and namespace the install uses). " +
+	"helm upgrade lws oci://registry.k8s.io/lws/charts/lws --version " + lwsRoleScalerChart + " -n <namespace> " +
+	"(the release name, and the namespace LeaderWorkerSet runs in). " +
 	"Then set scaling.mode: External on each role and re-run make scaledobjects-plan. " +
 	"(The install deploys LWS_CHART_VERSION only where no LeaderWorkerSet is installed.)"
 

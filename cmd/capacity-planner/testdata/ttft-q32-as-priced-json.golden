@@ -55,6 +55,7 @@
         },
         "capacityTokens": 764672,
         "kvPerRequest": 8114.099089776806,
+        "kvPerRequestSource": "measured below the prefix-hit discount, priced at it",
         "shape": {
           "inputTokens": 8000,
           "inputSource": "assumed",
