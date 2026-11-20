@@ -148,8 +148,18 @@ func TestUploadFileName(t *testing.T) {
 	} {
 		assert.Equal(t, want, UploadFileName(in), "%q", in)
 	}
+	for in, want := range map[string]string{
+		"Cafe\u0301.jsonl":                     "Cafe\u0301.jsonl",
+		"\u0939\u093f\u0902\u0926\u0940.jsonl": "\u0939\u093f\u0902\u0926\u0940.jsonl",
+		"e\u0301\u0301\u0301\u0301x":           "e\u0301\u0301__x",
+		"\u0301start":                          "_start",
+		"\u3164\u3164.jsonl":                   "__.jsonl",
+		"a\u200bb\u2066c":                      "a_b_c",
+	} {
+		assert.Equal(t, want, UploadFileName(in), "%+q", in)
+	}
 	long := UploadFileName(strings.Repeat("a", 300))
-	assert.Equal(t, strings.Repeat("a", 100), long)
+	assert.Equal(t, strings.Repeat("a", 80), long)
 }
 
 // The file name an upload gives, ?filename=, reaches the Uploader cleaned,

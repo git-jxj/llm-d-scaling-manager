@@ -148,9 +148,11 @@ Load it as any recording, with `"source": {"kind": "recording", "name": "upload:
   file's bytes. The optional `filename` is a label only: the page and
   `GET /v1/sources` show it beside the upload, its size and time, so
   people can tell uploads apart. Letters, digits and ` ._-+()[],=@` are
-  kept, anything else becomes `_`, at most 100 characters. It names no
-  file, and everyone who can open the planner sees it. The same bytes sent
-  again under another name take that name. The last 4 uploads are kept; an
+  kept, anything else becomes `_`, at most 80 characters. It names no
+  file, and everyone who can open the planner sees it. It is not tied to
+  who uploaded: the same bytes sent again, by anyone, under another name
+  take that name; sent with none, they keep theirs. Either way they count
+  as uploaded now, and newest. The last 4 uploads are kept; an
   older one is deleted, once no load is reading it. All are deleted
   when the server stops. A server that starts deletes what a stopped one left
   in the same `TMPDIR`, as after a container restart.

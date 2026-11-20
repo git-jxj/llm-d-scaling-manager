@@ -326,7 +326,7 @@ func TestServeUploadKeptWhileItLoads(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first.Name, res.Inputs.Source.Name)
 	assert.NoFileExists(t, firstPath, "removed once its load ended")
-	assert.Len(t, up.names(), maxKeptUploads)
+	assert.Len(t, up.list(), maxKeptUploads)
 	entries, err := os.ReadDir(up.dir)
 	require.NoError(t, err)
 	assert.Len(t, entries, maxKeptUploads)
@@ -410,7 +410,12 @@ func TestServeUploadAgainIsNewest(t *testing.T) {
 		require.True(t, created)
 		names = append(names, out.Name)
 	}
-	kept := up.names()
+	kept := make([]string, 0, maxKeptUploads)
+	for _, l := range up.list() {
+		require.NotEmpty(t, l.Name, "every upload kept is listed, after one is pushed out")
+		kept = append(kept, l.Name)
+	}
+	require.Len(t, kept, maxKeptUploads)
 	assert.Contains(t, kept, names[0], "uploaded again, it was kept")
 	assert.NotContains(t, kept, names[1], "the oldest not uploaded again went")
 	assert.Equal(t, []string{names[maxKeptUploads], names[0]}, kept[:2], "newest first")

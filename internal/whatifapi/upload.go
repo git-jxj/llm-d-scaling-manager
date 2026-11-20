@@ -46,25 +46,43 @@ var uploadTypes = []string{"application/octet-stream", "application/gzip"}
 // and never used to name a file.
 const UploadFileNameParam = "filename"
 
-// maxUploadFileName bounds an upload's file name, in characters.
-const maxUploadFileName = 100
+// maxUploadFileName bounds an upload's file name, in characters: the page's
+// bound on a name (MAX_NAME in scenario.js).
+const maxUploadFileName = 80
 
-// UploadFileName is name as an upload's label: the last element of a path,
-// every character other than a letter, a digit or one of ` ._-+()[],=@`
-// replaced by '_', trimmed, at most 100 characters. Empty when nothing is
-// left.
+// maxUploadFileMarks bounds the combining marks kept in a row: an accent or
+// a vowel sign, not a pile of them drawn over the text around it.
+const maxUploadFileMarks = 2
+
+// blankLetters are letters drawn as nothing (Hangul fillers): a name of
+// them would look empty, or pad one name to look like another.
+const blankLetters = "\u115f\u1160\u3164\uffa0"
+
+// UploadFileName is name as an upload's label: the last element of a path;
+// letters, digits, up to two combining marks after a letter, and
+// ` ._-+()[],=@` kept, every other character, a direction control or a
+// blank letter among them, replaced by '_'; trimmed, at most 80
+// characters. Empty when nothing is left.
 func UploadFileName(name string) string {
 	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
 		name = name[i+1:]
 	}
 	var b strings.Builder
-	n := 0
+	n, marks, afterLetter := 0, 0, false
 	for _, r := range name {
 		if n == maxUploadFileName {
 			break
 		}
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune(" ._-+()[],=@", r) {
-			r = '_'
+		mark := unicode.In(r, unicode.Mn, unicode.Mc)
+		switch {
+		case mark && afterLetter && marks < maxUploadFileMarks:
+			marks++
+		case (unicode.IsLetter(r) && !strings.ContainsRune(blankLetters, r)) || unicode.IsDigit(r):
+			afterLetter, marks = unicode.IsLetter(r), 0
+		case strings.ContainsRune(" ._-+()[],=@", r):
+			afterLetter, marks = false, 0
+		default:
+			r, afterLetter, marks = '_', false, 0
 		}
 		b.WriteRune(r)
 		n++

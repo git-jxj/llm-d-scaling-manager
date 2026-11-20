@@ -191,15 +191,6 @@ func (u *uploadStore) remove(path string) {
 	}
 }
 
-// names is the uploads kept, newest first.
-func (u *uploadStore) names() []string {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	out := slices.Clone(u.order)
-	slices.Reverse(out)
-	return out
-}
-
 // list is the uploads kept, newest first, each with the file name it was
 // last sent under, its size and when.
 func (u *uploadStore) list() []whatifapi.UploadedRecording {
