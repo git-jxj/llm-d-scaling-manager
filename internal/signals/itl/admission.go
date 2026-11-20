@@ -174,7 +174,10 @@ type Admission struct {
 	// llm-d-incubation/llm-d-scaling-manager#266). The hold ends where every
 	// hold does (SlopeHoldFor, Args), and a fit on steady readings replaces
 	// it; until then a fleet whose load keeps moving, such as a saturated
-	// one, keeps the A of its last steady fit. A key never fitted on steady
+	// one, keeps the A of its last steady fit, even where its slope has
+	// since risen and the held line prices under it; unlike the tier
+	// latch's hold, this one has no safe-side margin. A declined every-reading
+	// fit is still declined, not held. A key never fitted on steady
 	// readings holds nothing. Without it, as before, the fallback refits.
 	// The saturation analyzer sets it under a planner-only switch
 	// (saturation.SwitchITLHoldSteadySlope).

@@ -91,4 +91,12 @@ func TestImbalance_BusyIsComputedTokensNotRequests(t *testing.T) {
 	est := run(NewObserver(), cs...)
 	require.Empty(t, est.FRefused)
 	assert.Less(t, est.F, 1.15, "the long prompts' minutes, the busier by computed tokens")
+
+	// The negative control: off, the short prompts' minutes are half the
+	// median and pull it up.
+	for i := range cs {
+		cs[i].FBusyMinutes = false
+	}
+	off := run(NewObserver(), cs...)
+	assert.Greater(t, off.F, 1.15, "off, every minute")
 }

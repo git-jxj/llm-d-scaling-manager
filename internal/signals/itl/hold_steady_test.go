@@ -2,6 +2,7 @@ package itl
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -127,18 +128,26 @@ func TestTracker_AnUnsteadySlopeIsNotHeld(t *testing.T) {
 	}
 }
 
-// The hold ends where every hold does: past SlopeHoldFor, the every-reading
-// fit is taken again.
+// The hold ends where every hold does: the plateau's A is held while the
+// ramp-down's readings are still in the window, and past SlopeHoldFor the
+// every-reading fit is taken again.
 func TestTracker_ASteadySlopeHoldEnds(t *testing.T) {
-	adm := Admission{HoldsSteadySlope: true, SlopeHoldFor: 3 * time.Minute}
+	adm := Admission{HoldsSteadySlope: true, SlopeHoldFor: 15 * time.Minute}
 	got := rampDown(NewTracker(), adm)
-	refit := false
-	for _, r := range got {
-		if r.Tier == TierPinnedB && !r.SlopeHeld && r.Model.A > 1.3*holdSlope {
-			refit = true
+	heldAt, refitAt := -1, -1
+	for i, r := range got {
+		steady := r.SteadyHeld >= DefaultMinSamples
+		if heldAt < 0 && r.SlopeHeld && r.Held >= DefaultMinSamples && !steady && math.Abs(r.Model.A-holdSlope) < 1e-9 {
+			heldAt = i
+		}
+		if refitAt < 0 && r.Tier == TierPinnedB && !r.SlopeHeld && r.Model.A > 1.3*holdSlope {
+			refitAt = i
 		}
 	}
-	if !refit {
-		t.Errorf("past SlopeHoldFor the every-reading fit is taken again; no cycle fitted the ramp-down")
+	if heldAt < 0 {
+		t.Fatalf("premise: the plateau's A is held over the ramp-down's readings before SlopeHoldFor")
+	}
+	if refitAt <= heldAt {
+		t.Errorf("past SlopeHoldFor the every-reading fit is taken again: held at cycle %d, refit at %d", heldAt, refitAt)
 	}
 }
