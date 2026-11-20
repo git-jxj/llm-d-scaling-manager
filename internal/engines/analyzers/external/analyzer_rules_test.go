@@ -162,7 +162,7 @@ var _ = Describe("external.Analyzer demand rules per role", func() {
 
 		res, err := a.Analyze(context.Background(), pdInput())
 		Expect(err).To(MatchError(ContainSubstring("bad decode query")))
-		Expect(err).To(MatchError(ContainSubstring("role decode")))
+		Expect(err).To(MatchError(ContainSubstring("demand@decode")))
 		Expect(res).To(BeNil())
 	})
 
@@ -399,6 +399,24 @@ var _ = Describe("external.Analyzer measured targets", func() {
 		Expect(byVariant(res)["a"].PerReplicaCapacity).To(Equal(10.0))
 	})
 
+	It("sums a Pod's series before reducing: a Pod is one replica, whatever its ranks", func() {
+		a, err := external.New(def(0, ""), fs)
+		Expect(err).NotTo(HaveOccurred())
+		fs.results["external:kv:demand"] = values(1)
+		fs.results[primary] = &source.MetricResult{Values: []source.MetricValue{
+			{Labels: map[string]string{"pod": "a-1", "rank": "0"}, Value: 10},
+			{Labels: map[string]string{"pod": "a-1", "rank": "1"}, Value: 10},
+			{Labels: map[string]string{"pod": "a-2"}, Value: 40},
+			{Labels: map[string]string{"pod_name": "b-1"}, Value: 6},
+		}}
+
+		res, err := a.Analyze(context.Background(), input())
+		Expect(err).NotTo(HaveOccurred())
+		vcs := byVariant(res)
+		Expect(vcs["a"].PerReplicaCapacity).To(Equal(30.0), "(10+10 + 40) / 2 Pods, not / 3 series")
+		Expect(vcs["b"].PerReplicaCapacity).To(Equal(6.0), "a pod_name label joins too")
+	})
+
 	It("falls back past a query that failed", func() {
 		a, err := external.New(def(0, ""), fs)
 		Expect(err).NotTo(HaveOccurred())
@@ -471,6 +489,27 @@ var _ = Describe("external.Analyzer measured targets", func() {
 		res, err := a.Analyze(context.Background(), in)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(byVariant(res)["a"].PerReplicaCapacity).To(Equal(10.0))
+	})
+
+	It("does not fall through to the rule with no match when a role's own rule has no answer", func() {
+		d := external.Definition{Label: "kv", Bodies: map[string]external.Body{"": {
+			Threshold: 7,
+			Demand:    []external.DemandRule{{Role: domain.RoleDecode, Query: "d"}},
+			Target: []external.TargetRule{
+				{Role: domain.RoleDecode, Queries: []external.TargetQuery{{Query: "decode_target"}}},
+				{Queries: []external.TargetQuery{{Query: "any_target"}}},
+			},
+		}}}
+		a, err := external.New(d, fs)
+		Expect(err).NotTo(HaveOccurred())
+		fs.results["external:kv:demand@decode"] = values(10)
+		fs.results["external:kv:target@any:0"] = podValues(map[string]float64{"d-1": 999})
+
+		in := pdInput()
+		in.ReplicaMetrics = []domain.ReplicaMetrics{{PodName: "d-1", VariantName: "d1"}}
+		res, err := a.Analyze(context.Background(), in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(byVariant(res)["d1"].PerReplicaCapacity).To(Equal(7.0), "the threshold, not the catch-all rule")
 	})
 
 	It("measures each role from its own target rule", func() {

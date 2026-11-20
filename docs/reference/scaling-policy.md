@@ -2443,7 +2443,8 @@ analyzerDefinitions:
   for a model that is not split. One definition can carry all three, so it
   serves P/D and aggregated models alike.
 - A role with no rule is not sized by this analyzer. A model none of whose
-  roles has a rule is skipped: no query runs for it. If the policy lists
+  roles has a rule is skipped: no query runs for it. The model-level
+  `llmsm_analyzer_demand` series is the sum of the roles that have a rule. If the policy lists
   this analyzer without `saturation`, a role with no rule holds where it
   is, and the other role does not grow either.
 - If any rule's query fails, the analyzer reports nothing for the model that
@@ -2462,16 +2463,18 @@ analyzerDefinitions:
     threshold: "50000"             # used where no target query answers; recommended
     target:
       - queries:                   # tried in order; the first that answers wins
-          - query: avg by (pod) (epp_kv_capacity{namespace="{{.namespace}}"})
+          - query: sum by (pod) (epp_kv_capacity{namespace="{{.namespace}}"})
             e: epp                 # a name for the log line
-          - query: avg by (pod) (vllm_kv_capacity{namespace="{{.namespace}}"})
+          - query: sum by (pod) (vllm_kv_capacity{namespace="{{.namespace}}"})
             e: vllm
     targetReduce: avg              # avg (default), median, min or max
 ```
 
 - Each series must keep a `pod` (or `pod_name`) label: that is how its value
-  is matched to a variant. The value is what one replica serves: for an LWS
-  group, the group's figure, reported on each of its Pods. A Pod the scaling manager does not count, and a
+  is matched to a variant. The value is what one replica serves: several
+  series of one Pod (one per engine rank, say) are added up first. For an
+  LWS group, the group's figure on its leader Pod; other Pods of the group
+  are not matched. A Pod the scaling manager does not count, and a
   value of 0 or less, or not a number, are skipped.
 - A variant's Pods are reduced to one value with `targetReduce`.
 - The queries are tried in order for each variant, and stop once every
@@ -2550,7 +2553,9 @@ What to know before you rely on one:
   if it cannot run, it is dropped with a warning and a `ConfigFieldIgnored`
   Event that name the analyzer and the field, for example
   `analyzerDefinitions="queue-depth": this analyzer is not defined: demand[0].match.role: "prefil" is not a role`.
-  The other definitions and the rest of the entry still apply. A policy that
+  A top-level `query` or `threshold` left beside `engines` counts as an
+  error once any of those fields is used; without them it is ignored, as
+  before. The other definitions and the rest of the entry still apply. A policy that
   lists the dropped name runs without it, as if it were not defined, until
   the definition is fixed. A definition
   without those fields is checked when it is built, as before: an empty

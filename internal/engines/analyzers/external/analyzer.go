@@ -376,7 +376,7 @@ func (a *Analyzer) Analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 			}
 			demand, err := a.queryDemand(ctx, names.rules[i], input, body.EmptyIsMissing, rule.OrZero)
 			if err != nil {
-				return nil, fmt.Errorf("role %s: %w", rule.Role, err)
+				return nil, err
 			}
 			byRole[rule.Role] = demand
 			if rule.Threshold > 0 {
@@ -484,17 +484,19 @@ func (a *Analyzer) selectBody(engine string) (string, bool) {
 func (a *Analyzer) queryDemand(ctx context.Context, qName string, input domain.AnalyzerInput, emptyIsMissing, orZero bool) (float64, error) {
 	res, err := a.refresh(ctx, qName, input)
 	if err != nil {
-		return 0, fmt.Errorf("external analyzer %q: demand query: %w", a.def.Label, err)
+		return 0, fmt.Errorf("external analyzer %q: demand query %s: %w", a.def.Label, qName, err)
 	}
 	if res == nil || len(res.Values) == 0 {
 		if emptyIsMissing && !orZero {
-			return 0, fmt.Errorf("external analyzer %q: demand query: %w", a.def.Label, ErrEmptyResult)
+			return 0, fmt.Errorf("external analyzer %q: demand query %s: %w", a.def.Label, qName, ErrEmptyResult)
 		}
 		if !orZero {
 			reportEmptyOnce(ctx, a.def.Label, qName, input.Namespace, input.ModelID)
 		}
 		return 0, nil
 	}
+	// Series again: the next empty result is logged again.
+	reportedEmpty.Delete(emptyKey(qName, input.Namespace, input.ModelID))
 	var demand float64
 	for _, v := range res.Values {
 		// The SAME Pod gate the collector's builder applies, so an external
@@ -578,23 +580,35 @@ func (a *Analyzer) measureTargets(ctx context.Context, body Body, names bodyQuer
 					"e", q.E, "query", j, "error", err)
 				continue
 			}
-			perVariant := map[string][]float64{}
+			// Summed per Pod first: a data-parallel Pod that reports one
+			// series per engine rank is one replica, and P is the whole
+			// Pod's figure, as D is summed over Pods.
+			perPod := map[string]map[string]float64{}
 			for _, v := range res.Values {
-				variant := podVariant[seriesPodName(v.Labels)]
+				pod := seriesPodName(v.Labels)
+				variant := podVariant[pod]
 				if !pending[variant] || !(v.Value > 0) || math.IsInf(v.Value, 0) {
 					continue
 				}
 				if a.DropSeries != nil && a.DropSeries(ctx, input.Namespace, v.Labels) {
 					continue
 				}
-				perVariant[variant] = append(perVariant[variant], v.Value)
+				if perPod[variant] == nil {
+					perPod[variant] = map[string]float64{}
+				}
+				perPod[variant][pod] += v.Value
 			}
-			for _, variant := range slices.Sorted(maps.Keys(perVariant)) {
-				out[variant] = reduce(body.TargetReduce, perVariant[variant])
+			for _, variant := range slices.Sorted(maps.Keys(perPod)) {
+				pods := perPod[variant]
+				vals := make([]float64, 0, len(pods))
+				for _, pod := range slices.Sorted(maps.Keys(pods)) {
+					vals = append(vals, pods[pod])
+				}
+				out[variant] = reduce(body.TargetReduce, vals)
 				delete(pending, variant)
 				logger.Info("external analyzer measured a per-replica target",
 					"analyzer", a.def.Label, "namespace", input.Namespace, "modelID", input.ModelID,
-					"variant", variant, "e", q.E, "query", j, "pods", len(perVariant[variant]), "target", out[variant])
+					"variant", variant, "e", q.E, "query", j, "pods", len(vals), "target", out[variant])
 			}
 		}
 	}
@@ -648,11 +662,16 @@ func seriesPodName(labels map[string]string) string {
 // Analyzer's, or the line would be logged every cycle.
 var reportedEmpty sync.Map
 
-// reportEmptyOnce logs, once per query and model, that a demand query
+// emptyKey keys reportedEmpty.
+func emptyKey(qName, namespace, modelID string) string {
+	return qName + "/" + namespace + "/" + modelID
+}
+
+// reportEmptyOnce logs, once per query and model until it returns series again, that a demand query
 // returned no series and is read as 0 demand: a renamed metric or a label
 // typo reads that way too, and lets the model scale down.
 func reportEmptyOnce(ctx context.Context, label, qName, namespace, modelID string) {
-	if _, seen := reportedEmpty.LoadOrStore(qName+"/"+namespace+"/"+modelID, struct{}{}); seen {
+	if _, seen := reportedEmpty.LoadOrStore(emptyKey(qName, namespace, modelID), struct{}{}); seen {
 		return
 	}
 	ctrl.LoggerFrom(ctx).Info("External analyzer demand query returned no series, read as 0 demand; "+
