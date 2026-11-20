@@ -72,6 +72,8 @@ PODS_FIXTURE=''   # JSON for `kubectl get pods -n <ns> -l <sel>`; empty: none
 PODS_RC=0
 PODS_ERR=""
 RS_FIXTURE=''     # JSON for `kubectl get replicasets -n <ns> -l <sel>`; empty: none
+DSET_FIXTURE=''   # JSON for `kubectl get disaggregatedsets <name>`; empty: none.
+                  # Not cleared by reset: the cases that set it clear it.
 KUBECTL_TRACE=""  # a file the pods and logs reads are appended to: they run
                   # inside command substitutions, so a variable set there is lost
 LOGS_FIXTURE=''   # the text `kubectl logs <pod>` prints
@@ -137,6 +139,15 @@ kubectl() {
                     ;;
                 replicasets)
                     printf '%s' "$RS_FIXTURE"
+                    ;;
+                disaggregatedsets)
+                    # DSET_FIXTURE: one set, read by name or listed; empty
+                    # (the default) is a namespace with none.
+                    [ -n "$DSET_FIXTURE" ] || return 0
+                    case "${3:-}" in
+                        -n|-A) printf '%s' "$DSET_FIXTURE" | jq -c '{ items: [ . ] }' ;;
+                        *) printf '%s' "$DSET_FIXTURE" ;;
+                    esac
                     ;;
                 pods)
                     # `get pods -n <ns> -l <selector> -o json`: the replicas
@@ -3880,6 +3891,206 @@ assert_eq "$(grep -c 'no drain half' "$WORK/lws.err")" "0" "drain reason lines"
 reset; f_lws_hooked 600 120
 so_workload_patch_doc ns leaderworkersets w "$POD_LWS" >/dev/null 2>"$WORK/lws.err"
 assert_contains "$(cat "$WORK/lws.err")" "Add a preStop to the leader AND the worker, with the worker terminationGracePeriodSeconds at least the leader one"
+[ "$FAILED" -eq "$before" ] && ok
+
+# --- drain grace: preStop + --shutdown-timeout ------------------------------
+#
+# vLLM --shutdown-timeout N waits up to N s for in-flight requests after
+# SIGTERM, and SIGTERM comes only once the preStop hook ends, so the grace
+# period has to cover sleep + N + 15 s. A grace sized without N SIGKILLs the
+# end of the drain.
+
+# f_drain <grace> <args JSON> [<preStop JSON>]: one vLLM container.
+f_drain() {
+    FIXTURE="$(jq -cn --argjson g "$1" --argjson a "$2" --argjson h "${3:-null}" '
+        {spec:{template:{spec:{terminationGracePeriodSeconds:$g,
+          containers:[{name:"vllm",image:"quay.io/x/vllm-openai:v0.11",args:$a}
+                      + (if $h == null then {} else {lifecycle:{preStop:$h}} end)]}}}}')"
+}
+drain_times() { so_drain_times ns deployments w "$POD_DEPLOY" vllm | tr '\037' '|'; }
+drain_grace() { so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null | yq eval '.spec.template.spec.terminationGracePeriodSeconds' - 2>/dev/null; }
+TO90='["vllm","serve","/models/qwen","--shutdown-timeout","90"]'
+
+CASE="drain grace: no --shutdown-timeout keeps the configured grace, floored at preStop + 15 s"
+reset; f_drain 30 '["vllm","serve","/models/qwen"]'
+before=$FAILED
+assert_eq "$(drain_times)" "0|0|0|" "times"
+assert_eq "$(drain_grace)" "120" "grace"
+assert_not_contains "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" "Its --shutdown-timeout"
+# A configured grace below the preStop sleep itself is raised to cover it.
+assert_eq "$(LLMSM_DRAIN_GRACE_SECONDS=40 drain_grace)" "60" "grace under a 40 s setting"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: a --shutdown-timeout longer than the grace raises it to preStop + timeout + 15 s"
+reset; f_drain 30 "$TO90"
+before=$FAILED
+assert_eq "$(drain_times)" "0|0|90|" "times"
+assert_eq "$(drain_grace)" "150" "grace"
+assert_contains "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" "45 s of preStop"
+assert_eq "$(LLMSM_DRAIN_SLEEP_SECONDS=60 drain_grace)" "165" "grace with a 60 s preStop"
+# The =N form inside a shell command.
+f_drain 30 '["/bin/sh","-c","exec vllm serve /models/qwen --shutdown-timeout=200 --port 8000"]'
+assert_eq "$(drain_grace)" "260" "grace, =N in sh -c"
+# The underscore spelling, and the last one wins, as argparse reads it.
+f_drain 30 '["vllm","serve","/models/qwen","--shutdown_timeout","10","--shutdown-timeout","120"]'
+assert_eq "$(drain_grace)" "180" "grace, last flag"
+# A longer grace than the drain needs is kept.
+f_drain 300 "$TO90"
+assert_eq "$(drain_grace)" "300" "grace, longer kept"
+# The plan note for an unhooked engine says what the grace must be.
+f_drain 30 "$TO90"
+assert_contains "$(so_drain_note ns deployments w "$POD_DEPLOY")" "the grace period needs at least 150 s"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: a preStop sleep plus the timeout over the grace is reported, never patched"
+reset; f_drain 90 "$TO90" '{"exec":{"command":["/bin/sh","-c","sleep 30"]}}'
+before=$FAILED
+assert_eq "$(drain_times)" "1|30|90|" "times"
+note="$(so_drain_note ns deployments w "$POD_DEPLOY")"
+assert_contains "$note" "30 s of preStop + 90 s of --shutdown-timeout + 15 s = 135 s, and terminationGracePeriodSeconds is 90"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>"$WORK/drain.err")"
+assert_contains "$(cat "$WORK/drain.err")" "ns/w: Scale-down can still cut in-flight requests"
+assert_not_contains "$doc" "terminationGracePeriodSeconds:"
+assert_not_contains "$doc" "preStop"
+# At the boundary it is quiet; one second under, it is not.
+f_drain 135 "$TO90" '{"exec":{"command":["/bin/sh","-c","sleep 30"]}}'
+assert_eq "$(so_drain_note ns deployments w "$POD_DEPLOY")" "" "note at 135"
+f_drain 134 "$TO90" '{"exec":{"command":["/bin/sh","-c","sleep 30"]}}'
+assert_contains "$(so_drain_note ns deployments w "$POD_DEPLOY")" "= 135 s"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: every hook shape is read, and what cannot be read counts as 0 s and says so"
+reset
+before=$FAILED
+f_drain 30 '["vllm","serve","/models/qwen"]' '{"exec":{"command":["sleep","45"]}}'
+assert_eq "$(drain_times)" "1|45|0|" "argv sleep"
+assert_contains "$(so_drain_note ns deployments w "$POD_DEPLOY")" "= 60 s, and terminationGracePeriodSeconds is 30"
+f_drain 300 "$TO90" '{"sleep":{"seconds":20}}'
+assert_eq "$(drain_times)" "1|20|90|" "sleep action"
+f_drain 300 "$TO90" '{"exec":{"command":["/bin/sh","-c","sleep 2m"]}}'
+assert_eq "$(drain_times)" "1|120|90|" "minutes"
+f_drain 300 "$TO90" '{"exec":{"command":["/bin/sh","-c","sleep 5; curl -s localhost:8000/drain; /bin/sleep 10s"]}}'
+assert_eq "$(drain_times)" "1|15|90|" "two sleeps"
+f_drain 300 "$TO90" '{"exec":{"command":["/bin/sh","-c","sleep infinity; nosleep 9"]}}'
+assert_eq "$(drain_times)" "1|0|90|sleep" "no readable sleep"
+f_drain 60 "$TO90" '{"httpGet":{"path":"/drain","port":8000}}'
+note="$(so_drain_note ns deployments w "$POD_DEPLOY")"
+assert_contains "$note" "0 s of preStop + 90 s of --shutdown-timeout + 15 s = 105 s"
+assert_contains "$note" "could not be read and counts as 0 s"
+f_drain 30 '["/bin/sh","-c","vllm serve /models/qwen --shutdown-timeout $(T)"]' '{"exec":{"command":["sleep","45"]}}'
+assert_eq "$(drain_times)" "1|45|0|timeout" "a variable timeout"
+assert_contains "$(so_drain_note ns deployments w "$POD_DEPLOY")" "is not a number this can read"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: a hooked Deployment too short for its drain is not in the all-clear"
+reset; LIST_FIXTURE="$(serving_list)"
+before=$FAILED
+f_cached_properly
+run_driver
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) already drain on scale-down"   # anchor
+f_cached_properly
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].args += ["--shutdown-timeout","90"]')"
+run_driver
+assert_eq "$DRIVER_RC" "0" "return code"
+assert_contains "$(cat "$DRIVER_LOG")" "45 s of preStop + 90 s of --shutdown-timeout + 15 s = 150 s"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain"
+assert_not_contains "$(cat "$DRIVER_LOG")" "already drain on scale-down"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: LWS leader and worker templates are each checked, and counted once"
+reset; f_lws_hooked 120 120
+before=$FAILED
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].args += ["--shutdown-timeout","120"]')"
+so_workload_patch_doc ns leaderworkersets w "$POD_LWS" >/dev/null 2>"$WORK/lws.err"
+assert_contains "$(cat "$WORK/lws.err")" "LeaderWorkerSet ns/w (workerTemplate): Scale-down can still cut in-flight requests"
+assert_contains "$(cat "$WORK/lws.err")" "45 s of preStop + 120 s of --shutdown-timeout + 15 s = 180 s"
+assert_not_contains "$(cat "$WORK/lws.err")" "(leaderTemplate): Scale-down"
+assert_eq "$(grep -c 'no drain half' "$WORK/lws.err")" "0" "no-drain-half lines"
+# The leader too, and the all-clear leaves the LWS out.
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].args += ["--shutdown-timeout","120"]')"
+so_workload_patch_doc ns leaderworkersets w "$POD_LWS" >/dev/null 2>"$WORK/lws.err"
+assert_contains "$(cat "$WORK/lws.err")" "LeaderWorkerSet ns/w (leaderTemplate): Scale-down can still cut"
+LIST_FIXTURE='{"items":[{"metadata":{"name":"w","labels":{"llm-d.ai/role":"decode"}}}]}'
+LIST_FIXTURE_LWS='{"items":[{"metadata":{"name":"l","labels":{"llm-d.ai/role":"decode"}}}]}'
+CRD_RC=0
+FIXTURE_MAP[l]="$FIXTURE"
+f_cached_properly; FIXTURE_MAP[w]="$FIXTURE"
+run_driver
+assert_eq "$DRIVER_RC" "0" "return code"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) already drain on scale-down"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: DisaggregatedSet roles get the same check, leader falling back to worker"
+reset; CRD_RC=0
+before=$FAILED
+# prefill: worker template only, a 30 s hook, --shutdown-timeout=90, grace 90.
+# decode: a leader with no hook, --shutdown-timeout 90, grace 180.
+DSET_FIXTURE="$(jq -cn '
+    def eng($args; $grace; $hook):
+        { metadata: { labels: { "llm-d.ai/role": "decode" } },
+          spec: { terminationGracePeriodSeconds: $grace,
+                  containers: [ { name: "routing-proxy", image: "quay.io/x/proxy:1" },
+                                ( { name: "vllm", image: "quay.io/x/vllm-openai:v0.11",
+                                    command: ["/bin/sh", "-c"], args: [$args] }
+                                  + (if $hook then { lifecycle: { preStop: { exec: { command: ["sleep", "30"] } } } } else {} end) ) ] } };
+    { metadata: { name: "glm" },
+      spec: { roles: [
+        { name: "prefill", spec: { leaderWorkerTemplate: {
+            workerTemplate: eng("exec vllm serve /models/glm --shutdown-timeout=90"; 90; true) } } },
+        { name: "decode", spec: { leaderWorkerTemplate: {
+            leaderTemplate: eng("exec vllm serve /models/glm --shutdown-timeout 90"; 180; false),
+            workerTemplate: eng("exec vllm serve /models/glm --headless"; 180; false) } } } ] } }')"
+assert_eq "$(so_drain_times ns disaggregatedsets glm "$(so_dset_role_pod_path 0)" vllm | tr '\037' '|')" "1|30|90|" "prefill times"
+assert_contains "$(so_drain_note ns disaggregatedsets glm "$(so_dset_role_pod_path 0)")" "30 s of preStop + 90 s of --shutdown-timeout + 15 s = 135 s"
+assert_contains "$(so_drain_note ns disaggregatedsets glm "$(so_dset_role_pod_path 1)")" "the grace period needs at least 150 s"
+out="$(so_workload_report_dsets ns 2>"$WORK/dset.err")"
+assert_eq "$out" "2 2" "roles checked, roles with a gap"
+assert_contains "$(cat "$WORK/dset.err")" "role prefill (spec.roles[0]): not patched"
+assert_contains "$(cat "$WORK/dset.err")" "drain: Scale-down can still cut in-flight requests: vllm has a preStop hook"
+assert_contains "$(cat "$WORK/dset.err")" "drain: Scale-down will cut in-flight requests: vllm declares no preStop hook"
+DSET_FIXTURE=''
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: a short hook beside a written document is summarised; bad numbers are refused or capped"
+reset; LIST_FIXTURE="$(serving_list)"
+before=$FAILED
+# A repository id with no volume: a weights document is written, the grace is not.
+f_drain 90 '["vllm","serve","Qwen/Qwen3-0.6B","--shutdown-timeout","90"]' '{"exec":{"command":["sleep","30"]}}'
+run_driver
+assert_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "#   cache:"   # anchor: a document was written
+assert_not_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "terminationGracePeriodSeconds:"
+assert_contains "$(cat "$DRIVER_LOG")" "1 model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain"
+assert_contains "$(cat "$DRIVER_LOG")" "That is not in"
+# A sleep setting the arithmetic cannot use is refused before anything is read.
+LLMSM_DRAIN_SLEEP_SECONDS=45s run_driver
+assert_eq "$DRIVER_RC" "1" "return code, LLMSM_DRAIN_SLEEP_SECONDS=45s"
+assert_contains "$(cat "$DRIVER_LOG")" "LLMSM_DRAIN_SLEEP_SECONDS must be a whole number of seconds"
+# The plan note falls back to 45 s instead of ending the run.
+f_drain 30 "$TO90"
+assert_contains "$(LLMSM_DRAIN_SLEEP_SECONDS=45s so_drain_note ns deployments w "$POD_DEPLOY")" "the grace period needs at least 150 s"
+# Ten digits are not read; a tab separates like a space.
+f_drain 30 '["vllm","serve","/models/qwen","--shutdown-timeout","9999999999"]'
+assert_eq "$(drain_times)" "0|0|0|timeout" "ten-digit timeout"
+f_drain 30 '["/bin/sh","-c","vllm serve /models/qwen --shutdown-timeout\t90"]'
+assert_eq "$(drain_times)" "0|0|90|" "tab-separated timeout"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="drain grace: an unreadable timeout without a hook is said; settings are read as decimal"
+reset
+before=$FAILED
+f_drain 30 '["/bin/sh","-c","vllm serve /models/qwen --shutdown-timeout $(T)"]'
+so_workload_patch_doc ns deployments w "$POD_DEPLOY" >/dev/null 2>"$WORK/drain.err"
+assert_contains "$(cat "$WORK/drain.err")" "ns/w: --shutdown-timeout is not a number this can read"
+assert_contains "$(so_drain_note ns deployments w "$POD_DEPLOY")" "Its --shutdown-timeout is not a number this can read"
+# A sleep action too large to add up is not read as a number.
+f_drain 300 "$TO90" '{"sleep":{"seconds":10000000000}}'
+assert_eq "$(drain_times)" "1|0|90|sleep" "ten-digit sleep action"
+# 0200 is 200 seconds, not octal 128, and it is written as 200.
+LIST_FIXTURE="$(serving_list)"
+f_drain 30 '["vllm","serve","/models/qwen"]'
+LLMSM_DRAIN_GRACE_SECONDS=0200 run_driver
+assert_contains "$(cat "$DRIVER_OUT" 2>/dev/null)" "terminationGracePeriodSeconds: 200"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="LWS: a healthy LWS beside a healthy Deployment is an all-clear, nothing skipped"

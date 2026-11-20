@@ -1408,9 +1408,56 @@ routing to it meanwhile. So the window covers new arrivals still being sent here
 as well as generations already running. That is why the emitted patch sleeps 45s,
 not the 30s above. If the engine has a drain endpoint, call that instead.
 
-Set `terminationGracePeriodSeconds` above the preStop duration plus the longest
-generation. The grace period is the total budget; the kubelet sends SIGKILL when
-it expires, whatever the hook is doing.
+The grace period is the total budget: the kubelet sends SIGKILL when it
+expires, whatever the hook is doing. How long it must be is
+[below](#sizing-the-grace-period).
+
+### Sizing the grace period
+
+The grace period must cover the whole drain:
+
+```
+terminationGracePeriodSeconds >= preStop sleep + --shutdown-timeout + 15
+```
+
+The engine gets SIGTERM only after the preStop hook ends. With vLLM's
+`--shutdown-timeout N`, it then waits up to N seconds for in-flight requests
+before it exits. The 15 seconds are for the exit itself. Without
+`--shutdown-timeout`, the preStop sleep is the only drain, and it is what has
+to cover your longest generation.
+
+Example: `--shutdown-timeout 90` and the 45 s preStop the patch adds need at
+least 150 s. A grace of 120 is 30 s short: it cuts the last 15 s of the drain
+and leaves no time to exit.
+
+What `make workload-patch` does with it:
+
+- **No preStop hook on the engine.** The patch adds the hook and sets the grace
+  to the largest of the current value, `LLMSM_DRAIN_GRACE_SECONDS`, and
+  `LLMSM_DRAIN_SLEEP_SECONDS + --shutdown-timeout + 15`.
+- **A preStop hook already there.** Nothing is written. If the grace is shorter
+  than the hook's sleep plus `--shutdown-timeout` plus 15, the console says so
+  (`Scale-down can still cut in-flight requests ... Set
+  terminationGracePeriodSeconds to at least N`), and the workload is left out of
+  the all-clear. Fix the grace where the pod spec is owned.
+- **LeaderWorkerSet and DisaggregatedSet.** The same check runs on the leader
+  and the worker template of a LeaderWorkerSet, and on the leader template of
+  each role of a set (its worker template when it has no leader). It is
+  reported, never written. `make scaledobjects-plan` checks the leader template
+  only.
+
+How the numbers are read:
+
+- `--shutdown-timeout N`, `--shutdown-timeout=N` and `--shutdown_timeout`, in
+  `args` or inside a `sh -c` command. The last one wins, as in vLLM. Not set
+  means 0.
+- The hook's sleep: a `sleep` action's `seconds`, or the sum of every
+  `sleep N` (`N`, `Ns` or `Nm`) in an `exec` hook. A sleep inside a loop counts
+  once; sleeps on two branches of an `if`, or one sent to the background, both
+  count.
+- A value it cannot read (an `httpGet` hook, `sleep infinity`, a timeout in a
+  variable, more than nine digits) counts as 0 s, and the message says so. Read the numbers in the
+  message against your hook before you raise the grace.
 
 `make scaledobjects-plan` reports a missing hook per workload, because
 registering a ScaledObject is when scale-down becomes possible:
@@ -1478,8 +1525,9 @@ kubectl get deploy -n <ns> -o custom-columns=NAME:.metadata.name,GRACE:.spec.tem
 A null grace period or preStop in either output means the key path is wrong for
 your chart version. Last check: `make scaledobjects-plan` drops the
 `Scale-down will cut in-flight requests` note once the engine container has a
-preStop hook. It ignores the grace period (`so_drain_note` in
-`deploy/lib/scaledobject.sh`), so check that with the `kubectl` line above.
+preStop hook. It then checks the grace period only against the hook's sleep
+and `--shutdown-timeout` ([above](#sizing-the-grace-period)), not against your
+longest generation, so check that with the `kubectl` line above.
 
 ### On a LeaderWorkerSet
 
@@ -1734,7 +1782,7 @@ objects. Read what it prints first:
 | `LLMSM_WORKLOAD_PATCH_APPLY` | `false` | `true` also applies the drain half to the live workloads |
 | `LLMSM_WEIGHTS_NODE_AFFINITY` | `preferred` | the weights gate's node affinity: `preferred`, `required` or `none` ([Gate replicas on the weights](#gate-replicas-on-the-weights)) |
 | `LLMSM_WEIGHTS_WAIT_TIMEOUT` | `3600` | seconds the `wait-for-weights` init container waits for the node's copy before it exits 1 |
-| `LLMSM_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered |
+| `LLMSM_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered, and it is raised to the preStop sleep plus `--shutdown-timeout` plus 15 when that is longer ([Sizing the grace period](#sizing-the-grace-period)) |
 | `LLMSM_DRAIN_SLEEP_SECONDS` | `45` | the preStop sleep — the drain window itself |
 | `LLMSM_MODEL_PVC_NAME` | discovered, else `model-pvc` | the claim the emitted weights volume names. Setting it wins over discovery |
 | `LLMSM_MODEL_VOLUME_NAME` | `model-storage` | the volume name in the emitted patch |
