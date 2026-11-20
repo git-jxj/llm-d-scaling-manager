@@ -59,7 +59,7 @@ get:
   windows:
     note: |
       On Windows (amd64), from Git Bash, which has curl and sha256sum. cosign as above, when you have it.
-      The rest of this guide runs as written, with bin/capacity-planner.exe for bin/capacity-planner.
+      The planner commands below run as written in Git Bash.
     run: |
       export V=<release, v0.12.2 or later>
       B=capacity-planner-${V}-windows-amd64.exe

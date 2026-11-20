@@ -19,8 +19,11 @@ const uploadDirLocks = true
 const uploadDirLockName = "lock"
 
 // lockHeld reports whether err is lockUploadDir's on a directory another
-// server holds.
-func lockHeld(err error) bool { return errors.Is(err, windows.ERROR_SHARING_VIOLATION) }
+// server holds, or whose lock a sweeping server is removing (access denied
+// on a file pending delete, where Windows deletes the POSIX way).
+func lockHeld(err error) bool {
+	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED)
+}
 
 // lockUploadDir opens dir's lock file, made when missing, shared with no
 // one: an error when another server holds it. The system closes it when the

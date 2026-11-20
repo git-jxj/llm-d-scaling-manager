@@ -128,7 +128,7 @@ On Windows:
 <!-- guide:get.windows start -->
 ```bash
 # On Windows (amd64), from Git Bash, which has curl and sha256sum. cosign as above, when you have it.
-# The rest of this guide runs as written, with bin/capacity-planner.exe for bin/capacity-planner.
+# The planner commands below run as written in Git Bash.
 export V=<release, v0.12.2 or later>
 B=capacity-planner-${V}-windows-amd64.exe
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
@@ -140,9 +140,9 @@ bin/capacity-planner.exe version
 <!-- guide:get.windows end -->
 
 In PowerShell, `Get-FileHash -Algorithm SHA256 <file>` prints the hash to
-compare with the file's line in `SHA256SUMS`. On Windows, `serve` keeps
-uploads in `%TEMP%`; Ctrl-C stops it and removes them. Open the page with
-`start http://127.0.0.1:8080/`.
+compare with the file's line in `SHA256SUMS`. On Windows, open the page
+with `start http://127.0.0.1:8080/`; `serve --allow-upload` keeps uploads
+in `%TMP%` (usually `%TEMP%`), and Ctrl-C stops it and removes them.
 
 Or build it from a checkout:
 

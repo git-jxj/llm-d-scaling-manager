@@ -20,9 +20,11 @@ T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 FAILED=0
 PASSED=0
-# One ok or FAIL per case: the five platforms' build settings, and the host
-# binary's version line. A run that stops early fails on the count.
-EXPECT_CASES=6
+# One ok or FAIL per case: the five platforms' build settings, the host
+# binary's version line, and the windows-only files vetted and their tests
+# built (no other PR check compiles them). A run that stops early fails on
+# the count.
+EXPECT_CASES=7
 ok()   { printf '  ok   %s\n' "$1"; PASSED=$((PASSED + 1)); }
 fail() { printf '  FAIL %s\n' "$1"; FAILED=$((FAILED + 1)); }
 
@@ -51,6 +53,12 @@ host="$T/capacity-planner-$V-$(go env GOOS)-$(go env GOARCH)$(exe "$(go env GOOS
 got="$("$host" version 2>&1 || true)"
 want="capacity-planner $V (commit $COMMIT)"
 if [ "$got" = "$want" ]; then ok "the host binary prints: $got"; else fail "the host binary prints '$got', want '$want'"; fi
+
+if out="$(GOOS=windows go vet ./cmd/capacity-planner 2>&1 && GOOS=windows go test -c -o /dev/null ./cmd/capacity-planner 2>&1)"; then
+    ok "windows: the planner and its tests vet and build"
+else
+    fail "windows: the planner or its tests do not vet or build: $out"
+fi
 
 echo ""
 echo "capacity planner dist: $PASSED passed, $FAILED failed"

@@ -96,7 +96,7 @@ func newUploadStore(maxBytes int64, warn io.Writer) (*uploadStore, error) {
 		// filesystem's, such as NFS, which may not lock a directory.
 		if err != nil && !lockHeld(err) && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("cannot lock the upload directory (%w): the uploads need a local filesystem; "+
-				"point TMPDIR at one, in a Pod an emptyDir", err)
+				"point TMPDIR (TMP on Windows) at one, in a Pod an emptyDir", err)
 		}
 	}
 	return nil, errors.New("the upload directory was removed as it was made")
@@ -119,7 +119,9 @@ func sweepUploadDirs(tmp string, warn io.Writer) {
 			}
 			continue
 		}
-		if err := removeLockedDir(dir, lock); err != nil && warn != nil {
+		// Held again by its owner, which had not locked it yet (Windows,
+		// where the lock goes before the removal): it is kept, rightly.
+		if err := removeLockedDir(dir, lock); err != nil && !lockHeld(err) && warn != nil {
 			fmt.Fprintf(warn, "capacity-planner: removing a stopped server's uploads: %v\n", err)
 		}
 	}
