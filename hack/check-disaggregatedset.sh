@@ -63,6 +63,7 @@ assert_eq() { [ "$1" = "$2" ] || fail "${3:-value}: want '$2', got '$1'"; }
 # decode still Static (the shape a rollout-managed deployment starts from),
 # neither with a leader template, so both lead from the worker template. The
 # engine is the SECOND container: a routing sidecar comes first.
+# The hooked role's grace period covers its 30 s sleep and the 15 s margin.
 role() {
     local name="$1" mode="$2" prestop="$3"
     jq -n --arg name "$name" --arg mode "$mode" --argjson prestop "$prestop" '
@@ -71,7 +72,8 @@ role() {
                   leaderWorkerTemplate: { size: 4,
                     workerTemplate: {
                       metadata: { labels: { "llm-d.ai/role": $name, "llm-d.ai/model": "glm" } },
-                      spec: { containers: [
+                      spec: { terminationGracePeriodSeconds: (if $prestop then 60 else 30 end),
+                              containers: [
                         { name: "routing-proxy", image: "registry.example/router:v1" },
                         ( { name: "vllm", image: "registry.example/llm-d-cuda:v1",
                             command: ["/bin/bash", "-c"],
