@@ -193,6 +193,8 @@ plan.scenario object
 plan.scenario.arrivalCV2 number
 plan.scenario.assume object
 plan.scenario.assume.a number
+plan.scenario.assume.itlB number
+plan.scenario.assume.itlBFromFloor boolean
 plan.scenario.assume.promptCV number
 plan.scenario.assume.routerHop number
 plan.scenario.assume.tpotRatio number
@@ -253,6 +255,8 @@ plan.whatifSchema string
 planRequest object
 planRequest.assume object
 planRequest.assume.a number
+planRequest.assume.itlB number
+planRequest.assume.itlBFromFloor boolean
 planRequest.assume.promptCV number
 planRequest.assume.routerHop number
 planRequest.assume.tpotRatio number
@@ -499,6 +503,8 @@ reportRequest object
 reportRequest.arrivalCV2 number
 reportRequest.assume object
 reportRequest.assume.a number
+reportRequest.assume.itlB number
+reportRequest.assume.itlBFromFloor boolean
 reportRequest.assume.promptCV number
 reportRequest.assume.routerHop number
 reportRequest.assume.tpotRatio number
@@ -580,6 +586,8 @@ size.whatifSchema string
 sizeRequest object
 sizeRequest.assume object
 sizeRequest.assume.a number
+sizeRequest.assume.itlB number
+sizeRequest.assume.itlBFromFloor boolean
 sizeRequest.assume.promptCV number
 sizeRequest.assume.routerHop number
 sizeRequest.assume.tpotRatio number

@@ -24,6 +24,11 @@ const (
 // (pricedFleet.decodeSide).
 const sideLine = "line"
 
+// termITLBFloor is the inputs term of the intercept B the floor below the band
+// gives a line refused PinnedDefaultB (floorB): what assume.itlBFromFloor
+// would price at.
+const termITLBFloor = "itlBFloor"
+
 // inputsDoc is the inputs document of a fleet read at the recorded counts:
 // what the source saw, the policy's SLO, and every term with its source, in
 // the words and figures the CLI's JSON gives them (wireTTFT, wireInputs). A
@@ -161,7 +166,15 @@ func termsOf(f *answerFlags, st *learnreplay.State, pv *pricedVariant, pf *price
 		add("prefill", "", refusedBy(*pf.refused))
 	}
 	if knee := whatif.KneeRate(pv.decode); isRefused(knee) {
-		add("itlLine", "", refusedBy(pv.qualify(knee).(whatif.Unanswerable)))
+		u := pv.qualify(knee).(whatif.Unanswerable)
+		add("itlLine", "", refusedBy(u))
+		// The B a typed assume.itlBFromFloor would price at, for the page to
+		// show beside its ITL B box.
+		if u.Reason == whatif.PinnedDefaultB && pv.state.Tier == whatif.TierPinnedB && pv.state.Refitted {
+			if b, why := floorB(pv.state); why == "" {
+				add(termITLBFloor, "the floor below the band, not priced unless assumed", figure(b, "s"))
+			}
+		}
 	} else {
 		add("itlA", pv.state.Tier, figure(pv.decode.Line.A, "s"))
 		add("itlB", pv.state.Tier, figure(pv.decode.Line.B, "s"))

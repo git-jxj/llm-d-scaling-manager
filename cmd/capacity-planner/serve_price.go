@@ -425,6 +425,14 @@ func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
 		f.tpotRatio = *a.TPOTRatio
 		set("assume-tpot-ratio")
 	}
+	switch {
+	case a.ITLBFromFloor:
+		f.assumeITLB = itlBFloor
+		set("assume-itl-b")
+	case a.ITLB != nil:
+		f.assumeITLB = seconds(*a.ITLB).String()
+		set("assume-itl-b")
+	}
 	if k.ArrivalCV2 != nil {
 		f.arrivalCV2 = *k.ArrivalCV2
 		set("arrival-cv2")

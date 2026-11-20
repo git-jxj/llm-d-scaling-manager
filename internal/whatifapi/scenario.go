@@ -310,8 +310,24 @@ func (sc *Scenario) checkAssume() error {
 	if a.TPOTRatio != nil && (sc.TPOT == nil || sc.TPOT.Statistic == statisticMean) {
 		return InputErrorf("assume.tpotRatio needs a TPOT percentile (slo.tpot.statistic pNN)")
 	}
+	switch {
+	case a.ITLB != nil && a.ITLBFromFloor:
+		return InputErrorf("assume.itlB and assume.itlBFromFloor both state B; give one")
+	case a.ITLB != nil && !(usable(*a.ITLB) && *a.ITLB >= MinAssumedITLB && *a.ITLB <= MaxAssumedITLB):
+		return InputErrorf("assume.itlB %g, want seconds from %g to %g", *a.ITLB, MinAssumedITLB, MaxAssumedITLB)
+	}
 	return nil
 }
+
+// MaxAssumedITLB is the largest intercept B, in seconds, assume.itlB takes
+// (the CLI's --assume-itl-b takes the same): a token a second with the cache
+// empty is no engine's floor.
+const MaxAssumedITLB = 1.0
+
+// MinAssumedITLB is the smallest intercept B, in seconds, assume.itlB takes:
+// a microsecond, under any engine's step and well above the CLI's nanosecond
+// rounding.
+const MinAssumedITLB = 1e-6
 
 // bucketTargets sets a target per bucket on the "if all traffic were bucket
 // b" view: the request's, else the mix target.

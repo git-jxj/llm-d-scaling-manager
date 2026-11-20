@@ -233,7 +233,7 @@ func TestPageSavesAndCompares(t *testing.T) {
 	astart := strings.Index(js, "const ASSUMABLE = [")
 	require.GreaterOrEqual(t, astart, 0, "ASSUMABLE not found")
 	assumed := regexp.MustCompile(`key: "([A-Za-z]+)"`).FindAllStringSubmatch(js[astart:astart+strings.Index(js[astart:], "];")], -1)
-	require.Len(t, assumed, 4, "the assumed terms' keys")
+	require.Len(t, assumed, 5, "the assumed terms' keys")
 	lstart, lend := strings.Index(sjs, "const LINK_NUMBERS"), strings.Index(sjs, "// CONTROL is")
 	require.True(t, lstart >= 0 && lend > lstart, "the link's keys not found")
 	admitted := sjs[lstart:lend]

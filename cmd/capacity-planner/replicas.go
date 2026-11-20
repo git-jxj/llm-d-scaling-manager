@@ -264,6 +264,7 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 			fmt.Fprintf(&b, "%-16s%s\n", "shape", a.pv.shapeText())
 			fmt.Fprintf(&b, "%-16s%s\n", "engine", engineRowText(a.pv.state.Params))
 			checkRow(&b, "%-16s%s\n", "line check", a.pv)
+			itlBRow(&b, "%-16s%s\n", "ITL B", a.pv)
 			if a.ttft != nil {
 				a.ttft.writeRows(&b)
 				flagsLine(&b, a.pv, a.ttft.results()...)
@@ -304,6 +305,7 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 		fmt.Fprintf(&b, "%-16s%s\n", "shape", a.pv.shapeText())
 		fmt.Fprintf(&b, "%-16s%s\n", "engine", engineRowText(a.pv.state.Params))
 		checkRow(&b, "%-16s%s\n", "line check", a.pv)
+		itlBRow(&b, "%-16s%s\n", "ITL B", a.pv)
 		results := []whatif.Result{a.slo.KneeRate, a.slo.Rate, a.slo.MeanTPOT, a.slo.PercentileTPOT}
 		if a.ttft != nil {
 			results = append(results, a.ttft.results()...)
@@ -331,6 +333,14 @@ func writeReplicasText(out io.Writer, f *answerFlags, st *learnreplay.State, var
 // checkRow prints the line check's row, none with no line.
 func checkRow(b *strings.Builder, layout, label string, pv pricedVariant) {
 	if s := pv.checkText(); s != "" {
+		fmt.Fprintf(b, layout, label, s)
+	}
+}
+
+// itlBRow prints what --assume-itl-b did to the line, none when it was not
+// set.
+func itlBRow(b *strings.Builder, layout, label string, pv pricedVariant) {
+	if s := pv.itlBRowText(); s != "" {
 		fmt.Fprintf(b, layout, label, s)
 	}
 }

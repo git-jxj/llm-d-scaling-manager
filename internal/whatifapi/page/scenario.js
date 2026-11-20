@@ -25,7 +25,7 @@ const MAX_SCENARIOS = 50, MAX_NAME = 80, MAX_LINK = 4096, MAX_FILE = 65536;
 // the free names (a recording, a namespace, a model, a variant, a bucket),
 // and the keys with a fixed set of values or a form of their own (edges).
 const LINK_NUMBERS = new Set(["cycle", "prefill", "decode", "rate", "ttft", "tpot", "ratio", "headroom", "out", "max",
-  "vp", "a", "promptCV", "routerHop"]);
+  "vp", "a", "promptCV", "routerHop", "itlB"]);
 const LINK_NAMES = new Set(["recording", "namespace", "model", "prefillVariant", "decodeVariant", "priceAs"]);
 const STAT_WORD = /^(mean|p[0-9]{1,2}(\.[0-9]{1,3})?)$/;
 const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD,
@@ -541,7 +541,7 @@ const REFUSAL_WORDS = {
   NoFixedLatency: "no prefill fixed latency learned (assume a to price it)",
   NoTPOTHistogram: "no TPOT histogram to read a percentile from",
   TPOTBucketTooWide: "the TPOT histogram is too coarse for a percentile",
-  PinnedDefaultB: "the decode line rests on a default, not a measurement",
+  PinnedDefaultB: "the decode line rests on a default, not a measurement (type ITL B under Assume a term to price it)",
   NoLine: "no decode line learned",
   NoTraffic: "no traffic to judge",
 };
@@ -555,6 +555,7 @@ function refusalText(f) {
 // REPORT_FLAG_WORDS are the flags a report carries most, in a short phrase.
 // The rest are counted, and their codes kept for a tooltip.
 const REPORT_FLAG_WORDS = {
+  AssumedITLB: "assumes the decode ITL B",
   UnvalidatedTTFT: "TTFT is not validated",
   AssumedVP: "assumes the prefill speed you typed",
   AssumedA: "assumes the prefill fixed latency you typed",

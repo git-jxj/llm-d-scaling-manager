@@ -393,6 +393,16 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		in: wireTTFT{Percentile: q.q, TargetSeconds: q.seconds, Assumed: []string{}}}
 	if pv != nil {
 		pf.in.DecodeVariant = pv.state.Variant
+		// Before any refusal: decode is priced on a stated B whether or not
+		// prefill prices.
+		if w := pv.itlBWords(); w != "" {
+			pf.assume("%s", w)
+			pf.stated = append(pf.stated, "--assume-itl-b")
+		}
+		// Asked and not used: said where the asker reads, not dropped.
+		if w := pv.itlBNotUsed(); w != "" {
+			pf.assume("%s", w)
+		}
 		if domain.CanonicalRole(pv.state.Role) == domain.RoleBoth {
 			pf.refused = aggregatedRefusal(pv.state.Variant)
 			return pf

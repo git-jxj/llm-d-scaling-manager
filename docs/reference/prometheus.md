@@ -1465,6 +1465,7 @@ model reads all of them `0`, including the two marked "on every answer":
 | `VPLowerBound` | `V_P` is a lower bound. |
 | `AFromEngineTiming` | Capacity planner only, never on this metric: the fixed latency `a` was fitted from the prefill engines' own timing, because the fleet had too few quiet minutes. TTFT on such a fleet is not validated. |
 | `AdaptedBandFloor` | Capacity planner only, never on this metric: the decode latency line was read with the KV-fill band's floor lowered to the fill the fleet had, because it never filled far enough above the default floor. |
+| `AssumedITLB` | Capacity planner only, never on this metric: the decode latency line's intercept B was stated (`--assume-itl-b`, API `assume.itlB` or `assume.itlBFromFloor`) in place of the 6 ms default, and its slope refitted through it. |
 | `VPAboveSlopeBound` | `V_P` is above what the low-load fit allows: one of the two is wrong. |
 | `VPShapeMoved` | The mean prompt is more than 1.2 times away from the one `V_P` was learned at, with no curve to rescale by. |
 | `VPScaledToPrompt` | `V_P` was rescaled to a longer prompt. It read 1.5% high on the one measured point. |

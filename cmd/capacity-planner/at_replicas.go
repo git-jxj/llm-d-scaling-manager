@@ -219,6 +219,18 @@ func (f *answerFlags) reportQuery(rf reportFlags) (whatifapi.ReportQuery, error)
 	if f.set["assume-tpot-ratio"] {
 		a.TPOTRatio = &f.tpotRatio
 	}
+	if f.set["assume-itl-b"] {
+		floor, b, err := parseAssumeITLB(f.assumeITLB)
+		if err != nil {
+			return q, err
+		}
+		if floor {
+			a.ITLBFromFloor = true
+		} else {
+			x := b.Seconds()
+			a.ITLB = &x
+		}
+	}
 	if f.set["arrival-cv2"] {
 		q.ArrivalCV2 = &f.arrivalCV2
 	}

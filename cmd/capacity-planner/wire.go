@@ -248,6 +248,33 @@ type wireLine struct {
 	TierChanges int `json:"tierChanges"`
 	// Check is the line against the recording's rows, absent with no line.
 	Check *wireLineCheck `json:"check,omitempty"`
+	// AssumedB is what --assume-itl-b did to the line, absent without it.
+	AssumedB *wireAssumedB `json:"assumedB,omitempty"`
+}
+
+// wireAssumedB is a stated intercept B (interceptAssumption) on the wire.
+// Source is stated or floor; Applied says the line was refitted through
+// Seconds, and Why, when it was not, says why. FloorSeconds and FloorFill
+// are the floor below the band B was read from, DefaultA the slope on the
+// default intercept.
+type wireAssumedB struct {
+	Source       string  `json:"source"`
+	Applied      bool    `json:"applied"`
+	Seconds      float64 `json:"seconds,omitempty"`
+	Why          string  `json:"why,omitempty"`
+	FloorSeconds float64 `json:"floorSeconds,omitempty"`
+	FloorFill    float64 `json:"floorFill,omitempty"`
+	DefaultA     float64 `json:"defaultA,omitempty"`
+}
+
+// wireAssumed is pv's stated intercept on the wire, nil with none asked.
+func wireAssumed(pv pricedVariant) *wireAssumedB {
+	a := pv.itlB
+	if !a.Asked {
+		return nil
+	}
+	return &wireAssumedB{Source: a.Source, Applied: a.Applied, Seconds: a.Seconds, Why: a.Why,
+		FloorSeconds: a.FloorSeconds, FloorFill: a.FloorFill, DefaultA: a.DefaultA}
 }
 
 // wireLineCheck is whatif.LineCheck on the wire. Status is ok,
@@ -560,7 +587,7 @@ func inputsOf(f *answerFlags, pv pricedVariant) *wireInputs {
 		Line: wireLine{A: pv.decode.Line.A, B: pv.decode.Line.B, Tier: pv.state.Tier,
 			BorrowedFrom: pv.state.BorrowedFrom, Readings: len(pv.state.LineReadings),
 			Resamples: pv.lines.Drawn, TierChanges: pv.lines.TierChanges(),
-			FromCycle: pv.state.ReadingsFrom, ToCycle: pv.state.ReadingsTo, Check: wireCheck(pv)},
+			FromCycle: pv.state.ReadingsFrom, ToCycle: pv.state.ReadingsTo, Check: wireCheck(pv), AssumedB: wireAssumed(pv)},
 		FillBand:       wireInterval{Lo: pv.decode.Band.Lo, Hi: pv.decode.Band.Hi},
 		CapacityTokens: pv.decode.CapacityTokens, KVPerRequest: pv.decode.KVPerRequest, KVPerRequestSource: pv.kvSource,
 		Shape: wireShape{InputTokens: pv.shape.AvgInputTokens, InputSource: shapeMeasured,
