@@ -498,17 +498,19 @@ capacity-planner: ## Build the capacity planner command line (bin/capacity-plann
 	ln -sf capacity-planner bin/whatif
 
 # The capacity planner binaries a release attaches, one per platform, named
-# capacity-planner-<version>-<os>-<arch>: the ldflags of capacity-planner, the
-# release as `capacity-planner version` prints it, and -trimpath, so a re-run
-# of the release builds the same bytes. ci-release.yaml (release-files) runs
-# it after release-manifests and adds the binaries to SHA256SUMS.
-CAPACITY_PLANNER_PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+# capacity-planner-<version>-<os>-<arch>, .exe on windows: the ldflags of
+# capacity-planner, the release as `capacity-planner version` prints it, and
+# -trimpath, so a re-run of the release builds the same bytes. ci-release.yaml
+# (release-files) runs it after release-manifests and adds the binaries to
+# SHA256SUMS.
+CAPACITY_PLANNER_PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 .PHONY: capacity-planner-dist
 capacity-planner-dist: ## Build the release's capacity planner binaries: make capacity-planner-dist RELEASE_VERSION=vX.Y.Z [DIST=dist]
 	@test -n "$(RELEASE_VERSION)" || { echo "set RELEASE_VERSION=vX.Y.Z"; exit 1; }
 	@mkdir -p "$(DIST)"
 	@set -e; for p in $(CAPACITY_PLANNER_PLATFORMS); do \
-		os="$${p%/*}"; arch="$${p#*/}"; out="$(DIST)/capacity-planner-$(RELEASE_VERSION)-$$os-$$arch"; \
+		os="$${p%/*}"; arch="$${p#*/}"; ext=""; if [ "$$os" = windows ]; then ext=.exe; fi; \
+		out="$(DIST)/capacity-planner-$(RELEASE_VERSION)-$$os-$$arch$$ext"; \
 		CGO_ENABLED=0 GOOS="$$os" GOARCH="$$arch" go build -trimpath -buildvcs=false \
 			-ldflags "$(LEARNREC_LDFLAGS) -X main.version=$(RELEASE_VERSION)" -o "$$out" ./cmd/capacity-planner; \
 		echo "built $$out"; \

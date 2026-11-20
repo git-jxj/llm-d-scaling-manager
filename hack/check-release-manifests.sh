@@ -733,8 +733,11 @@ expect_wf "release-files may upload (contents) and pull the tools image (package
     'contents=write,packages=read' '.jobs."release-files".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
 expect_wf "release-sign may sign (id-token) and read, and write nothing" \
     'contents=read,id-token=write' '.jobs."release-sign".permissions | to_entries | map(.key + "=" + .value) | sort | join(",")'
-expect_wf "release-sign builds and signs a capacity planner binary for linux and darwin, amd64 and arm64" \
-    'linux/amd64 linux/arm64 darwin/amd64 darwin/arm64' '.jobs."release-sign".env.CAPACITY_PLANNER_PLATFORMS'
+expect_wf "release-sign builds and signs a capacity planner binary for linux and darwin, amd64 and arm64, and windows amd64" \
+    'linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64' '.jobs."release-sign".env.CAPACITY_PLANNER_PLATFORMS'
+expect_wf "the windows binary (.exe) is signed, verified before the tools build, and attached" \
+    'release-files,release-sign,release-tools' \
+    '[.jobs | to_entries[] | select(.value.steps[]? | (.run // "") | test("dist/capacity-planner-v[*][.]exe ")) | .key] | unique | join(",")'
 expect_wf "the planner is scanned by govulncheck, then built, then signed" \
     'Scan the capacity planner for called vulnerabilities (blocking),Build the capacity planner binaries,Sign the release files' \
     '[.jobs."release-sign".steps[].name | select(. == "Scan the capacity planner for called vulnerabilities (blocking)" or . == "Build the capacity planner binaries" or . == "Sign the release files")] | join(",")'
@@ -790,20 +793,21 @@ yq -r '.jobs."release-sign".steps[] | select(.name == "Sign the release files") 
 sign_run() {
     (cd "$WORK/wf/run" && STUB_LOG="$WORK/wf/cosign.log" PATH="$WORK/wf/bin:$PATH" bash "$WORK/wf/sign.sh") > "$WORK/wf/sign.out" 2>&1
 }
-# The render plus the four capacity planner binaries the build step adds
-# (stand-ins: the sign step reads only their names).
-PLANNER_BINS="capacity-planner-$VERSION-linux-amd64 capacity-planner-$VERSION-linux-arm64 capacity-planner-$VERSION-darwin-amd64 capacity-planner-$VERSION-darwin-arm64"
+# The render plus the five capacity planner binaries the build step adds
+# (stand-ins: the sign step reads only their names), the windows one last.
+PLANNER_BINS="capacity-planner-$VERSION-linux-amd64 capacity-planner-$VERSION-linux-arm64 capacity-planner-$VERSION-darwin-amd64 capacity-planner-$VERSION-darwin-arm64 capacity-planner-$VERSION-windows-amd64.exe"
 sign_dist() {
     rm -rf "$WORK/wf/run"; mkdir -p "$WORK/wf/run"; cp -r "$GOOD" "$WORK/wf/run/dist"; : > "$WORK/wf/cosign.log"
     for b in $PLANNER_BINS; do echo stub > "$WORK/wf/run/dist/$b"; done
 }
 sign_dist
 if sign_run; then
-    want=$(( $(echo $ALL_FILES | wc -w) + 2 + 4 ))
+    want=$(( $(echo $ALL_FILES | wc -w) + 2 + 5 ))
     got="$(grep -c '^sign-blob --yes --bundle ' "$WORK/wf/cosign.log")"
     bundles="$(find "$WORK/wf/run/dist" -name '*.sigstore.json' | wc -l)"
     if [ "$got" = "$want" ] && [ "$bundles" = "$want" ] && [ -s "$WORK/wf/run/dist/SHA256SUMS.sigstore.json" ] \
-        && [ -s "$WORK/wf/run/dist/capacity-planner-$VERSION-darwin-arm64.sigstore.json" ]; then
+        && [ -s "$WORK/wf/run/dist/capacity-planner-$VERSION-darwin-arm64.sigstore.json" ] \
+        && [ -s "$WORK/wf/run/dist/capacity-planner-$VERSION-windows-amd64.exe.sigstore.json" ]; then
         pass
         echo "  ok: the sign step signs all $want files, SHA256SUMS, the tools tarball and the planner binaries included"
     else
@@ -817,11 +821,14 @@ if sign_run; then fail "the sign step passed with no manifest rendered"; else pa
 sign_dist
 rm -f "$WORK/wf/run/dist"/capacity-planner-*-arm64
 if sign_run; then fail "the sign step passed with no arm64 capacity planner binary"; else pass; fi
+sign_dist
+rm -f "$WORK/wf/run/dist"/capacity-planner-*.exe
+if sign_run; then fail "the sign step passed with no windows capacity planner binary"; else pass; fi
 
 # The build step's checks, executed with a stub make that builds what
 # STUB_BUILD names and a stub binary that prints STUB_VERSION_LINE: every
 # platform built and printing this release and commit, else the job fails;
-# on success SHA256SUMS lists the four binaries beside the render.
+# on success SHA256SUMS lists the five binaries beside the render.
 yq -r '.jobs."release-sign".steps[] | select(.name == "Build the capacity planner binaries") | .run' "$WF" > "$WORK/wf/build.sh"
 cat > "$WORK/wf/bin/make" <<'STUB'
 #!/usr/bin/env bash
@@ -835,13 +842,15 @@ build_run() {
         PATH="$WORK/wf/bin:$PATH" bash -e "$WORK/wf/build.sh") > "$WORK/wf/build.out" 2>&1
 }
 if build_run "$PLANNER_BINS" "capacity-planner $VERSION (commit abc123)" \
-    && [ "$(wc -l < "$WORK/wf/run/dist/SHA256SUMS")" -eq "$(( $(wc -l < "$GOOD/SHA256SUMS") + 4 ))" ] \
+    && [ "$(wc -l < "$WORK/wf/run/dist/SHA256SUMS")" -eq "$(( $(wc -l < "$GOOD/SHA256SUMS") + 5 ))" ] \
+    && grep -q " capacity-planner-$VERSION-windows-amd64[.]exe$" "$WORK/wf/run/dist/SHA256SUMS" \
     && (cd "$WORK/wf/run/dist" && sha256sum -c --quiet SHA256SUMS >/dev/null 2>&1); then
     pass
 else
-    fail "the build step on four good binaries: $(tail -2 "$WORK/wf/build.out" | tr '\n' ' ')"
+    fail "the build step on five good binaries: $(tail -2 "$WORK/wf/build.out" | tr '\n' ' ')"
 fi
-if build_run "${PLANNER_BINS% *}" "capacity-planner $VERSION (commit abc123)"; then fail "the build step passed with the darwin/arm64 binary missing"; else pass; fi
+if build_run "${PLANNER_BINS% *}" "capacity-planner $VERSION (commit abc123)"; then fail "the build step passed with the windows/amd64 binary missing"; else pass; fi
+if build_run "${PLANNER_BINS% *} capacity-planner-$VERSION-windows-amd64" "capacity-planner $VERSION (commit abc123)"; then fail "the build step passed with the windows/amd64 binary named without .exe"; else pass; fi
 if build_run "$PLANNER_BINS" "capacity-planner unreleased (commit abc123)"; then fail "the build step passed with a binary that prints another version"; else pass; fi
 
 # The attach step, executed with a stub gh: a missing release becomes a draft
