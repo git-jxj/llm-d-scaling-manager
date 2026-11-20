@@ -136,8 +136,9 @@ func TestK2DerivedAtResidentKV_TheGate(t *testing.T) {
 		a.kvHitsResident, a.kvAboveContext, a.k2AtResidentKV = true, true, true
 		return a
 	}
-	assert.InDelta(t, 3000, all().k2ResidentKV(read, residentBoundAboveContext, false), 1e-9)
-	assert.InDelta(t, 3000, all().k2ResidentKV(read, residentBoundNone, false), 1e-9)
+	assert.Equal(t, residentKVLine{perRequest: 3000}, all().k2ResidentKV(read, residentBoundAboveContext, false),
+		"a ratio: all of it per request, none held once")
+	assert.Equal(t, residentKVLine{perRequest: 3000}, all().k2ResidentKV(read, residentBoundNone, false))
 
 	for name, a := range map[string]*SaturationAnalyzer{
 		"switch off":        func() *SaturationAnalyzer { a := all(); a.k2AtResidentKV = false; return a }(),
@@ -174,17 +175,26 @@ func TestK2DerivedAtResidentKV_TheFigure(t *testing.T) {
 	ctx := budgetIn + budgetOut/2
 	k1 := int64(math.MaxInt64 / 2)
 
-	bc.residentKV = 3 * ctx
+	bc.resident = residentKVLine{perRequest: 3 * ctx}
 	got := k2AtResidentKV(params, bc, budgetIn, budgetOut, budgetRanks, k1, atCtx)
 	assert.InDelta(t, 3, float64(got)/float64(atCtx), 1e-6, "three times the context, the same batch")
 
 	assert.Equal(t, atCtx+1, k2AtResidentKV(params, bc, budgetIn, budgetOut, budgetRanks, atCtx+1, atCtx), "held at k1")
 	assert.Equal(t, atCtx, k2AtResidentKV(params, bc, budgetIn, budgetOut, budgetRanks, atCtx/2, atCtx),
 		"k1 under the context's figure: unchanged, min(k1, k2) takes it")
-	bc.residentKV = ctx / 2
+	bc.resident = residentKVLine{perRequest: ctx / 2}
 	assert.Equal(t, atCtx, k2AtResidentKV(params, bc, budgetIn, budgetOut, budgetRanks, k1, atCtx), "never lower")
-	bc.residentKV = 0
+	bc.resident = residentKVLine{}
 	assert.Equal(t, atCtx, k2AtResidentKV(params, bc, budgetIn, budgetOut, budgetRanks, k1, atCtx), "no reading")
+	bc.resident = residentKVLine{held: -1, perRequest: 3 * ctx}
+	assert.Equal(t, atCtx, k2AtResidentKV(params, bc, budgetIn, budgetOut, budgetRanks, k1, atCtx), "a negative held part")
+
+	// A line with KV held once (issue #52's form): each rank adds it once,
+	// whatever its batch.
+	held := 50_000.0
+	bc.resident = residentKVLine{held: held, perRequest: ctx}
+	got = k2AtResidentKV(params, bc, budgetIn, budgetOut, budgetRanks, k1, atCtx)
+	assert.InDelta(t, float64(atCtx)+budgetRanks*held, float64(got), 2*budgetRanks, "the context's figure plus the held part a rank")
 }
 
 // The switch is off from the constructor, and a replay names it.

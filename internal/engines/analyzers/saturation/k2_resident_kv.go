@@ -45,27 +45,63 @@ import (
 // before. The prefill role has no derived k2, and the zero-replica estimate
 // has no reading; neither moves.
 //
+// The reading reaches the derived k2 as a line in the resident requests
+// (residentKVLine), held once plus per request, with nothing held once: the
+// fleet's ratio cannot separate a shared prefix from each request's own KV.
+// Issue #52's fit of the KV in use against the running count would fill
+// both parts, and price the same way.
+//
+// Not yet safe beside SwitchK2DecodeBudgetAtComputedPrompt. On the day-long
+// recording, with both on, k2 rose 2.8x at the median and the decode role
+// was asked 7-10 replicas in 10 of 25 hours on a fleet of 11 that served
+// the traffic. The reading is not what over-prices there: the steady batch
+// at the budget is 16-19 requests a rank, where the ranks ran 2-6. Priced
+// at the context, the low KV a request hid that batch.
+//
 // Off from the constructor: on, a decode is priced at more capacity and
 // fewer replicas are ordered, and the default changes only after a GPU
 // check, with SwitchKVPerRequestAboveContext's.
 const SwitchK2DerivedAtResidentKV = "k2-derived-at-resident-kv"
 
-// k2ResidentKV is the KV a resident request holds that the derived k2 prices
-// a replica at under SwitchK2DerivedAtResidentKV: fleetShape's KVreq as
-// withResidentKV priced it, with bound the bound it reported. It is 0, the
-// context, unless every condition the switch's comment lists holds.
-func (a *SaturationAnalyzer) k2ResidentKV(fleetShape shape.Shape, bound string, shapeChanging bool) float64 {
+// residentKVLine is the KV one engine rank holds as a line in the requests
+// resident on it: held once whatever the count (a prefix every request
+// shares), plus perRequest for each. The fleet's resident reading is a ratio
+// and cannot tell the two apart, so it is all perRequest, held 0; a fit of
+// the KV in use against the running count (issue
+// llm-d-incubation/llm-d-scaling-manager#52) gives both. The zero value is
+// no reading: the derived k2 prices the context.
+type residentKVLine struct {
+	held       float64
+	perRequest float64
+}
+
+// known reports whether l is a reading the derived k2 may price at.
+func (l residentKVLine) known() bool {
+	return l.perRequest > 0 && !math.IsInf(l.perRequest, 0) && l.held >= 0 && !math.IsInf(l.held, 0)
+}
+
+// kvAt is the KV one engine rank holds with n requests resident on it.
+func (l residentKVLine) kvAt(n float64) float64 {
+	return l.held + l.perRequest*n
+}
+
+// k2ResidentKV is the KV line the derived k2 prices a replica at under
+// SwitchK2DerivedAtResidentKV: fleetShape's KVreq as withResidentKV priced
+// it, with bound the bound it reported, all of it per request. It is the
+// zero value, the context, unless every condition the switch's comment
+// lists holds.
+func (a *SaturationAnalyzer) k2ResidentKV(fleetShape shape.Shape, bound string, shapeChanging bool) residentKVLine {
 	if !a.k2AtResidentKV || !a.kvHitsResident || !a.kvAboveContext || shapeChanging {
-		return 0
+		return residentKVLine{}
 	}
 	if bound != residentBoundNone && bound != residentBoundAboveContext {
-		return 0
+		return residentKVLine{}
 	}
 	kv := fleetShape.KVreq
 	if math.IsInf(kv, 0) || !(kv > fleetShape.Context()) {
-		return 0
+		return residentKVLine{}
 	}
-	return kv
+	return residentKVLine{perRequest: kv}
 }
 
 // derivedBatch is the requests one engine rank holds in steady state at
@@ -83,20 +119,20 @@ func derivedBatch(params *capacity.EngineParams, batchCap int64, avgInput, avgOu
 }
 
 // k2AtResidentKV is the derived k2 of a replica of ranks engine ranks with
-// each resident request priced at residentKV, not at its context
-// (SwitchK2DerivedAtResidentKV), held at k1, and never below atContext, the
-// figure priced at the context. It is atContext where residentKV is 0 or
-// the batch is.
+// the KV its resident requests hold read off batchCap.resident, not priced
+// at their context (SwitchK2DerivedAtResidentKV): each rank's steady batch
+// on the line, times the ranks. Held at k1, and never below atContext, the
+// figure priced at the context. It is atContext with no line or no batch.
 func k2AtResidentKV(params *capacity.EngineParams, batchCap pricedBatchCap, avgInput, avgOutput float64,
 	ranks int, k1, atContext int64) int64 {
-	if !(batchCap.residentKV > 0) {
+	if !batchCap.resident.known() {
 		return atContext
 	}
 	n := derivedBatch(params, batchCap.perRank, avgInput, avgOutput, batchCap.budget)
 	if !(n > 0) {
 		return atContext
 	}
-	at := n * batchCap.residentKV * float64(max(ranks, 1))
+	at := batchCap.resident.kvAt(n) * float64(max(ranks, 1))
 	if !(at < float64(k1)) {
 		return max(atContext, k1)
 	}

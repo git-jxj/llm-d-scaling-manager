@@ -85,9 +85,10 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	// read once per cycle so every replica and the fleet shape agree: the
 	// derived k2 then prices no spread (replicaOutputDispersion).
 	shapeChanging bool,
-	// residentKV is the KV a resident request is read to hold, where the
-	// derived k2 prices it at that (k2ResidentKV); 0 prices the context.
-	residentKV float64,
+	// resident is the KV the replica's resident requests are read to hold,
+	// where the derived k2 prices them at that (k2ResidentKV); the zero
+	// value prices the context.
+	resident residentKVLine,
 	logger logr.Logger,
 ) *capacity.ReplicaCapacity {
 	if rm.TotalKvCapacityTokens <= 0 {
@@ -249,7 +250,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		// What a decode replica's budget is spent on (decode_budget.go).
 		batchCap.budget = decodeStepBudget(rm, role, engineParams)
 	}
-	batchCap.residentKV = residentKV
+	batchCap.resident = resident
 	d := a.computeK2(
 		historyKey,
 		modelID, namespace, rm.VariantName,
@@ -1241,7 +1242,7 @@ func (a *SaturationAnalyzer) k2Chain(
 		//
 		// Under SwitchK2DerivedAtResidentKV a request is priced at the KV the
 		// fleet's requests are read to hold where that reading is trusted
-		// above the context (batchCap.residentKV, k2_resident_kv.go): the
+		// above the context (batchCap.resident, k2_resident_kv.go): the
 		// figure only rises, and never above k1.
 		if k2Derived := estimateCapacityAtCapBudget(engineParams, batchCap.perRank, avgInput, avgOutput, outputDispersion, batchCap.budget) * int64(max(ranks, 1)); k2Derived > 0 {
 			atContext := k2Derived
@@ -1255,10 +1256,10 @@ func (a *SaturationAnalyzer) k2Chain(
 				"avgInputTokens", avgInput, "avgOutputTokens", avgOutput, "outputDispersion", outputDispersion,
 				"engineParams", engineParams, "engineRanks", max(ranks, 1),
 				"batchCap", batchCap.perRank, "batchCapSource", batchCap.source, "k2", k2Derived}
-			if batchCap.residentKV > 0 {
+			if batchCap.resident.known() {
 				// Only where SwitchK2DerivedAtResidentKV gave a reading:
 				// off, the line is the one before the switch.
-				kv = append(kv, "residentKVPerRequest", batchCap.residentKV, "k2AtContext", atContext)
+				kv = append(kv, "residentKVPerRequest", batchCap.resident.perRequest, "k2AtContext", atContext)
 			}
 			logger.V(perReplicaLogLevel).Info("k2-decision", kv...)
 			return k2Derived, capacity.K2SrcDerived, k2Borrow{}
