@@ -88,7 +88,9 @@ already in the node's page cache; a fresh node adds ~10 s (see below).
 **A fresh node is ~10 s slower.** On v0.32.0, prepared, the weight load took
 19.9 s with the weight files out of memory (53.7 s to `/health`) and 10.0 s when
 they had been read once beforehand (43.6 s). A node that ran the model recently
-has them in memory; a fresh node does not. Recorded in
+has them in memory; a fresh node does not. Nor does a node where an engine
+releases the page cache at start (`--release-weight-page-cache`, or a
+`DONTNEED` walk over the model files): there every start is the cold one. Recorded in
 [Reading a model's weights into memory](../proposals/weights-prewarm-on-schedule.md#small-model-qwen3-32b-one-gpu).
 
 About half of the prepared start happens before the engine touches the GPU, and

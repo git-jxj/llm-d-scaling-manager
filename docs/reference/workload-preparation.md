@@ -428,6 +428,16 @@ safetensors); `--safetensors-load-strategy prefetch` is for network filesystems
 and buys nothing here. Direct-I/O, many-thread loaders are a further step, not
 measured here.
 
+**A warm page cache is not guaranteed.** On Qwen3-32B the weight load takes
+10.0 s when the files are already in memory and 19.9 s when they are not
+([start time](start-time.md#qwen3-32b-on-one-h200)). Some deployments drop
+those pages on purpose at engine start, to give the RAM to a CPU KV tier:
+vLLM's `--release-weight-page-cache`, or a launch step that calls
+`posix_fadvise(POSIX_FADV_DONTNEED)` on every file under the model mount. On a
+node where any engine does that, expect every start to read cold. The learned
+start time already measures what you actually get; only the warm figure in the
+docs does not apply there.
+
 The benchmark standup has the same measure under
 `BENCHMARK_MODEL_HOSTPATH=<dir>`; what the harness does with it is in
 [Benchmark the scaling manager](../guides/benchmarking/README.md#replica-start-time-in-the-harness).
