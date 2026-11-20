@@ -809,8 +809,10 @@ How the rows are drawn:
   not held. A step held when its completions came within 3% of those due and
   none failed; a void step counts, since the noise floor voids its percentiles,
   not its count. Knees are read with flow control off, where every phase held to
-  the predicted knee: one-sided, at most +3%, since the 3% hold rule cannot see
-  a fleet short by less. A knee row is bounded to flow control off: with it on,
+  the predicted knee or, for bucket A, to its last step: one-sided, at most +3%
+  for the prefill knees and at most +15% for bucket A's decode knee, which the
+  run stopped short of, since the 3% hold rule cannot see a fleet short by
+  less. A knee row is bounded to flow control off: with it on,
   the router stopped buckets B and C near the prefill onset, 5% to 25% under
   the knee; those crossings are the flow-control-onset rows.
 - **Rates.** A rate reading is where the client's percentile crossed the frozen

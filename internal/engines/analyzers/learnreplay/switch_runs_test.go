@@ -1389,6 +1389,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestImbalance_TheBusiestMinutesSetF"},
 		{"../../../signals/prefill", "TestImbalance_TooFewBusyMinutesTakeTheBusiest"},
+		{"../../../signals/prefill", "TestImbalance_BusyIsComputedTokensNotRequests"},
 		{"../saturation", "TestPrefillFBusyMinutes_LightMinutesThroughAnalyze"},
 	},
 	saturation.SwitchITLHoldSteadySlope: {

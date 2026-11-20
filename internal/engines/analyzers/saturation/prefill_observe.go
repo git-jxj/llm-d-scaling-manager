@@ -95,9 +95,10 @@ const SwitchPrefillAEngineTiming = "prefill-a-engine-timing"
 const SwitchPrefillQueueByCapacity = "prefill-queue-by-capacity"
 
 // SwitchPrefillFBusyMinutes is the replay switch for which minutes f is the
-// median of (prefill.Cycle.FBusyMinutes). On, the busiest: those at or above
-// half the busiest minute's computed tokens per pod. The shares are uneven at light
-// load and even out near capacity, so a median over every minute reads a
+// median of (prefill.Cycle.FBusyMinutes). On, the busiest: those at or
+// above half the busiest minute's computed tokens per pod. The shares are
+// uneven at light load and even out near capacity, so a median over every
+// minute reads a
 // fleet that spent much of its window light as more uneven than it is at
 // the knee f prices (issue llm-d-incubation/llm-d-scaling-manager#266).
 // Off, every minute, as before this switch. Planner-only, as

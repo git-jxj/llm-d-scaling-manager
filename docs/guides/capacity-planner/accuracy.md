@@ -48,7 +48,8 @@ Where to find it:
 
 One run so far: Qwen3-32B at tensor parallelism 2 on H200, 2 prefill and 2
 decode Pods. It climbed a ladder of 6 load levels, from 0.40 to 0.90 of the
-knee, each judged over 7 to 22 minutes. Each level ran twice, once with the
+knee (for short prompts, 0.36 to 0.81 of the knee the planner now names),
+each judged over 7 to 22 minutes. Each level ran twice, once with the
 router's flow control off and once on. The client timed every request.
 
 So "n=12 at 6 load levels" is 6 load levels, each read twice. The planner
@@ -91,14 +92,12 @@ What this says:
 - **Short prompts:** the planner is close. TTFT reads from about 9% fast to
   4% slow, mean TPOT from 17% fast to on the mark.
 - **Mean TPOT on long prompts:** within a few percent, from 6% fast to 2% fast.
-- **Long prompts:** TTFT reads 15% to 190% slow, more so near the knee.
+- **Long prompts:** TTFT reads 5% to 190% slow, more so near the knee.
   Sizing for TTFT therefore errs on the side of more Pods than needed.
-- **Knees, flow control off:** every phase held at the knee the planner
-  names, or, for short prompts, up to the last step run. The run stopped
-  there, and its hold rule cannot see a fleet short by less than 3%, so the
-  knee is "not exceeded within the steps run": the long prompts' at most
-  about 3% high, the short prompts' (decode) at most about 15% high, where
-  the run stopped short of it.
+- **Knees, flow control off:** long prompts held to the knee the planner
+  names: at most about 3% high, since the hold rule cannot see a fleet short
+  by less. Short prompts held every step run, up to 15.6 r/s, against a
+  predicted 17.5: at most about 15% high.
 - **Flow control on:** the fleet stops at the router's onset, not at the
   knee: 5% to 25% under it in this run. The knee is outside with flow control
   on; read the onset's label instead. For bursty traffic the router started
