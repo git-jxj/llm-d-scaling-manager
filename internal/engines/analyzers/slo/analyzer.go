@@ -193,6 +193,9 @@ type Analyzer struct {
 	// ttftLowLoadDecodeTTFT is SwitchTTFTLowLoadDecodeTTFT (ttft_fleet.go):
 	// off from the constructor; only a replay turns it on.
 	ttftLowLoadDecodeTTFT bool
+	// ttftSizesPrefill is SwitchTTFTSizesPrefill (ttft_prefill_ask.go): off
+	// from the constructor; only a replay turns it on.
+	ttftSizesPrefill bool
 	// ttftJointInputs is SwitchTTFTJointInputs (ttft_joint.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftJointInputs bool
@@ -456,6 +459,9 @@ func (a *Analyzer) analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 	// reads its decode variant's line. After the judge: the decode term reads
 	// the router's mean it collected.
 	snap.TTFT = a.priceTTFTVariants(logger, input, cfg, fleet, decodeLines, j.Latency, now)
+	if a.ttftSizesPrefill {
+		sizePrefill(result, snap.TTFT, fleet, modelArrival(input, fleet))
+	}
 
 	// A window that covered a wake or a starting replica is not judged: the
 	// requests in it waited out capacity no steady-state sizing could have had
@@ -565,7 +571,8 @@ func (a *Analyzer) priceVariant(input domain.AnalyzerInput, vs domain.VariantRep
 	// Prefill has no TPOT (the P/D sidecar asks it for one token), and its
 	// TTFT is priced in shadow only (ttft.go), so the result carries nothing
 	// of it. Left as no-data, so a combiner treats it as undefined rather
-	// than as zero.
+	// than as zero; SwitchTTFTSizesPrefill sizes it after the TTFT pricing
+	// (sizePrefill).
 	if !isGenerating(vs.Role) {
 		return vc, nil, d
 	}

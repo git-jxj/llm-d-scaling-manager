@@ -25,7 +25,8 @@ import (
 // the model in internal/signals/whatif: the TTFT predicted at the current rate,
 // and the rate per replica at which the bounded TTFT meets the target. Both go
 // to llmsm_slo_* series and the cycle log, and nothing else: the analyzer's result
-// is unchanged, a prefill variant stays no-data, so no replica count moves.
+// is unchanged, a prefill variant stays no-data, so no replica count moves
+// (SwitchTTFTSizesPrefill, off by default, sizes it; ttft_prefill_ask.go).
 // Aggregated variants wait for the what-if M1.
 //
 // The prediction is not a bound, and which way it errs depends on the prompt
@@ -462,10 +463,7 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 		t := whatif.TermFromEstimate(est)
 		term = &t
 	}
-	arrival := input.ArrivalRate
-	if !(arrival > 0) || !whatif.Finite(arrival) {
-		arrival = fleet.requestRate
-	}
+	arrival := modelArrival(input, fleet)
 	joint := a.noteJoint(input, fleet, prefills, decodes, prefillRows, decodeRows, arrival, term, now)
 
 	view := &prefill.Settle{View: a.settleView(), Model: utils.GetNamespacedKey(input.Namespace, input.ModelID)}
@@ -475,6 +473,10 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 		rows := rowsOf(fleet.rows, []string{v})
 		est, fresh := a.prefillEstimate(input.Namespace, input.ModelID, v, now)
 		est = withInvertedVP(est, joint)
+		var aFromJoint bool
+		if a.ttftSizesPrefill {
+			est, aFromJoint = withJointFixedLatency(est, joint)
+		}
 		var estimateAt time.Time
 		if fresh {
 			estimateAt = now
@@ -490,7 +492,7 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 			decodeTTFT:   measured, term: term, legacyDecodeSum: !a.ttftDecodeTerm, flow: flow, mismatch: mismatch,
 			processorSharing: a.ttftProcessorSharing, routerWait: a.ttftRouterWait,
 			psOnsets: a.ttftPSOnsets, decodeGateCharge: a.ttftDecodeGateCharge,
-			acrossCounts: a.ttftImbalanceAcrossCounts,
+			acrossCounts: a.ttftImbalanceAcrossCounts, aFromJoint: aFromJoint,
 		}
 		in.outputSpreadUnread = a.outputSpreadUnread(fleet)
 		p := gateOrPrice(&in, fresh, arrival, target)
@@ -705,7 +707,7 @@ func logTTFT(logger logr.Logger, input domain.AnalyzerInput, variant string, in 
 		"onsetPrefill", onsetPrefill, "onsetDecode", onsetDecode, "flags", p.flags,
 		// The inputs.
 		"vp", in.est.VP, "vpSource", vpSource(in.est), "vpPromptTokens", in.est.VPPromptTokens,
-		"estimateAt", in.estimateAt, "a", in.est.A, "f", p.f, "fSource", fSource, "fRaw", in.shares.largest,
+		"estimateAt", in.estimateAt, "a", in.est.A, "aSource", aSource(in.est, in.aFromJoint), "f", p.f, "fSource", fSource, "fRaw", in.shares.largest,
 		"fRawLeast", in.shares.least, "fRawWindowFull", in.shares.full, "otherPrefillPods", in.otherPods,
 		"prompt", in.prompt, "cv", in.spread.CV, "cvSource", cvSource, "transferPerToken", in.transfer,
 		"decodeVariant", in.decodeVariant, "decodeTTFT", in.decodeTTFT.Seconds,

@@ -782,7 +782,8 @@ in the validation table only, left out for size and test time; their recordings
 are outside the repository.
 `ttft_staircase_test.go` freezes what the recordings say of S2's gate and of the
 flow-control series. The load driver and the run's other files live outside
-the repository.
+the repository. `ttft_sizes_prefill_staircase_test.go` replays them with
+`slo-ttft-sizes-prefill` on and off.
 
 The `throughput-sweep` and `throughput-sweep-restart` goldens are one run
 of the `ols-sweep` scenario with the throughput analyzer listed beside

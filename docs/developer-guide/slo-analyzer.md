@@ -118,6 +118,30 @@ analyzer cannot answer at another cycle, so it holds a calm figure instead. Repl
 `TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases` replays the staircases
 both ways.
 
+`slo-ttft-sizes-prefill` (off, replay-only, `ttft_prefill_ask.go`) sizes a
+prefill variant on TTFT
+([#131](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/131)).
+Off, a prefill variant is `no-data`, and a short-prompt prefill that never
+queues is not priced at all: P1's `a` needs low-load minutes over a spread of
+prompt lengths, which one prompt length run above low load never gives. On:
+
+- Where P1 refused `a`, the joint window's `a₀` stands
+  (`withJointFixedLatency`; `aSource` on the `slo-ttft-variant` line).
+- A prefill variant whose reading is `priced` gets that reading's
+  per-replica rate as `PerReplicaCapacity` (requests per second), reason
+  `slo-ttft`, and the role's demand is the model's arrival rate
+  (`sizePrefill`). The need is arrival over that rate. Decode-bound,
+  routing-bound and refused readings ask nothing.
+- On the staircase goldens only `a-off` is sized (one replica, as
+  saturation). `b-off`, the issue's case, is below the floor at the assumed
+  prompt cv of 2: no count meets 190 ms. Priced at a measured cv of 0.1, the
+  steps that missed ask 3 where saturation asks 2, and past 37 r/s the ask
+  climbs to 7-31 as the decode engine's TTFT nears the target.
+  `TestGoldens_TTFTSizesPrefillOnTheStaircases` holds the first two.
+
+It stays off until a cluster run settles whether a third prefill replica
+holds the target on that shape.
+
 The analyzer's met/unmet is `whatif.TTFTMeets`. `RateForTTFT`, which the
 CLI's and the planner API's rates and the analyzer's published rate come
 from, is capped under the prefill onset (`BoundPrefillOnset`), so it answers
