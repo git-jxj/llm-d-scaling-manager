@@ -578,7 +578,7 @@ func (c *cycle) fitLines() {
 		adm := itl.Admission{MinK: lo, MaxK: hi, MaxNumSeqs: atCap.perRank, MaxNumSeqsSource: atCap.source,
 			CapMaxPreemptionRate: c.cfg.ITLCapPreemptionRate(), Steady: c.tune.steadiness(),
 			SlopeHoldFor: c.a.Horizons().BucketRetention, Args: windowArgs(params),
-			TierHysteresis: c.a.tierHysteresisOn()}
+			TierHysteresis: c.a.tierHysteresisOn(), BaselineFromFloor: c.a.baselineFromFloorOn()}
 		// When each replica's settle began: the engine's settle tracker
 		// (itl_settle.go).
 		c.a.itlSettleAdmission(&adm, c.input.Namespace, c.input.ModelID)
@@ -608,6 +608,9 @@ func (c *cycle) fitLines() {
 				c.a.noteOccupancy(c.occupancyInput(variantKey, variant, params), itlLogger)
 			}
 		}
+		// A decode variant's window is kept through a shape change; the
+		// floor below the band is not (itl_baseline_floor.go).
+		c.a.floorOnShapeChange(variantKey, role, adm, c.shapeChanging)
 		reading := c.a.noteITL(variantKey, rows, variant, adm, c.a.now(), itlLogger)
 		c.a.noteITLOneSided(variantKey, reading)
 		// The line as a learner: its report and learner-write (itl_learner.go).

@@ -1069,6 +1069,14 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// golden replay runs it off, and off alone from all on moves nothing.
 	// Its unit tests hold it (heldBy).
 	saturation.SwitchDecodeOwesRouterBacklog: nil,
+	// llm-d-incubation/llm-d-scaling-manager#169 item 1: the ITL line's B
+	// pinned through the floor below the band while unlearned. Off from the
+	// constructor, so every golden replay runs it off, and off alone from
+	// all on moves nothing. On, it moves the variant and demand outputs of
+	// the fixtures whose lines sit on the default B;
+	// TestGoldens_ITLBaselineFromFloorReplicas holds what it moves on e1, the
+	// staircases and three-pods, and its unit tests hold it (heldBy).
+	saturation.SwitchITLBaselineFromFloor: nil,
 	// ev-shindin/llm-scaling-manager#275 (two switches) and ev-shindin/llm-scaling-manager#438, this file's own rows before learner PR
 	// 4b-1 (see replaySwitches).
 	saturation.SwitchZeroReplicaDataParallel: nil,
@@ -1344,6 +1352,30 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPrefillAEngineTiming_ABusyGroupLearnsA"},
 		{"../../../signals/prefill", "TestTiming_ABusyFleetLearnsAFromEngineTiming"},
 		{"../../../signals/prefill", "TestTiming_LongPromptsAreFlaggedNotRefused"},
+	},
+	saturation.SwitchITLBaselineFromFloor: {
+		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},
+		{"../saturation", "TestITLBaselineFromFloor_TheFitLineIsUnchangedOff"},
+		{"../../../signals/itl", "TestTracker_BaselineFromFloorPinsAnUnlearnedKey"},
+		{"../../../signals/itl", "TestTracker_ALearnedBaselineEndsTheFloor"},
+		{"../../../signals/itl", "TestTracker_TheFloorReadsSteadyRowsOnly"},
+		{"../../../signals/itl", "TestTracker_SweepForgetsTheFloor"},
+		{"../../../signals/itl", "TestTracker_ForgetFloorsDropsEveryFloor"},
+		{"../../../signals/itl", "TestTracker_ARolloutClearsTheFloor"},
+		{"../../../signals/itl", "TestTracker_AShapeMoveClearsTheFloor"},
+		{"../../../signals/itl", "TestTracker_TheFloorAgesOut"},
+		{"../../../signals/itl", "TestTracker_AHoldKeepsItsSlopesB"},
+		{"../../../signals/itl", "TestHeldSlope_PinsTheBItWasFittedThrough"},
+		{"../../../signals/itl", "TestTracker_AFloorSlopeIsExportedWithItsB"},
+		{"../../../signals/itl", "TestTracker_ARestoredFloorSlopeHoldsItsLine"},
+		{"../../../signals/itl", "TestTracker_ForgetFloorDropsOneKey"},
+		{"../../../signals/itl", "TestDwellTier_ComparesTheHeldSlopeThroughItsB"},
+		{"../saturation", "TestITLBaselineFromFloor_AForgetDropsTheFloors"},
+		{"../saturation", "TestITLBaselineFromFloor_AShapeChangeDropsADecodeFloor"},
+		{"../saturation", "TestITLBaselineFromFloor_ASnapshotKeepsTheFloorSlope"},
+		{"../../../signals/itl", "TestBelowBandPoint_ReadsOnlyUnderTheBandNow"},
+		{"../../../signals/itl", "TestFloorIntercept_NeedsTheGap"},
+		{".", "TestGoldens_ITLBaselineFromFloorReplicas"},
 	},
 	saturation.SwitchITLAdaptiveBandFloor: {
 		{"../saturation", "TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine"},

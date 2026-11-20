@@ -1228,6 +1228,7 @@ float
 floor
 floor-trust-reads-completions
 floorExcessGPUs
+floorK
 floorTrust
 floorTrust.lagFraction
 floorTrust.lagFraction/trustFraction
@@ -2181,6 +2182,7 @@ picture
 pinned-B
 pinned-B-held
 pinnedAtBPrior
+pinnedAtFloor
 pinnedAtLeastITL
 pins
 pipeline_parallel_size
@@ -2572,6 +2574,7 @@ saturates
 saturation
 saturation-decode-owes-router-backlog
 saturation-holds-role
+saturation-itl-baseline-from-floor
 saturation-itl-clears-on-a-new-revision
 saturation-itl-one-sided-at-cap
 saturation-itl-tier-hysteresis

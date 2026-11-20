@@ -130,7 +130,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
-// SwitchITLOneSidedAtCap,
+// SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
 // SwitchPrefillBoundHeldConfidence, SwitchThroughputFloorRaisesVariants,
 // SwitchQueuePricedAsDrain, SwitchFloorTrustReadsCompletions,
 // SwitchPrefillKeepsRouterPrompts, SwitchPrefillBusyShareBound,
@@ -260,6 +260,9 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// Both off from the constructor.
 		SwitchK2DecodeBudgetAtComputedPrompt: &a.k2DecodeBudget,
 		SwitchDecodeLandedNeedsABound:        &a.decodeLandedNeedsBound,
+		// The ITL line's B pinned at the floor read below the band while
+		// unlearned (itl_baseline_floor.go). Off from the constructor.
+		SwitchITLBaselineFromFloor: &a.itlBaselineFromFloor,
 		// Issue ev-shindin/llm-scaling-manager#467: the ITL line priced one-sided at the sequence cap
 		// while B is unlearned (itl_one_sided.go).
 		SwitchITLOneSidedAtCap: &a.itlOneSidedAtCap,

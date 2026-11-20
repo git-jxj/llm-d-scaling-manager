@@ -534,6 +534,10 @@ type SaturationAnalyzer struct {
 	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): off
 	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
 	decodeLandedNeedsBound bool
+	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
+	// (itl_baseline_floor.go): off from the constructor; only a replay
+	// turns it on.
+	itlBaselineFromFloor bool
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
 	// (SetSwitchesForReplay).
