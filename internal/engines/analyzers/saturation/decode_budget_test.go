@@ -111,12 +111,16 @@ func ceilReplicas(demand, scaleUp float64, perReplica int64) int {
 	return c
 }
 
-func TestK2DecodeBudget_SpeculationIsPricedOnlyWhereItIsRead(t *testing.T) {
-	// No acceptance read: a step takes one token and emits one, so N = 256 x
-	// 700 / (1,600 + 700) = 77.9, capped at 64: 64 x 80,350 x 4.
+func TestK2DecodeBudget_UnreadAcceptanceStillTakesTheStepsBudget(t *testing.T) {
+	// No acceptance read: a step still takes 1 + k = 4 tokens of budget, and
+	// is read to emit one, so N = 256 x 700 / (1,600 + 4 x 700) = 40.7 a
+	// rank. Charged one token a step, as before, it read 77.9, capped at 64.
 	rm := budgetRow()
 	rm.SpecAcceptedPerStep, rm.SpecAcceptedPerStepKnown = 0, false
-	assert.Equal(t, int64(64*80_350*budgetRanks), priceBudget(t, rm, domain.RoleDecode, true).EffectiveCapacity)
+	n := 256.0 * 700 / (1_600 + 4*700)
+	got := priceBudget(t, rm, domain.RoleDecode, true).EffectiveCapacity
+	assert.InDelta(t, n*80_350*budgetRanks, float64(got), float64(budgetRanks), "the step's 1 + k is charged without the acceptance")
+	assert.Less(t, got, int64(64*80_350*budgetRanks), "not the one-token step's 64 a rank")
 }
 
 func TestK2DecodeBudget_NoComputedPromptIsPricedAsBefore(t *testing.T) {

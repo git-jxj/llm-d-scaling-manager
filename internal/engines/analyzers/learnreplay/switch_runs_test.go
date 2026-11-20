@@ -930,13 +930,16 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	//     (P3) charges its token budget the prompt it computes, not the
 	//     whole prompt. It moves the three fixtures whose decode is priced
 	//     at P3 with a stated --max-num-batched-tokens and reports the
-	//     computed prompt. Decode's PerReplicaCapacity rises 7.4x at the
-	//     median on ttft-open-loop-long and ttft-saturated, 4.3x on
-	//     ttft-open-loop-short, most rows now held at k1 (K2Source k1-bound).
-	//     The store, the composite's supply and spare and the warm pool's
-	//     spare fraction move with it. On the 20-40 cycles a fixture prices
+	//     computed prompt. Decode's PerReplicaCapacity rises at the median
+	//     7.4x on ttft-open-loop-long, 7.3x on ttft-saturated and 4.3x on
+	//     ttft-open-loop-short. It is held at k1 (K2Source k1-bound) on every
+	//     moved row of the first, all but two of the second, and a third of
+	//     the third. One ttft-saturated row, its first P3 cycle, moves from
+	//     P3-k2 to P4-k1. The store, the composite's supply and spare and the
+	//     warm pool's spare fraction move with it, and decode's utilization
+	//     falls where its demand stays. On the 20-40 cycles a fixture prices
 	//     decode's demand at 0.7 of its supply, that demand scales with the
-	//     supply; its utilization does not move. No role's RequiredCapacity
+	//     supply and its utilization stays 0.7. No role's RequiredCapacity
 	//     moves. ttft-saturated's model-level RequiredCapacity, which pools
 	//     decode's new spare against prefill's need, falls on 65 cycles; a
 	//     P/D model is sized per role (RoleCapacities), and prefill's is

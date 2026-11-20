@@ -349,6 +349,12 @@ term: on a fleet with headroom it packs decode into fewer replicas at a
 higher per-token latency, bounded only by the engine. A TPOT-aware cap is
 issue llm-d-incubation/llm-d-scaling-manager#258.
 
+Two edges. The zero-replica estimate (`estimateStoredCapacity`) has no
+live rates, so it still charges the whole prompt: a parked decode with only a
+deployment record is priced low until its first live cycle. With
+`num_speculative_tokens` k stated, a step is charged `1 + k` of budget even
+when the acceptance is not read; it is then read to emit one token.
+
 The spread moves the two figures it enters in opposite directions, both
 towards the truth: `k2` rises (the sequences the batch cap admits hold more KV
 each, so a replica holds more before its batch binds, and fewer replicas are
