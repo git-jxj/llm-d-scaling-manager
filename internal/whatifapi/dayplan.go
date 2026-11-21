@@ -189,7 +189,7 @@ type DayPlanResponse struct {
 	// Notes are what the plan does not price, in words.
 	Notes []string `json:"notes"`
 	// Gaps is how much of the source's span its cycles cover; absent with
-	// fewer than three cycles. A bucket inside a gap has no data.
+	// fewer than three distinct cycles. A bucket inside a gap has no data.
 	Gaps *WindowGaps `json:"gaps,omitempty"`
 }
 

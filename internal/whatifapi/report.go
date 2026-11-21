@@ -225,7 +225,7 @@ type ReportSource struct {
 	FirstAt     time.Time `json:"firstAt"`
 	LastAt      time.Time `json:"lastAt"`
 	// Gaps is how much of the span from FirstAt to LastAt the cycles read
-	// cover; absent with fewer than three cycles.
+	// cover; absent with fewer than three distinct cycles.
 	Gaps *WindowGaps `json:"gaps,omitempty"`
 }
 

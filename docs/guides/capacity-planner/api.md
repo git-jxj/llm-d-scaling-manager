@@ -347,7 +347,7 @@ The answer:
 
 | Field | Holds |
 | --- | --- |
-| `source` | What was read: the namespace, the model, the cycle and `totalCycles`, `firstAt` and `lastAt`, and `gaps`: the window's `cycleSeconds` (the median time between cycles), `expectedCycles` its span holds at that cycle time, `presentCycles`, `missingShare`, the `largestGapSeconds` with `largestGapFrom` and `largestGapTo`, and `flagged` (`WindowGaps`) above 5% missing. `gaps` is absent with fewer than three cycles. |
+| `source` | What was read: the namespace, the model, the cycle and `totalCycles`, `firstAt` and `lastAt`, and `gaps`: the window's `cycleSeconds` (the lower median of the time between distinct cycles), `expectedCycles` its span holds at that cycle time, `presentCycles`, `missingShare`, the `largestGapSeconds` with `largestGapFrom` and `largestGapTo`, and `flagged` (`WindowGaps`) above 5% missing. `gaps` is absent with fewer than three distinct cycles. |
 | `fleet` | The fleet judged: `prefill`, `decode`, their variants, and `prefillFrom`/`decodeFrom` (`recording` or `asked`). |
 | `load` | The load judged at (`rate`, the same as `seen`, as a figure that carries the refusal when there is none), the load seen and its `source` (`observed`, `asked` or `none`), the `statistic` judged (`mean`, `p95`, `peak`, or `stated`), `cycles` read and `cyclesWithTraffic`, the per-cycle `mean`, `p95` and `peak` (each a 1-minute rate), `p95IsPeak` below 20 cycles, and `rolling`, the busiest 2 minutes' mean, idle and failed reads counted as 0. |
 | `loads` | The tables' rates, in order: the summary's columns. |
