@@ -32,12 +32,16 @@ func residenceState(pd, on bool, waiting int) *learnreplay.State {
 // the decode engine's TTFT at the prompt priced (#301); off, or with no
 // prefill variant, it holds nothing. A TTFT read with requests waiting on
 // decode capacity is a queue that holds no KV: it is not priced, and the
-// figure is flagged ResidenceUnread, as it is when the TTFT is unread.
+// figure is flagged ResidenceUnread, as it is when the TTFT is unread or
+// the window's backlog is (BacklogUnread). An aggregated variant holds no
+// pull.
 func TestDecodeResidence_TheDecodeEngineTTFTOnTheSwitch(t *testing.T) {
 	for name, c := range map[string]struct {
 		pd, on   bool
 		waiting  int
 		unread   bool
+		backlog  bool
+		both     bool
 		want     float64
 		wantFlag bool
 	}{
@@ -49,11 +53,17 @@ func TestDecodeResidence_TheDecodeEngineTTFTOnTheSwitch(t *testing.T) {
 		"P/D, off, backlog":       {pd: true, waiting: 3},
 		"P/D, on, TTFT unread":    {pd: true, on: true, unread: true, wantFlag: true},
 		"decode only, on, unread": {on: true, unread: true},
+		"P/D, on, backlog unread": {pd: true, on: true, backlog: true, wantFlag: true},
+		"P/D, on, aggregated":     {pd: true, on: true, both: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			st := residenceState(c.pd, c.on, c.waiting)
 			if c.unread {
 				st.Variants[0].DecodeTTFT.EngineTTFT = whatif.DecodeTTFT{}
+			}
+			st.Variants[0].DecodeTTFT.BacklogUnread = c.backlog
+			if c.both {
+				st.Variants[0].Role = string(domain.RoleBoth)
 			}
 			f := answerFlags{set: map[string]bool{}}
 			vs, err := f.decodeVariants(st)

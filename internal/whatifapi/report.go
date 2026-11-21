@@ -302,9 +302,9 @@ type ReportDecodeUse struct {
 	WaitProbability Figure `json:"waitProbability"`
 	// KVPull is the KV pull on the decode pods, where the TTFT prices it as
 	// a processor-sharing stage on them (a P/D fleet with a decode line and
-	// a transfer); nil where it does not. It stands where the TTFT is
-	// refused, the pull saturating among the reasons. The KV fill and the
-	// slots leave it out.
+	// a transfer); nil where it does not, and where the fleet itself is
+	// refused. It stands where the TTFT is refused, the pull saturating
+	// among the reasons. The KV fill and the slots leave it out.
 	KVPull *ReportKVPull `json:"kvPull,omitempty"`
 }
 
@@ -315,12 +315,13 @@ type ReportKVPull struct {
 	Utilization float64 `json:"utilization"`
 	// Wait is the pull's mean stretch, in seconds: the time a pull shares
 	// its pod beyond its own work. Absent where the mean TTFT is refused at
-	// the load.
+	// the load, or is priced first come at a prompt spread past processor
+	// sharing's, which prices no pull stage.
 	Wait *float64 `json:"wait,omitempty"`
-	// SetsTTFT says the pull is the larger wait in TTFT: on its own larger
-	// than decode admission's and than the prefill side's, so the decode
-	// count, not the prefill count, moves TTFT here. False where Wait is
-	// absent.
+	// SetsTTFT says the pull is the larger mean wait in TTFT: on its own
+	// larger than decode admission's and than the prefill side's, so more
+	// decode pods, not more prefill pods, cut the mean TTFT most here. False
+	// where Wait is absent.
 	SetsTTFT bool `json:"setsTTFT"`
 }
 

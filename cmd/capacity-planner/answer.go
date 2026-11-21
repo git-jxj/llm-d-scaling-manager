@@ -575,15 +575,19 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
 			AssumedB:  pv.itlB.Applied,
 		}
-		if st.DecodeResidencePull && slices.ContainsFunc(st.Variants, func(v learnreplay.VariantState) bool {
+		if st.DecodeResidencePull && domain.CanonicalRole(vs.Role) == domain.RoleDecode && slices.ContainsFunc(st.Variants, func(v learnreplay.VariantState) bool {
 			return domain.CanonicalRole(v.Role) == domain.RolePrefill
 		}) {
 			// A P/D decode holds the KV from the pull: the decode engine's
 			// TTFT at the prompt priced (saturation.SwitchDecodeResidencePull).
 			// One read with requests waiting on decode capacity is a queue,
-			// and a waiting request holds no KV: it is not priced, nor is an
-			// unread one, and the figures say so (residenceUnread).
-			if et := vs.DecodeTTFT.EngineTTFT; et.Waiting == 0 && et.At(pv.shape.ILeff) > 0 {
+			// and a waiting request holds no KV; a window whose decode rows
+			// did not say why they waited (BacklogUnread) may be one. Neither
+			// is priced, nor is an unread or non-finite TTFT, and the
+			// figures say so (residenceUnread). An aggregated variant
+			// prefills its own prompt and holds no pull.
+			if et := vs.DecodeTTFT.EngineTTFT; et.Waiting == 0 && !vs.DecodeTTFT.BacklogUnread &&
+				whatif.Finite(et.At(pv.shape.ILeff)) && et.At(pv.shape.ILeff) > 0 {
 				pv.decode.HeldBefore = et.At(pv.shape.ILeff)
 			} else {
 				pv.flags = append(pv.flags, residenceUnread)
@@ -784,13 +788,22 @@ func onHostBound(res whatif.Result, pv pricedVariant, r resolvedRatio) whatif.Re
 	return res
 }
 
-// tpotRatioRead is R_q as the histograms read it (tpotRatioFor).
+// tpotRatioRead is R_q as the histograms read it (tpotRatioFor). Where the
+// censored fit reads the router's buckets (saturation.SwitchTPOTRatioCensored),
+// it reads inside a coarse bucket rather than at its edge, so the engine's
+// edge reading does not replace it: the switch is the remedy for the coarse
+// grid. Where the fit does not read, the router's edge reading falls back to
+// the engine's as without the switch.
 func (f *answerFlags) tpotRatioRead(st *learnreplay.State, q float64) (whatif.TPOTRatio, []whatif.Flag, *whatif.Unanswerable) {
 	r, flags, refused := whatif.TPOTRatio{}, []whatif.Flag(nil), &whatif.Unanswerable{Reason: whatif.NoTPOTHistogram,
 		Detail: "the recording carries no TPOT histogram; pass --assume-tpot-ratio for a flagged answer"}
 	switch {
 	case len(st.TPOTWindows) > 0 && st.TPOTRatioCensored:
-		r, flags, refused = whatif.TPOTRatioCensored(st.TPOTWindows, q)
+		var fitted bool
+		r, flags, refused, fitted = whatif.TPOTRatioCensoredFit(st.TPOTWindows, q)
+		if fitted {
+			return r, flags, refused
+		}
 	case len(st.TPOTWindows) > 0:
 		r, flags, refused = whatif.TPOTRatioFromWindows(st.TPOTWindows, q)
 	}

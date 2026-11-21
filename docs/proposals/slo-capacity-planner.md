@@ -128,15 +128,20 @@ that step is in it; the fill is
 `k = λ_rep·(H + (OL − 1)·B) / (C/KVreq − λ_rep·(OL − 1)·A)`, with the same
 residence in the admission chain and the knee. A TTFT read with requests
 waiting on decode capacity is a queue, and a waiting request holds no KV: it is
-not used, nor is an unread one, and the figures are flagged `ResidenceUnread`. With `H = 0` every figure is the closed form
+not used, nor is an unread one or one from a window whose decode backlog is
+unread, and the figures are flagged `ResidenceUnread`. `H` is read at the
+recorded load and held at every rate, and it times the batch slots too, where a
+request pulling its KV holds cache but not yet a running slot: a knee the slots
+bind is priced low. With `H = 0` every figure is the closed form
 above, exactly. At 8k prompts and 26 output tokens `H` is about a third of the
 residence; at 1000/1000 under 1%. Planner-only replay switch
-`decode-residence-pull`, off. It only raises the fill, so no TPOT reads lower
-with it (the knee and the rate for a target do drop); alone it moves the 0.6B staircase's mean TPOT further over (r1 B,
+`decode-residence-pull`, off. Where `H` is at least one step `ITL(k)` it only
+raises the fill, so no TPOT reads lower with it (the knee and the rate for a
+target do drop); alone it moves the 0.6B staircase's mean TPOT further over (r1 B,
 1.36 to 1.56 of measured), where the line already reads high. Beside
 `itl-hold-steady-slope` and `itl-line-at-floor` it lifts the bursty phases they
 read low (r2 C at Ca² 4, mean TPOT 0.79 to 0.85, steps read low 18 to 3 of 30):
-it goes on with them.
+it should go on with them (nothing enforces it).
 
 The pull also loads the decode pods while their KV fill reads near idle: with
 processor sharing on (the CLI's default) the pull is a stage on each decode pod,
@@ -146,8 +151,8 @@ mean wait), on a P/D fleet with a decode line and a transfer, and says when it i
 the larger wait in TTFT, on its own larger than decode admission's and than the
 prefill side's. The row stands where the TTFT is refused, with its utilization
 and no wait: at 1 or above the pull saturates the decode pods, the refusal's
-reason. Where the pull is the larger wait, the decode count, not the prefill
-count, moves TTFT, as on the 0.6B warm-up at 9 prefill, where decode 2, 3 and 4
+reason. Where the pull is the larger mean wait, more decode pods, not more prefill
+pods, cut the mean TTFT most, as on the 0.6B warm-up at 9 prefill, where decode 2, 3 and 4
 gave p95 TTFT 322, 218 and 198 ms at a KV fill under 0.01. A missed TTFT names
 the pull, not decode admission, in the verdict's reason.
 
@@ -284,13 +289,16 @@ bucket set `σ`, where the second-fullest bucket holds real mass (3 requests and
 with none, or a fit at the floor of the `σ` range, the edge reading stands. By
 fill, each bucket is fitted on its own windows, never above that bucket's own
 edge reading, and one whose windows do not identify `σ` takes the global `R_q`
-capped there. Flags and refusals are the
-edge reading's. Planner-only replay switch `tpot-ratio-censored`, off: on the
-Qwen3-32B phases it reads p90 over p50 at about 1.15 where the edge read 1.56,
+capped there. Flags and refusals are the edge reading's; a fitted read is not
+replaced by the engine histogram's edge reading where the router's buckets are
+coarse, since the fit is what reads inside them. Requests past a window's last
+finite edge are a cell of their own. Planner-only replay switch `tpot-ratio-censored`, off: on the
+Qwen3-32B shape-A phase it reads p90 over p50 at about 1.22 where the edge read 1.57
+(against a measured 1.27 to 1.31),
 and the router's 10, 20 and 40 ms buckets hold the measured p50 and p90 in the
 same bucket in nearly every step, so the backtest cannot say which is right
 (both unresolvable); on the shorter-output phases it moves the p90 from about
-the interpolated measured figure (19 ms) to 13 to 14 ms. Nothing there shows it
+the interpolated measured figure (19 ms) to 14 to 15 ms. Nothing there shows it
 reads at or over the truth, so it stays off.
 
 **Without a histogram**, a percentile TPOT is refused (`NoTPOTHistogram`).
@@ -1460,7 +1468,9 @@ spread, with no flag asking, so `schemaVersion` is `2`. The TTFT priced as
 processor sharing ([the TTFT page](slo-capacity-planner-ttft.md#as-built-processor-sharing))
 changed what `parts.engineWait` means (the prefill pods' stretch, not the busiest
 pod's first-come wait), added `parts.kvPullWait`, and left `parts.waitScale` and
-`parts.waitOffset` at 0, so `schemaVersion` is `3`.
+`parts.waitOffset` at 0, so `schemaVersion` is `3`. Naming the KV pull in decode
+utilization added `parts.kvPullUtilization` beside `parts.kvPullWait`; the key is
+new and additive, so `schemaVersion` stays `3`.
 
 **Replay.** `learnreplay.State` gains `Prefill`, `FlowControlSeries` and each
 variant's `DecodeTTFT` (`state_ttft.go`). They are read from the cycles' rows and
@@ -1942,6 +1952,7 @@ roles[].results.ttft.answer.parts.decodeWaitProbability number
 roles[].results.ttft.answer.parts.engineWait number
 roles[].results.ttft.answer.parts.firstStep number
 roles[].results.ttft.answer.parts.independent number
+roles[].results.ttft.answer.parts.kvPullUtilization number
 roles[].results.ttft.answer.parts.kvPullWait number
 roles[].results.ttft.answer.parts.onsets object
 roles[].results.ttft.answer.parts.onsets.decode number

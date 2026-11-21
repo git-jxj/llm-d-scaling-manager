@@ -568,10 +568,11 @@ It replays the recording once and answers, for each shape and load:
   (opt-in), it is read off the pod counts that were learned, or 1.15 with
   none. The `checks` lines give each fleet tried and its numbers.
 - **Per shape:** utilization at the load (decode KV fill, batch slots, wait
-  probability, and on a P/D fleet with a KV transfer a `KV pull` row: the
-  pull's load on each decode pod, which the KV fill leaves out, and whether it
-  is the larger wait in TTFT, where the decode count, not the prefill count,
-  moves TTFT; at 1 or more the pull saturates the decode pods and TTFT is
+  probability, and on a P/D fleet with a KV transfer, TTFT priced as
+  processor sharing (the default), a `KV pull` row: the pull's load on each
+  decode pod, which the KV fill leaves out, and whether it is the larger mean
+  wait in TTFT, where more decode pods, not more prefill pods, cut the mean
+  TTFT most; at 1 or more the pull saturates the decode pods and TTFT is
   refused;
   prefill utilization pooled and on the busiest pod), the
   prefill, decode and fleet knees in req/s and output tok/s with what binds

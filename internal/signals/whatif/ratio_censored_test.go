@@ -24,15 +24,17 @@ func lognormalWindow(n, m, sigma float64, edges []float64) TPOTWindow {
 	return w
 }
 
-// trueRatio is a lognormal's q-quantile over its mean.
-func trueRatio(q, sigma float64) float64 {
+// trueP90 is a lognormal's 0.9-quantile over its mean.
+func trueP90(sigma float64) float64 {
+	const q = 0.9
 	return math.Exp(sigma*math.Sqrt2*math.Erfinv(2*q-1) - sigma*sigma/2)
 }
 
 // The router's TPOT edges (10, 25, 50, 75 ms) around a 15 ms mean with a
 // per-request spread of 0.2: the p90's bucket is 10 to 25 ms, and the edge
-// read prices R_q at 25/15 = 1.67 where the truth is 1.26 (#279: predicted
-// p90 over p50 1.55 against a measured 1.27 to 1.31). The censored fit
+// read prices R_q at 25/15 = 1.67 where the truth is 1.26 (#279 reads the
+// same overshoot as a ratio over the p50, not the mean: predicted p90 over
+// p50 1.55 against a measured 1.27 to 1.31). The censored fit
 // reads the bucket's mass and lands within 5% of the truth, and never above
 // the edge reading.
 func TestTPOTRatioCensored_ReadsTheBucketMassNotItsEdge(t *testing.T) {
@@ -44,7 +46,7 @@ func TestTPOTRatioCensored_ReadsTheBucketMassNotItsEdge(t *testing.T) {
 		require.Nil(t, u)
 		got, _, u := TPOTRatioCensored(ws, 0.9)
 		require.Nil(t, u)
-		want := trueRatio(0.9, c.sigma)
+		want := trueP90(c.sigma)
 		assert.InEpsilon(t, max(1, want), got.Value, 0.05, "mean %g sigma %g: edge %.3f", c.mean, c.sigma, edge.Value)
 		assert.LessOrEqual(t, got.Value, edge.Value, "never above the edge reading")
 	}
@@ -93,7 +95,7 @@ func TestTPOTRatioCensored_PooledWindowsSetTheSpread(t *testing.T) {
 	got, _, u := TPOTRatioCensored(ws, 0.9)
 	require.Nil(t, u)
 	assert.Greater(t, got.Value, 1.1)
-	assert.Less(t, got.Value, trueRatio(0.9, 0.25)+1e-9)
+	assert.Less(t, got.Value, trueP90(0.25)+1e-9)
 	assert.LessOrEqual(t, got.Value, edge.Value)
 }
 
@@ -145,7 +147,7 @@ func TestTPOTRatioCensored_ByFillNeverAboveTheBucketsOwnEdge(t *testing.T) {
 	assert.InDelta(t, low.Value, low.Learned, 1e-12, "Learned is the bucket's own reading")
 
 	mid := got.ByFill[2]
-	assert.InEpsilon(t, trueRatio(0.9, 0.5), mid.Learned, 0.05)
+	assert.InEpsilon(t, trueP90(0.5), mid.Learned, 0.05)
 	assert.LessOrEqual(t, mid.Learned, edge.ByFill[2].Learned)
 	for i, b := range got.ByFill {
 		if i > 0 {
@@ -155,4 +157,18 @@ func TestTPOTRatioCensored_ByFillNeverAboveTheBucketsOwnEdge(t *testing.T) {
 			assert.GreaterOrEqual(t, b.Value, got.Value, "a thin bucket reads the global R_q, raised")
 		}
 	}
+}
+
+// A window that carries no +Inf bucket still counts every request in
+// _count and _sum: the requests past its last edge are the tail, and the
+// fit reads them as a cell from that edge up. Dropped, the mean keeps them
+// while the cells do not, and the spread reads short (#279 round 2).
+func TestTPOTRatioCensored_KeepsTheMassPastTheLastEdge(t *testing.T) {
+	w := lognormalWindow(1000, 0.015, 0.4, []float64{0.010, 0.025})
+	require.Less(t, w.Buckets[1].Count, w.Count-50, "the fixture holds a tail past 25 ms")
+	ws := []TPOTWindow{w, w, w}
+	got, _, u := TPOTRatioCensored(ws, 0.9)
+	require.Nil(t, u)
+	// Dropped, the tail reads sigma 0.35 and R_q 1.47 against the true 1.54.
+	assert.InEpsilon(t, trueP90(0.4), got.Value, 0.01)
 }

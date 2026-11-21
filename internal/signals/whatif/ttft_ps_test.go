@@ -464,3 +464,34 @@ func isRefusal(r Result, reason Reason) bool {
 	u, ok := r.(Unanswerable)
 	return ok && u.Reason == reason
 }
+
+// KVPullUtilization is the TTFT's own pull utilization where the TTFT prices
+// the pull, stands at or past 1 where the TTFT refuses a saturated pull, and
+// is 0 where no pull stage is priced: first come, no decode line, or no
+// transfer.
+func TestPS_KVPullUtilizationIsTheTTFTs(t *testing.T) {
+	fl := psFleet(0.0577, 1)
+	for _, rate := range []float64{1, 10, 28.3} {
+		nearRel(t, "pull utilization", KVPullUtilization(fl, rate), psTTFT(t, fl, rate, 0).Parts.KVPullUtilization, 1e-12)
+	}
+	sat := psFleet(0.0577, 1)
+	sat.Decode.Replicas = 1
+	sat.Prefill.TransferSecondsPerToken = 2e-5
+	if !isRefusal(TTFTAt(sat, 7, 0), Saturated) {
+		t.Fatalf("want the saturated pull refused: %+v", TTFTAt(sat, 7, 0))
+	}
+	if got := KVPullUtilization(sat, 7); got < 1 {
+		t.Errorf("a saturated pull reads %g, want at least 1", got)
+	}
+	fc := psFleet(0.0577, 1)
+	fc.ProcessorSharing = false
+	noDecode := psFleet(0.0577, 1)
+	noDecode.Decode = nil
+	noXfer := psFleet(0.0577, 1)
+	noXfer.Prefill.TransferSecondsPerToken = 0
+	for name, f := range map[string]TTFTFleet{"first come": fc, "no decode line": noDecode, "no transfer": noXfer} {
+		if got := KVPullUtilization(f, 10); got != 0 {
+			t.Errorf("%s: %g, want 0", name, got)
+		}
+	}
+}

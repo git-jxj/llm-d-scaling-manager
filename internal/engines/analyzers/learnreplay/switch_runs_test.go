@@ -1468,7 +1468,10 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestTPOTRatioCensored_PooledWindowsSetTheSpread"},
 		{"../../../signals/whatif", "TestTPOTRatioCensored_ASliverDoesNotSetTheSpread"},
 		{"../../../signals/whatif", "TestTPOTRatioCensored_ByFillNeverAboveTheBucketsOwnEdge"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_KeepsTheMassPastTheLastEdge"},
 		{"../../../../cmd/capacity-planner", "TestTPOTRatio_TheCensoredReadOnTheSwitch"},
+		{"../../../../cmd/capacity-planner", "TestTPOTRatio_TheCensoredReadIsNotSwappedForTheEngines"},
+		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
 	},
 	saturation.SwitchDecodeResidencePull: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
@@ -1476,6 +1479,7 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestDecode_ResidenceOfOneTokenIsTheTTFT"},
 		{"../../../signals/whatif", "TestDecode_ResidenceRefusesABadHeldBefore"},
 		{"../../../../cmd/capacity-planner", "TestDecodeResidence_TheDecodeEngineTTFTOnTheSwitch"},
+		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},

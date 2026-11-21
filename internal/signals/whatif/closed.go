@@ -53,6 +53,15 @@ type Decode struct {
 	// tokens the pull is about a third of the residence. 0, as the controller
 	// prices, leaves it out. It must be a TTFT read with no decode backlog: a
 	// request waiting for decode capacity holds no KV.
+	//
+	// Two simplifications. HeldBefore is the TTFT read at the recorded load
+	// and held at every rate priced: the pull's own wait grows with the rate,
+	// so above the recorded load the residence reads short (the knee high),
+	// below it long. And the same residence times the batch slots, where a
+	// request pulling its KV holds cache but not yet a running-batch slot
+	// (vLLM's WAITING_FOR_REMOTE_KVS): a knee the slots bind (BoundBatchCap)
+	// is under-priced, conservatively, by up to HeldBefore over the
+	// residence.
 	HeldBefore float64
 	// AssumedB says the caller stated Line's intercept B and refitted the
 	// slope through it (the capacity planner's --assume-itl-b): a line on the

@@ -437,12 +437,12 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 		case k.Utilization >= 1:
 			pull += ", saturated: TTFT is refused"
 		case k.Wait == nil:
-			pull += ", mean wait unpriced (TTFT refused)"
+			pull += ", mean wait unpriced (TTFT refused, or priced first come)"
 		default:
 			pull += ", mean wait " + msText(*k.Wait)
 		}
 		if k.SetsTTFT {
-			pull += ": the larger wait in TTFT, so the decode count sets TTFT"
+			pull += ": the larger wait in TTFT, so more decode pods cut its mean most"
 		}
 		fmt.Fprintf(b, "  %-14s%s\n", "KV pull", pull)
 	}

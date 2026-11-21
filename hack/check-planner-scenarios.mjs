@@ -593,7 +593,7 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("decode use reads in words", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8, slotsOccupied: {value: 48.2}, slots: 228, waitProbability: {value: 0.004}}) ===
     "decode KV 17% full (of 80% usable), 48 of 228 batch slots busy, 0% of requests wait for a slot", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8}));
   check("a KV pull that sets TTFT is named", ctx.decodeUse({kvFill: {value: 0.006}, bandTop: 0.8, kvPull: {utilization: 0.62, wait: 0.05, setsTTFT: true}}) ===
-    "decode KV 1% full (of 80% usable); KV pull 62% busy per decode pod, the larger wait in TTFT (the decode count sets TTFT)",
+    "decode KV 1% full (of 80% usable); KV pull 62% busy per decode pod, the larger wait in TTFT (more decode pods cut its mean most)",
     ctx.decodeUse({kvFill: {value: 0.006}, bandTop: 0.8, kvPull: {utilization: 0.62, wait: 0.05, setsTTFT: true}}));
   check("a KV pull that does not set TTFT is not named as its wait", ctx.decodeUse({kvFill: {value: 0.006}, bandTop: 0.8, kvPull: {utilization: 0.2, wait: 0.001, setsTTFT: false}}) ===
     "decode KV 1% full (of 80% usable); KV pull 20% busy per decode pod",

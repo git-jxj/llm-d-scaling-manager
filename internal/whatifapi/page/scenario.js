@@ -780,7 +780,7 @@ function kvPullUse(k) {
   if (!k) return "";
   if (k.utilization >= 1) return `; KV pull ${pct(k.utilization)} busy per decode pod, saturated`;
   return `; KV pull ${pct(k.utilization)} busy per decode pod` +
-    (k.setsTTFT ? ", the larger wait in TTFT (the decode count sets TTFT)" : "");
+    (k.setsTTFT ? ", the larger wait in TTFT (more decode pods cut its mean most)" : "");
 }
 
 // prefillUse is prefill's utilization at the load, in words.

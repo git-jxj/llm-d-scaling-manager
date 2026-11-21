@@ -13,7 +13,7 @@ import (
 
 // The KV pull is named as the larger wait in TTFT only where it is, on its
 // own, larger than the prefill side's wait and than decode admission's
-// (issue #301: decode idle by its KV fill, yet the decode count sets TTFT).
+// (issue #301: decode idle by its KV fill, yet the pull is the larger wait in TTFT).
 func TestKVPull_SetsTTFTOnlyAsTheLargerWait(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -55,7 +55,7 @@ func TestKVPull_TheUtilizationRow(t *testing.T) {
 	s.Utilization.Decode.KVPull = &whatifapi.ReportKVPull{Utilization: 0.62, Wait: &wait, SetsTTFT: true}
 	var b strings.Builder
 	shapeText(&b, s)
-	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait 50.0 ms: the larger wait in TTFT, so the decode count sets TTFT\n")
+	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait 50.0 ms: the larger wait in TTFT, so more decode pods cut its mean most\n")
 
 	s.Utilization.Decode.KVPull.SetsTTFT = false
 	b.Reset()
@@ -65,7 +65,7 @@ func TestKVPull_TheUtilizationRow(t *testing.T) {
 	s.Utilization.Decode.KVPull.Wait = nil
 	b.Reset()
 	shapeText(&b, s)
-	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait unpriced (TTFT refused)\n")
+	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait unpriced (TTFT refused, or priced first come)\n")
 
 	s.Utilization.Decode.KVPull.Utilization = 1.25
 	b.Reset()
@@ -115,4 +115,29 @@ func TestKVPull_TheRowStandsWhereThePullSaturates(t *testing.T) {
 	assert.InDelta(t, 1.2, kv.Utilization, 1e-9)
 	assert.Nil(t, kv.Wait)
 	assert.False(t, kv.SetsTTFT)
+}
+
+// At a prompt spread past processor sharing's (whatif.MaxPSPromptCV) the
+// TTFT is the larger of processor sharing's and first come's; where first
+// come's is larger it prices no pull stage, and its pull wait of 0 is no
+// reading: the row keeps the utilization and gives no wait, rather than a
+// mean wait of 0.0 ms (review of #301's row).
+func TestKVPull_NoZeroWaitWhereFirstComePrices(t *testing.T) {
+	// One prefill pod at 5 r/s, prompt cv 2: first come's queue is the
+	// larger; at cv 1 processor sharing prices the pull's wait.
+	at := func(cv float64) *whatifapi.ReportKVPull {
+		q := stairQuery(1, 2, 5)
+		q.TTFT = &whatifapi.ReportTarget{Seconds: 0.2, Percentile: 0.95}
+		q.Assume.PromptCV = &cv
+		kv := stairReport(t, q).Shapes[0].Utilization.Decode.KVPull
+		require.NotNil(t, kv, "cv %g", cv)
+		return kv
+	}
+	ps := at(1)
+	require.NotNil(t, ps.Wait)
+	assert.Greater(t, *ps.Wait, 0.0)
+	fc := at(2)
+	assert.InDelta(t, ps.Utilization, fc.Utilization, 1e-12, "the pull's load does not depend on the queue priced")
+	assert.Nil(t, fc.Wait, "first come prices no pull wait")
+	assert.False(t, fc.SetsTTFT)
 }

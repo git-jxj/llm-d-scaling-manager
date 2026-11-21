@@ -39,13 +39,21 @@ const (
 // global R_q capped there, and a thin bucket the global R_q, as the edge
 // read gives it. Learned is the bucket's reading before the raise over fill.
 func TPOTRatioCensored(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, *Unanswerable) {
+	r, flags, refused, _ := TPOTRatioCensoredFit(windows, q)
+	return r, flags, refused
+}
+
+// TPOTRatioCensoredFit is TPOTRatioCensored, and whether the fit read R_q:
+// false where the edge reading stands (no window spreads over two buckets,
+// a fit at the sigma floor, or a refusal).
+func TPOTRatioCensoredFit(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, *Unanswerable, bool) {
 	edge, flags, refused := TPOTRatioFromWindows(windows, q)
 	if refused != nil {
-		return edge, flags, refused
+		return edge, flags, refused, false
 	}
 	global, ok := censoredPooled(windows, q)
 	if !ok {
-		return edge, flags, nil
+		return edge, flags, nil, false
 	}
 	r := TPOTRatio{Value: max(1, min(global, edge.Value))}
 	if len(edge.ByFill) > 0 {
@@ -75,7 +83,7 @@ func TPOTRatioCensored(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, *Una
 			r.ByFill[i].Value = max(r.ByFill[i].Value, r.ByFill[i-1].Value)
 		}
 	}
-	return r, flags, nil
+	return r, flags, nil, true
 }
 
 // censoredCell is a bucket's count between two edges.
@@ -89,7 +97,9 @@ type censoredWindow struct {
 	cells []censoredCell
 }
 
-// censoredCells reads a window for the fit.
+// censoredCells reads a window for the fit. Requests past the last edge a
+// window carries (one with no +Inf bucket) are a cell from that edge up:
+// the mean counts them, and dropping them would read the spread short.
 func censoredCells(w TPOTWindow, q float64) (censoredWindow, bool) {
 	if !(w.Count > 0) || !(w.Sum > 0) || len(w.Buckets) == 0 {
 		return censoredWindow{}, false
@@ -105,6 +115,9 @@ func censoredCells(w TPOTWindow, q float64) (censoredWindow, bool) {
 			cw.cells = append(cw.cells, censoredCell{lo: lo, hi: b.UpperEdge, n: n})
 		}
 		lo, prev = b.UpperEdge, running
+	}
+	if n := w.Count - running; n > 0 && !math.IsInf(lo, 1) {
+		cw.cells = append(cw.cells, censoredCell{lo: lo, hi: math.Inf(1), n: n})
 	}
 	return cw, len(cw.cells) > 0
 }

@@ -30,3 +30,26 @@ func TestTPOTRatio_TheCensoredReadOnTheSwitch(t *testing.T) {
 	assert.Less(t, censored.Value, edge.Value, "the censored read is under the edge read")
 	assert.InDelta(t, 1.267, censored.Value, 0.05)
 }
+
+// The censored read is not replaced by the engine's edge reading where the
+// router's buckets are coarse: the fit reads inside the coarse bucket, which
+// is what the switch is for (#279 round 2). Without the switch the engine's
+// finer edge reading stands, as before.
+func TestTPOTRatio_TheCensoredReadIsNotSwappedForTheEngines(t *testing.T) {
+	w := whatif.TPOTWindow{Sum: 15, Count: 1000, SumMeasured: true, Buckets: []whatif.HistogramBucket{
+		{UpperEdge: 0.010, Count: 27}, {UpperEdge: 0.025, Count: 996}, {UpperEdge: 0.050, Count: 1000}, {UpperEdge: math.Inf(1), Count: 1000}}}
+	router := []whatif.TPOTWindow{w, w, w}
+	st := &learnreplay.State{TPOTWindows: router, EngineTPOTWindows: []whatif.TPOTWindow{fineWindow, fineWindow, fineWindow}}
+	f := answerFlags{set: map[string]bool{}}
+	_, flags, u := f.tpotRatioFor(st, 0.9)
+	require.Nil(t, u)
+	require.Contains(t, flags, whatif.EngineTPOTHistogram, "off: the coarse router falls back to the engine")
+	st.TPOTRatioCensored = true
+	f = answerFlags{set: map[string]bool{}}
+	got, flags, u := f.tpotRatioFor(st, 0.9)
+	require.Nil(t, u)
+	want, _, _ := whatif.TPOTRatioCensored(router, 0.9)
+	assert.NotContains(t, flags, whatif.EngineTPOTHistogram)
+	assert.False(t, f.engineTPOT)
+	assert.InDelta(t, want.Value, got.Value, 1e-12)
+}

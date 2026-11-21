@@ -945,12 +945,14 @@ func (r *reporter) use(u *whatifapi.ReportUse, base *servedFleet, ev fleetEval) 
 	// The KV pull's utilization stands where the TTFT is refused, the pull
 	// saturating among the reasons; its wait is the mean TTFT's part, with
 	// no span (a mean whatever the percentile judged), and absent where that
-	// TTFT is refused.
+	// TTFT is refused, or priced first come at a prompt spread past
+	// processor sharing's (whatif.SpreadBeyondProcessorSharing), which prices
+	// no pull stage: its wait reads 0 there, which is not a measurement.
 	if base.pf.refused == nil {
 		if rho := whatif.KVPullUtilization(base.pf.fleet, r.load); rho > 0 {
 			kv := &whatifapi.ReportKVPull{Utilization: rho}
 			mean := base.pf.priced(func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, r.load, 0) })
-			if t, ok := mean.(whatif.TTFT); ok {
+			if t, ok := mean.(whatif.TTFT); ok && t.Parts.KVPullUtilization > 0 {
 				w := t.Parts.KVPullWait
 				kv.Wait, kv.SetsTTFT = &w, pullSetsTTFT(t.Parts)
 			}

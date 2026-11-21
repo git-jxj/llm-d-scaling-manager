@@ -35,7 +35,7 @@ func TestDecode_ResidenceHoldsTheKVFromThePull(t *testing.T) {
 	assert.InDelta(t, 10*26*0.00172/den, k0, 1e-12)
 	den1 := 1.16e6/8200 - 10*25*0.03125
 	assert.InDelta(t, 10*(held+25*0.00172)/den1, k1, 1e-12)
-	assert.Greater(t, k1/k0, 1.6, "at 26 output tokens the pull is most of the residence")
+	assert.Greater(t, k1/k0, 1.6, "at 26 output tokens the pull lifts the fill by more than half")
 
 	// Little's law on the result: requests resident = rate x residence.
 	seqs := k1 * 1.16e6 / 8200
