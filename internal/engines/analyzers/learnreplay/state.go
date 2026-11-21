@@ -194,6 +194,11 @@ type VariantState struct {
 	// itl.BelowBandMinReadings, where the line is not read below the band.
 	// BelowBandFill is the fill that reading was taken at, 0 with none.
 	BelowBandITL, BelowBandFill float64
+	// LineLift is how far, in seconds, Line's intercept was raised to pass
+	// through that floor (saturation.SwitchITLLineAtFloor,
+	// whatif.LiftToFloor); 0 where it was not. Baseline and LineReadings
+	// are the fit's, before the lift.
+	LineLift float64
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -244,7 +249,13 @@ type shapeSample struct {
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
 // TTFT and TPOT under what was measured, because it predicts less decode KV
-// fill than the pods held. It stays off until that is fixed.
+// fill than the pods held. Nor is saturation.SwitchITLLineAtFloor, which
+// fixes that fill (issue llm-d-incubation/llm-d-scaling-manager#274) and
+// only helps with the hold: alone it lifts the steeper line the hold
+// replaces, and reads TPOT higher still. With both, the planner's mean TTFT
+// and TPOT on the public staircase's 8k-prompt phases come within 13% of
+// measured, but its p90 TTFT there still reads 15% to 23% under and its p90
+// TPOT up to 32% under, so both stay off.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -351,10 +362,12 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		arrivals []float64
 		ranges   = map[string]ShapeRange{}
 	)
+	lineAtFloor := false
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
 		}
+		lineAtFloor = r.sat.ITLLineAtFloor()
 		// The replay applied the event before asking: its data decoded in
 		// full there, so the input alone is read here.
 		raw, _ := learnrec.Raw(ev.Data).Member("Input")
@@ -441,6 +454,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
 		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
+		st.Variants[i].liftToFloor(lineAtFloor)
 	}
 	var out map[int]*State
 	if len(snaps) > 0 {
@@ -456,6 +470,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
 			b := sn.below[s.Variants[i].Variant]
 			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b[0], b[1]
+			s.Variants[i].liftToFloor(lineAtFloor)
 		}
 		out[c] = s
 	}
@@ -801,6 +816,16 @@ func (vs *VariantState) refit() {
 	if got := itl.RefitAboveBand(vs.Readings.Above, vs.Readings.AboveSteady, vs.MinSettled); got.Tier != "" && sameLine(got.Model, vs.Line) {
 		vs.Tier, vs.LineReadings, vs.Refitted = whatif.TierAboveBand, got.Read, true
 	}
+}
+
+// liftToFloor raises a decode variant's line to the floor read below the
+// band, when on is set (saturation.SwitchITLLineAtFloor; whatif.LiftToFloor).
+// It runs after the refit, which finds the readings of the line as fitted.
+func (vs *VariantState) liftToFloor(on bool) {
+	if !on || domain.CanonicalRole(vs.Role) == domain.RolePrefill {
+		return
+	}
+	vs.Line, vs.LineLift = whatif.LiftToFloor(vs.Tier, vs.Line, whatif.LineFloor{ITL: vs.BelowBandITL, Fill: vs.BelowBandFill})
 }
 
 // ShapeRange is the range of a variant's per-cycle mean lengths and prefix-hit
