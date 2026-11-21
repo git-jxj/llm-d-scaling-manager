@@ -501,3 +501,43 @@ func TestOnsetSwitches_SayWhatTheyDid(t *testing.T) {
 		}
 	}
 }
+
+// q32EngineRunningCap is the Qwen3-32B staircase engine's running cap at
+// its 8000-token prompts: max_num_batched_tokens 65536 over the prompt.
+const q32EngineRunningCap = 8
+
+// Why PSOnsets stays off (DefaultPSOnsets): on the Qwen3-32B staircase the
+// router's wait appeared between two steps of each bucket (q32Steps: none at
+// the lower, a mean of seconds at the upper). The first-come onset falls
+// between them for both buckets. On processor sharing at the engine's own
+// running cap, B's onset falls between them too, but C's (Ca^2 4) falls past
+// the step that measured a 1.4 s wait, so a rate answer capped there would be
+// more optimistic than measured. With the cap not known, both sit under the
+// lower step, conservative.
+func TestPSOnsets_TheQ32CrossingKeepsThemOff(t *testing.T) {
+	for _, bucket := range []string{"B", "C"} {
+		steps := q32Steps[bucket]
+		lo, hi := steps[0], steps[1]
+		if !(lo.routerWait == 0 && hi.routerWait >= 1) {
+			t.Fatalf("%s: precondition: no wait at %.3f r/s and seconds at %.3f, got %g and %g", bucket, lo.rate, hi.rate, lo.routerWait, hi.routerWait)
+		}
+		fcfs := mustOnsets(t, onFleet(q32Fleet(bucket), false, false, 0)).Prefill
+		atCap := mustOnsets(t, onFleet(q32Fleet(bucket), true, false, q32EngineRunningCap)).Prefill
+		unknown := mustOnsets(t, onFleet(q32Fleet(bucket), true, false, 0)).Prefill
+		t.Logf("%s: measured crossing %.3f to %.3f r/s; first come %.4f, processor sharing at cap %d %.4f, cap unknown %.4f",
+			bucket, lo.rate, hi.rate, fcfs, q32EngineRunningCap, atCap, unknown)
+		if !(fcfs > lo.rate && fcfs < hi.rate) {
+			t.Errorf("%s: the first-come onset %.4f is outside the measured crossing", bucket, fcfs)
+		}
+		if !(unknown < lo.rate) {
+			t.Errorf("%s: with the cap not known the onset %.4f is not under the step with no wait, %.3f", bucket, unknown, lo.rate)
+		}
+		switch inside := atCap > lo.rate && atCap < hi.rate; {
+		case bucket == "B" && !inside:
+			t.Errorf("B: processor sharing at cap %d puts the onset at %.4f, outside the crossing", q32EngineRunningCap, atCap)
+		case bucket == "C" && !(atCap >= hi.rate):
+			t.Errorf("C: processor sharing at cap %d puts the onset at %.4f, want at or past the step that waited, %.3f",
+				q32EngineRunningCap, atCap, hi.rate)
+		}
+	}
+}
