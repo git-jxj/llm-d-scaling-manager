@@ -6,7 +6,7 @@ REFUSED prefill's TTFT (NoFixedLatency), in 15 buckets: P1 refused a: TooFewLowL
   what the plan did: Prefill is not sized: decode is sized alone, on its knee times headroom.
 
 REFUSED decode's knee (PinnedDefaultB), in 15 buckets: a pinned-B line on the default intercept 0.006 s; state B for a flagged answer: assume.itlB in seconds, at most the floor's 0.003064 (on the page, Assume a term, ITL B); the floor gives none here: the floor 3.1 ms at fill 0.05 gives no intercept with the line's readings (their mean fill under twice the floor's, or B outside (0, the floor])
-  what to do: The decode ITL line rests on the 6 ms default intercept B (PinnedDefaultB), so neither TPOT nor the decode knee is priced: state B, flagged as assumed: --assume-itl-b floor (from the floor read below the band) or --assume-itl-b 12ms, or in the API assume.itlBFromFloor or assume.itlB.
+  what to do: The decode ITL line rests on the 6 ms default intercept B (PinnedDefaultB), so neither TPOT nor the decode knee is priced: state B, flagged as assumed, as the detail says: --assume-itl-b floor where the detail names the B the floor gives, else a duration under the floor it names (in the API assume.itlBFromFloor or assume.itlB).
   what the plan did: Nothing is sized: decode's own limit is refused too.
 
 each hour: the need of its busiest bucket, the fewest pods it had, and the fleet it had judged whole at each bucket's rate

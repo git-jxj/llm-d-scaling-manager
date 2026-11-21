@@ -100,13 +100,15 @@ type SelfCheck struct {
 	Seconds float64 `json:"seconds"`
 	// Stated is the answer's stated inputs the recording was replayed with,
 	// in the words of the question's source: every figure they move is
-	// flagged, and outside the validated region. WithoutStated is the
-	// answer's stated inputs the self-check ran without. Each is absent
-	// with none.
+	// flagged. WithoutStated is the answer's stated inputs the self-check
+	// ran without. Each is absent with none.
 	Stated        []string `json:"stated,omitempty"`
 	WithoutStated []string `json:"withoutStated,omitempty"`
-	// notUsed is what the line adds of a stated ITL B the fits did not use.
+	// notUsed is what the line adds of a stated ITL B the fits did not use;
+	// outside says a replayed term puts the figures outside the validated
+	// region.
 	notUsed string
+	outside bool
 }
 
 // StatedITLBNotUsed opens the words of a refusal whose stated ITL B was not
@@ -160,8 +162,25 @@ type Stated struct {
 	// PromptTokens and OutputTokens are stated mean lengths, 0 the
 	// observed ones.
 	PromptTokens, OutputTokens float64
+	// Other is what else the answer set that its fits do not price with
+	// (the CLI's opt-in switches, a stated batch cap), in words: the
+	// self-check names it as run without.
+	Other []string
 	// CLI names them as the CLI's flags; false, as the API's keys.
 	CLI bool
+	// arrivalKey is the API's key of ArrivalCV2; empty, arrivalCV2.
+	arrivalKey string
+}
+
+// outside says the terms st replays put a figure outside the validated
+// region (the CLI's flagsOutside, and a stated B, which does once it
+// applies); a stated prompt spread and arrivals are inside.
+func (st *Stated) outside() bool {
+	if st == nil {
+		return false
+	}
+	a := st.Assume
+	return a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor
 }
 
 // replayed is the request terms the self-check replays st with, and their
@@ -185,7 +204,7 @@ func (st *Stated) notReplayed() []string {
 	if st == nil {
 		return nil
 	}
-	return st.words(Assume{TPOTRatio: st.Assume.TPOTRatio}, nil, st.PromptTokens, st.OutputTokens)
+	return append(st.words(Assume{TPOTRatio: st.Assume.TPOTRatio}, nil, st.PromptTokens, st.OutputTokens), st.Other...)
 }
 
 // all is every input st states, in words.
@@ -193,7 +212,7 @@ func (st *Stated) all() []string {
 	if st == nil {
 		return nil
 	}
-	return st.words(st.Assume, st.ArrivalCV2, st.PromptTokens, st.OutputTokens)
+	return append(st.words(st.Assume, st.ArrivalCV2, st.PromptTokens, st.OutputTokens), st.Other...)
 }
 
 // words names the inputs given, as the CLI's flags or the API's keys, each
@@ -223,7 +242,11 @@ func (st *Stated) words(a Assume, cv2 *float64, prompt, output float64) []string
 		out = append(out, "assume.itlBFromFloor")
 	}
 	add("--assume-itl-b", "assume.itlB", a.ITLB, dur)
-	add("--arrival-cv2", "arrivalCV2", cv2, num)
+	arrivalKey := st.arrivalKey
+	if arrivalKey == "" {
+		arrivalKey = "arrivalCV2"
+	}
+	add("--arrival-cv2", arrivalKey, cv2, num)
 	if prompt > 0 {
 		add("--assume-input-tokens", "traffic.mix.promptTokens", &prompt, num)
 	}
@@ -244,7 +267,11 @@ func (sc *SelfCheck) RanWithout(st *Stated) *SelfCheck {
 	}
 	out := *sc
 	out.WithoutStated = words
-	out.Line = sc.Line + withoutStatedSentence(words)
+	if sc.Status == SelfCheckNotRun {
+		out.Line = sc.Line + " It was not run with the stated " + strings.Join(words, ", ") + " either."
+	} else {
+		out.Line = sc.Line + withoutStatedSentence(words)
+	}
 	return &out
 }
 
@@ -263,7 +290,11 @@ func (sc *SelfCheck) lead(head string) string {
 	if len(sc.Stated) == 0 {
 		return head
 	}
-	return fmt.Sprintf("%s, replayed with the stated %s (flagged, outside the validated region)", head, strings.Join(sc.Stated, ", "))
+	flag := "flagged as stated"
+	if sc.outside {
+		flag += ", outside the validated region"
+	}
+	return fmt.Sprintf("%s, replayed with the stated %s (%s)", head, strings.Join(sc.Stated, ", "), flag)
 }
 
 // SelfCheckFigure is one figure's score over the folds.
@@ -346,7 +377,7 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 		return notRun("no fit was read at an earlier cycle")
 	}
 	req, stated := info.Stated.replayed()
-	sc.Stated, sc.WithoutStated = stated, info.Stated.notReplayed()
+	sc.Stated, sc.WithoutStated, sc.outside = stated, info.Stated.notReplayed(), info.Stated.outside()
 	folds = slices.Clone(folds)
 	slices.SortFunc(folds, func(a, b FoldFit) int { return a.At.Compare(b.At) })
 	answered := e.series[len(e.series)-1].At

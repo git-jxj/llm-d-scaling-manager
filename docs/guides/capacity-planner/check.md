@@ -102,13 +102,19 @@ An answer given stated inputs is checked with them. With
 values, and the line names them:
 
 ```text
-Self-check, replayed with the stated --assume-prompt-cv 0.06 (flagged, outside the validated region): tested on ...
+Self-check, replayed with the stated --assume-prompt-cv 0.06 (flagged as stated): tested on ...
 ```
 
-A stated TPOT ratio (`--assume-tpot-ratio`) and stated lengths
-(`--assume-input-tokens`, `--assume-output-tokens`) are not replayed: the
-check scores p90 TPOT on the recording's own ratio, and the recording's own
-traffic. The line ends `It ran without the stated ...` to say so. On the
+A stated V_P, a, router hop or ITL B also puts the figures outside the
+validated region, and the line says so. A stated TPOT ratio
+(`--assume-tpot-ratio`), stated lengths (`--assume-input-tokens`,
+`--assume-output-tokens`) and the opt-in switches (`--batch-cap`,
+`--flow-control`, `--price-router-wait`, `--router-wait-in-prefill`,
+`--ps-onsets`, `--prefill-running-cap`, `--charge-decode-gate`) are not
+replayed: the check scores p90 TPOT on the recording's own ratio, the
+recording's own traffic, and the switches' defaults. The line ends
+`It ran without the stated ...` to say so. Where a stated ITL B is not used
+at the fits (the line is held there), the line says in how many steps. On the
 server, a report or day plan that states inputs carries the source's
 self-check, which ran before anything was stated, with the same ending.
 

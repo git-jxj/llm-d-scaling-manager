@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // The scenario's ranges.
@@ -306,6 +308,9 @@ func (sc *Scenario) checkAssume() error {
 		if t.x != nil && (math.IsNaN(*t.x) || *t.x < 0 || math.IsInf(*t.x, 1)) {
 			return InputErrorf("assume.%s %g, want a finite value of 0 or more", t.name, *t.x)
 		}
+	}
+	if a.PromptCV != nil && *a.PromptCV > whatif.PromptCVStop {
+		return InputErrorf("assume.promptCV %g, want a cv from 0 to %g", *a.PromptCV, whatif.PromptCVStop)
 	}
 	if a.TPOTRatio != nil && (sc.TPOT == nil || sc.TPOT.Statistic == statisticMean) {
 		return InputErrorf("assume.tpotRatio needs a TPOT percentile (slo.tpot.statistic pNN)")

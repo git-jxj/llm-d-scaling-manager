@@ -467,7 +467,7 @@ turns it off for that source.
 | `issueUrl` | With `inconsistent`: a new-issue page prefilled with diagnostics that hold no name, no rate and no recording, for the user to review and file. |
 | `seconds` | What the self-check took, its fits' replay apart (shared with the answer's). |
 | `stated` | The answer's stated inputs the recording was replayed with (`--assume-itl-b floor`, `assume.promptCV 0.06`), named as the question's source names them. Absent with none. |
-| `withoutStated` | The answer's stated inputs the self-check ran without: a TPOT ratio, stated lengths, and on a report or day plan from the server every stated input (the source's self-check ran before them). The line says so. Absent with none. |
+| `withoutStated` | The answer's stated inputs the self-check ran without: a TPOT ratio, stated lengths, the CLI's opt-in switches, and on a report or day plan from the server every stated input (the source's self-check ran before them). The line says so. Absent with none. |
 
 ## Predict and compare
 

@@ -140,13 +140,16 @@ func (f *answerFlags) assumeIntercept(pv *pricedVariant) {
 	pv.stated = append(pv.stated, "--assume-itl-b")
 }
 
+// oneSidedLine is why no B refits a line priced one-sided past the cap.
+const oneSidedLine = "the line is priced one-sided past the cap, at a prior, not through B"
+
 // refitThrough is the line refitted through B on vs's readings, with the
 // tracker's choice of fit (itl.Refit), or why no line runs through B.
 func refitThrough(vs learnreplay.VariantState, b float64) (itl.Refitted, string) {
 	got := itl.Refit(vs.Readings.All, vs.Readings.Steady, b, vs.MinSettled, vs.OneSided)
 	switch {
 	case got.PinnedAtBPrior || got.PinnedAtLeastITL:
-		return got, "the line is priced one-sided past the cap, at a prior, not through B"
+		return got, oneSidedLine
 	case got.Tier != whatif.TierPinnedB || !itl.ValidModel(got.Model.A, got.Model.B) || math.Abs(got.Model.B-b) > 1e-12:
 		return got, fmt.Sprintf("no slope fits the line's readings through B %s: it is at or above what they read", ms(b))
 	}
@@ -241,6 +244,10 @@ func (pv pricedVariant) pinnedDefaultBHint() string {
 		return "; no stated B can price it: the replay does not reproduce this pinned-B line from its readings, so it cannot be refitted"
 	}
 	b, why := floorAssumption(pv.state)
+	if why == oneSidedLine {
+		// Its price is set by the cap: a stated B would be declined too.
+		return "; no stated B can price it: " + why
+	}
 	if why != "" {
 		// The floor gives no B here: offering it would only be declined
 		// (issue llm-d-incubation/llm-d-scaling-manager#277).

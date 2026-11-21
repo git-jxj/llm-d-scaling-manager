@@ -26,7 +26,7 @@ func TestSelfCheck_ReplaysTheStatedInputs(t *testing.T) {
 		seen = append(seen, k)
 	}
 	stated := &Stated{Assume: Assume{PromptCV: f64(0.06), ITLBFromFloor: true, TPOTRatio: f64(1.3), RouterHop: f64(0.008)},
-		ArrivalCV2: f64(2), PromptTokens: 2000, CLI: true}
+		ArrivalCV2: f64(2), PromptTokens: 2000, Other: []string{"--ps-onsets=true"}, CLI: true}
 	sc := selfCheckEntry(context.Background(), e, folds, SelfCheckInfo{PlannerVersion: "vtest", Stated: stated})
 	require.NotEmpty(t, sc.Folds, sc.Line)
 	require.NotEmpty(t, seen)
@@ -41,21 +41,30 @@ func TestSelfCheck_ReplaysTheStatedInputs(t *testing.T) {
 		assert.NotEqual(t, 2000.0, k.PromptTokens, "each step's own lengths, not the stated ones")
 	}
 	assert.Equal(t, []string{"--assume-prompt-cv 0.06", "--assume-router-hop 8ms", "--assume-itl-b floor", "--arrival-cv2 2"}, sc.Stated)
-	assert.Equal(t, []string{"--assume-tpot-ratio 1.3", "--assume-input-tokens 2000"}, sc.WithoutStated)
+	assert.Equal(t, []string{"--assume-tpot-ratio 1.3", "--assume-input-tokens 2000", "--ps-onsets=true"}, sc.WithoutStated)
 	assert.True(t, strings.HasPrefix(sc.Line, "Self-check, replayed with the stated --assume-prompt-cv 0.06, --assume-router-hop 8ms, "+
-		"--assume-itl-b floor, --arrival-cv2 2 (flagged, outside the validated region): tested on the last "), sc.Line)
-	assert.True(t, strings.HasSuffix(sc.Line, " It ran without the stated --assume-tpot-ratio 1.3, --assume-input-tokens 2000: "+
+		"--assume-itl-b floor, --arrival-cv2 2 (flagged as stated, outside the validated region): tested on the last "), sc.Line)
+	assert.True(t, strings.HasSuffix(sc.Line, " It ran without the stated --assume-tpot-ratio 1.3, --assume-input-tokens 2000, --ps-onsets=true: "+
 		"what the answer prices on them is not checked."), sc.Line)
+
+	// A stated spread and arrivals are inside the validated region: the line
+	// does not call them outside.
+	inside := selfCheckEntry(context.Background(), e, folds, SelfCheckInfo{Stated: &Stated{Assume: Assume{PromptCV: f64(0.06)}, CLI: true}})
+	assert.True(t, strings.HasPrefix(inside.Line, "Self-check, replayed with the stated --assume-prompt-cv 0.06 (flagged as stated): "), inside.Line)
 
 	// The API's keys name them on the API.
 	stated.CLI = false
 	sc = selfCheckEntry(context.Background(), e, folds, SelfCheckInfo{Stated: stated})
 	assert.Equal(t, []string{"assume.promptCV 0.06", "assume.routerHop 0.008", "assume.itlBFromFloor", "arrivalCV2 2"}, sc.Stated)
-	assert.Equal(t, []string{"assume.tpotRatio 1.3", "traffic.mix.promptTokens 2000"}, sc.WithoutStated)
+	assert.Equal(t, []string{"assume.tpotRatio 1.3", "traffic.mix.promptTokens 2000", "--ps-onsets=true"}, sc.WithoutStated)
+	stated.arrivalKey = "traffic.arrivalCV2"
+	assert.Contains(t, selfCheckEntry(context.Background(), e, folds, SelfCheckInfo{Stated: stated}).Stated, "traffic.arrivalCV2 2",
+		"a day plan's arrivals are traffic.arrivalCV2")
 
 	// Nothing stated: the line and the fleets priced are as before.
 	seen = nil
 	plain := selfCheckEntry(context.Background(), e, folds, SelfCheckInfo{})
+	require.NotEmpty(t, seen)
 	assert.True(t, strings.HasPrefix(plain.Line, "Self-check: tested on the last "), plain.Line)
 	assert.Empty(t, plain.Stated)
 	assert.Empty(t, plain.WithoutStated)
@@ -82,6 +91,31 @@ func TestSelfCheck_RanWithoutTheStatedInputs(t *testing.T) {
 		"what the answer prices on them is not checked.", got.Line)
 	assert.Equal(t, "Self-check: tested on the last 1 h.", sc.Line, "the cached self-check is not changed")
 	assert.Empty(t, sc.WithoutStated)
+
+	// One that did not run did not run without them either.
+	notRun := &SelfCheck{Status: SelfCheckNotRun, Line: "Self-check not run: the recording spans 40 min."}
+	assert.Equal(t, "Self-check not run: the recording spans 40 min. It was not run with the stated assume.promptCV 0.06 either.",
+		notRun.RanWithout(&Stated{Assume: Assume{PromptCV: f64(0.06)}}).Line)
+}
+
+// A stated ITL B a fit did not use (its line held there) is counted over the
+// judged steps' p90 TPOT, with the first one's reason.
+func TestSelfCheck_CountsAStatedITLBNotUsed(t *testing.T) {
+	refused := func(detail string) []BacktestPoint {
+		return []BacktestPoint{{Statistic: statP90, Predicted: Figure{Refused: &Refusal{Reason: "PinnedDefaultB", Detail: detail}}}}
+	}
+	why := "a held line has no readings of its own at this cycle to refit through a stated B"
+	steps := []BacktestStep{
+		{TPOT: refused("a held line on the default intercept 0.006 s; " + StatedITLBNotUsed + "assume.itlBFromFloor): " + why)},
+		{TPOT: refused("a held line on the default intercept 0.006 s; " + StatedITLBNotUsed + "assume.itlBFromFloor): " + why)},
+		{TPOT: refused("a pinned-B line on the default intercept 0.006 s")},
+		{Excluded: ExcludedWarmUp, TPOT: refused(StatedITLBNotUsed + "assume.itlB): excluded")},
+	}
+	n, got := itlBNotUsed(steps)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, why, got)
+	n, _ = itlBNotUsed(nil)
+	assert.Zero(t, n)
 }
 
 // A backtest refuses a stated term out of range, as a plan does, instead of

@@ -439,7 +439,8 @@ func (q *dayQuestion) key() any {
 // stated is what the plan states in place of what its source gave, named
 // as the CLI's flags or the API's keys.
 func (q *dayQuestion) stated(cli bool) *Stated {
-	return &Stated{Assume: q.k.Assume, ArrivalCV2: q.k.ArrivalCV2, PromptTokens: q.k.PromptTokens, OutputTokens: q.k.OutputTokens, CLI: cli}
+	return &Stated{Assume: q.k.Assume, ArrivalCV2: q.k.ArrivalCV2, PromptTokens: q.k.PromptTokens, OutputTokens: q.k.OutputTokens, CLI: cli,
+		arrivalKey: "traffic.arrivalCV2"}
 }
 
 // dayQuestionOf checks req against e.
@@ -679,8 +680,8 @@ func refusalHint(term string, reason whatif.Reason) string {
 	case (term == termTPOT || term == termDecodeKnee) && reason == whatif.PinnedDefaultB:
 		// The line prices decode's knee too: asking no TPOT does not help.
 		return "The decode ITL line rests on the 6 ms default intercept B (PinnedDefaultB), so neither TPOT nor the decode knee is priced: " +
-			"state B, flagged as assumed: --assume-itl-b floor (from the floor read below the band) or --assume-itl-b 12ms, " +
-			"or in the API assume.itlBFromFloor or assume.itlB."
+			"state B, flagged as assumed, as the detail says: --assume-itl-b floor where the detail names the B the floor gives, " +
+			"else a duration under the floor it names (in the API assume.itlBFromFloor or assume.itlB)."
 	case (term == termTPOT || term == termDecodeKnee) && reason == whatif.NoLine:
 		// The line prices decode's knee too: asking no TPOT does not help.
 		return "The source fitted no decode ITL line it can price (" + string(reason) + "), so neither TPOT nor the decode knee is priced: " +

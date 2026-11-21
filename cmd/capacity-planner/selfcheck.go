@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +95,23 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 	}
 	if f.set["assume-output-tokens"] {
 		st.OutputTokens = f.outputTokens
+	}
+	// The fits price at the switches' defaults (servedState.fleetAt): what
+	// the answer set of them is named as run without.
+	for _, o := range []struct {
+		name, value string
+	}{
+		{"batch-cap", strconv.FormatInt(f.batchCap, 10)},
+		{"flow-control", f.flowControl},
+		{"price-router-wait", strconv.FormatBool(f.priceRouterWait)},
+		{"router-wait-in-prefill", strconv.FormatBool(f.routerWaitInPrefill)},
+		{"ps-onsets", strconv.FormatBool(f.psOnsets)},
+		{"prefill-running-cap", strconv.Itoa(f.prefillRunningCap)},
+		{"charge-decode-gate", strconv.FormatBool(f.chargeDecodeGate)},
+	} {
+		if f.set[o.name] {
+			st.Other = append(st.Other, "--"+o.name+"="+o.value)
+		}
 	}
 	return st, nil
 }

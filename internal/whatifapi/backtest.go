@@ -692,9 +692,6 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		if err := sc.checkAssume(); err != nil {
 			return nil, err
 		}
-		if a.PromptCV != nil && *a.PromptCV > whatif.PromptCVStop {
-			return nil, InputErrorf("assume.promptCV %g, want a cv from 0 to %g", *a.PromptCV, whatif.PromptCVStop)
-		}
 		q.assume = *a
 		q.assumed = append(q.assumed, "terms typed in for the fit (assume): every figure they move is flagged")
 	}
