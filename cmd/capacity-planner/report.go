@@ -373,6 +373,20 @@ func (r *reporter) fleet(np, nd int, ttftQ, tpotQ float64) (*servedFleet, error)
 	return sf, nil
 }
 
+// gpusPerReplica is each priced role's GPUs per replica as the recording
+// states them, 0 for a role it states none for.
+func (r *reporter) gpusPerReplica() (whatifapi.FleetCounts, error) {
+	sf, err := r.fleet(r.q.Prefill, r.q.Decode, r.sloTTFTQ(), r.sloTPOTQ())
+	if err != nil {
+		return whatifapi.FleetCounts{}, err
+	}
+	out := whatifapi.FleetCounts{Decode: sf.pv.state.GPUsPerReplica}
+	if sf.pf != nil {
+		out.Prefill = variantGPUs(r.st, sf.pf.variant)
+	}
+	return out, nil
+}
+
 // counts is the base fleet's replica counts as priced.
 func (r *reporter) counts(base *servedFleet) (np, nd int) {
 	nd = base.pv.decode.Replicas
@@ -1195,6 +1209,20 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		return v, nil
 	}
 	v.Verdict = whatifapi.VerdictRight
+	if r.q.Spare > 0 {
+		// Asked for a spare, a fleet that holds with no replica to spare is
+		// the one to add it to: not searched, so Minimizes stays empty.
+		n := whatifapi.FleetCounts{Prefill: np, Decode: nd}
+		g, err := r.gpusPerReplica()
+		if err != nil {
+			return v, err
+		}
+		v.Needed = &whatifapi.ReportNeeded{Prefill: np, Decode: nd, MaxReplicas: whatifapi.DefaultSizeBound,
+			GPUs: whatifapi.FleetGPUs(n, g), WithSpare: whatifapi.WithSpare(n, r.q.Spare, g)}
+		if v.Needed.GPUs != nil {
+			v.Needed.GPUsPerReplica = &g
+		}
+	}
 	if r.brief {
 		v.Summary = v.Verdict + ": holds, no replica to spare."
 	} else {
@@ -1288,9 +1316,12 @@ func (r *reporter) marginWords(op float64) string {
 }
 
 // needed finds the smallest fleet that holds every target at the load with
-// headroom, the fewest replicas in all (ties to fewer decode), by POST
-// /v1/size's search (whatifapi.SmallestFleet) on the report's own check,
-// and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
+// headroom, the fewest GPUs where the recording states each role's GPUs per
+// replica, else the fewest replicas (ties to fewer replicas, then fewer
+// decode), by POST /v1/size's search (whatifapi.SmallestFleet) on the
+// report's own check, and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
+// Its GPUs, and the fleet with the spare asked, are in v.Needed (the text's
+// needed line).
 // A role it cuts, below np prefill or nd decode, must also hold its own
 // check at the peak, the test roles judges a spare by: removing capacity
 // is the costly mistake. Both tests being monotone in each count, it then
@@ -1306,6 +1337,19 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 	bound := whatifapi.DefaultSizeBound
 	out := &whatifapi.ReportNeeded{MaxReplicas: bound}
 	v.Needed = out
+	gpus, err := r.gpusPerReplica()
+	if err != nil {
+		return "", nil, err
+	}
+	// sized fills the needed fleet's GPUs and its spare, once its counts
+	// are set.
+	sized := func() {
+		n := whatifapi.FleetCounts{Prefill: out.Prefill, Decode: out.Decode}
+		if out.GPUs = whatifapi.FleetGPUs(n, gpus); out.GPUs != nil {
+			out.GPUsPerReplica = &gpus
+		}
+		out.WithSpare = whatifapi.WithSpare(n, r.q.Spare, gpus)
+	}
 	at := func(n whatifapi.FleetCounts) (fleetEval, error) {
 		return r.evaluateAt(n.Prefill, n.Decode, r.load, false)
 	}
@@ -1357,12 +1401,15 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 			return fmt.Sprintf("no count up to %d decode replicas holds", bound), nil, nil
 		}
 		out.Decode, out.DecodeOnly = d, true
+		sized()
 		if d > nd {
 			v.Grow = append(v.Grow, roleDecodeWord)
 		}
 		return fmt.Sprintf("needs at least %d decode (has %d)", d, nd), nil, nil
 	}
-	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, decodeHolds, holds)
+	cost, minimizes := whatifapi.ReplicaCost(gpus)
+	out.Minimizes = minimizes
+	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, cost, decodeHolds, holds)
 	switch {
 	case err != nil:
 		return "", nil, err
@@ -1371,6 +1418,7 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 		return fmt.Sprintf("no fleet up to %d replicas of each role holds", bound), nil, nil
 	}
 	out.Prefill, out.Decode = n.Prefill, n.Decode
+	sized()
 	if n.Prefill > np {
 		v.Grow = append(v.Grow, rolePrefill)
 	}

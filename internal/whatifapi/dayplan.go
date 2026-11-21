@@ -220,8 +220,35 @@ type DayShape struct {
 	Source        string   `json:"source"`
 }
 
-// DayNeeded is the fewest replicas in all that serve a bucket's rate, ties
-// going to fewer decode (SmallestFleet): one fleet that serves it, and
+// neededWhat names what a size's needed fleet is the fewest of: GPUs where
+// the roles' GPUs per replica are stated and differ, else replicas (where
+// they are equal the fewest GPUs are the fewest replicas).
+func neededWhat(gpusPerReplica FleetCounts) string {
+	if WeighsGPUs(gpusPerReplica) {
+		return "fewest GPUs"
+	}
+	return "fewest replicas"
+}
+
+// neededOrder is the order neededWhat's search ranks fleets in, in words.
+func neededOrder(gpusPerReplica FleetCounts) string {
+	if WeighsGPUs(gpusPerReplica) {
+		return fmt.Sprintf("the fewest GPUs at %d a prefill and %d a decode replica, ties to fewer replicas, then fewer decode",
+			gpusPerReplica.Prefill, gpusPerReplica.Decode)
+	}
+	return "the fewest in all, ties to fewer decode"
+}
+
+// WeighsGPUs reports whether a size's search on gpusPerReplica ranks fleets
+// otherwise than by replicas: both roles stated, and unequal.
+func WeighsGPUs(gpusPerReplica FleetCounts) bool {
+	w, on := ReplicaCost(gpusPerReplica)
+	return on == MinimizesGPUs && w.Prefill != w.Decode
+}
+
+// DayNeeded is the cheapest fleet that serves a bucket's rate, the fewest
+// GPUs or replicas (SmallestFleet, ReplicaCost), ties going to fewer
+// replicas, then fewer decode: one fleet that serves it, and
 // another mix may serve it too. Prefill is absent where the source cannot
 // price it (Refused); Decode is then sized on decode's own limit alone, a
 // lower bound (AtLeast): the fleet's limit, which decode admission can hold
@@ -1008,9 +1035,10 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		"Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
 		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates. A p95 needs %d cycles in the bucket; with fewer the bucket is sized for its mean, "+
 			"which is less conservative (FewCyclesForP95).", q.sizeFor, MinPercentileCycles),
-		fmt.Sprintf("Needed is the fewest replicas whose fleet limit, at the SLO and headroom %.2f, reaches the rate: the fewest in all, ties to fewer decode "+
+		fmt.Sprintf("Needed is the %s whose fleet limit, at the SLO and headroom %.2f, reaches the rate: %s "+
 			"(POST /v1/size's search, whatifapi.SmallestFleet). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: "+
-			"under when its limit falls short, over when one replica fewer of either role would still serve it.", q.sc.Headroom),
+			"under when its limit falls short, over when one replica fewer of either role would still serve it.", neededWhat(q.e.doc.Fleet.GPUsPerReplica()), q.sc.Headroom,
+			neededOrder(q.e.doc.Fleet.GPUsPerReplica())),
 		fmt.Sprintf("A bucket with fewer than %.0f requests is not sized (too little data); a bucket no cycle fell in has no data.", q.minRequests),
 		"Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. "+
 			"A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.")
