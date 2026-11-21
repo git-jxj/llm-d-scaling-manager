@@ -135,9 +135,6 @@ func TestDayPlanJudgesTheFleetItHadWhole(t *testing.T) {
 	assert.Equal(t, DayVerdictUnder, none.Buckets[0].Verdict)
 }
 
-// ptrInt is a pointer to n.
-func ptrInt(n int) *int { return &n }
-
 // A source that cannot price prefill sizes decode alone, as a lower bound
 // (AtLeast), names the refusal once, gives no GPU-hours of a need, and
 // judges decode alone.
