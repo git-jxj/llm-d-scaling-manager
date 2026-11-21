@@ -1100,6 +1100,7 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillFBusyMinutes:    nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	saturation.SwitchITLHoldSteadySlope:     nil,
+	saturation.SwitchPrefillVPFloorServed:   nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1438,6 +1439,13 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestImbalance_TooFewBusyMinutesTakeTheBusiest"},
 		{"../../../signals/prefill", "TestImbalance_BusyIsComputedTokensNotRequests"},
 		{"../saturation", "TestPrefillFBusyMinutes_LightMinutesThroughAnalyze"},
+	},
+	saturation.SwitchPrefillVPFloorServed: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_ALowerBoundIsFlooredAtTheServedPeak"},
+		{"../../../signals/prefill", "TestCapacity_BusyMinutesAreNotFloored"},
+		{"../../../signals/prefill", "TestCapacity_NoQueueStaysRefused"},
+		{"../saturation", "TestPrefillVPFloorServed_ThroughAnalyze"},
 	},
 	// The first holds it off from the constructor; the others run it on and
 	// off and assert both, in the window, through Analyze and in the

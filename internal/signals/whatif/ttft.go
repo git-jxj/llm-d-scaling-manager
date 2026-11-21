@@ -271,6 +271,13 @@ type TTFTFleet struct {
 	// prefill pod and the pull at its unloaded time. On with
 	// slo.SwitchTTFTProcessorSharing, and in the CLI.
 	ProcessorSharing bool
+	// LowerBoundKneeUnpriced refuses a rate at or above a prefill knee priced
+	// from a V_P that is a lower bound (Prefill.VPLowerBound) as
+	// PastLowerBoundKnee, not Saturated: the true knee is at or above it, so
+	// a rate past it is one the model cannot price, not one the fleet cannot
+	// carry. Off, Saturated, as the SLO analyzer reads it; the planner sets
+	// it (issue llm-d-incubation/llm-d-scaling-manager#280).
+	LowerBoundKneeUnpriced bool
 	// PriceRouterWait prices EPP flow control's gate past the prefill onset,
 	// opt-in, off by default (DefaultPriceRouterWait). On, a TTFT at or above the
 	// prefill gate's onset carries the gate as a stage in front of the
@@ -738,6 +745,9 @@ type ttftPlan struct {
 	// chargeGate is TTFTFleet.ChargeDecodeGate where it takes: flow control
 	// on and a decode line.
 	chargeGate bool
+	// kneeUnpriced is TTFTFleet.LowerBoundKneeUnpriced on a V_P that is a
+	// lower bound and not the caller's.
+	kneeUnpriced bool
 }
 
 // plan checks a fleet and places its flow-control onsets.
@@ -752,7 +762,8 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 		}
 	}
 	pl := ttftPlan{pf: pf, d: fl.Decode, fc: fl.FlowControl, ps: fl.ProcessorSharing,
-		psCapped: fl.ProcessorSharing && pf.cv > MaxPSPromptCV}
+		psCapped:     fl.ProcessorSharing && pf.cv > MaxPSPromptCV,
+		kneeUnpriced: fl.LowerBoundKneeUnpriced && fl.Prefill.VPLowerBound && !fl.Prefill.VPAssumed}
 	pl.routerWait = (fl.PriceRouterWait || fl.RouterWaitInPrefill) && pl.ps && !pl.psCapped
 	pl.gateStage = pl.routerWait && fl.PriceRouterWait
 	pl.psOnsets = fl.PSOnsets && pl.ps
@@ -1102,12 +1113,28 @@ func (pl ttftPlan) price(rate, q float64, withDecodeWait, extras bool) priced {
 	return ps
 }
 
+// decodeSaturates says rate is at or above the decode line's knee: there the
+// fleet saturates on decode, whatever bound V_P is.
+func (pl ttftPlan) decodeSaturates(rate float64) bool {
+	if pl.d == nil {
+		return false
+	}
+	k, ok := KneeRate(*pl.d).(Answer)
+	return ok && rate >= k.Value
+}
+
 // priceOne is price on the plan's one queue: processor sharing with pl.ps,
 // first come without.
 func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced {
 	pk := pl.pf.knee()
 	out := TTFT{PrefillKnee: pk, Onsets: pl.onsets, Flags: append([]Flag(nil), pl.flags...)}
 	if rate >= pk {
+		if pl.kneeUnpriced && !pl.decodeSaturates(rate) {
+			u := refuse(PastLowerBoundKnee, fmt.Sprintf("%g r/s at or above the prefill knee %g r/s, "+
+				"priced from a V_P that is only a lower bound: the fleet may carry it", rate, pk))
+			u.Flags = []Flag{VPLowerBound}
+			return priced{u: &u}
+		}
 		u := refuse(Saturated, fmt.Sprintf("%g r/s at or above the prefill knee %g r/s", rate, pk))
 		return priced{u: &u}
 	}

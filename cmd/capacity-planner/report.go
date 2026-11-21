@@ -781,6 +781,7 @@ func reasonOf(r whatif.Result) string {
 var plainReasons = map[string]string{
 	string(whatif.Saturated):             "saturated",
 	string(whatif.AboveDecodeOnset):      "saturated",
+	string(whatif.PastLowerBoundKnee):    "past a lower-bound knee",
 	string(whatif.NoPrefillCapacity):     "no prefill speed learned",
 	string(whatif.NoFixedLatency):        "no fixed prefill latency learned",
 	string(whatif.NoImbalance):           "no prefill imbalance learned",
