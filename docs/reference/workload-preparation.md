@@ -1135,29 +1135,31 @@ With `VLLM_CACHE_ROOT` on the engine cache, vLLM keeps more there than
 torch.compile:
 
 - **DeepGEMM kernels.** When `DG_JIT_CACHE_DIR` is unset, vLLM sets it to
-  `$VLLM_CACHE_ROOT/deep_gemm`. FP8 block-quantised models on Hopper and later
-  (most FP8 MoE checkpoints) build these kernels on a cold start.
-- **The compiled model.** vLLM points Inductor under `VLLM_CACHE_ROOT` while it
-  compiles, and a warm start loads the compiled model from there.
+  `$VLLM_CACHE_ROOT/deep_gemm`. Models with FP8 block-scaled weights can build
+  these kernels on a cold start; on Qwen3-30B-A3B-FP8 on an H200, vLLM built
+  them for the linear layers.
+- **The compiled model.** vLLM saves the torch.compile output under
+  `VLLM_CACHE_ROOT`, and a warm start loads it from there instead of compiling.
 
 A warm start still writes about 1 MB outside the engine cache: a few small
-Inductor kernels under `/tmp/torchinductor_<user>` and two files under
-`~/.tensorrt_llm`. Keeping those as well (`DG_JIT_CACHE_DIR`,
-`TRTLLM_DG_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR` and `CUDA_CACHE_PATH` on the
-engine cache) did not shorten a start by more than starts vary, so
-`make workload-patch` does not set them. Measured on Qwen3-30B-A3B-FP8, one
-H200, vLLM 0.34, time from container start to `/health`:
+Inductor kernels under `/tmp/torchinductor_<user>`, two files under
+`~/.tensorrt_llm`, and a few files no cache variable covers. Keeping the first
+two as well (`DG_JIT_CACHE_DIR`, `TRTLLM_DG_CACHE_DIR`,
+`TORCHINDUCTOR_CACHE_DIR` and `CUDA_CACHE_PATH` on the engine cache) did not
+shorten a start by more than starts vary, so `make workload-patch` does not set
+them. Measured on Qwen3-30B-A3B-FP8, one H200, vLLM 0.34:
 
-| start | seconds |
+| Start | Seconds to `/health` |
 | --- | --- |
 | cold engine cache | 198.5, 207.2 |
 | warm, what `make workload-patch` sets | 50.0, 51.0, 51.1 |
 | warm, with the four variables above on the engine cache | 48.5 |
 | the first start after adding the four | 140.5, 144.0 |
 
-**Leave `DG_JIT_CACHE_DIR` unset.** Pointing it at its own directory moves
-DeepGEMM out of `$VLLM_CACHE_ROOT/deep_gemm`, so the next start on every node
-builds every kernel again: 164 kernel files and about 90 s on the model above.
+**If `VLLM_CACHE_ROOT` is on the engine cache, leave `DG_JIT_CACHE_DIR`
+unset.** Setting it to another directory moves DeepGEMM out of
+`$VLLM_CACHE_ROOT/deep_gemm`, so the first start on each node builds every
+kernel again: about 90 s on the model above, nearly all of it DeepGEMM warmup.
 
 #### Check the cache without a second start
 

@@ -7,7 +7,8 @@ and its revert, the refusal, and `engine-cache-keys` / `-verify`; see
 Not built: the bytecode offer for images before vLLM v0.32, and the
 start-time decisions. Dropped: the five variables of the cache-variable PR
 (#213). A GPU run found that `VLLM_CACHE_ROOT` already keeps DeepGEMM and the
-compiled model, and that the rest saves no measurable start time; see
+compiled model, and that the rest saved no more start time than starts vary
+(one model, one GPU); see
 [What `VLLM_CACHE_ROOT` already covers](../reference/workload-preparation.md#what-vllm_cache_root-already-covers).
 The variable lists below predate that result.
 
