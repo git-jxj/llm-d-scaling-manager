@@ -1,6 +1,7 @@
 package whatifapi
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestDayPlanSaysWhatWasAskedAndNotServing(t *testing.T) {
 			first[i].PrefillNotServing = 1
 		}
 	}
-	res.Series = append(first, shaped(t0.Add(5*time.Minute), 2, 1000)...)
+	res.Series = slices.Concat(first, shaped(t0.Add(5*time.Minute), 2, 1000))
 	p, err := DayPlan(t.Context(), res, DayPlanRequest{}, "schema-v3")
 	require.NoError(t, err)
 	require.Len(t, p.Buckets, 2)
