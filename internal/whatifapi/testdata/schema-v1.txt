@@ -422,6 +422,7 @@ inputs.selfCheck.tpot.minRatio number
 inputs.selfCheck.tpot.nearKnee object
 inputs.selfCheck.tpot.nearKnee.steps number
 inputs.selfCheck.tpot.nearKnee.worst number
+inputs.selfCheck.tpot.nearKneeUnsettled number
 inputs.selfCheck.tpot.overloaded number
 inputs.selfCheck.tpot.pastKnee object
 inputs.selfCheck.tpot.pastKnee.hi number
@@ -443,6 +444,7 @@ inputs.selfCheck.ttft.minRatio number
 inputs.selfCheck.ttft.nearKnee object
 inputs.selfCheck.ttft.nearKnee.steps number
 inputs.selfCheck.ttft.nearKnee.worst number
+inputs.selfCheck.ttft.nearKneeUnsettled number
 inputs.selfCheck.ttft.overloaded number
 inputs.selfCheck.ttft.pastKnee object
 inputs.selfCheck.ttft.pastKnee.hi number
@@ -822,6 +824,7 @@ report.selfCheck.tpot.minRatio number
 report.selfCheck.tpot.nearKnee object
 report.selfCheck.tpot.nearKnee.steps number
 report.selfCheck.tpot.nearKnee.worst number
+report.selfCheck.tpot.nearKneeUnsettled number
 report.selfCheck.tpot.overloaded number
 report.selfCheck.tpot.pastKnee object
 report.selfCheck.tpot.pastKnee.hi number
@@ -843,6 +846,7 @@ report.selfCheck.ttft.minRatio number
 report.selfCheck.ttft.nearKnee object
 report.selfCheck.ttft.nearKnee.steps number
 report.selfCheck.ttft.nearKnee.worst number
+report.selfCheck.ttft.nearKneeUnsettled number
 report.selfCheck.ttft.overloaded number
 report.selfCheck.ttft.pastKnee object
 report.selfCheck.ttft.pastKnee.hi number

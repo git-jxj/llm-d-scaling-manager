@@ -133,15 +133,18 @@ const (
 	UnscoredNotComparable = "notComparable"
 	// UnscoredUnsettled is a TTFT whose prefill queue does not settle inside
 	// the step's measurement window: its relaxation time is more than
-	// SettleShare of the window (BacktestStep.RelaxationSeconds), so the
-	// window's TTFT is not the steady state the planner prices.
+	// SettleShare of the window (BacktestStep.RelaxationSeconds). The wait
+	// is correlated over about one relaxation time, so the window holds
+	// fewer than 1/SettleShare independent readings of it: its TTFT is a
+	// noisy sample of the steady state the planner prices.
 	UnscoredUnsettled = "unsettled"
 )
 
 // SettleShare is the most of a step's measurement window the prefill
 // queue's relaxation time may take for the step's TTFT to be scored: a
-// queue relaxes to its steady state in a few relaxation times, so one of a
-// fifth of the window leaves most of the window at the steady state
+// queue's wait is correlated over about one relaxation time (and relaxes to
+// its steady state in a few), so one of a fifth of the window leaves five
+// or more independent readings of the steady state in it
 // (llm-d-incubation/llm-d-scaling-manager#305).
 const SettleShare = 0.2
 
@@ -152,10 +155,13 @@ const SettleShare = 0.2
 // N the pods, rho the step's rate over that knee, Ca^2 the arrivals' spread
 // priced (1 for random arrivals) and Cs the prompt spread priced (a pod's
 // service time follows the prompt; the fixed latency a would narrow it).
-// The knee carries the V_P margin and the pods' imbalance, so rho and E[S]
-// read high and t_r errs long: a step near the knee is more often left
-// unscored than scored wrongly. One pod gives the M/G/1 figure. It is +Inf
-// at or past the knee, and 0 where nothing prices it.
+// Pooling is the router's best case: pods held unevenly relax slower, up to
+// N times (one pod's M/G/1 figure), so t_r may read short, and a step near
+// the knee is then scored rather than left out. That is kept on purpose: on
+// the Qwen3-32B staircase phases one pod's figure would leave 23 more steps
+// (0.77 to 0.91 of the knee) unscored, 12 of whose 92 TTFT readings read
+// more than 20% low, and a self-check that drops them no longer sees them
+// (#305). It is +Inf at or past the knee, and 0 where nothing prices it.
 func relaxationSeconds(rate, prefillKnee float64, pods int, ca2, cv float64) float64 {
 	if !(rate > 0) || !(prefillKnee > 0) || pods <= 0 {
 		return 0
@@ -1187,7 +1193,11 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 	end := q.test.series[st.anchor].At
 	switch {
 	case !(in.rate > 0):
-		fl.idle(q.step.Seconds())
+		if math.IsNaN(in.rate) {
+			fl.reset() // a rate that is no number says nothing of what drained
+		} else {
+			fl.idle(q.step.Seconds())
+		}
 		out.Excluded, out.Detail = ExcludedNoTraffic, "no requests arrived"
 		return out
 	case st.windowStart.Before(first.Add(q.settle)) || (q.settle == 0 && st.windowStart.Before(first)):
@@ -2042,7 +2052,7 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 	}
 	if n := sc.Unscored[UnscoredUnsettled]; n > 0 {
 		w += fmt.Sprintf(" %d ran so near the prefill knee that its queue does not settle inside the window (relaxation time over %.0f%% of it): "+
-			"the window's TTFT is not the steady state priced.", n, 100*SettleShare)
+			"the window's TTFT is a noisy sample of the steady state priced.", n, 100*SettleShare)
 	}
 	return w, quoted
 }

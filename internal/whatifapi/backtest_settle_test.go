@@ -3,6 +3,7 @@ package whatifapi
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,4 +106,66 @@ func TestScoreStepUnsettled(t *testing.T) {
 	assert.Nil(t, st.TTFT[0].Ratio)
 	require.NotNil(t, st.TPOT[0].Ratio)
 	assert.InDelta(t, 1, *st.TPOT[0].Ratio, 1e-12)
+}
+
+// btSteps is a test window of 2 prefill and 2 decode pods at one rate a
+// five-minute step (rates), the prefill pods of step i set by prefill[i]
+// where given, with the router's latency.
+func btSteps(rates []float64, prefill map[int]int) ([]SeriesSample, []LatencySample) {
+	n := 20 * len(rates)
+	s := make([]SeriesSample, n)
+	l := make([]LatencySample, n)
+	for i := range n {
+		at := btT0.Add(time.Duration(i) * btCycle)
+		r, np := rates[i/20], 2
+		if p, ok := prefill[i/20]; ok {
+			np = p
+		}
+		s[i] = SeriesSample{At: at, Rate: r, RateKnown: r > 0, Prefill: np, Decode: 2, PromptTokens: 1000, OutputTokens: 100, HasShape: true}
+		l[i] = LatencySample{At: at, Router: btRouter(r, 0.1)}
+	}
+	return s, l
+}
+
+// Through a backtest on the stub (a fleet knee of 19.6 r/s, the prefill
+// pods', and the assumed prompt spread): a step at 0.95 of the knee is
+// unsettled and its TTFT unscored, one at 0.77 is scored; a step past the
+// knee leaves a backlog that an idle step drains at the knee and the next
+// step carries; a step that does not price (no prefill pod) clears it.
+func TestBacktestStepsSettleAndCarry(t *testing.T) {
+	r := &stubResolver{}
+	fitS, fitL := btEarlier(btSeries(240, 0, 1))
+	fit := btEntry(t, r, "fit", fitS, fitL, btConfig("H100"))
+	rates := []float64{5, 15, 18.6, 45, 0, 5, 45, 5, 5}
+	s, l := btSteps(rates, map[int]int{7: 0})
+	out := btRun(t, fit, btEntry(t, r, "t", s, l, btConfig("H100")), BacktestRequest{})
+	require.Len(t, out.Steps, len(rates))
+	st := out.Steps
+	require.NotNil(t, st[1].KneeShare)
+	mu := 5 / *st[0].KneeShare
+	require.InDelta(t, 19.6, mu, 0.1, "the premise: the stub's fleet knee")
+
+	require.NotNil(t, st[1].RelaxationSeconds)
+	assert.False(t, st[1].Unsettled, "0.77 of the knee settles: tr %.0f s", *st[1].RelaxationSeconds)
+	require.NotNil(t, st[1].TTFT[0].Ratio, "and its TTFT is scored")
+	require.NotNil(t, st[2].RelaxationSeconds)
+	assert.True(t, st[2].Unsettled, "0.95 of the knee does not: tr %.0f s", *st[2].RelaxationSeconds)
+	for _, p := range st[2].TTFT {
+		assert.Equal(t, UnscoredUnsettled, p.Unscored, p.Statistic)
+	}
+	assert.Nil(t, st[3].RelaxationSeconds, "past the knee")
+
+	// 45 r/s for 300 s queues (45 - mu) x 300; the idle step drains mu x 300
+	// of it, and 10:25 carries the rest.
+	assert.Equal(t, ExcludedNoTraffic, st[4].Excluded)
+	require.NotNil(t, st[5].Backlog)
+	assert.InDelta(t, (45-mu)*300-mu*300, *st[5].Backlog, 1)
+	require.NotNil(t, st[5].BacklogWait)
+	assert.Positive(t, *st[5].BacklogWait)
+
+	// The step with no prefill pod does not price: the backlog 10:30 left is
+	// not carried past it.
+	assert.Zero(t, st[7].Prefill)
+	assert.Nil(t, st[7].KneeShare, "10:35 did not price")
+	assert.Nil(t, st[8].Backlog, "the chain broke at 10:35")
 }
