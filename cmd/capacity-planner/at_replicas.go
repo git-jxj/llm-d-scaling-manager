@@ -505,8 +505,11 @@ func spareText(n *whatifapi.ReportNeeded) string {
 		return ""
 	}
 	gpus := func(x *int) string {
-		if x == nil {
+		switch {
+		case x == nil:
 			return ""
+		case n.DecodeOnly:
+			return fmt.Sprintf(" = %d decode GPUs", *x)
 		}
 		return fmt.Sprintf(" = %d GPUs", *x)
 	}
@@ -528,8 +531,12 @@ func spareText(n *whatifapi.ReportNeeded) string {
 		}
 	}
 	if s := n.WithSpare; s != nil {
-		fmt.Fprintf(&b, "; with %d spare of each role %s%s, which still holds with %d of each role lost",
-			s.Spare, fleet(s.Fleet), gpus(s.GPUs), s.Spare)
+		of := "of each role"
+		if n.DecodeOnly {
+			of = roleDecodeWord
+		}
+		fmt.Fprintf(&b, "; with %d spare %s %s%s, which still holds with %d %s lost",
+			s.Spare, of, fleet(s.Fleet), gpus(s.GPUs), s.Spare, of)
 	}
 	return b.String()
 }

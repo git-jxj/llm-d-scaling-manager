@@ -162,6 +162,13 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 		On       string
 		Spare    int `json:",omitempty"`
 	}{sc, bound, on, spare})
+	// The search does not depend on the spare: it is kept under the id of
+	// the same size with none, so that asking for a spare searches once.
+	searchID := contentID("size", struct {
+		Scenario Scenario
+		Bound    FleetCounts
+		On       string
+	}{sc, bound, on})
 	if b, ok := s.sizes.get(id); ok {
 		return b, nil
 	}
@@ -173,7 +180,7 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 			return nil, errBusy
 		}
 		defer func() { <-s.planSlots }()
-		found, ok := s.searches.get(id)
+		found, ok := s.searches.get(searchID)
 		if !ok {
 			if s.onSearch != nil {
 				s.onSearch()
@@ -183,7 +190,7 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 			if found, err = z.search(ctx); err != nil {
 				return nil, err
 			}
-			found = s.searches.add(id, found)
+			found = s.searches.add(searchID, found)
 		}
 		out := *found
 		if found.Answer != nil {

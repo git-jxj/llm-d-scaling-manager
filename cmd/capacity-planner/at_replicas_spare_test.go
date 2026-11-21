@@ -153,5 +153,46 @@ func TestSpareText(t *testing.T) {
 	assert.Empty(t, spareText(&whatifapi.ReportNeeded{Unmet: "fleet"}))
 	assert.Empty(t, spareText(nil))
 	d := &whatifapi.ReportNeeded{Decode: 3, DecodeOnly: true, WithSpare: whatifapi.WithSpare(whatifapi.FleetCounts{Decode: 3}, 1, whatifapi.FleetCounts{})}
-	assert.Equal(t, "at least 3 decode; with 1 spare of each role at least 4 decode, which still holds with 1 of each role lost", spareText(d))
+	assert.Equal(t, "at least 3 decode; with 1 spare decode at least 4 decode, which still holds with 1 decode lost", spareText(d))
+	d.GPUs, d.WithSpare = whatifapi.FleetGPUs(whatifapi.FleetCounts{Decode: 3}, whatifapi.FleetCounts{Decode: 2}),
+		whatifapi.WithSpare(whatifapi.FleetCounts{Decode: 3}, 1, whatifapi.FleetCounts{Decode: 2})
+	assert.Equal(t, "at least 3 decode = 6 decode GPUs; with 1 spare decode at least 4 decode = 8 decode GPUs, which still holds with 1 decode lost", spareText(d))
+}
+
+// A right-sized fleet has no replica of either role to spare, yet with the
+// roles' GPUs per replica unequal a mix of fewer GPUs may hold: at 54 r/s on
+// the 16k-prompt shape at TTFT p95, 8 prefill + 7 decode holds and neither 7
+// + 7 nor 8 + 6 does, while 7 + 8 holds on 64 GPUs against 71 at 8 and 1 a
+// replica. The verdict stays RIGHT-SIZED, its sentence unchanged, and Needed
+// names the cheaper mix. With equal GPUs and no spare there is none.
+func TestAtReplicas_RightSizedNamesACheaperMix(t *testing.T) {
+	plain := stairReplay.state(t)
+	sh, err := whatifapi.ParseReportShape("16k/200/0.3")
+	require.NoError(t, err)
+	verdict := func(st *learnreplay.State) whatifapi.ReportVerdict {
+		t.Helper()
+		q := stairQuery(8, 7, 0)
+		q.TTFT.Percentile = 0.95
+		q.Shapes = []whatifapi.ReportShapeAsk{sh}
+		r := &reporter{st: st, s: &servedState{st: st, decodeVariant: "variant-01"}, q: q, fleets: map[fleetKey]*servedFleet{}}
+		r.resolveTargets()
+		r.sh, r.load = sh, 54
+		base, err := r.evaluateAt(8, 7, 54, false)
+		require.NoError(t, err)
+		v, err := r.verdict(8, 7, base)
+		require.NoError(t, err)
+		return v
+	}
+	v := verdict(withGPUs(plain, 8, 1))
+	require.Equal(t, whatifapi.VerdictRight, v.Verdict, v.Reason)
+	require.NotNil(t, v.Needed)
+	assert.Equal(t, whatifapi.FleetCounts{Prefill: 7, Decode: 8}, whatifapi.FleetCounts{Prefill: v.Needed.Prefill, Decode: v.Needed.Decode})
+	assert.Equal(t, whatifapi.MinimizesGPUs, v.Needed.Minimizes)
+	assert.Empty(t, v.Grow, "a right-sized fleet grows no role")
+	assert.NotContains(t, v.Summary, "needs", "the verdict sentence is unchanged")
+	assert.Contains(t, spareText(v.Needed), "7 prefill + 8 decode = 64 GPUs")
+
+	v = verdict(plain)
+	require.Equal(t, whatifapi.VerdictRight, v.Verdict, v.Reason)
+	assert.Nil(t, v.Needed, "equal GPUs and no spare: nothing to name")
 }

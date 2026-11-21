@@ -1209,19 +1209,8 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		return v, nil
 	}
 	v.Verdict = whatifapi.VerdictRight
-	if r.q.Spare > 0 {
-		// Asked for a spare, a fleet that holds with no replica to spare is
-		// the one to add it to: not searched, so Minimizes stays empty.
-		n := whatifapi.FleetCounts{Prefill: np, Decode: nd}
-		g, err := r.gpusPerReplica()
-		if err != nil {
-			return v, err
-		}
-		v.Needed = &whatifapi.ReportNeeded{Prefill: np, Decode: nd, MaxReplicas: whatifapi.DefaultSizeBound,
-			GPUs: whatifapi.FleetGPUs(n, g), WithSpare: whatifapi.WithSpare(n, r.q.Spare, g)}
-		if v.Needed.GPUs != nil {
-			v.Needed.GPUsPerReplica = &g
-		}
+	if err := r.rightSizedNeed(np, nd, base, &v); err != nil {
+		return v, err
 	}
 	if r.brief {
 		v.Summary = v.Verdict + ": holds, no replica to spare."
@@ -1232,6 +1221,42 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		v.Reason += ". " + noSLONote
 	}
 	return v, nil
+}
+
+// rightSizedNeed fills v.Needed on a right-sized fleet, which has no
+// replica of either role to spare. With the roles' GPUs per replica unequal
+// a mix of fewer GPUs may still hold (9 prefill + 4 decode right-sized while
+// 8 + 5 holds on fewer GPUs at 8 and 1 a replica): the search runs, and
+// Needed is its fleet when that takes fewer GPUs than the fleet judged. Else,
+// with a spare asked, Needed is the fleet judged, not searched (Minimizes
+// empty), for its spare; else nil. The verdict's grow and words are not
+// touched: the fleet judged holds.
+func (r *reporter) rightSizedNeed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) error {
+	g, err := r.gpusPerReplica()
+	if err != nil {
+		return err
+	}
+	judged := whatifapi.FleetCounts{Prefill: np, Decode: nd}
+	if whatifapi.WeighsGPUs(g) {
+		grow := v.Grow
+		if _, _, err := r.needed(np, nd, base, v); err != nil {
+			return err
+		}
+		v.Grow = grow
+		n := v.Needed
+		if n.Unmet == "" && (whatifapi.FleetCounts{Prefill: n.Prefill, Decode: n.Decode}).Cost(g) < judged.Cost(g) {
+			return nil
+		}
+		v.Needed = nil
+	}
+	if r.q.Spare > 0 {
+		v.Needed = &whatifapi.ReportNeeded{Prefill: np, Decode: nd, MaxReplicas: whatifapi.DefaultSizeBound,
+			GPUs: whatifapi.FleetGPUs(judged, g), WithSpare: whatifapi.WithSpare(judged, r.q.Spare, g)}
+		if v.Needed.GPUs != nil {
+			v.Needed.GPUsPerReplica = &g
+		}
+	}
+	return nil
 }
 
 // noteText is notes in parentheses, "" with none.

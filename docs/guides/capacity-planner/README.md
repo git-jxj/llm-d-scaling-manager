@@ -563,11 +563,13 @@ It replays the recording once and answers, for each shape and load:
   hold are listed too. With the prefill side not priced it says "needs at
   least 3 decode".
   When the roles take different GPUs a replica, a `needed` line under the
-  verdict gives the GPUs of the fleet and of the other mixes.
+  verdict gives the GPUs of the fleet and of the other mixes. A right-sized
+  fleet gets that line too when another mix holds on fewer GPUs.
   `--spare N` adds N replicas of each role to the fleet needed, on the same
   line: the fleet that still holds with N replicas of each role lost (see
   [Size for failures, minReplicaCount and quota](#size-for-failures-minreplicacount-and-quota)).
-  On a right-sized fleet the spare is added to the fleet judged.
+  On a right-sized fleet the spare is added to the fleet judged. When no
+  fleet within the bound holds, there is no `needed` line.
   Each role's standing is in the sentence ("decode: one fewer holds even
   at the peak 43.2 r/s; prefill: no spare (1.9% under its operating
   point)"), with any prefill imbalance f that no run learned at that pod
@@ -732,7 +734,7 @@ Add the spare yourself, and decide how many from your failure domains:
 - **Larger failure domains.** When one node or one zone holds several
   replicas of a role, the spare is the most replicas of that role one domain
   holds: spread the role with a topology spread constraint, then set
-  `--spare` to the replicas a domain can still hold. A replica that spans
+  `--spare` to the most replicas of the role that any one domain holds. A replica that spans
   nodes (a LeaderWorkerSet group) is lost whole when one of its nodes is.
 
 Then map the answer onto the ScaledObject and the quota:
@@ -740,14 +742,18 @@ Then map the answer onto the ScaledObject and the quota:
 - **`minReplicaCount`** per role: the quietest need plus the spare. Take the
   quietest need from [the day plan](#plan-replicas-over-a-day) (`needed: at
   the quietest ...`), or from `at-replicas --load-statistic mean` over a quiet
-  window, and add `--spare`. Below it, a failure at the trough leaves the
+  window, and add the spare. Below it, a failure at the trough leaves the
   role under its need for a whole replica start.
-- **`maxReplicaCount`** per role: the busiest need plus the spare, with room
-  for the growth you plan for (`--load-seen-x`).
-- **Quota.** The GPUs of the busiest need plus the spare: the `withSpare.gpus`
-  of the size, or each role's replicas times its GPUs per replica. Bound the
-  quota at or above that, or a failure at the peak is a scale-up the quota
-  refuses ([the quota limiter](../../reference/quota-limiter.md)).
+- **`maxReplicaCount`** per role: that role's largest need over the day (the
+  `need P` and `need D` columns of the day plan's hours) plus the spare, with room for the growth you plan for (`--load-seen-x`). Take
+  each role's own largest need over the buckets, not the busiest bucket's
+  mix: each role scales on its own signal, and the prefill need need not peak
+  where the rate does. Between the two bounds the autoscaler sets the count.
+- **Quota.** Per accelerator type, the GPUs of those largest needs plus the
+  spare, summed over every model the quota covers, plus room for a rollout's
+  surge Pods: the `withSpare.gpus` of a size gives one model's at one rate.
+  Below that, the quota refuses the spare replicas at the peak
+  ([the quota limiter](../../reference/quota-limiter.md)).
 
 The planner sizes on each role's GPUs per replica as the source states them:
 a recording made by the scaling manager, or a capture with

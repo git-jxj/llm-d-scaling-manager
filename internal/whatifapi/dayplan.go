@@ -274,7 +274,7 @@ type DayBucket struct {
 	SizedRate *float64 `json:"sizedRate,omitempty"`
 	Shape     DayShape `json:"shape"`
 	Status    string   `json:"status"`
-	// Needed is the fewest replicas that serve SizedRate (sized), and Limit
+	// Needed is the cheapest fleet that serves SizedRate (sized), and Limit
 	// the limit they were sized on.
 	Needed *DayNeeded `json:"needed,omitempty"`
 	Limit  *Figure    `json:"limit,omitempty"`
@@ -323,6 +323,10 @@ type DaySummary struct {
 	// GPUsPerReplica is the priced variants' GPUs per replica, where the
 	// source states them; the GPU-hours follow the replica-hours.
 	GPUsPerReplica *FleetCounts `json:"gpusPerReplica,omitempty"`
+	// SizedOnGPUs is the GPUs per replica the buckets' search weighed each
+	// role by (ReplicaCost), set only where they differ between the roles
+	// and the search so ranked fleets by GPUs rather than by replicas.
+	SizedOnGPUs    *FleetCounts `json:"sizedOnGpus,omitempty"`
 	NeededGPUHours *float64     `json:"neededGpuHours,omitempty"`
 	HadGPUHours    *float64     `json:"hadGpuHours,omitempty"`
 	HadGPUHoursAll *float64     `json:"hadGpuHoursAll,omitempty"`
@@ -878,8 +882,8 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 // hadVerdict judges the fleet a bucket had, as one fleet, at the bucket's
 // rate: under when its limit does not reach the rate; over when it does and
 // a fleet of one replica fewer of either role does too (as at-replicas
-// judges over); else match. The fewest replicas found (Needed) are one fleet
-// that serves the rate, the fewest in all: another mix may serve it as well,
+// judges over); else match. The cheapest fleet found (Needed) is one fleet
+// that serves the rate: another mix may serve it as well,
 // and the fleet it had is judged on its own mix, never role by role against
 // Needed. With prefill not priced, decode is judged alone.
 func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket, rate float64) error {
@@ -1039,6 +1043,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	}
 	out.Hours = hoursOf(series, out.Buckets)
 	out.Summary = summaryOf(out.Buckets, out.Hours, q.step, gpus)
+	if g := q.e.doc.Fleet.GPUsPerReplica(); WeighsGPUs(g) {
+		out.Summary.SizedOnGPUs = &g
+	}
 	out.Notes = append(out.Notes,
 		"Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
 		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates. A p95 needs %d cycles in the bucket; with fewer the bucket is sized for its mean, "+

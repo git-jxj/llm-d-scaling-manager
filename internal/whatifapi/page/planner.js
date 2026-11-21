@@ -989,7 +989,7 @@ function syncControls() {
   el("mplan").checked = !sizing;
   el("msize").checked = sizing;
   el("msize").disabled = !state.inputs.fleet.prefill;
-  el("modenote").textContent = sizing ? "Set the rate and the targets; the page finds the fleet of the fewest GPUs that meets them." :
+  el("modenote").textContent = sizing ? "Set the rate and the targets; the page finds the fleet of the fewest GPUs (replicas, where the source states no GPUs) that meets them." :
     "Set the replicas; the page prices the most they serve.";
   el("maxrow").hidden = !sizing;
   el("maxrep").value = k.maxRep;
