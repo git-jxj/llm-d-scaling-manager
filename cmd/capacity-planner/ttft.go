@@ -629,15 +629,16 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 	switch {
 	case f.fixedImbalance > 0 && p.Replicas >= 2:
 		// The report's sensitivity to f (fSensitivity): one f at every
-		// count, never under the f P1 learned at the count, so neither row
-		// prices a measured count more even than it ran.
-		fixed := f.fixedImbalance
-		if v, ok := ps.Estimate.FByPods[p.Replicas]; ok && v >= 1 {
-			fixed = max(fixed, v)
+		// count P1 has not learned; a learned count keeps its own, as every
+		// other reading does, so no row prices a measured count other than
+		// it ran.
+		if v, ok := whatif.ImbalanceReadingsOf(ps.Estimate, ps.Pods, ps.RawShare).LearnedAt(p.Replicas); ok {
+			p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = v, false, sourceLearned
+			break
 		}
-		p.Imbalance, p.ImbalanceAssumed = min(float64(p.Replicas), fixed), true
+		p.Imbalance, p.ImbalanceAssumed = min(float64(p.Replicas), f.fixedImbalance), true
 		pf.in.ImbalanceSource = num(f.fixedImbalance) + " for the sensitivity to f"
-	case f.imbalanceAcrossCounts && learnedAnyCount(ps):
+	case f.imbalanceAcrossCounts && whatif.ImbalanceReadingsOf(ps.Estimate, ps.Pods, ps.RawShare).LearnedAny():
 		// The curve needs a count P1 learned: with none, its
 		// whatif.FreshImbalance is the analyzer's figure after a restart,
 		// not a reading, and the floor below stands.
@@ -667,30 +668,21 @@ func imbalanceAcross(ps *learnreplay.PrefillState, pods int) (f float64, assumed
 	return r.F, r.Assumed, r.Source
 }
 
-// learnedAnyCount is whether P1 learned f at any prefill count above one.
-func learnedAnyCount(ps *learnreplay.PrefillState) bool {
-	for pods, f := range ps.Estimate.FByPods {
-		if pods >= 2 && f >= 1 && !math.IsInf(f, 0) {
-			return true
-		}
-	}
-	return false
-}
-
 // imbalanceAt is f at pods, by S1's decision 1: P1's own at that count, else
 // nothing on one pod, which P3 prices as exactly 1, else an assumed
 // min(pods, max(1.5, f)), f the learned figure at the recorded count or the
 // raw share. A learned f is never carried unchanged to another count, and one
 // pod's exact 1 never reaches two.
 func imbalanceAt(ps *learnreplay.PrefillState, pods int) (f float64, assumed bool, source string) {
-	if v, ok := ps.Estimate.FByPods[pods]; ok && v >= 1 {
+	r := whatif.ImbalanceReadingsOf(ps.Estimate, ps.Pods, ps.RawShare)
+	if v, ok := r.LearnedAt(pods); ok {
 		return v, false, sourceLearned
 	}
 	if pods == 1 {
 		return 0, false, "one pod"
 	}
 	base := ps.RawShare
-	if v, ok := ps.Estimate.FByPods[ps.Pods]; ok && v >= 1 {
+	if v, ok := r.LearnedAt(ps.Pods); ok {
 		base = v
 	}
 	return min(float64(pods), max(whatif.ImbalanceFloor, base)), true, shapeAssumed

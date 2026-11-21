@@ -17,8 +17,8 @@ import (
 var sensitivityImbalances = [...]float64{1, whatif.ImbalanceFloor}
 
 // fSensitivity repeats the needed search with f fixed at each of
-// sensitivityImbalances on every count above one prefill pod, or the f P1
-// learned at the count where that is higher (answerFlags.fixedImbalance).
+// sensitivityImbalances on every count above one prefill pod that P1 has not
+// learned; a learned count keeps its own f (answerFlags.fixedImbalance).
 // search is the needed search, which prices at r.fixedF.
 func (r *reporter) fSensitivity(search func() (whatifapi.FleetCounts, string, error)) ([]whatifapi.ReportNeededAtF, error) {
 	defer func() { r.fixedF = 0 }()

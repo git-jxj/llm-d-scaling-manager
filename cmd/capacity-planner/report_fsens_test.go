@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,29 +60,61 @@ func TestAtReplicas_TheFleetNeededAtEachF(t *testing.T) {
 	assert.Equal(t, 1.0, lo.F)
 	assert.Equal(t, whatif.ImbalanceFloor, hi.F)
 	assert.Empty(t, lo.Unmet)
-	assert.Equal(t, n.Prefill, lo.Prefill, "the curve reads f about 1 past two pods: f 1's answer")
+	assert.LessOrEqual(t, lo.Prefill, n.Prefill, "f 1 needs no more than the curve's f, at least 1")
 	assert.Greater(t, hi.Prefill, lo.Prefill, "at f 1.5 more prefill pods are needed")
 	assert.Contains(t, v.Summary, fSensitivityWords(whatifapi.FleetCounts{Prefill: n.Prefill, Decode: n.Decode}, n.FSensitivity))
 }
 
-// A fixed f never prices a count P1 learned more even than it ran: at the
-// staircase's two pods, f 1 reads the learned f where that is higher; at
-// three, no count learned, it is the f fixed.
-func TestFixedImbalance_NotUnderTheLearnedF(t *testing.T) {
+// A fixed f prices only the counts P1 has not learned: at the staircase's
+// two pods both rows keep the f learned there, as the floor and the curve
+// do; at three, none learned, they take the f fixed.
+func TestFixedImbalance_ALearnedCountKeepsItsF(t *testing.T) {
 	st := stairReplay.state(t)
 	s := &servedState{st: st, decodeVariant: "variant-01", imbalanceAcrossCounts: true}
 	learned := stairF2(t)
-	require.Greater(t, learned, 1.0, "precondition: f learned above 1 at two pods")
 	for _, c := range []struct {
-		pods int
-		want float64
-	}{{2, learned}, {3, 1}} {
+		pods    int
+		fixed   float64
+		want    float64
+		assumed bool
+	}{{2, 1, learned, false}, {2, whatif.ImbalanceFloor, learned, false}, {3, 1, 1, true}, {3, whatif.ImbalanceFloor, whatif.ImbalanceFloor, true}} {
 		k := whatifapi.Knobs{Prefill: c.pods, Decode: 2, TTFTPercentile: 0.9, Headroom: 0.85, Assume: stairQuery(2, 2, 0).Assume}
-		sf, err := s.fleetAtImbalance(k, 1)
+		sf, err := s.fleetAtImbalance(k, c.fixed)
 		require.NoError(t, err)
 		require.Nil(t, sf.pf.refused)
-		assert.InDelta(t, c.want, sf.pf.fleet.Prefill.Imbalance, 1e-12, "%d pods", c.pods)
-		assert.True(t, sf.pf.fleet.Prefill.ImbalanceAssumed)
+		assert.InDelta(t, c.want, sf.pf.fleet.Prefill.Imbalance, 1e-12, "%d pods at f %g", c.pods, c.fixed)
+		assert.Equal(t, c.assumed, sf.pf.fleet.Prefill.ImbalanceAssumed, "%d pods at f %g", c.pods, c.fixed)
+	}
+}
+
+// The planner reads the curve only where P1 learned some count: with none
+// learned (none at all, or only an f that is not one), an unlearned count
+// keeps the floor, max(1.5, the raw share), and not whatif.FreshImbalance.
+func TestTTFT_NoCountLearnedKeepsTheFloor(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		byPods  map[int]float64
+		raw     float64
+		want    float64
+		source  string
+	}{
+		{"none", nil, 0, whatif.ImbalanceFloor, shapeAssumed},
+		{"none, a raw share", nil, 1.2, whatif.ImbalanceFloor, shapeAssumed},
+		{"none, a hot raw share", nil, 1.8, 1.8, shapeAssumed},
+		{"NaN", map[int]float64{2: math.NaN()}, 1.2, whatif.ImbalanceFloor, shapeAssumed},
+		{"Inf", map[int]float64{2: math.Inf(1)}, 1.2, whatif.ImbalanceFloor, shapeAssumed},
+		{"one learned", map[int]float64{2: 1}, 0, 1, "fitted from counts {2}"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			st := learnedState()
+			st.Prefill[0].Pods, st.Prefill[0].RawShare = 2, c.raw
+			st.Prefill[0].Estimate.FByPods = c.byPods
+			pf := fleetOf(t, st, answerFlags{imbalanceAcrossCounts: true, prefill: 3})
+			require.Nil(t, pf.refused)
+			assert.InDelta(t, c.want, pf.fleet.Prefill.Imbalance, 1e-12)
+			assert.True(t, pf.fleet.Prefill.ImbalanceAssumed)
+			assert.Equal(t, c.source, pf.in.ImbalanceSource)
+		})
 	}
 }
 

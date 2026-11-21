@@ -61,8 +61,8 @@ import (
 
 // DefaultImbalanceAcrossCounts is the SLO analyzer's default of reading f
 // across pod counts (ImbalanceReadings.At,
-// slo.SwitchTTFTImbalanceAcrossCounts): off, so an unlearned count is priced at min(N, max(ImbalanceFloor,
-// f)) as before. Opt-in first: one GPU run at three pods backs the curve and
+// slo.SwitchTTFTImbalanceAcrossCounts): off, so an unlearned count is
+// priced at min(N, max(ImbalanceFloor, f)) as before. Opt-in first: one GPU run at three pods backs the curve and
 // FreshImbalance. The default flips after a check at a count none of the
 // learned ones covers, and once FByPods survives a restart.
 const DefaultImbalanceAcrossCounts = false
@@ -264,6 +264,17 @@ func fitSpread(points []imbalancePoint) float64 {
 
 // learnedF is an f P1 reports: finite and at least 1.
 func learnedF(f float64) bool { return f >= 1 && !math.IsInf(f, 0) }
+
+// LearnedAt is P1's f at pods, and whether it learned one there: finite and
+// at least 1.
+func (r ImbalanceReadings) LearnedAt(pods int) (float64, bool) {
+	f, ok := r.ByPods[pods]
+	return f, ok && learnedF(f)
+}
+
+// LearnedAny is whether P1 learned f at any count above one: the curve has a
+// point of its own.
+func (r ImbalanceReadings) LearnedAny() bool { return len(r.learnedPoints()) > 0 }
 
 // fittedSource names the counts a curve was fitted from.
 func fittedSource(counts []int) string {
