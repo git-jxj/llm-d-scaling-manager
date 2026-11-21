@@ -156,11 +156,13 @@ type DayPlanRequest struct {
 // DayPlanResponse is a day plan: every bucket, the hours they make, the
 // summary, and what the source could not price.
 type DayPlanResponse struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	WhatifSchema  string `json:"whatifSchema"`
-	DayPlanID     string `json:"dayPlanId"`
-	InputsID      string `json:"inputsId"`
-	Banner        string `json:"banner"`
+	// SelfCheck is the planner checked on the source the plan reads.
+	SelfCheck     *SelfCheck `json:"selfCheck,omitempty"`
+	SchemaVersion int        `json:"schemaVersion"`
+	WhatifSchema  string     `json:"whatifSchema"`
+	DayPlanID     string     `json:"dayPlanId"`
+	InputsID      string     `json:"inputsId"`
+	Banner        string     `json:"banner"`
 	// From and To are the first bucket's start and the last bucket's end.
 	From time.Time `json:"from"`
 	To   time.Time `json:"to"`
@@ -377,6 +379,7 @@ func (s *Server) dayPlan(ctx context.Context, req DayPlanRequest) ([]byte, error
 			return nil, err
 		}
 		out.SchemaVersion, out.WhatifSchema, out.DayPlanID, out.InputsID, out.Banner = SchemaVersion, s.whatifSchema, id, e.id, banner
+		out.SelfCheck = e.doc.SelfCheck
 		body, err := marshal(out)
 		if err != nil {
 			return nil, err
@@ -400,6 +403,9 @@ func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest, whatifSchem
 	out, err := q.plan(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if res.Folds != nil {
+		out.SelfCheck = SelfCheckOf(ctx, res, SelfCheckInfo{PlannerVersion: res.PlannerVersion})
 	}
 	out.SchemaVersion, out.WhatifSchema, out.DayPlanID, out.InputsID, out.Banner = SchemaVersion, whatifSchema,
 		contentID("dayplan", q.key()), e.id, banner

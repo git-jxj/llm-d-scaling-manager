@@ -70,7 +70,8 @@ func apiError(err error) error {
 // the recorded counts as the CLI would, the TTFT at the policy's statistic.
 func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest) (*whatifapi.Resolved, error) {
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
-		seed: whatif.DefaultResampling().Seed, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
+		serveSelfCheck: req.SelfCheck != nil && *req.SelfCheck,
+		seed:           whatif.DefaultResampling().Seed, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
@@ -360,6 +361,10 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 		Latency: latency,
 	}
 	res.Config = runConfigOf(st, variants[0].state.Variant, prefill)
+	if f.selfCheckOn() {
+		res.Folds, res.PlannerVersion = f.foldFits(variants[0].state.Variant, f.prefillVariant), selfCheckVersion()
+		res.Content += "\x00self-check"
+	}
 	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(latency) + sizeOf(res.Inputs))
 	return res, nil
 }

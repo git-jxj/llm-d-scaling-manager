@@ -450,6 +450,23 @@ curl -s http://127.0.0.1:8080/v1/backtest -H 'Content-Type: application/json' -d
   "inputsId": "'"$ID"'", "split": "60%", "step": "5m"}' | jq -r '.verdict, .excluded'
 ```
 
+## The self-check
+
+`POST /v1/inputs` self-checks the source by default (`selfCheck`, true
+unless the server was started with `--no-self-check`): the answer's
+`selfCheck`, and the report's and the day plan's, carry it. `selfCheck` false
+turns it off for that source.
+
+| Key | What it is |
+| --- | --- |
+| `status` | `ok`, `weak`, `inconsistent` or `notRun`. |
+| `line`, `why`, `trust` | The result in one sentence, what made the status, and which figures not to trust. |
+| `ttft`, `tpot` | The p90 scored over the folds: `steps`, `within`, `bias`, `low`, `judged`, `overloaded`, `pastKnee` (what the fleet measured where the planner gave no figure), `refused`. |
+| `folds[]` | Each cut: `fitTo`, `testFrom`, `testTo`, `judged`. |
+| `checks[]` | Each rule: `name`, `passed`, `detail`. |
+| `issueUrl` | With `inconsistent`: a new-issue page prefilled with diagnostics that hold no name, no rate and no recording, for the user to review and file. |
+| `seconds` | What the self-check took, its fits' replay apart (shared with the answer's). |
+
 ## Predict and compare
 
 The backtest in two steps, for a check where the planner never holds the

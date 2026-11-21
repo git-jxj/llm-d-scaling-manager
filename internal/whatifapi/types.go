@@ -26,6 +26,10 @@ type InputsRequest struct {
 	// several of a role (the CLI's --prefill-variant and --variant).
 	PrefillVariant string `json:"prefillVariant,omitempty"`
 	DecodeVariant  string `json:"decodeVariant,omitempty"`
+	// SelfCheck asks the planner be checked on the source beside its
+	// inputs (SelfCheck); absent, the server's default (on, unless the
+	// server was started with --no-self-check).
+	SelfCheck *bool `json:"selfCheck,omitempty"`
 }
 
 // The source kinds.
@@ -63,6 +67,9 @@ type InputsResponse struct {
 	Terms         []Term     `json:"terms"`
 	// Assumed is every input the source did not give, in words.
 	Assumed []string `json:"assumed"`
+	// SelfCheck is the planner checked on this source: the folds of it
+	// fitted on earlier cycles predicting later ones. Absent when not asked.
+	SelfCheck *SelfCheck `json:"selfCheck,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's

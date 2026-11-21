@@ -44,7 +44,7 @@ var (
 		"assume-input-tokens", "assume-output-tokens", "assume-prompt-cv", "arrival-cv2", "flow-control", "headroom", "rate",
 		"seed", "o", "output", "ttft", "ttft-percentile", "tpot", "tpot-percentile",
 		"prometheus", "bearer-token-file", "ca-file", "insecure-skip-verify", "timeout", "kube-state-metrics", "role-of",
-		"from", "to", "step", "force",
+		"from", "to", "step", "force", "no-self-check",
 		// Set, it states nothing until it applies: assumeIntercept then adds
 		// --assume-itl-b to the variant's stated inputs, which puts its figures outside.
 		"assume-itl-b"}

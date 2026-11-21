@@ -285,20 +285,46 @@ func StateAt(ctx context.Context, recording []byte, opts Options, q StateQuery) 
 // never held: one to resolve the model and its cycles, one to replay to the
 // cycle.
 func StateFrom(ctx context.Context, src Source, opts Options, q StateQuery) (*State, error) {
+	st, _, err := StatesFrom(ctx, src, opts, q, nil)
+	return st, err
+}
+
+// StatesFrom is StateFrom, and in the same replay the state at each of the
+// earlier cycles also names, given the cycle q answers at: what StateFrom
+// would answer at each, from one pass. A cycle at or past q's, or below 1,
+// is not read; a nil also reads none.
+func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, also func(cycle int) []int) (*State, map[int]*State, error) {
 	if q.Cycle < 0 {
-		return nil, queryErrorf("cycle %d, want 1 or more, or 0 for the last", q.Cycle)
+		return nil, nil, queryErrorf("cycle %d, want 1 or more, or 0 for the last", q.Cycle)
 	}
 	ns, model, total, err := resolveModel(src, q)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cycle := q.Cycle
 	if cycle == 0 {
 		cycle = total
 	}
 	if cycle > total {
-		return nil, queryErrorf("cycle %d asked for, and the recording holds %d of %s/%s", cycle, total, ns, model)
+		return nil, nil, queryErrorf("cycle %d asked for, and the recording holds %d of %s/%s", cycle, total, ns, model)
 	}
+	early := map[int]bool{}
+	if also != nil {
+		for _, c := range also(cycle) {
+			if c >= 1 && c < cycle {
+				early[c] = true
+			}
+		}
+	}
+	// snap is a state read before the replay's end, with what the closing
+	// of a state reads as of its cycle.
+	type snap struct {
+		st                       *State
+		windows, engine, arrived int
+		rows                     map[string][]whatif.LineRow
+		below                    map[string]float64
+	}
+	snaps := map[int]*snap{}
 	opts.Mode = Normal
 	opts.Switches = withPlannerSwitches(opts.Switches)
 	opts.discardRecording = true
@@ -366,29 +392,39 @@ func StateFrom(ctx context.Context, src Source, opts Options, q StateQuery) (*St
 		ttft.noteJoint(in, ev.Now, args, sglang)
 		lines.note(in, n, ev.Now)
 		ttft.noteTerm(in, ev.Now, args)
-		if n == cycle {
-			st = r.stateOf(in, n, ev.Now, shapes)
-			for i := range st.Variants {
-				v := &st.Variants[i]
+		if n == cycle || early[n] {
+			s := r.stateOf(in, n, ev.Now, shapes)
+			for i := range s.Variants {
+				v := &s.Variants[i]
 				v.ShapeRange = ranges[v.Variant]
 				if domain.CanonicalRole(v.Role) != domain.RolePrefill {
 					v.Resident = residentOf(resident[v.Variant], v.Shape)
 				}
 			}
-			r.fillTTFT(st, in, ttft)
-			return true
+			r.fillTTFT(s, in, ttft)
+			if n == cycle {
+				st = s
+				return true
+			}
+			sn := &snap{st: s, windows: len(windows), engine: len(engine), arrived: len(arrivals),
+				rows: map[string][]whatif.LineRow{}, below: map[string]float64{}}
+			for _, v := range s.Variants {
+				sn.rows[v.Variant] = slices.Clone(lines.rows(v.Variant))
+				sn.below[v.Variant] = lines.leastBelowBand(v.Variant)
+			}
+			snaps[n] = sn
 		}
 		return false
 	}
 	// resolveModel read every line: the recording reads.
 	if _, err := replayFrom(ctx, src, opts); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if stateErr != nil {
-		return nil, fmt.Errorf("learnreplay: %w", stateErr)
+		return nil, nil, fmt.Errorf("learnreplay: %w", stateErr)
 	}
 	if st == nil {
-		return nil, fmt.Errorf("learnreplay: the replay ended after %d of the %d cycles of %s/%s", n, cycle, ns, model)
+		return nil, nil, fmt.Errorf("learnreplay: the replay ended after %d of the %d cycles of %s/%s", n, cycle, ns, model)
 	}
 	st.FirstAt, st.TPOTWindows, st.EngineTPOTWindows, st.Cycles = firstAt, windows, engine, total
 	st.ArrivalRates = arrivals
@@ -397,7 +433,23 @@ func StateFrom(ctx context.Context, src Source, opts Options, q StateQuery) (*St
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
 		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
 	}
-	return st, nil
+	var out map[int]*State
+	if len(snaps) > 0 {
+		out = make(map[int]*State, len(snaps))
+	}
+	for c, sn := range snaps {
+		s := sn.st
+		s.FirstAt, s.Cycles = firstAt, total
+		s.TPOTWindows, s.EngineTPOTWindows = slices.Clone(windows[:sn.windows]), slices.Clone(engine[:sn.engine])
+		s.ArrivalRates = slices.Clone(arrivals[:sn.arrived])
+		for i := range s.Variants {
+			s.Variants[i].ReadingsFrom, s.Variants[i].ReadingsTo = cyclesSpanned(s.Variants[i].LineReadings, cycleAt)
+			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
+			s.Variants[i].BelowBandITL = sn.below[s.Variants[i].Variant]
+		}
+		out[c] = s
+	}
+	return st, out, nil
 }
 
 // resolveModel is the model q names and how many saturation cycles the

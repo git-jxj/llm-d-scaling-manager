@@ -182,7 +182,7 @@ func predictEntries(ctx context.Context, fit, window *inputsEntry, req PredictRe
 	blind := *window
 	blind.latency = nil
 	q, err := questionOf(fit, &blind, BacktestRequest{Step: req.Step, Settle: req.Settle, ArrivalCV2: req.ArrivalCV2, Assume: req.Assume,
-		AllowConfigMismatch: req.AllowConfigMismatch}, time.Time{}, "", true)
+		AllowConfigMismatch: req.AllowConfigMismatch}, time.Time{}, time.Time{}, "", true)
 	if err != nil {
 		return nil, err
 	}

@@ -584,11 +584,12 @@ type backtestQuestion struct {
 // backtestQuestionOf checks req against fit and test, and refuses a test
 // whose configuration differs from the fit's unless the request allows it.
 func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time.Time, split string) (*backtestQuestion, error) {
-	return questionOf(fit, test, req, cutoff, split, false)
+	return questionOf(fit, test, req, cutoff, time.Time{}, split, false)
 }
 
-// questionOf is backtestQuestionOf; predictOnly asks no latency of the test.
-func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time.Time, split string, predictOnly bool) (*backtestQuestion, error) {
+// questionOf is backtestQuestionOf; predictOnly asks no latency of the
+// test, and a non-zero until ends the test at that time.
+func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.Time, split string, predictOnly bool) (*backtestQuestion, error) {
 	q := &backtestQuestion{fit: fit, test: test, cutoff: cutoff, split: split, step: DefaultBacktestStep,
 		settle: DefaultBacktestSettle, measured: MeasuredAuto, cv2: req.ArrivalCV2}
 	var err error
@@ -654,7 +655,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time.Time, s
 		q.config.Allowed = true
 	}
 	for i, x := range test.series {
-		if q.cutoff.IsZero() || x.At.After(q.cutoff) {
+		if (q.cutoff.IsZero() || x.At.After(q.cutoff)) && (until.IsZero() || !x.At.After(until)) {
 			q.testIndices = append(q.testIndices, i)
 		}
 	}

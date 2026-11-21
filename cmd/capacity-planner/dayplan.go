@@ -36,6 +36,7 @@ type dayPlanFlags struct {
 	// assumeITLBSet says it was given, empty or not.
 	assumeITLB    string
 	assumeITLBSet bool
+	noSelfCheck   bool
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -52,6 +53,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.window.namespace, "namespace", "", "the model's namespace (with --prometheus, the namespace to capture: required)")
 	fs.IntVar(&f.window.batchCap, "batch-cap", 0, "with --prometheus, the engine's batch cap the window is captured with")
 	fs.StringVar(&f.recording, "recording", "", "a learner recording (.jsonl or .jsonl.gz); this or --prometheus is required")
+	fs.BoolVar(&f.noSelfCheck, "no-self-check", false, "do not check the planner on the recording beside the plan")
 	fs.StringVar(&f.model, "model", "", "the model; empty takes the source's only model")
 	fs.StringVar(&f.prefillVariant, "prefill-variant", "", "the prefill variant, when the model has several")
 	fs.StringVar(&f.decodeVariant, "variant", "", "the decode variant, when the model has several")
@@ -102,7 +104,9 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 		enc.SetIndent("", "  ")
 		err = enc.Encode(plan)
 	} else {
-		err = writeDayPlanText(out, res.Inputs, plan)
+		if _, err = io.WriteString(out, selfCheckText(plan.SelfCheck)); err == nil {
+			err = writeDayPlanText(out, res.Inputs, plan)
+		}
 	}
 	if err != nil {
 		return err
@@ -133,7 +137,8 @@ var resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*wh
 // resolve reads the source as serve resolves it: a recording by its file,
 // or a Prometheus window, the last day by default.
 func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.Resolved, error) {
-	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant}
+	check := defaultSelfCheck && !f.noSelfCheck
+	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant, SelfCheck: &check}
 	src := &servedSources{warn: warn}
 	switch {
 	case f.recording != "" && f.window.prometheus != "":

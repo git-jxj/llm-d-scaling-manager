@@ -21,6 +21,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource"
 )
 
@@ -40,6 +41,12 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
+	// noSelfCheck is --no-self-check; serveSelfCheck the server's request
+	// to self-check (selfCheckOn). folds is the states read at the folds'
+	// cuts, and checked the self-check the answer prints with it.
+	noSelfCheck, serveSelfCheck bool
+	folds                       map[int]*learnreplay.State
+	checked                     *whatifapi.SelfCheck
 	// regularOnly refuses a --recording that is no regular file rather than
 	// read it whole: the server's (openRecording).
 	regularOnly bool
@@ -109,6 +116,7 @@ type capturedWindow struct {
 
 func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.recording, "recording", "", "a learner recording (.jsonl or .jsonl.gz) to answer from; this or --prometheus is required")
+	fs.BoolVar(&f.noSelfCheck, "no-self-check", false, "do not check the planner on the recording beside the answer")
 	fs.StringVar(&f.cycle, "cycle", "last", "the model's cycle to answer at: a number from 1, or last")
 	fs.StringVar(&f.model, "model", "", "the model to answer for; empty takes the recording's only model")
 	fs.StringVar(&f.window.namespace, "namespace", "", "the model's namespace; empty matches any (with --prometheus, the namespace to capture: required)")
@@ -247,7 +255,12 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 		return nil, err
 	}
 	defer func() { _ = src.Close() }()
-	return f.stateOf(ctx, name, src)
+	st, err := f.stateOf(ctx, name, src)
+	if err != nil {
+		return nil, err
+	}
+	f.checkRecording(ctx, st, src)
+	return st, nil
 }
 
 // stateOf is readState on a recording already opened: src, and the name its
@@ -264,8 +277,7 @@ func (f *answerFlags) stateOf(ctx context.Context, name string, src *recordingSo
 		return nil, err
 	}
 	cycle, _ := f.cycleNumber()
-	st, err := learnreplay.StateFrom(ctx, src.open, learnreplay.Options{},
-		learnreplay.StateQuery{Namespace: f.window.namespace, ModelID: f.model, Cycle: cycle})
+	st, err := f.readStates(ctx, src.open, learnreplay.StateQuery{Namespace: f.window.namespace, ModelID: f.model, Cycle: cycle})
 	if cerr := src.unchanged(); cerr != nil {
 		return nil, cerr
 	}
@@ -352,11 +364,11 @@ func (f *answerFlags) captureAndGenerate(ctx context.Context) ([]byte, error) {
 func (f *answerFlags) sourceLine(st *learnreplay.State) string {
 	o := f.captured
 	if o == nil {
-		return ""
+		return selfCheckText(f.checked)
 	}
 	return fmt.Sprintf("answered for %s/%s from %s, %s to %s every %s (captured and generated in memory)\n",
 		st.Namespace, st.ModelID, redactedURL(f.window.prometheus),
-		o.from.Format(time.RFC3339), o.to.Format(time.RFC3339), o.step)
+		o.from.Format(time.RFC3339), o.to.Format(time.RFC3339), o.step) + selfCheckText(f.checked)
 }
 
 // prometheus reports whether the flags ask to answer from Prometheus
