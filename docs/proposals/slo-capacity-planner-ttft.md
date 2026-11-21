@@ -254,7 +254,13 @@ from per-pod `PrefillComputedTokenRate`, over minutes with at least 100
 requests a pod on average, minus the expected max of `N_p` Poisson counts.
 That de-bias errs both ways ([where it is most wrong](#where-it-is-most-wrong)):
 low on a real imbalance at few requests, high on equal pods with variable
-prompts. Sticky routing
+prompts. The controller takes the median of every minute. The capacity planner
+takes the median of the busiest minutes, those at half the busiest one's
+computed tokens a pod or more (`saturation.SwitchPrefillFBusyMinutes`): the
+router spreads light load less evenly, and on the public staircase the median
+of every minute read `f` 1.23, where the busy minutes' raw shares were 1.01 to
+1.06 and their `f` 1.00, so the knee read about 20% low (issue #266). Below the knee the busy minutes' `f` prices
+the worst pod's queue a little low. Sticky routing
 (one pod wins a whole refresh window `w`) averages back toward 1 per minute; the
 worst pod then gets `Ca² ≈ 1 + λ_w·w`, uncapped.
 

@@ -1498,6 +1498,7 @@ itl-baseline-stamped
 itl-fit
 itl-fit-declined
 itl-gps-mismatch
+itl-hold-steady-slope
 itl-idle-needs-evidence
 itl-keeps-the-settle-through-a-missing-row
 itl-line
@@ -2304,6 +2305,7 @@ prefill-capacity-observe
 prefill-capacity-observed
 prefill-catchup
 prefill-demand-held
+prefill-f-busy-minutes
 prefill-knee
 prefill-latency
 prefill-queue-by-capacity

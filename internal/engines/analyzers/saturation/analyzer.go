@@ -529,6 +529,10 @@ type SaturationAnalyzer struct {
 	// prefillQueueByCapacity is SwitchPrefillQueueByCapacity: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillQueueByCapacity bool
+	// prefillFBusyMinutes is SwitchPrefillFBusyMinutes, and
+	// itlHoldSteadySlope SwitchITLHoldSteadySlope: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillFBusyMinutes, itlHoldSteadySlope bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor

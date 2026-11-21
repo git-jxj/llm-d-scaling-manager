@@ -236,13 +236,21 @@ type shapeSample struct {
 //     timing where there are too few low-load minutes.
 //   - saturation.SwitchPrefillQueueByCapacity: a prefill queue for V_P
 //     counted by its capacity part only, so deferred waits are not a queue.
+//   - saturation.SwitchPrefillFBusyMinutes: f, the prefill imbalance, the
+//     median of the busiest minutes, not of every minute.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
+//
+// saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
+// the line it holds is right at a given fill, and the planner then reads
+// TTFT and TPOT under what was measured, because it predicts less decode KV
+// fill than the pods held. It stays off until that is fixed.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
 		saturation.SwitchPrefillAEngineTiming:   true,
 		saturation.SwitchPrefillQueueByCapacity: true,
+		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 	}}
 }

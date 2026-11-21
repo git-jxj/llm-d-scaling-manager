@@ -129,7 +129,8 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
-// SwitchITLAdaptiveBandFloor,
+// SwitchPrefillFBusyMinutes, SwitchITLAdaptiveBandFloor,
+// SwitchITLHoldSteadySlope,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
 // SwitchK2BatchAtITLTarget,
 // SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
@@ -260,9 +261,16 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// only, where vLLM publishes it (prefill.queuedForCapacity). Off
 		// from the constructor.
 		SwitchPrefillQueueByCapacity: &a.prefillQueueByCapacity,
+		// The planner's f: the median of the busiest minutes
+		// (prefill.Cycle.FBusyMinutes). Off from the constructor.
+		SwitchPrefillFBusyMinutes: &a.prefillFBusyMinutes,
 		// The planner's ITL band floor on a low-fill fleet
 		// (itl_band_floor.go). Off from the constructor.
 		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,
+		// The planner's held ITL slope: an A fitted on steady readings is
+		// held, not refitted on every reading (itl.Admission.HoldsSteadySlope).
+		// Off from the constructor.
+		SwitchITLHoldSteadySlope: &a.itlHoldSteadySlope,
 		// Issue llm-d-incubation/llm-d-scaling-manager#201: a decode's
 		// derived k2 charges its budget the prompt it computes
 		// (decode_budget.go), and a landed request is a decode's backlog

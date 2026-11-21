@@ -21,19 +21,19 @@ verdicts
 shape measured: IL 8003 OL 200, prefix hit 0.00 (measured, cycles 269-288)
 utilization at the load judged
   decode        KV fill saturated (band top 0.8), slots saturated of 222, wait p saturated
-  prefill       utilization pooled 0.83, worst pod 0.84 (f 1)
+  prefill       utilization pooled 0.83, worst pod 0.83 (f 1)
   verdict       UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).
                 x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (37.0 r/s); needs 4 prefill + 4 decode (has 2 + 2) (prefill f 1.5 assumed at 4 pods).
 capacity            req/s     out tok/s   bound by
-  prefill knee      49.83     9966        prefill compute: N_p 2 x V_P / (f 1.003 x 8001 tokens)
+  prefill knee      49.97     9993        prefill compute: N_p 2 x V_P / (f 1.000 x 8001 tokens)
   decode knee       36.98     7396        decode band top at fill 0.798
   fleet knee        36.98     7396        decode
   operating (0.85)  31.44     6287        0.85 x fleet knee (scaleUpThreshold)
   max at SLO        29.71     5941        TTFT p90, end to end
 SLO vs load              r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee            18.49  111.7/616.6     3.15/5.00         0.87 s
-  80% of knee            29.59  215.9/1943.7    6.81/10.80        2.07 s
-  5r/s                   5.00   65.8/388.4      3.07/4.87         0.77 s
+  50% of knee            18.49  111.5/616.6     3.15/5.00         0.87 s
+  80% of knee            29.59  215.0/1943.7    6.81/10.80        2.07 s
+  5r/s                   5.00   65.7/388.3      3.07/4.87         0.77 s
   load seen (113%)       41.70  saturated       saturated         saturated
   load seen x1.2 (135%)  50.04  saturated       saturated         saturated
 checks
@@ -49,7 +49,7 @@ utilization at the load judged
   verdict       UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.2x the fleet knee of 35.6 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2).
                 x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (35.6 r/s); needs 1 prefill + 4 decode (has 2 + 2).
 capacity            req/s     out tok/s   bound by
-  prefill knee      389.39    398734      prefill compute: N_p 2 x V_P / (f 1.003 x 1024 tokens)
+  prefill knee      390.47    399839      prefill compute: N_p 2 x V_P / (f 1.000 x 1024 tokens)
   decode knee       35.56     36416       decode batch cap at fill 0.349
   fleet knee        35.56     36416       decode
   operating (0.85)  30.23     30954       0.85 x fleet knee (scaleUpThreshold)
@@ -73,15 +73,15 @@ utilization at the load judged
   verdict       UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 2.3x the fleet knee of 18.2 r/s, the fleet saturates; needs 5 prefill + 6 decode (has 2 + 2) (prefill f 1.5 assumed at 5 pods).
                 x1.2 (50.0 r/s): UNDER-PROVISIONED: 2.8x the fleet knee (18.2 r/s); needs 6 prefill + 7 decode (has 2 + 2) (prefill f 1.5 assumed at 6 pods).
 capacity            req/s     out tok/s   bound by
-  prefill knee      34.77     6953        prefill compute: N_p 2 x V_P / (f 1.003 x 11469 tokens)
+  prefill knee      34.86     6973        prefill compute: N_p 2 x V_P / (f 1.000 x 11469 tokens)
   decode knee       18.17     3633        decode band top at fill 0.790
   fleet knee        18.17     3633        decode
   operating (0.85)  15.44     3088        0.85 x fleet knee (scaleUpThreshold)
   max at SLO        16.54     3308        TTFT p90, end to end
 SLO vs load              r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee            9.08   108.3/666.7     3.15/5.00         0.89 s
-  80% of knee            14.53  175.6/1014.8    6.80/10.78        1.74 s
-  5r/s                   5.00   83.7/566.9      3.07/4.87         0.83 s
+  50% of knee            9.08   108.1/666.7     3.15/5.00         0.89 s
+  80% of knee            14.53  175.1/1014.8    6.80/10.78        1.74 s
+  5r/s                   5.00   83.6/566.6      3.07/4.87         0.83 s
   load seen (230%)       41.70  saturated       saturated         saturated
   load seen x1.2 (275%)  50.04  saturated       saturated         saturated
 checks

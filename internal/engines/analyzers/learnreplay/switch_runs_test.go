@@ -1097,7 +1097,9 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillALowLoadPerRank: nil,
 	saturation.SwitchPrefillAEngineTiming:   nil,
 	saturation.SwitchPrefillQueueByCapacity: nil,
+	saturation.SwitchPrefillFBusyMinutes:    nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
+	saturation.SwitchITLHoldSteadySlope:     nil,
 	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
 	// where the variant's ITL line reaches the policy's TPOT objective. On
 	// from the constructor; no committed golden has a decode line it trusts
@@ -1408,7 +1410,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestDecodeRouterBacklog_OffFromTheConstructor"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
-	// asserts both, and the first holds all four off from the constructor.
+	// asserts both, and the first holds all six off from the constructor.
 	saturation.SwitchPrefillALowLoadPerRank: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
@@ -1425,6 +1427,20 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestCapacity_ACapacityQueueIsStillAQueue"},
 		{"../saturation", "TestPrefillQueueByCapacity_DeferredWaitsThroughAnalyze"},
 		{"../../../signals/prefill", "TestCapacity_AMinuteWithNoCapacityQueueEndsTheRun"},
+	},
+	saturation.SwitchPrefillFBusyMinutes: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestImbalance_TheBusiestMinutesSetF"},
+		{"../../../signals/prefill", "TestImbalance_TooFewBusyMinutesTakeTheBusiest"},
+		{"../../../signals/prefill", "TestImbalance_BusyIsComputedTokensNotRequests"},
+		{"../saturation", "TestPrefillFBusyMinutes_LightMinutesThroughAnalyze"},
+	},
+	saturation.SwitchITLHoldSteadySlope: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/itl", "TestTracker_ASteadySlopeHoldsThroughARampDown"},
+		{"../../../signals/itl", "TestTracker_AnUnsteadySlopeIsNotHeld"},
+		{"../../../signals/itl", "TestTracker_ASteadySlopeHoldEnds"},
+		{"../saturation", "TestITLHoldSteadySlope_ARampDownThroughAnalyze"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},
