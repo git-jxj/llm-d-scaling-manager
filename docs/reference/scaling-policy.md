@@ -2285,10 +2285,11 @@ of replicas meets, bounds nothing (`target-unreachable`).
   while the fleet stays inside the band, past the 30 minutes, and across a
   controller restart. A newer low-load stretch or a full fit replaces it.
   A rollout, a change of request shape or of engine arguments ends it, and
-  so do readings under it.
-  Before any low load, its line rests on the 6 ms default intercept and
-  bounds nothing (`default-intercept`). The B read this way can come out under the true
-  intercept, which prices a steeper line and usually asks for more decode
+  so do readings under it, and it is kept for at most 7 days
+  (`BucketRetention`) after it was read. Before any low load, or once the
+  kept B ends, its line rests on the 6 ms default intercept and bounds
+  nothing (`default-intercept`). The B read this way can come out under
+  the true intercept, which prices a steeper line and usually asks for more decode
   replicas. At `--v=2`, the `itl-fit` line shows
   `pinnedAtFloor`, `floor` and `floorK` for it, and `floorBHeld` and
   `floorBAge` when the B was kept from an earlier stretch. No setting turns

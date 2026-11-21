@@ -518,7 +518,7 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 			}
 		}
 		if floorB == 0 && havePinned && adm.BaselineFromFloor && adm.HoldsFloorBaseline {
-			if b, at, ok := t.heldFloorB(key, pinned, floor, haveFloor, adm); ok {
+			if b, at, ok := t.heldFloorB(key, pinned, floor, haveFloor, adm, now); ok {
 				baseline, floorB, floorBAt = b, b, at
 				r.FloorBHeld = true
 			}
@@ -637,12 +637,17 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 //     (heldSlope.floorBGone): it was read under an engine or a shape the key
 //     no longer runs, and an old shape's floor sets a B under the truth;
 //   - a slope fitted under other engine arguments (Admission.mayHold's rule);
+//   - an age past Admission.SlopeHoldFor since it was read from a floor
+//     (heldSlope.floorBAt), the horizon a held slope is kept on: a request
+//     shape that drifts too slowly to count as a move is not held against
+//     for ever. A B of unknown age (a snapshot written without the stamp) is
+//     held, as a learned B of unknown age is;
 //   - a floor read this cycle, though refused by floorIntercept, under it: a
 //     floor's ITL is an upper bound on B;
 //   - the pinned readings' low quantile under it (heldFloorContradicted): no
 //     line through it passes them, since every reading is B plus A times its
 //     fill.
-func (t *Tracker) heldFloorB(key string, pinned []Observation, floor Observation, haveFloor bool, adm Admission) (float64, time.Time, bool) {
+func (t *Tracker) heldFloorB(key string, pinned []Observation, floor Observation, haveFloor bool, adm Admission, now time.Time) (float64, time.Time, bool) {
 	t.mu.Lock()
 	held, have := t.slopes[key]
 	t.mu.Unlock()
@@ -650,6 +655,9 @@ func (t *Tracker) heldFloorB(key string, pinned []Observation, floor Observation
 		return 0, time.Time{}, false
 	}
 	if adm.Args != "" && held.args != "" && adm.Args != held.args {
+		return 0, time.Time{}, false
+	}
+	if adm.SlopeHoldFor > 0 && !held.floorBAt.IsZero() && now.Sub(held.floorBAt) > adm.SlopeHoldFor {
 		return 0, time.Time{}, false
 	}
 	if haveFloor && floor.ITLSec > 0 && floor.ITLSec < held.floorB {

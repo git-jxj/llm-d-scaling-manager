@@ -236,7 +236,10 @@ func TestTracker_ARestoredHeldBHoldsAfterARestart(t *testing.T) {
 func TestTracker_ASweepForgetsTheHeldB(t *testing.T) {
 	start := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 	tr := NewTracker()
-	inBandFor(tr, heldAdm, floorTrue, 160, start)
+	rs := inBandFor(tr, heldAdm, floorTrue, 160, start)
+	if !rs[len(rs)-1].FloorBHeld || tr.Slopes()["k"].FloorB != floorTrue.B {
+		t.Fatalf("premise: the B is held on the key's slope; got %+v", rs[len(rs)-1])
+	}
 	tr.Sweep(start.Add(4*time.Hour), func(string) bool { return true })
 	if _, ok := tr.Slopes()["k"]; ok {
 		t.Errorf("the held B outlived the sweep: %+v", tr.Slopes()["k"])
@@ -278,10 +281,10 @@ func TestTracker_ARefusedFloorUnderTheHeldBEndsIt(t *testing.T) {
 	tr := NewTracker()
 	tr.slopes["k"] = heldSlope{a: 0.05, floorB: 0.012}
 	pinned := []Observation{{K: 0.35, ITLSec: 0.03}}
-	if _, _, ok := tr.heldFloorB("k", pinned, Observation{K: 0.2, ITLSec: 0.011}, true, heldAdm); ok {
+	if _, _, ok := tr.heldFloorB("k", pinned, Observation{K: 0.2, ITLSec: 0.011}, true, heldAdm, time.Time{}); ok {
 		t.Errorf("held a B of 12 ms over a floor read at 11 ms")
 	}
-	if b, _, ok := tr.heldFloorB("k", pinned, Observation{K: 0.2, ITLSec: 0.013}, true, heldAdm); !ok || b != 0.012 {
+	if b, _, ok := tr.heldFloorB("k", pinned, Observation{K: 0.2, ITLSec: 0.013}, true, heldAdm, time.Time{}); !ok || b != 0.012 {
 		t.Errorf("a floor at 13 ms ended the held 12 ms (%g, %v)", b, ok)
 	}
 }
@@ -302,5 +305,28 @@ func TestHeldFloorContradicted_ReadsAQuantile(t *testing.T) {
 	}
 	if !heldFloorContradicted(low, 0.012) {
 		t.Errorf("every reading under the B did not end it")
+	}
+}
+
+// The held B ages out where a held slope does (Admission.SlopeHoldFor),
+// counted from when it was read from a floor; one of unknown age is held.
+func TestTracker_TheHeldBAgesOutAtTheSlopeHold(t *testing.T) {
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	adm := heldAdm
+	adm.SlopeHoldFor = 7 * 24 * time.Hour
+	pinned := []Observation{{K: 0.35, ITLSec: 0.03}}
+	for name, c := range map[string]struct {
+		at   time.Time
+		want bool
+	}{
+		"a day old":      {now.Add(-24 * time.Hour), true},
+		"eight days old": {now.Add(-8 * 24 * time.Hour), false},
+		"unknown age":    {time.Time{}, true},
+	} {
+		tr := NewTracker()
+		tr.slopes["k"] = heldSlope{a: 0.05, fittedAt: now, floorB: 0.012, floorBAt: c.at}
+		if _, _, ok := tr.heldFloorB("k", pinned, Observation{}, false, adm, now); ok != c.want {
+			t.Errorf("%s: held %v, want %v", name, ok, c.want)
+		}
 	}
 }

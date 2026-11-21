@@ -1188,9 +1188,13 @@ is pinned through the B it last read from a floor (`Tracker.heldFloorB`):
   (`SlopeSnapshot.FloorB`, and `FloorBAt`, absent when unknown), and a
   restored slope brings it back with its stamp; a stamp past the clock skew
   comes back as unknown.
-- **How it ages.** As a learned B does: it is swept and forgotten with the
-  key, and a slope is restored only within `BucketRetention` of its last
-  fit. No age of its own ends it.
+- **How it ages.** As learned figures do: it is swept and forgotten with
+  the key, a slope is restored only within `BucketRetention` of its last
+  fit, and the B is held for at most `Admission.SlopeHoldFor`
+  (`BucketRetention`, 7 days by default) after it was read from a floor,
+  so a request shape that drifts too slowly to count as a move is not
+  held against for ever. A B of unknown age, from a snapshot written
+  without the stamp, is held.
 - **What ends it.** A newer floor's B replaces it, and a full fit's learned
   B replaces it. Evidence against it ends it:
   - a rollout or a shape move that drops the floor's readings
