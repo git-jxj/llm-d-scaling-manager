@@ -84,3 +84,15 @@ func TestFixedImbalance_NotUnderTheLearnedF(t *testing.T) {
 		assert.True(t, sf.pf.fleet.Prefill.ImbalanceAssumed)
 	}
 }
+
+// --imbalance-across-counts at the planner's default states nothing, so it
+// puts no figure outside the envelope; set away from it, it does.
+func TestEnvelope_ImbalanceAcrossCountsAtTheDefault(t *testing.T) {
+	for _, c := range []struct {
+		on   bool
+		want []string
+	}{{whatif.DefaultPlannerImbalanceAcrossCounts, nil}, {!whatif.DefaultPlannerImbalanceAcrossCounts, []string{"--imbalance-across-counts"}}} {
+		f := answerFlags{imbalanceAcrossCounts: c.on, set: map[string]bool{"imbalance-across-counts": true}}
+		assert.Equal(t, c.want, f.statedOutside(), "on %v", c.on)
+	}
+}

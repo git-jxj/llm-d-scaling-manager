@@ -17,7 +17,8 @@ import (
 // DefaultPlannerImbalanceAcrossCounts for the capacity planner), both read
 // f at any count through ImbalanceReadings.At: a count P1 learned keeps its
 // own f, any other is read off a curve fitted to the counts learned and the
-// raw share, and with no count learned f is at least FreshImbalance.
+// raw share, and with no count learned f is at least FreshImbalance (the
+// analyzer; the planner keeps ImbalanceFloor with none learned).
 //
 // The curve. Each pod's share of the prefill work is 1 + c·z, z a standard
 // normal draw per pod, from the router's scoring, a slower node, or a prefix
