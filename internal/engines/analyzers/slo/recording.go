@@ -100,7 +100,8 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchITLRestartUnderName, SwitchITLIdleOnEvidence and
 // SwitchITLForgetReachesTheLine, SwitchITLOneSidedAtCap, SwitchTTFTPrice,
 // SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer,
-// SwitchTTFTPrefixAttention, SwitchTTFTProcessorSharing, SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
+// SwitchTTFTPrefixAttention, SwitchTTFTProcessorSharing,
+// SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
 // SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTJointInputs and
 // SwitchKVPerRequestOutputDispersion; a name it does not know is an error,

@@ -613,6 +613,10 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		p.VPAssumed, p.VPMargin, p.CurveSlope, p.CurveCurvature = true, 0, 0, 0
 	}
 	pf.in.VP, pf.in.VPPromptTokens = p.VP, p.VPPromptTokens
+	if p.VPWholePromptTokens > 0 {
+		hit := p.VPPromptHitRate
+		pf.in.VPWholePromptTokens, pf.in.VPPromptHitRate = p.VPWholePromptTokens, &hit
+	}
 	pf.in.FixedLatencySeconds, pf.in.FixedLatencySource = p.FixedLatency, sourceLearned
 	switch {
 	case pf.assumedA:
@@ -709,6 +713,10 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 		pf.assume("prompt %s tokens (the decode variant's; no computed-token rate on the prefill rows)", num(round(p.PromptTokens)))
 	}
 	pf.in.PromptTokens = p.PromptTokens
+	if p.WholePromptTokens > 0 {
+		hit := p.PromptHitRate
+		pf.in.WholePromptTokens, pf.in.PromptHitRate = p.WholePromptTokens, &hit
+	}
 
 	// The window's, whatever the prompt asked: a cv is a figure of the traffic
 	// the histogram counted. --assume-prompt-cv overrides it, as every
@@ -765,6 +773,13 @@ func (pf *pricedFleet) transferPerToken(read, base float64) float64 {
 		return t / read
 	}
 	dur := func(s float64) time.Duration { return time.Duration(math.Round(s * float64(time.Second))) }
+	// The guard first: a base it drops is not named as applied.
+	if !(asked > 0) || !(movedRead > 0) {
+		if base > 0 {
+			pf.assume("--assume-transfer-base not applied: no tokens read as moved (the decode variant's hit rate 1)")
+		}
+		return t / read
+	}
 	switch {
 	case base > t:
 		pf.assume("KV transfer base %s above the %s measured: priced at the measured, with no per-token part", dur(base), dur(t))
@@ -772,19 +787,24 @@ func (pf *pricedFleet) transferPerToken(read, base float64) float64 {
 	case base > 0:
 		pf.assume("KV transfer base %s a request (--assume-transfer-base), the rest of the %s measured per token moved", dur(base), dur(t))
 	}
-	if !(asked > 0) || !(movedRead > 0) {
-		return t / read
-	}
 	return (base + (t-base)*moved/movedRead) / asked
 }
 
 // effectivePrompt is an assumed whole prompt il less its prefix hits, and the
-// hit rate taken off: the decode variant's shape's, or with no decode
-// variant none. With slo.SwitchTTFTPrefixAttention on, the prefill
-// variant's where its shape was read (prefillHit): the prefill pods compute
-// the prompt less their own hits, not decode's.
+// hit rate taken off. Off (slo.SwitchTTFTPrefixAttention), it is the decode
+// variant's shape's pv.shape.ILeff, il ignored: answer.go built that shape
+// from the same il (--assume-input-tokens, or the decode variant's prompt),
+// at the decode hit rate, stated or measured; with no decode variant, il and
+// none. On, a hit rate stated (--prefix-hit, or a stated IL/OL/hit shape)
+// governs the prefill pods too; else the prefill variant's where its shape
+// was read (prefillHit): the prefill pods compute the prompt less their own
+// hits, not decode's; else the decode variant's, as off.
 func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {
 	if pf.prefixAttention {
+		if pf.pv != nil && pf.pv.assumedHit {
+			hit := pf.pv.shape.PrefixHitRate
+			return il * (1 - hit), hit
+		}
 		if hit, ok := pf.prefillHit(); ok {
 			return il * (1 - hit), hit
 		}
@@ -1020,7 +1040,8 @@ func (pf *pricedFleet) describe() {
 	case pf.assumedVP:
 		b.WriteString("ASSUMED")
 	case p.VPPromptTokens > 0:
-		fmt.Fprintf(&b, "learned (%s, at %s tokens)", pf.in.VPOrigin, num(round(p.VPPromptTokens)))
+		fmt.Fprintf(&b, "learned (%s, at %s tokens%s)", pf.in.VPOrigin, num(round(p.VPPromptTokens)),
+			pf.wholeText(p.VPWholePromptTokens, p.VPPromptHitRate))
 	default:
 		fmt.Fprintf(&b, "learned (%s)", pf.in.VPOrigin)
 	}
@@ -1030,6 +1051,7 @@ func (pf *pricedFleet) describe() {
 	if pf.in.PromptFromCycle > 0 {
 		fmt.Fprintf(&b, ", cycles %d-%d", pf.in.PromptFromCycle, pf.in.PromptToCycle)
 	}
+	b.WriteString(pf.wholeText(p.WholePromptTokens, p.PromptHitRate))
 	b.WriteString(")")
 	switch pf.in.DecodeSide {
 	case "line":
@@ -1040,6 +1062,19 @@ func (pf *pricedFleet) describe() {
 		b.WriteString("; decode side omitted")
 	}
 	pf.inputsText = b.String()
+}
+
+// wholeText is a whole prompt and its prefix-cache hit rate as the inputs
+// row prints them beside a computed prompt, so a VPShapeMoved the hits
+// raised (whatif.Prefill.prefixMoved) shows why. Empty where the whole
+// prompt is unknown, or where neither V_P's nor the question's hit rate is
+// above 0: the whole prompt then is the computed one, already printed.
+func (pf *pricedFleet) wholeText(whole, hit float64) string {
+	p := pf.fleet.Prefill
+	if !(whole > 0) || !(max(p.PromptHitRate, p.VPPromptHitRate) > 0) {
+		return ""
+	}
+	return fmt.Sprintf(", %s whole at a %.2f prefix hit rate", num(round(whole)), hit)
 }
 
 // aText is a as the inputs row prints it: the learned figure beside an

@@ -63,6 +63,17 @@ func TestCapacity_VPRecordsTheWholePromptAndTheHit(t *testing.T) {
 		assert.Zero(t, est.VPPromptHitRate)
 	})
 
+	// No presence is carried for the hit-rate series: an absent one reads
+	// 0 beside the whole prompt, the careful side (rowWholePrompt).
+	t.Run("a minute with no hit series reads hit 0", func(t *testing.T) {
+		cs := []Cycle{hitAt(2000, 2000, 0), hitAt(2000, 2000, 0), hitAt(2000, 2000, 0),
+			hitAt(2000, 2000, 0), hitAt(2000, 2000, 0)}
+		est := run(NewObserver(), cs...)
+		require.Equal(t, SourceBusyMinutes, est.VPSource)
+		assert.Equal(t, 2000.0, est.VPWholePromptTokens)
+		assert.Zero(t, est.VPPromptHitRate)
+	})
+
 	t.Run("the back-pressure bound records none", func(t *testing.T) {
 		c := cycle(t0, lowLoad(1000, 0.01, 1, 0.003))
 		c.Rows[0].AvgInputTokensRecent, c.Rows[0].PrefixCacheHitRate = 4000, 0.75

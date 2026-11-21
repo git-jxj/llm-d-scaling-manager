@@ -509,18 +509,20 @@ func (pl prefillPlan) atRate(rate float64) prefillPlan {
 // prefix hit of h tokens is not computed, but each of the I_eff = I - h
 // tokens that are attends over the h cached ones too: mean context
 // h + I_eff/2, so the curve's argument is I_eff + 2h (attentionSpan). With
-// PrefixAttention on and both whole prompts known, the rescale reads that
-// argument at I_vp and at the question; otherwise I_eff stands for it, as if
-// nothing were cached, and reads V_P high at a hit (issue
-// llm-d-incubation/llm-d-scaling-manager#311).
+// PrefixAttention on, both whole prompts known (the hit rates are read with
+// them) and either hit rate above MaterialPrefixHitMove, the rescale reads
+// that argument at I_vp and at the question, h from each side's own hit rate;
+// otherwise I_eff stands for it, as if nothing were cached, and reads V_P
+// high at a hit (issue llm-d-incubation/llm-d-scaling-manager#311).
 func (p Prefill) shapedVP() (float64, Flag) {
 	if p.VPAssumed {
 		return p.VP, ""
 	}
 	i, ivp := p.PromptTokens, p.VPPromptTokens
 	if p.CurveSlope > 0 && p.CurveCurvature > 0 && ivp > 0 {
-		if p.PrefixAttention && p.VPWholePromptTokens > 0 && p.WholePromptTokens > 0 {
-			i, ivp = attentionSpan(i, p.WholePromptTokens), attentionSpan(ivp, p.VPWholePromptTokens)
+		if p.PrefixAttention && p.VPWholePromptTokens > 0 && p.WholePromptTokens > 0 &&
+			max(p.PromptHitRate, p.VPPromptHitRate) > MaterialPrefixHitMove {
+			i, ivp = attentionSpan(i, p.PromptHitRate), attentionSpan(ivp, p.VPPromptHitRate)
 		}
 		if i > ivp {
 			s := func(x float64) float64 { return p.CurveSlope + p.CurveCurvature*x }
@@ -535,15 +537,24 @@ func (p Prefill) shapedVP() (float64, Flag) {
 }
 
 // attentionSpan is the curve's argument for a computed prompt of eff tokens
-// of a whole prompt of whole: eff + 2h, h = whole - eff the cached tokens
-// (shapedVP). A whole prompt under eff caches nothing.
-func attentionSpan(eff, whole float64) float64 {
-	return eff + 2*max(whole-eff, 0)
+// at a prefix-cache hit rate hit in [0, 1): eff + 2h, h = eff*hit/(1 - hit)
+// the cached tokens (shapedVP). h is taken from the measured hit rate, not
+// as the whole prompt less eff: the two prompts are read over different
+// windows, and their drift with no cache would read as cached context.
+func attentionSpan(eff, hit float64) float64 {
+	return eff + 2*eff*hit/(1-hit)
 }
+
+// MaterialPrefixHitMove is how far a prefix-cache hit rate must move, or
+// stand above 0, for prefixMoved to read the prefix hits as moved, and how
+// high one must stand for shapedVP to price the cached tokens' attention
+// (PrefixAttention): below it a hit rate is taken as noise around none.
+// Stated, not measured: no committed recording has prefix hits.
+const MaterialPrefixHitMove = 0.1
 
 // prefixMoved reports whether the prefix hits V_P was read at moved from the
 // question's, which the computed prompt alone does not show: the hit rate
-// by more than MaterialPrefixHitShare, or, with either hit rate above it, the
+// by more than MaterialPrefixHitMove, or, with either hit rate above it, the
 // whole prompt by more than MaxVPShapeRatio either way. At 32k with a 75% hit
 // a pod computes the 8k a fresh 8k prompt does, so I_vp and E[I_eff] agree,
 // but each token attends over 24k cached ones (issue
@@ -555,10 +566,10 @@ func (p Prefill) prefixMoved() bool {
 	if p.VPAssumed || !(p.VPWholePromptTokens > 0) || !(p.WholePromptTokens > 0) {
 		return false
 	}
-	if math.Abs(p.PromptHitRate-p.VPPromptHitRate) > MaterialPrefixHitShare {
+	if math.Abs(p.PromptHitRate-p.VPPromptHitRate) > MaterialPrefixHitMove {
 		return true
 	}
-	if max(p.PromptHitRate, p.VPPromptHitRate) <= MaterialPrefixHitShare {
+	if max(p.PromptHitRate, p.VPPromptHitRate) <= MaterialPrefixHitMove {
 		return false
 	}
 	w, wvp := p.WholePromptTokens, p.VPWholePromptTokens
@@ -598,7 +609,10 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 	case !Finite(p.VPWholePromptTokens) || p.VPWholePromptTokens < 0 || !Finite(p.WholePromptTokens) || p.WholePromptTokens < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("whole prompt %g, V_P's %g, want finite values of at least 0 (0 is unknown)",
 			p.WholePromptTokens, p.VPWholePromptTokens))
-	case !(p.PromptHitRate >= 0 && p.PromptHitRate < 1) || !(p.VPPromptHitRate >= 0 && p.VPPromptHitRate < 1):
+	case p.WholePromptTokens > 0 && !(p.PromptHitRate >= 0 && p.PromptHitRate < 1) ||
+		p.VPWholePromptTokens > 0 && !(p.VPPromptHitRate >= 0 && p.VPPromptHitRate < 1):
+		// A hit rate is read only beside a known whole prompt; with the whole
+		// prompt unknown, nothing reads it (shapedVP, prefixMoved).
 		u = refuse(InvalidInput, fmt.Sprintf("prefix hit rate %g, V_P's %g, want 0 <= hit < 1", p.PromptHitRate, p.VPPromptHitRate))
 	case !Finite(p.CurveSlope) || p.CurveSlope < 0 || !Finite(p.CurveCurvature) || p.CurveCurvature < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("curve b %g, c %g, want finite values of at least 0", p.CurveSlope, p.CurveCurvature))

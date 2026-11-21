@@ -689,6 +689,15 @@ func effectivePrompt(rm domain.ReplicaMetrics, sglang bool) (float64, bool) {
 // rowWholePrompt is the row's whole prompt over the same minute, prefix hits
 // included, and its prefix-cache hit rate, taken as 0 outside [0, 1) as
 // effectivePrompt takes it; a whole prompt of 0 is not read.
+//
+// A row whose hit-rate series is absent reads a hit rate of 0 beside a read
+// whole prompt: domain.ReplicaMetrics carries no presence for
+// PrefixCacheHitRate (the collector leaves it 0), so absent and none look
+// alike. That is the careful side: a V_P read at hit 0 is flagged
+// VPShapeMoved against a question with hits (whatif.Prefill.prefixMoved),
+// and with the planner's slo-ttft-prefix-attention on, its shorter span
+// rescales V_P down, never up; an unknown whole prompt would instead price
+// as if no hit had moved.
 func rowWholePrompt(rm domain.ReplicaMetrics) (whole, hit float64) {
 	hit = rm.PrefixCacheHitRate
 	if !(hit >= 0 && hit < 1) {

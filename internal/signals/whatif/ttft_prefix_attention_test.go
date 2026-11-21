@@ -59,6 +59,33 @@ func TestVPRescale_PrefixAttentionReadsTheCachedContext(t *testing.T) {
 	relNear(t, "fresh prompt, the curve", got, 120000*s(8000)/s(16000), 1e-12)
 }
 
+// h is read from the measured hit rate, h = I_eff*hit/(1 - hit), not as the
+// whole prompt less I_eff: the two are read over different windows, and a
+// whole prompt that drifted from I_eff with no cache is no cached context.
+// At or below MaterialPrefixHitMove on both sides nothing is cached either.
+func TestVPRescale_PrefixAttentionTakesTheCachedTokensFromTheHit(t *testing.T) {
+	s := func(x float64) float64 { return hitCurveB + hitCurveC*x }
+	for _, c := range []struct {
+		name       string
+		eff, whole float64
+		hit        float64
+		want       float64
+	}{
+		// 16k computed, the whole prompt read at 24k over another window,
+		// no hit: rescaled on I_eff, as off.
+		{"drift with no cache", 16000, 24000, 0, 120000 * s(8000) / s(16000)},
+		{"a hit at the floor", 16000, 24000, MaterialPrefixHitMove, 120000 * s(8000) / s(16000)},
+		// 8k computed at a 50% hit: 8k cached, whatever the whole prompt
+		// read.
+		{"a hit, the whole read elsewhere", 8000, 20000, 0.5, 120000 * s(8000) / s(8000+2*8000)},
+	} {
+		p := hitFleet(c.eff, c.whole, c.hit)
+		p.PrefixAttention = true
+		vp, _ := pricedVP(t, p)
+		relNear(t, c.name, vp, c.want, 1e-12)
+	}
+}
+
 // Where a whole prompt is not known, on either side, the rescale reads
 // E[I_eff] as before, switch or not.
 func TestVPRescale_PrefixAttentionNeedsBothWholePrompts(t *testing.T) {
@@ -81,8 +108,8 @@ func TestVPRescale_PrefixAttentionNeedsBothWholePrompts(t *testing.T) {
 
 // VPShapeMoved, on whatever the switch says, where the prefix hits moved
 // from those V_P was read at: the hit rate by more than
-// MaterialPrefixHitShare, or the whole prompt by more than MaxVPShapeRatio
-// with a hit on either side. With no hit on either side the whole prompt
+// MaterialPrefixHitMove, or the whole prompt by more than MaxVPShapeRatio
+// with a hit rate above it on either side. With no hit on either side the whole prompt
 // moves with E[I_eff], and nothing new is raised: no golden moves.
 func TestVPShapeMoved_WhenThePrefixHitsMove(t *testing.T) {
 	for _, c := range []struct {
@@ -127,6 +154,18 @@ func TestPrefill_PrefixInputsChecked(t *testing.T) {
 		u, ok := PrefillKnee(p).(Unanswerable)
 		if !ok || u.Reason != InvalidInput {
 			t.Errorf("%s: %#v, want InvalidInput", name, PrefillKnee(p))
+		}
+	}
+	// A hit rate beside an unknown whole prompt is read by nothing: priced
+	// as before, not refused.
+	unknownVP := hitFleet(8000, 8000, 0)
+	unknownVP.VPWholePromptTokens, unknownVP.VPPromptHitRate = 0, 1
+	for name, p := range map[string]Prefill{
+		"hit 1, whole unknown":       hitFleet(8000, 0, 1),
+		"V_P's hit 1, whole unknown": unknownVP,
+	} {
+		if _, ok := PrefillKnee(p).(Answer); !ok {
+			t.Errorf("%s: %#v, want an answer", name, PrefillKnee(p))
 		}
 	}
 }

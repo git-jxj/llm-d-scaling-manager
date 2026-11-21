@@ -110,7 +110,8 @@ A stated V_P, a, router hop, ITL B or router wait also puts the figures outside 
 validated region, and the line says so. A stated TPOT ratio
 (`--assume-tpot-ratio`), stated lengths (`--assume-input-tokens`,
 `--assume-output-tokens`), a stated KV transfer base
-(`--assume-transfer-base`) and the other opt-in switches (`--batch-cap`,
+(`--assume-transfer-base`, on `replicas-to-slo` and `slo-to-rate` only:
+`at-replicas` refuses it) and the other opt-in switches (`--batch-cap`,
 `--ps-onsets`, `--prefill-running-cap`, `--charge-decode-gate`) are not
 replayed: the check scores p90 TPOT on the recording's own ratio, the
 recording's own traffic, and the switches' defaults. The line ends

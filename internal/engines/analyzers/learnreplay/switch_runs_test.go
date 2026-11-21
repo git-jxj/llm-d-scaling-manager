@@ -1690,7 +1690,9 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFT_ThePrefixAttentionOffFromTheConstructor"},
 		{".", "TestStateAt_ThePrefixAttentionSwitchReachesThePrefillState"},
 		{"../../../signals/whatif", "TestVPRescale_PrefixAttentionReadsTheCachedContext"},
+		{"../../../signals/whatif", "TestVPRescale_PrefixAttentionTakesTheCachedTokensFromTheHit"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionPricesThePrefillVariantsHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionAStatedHitGovernsThePrefill"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionMovesTheTransferByTheDecodeHit"},
 	},
 	// Issue ev-shindin/llm-scaling-manager#275's lift: an aggregated figure sizes once the GPS check has

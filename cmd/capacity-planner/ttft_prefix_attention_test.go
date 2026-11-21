@@ -28,9 +28,10 @@ func hitState(prefillHit float64, on bool) *learnreplay.State {
 	return st
 }
 
-// hitDecode is a decode variant that served il-token prompts at hit rate
+// hitDecode is a decode variant that served 8000-token prompts at hit rate
 // hit, read as asked, with the KV transfer measured at transfer seconds.
-func hitDecode(il, hit, transfer float64) *pricedVariant {
+func hitDecode(hit, transfer float64) *pricedVariant {
+	const il = 8000
 	return &pricedVariant{
 		state: learnreplay.VariantState{Variant: "dec", Role: domain.RoleDecode,
 			Shape:      learnreplay.MeasuredShape{InputTokens: il, OutputTokens: 200, PrefixHitRate: hit, Cycles: 20},
@@ -55,7 +56,7 @@ func hitFleetOf(t *testing.T, st *learnreplay.State, pv *pricedVariant, f answer
 // with the switch on, by the prefill variant's, which is what the prefill
 // pods skip. Unread, the prefill variant's leaves the decode one's.
 func TestTTFT_PrefixAttentionPricesThePrefillVariantsHit(t *testing.T) {
-	pv := hitDecode(8000, 0.75, 0)
+	pv := hitDecode(0.75, 0)
 	off := hitFleetOf(t, hitState(0.5, false), pv, answerFlags{inputTokens: 8000}, "assume-input-tokens")
 	require.Nil(t, off.refused)
 	p := off.fleet.Prefill
@@ -76,6 +77,76 @@ func TestTTFT_PrefixAttentionPricesThePrefillVariantsHit(t *testing.T) {
 	unread.Variants[0].Shape = learnreplay.MeasuredShape{}
 	pf := hitFleetOf(t, unread, pv, answerFlags{inputTokens: 8000}, "assume-input-tokens")
 	assert.Equal(t, 2000.0, pf.fleet.Prefill.PromptTokens, "no prefill shape read: as before")
+}
+
+// A stated hit rate (--prefix-hit, or a stated IL/OL/hit shape) governs the
+// prefill pods too with the switch on, over the prefill variant's measured
+// one, and is the hit rate recorded beside the prompt; off, the decode
+// shape's, stated or not, as before.
+func TestTTFT_PrefixAttentionAStatedHitGovernsThePrefill(t *testing.T) {
+	stated := func() *pricedVariant {
+		pv := hitDecode(0.75, 0)
+		pv.shape, pv.assumedHit = shape.New(8000, 200, 0.25), true
+		return pv
+	}
+	on := hitFleetOf(t, hitState(0.5, true), stated(), answerFlags{inputTokens: 8000}, "assume-input-tokens")
+	require.Nil(t, on.refused)
+	assert.Equal(t, 6000.0, on.fleet.Prefill.PromptTokens, "on: the stated 25%, not the prefill variant's 50%")
+	assert.Equal(t, 0.25, on.fleet.Prefill.PromptHitRate)
+
+	off := hitFleetOf(t, hitState(0.5, false), stated(), answerFlags{inputTokens: 8000}, "assume-input-tokens")
+	require.Nil(t, off.refused)
+	assert.Equal(t, 6000.0, off.fleet.Prefill.PromptTokens, "off: the decode shape's, here the stated one")
+	assert.Equal(t, 0.25, off.fleet.Prefill.PromptHitRate)
+}
+
+// The whole prompts and hit rates sit in the inputs row and the JSON beside
+// the computed prompts, so a VPShapeMoved the hits raised shows why; where
+// no hit is above 0 the row is as before, and where the whole prompt is
+// unknown so is the JSON.
+func TestTTFT_TheWholePromptAndHitAreShown(t *testing.T) {
+	st := hitState(0.75, false)
+	st.Prefill[0].Estimate.VPWholePromptTokens = 2000
+	pf := fleetOf(t, st, answerFlags{})
+	require.Nil(t, pf.refused)
+	assert.Contains(t, pf.inputsText, "at 2000 tokens, 2000 whole at a 0.00 prefix hit rate)")
+	assert.Contains(t, pf.inputsText, "cycles 21-40, 8000 whole at a 0.75 prefix hit rate)")
+	assert.Equal(t, 2000.0, pf.in.VPWholePromptTokens)
+	require.NotNil(t, pf.in.VPPromptHitRate)
+	assert.Zero(t, *pf.in.VPPromptHitRate)
+	assert.Equal(t, 8000.0, pf.in.WholePromptTokens)
+	require.NotNil(t, pf.in.PromptHitRate)
+	assert.Equal(t, 0.75, *pf.in.PromptHitRate)
+
+	fresh := hitState(0, false)
+	fresh.Prefill[0].Estimate.VPWholePromptTokens = 2000
+	pf = fleetOf(t, fresh, answerFlags{})
+	assert.NotContains(t, pf.inputsText, "whole", "no hit on either side: the row as before")
+
+	pf = fleetOf(t, learnedState(), answerFlags{})
+	assert.NotContains(t, pf.inputsText, "whole")
+	assert.Zero(t, pf.in.VPWholePromptTokens)
+	assert.Nil(t, pf.in.VPPromptHitRate)
+	assert.Zero(t, pf.in.WholePromptTokens)
+	assert.Nil(t, pf.in.PromptHitRate)
+}
+
+// freeze drops the recording's hit rates, V_P's with the shapes', so a V_P
+// read at a warm-up's hits is not flagged VPShapeMoved against the
+// driver's none.
+func TestFreeze_DropsVPsHitsWithTheShapes(t *testing.T) {
+	st := hitState(0.75, false)
+	st.Prefill[0].Estimate.VPWholePromptTokens, st.Prefill[0].Estimate.VPPromptHitRate = 8000, 0.75
+	rates := dropWarmUpHits(st)
+	assert.Equal(t, map[string]float64{"pre": 0.75}, rates)
+	assert.Zero(t, st.Variants[0].Shape.PrefixHitRate)
+	assert.Zero(t, st.Prefill[0].Estimate.VPWholePromptTokens)
+	assert.Zero(t, st.Prefill[0].Estimate.VPPromptHitRate)
+	pf := fleetOf(t, st, answerFlags{})
+	require.Nil(t, pf.refused)
+	k, ok := whatif.PrefillKnee(pf.fleet.Prefill).(whatif.Answer)
+	require.True(t, ok)
+	assert.False(t, k.HasFlag(whatif.VPShapeMoved), "flags %v", k.Flags)
 }
 
 // The whole prompt and the hit rate sit beside the measured prompt, on
@@ -112,7 +183,7 @@ func TestTTFT_PrefixAttentionMovesTheTransferByTheDecodeHit(t *testing.T) {
 	// a 50% hit, the pull took 20 ms. Asked: 16000 at the same hits.
 	const transfer = 0.02
 	total := func(on bool) (float64, *pricedFleet) {
-		pv := hitDecode(8000, 0.5, transfer)
+		pv := hitDecode(0.5, transfer)
 		pv.shape = shape.New(16000, 200, 0.5)
 		pf := hitFleetOf(t, hitState(0.75, on), pv, answerFlags{inputTokens: 16000}, "assume-input-tokens")
 		require.Nil(t, pf.refused)
@@ -134,7 +205,7 @@ func TestTTFT_PrefixAttentionMovesTheTransferByTheDecodeHit(t *testing.T) {
 func TestTTFT_TheTransferBaseIsAFixedPartOfTheMeasured(t *testing.T) {
 	const transfer = 0.02
 	at := func(base time.Duration, measured float64) (float64, *pricedFleet) {
-		pv := hitDecode(8000, 0.5, measured)
+		pv := hitDecode(0.5, measured)
 		pv.shape = shape.New(16000, 200, 0.5)
 		set := []string{"assume-input-tokens"}
 		if base != 0 {
@@ -156,6 +227,19 @@ func TestTTFT_TheTransferBaseIsAFixedPartOfTheMeasured(t *testing.T) {
 	_, pf = at(5*time.Millisecond, 0)
 	assert.Zero(t, pf.fleet.Prefill.TransferSecondsPerToken)
 	assert.Contains(t, pf.in.Assumed, "--assume-transfer-base not applied: no KV transfer measured on the decode rows")
+
+	// With the switch on and a decode hit rate of 1, no token reads as
+	// moved: the base is dropped, and not named as applied.
+	pv := hitDecode(1, transfer)
+	pv.shape = shape.New(16000, 200, 0.5)
+	pf = hitFleetOf(t, hitState(0.75, true), pv, answerFlags{inputTokens: 16000, assumeTransferBase: 5 * time.Millisecond},
+		"assume-input-tokens", "assume-transfer-base")
+	require.Nil(t, pf.refused)
+	p := pf.fleet.Prefill
+	assert.InDelta(t, transfer*p.PromptTokens/2000, p.TransferSecondsPerToken*p.PromptTokens, 1e-15, "T over the computed prompt read")
+	assumed := strings.Join(pf.in.Assumed, "; ")
+	assert.NotContains(t, assumed, "KV transfer base 5ms a request")
+	assert.Contains(t, assumed, "--assume-transfer-base not applied")
 
 	f := answerFlags{assumeTransferBase: -time.Millisecond, set: map[string]bool{"assume-transfer-base": true}}
 	require.ErrorContains(t, f.checkTTFT(), "--assume-transfer-base -1ms, want a duration of 0 or more")
