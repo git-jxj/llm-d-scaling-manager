@@ -701,11 +701,60 @@ func (f *answerFlags) headroomFor(p *config.ScalingPolicy) float64 {
 // the engine's is the answer (whatif.EngineTPOTRatio): it says more than that
 // no histogram exists. Any other refusal of the router's stands: it says that
 // data is wrong. A refusal comes back as the Result the percentile answers
-// with.
+// with. A coarse R_q on a host-bound decode line is refused too
+// (hostBoundRefusal).
 func (f *answerFlags) tpotRatioFor(st *learnreplay.State, q float64) (whatif.TPOTRatio, []whatif.Flag, *whatif.Unanswerable) {
 	if f.set["assume-tpot-ratio"] {
 		return whatif.TPOTRatio{Value: f.tpotRatio, Assumed: true}, nil, nil
 	}
+	r, flags, refused := f.tpotRatioRead(st, q)
+	if refused == nil {
+		if u := f.hostBoundRefusal(st, flags); u != nil {
+			return whatif.TPOTRatio{}, nil, u
+		}
+	}
+	return r, flags, refused
+}
+
+// hostBoundITL is the decode step time under which a TPOT tail is the
+// host's jitter (scheduling, sampling, detokenizing), not the fill: on a
+// sub-1B model the step is host-bound and the line's intercept and its
+// floor read 1.5 to 2.5 ms.
+const hostBoundITL = 0.005
+
+// hostBoundRefusal refuses a TPOT percentile whose R_q was read off coarse
+// buckets (whatif.CoarseTPOTBucket) where every decode variant priced is
+// host-bound: its line's intercept B, and its floor below the band where one
+// was read, under hostBoundITL. The bucket grid then sets R_q, and the tail
+// it stands for is host jitter the line does not model: on the 0.6B
+// staircase the planner priced p90 TPOT at the mean while the fleet measured
+// a p90 1.3x and a p95 1.6x its mean (#291). Nil where it prices.
+func (f *answerFlags) hostBoundRefusal(st *learnreplay.State, flags []whatif.Flag) *whatif.Unanswerable {
+	if !slices.Contains(flags, whatif.CoarseTPOTBucket) {
+		return nil
+	}
+	n, worst := 0, 0.0
+	for _, vs := range st.Variants {
+		if domain.CanonicalRole(vs.Role) == domain.RolePrefill || (f.variant != "" && vs.Variant != f.variant) {
+			continue
+		}
+		b := max(vs.Line.B, vs.BelowBandITL)
+		if !(vs.Line.B > 0) || b >= hostBoundITL {
+			return nil
+		}
+		n, worst = n+1, max(worst, b)
+	}
+	if n == 0 {
+		return nil
+	}
+	return &whatif.Unanswerable{Reason: whatif.TPOTBucketTooWide, Flags: []whatif.Flag{whatif.CoarseTPOTBucket},
+		Detail: fmt.Sprintf("the decode step is host-bound (the line's intercept and floor at most %.2f ms, under %.0f ms) and the TPOT histogram's "+
+			"q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; "+
+			"pass --assume-tpot-ratio for a flagged answer, or ask for the mean", worst*1000, hostBoundITL*1000)}
+}
+
+// tpotRatioRead is R_q as the histograms read it (tpotRatioFor).
+func (f *answerFlags) tpotRatioRead(st *learnreplay.State, q float64) (whatif.TPOTRatio, []whatif.Flag, *whatif.Unanswerable) {
 	r, flags, refused := whatif.TPOTRatio{}, []whatif.Flag(nil), &whatif.Unanswerable{Reason: whatif.NoTPOTHistogram,
 		Detail: "the recording carries no TPOT histogram; pass --assume-tpot-ratio for a flagged answer"}
 	if len(st.TPOTWindows) > 0 {

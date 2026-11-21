@@ -110,10 +110,38 @@ const (
 	// predicted: on a P/D fleet the engines' TTFT (the prefill pods'
 	// alone), and the engines' mean inter-token latency for a mean TPOT.
 	UnscoredNotComparable = "notComparable"
+	// UnscoredUnresolvable is a measured percentile that fell in a histogram
+	// bucket too wide to place it (MeasuredBucketWidth): interpolated inside
+	// the bucket, it reads the bucket's grid, not the traffic.
+	UnscoredUnresolvable = "unresolvable"
 )
 
-// statP90 is the statistic a verdict leads with.
+// MeasuredBucketWidth is the widest bucket, over the measured mean, a
+// measured percentile is scored in. A percentile is interpolated inside the
+// bucket that holds it, and the interpolation reads L + q'(U - L) whatever the
+// traffic did (#291): in a bucket 0.2 to 0.4 s around a mean of 0.16 s, a p90
+// reads high by up to the bucket's width. With no measured mean the bucket's
+// lower edge stands for it: a bucket is scored when U <= 1.4 L.
+const MeasuredBucketWidth = 0.4
+
+// statP90 is the percentile a verdict reports beside the mean.
 const statP90 = "p90"
+
+// primaryStats is the order a verdict and the self-check take a figure's
+// statistic in: the mean (the histogram's sum over its count, no bucket
+// interpolated), else p90, else p50, the first scored in any step.
+var primaryStats = []string{statisticMean, statP90, "p50"}
+
+// primaryScore is the first of primaryStats scored in a step, nil with none.
+func primaryScore(scores []BacktestScore) *BacktestScore {
+	for _, stat := range primaryStats {
+		i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == stat })
+		if i >= 0 && scores[i].All.Steps > 0 {
+			return &scores[i]
+		}
+	}
+	return nil
+}
 
 // backtestBanner is the backtest's standing in one line.
 const backtestBanner = "The planner's figures are a model, not a bound: this check measures how far off they are on this fleet."
@@ -260,7 +288,11 @@ type BacktestPoint struct {
 	// top bucket while the prediction was under it: Ratio is then the
 	// prediction over the top bound, no lower than the truth's, and never
 	// within.
-	AboveHistogram bool   `json:"aboveHistogram,omitempty"`
+	AboveHistogram bool `json:"aboveHistogram,omitempty"`
+	// MeasuredBucket is the histogram bucket the measured percentile fell
+	// in, where it is too wide to score the percentile (Unscored
+	// unresolvable): the truth is somewhere in it.
+	MeasuredBucket *Band  `json:"measuredBucket,omitempty"`
 	Unscored       string `json:"unscored,omitempty"`
 }
 
@@ -1099,10 +1131,10 @@ func scoreStep(out *BacktestStep, m measured, target *ReportTarget) {
 		out.Excluded, out.Detail = ExcludedNoMeasurement, "the source measured no request in the step"
 	}
 	for i := range out.TTFT {
-		out.TTFT[i] = scoredPoint(out.TTFT[i], m.ttft[i], m.requests, m.ttftTop, m.ttftWhy[i])
+		out.TTFT[i] = scoredPoint(out.TTFT[i], m.ttft[i], m.requests, m.ttftTop, m.ttftWhy[i], m.ttftBucket[i])
 	}
 	for i := range out.TPOT {
-		out.TPOT[i] = scoredPoint(out.TPOT[i], m.tpot[i], m.tpotRequests, m.tpotTop, m.tpotWhy[i])
+		out.TPOT[i] = scoredPoint(out.TPOT[i], m.tpot[i], m.tpotRequests, m.tpotTop, m.tpotWhy[i], m.tpotBucket[i])
 	}
 	if target != nil {
 		out.Target = judgeTarget(target, out.TTFT, m)
@@ -1283,6 +1315,7 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 type measured struct {
 	ttft, tpot             []*float64
 	ttftWhy, tpotWhy       []string
+	ttftBucket, tpotBucket []*Band
 	requests, tpotRequests float64
 	ttftTop, tpotTop       float64
 }
@@ -1294,7 +1327,8 @@ type measured struct {
 // planner predicts, so each is marked not comparable rather than scored.
 func measuredOf(l LatencySample, source string, windowSeconds float64, pd bool) measured {
 	n := len(backtestStats)
-	m := measured{ttft: make([]*float64, n), tpot: make([]*float64, n), ttftWhy: make([]string, n), tpotWhy: make([]string, n)}
+	m := measured{ttft: make([]*float64, n), tpot: make([]*float64, n), ttftWhy: make([]string, n), tpotWhy: make([]string, n),
+		ttftBucket: make([]*Band, n), tpotBucket: make([]*Band, n)}
 	var tb, pb []domain.LatencyBucket
 	var ttftMean, tpotMean *float64
 	switch {
@@ -1333,10 +1367,10 @@ func measuredOf(l LatencySample, source string, windowSeconds float64, pd bool) 
 			m.ttft[i], m.tpot[i] = ttftMean, tpotMean
 		default:
 			if tok {
-				m.ttft[i] = ptr(th.quantile(q))
+				m.ttft[i], m.ttftBucket[i] = ptr(th.quantile(q)), th.coarseBucket(q, ttftMean)
 			}
 			if pok {
-				m.tpot[i] = ptr(ph.quantile(q))
+				m.tpot[i], m.tpotBucket[i] = ptr(ph.quantile(q)), ph.coarseBucket(q, tpotMean)
 			}
 		}
 	}
@@ -1406,6 +1440,36 @@ func (h latencyHist) quantile(q float64) float64 {
 	return math.Inf(1)
 }
 
+// coarseBucket is the finite bucket holding the q-quantile where it is too
+// wide to place the quantile: wider than MeasuredBucketWidth times mean, or,
+// with no mean, than that share of its lower edge; nil where it is narrow
+// enough, or the quantile is above the top bucket (scored as a miss, not
+// placed).
+func (h latencyHist) coarseBucket(q float64, mean *float64) *Band {
+	rank := q * h.total
+	for i, b := range h.buckets {
+		if b.Rate < rank {
+			continue
+		}
+		if math.IsInf(b.UpperBound, 1) {
+			return nil
+		}
+		lower := 0.0
+		if i > 0 {
+			lower = h.buckets[i-1].UpperBound
+		}
+		ref := lower
+		if mean != nil && *mean > 0 {
+			ref = *mean
+		}
+		if ref > 0 && b.UpperBound-lower <= MeasuredBucketWidth*ref {
+			return nil
+		}
+		return &Band{Lo: lower, Hi: b.UpperBound}
+	}
+	return nil
+}
+
 // minRequestsFor is the fewest requests a step's measured statistic needs:
 // 50 for the mean, else ten beyond the percentile, max(50, 10/(1-q)), as the
 // slo analyzer judges a window.
@@ -1428,8 +1492,10 @@ func predictedPoint(q float64, pred Figure, bound *float64) BacktestPoint {
 // where both are figures. A measured figure above the top bucket is a miss
 // the planner read low wherever its own figure is under the top bound: it
 // is scored at the top bound, a ratio no lower than the truth's, and never
-// within. why is a measurement not comparable.
-func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why string) BacktestPoint {
+// within. why is a measurement not comparable. bucket is the measured
+// percentile's bucket where it is too wide to place it: the figure is
+// shown and not scored, unresolvable.
+func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why string, bucket *Band) BacktestPoint {
 	q, _ := parseStatistic("", p.Statistic)
 	pred := p.Predicted
 	switch {
@@ -1462,6 +1528,8 @@ func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why stri
 		p.Ratio, p.AboveHistogram = ptr(*pred.Value/top), true
 	case math.IsInf(*meas, 1):
 		p.Unscored = UnscoredAboveHistogram
+	case bucket != nil:
+		p.Unscored, p.MeasuredBucket = UnscoredUnresolvable, bucket
 	case *meas > 0 && *pred.Value > 0:
 		p.Ratio = ptr(*pred.Value / *meas)
 	default:
@@ -1492,6 +1560,9 @@ func judgeTarget(target *ReportTarget, points []BacktestPoint, m measured) *Back
 		if target.Seconds < m.ttftTop {
 			j.Measured = judgedMissed
 		}
+	case m.ttftBucket[i] != nil && target.Seconds > m.ttftBucket[i].Lo && target.Seconds < m.ttftBucket[i].Hi:
+		// The target is inside the bucket the percentile fell in: the
+		// histogram cannot say which side of it the percentile is.
 	case *v <= target.Seconds:
 		j.Measured = judgedMet
 	default:
@@ -1750,17 +1821,13 @@ func backtestHint(reason string) string {
 	return "see the refusal in the steps"
 }
 
-// verdictPart is one figure's sentence: its p90 (else p50, else mean)
-// within 20% in how many of the steps it priced, its lean, the steps it
-// read more than 20% low, and the steps it gave no figure for and why.
+// verdictPart is one figure's sentence: its mean (else p90, else p50,
+// primaryStats) within 20% in how many of the steps it priced, its lean,
+// the steps it read more than 20% low, and the steps it gave no figure for
+// and why; then the p90 beside it, over the steps whose measured p90 a
+// bucket could place.
 func verdictPart(name string, scores []BacktestScore, unit string) (line string, quoted *BacktestScore) {
-	for _, stat := range []string{statP90, "p50", statisticMean} {
-		i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == stat })
-		if i >= 0 && scores[i].All.Steps > 0 {
-			quoted = &scores[i]
-			break
-		}
-	}
+	quoted = primaryScore(scores)
 	if quoted == nil {
 		var why []string
 		hint := ""
@@ -1821,7 +1888,34 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 	if n := sc.Unscored[UnscoredAboveHistogram]; n > 0 {
 		w += fmt.Sprintf(" %d measured above the histogram's top bucket, beyond what it can tell.", n)
 	}
+	if sc.Statistic != statP90 {
+		w += percentileWords(name, scores)
+	}
 	return w, quoted
+}
+
+// percentileWords is the p90 beside the figure a verdict quotes: within 20%
+// in how many of the steps its measured p90 could be placed, and in how
+// many a histogram bucket too wide to place it left it unscored.
+func percentileWords(name string, scores []BacktestScore) string {
+	i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 })
+	if i < 0 {
+		return ""
+	}
+	sc, w := scores[i], ""
+	if a := sc.All; a.Steps > 0 {
+		w = fmt.Sprintf(" p90 %s: within %.0f%% in %d of %d, median ratio %.2f", name, BacktestTolerance*100,
+			int(math.Round(*a.Within*float64(a.Steps))), a.Steps, *a.Bias)
+		if a.Low > 0 {
+			w += fmt.Sprintf(", %d read more than 20%% low", a.Low)
+		}
+		w += "."
+	}
+	if n := sc.Unscored[UnscoredUnresolvable]; n > 0 {
+		w += fmt.Sprintf(" p90 %s not scored in %d: the measured p90 fell in a histogram bucket wider than %.0f%% of the measured mean, "+
+			"which cannot place it.", name, n, MeasuredBucketWidth*100)
+	}
+	return w
 }
 
 // verdictOf is the answer, one sentence a figure and one on the region,
@@ -1885,7 +1979,9 @@ func backtestNotes(q *backtestQuestion) []string {
 			"with it; the engines' one minute): a step shorter than the window is measured over the window, so neighbouring steps share "+
 			"requests and are not independent. A step whose window reaches before the test, or over a change of "+
 			"replicas, is not judged. A percentile is scored with %0.f requests or more at p50, %0.f at p90 and %0.f at p95 (50 for the mean); "+
-			"measured percentiles are interpolated inside the histogram's buckets.", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95)),
+			"measured percentiles are interpolated inside the histogram's buckets, and one whose bucket is wider than %.0f%% of the measured "+
+			"mean is shown and not scored (unresolvable): the bucket, not the traffic, would set it. The verdict quotes the mean, "+
+			"the histogram's sum over its count.", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95), MeasuredBucketWidth*100),
 		fmt.Sprintf("Median ratio is the middle step's predicted over measured; typical and worst-10%% miss the median and p90 of the factor "+
 			"between them; under the upper bound the share measured at or under the planner's own upper estimate, where it gives one; "+
 			"within, the share inside %.0f%%. A measured figure above the histogram's top bucket counts as read low.", BacktestTolerance*100),

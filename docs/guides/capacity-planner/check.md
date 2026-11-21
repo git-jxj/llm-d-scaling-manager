@@ -36,23 +36,32 @@ another recording, pick **another recording** and choose it.
 The first lines are the answer. For example:
 
 ```text
-Over the 1 h 52 min the planner did not see:
-p90 TTFT: within 20% of measured in 11 of the 15 five-minute steps scored (a figure, and enough measured requests);
-it leans high (median ratio 1.09). For 7 more it gave no figure, calling the fleet overloaded; the fleet measured
-p90 358 ms to 374 ms there.
-p90 TPOT: within 20% of measured in 2 of the 15 five-minute steps scored (a figure, and enough measured requests);
-its errors are wide; it leans high (median ratio 1.24); it read 5 more than 20% low. For 7 more it gave no figure, ...
+Over the 1 h 13 min the planner did not see:
+mean TTFT: within 20% of measured in 0 of the 14 five-minute steps scored (a figure, and enough measured requests);
+its errors are wide; it leans high (median ratio 1.73); it read 2 more than 20% low. For 1 more it gave no figure,
+calling the fleet overloaded; the fleet measured mean 11.6 s there. p90 TTFT not scored in 9: the measured p90 fell
+in a histogram bucket wider than 40% of the measured mean, which cannot place it.
+mean TPOT: within 20% of measured in 15 of the 15 five-minute steps scored (a figure, and enough measured requests);
+no overall lean (median ratio 0.98). p90 TPOT not scored in 10: the measured p90 fell in a histogram bucket wider
+than 40% of the measured mean, which cannot place it.
 None of these figures falls within the conditions our own accuracy benchmarks cover
 (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
-Judged 22 of 23 five-minute steps; not judged: 1 warm-up.
+Judged 15 of 16 five-minute steps; not judged: 1 warm-up.
 ```
 
 How to read it:
 
-- **Within 20% in 11 of the 15 steps scored**: the count that matters. A
+- **Within 20% in 15 of the 15 steps scored**: the count that matters. A
   step is scored when the planner gave a figure and the fleet measured
-  enough requests to read the statistic (100 for a p90). The other steps,
-  and why they were not scored, follow in the same line.
+  enough requests to read the statistic (50 for the mean, 100 for a p90).
+  The other steps, and why they were not scored, follow in the same line.
+- **The mean leads**: the line quotes the mean, the histogram's sum over
+  its count, which no bucket edge sets. The p90 follows it, scored only in
+  the steps where the measured p90 fell in a bucket no wider than 40% of
+  the measured mean. A router's buckets are often wider (TPOT 5 to 10 ms
+  around a mean of 7 ms): a p90 read inside one is the bucket's grid, not
+  the traffic, so it is shown with a `~` in the steps and counted as
+  `unresolvable`, not as a miss.
 - **Median ratio**: the planner's figure over the measured one, at the
   middle step. Above 1 it leans high at the middle; below 1 it leans low. A
   median near 1 can still hide steps it read low, so check that count too.
@@ -67,8 +76,9 @@ How to read it:
 - **Not judged**: steps whose measurement reaches into the first minutes of
   the test or over a change of replicas, and steps with no traffic.
 
-Below that are each step and then the scores: the mean, p50, p90 and p95 of
-TTFT and TPOT, then the same split by load. The page draws the same steps over
+Below that are each step (the mean and the p90 of each) and then the
+scores: the mean, p50, p90 and p95 of TTFT and TPOT, then the same split by
+load. The page draws the same steps over
 time: predicted lines, measured dots, steps it called overloaded marked in
 red at the top, and steps not judged in grey.
 
@@ -92,8 +102,8 @@ what the fleet measured. The result comes first, in one line:
 
 ```text
 Self-check: tested on the last 1 h 13 min of this recording, each part predicted from a fit on what came before it,
-p90 TTFT within 20% in 0 of 9 steps (median ratio 1.90); p90 TPOT within 20% in 10 of 10 steps (median ratio 0.94). [inconsistent]
-  Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
+mean TTFT within 20% in 0 of 13 steps (median ratio 1.69); mean TPOT within 20% in 14 of 14 steps (median ratio 0.98). [inconsistent]
+  Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures held.
 ```
 
 On the page it is a badge beside the source, with the same lines under it.
@@ -173,7 +183,8 @@ On the page: **Blind: predict now, compare later**, under the check.
 
 Size from the planner when, below the load it thinks the fleet can carry:
 
-- the p90 TTFT is within 20% in most of the steps it gave a figure for;
+- the mean TTFT and TPOT are within 20% in most of the steps it gave a
+  figure for, and the p90s too where the histogram could place them;
 - the median ratio is between about 0.95 and 1.2 (leaning a little high
   costs replicas, leaning low costs the SLO);
 - it read few steps more than 20% low;

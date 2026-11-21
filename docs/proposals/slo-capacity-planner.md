@@ -1067,7 +1067,7 @@ Every answer is an `Answer{Value, Band, Basis, Flags}` or an
 | `TokenGapPercentile` | A percentile over token gaps (ITL); per-request TPOT percentiles are supported |
 | `NoTPOTHistogram` | A per-request TPOT percentile with no router or engine TPOT histogram holding an observation (the router's needs `usage` on responses) and no `--assume-tpot-ratio` |
 | `TPOTQuantileUnbounded` | The TPOT `q` quantile falls in the histogram's `+Inf` bucket |
-| `TPOTBucketTooWide` | A TPOT percentile the engine's histogram was asked for, the router's holding no observation, with a `q` bucket wider than the window's mean (`whatif.MaxEngineBucketWidth`): the bucket's edge, whatever `q` was asked. It names `--assume-tpot-ratio`, and keeps `EngineTPOTHistogram` and `CoarseTPOTBucket` |
+| `TPOTBucketTooWide` | A TPOT percentile on a host-bound decode (the line's intercept and its floor under 5 ms, as a sub-1B model's) whose `R_q` was read off coarse buckets: its tail is host jitter the line does not model. Or a TPOT percentile the engine's histogram was asked for, the router's holding no observation, with a `q` bucket wider than the window's mean (`whatif.MaxEngineBucketWidth`): the bucket's edge, whatever `q` was asked. It names `--assume-tpot-ratio`, and keeps `EngineTPOTHistogram` and `CoarseTPOTBucket` |
 | `TargetBelowFloor` | The target is below what any number of replicas reaches |
 | `FlowControlUnknown` | Flow control on and the detector's thresholds unknown |
 | `AboveDecodeOnset` | A TTFT asked at or above the decode gate's onset with flow control on, where the gate is not work conserving and TTFT is not priced |
