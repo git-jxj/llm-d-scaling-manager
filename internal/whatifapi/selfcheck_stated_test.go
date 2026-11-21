@@ -92,6 +92,17 @@ func TestSelfCheck_RanWithoutTheStatedInputs(t *testing.T) {
 	assert.Equal(t, "Self-check: tested on the last 1 h.", sc.Line, "the cached self-check is not changed")
 	assert.Empty(t, sc.WithoutStated)
 
+	// One stopped before any replay names every stated input it was not
+	// run with.
+	e, folds := scEntry(t, 1, 1)
+	short := *e
+	short.series, short.latency = e.series[:200], e.latency[:200]
+	st := selfCheckEntry(context.Background(), &short, folds, SelfCheckInfo{Stated: &Stated{Assume: Assume{PromptCV: f64(0.06)}, CLI: true}})
+	assert.Empty(t, st.Stated)
+	assert.Equal(t, []string{"--assume-prompt-cv 0.06"}, st.WithoutStated)
+	assert.True(t, strings.HasPrefix(st.Line, "Self-check not run: the recording spans "), st.Line)
+	assert.True(t, strings.HasSuffix(st.Line, " It was not run with the stated --assume-prompt-cv 0.06 either."), st.Line)
+
 	// One that did not run did not run without them either.
 	notRun := &SelfCheck{Status: SelfCheckNotRun, Line: "Self-check not run: the recording spans 40 min."}
 	assert.Equal(t, "Self-check not run: the recording spans 40 min. It was not run with the stated assume.promptCV 0.06 either.",

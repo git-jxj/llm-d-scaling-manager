@@ -680,8 +680,8 @@ func refusalHint(term string, reason whatif.Reason) string {
 	case (term == termTPOT || term == termDecodeKnee) && reason == whatif.PinnedDefaultB:
 		// The line prices decode's knee too: asking no TPOT does not help.
 		return "The decode ITL line rests on the 6 ms default intercept B (PinnedDefaultB), so neither TPOT nor the decode knee is priced: " +
-			"state B, flagged as assumed, as the detail says: --assume-itl-b floor where the detail names the B the floor gives, " +
-			"else a duration under the floor it names (in the API assume.itlBFromFloor or assume.itlB)."
+			"unless the detail says no stated B can price it, state B, flagged as assumed, as the detail says: --assume-itl-b floor " +
+			"where the detail names the B the floor gives, else a duration at most the floor it names (in the API assume.itlBFromFloor or assume.itlB)."
 	case (term == termTPOT || term == termDecodeKnee) && reason == whatif.NoLine:
 		// The line prices decode's knee too: asking no TPOT does not help.
 		return "The source fitted no decode ITL line it can price (" + string(reason) + "), so neither TPOT nor the decode knee is priced: " +

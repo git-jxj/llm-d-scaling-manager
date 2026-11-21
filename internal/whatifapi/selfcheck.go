@@ -145,6 +145,7 @@ func itlBNotUsed(steps []BacktestStep) (int, string) {
 					why = why[j+len("): "):]
 				}
 			}
+			break
 		}
 	}
 	return n, why
@@ -164,8 +165,12 @@ type Stated struct {
 	PromptTokens, OutputTokens float64
 	// Other is what else the answer set that its fits do not price with
 	// (the CLI's opt-in switches, a stated batch cap), in words: the
-	// self-check names it as run without.
-	Other []string
+	// self-check names it as run without. Replayed is what else the fits
+	// do price with, in words, and Outside says it puts the figures
+	// outside the validated region.
+	Other    []string
+	Replayed []string
+	Outside  bool
 	// CLI names them as the CLI's flags; false, as the API's keys.
 	CLI bool
 	// arrivalKey is the API's key of ArrivalCV2; empty, arrivalCV2.
@@ -180,7 +185,7 @@ func (st *Stated) outside() bool {
 		return false
 	}
 	a := st.Assume
-	return a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor
+	return st.Outside || a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor
 }
 
 // replayed is the request terms the self-check replays st with, and their
@@ -196,7 +201,7 @@ func (st *Stated) replayed() (BacktestRequest, []string) {
 		req.Assume = &a
 	}
 	req.ArrivalCV2 = st.ArrivalCV2
-	return req, st.words(a, st.ArrivalCV2, 0, 0)
+	return req, append(st.words(a, st.ArrivalCV2, 0, 0), st.Replayed...)
 }
 
 // notReplayed is the words of st the self-check runs without.
@@ -212,7 +217,7 @@ func (st *Stated) all() []string {
 	if st == nil {
 		return nil
 	}
-	return append(st.words(st.Assume, st.ArrivalCV2, st.PromptTokens, st.OutputTokens), st.Other...)
+	return append(append(st.words(st.Assume, st.ArrivalCV2, st.PromptTokens, st.OutputTokens), st.Replayed...), st.Other...)
 }
 
 // words names the inputs given, as the CLI's flags or the API's keys, each
@@ -268,11 +273,17 @@ func (sc *SelfCheck) RanWithout(st *Stated) *SelfCheck {
 	out := *sc
 	out.WithoutStated = words
 	if sc.Status == SelfCheckNotRun {
-		out.Line = sc.Line + " It was not run with the stated " + strings.Join(words, ", ") + " either."
+		out.Line = sc.Line + notRunWithSentence(words)
 	} else {
 		out.Line = sc.Line + withoutStatedSentence(words)
 	}
 	return &out
+}
+
+// notRunWithSentence is what the line of a self-check not run adds of the
+// stated inputs it was not run with.
+func notRunWithSentence(words []string) string {
+	return " It was not run with the stated " + strings.Join(words, ", ") + " either."
 }
 
 // withoutStatedSentence is what a self-check's line adds of the stated
@@ -284,6 +295,9 @@ func withoutStatedSentence(words []string) string {
 	return " It ran without the stated " + strings.Join(words, ", ") + ": what the answer prices on them is not checked."
 }
 
+// selfCheckNotRunHead opens the line of a self-check not run.
+const selfCheckNotRunHead = "Self-check not run"
+
 // lead is the line's opening, head, naming the stated inputs the recording
 // was replayed with.
 func (sc *SelfCheck) lead(head string) string {
@@ -293,6 +307,9 @@ func (sc *SelfCheck) lead(head string) string {
 	flag := "flagged as stated"
 	if sc.outside {
 		flag += ", outside the validated region"
+	}
+	if head == selfCheckNotRunHead {
+		return fmt.Sprintf("Self-check with the stated %s (%s) not run", strings.Join(sc.Stated, ", "), flag)
 	}
 	return fmt.Sprintf("%s, replayed with the stated %s (%s)", head, strings.Join(sc.Stated, ", "), flag)
 }
@@ -360,7 +377,14 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	defer func() { sc.Seconds = now().Sub(t0).Seconds() }()
 	notRun := func(why string) *SelfCheck {
 		sc.Why = why
-		sc.Line = sc.lead("Self-check not run") + ": " + why + "." + sc.tail()
+		sc.Line = sc.lead(selfCheckNotRunHead) + ": " + why + "." + sc.tail()
+		if sc.Stated == nil {
+			// Stopped before any replay: nothing stated was replayed.
+			if words := info.Stated.all(); len(words) > 0 {
+				sc.WithoutStated = words
+				sc.Line += notRunWithSentence(words)
+			}
+		}
 		return sc
 	}
 	switch {
@@ -512,7 +536,7 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 		if len(why) > 0 {
 			sc.Why += " (" + strings.Join(why, "; ") + ")"
 		}
-		sc.Line = sc.lead("Self-check not run") + ": " + sc.Why + "." + sc.tail()
+		sc.Line = sc.lead(selfCheckNotRunHead) + ": " + sc.Why + "." + sc.tail()
 		return
 	}
 	sc.Line = fmt.Sprintf("%s: tested on the last %s of this recording, each part predicted from a fit on what came before it, %s.",

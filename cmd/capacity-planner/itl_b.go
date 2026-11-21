@@ -163,6 +163,11 @@ func floorAssumption(vs learnreplay.VariantState) (float64, string) {
 	if !vs.Refitted || len(vs.LineReadings) == 0 {
 		return 0, "the replay does not reproduce this pinned-B line from its readings"
 	}
+	// A line priced one-sided past the cap takes no B at all: probed with
+	// one under the default, whatever the floor gives.
+	if _, why := refitThrough(vs, itl.DefaultBaselineSec/2); why == oneSidedLine {
+		return 0, why
+	}
 	b, why := floorB(vs)
 	if why != "" {
 		return 0, why
@@ -263,11 +268,13 @@ func (pv pricedVariant) pinnedDefaultBHint() string {
 		}
 		return "; state B for a flagged answer: " + cli + "; the floor gives none here: " + why
 	}
-	floor := fmt.Sprintf(" (here %s, through the floor of %s at fill %.2f)", ms(b), ms(pv.state.BelowBandITL), pv.state.BelowBandFill)
+	// The floor caps a stated B here too.
+	f := pv.state.BelowBandITL
+	floor := fmt.Sprintf(" (here %s, through the floor of %s at fill %.2f)", ms(b), ms(f), pv.state.BelowBandFill)
 	if pv.api {
 		return "; state B for a flagged answer: assume.itlBFromFloor true takes it from the floor below the band" + floor +
-			", or assume.itlB in seconds (on the page, Assume a term, ITL B)"
+			fmt.Sprintf(", or assume.itlB in seconds, at most the floor's %.4g (on the page, Assume a term, ITL B)", f)
 	}
 	return "; state B for a flagged answer: --assume-itl-b floor takes it from the floor below the band" + floor +
-		", or --assume-itl-b 12ms states one"
+		fmt.Sprintf(", or --assume-itl-b with a duration at most the floor's %s states one", ms(f))
 }

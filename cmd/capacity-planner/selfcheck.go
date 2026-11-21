@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -97,21 +98,27 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 		st.OutputTokens = f.outputTokens
 	}
 	// The fits price at the switches' defaults (servedState.fleetAt): what
-	// the answer set of them is named as run without.
+	// the answer set of them off its default is named as run without.
 	for _, o := range []struct {
 		name, value string
+		moved       bool
 	}{
-		{"batch-cap", strconv.FormatInt(f.batchCap, 10)},
-		{"flow-control", f.flowControl},
-		{"price-router-wait", strconv.FormatBool(f.priceRouterWait)},
-		{"router-wait-in-prefill", strconv.FormatBool(f.routerWaitInPrefill)},
-		{"ps-onsets", strconv.FormatBool(f.psOnsets)},
-		{"prefill-running-cap", strconv.Itoa(f.prefillRunningCap)},
-		{"charge-decode-gate", strconv.FormatBool(f.chargeDecodeGate)},
+		{"batch-cap", strconv.FormatInt(f.batchCap, 10), f.batchCap != 0},
+		{"flow-control", f.flowControl, f.flowControl != ""},
+		{"price-router-wait", strconv.FormatBool(f.priceRouterWait), f.priceRouterWait != whatif.DefaultPriceRouterWait},
+		{"router-wait-in-prefill", strconv.FormatBool(f.routerWaitInPrefill), f.routerWaitInPrefill != whatif.DefaultRouterWaitInPrefill},
+		{"ps-onsets", strconv.FormatBool(f.psOnsets), f.psOnsets != whatif.DefaultPSOnsets},
+		{"prefill-running-cap", strconv.Itoa(f.prefillRunningCap), f.prefillRunningCap != 0},
+		{"charge-decode-gate", strconv.FormatBool(f.chargeDecodeGate), f.chargeDecodeGate != whatif.DefaultChargeDecodeGate},
 	} {
-		if f.set[o.name] {
+		if f.set[o.name] && o.moved {
 			st.Other = append(st.Other, "--"+o.name+"="+o.value)
 		}
+	}
+	// The fits do price with --imbalance-across-counts (foldFits): replayed,
+	// and outside the validated region.
+	if f.set["imbalance-across-counts"] && f.imbalanceAcrossCounts != whatif.DefaultImbalanceAcrossCounts {
+		st.Replayed, st.Outside = append(st.Replayed, "--imbalance-across-counts="+strconv.FormatBool(f.imbalanceAcrossCounts)), true
 	}
 	return st, nil
 }

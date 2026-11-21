@@ -59,4 +59,20 @@ func TestPinnedDefaultBHint_NamesTheFloorWhereItWorks(t *testing.T) {
 	r := role(t, decodeOutput(t, out), roleDecode)
 	require.NotNil(t, r.Results.Knee.Refused)
 	assert.Contains(t, r.Results.Knee.Refused.Detail, "--assume-itl-b floor takes it from the floor below the band (here ")
+	assert.Contains(t, r.Results.Knee.Refused.Detail, "or --assume-itl-b with a duration at most the floor's ", "a stated B is capped by the floor")
+	assert.NotContains(t, r.Results.Knee.Refused.Detail, "12ms", "no B the floor would refuse")
+}
+
+// The self-check names a switch the answer set off its default as run
+// without, not one given at its default; --imbalance-across-counts, which
+// the fits do price with, is replayed and outside.
+func TestSelfCheckStatedSwitches(t *testing.T) {
+	f := answerFlags{psOnsets: true, priceRouterWait: false, imbalanceAcrossCounts: !whatif.DefaultImbalanceAcrossCounts,
+		set: map[string]bool{"ps-onsets": true, "price-router-wait": true, "imbalance-across-counts": true}}
+	st, err := f.stated()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--ps-onsets=true"}, st.Other)
+	require.Len(t, st.Replayed, 1)
+	assert.Contains(t, st.Replayed[0], "--imbalance-across-counts=")
+	assert.True(t, st.Outside)
 }
