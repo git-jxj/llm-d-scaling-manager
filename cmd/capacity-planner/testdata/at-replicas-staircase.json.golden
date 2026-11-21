@@ -273,7 +273,8 @@
             "floor": 0.004872742612921775,
             "flags": [
               "BelowFittedBand",
-              "CoarseTPOTBucket"
+              "CoarseTPOTBucket",
+              "HostBoundTPOTTail"
             ]
           },
           "e2eMeanSum": {
@@ -391,7 +392,8 @@
             "floor": 0.004872742612921775,
             "flags": [
               "BelowFittedBand",
-              "CoarseTPOTBucket"
+              "CoarseTPOTBucket",
+              "HostBoundTPOTTail"
             ]
           },
           "e2eMeanSum": {
@@ -469,7 +471,8 @@
               "reason": "Saturated",
               "detail": "rate 36.98 r/s at or above the knee 36.98 r/s",
               "flags": [
-                "CoarseTPOTBucket"
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
               ]
             }
           },
@@ -530,7 +533,8 @@
               "reason": "Saturated",
               "detail": "rate 41.7 r/s at or above the knee 36.98 r/s",
               "flags": [
-                "CoarseTPOTBucket"
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
               ]
             }
           },
@@ -604,7 +608,8 @@
         "AssumedPoissonArrivals",
         "AssumedA",
         "PromptSpreadAbovePeak",
-        "CoarseTPOTBucket"
+        "CoarseTPOTBucket",
+        "HostBoundTPOTTail"
       ],
       "assumed": [
         "V_P 200000 tok/s (--assume-vp)",
