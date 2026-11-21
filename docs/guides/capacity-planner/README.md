@@ -546,8 +546,9 @@ It replays the recording once and answers, for each shape and load:
   under there. `p95-modulation` moved the judged load by at most 0.06 r/s
   (0.2%) on every recording we hold, and no verdict or need. In `day-plan`
   it sizes for up to 23% less at a bucket and moved one bucket's need on
-  three of seven recordings, by one replica (the Qwen3-32B warm-ups at 0.4
-  and 4.7 r/s, and the guide's sample at 2 r/s). Every recording we hold is
+  three of seven recordings, by one replica (two Qwen3-32B warm-ups, sized
+  for 0.38 against 0.48 r/s and 4.21 against 4.70 r/s, and the guide's
+  sample, 1.68 against 2.00 r/s). Every recording we hold is
   a staircase or a sweep, whose loads swing; the case it is for, a steady
   low rate on a slow model, needs a recording of its own, with its latency,
   to show the fleet sized at the modulated load still holds the SLO.

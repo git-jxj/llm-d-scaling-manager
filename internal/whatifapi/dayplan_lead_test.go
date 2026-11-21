@@ -78,6 +78,14 @@ func TestDayPlanLeadOf(t *testing.T) {
 	require.NotNil(t, p.Lead)
 	assert.Equal(t, RoleLead{Seconds: 67.5, Source: LeadLearned}, p.Lead.Decode)
 	assert.NotNil(t, p.Buckets[0].Held)
+	// A lead of 0 asked overrides the learned one: nothing is held, and the
+	// plan says it was asked.
+	p, err = DayPlan(t.Context(), res, DayPlanRequest{Lead: &DayLead{Prefill: ptr(0.0), Decode: ptr(0.0)}}, "schema-v3")
+	require.NoError(t, err)
+	require.NotNil(t, p.Lead)
+	assert.Equal(t, RoleLead{Source: LeadFromRequest}, p.Lead.Decode)
+	assert.Nil(t, p.Buckets[0].Held)
+	assert.Contains(t, p.Notes[0], "The lead asked is 0")
 }
 
 // A lead asked out of range is a usage error, before any source is read.

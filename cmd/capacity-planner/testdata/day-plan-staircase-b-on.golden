@@ -14,7 +14,7 @@ hour (UTC)        rate mean  rate p95 need P need D busiest    held  had P  had 
 buckets: 16 sized (10 under, 2 over, 4 match; 13 for the p95, 3 for the mean, 0 for the max), 0 beyond the bound, 0 refused, 0 too little data, 0 no data
 needed: to hold every bucket at least 3 decode (prefill not priced); the busiest bucket alone at least 3 decode (prefill not priced), the quietest at least 1 decode (prefill not priced) (each the fewest replicas in all; another mix may serve too)
 replica-hours over the 16 sized buckets: needed 3.33 decode (prefill not priced in 16 of the 16), had 2.67 decode (prefill not priced in 16 of the 16)
-held with the scale-up lead, each scale-up's replicas from one lead before their bucket: 3.39 decode (prefill not priced in 16 of the 16) replica-hours
+replica-hours held with the scale-up lead, each scale-up's replicas from one lead before their bucket: 3.39 decode (prefill not priced in 16 of the 16)
 had over every bucket with data: 2.67 prefill + 2.67 decode replica-hours, 5.33 GPU-hours (GPUs per replica: 1 prefill, 1 decode)
 hours under (SLO risk): 02:00, 03:00
 hours over (waste): none

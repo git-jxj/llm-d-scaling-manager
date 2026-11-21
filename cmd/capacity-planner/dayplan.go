@@ -67,7 +67,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.sizeFor, "size-for", "", "the rate of a bucket to size for: mean, p95, p95-modulation (the p95 less counting noise) or max of its cycles; "+
 		"default p95, but the mean, less conservative and flagged FewCyclesForP95, for a bucket of fewer than 20 cycles")
 	fs.StringVar(&f.lead, "lead", "", "each role's scale-up lead time, the replicas held ahead of the buckets that need them: one duration for both roles (90s), "+
-		"or prefill=3m,decode=90s; a role not given takes the start time the recording learned, else none")
+		"or prefill=3m,decode=90s; a role not given takes the start time the source learned, else none")
 	fs.Float64Var(&f.minRequests, "min-requests", whatifapi.DefaultMinRequests, "the fewest requests a bucket must hold to be sized")
 	fs.IntVar(&f.maxPrefill, "max-prefill", 0, "the most prefill replicas a bucket is sized to; 0 is 32")
 	fs.IntVar(&f.maxDecode, "max-decode", 0, "the most decode replicas a bucket is sized to; 0 is 32")
@@ -421,7 +421,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 			fmt.Fprintf(&b, "GPU-hours over the sized buckets: needed %.2f, had %.2f\n", *s.NeededGPUHours, *s.HadGPUHours)
 		}
 		if r := s.HeldReplicaHours; r != nil {
-			fmt.Fprintf(&b, "held with the scale-up lead, each scale-up's replicas from one lead before their bucket: %s replica-hours", hours(r))
+			fmt.Fprintf(&b, "replica-hours held with the scale-up lead, each scale-up's replicas from one lead before their bucket: %s", hours(r))
 			if s.HeldGPUHours != nil {
 				fmt.Fprintf(&b, ", %.2f GPU-hours", *s.HeldGPUHours)
 			}

@@ -11,7 +11,7 @@ buckets: 16 sized (10 under, 2 over, 4 match; 13 for the p95, 3 for the mean, 0 
 needed: to hold every bucket 3 prefill + 3 decode; the busiest bucket alone 3 prefill + 3 decode, the quietest 1 prefill + 1 decode (each the fewest replicas in all; another mix may serve too)
 replica-hours over the 16 sized buckets: needed 2.92 prefill + 3.33 decode, had 2.67 prefill + 2.67 decode
 GPU-hours over the sized buckets: needed 6.25, had 5.33
-held with the scale-up lead, each scale-up's replicas from one lead before their bucket: 2.98 prefill + 3.39 decode replica-hours, 6.38 GPU-hours
+replica-hours held with the scale-up lead, each scale-up's replicas from one lead before their bucket: 2.98 prefill + 3.39 decode, 6.38 GPU-hours
 had over every bucket with data: 2.67 prefill + 2.67 decode replica-hours, 5.33 GPU-hours (GPUs per replica: 1 prefill, 1 decode)
 hours under (SLO risk): 02:00, 03:00
 hours over (waste): none

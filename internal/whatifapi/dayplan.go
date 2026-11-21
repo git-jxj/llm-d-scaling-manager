@@ -1252,9 +1252,12 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	}
 	out.Hours = hoursOf(series, out.Buckets)
 	out.Summary = summaryOf(out.Buckets, out.Hours, q.step, gpus)
-	if q.lead.any() {
+	asked := q.lead.Prefill.Source == LeadFromRequest || q.lead.Decode.Source == LeadFromRequest
+	if q.lead.any() || asked {
 		l := q.lead
 		out.Lead = &l
+	}
+	if q.lead.any() {
 		heldOf(out, q.step, gpus)
 	}
 	if err := q.confirmHolding(ctx, out, sized); err != nil {
@@ -1265,6 +1268,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	}
 	steady := "Steady state: each bucket is sized as if its rate held. A replica must be Ready when its bucket starts, so it starts one lead time " +
 		"before: no role's lead is known (none learned from the source, none asked), so nothing is held ahead; state one with --lead (API lead)."
+	if asked && !q.lead.any() {
+		steady = "Steady state: each bucket is sized as if its rate held. The lead asked is 0 for each role, so nothing is held ahead."
+	}
 	if q.lead.any() {
 		steady = fmt.Sprintf("Steady state: each bucket is sized as if its rate held. A replica must be Ready when its bucket starts, so it starts "+
 			"one lead time before (prefill %s, decode %s): held is each role's most need over the bucket and every bucket that starts within its lead "+
