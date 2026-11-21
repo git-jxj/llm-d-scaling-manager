@@ -249,10 +249,10 @@ type shapeSample struct {
 //     median of the busiest minutes, not of every minute.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
-//   - slo.SwitchTTFTPromptSupport: the prompt held at the longest the
-//     computed-token histogram allows, which also decides processor sharing.
-//     The planner reads its own prompt windows (state_ttft.go), so it reads
-//     the switch from here even where the recording has no slo analyzer.
+//   - slo.SwitchTTFTHopUnqueued: the router hop of the decode term read off
+//     windows whose prefill pods held no queue. The planner reads its own
+//     decode term windows (state_ttft.go), so it reads the switch from here
+//     even where the recording has no slo analyzer to set it on.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
@@ -266,6 +266,18 @@ type shapeSample struct {
 // but its p90 TTFT on the B-off and B-on phases still reads 15% to 23% under
 // and its p90 TPOT up to 22% under there (32% on the first warm-up's
 // B-onset, 39% on the bursty C phases), so both stay off.
+//
+// slo.SwitchTTFTPromptSupport is planner-only too but not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#304): it holds the prompt at the
+// longest its computed-token histogram allows, and a bound at
+// whatif.MaxPSPromptSupport or under prices processor sharing alone. Both
+// are right of the traffic, and both lower the TTFT: on the q32 staircase
+// backtests (the split and the warm-up fits) 27 TTFT figures that read at or
+// above measured read under it, by up to 6% (p90 and p95 on the 8000-token
+// B and C phases, where the bound clears processor sharing, and on the
+// 1000-token A phases, whose bound of 2 times the mean does not). The cv a
+// bucket's width reads was holding up a TTFT the rest of the model reads
+// low, so it stays off until that is found.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -274,7 +286,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 	}, PackageSLO: {
-		slo.SwitchTTFTPromptSupport: true,
+		slo.SwitchTTFTHopUnqueued: true,
 	}}
 }
 
@@ -369,7 +381,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		engine   []whatif.TPOTWindow
 		shapes   = map[string][]shapeSample{}
 		resident = map[string][]residentSample{}
-		ttft     = newTTFTSamples()
+		ttft     = newTTFTSamples(opts.Switches[PackageSLO][slo.SwitchTTFTHopUnqueued])
 		lines    = newLineSamples()
 		cycleAt  = map[time.Time]int{}
 		arrivals []float64
