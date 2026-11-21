@@ -638,6 +638,10 @@ echo "workload-patch gate"
             *) return 0 ;;
         esac
     }
+    # dep: a model server with every other half already in place (drain,
+    # engine caches, bytecode, the JIT caches beyond vLLM's own), so the
+    # weights gate is the only thing a document can carry and an empty one
+    # means no gate.
     dep() {   # dep CLAIM MOUNT SUBPATH EXTRA_SPEC_JSON
         local extra="${4:-}"
         [ -n "$extra" ] || extra='{}'
@@ -649,7 +653,9 @@ echo "workload-patch gate"
             containers: [{name: "vllm", image: "quay.io/example/vllm-openai:v0.26.0",
                           args: ["vllm", "serve", ($mount + "/models/Qwen/Qwen3-32B")],
                           lifecycle: {preStop: {exec: {command: ["sleep", "30"]}}},
-                          env: [{name: "VLLM_CACHE_ROOT", value: "/ec/vllm"}, {name: "PYTHONPYCACHEPREFIX", value: "/ec/pyc"}],
+                          env: [{name: "VLLM_CACHE_ROOT", value: "/ec/vllm"}, {name: "PYTHONPYCACHEPREFIX", value: "/ec/pyc"},
+                                {name: "DG_JIT_CACHE_DIR", value: "/ec/deepgemm"}, {name: "TRTLLM_DG_CACHE_DIR", value: "/ec/trtllm-deepgemm"},
+                                {name: "TORCHINDUCTOR_CACHE_DIR", value: "/ec/inductor"}, {name: "CUDA_CACHE_PATH", value: "/ec/cuda"}],
                           volumeMounts: ([{name: "model-storage", mountPath: $mount} + (if $sub == "" then {} else {subPath: $sub} end)]
                                          + [{name: "ec", mountPath: "/ec"}])}]} + $extra)}}}'
     }
