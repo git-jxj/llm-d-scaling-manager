@@ -68,7 +68,7 @@ func (r *ReportResponse) JudgeTrust() {
 			g := &s.Growth[j]
 			switch {
 			case g.Verdict.Verdict == VerdictNotJudged || g.Verdict.Verdict == "":
-			case len(bad) > 0:
+			case len(bad) > 0, s.Source == shapeSourceAsked:
 				g.Verdict.Trust = v.Trust
 			case sc.Covered != nil && !sc.Covered.Covers(g.Rate, r.Fleet.Prefill, r.Fleet.Decode):
 				g.Verdict.Trust = fmt.Sprintf("%s: it tested %s; this what-if is at %.2f r/s", TrustNotCovered, sc.Covered.Words(), g.Rate)

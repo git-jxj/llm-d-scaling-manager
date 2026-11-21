@@ -149,6 +149,9 @@ func TestReport_JudgeTrust(t *testing.T) {
 	assert.Empty(t, g.Shapes[0].Verdict.Trust)
 	assert.Contains(t, g.Shapes[0].Growth[0].Verdict.Trust, TrustNotCovered+": it tested 1.00 to 10.00 r/s")
 	assert.Equal(t, 0, g.ExitCode)
+	g.Shapes[0].Source, g.Shapes[0].Growth[0].Verdict.Trust = "asked", ""
+	g.JudgeTrust()
+	assert.Contains(t, g.Shapes[0].Growth[0].Verdict.Trust, "not this shape", "a typed shape's what-if is not covered either")
 
 	r := report([]string{"tpot"}, 5, ScopeFleet, "measured", VerdictUnder, false)
 	r.ExitCode, r.Shapes[0].Verdict.Trust = 3, ""

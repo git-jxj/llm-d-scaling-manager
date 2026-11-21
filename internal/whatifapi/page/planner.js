@@ -2457,6 +2457,7 @@ function renderReport(r) {
       p.appendChild(textNode("b", g.verdict + ": "));
       if (g.needs) p.appendChild(textNode("span", g.needs, g.unmet ? "rneeds unmet" : "rneeds"));
       p.appendChild(textNode("span", " " + g.rest));
+      if (g.trust) p.appendChild(textNode("span", " Self-check: " + g.trust + ".", "rtrust"));
       li.appendChild(p);
     }
     verdicts.appendChild(li);

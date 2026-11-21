@@ -642,7 +642,7 @@ func (sc *SelfCheck) figureRules(name, label string, f *SelfCheckFigure, within 
 			fmt.Sprintf("at 0.8 to 1.0 of the knee the worst tenth of %d steps read %.2f of measured, want %.2f to %.2f",
 				k.Steps, k.Worst, selfCheckFloor, selfCheckNearKneeHi))
 	}
-	if f.Overloaded > 0 {
+	if f.Overloaded > 0 && name == "ttft" {
 		served := f.ServedPastKnee >= selfCheckServedMin && float64(f.ServedPastKnee) >= selfCheckServedShare*float64(f.Overloaded)
 		rule("knee", !served,
 			fmt.Sprintf("called the fleet overloaded in %d steps; in %d of them it measured a p90 %s within %.1fx of its steps below 0.8 of the knee, "+

@@ -490,7 +490,11 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 
 // growthText is a growth what-if's verdict line.
 func growthText(g whatifapi.ReportGrowth) string {
-	return fmt.Sprintf("x%s (%s): %s", num(g.X), rateWords(g.Rate), g.Verdict.Summary)
+	s := fmt.Sprintf("x%s (%s): %s", num(g.X), rateWords(g.Rate), g.Verdict.Summary)
+	if g.Verdict.Trust != "" {
+		s += " Self-check: " + g.Verdict.Trust + "."
+	}
+	return s
 }
 
 // refusedDetail is a refused figure's detail, "" otherwise.
