@@ -131,7 +131,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
 // SwitchPrefillFBusyMinutes, SwitchPrefillALowLoadByRate,
 // SwitchPrefillAMedianOverhead, SwitchITLAdaptiveBandFloor,
-// SwitchITLHoldSteadySlope,
+// SwitchITLHoldSteadySlope, SwitchITLLineAtFloor,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
 // SwitchK2BatchAtITLTarget,
 // SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
@@ -278,6 +278,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// held, not refitted on every reading (itl.Admission.HoldsSteadySlope).
 		// Off from the constructor.
 		SwitchITLHoldSteadySlope: &a.itlHoldSteadySlope,
+		// The planner's decode line lifted to the floor read below the band
+		// (itl_line_at_floor.go). Off from the constructor; the analyzer
+		// does not read it.
+		SwitchITLLineAtFloor: &a.itlLineAtFloor,
 		// Issue llm-d-incubation/llm-d-scaling-manager#201: a decode's
 		// derived k2 charges its budget the prompt it computes
 		// (decode_budget.go), and a landed request is a decode's backlog

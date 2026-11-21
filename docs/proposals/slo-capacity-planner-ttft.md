@@ -1881,9 +1881,9 @@ default, in the CLI, the planner API and the SLO analyzer alike.
   `AboveFlowControlOnset` and is judged by its figure. No figure moves. It is
   one setting with one default (`whatif.DefaultPriceRouterWait`, off) for both
   consumers: `--price-router-wait` in the CLI, and the replay switch
-  `slo-ttft-router-wait` in the SLO analyzer. The planner API reads fleets
-  the way the CLI does and has no switch, so it always answers with the
-  default. `FlowControlWaitPriced` is on the analyzer's flag series, at 0
+  `slo-ttft-router-wait` in the SLO analyzer. The planner API states it as
+  `assume.routerWait` (`gateStage`, `inPrefill` or `none`); absent, it
+  answers with the default. `FlowControlWaitPriced` is on the analyzer's flag series, at 0
   while the switch is off.
 - **Where the switch takes.** Only on processor sharing, at a prompt cv up to
   0.25 (`MaxPSPromptCV`), and at a rate up to 0.9 of the prefill knee
@@ -2076,7 +2076,7 @@ issue proposed (above).
 `TTFTFleet.PriceRouterWait`, on, now prices EPP flow control's gate past the
 prefill onset as a stage of the TTFT (`internal/signals/whatif/ttft_gate.go`).
 It is **opt-in and off by default** (`whatif.DefaultPriceRouterWait`) in the
-CLI (`--price-router-wait`), the planner API (no switch, the default) and the
+CLI (`--price-router-wait`), the planner API (`assume.routerWait: gateStage`) and the
 SLO analyzer (replay switch `slo-ttft-router-wait`): by default a TTFT past
 the onset is flagged `AboveFlowControlOnset`, a miss, as before. With it on,
 below the onsets and with flow control off no figure moves. It meets its

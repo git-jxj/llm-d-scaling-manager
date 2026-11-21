@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -67,8 +69,102 @@ func (f *answerFlags) checkRecording(ctx context.Context, st *learnreplay.State,
 			Folds: []whatifapi.SelfCheckFold{}, Checks: []whatifapi.SelfCheckRule{}}
 		return
 	}
-	f.checked = whatifapi.SelfCheckOf(ctx, res, whatifapi.SelfCheckInfo{PlannerVersion: selfCheckVersion()})
+	stated, err := f.stated()
+	if err != nil {
+		f.checked = &whatifapi.SelfCheck{Status: whatifapi.SelfCheckNotRun, Why: err.Error(), Line: "Self-check not run: " + err.Error() + ".",
+			Folds: []whatifapi.SelfCheckFold{}, Checks: []whatifapi.SelfCheckRule{}}
+		return
+	}
+	f.checked = whatifapi.SelfCheckOf(ctx, res, whatifapi.SelfCheckInfo{PlannerVersion: selfCheckVersion(), Stated: stated})
 	f.checked.Seconds = time.Since(t0).Seconds()
+}
+
+// stated is what the flags state in place of what the recording gave: the
+// self-check replays it with the answer's own terms (issue
+// llm-d-incubation/llm-d-scaling-manager#277).
+func (f *answerFlags) stated() (*whatifapi.Stated, error) {
+	a, err := f.assume()
+	if err != nil {
+		return nil, err
+	}
+	st := &whatifapi.Stated{Assume: a, CLI: true}
+	if f.set["arrival-cv2"] {
+		st.ArrivalCV2 = &f.arrivalCV2
+	}
+	if f.set["assume-input-tokens"] {
+		st.PromptTokens = f.inputTokens
+	}
+	if f.set["assume-output-tokens"] {
+		st.OutputTokens = f.outputTokens
+	}
+	// The router's flow control and wait replay as assume.flowControl and
+	// assume.routerWait, as backtest's flags of the same names state them.
+	if f.set["flow-control"] {
+		st.Assume.FlowControl = f.flowControl
+	}
+	switch {
+	case f.priceRouterWait == whatif.DefaultPriceRouterWait && f.routerWaitInPrefill == whatif.DefaultRouterWaitInPrefill:
+	case f.priceRouterWait:
+		st.Assume.RouterWait = whatifapi.RouterWaitGateStage
+	case f.routerWaitInPrefill:
+		st.Assume.RouterWait = whatifapi.RouterWaitInPrefill
+	default:
+		st.Assume.RouterWait = whatifapi.RouterWaitNone
+	}
+	// The fits price at the other switches' defaults (servedState.fleetAt):
+	// what the answer set of them off its default is named as run without.
+	for _, o := range []struct {
+		name, value string
+		moved       bool
+	}{
+		{"batch-cap", strconv.FormatInt(f.batchCap, 10), f.batchCap != 0},
+		{"ps-onsets", strconv.FormatBool(f.psOnsets), f.psOnsets != whatif.DefaultPSOnsets},
+		{"prefill-running-cap", strconv.Itoa(f.prefillRunningCap), f.prefillRunningCap != 0},
+		{"charge-decode-gate", strconv.FormatBool(f.chargeDecodeGate), f.chargeDecodeGate != whatif.DefaultChargeDecodeGate},
+	} {
+		if f.set[o.name] && o.moved {
+			st.Other = append(st.Other, "--"+o.name+"="+o.value)
+		}
+	}
+	// The fits do price with --imbalance-across-counts (foldFits): replayed,
+	// and outside the validated region.
+	if f.set["imbalance-across-counts"] && f.imbalanceAcrossCounts != whatif.DefaultPlannerImbalanceAcrossCounts {
+		st.Replayed, st.Outside = append(st.Replayed, "--imbalance-across-counts="+strconv.FormatBool(f.imbalanceAcrossCounts)), true
+	}
+	return st, nil
+}
+
+// assume is the terms the --assume-* flags state, as the API's assume
+// takes them.
+func (f *answerFlags) assume() (whatifapi.Assume, error) {
+	var a whatifapi.Assume
+	if f.set["assume-vp"] {
+		a.VP = &f.assumeVP
+	}
+	if f.set["assume-a"] {
+		a.A = ptrTo(f.assumeA.Seconds())
+	}
+	if f.set["assume-prompt-cv"] {
+		a.PromptCV = &f.assumePromptCV
+	}
+	if f.set["assume-router-hop"] {
+		a.RouterHop = ptrTo(f.assumeRouterHop.Seconds())
+	}
+	if f.set["assume-tpot-ratio"] {
+		a.TPOTRatio = &f.tpotRatio
+	}
+	if f.set["assume-itl-b"] {
+		floor, b, err := parseAssumeITLB(f.assumeITLB)
+		if err != nil {
+			return a, err
+		}
+		if floor {
+			a.ITLBFromFloor = true
+		} else {
+			a.ITLB = ptrTo(b.Seconds())
+		}
+	}
+	return a, nil
 }
 
 // selfCheckText is the self-check as the CLI prints it beside an answer:

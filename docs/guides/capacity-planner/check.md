@@ -96,6 +96,28 @@ p90 TTFT within 20% in 0 of 9 steps (median ratio 1.90); p90 TPOT within 20% in 
   Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
 ```
 
+An answer given stated inputs is checked with them. With
+`--assume-vp`, `--assume-a`, `--assume-prompt-cv`, `--assume-router-hop`,
+`--assume-itl-b`, `--arrival-cv2`, `--flow-control`, `--router-wait-in-prefill`
+or `--price-router-wait`, the recording is replayed with the same values, and
+the line names them:
+
+```text
+Self-check, replayed with the stated --assume-prompt-cv 0.06 (flagged as stated): tested on ...
+```
+
+A stated V_P, a, router hop, ITL B or router wait also puts the figures outside the
+validated region, and the line says so. A stated TPOT ratio
+(`--assume-tpot-ratio`), stated lengths (`--assume-input-tokens`,
+`--assume-output-tokens`) and the other opt-in switches (`--batch-cap`,
+`--ps-onsets`, `--prefill-running-cap`, `--charge-decode-gate`) are not
+replayed: the check scores p90 TPOT on the recording's own ratio, the
+recording's own traffic, and the switches' defaults. The line ends
+`It ran without the stated ...` to say so. Where a stated ITL B is not used
+at the fits (the line is held there), the line says in how many steps. On the
+server, a report or day plan that states inputs carries the source's
+self-check, which ran before anything was stated, with the same ending.
+
 On the page it is a badge beside the source, with the same lines under it.
 
 | Badge | Means |
@@ -214,7 +236,11 @@ Size from the planner when, below the load it thinks the fleet can carry:
 | `--ttft-target` | | Judge each step against a target too: `500ms@p90`. The summary counts the steps predicted to meet it that measured a miss. |
 | `--measured` | `auto` | `router`, `engine`, or `auto` (the router's where recorded). |
 | `--assume-vp`, `--assume-a` | | A prefill pod's prompt tokens per second, and its fixed latency, where the part it learned from held none. Flagged. |
+| `--assume-prompt-cv` | each step's | The prompts' spread, 0 to 3, in place of the one each step reads from the histogram, which is coarse on long prompts. Flagged. |
+| `--assume-router-hop`, `--assume-itl-b` | | The router hop, and decode's ITL B (`12ms`, or `floor`), as an answer's flags of the same names: check an answer with the inputs it stated. Flagged. |
 | `--allow-config-mismatch` | off | Score a test of another configuration, with the difference printed. |
+| `--flow-control` | inferred | `on` or `off`: the router's flow control, in place of what the fit's queue series says. To score a test that ran with flow control on against a fit that ran with it off, add `--allow-config-mismatch` too. |
+| `--router-wait-in-prefill`, `--price-router-wait` | off | How a step past the prefill flow-control onset carries the router's wait: `--router-wait-in-prefill` for router v1.0.0, `--price-router-wait` for v0.11.0. Off, the step is flagged `AboveFlowControlOnset`. Set at most one: together they are refused. |
 | `-o json` | text | The same answer as `POST /v1/backtest` ([the API](api.md#the-backtest)). |
 
 The command exits 0 when it judged at least one step, 3 when it judged none,
