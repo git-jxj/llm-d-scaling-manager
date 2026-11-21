@@ -31,7 +31,7 @@ func stepFleet() Fleet {
 // that cycle's end, rounded up to a cycle, at each of MeasuredStarts: 30 s,
 // 1m45s and 8m0s into the run.
 func TestFleet_AnOrderedReplicaIsReadyAfterTheStartTime(t *testing.T) {
-	for _, start := range MeasuredStarts() {
+	AtMeasuredStarts(t, func(t *testing.T, start time.Duration) {
 		f := Fleet{Pods: []float64{1}, AddedMu: 1, Lambda: func(time.Duration) float64 { return 0.5 },
 			Need: Ceil, Horizon: 15 * time.Minute, StartTime: start}
 		readyAt := time.Duration(-1)
@@ -45,7 +45,7 @@ func TestFleet_AnOrderedReplicaIsReadyAfterTheStartTime(t *testing.T) {
 		if readyAt != want {
 			t.Errorf("start %s: the ordered replica first Ready at %s, want %s", start, readyAt, want)
 		}
-	}
+	})
 }
 
 // A truthful step -- it orders need from what the replicas serve and queue

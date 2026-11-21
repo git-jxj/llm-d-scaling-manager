@@ -18,8 +18,10 @@ import (
 //
 // The two restored-first-sight cases are not run here. Measured at every
 // start, the fleet with the first sights restored and the fleet that waits
-// are the same on every cycle, so their comparisons hold whatever changes.
-// Their own comments say they hold the outcome, not the bound.
+// do not differ: on every cycle through the load step, and in the lowest
+// fleet, the final fleet and the time under need through the steady
+// restart. Their comparisons hold whatever changes; their own comments say
+// they hold the outcome, not the bound.
 //
 // The decode-step cases run on the shortest-queue router at every start and
 // are judged at verdictHorizon, as the start probes are: at 463 s the decode
@@ -101,9 +103,14 @@ func TestClosedLoopProbeAtStarts_AControllerRestartBeforeALoadStepSettlesAtNeed(
 				on, r.need, r.final, r.peak, r.underFor, control.underFor, control.final, control.peak)
 			if !on {
 				require.Greater(t, r.underFor, control.underFor+allowance, "negative control: off, the restart costs the step its floor")
+				if start < learnertest.ColdStart {
+					require.Empty(t, r.verdict(), "off: inside the bound a start and a settle take")
+				}
 				continue
 			}
-			settlesUnlessCold(t, start, control, control)
+			if start < learnertest.ColdStart {
+				require.Empty(t, control.verdict(), "premise: without a restart the step settles at need")
+			}
 			settlesUnlessCold(t, start, r, control)
 			require.LessOrEqual(t, r.underFor, control.underFor+allowance, "the first read prices the step the restart left without a mu")
 		}
@@ -145,6 +152,11 @@ func TestClosedLoopProbeAtStarts_WithoutTheUnreadCreditASlowReplicaTakesTheFleet
 		bound := overBound(c.need)
 		t.Logf("unread replicas at what they serve: need %d, final %d, peak %d (bound %.1f); %s", c.need, c.final, c.peak, bound, c.verdict())
 		require.Greater(t, float64(c.peak), bound, "the credit is what keeps the slow period under the bound")
+		if start < learnertest.ColdStart {
+			require.Contains(t, c.verdict(), "over-ordered", "the low figure seals the fleet")
+			return
+		}
+		require.Empty(t, c.verdict(), "the named difference: at the cold start the figure is rewritten before the fleet settles")
 	})
 }
 
