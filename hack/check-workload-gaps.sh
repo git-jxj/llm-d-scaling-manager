@@ -4100,7 +4100,7 @@ assert_not_contains "$log" "not set in the pod spec"
 assert_contains "$doc" "preStop"
 assert_contains "$doc" "#   engine caches: owned externally; none is ours (see the report)"
 assert_contains "$doc" "the guard below is offered for whoever"
-assert_contains "$doc" "#     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
+assert_contains "$doc" "#     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"
 assert_not_contains "$doc" "#   engine-cache:"
 assert_eq "$(ext_envnames "$doc")" "" "env the document writes"
 assert_eq "$(printf '%s\n' "$doc" | yq eval '[.spec.template.spec.volumes[]?.name] | join(" ")' - 2>/dev/null)" "" "volumes the document writes"
@@ -4174,7 +4174,7 @@ log="$(cat "$WORK/ext.err")"
 assert_contains "$log" "ns/w: engine caches are ours ($EXT_ANN=ours)."
 assert_contains "$log" "COMPILES FROM NOTHING"
 assert_contains "$doc" "#   engine-cache: the compile caches"
-assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "env the document writes"
+assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH PYTHONPYCACHEPREFIX" "env the document writes"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="engine-cache-owner with an unknown value: the patch as before, plus a warning naming the value"
@@ -4208,7 +4208,7 @@ log="$(cat "$WORK/ext.err")"
 assert_contains "$log" "COMPILES FROM NOTHING"
 assert_contains "$log" "container download shares the emptyDir jit, which holds an engine cache, and mounts claim model-pvc"
 assert_contains "$doc" "#   engine-cache: the compile caches"
-assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "env the document writes"
+assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH PYTHONPYCACHEPREFIX" "env the document writes"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="engine-cache-owner external, patched before it was annotated: the conflict and the revert"
@@ -4216,7 +4216,9 @@ reset; f_engine_cache_on_claim; ext_owner external
 before=$FAILED
 doc="$(ext_doc)"
 log="$(cat "$WORK/ext.err")"
-assert_contains "$log" "CONFLICT: the pod spec still carries what an earlier make workload-patch wrote (the volume engine-cache) (PYTHONPYCACHEPREFIX VLLM_CACHE_ROOT under /engine-cache)"
+# The JIT caches #213 wrote under /engine-cache are traces of the patch too.
+assert_contains "$log" "CONFLICT: the pod spec still carries what an earlier make workload-patch wrote (the volume engine-cache) (CUDA_CACHE_PATH DG_JIT_CACHE_DIR PYTHONPYCACHEPREFIX TORCHINDUCTOR_CACHE_DIR TRTLLM_DG_CACHE_DIR VLLM_CACHE_ROOT under /engine-cache)"
+assert_not_contains "$log" "left to the owner, not patched"
 assert_contains "$log" "remove the volume engine-cache, its mounts, and every cache variable that points under /engine-cache"
 assert_contains "$log" "delete the copies the manager stored while that was applied"
 assert_contains "$log" "Nothing more of ours is patched until it is reverted"
@@ -4289,6 +4291,55 @@ assert_contains "$(cat "$WORK/ext.err")" "store: claim jit-store, mounted read-w
 assert_not_contains "$(cat "$WORK/ext.err")" "mounts the store"
 [ "$FAILED" -eq "$before" ] && ok
 
+# Owned externally, the JIT caches beyond vLLM's own are the owner's whether
+# the pod spec sets them or not. The owner keeps VLLM_CACHE_ROOT on a claim
+# here, which is what made the JIT half fire: it would have written the four
+# beside it, into the owner's directory.
+f_ext_manager_on_claim() {
+    f_ext_manager
+    FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '(.spec.template.spec.volumes[] | select(.name == "jit")) = {"name":"jit","persistentVolumeClaim":{"claimName":"jit-pvc"}}')"
+}
+
+CASE="engine-cache-owner external, VLLM_CACHE_ROOT on a claim and no JIT cache set: no JIT half, no JIT warning, the four named as the owner's"
+reset; f_ext_manager_on_claim
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "ns/w: engine caches owned externally ($EXT_ANN=external)"
+assert_contains "$log" "left to the owner, not patched: DG_JIT_CACHE_DIR, TRTLLM_DG_CACHE_DIR, TORCHINDUCTOR_CACHE_DIR, CUDA_CACHE_PATH."
+assert_contains "$log" "every cache variable is set in the pod spec: deferred to the owner"
+assert_not_contains "$log" "BUILDS ITS JIT KERNELS AGAIN"
+assert_not_contains "$doc" "#   jit:"
+# The guard offered to the owner names the four; no entry of ours does.
+assert_not_contains "$doc" "name: DG_JIT_CACHE_DIR"
+assert_not_contains "$doc" "/var/cache/jit"
+assert_eq "$(ext_envnames "$doc")" "" "env the document writes"
+# The note make scaledobjects-plan prints says nothing about the JIT caches either.
+assert_not_contains "$(so_enginecache_note ns deployments w "$POD_DEPLOY")" "JIT kernels"
+# Without the annotation the same pod spec gets the JIT half, under its claim.
+ext_owner -
+doc="$(ext_doc)"
+assert_contains "$(cat "$WORK/ext.err")" "BUILDS ITS JIT KERNELS AGAIN"
+assert_contains "$doc" "value: /var/cache/jit/deepgemm/"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="engine-cache-owner external, the owner sets one JIT cache: the rest named, none patched"
+reset; f_ext_manager_on_claim
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"DG_JIT_CACHE_DIR","value":"/var/cache/jit/deepgemm"}]')"
+before=$FAILED
+doc="$(ext_doc)"
+log="$(cat "$WORK/ext.err")"
+assert_contains "$log" "left to the owner, not patched: TRTLLM_DG_CACHE_DIR, TORCHINDUCTOR_CACHE_DIR, CUDA_CACHE_PATH."
+assert_not_contains "$log" "BUILDS ITS JIT KERNELS AGAIN"
+assert_eq "$(ext_envnames "$doc")" "" "env the document writes"
+# Every one set: nothing left to name.
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [
+    {"name":"TRTLLM_DG_CACHE_DIR","value":"/var/cache/jit/t"},{"name":"TORCHINDUCTOR_CACHE_DIR","value":"/var/cache/jit/i"},
+    {"name":"CUDA_CACHE_PATH","valueFrom":{"configMapKeyRef":{"name":"c","key":"k"}}}]')"
+ext_doc >/dev/null
+assert_not_contains "$(cat "$WORK/ext.err")" "left to the owner, not patched"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="engine-cache-owner external, every variable covered, --apply-engine-cache: refused, non-zero exit"
 reset; LIST_FIXTURE="$(serving_list)"; f_ext_manager
 before=$FAILED
@@ -4345,7 +4396,7 @@ assert_contains "$log" "ns/w (leaderTemplate): engine caches owned externally"
 assert_contains "$log" "ns/w (workerTemplate) COMPILES FROM NOTHING"
 assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.leaderTemplate')" "null" "leader in the document"
 assert_eq "$(lws_get "$doc" '[.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env[].name] | join(" ")')" \
-    "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "worker env"
+    "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH PYTHONPYCACHEPREFIX" "worker env"
 assert_contains "$doc" "#   engine caches: owned externally in leaderTemplate; none is ours"
 assert_contains "$doc" "#   engine-cache: the compile caches"
 [ "$FAILED" -eq "$before" ] && ok

@@ -1111,9 +1111,10 @@ so_cache_owner_report() {
             [ "${ext_fidir:-0}" -eq 0 ] \
                 || log_warning "    FLASHINFER_WORKSPACE_DIR: left to the owner, but FlashInfer does not read it, so its kernels are built again on every start. The owner should set FLASHINFER_WORKSPACE_BASE instead."
             # Never patched, owned externally (so_cache_owner_plan); said so
-            # the owner knows which JIT caches it does not keep.
-            [ -z "${ext_jit:-}" ] \
-                || log_info "    ${ext_jit// /, }: not set in the pod spec, and not patched: owned externally, the JIT caches beyond vLLM's own are left to the owner. Where the engine uses them (DeepGEMM, Inductor outside the vLLM compile, the driver's PTX cache), they are built again in every container until the owner sets them under its directory; see $doc."
+            # the owner knows which JIT caches it does not keep. Not while a
+            # conflict stands: the revert comes first.
+            [ -z "${ext_jit:-}" ] || [ -n "$cours_vol$cours_env" ] \
+                || log_info "    left to the owner, not patched: ${ext_jit// /, }. These JIT caches beyond vLLM's own are the owner's whether the pod spec sets them or not; unset, they are built again in every container that uses them (DeepGEMM, Inductor outside the vLLM compile, the driver's PTX cache) until the owner sets them under its directory; see $doc."
             if [ -n "$cours_vol$cours_env" ]; then
                 # A conflict is a gap, never an all-clear (ext_conflict_names).
                 ext_conflict_names="${ext_conflict_names:-}${ext_conflict_names:+; }$who"
