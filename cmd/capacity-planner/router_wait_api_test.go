@@ -41,9 +41,9 @@ func TestTTFT_TheAPIStatesTheRouterWaitAsTheCLI(t *testing.T) {
 		priced     bool
 	}{
 		{"", nil, whatif.DefaultPriceRouterWait, whatif.DefaultRouterWaitInPrefill, whatif.DefaultPriceRouterWait || whatif.DefaultRouterWaitInPrefill},
-		{whatifapi.RouterWaitNone, []string{"--router-wait-in-prefill=false", "--price-router-wait=false"}, false, false, false},
+		{whatifapi.RouterWaitNone, nil, false, false, false},
 		{whatifapi.RouterWaitInPrefill, []string{"--router-wait-in-prefill"}, false, true, true},
-		{whatifapi.RouterWaitGateStage, []string{"--price-router-wait", "--router-wait-in-prefill=false"}, true, false, true},
+		{whatifapi.RouterWaitGateStage, []string{"--price-router-wait"}, true, false, true},
 	}
 	for _, c := range cases {
 		served, err := ss.Fleet(whatifapi.Knobs{Prefill: 2, Decode: 2, PromptTokens: 8000, OutputTokens: 200, Headroom: 0.9,
@@ -68,6 +68,7 @@ func TestTTFT_TheAPIStatesTheRouterWaitAsTheCLI(t *testing.T) {
 		require.Nil(t, cli[0].refused)
 
 		assert.Equal(t, cli[0].fleet, api.pf.fleet, "routerWait %q: one fleet", c.routerWait)
+		assert.Equal(t, cli[0].stated, api.pf.stated, "routerWait %q: the same inputs stated, so the same envelope class", c.routerWait)
 		assert.Equal(t, c.gate, api.pf.fleet.PriceRouterWait, "routerWait %q", c.routerWait)
 		assert.Equal(t, c.in, api.pf.fleet.RouterWaitInPrefill, "routerWait %q", c.routerWait)
 		require.Equal(t, whatif.FlowControlOn, api.pf.fleet.FlowControl.State, "stated")
@@ -87,11 +88,15 @@ func TestTTFT_TheAPIStatesTheRouterWaitAsTheCLI(t *testing.T) {
 		assert.Equal(t, !c.priced, got.HasFlag(whatif.AboveFlowControlOnset), "routerWait %q: %v", c.routerWait, got.Flags)
 	}
 
-	for _, bad := range []whatifapi.Assume{{FlowControl: "maybe"}, {RouterWait: "both"}} {
+	for field, bad := range map[string]whatifapi.Assume{"assume.flowControl": {FlowControl: "maybe"}, "assume.routerWait": {RouterWait: "both"}} {
 		_, err := ss.Fleet(whatifapi.Knobs{Prefill: 2, Headroom: 0.9, Assume: bad})
 		require.Error(t, err, "%+v", bad)
 		assert.True(t, whatifapi.IsInputError(err), "%+v: %v", bad, err)
+		assert.Contains(t, err.Error(), field)
+		require.Error(t, bad.CheckFlowControl(), "the validator backtest and predict call")
 	}
+	_, err = ss.Fleet(whatifapi.Knobs{Prefill: 2, Headroom: 0.9, Assume: whatifapi.Assume{FlowControl: whatifapi.FlowControlOff, RouterWait: whatifapi.RouterWaitNone}})
+	require.NoError(t, err, "a valid assume on the same knobs")
 }
 
 // backtest's --flow-control, --router-wait-in-prefill, --price-router-wait

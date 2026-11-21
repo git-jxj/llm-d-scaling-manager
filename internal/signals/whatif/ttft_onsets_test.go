@@ -532,10 +532,12 @@ func TestPSOnsets_TheQ32CrossingKeepsThemOff(t *testing.T) {
 		if !(unknown < lo.rate) {
 			t.Errorf("%s: with the cap not known the onset %.4f is not under the step with no wait, %.3f", bucket, unknown, lo.rate)
 		}
-		inside := atCap > lo.rate && atCap < hi.rate
-		if want := bucket == "B"; inside != want {
-			t.Errorf("%s: processor sharing at cap %d puts the onset at %.4f, inside the crossing %v, want %v",
-				bucket, q32EngineRunningCap, atCap, inside, want)
+		switch inside := atCap > lo.rate && atCap < hi.rate; {
+		case bucket == "B" && !inside:
+			t.Errorf("B: processor sharing at cap %d puts the onset at %.4f, outside the crossing", q32EngineRunningCap, atCap)
+		case bucket == "C" && !(atCap >= hi.rate):
+			t.Errorf("C: processor sharing at cap %d puts the onset at %.4f, want at or past the step that waited, %.3f",
+				q32EngineRunningCap, atCap, hi.rate)
 		}
 	}
 }

@@ -371,3 +371,23 @@ func TestBacktest_PricesAPDFleetOfItsOwnVariants(t *testing.T) {
 	}
 	assert.Contains(t, out.Excluded, "other variants serving")
 }
+
+// A backtest refuses an assume.flowControl or assume.routerWait no CLI flag
+// takes, as the caller's error, before any step is priced: the pricer would
+// refuse it on every step, and the answer would judge none.
+func TestBacktest_RefusesAnUnknownRouterWait(t *testing.T) {
+	r := &stubResolver{}
+	s, l := btSeries(120, 0, 1)
+	fs, fl := btEarlier(btSeries(120, 0, 1))
+	fit := btEntry(t, r, "fit", fs, fl, btConfig("H100"))
+	test := btEntry(t, r, "test", s, l, btConfig("H100"))
+	for field, a := range map[string]Assume{"assume.flowControl": {FlowControl: "maybe"}, "assume.routerWait": {RouterWait: "both"}} {
+		_, err := backtestQuestionOf(fit, test, BacktestRequest{Assume: &a}, time.Time{}, "")
+		require.Error(t, err)
+		assert.True(t, IsInputError(err), "%v", err)
+		assert.Contains(t, err.Error(), field)
+	}
+	ok := Assume{FlowControl: FlowControlOn, RouterWait: RouterWaitInPrefill}
+	_, err := backtestQuestionOf(fit, test, BacktestRequest{Assume: &ok}, time.Time{}, "")
+	require.NoError(t, err)
+}

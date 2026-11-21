@@ -362,7 +362,8 @@ type Assume struct {
 	// the router's wait: RouterWaitInPrefill (--router-wait-in-prefill,
 	// router v1.0.0), RouterWaitGateStage (--price-router-wait, router
 	// v0.11.0) or RouterWaitNone (not priced: the figure is flagged
-	// AboveFlowControlOnset, a miss); absent, the CLI's default.
+	// AboveFlowControlOnset, a miss); absent, the CLI's default
+	// (whatif.DefaultRouterWaitInPrefill, whatif.DefaultPriceRouterWait).
 	RouterWait string `json:"routerWait,omitempty"`
 }
 
@@ -371,6 +372,22 @@ const (
 	FlowControlOn  = "on"
 	FlowControlOff = "off"
 )
+
+// CheckFlowControl refuses an Assume.FlowControl or Assume.RouterWait no
+// CLI flag takes, as an input error.
+func (a Assume) CheckFlowControl() error {
+	switch a.FlowControl {
+	case "", FlowControlOn, FlowControlOff:
+	default:
+		return InputErrorf("assume.flowControl %q, want %s or %s", a.FlowControl, FlowControlOn, FlowControlOff)
+	}
+	switch a.RouterWait {
+	case "", RouterWaitNone, RouterWaitInPrefill, RouterWaitGateStage:
+	default:
+		return InputErrorf("assume.routerWait %q, want %s, %s or %s", a.RouterWait, RouterWaitNone, RouterWaitInPrefill, RouterWaitGateStage)
+	}
+	return nil
+}
 
 // The values Assume.RouterWait takes.
 const (

@@ -167,9 +167,9 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 	switch {
 	case f.routerWaitInPrefill && f.priceRouterWait:
 		return req, usagef("--price-router-wait and --router-wait-in-prefill price the same wait two ways (router v0.11.0's gate, v1.0.0's): set one")
+	case f.priceRouterWait == whatif.DefaultPriceRouterWait && f.routerWaitInPrefill == whatif.DefaultRouterWaitInPrefill:
 	case f.priceRouterWait:
 		a.RouterWait = whatifapi.RouterWaitGateStage
-	case f.routerWaitInPrefill == whatif.DefaultRouterWaitInPrefill:
 	case f.routerWaitInPrefill:
 		a.RouterWait = whatifapi.RouterWaitInPrefill
 	default:

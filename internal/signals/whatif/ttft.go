@@ -156,7 +156,7 @@ const minPromptCV = 1e-4
 const MaxPSPromptCV = 0.25
 
 // DefaultPriceRouterWait is TTFTFleet.PriceRouterWait's default, for the CLI
-// (--price-router-wait), the planner API and the SLO analyzer
+// (--price-router-wait), the planner API (assume.routerWait gateStage) and the SLO analyzer
 // (slo.SwitchTTFTRouterWait) alike: off, so a TTFT past the prefill onset is
 // flagged AboveFlowControlOnset, a miss. On (opt-in) prices the gate as a
 // stage (ttft_gate.go). It reads at least 0.9 of the client at the mean, p90

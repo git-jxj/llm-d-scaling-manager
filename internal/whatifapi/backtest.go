@@ -686,6 +686,9 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		q.promptCV = whole.promptCV
 	}
 	if a := req.Assume; a != nil {
+		if err := a.CheckFlowControl(); err != nil {
+			return q, err
+		}
 		q.assume = *a
 		q.assumed = append(q.assumed, "terms typed in for the fit (assume): every figure they move is flagged")
 	}

@@ -471,26 +471,26 @@ func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
 }
 
 // assumeFlowControl sets the flags assume's flow control stands for: the
-// CLI's --flow-control, and --router-wait-in-prefill or --price-router-wait.
+// CLI's --flow-control, and --router-wait-in-prefill or --price-router-wait,
+// each marked set as the CLI's parse marks it, so a switch that is on puts
+// the figures outside the validated envelope there too (statedOutside).
 func (f *answerFlags) assumeFlowControl(a whatifapi.Assume) error {
-	switch a.FlowControl {
-	case "":
-	case whatifapi.FlowControlOn, whatifapi.FlowControlOff:
+	if err := a.CheckFlowControl(); err != nil {
+		return usageError{err}
+	}
+	if a.FlowControl != "" {
 		f.flowControl = a.FlowControl
 		f.set["flow-control"] = true
-	default:
-		return usagef("assume.flowControl %q, want %s or %s", a.FlowControl, whatifapi.FlowControlOn, whatifapi.FlowControlOff)
 	}
 	switch a.RouterWait {
-	case "":
 	case whatifapi.RouterWaitNone:
 		f.routerWaitInPrefill, f.priceRouterWait = false, false
 	case whatifapi.RouterWaitInPrefill:
 		f.routerWaitInPrefill, f.priceRouterWait = true, false
+		f.set["router-wait-in-prefill"] = true
 	case whatifapi.RouterWaitGateStage:
 		f.priceRouterWait, f.routerWaitInPrefill = true, false
-	default:
-		return usagef("assume.routerWait %q, want %s, %s or %s", a.RouterWait, whatifapi.RouterWaitNone, whatifapi.RouterWaitInPrefill, whatifapi.RouterWaitGateStage)
+		f.set["price-router-wait"] = true
 	}
 	return nil
 }
