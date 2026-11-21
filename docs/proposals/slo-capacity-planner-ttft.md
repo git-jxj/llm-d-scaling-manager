@@ -67,8 +67,9 @@ Three derivations matter here:
   `AvgServiceTime` is the prefill time and `AvgTTFT − AvgServiceTime` is the
   engine wait. That difference holds a constant overhead (tokenization,
   scheduling, the HTTP path): on `ols-sweep` it is never below 2.5 ms with no
-  queue. Its low-load minimum is added to `a`. Two replay switches, off
-  until the planner turns them on (issue #306), add the median instead
+  queue. Its low-load minimum is added to `a`. Two planner-only replay
+  switches, which the capacity planner turns on (issue #306), add the
+  median instead
   (`saturation.SwitchPrefillAMedianOverhead`), since the least of ten to
   thirty noisy minutes sits under the typical one and a smaller `a` prices
   TTFT lower, and read a minute as low load by its rate against its prompt

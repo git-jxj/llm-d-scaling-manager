@@ -112,8 +112,7 @@ const SwitchPrefillFBusyMinutes = "prefill-f-busy-minutes"
 // own service time, as P1 shipped: at a given rate a minute whose prefill
 // ran slow is cut, so the fit selects on the response it reads and its
 // intercept reads low (issue llm-d-incubation/llm-d-scaling-manager#306).
-// Planner-only: off from the constructor, and not yet among the switches
-// the planner's replay turns on (learnreplay.PlannerSwitches says why).
+// Planner-only, as SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillALowLoadByRate = "prefill-a-low-load-by-rate"
 
 // SwitchPrefillAMedianOverhead is the replay switch for the overhead a adds
@@ -121,8 +120,8 @@ const SwitchPrefillALowLoadByRate = "prefill-a-low-load-by-rate"
 // low-load minutes' AvgTTFT - AvgServiceTime. Off, the least, as P1
 // shipped: the least of ten to thirty noisy minutes sits about two standard
 // deviations under the typical one, and a smaller a prices TTFT lower
-// (issue llm-d-incubation/llm-d-scaling-manager#306). Planner-only, and
-// not yet turned on, as SwitchPrefillALowLoadByRate.
+// (issue llm-d-incubation/llm-d-scaling-manager#306). Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillAMedianOverhead = "prefill-a-median-overhead"
 
 // prefillKVFull is the pods of rows whose KV cache is full (kvFull at

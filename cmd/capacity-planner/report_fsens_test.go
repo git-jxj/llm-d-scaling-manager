@@ -92,11 +92,11 @@ func TestFixedImbalance_ALearnedCountKeepsItsF(t *testing.T) {
 // keeps the floor, max(1.5, the raw share), and not whatif.FreshImbalance.
 func TestTTFT_NoCountLearnedKeepsTheFloor(t *testing.T) {
 	for _, c := range []struct {
-		name    string
-		byPods  map[int]float64
-		raw     float64
-		want    float64
-		source  string
+		name   string
+		byPods map[int]float64
+		raw    float64
+		want   float64
+		source string
 	}{
 		{"none", nil, 0, whatif.ImbalanceFloor, shapeAssumed},
 		{"none, a raw share", nil, 1.2, whatif.ImbalanceFloor, shapeAssumed},
