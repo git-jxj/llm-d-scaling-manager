@@ -271,8 +271,11 @@ reading above the context needs at least 8 such requests
 running count that lags the KV, read several times the context with nothing
 held beyond it. Above 8 the scrape cannot tell a long tail from extra KV, so
 k prompts L times the shape's among n still lift the reading by about
-`k x (L - 1) / n`. The switch is off from the constructor: the controller keeps the
-bound until a GPU check on a prefix-heavy P/D workload clears the change.
+`k x (L - 1) / n`. The switch is on from the constructor since v0.12.3; a
+replay turns it off. A GPU check on a P/D decode with no KV beyond its context
+cleared it of harm: on and off asked for decode replicas within one of each
+other at every load. That run had no reading above the context, so the case
+the switch is for rests on its unit tests and the replay.
 
 `KVreq` is the single most load-bearing quantity in the analyzer. Everything
 that asks "how many requests fit" divides by it.
@@ -1802,7 +1805,7 @@ switch on, the floor log line carries `routerBacklogOwed`,
 `-owes-backlog` (seeds 1-100), and prefill-bound P/D is unchanged, also with
 decode's KV raised to 0.70-0.80, with completions read 10% and 20% high, and
 with each request reading twice the context under
-`kv-per-request-above-context`. The
+`kv-per-request-above-context` (on from the constructor). The
 switch is off from the constructor: the controller keeps the old charge until
 a P/D run checks it. No controller golden moves; replayed on,
 `ttft-staircase-c-on` asks one more decode replica on 16 of its 584
