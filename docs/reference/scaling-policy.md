@@ -2243,9 +2243,14 @@ of replicas meets, bounds nothing (`target-unreachable`).
   spread far enough in fill to fit the intercept B (the usual case: the
   router balances them) takes B from the latency its replicas read at low
   load, below the band, in the last 30 minutes, so the bound applies to it
-  after a stretch at low load. With no such readings, before any low load
-  or after 30 minutes held inside the band, its line rests on the 6 ms
-  default intercept and bounds nothing (`default-intercept`).
+  after a stretch at low load. It needs at least 10 such readings, and the
+  replicas' fill now at twice the low-load fill or more. Without them,
+  before any low load or after 30 minutes held inside the band, its line
+  rests on the 6 ms default intercept and bounds nothing
+  (`default-intercept`). The B read this way can come out under the true
+  intercept, which prices a steeper line and usually asks for more decode
+  replicas. At `--v=2`, the `itl-fit` line shows
+  `pinnedAtFloor`, `floor` and `floorK` for it. No setting turns it off.
 - **Saturation's own line.** Saturation fits its own ITL line. The SLO
   analyzer's `llmsm_slo_fill` comes from a fit of its own, so the two fills
   can differ.
