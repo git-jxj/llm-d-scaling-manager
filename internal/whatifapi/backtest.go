@@ -98,10 +98,11 @@ const (
 	// priced ones also served: the model's rate and the router's latency
 	// are the whole model's, the replicas priced are not.
 	ExcludedOtherVariants = "otherVariants"
-	// ExcludedBurst is a step whose measurement window holds the start or
-	// the end of a load near the knee (burstIn): its requests mostly
-	// arrived at that load, or queued behind it, and its mean rate is no rate
-	// the fleet ran at.
+	// ExcludedBurst is a step whose measurement window runs both near the
+	// knee and far under it (burstIn): most often the start or the end of a
+	// load near the knee, though an on-off load reads the same. Its requests
+	// mostly arrived at that load, or queued behind it, and its mean rate is
+	// no rate the fleet ran at.
 	ExcludedBurst = "burst"
 )
 
