@@ -704,6 +704,11 @@ alone. A higher `--ttft` sizes them.
   bucket's rate: UNDER (SLO risk) when its limit falls short, over (waste)
   when one replica fewer of either role would still serve it. An hour is
   UNDER when any of its buckets is, and over when every sized bucket is.
+  Had counts what served: replicas asked for and not serving (still
+  starting, or never started, held by a quota or a cluster with no room)
+  show beside it as `2(+1)`, the most in a bucket of the hour, with a note.
+  The asked count is the larger of the scaling manager's last decision and
+  the replicas the workload had.
   Replica-hours and GPU-hours needed and had are over the sized buckets, and
   left out for prefill when any of them did not price it; the last line is
   what the fleet ran over every bucket with data.

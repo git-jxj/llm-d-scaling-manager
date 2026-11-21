@@ -52,6 +52,13 @@ type CycleSample struct {
 	// FlowControlSeries says the cycle read the router's flow-control queue
 	// series (domain.AnalyzerInput.FlowControlSeries).
 	FlowControlSeries bool
+	// PrefillNotServing and DecodeNotServing are the counted variants'
+	// replicas asked for and not serving at the cycle: each variant's
+	// asked, the larger of the last decision (DesiredReplicas) and the
+	// replicas it had (CurrentReplicas), less those ready (CurrentReplicas
+	// less PendingReplicas). A replica the quota never let start, and one
+	// still starting, count; 0 where the cycle states neither.
+	PrefillNotServing, DecodeNotServing int
 }
 
 // SeriesVariants names the variants a series counts: the prefill and the
@@ -147,11 +154,15 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 		if !counted(vs.VariantName, domain.CanonicalRole(vs.Role)) {
 			continue
 		}
+		ready := max(vs.CurrentReplicas-vs.PendingReplicas, 0)
+		notServing := max(max(vs.DesiredReplicas, vs.CurrentReplicas)-ready, 0)
 		switch domain.CanonicalRole(vs.Role) {
 		case domain.RolePrefill:
 			s.PrefillGPUs = max(s.PrefillGPUs, vs.GPUsPerReplica)
+			s.PrefillNotServing += notServing
 		case domain.RoleDecode:
 			s.DecodeGPUs = max(s.DecodeGPUs, vs.GPUsPerReplica)
+			s.DecodeNotServing += notServing
 		}
 	}
 	var weight, il, ol, hit, modelRate float64

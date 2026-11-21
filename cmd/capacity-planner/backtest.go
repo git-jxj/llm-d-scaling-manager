@@ -184,7 +184,7 @@ func seriesAndLatencyOf(src learnreplay.Source, st *learnreplay.State, v learnre
 			PrefillGPUs: c.PrefillGPUs, DecodeGPUs: c.DecodeGPUs, PromptTokens: c.PromptTokens, OutputTokens: c.OutputTokens,
 			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods,
 			PromptComputedRate: c.PromptComputedRate, PromptRequestRate: c.PromptRequestRate, PromptBuckets: c.PromptBuckets,
-			FlowControlSeries: c.FlowControlSeries}
+			FlowControlSeries: c.FlowControlSeries, PrefillNotServing: c.PrefillNotServing, DecodeNotServing: c.DecodeNotServing}
 	}
 	ls := make([]whatifapi.LatencySample, len(lat))
 	for i, l := range lat {

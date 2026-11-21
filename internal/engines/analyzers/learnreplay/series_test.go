@@ -75,3 +75,23 @@ func TestSampleOfRateWithoutTheRouter(t *testing.T) {
 	assert.Zero(t, idle.ArrivalRate)
 	assert.False(t, idle.HasShape)
 }
+
+// A cycle counts the replicas asked for and not serving of the named
+// variants: each variant's asked, the larger of the last decision and the
+// replicas it had, less those ready. A decision the quota never let start
+// counts, and a replica still starting; a decision below what it had (a
+// scale-down) counts none.
+func TestSampleOfCountsTheReplicasNotServing(t *testing.T) {
+	in := seriesInput(1)
+	in.VariantStates[0].CurrentReplicas, in.VariantStates[0].DesiredReplicas, in.VariantStates[0].PendingReplicas = 2, 0, 1
+	in.VariantStates[1].CurrentReplicas, in.VariantStates[1].DesiredReplicas, in.VariantStates[1].PendingReplicas = 2, 5, 0
+	in.VariantStates[2].CurrentReplicas, in.VariantStates[2].DesiredReplicas, in.VariantStates[2].PendingReplicas = 3, 4, 1
+	s := sampleOf(in, time.Time{}, SeriesVariants{Prefill: "p1", Decode: "d1"})
+	assert.Equal(t, 1, s.PrefillNotServing, "one of two still starting, no decision recorded")
+	assert.Equal(t, 3, s.DecodeNotServing, "asked 5, had 2 ready: d1 alone")
+	all := sampleOf(in, time.Time{}, SeriesVariants{})
+	assert.Equal(t, 3+2, all.DecodeNotServing, "d2: asked 4, 2 ready")
+
+	in.VariantStates[1].DesiredReplicas = 1
+	assert.Zero(t, sampleOf(in, time.Time{}, SeriesVariants{Decode: "d1"}).DecodeNotServing, "a scale-down asks no more than it had")
+}
