@@ -44,6 +44,7 @@ func TestStepBudgetCap_DerivedMuAtSpeculativeTokens(t *testing.T) {
 	assert.InDelta(t, 256, off["seqs"], 1e-9)
 	got := stepDerivedMu(t, wideEPMTP(), on)
 	assert.InDelta(t, 64, got["seqs"], 1e-9)
+	assert.Equal(t, batchCapStepBudget, got["batchCapSource"])
 	assert.InDelta(t, off["rate"].(float64)/4, got["rate"], 1e-9)
 
 	k1 := wideEPMTP()
@@ -77,18 +78,6 @@ func stepDerivedMu(t *testing.T, params *capacity.EngineParams, edit func(*Satur
 	fields := requireLogged(t, logs, "derived-mu")
 	require.Equal(t, true, fields["ok"], "the line prices mu: %v", fields)
 	return fields
-}
-
-// The zero-replica estimate is held as the live replica's mu is: at MTP k = 3
-// and a budget of 256, 64 sequences a rank on, so the order from zero agrees
-// with the price once a pod runs; off, as before.
-func TestStepBudgetCap_ZeroReplicaAtTheBudgetsBatch(t *testing.T) {
-	off := zeroReplicaEstimateOf(t, wideEPMTP(), 1, nil)
-	on := zeroReplicaEstimateOf(t, wideEPMTP(), 1, func(a *SaturationAnalyzer) { a.muAtStepBudget = true })
-	assert.EqualValues(t, 256, off["batchCap"])
-	assert.EqualValues(t, 64, on["batchCap"])
-	assert.Equal(t, batchCapStepBudget, on["batchCapSource"])
-	assert.Less(t, on["derivedCapacity"].(int64), off["derivedCapacity"].(int64))
 }
 
 // The switch moves nothing where the budget holds the cap: a dense engine at

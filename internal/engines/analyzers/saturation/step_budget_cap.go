@@ -10,10 +10,10 @@ import (
 // priced at (issue llm-d-incubation/llm-d-scaling-manager#302).
 //
 // On, the cap the derived mu prices one vLLM engine rank at is held to what
-// its step token budget runs: floor(budget / (1 + k)) sequences with k
+// its step token budget runs: ceil(budget / (1 + k)) sequences with k
 // speculative tokens (whatif.StepBudgetCap). vLLM's scheduler takes 1 + k
-// tokens of the budget per running request and skips the rest once it is
-// spent, so a rank priced at its max_num_seqs above that batch is priced at a
+// tokens of the budget per running request until it is spent, so a rank
+// priced at its max_num_seqs above that batch is priced at a
 // throughput it cannot run. Off, as before, at the batch cap alone.
 //
 // Off from the constructor. The expected effect on: nothing on a dense engine
@@ -46,11 +46,9 @@ func atStepBudget(p pricedBatchCap, params *capacity.EngineParams, on bool) pric
 	if !on || params == nil || params.Engine == inferenceengine.EngineSGLang {
 		return p
 	}
-	budget := params.EffectiveMaxBatchedTokens
-	if budget <= 0 {
-		budget = params.MaxNumBatchedTokens
-	}
-	capped := whatif.StepBudgetCap(p.perRank, budget, params.SpeculativeTokens())
+	// The resolved budget, as every other reader of it (steadyBatch, the
+	// k2 ITL bound): 0, unknown, caps nothing.
+	capped := whatif.StepBudgetCap(p.perRank, params.EffectiveMaxBatchedTokens, params.SpeculativeTokens())
 	if p.perRank > 0 && capped < p.perRank {
 		p.perRank, p.source = capped, batchCapStepBudget
 	}

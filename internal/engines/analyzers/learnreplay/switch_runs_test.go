@@ -1423,7 +1423,6 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestStepBudgetCap_OffFromTheConstructor"},
 		{"../saturation", "TestStepBudgetCap_DerivedMuAtSpeculativeTokens"},
 		{"../saturation", "TestStepBudgetCap_DenseEngineUnmoved"},
-		{"../saturation", "TestStepBudgetCap_ZeroReplicaAtTheBudgetsBatch"},
 	},
 	saturation.SwitchPlannerCapAtStepBudget: {
 		{"../saturation", "TestStepBudgetCap_OffFromTheConstructor"},

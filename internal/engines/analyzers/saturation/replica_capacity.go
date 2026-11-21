@@ -1435,10 +1435,6 @@ func (a *SaturationAnalyzer) estimateStoredCapacity(
 		// the default, and never the learned cap (zeroReplicaBatchCap,
 		// issue ev-shindin/llm-scaling-manager#427).
 		batchCap := a.zeroReplicaBatchCap(namespace, modelID, variantName, role, rec.EngineParams)
-		// Held to the step budget as the live replica's mu is, so the order
-		// from zero agrees with the price once a pod runs
-		// (SwitchMuAtStepBudget).
-		batchCap = atStepBudget(batchCap, rec.EngineParams, a.muAtStepBudget)
 		if derived := estimateCapacityAtCapSpread(rec.EngineParams, batchCap.perRank, modelAvgInput, modelAvgOutput, modelFactor) * ranks; derived > 0 {
 			bounded := derived
 			boundedBy := "derived"
