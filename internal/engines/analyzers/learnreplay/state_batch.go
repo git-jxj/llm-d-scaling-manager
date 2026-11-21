@@ -22,13 +22,18 @@ const batchTermRows = 2000
 
 // batchSamples is each variant's rows for the batch term; nil rows while the
 // switch is off, so nothing is kept or fitted.
+// ranks is the most engine ranks a variant's rows were split over
+// (domain.ReplicaMetrics.Ranks): the term is priced per rank as its rows
+// were read, not at the variant's configured data parallelism, which a row
+// that did not read its ranks does not divide by.
 type batchSamples struct {
-	on   bool
-	rows map[string][]whatif.BatchRow
+	on    bool
+	rows  map[string][]whatif.BatchRow
+	ranks map[string]int
 }
 
 func newBatchSamples(on bool) *batchSamples {
-	return &batchSamples{on: on, rows: map[string][]whatif.BatchRow{}}
+	return &batchSamples{on: on, rows: map[string][]whatif.BatchRow{}, ranks: map[string]int{}}
 }
 
 // note reads one cycle: every serving row of a variant that is not prefill,
@@ -51,6 +56,7 @@ func (b *batchSamples) note(in domain.AnalyzerInput) {
 		}
 		b.rows[rm.VariantName] = append(b.rows[rm.VariantName], whatif.BatchRow{K: k,
 			SeqsPerRank: float64(rm.RunningRequests) / float64(rm.Ranks()), ITLSec: rm.AvgITL})
+		b.ranks[rm.VariantName] = max(b.ranks[rm.VariantName], rm.Ranks())
 		if rows := b.rows[rm.VariantName]; len(rows) > batchTermRows {
 			b.rows[rm.VariantName] = rows[len(rows)-batchTermRows:]
 		}
@@ -59,7 +65,7 @@ func (b *batchSamples) note(in domain.AnalyzerInput) {
 
 // fit sets each decode variant's BatchFit in s from the rows noted so far:
 // on the residuals of the line it was priced on, a sequence one batch token
-// split over the replica's engine ranks. A variant with no line, or a
+// split over the engine ranks its rows read (ranks). A variant with no line, or a
 // prefill one, keeps the zero fit, as does every variant while the switch is
 // off; a speculating vLLM variant is refused (whatif.BatchTermSpeculative).
 func (b *batchSamples) fit(s *State) {
@@ -71,6 +77,8 @@ func (b *batchSamples) fit(s *State) {
 		if domain.CanonicalRole(v.Role) == domain.RolePrefill || v.Line.IsZero() {
 			continue
 		}
+		// Only vLLM's speculative flags are read (SpeculatesPerStep): SGLang's
+		// ITL is already per token.
 		if v.Params.SpeculatesPerStep() {
 			// The rows are the step's mean ITL (rm.AvgITL), as the replay's
 			// line rows are, while the analyzer may fit the line per
@@ -79,6 +87,6 @@ func (b *batchSamples) fit(s *State) {
 			v.BatchFit = whatif.BatchFit{Rows: len(b.rows[v.Variant]), Why: whatif.BatchTermSpeculative}
 			continue
 		}
-		v.BatchFit = whatif.FitBatchTerm(v.Line, b.rows[v.Variant], max(v.Ranks, 1), 0)
+		v.BatchFit = whatif.FitBatchTerm(v.Line, b.rows[v.Variant], max(b.ranks[v.Variant], 1), 0)
 	}
 }

@@ -785,7 +785,8 @@ the batch. The planner then prices `whatif.Decode.Batch` on top of the line
 no closed form), and the TTFT decode terms; figures carry `ITLBatchTerm`. A
 stated intercept, a line lifted to its floor (`SwitchITLLineAtFloor`) and a
 speculating vLLM variant are not priced with it: the residuals were not read
-against those lines.
+against those lines. The rows' batch is per engine rank as each row read its
+ranks, and the term is priced over the same ranks.
 
 On the Qwen3-32B recordings the term is real but one shape cannot identify
 it. The warm-up alone fits 0.003 ms per sequence and removes 0.4% of the
@@ -796,7 +797,18 @@ of the error. The engine's mean ITL rises smoothly from 14 to 31 ms over 46
 to 256 running sequences there; the step from 15 to 29 ms the router's TPOT
 shows is its histogram's 25 ms bucket edge, not the engine. Since a fleet's
 recording rarely holds two shapes, the switch stays off.
-`whatif.CheckLine` still prices its rows on the line alone.
+`whatif.CheckLine` still prices its rows on the line alone, and a bootstrap
+resample whose `B` is too low for the term fitted on the point line is read
+on the line alone (`BatchTerm.UsableWith`). A refused fit's reason
+(`BatchFit.Why`) is not shown in any output. The slope is read on the
+batch with its fill-linear part removed, since the line's slope already
+holds that part, and the gain gate is on the model as priced, the line
+plus the term with no offset, against the line alone. On rows whose own
+line already took part of the term into its slope, the slope comes back
+right (a synthetic two-shape fit reads 0.034 ms at roof 120 where the raw
+hinge read 0.015 ms at roof 48 and passed the old gate), but priced on that
+line the term removes little of its error and the gate refuses it: pricing it
+would need the line refitted with the term, which this does not do.
 
 ### ITL per accepted token (speculative decoding)
 

@@ -131,3 +131,18 @@ func TestBatchSamples_ASpeculatingVariantIsRefused(t *testing.T) {
 	assert.True(t, fit.Term.IsZero())
 	assert.Equal(t, 200, fit.Rows)
 }
+
+// The term is priced per rank as its rows were read: rows that did not read
+// their ranks divide by one, so the term carries one rank even where the
+// variant is configured with eight.
+func TestBatchSamples_TheTermsRanksAreTheRows(t *testing.T) {
+	line := itl.Model{A: 0.03, B: 0.012}
+	b := newBatchSamples(true)
+	for _, in := range batchFixture(line) {
+		b.note(in)
+	}
+	st := &State{Variants: []VariantState{{Variant: "v", Role: "decode", Line: line, Ranks: 8}}}
+	b.fit(st)
+	require.Empty(t, st.Variants[0].BatchFit.Why)
+	assert.Equal(t, 1, st.Variants[0].BatchFit.Term.Ranks)
+}

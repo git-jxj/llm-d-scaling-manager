@@ -61,4 +61,29 @@ func TestBatchTerm_DecodeVariantsPricesTheReplaysTerm(t *testing.T) {
 
 	lifted := priced(t, state(whatif.BatchFit{Term: term}, 0.001), map[string]bool{})
 	assert.True(t, lifted.decode.Batch.IsZero(), "a lifted line is not the one the term was read on")
+	assert.Equal(t, term, batchTerm(state(whatif.BatchFit{Term: term}, 0).Variants[0], false))
+	assert.True(t, batchTerm(state(whatif.BatchFit{Term: term}, 0).Variants[0], true).IsZero(),
+		"a stated intercept refits the line: the term was not read on it")
+}
+
+// A bootstrap resample too low for the term (B under Slope*Roof) is read on
+// the line alone, not dropped from the band.
+func TestBatchTerm_ALowResampleIsReadOnTheLineAlone(t *testing.T) {
+	term := whatif.BatchTerm{Slope: 0.1e-3, Roof: 100, Ranks: 1}
+	low := itl.Model{A: 0.03, B: 0.005}
+	require.False(t, term.UsableWith(low), "B 5 ms is under 0.1 ms x 100")
+	assert.True(t, term.UsableWith(itl.Model{A: 0.03, B: 0.012}))
+	assert.True(t, whatif.BatchTerm{}.UsableWith(low), "no term fits every line")
+
+	pv := pricedVariant{decode: whatif.Decode{Line: itl.Model{A: 0.03, B: 0.012}, Band: whatif.FillBand{Lo: 0.15, Hi: 0.8},
+		CapacityTokens: 764_672, KVPerRequest: 1500, OutputTokens: 1000, ReplicaCap: 256, Replicas: 1, Tier: whatif.TierOLS, Batch: term}}
+	var read []whatif.BatchTerm
+	pv.lines = whatif.LineResamples{Lines: []whatif.Resample{{Line: low}, {Line: pv.decode.Line}}, Drawn: 2}
+	pv.band(whatif.KneeRate(pv.decode), func(d whatif.Decode) whatif.Result {
+		read = append(read, d.Batch)
+		return whatif.KneeRate(d)
+	})
+	require.Len(t, read, 2)
+	assert.True(t, read[0].IsZero(), "the low resample: the line alone")
+	assert.Equal(t, term, read[1])
 }

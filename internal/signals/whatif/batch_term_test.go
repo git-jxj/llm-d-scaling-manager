@@ -205,3 +205,32 @@ func TestFitBatchTerm_Gates(t *testing.T) {
 		t.Error("NaN gain")
 	}
 }
+
+// The line the planner prices was fitted on the same rows, so its slope has
+// already taken the part of the batch that moves with the fill. Fitted on
+// the residuals of that line, the term's slope is read on the rest of the
+// batch: it comes back at the true 0.034 ms and roof 120, where a slope of
+// the raw hinge on those residuals reads 0.015 ms. Priced on that line as it
+// is, the term removes little of the line's own error, since the line took
+// part of it: the gain gate refuses it, and the line alone is priced.
+func TestFitBatchTerm_OnTheRowsOwnLine(t *testing.T) {
+	truth := itl.Model{A: 0.03, B: 0.012}
+	rows := batchRows(truth, q32jBatchTerm(), []float64{1500, 8000}, 0.3e-3)
+	// The line an OLS fit of ITL on k over the rows gives.
+	var sk, sy, skk, sky float64
+	for _, r := range rows {
+		sk, sy, skk, sky = sk+r.K, sy+r.ITLSec, skk+r.K*r.K, sky+r.K*r.ITLSec
+	}
+	n := float64(len(rows))
+	a := (n*sky - sk*sy) / (n*skk - sk*sk)
+	own := itl.Model{A: a, B: (sy - a*sk) / n}
+	if !(own.A > truth.A) {
+		t.Fatalf("the rows' own line %+v should have taken part of the term into its slope", own)
+	}
+	fit := FitBatchTerm(own, rows, 1, 0)
+	near(t, "slope", fit.Slope, 0.034e-3, 0.004e-3)
+	near(t, "roof", fit.Roof, 120, 15)
+	if fit.Why != BatchTermSmallGain || !fit.Term.IsZero() {
+		t.Errorf("fit %+v: want the gain gate to refuse a term on the line that took part of it", fit)
+	}
+}
