@@ -328,8 +328,8 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		fmt.Fprintf(&b, layout, h.Start.Format("2006-01-02 15:04"), mean, p95, np, nd, busiest, ap, ad, verdict)
 	}
 	if notServing {
-		b.WriteString("had (+n): n more replicas were asked for and not serving (they exist and are not ready: starting, unschedulable, " +
-			"or held by an admission gate), in the hour's bucket of the fewest serving; the verdict judges what served\n")
+		b.WriteString("had (+n): n more replicas were asked for and not serving (they exist and are not ready: starting, unschedulable,\n" +
+			"  held by an admission gate, or a rollout's surge), each role in its bucket of the fewest serving; the verdict judges what served\n")
 	}
 	s := p.Summary
 	c := s.Counts

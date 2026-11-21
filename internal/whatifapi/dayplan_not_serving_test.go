@@ -64,6 +64,36 @@ func TestHourNotServingReadsTheBucketOfTheFewest(t *testing.T) {
 	assert.Nil(t, hourNotServing(had, []*DayBucket{b(1, 0), b(2, 1)}), "the restart is in the bucket of 2: 1, not 1(+1)")
 	assert.Equal(t, &FleetCounts{Decode: 2}, hourNotServing(had, []*DayBucket{b(1, 1), b(1, 2)}), "the most at a tie")
 	assert.Nil(t, hourNotServing(nil, nil))
+
+	// Per role: the fewest prefill and the fewest decode can be different
+	// buckets, each column read off its own.
+	two := []*DayBucket{
+		{Actual: &FleetCounts{Prefill: 1, Decode: 3}, NotServing: &FleetCounts{Prefill: 1, Decode: 2}},
+		{Actual: &FleetCounts{Prefill: 2, Decode: 2}, NotServing: &FleetCounts{Prefill: 3, Decode: 1}},
+		{NotServing: &FleetCounts{Prefill: 9, Decode: 9}},
+	}
+	assert.Equal(t, &FleetCounts{Prefill: 1, Decode: 1}, hourNotServing(&FleetCounts{Prefill: 1, Decode: 2}, two),
+		"prefill off the first bucket, decode off the second; a bucket with no had is none")
+}
+
+// A bucket's had and (+n) describe a fleet its cycles had: half its cycles
+// at 2 serving and 1 restarting, half at 3 serving, read 3 serving and
+// none more, not 3(+1), four replicas no cycle had.
+func TestNotServingOfPairsTheCycles(t *testing.T) {
+	samples := make([]SeriesSample, 20)
+	for i := range samples {
+		samples[i] = SeriesSample{Prefill: 1, Decode: 3}
+		if i < 10 {
+			samples[i].Decode, samples[i].DecodeNotServing = 2, 1
+		}
+	}
+	assert.Equal(t, FleetCounts{Prefill: 1, Decode: 3}, actualOf(samples))
+	assert.Equal(t, FleetCounts{}, notServingOf(samples))
+	for i := range samples[:15] {
+		samples[i].Decode, samples[i].DecodeNotServing = 2, 1
+	}
+	assert.Equal(t, FleetCounts{Prefill: 1, Decode: 2}, actualOf(samples))
+	assert.Equal(t, FleetCounts{Decode: 1}, notServingOf(samples), "most cycles 2 serving and 1 restarting: 2(+1)")
 }
 
 // hasNote says a note holds s.

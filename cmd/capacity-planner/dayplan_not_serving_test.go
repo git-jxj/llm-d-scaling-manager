@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,23 +59,28 @@ func TestDayPlanHadSaysWhatWasAskedAndNotServing(t *testing.T) {
 	assert.Equal(t, 2, strings.Count(out, "(+"), "the hour and the line under the table; the other hours had none")
 }
 
-// On a real recording, the P/D restart, a decode pod restarted: a bucket
-// says it was not ready, and an hour reads its had and (+n) off one bucket
-// (one that had that few serving and that many not ready), never the
-// fewest of one bucket beside the restart of another.
-func TestDayPlanNotServingOnARestart(t *testing.T) {
+// On a real recording, the P/D restart run, decode scales up twice: at
+// 12:25 two replicas start beside the two serving (4 serve from 12:30), at
+// 12:45 one beside three (4 from 12:50). Those buckets say so; the hours
+// read their bucket of the fewest serving (12:10 and 13:05, one decode
+// each, none starting), so neither hour pairs the fewest of one bucket with
+// the starting replicas of another: 12:00 reads 1, not 1(+2).
+func TestDayPlanNotServingOnAScaleUp(t *testing.T) {
 	p, _ := dayJSON(t, "--recording", stairDir+"pd-restart/recording.jsonl.gz")
-	assert.True(t, slices.ContainsFunc(p.Buckets, func(b whatifapi.DayBucket) bool { return b.NotServing != nil }),
-		"the restart shows as a replica not serving")
-	for _, h := range p.Hours {
-		if h.NotServing == nil {
-			continue
+	got := map[string][2]whatifapi.FleetCounts{}
+	for _, b := range p.Buckets {
+		if b.NotServing != nil {
+			require.NotNil(t, b.Actual)
+			got[b.Start.Format("15:04")] = [2]whatifapi.FleetCounts{*b.Actual, *b.NotServing}
 		}
-		require.NotNil(t, h.Actual)
-		hour := h.Start
-		assert.True(t, slices.ContainsFunc(p.Buckets, func(b whatifapi.DayBucket) bool {
-			return b.Start.Truncate(time.Hour).Equal(hour) && b.Actual != nil && b.NotServing != nil &&
-				b.Actual.Decode == h.Actual.Decode && b.NotServing.Decode == h.NotServing.Decode
-		}), "%s: had D %d (+%d) from one bucket", hour, h.Actual.Decode, h.NotServing.Decode)
+	}
+	assert.Equal(t, map[string][2]whatifapi.FleetCounts{
+		"12:25": {{Prefill: 1, Decode: 2}, {Decode: 2}},
+		"12:45": {{Prefill: 2, Decode: 3}, {Decode: 1}},
+	}, got)
+	require.Len(t, p.Hours, 2)
+	for _, h := range p.Hours {
+		assert.Equal(t, &whatifapi.FleetCounts{Prefill: 1, Decode: 1}, h.Actual, h.Start)
+		assert.Nil(t, h.NotServing, "%s: its bucket of the fewest serving had none starting", h.Start)
 	}
 }

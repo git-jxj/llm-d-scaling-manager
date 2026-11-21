@@ -669,7 +669,7 @@ func hourNotServing(had *FleetCounts, buckets []*DayBucket) *FleetCounts {
 	}
 	var out FleetCounts
 	for _, b := range buckets {
-		if b.NotServing == nil {
+		if b.NotServing == nil || b.Actual == nil {
 			continue
 		}
 		if b.Actual.Prefill == had.Prefill {
@@ -696,14 +696,18 @@ func countFunc[T any](xs []T, f func(T) bool) int {
 	return n
 }
 
-// notServingOf is the median of each role's replicas asked for and not
-// serving over samples, as actualOf is of the pods serving.
+// notServingOf is each role's replicas asked for and not serving over
+// samples, beside actualOf's median serving: the median of serving plus
+// not serving, less the median serving, floored at 0. Two medians taken
+// apart could pair the serving of some cycles with the not serving of
+// others, a fleet no cycle had.
 func notServingOf(samples []SeriesSample) FleetCounts {
 	p, d := make([]int, len(samples)), make([]int, len(samples))
 	for i, x := range samples {
-		p[i], d[i] = x.PrefillNotServing, x.DecodeNotServing
+		p[i], d[i] = x.Prefill+x.PrefillNotServing, x.Decode+x.DecodeNotServing
 	}
-	return FleetCounts{Prefill: medianInt(p), Decode: medianInt(d)}
+	had := actualOf(samples)
+	return FleetCounts{Prefill: max(medianInt(p)-had.Prefill, 0), Decode: max(medianInt(d)-had.Decode, 0)}
 }
 
 // shapeKnob is x rounded onto the shape grid, a whole token.
@@ -1223,8 +1227,8 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			"A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.")
 	if n := countFunc(out.Buckets, func(b DayBucket) bool { return b.NotServing != nil }); n > 0 {
 		out.Notes = append(out.Notes, fmt.Sprintf("Had counts the replicas serving. In %d bucket(s) more were asked for and not serving "+
-			"(notServing: replicas that exist and are not ready, starting, unschedulable, or held by an admission gate such as Kueue's). "+
-			"Had and (+n) of an hour come from its bucket of the fewest serving; the verdict judges what served. A replica whose pod was never "+
+			"(notServing: replicas that exist and are not ready, starting, unschedulable, held by an admission gate such as Kueue's, or a "+
+			"rolling update's surge). Each role's had and (+n) of an hour come from its bucket of the fewest of that role serving; the verdict judges what served. A replica whose pod was never "+
 			"created (a ResourceQuota refusing it) is not in the recording.", n))
 	}
 	if q.noTTFT {

@@ -706,8 +706,9 @@ alone. A higher `--ttft` sizes them.
   UNDER when any of its buckets is, and over when every sized bucket is.
   Had counts what served. Replicas asked for and not serving, those that
   exist and are not ready (starting, unschedulable, or held by an admission
-  gate such as Kueue's), show beside it as `2(+1)`, read off the hour's
-  bucket of the fewest serving, with a note. A replica whose pod was never
+  gate such as Kueue's; a rolling update's surge pods count too), show
+  beside it as `2(+1)`, each role read off the hour's bucket of the fewest
+  of that role serving, with a note. A replica whose pod was never
   created (a ResourceQuota refusing it) is not in the recording and is not
   shown. For a LeaderWorkerSet a replica is a group.
   Replica-hours and GPU-hours needed and had are over the sized buckets, and
