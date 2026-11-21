@@ -686,9 +686,10 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		q.promptCV = whole.promptCV
 	}
 	if a := req.Assume; a != nil {
-		// A backtest prices every statistic, percentiles among them, so a
-		// TPOT ratio is checked as a percentile's.
-		sc := Scenario{Assume: *a, TPOT: &ResolvedObjective{Statistic: statP90}}
+		// Checked as a plan's, at a TPOT percentile (a backtest prices its
+		// percentiles): a term the pricer would refuse on every step is the
+		// caller's error, not a test with no step judged.
+		sc := Scenario{Assume: *a, TPOT: &ResolvedObjective{Statistic: "p90"}}
 		if err := sc.checkAssume(); err != nil {
 			return nil, err
 		}
