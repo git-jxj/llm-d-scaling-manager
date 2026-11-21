@@ -455,7 +455,8 @@ type DecodePacking struct {
 	// Reason is the target's source (slo-tpot) with Bound itl, and with
 	// Bound none DecodePackingNotBinding or why the bound did not apply
 	// (no-line, borrowed-line, one-sided-line, above-band-line,
-	// default-intercept, per-step-line, target-unreachable, bad-band).
+	// default-intercept, per-step-line, target-unreachable, bad-band,
+	// no-kv-capacity).
 	Reason string
 	// K2Unbounded is the k2 before the bound, and K2 the one priced, in KV
 	// tokens.
