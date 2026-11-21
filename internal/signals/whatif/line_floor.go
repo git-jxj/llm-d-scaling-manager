@@ -26,14 +26,20 @@ func (f LineFloor) ok() bool {
 // there. Its B is then not the engine's: a full fit over a narrow spread of
 // fill pivots about the readings' mean, and B moves with the fit's slope. On
 // the public staircase's warm-up the last full fit, at the top of a plateau,
-// put B at 1.13 ms where the engines read 1.75 ms at a fill of 0.0006, and
+// put B at 1.13 ms where the engines read 1.75 ms at a fill of 0.0006 to
+// 0.0011, and
 // the planner's decode fill at a rate is B / (C/KVreq - lambda*OL*A) times
 // lambda*OL (Decode.fillAtReplicaRate): proportional to B, so the fill and
 // TPOT it predicted were about 0.7 of what the pods held (issue
 // llm-d-incubation/llm-d-scaling-manager#274).
 //
 // Only B moves: the slope was fitted over the band, where the line is read,
-// and a shift up prices a higher ITL at every fill, never a lower one.
+// and a shift up prices a higher ITL at every fill, never a lower one. That
+// is not itl.FloorIntercept's rule, which pivots the line through the floor
+// and its readings' mean and so lowers A: on the staircase's B-off phase the
+// shifted line reads 7.36 ms at the fill of 0.18 where 7.6 ms was measured,
+// and the pivoted one about 7.1 ms. A held line has no readings to pivot
+// about either.
 func LiftToFloor(tier string, line itl.Model, floor LineFloor) (itl.Model, float64) {
 	if !floor.ok() || !MeasuredIntercept(tier, line) || !itl.ValidModel(line.A, line.B) {
 		return line, 0

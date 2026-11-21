@@ -889,8 +889,7 @@ to 2.65 requests/s for two and a half minutes.
 a planner-only switch, off in the controller and, for now, in the capacity
 planner's replay too: with it on, the planner predicts less decode KV fill
 than the pods held, and reads TTFT and TPOT low (see the floor lift below).
-With it, a key whose
-last `A` was fitted on steady readings then holds it instead of refitting on
+With it, a key whose last `A` was fitted on steady readings then holds it instead of refitting on
 every reading. After a load stops, the window's last readings are the
 ramp-down's: each minute's ITL still covers the load that stopped while its
 mean fill falls, so they read a steep slope. On the public staircase they
@@ -906,26 +905,34 @@ with the fit's slope. On the public staircase's warm-up, as the readings of
 the climb to the 8k-prompt plateau aged out of the window and the rest sat
 at fills of 0.66 to 0.70, the full fit's `B` fell from 2.39 ms to 1.13 ms in
 six cycles (90 s) while `A` rose from 28.8 to 30.7 ms per unit of fill; the
-next fit's `B` was negative and was not kept, so 1.13 ms stayed the key's. The engines read 1.75 ms at a fill of 0.0006. The
-planner's decode fill at a rate is `lambda*OL*B / (C/KVreq - lambda*OL*A)`
-(`whatif.Decode.fillAtReplicaRate`), proportional to `B`, so at 33.5 r/s on
-the B-off phase it predicted a fill of 0.13 and a mean TPOT of 5.3 ms where
-the pods held 0.18 (`KvUsageMean`, the fill the line is fitted on; the 0.26
-first quoted was `KvCacheUsage`) at a mean ITL of 7.6 ms.
+next fit's `B` was negative and was not kept, so 1.13 ms stayed the key's.
+The engines read 1.75 ms at a fill of 0.0006 to 0.0011. The planner's
+decode fill at a rate is `lambda*OL*B / (C/KVreq - lambda*OL*A)`
+(`whatif.Decode.fillAtReplicaRate`), proportional to `B`, so at 33.5 r/s,
+the B-off phase's top rate (`at-replicas --load 33.5r/s`) it predicted a fill
+of 0.13 and a mean TPOT of 5.3 ms where the pods held 0.18 (`KvUsageMean`,
+the fill the line is fitted on; the 0.26 quoted in issue
+llm-d-incubation/llm-d-scaling-manager#274 was `KvCacheUsage`) at a mean ITL
+of 7.6 ms.
 
 `saturation.SwitchITLLineAtFloor`, also planner-only and off, lifts the
 line the planner's replay learned to the floor it read below the band
 (`whatif.LiftToFloor`, applied in `learnreplay.StatesFrom` after the refit):
 where the line reads under the floor at the floor's fill, `B` rises until it
-passes through it, and `A` is kept. The analyzer only holds the switch. With
-the hold and the lift on, the planner's mean TPOT on the staircase's
-8k-prompt phases comes within 13% of measured (0.87 to 0.93), where the hold
-alone read 0.57 to 0.61 on the first run and neither read 1.22 to 1.49, with
-up to 9 steps refused as saturated. On the 1k-prompt, 1000-output phase it
-reads 1.38 to 1.45, the safe side. Both stay out of
-`learnreplay.PlannerSwitches` while the p90 TTFT on the 8k-prompt phases
-reads 15% to 23% under; the lift alone, on the steeper line the hold
-replaces, reads TPOT higher still (1.84 to 2.06).
+passes through it, and `A` is kept, on a P/D decode role only. This is not
+[B from the floor below the band](#b-from-the-floor-below-the-band-issue-169-item-1):
+that sets `B` only on a pinned fit and ends at a learned `B`, and here the
+`B` was learned, by the full fit that pivoted. The analyzer accepts the
+switch and does not read it. With the hold and the lift on, the planner's
+mean TPOT on the staircase's B phases (8000/200, Poisson arrivals) comes
+within 13% of measured (0.87 to 0.93), where the hold alone read 0.57 to 0.61
+on the first run and neither read 1.22 to 1.49, with up to 9 steps refused
+as saturated. On the bursty C phases and the second warm-up's B-onset phase
+it reads 0.79 to 0.84, and on the 1k-prompt, 1000-output A phases 1.23 to
+1.45, the safe side. Both stay out of `learnreplay.PlannerSwitches` while the
+p90 TTFT on the B-off and B-on phases reads 15% to 23% under; the lift alone,
+on the steeper line the hold replaces, reads TPOT higher still (1.84 to
+2.06).
 
 A saturated fleet has few steady readings: `k` swings between above the band
 and its dips into it by more than `DefaultMaxKDrift`, and on a two-namespace

@@ -194,11 +194,14 @@ type VariantState struct {
 	// itl.BelowBandMinReadings, where the line is not read below the band.
 	// BelowBandFill is the fill that reading was taken at, 0 with none.
 	BelowBandITL, BelowBandFill float64
-	// LineLift is how far, in seconds, Line's intercept was raised to pass
-	// through that floor (saturation.SwitchITLLineAtFloor,
-	// whatif.LiftToFloor); 0 where it was not. Baseline and LineReadings
-	// are the fit's, before the lift.
-	LineLift float64
+	// LineAtFloor says the replay lifts a decode line to that floor
+	// (saturation.SwitchITLLineAtFloor, whatif.LiftToFloor), and LineLift
+	// how far, in seconds, Line's intercept was raised to pass through it; 0
+	// where it was not. Baseline and LineReadings are the fit's, before the
+	// lift. A resample of the line is lifted by the same rule wherever
+	// LineAtFloor is set, whether or not the line itself was.
+	LineAtFloor bool
+	LineLift    float64
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -253,9 +256,10 @@ type shapeSample struct {
 // fixes that fill (issue llm-d-incubation/llm-d-scaling-manager#274) and
 // only helps with the hold: alone it lifts the steeper line the hold
 // replaces, and reads TPOT higher still. With both, the planner's mean TTFT
-// and TPOT on the public staircase's 8k-prompt phases come within 13% of
-// measured, but its p90 TTFT there still reads 15% to 23% under and its p90
-// TPOT up to 32% under, so both stay off.
+// and TPOT on the public staircase's B phases (8000/200, Poisson) come
+// within 13% of measured, but its p90 TTFT on the B-off and B-on phases
+// still reads 15% to 23% under and its p90 TPOT up to 32% under (39% on the
+// bursty C phases), so both stay off.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -362,12 +366,12 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		arrivals []float64
 		ranges   = map[string]ShapeRange{}
 	)
-	lineAtFloor := false
+	// Read once: the switches are set before the replay starts.
+	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
 		}
-		lineAtFloor = r.sat.ITLLineAtFloor()
 		// The replay applied the event before asking: its data decoded in
 		// full there, so the input alone is read here.
 		raw, _ := learnrec.Raw(ev.Data).Member("Input")
@@ -821,10 +825,14 @@ func (vs *VariantState) refit() {
 // liftToFloor raises a decode variant's line to the floor read below the
 // band, when on is set (saturation.SwitchITLLineAtFloor; whatif.LiftToFloor).
 // It runs after the refit, which finds the readings of the line as fitted.
+// Only a P/D decode role: an aggregated variant's readings below the band
+// carry prefill chunks, which would read a floor its decode steps do not
+// have, and the evidence for the lift is P/D decode alone.
 func (vs *VariantState) liftToFloor(on bool) {
-	if !on || domain.CanonicalRole(vs.Role) == domain.RolePrefill {
+	if !on || domain.CanonicalRole(vs.Role) != domain.RoleDecode {
 		return
 	}
+	vs.LineAtFloor = true
 	vs.Line, vs.LineLift = whatif.LiftToFloor(vs.Tier, vs.Line, whatif.LineFloor{ITL: vs.BelowBandITL, Fill: vs.BelowBandFill})
 }
 

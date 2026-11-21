@@ -45,6 +45,8 @@ func TestITLLineAtFloor_TheStaircaseLineThroughItsFloor(t *testing.T) {
 	require.Greater(t, off.BelowBandITL, 0.0, "the golden reads a floor below the band")
 	assert.Less(t, off.Line.ITLAt(off.BelowBandFill), off.BelowBandITL, "held, the line reads under its floor")
 	assert.Zero(t, off.LineLift)
+	assert.False(t, off.LineAtFloor)
+	assert.True(t, on.LineAtFloor, "the bootstrap lifts its resamples by the same rule")
 
 	assert.Equal(t, off.Line.A, on.Line.A, "the slope is kept")
 	assert.InDelta(t, on.BelowBandITL, on.Line.ITLAt(on.BelowBandFill), 1e-12, "lifted, the line passes through its floor")
@@ -56,5 +58,6 @@ func TestITLLineAtFloor_TheStaircaseLineThroughItsFloor(t *testing.T) {
 
 	steep := at(false, true)
 	assert.Zero(t, steep.LineLift, "the pinned fit reads over its floor: nothing to lift")
+	assert.True(t, steep.LineAtFloor, "its resamples are still lifted where they read under it")
 	assert.GreaterOrEqual(t, steep.Line.ITLAt(steep.BelowBandFill), steep.BelowBandITL)
 }

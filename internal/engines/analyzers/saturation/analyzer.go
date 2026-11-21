@@ -534,8 +534,8 @@ type SaturationAnalyzer struct {
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillFBusyMinutes, itlHoldSteadySlope bool
 	// itlLineAtFloor is SwitchITLLineAtFloor: off from the constructor,
-	// planner-only; the analyzer holds it for the planner's replay
-	// (ITLLineAtFloor) and reads it nowhere else.
+	// planner-only; the analyzer accepts it for the planner's replay
+	// (learnreplay.StatesFrom reads it) and reads it nowhere.
 	itlLineAtFloor bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's

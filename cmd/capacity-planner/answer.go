@@ -596,7 +596,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		if vs.Refitted {
 			fit := whatif.Refit{Tier: vs.Tier, Line: vs.Line, Baseline: vs.Baseline, MinSettled: vs.MinSettled, OneSided: vs.OneSided}
-			if vs.LineLift > 0 {
+			if vs.LineAtFloor {
 				// Each resample lifted as the line was
 				// (saturation.SwitchITLLineAtFloor).
 				fit.Floor = whatif.LineFloor{ITL: vs.BelowBandITL, Fill: vs.BelowBandFill}
