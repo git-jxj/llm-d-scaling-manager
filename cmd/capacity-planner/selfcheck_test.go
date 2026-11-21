@@ -29,9 +29,11 @@ var selfCheckQ32 = []string{"at-replicas", "--recording", q32Recording, "--ttft"
 // variants, file. (Each run replays the q32 warm-up: two runs, not more.)
 func TestSelfCheckGolden(t *testing.T) {
 	withSelfCheck(t)
-	// The window's own 2 + 2 carried 3.8x the fleet knee for 8 minutes: the
-	// window contradicts the model, so no verdict is given (#297) and none
-	// is judged for trust (#298; TestReport_JudgeTrust holds the exit 4).
+	// The load is the warm-up's 1000/1000 phase, the shape priced its last
+	// cycles' 8k/26: of different traffic, so no verdict is given (#297;
+	// at its own shape the window's 2 + 2 ran at 0.8x the knee, not past
+	// it) and none is judged for trust (#298; TestReport_JudgeTrust holds
+	// the exit 4).
 	checkGolden(t, "at-replicas-q32-self-check", whatif.ExitRefused, selfCheckQ32)
 	out, code := runCmd(t, append(selfCheckQ32, "-o", "json")...)
 	require.Equal(t, whatif.ExitRefused, code, out)
@@ -44,7 +46,8 @@ func TestSelfCheckGolden(t *testing.T) {
 	assert.Contains(t, sc.Untrusted, "ttft")
 	require.NotEmpty(t, rep.Shapes)
 	assert.Equal(t, whatifapi.VerdictNotJudged, rep.Shapes[0].Verdict.Verdict)
-	assert.Contains(t, rep.Shapes[0].Verdict.Summary, contradictsWords)
+	assert.Contains(t, rep.Shapes[0].Verdict.Summary, phasesWords)
+	assert.NotContains(t, rep.Shapes[0].Verdict.Summary, contradictsWords, "its hot cycles are not at the shape priced")
 	assert.Empty(t, rep.Shapes[0].Verdict.Trust, "a verdict not given is not judged for trust")
 	require.NotEmpty(t, sc.IssueURL)
 	u, err := url.Parse(sc.IssueURL)

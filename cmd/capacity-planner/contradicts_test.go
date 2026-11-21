@@ -9,26 +9,32 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // contradictsReporter is a reporter on a window of 40 cycles 15 s apart, all
-// at 1 r/s on 2 prefill (p) + 2 decode (d), but for the cycles in hot, at
-// rate on prefill replicas pre and decode replicas dec.
+// at 1 r/s on 2 prefill (p) + 2 decode (d) at the shape priced, 1000/1000,
+// but for the cycles in hot, served at rate on prefill replicas pre and
+// decode replicas dec. The arrivals are the served rate.
 func contradictsReporter(hot []int, rate float64, pre, dec int) *reporter {
 	const n = 40
 	at := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
 	st := &learnreplay.State{FirstAt: at, At: at.Add((n - 1) * 15 * time.Second),
 		ArrivalRates: make([]float64, n), ServingReplicas: map[string][]int{"p": make([]int, n), "d": make([]int, n)}}
+	series := make([]learnreplay.CycleShape, n)
 	for i := range n {
 		st.ArrivalRates[i], st.ServingReplicas["p"][i], st.ServingReplicas["d"][i] = 1, 2, 2
+		series[i] = learnreplay.CycleShape{Cycle: i + 1, InputTokens: 1000, OutputTokens: 1000, RequestRate: 1}
 	}
 	for _, i := range hot {
 		st.ArrivalRates[i], st.ServingReplicas["p"][i], st.ServingReplicas["d"][i] = rate, pre, dec
+		series[i].RequestRate = rate
 	}
-	return &reporter{st: st, sh: whatifapi.ReportShapeAsk{Measured: true},
-		pv: pricedVariant{state: learnreplay.VariantState{Variant: "d"}}, pfVariant: "p"}
+	st.Variants = []learnreplay.VariantState{{Variant: "p", Role: "prefill"}, {Variant: "d", Role: "decode", ShapeSeries: series}}
+	return &reporter{st: st, sh: whatifapi.ReportShapeAsk{Measured: true}, s: &servedState{st: st, decodeVariant: "d"},
+		pv: pricedVariant{state: st.Variants[1], shape: shape.Shape{AvgInputTokens: 1000, AvgOutputTokens: 1000}}, pfVariant: "p"}
 }
 
 // cycles is the indexes from..to-1.
@@ -41,11 +47,12 @@ func cycles(from, to int) []int {
 }
 
 // The window contradicts the knee when the fleet priced, or a smaller one,
-// carried more than 1.25x the fleet knee for 3 minutes without a break: 12
-// cycles 15 s apart. At the edges: 11 cycles, a rate at 1.25x, a break, a
-// larger fleet, a stated shape, no per-cycle fleet, no knee (#297).
+// served more than 1.25x the fleet knee at the shape priced for 3 minutes
+// without a break: 12 cycles 15 s apart. At the edges: 11 cycles, a rate at
+// 1.25x, a break, a larger fleet, a stated shape, no per-cycle fleet, no
+// knee (#297).
 func TestReport_WindowContradictsTheKnee(t *testing.T) {
-	base := fleetEval{kneeOK: true, knee: 4}
+	base := fleetEval{kneeOK: true, knee: 4, binds: roleDecodeWord, decodeKnee: whatif.Answer{Value: 4}}
 	for _, c := range []struct {
 		name     string
 		r        *reporter
@@ -53,7 +60,7 @@ func TestReport_WindowContradictsTheKnee(t *testing.T) {
 		want     bool
 		contains string
 	}{
-		{"12 cycles at 3x", contradictsReporter(cycles(10, 22), 12, 2, 2), 2, 2, true, "2 prefill + 2 decode or fewer carried above 1.25x the fleet knee of 4.0 r/s for 3 min without a break (12 cycles), up to 12.0 r/s (3.0x)"},
+		{"12 cycles at 3x", contradictsReporter(cycles(10, 22), 12, 2, 2), 2, 2, true, "2 prefill + 2 decode or fewer served above 1.25x the fleet knee of 4.0 r/s at the shape priced for 3 min without a break (12 cycles), up to 12.0 r/s (3.0x)"},
 		{"11 cycles", contradictsReporter(cycles(10, 21), 12, 2, 2), 2, 2, false, ""},
 		{"at 1.25x is not above", contradictsReporter(cycles(10, 22), 5, 2, 2), 2, 2, false, ""},
 		{"just above 1.25x", contradictsReporter(cycles(10, 22), 5.01, 2, 2), 2, 2, true, "(1.3x)"},
@@ -62,7 +69,7 @@ func TestReport_WindowContradictsTheKnee(t *testing.T) {
 		{"a larger decode carried it", contradictsReporter(cycles(10, 22), 12, 2, 3), 2, 2, false, ""},
 		{"no serving replica", contradictsReporter(cycles(10, 22), 12, 2, 0), 2, 2, false, ""},
 		{"a break", contradictsReporter(append(cycles(10, 16), cycles(17, 23)...), 12, 2, 2), 2, 2, false, ""},
-		{"decode alone priced", contradictsReporter(cycles(10, 22), 12, 3, 2), 0, 2, true, "2 decode or fewer carried"},
+		{"decode alone priced", contradictsReporter(cycles(10, 22), 12, 3, 2), 0, 2, true, "2 decode or fewer served"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := c.r.contradicted(c.np, c.nd, base)
@@ -80,11 +87,88 @@ func TestReport_WindowContradictsTheKnee(t *testing.T) {
 	assert.Empty(t, r.contradicted(2, 2, fleetEval{}), "no knee")
 }
 
-// On the ols-sweep the window's own 1 + 1 carried 14.8x the knee the model
-// prices; v0.12.2 called it UNDER-PROVISIONED, needing 18 decode. The
-// verdict is NOT JUDGED and says the window contradicts the model, and the
-// command exits refused (#297).
-func TestAtReplicas_TheOLSSweepContradictsTheModel(t *testing.T) {
+// Only what the window served at the shape priced judges the knee: the q32
+// warm-up's hot cycles ran at 1000/1000 while its knee is priced at the
+// last cycles' 8k/26, a different phase; a burst of arrivals the fleet did
+// not serve is not carried; a lower-bound prefill knee reads low by
+// construction; a decode knee set by the band's top stops short of a full
+// replica, so the share is over the band's top; and every variant of a
+// role counts toward its fleet (#297).
+func TestReport_ContradictsOnlyAtTheShapePriced(t *testing.T) {
+	base := fleetEval{kneeOK: true, knee: 4, binds: roleDecodeWord, decodeKnee: whatif.Answer{Value: 4}}
+
+	r := contradictsReporter(cycles(10, 22), 12, 2, 2)
+	r.pv.shape = shape.Shape{AvgInputTokens: 8016, AvgOutputTokens: 26}
+	assert.Empty(t, r.contradicted(2, 2, base), "hot cycles of another shape say nothing of this knee")
+	r.pv.shape = shape.Shape{AvgInputTokens: 1150, AvgOutputTokens: 900}
+	assert.NotEmpty(t, r.contradicted(2, 2, base), "within 20% of each length is the shape priced")
+
+	r = contradictsReporter(cycles(10, 22), 12, 2, 2)
+	for _, i := range cycles(10, 22) {
+		r.st.Variants[1].ShapeSeries[i].RequestRate = 4.5
+	}
+	assert.Empty(t, r.contradicted(2, 2, base), "arrivals of 12 r/s served at 4.5 r/s carried no more than 1.25x")
+
+	pre := fleetEval{kneeOK: true, knee: 4, binds: rolePrefill, prefillKnee: whatif.Answer{Value: 4, Flags: []whatif.Flag{whatif.VPLowerBound}}}
+	assert.Empty(t, contradictsReporter(cycles(10, 22), 12, 2, 2).contradicted(2, 2, pre), "a lower-bound knee")
+	pre.prefillKnee = whatif.Answer{Value: 4}
+	assert.NotEmpty(t, contradictsReporter(cycles(10, 22), 12, 2, 2).contradicted(2, 2, pre))
+
+	top := fleetEval{kneeOK: true, knee: 4, binds: roleDecodeWord,
+		decodeKnee: whatif.Answer{Value: 4, Basis: whatif.Basis{BoundBy: []whatif.Bound{whatif.BoundBandTop}}}}
+	r = contradictsReporter(cycles(10, 22), 6, 2, 2)
+	r.pv.decode.Band = whatif.FillBand{Lo: 0.2, Hi: 0.8}
+	assert.Empty(t, r.contradicted(2, 2, top), "6 r/s is under 1.25/0.8 = 1.56x a band-top knee of 4")
+	assert.NotEmpty(t, r.contradicted(2, 2, base), "but above 1.25x a knee the band's top does not set")
+
+	r = contradictsReporter(cycles(10, 22), 12, 2, 2)
+	r.st.Variants = append(r.st.Variants, learnreplay.VariantState{Variant: "d2", Role: "decode"})
+	r.st.ServingReplicas["d2"] = make([]int, 40)
+	for _, i := range cycles(10, 22) {
+		r.st.ServingReplicas["d2"][i] = 1
+	}
+	assert.Empty(t, r.contradicted(2, 2, base), "2 + 1 decode across the role's variants is more than the 2 priced")
+}
+
+// A would-be UNDER on a load whose cycles ran at another shape than the
+// measured shape priced is NOT JUDGED, and says both shapes; a stated shape
+// is the question's, and keeps its verdict (#294, #297).
+func TestReport_NotJudgedWhereTheLoadRanAtAnotherShape(t *testing.T) {
+	r := contradictsReporter(nil, 1, 2, 2)
+	r.pv.shape = shape.Shape{AvgInputTokens: 8016, AvgOutputTokens: 26}
+	r.loadShape = &whatifapi.ReportLoadShape{InputTokens: 1000, OutputTokens: 1000}
+	var v whatifapi.ReportVerdict
+	require.True(t, r.notJudgedUnder(2, 2, fleetEval{}, &v))
+	assert.Equal(t, whatifapi.VerdictNotJudged, v.Verdict)
+	assert.Contains(t, v.Summary, phasesWords+" the load's cycles ran at IL 1000 OL 1000, the shape priced is IL 8016 OL 26")
+	r.sh.Measured = false
+	assert.False(t, r.notJudgedUnder(2, 2, fleetEval{}, &whatifapi.ReportVerdict{}))
+	r.sh.Measured = true
+	r.loadShape = &whatifapi.ReportLoadShape{InputTokens: 8500, OutputTokens: 28}
+	assert.False(t, r.notJudgedUnder(2, 2, fleetEval{}, &whatifapi.ReportVerdict{}), "the same traffic")
+}
+
+// The q32 warm-up's hot cycles (5-34, 65-90) ran at 1000/1000, up to 3.8x
+// the knee its last cycles' 8k/26 prices: they say nothing of that knee. A
+// stated load past the knee, which no load shape withholds, is judged
+// UNDER-PROVISIONED, not contradicted (v0.12.3's first #297 check called
+// it contradicted).
+func TestAtReplicas_Q32HotCyclesOfAnotherShapeDoNotContradict(t *testing.T) {
+	out, code := runCmd(t, "at-replicas", "--recording", q32Recording, "--ttft", "2s@p90", "--load-seen", "12", "-o", "json")
+	var rep whatifapi.ReportResponse
+	require.NoError(t, json.Unmarshal([]byte(out), &rep), "exit %d: %s", code, out)
+	require.NotEmpty(t, rep.Shapes)
+	v := rep.Shapes[0].Verdict
+	assert.NotContains(t, v.Summary, contradictsWords)
+	assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Summary)
+}
+
+// On the ols-sweep the load's cycles ran at about 1000/560 while the shape
+// priced is the last cycles' 4569/1855: v0.12.2 called the window's own
+// 1 + 1 UNDER-PROVISIONED at 14.8x that shape's knee, needing 18 decode.
+// The verdict is NOT JUDGED and says the load and the shape priced are of
+// different traffic, and the command exits refused (#294, #297).
+func TestAtReplicas_TheOLSSweepLoadIsOfAnotherShape(t *testing.T) {
 	out, code := runCmd(t, "at-replicas", "--recording", olsSweep, "-o", "json")
 	require.Equal(t, whatif.ExitRefused, code, out)
 	var rep whatifapi.ReportResponse
@@ -92,9 +176,9 @@ func TestAtReplicas_TheOLSSweepContradictsTheModel(t *testing.T) {
 	require.NotEmpty(t, rep.Shapes)
 	v := rep.Shapes[0].Verdict
 	assert.Equal(t, whatifapi.VerdictNotJudged, v.Verdict, v.Summary)
-	assert.Contains(t, v.Summary, contradictsWords)
-	assert.Contains(t, v.Summary, "(14.8x)")
-	assert.Nil(t, v.Needed, "no fleet is sized on a knee the window contradicts")
+	assert.Contains(t, v.Summary, phasesWords+" the load's cycles ran at IL ")
+	assert.Contains(t, v.Summary, "the shape priced is IL 4569 OL 1855")
+	assert.Nil(t, v.Needed, "no fleet is sized on a knee of other traffic")
 	for _, g := range rep.Shapes[0].Growth {
 		assert.Equal(t, whatifapi.VerdictNotJudged, g.Verdict.Verdict, g.Verdict.Summary)
 	}

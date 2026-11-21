@@ -27,9 +27,10 @@ func reportJSON(t *testing.T, args ...string) *whatifapi.ReportResponse {
 // On the guide's sample the p95 load, 29.7 r/s, ran at 1000-token prompts
 // and 500-token outputs (cycles 82-95), while the measured shape is the
 // last cycles' 4569/1855. The report says so beside the shape priced and
-// flags it; asked the load's own shape, it prices the load at the traffic
-// that made it, and needs what day-plan sizes the same rate at (4 + 2), not
-// 14 + 23.
+// flags it, and gives no verdict on the measured shape (v0.12.2 asked
+// 14 + 23 there, #297); asked the load's own shape, it prices the load at
+// the traffic that made it, and needs what day-plan sizes the same rate at
+// (4 + 2).
 func TestAtReplicasLoadShape(t *testing.T) {
 	r := reportJSON(t, "--shape", "measured", "--shape", "load")
 	require.Len(t, r.Shapes, 2)
@@ -42,7 +43,8 @@ func TestAtReplicasLoadShape(t *testing.T) {
 	assert.Greater(t, m.InputTokens, 4*ls.InputTokens, "the measured shape is the last cycles'")
 	assert.True(t, ls.Mismatch)
 	assert.Contains(t, m.Flags, whatifapi.FlagShapeLoadMismatch)
-	assert.Contains(t, m.Verdict.Summary, "needs 14 prefill + 23 decode")
+	assert.Equal(t, whatifapi.VerdictNotJudged, m.Verdict.Verdict, m.Verdict.Summary)
+	assert.Contains(t, m.Verdict.Summary, phasesWords)
 
 	assert.Equal(t, ls.InputTokens, l.InputTokens, "--shape load is the load's cycles' shape")
 	assert.Equal(t, ls.OutputTokens, l.OutputTokens)

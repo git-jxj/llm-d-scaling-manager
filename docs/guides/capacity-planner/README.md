@@ -558,8 +558,9 @@ It replays the recording once and answers, for each shape and load:
     target at the window's peak too, since removing capacity is the costly
     mistake.
   - RIGHT-SIZED: the fleet holds, and no role has a replica to spare.
-  - NOT JUDGED: the window contradicts the model (its own fleet carried
-    more than 1.25x the knee for 3 minutes), or a figure the verdict needs
+  - NOT JUDGED: where it would be UNDER-PROVISIONED on a load of other
+    traffic than the shape priced, or on a knee the window's own fleet
+    served past for 3 minutes; or a figure the verdict needs
     is refused (the sentence says
     which), there is no load, or the prefill side is not priced and decode
     alone holds. With no prefill speed learned, decode alone is judged
@@ -630,10 +631,20 @@ knee read 44% to 103% high on the 0.6B goldens, and the needed fleet gives the
 decode count at that error beside the point answer
 ([accuracy](accuracy.md#what-was-measured)). TTFT is not validated.
 
-A verdict is NOT JUDGED when the window contradicts the model: the fleet
-priced, or a smaller one, carried more than 1.25x the fleet knee for 3
-minutes without a break. The summary says how far and for how long; the
-knee reads low for that window, so no fleet is sized on it.
+A verdict that would be UNDER-PROVISIONED is NOT JUDGED instead in two
+cases, and no fleet is sized:
+
+- The load and the shape priced are of different traffic: the cycles the
+  load was read from ran more than 20% off the measured shape in a length
+  (the `SHAPE/LOAD MISMATCH` line). The knee is of other traffic. The
+  summary gives both shapes; `--shape load` prices the load at its own.
+- The window contradicts the model: at the shape priced, the fleet priced,
+  or a smaller one, served more than 1.25x the fleet knee for 3 minutes
+  without a break (over the band's top where that sets the decode knee;
+  never on a prefill knee read off a lower bound of V_P). The summary says
+  how far and for how long; the knee reads low for that window.
+
+Only an UNDER is withheld: neither case shows the fleet holding.
 
 ## Plan replicas over a day
 

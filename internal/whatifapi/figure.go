@@ -118,14 +118,21 @@ type Validation struct {
 	// (min-max, n=6 load levels, 12 readings; q32 staircase)", or "OUTSIDE
 	// VALIDATED REGION (why)".
 	Label string `json:"label"`
-	// Source, Shape, ErrorLo, ErrorHi and Readings are the row that holds
-	// the figure, absent outside it. The errors are signed shares, the model
-	// over the measured figure less 1; one absent is unbounded on its side.
+	// Source, Shape, ErrorLo, ErrorHi, Spread, Readings, Levels and Holdout
+	// are the row that holds the figure, absent outside it. The errors are
+	// signed shares, the model over the measured figure less 1; one absent
+	// is unbounded on its side. Spread is the kind of range they are
+	// ("min-max" or "p10-p90"); Readings the readings the range rests on,
+	// Levels the independent load levels among them, and Holdout that the
+	// run never tuned the planner (false: in-sample).
 	Source   string   `json:"source,omitempty"`
 	Shape    string   `json:"shape,omitempty"`
 	ErrorLo  *float64 `json:"errorLo,omitempty"`
 	ErrorHi  *float64 `json:"errorHi,omitempty"`
+	Spread   string   `json:"spread,omitempty"`
 	Readings int      `json:"readings,omitempty"`
+	Levels   int      `json:"levels,omitempty"`
+	Holdout  bool     `json:"holdout,omitempty"`
 	// Outside is why no row holds the figure.
 	Outside string `json:"outside,omitempty"`
 }
@@ -135,6 +142,7 @@ func ValidationOf(v whatif.Validation) *Validation {
 	w := &Validation{Validated: v.Validated(), Label: v.String(), Outside: v.Outside}
 	if r := v.Row; r != nil {
 		w.Source, w.Shape, w.ErrorLo, w.ErrorHi, w.Readings = r.Source, r.Shape, r.ErrorLo, r.ErrorHi, r.Readings
+		w.Spread, w.Levels, w.Holdout = r.Spread, r.Levels, r.Holdout
 	}
 	return w
 }

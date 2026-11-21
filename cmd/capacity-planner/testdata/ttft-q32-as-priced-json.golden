@@ -165,7 +165,9 @@
               "shape": "8000-token prompts, 200 out, Ca^2 1",
               "errorLo": -0.0265944871629753,
               "errorHi": 0.006849223516752545,
-              "readings": 12
+              "spread": "min-max",
+              "readings": 12,
+              "levels": 6
             }
           }
         }

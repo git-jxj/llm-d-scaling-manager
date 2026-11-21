@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -1187,9 +1188,10 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 
 // verdict judges the fleet at the load:
 //   - UNDER-PROVISIONED on a known miss at the load judged;
-//   - NOT JUDGED when the window contradicts the model (contradicted), when
-//     its own check is not judged, or when the prefill side
-//     does not price and decode alone holds;
+//   - NOT JUDGED where it would be UNDER-PROVISIONED on a load of other
+//     traffic than the shape priced, or one the window's own fleet served
+//     past the knee (notJudgedUnder), when its own check is not judged, or
+//     when the prefill side does not price and decode alone holds;
 //   - OVER-PROVISIONED when a role has a replica to spare: one fewer of it
 //     holds the whole fleet at the load judged, and the role's own check
 //     (knee and target) at the peak too, since removing capacity is the
@@ -1212,12 +1214,6 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 	if !r.brief {
 		lead = "at " + r.loadWords + ", "
 	}
-	if why := r.contradicted(np, nd, base); why != "" {
-		v.Verdict = whatifapi.VerdictNotJudged
-		v.Reason += ". " + why
-		v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, contradictsWords, why)
-		return v, nil
-	}
 	switch {
 	case !base.kneeOK:
 		v.Verdict = whatifapi.VerdictNotJudged
@@ -1226,6 +1222,8 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 	case !(r.load > 0):
 		v.Verdict = whatifapi.VerdictNotJudged
 		v.Summary = v.Verdict + ": the window saw no traffic to judge at; state a load (--load-seen)."
+		return v, nil
+	case base.under && r.notJudgedUnder(np, nd, base, &v):
 		return v, nil
 	case base.under:
 		v.Verdict = whatifapi.VerdictUnder
@@ -1286,47 +1284,123 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 }
 
 // A window contradicts the model when the fleet priced, or a smaller one,
-// carried more than contradictShare times the fleet knee the model prices
-// for it, for contradictSpan or longer without a break: a load the model
-// says saturates the fleet was carried for minutes. A verdict priced on that
-// knee would say UNDER-PROVISIONED of a fleet the window shows holding, so
-// none is given (#297).
+// served more than contradictShare times the fleet knee the model prices
+// for it, at the shape priced, for contradictSpan or longer without a
+// break: a load the model says saturates the fleet was carried for
+// minutes. A verdict priced on that knee would say UNDER-PROVISIONED of a
+// fleet the window shows holding, so none is given (#297).
 const (
 	contradictShare = 1.25
 	contradictSpan  = 180.0 // seconds
 )
 
 // contradictsWords opens the verdict's summary when the window contradicts
-// the model.
-const contradictsWords = "the model contradicts this window:"
+// the model, and phasesWords when the load and the shape priced are of
+// different traffic.
+const (
+	contradictsWords = "the model contradicts this window:"
+	phasesWords      = "the load and the shape priced are of different traffic:"
+)
 
-// contradicted says how the window's own fleet carried more than the model
+// notJudgedUnder makes v NOT JUDGED, and says so, where an UNDER-PROVISIONED
+// verdict would rest on a reading the window itself does not support: the
+// load judged ran at another shape than the measured one priced
+// (whatifapi.ShapeLoadMismatch, #294), so the knee is of other traffic; or
+// the window's own fleet served past the knee at the shape priced
+// (contradicted). Only an UNDER is withheld: neither says the fleet holds.
+func (r *reporter) notJudgedUnder(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) bool {
+	why, lead := r.phasesDiffer(), phasesWords
+	if why == "" {
+		why, lead = r.contradicted(np, nd, base), contradictsWords
+	}
+	if why == "" {
+		return false
+	}
+	v.Verdict = whatifapi.VerdictNotJudged
+	v.Reason += ". " + why
+	v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, lead, why)
+	return true
+}
+
+// phasesDiffer says how the load's cycles ran at another shape than the
+// measured shape priced, "" where they did not or a shape was stated.
+func (r *reporter) phasesDiffer() string {
+	ls := r.loadShape
+	il, ol := r.pv.shape.AvgInputTokens, r.pv.shape.AvgOutputTokens
+	if !r.sh.Measured || ls == nil || !whatifapi.ShapeLoadMismatch(il, ol, *ls) {
+		return ""
+	}
+	return fmt.Sprintf("the load's cycles ran at IL %s OL %s, the shape priced is IL %s OL %s, so the knee is of other traffic and "+
+		"no verdict is priced on it; --shape load prices the load at its own shape", num(round(ls.InputTokens)), num(round(ls.OutputTokens)),
+		num(round(il)), num(round(ol)))
+}
+
+// contradicted says how the window's own fleet served more than the model
 // prices it to, "" where it did not or cannot say: a shape stated by the
-// question, a cycle time or per-cycle fleet the recording does not hold, or
-// no knee. A cycle counts when every role priced served at most the
-// replicas priced (CurrentReplicas less PendingReplicas) and at least one,
-// and its arrival rate was above contradictShare times the fleet knee.
+// question, a cycle time, per-cycle fleet or shape the recording does not
+// hold, no knee, or a prefill knee read off a lower bound of V_P (it reads
+// low by construction). A cycle counts when it ran at the shape priced
+// (within whatifapi.ShapeLoadTolerance in each length), every role served
+// at least one replica and at most the replicas priced (CurrentReplicas
+// less PendingReplicas, summed over the role's variants), and the decode
+// replicas served above the share times the fleet knee. The share is
+// contradictShare, over the band's top where that sets the decode knee:
+// such a knee stops at the highest fill the line was fitted to, short of a
+// full replica. Cycles are counted at the mean cycle time.
 func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 	sec := cycleSeconds(r.st)
-	if !r.sh.Measured || !base.kneeOK || !(base.knee > 0) || !(sec > 0) {
+	il, ol := r.pv.shape.AvgInputTokens, r.pv.shape.AvgOutputTokens
+	if !r.sh.Measured || !base.kneeOK || !(base.knee > 0) || !(sec > 0) || !(il > 0) || !(ol > 0) {
 		return ""
 	}
-	dec := r.st.ServingReplicas[r.pv.state.Variant]
-	if len(dec) == 0 {
-		return ""
-	}
-	var pre []int
-	if np > 0 && r.pfVariant != "" && r.pfVariant != r.pv.state.Variant {
-		if pre = r.st.ServingReplicas[r.pfVariant]; len(pre) == 0 {
+	share := contradictShare
+	switch base.binds {
+	case rolePrefill:
+		if a, ok := base.prefillKnee.(whatif.Answer); !ok || slices.Contains(a.Flags, whatif.VPLowerBound) {
 			return ""
 		}
+	case roleDecodeWord:
+		if a, ok := base.decodeKnee.(whatif.Answer); ok && slices.Contains(a.Basis.BoundBy, whatif.BoundBandTop) && r.pv.decode.Band.Hi > 0 {
+			share /= r.pv.decode.Band.Hi
+		}
 	}
-	within := func(rows []int, i, n int) bool { return i < len(rows) && rows[i] >= 1 && rows[i] <= n }
-	over := contradictShare * base.knee
+	shapeAt := map[int]learnreplay.CycleShape{}
+	for _, c := range r.decodeShapeSeries() {
+		shapeAt[c.Cycle] = c
+	}
+	n := len(r.st.ArrivalRates)
+	dec, pre, served := make([]int, n), make([]int, n), make([]float64, n)
+	hasPrefill := false
+	for _, v := range r.st.Variants {
+		rows := r.st.ServingReplicas[v.Variant]
+		if len(rows) == 0 {
+			return ""
+		}
+		into := dec
+		if domain.CanonicalRole(v.Role) == domain.RolePrefill {
+			into, hasPrefill = pre, true
+		} else {
+			for _, c := range v.ShapeSeries {
+				if c.Cycle >= 1 && c.Cycle <= n {
+					served[c.Cycle-1] += c.RequestRate
+				}
+			}
+		}
+		for i := 0; i < n && i < len(rows); i++ {
+			into[i] += rows[i]
+		}
+	}
+	checkPrefill := hasPrefill && np > 0
+	within := func(x, most int) bool { return x >= 1 && x <= most }
+	over := share * base.knee
 	run, best := 0, 0
 	var runPeak, bestPeak float64
-	for i, x := range r.st.ArrivalRates {
-		if !(whatif.Finite(x) && x > over) || !within(dec, i, nd) || (pre != nil && !within(pre, i, np)) {
+	for i := range n {
+		c, ok := shapeAt[i+1]
+		atShape := ok && c.InputTokens > 0 && c.OutputTokens > 0 &&
+			!whatifapi.ShapeLoadMismatch(c.InputTokens, c.OutputTokens, whatifapi.ReportLoadShape{InputTokens: il, OutputTokens: ol})
+		x := served[i]
+		if !atShape || !(whatif.Finite(x) && x > over) || !within(dec[i], nd) || (checkPrefill && !within(pre[i], np)) {
 			run, runPeak = 0, 0
 			continue
 		}
@@ -1341,11 +1415,11 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 		return ""
 	}
 	fleet := fmt.Sprintf("%d decode", nd)
-	if pre != nil {
+	if checkPrefill {
 		fleet = fleetText(np, nd)
 	}
-	return fmt.Sprintf("%s or fewer carried above %.2fx the fleet knee of %s for %s without a break (%d cycles), up to %s (%.1fx); "+
-		"the knee reads low for this window, so no verdict is priced on it", fleet, contradictShare, rateWords(base.knee),
+	return fmt.Sprintf("%s or fewer served above %.2fx the fleet knee of %s at the shape priced for %s without a break (%d cycles), up to %s (%.1fx); "+
+		"the knee reads low for this window, so no verdict is priced on it", fleet, share, rateWords(base.knee),
 		minutesWords(span), best, rateWords(bestPeak), bestPeak/base.knee)
 }
 
@@ -1568,9 +1642,26 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 // decodeKneeGoldensHigh outside every row (#297). It says the count in
 // words where it is above the point estimate out.Decode, "" otherwise.
 func (r *reporter) atBound(base fleetEval, nd int, out *whatifapi.ReportNeeded) string {
+	d, e, ok := r.decodeAtBound(base, nd)
+	if !ok {
+		return ""
+	}
+	d = max(d, out.Decode)
+	out.DecodeAtErrorBound, out.DecodeKneeError = d, e
+	if d <= out.Decode {
+		return ""
+	}
+	return fmt.Sprintf(", %d decode if the decode knee reads %.0f%% high", d, e*100)
+}
+
+// decodeAtBound is the decode replicas the load needs at the operating
+// point when the decode knee, priced at nd replicas, reads as high as its
+// label allows, and that error e; ok is false with no knee, fleet, load or
+// headroom to size by. It sizes by the knee alone, not by a TPOT target.
+func (r *reporter) decodeAtBound(base fleetEval, nd int) (int, float64, bool) {
 	k, ok := valueOf(base.decodeKnee)
 	if !ok || !(k > 0) || nd < 1 || !(r.load > 0) || !(r.headroom > 0) {
-		return ""
+		return 0, 0, false
 	}
 	e := decodeKneeGoldensHigh
 	if r.kneeV.Validated() {
@@ -1580,12 +1671,7 @@ func (r *reporter) atBound(base fleetEval, nd int, out *whatifapi.ReportNeeded) 
 		}
 	}
 	// Tolerance: a load exactly at a count's operating point needs that count.
-	d := max(int(math.Ceil(r.load*(1+e)/(r.headroom*k/float64(nd))-1e-9)), out.Decode)
-	out.DecodeAtErrorBound, out.DecodeKneeError = d, e
-	if d <= out.Decode {
-		return ""
-	}
-	return fmt.Sprintf(", %d decode if the decode knee reads %.0f%% high", d, e*100)
+	return int(math.Ceil(r.load*(1+e)/(r.headroom*k/float64(nd)) - 1e-9)), e, true
 }
 
 // targetWords names what a holding fleet holds: every target, or its

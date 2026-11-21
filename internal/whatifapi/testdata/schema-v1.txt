@@ -19,11 +19,14 @@ Figure.unit string
 Figure.validation object
 Figure.validation.errorHi number
 Figure.validation.errorLo number
+Figure.validation.holdout boolean
 Figure.validation.label string
+Figure.validation.levels number
 Figure.validation.outside string
 Figure.validation.readings number
 Figure.validation.shape string
 Figure.validation.source string
+Figure.validation.spread string
 Figure.validation.validated boolean
 Figure.value number
 Line object

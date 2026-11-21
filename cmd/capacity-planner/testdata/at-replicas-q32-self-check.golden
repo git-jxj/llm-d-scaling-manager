@@ -7,24 +7,26 @@ ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-
 decode engine   vLLM release not recorded
 prefill engine  vLLM release not recorded
 load judged     12.48 r/s, the p95 of the 573 of 580 cycles with traffic
-load seen       per cycle (1-minute rates): mean 3.00, p95 12.48, peak 15.38 r/s; busiest 2m1s (8 cycles): 12.96 r/s
+load seen       per cycle (1-minute rates): mean 3.00, p95 12.48, peak 15.38 r/s; p95 less counting noise 12.46; busiest 2m1s (8 cycles): 12.96 r/s
 SLO             TTFT p90 2000.0 ms (asked)
 cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
 mark = the SLO (TTFT p90 2000.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
 summary     50%                   80%                    100%              seen
   measured  5123/18.4 @2.02 MISS  14241/18.4 @3.23 MISS  -/18.4 @4.04 SAT  -/19.1 @12.48 SAT
 verdicts
-  measured  NOT JUDGED: the model contradicts this window: 2 prefill + 2 decode or fewer carried above 1.25x the fleet knee of 4.0 r/s for 8 min without a break (30 cycles), up to 15.4 r/s (3.8x); the knee reads low for this window, so no verdict is priced on it.
+  measured  NOT JUDGED: the load and the shape priced are of different traffic: the load's cycles ran at IL 1000 OL 1133, the shape priced is IL 8016 OL 26, so the knee is of other traffic and no verdict is priced on it; --shape load prices the load at its own shape.
 
 shape measured: IL 8016 OL 26, prefix hit 0.00 (measured, cycles 560-579)
+  the load's cycles (the p95 and above: 30, cycles 8-89): IL 1000 OL 1133, prefix hit 0.00
+  SHAPE/LOAD MISMATCH: the load is priced at a shape more than 20% off the traffic that made it; --shape load prices it at its own
 utilization at the load judged
   decode        KV fill 0.019 (band top 0.8), slots 4 of 152, wait p 0.000
   prefill       utilization pooled 3.09, worst pod 3.09 (f 1)
-  verdict       NOT JUDGED: the model contradicts this window: 2 prefill + 2 decode or fewer carried above 1.25x the fleet knee of 4.0 r/s for 8 min without a break (30 cycles), up to 15.4 r/s (3.8x); the knee reads low for this window, so no verdict is priced on it.
+  verdict       NOT JUDGED: the load and the shape priced are of different traffic: the load's cycles ran at IL 1000 OL 1133, the shape priced is IL 8016 OL 26, so the knee is of other traffic and no verdict is priced on it; --shape load prices the load at its own shape.
 capacity            req/s     out tok/s   bound by
   prefill knee      4.04      103         prefill compute: N_p 2 x V_P x (1 - 0.05 margin) / (f 1.000 x 8007 tokens)
   decode knee       134.15    3428        decode band top at fill 0.798
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (flow control unknown, measured off)
   fleet knee        4.04      103         prefill
   operating (0.85)  3.44      88          0.85 x fleet knee (scaleUpThreshold)
   max at SLO        0.13      3           TTFT p90, end to end
@@ -36,7 +38,7 @@ SLO vs load         r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
 checks
   2 prefill + 2 decode  does not hold: 12.48 r/s is 3.1x the fleet knee of 4.04 r/s; TTFT p90 saturated misses 2000.0 ms
 assumed: prompt cv 2 (no computed-prompt histogram); flow control off (no queue series); Poisson arrivals
-flags: UnvalidatedTTFT; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; HeldLine; SpreadBeyondProcessorSharing; FlowControlInferredOff; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; TransferHeld; PromptSpreadAbovePeak; CoarseTPOTBucket; MeanBoundedTPOTPercentile
+flags: UnvalidatedTTFT; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; HeldLine; SpreadBeyondProcessorSharing; FlowControlInferredOff; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; TransferHeld; PromptSpreadAbovePeak; CoarseTPOTBucket; MeanBoundedTPOTPercentile; ShapeLoadMismatch
 
 not validated:
   - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 44% to 103% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
