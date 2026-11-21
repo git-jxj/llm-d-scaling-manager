@@ -16,6 +16,7 @@
 --role-of
 --step
 --tensor-parallel-size
+--v
 --vllm-version
 -1
 -1000
@@ -68,6 +69,7 @@
 24h
 24ns
 2m
+3
 30
 30s
 394
@@ -142,6 +144,7 @@ DSET_ROLE_WRITER
 Data
 DataParallelRanks
 Datastore
+Decode
 DecodeEngineMeasured
 DecodeOnsetUnchecked
 DecodeSideOmitted
@@ -267,6 +270,7 @@ MalformedHistogram
 MaxDecodeGateClosedShare
 MaxPSPromptCV
 MeanBoundedTPOTPercentile
+Meanwhile
 MeasuredLowConfirmFor
 Metrics
 Mimir
@@ -618,6 +622,7 @@ analyzer-in-grace
 analyzer-result
 analyzerDefinitions
 analyzerTuning
+analyzerTuning.itlBand
 analyzers
 and
 annotation
@@ -1248,6 +1253,7 @@ firstWrite
 fit
 fit-declined
 fitRows
+fits
 fitted
 fitting
 fix
@@ -1594,6 +1600,7 @@ k2-key-bucket-held
 k2-key-bucket-moved
 k2-obs-admitted
 k2-reads-the-settle-tracker
+k2-under-bound
 k2-unsettled-joined
 k2-unsettled-window
 k2-waits-after-a-rollout
@@ -1748,6 +1755,7 @@ let
 levels
 liftReason
 lifted
+light
 likely
 limit
 limited
@@ -1892,6 +1900,7 @@ milliseconds
 min
 min-max
 minKSpread
+minReplicaCount
 minReplicas
 minSamples
 minValue
@@ -2032,6 +2041,7 @@ no-hit
 no-itl
 no-itl-line
 no-k
+no-kv-capacity
 no-limiter
 no-line
 no-listed-analyzer-sizes-role
@@ -2197,6 +2207,7 @@ owning
 p
 p1
 p10-p90
+packing
 page_size
 panic
 panicked
@@ -2539,6 +2550,7 @@ replicasByVariant
 replicasImplied
 replicasToMove
 replicaset
+report
 report-only
 reportOnly
 reported
@@ -2585,6 +2597,7 @@ restored
 restoredKeys
 restoredTransfers
 restoring
+rests
 result
 resumed
 resumes
@@ -2825,6 +2838,7 @@ single-accelerator
 single-sample
 sit
 size
+sized
 sizedSeconds
 sizes
 skipped
@@ -2877,6 +2891,7 @@ slo.EvictStale
 slo.ForgetVariant
 slo.NoteVariantsPresent
 slo.flowControl
+slo.tpot
 sloEntries
 slope
 slopeAge
@@ -2901,6 +2916,7 @@ spare
 spec
 spec.fallback
 speculates
+speculating
 speculative
 speculative_
 speculative_algorithm
