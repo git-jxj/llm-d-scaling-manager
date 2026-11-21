@@ -343,7 +343,18 @@ N_steady = min(B x steps / (prompt + (1 + k) x steps), S)
 ```
 
 A replica that reports no computed prompt or no completions is priced as
-before. The switch is off from the constructor.
+before. The switch is on from the constructor since v0.12.2; a replay turns
+it off. `N_steady` is the budget's throughput ceiling and has no latency
+term: on a fleet with headroom it packs decode into fewer replicas at a
+higher per-token latency, bounded only by the engine. A TPOT-aware cap is
+issue llm-d-incubation/llm-d-scaling-manager#258.
+
+Two edges. The zero-replica estimate (`estimateStoredCapacity`) has no
+live rates, so it still charges the whole prompt: a parked decode with only a
+deployment record is priced low until its first live cycle. With
+`num_speculative_tokens` k stated, a step is charged `1 + k` of budget even
+when the acceptance is not read; it is then read to emit `1 + k`, the
+smallest batch the flags allow.
 
 The spread moves the two figures it enters in opposite directions, both
 towards the truth: `k2` rises (the sequences the batch cap admits hold more KV
@@ -377,8 +388,9 @@ one (`atCapBatchCap`):
 | `slo` analyzer's per-rank cap (`priceVariant`) | `StatedBatchCap`, else `BatchCap`; `slo-variant` logs `batchCap` and `batchCapSource` | `slo.SwitchBatchCapPerRank` |
 
 A landed pull is a backlog only where the scheduler can stop before it. On a
-decode below its stated cap on every rank (running summed over ranks under
-the per-rank cap) and with its busiest rank's KV under `kvCacheThreshold`, a
+decode below its stated cap on every rank (its busiest rank's estimated
+running count, `busiestRankRunning`, under the per-rank cap) and with its
+busiest rank's KV under `kvCacheThreshold`, a
 landed request waits for the next step, and the one-minute peak of that wait
 is a burst, not a backlog. Read as one, five landed requests on a rank at 24 %
 KV met the queue threshold of 5 and recorded a `k2` at 24 % of the cache
@@ -389,10 +401,11 @@ alone. The loop also stops when the step's token budget is spent, so where
 the flags give a budget the replica's busiest rank must also run fewer
 requests than `N_steady` above, priced at the prompt it computes. The engine
 reports running summed over ranks, so the busiest rank's count is the mean a
-rank scaled by its KV over the pod's mean, at most the sum. One step's sum is not the
+rank scaled by its KV over the pod's mean, at most the sum, and the sum where
+the busiest rank's KV is not reported. One step's sum is not the
 test: with chunked prefill a landed request starts on any budget left, and
 5 landed requests of 1,600 computed tokens are over a 256-token budget on
-every step. Off from the constructor.
+every step. On from the constructor since v0.12.2; a replay turns it off.
 
 Why the at-cap readers do not read the learned cap: it is the highest
 plateau seen, so it may sit below the true cap. Below the true cap vLLM

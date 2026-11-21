@@ -538,12 +538,12 @@ type SaturationAnalyzer struct {
 	itlFills         map[string][]engineFill
 	itlBandFloors    map[string]bandFloor
 	// k2DecodeBudget is SwitchK2DecodeBudgetAtComputedPrompt (issue
-	// llm-d-incubation/llm-d-scaling-manager#201, decode_budget.go): off
-	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
+	// llm-d-incubation/llm-d-scaling-manager#201, decode_budget.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	k2DecodeBudget bool
 	// decodeLandedNeedsBound is SwitchDecodeLandedNeedsABound (issue
-	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): off
-	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
+	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	decodeLandedNeedsBound bool
 	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
 	// (itl_baseline_floor.go): off from the constructor; only a replay
@@ -845,6 +845,8 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillKeepsPrompts:    true,
 		prefillBusyShare:       true,
 		lowerBoundCapsShare:    true,
+		k2DecodeBudget:         true,
+		decodeLandedNeedsBound: true,
 		drainHaircut:           FirstReadHaircut,
 		itlOneSidedLast:        make(map[string]itlOneSidedRecord),
 		prefillObserver:        prefill.NewObserver(),

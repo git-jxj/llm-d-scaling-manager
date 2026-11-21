@@ -266,7 +266,7 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// derived k2 charges its budget the prompt it computes
 		// (decode_budget.go), and a landed request is a decode's backlog
 		// only where the replica can be at a bound (pd_decode_queue.go).
-		// Both off from the constructor.
+		// Both on from the constructor since v0.12.2.
 		SwitchK2DecodeBudgetAtComputedPrompt: &a.k2DecodeBudget,
 		SwitchDecodeLandedNeedsABound:        &a.decodeLandedNeedsBound,
 		// The ITL line's B pinned at the floor read below the band while

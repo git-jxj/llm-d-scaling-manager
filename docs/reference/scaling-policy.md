@@ -1676,7 +1676,27 @@ script, or `--max-num-seqs $VAR` with the value from an `envFrom`), it assumes
 vLLM's 256. An engine whose real cap is lower is then priced as if it held
 more than it can.
 
-This matters under **flow control**. The router holds the queue, the engine's
+**P/D decode and `--max-num-batched-tokens`.** The token budget can bind
+before the cap. A P/D decode's budget is charged only the prompt tokens the
+decode computes itself, not the whole prompt: the rest of its KV arrives from
+prefill. Before v0.12.2 the whole prompt was charged, so a decode with a small
+budget and long prompts was priced 10-18x below its capacity. Since v0.12.2:
+
+- Expect fewer decode replicas, and a higher per-token latency where the
+  fleet had headroom. Decode is packed up to its KV cache and its
+  `--max-num-seqs` per rank. Nothing caps that packing at a TPOT target yet.
+- A short burst of requests whose KV has just landed on a decode with room
+  no longer records a saturated capacity.
+- A capacity learned before the upgrade keeps pricing until it ages out. To
+  drop it now, [reset the variant](troubleshooting.md#reset-one-variants-learned-state).
+- No setting turns this off. If per-token latency rises past what you accept,
+  lower the decode's `--max-num-seqs`: it caps the batch per rank, and the
+  derived capacity reads it. Or raise the decode ScaledObject's
+  `minReplicaCount` ([trigger reference](scaledobject-trigger.md)).
+- An engine that does not publish the computed prompt (SGLang) is still
+  charged the whole prompt.
+
+A cap read too high matters most under **flow control**. The router holds the queue, the engine's
 own queue stays under `queueLengthThreshold`, and the replica is never seen
 full. A sequence-bound replica is then priced at its KV cache. Measured at a
 true capacity of 0.42 of the cache, that is 1.9 times the truth: about half
