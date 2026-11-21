@@ -259,6 +259,15 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 	if err != nil {
 		return nil, err
 	}
+	series, _, err := seriesAndLatencyOf(src.open, st, learnreplay.SeriesVariants{})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	if why := whatifapi.EngineRowsShort(series); why != "" {
+		// Every per-replica rate and knee would read low by the ranks the
+		// rows leave out (issue llm-d-incubation/llm-d-scaling-manager#331).
+		return nil, usagef("%s: %s; the planner reads a replica as its engine rows, so it answers nothing from this recording", name, why)
+	}
 	f.checkRecording(ctx, st, src)
 	return st, nil
 }

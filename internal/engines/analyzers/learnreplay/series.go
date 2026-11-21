@@ -52,6 +52,17 @@ type CycleSample struct {
 	// FlowControlSeries says the cycle read the router's flow-control queue
 	// series (domain.AnalyzerInput.FlowControlSeries).
 	FlowControlSeries bool
+	// EngineRate is the request rate every decode row of the model
+	// reports, summed, whatever ArrivalRate is: where every replica's
+	// engine is read it is the router's rate, and where a multi-Pod group's
+	// rows report one rank of several it is a fraction of it (issue
+	// llm-d-incubation/llm-d-scaling-manager#331).
+	EngineRate float64
+	// PrefillReplicas and DecodeReplicas are the counted variants'
+	// replicas as the cycle's variant states give them (CurrentReplicas),
+	// summed; 0 where none is stated. Beside PrefillPods and DecodePods
+	// they say whether a replica is one engine row.
+	PrefillReplicas, DecodeReplicas int
 }
 
 // SeriesVariants names the variants a series counts: the prefill and the
@@ -150,8 +161,10 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 		switch domain.CanonicalRole(vs.Role) {
 		case domain.RolePrefill:
 			s.PrefillGPUs = max(s.PrefillGPUs, vs.GPUsPerReplica)
+			s.PrefillReplicas += max(vs.CurrentReplicas, 0)
 		case domain.RoleDecode:
 			s.DecodeGPUs = max(s.DecodeGPUs, vs.GPUsPerReplica)
+			s.DecodeReplicas += max(vs.CurrentReplicas, 0)
 		}
 	}
 	var weight, il, ol, hit, modelRate float64
@@ -202,6 +215,7 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 	if weight > 0 {
 		s.PromptTokens, s.OutputTokens, s.PrefixHitRate, s.HasShape = il/weight, ol/weight, hit/weight, true
 	}
+	s.EngineRate = modelRate
 	s.RateKnown = in.ArrivalRate > 0 || modelRate == 0
 	if !s.RateKnown {
 		s.ArrivalRate = modelRate

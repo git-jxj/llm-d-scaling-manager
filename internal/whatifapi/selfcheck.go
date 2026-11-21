@@ -417,6 +417,8 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 		return notRun("the planner prices a P/D fleet, and the recording has no prefill variant")
 	case len(folds) == 0:
 		return notRun("no fit was read at an earlier cycle")
+	case EngineRowsShort(e.series) != "":
+		return notRun(EngineRowsShort(e.series))
 	}
 	req, stated := info.Stated.replayed()
 	sc.Stated, sc.WithoutStated, sc.outside = stated, info.Stated.notReplayed(), info.Stated.outside()
