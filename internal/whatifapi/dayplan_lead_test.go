@@ -57,6 +57,78 @@ func TestDayPlanLeadHoldsAhead(t *testing.T) {
 	assert.Contains(t, p.Notes[0], "prefill 90 s asked, decode none known")
 }
 
+// noTPOT asks no TPOT target: one stub decode replica's limit is then 6 r/s
+// at 1000-token prompts.
+var noTPOT = &SLORequest{TPOT: &Objective{Statistic: statisticNone}}
+
+// The roles' leads swapped: a decode lead and none for prefill. With no TPOT
+// asked, 10:05 runs 6.5 r/s of 1000-token prompts, where both roles need
+// more than at 10:00's 2 r/s; 10:00 holds 10:05's decode, and only its own
+// prefill.
+func TestDayPlanLeadHoldsDecodeAlone(t *testing.T) {
+	res, err := (&stubResolver{}).Resolve(t.Context(), InputsRequest{})
+	require.NoError(t, err)
+	t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	res.Series = append(append(shaped(t0, 2, 1000), shaped(t0.Add(5*time.Minute), 6.5, 1000)...), shaped(t0.Add(10*time.Minute), 2, 1000)...)
+	p, err := DayPlan(t.Context(), res, DayPlanRequest{SLO: noTPOT, Lead: &DayLead{Prefill: ptr(0.0), Decode: ptr(90.0)}}, "schema-v3")
+	require.NoError(t, err)
+	require.Len(t, p.Buckets, 3)
+	n0, n1 := p.Buckets[0].Needed, p.Buckets[1].Needed
+	require.NotNil(t, n0)
+	require.NotNil(t, n1)
+	require.NotNil(t, n0.Prefill)
+	require.NotNil(t, n1.Prefill)
+	require.Greater(t, n1.Decode, n0.Decode, "the premise: decode rises at 10:05")
+	require.Greater(t, *n1.Prefill, *n0.Prefill, "the premise: prefill rises at 10:05 too")
+	require.NotNil(t, p.Buckets[0].Held)
+	assert.Equal(t, DayNeeded{Prefill: n0.Prefill, Decode: n1.Decode}, *p.Buckets[0].Held,
+		"10:00 starts 10:05's decode, not its prefill")
+	assert.Equal(t, *n1, *p.Buckets[1].Held)
+
+	need, held := p.Summary.NeededReplicaHours, p.Summary.HeldReplicaHours
+	require.NotNil(t, held)
+	require.NotNil(t, held.Prefill)
+	assert.InDelta(t, *need.Prefill, *held.Prefill, 1e-9, "no prefill lead")
+	assert.InDelta(t, need.Decode+float64(n1.Decode-n0.Decode)*90.0/3600, held.Decode, 1e-9)
+	assert.Contains(t, p.Notes[0], "decode 90 s asked")
+}
+
+// A lead of exactly one 300 s bucket holds a rise one bucket early; 400 s,
+// past one bucket, holds it two buckets early. With no TPOT asked, 10:10
+// runs 6.5 r/s of 1000-token prompts and needs more decode than the 2 r/s
+// around it.
+func TestDayPlanLeadAtAndPastOneBucket(t *testing.T) {
+	res, err := (&stubResolver{}).Resolve(t.Context(), InputsRequest{})
+	require.NoError(t, err)
+	t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	rates := []float64{2, 2, 6.5, 2}
+	s := make([]SeriesSample, 0, 20*len(rates))
+	for i, rate := range rates {
+		s = append(s, shaped(t0.Add(time.Duration(i)*5*time.Minute), rate, 1000)...)
+	}
+	res.Series = s
+	held := func(lead float64) []int {
+		p, err := DayPlan(t.Context(), res, DayPlanRequest{SLO: noTPOT, Lead: &DayLead{Decode: ptr(lead)}}, "schema-v3")
+		require.NoError(t, err)
+		require.Len(t, p.Buckets, 4)
+		out := make([]int, 4)
+		for k, b := range p.Buckets {
+			require.NotNil(t, b.Held, "bucket %d", k)
+			out[k] = b.Held.Decode
+		}
+		return out
+	}
+	p, err := DayPlan(t.Context(), res, DayPlanRequest{SLO: noTPOT}, "schema-v3")
+	require.NoError(t, err)
+	require.NotNil(t, p.Buckets[0].Needed)
+	require.NotNil(t, p.Buckets[2].Needed)
+	lo, hi := p.Buckets[0].Needed.Decode, p.Buckets[2].Needed.Decode
+	require.Greater(t, hi, lo, "the premise: decode rises at 10:10")
+	assert.Equal(t, []int{lo, hi, hi, lo}, held(300), "300 s: started at 10:05")
+	assert.Equal(t, []int{hi, hi, hi, lo}, held(400), "400 s: started at 10:03:20, in 10:00")
+	assert.Equal(t, []int{lo, hi, hi, lo}, held(299), "299 s: within 10:05")
+}
+
 // A role's lead is the one asked, else the start time the source learned,
 // else none; a seed says so.
 func TestDayPlanLeadOf(t *testing.T) {
@@ -137,6 +209,11 @@ func TestDayPlanSizedForP95Modulation(t *testing.T) {
 	assert.Less(t, *b.SizedRate, b.Rate.P95, "the counting noise is taken out")
 	assert.GreaterOrEqual(t, *b.SizedRate, b.Rate.Mean)
 	assert.Equal(t, *b.Rate.P95Modulation, *b.SizedRate)
+	rates := make([]float64, len(s))
+	for i, x := range s {
+		rates[i] = x.Rate
+	}
+	assert.Equal(t, ModulationP95(rates, b.Rate.Mean, b.Rate.P95), *b.SizedRate, "the bucket's own cycles, at its mean and p95")
 	assert.Equal(t, 1, p.Summary.Counts.SizedForP95Modulation)
 	assert.Zero(t, p.Summary.Counts.SizedForP95)
 

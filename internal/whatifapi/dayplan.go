@@ -1761,6 +1761,9 @@ func heldOf(out *DayPlanResponse, step time.Duration, gpus FleetCounts) {
 			if j <= k+mp {
 				any = true
 				if n.Prefill == nil {
+					// Prefill held over a bucket it was not priced in is a
+					// lower bound, past the decode lead too: AtLeast covers
+					// both roles (DayNeeded).
 					h.AtLeast = true
 				} else {
 					prefill = true
