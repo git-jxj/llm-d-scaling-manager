@@ -82,7 +82,8 @@ Three derivations matter here:
   `AvgServiceTime − (OL − 1)·ITLPerToken` subtracts two large numbers. The
   per-stage `request_prefill_time_seconds` is needed.
 - **`ols-sweep`** has one prefill pod that never queued. It supports `a`
-  and the low-load slope, not `V_P` or `f`. `a` is 11.04 ms: an
+  and the low-load slope, not `V_P` or `f`. P1's `a` is 11.04 ms (the
+  capacity planner, with the median overhead, reads 13.24 ms): an
   intercept of 8.36 ms, fitted against the effective prompt over low-load
   minutes, plus the least overhead, 2.68 ms. An earlier
   revision said 10.1 ms: that was an intercept fitted against

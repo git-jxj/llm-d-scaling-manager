@@ -166,9 +166,9 @@ func BenchmarkSizeAnswerPlan(b *testing.B) {
 	b.ReportMetric(float64(n.Prefill), "prefill")
 }
 
-// Sized on the worst corner, the benchmark's question has a TTFT floor above
+// Sized on the worst corner (SizeOnLow), the benchmark's question has a TTFT floor above
 // its 200 ms target: the size is that refusal, at any count, never the bound
-// reached with a shortfall that points the wrong way. Since P1's a reads the
+// reached with a shortfall that points the wrong way. Since the planner's a reads the
 // median overhead (issue llm-d-incubation/llm-d-scaling-manager#306), the
 // floor at the learned figures is above it too, 200.7 ms, so the refusal is
 // the base figure's, not only the corner's.

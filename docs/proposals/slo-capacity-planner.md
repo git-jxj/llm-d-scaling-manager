@@ -1256,7 +1256,7 @@ TTFT: the decode answers are as they were.
 | `--assume-router-hop 8ms` | The hop between the router and the engines, in place of the learned or default one, flagged `RouterHopAssumed` |
 | `--prefill N` | Prefill pods to price; 0 takes the serving pods at the cycle |
 | `--prefill-variant V` | The prefill variant to price, when the model has several: the CLI prices one fleet, and a usage error says so otherwise. It gets the whole rate, named as assumed |
-| `--assume-a 11ms` | `a`, the fixed latency one request pays on a prefill pod, in place of the learned one, flagged `AssumedA` and printed `a ASSUMED`, with any learned figure beside it (`a 8.00 ms ASSUMED, learned 11.04 ms`, and `fixedLatencyLearned` in the JSON). For a fleet of one prompt length, which gives P1 no fit |
+| `--assume-a 11ms` | `a`, the fixed latency one request pays on a prefill pod, in place of the learned one, flagged `AssumedA` and printed `a ASSUMED`, with any learned figure beside it (`a 8.00 ms ASSUMED, learned 13.24 ms`, and `fixedLatencyLearned` in the JSON). For a fleet of one prompt length, which gives P1 no fit |
 
 **Where each input comes from.**
 
@@ -1329,7 +1329,7 @@ That is the worked example with the CLI's `cv` of 2 and an assumed 20 ms hop. At
 that spread the price is the larger of processor sharing's and the first-come
 queue's (flag `SpreadBeyondProcessorSharing`), here first come's, so 376 ms where
 the page, at `cv` 1 on the old sum, has 160 ms (processor sharing alone reads 250
-ms); `a` is P1's 13.24 ms (the median overhead, issue #306). Question 1 at
+ms); `a` is the planner's 13.24 ms (the median overhead, issue #306). Question 1 at
 200 ms p95 reads 0.15 r/s where the page has 11.10, and the JSON's note says
 the assumed term moved it from 1.08. `--assume-prompt-cv 1`, the page's `cv`,
 reads 9.45 (processor sharing's, the larger there), and `--arrival-cv2 4` on
@@ -1337,7 +1337,7 @@ top of it 4.11 (`TestInputs_TheWorkedExampleAtTheStatedInputs`; 10.73 and
 4.68 first come).
 `TestTTFT_TheWorkedExampleFromTheRecording` puts `cv` 1, the old sum and the
 first-come queue back on the fleet the CLI read, and gets the page's figures within
-1 ms, 0.6 ms higher: P1's `a` is 0.6 ms above the page's. `TestTTFT_HandComputedAtCV2` holds a figure at
+1 ms, 0.6 ms higher: the planner's `a` is 0.6 ms above the page's. `TestTTFT_HandComputedAtCV2` holds a figure at
 `cv` 2 through the command, priced first come, to a calculation that reads no Go:
 4.755796 s on run 4 at `--assume-vp 130000` (about 2.46 s as processor sharing).
 Both check the arithmetic. Neither validates the model. The `ttft-*.golden`

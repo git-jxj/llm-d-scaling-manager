@@ -246,7 +246,7 @@ func TestTTFT_TheSpreadOrder(t *testing.T) {
 }
 
 // The asked-for TTFT is priced from the same fleet the page's worked example
-// computes by hand. The page assumes cv 1, and a of 12.6 ms; P1's is 13.24 ms
+// computes by hand. The page assumes cv 1, and a of 12.6 ms; the planner's is 13.24 ms
 // (the median overhead, issue llm-d-incubation/llm-d-scaling-manager#306), so
 // the figures are the page's, read 0.6 ms higher.
 func TestTTFT_TheWorkedExampleFromTheRecording(t *testing.T) {

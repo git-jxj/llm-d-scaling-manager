@@ -60,7 +60,7 @@ func TestArrivalCV2_ReachesThePrefillQueue(t *testing.T) {
 
 // The fleet that showed a burstier arrival priced better than Poisson at the
 // default cv: 300 ms at p95 read 5.26 r/s at Poisson and 5.53 at Ca^2 1.0001, and
-// p95 at 10 r/s read 396.0 ms and 361.5 ms (with a 11.04 ms; at P1's 13.24 ms
+// p95 at 10 r/s read 396.0 ms and 361.5 ms (with a 11.04 ms; at the planner's 13.24 ms
 // since issue llm-d-incubation/llm-d-scaling-manager#306, Poisson reads
 // 5.14 r/s and 398.2 ms). Kingman's decay outran Poisson's root.
 // The figures are the first-come model's, where that was; the property holds
