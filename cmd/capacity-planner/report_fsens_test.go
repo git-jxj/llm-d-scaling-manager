@@ -63,3 +63,24 @@ func TestAtReplicas_TheFleetNeededAtEachF(t *testing.T) {
 	assert.Greater(t, hi.Prefill, lo.Prefill, "at f 1.5 more prefill pods are needed")
 	assert.Contains(t, v.Summary, fSensitivityWords(whatifapi.FleetCounts{Prefill: n.Prefill, Decode: n.Decode}, n.FSensitivity))
 }
+
+// A fixed f never prices a count P1 learned more even than it ran: at the
+// staircase's two pods, f 1 reads the learned f where that is higher; at
+// three, no count learned, it is the f fixed.
+func TestFixedImbalance_NotUnderTheLearnedF(t *testing.T) {
+	st := stairReplay.state(t)
+	s := &servedState{st: st, decodeVariant: "variant-01", imbalanceAcrossCounts: true}
+	learned := stairF2(t)
+	require.Greater(t, learned, 1.0, "precondition: f learned above 1 at two pods")
+	for _, c := range []struct {
+		pods int
+		want float64
+	}{{2, learned}, {3, 1}} {
+		k := whatifapi.Knobs{Prefill: c.pods, Decode: 2, TTFTPercentile: 0.9, Headroom: 0.85, Assume: stairQuery(2, 2, 0).Assume}
+		sf, err := s.fleetAtImbalance(k, 1)
+		require.NoError(t, err)
+		require.Nil(t, sf.pf.refused)
+		assert.InDelta(t, c.want, sf.pf.fleet.Prefill.Imbalance, 1e-12, "%d pods", c.pods)
+		assert.True(t, sf.pf.fleet.Prefill.ImbalanceAssumed)
+	}
+}

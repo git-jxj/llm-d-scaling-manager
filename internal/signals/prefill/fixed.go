@@ -70,7 +70,9 @@ import (
 //
 // AvgTTFT - AvgServiceTime holds a constant overhead (tokenization,
 // scheduling, the HTTP path) beside the engine wait; with no queue there is
-// no wait, and the least of it is added to a.
+// no wait, and the least of it is added to a, or the median with
+// Cycle.AMedianOverhead (the planner's: the least of a few noisy minutes
+// sits under the typical one).
 //
 // The low-load fit bounds V_P from above, a validation signal and not a
 // source: a step of B tokens of prompts of length I costs about
@@ -88,7 +90,9 @@ import (
 // under LowLoadOccupancy, so a prompt rarely shares a step. The readings are
 // excluded by that state. QueueLength has no presence bit until the TTFT
 // recorder fields land; the occupancy test holds a row whose queue was not
-// read to low load anyway.
+// read to low load anyway. With Cycle.ALowLoadByRate the occupancy is read
+// against the prompt cluster's service time, not the minute's own
+// (lowLoadByRate), so a slow minute is not cut for being slow.
 //
 // On an aggregated pod the service time includes decode, and a is refused.
 
@@ -279,26 +283,47 @@ func (est *Estimate) fixed(ks *keyState, c Cycle) {
 // service time, so at a given rate a minute whose prefill ran slow is cut
 // and one that ran fast is kept: it selects on the response it then fits,
 // and the intercept reads low. Here the service time the rate is read
-// against is one figure for every minute of a prompt length: the median
-// service time of the slower-rate half of the candidates within
-// MaxClusterWidth of its prompt either way (at least one). The half is
-// chosen by rate, so no minute's outcome decides whether it is kept.
+// against is the median service time of the slower-rate half of the other
+// candidates within MaxClusterWidth of its prompt either way: the half is
+// chosen by rate, and the minute itself is left out, so its own outcome does
+// not decide whether it is kept. A minute with no such neighbour has no
+// cluster to read, and keeps the test P1 shipped.
+//
+// The candidates are indexed in rate order once, and each minute walks that
+// order over its neighbours, so a key of a few thousand minutes costs a few
+// million comparisons and no copies.
 func lowLoadByRate(cands []sample) []sample {
+	byRate := make([]int, len(cands))
+	for i := range byRate {
+		byRate[i] = i
+	}
+	slices.SortStableFunc(byRate, func(a, b int) int { return cmp.Compare(cands[a].rankRate, cands[b].rankRate) })
+	near := func(i, j int) bool {
+		return i != j && cands[j].ieff <= MaxClusterWidth*cands[i].ieff && cands[i].ieff <= MaxClusterWidth*cands[j].ieff
+	}
 	out := make([]sample, 0, len(cands))
-	for _, s := range cands {
-		var near []sample
-		for _, o := range cands {
-			if o.ieff <= MaxClusterWidth*s.ieff && s.ieff <= MaxClusterWidth*o.ieff {
-				near = append(near, o)
+	var svcs []float64
+	for i, s := range cands {
+		n := 0
+		for j := range cands {
+			if near(i, j) {
+				n++
 			}
 		}
-		slices.SortStableFunc(near, func(a, b sample) int { return cmp.Compare(a.rankRate, b.rankRate) })
-		near = near[:(len(near)+1)/2]
-		svcs := make([]float64, len(near))
-		for i, o := range near {
-			svcs[i] = o.svc
+		ref := s.svc
+		if n > 0 {
+			svcs = svcs[:0]
+			for _, j := range byRate {
+				if len(svcs) == (n+1)/2 {
+					break
+				}
+				if near(i, j) {
+					svcs = append(svcs, cands[j].svc)
+				}
+			}
+			ref = median(svcs)
 		}
-		if s.rankRate*median(svcs) <= LowLoadOccupancy {
+		if s.rankRate*ref <= LowLoadOccupancy {
 			out = append(out, s)
 		}
 	}

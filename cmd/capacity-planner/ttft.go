@@ -629,8 +629,13 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 	switch {
 	case f.fixedImbalance > 0 && p.Replicas >= 2:
 		// The report's sensitivity to f (fSensitivity): one f at every
-		// count, not a reading.
-		p.Imbalance, p.ImbalanceAssumed = min(float64(p.Replicas), f.fixedImbalance), true
+		// count, never under the f P1 learned at the count, so neither row
+		// prices a measured count more even than it ran.
+		fixed := f.fixedImbalance
+		if v, ok := ps.Estimate.FByPods[p.Replicas]; ok && v >= 1 {
+			fixed = max(fixed, v)
+		}
+		p.Imbalance, p.ImbalanceAssumed = min(float64(p.Replicas), fixed), true
 		pf.in.ImbalanceSource = fmt.Sprintf("%s for the sensitivity to f", num(f.fixedImbalance))
 	case f.imbalanceAcrossCounts:
 		p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAcross(ps, p.Replicas)
