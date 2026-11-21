@@ -114,6 +114,9 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time, bus
 			continue
 		}
 		k := fillForITL(rm, busiest)
+		// The ratio's filter reads the busiest rank's peak, not fillForITL's
+		// k, on purpose: it asks whether the pod was loaded as the band's
+		// bottom counts load, at the rank that sets its step.
 		if r, ok := rm.BusiestRankFillRatio(); ok && busiest != nil && busiest(rm.VariantName) &&
 			rm.BusiestRankKvUsage() >= bottom {
 			l.ratios[rm.VariantName] = append(l.ratios[rm.VariantName], r)

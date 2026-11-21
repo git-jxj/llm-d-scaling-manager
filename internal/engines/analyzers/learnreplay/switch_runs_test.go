@@ -1426,6 +1426,9 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestMoEBusiestRank_LineReadAtTheBusiestRank"},
 		{"../../../signals/itl", "TestObserve_BusiestRankFill"},
 		{".", "TestLineSamples_BusiestRankRowsAndRatio"},
+		{".", "TestLineSamples_BusiestRatioMedianOfLoadedRows"},
+		{"../../../../cmd/capacity-planner", "TestBusiestRank_ReplayToPrice"},
+		{"../../../../cmd/capacity-planner", "TestBusiestRankCapacity_PricesTheMeanAtTheTopOverTheRatio"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
 	// asserts both, and the first holds all six off from the constructor.

@@ -641,6 +641,27 @@ func busiestRankCapacity(vs learnreplay.VariantState) float64 {
 	return vs.CapacityTokens
 }
 
+// busiestRankAssumed is what a report and a TTFT answer list as assumed for
+// a decode line read at the busiest rank (busiestRankFill): the flag and the
+// ratio its capacity was priced at, as the text's flags line gives them; ""
+// for a line read on the mean.
+func (pv pricedVariant) busiestRankAssumed() string {
+	if !pv.state.BusiestRankFill {
+		return ""
+	}
+	return fmt.Sprintf("%s (%s)", busiestRankFill, busiestRankWords(pv.state.BusiestRankRatio))
+}
+
+// capacitySource is where a decode variant's priced capacity came from, for
+// the inputs the page shows: "" for the variant's own, or the busiest/mean
+// rank ratio it was divided by (busiestRankCapacity).
+func (pv pricedVariant) capacitySource() string {
+	if pv.state.BusiestRankFill && pv.state.BusiestRankRatio > 1 {
+		return fmt.Sprintf("the variant's over the busiest/mean rank fill ratio %.2f", pv.state.BusiestRankRatio)
+	}
+	return ""
+}
+
 // resampling is the bands' bootstrap: the page's, from --seed.
 func (f *answerFlags) resampling() whatif.Resampling {
 	r := whatif.DefaultResampling()

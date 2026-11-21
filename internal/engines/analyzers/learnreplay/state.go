@@ -273,6 +273,13 @@ type shapeSample struct {
 // but its p90 TTFT on the B-off and B-on phases still reads 15% to 23% under
 // and its p90 TPOT up to 22% under there (32% on the first warm-up's
 // B-onset, 39% on the bursty C phases), so both stay off.
+//
+// saturation.SwitchMoEBusiestRank is not listed either: it reads a
+// data-parallel MoE engine's line at its busiest rank (issue
+// llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
+// synthetic. No recording in the goldens is of such an engine, so nothing
+// shows it does not read a figure under what was measured; a replay turns it
+// on by name.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
