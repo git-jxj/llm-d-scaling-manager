@@ -250,6 +250,8 @@ type shapeSample struct {
 //     median of the busiest minutes, not of every minute.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
+//   - saturation.SwitchPrefillVPFloorServed: a lower-bound V_P raised to the
+//     highest computed-token rate a pod was seen to sustain.
 //   - slo.SwitchTTFTHopUnqueued: the router hop of the decode term read off
 //     windows whose prefill pods held no queue. The planner reads its own
 //     decode term windows (state_ttft.go), so it reads the switch from here
@@ -279,6 +281,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
+		saturation.SwitchPrefillVPFloorServed:   true,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,
 	}}

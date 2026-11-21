@@ -541,6 +541,9 @@ type SaturationAnalyzer struct {
 	// planner-only; the analyzer accepts it for the planner's replay
 	// (learnreplay.StatesFrom reads it) and reads it nowhere.
 	itlLineAtFloor bool
+	// prefillVPFloorServed is SwitchPrefillVPFloorServed: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillVPFloorServed bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor
