@@ -44,7 +44,9 @@ const (
 // The self-check's rules: a figure is inconsistent with its recording when
 // its median ratio lies outside [selfCheckBiasFail, selfCheckBiasHi], fewer than
 // selfCheckWithinLo of its steps are within BacktestTolerance, more than
-// selfCheckLowShare read low or any one under selfCheckFloor, its worst
+// selfCheckLowShare read low or any one under selfCheckFloor, its p90 (where
+// the figure is judged at the mean) reads low in half of selfCheckMinSteps
+// or more scored steps, its worst
 // tenth near the knee reads outside [selfCheckFloor, selfCheckNearKneeHi],
 // or it called the fleet overloaded where it served unqueued
 // (selfcheck_rules.go); weak when its median ratio lies under
@@ -375,6 +377,10 @@ type SelfCheckFigure struct {
 	ServedPastKnee int                `json:"servedPastKnee"`
 	// Refused is the other refusals, by reason.
 	Refused map[string]int `json:"refused"`
+	// p90Steps and p90Low are the p90's scored steps and those read more
+	// than BacktestTolerance low, where the figure is judged at another
+	// statistic (the p90-low rule, figureRules).
+	p90Steps, p90Low int
 }
 
 // SelfCheckFold is one fold: the fit up to FitTo, the test from TestFrom to
@@ -506,21 +512,25 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	return sc
 }
 
-// selfCheckFigure is the primary score among scores (primaryStats: the
-// mean, which no histogram bucket sets, else a percentile), over judged
-// steps; the p90's where none was scored, for its refusals.
+// selfCheckFigure is the score the self-check judges among scores, over
+// judged steps (selfCheckScore); the p90's where none was scored, for its
+// refusals. Beside a figure judged at another statistic it keeps the p90's
+// scored and low steps, for the p90-low rule.
 func selfCheckFigure(scores []BacktestScore, judged int) *SelfCheckFigure {
-	p := primaryScore(scores)
+	p90 := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 })
+	p := selfCheckScore(scores)
 	if p == nil {
-		i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 })
-		if i < 0 {
+		if p90 < 0 {
 			return nil
 		}
-		p = &scores[i]
+		p = &scores[p90]
 	}
 	s := *p
 	f := &SelfCheckFigure{Statistic: s.Statistic, Steps: s.All.Steps, Bias: s.All.Bias, Low: s.All.Low, Judged: judged,
 		Overloaded: s.Refused[string(whatif.Saturated)], PastKnee: s.PastKnee, Refused: map[string]int{}}
+	if p90 >= 0 && s.Statistic != statP90 {
+		f.p90Steps, f.p90Low = scores[p90].All.Steps, scores[p90].All.Low
+	}
 	if s.All.Within != nil {
 		f.Within = int(math.Round(*s.All.Within * float64(s.All.Steps)))
 	}
@@ -530,6 +540,28 @@ func selfCheckFigure(scores []BacktestScore, judged int) *SelfCheckFigure {
 		}
 	}
 	return f
+}
+
+// selfCheckScore is the score the self-check judges a figure at: the first
+// of primaryStats (the mean, then the p90 and p50) scored in
+// selfCheckMinSteps or more steps, else the one scored in the most (the
+// first of primaryStats on a tie); nil where none was scored. A mean over a
+// few steps does not stand in for a percentile scored over many.
+func selfCheckScore(scores []BacktestScore) *BacktestScore {
+	var most *BacktestScore
+	for _, stat := range primaryStats {
+		i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == stat })
+		if i < 0 || scores[i].All.Steps == 0 {
+			continue
+		}
+		if scores[i].All.Steps >= selfCheckMinSteps {
+			return &scores[i]
+		}
+		if most == nil || scores[i].All.Steps > most.All.Steps {
+			most = &scores[i]
+		}
+	}
+	return most
 }
 
 // judge sets the status, the line, why, what to trust and the issue.
@@ -640,6 +672,13 @@ func (sc *SelfCheck) figureRules(name, label string, f *SelfCheckFigure, within 
 	low := float64(f.Low) / float64(f.Steps)
 	rule("low", low <= selfCheckLowShare,
 		fmt.Sprintf("read more than 20%% low in %d of %d steps (%.0f%%), want %.0f%% or fewer", f.Low, f.Steps, low*100, selfCheckLowShare*100))
+	// A mean within its tolerance can hide a tail read low: where the p90
+	// was scored in enough steps, it reading low in half of them or more is
+	// inconsistent too.
+	if f.p90Steps >= selfCheckMinSteps {
+		rule("p90-low", 2*f.p90Low < f.p90Steps,
+			fmt.Sprintf("its p90 read more than 20%% low in %d of %d steps, want fewer than half", f.p90Low, f.p90Steps))
+	}
 	if f.MinRatio != nil {
 		rule("floor", *f.MinRatio >= selfCheckFloor,
 			fmt.Sprintf("the lowest step read %.2f of measured, want %.2f or more", *f.MinRatio, selfCheckFloor))

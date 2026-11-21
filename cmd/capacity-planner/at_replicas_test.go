@@ -391,6 +391,11 @@ func TestAtReplicas_CellAtTheSLOStatistics(t *testing.T) {
 		assert.Equal(t, wantRows[i].TTFT[0].Figure, c.TTFT.Figure, row.Label)
 		if c.TPOT.Statistic == whatifapi.ReportStatisticName(0) {
 			assert.Nil(t, wantRows[i].TPOTPercentile.Value, "%s: the mean stands in only where the p99 is refused", row.Label)
+			// On the staircase the p99 TPOT is refused as host-bound
+			// (#291), so the cell's TPOT is the mean standing in.
+			if c.TTFT.Value != nil && c.TPOT.Value != nil {
+				valued++
+			}
 			continue
 		}
 		assert.Equal(t, "p99", c.TPOT.Statistic, row.Label)

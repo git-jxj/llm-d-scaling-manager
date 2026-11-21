@@ -115,9 +115,14 @@ what the fleet measured. The result comes first, in one line:
 
 ```text
 Self-check: tested on the last 1 h 13 min of this recording, each part predicted from a fit on what came before it,
-mean TTFT within 20% in 0 of 13 steps (median ratio 1.69); mean TPOT within 20% in 14 of 14 steps (median ratio 0.98). [inconsistent]
-  Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures held.
+mean TTFT within 20% in 8 of 11 steps at 5 load levels (median ratio 1.18); mean TPOT within 20% in 12 of 12 steps at 5 load levels (median ratio 0.99).
+It tested 0.24 to 4.13 r/s at 2 prefill + 2 decode: an answer at another rate or fleet is not covered by it. [weak]
+  why: few or loose agreements: mean TTFT: within 20% in 73% of 11 steps; the within share could be as low as 45% over the load levels
 ```
+
+Each figure is judged at its mean when the mean was scored in 6 steps or
+more, else at the p90, else at the p50; with none scored in 6, at the one
+scored in the most steps.
 
 An answer given stated inputs is checked with them. With
 `--assume-vp`, `--assume-a`, `--assume-prompt-cv`, `--assume-router-hop`,
@@ -147,7 +152,7 @@ On the page it is a badge beside the source, with the same lines under it.
 | --- | --- |
 | held on its own steps (`ok` in JSON) | The planner predicted this recording's own steps well: 12 steps or more at 4 load levels or more, 70% of them within 20%, a median ratio from 0.95 to 1.25, and the within share still at least half when the levels are resampled. It tested only the rates and replica counts the recording ran: it says nothing of other fleets. |
 | weak | It held, but over fewer than 12 steps or 4 load levels, with fewer than 70% of the steps within 20%, leaning low (a median ratio from 0.80 to 0.95), or with a within share that could be under half once the levels are resampled. Size with care. |
-| inconsistent | The planner and this recording disagree. The line says which figures not to trust, and why: the median ratio is outside 0.80 to 1.25; fewer than half the steps are within 20%; more than 15% of the steps read more than 20% low, or any one read under 0.67 of measured; at 0.8 to 1.0 of the knee the worst tenth of the steps (3 or more) read outside 0.67 to 2 times measured; the planner called the fleet overloaded in half the steps where it served; or it called the fleet overloaded in steps where the fleet's measured p90 TTFT stayed within 1.5x of the median of its steps below 0.8 of the knee, so its queue did not grow (2 or more, and a fifth of those steps): the knee reads low. |
+| inconsistent | The planner and this recording disagree. The line says which figures not to trust, and why: the median ratio is outside 0.80 to 1.25; fewer than half the steps are within 20%; more than 15% of the steps read more than 20% low, or any one read under 0.67 of measured; on a figure judged at its mean, the p90 read more than 20% low in half or more of its scored steps (6 or more); at 0.8 to 1.0 of the knee the worst tenth of the steps (3 or more) read outside 0.67 to 2 times measured; the planner called the fleet overloaded in half the steps where it served; or it called the fleet overloaded in steps where the fleet's measured p90 TTFT stayed within 1.5x of the median of its steps below 0.8 of the knee, so its queue did not grow (2 or more, and a fifth of those steps): the knee reads low. |
 | not run | The recording is shorter than an hour, carries no latency, or is not a P/D fleet; fewer than 6 steps could be scored for each figure (the refusals are named); or, on the server, it ran out of its time budget. The line says which. |
 
 The steps are not independent: a load level holds for several steps, and
