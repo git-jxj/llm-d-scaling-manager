@@ -97,6 +97,10 @@ type answerFlags struct {
 	// (ttft.go): on by default (whatif.DefaultPlannerImbalanceAcrossCounts),
 	// where the SLO analyzer's is off.
 	imbalanceAcrossCounts bool
+	// loadAwareRouter is --load-aware-router, a TTFT flag (ttft.go): f
+	// falls to 1 at the pooled prefill knee (whatif.Prefill.LoadAwareRouter);
+	// off by default (whatif.DefaultPlannerLoadAwareRouter).
+	loadAwareRouter bool
 	// fixedImbalance, above zero, is f at every prefill count above one,
 	// assumed: the report's sensitivity to f (fSensitivity). No flag sets
 	// it.
@@ -154,6 +158,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.IntVar(&f.prefillRunningCap, "prefill-running-cap", 0, "with --ps-onsets, the most prompts a prefill pod computes at once (about max_num_batched_tokens over the prompt); 0 (unknown, the default) takes the lower of processor sharing at 1 and first come")
 	fs.BoolVar(&f.chargeDecodeGate, "charge-decode-gate", whatif.DefaultChargeDecodeGate, "experimental, unvalidated, slo-to-rate only: charge the time the decode flow-control gate is closed below its onset to the rate answer")
 	fs.StringVar(&f.inputBucket, "input-bucket", "", "not supported: per-bucket answers are the planner's M1")
+	fs.BoolVar(&f.loadAwareRouter, "load-aware-router", whatif.DefaultPlannerLoadAwareRouter, "the router scores each pod's queue (llm-d's EPP queue scorer): f falls to 1 as the prefill pods fill, so the prefill knee is the pooled one and f prices only the latency below it (no recording says what the router scores)")
 	fs.BoolVar(&f.imbalanceAcrossCounts, "imbalance-across-counts", whatif.DefaultPlannerImbalanceAcrossCounts, fmt.Sprintf("at a prefill count P1 has not learned, price f off a curve fitted to the counts it learned; with none learned, and with =false, max(%g, f) (flagged AssumedImbalance either way)", whatif.ImbalanceFloor))
 	f.window.registerWindow(fs)
 	fs.Lookup("prometheus").Usage = "answer from a window of this Prometheus (base URL), captured and generated in memory, in place of --recording"

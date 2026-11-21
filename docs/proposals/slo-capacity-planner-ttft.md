@@ -270,7 +270,47 @@ computed tokens a pod or more (`saturation.SwitchPrefillFBusyMinutes`): the
 router spreads light load less evenly, and on the public staircase the median
 of every minute read `f` 1.23, where the busy minutes' raw shares were 1.01 to
 1.06 and their `f` 1.00, so the knee read about 20% low (issue #266). Below the knee the busy minutes' `f` prices
-the worst pod's queue a little low. Sticky routing
+the worst pod's queue a little low.
+
+**`f` by load** (issue #300). On every recording that learned `f`, the
+de-biased `f` of each minute falls as the pods fill. By the minute's mean pod
+utilization `ρ` (computed tokens a pod over `V_P`), median `f`, two pods, a
+band of fewer than five minutes left blank (the phases, which learned no
+`V_P`, at the warm-up's):
+
+| recording | ρ < 0.1 | 0.1-0.2 | 0.2-0.3 | 0.3-0.4 | 0.4-0.5 | 0.5-0.6 | 0.7-0.8 | 0.8+ | busy minutes (`ρ_m`) |
+|---|---|---|---|---|---|---|---|---|---|
+| 0.6B warm-up | 1.50 | | | | 1.00 | 1.00 | | 1.00 | 1.000 (0.59) |
+| 0.6B phase B | | 1.19 | 1.09 | 1.04 | 1.01 | | | | 1.021 (0.42) |
+| 0.6B phase C | | 1.14 | 1.08 | 1.05 | 1.03 | | | | 1.035 (0.42) |
+| Qwen3-32B capture | | | | 1.16 | 1.10 | 1.00 | 1.01 | 1.00 | 1.000 (0.93) |
+
+So the busy minutes' `f` is the `f` at the rates a knee and a headroom are
+priced at: at and above `ρ_m` the minutes read it or less. Below `ρ_m` they read
+more, and there the held `f` prices TTFT low, but the queue is short: at ρ 0.15
+on phase B, `f` 1.19 against 1.02 moves the busiest pod from 0.18 to 0.15
+utilization, about 1 ms of a 50 ms TTFT. A recording that never got busy reads
+its light minutes' `f`, which is high, and prices every higher rate safe.
+`prefill.Estimate.FLoad` (and `FLoadByPods`) is the load `f` was read at.
+
+**A load-aware router** (`--load-aware-router`, `Prefill.LoadAwareRouter`,
+opt-in). A router that scores the pods' queues (llm-d's EPP queue scorer)
+sends less to a pod as its queue grows, so near the pooled knee the busiest
+pod's share is the mean share. With the flag, `f` is held up to `ρ_m`
+(`ImbalanceUtilization`, `FLoad` over `V_P`) and past it falls linearly to 1 at
+`ρ = 1`:
+
+    f(ρ) = 1 + (f − 1)(1 − ρ)/(1 − ρ_m)
+
+The knee is then where `f(ρ)·ρ` reaches `1 − margin`: the pooled knee, but for
+the margin, unless `f − 1 > 1 − ρ_m`, a pod too hot for the idle capacity left
+to absorb, which saturates first. `f` prices only the latency below the knee.
+The linear fall is a stated shape: the table above has it falling, not its
+form near the knee. No recording says what the router scores (the backtest's
+`notRecordedConfig`), so the flag is the operator's statement, and it is off by
+default.
+
+Sticky routing
 (one pod wins a whole refresh window `w`) averages back toward 1 per minute; the
 worst pod then gets `Ca² ≈ 1 + λ_w·w`, uncapped.
 

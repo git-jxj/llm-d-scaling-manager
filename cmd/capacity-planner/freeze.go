@@ -224,7 +224,7 @@ func runFreeze(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	a := answerFlags{question: "freeze", recording: f.recording, cycle: "last", warn: warn,
-		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts}
+		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	name, src, err := a.recordingSource(ctx)
 	if err != nil {
 		return err
@@ -392,7 +392,7 @@ func gateOf(st *learnreplay.State) frozenGate {
 		g.VP = g.VP || ps.EstimateRead && ps.Estimate.VP > 0 && ps.Estimate.VPRefused == ""
 		g.A = g.A || ps.EstimateRead && ps.Estimate.ARefused == ""
 	}
-	f := answerFlags{question: "freeze", cycle: "last", imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts}
+	f := answerFlags{question: "freeze", cycle: "last", imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	if variants, err := f.decodeVariants(st); err == nil {
 		g.DecodeLine = slices.ContainsFunc(variants, func(pv pricedVariant) bool {
 			_, ok := whatif.KneeRate(pv.decode).(whatif.Answer)
@@ -463,7 +463,7 @@ func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b fre
 	}
 	a := answerFlags{question: "freeze", cycle: "last", decode: b.Decode, prefill: b.Prefill,
 		inputTokens: b.Prompt, outputTokens: b.Output, assumeVP: f.assumeVP, seed: 1,
-		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
+		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter, set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
 	if f.assumeVP > 0 {
 		a.set["assume-vp"] = true
 	}

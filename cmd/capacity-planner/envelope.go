@@ -50,7 +50,7 @@ var (
 		"assume-itl-b"}
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait", "router-wait-in-prefill",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
-		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts"}
+		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "load-aware-router"}
 )
 
 // statedOutside is the flags in flagsOutside that were set, as --name;
@@ -60,6 +60,9 @@ func (f *answerFlags) statedOutside() []string {
 	for _, name := range flagsOutside {
 		// --imbalance-across-counts at the planner's default states nothing.
 		if name == "imbalance-across-counts" && f.imbalanceAcrossCounts == whatif.DefaultPlannerImbalanceAcrossCounts {
+			continue
+		}
+		if name == "load-aware-router" && f.loadAwareRouter == whatif.DefaultPlannerLoadAwareRouter {
 			continue
 		}
 		if f.set[name] {
