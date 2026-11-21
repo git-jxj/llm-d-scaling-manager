@@ -243,12 +243,18 @@ func (f *answerFlags) cycleNumber() (int, error) {
 	return n, nil
 }
 
+// engineRowsFix is what an operator does about a recording whose engine rows
+// do not stand for the fleet (whatifapi.EngineRowsShort): the troubleshooting
+// guide's row says the same.
+const engineRowsFix = "scrape every rank's engine metrics and record again (capacity-planner troubleshooting guide)"
+
 // readState replays the recording to the cycle asked for: the --recording
 // file, or with --prometheus the window captured and generated in memory
 // (windowRecording). A file that cannot be read or is no recording, and a
-// model or a cycle the recording does not hold, are input errors; a
-// recording that fails inside the analyzers, or a replay cancelled, is an
-// internal one.
+// model or a cycle the recording does not hold, and a recording whose engine
+// rows do not stand for the fleet (whatifapi.EngineRowsShort), are input
+// errors; a recording that fails inside the analyzers, or a replay
+// cancelled, is an internal one.
 func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error) {
 	name, src, err := f.recordingSource(ctx)
 	if err != nil {
@@ -259,8 +265,9 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 	if err != nil {
 		return nil, err
 	}
-	// The variants asked, as the API's series counts the priced ones; an
-	// empty name counts every variant of the role.
+	// The variants asked; an empty name counts every variant of the role,
+	// rows and replicas alike, where the server counts the variant it
+	// resolved. Both compare a role's rows with its own replicas.
 	cycles, err := learnreplay.SeriesFrom(src.open, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID},
 		learnreplay.SeriesVariants{Prefill: f.prefillVariant, Decode: f.variant})
 	if cerr := src.unchanged(); cerr != nil {
@@ -272,7 +279,7 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 	if why := whatifapi.EngineRowsShort(seriesSamplesOf(cycles)); why != "" {
 		// Every per-replica rate and knee would read low by the ranks the
 		// rows leave out (issue llm-d-incubation/llm-d-scaling-manager#331).
-		return nil, usagef("%s: %s; the planner reads a replica as its engine rows, so it answers nothing from this recording", name, why)
+		return nil, usagef("%s: %s; the planner reads a replica as its engine rows, so it answers nothing from this recording; %s", name, why, engineRowsFix)
 	}
 	f.checkRecording(ctx, st, src)
 	return st, nil

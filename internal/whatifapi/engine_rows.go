@@ -15,9 +15,9 @@ import (
 // apart from its base model) reads over it.
 const EngineRateTolerance = 0.2
 
-// MinRowsPerReplica is the median engine rows a serving replica may have,
-// over the cycles that state replicas, before the rows are taken not to
-// stand for the fleet (EngineRowsShort): a replica is one engine row, and
+// MinRowsPerReplica is the least ratio of a role's engine rows to its
+// serving replicas, in the median cycle of those that state replicas,
+// before the rows are taken not to stand for the fleet (EngineRowsShort): a replica is one engine row, and
 // fewer is a replica whose engine the recording did not read.
 const MinRowsPerReplica = 0.75
 
@@ -25,7 +25,7 @@ const MinRowsPerReplica = 0.75
 // EngineRowsShort compares: fewer say nothing of a window.
 const minEngineRateCycles = 4
 
-// EngineRowsShort is why the engine rows of series do not stand for the
+// EngineRowsShort returns why the engine rows of series do not stand for the
 // fleet, or "" where they do (or nothing says otherwise). The planner reads a
 // replica as its engine rows: their request rate, their count. On a fleet of
 // multi-Pod groups whose rows report one rank (one Pod) of several, the rows

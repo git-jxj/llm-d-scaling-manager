@@ -43,6 +43,7 @@ func TestResolve_RefusesEngineRowsThatCountOneRankInFour(t *testing.T) {
 	assert.Contains(t, err.Error(), "9 decode engine rows stand for 36 serving replicas")
 	assert.Contains(t, err.Error(), "2 prefill engine rows stand for 8 serving replicas")
 	assert.Contains(t, err.Error(), "multi-Pod group")
+	assert.Contains(t, err.Error(), engineRowsFix, "the refusal says what to do")
 
 	// The CLI's answers read the same rows, and refuse them too.
 	err = run(context.Background(), []string{"at-replicas", "--recording", busyFleetRecordingOf(t, 4), "--decode", "9", "--prefill", "2"},
@@ -51,4 +52,5 @@ func TestResolve_RefusesEngineRowsThatCountOneRankInFour(t *testing.T) {
 	assert.Equal(t, 2, exitCode(err), "an input error")
 	assert.Contains(t, err.Error(), "9 decode engine rows stand for 36 serving replicas")
 	assert.Contains(t, err.Error(), "multi-Pod group")
+	assert.Contains(t, err.Error(), engineRowsFix, "the refusal says what to do")
 }

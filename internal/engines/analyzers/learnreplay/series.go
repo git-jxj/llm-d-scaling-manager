@@ -52,8 +52,8 @@ type CycleSample struct {
 	// FlowControlSeries says the cycle read the router's flow-control queue
 	// series (domain.AnalyzerInput.FlowControlSeries).
 	FlowControlSeries bool
-	// EngineRate is the request rate every decode and every unsplit
-	// ("both") row of the model reports, summed, whatever ArrivalRate is:
+	// EngineRate is the request rate of every decode and every unsplit
+	// ("both") row of the model that reports a rate, summed, whatever ArrivalRate is:
 	// where every replica's engine is read it is the router's rate, and
 	// where a multi-Pod group's rows report one rank of several it is a
 	// fraction of it (issue llm-d-incubation/llm-d-scaling-manager#331).
