@@ -425,10 +425,32 @@ says so when the cluster has SecurityContextConstraints:
   it as `excluded` and leaves it out of the count, since no engine can start
   there either. Nothing in the namespace fixes that node.
 
-On node-local NVMe use the engine's default loader (memory-mapped
-safetensors); `--safetensors-load-strategy prefetch` is for network filesystems
-and buys nothing here. Direct-I/O, many-thread loaders are a further step, not
-measured here.
+On node-local NVMe the loader still matters when the page cache is cold.
+`--safetensors-load-strategy prefetch` cuts the weights load by a quarter to a
+third, and the `instanttensor` loader (direct I/O) by a little more. Measured on
+one H200 node, vLLM 0.34.0, the model's pages dropped from the page cache
+before each start, median of three starts (the weights load from the engine
+log, then container start to `/health`):
+
+| Loader flags | Qwen3-32B, TP=1, 61 GiB | Qwen3-235B-A22B-FP8, TP=4 with expert parallel, 223 GiB |
+| --- | --- | --- |
+| none (default, memory-mapped) | 17.6 s, 53.1 s | 61.4 s, 142.6 s |
+| `--safetensors-load-strategy prefetch` | 13.1 s, 47.7 s | 41.5 s, 122.0 s |
+| `--load-format instanttensor` | 11.0 s, 46.0 s | 37.7 s, 117.9 s |
+| `--enable-ep-weight-filter` | - | 35.1 s, 117.3 s |
+| `--enable-ep-weight-filter` and prefetch | - | 39.9 s, 123.0 s |
+
+- **`instanttensor`** reads around the page cache: after a start, under 0.2 %
+  of the model is in memory, so a later start on the node cannot gain from a
+  warm cache. It needs an image that ships the `instanttensor` package.
+- **`--enable-ep-weight-filter`** on one node: each rank parses only its own
+  experts, but every expert is local to some rank, so the node still reads the
+  whole model (223 GiB in every row). Prefetch reads whole files, so with
+  prefetch the filter gains little. Across nodes, the filter would also cut
+  each node's read; that was not measured.
+- **The first start with a new loader flag can compile again.**
+  `--enable-ep-weight-filter` is part of vLLM's compile-cache key: the first
+  start with it took 167 s, the next ones 123 s and 122 s.
 
 The benchmark standup has the same measure under
 `BENCHMARK_MODEL_HOSTPATH=<dir>`; what the harness does with it is in

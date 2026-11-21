@@ -425,7 +425,7 @@ everything).
 | **A pod holding the weights in RAM** (`mlock`) | Unevictable memory equal to the model, per node per model, forever. |
 | **Peer weight transfer** | Complementary: a replica filled from a serving peer over NCCL reads no files ([§4e](warm-pool-weight-transfer.md#4e-it-works-on-a-plain-scale-up-too-with-no-pool-at-all), measured byte-identical). Needs a same-layout peer and engine changes. |
 | **Snapshot of a loaded engine** | Measured: restores in ~15 s, TP=1 only today. Where it applies it removes much more than the read. |
-| **vLLM's own `--safetensors-load-strategy prefetch`** | Reads whole files into page cache, but inside the load, after the head start; on node-local NVMe the [reference](../reference/workload-preparation.md#weights-on-the-nodes-disk) says it buys nothing. |
+| **vLLM's own `--safetensors-load-strategy prefetch`** | Reads whole files into page cache, but inside the load, after the head start. On node-local NVMe with a cold page cache it cuts the load by a quarter to a third (41.5 s against 61.4 s on a 223 GiB MoE; [reference](../reference/workload-preparation.md#weights-on-the-nodes-disk)), but a prewarm that runs before the engine removes the read from the start altogether. |
 | **Warm pool** | Removes the whole start, at the cost of an idle engine. |
 
 ## 10. Measurement plan before building past alpha
