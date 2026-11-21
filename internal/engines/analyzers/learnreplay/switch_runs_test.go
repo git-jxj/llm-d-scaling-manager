@@ -232,7 +232,9 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// variant-01's 09:06 sample is its reader alone, 6.60, where the bare
 	// tolerance weighed it to 12.12 on one reading, since the band sets on
 	// a 5 min mean; the priced mu falls 11.537 to 10.884 (-5.7 %) on the
-	// four cycles of 09:11, the cost side. Both outputs are named by
+	// four cycles of 09:11, the cost side (measured on the mu-paths
+	// recording before llm-d-incubation/llm-d-scaling-manager#188 took it
+	// again with yv-a at 3). Both outputs are named by
 	// SwitchMuWeighsFleet, so all off is still their base. Its unit tests
 	// hold it (heldBy).
 	saturation.SwitchMuWeighingBand: nil,
@@ -1323,8 +1325,9 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 }))))))))
 
 // kvAboveContextSeamMoves is what each earlier seam, off alone from all on,
-// moves since llm-d-incubation/llm-d-scaling-manager#188's
-// SwitchKVPerRequestAboveContext is on in all on.
+// moves since llm-d-incubation/llm-d-scaling-manager#188: its
+// SwitchKVPerRequestAboveContext on in all on, and the mu-paths recording
+// taken again.
 //
 //   - SwitchKVPerRequestHitsResident: the reading #188 prices is this
 //     switch's, so off it turns #188 off too, and moves what #188 moves
@@ -2131,9 +2134,11 @@ var switchBase = withDigests(staircaseBase, map[string]string{
 	"ttft-open-loop-short/store-records.csv": "8a16f127a4de2ab2c877c39fae242c2e1bd25c2c71b6b5702cb449c40a88eed0",
 	"ttft-saturated/store-records.csv":       "79ba58cb43e4653b9c2f02ec09ca29f27319921f69ff3be79d83984748f82e54",
 
-	// mu-paths' results, variant-capacities and learned-state below are the
-	// all-off replay of the recording taken again for
+	// mu-paths' variant-capacities and learned-state below are the all-off
+	// replay of the recording taken again for
 	// llm-d-incubation/llm-d-scaling-manager#188 (kvAboveContextMoves).
+	// Its results digest is that replay's too, though no row here names
+	// that output.
 
 	"acceptance/results.csv":            "7aef7e7391f761fe984f89720d61b0583048b330989c449098dce8ec2d285981",
 	"acceptance/variant-capacities.csv": "47ad82ad3c017924b6cc5398d9578ddd28ab95fdc547adcec6decb69abcc91b3",

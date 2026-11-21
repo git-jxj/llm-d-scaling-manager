@@ -1699,21 +1699,25 @@ budget and long prompts was priced 10-18x below its capacity. Since v0.12.2:
 **A decode request that holds more KV than its context.** Where the engine
 reports its running requests, a decode's derived service rate is priced at the
 KV each one is measured to hold: tokens in use over running requests. Before
-v0.12.3 that reading was capped at the request's whole context, its prompt
-plus, on average, half its output. An engine that keeps more KV per request in the same cache,
-such as a sparse-attention indexer's keys or a speculative draft model's KV,
-was then priced as if it fit more requests than it does. Since v0.12.3:
+v0.12.3 that reading was capped at the request's whole context: its prompt
+plus, on average, half its output. An engine that keeps more KV per request
+in the same cache, such as a sparse-attention indexer's keys or a speculative
+draft model's KV, was then priced as if it fit more requests than it does.
+Since v0.12.3:
 
 - A reading above the context, taken over at least 8 requests, is priced as
   read. Expect more decode replicas where such a reading holds.
-- On a P/D decode, the requests still pulling their KV from prefill, or
-  waiting for the next step after it landed, are counted with the running
-  ones: their KV is in the tokens in use. vLLM reports them where it splits
-  its waiting queue by reason.
+- Requests that wait for something other than capacity are counted with the
+  running ones: their KV is in the tokens in use. On a P/D decode these are
+  the requests still pulling their KV from prefill, or waiting a step after it
+  landed. vLLM 0.20 and later reports them, through
+  `vllm:num_requests_waiting_by_reason`. This lowers the reading, so on its
+  own it asks for fewer decode replicas, not more.
 - SGLang is still held at the context: it reports its busiest rank against
   the whole pod, which reads high on a pod of several ranks.
 - The `derived-mu` line at `--v=3` says `residentKVBound=above-context` where
-  a reading over twice the context is priced as read.
+  the reading is more than twice the context. A reading between once and
+  twice the context is also priced as read, and says `none`.
 - No setting turns this off.
 
 A cap read too high matters most under **flow control**. The router holds the queue, the engine's

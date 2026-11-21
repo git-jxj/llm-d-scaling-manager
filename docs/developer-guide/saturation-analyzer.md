@@ -247,8 +247,9 @@ throughput and slo analyzers still price their KV per request at `ILeff`.
 The upper bound under-prices an engine that holds more KV per request than its
 context in the same pool, such as a sparse-attention indexer's keys or a
 speculative draft model's KV (issue llm-d-incubation/llm-d-scaling-manager#188).
-The replay switch `kv-per-request-above-context`
-(`SwitchKVPerRequestAboveContext`) drops the bound and prices the reading by
+Since v0.12.3 the analyzer drops the bound (switch
+`kv-per-request-above-context`, `SwitchKVPerRequestAboveContext`; a replay can
+turn it off) and prices the reading by
 the capacity planner's rule, `shape.PriceResident`: held at the discount from
 below, priced as read above the context, held at the context on SGLang. A
 shape with no hit is read too. `residentKVBound` is then `above-context` for a
@@ -262,9 +263,10 @@ from `minK x reading / context`, so neither gate would ever take it on a
 recording that reads three times the context at a fill of 0.15-0.35. Not every
 reading above the context is KV held beyond prompt and output, so with the
 switch on two more rules apply. The tokens are spread over the requests that
-hold KV without running as well: on the decode side of a P/D split, those
-pulling their KV from prefill or waiting for the next step after it landed
-(the waiting queue less the requests waiting for capacity). A decode pulling
+hold KV without running as well (`holdingNotRunning`: the waiting queue less
+the requests waiting for capacity, on any replica that splits its queue by
+reason). On the decode side of a P/D split those are the requests pulling
+their KV from prefill or waiting for the next step after it landed. A decode pulling
 30 prompts beside 4 running would otherwise read 8 times the context. And a
 reading above the context needs at least 8 such requests
 (`minAboveContextSequences`): a few long prompts in a mixed workload, or a
@@ -1805,8 +1807,9 @@ switch on, the floor log line carries `routerBacklogOwed`,
 `-owes-backlog` (seeds 1-100), and prefill-bound P/D is unchanged, also with
 decode's KV raised to 0.70-0.80, with completions read 10% and 20% high, and
 with each request reading twice the context under
-`kv-per-request-above-context` (on from the constructor). The
-switch is off from the constructor: the controller keeps the old charge until
+`kv-per-request-above-context` (on from the constructor).
+`saturation-decode-owes-router-backlog` is off from the constructor: the
+controller keeps the old charge until
 a P/D run checks it. No controller golden moves; replayed on,
 `ttft-staircase-c-on` asks one more decode replica on 16 of its 584
 role-cycles, in the runaway step.

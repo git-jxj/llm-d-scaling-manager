@@ -202,7 +202,7 @@ func TestKVHitsResident_TheGPSCheckPricesTheMeasuredKV(t *testing.T) {
 // On a P/D fleet only decode is read. A prefill replica holds the KV of
 // prompts it is handing to decode, 90,000 tokens over 10 running here; read,
 // it would pull the decode reading of 1000 a request to 140,000 / 60 = 2333,
-// past the upper bound.
+// past the context.
 func TestKVHitsResident_APrefillReplicaIsNotRead(t *testing.T) {
 	ctx, logs := observedCtx(t)
 	store := capacity.NewStore()
@@ -448,8 +448,9 @@ func TestKVHitsResident_AShapeThatIsNotFiniteIsNeverRead(t *testing.T) {
 	assert.Equal(t, math.MaxInt32, minResidentSequences(shape.Shape{AvgInputTokens: 1000, AvgOutputTokens: math.Inf(1)}))
 }
 
-// Whatever the shape and the reading, the price is never under the
-// discount nor over no discount, and only KVreq moves.
+// Whatever the shape and the reading, with SwitchKVPerRequestAboveContext off
+// (residentRule{}), the price is never under the discount nor over no
+// discount, and only KVreq moves.
 func TestKVHitsResident_TheReadingStaysInsideTheBounds(t *testing.T) {
 	rng := rand.New(rand.NewPCG(277, 3))
 	for i := range 2000 {
