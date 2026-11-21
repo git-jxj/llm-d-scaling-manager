@@ -404,8 +404,9 @@ rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
 
 Decode refused with `PinnedDefaultB` means the latency line's intercept B,
 the per-token latency with the cache empty, was never measured: no full fit,
-and no low-load readings below the band to take B from (where there are
-some, the line runs through them and is not refused). The **ITL B** box shows the B the floor below the band
+and at that cycle no usable low-load reading in the last 30 minutes to take
+B from (where there is one, the line runs through it and is not refused).
+The **ITL B** box shows the B the floor below the band
 gives; type it, or your own. On the CLI, `--assume-itl-b floor` uses that B
 and `--assume-itl-b 12ms` states one. Figures on it are flagged
 `AssumedITLB` and read as outside the validated region.

@@ -27,8 +27,10 @@ import (
 // (SwitchITLOneSidedAtCap) is set against the pinned fit as against the
 // default. A learned B ends it. Off, as before, the default. On from the
 // constructor since a GPU check on a Qwen3-32B P/D fleet on H200, where the
-// B it pinned sat 4 % under the measured low-load TPOT floor; a replay turns
-// it off.
+// B it pinned sat 4-6 % under the measured low-load TPOT floor; a replay
+// turns it off. The floor is read each cycle from readings at most
+// itl.DefaultObservationMaxAge old: a fleet held in the band past that, none
+// of its replicas below it, is back on the default B.
 const SwitchITLBaselineFromFloor = "saturation-itl-baseline-from-floor"
 
 // baselineFromFloorOn reports SwitchITLBaselineFromFloor.

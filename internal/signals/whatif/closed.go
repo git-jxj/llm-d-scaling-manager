@@ -128,9 +128,9 @@ func OnDefaultB(tier string, line itl.Model) bool {
 }
 
 // MeasuredIntercept reports a line whose intercept B is not a guess: an ols
-// fit's own B; a pinned-B or held line's B, which only a full fit stores
-// (the tracker's baseline), unless it is the default, itl.DefaultBaselineSec,
-// which no fit measured; or an above-band line's B, the least ITL read above
+// fit's own B; a pinned-B or held line's B, which a full fit stores (the
+// tracker's baseline) or the floor below the band sets, unless it is the
+// default, itl.DefaultBaselineSec, which no fit measured; or an above-band line's B, the least ITL read above
 // the band, which is an upper bound on the engine's floor by construction,
 // so reading below the band from it errs high, never low. A borrowed line is
 // another variant's, and a line of unknown tier has no known provenance:

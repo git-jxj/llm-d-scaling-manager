@@ -85,6 +85,7 @@ func TestDecodeTTFTUnderLoad_StaircaseCollapse(t *testing.T) {
 				if c.lineAt240 && cycle == "240" {
 					assert.Equal(t, "line", r.TTFT.DecodeSide, "cycle %s", cycle)
 					assert.Zero(t, decode, "cycle %s: the engine's TTFT is not read", cycle)
+					assert.Positive(t, floor, "cycle %s: the line prices a floor", cycle)
 					assert.Less(t, floor, 0.3, "cycle %s: the floor is calm", cycle)
 					continue
 				}

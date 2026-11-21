@@ -1481,6 +1481,7 @@ var heldBy = map[string][]heldTest{
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OnFromTheConstructor"},
+		{"../saturation", "TestITLBaselineFromFloor_AnalyzePinsAtTheFloorByDefault"},
 		{"../saturation", "TestITLBaselineFromFloor_TheFitLineIsUnchangedOff"},
 		{"../../../signals/itl", "TestTracker_BaselineFromFloorPinsAnUnlearnedKey"},
 		{"../../../signals/itl", "TestTracker_ALearnedBaselineEndsTheFloor"},

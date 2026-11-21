@@ -1105,12 +1105,22 @@ and three-pods asks for one replica more on 31 of 203 cycles.
 It is on from the constructor after a GPU check on a Qwen3-32B P/D fleet on
 H200 (TP 2, prefill pinned at 2, decode between 1 and 3). Replayed with the
 switch on, the decode line at 8 requests a second, with no full fit, was
-pinned at B 10.7-10.9 ms; the clients' TPOT 10th percentile at 1 request a
-second was 11.4 ms, 4 % above it, on two separate runs. The off arm's
-recording replayed with the switch on gave the same B within 0.3 ms. Live,
+pinned at B 10.55-10.96 ms (medians 10.67-10.92 ms); the clients' TPOT
+10th percentile at 1 request a second was 11.4 ms, 4-6 % above the median
+B, on two separate runs. The off arm's recording replayed with the switch
+on gave the same B within 0.3 ms. Live,
 decode asked for 2 replicas with the switch on and off at 8 requests a
 second, at TPOT p90 16 ms both. A full fit, here only in overload, ends the
-floor's B as before.
+floor's B as before. The run had no `tpot` target, so it did not exercise the
+TPOT bound on a floor-pinned line; its unit tests hold that.
+
+The floor is read again each cycle, not stored: its readings age out after
+`itl.DefaultObservationMaxAge` (30 min). A fleet held inside the band for
+longer than that, with no replica below it, loses the floor, and its line
+goes back to the default B until it next runs at low load (a 2026-11-21
+probe: pinned at the floor to 29.0 min in the band, the default from
+29.2 min, the slope 40 % steeper). That is the line it priced before this
+switch.
 
 #### When a replica's settle starts (learner PR 4a)
 
