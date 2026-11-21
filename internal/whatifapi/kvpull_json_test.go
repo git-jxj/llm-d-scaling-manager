@@ -26,4 +26,9 @@ func TestReportKVPull_JSONOmitsWhatIsUnpriced(t *testing.T) {
 	b, err = json.Marshal(d)
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `"kvPull":{"utilization":0.62,"wait":0.05,"setsTTFT":true}`)
+
+	d.KVPull = &ReportKVPull{Utilization: 1.2, Unpriced: KVPullTTFTRefused}
+	b, err = json.Marshal(d)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"kvPull":{"utilization":1.2,"unpriced":"ttftRefused","setsTTFT":false}`)
 }

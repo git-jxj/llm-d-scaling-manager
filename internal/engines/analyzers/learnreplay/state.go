@@ -290,7 +290,10 @@ type shapeSample struct {
 // saturation.SwitchDecodeBurstFill, planner-only, reads a decode's TPOT at
 // the fill a request sees beside clustered arrivals, from a stated
 // --arrival-cv2 (issue llm-d-incubation/llm-d-scaling-manager#291 (b)): at
-// Poisson, and with no Ca^2 stated, it moves no figure.
+// Poisson, and with no Ca^2 stated, it moves no figure. It brings the
+// bursty phases' mean TPOT back to what was measured, but it is off: with
+// it, the hold, the lift and the residence all on, other figures still read
+// under what was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,

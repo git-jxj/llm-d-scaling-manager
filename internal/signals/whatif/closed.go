@@ -265,11 +265,11 @@ func (d Decode) replicaRate(k float64) float64 {
 // llm-d-incubation/llm-d-scaling-manager#291). Little's law gives the time
 // average fill k; a request is counted where requests arrive, and clustered
 // arrivals put more of them beside it. For a stationary arrival stream with
-// interarrival Ca^2, the arrivals expected beside a typical one, beyond the
-// rate's share, number Ca^2 - 1 in all (the counts' variance over a long
-// window is Ca^2 times their mean); a decode replica of N_d taking a share
-// 1/N_d of them at random (Bernoulli splitting) holds (Ca^2 - 1)/N_d of
-// them. They are taken as all overlapping the request's residence, which
+// interarrival squared coefficient of variation Ca^2, the arrivals expected
+// beside a typical one, beyond the rate's share, number Ca^2 - 1 in all (the
+// counts' variance over a long window is Ca^2 times their mean); each of N_d
+// decode replicas, taking a share 1/N_d of them at random (Bernoulli
+// splitting), holds (Ca^2 - 1)/N_d of them. They are taken as all overlapping the request's residence, which
 // holds where the residence is long against the clusters (a residence of
 // hundreds of steps): where it is not, this reads a request's fill high.
 // The line was fitted on what the engines measured at their own arrivals
@@ -292,6 +292,14 @@ func (d Decode) seenFill(k float64) float64 {
 		return k
 	}
 	return max(k, min(k+e, d.full().fill))
+}
+
+// SeenFill is the fill a request runs at where the replica's time average is
+// k (Basis.Fill): k itself for Poisson arrivals, higher where they cluster
+// (ArrivalCV2 above 1). The line is read there, so a caller checking a fill
+// against what was observed checks this one.
+func (d Decode) SeenFill(k float64) float64 {
+	return d.seenFill(k)
 }
 
 // residence is a request's seconds on the replica at step time itlSec:
@@ -570,23 +578,29 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	p := d.full()
 	k, global := d.fillForTPOT(t.Seconds, r, d.lowestFill())
 	by := []Bound{BoundTPOT}
-	clamped := k > p.fill
+	e := d.burstFill()
+	// Under a burst a target met at k_full itself is met at every fill a
+	// request can see, so it is the knee's too (>=, not >): with none the
+	// bound stays the target's at k_full, as before.
+	clamped := k > p.fill || (e > 0 && k >= p.fill)
 	if clamped {
 		k, by = p.fill, []Bound{p.by}
 	}
 	// k is the fill a request runs at (seenFill); the replica's own is the
 	// burst's fill (burstFill) under it. A target a request misses at the
 	// burst alone has no rate.
-	if e := d.burstFill(); e > 0 && !clamped {
+	if e > 0 && !clamped {
 		if k <= e {
+			burstFloor, _ := d.tpotAtFill(max(e, d.lowestFill()), r)
 			return refuse(TargetBelowFloor, fmt.Sprintf("target %.4g ms at or below the TPOT the arrivals' clustering alone prices, %.4g ms",
-				1000*t.Seconds, 1000*d.Line.ITLAt(e)))
+				1000*t.Seconds, 1000*burstFloor))
 		}
 		k -= e
 	}
-	// below is whether the answer's fill sits under the band: set once per
+	// below is whether the line is read under the band: at the fill a
+	// request sees (seenFill), not the replica's time average. Set once per
 	// place k is set, and flagged once, at the end.
-	below := k < d.Band.Lo
+	below := d.seenFill(k) < d.Band.Lo
 	if clamped {
 		below = p.belowBand
 	}
@@ -721,11 +735,16 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 }
 
 // tpotAt is the TPOT at fill k, times R_q at that fill, never below the floor.
+// The line is read at the fill a request sees (seenFill); Basis.Fill is the
+// replica's time-average k, and Basis.Floor the line's floor at the lowest
+// fill, not the higher floor a burst puts under every request.
 func (d Decode) tpotAt(k, knee float64, r TPOTRatio, flags []Flag) Answer {
 	lowest := d.lowestFill()
 	floor, _ := d.tpotAtFill(lowest, r)
-	at := max(d.seenFill(k), lowest)
-	if k < d.Band.Lo {
+	seen := d.seenFill(k)
+	at := max(seen, lowest)
+	// Below the band where the line is read: the fill the request sees.
+	if seen < d.Band.Lo {
 		flags = append(flags, BelowFittedBand)
 	}
 	v, global := d.tpotAtFill(at, r)

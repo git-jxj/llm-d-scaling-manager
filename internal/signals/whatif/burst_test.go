@@ -84,6 +84,24 @@ func TestDecode_RateForTPOTInvertsTheClusteredFill(t *testing.T) {
 	assert.Contains(t, u.Detail, "clustering")
 }
 
+// With the KV pull held (HeldBefore > 0, #301) the burst's fixed point keeps
+// it: k*C/KVreq = lam*(H + S*ITL(k + e)), S = OL - 1 under H.
+func TestDecode_TheClusteredFillKeepsTheHeldPull(t *testing.T) {
+	const held = 0.030
+	d := burstDecode(4)
+	d.HeldBefore = held
+	off := burstDecode(4)
+	lam := 0.5 * d.kneeRate() / 2
+	k, ok := d.fillAtReplicaRate(lam)
+	require.True(t, ok)
+	e := d.burstFill()
+	require.Less(t, k+e, d.full().fill, "the fill is read on the line, not at k_full")
+	assert.InDelta(t, k*1.16e6/8200, lam*(held+199*d.Line.ITLAt(k+e)), 1e-9, "Little's law with the pull held")
+	k0, ok := off.fillAtReplicaRate(lam)
+	require.True(t, ok)
+	assert.Greater(t, k, k0, "the held pull raises the fill under the burst too")
+}
+
 // Near the knee the fill a request sees stops at k_full, and Little's law
 // reads the replica's fill at the full batch's step: the fill stays under
 // the slots, and the rate it carries never exceeds the knee.
@@ -91,13 +109,75 @@ func TestDecode_TheClusteredFillStopsAtTheFullBatch(t *testing.T) {
 	d := burstDecode(16)
 	full := d.full()
 	knee := d.kneeRate()
+	e := d.burstFill()
+	capped := 0
 	for _, share := range []float64{0.9, 0.97, 0.995} {
-		k, ok := d.fillAtReplicaRate(share * knee / 2)
-		if !ok {
+		lam := share * knee / 2
+		k, ok := d.fillAtReplicaRate(lam)
+		require.True(t, ok, "share %g: under the knee a fill carries the rate", share)
+		assert.False(t, math.IsNaN(k))
+		assert.LessOrEqual(t, k, full.slotFill)
+		assert.LessOrEqual(t, float64(d.Replicas)*d.replicaRate(k), knee*(1+1e-12), "share %g", share)
+		if k+e < full.fill {
 			continue
 		}
-		assert.LessOrEqual(t, d.seenFill(k), full.fill+1e-15)
-		assert.LessOrEqual(t, k, full.slotFill)
-		assert.False(t, math.IsNaN(k))
+		capped++
+		// Past k_full every step runs at ITL(k_full).
+		assert.InDelta(t, k*1.16e6/8200, lam*d.residence(d.Line.ITLAt(full.fill)), 1e-9, "share %g", share)
 	}
+	require.Positive(t, capped, "no share reached the capped branch")
+
+	// The two forms meet where k + e = k_full: the rate there by the capped
+	// form gives back k_full - e by the uncapped one.
+	at := (full.fill - e) * 1.16e6 / 8200 / d.residence(d.Line.ITLAt(full.fill))
+	k, ok := d.fillAtReplicaRate(at)
+	require.True(t, ok)
+	assert.InDelta(t, full.fill-e, k, 1e-9)
+}
+
+// TTFT reads the decode's first step at the fill the request sees, as its
+// TPOT is: clustered arrivals raise it, Poisson leaves it as before.
+func TestTTFT_TheFirstStepIsReadAtTheFillARequestSees(t *testing.T) {
+	const rate = 0.5
+	at := func(cv2 float64) (TTFT, Decode) {
+		fl := workedFleet()
+		d := *fl.Decode
+		d.ArrivalCV2 = cv2
+		fl.Decode = &d
+		return mustTTFT(t, TTFTAt(fl, rate, 0)), d
+	}
+	base, _ := at(1)
+	got, d := at(16)
+	k, ok := d.fillAtReplicaRate(rate / float64(d.Replicas))
+	require.True(t, ok)
+	require.Greater(t, d.seenFill(k), d.lowestFill(), "the fill is read on the line")
+	assert.InDelta(t, d.Line.ITLAt(d.seenFill(k)), got.Parts.FirstStep, 1e-15)
+	assert.Greater(t, got.Parts.FirstStep, base.Parts.FirstStep)
+}
+
+// BelowFittedBand is judged at the fill the line is read at: a replica whose
+// time-average fill is under the band's bottom, while the fill its requests
+// see is inside it, reads the line inside the band, and is not flagged.
+func TestDecode_TheBandIsJudgedAtTheFillARequestSees(t *testing.T) {
+	d := burstDecode(4)
+	rate := 0.4 * d.kneeRate()
+	k, ok := d.fillAtReplicaRate(rate / 2)
+	require.True(t, ok)
+	e := d.burstFill()
+	d.Band.Lo = k + e/2
+	mean, ok := SLOAtReplicas(d, ReplicasQuery{Rate: rate}).MeanTPOT.(Answer)
+	require.True(t, ok)
+	require.Less(t, mean.Basis.Fill, d.Band.Lo, "the time-average fill is under the band")
+	assert.NotContains(t, mean.Flags, BelowFittedBand, "read at %g, inside the band from %g", k+e, d.Band.Lo)
+
+	got, ok := RateForTPOT(d, RateQuery{Target: TPOTTarget{Seconds: mean.Value}, Headroom: 1}).(Answer)
+	require.True(t, ok)
+	assert.NotContains(t, got.Flags, BelowFittedBand)
+
+	// Poisson reads the same band at k itself, under it.
+	poisson := d
+	poisson.ArrivalCV2 = 0
+	base, ok := SLOAtReplicas(poisson, ReplicasQuery{Rate: rate}).MeanTPOT.(Answer)
+	require.True(t, ok)
+	assert.Contains(t, base.Flags, BelowFittedBand)
 }

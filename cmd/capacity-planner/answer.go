@@ -599,6 +599,8 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			// Clustered arrivals put more sequences beside a request than
 			// the time average (saturation.SwitchDecodeBurstFill): its
 			// TPOT is read at that fill, from the Ca^2 stated, and says so.
+			// The decode admission chain stays Poisson (DecodeAdmission):
+			// its wait probability is not raised with the fill.
 			pv.decode.ArrivalCV2 = f.arrivalCV2
 			pv.flags = append(pv.flags, assumedArrivalCV2)
 		}
@@ -694,7 +696,9 @@ func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 			flags = append(flags, fl)
 		}
 	}
-	if top, ok := pv.observedFillMax(); ok && a.Basis.Fill > top && !slices.Contains(flags, whatif.ExtrapolatedFill) {
+	// The line is read at the fill a request sees, above Basis.Fill where
+	// arrivals cluster (decode-burst-fill), so that is the fill checked.
+	if top, ok := pv.observedFillMax(); ok && pv.decode.SeenFill(a.Basis.Fill) > top && !slices.Contains(flags, whatif.ExtrapolatedFill) {
 		flags = append(flags, whatif.ExtrapolatedFill)
 	}
 	a.Flags = flags

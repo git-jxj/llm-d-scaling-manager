@@ -1270,12 +1270,15 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 			u := refuse(Saturated, fmt.Sprintf("no decode fill carries %g r/s", rate))
 			return priced{u: &u}
 		}
-		fill := k
-		if k < d.Band.Lo {
+		// fill is the fill the request runs at (seenFill): its first step
+		// and the term are read there, as its TPOT is; k for Poisson
+		// arrivals, higher where they cluster.
+		fill := d.seenFill(k)
+		if fill < d.Band.Lo {
 			out.Flags = addFlags(out.Flags, BelowFittedBand)
 		}
 		lowest := d.lowestFill()
-		k = max(k, lowest)
+		k = max(fill, lowest)
 		first, floorStep = d.Line.ITLAt(k), d.Line.ITLAt(lowest)
 		oldFirst, oldFloorStep = first, floorStep
 		if t := pl.term; t != nil {

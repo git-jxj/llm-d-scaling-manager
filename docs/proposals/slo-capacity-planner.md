@@ -150,22 +150,29 @@ it should go on with them (nothing enforces it).
 **The fill a request sees under clustered arrivals, behind a switch (#291 (b)).**
 Little's law gives the time-average fill; a request is counted where requests
 arrive, and clustered arrivals put more of them beside it. For a stationary
-stream with interarrival `Ca²` the arrivals expected beside a typical one, beyond
-the rate's share, number `Ca² − 1` (the counts' variance over a long window is
-`Ca²` times their mean); a decode replica of `N_d` taking a share at random holds
-`e = (Ca² − 1)/N_d` of them, all taken as overlapping the request's residence
-(hundreds of steps against clusters of a few interarrival times; where the
-residence is short this reads high). The request's steps run at `ITL(k + e·KVreq/C)`,
-so the fill is the fixed point
-`k = λ_rep·(H + S·B + S·A·ε) / (C/KVreq − λ_rep·S·A)`, `ε = e·KVreq/C`, `S` the
-steps, and the mean TPOT is `ITL(k + ε)`, never past `k_full`. The line was fitted
-at the engines' own arrivals (Poisson on every recording that states none), so
-only the excess over Poisson is priced: `Ca² ≤ 1` prices none. The knee is
-unchanged (a full batch is no fuller). It reads the `Ca²` stated with
-`--arrival-cv2`, flagged `AssumedArrivalCV2` on the decode figures. Planner-only
-replay switch `decode-burst-fill`. The per-cycle rates of a held step are not
-used: their spread is the counts' noise (`cv² ≈ Ca²/(60λ)`), well under the
-clustering inside a cycle.
+stream with interarrival squared coefficient of variation `Ca²` the arrivals
+expected beside a typical one, beyond the rate's share, number `Ca² − 1` (the
+counts' variance over a long window is `Ca²` times their mean); each of `N_d`
+decode replicas, taking a share at random, holds `e = (Ca² − 1)/N_d` of them, all
+taken as overlapping the request's residence (hundreds of steps against clusters
+of a few interarrival times; where the residence is short this reads high). As a
+fill that is `ε = e·KVreq/C`, and the request's steps run at `ITL(k + ε)`, so the
+fill is the fixed point `k = λ_rep·(H + S·B + S·A·ε) / (C/KVreq − λ_rep·S·A)`,
+`S` the steps, and the mean TPOT is `ITL(min(k + ε, k_full))`. TTFT reads the
+decode's first step (and the decode term) at the same fill, and the
+below-band and extrapolated-fill flags are judged there too. The line was
+fitted at the engines' own arrivals (Poisson on every recording that states
+none), so only the excess over Poisson is priced: `Ca² ≤ 1` prices none. The
+knee is unchanged (a full batch is no fuller), and so is the decode admission
+chain, which stays Poisson. It reads the `Ca²` stated with `--arrival-cv2`,
+flagged `AssumedArrivalCV2` on the decode figures. Planner-only replay switch
+`decode-burst-fill`, off. With the hold, the lift and the residence on, the
+staircase's bursty C phases at `Ca²` 4 read a mean TPOT of 0.98 to 1.06 of what
+was measured (from 0.84 to 0.89 without it), and the Qwen3-32B C phases 1.04.
+It stays off because, with all four on, other figures still read under what
+was measured (the status is kept on issue #291). The per-cycle rates of a held
+step are not used: their spread is the counts' noise (`cv² ≈ Ca²/(60λ)`), well
+under the clustering inside a cycle.
 
 The pull also loads the decode pods while their KV fill reads near idle: with
 processor sharing on (the CLI's default) the pull is a stage on each decode pod,
@@ -1357,7 +1364,7 @@ TTFT: the decode answers are as they were.
 | `--ttft-percentile 90` | `replicas-to-slo`: the percentile. Default: the policy's `slo.ttft`, else 90. On `slo-to-rate`, beside a plain `--ttft` |
 | `--assume-vp 30000` | `V_P`, prompt tokens per second, in place of the learned one, as every `--assume-*` flag overrides the recording. Neither rescaled nor margined |
 | `--assume-prompt-cv 1` | The prompt's `cv`, 0 to 3, in place of the measured one or the default 2, flagged `AssumedPromptSpread`, with any measured figure beside it (`promptCVRead` in the JSON). At 0 the JSON's `promptCV` is absent and `promptCVSource` says `assumed` |
-| `--arrival-cv2 4` | `Ca²` at the prefill queue, above 0, in place of Poisson's 1, flagged `AssumedArrivalCV2`. 0 is refused: P3 reads it as Poisson. Decode's admission chain has no `Ca²`, so on a decode line it stays Poisson, and `AssumedPoissonArrivals` stays; with the replay switch `decode-burst-fill` the decode's TPOT is read at the fill a request sees beside the clustered arrivals, flagged `AssumedArrivalCV2`. The closing note then quotes no P2 row: those were read at Poisson. Assumed, and not validated: the one bursty bucket says nothing of the model at any other `Ca²` ([the staircase](slo-capacity-planner-ttft.md#ground-truth-and-the-staircase)) |
+| `--arrival-cv2 4` | `Ca²` at the prefill queue, above 0, in place of Poisson's 1, flagged `AssumedArrivalCV2`. 0 is refused: P3 reads it as Poisson. Decode's admission chain has no `Ca²`, so on a decode line it stays Poisson, and `AssumedPoissonArrivals` stays; with the replay switch `decode-burst-fill` a `--arrival-cv2` above 1 reads the decode's TPOT at the fill a request sees beside the clustered arrivals, flagged `AssumedArrivalCV2`. The closing note then quotes no P2 row: those were read at Poisson. Assumed, and not validated: the one bursty bucket says nothing of the model at any other `Ca²` ([the staircase](slo-capacity-planner-ttft.md#ground-truth-and-the-staircase)) |
 | `--assume-router-hop 8ms` | The hop between the router and the engines, in place of the learned or default one, flagged `RouterHopAssumed` |
 | `--prefill N` | Prefill pods to price; 0 takes the serving pods at the cycle |
 | `--prefill-variant V` | The prefill variant to price, when the model has several: the CLI prices one fleet, and a usage error says so otherwise. It gets the whole rate, named as assumed |
