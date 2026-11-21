@@ -164,17 +164,26 @@ const MaxPSPromptCV = 0.25
 // held, and moves no figure below the onsets
 // (TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient); off, the price
 // reads short there (TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep).
-// One held step is not enough to make it the default: a cluster staircase
-// with several held steps between the onset and MaxRouterWaitKneeShare of
-// the knee gates that.
+// One held step is not enough to make it the default, and the backtests of
+// four runs' flow-control-on phases (router v0.11.0, 41 steps past the
+// prefill onset) keep it off: the gate there either held or collapsed on its
+// TTL, at nearly one rate, so at held steps the stage read up to 5.1 times
+// the router's TTFT, at all 15 collapses it still read more than 20 % short,
+// and at 2 of the 26 held steps too (docs/developer-guide/testing.md, "Flow
+// control past the prefill onset, backtested"). Router v1.0.0 releases no
+// burst to one pod, so the stage is not its model.
 const DefaultPriceRouterWait = false
 
 // DefaultRouterWaitInPrefill is TTFTFleet.RouterWaitInPrefill's default, for
 // the CLI (--router-wait-in-prefill): off, so a TTFT past the prefill onset
-// is flagged AboveFlowControlOnset, a miss. The planner API and the SLO
-// analyzer have no switch for it. Measured on router v1.0.0 at six bursty
-// steps of one fleet (Ca^2 4, up to 0.88 of the prefill knee); no Poisson
-// step past the onset has been run on v1.0.0, so it is not the default.
+// is flagged AboveFlowControlOnset, a miss. The planner API states it as
+// assume.routerWait inPrefill; the SLO analyzer has no switch for it.
+// Measured on router v1.0.0 at six bursty steps of one fleet (Ca^2 4, up to
+// 0.88 of the prefill knee); no Poisson step past the onset has been run on
+// v1.0.0, and those recordings hold no saturation cycle, so no backtest
+// replays them. The planner cannot read the router's version, and on v0.11.0
+// the backtests read this figure more than 20 % short at 18 of 41 steps past
+// the onset, 15 of them where the gate collapsed: so it is not the default.
 const DefaultRouterWaitInPrefill = false
 
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
@@ -196,7 +205,11 @@ const MaxRouterWaitKneeShare = 0.9
 // DefaultPSOnsets is TTFTFleet.PSOnsets's default, for the CLI
 // (--ps-onsets) and the SLO analyzer (slo.SwitchTTFTPSOnsets) alike: off.
 // The placement it switches to is derived, not measured: the second
-// staircase could not tell it from the first-come one.
+// staircase could not tell it from the first-come one, and on the Qwen3-32B
+// staircase, at the engine's own running cap, it put bucket C's onset past a
+// step that measured a wait of seconds, where the first-come onset fell
+// between the last step with no wait and the first with one
+// (TestPSOnsets_TheQ32CrossingKeepsThemOff).
 const DefaultPSOnsets = false
 
 // DefaultChargeDecodeGate is TTFTFleet.ChargeDecodeGate's default, for the
