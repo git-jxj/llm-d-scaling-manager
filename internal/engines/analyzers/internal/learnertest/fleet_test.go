@@ -41,7 +41,11 @@ func TestFleet_AnOrderedReplicaIsReadyAfterTheStartTime(t *testing.T) {
 			}
 			return 2
 		})
-		want := (Cycle + start + Cycle - 1) / Cycle * Cycle
+		// The order lands at the cycle's end plus the start, rounded up to a cycle.
+		want := (Cycle + start).Truncate(Cycle)
+		if want < Cycle+start {
+			want += Cycle
+		}
 		if readyAt != want {
 			t.Errorf("start %s: the ordered replica first Ready at %s, want %s", start, readyAt, want)
 		}
