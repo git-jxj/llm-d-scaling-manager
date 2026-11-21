@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 )
 
 // floorRun is three queued minutes at a light 5k tok/s, then six minutes at
@@ -88,4 +90,62 @@ func TestCapacity_NoQueueStaysRefused(t *testing.T) {
 	assert.Equal(t, NoPrefillCapacity, est.VPRefused)
 	assert.Zero(t, est.VP)
 	assert.False(t, est.VPFlooredAtServed)
+}
+
+// floorCycles is three queued minutes at 5k tok/s on pods, then one cycle
+// per entry of served, each a minute after the last unless at says when (in
+// minutes from t0), the queues empty and the floor on. served[i][j] is pod
+// j's rate.
+func floorCycles(pods []string, at []int, served ...[]float64) []Cycle {
+	out := make([]Cycle, 0, 3+len(served))
+	for i := range 3 {
+		rows := make([]domain.ReplicaMetrics, 0, len(pods))
+		for _, p := range pods {
+			rows = append(rows, queued(p, 5000, 3))
+		}
+		out = append(out, cycle(t0.Add(time.Duration(i)*minute), rows...))
+	}
+	for i, rates := range served {
+		rows := make([]domain.ReplicaMetrics, 0, len(pods))
+		for j, p := range pods {
+			rows = append(rows, queued(p, rates[j], 0))
+		}
+		m := 3 + i
+		if at != nil {
+			m = at[i]
+		}
+		out = append(out, cycle(t0.Add(time.Duration(m)*minute), rows...))
+	}
+	for i := range out {
+		out[i].VPFloorServed = true
+	}
+	return out
+}
+
+// The served peak is a run's least minute: one high minute between two
+// lower ones is not the peak.
+func TestCapacity_TheServedPeakCutsOneHighMinute(t *testing.T) {
+	est := run(NewObserver(), floorCycles([]string{"p-0"}, nil, []float64{20000}, []float64{40000}, []float64{20000})...)
+	assert.Equal(t, 20000.0, est.VP)
+	assert.True(t, est.VPFlooredAtServed)
+	assert.Equal(t, PeakRun, est.VPSamples)
+}
+
+// A gap wider than MaxRunGap ends a served run, as it ends a queued one: two
+// minutes at 30k, a gap, then 30k, 30k, 10k sustain only 10k.
+func TestCapacity_AGapEndsAServedRun(t *testing.T) {
+	est := run(NewObserver(), floorCycles([]string{"p-0"}, []int{3, 4, 8, 9, 10},
+		[]float64{30000}, []float64{30000}, []float64{30000}, []float64{30000}, []float64{10000})...)
+	assert.Equal(t, 10000.0, est.VP)
+	assert.True(t, est.VPFlooredAtServed)
+}
+
+// A served run is one pod's: two pods taking turns at 30k each sustain only
+// 10k, not the 30k some pod read every minute.
+func TestCapacity_AServedRunIsOnePods(t *testing.T) {
+	est := run(NewObserver(), floorCycles([]string{"p-0", "p-1"}, nil,
+		[]float64{30000, 10000}, []float64{10000, 30000}, []float64{30000, 10000},
+		[]float64{10000, 30000}, []float64{30000, 10000})...)
+	assert.Equal(t, 10000.0, est.VP)
+	assert.Equal(t, 10000.0, est.VPServedPeak)
 }

@@ -235,10 +235,12 @@ type Estimate struct {
 	VPSamples          int
 	// VPServedPeak is the highest computed-token rate any pod sustained over
 	// PeakRun minutes, queued or not, read beside a lower-bound V_P; zero
-	// otherwise. VPFlooredAtServed says V_P is that peak, raised to it from
-	// a lower source (Cycle.VPFloorServed); VPSource still names the source
-	// that made V_P a lower bound.
-	VPServedPeak      float64
+	// otherwise.
+	VPServedPeak float64
+	// VPFlooredAtServed says V_P is VPServedPeak, raised to it from a lower
+	// source (Cycle.VPFloorServed): VPSamples is then PeakRun and
+	// VPPromptTokens the peak's, while VPSource and VPLowerBoundReason still
+	// name the source that made V_P a lower bound.
 	VPFlooredAtServed bool
 	// VPQueuedMinutes, VPLongestQueuedRun and VPBusyMinutes say why V_P was
 	// refused or where it stands: the samples kept that held a queue on

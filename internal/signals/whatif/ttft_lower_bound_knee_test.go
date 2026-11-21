@@ -29,6 +29,7 @@ func TestTTFT_PastALowerBoundKneeIsNotPriced(t *testing.T) {
 		{"no bound", false, false, true, pk * 1.2, Saturated},
 		{"assumed", true, true, true, pk * 1.2, Saturated},
 		{"past decode's knee", true, false, true, dk * 1.1, Saturated},
+		{"at decode's knee", true, false, true, dk, Saturated},
 	} {
 		fl := base
 		fl.Prefill.VPLowerBound, fl.Prefill.VPAssumed, fl.LowerBoundKneeUnpriced = tc.lowerBound, tc.assumed, tc.unpriced
@@ -43,4 +44,32 @@ func TestTTFT_PastALowerBoundKneeIsNotPriced(t *testing.T) {
 	fl := base
 	fl.Prefill.VPLowerBound, fl.LowerBoundKneeUnpriced = true, true
 	mustTTFT(t, within(t, "under the knee", func() Result { return TTFTAt(fl, pk*0.9, 0.9) }))
+}
+
+// Under flow control a rate past a lower-bound prefill knee and past the
+// decode gate's onset, under decode's knee, is the miss it was before the
+// knee went unpriced: AboveDecodeOnset, not PastLowerBoundKnee.
+func TestTTFT_PastALowerBoundKneeKeepsTheDecodeOnset(t *testing.T) {
+	fl := workedFleet()
+	fl.Prefill.VP, fl.Prefill.Replicas, fl.Prefill.Imbalance = 4000, 2, 1.25
+	fl.FlowControl = FlowControl{State: FlowControlOn, QueueThreshold: 5, KVThreshold: 0.8}
+	fl.Prefill.VPLowerBound, fl.Prefill.VPAssumed, fl.LowerBoundKneeUnpriced = true, false, true
+	pk := mustAnswer(t, PrefillKnee(fl.Prefill)).Value
+	dk := mustAnswer(t, KneeRate(*fl.Decode)).Value
+	on, ok := FlowControlOnsets(fl).(Onsets)
+	if !ok {
+		t.Fatalf("no onsets: %#v", FlowControlOnsets(fl))
+	}
+	if !(pk < on.Decode && on.Decode < dk) {
+		t.Fatalf("want prefill knee %g < decode onset %g < decode knee %g", pk, on.Decode, dk)
+	}
+	for _, c := range []struct {
+		rate float64
+		want Reason
+	}{{on.Decode, AboveDecodeOnset}, {(pk + on.Decode) / 2, PastLowerBoundKnee}} {
+		res := within(t, "flow control", func() Result { return TTFTAt(fl, c.rate, 0.9) })
+		if u, ok := res.(Unanswerable); !ok || u.Reason != c.want {
+			t.Errorf("rate %g: %#v, want %s", c.rate, res, c.want)
+		}
+	}
 }

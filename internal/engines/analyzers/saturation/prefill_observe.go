@@ -333,6 +333,7 @@ func (c *cycle) observePrefill() {
 			"vp", est.VP, "vpSource", string(est.VPSource), "vpLowerBound", est.VPLowerBound,
 			"vpLowerBoundReason", string(est.VPLowerBoundReason),
 			"vpRefused", string(est.VPRefused), "vpSamples", est.VPSamples,
+			"vpServedPeak", est.VPServedPeak, "vpFlooredAtServed", est.VPFlooredAtServed,
 			"slopeBound", est.SlopeBound, "vpAboveSlopeBound", est.VPAboveSlopeBound,
 			"a", est.A, "aIntercept", est.AIntercept, "aOverhead", est.AOverhead,
 			"aOverheadKnown", est.AOverheadKnown, "aRefused", string(est.ARefused), "aSamples", est.ASamples,

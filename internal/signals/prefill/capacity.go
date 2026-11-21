@@ -30,6 +30,16 @@ import (
 //     no queue is the offered load, not capacity, and is not used.
 //  3. The back-pressure bound (Cycle.Bound). A lower bound.
 //
+// With Cycle.VPFloorServed a lower bound (2, 3, or busy minutes of a
+// data-parallel pod) is raised to the served peak, the highest rate any
+// replica sustained over PeakRun minutes queued or not (floorAtServed): a
+// lower bound too, read over Retention as the peak under a queue is. It
+// keeps the mean prompt of its run as VPPromptTokens, so the what-if model
+// rescales it on the curve to a longer prompt asked, or without a curve flags
+// one far from it VPShapeMoved, as it does the peak under a queue. Taking
+// the max over unqueued minutes too adds windows, so its noise is that of
+// source 2 over more runs: still within a one-minute rate's spread.
+//
 // Otherwise NoPrefillCapacity. SGLang always refuses: it publishes no
 // computed-token series.
 //
@@ -117,7 +127,7 @@ func (est *Estimate) floorAtServed(ks *keyState, on bool) {
 	if !on || !(v > est.VP) {
 		return
 	}
-	est.VP, est.VPPromptTokens, est.VPFlooredAtServed = v, prompt, true
+	est.VP, est.VPPromptTokens, est.VPSamples, est.VPFlooredAtServed = v, prompt, PeakRun, true
 }
 
 // busy is the busy minutes' reading: the median rate, how many minutes,

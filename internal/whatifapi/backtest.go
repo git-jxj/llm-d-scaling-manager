@@ -1793,7 +1793,7 @@ func backtestHint(reason string) string {
 		return "every step was at or past the load the planner thinks the fleet can carry"
 	case string(whatif.PastLowerBoundKnee):
 		return "every step was at or past a prefill knee priced from a lower bound of V_P, " +
-			"which the fleet may carry, so the planner gave no price there and does not call it overloaded"
+			"and the true knee may be higher, so the planner gave no price there and does not call it overloaded"
 	case string(whatif.NoPrefillCapacity), string(whatif.NoFixedLatency), string(whatif.PinnedDefaultB), string(whatif.NoLine):
 		return "the fitted part held too few busy minutes to learn from; fit on more (a larger split, or a longer recording)"
 	}

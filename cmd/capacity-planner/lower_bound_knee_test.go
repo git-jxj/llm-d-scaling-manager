@@ -150,9 +150,13 @@ func TestLowerBoundKnee_NoStepIsCalledOverloaded(t *testing.T) {
 	assert.Contains(t, got, `"VPLowerBound"`)
 	assert.Contains(t, got, `"vpOrigin": "peak-under-queue"`)
 	bt, _ := runCmd(t, "backtest", "--recording", rec, "--split", "50%")
+	ttft := 0
 	for _, line := range strings.Split(bt, "\n") {
 		if strings.HasPrefix(line, "TTFT ") {
+			ttft++
 			assert.NotContains(t, line, "refused Saturated", line)
 		}
 	}
+	require.Positive(t, ttft, "no TTFT line in the backtest:\n%s", bt)
+	assert.Contains(t, bt, "refused PastLowerBoundKnee")
 }
