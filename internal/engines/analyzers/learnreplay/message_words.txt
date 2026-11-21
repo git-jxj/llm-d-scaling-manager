@@ -2549,6 +2549,7 @@ reserved
 residency
 resident
 residentDemand
+residentHolding
 residentKVBound
 residentKVBoundFleet
 residentKVPerSeq
