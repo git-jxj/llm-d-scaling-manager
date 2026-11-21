@@ -32,7 +32,7 @@ func batchInput(k float64, n int, itlSec float64) domain.AnalyzerInput {
 // and must be left out.
 func batchFixture(line itl.Model) []domain.AnalyzerInput {
 	term := whatif.BatchTerm{Slope: 0.034e-3, Roof: 120, Ranks: 1}
-	var ins []domain.AnalyzerInput
+	ins := make([]domain.AnalyzerInput, 0, 203)
 	for _, kv := range []float64{1500, 8000} {
 		for i := range 100 {
 			k := 0.15 + 0.35*float64(i)/99

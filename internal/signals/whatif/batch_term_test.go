@@ -122,7 +122,7 @@ func TestBatchTerm_ARateThatFallsIsRefused(t *testing.T) {
 // the sequences, which is what tells the term from the line's slope.
 func batchRows(line itl.Model, term BatchTerm, kvs []float64, noise float64) []BatchRow {
 	rng := rand.New(rand.NewPCG(309, 1))
-	var rows []BatchRow
+	rows := make([]BatchRow, 0, 150*len(kvs))
 	for _, kv := range kvs {
 		for i := range 150 {
 			k := 0.15 + 0.35*float64(i)/149

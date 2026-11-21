@@ -49,12 +49,11 @@ func (b *batchSamples) note(in domain.AnalyzerInput) {
 			!rm.RunningRequestsKnown || rm.RunningRequests <= 0 {
 			continue
 		}
-		rows := append(b.rows[rm.VariantName], whatif.BatchRow{K: k,
+		b.rows[rm.VariantName] = append(b.rows[rm.VariantName], whatif.BatchRow{K: k,
 			SeqsPerRank: float64(rm.RunningRequests) / float64(rm.Ranks()), ITLSec: rm.AvgITL})
-		if len(rows) > batchTermRows {
-			rows = rows[len(rows)-batchTermRows:]
+		if rows := b.rows[rm.VariantName]; len(rows) > batchTermRows {
+			b.rows[rm.VariantName] = rows[len(rows)-batchTermRows:]
 		}
-		b.rows[rm.VariantName] = rows
 	}
 }
 
