@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 )
 
@@ -44,6 +45,12 @@ func TestMoEBusiestRank_OnlyExpertParallelDataParallel(t *testing.T) {
 	one.DataParallelSize = 1
 	assert.False(t, a.BusiestRankFillFor(one), "expert parallelism over one rank")
 	assert.False(t, a.BusiestRankFillFor(nil), "no arguments recorded")
+	spread := moeDP8()
+	spread.DataParallelSizeLocal = 1
+	assert.False(t, a.BusiestRankFillFor(spread), "one rank a pod: no ratio to read")
+	sg := moeDP8()
+	sg.Engine = inferenceengine.EngineSGLang
+	assert.False(t, a.BusiestRankFillFor(sg), "SGLang")
 }
 
 // Through Analyze: the ITL line's reading of a DP8 MoE decode replica is at

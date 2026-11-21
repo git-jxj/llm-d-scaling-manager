@@ -41,5 +41,5 @@ func TestBusiestRankCapacity_PricesTheMeanAtTheTopOverTheRatio(t *testing.T) {
 // The flag's words name the ratio, or say none was read.
 func TestBusiestRankWords(t *testing.T) {
 	assert.Contains(t, busiestRankWords(1.25), "fill / 1.25")
-	assert.Contains(t, busiestRankWords(0), "no busiest/mean ratio read")
+	assert.Contains(t, busiestRankWords(0), "busiest rank not read")
 }

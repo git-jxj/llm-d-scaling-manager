@@ -1,6 +1,9 @@
 package saturation
 
-import "github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
+import (
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
+)
 
 // SwitchMoEBusiestRank is the replay switch that fits the ITL line of a
 // data-parallel MoE engine against its busiest rank's KV fill, not the mean
@@ -27,9 +30,23 @@ import "github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capac
 const SwitchMoEBusiestRank = "moe-dp-busiest-rank"
 
 // BusiestRankFillFor reports whether a variant run under params has its ITL
-// line read at its busiest rank: SwitchMoEBusiestRank on, and an engine
-// with expert parallelism over more than one data-parallel rank. A row of
-// one rank reads the same either way (domain.ReplicaMetrics.BusiestRankKvUsageForITL).
+// line read at its busiest rank: SwitchMoEBusiestRank on, and a vLLM engine
+// with expert parallelism over more than one data-parallel rank in the pod
+// (--data-parallel-size-local where it is set, below the global size). The
+// busiest/mean ratio is read per pod, so a pod of one rank reads none.
+//
+// Not covered: an MoE engine with data parallelism but no expert parallelism
+// (vLLM steps those ranks in lockstep too; the arguments do not say the
+// model is MoE), and SGLang, whose lockstep comes from --enable-dp-attention,
+// which the parser does not read, and whose fill queries take the busiest
+// rank already.
 func (a *SaturationAnalyzer) BusiestRankFillFor(params *capacity.EngineParams) bool {
-	return a.moeBusiestRank && params != nil && params.ExpertParallel && params.DataParallelSize > 1
+	if !a.moeBusiestRank || params == nil || params.Engine == inferenceengine.EngineSGLang || !params.ExpertParallel {
+		return false
+	}
+	local := max(params.DataParallelSize, 1)
+	if params.DataParallelSizeLocal > 0 {
+		local = min(params.DataParallelSizeLocal, local)
+	}
+	return local > 1
 }

@@ -148,7 +148,7 @@ func flagsLine(b *strings.Builder, pv pricedVariant, results ...whatif.Result) {
 // ratio its capacity was priced at.
 func busiestRankWords(ratio float64) string {
 	if !(ratio > 1) {
-		return "fill is the busiest rank's; no busiest/mean ratio read, priced at the whole capacity"
+		return "busiest rank not read: fill is the mean over the ranks, priced at the whole capacity, optimistic by the spread unseen"
 	}
-	return fmt.Sprintf("fill is the busiest rank's; mean fill = fill / %.2f", ratio)
+	return fmt.Sprintf("fill is the busiest rank's; mean fill = fill / %.2f, a lower bound on the ratio", ratio)
 }

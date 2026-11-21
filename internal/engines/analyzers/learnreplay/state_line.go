@@ -45,7 +45,8 @@ type lineSamples struct {
 }
 
 // busiestRatioRows is how many rows a variant's busiest/mean rank fill ratio
-// is the median of: an hour of one replica at the default 15 s cycle.
+// is the median of: one row a replica a cycle, so an hour of one replica at
+// the default 15 s cycle, 7.5 minutes of eight.
 const busiestRatioRows = 240
 
 // busiestRatio is the median of the variant's ratios, 0 with none.

@@ -622,7 +622,12 @@ const busiestRankFill whatif.Flag = "BusiestRankFill"
 // the sequences a replica holds at a busiest-rank fill k are those of the
 // mean fill k/ratio: the band's top prices the mean at Hi/ratio, where the
 // busiest rank reaches Hi (issue llm-d-incubation/llm-d-scaling-manager#312).
-// Without a ratio read it is the capacity, the least the busiest rank needs.
+// Without a ratio read the rows read the mean (BusiestRankKvUsageForITL), and
+// it is the whole capacity: optimistic by the spread no row showed.
+//
+// The ratio is of the ranks' one-minute peaks, so it is a lower bound on the
+// busiest/mean ratio of the moment where the hottest rank changes inside the
+// minute: the price stays optimistic by the difference.
 func busiestRankCapacity(vs learnreplay.VariantState) float64 {
 	if vs.BusiestRankFill && vs.BusiestRankRatio > 1 {
 		return vs.CapacityTokens / vs.BusiestRankRatio
