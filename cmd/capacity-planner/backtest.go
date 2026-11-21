@@ -30,15 +30,38 @@ type backtestFlags struct {
 	arrivalCV2, assumeVP                  float64
 	assumeA                               time.Duration
 	allowMismatch                         bool
-	// flowControl, routerWaitInPrefill and priceRouterWait are the TTFT
-	// flags of the same names (answer.go), as assume.flowControl and
-	// assume.routerWait.
+	// assumePromptCV, assumeRouterHop and assumeITLB are the answers' own
+	// --assume-* flags, and flowControl, routerWaitInPrefill and
+	// priceRouterWait their TTFT flags of the same names (answer.go), so
+	// that a backtest checks an answer with the inputs it stated (issue
+	// llm-d-incubation/llm-d-scaling-manager#277): as assume.promptCV,
+	// assume.routerHop, assume.itlB or assume.itlBFromFloor,
+	// assume.flowControl and assume.routerWait. set is the flags given.
+	assumePromptCV                       float64
+	assumeRouterHop                      time.Duration
+	assumeITLB                           string
 	flowControl                          string
 	routerWaitInPrefill, priceRouterWait bool
-	// assumePromptCV is --assume-prompt-cv, read where promptCVSet: the
-	// prompts' cv in place of the one each step reads (assume.promptCV).
-	assumePromptCV float64
-	promptCVSet    bool
+	set                                  map[string]bool
+}
+
+// registerAssume registers the stated-input flags backtest and predict take.
+func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
+	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, where the fit learned none (flagged)")
+	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, where the fit learned none (flagged)")
+	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompts' coefficient of variation, 0 to 3, in place of the one each step reads from the histogram (flagged)")
+	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the hop between the router and the engines (8ms), in place of the learned or default one (flagged)")
+	fs.StringVar(&f.assumeITLB, "assume-itl-b", "", "the decode line's intercept B (12ms), or floor for B from the floor read below the band, "+
+		"where the fit measured none (PinnedDefaultB); the slope is refitted through it (flagged AssumedITLB)")
+	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the fit's queue series (flagged as stated)")
+	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0)")
+	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0)")
+}
+
+// parsed records the flags given, once fs is parsed.
+func (f *backtestFlags) parsed(fs *flag.FlagSet) {
+	f.set = map[string]bool{}
+	fs.Visit(func(fl *flag.Flag) { f.set[fl.Name] = true })
 }
 
 // runBacktest is `capacity-planner backtest`: the planner fitted on one
@@ -60,21 +83,16 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.StringVar(&f.ttft, "ttft-target", "", "a TTFT target to judge each step by, predicted and measured: 500ms or 500ms@p90")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "the test's arrivals' Ca^2, when known; default Poisson (1), flagged")
 	fs.StringVar(&f.measured, "measured", whatifapi.MeasuredAuto, "the latency scored against: auto (the router's where recorded), router or engine")
-	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, where the fit learned none (flagged)")
-	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, where the fit learned none (flagged)")
-	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompts' coefficient of variation, 0 to 3, in place of the one each step reads from the histogram (flagged)")
+	f.registerAssume(fs)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
-	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the fit's queue series (flagged as stated)")
-	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0)")
-	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0)")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
+	f.parsed(fs)
 	if f.output != outputText && f.output != outputJSON {
 		return usagef("-o %q, want text or json", f.output)
 	}
-	fs.Visit(func(fl *flag.Flag) { f.promptCVSet = f.promptCVSet || fl.Name == "assume-prompt-cv" })
 	ctrllog.SetLogger(logr.Discard())
 	req, err := f.request()
 	if err != nil {
@@ -151,32 +169,9 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 	if f.arrivalCV2 != 0 {
 		req.ArrivalCV2 = &f.arrivalCV2
 	}
-	a := whatifapi.Assume{FlowControl: f.flowControl}
-	if err := a.CheckFlowControl(); err != nil {
-		return req, usagef("--flow-control %q, want on or off", f.flowControl)
-	}
-	if f.assumeVP > 0 {
-		a.VP = &f.assumeVP
-	}
-	if f.assumeA > 0 {
-		a.A = ptrTo(f.assumeA.Seconds())
-	}
-	if f.promptCVSet {
-		if !(f.assumePromptCV >= 0 && f.assumePromptCV <= whatif.PromptCVStop) {
-			return req, usagef("--assume-prompt-cv %g, want a cv from 0 to %g", f.assumePromptCV, whatif.PromptCVStop)
-		}
-		a.PromptCV = &f.assumePromptCV
-	}
-	switch {
-	case f.routerWaitInPrefill && f.priceRouterWait:
-		return req, usagef("--price-router-wait and --router-wait-in-prefill price the same wait two ways (router v0.11.0's gate, v1.0.0's): set one")
-	case f.priceRouterWait == whatif.DefaultPriceRouterWait && f.routerWaitInPrefill == whatif.DefaultRouterWaitInPrefill:
-	case f.priceRouterWait:
-		a.RouterWait = whatifapi.RouterWaitGateStage
-	case f.routerWaitInPrefill:
-		a.RouterWait = whatifapi.RouterWaitInPrefill
-	default:
-		a.RouterWait = whatifapi.RouterWaitNone
+	a, err := f.assume()
+	if err != nil {
+		return req, err
 	}
 	if a != (whatifapi.Assume{}) {
 		req.Assume = &a
@@ -187,6 +182,56 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 	}
 	req.TTFT = o
 	return req, nil
+}
+
+// assume is the terms the --assume-* flags state, checked as an answer
+// checks them: V_P and a above 0, as before, and the rest where given.
+func (f *backtestFlags) assume() (whatifapi.Assume, error) {
+	a := whatifapi.Assume{FlowControl: f.flowControl}
+	if err := a.CheckFlowControl(); err != nil {
+		return a, usagef("--flow-control %q, want on or off", f.flowControl)
+	}
+	switch {
+	case f.routerWaitInPrefill && f.priceRouterWait:
+		return a, usagef("--price-router-wait and --router-wait-in-prefill price the same wait two ways (router v0.11.0's gate, v1.0.0's): set one")
+	case f.priceRouterWait == whatif.DefaultPriceRouterWait && f.routerWaitInPrefill == whatif.DefaultRouterWaitInPrefill:
+	case f.priceRouterWait:
+		a.RouterWait = whatifapi.RouterWaitGateStage
+	case f.routerWaitInPrefill:
+		a.RouterWait = whatifapi.RouterWaitInPrefill
+	default:
+		a.RouterWait = whatifapi.RouterWaitNone
+	}
+	if f.assumeVP > 0 {
+		a.VP = &f.assumeVP
+	}
+	if f.assumeA > 0 {
+		a.A = ptrTo(f.assumeA.Seconds())
+	}
+	if f.set["assume-prompt-cv"] {
+		if !(f.assumePromptCV >= 0 && f.assumePromptCV <= whatif.PromptCVStop) {
+			return a, usagef("--assume-prompt-cv %g, want a cv from 0 to %g: past that the rate stops falling as the cv rises", f.assumePromptCV, whatif.PromptCVStop)
+		}
+		a.PromptCV = &f.assumePromptCV
+	}
+	if f.set["assume-router-hop"] {
+		if f.assumeRouterHop < 0 {
+			return a, usagef("--assume-router-hop %s, want a duration of 0 or more", f.assumeRouterHop)
+		}
+		a.RouterHop = ptrTo(f.assumeRouterHop.Seconds())
+	}
+	if f.set["assume-itl-b"] {
+		floor, b, err := parseAssumeITLB(f.assumeITLB)
+		if err != nil {
+			return a, err
+		}
+		if floor {
+			a.ITLBFromFloor = true
+		} else {
+			a.ITLB = ptrTo(b.Seconds())
+		}
+	}
+	return a, nil
 }
 
 // resolveBacktest resolves one recording at cycle (0 the last): the

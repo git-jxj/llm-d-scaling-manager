@@ -398,6 +398,8 @@ inputs.selfCheck.folds[].testTo string
 inputs.selfCheck.issueUrl string
 inputs.selfCheck.line string
 inputs.selfCheck.seconds number
+inputs.selfCheck.stated array
+inputs.selfCheck.stated[] string
 inputs.selfCheck.status string
 inputs.selfCheck.tpot object
 inputs.selfCheck.tpot.bias number
@@ -427,6 +429,8 @@ inputs.selfCheck.ttft.statistic string
 inputs.selfCheck.ttft.steps number
 inputs.selfCheck.ttft.within number
 inputs.selfCheck.why string
+inputs.selfCheck.withoutStated array
+inputs.selfCheck.withoutStated[] string
 inputs.source object
 inputs.source.cycle number
 inputs.source.firstAt string
@@ -767,6 +771,8 @@ report.selfCheck.folds[].testTo string
 report.selfCheck.issueUrl string
 report.selfCheck.line string
 report.selfCheck.seconds number
+report.selfCheck.stated array
+report.selfCheck.stated[] string
 report.selfCheck.status string
 report.selfCheck.tpot object
 report.selfCheck.tpot.bias number
@@ -796,6 +802,8 @@ report.selfCheck.ttft.statistic string
 report.selfCheck.ttft.steps number
 report.selfCheck.ttft.within number
 report.selfCheck.why string
+report.selfCheck.withoutStated array
+report.selfCheck.withoutStated[] string
 report.shapes array
 report.shapes[] object
 report.shapes[].assumed array

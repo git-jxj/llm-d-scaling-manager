@@ -111,7 +111,7 @@ func TestBacktest_FlowControlFlagsAreAssumed(t *testing.T) {
 		{backtestFlags{routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, priceRouterWait: whatif.DefaultPriceRouterWait}, nil},
 		{backtestFlags{flowControl: "on", routerWaitInPrefill: true}, &whatifapi.Assume{FlowControl: "on", RouterWait: whatifapi.RouterWaitInPrefill}},
 		{backtestFlags{flowControl: "off", priceRouterWait: true}, &whatifapi.Assume{FlowControl: "off", RouterWait: whatifapi.RouterWaitGateStage}},
-		{backtestFlags{promptCVSet: true}, &whatifapi.Assume{PromptCV: ptrTo(0.0)}},
+		{backtestFlags{set: map[string]bool{"assume-prompt-cv": true}}, &whatifapi.Assume{PromptCV: ptrTo(0.0)}},
 	} {
 		req, err := c.f.request()
 		require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestBacktest_FlowControlFlagsAreAssumed(t *testing.T) {
 	_, err = (&backtestFlags{flowControl: "maybe"}).request()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--flow-control")
-	_, err = (&backtestFlags{promptCVSet: true, assumePromptCV: whatif.PromptCVStop + 1}).request()
+	_, err = (&backtestFlags{set: map[string]bool{"assume-prompt-cv": true}, assumePromptCV: whatif.PromptCVStop + 1}).request()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--assume-prompt-cv")
 }

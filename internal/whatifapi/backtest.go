@@ -691,7 +691,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		// caller's error, not a test with no step judged.
 		sc := Scenario{Assume: *a, TPOT: &ResolvedObjective{Statistic: "p90"}}
 		if err := sc.checkAssume(); err != nil {
-			return q, err
+			return nil, err
 		}
 		q.assume = *a
 		q.assumed = append(q.assumed, "terms typed in for the fit (assume): every figure they move is flagged")
