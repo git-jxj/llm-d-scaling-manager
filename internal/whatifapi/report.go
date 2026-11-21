@@ -526,7 +526,8 @@ func (s *Server) report(ctx context.Context, req ReportRequest) (*ReportResponse
 		return nil, err
 	}
 	out.SchemaVersion = SchemaVersion
-	out.SelfCheck = e.doc.SelfCheck
+	// The source's self-check was read before this report stated anything.
+	out.SelfCheck = e.doc.SelfCheck.RanWithout(&Stated{Assume: q.Assume, ArrivalCV2: q.ArrivalCV2})
 	return out, nil
 }
 

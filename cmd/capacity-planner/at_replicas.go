@@ -207,35 +207,8 @@ func (f *answerFlags) reportQuery(rf reportFlags) (whatifapi.ReportQuery, error)
 	if f.set["assume-tpot-ratio"] && q.TPOTPercentile == 0 && (q.TPOT == nil || q.TPOT.Percentile == 0) {
 		return q, usagef("--assume-tpot-ratio needs a TPOT percentile (--tpot-percentile 90)")
 	}
-	a := &q.Assume
-	if f.set["assume-vp"] {
-		a.VP = &f.assumeVP
-	}
-	if f.set["assume-a"] {
-		x := f.assumeA.Seconds()
-		a.A = &x
-	}
-	if f.set["assume-prompt-cv"] {
-		a.PromptCV = &f.assumePromptCV
-	}
-	if f.set["assume-router-hop"] {
-		x := f.assumeRouterHop.Seconds()
-		a.RouterHop = &x
-	}
-	if f.set["assume-tpot-ratio"] {
-		a.TPOTRatio = &f.tpotRatio
-	}
-	if f.set["assume-itl-b"] {
-		floor, b, err := parseAssumeITLB(f.assumeITLB)
-		if err != nil {
-			return q, err
-		}
-		if floor {
-			a.ITLBFromFloor = true
-		} else {
-			x := b.Seconds()
-			a.ITLB = &x
-		}
+	if q.Assume, err = f.assume(); err != nil {
+		return q, err
 	}
 	if f.set["arrival-cv2"] {
 		q.ArrivalCV2 = &f.arrivalCV2
