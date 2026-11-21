@@ -139,8 +139,8 @@ shape says `not covered by the self-check`. A verdict that rests on the
 figures an inconsistent self-check names says `not trusted`, and the command
 exits 4 (`verdict.trust` and `exitCode` in the JSON); the verdict is still
 printed. `day-plan` judges each bucket's verdict the same way, at the
-bucket's sized rate on the fleet it had: `not trusted` or `not covered` beside
-the hour (`buckets[].trust`, `hours[].trust`, `summary.counts.untrusted` and
+bucket's sized rate on the fleet it had, or its stated shape: `not trusted`
+or `not covered by the self-check` beside the hour (`buckets[].trust`, `hours[].trust`, `summary.counts.untrusted` and
 `notCovered` in the JSON), and it exits 4 when a bucket is not trusted.
 
 On **inconsistent**, the answer offers an issue to file: a link to a new

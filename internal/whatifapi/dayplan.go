@@ -984,7 +984,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			db.Flags = append(db.Flags, FlagWindowShape)
 		}
 		if stated {
-			db.Shape.Source = "stated"
+			db.Shape.Source = dayShapeStated
 			if k.PromptTokens > 0 {
 				db.Shape.PromptTokens = ptr(k.PromptTokens)
 			}

@@ -226,6 +226,30 @@ func TestDayPlan_JudgeTrust(t *testing.T) {
 	p.JudgeTrust()
 	assert.Equal(t, TrustNot, p.Hours[0].Trust, "not trusted outranks a not covered bucket met before it in the hour")
 
+	// A fleet the check did not test, a stated shape, an unmet bucket (judged
+	// by the bound, tested for no coverage) and a fleet with no replica of a
+	// role (judged on no figure).
+	p = plan(nil)
+	p.Buckets[0].Actual = &FleetCounts{Prefill: 3, Decode: 2}
+	p.Buckets[1].Shape.Source = dayShapeStated
+	p.Buckets[2].Status, p.Buckets[2].Verdict = BucketUnmet, DayVerdictUnder
+	p.Buckets[5].Status, p.Buckets[5].Actual = BucketSized, &FleetCounts{Prefill: 2}
+	p.JudgeTrust()
+	assert.Equal(t, TrustNotCovered+": it tested 1.00 to 10.00 r/s at 2 prefill + 2 decode; this verdict is at 5.00 r/s at 3 prefill + 2 decode", p.Buckets[0].Trust)
+	assert.Equal(t, TrustNotCovered+": it tested the recorded traffic, not this shape", p.Buckets[1].Trust)
+	assert.Empty(t, p.Buckets[2].Trust, "unmet, past the rates tested")
+	assert.Empty(t, p.Buckets[5].Trust, "no hadLimit")
+	assert.Equal(t, 2, p.Summary.Counts.NotCovered)
+	p.SelfCheck.Untrusted = []string{"tpot"}
+	p.JudgeTrust()
+	assert.Contains(t, p.Buckets[2].Trust, TrustNot+":", "an unmet bucket's verdict rests on the figures too")
+	assert.Empty(t, p.Buckets[5].Trust, "no figure, nothing to distrust")
+	assert.Equal(t, 3, p.Summary.Counts.Untrusted, "judged afresh: 0, 1 and 2, not added to the last call's")
+	assert.Zero(t, p.Summary.Counts.NotCovered)
+	assert.Equal(t, p.Summary.Counts.Untrusted, func() int { p.JudgeTrust(); return p.Summary.Counts.Untrusted }(), "a second call counts the same")
+	assert.Equal(t, "TPOT", p.UntrustedFigures(p.Buckets[0]))
+	assert.Empty(t, p.UntrustedFigures(p.Buckets[5]))
+
 	p = plan([]string{"ttft", "tpot"})
 	p.SelfCheck.Status = SelfCheckNotRun
 	p.JudgeTrust()

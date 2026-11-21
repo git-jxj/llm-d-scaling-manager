@@ -510,17 +510,29 @@ func TestDayPlanJudgesTrust(t *testing.T) {
 				assert.Regexp(t, h.Start.Format("2006-01-02 15:04")+` .*; not trusted\n`, out)
 			}
 		}
-		assert.Contains(t, out, fmt.Sprintf("self-check: %d bucket(s) not trusted: the self-check found this recording's TTFT figures inconsistent with it", p.Summary.Counts.Sized))
+		assert.Contains(t, out, fmt.Sprintf("self-check: %d bucket(s) not trusted: their verdicts rest on the TTFT figures, "+
+			"which the self-check found inconsistent with this recording.\n", p.Summary.Counts.Sized))
 	})
 	t.Run("not covered", func(t *testing.T) {
+		// Every fleet the plan had is one the check tested: the rate alone
+		// is not covered.
+		had, _ := dayJSON(t, args[1:]...)
+		fleets := []whatifapi.FleetCounts{}
+		for _, b := range had.Buckets {
+			if b.Actual != nil && !slices.Contains(fleets, *b.Actual) {
+				fleets = append(fleets, *b.Actual)
+			}
+		}
 		narrow := *sc
 		narrow.Status, narrow.Untrusted = whatifapi.SelfCheckWeak, nil
-		narrow.Covered = &whatifapi.SelfCheckCoverage{RateLo: 1000, RateHi: 2000, Fleets: []whatifapi.FleetCounts{{Prefill: 2, Decode: 2}}}
+		narrow.Covered = &whatifapi.SelfCheckCoverage{RateLo: 1000, RateHi: 2000, Fleets: fleets}
 		withCheck(t, &narrow)
 		out, code := runCmd(t, args...)
 		assert.Equal(t, 0, code, out)
+		p, _ := dayJSON(t, args[1:]...)
+		assert.Equal(t, p.Summary.Counts.Sized, p.Summary.Counts.NotCovered, "every sized bucket is below 1000 r/s")
 		assert.Contains(t, out, "; not covered by the self-check\n")
-		assert.Contains(t, out, "bucket(s) not covered by the self-check: it tested 1000.00 to 2000.00 r/s at 2 prefill + 2 decode")
+		assert.Contains(t, out, fmt.Sprintf("self-check: %d bucket(s) not covered: it tested 1000.00 to 2000.00 r/s at ", p.Summary.Counts.Sized))
 		assert.NotContains(t, out, "not trusted")
 	})
 	t.Run("a refusal outranks", func(t *testing.T) {
@@ -529,7 +541,7 @@ func TestDayPlanJudgesTrust(t *testing.T) {
 		withCheck(t, &tpot)
 		out, code := runCmd(t, "day-plan", "--recording", stair("ttft-staircase-b-on"))
 		assert.Equal(t, 3, code, out)
-		assert.Contains(t, out, "not trusted: the self-check found this recording's TPOT figures", "decode sized alone rests on the TPOT figures")
+		assert.Contains(t, out, "not trusted: their verdicts rest on the TPOT figures,", "decode sized alone rests on the TPOT figures")
 	})
 }
 

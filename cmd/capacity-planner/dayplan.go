@@ -364,28 +364,35 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	return err
 }
 
-// dayTrustText is what the self-check says of the buckets' verdicts, a line
-// for each way it does not trust them, with how many, then one line for
-// those it does not cover; empty when it says nothing of any.
+// dayTrustText is what the self-check says of the buckets' verdicts: a line
+// for each set of figures the verdicts not trusted rest on, with how many,
+// then one line for those it does not cover; empty when it says nothing of
+// any.
 func dayTrustText(p *whatifapi.DayPlanResponse) string {
 	var b strings.Builder
-	var words []string
+	var figures []string
 	n := map[string]int{}
 	for _, bk := range p.Buckets {
-		if !strings.HasPrefix(bk.Trust, whatifapi.TrustNot+":") {
+		f := p.UntrustedFigures(bk)
+		if f == "" {
 			continue
 		}
-		if n[bk.Trust] == 0 {
-			words = append(words, bk.Trust)
+		if n[f] == 0 {
+			figures = append(figures, f)
 		}
-		n[bk.Trust]++
+		n[f]++
 	}
-	for _, w := range words {
-		fmt.Fprintf(&b, "self-check: %d bucket(s) %s.\n", n[w], w)
+	for _, f := range figures {
+		fmt.Fprintf(&b, "self-check: %d bucket(s) %s: their verdicts rest on the %s figures, which the self-check found inconsistent with this recording.\n",
+			n[f], whatifapi.TrustNot, f)
 	}
-	if c := p.Summary.Counts.NotCovered; c > 0 && p.SelfCheck != nil && p.SelfCheck.Covered != nil {
-		fmt.Fprintf(&b, "self-check: %d bucket(s) %s: it tested %s, not the rate each was sized for on the fleet it had.\n",
-			c, whatifapi.TrustNotCovered, p.SelfCheck.Covered.Words())
+	if c := p.Summary.Counts.NotCovered; c > 0 {
+		tested := "the recorded traffic"
+		if p.SelfCheck != nil && p.SelfCheck.Covered != nil {
+			tested = p.SelfCheck.Covered.Words()
+		}
+		fmt.Fprintf(&b, "self-check: %d bucket(s) not covered: it tested %s, not the rate each was sized for on the fleet it had, or the shape stated.\n",
+			c, tested)
 	}
 	return b.String()
 }

@@ -36,21 +36,44 @@ func (sc *SelfCheck) judges() bool {
 	return sc != nil && sc.Status != SelfCheckNotRun
 }
 
-// notTrusted is what sc says of a verdict that rests on the figures rests
-// names (restsOn) when it found one of them inconsistent: TrustNot, and
-// which; empty when it found none of them so.
-func (sc *SelfCheck) notTrusted(rests []string) string {
+// badOf is the figures of rests (restsOn) sc found inconsistent, in
+// words: "TTFT", "TPOT", "TTFT and TPOT"; empty when none.
+func (sc *SelfCheck) badOf(rests []string) string {
 	var bad []string
 	for _, f := range rests {
 		if slices.Contains(sc.Untrusted, f) {
 			bad = append(bad, strings.ToUpper(f))
 		}
 	}
-	if len(bad) == 0 {
+	return strings.Join(bad, " and ")
+}
+
+// notTrusted is what sc says of a verdict that rests on the figures rests
+// names (restsOn) when it found one of them inconsistent: TrustNot, and
+// which; empty when it found none of them so.
+func (sc *SelfCheck) notTrusted(rests []string) string {
+	bad := sc.badOf(rests)
+	if bad == "" {
 		return ""
 	}
 	return fmt.Sprintf("%s: the self-check found this recording's %s figures inconsistent with it, and this verdict rests on them",
-		TrustNot, strings.Join(bad, " and "))
+		TrustNot, bad)
+}
+
+// dayRestsOn is the figures a day plan bucket's verdict rests on: the TTFT
+// figures where it priced prefill, the TPOT figures always.
+func dayRestsOn(b DayBucket) []string {
+	return restsOn(!slices.Contains(b.Flags, FlagPrefillNotPriced), false)
+}
+
+// UntrustedFigures is the figures a bucket's verdict rests on that the
+// plan's self-check found inconsistent, in words ("TTFT and TPOT"); empty
+// when its verdict is not judged not trusted (JudgeTrust).
+func (p *DayPlanResponse) UntrustedFigures(b DayBucket) string {
+	if !strings.HasPrefix(b.Trust, TrustNot+":") || p.SelfCheck == nil {
+		return ""
+	}
+	return p.SelfCheck.badOf(dayRestsOn(b))
 }
 
 // notCovered is what sc says of a verdict at rate on np prefill + nd
@@ -113,32 +136,49 @@ func (r *ReportResponse) JudgeTrust() {
 // report's verdict's (ReportResponse.JudgeTrust): not trusted where its
 // verdict rests on figures the self-check found inconsistent (the TTFT
 // figures where the bucket priced prefill, the TPOT figures always); else
-// not covered where the bucket's sized rate on the fleet it had is not one
-// the self-check tested. Each hour's Trust is its worst bucket's opening
-// words, and the summary counts both. A bucket refused, or not sized,
-// says nothing more. The day plan exits ExitUntrusted when
+// not covered where the bucket was priced at a stated shape, or its sized
+// rate on the fleet it had is not one the self-check tested (an unmet
+// bucket, judged by the replica bound, is not tested for coverage). Each
+// hour's Trust is its worst bucket's opening words, and the summary counts
+// both. A bucket refused, not sized, or judged on no figure says nothing
+// more. It judges afresh each call. The day plan exits ExitUntrusted when
 // Summary.Counts.Untrusted is above 0.
 func (p *DayPlanResponse) JudgeTrust() {
+	c := &p.Summary.Counts
+	c.Untrusted, c.NotCovered = 0, 0
+	for i := range p.Hours {
+		p.Hours[i].Trust = ""
+	}
+	for i := range p.Buckets {
+		p.Buckets[i].Trust = ""
+	}
 	sc := p.SelfCheck
 	if !sc.judges() {
 		return
 	}
-	c := &p.Summary.Counts
 	for i := range p.Buckets {
 		b := &p.Buckets[i]
-		if b.Verdict == "" || b.Verdict == DayVerdictRefused {
+		// A verdict on a fleet with no replica of a role it prices
+		// (hadVerdict) rests on no figure.
+		if b.Verdict == "" || b.Verdict == DayVerdictRefused || (b.Status == BucketSized && b.HadLimit == nil) {
 			continue
 		}
-		b.Trust = sc.notTrusted(restsOn(!slices.Contains(b.Flags, FlagPrefillNotPriced), false))
-		if b.Trust != "" {
+		b.Trust = sc.notTrusted(dayRestsOn(*b))
+		switch {
+		case b.Trust != "":
 			c.Untrusted++
-		} else if b.SizedRate != nil && b.Actual != nil {
-			if b.Trust = sc.notCovered(*b.SizedRate, b.Actual.Prefill, b.Actual.Decode); b.Trust != "" {
-				c.NotCovered++
-			}
+		case b.Status == BucketUnmet:
+			// Its verdict is the replica bound's, not the fleet it had.
+		case b.Shape.Source == dayShapeStated:
+			b.Trust = TrustNotCovered + ": it tested the recorded traffic, not this shape"
+		case b.SizedRate != nil && b.Actual != nil:
+			b.Trust = sc.notCovered(*b.SizedRate, b.Actual.Prefill, b.Actual.Decode)
 		}
 		if b.Trust == "" {
 			continue
+		}
+		if strings.HasPrefix(b.Trust, TrustNotCovered) {
+			c.NotCovered++
 		}
 		h := slices.IndexFunc(p.Hours, func(h DayHour) bool { return h.Start.Equal(b.Start.Truncate(time.Hour)) })
 		if h >= 0 && p.Hours[h].Trust != TrustNot {
@@ -147,5 +187,10 @@ func (p *DayPlanResponse) JudgeTrust() {
 	}
 }
 
-// shapeSourceAsked is ReportShape.Source for a shape the question typed.
-const shapeSourceAsked = "asked"
+// shapeSourceAsked is ReportShape.Source for a shape the question typed,
+// and dayShapeStated DayShape.Source for a bucket priced at the request's
+// mix: neither is the traffic the self-check replayed.
+const (
+	shapeSourceAsked = "asked"
+	dayShapeStated   = "stated"
+)

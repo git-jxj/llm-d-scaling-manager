@@ -365,7 +365,7 @@ function dayBucketsTable(plan) {
       `<td>${b.rate ? dayFmt(b.rate.mean) : "-"}</td><td>${b.rate ? dayFmt(b.rate.p95) : "-"}</td>` +
       `<td>${b.sizedRate != null ? dayFmt(b.sizedRate) + " (" + esc(b.sizedFor) + ")" : "-"}</td>` +
       `<td>${n(b.needed && b.needed.prefill)}</td><td>${n(b.needed && b.needed.decode)}</td><td>${n(b.actual && b.actual.prefill)}</td><td>${n(b.actual && b.actual.decode)}</td>` +
-      `<td>${esc((b.verdict ? DAY_VERDICT[b.verdict] || b.verdict : "") + (b.trust ? "; " + b.trust : ""))}</td><td>${esc(why)}</td><td>${esc((b.flags || []).join(", "))}</td></tr>`;
+      `<td>${esc((b.verdict ? DAY_VERDICT[b.verdict] || b.verdict : "") + (b.trust ? "; " + b.trust.split(":")[0] : ""))}</td><td>${esc(why)}</td><td>${esc((b.flags || []).join(", "))}</td></tr>`;
   }
   return s + "</table>";
 }
@@ -388,6 +388,6 @@ function daySummaryText(plan) {
   out.push(`${c.sized} buckets sized (${c.sizedForP95} for their p95, ${c.sizedForMean} for their mean, ${c.sizedForMax} for their max), ` +
     `${c.unmet} beyond the bound, ${c.refused} refused, ${c.tooLittleData} with too little data, ${c.noData} with no data.`);
   if (c.untrusted) out.push(`Self-check: ${c.untrusted} bucket(s) not trusted: their verdicts rest on figures the self-check found inconsistent with this recording (see each bucket).`);
-  if (c.notCovered) out.push(`Self-check: ${c.notCovered} bucket(s) not covered by the self-check: it did not test the rate each was sized for on the fleet it had.`);
+  if (c.notCovered) out.push(`Self-check: ${c.notCovered} bucket(s) not covered: it did not test the rate each was sized for on the fleet it had, or the shape stated.`);
   return out;
 }
