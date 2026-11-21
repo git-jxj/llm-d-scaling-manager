@@ -197,7 +197,7 @@ way.
 | --- | --- |
 | `inputsId` | `sha256:` and a hash of the recording's bytes, the cycle, the model and the variants. The same source gives the same id. |
 | `source` | The kind, the recording's name or the window, the cycle read and how many the recording holds. |
-| `fleet` | The prefill and the decode variant, with their replica counts at the cycle. |
+| `fleet` | The prefill and the decode variant, with their replica counts at the cycle, and `startSeconds`, how long a new replica of the role took to become Ready as the source's start learner measured it (its slowest measured variant of the role; `startSeeded` true where it is a ScaledObject's seed, nothing measured), absent where none was learned. |
 | `observed` | The mean prompt and output and the prompt's spread; the default buckets (1k, 4k, 8k, 32k, 128k, each named by its upper edge) and the one the mean prompt falls in. The request rate and the share per bucket are refused (`NoPerRequestLengths`): the source carries neither. |
 | `policy` | The policy's TTFT and TPOT objectives, the headroom (`scaleUpThreshold`), and the flow-control state. |
 | `terms` | V_P, a, f, the prompt and its cv, the KV transfer, the router hop, the ITL line, the KV capacity and per-request KV, the batch cap, the context window (`maxModelLen`), and R_q at p90: each with its source, or the refusal that stopped it. |
@@ -376,7 +376,8 @@ decode is sized alone, and the missing target adds nothing to `refused`.
 | Key | Default | Notes |
 | --- | --- | --- |
 | `step` | `5m` | A bucket's length, a Go duration from `15s` to `24h`. Buckets start on the step in UTC. |
-| `sizeFor` | `p95` | The rate of a bucket's cycles to size for: `mean`, `p95` or `max`. A bucket of fewer than 20 cycles asked for its `p95` is sized for its `mean` and flagged `FewCyclesForP95`; each bucket's `sizedFor` says which. |
+| `sizeFor` | `p95` | The rate of a bucket's cycles to size for: `mean`, `p95`, `p95-modulation` (the p95 less the counting noise of a 1-minute rate; the bucket's `rate.p95Modulation`) or `max`. A bucket of fewer than 20 cycles asked for its `p95` or `p95-modulation` is sized for its `mean` and flagged `FewCyclesForP95`; each bucket's `sizedFor` says which. |
+| `lead` | the source's | Each role's scale-up lead time, seconds: `{"prefill": 180, "decode": 90}`. A role left out takes the start time the source learned (`fleet.<role>.startSeconds` in the inputs), else 0. |
 | `minRequests` | 30 | A bucket with fewer requests is `tooLittleData`, not sized. |
 
 A term the source cannot price at any rate is not a bucket's refusal. The plan
@@ -398,13 +399,14 @@ bucket when the stated length lies outside what the buckets observed.
 
 | Key | What it is |
 | --- | --- |
-| `from`, `to`, `step`, `sizeFor`, `sizeForSource`, `minRequests`, `ttft`, `tpot`, `headroom`, `maxReplicas` | What was planned. `ttft` is absent when neither the request nor the policy sets a TTFT target: prefill is then not sized, and decode is sized alone (`PrefillNotPriced`, and a note). |
+| `from`, `to`, `step`, `sizeFor`, `sizeForSource`, `lead`, `minRequests`, `ttft`, `tpot`, `headroom`, `maxReplicas` | What was planned. `ttft` is absent when neither the request nor the policy sets a TTFT target: prefill is then not sized, and decode is sized alone (`PrefillNotPriced`, and a note). |
 | `buckets[]` | `start`, `samples` (cycles), `requests`, `rate` (`mean`, `p95`, `max` of its cycle rates), `sizedFor` and `sizedRate`, `shape`, `status`, `needed` and `limit` (sized: the fewest replicas in all, ties to fewer decode, and another mix may serve too; `needed.prefill` absent and `needed.atLeast` true when prefill is not priced, decode then a lower bound), `unmet` and `unmetRole` (beyond the bound), `actual` (the median serving pods of the priced prefill and decode variants), `hadLimit` (the limit of the fleet it had, priced whole), `verdict` (`under` when `hadLimit` falls short of the rate, `over` when one replica fewer of either role still serves it, `match`, `refused`) and `flags`. |
 | `hours[]` | Per UTC hour: the rate over its cycles, `needed` (a fleet that holds every sized bucket of the hour, priced again at each bucket's rate and shape: the fewest of the buckets' own fleets that holds them all, else each role's most over them; `notConfirmed` true where it falls short at one; with `atLeast` where any bucket sized decode alone), `busiest` (the fleet of its one bucket of the highest sized rate, which need not hold a bucket of a lower rate but longer requests), the fewest pods it had, `unmet` (buckets beyond the bound), and the verdict: `under` when any bucket was under or beyond the bound, `refused` when every bucket with data was refused, `over` when every sized bucket was over. |
 | `summary` | `peakNeeded` (a fleet that holds every sized bucket, as an hour's `needed`; `peakNotConfirmed` as `notConfirmed`), `busiestNeeded` and `minNeeded` (the needs of the busiest and the quietest sized buckets), replica-hours and GPU-hours needed and had over the sized buckets (absent when none was sized; prefill's hours and the GPU-hours also when any sized bucket did not price prefill, `counts.prefillNotPriced`), `hadReplicaHoursAll` and `hadGpuHoursAll` over every bucket with data, `underHours`, `overHours`, `refusedHours`, and the counts, including how many buckets were sized for each statistic. |
 | `searched` | How many fleets the plan priced. |
 | `refused[]` | Every term the source cannot price at any rate, with `role`, `term` (`ttft`, `tpot`, `decodeKnee`), `reason`, `detail`, `hint` (what to do), `effect` (what the plan did instead) and `buckets`. Empty when every term priced. |
-| `notes` | What it does not price: scale-up lag (it sizes steady state), and the prefix hit rate. |
+| `lead`, `buckets[].held`, `hours[].held`, `summary.heldReplicaHours`, `summary.heldGpuHours` | With a scale-up lead for either role: `lead.prefill` and `lead.decode` (`seconds`, and `source`: `request`, `learned`, `seeded` or `none`); a bucket's `held`, each role's most need over the bucket and every bucket that starts within the role's lead after it ends (a bucket not sized can hold the replicas of one after it); an hour's, each role's most held over its buckets; and the held replica-hours and GPU-hours, each scale-up's replicas counted from one lead before their bucket. All absent with no lead. |
+| `notes` | What it does not price: the steady state each bucket is sized at, the scale-up lead it holds ahead, and the prefix hit rate. |
 
 ```bash
 curl -s http://127.0.0.1:8080/v1/dayplan -H 'Content-Type: application/json' -d '{

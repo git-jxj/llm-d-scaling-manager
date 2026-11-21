@@ -687,8 +687,24 @@ alone. A higher `--ttft` sizes them.
 - **Sized for.** Each bucket is sized for the p95 of its cycles' rates when it
   holds 20 cycles or more (5 minutes at a 15 s cycle), else for their mean,
   which is less conservative, flagged `FewCyclesForP95`. `--size-for
-  mean|p95|max` sets it; the table and each bucket say which was used.
+  mean|p95|p95-modulation|max` sets it; the table and each bucket say which
+  was used. `p95-modulation` is the p95 less the counting noise of a
+  1-minute rate, as in `at-replicas`: a bucket of a steady stream is sized
+  near its mean. It is not the default; see "Not the default" below.
   `--bucket 15m` sets the bucket.
+- **Scale-up lead.** A replica must be Ready when its bucket starts, so it
+  starts one start time before. The plan takes each role's start time from
+  the recording (the start learner's slowest measured variant of the role;
+  `fleet.<role>.startSeconds` in the inputs), or `--lead 90s` (both roles),
+  `--lead prefill=3m,decode=90s`. With a lead, the `held` column is the
+  fleet held in the hour: each role's most need over a bucket and every
+  bucket that starts within the role's lead after it ends. The summary
+  adds the held replica-hours: each scale-up's replicas counted from one
+  lead before their bucket. On the sample (start times 67 and 68 s) the
+  21:00 hour needs 1 + 1 but holds 1 + 2, for the 22:00 rise; the held
+  decode replica-hours are 1.86 against 1.75 needed. The verdicts still
+  judge the need. With no start time learned and none asked, nothing is
+  held ahead, and a note says so.
 - **Shape.** Each bucket is priced at its own observed prompt and output
   length. A bucket whose cycles read none is priced at the source's shape and
   flagged `WindowShape`. `--assume-input-tokens` and `--assume-output-tokens`
