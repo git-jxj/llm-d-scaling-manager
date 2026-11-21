@@ -10,9 +10,9 @@ tuned the planner (see [What was measured](#what-was-measured)).
 
 Each figure carries one of two labels.
 
-- **`validated in-sample: error +15..+156% (min-max, n=6 load levels, 12 readings; q32 staircase)`.**
+- **`validated in-sample: error +3..+152% (min-max, n=6 load levels, 12 readings; q32 staircase)`.**
   Your fleet and traffic sit inside what a measured run covered. On that
-  run the planner's figure read 15% to 156% over what the client measured,
+  run the planner's figure read 3% to 152% over what the client measured,
   lowest to highest, over 6 independent load levels (12 readings: each level
   read twice). `in-sample` says the run also tuned the planner; a run kept
   out of tuning would print `validated on a holdout`.

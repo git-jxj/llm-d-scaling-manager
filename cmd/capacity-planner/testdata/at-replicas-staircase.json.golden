@@ -161,8 +161,8 @@
           ],
           "validation": {
             "validated": false,
-            "label": "OUTSIDE VALIDATED REGION (--assume-vp stated, which the run did not price)",
-            "outside": "--assume-vp stated, which the run did not price"
+            "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+            "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
           },
           "outputTokensPerSecond": 7396.031728752224,
           "binds": "decode band top at fill 0.798"

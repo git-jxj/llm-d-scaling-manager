@@ -60,7 +60,7 @@ func TestAtReplicasGolden(t *testing.T) {
 		{"at-replicas-over", atStair("--decode", "3", "--load-seen", "20"), 0},
 		// V_P is refused on the sweep: the report answers for decode alone,
 		// which is under-provisioned at the p95: an answer, exit 0.
-		{"at-replicas-decode-only", []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}, 0},
+		{"at-replicas-decode-only", []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}, 3},
 		// Three shapes by four loads: the measured one, a short and a long
 		// prompt the recording never saw (EXTRAPOLATED), at two shares of each
 		// shape's knee, a stated rate and the load seen grown by a fifth. Past

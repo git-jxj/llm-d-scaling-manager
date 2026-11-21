@@ -21,7 +21,7 @@ utilization at the load judged
 capacity            req/s     out tok/s   bound by
   prefill knee      no prefill speed learned            P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
   decode knee       30.88     18589       decode batch cap at fill 0.680
-                    OUTSIDE VALIDATED REGION (ExtrapolatedFill: an input the run did not price)
+                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
   fleet knee        30.88     18589       decode (prefill not priced)
   operating (0.85)  26.25     15801       0.85 x fleet knee (scaleUpThreshold)
   max at SLO        no prefill speed learned            no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
