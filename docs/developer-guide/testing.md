@@ -1996,6 +1996,42 @@ L only where a pod held at the cap with requests waiting, with `max_num_seqs` fr
 prefill Deployment's args when set; reported and not scored. The share waited is past
 the largest bucket edge at or under 10 ms, which the table names.
 
+**Flow control past the prefill onset, backtested.** `capacity-planner backtest` takes
+`--flow-control on`, `--router-wait-in-prefill`, `--price-router-wait` and
+`--assume-prompt-cv` (the API's `assume.flowControl`, `assume.routerWait` and
+`assume.promptCV`), so a flow-control-on phase can be scored against the run's warm-up
+with each way of carrying the router's wait:
+
+```bash
+capacity-planner backtest --fit warmup.jsonl --test C-on.jsonl --allow-config-mismatch \
+  --arrival-cv2 4 --assume-prompt-cv 0.0577 --flow-control on --price-router-wait -o json
+```
+
+`--assume-prompt-cv` is needed: each step reads the prompts' spread from the histogram,
+0.3 on these 8000-token prompts against the spec's 0.0577, and past `MaxPSPromptCV`
+neither switch takes. Run on every flow-control-on phase with a saturation cycle (router
+v0.11.0 and earlier: Qwen3-32B runs j and q132d, Qwen3-0.6B runs r1 and r2), 41 steps sat past the
+prefill onset. They split two ways, at nearly one rate: 26 held, and 15 collapsed, with
+the measured mean TTFT at 18 s or more, the router evicting requests on its TTL.
+
+| Past the onset | Unpriced, or `--router-wait-in-prefill` | `--price-router-wait` |
+| --- | --- | --- |
+| Held: steps more than 20% low at mean, p90 or p95 | 3 of 26 | 2 of 26 |
+| Held: predicted over measured, range | 0.10 to 4.74 | 0.17 to 5.07 |
+| Collapsed: steps more than 20% low | 15 of 15 | 15 of 15 |
+| Collapsed: predicted over measured, range | 0.01 to 0.45 | 0.02 to 0.95 |
+
+The two unpriced ways give one figure; they differ only in the flag. The gate stage
+roughly doubles the figure at held steps and still reads short at every collapse. No
+wait added to a fixed service rate reaches a collapse, where the gate itself starves
+the pods, so both switches stay off: past the onset the default flags the figure a miss
+and caps the rate answer at the onset. Router v1.0.0's A/B did not collapse, but its
+recordings hold no saturation cycle, so no backtest replays them; its steps are checked
+against the client by `TestRouterV1_TheWaitIsInsidePrefill`. The onset placement is
+pinned by `TestPSOnsets_TheQ32CrossingKeepsThemOff`: first come falls between the last
+step with no router wait and the first with one in both Qwen3-32B buckets, and
+processor sharing at the engine's running cap puts bucket C's past it.
+
 For bursty buckets the freeze sizes each step's window for the top of the Ca2 band
 (1.25 times the Ca2 asked), because the analysis judges a step at the Ca2 it actually
 sent. Bucket C has extra steps between 0.80 and 0.925 of the knee. At 2+2, no window up

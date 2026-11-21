@@ -54,7 +54,7 @@ weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights)).
 <!-- guide:tools.setup start -->
 ```bash
 # Once per machine. The release's tools image, by the digest the release prints.
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:30e265ebcdd7ff110faa6adb3aac92afad0a314cc28a9df12cc35e6f73d50855
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:fc34a5e01283b5167e3e1accc0e7421ae6dccc42652d50e493a5f2a12ee59695
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
@@ -92,7 +92,7 @@ The same install with `kubectl`: for GitOps, or to see each step.
 <!-- guide:prerequisites.download start -->
 ```bash
 # The release files. Pick the release you install.
-V=<release, for example v0.12.1>
+V=<release, for example v0.12.2>
 URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
 for f in cluster settings preflight-cluster scaler-tls model-namespace keda-auth; do
   curl -fsSLO $URL/scaling-manager-$f.yaml

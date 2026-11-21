@@ -47,12 +47,12 @@ func runPredict(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.settle, "settle", whatifapi.DefaultBacktestSettle.String(), "how long after a change of replicas, and after the window's start, a step is not judged")
 	fs.StringVar(&measureWindow, "measure-window", "", "the window the latency will be measured over; default the window's router rate window, else 1m")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "the window's arrivals' Ca^2, when known; default random (1), flagged")
-	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, where the fit learned none (flagged)")
-	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, where the fit learned none (flagged)")
+	f.registerAssume(fs)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "predict a window of another configuration, with the difference as a caveat")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
+	f.parsed(fs)
 	if f.fit == "" || window == "" || dst == "" {
 		return usagef("--fit, --window and -o are required")
 	}
