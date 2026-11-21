@@ -106,3 +106,15 @@ func TestTPOTRatio_HostBoundNeverDisplacesARefusal(t *testing.T) {
 	assert.Contains(t, u.Flags, whatif.CoarseTPOTBucket)
 	assert.Contains(t, u.Flags, whatif.EngineTPOTHistogram)
 }
+
+// freeze refuses the same percentile on a host-bound decode, recording why
+// and no figure, so the staircase analyzer scores no stand-in for it.
+func TestFreeze_AHostBoundPercentileIsRefused(t *testing.T) {
+	st := windowsState([]whatif.TPOTWindow{coarseWindow}, nil)
+	vs := hostVariant("d", 0.0017, 0.00175)
+	out := percentileTPOTs(st, &vs, whatif.Decode{}, 1, []float64{90})
+	require.Len(t, out, 1)
+	assert.Zero(t, out[0].Seconds)
+	assert.Contains(t, out[0].Refused, "TPOTBucketTooWide")
+	assert.Contains(t, out[0].Refused, "host-bound")
+}

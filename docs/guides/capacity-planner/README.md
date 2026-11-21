@@ -530,10 +530,9 @@ It replays the recording once and answers, for each shape and load:
   `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
   repeatable: `80%` of that shape's fleet knee, `5r/s`, `seen`, or
   `seen x1.5`). A cell
-  such as `617/5.0 @18.49 ok` is TTFT p90 617 ms and TPOT p90 5.0 ms at
-  18.49 r/s, and the SLO's own statistics are met there (the sample below
-  prints `617/3.2m`: its p90 TPOT is refused as host-bound, so the cell
-  shows the mean). The mark is `ok`
+  such as `617/3.2m @18.49 ok` is TTFT p90 617 ms and, its p90 refused
+  as host-bound, TPOT mean 3.2 ms at 18.49 r/s, and the SLO's own
+  statistics are met there. The mark is `ok`
   met, `MISS` missed, `MISS*` missed because the rate is past the prefill
   flow-control onset (the router queues) though the figure is within, `SAT`
   saturated, `?` not judged. A TPOT ending in `m` is the mean, where the

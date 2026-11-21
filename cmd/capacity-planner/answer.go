@@ -725,7 +725,9 @@ const hostBoundITL = 0.005
 // staircase the planner priced p90 TPOT at the mean while the fleet measured
 // a p90 1.3x and a p95 1.6x its mean (#291). Nil where it prices: an
 // assumed or refused R_q, fine buckets, or a line with no measured
-// intercept says nothing about the host.
+// intercept says nothing about the host. pv's line where --assume-itl-b
+// stated its intercept is the operator's, not a reading: onHostBound skips
+// it.
 func hostBoundRefusal(vs learnreplay.VariantState, r resolvedRatio) *whatif.Unanswerable {
 	if r.refused != nil || r.ratio.Assumed || !slices.Contains(r.flags, whatif.CoarseTPOTBucket) {
 		return nil
@@ -753,7 +755,7 @@ func hostBoundRefusal(vs learnreplay.VariantState, r resolvedRatio) *whatif.Unan
 // rest) says more about the fleet than the histogram does, and stands. The
 // refusal carries no flags of its own; onRatio adds the read's.
 func onHostBound(res whatif.Result, pv pricedVariant, r resolvedRatio) whatif.Result {
-	if _, ok := res.(whatif.Answer); !ok {
+	if _, ok := res.(whatif.Answer); !ok || pv.itlB.Applied {
 		return res
 	}
 	if u := hostBoundRefusal(pv.state, r); u != nil {

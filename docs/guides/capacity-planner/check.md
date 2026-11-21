@@ -62,9 +62,10 @@ How to read it:
   bucket is at most 1.2 times its lower edge, the 20% the verdict judges
   by. A router's buckets are often wider (TPOT 5 to 10 ms around a mean of
   7.5 ms). There the step shows the p90 with a `~`, and the bucket decides:
-  a prediction wholly under or over the bucket is a certain miss, scored
-  against the nearer edge and never within; a prediction inside it is
-  counted `unresolvable`, not as a miss.
+  a prediction more than 20% under or over the bucket's nearer edge is a
+  certain miss, scored against that edge (which understates the miss) and
+  never within; a prediction nearer than that, or inside it, could be
+  within and is counted `unresolvable`, not as a miss.
 - **Median ratio**: the planner's figure over the measured one, at the
   middle step. Above 1 it leans high at the middle; below 1 it leans low. A
   median near 1 can still hide steps it read low, so check that count too.

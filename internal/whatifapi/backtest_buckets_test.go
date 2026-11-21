@@ -100,11 +100,11 @@ func TestBacktest_ABucketIsJudgedOnItsOwnEdge(t *testing.T) {
 	assert.Equal(t, &Band{Lo: 0, Hi: 0.010}, h.coarseBucket(0.3), "a first bucket from 0 never places one")
 }
 
-// A prediction wholly outside the coarse bucket the measured percentile
-// fell in is a certain miss: scored against the nearer edge, never within,
-// and read low under the bucket where even its lower edge says so. The
-// split recording's p90 TTFT predicted at 5.09 s against a bucket of 15 to
-// 20 s is such a miss, not an unknown.
+// A prediction more than 20% beyond the nearer edge of the coarse bucket
+// the measured percentile fell in is a certain miss: scored against that
+// edge, never within, and read low under the bucket. The split recording's
+// p90 TTFT predicted at 5.09 s against a bucket of 15 to 20 s is such a
+// miss, not an unknown. Nearer the bucket it could be within: unresolvable.
 func TestBacktest_APredictionOutsideACoarseBucketIsScoredAtItsEdge(t *testing.T) {
 	p90 := statIndex(t, 0.9)
 	m := measuredOf(LatencySample{Router: bkRouter(10, [][2]float64{{15, 0.7}, {20, 1}}, 11.4,
@@ -123,17 +123,22 @@ func TestBacktest_APredictionOutsideACoarseBucketIsScoredAtItsEdge(t *testing.T)
 	require.NotNil(t, over.Ratio)
 	assert.Equal(t, OutsideOver, over.OutsideBucket)
 	assert.InDelta(t, 1.5, *over.Ratio, 1e-12)
-	near := at(14.5) // under the bucket, by less than 20% of its edge
-	assert.Equal(t, OutsideUnder, near.OutsideBucket)
-	assert.Equal(t, UnscoredUnresolvable, at(17).Unscored)
+	for _, v := range []float64{12.5, 14.5, 15, 17, 20, 24} {
+		p := at(v)
+		assert.Equal(t, UnscoredUnresolvable, p.Unscored, "%g s could be within 20%% of a truth in 15 to 20 s", v)
+		assert.Empty(t, p.OutsideBucket, "%g s", v)
+		assert.Nil(t, p.Ratio, "%g s", v)
+	}
+	assert.Equal(t, OutsideUnder, at(11.9).OutsideBucket, "11.9 s is under 0.8 x 15 s")
 
 	steps := []BacktestStep{{TTFT: []BacktestPoint{{}, {}, under, {}}}, {TTFT: []BacktestPoint{{}, {}, over, {}}},
-		{TTFT: []BacktestPoint{{}, {}, near, {}}}}
+		{TTFT: []BacktestPoint{{}, {}, at(17), {}}}}
 	ttft, _ := scoresOf(steps)
 	sc := ttft[p90]
-	assert.Equal(t, 3, sc.All.Steps)
+	assert.Equal(t, 2, sc.All.Steps)
+	assert.Equal(t, 1, sc.Unscored[UnscoredUnresolvable])
 	assert.InDelta(t, 0.0, *sc.All.Within, 1e-12, "a certain miss is never within")
-	assert.Equal(t, 1, sc.All.Low, "5.09 s is read low by its edge; 14.5 s may be within 20% of the truth")
+	assert.Equal(t, 1, sc.All.Low, "5.09 s is read low by its edge; 30 s reads high")
 }
 
 // A measured percentile beside a refusal keeps its bucket, and the range a
