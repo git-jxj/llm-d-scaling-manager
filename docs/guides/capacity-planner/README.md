@@ -604,11 +604,14 @@ Read the `not validated` lines after each shape (not shown above): the decode kn
 high on the goldens, and TTFT is not validated.
 
 A window whose cycles do not cover its span (a capture or recording with
-holes) gets a `window gaps` line under the first: the cycles the span should
-hold, those present, and the largest gap, ending `WindowGaps` above 5%
-missing (JSON `source.gaps`). The load and the figures are read from the
-cycles present, so a gap over the busy spell reads the load low: capture
-the window again.
+holes) gets a `window gaps` line under the header line: the cycles the span
+should hold, those present, and the largest gap between the cycles either
+side of it, ending `WindowGaps` above 5% missing (JSON `source.gaps`). The
+load and the figures are read from the cycles present, so a gap over the
+busy spell reads the load low: capture the window again. A gap is any
+stretch with no cycle for the model, so a model parked at zero, or a cycle
+time changed mid-window, reads as one too. A scrape that misses only the
+engine's series still leaves a cycle, and is not counted.
 
 ## Plan replicas over a day
 

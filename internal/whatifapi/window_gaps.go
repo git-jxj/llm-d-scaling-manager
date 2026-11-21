@@ -41,26 +41,36 @@ type WindowGaps struct {
 }
 
 // WindowGapsOf is the gaps of a window whose cycles were read at times,
-// oldest first. Nil with fewer than three cycles, where no cycle time can be
-// read. Two cycles further apart than one and a half cycle times count the
-// cycles that would fit between them as missing.
+// oldest first; a time read twice counts once. Nil with fewer than three
+// distinct cycles, where no cycle time can be read. Two cycles further apart
+// than one and a half cycle times count the cycles that would fit between
+// them as missing.
+//
+// It counts cycles the source does not hold, whatever the cause: a capture
+// or recording that lost them, a model parked at zero (no cycle is recorded
+// for it), or a cycle time that changed within the window (the median is
+// one of the two, and the longer reads as gaps).
 func WindowGapsOf(times []time.Time) *WindowGaps {
-	if len(times) < 3 {
+	diffs := make([]float64, 0, len(times))
+	kept := make([]time.Time, 0, len(times))
+	for _, t := range times {
+		if n := len(kept); n > 0 {
+			d := t.Sub(kept[n-1]).Seconds()
+			if d <= 0 {
+				continue
+			}
+			diffs = append(diffs, d)
+		}
+		kept = append(kept, t)
+	}
+	if len(kept) < 3 {
 		return nil
 	}
-	diffs := make([]float64, 0, len(times)-1)
-	for i := 1; i < len(times); i++ {
-		diffs = append(diffs, times[i].Sub(times[i-1]).Seconds())
-	}
+	times = kept
 	sorted := slices.Clone(diffs)
 	slices.Sort(sorted)
-	cycle := sorted[len(sorted)/2]
-	if len(sorted)%2 == 0 {
-		cycle = (sorted[len(sorted)/2-1] + sorted[len(sorted)/2]) / 2
-	}
-	if !(cycle > 0) {
-		return nil
-	}
+	// The lower median: with two intervals, a gap is never its own cycle.
+	cycle := sorted[(len(sorted)-1)/2]
 	g := &WindowGaps{CycleSeconds: cycle, PresentCycles: len(times)}
 	missing := 0
 	largest := -1
@@ -85,7 +95,7 @@ func WindowGapsOf(times []time.Time) *WindowGaps {
 
 // Text is the gaps in words for a window that misses cycles, "" for one that
 // misses none: "289 cycles expected, 229 present (21% missing), largest gap
-// 15m0s from 02:40 to 02:55Z".
+// 15m0s from 02:42 to 02:58Z", the times being the cycles either side of it.
 func (g *WindowGaps) Text() string {
 	if g == nil || g.ExpectedCycles == g.PresentCycles {
 		return ""

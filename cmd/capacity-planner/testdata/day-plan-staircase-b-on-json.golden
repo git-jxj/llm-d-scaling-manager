@@ -1140,7 +1140,7 @@
     "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). The fleet's limit, which decode admission can hold down, is not priced."
   ],
   "gaps": {
-    "cycleSeconds": 15.021509627,
+    "cycleSeconds": 15.021506602,
     "expectedCycles": 289,
     "presentCycles": 289,
     "missingShare": 0,

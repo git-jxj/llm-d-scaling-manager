@@ -52,6 +52,13 @@ func TestWindowGapsOf(t *testing.T) {
 	jit[10] = jit[10].Add(5 * time.Second)
 	assert.Equal(t, 50, WindowGapsOf(jit).ExpectedCycles)
 
+	// A time read twice counts once, and a 3-cycle window still shows its gap.
+	dup := cyclesAt(t0, 50, nil)
+	dup = append(dup[:20], append([]time.Time{dup[19]}, dup[20:]...)...)
+	assert.Equal(t, 50, WindowGapsOf(dup).PresentCycles)
+	three := []time.Time{t0, t0.Add(15 * time.Second), t0.Add(60 * time.Second)}
+	assert.Equal(t, 5, WindowGapsOf(three).ExpectedCycles)
+
 	assert.Nil(t, WindowGapsOf(cyclesAt(t0, 2, nil)), "too few cycles for a cycle time")
 	var none *WindowGaps
 	assert.Empty(t, none.Text())
