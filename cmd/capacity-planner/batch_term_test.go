@@ -66,6 +66,18 @@ func TestBatchTerm_DecodeVariantsPricesTheReplaysTerm(t *testing.T) {
 		"a stated intercept refits the line: the term was not read on it")
 }
 
+// A line read at the busiest rank of a data-parallel MoE engine
+// (saturation.SwitchMoEBusiestRank) drops the term: its rows read each pod's
+// mean fill, not the busiest rank's the line was read at.
+func TestBatchTerm_ABusiestRankLineDropsTheTerm(t *testing.T) {
+	term := whatif.BatchTerm{Slope: 0.034e-3, Roof: 120, Ranks: 1}
+	vs := learnreplay.VariantState{Variant: "dec", Role: domain.RoleDecode, Line: itl.Model{A: 0.03, B: 0.012},
+		BatchFit: whatif.BatchFit{Term: term}}
+	assert.Equal(t, term, batchTerm(vs, false), "a line read on the mean prices the term")
+	vs.BusiestRankFill, vs.BusiestRankRatio = true, 1.4
+	assert.True(t, batchTerm(vs, false).IsZero(), "a busiest-rank line is not the one the term was read on")
+}
+
 // A bootstrap resample too low for the term (B under Slope*Roof) is read on
 // the line alone, not dropped from the band.
 func TestBatchTerm_ALowResampleIsReadOnTheLineAlone(t *testing.T) {

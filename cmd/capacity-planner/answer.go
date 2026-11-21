@@ -688,9 +688,12 @@ const itlBatchTerm whatif.Flag = "ITLBatchTerm"
 // line it was fitted against, and none on another. A stated intercept
 // (statedB) refits the line, and a line lifted to its floor
 // (saturation.SwitchITLLineAtFloor) is not the one whose residuals the term
-// was read on.
+// was read on. Nor is a line read at the busiest engine rank
+// (saturation.SwitchMoEBusiestRank): the term's rows are each pod's mean
+// fill and running requests per rank, so their residuals against the
+// busiest rank's line are not the batch's cost.
 func batchTerm(vs learnreplay.VariantState, statedB bool) whatif.BatchTerm {
-	if statedB || vs.LineLift > 0 {
+	if statedB || vs.LineLift > 0 || vs.BusiestRankFill {
 		return whatif.BatchTerm{}
 	}
 	return vs.BatchFit.Term
