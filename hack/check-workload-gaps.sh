@@ -207,14 +207,14 @@ skip() { SKIPPED=$((SKIPPED + 1)); printf 'SKIP  %s: %s\n' "$CASE" "$1" >&2; }
 # line-oriented and re-emits a delimiterless line whole, so it cannot see the
 # truncation that `read` suffers when a field still contains newlines.
 gaps_field() {
-    local idx="$1" gaps f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11
+    local idx="$1" gaps f1 f2 f3 f4 f5 f6 f7 f8 f9 f10
     gaps="$(so_workload_gaps ns deployments w "$POD_DEPLOY")" || return 1
-    IFS=$'\037' read -r f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 <<< "$gaps"
+    IFS=$'\037' read -r f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 <<< "$gaps"
     case "$idx" in
         1) printf '%s' "$f1" ;; 2) printf '%s' "$f2" ;; 3) printf '%s' "$f3" ;;
         4) printf '%s' "$f4" ;; 5) printf '%s' "$f5" ;; 6) printf '%s' "$f6" ;;
         7) printf '%s' "$f7" ;; 8) printf '%s' "$f8" ;; 9) printf '%s' "$f9" ;;
-        10) printf '%s' "$f10" ;; 11) printf '%s' "$f11" ;;
+        10) printf '%s' "$f10" ;;
     esac
 }
 
@@ -285,11 +285,7 @@ f_cached_properly() {
         "containers":[{"name":"vllm","image":"quay.io/x/vllm-openai:v0.11",
                        "env":[{"name":"HF_HOME","value":"/model-cache/huggingface"},
                               {"name":"VLLM_CACHE_ROOT","value":"/model-cache/engine-cache/vllm"},
-                              {"name":"PYTHONPYCACHEPREFIX","value":"/model-cache/engine-cache/pycache/5f8fcd7456cd"},
-                              {"name":"DG_JIT_CACHE_DIR","value":"/model-cache/engine-cache/deepgemm/5f8fcd7456cd"},
-                              {"name":"TRTLLM_DG_CACHE_DIR","value":"/model-cache/engine-cache/trtllm-deepgemm/5f8fcd7456cd"},
-                              {"name":"TORCHINDUCTOR_CACHE_DIR","value":"/model-cache/engine-cache/inductor/5f8fcd7456cd"},
-                              {"name":"CUDA_CACHE_PATH","value":"/model-cache/engine-cache/cuda/5f8fcd7456cd"}],
+                              {"name":"PYTHONPYCACHEPREFIX","value":"/model-cache/engine-cache/pycache/5f8fcd7456cd"}],
                        "volumeMounts":[{"name":"model-storage","mountPath":"/model-cache"}],
                        "lifecycle":{"preStop":{"exec":{"command":["sleep","45"]}}},
                        "args":["vllm","serve","Qwen/Qwen3-0.6B"]}]}}}}'
@@ -1422,11 +1418,7 @@ f_engine_cache_on_claim() {
         "containers":[{"name":"vllm","image":"quay.io/x/vllm-openai:v0.11",
                        "env":[{"name":"HF_HOME","value":"/model-cache/huggingface"},
                               {"name":"VLLM_CACHE_ROOT","value":"/engine-cache/vllm"},
-                              {"name":"PYTHONPYCACHEPREFIX","value":"/engine-cache/pycache/5f8fcd7456cd"},
-                              {"name":"DG_JIT_CACHE_DIR","value":"/engine-cache/deepgemm/5f8fcd7456cd"},
-                              {"name":"TRTLLM_DG_CACHE_DIR","value":"/engine-cache/trtllm-deepgemm/5f8fcd7456cd"},
-                              {"name":"TORCHINDUCTOR_CACHE_DIR","value":"/engine-cache/inductor/5f8fcd7456cd"},
-                              {"name":"CUDA_CACHE_PATH","value":"/engine-cache/cuda/5f8fcd7456cd"}],
+                              {"name":"PYTHONPYCACHEPREFIX","value":"/engine-cache/pycache/5f8fcd7456cd"}],
                        "volumeMounts":[{"name":"model-storage","mountPath":"/model-cache"},
                                        {"name":"engine-cache","mountPath":"/engine-cache"}],
                        "lifecycle":{"preStop":{"exec":{"command":["sleep","45"]}}},
@@ -1545,20 +1537,18 @@ assert_not_contains "$doc" "#   engine-cache:"
 assert_contains "$doc" "PYTHONPYCACHEPREFIX"
 [ "$FAILED" -eq "$before" ] && ok
 
-CASE="engine cache: eleven fields, argv and cachevol where they were, image, bytecode, FlashInfer and the JIT caches after"
+CASE="engine cache: ten fields, argv and cachevol where they were, image, bytecode and FlashInfer after"
 reset; f_vllm_plain
 before=$FAILED
-FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env = [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/x"},{"name":"CUDA_CACHE_PATH","value":"/y"}]')"
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env = [{"name":"FLASHINFER_WORKSPACE_DIR","value":"/x"}]')"
 gaps="$(so_workload_gaps ns deployments w "$POD_DEPLOY")"
-IFS=$'\037' read -r e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 e12 <<< "$gaps"
+IFS=$'\037' read -r e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 <<< "$gaps"
 assert_eq "$e6" "vllm serve Qwen/Qwen3-0.6B" "argv (field 6)"
 assert_eq "$e7" "unset" "cachevol (field 7)"
 assert_eq "$e8" "quay.io/x/vllm-openai:v0.11" "image (field 8)"
 assert_eq "$e9" "unset" "bytecode (field 9)"
 assert_eq "$e10" "dir:/x" "FlashInfer (field 10)"
-# No volume, so no base; CUDA_CACHE_PATH is set, so it is not missing.
-assert_eq "$e11" "|DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR" "JIT caches (field 11)"
-assert_eq "$e12" "" "a twelfth field"
+assert_eq "$e11" "" "an eleventh field"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="engine cache: the patch carries the three variables, the mount and the claim"
@@ -1595,7 +1585,7 @@ assert_eq "$(printf '%s\n' "$doc" | grep -c '^      volumes:$')" "1" "volumes li
 # second `volumes:` key would silently have replaced.
 d="$(mktemp)"; printf '%s\n' "$doc" > "$d"
 assert_eq "$(yq eval '.spec.template.spec.volumes | length' "$d" 2>/dev/null)" "2" "volumes read back"
-assert_eq "$(yq eval '.spec.template.spec.containers[0].env | length' "$d" 2>/dev/null)" "9" "env read back (HF_HOME, the three vLLM caches, PYTHONPYCACHEPREFIX, the four JIT caches)"
+assert_eq "$(yq eval '.spec.template.spec.containers[0].env | length' "$d" 2>/dev/null)" "5" "env read back (HF_HOME, the three vLLM caches, PYTHONPYCACHEPREFIX)"
 rm -f "$d"
 [ "$FAILED" -eq "$before" ] && ok
 
@@ -1725,7 +1715,7 @@ assert_not_contains "$PATCH_BODY" "claimName: model-pvc"
 assert_not_contains "$PATCH_BODY" "model-storage"
 # The body is a document the API server would take: one env list of four.
 d="$(mktemp)"; printf '%s\n' "$PATCH_BODY" > "$d"
-assert_eq "$(yq eval '.spec.template.spec.containers[0].env | length' "$d" 2>/dev/null)" "8" "env read back (the three vLLM caches, PYTHONPYCACHEPREFIX and the four JIT caches)"
+assert_eq "$(yq eval '.spec.template.spec.containers[0].env | length' "$d" 2>/dev/null)" "4" "env read back (the three vLLM caches and PYTHONPYCACHEPREFIX)"
 assert_eq "$(yq eval '.spec.template.spec.volumes | length' "$d" 2>/dev/null)" "1" "volumes read back"
 rm -f "$d"
 # ...and the guard's absence is said at the time.
@@ -1964,156 +1954,6 @@ assert_contains "$doc" "value: /engine-cache/flashinfer/$KFI"
 assert_not_contains "$doc" "#   flashinfer:"
 assert_not_contains "$doc" "value: /tmp/fi"
 assert_contains "$(cat "$WORK/fi.err")" "drop FLASHINFER_WORKSPACE_DIR"
-[ "$FAILED" -eq "$before" ] && ok
-
-# --- The JIT caches beyond vLLM's own (#213) -----------------------------------
-#
-# DG_JIT_CACHE_DIR, TRTLLM_DG_CACHE_DIR, TORCHINDUCTOR_CACHE_DIR and
-# CUDA_CACHE_PATH: the engine-cache half carries each one the pod spec does not
-# set, under the engine cache, keyed by image; a workload patched before them
-# (VLLM_CACHE_ROOT already on its volume) gets them in an env-only JIT half,
-# emitted and never applied.
-
-# A workload patched before these variables: everything else on the claim.
-f_engine_cache_pre_jit() {
-    f_engine_cache_on_claim
-    FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env |= map(select(.name
-        | IN("DG_JIT_CACHE_DIR", "TRTLLM_DG_CACHE_DIR", "TORCHINDUCTOR_CACHE_DIR", "CUDA_CACHE_PATH") | not))')"
-}
-jit_env() {   # <document> <name>: the value of env entry <name> of container 0
-    local d; d="$(mktemp)"; printf '%s\n' "$1" > "$d"
-    yq eval ".spec.template.spec.containers[0].env[] | select(.name == \"$2\") | .value" "$d" 2>/dev/null
-    rm -f "$d"
-}
-
-CASE="jit: the engine-cache half carries the four JIT caches, keyed by image"
-reset; f_engine_cache_only_gap
-before=$FAILED
-doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
-assert_contains "$doc" "#   engine-cache:"                     # anchor: the engine-cache half
-assert_eq "$(jit_env "$doc" DG_JIT_CACHE_DIR)" "/engine-cache/deepgemm/$KFI" "DG_JIT_CACHE_DIR"
-assert_eq "$(jit_env "$doc" TRTLLM_DG_CACHE_DIR)" "/engine-cache/trtllm-deepgemm/$KFI" "TRTLLM_DG_CACHE_DIR"
-assert_eq "$(jit_env "$doc" TORCHINDUCTOR_CACHE_DIR)" "/engine-cache/inductor/$KFI" "TORCHINDUCTOR_CACHE_DIR"
-assert_eq "$(jit_env "$doc" CUDA_CACHE_PATH)" "/engine-cache/cuda/$KFI" "CUDA_CACHE_PATH"
-assert_not_contains "$doc" "#   jit:"                            # with the half, not a JIT half of its own
-assert_not_contains "$doc" "XDG_CACHE_HOME"                      # never: it moves every ~/.cache user
-[ "$FAILED" -eq "$before" ] && ok
-
-CASE="jit: a JIT cache variable the pod spec sets is left alone, valueFrom included"
-reset; f_engine_cache_only_gap
-before=$FAILED
-FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [
-    {"name":"DG_JIT_CACHE_DIR","value":"/owner/deep_gemm"},
-    {"name":"TORCHINDUCTOR_CACHE_DIR","valueFrom":{"configMapKeyRef":{"name":"c","key":"k"}}}]')"
-doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
-assert_contains "$doc" "#   engine-cache:"                     # anchor
-assert_eq "$(printf '%s\n' "$doc" | grep -c 'name: DG_JIT_CACHE_DIR$')" "0" "DG_JIT_CACHE_DIR entries"
-assert_eq "$(printf '%s\n' "$doc" | grep -c 'name: TORCHINDUCTOR_CACHE_DIR$')" "0" "TORCHINDUCTOR_CACHE_DIR entries"
-assert_eq "$(jit_env "$doc" TRTLLM_DG_CACHE_DIR)" "/engine-cache/trtllm-deepgemm/$KFI" "TRTLLM_DG_CACHE_DIR"
-assert_eq "$(jit_env "$doc" CUDA_CACHE_PATH)" "/engine-cache/cuda/$KFI" "CUDA_CACHE_PATH"
-[ "$FAILED" -eq "$before" ] && ok
-
-CASE="jit: field 11 names the missing ones and the base beside VLLM_CACHE_ROOT; nothing for SGLang"
-reset; f_engine_cache_pre_jit
-before=$FAILED
-assert_field 7 "volume:/engine-cache/vllm"                   # anchor
-assert_field 11 "/engine-cache|DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH"
-reset; f_engine_cache_on_claim
-assert_field 11 "/engine-cache|"
-# VLLM_CACHE_ROOT at the mount itself: its parent is not on the volume, so the
-# base is the root.
-reset; f_engine_cache_pre_jit
-FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '(.spec.template.spec.containers[0].env[] | select(.name == "VLLM_CACHE_ROOT") | .value) = "/engine-cache"')"
-assert_field 11 "/engine-cache|DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH"
-reset; f_sglang_proxy_has_hook
-assert_field 1 "server"
-assert_field 11 ""
-[ "$FAILED" -eq "$before" ] && ok
-
-CASE="jit: a workload patched before them gets the JIT half beside VLLM_CACHE_ROOT, env only, with the guard"
-reset; f_engine_cache_pre_jit
-before=$FAILED
-doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
-assert_contains "$doc" "#   jit:"
-assert_not_contains "$doc" "#   engine-cache:"
-assert_not_contains "$doc" "volumes:"
-assert_not_contains "$doc" "- name: VLLM_CACHE_ROOT"
-d="$(mktemp)"; printf '%s\n' "$doc" > "$d"
-assert_eq "$(yq eval '.spec.template.spec.containers[0].env | map(.name + "=" + .value) | join(",")' "$d" 2>/dev/null)" \
-    "DG_JIT_CACHE_DIR=/engine-cache/deepgemm/$KFI,TRTLLM_DG_CACHE_DIR=/engine-cache/trtllm-deepgemm/$KFI,TORCHINDUCTOR_CACHE_DIR=/engine-cache/inductor/$KFI,CUDA_CACHE_PATH=/engine-cache/cuda/$KFI" "env read back"
-rm -f "$d"
-assert_contains "$doc" "PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"   # the guard
-assert_contains "$doc" "run it again"                            # the re-prepare note
-warn="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>&1 >/dev/null)"
-assert_contains "$warn" "BUILDS ITS JIT KERNELS AGAIN"
-note="$(so_enginecache_note ns deployments w "$POD_DEPLOY")"
-assert_contains "$note" "builds its JIT kernels again"
-assert_contains "$note" "jit-caches-beyond-vllms-own"
-[ "$FAILED" -eq "$before" ] && ok
-
-CASE="jit: the JIT half is counted, emitted, never applied, and there is no all-clear"
-reset; LIST_FIXTURE="$(serving_list)"; f_engine_cache_pre_jit
-before=$FAILED
-PVC_FIXTURE="$(pvc_list engine-cache:ReadWriteMany model-pvc:ReadWriteMany)"
-DS_FIXTURE='{"status":{"desiredNumberScheduled":2,"numberReady":2}}'
-dir="$(mktemp -d)"
-DRIVER_RC=0
-LLMSM_DEFAULT_SO_NS=ns1 LLMSM_WORKLOAD_PATCH_APPLY=true LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true \
-    LLMSM_WORKLOAD_PATCH_FILE="$dir/p.yaml" llmsm_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
-assert_eq "$DRIVER_RC" "0" "return code"
-assert_contains "$(cat "$dir/log")" "1 model server(s) keep VLLM_CACHE_ROOT on a volume but not every JIT cache."
-assert_not_contains "$(cat "$dir/log")" "no vLLM among them compiles from nothing"
-assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
-assert_contains "$(cat "$dir/p.yaml")" "value: /engine-cache/deepgemm/$KFI"
-[ "$FAILED" -eq "$before" ] && ok
-
-CASE="jit: the trim drops the JIT half with the engine-cache half, and alone it is never applied"
-reset; f_vllm_plain
-before=$FAILED
-d="$(mktemp)"
-so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null > "$d"
-assert_contains "$(cat "$d")" "name: DG_JIT_CACHE_DIR"           # anchor
-so_workload_patch_trim "$d" 1 0 || fail "the drain half should be left to apply"
-assert_contains "$(cat "$d")" "preStop"                          # anchor: the trimmed document
-assert_not_contains "$(cat "$d")" "DG_JIT_CACHE_DIR"
-assert_not_contains "$(cat "$d")" "CUDA_CACHE_PATH"
-reset; f_engine_cache_pre_jit
-so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null > "$d"
-assert_contains "$(cat "$d")" "name: DG_JIT_CACHE_DIR"           # anchor
-if so_workload_patch_trim "$d" 1 1; then fail "an env-only JIT half was left as something to apply"; fi
-rm -f "$d"
-[ "$FAILED" -eq "$before" ] && ok
-
-CASE="jit: the emitted guard falls back to the engine default for a JIT cache it cannot write"
-reset; f_engine_cache_pre_jit
-before=$FAILED
-G="$(mktemp -d)"
-so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null | sed -n '/^#     for v in /,/^#     done$/p' | sed 's/^#     //' > "$G/guard.sh"
-grep -q 'TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
-printf '%s\n' 'echo "DG=${DG_JIT_CACHE_DIR-unset} IND=${TORCHINDUCTOR_CACHE_DIR-unset}"' >> "$G/guard.sh"
-mkdir -p "$G/ok"
-out="$(DG_JIT_CACHE_DIR="$G/ok/dg" TORCHINDUCTOR_CACHE_DIR="/proc/no/such/dir" sh "$G/guard.sh" 2>&1)"
-assert_contains "$out" "DG=$G/ok/dg "
-assert_contains "$out" "IND=unset"
-assert_contains "$out" "engine cache TORCHINDUCTOR_CACHE_DIR=/proc/no/such/dir is not writable; using the engine default instead"
-rm -rf "$G"
-[ "$FAILED" -eq "$before" ] && ok
-
-CASE="jit: a LeaderWorkerSet template patched before them gets the JIT half, per template"
-reset
-before=$FAILED
-CRD_RC=0
-f_engine_cache_pre_jit
-FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '{metadata: {resourceVersion: "7"},
-    spec: {leaderWorkerTemplate: {size: 2, leaderTemplate: .spec.template, workerTemplate: .spec.template}}}')"
-doc="$(so_workload_patch_doc ns leaderworkersets w "$POD_LWS" 2>/dev/null)"
-assert_contains "$doc" "#   jit:"
-assert_contains "$doc" "leaderTemplate, engine container vllm: jit"
-assert_contains "$doc" "workerTemplate, engine container vllm: jit"
-d="$(mktemp)"; printf '%s\n' "$doc" > "$d"
-assert_eq "$(yq eval '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env[] | select(.name == "DG_JIT_CACHE_DIR") | .value' "$d" 2>/dev/null)" \
-    "/engine-cache/deepgemm/$KFI" "worker DG_JIT_CACHE_DIR"
-rm -f "$d"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="trim: the weights half can be kept while the engine-cache half goes, and back"
@@ -2648,7 +2488,7 @@ assert_contains "$doc" "mountPath: /engine-cache"
 assert_contains "$doc" "claimName: engine-cache"
 assert_contains "$doc" "engine-cache does NOT exist yet in ns"   # the claim note travels with the volume
 # The guard travels with it: an unwritable prefix is slower than none.
-assert_contains "$doc" "for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"
+assert_contains "$doc" "for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
 assert_not_contains "$doc" "- name: VLLM_CACHE_ROOT"
 assert_not_contains "$doc" "preStop"                             # it drains already
 # ...and a mount already at the engine-cache path is used, with no new volume.
@@ -2761,7 +2601,7 @@ reset; f_sglang_no_pyc
 before=$FAILED
 G="$(mktemp -d)"
 guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
-grep -q 'PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+grep -q 'PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
 printf '%s\n' 'echo "PYC=${PYTHONPYCACHEPREFIX-unset}"' >> "$G/guard.sh"
 mkdir -p "$G/ok" "$G/ro"
 out="$(PYTHONPYCACHEPREFIX="$G/ok/pycache/k" sh "$G/guard.sh" 2>&1)"
@@ -2786,7 +2626,7 @@ reset; f_vllm_plain
 before=$FAILED
 G="$(mktemp -d)"
 guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
-grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
 printf '%s\n' 'echo "FI=${FLASHINFER_WORKSPACE_BASE-unset}"' >> "$G/guard.sh"
 mkdir -p "$G/fi/.cache/flashinfer/90/cached_ops/x"; echo x > "$G/fi/.cache/flashinfer/90/cached_ops/x/x.so"
 out="$(FLASHINFER_WORKSPACE_BASE="$G/fi" sh "$G/guard.sh" 2>&1)"
@@ -2901,7 +2741,7 @@ reset; f_engine_cache_only_gap
 before=$FAILED
 G="$(mktemp -d)"
 guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
-grep -q 'PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+grep -q 'PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
 me="$(id -u)"
 # mktemp for a filesystem that does not report owners: the file it makes
 # reads as another user's (a link to /dev/null, which root owns)
@@ -2988,7 +2828,7 @@ reset; f_engine_cache_only_gap
 before=$FAILED
 G="$(mktemp -d)"
 guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
-grep -q 'PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+grep -q 'PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
 me="$(id -u)"
 mkdir -p "$G/nochmod"
 printf '%s\n' '#!/bin/sh' 'exit 1' > "$G/nochmod/chmod"
@@ -3105,7 +2945,7 @@ before=$FAILED
 G="$(mktemp -d)"
 doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
 guard_all_from "$doc" > "$G/guard.sh"
-grep -q 'PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+grep -q 'PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
 assert_contains "$(cat "$G/guard.sh")" "export VLLM_USE_MEGA_AOT_ARTIFACT=1"
 fake_engine "$G/v26" vllm 0.26.0 none
 fake_engine "$G/v27" vllm 0.27.0 none
@@ -3132,7 +2972,7 @@ for sh_ in $GUARD_SHELLS; do
 done
 # LLMSM_ENGINE_CACHE_AOT=false leaves the block out of the text.
 doc="$(LLMSM_ENGINE_CACHE_AOT=false so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
-assert_contains "$doc" "PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"                     # anchor: the guard is there
+assert_contains "$doc" "PYTHONPYCACHEPREFIX; do"                     # anchor: the guard is there
 assert_not_contains "$doc" "VLLM_USE_MEGA_AOT_ARTIFACT"
 guard_all_from "$doc" > "$G/noaot.sh"
 out="$(run_guard sh "$G/noaot.sh" "$G/v26" VLLM_CACHE_ROOT="$G/c/vllm")"
@@ -3311,7 +3151,7 @@ reset; f_vllm_plain
 before=$FAILED
 G="$(mktemp -d)"
 guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
-grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
 mkdir -p "$G/real/.cache/flashinfer/90/cached_ops/x"
 ln -s "$G/real" "$G/link"
 fi_run() {   # <shell> <base> [set options]: the guard, then what it left
@@ -3374,7 +3214,7 @@ reset; f_vllm_plain
 before=$FAILED
 G="$(mktemp -d)"
 guard_from "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" > "$G/guard.sh"
-grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
+grep -q 'FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do$' "$G/guard.sh" || fail "no guard extracted: $(cat "$G/guard.sh")"
 me="$(id -u)"
 fi_one() { FLASHINFER_WORKSPACE_BASE="$G/fi" "$1" -c ". \"$G/guard.sh\"; echo \"FI=\${FLASHINFER_WORKSPACE_BASE-unset}\"" 2>&1; }
 for sh_ in $GUARD_SHELLS; do
@@ -3431,7 +3271,7 @@ before=$FAILED
 doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
 assert_contains "$doc" "#   flashinfer:"                       # anchor: the half fired alone
 assert_not_contains "$doc" "#   engine-cache:"
-assert_contains "$doc" "FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"
+assert_contains "$doc" "FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
 assert_contains "$doc" "replace all of it; renaming its variables is not enough"
 assert_not_contains "$doc" "VLLM_USE_MEGA_AOT_ARTIFACT"
 G="$(mktemp -d)"
@@ -3559,7 +3399,7 @@ so_workload_patch_doc ns deployments w "$POD_DEPLOY" >"$G/doc" 2>"$G/log"
 assert_contains "$(cat "$G/log")" "ns/w: no Ready pod to read its KV cache size from"
 assert_not_contains "$(cat "$G/doc")" "kv-cache-memory"
 # ...and a workload with nothing to fix is not told about it at all.
-FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"VLLM_CACHE_ROOT","value":"/model-cache/vllm"},{"name":"PYTHONPYCACHEPREFIX","value":"/model-cache/pyc"},{"name":"DG_JIT_CACHE_DIR","value":"/x/dg"},{"name":"TRTLLM_DG_CACHE_DIR","value":"/x/tdg"},{"name":"TORCHINDUCTOR_CACHE_DIR","value":"/x/ind"},{"name":"CUDA_CACHE_PATH","value":"/x/cuda"}]')"
+FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"VLLM_CACHE_ROOT","value":"/model-cache/vllm"},{"name":"PYTHONPYCACHEPREFIX","value":"/model-cache/pyc"}]')"
 assert_field 7 "volume:/model-cache/vllm"                           # anchor: no gap left
 assert_eq "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>&1)" "" "output for a workload with nothing to fix"
 reset; f_kv_deploy
@@ -3650,7 +3490,7 @@ CASE="bytecode: an env-only half carries the guard too, and the re-prepare note"
 reset; f_engine_cache_on_claim_no_pyc
 before=$FAILED
 doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
-assert_contains "$doc" "PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"
+assert_contains "$doc" "PYTHONPYCACHEPREFIX; do"
 assert_contains "$doc" "run \`make engine-cache\` again first"
 [ "$FAILED" -eq "$before" ] && ok
 
@@ -3770,16 +3610,14 @@ f_lws_converged() {
             "volumes":[{"name":"engine-cache","persistentVolumeClaim":{"claimName":"engine-cache"}}],
             "containers":[{"name":"vllm","image":"'"$LWS_LEADER_IMAGE"'",
                            "env":[{"name":"VLLM_CACHE_ROOT","value":"/engine-cache/vllm"},
-                                  {"name":"PYTHONPYCACHEPREFIX","value":"/engine-cache/pycache/'"$KEY_LEADER"'"},
-                                  {"name":"DG_JIT_CACHE_DIR","value":"/x/dg"},{"name":"TRTLLM_DG_CACHE_DIR","value":"/x/tdg"},{"name":"TORCHINDUCTOR_CACHE_DIR","value":"/x/ind"},{"name":"CUDA_CACHE_PATH","value":"/x/cuda"}],
+                                  {"name":"PYTHONPYCACHEPREFIX","value":"/engine-cache/pycache/'"$KEY_LEADER"'"}],
                            "volumeMounts":[{"name":"engine-cache","mountPath":"/engine-cache"}],
                            "args":["vllm","serve","/models/qwen"]}]}},
         "workerTemplate":{"spec":{
             "volumes":[{"name":"engine-cache","persistentVolumeClaim":{"claimName":"engine-cache"}}],
             "containers":[{"name":"vllm","image":"'"$LWS_LEADER_IMAGE"'",
                            "env":[{"name":"VLLM_CACHE_ROOT","value":"/engine-cache/vllm"},
-                                  {"name":"PYTHONPYCACHEPREFIX","value":"/engine-cache/pycache/'"$KEY_LEADER"'"},
-                                  {"name":"DG_JIT_CACHE_DIR","value":"/x/dg"},{"name":"TRTLLM_DG_CACHE_DIR","value":"/x/tdg"},{"name":"TORCHINDUCTOR_CACHE_DIR","value":"/x/ind"},{"name":"CUDA_CACHE_PATH","value":"/x/cuda"}],
+                                  {"name":"PYTHONPYCACHEPREFIX","value":"/engine-cache/pycache/'"$KEY_LEADER"'"}],
                            "volumeMounts":[{"name":"engine-cache","mountPath":"/engine-cache"}],
                            "args":["vllm","serve","/models/qwen","--headless"]}]}}}}}'
 }
@@ -3840,7 +3678,7 @@ assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.leaderTemplate.spec.cont
 assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].name')" "vllm-worker" "worker container"
 assert_eq "$(lws_get "$doc" '.apiVersion + " " + .kind')" "leaderworkerset.x-k8s.io/v1 LeaderWorkerSet" "kind"
 assert_eq "$(lws_get "$doc" '.spec.template // "none"')" "none" "a Deployment-shaped field"
-assert_contains "$doc" "PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"                  # the guard
+assert_contains "$doc" "PYTHONPYCACHEPREFIX; do"                  # the guard
 assert_contains "$doc" "leader command AND the worker"
 [ "$FAILED" -eq "$before" ] && ok
 
@@ -3935,7 +3773,7 @@ assert_eq "$(jq -r '[.[] | select(.path | endswith("/-"))] | length' <<< "$PATCH
 assert_eq "$(jq -r '[.[] | select(.op == "add" and (.path | endswith("/spec/volumes")))] | length' <<< "$PATCH_BODY")" "2" "volumes created"
 after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not apply: $PATCH_BODY"
 for t in leaderTemplate workerTemplate; do
-    assert_eq "$(jq -r ".spec.leaderWorkerTemplate.$t.spec.containers[0].env | map(.name) | join(\",\")" <<< "$after")" "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,DG_JIT_CACHE_DIR,TRTLLM_DG_CACHE_DIR,TORCHINDUCTOR_CACHE_DIR,CUDA_CACHE_PATH,PYTHONPYCACHEPREFIX" "$t env"
+    assert_eq "$(jq -r ".spec.leaderWorkerTemplate.$t.spec.containers[0].env | map(.name) | join(\",\")" <<< "$after")" "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "$t env"
     assert_eq "$(jq -r ".spec.leaderWorkerTemplate.$t.spec.volumes[0].persistentVolumeClaim.claimName" <<< "$after")" "engine-cache" "$t volume"
 done
 # The weights half had no opt-in, so neither its volume nor HF_HOME went.
@@ -3951,12 +3789,12 @@ assert_eq "$PATCH_CALLS" "1" "kubectl patch calls"
 assert_contains "$PATCH_BODY" '"path":"/spec/leaderWorkerTemplate/leaderTemplate/spec/containers/1/name"'   # the test op, by name
 after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not apply: $PATCH_BODY"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[1].env | map(.name + "=" + .value) | join(",")' <<< "$after")" \
-    "HF_HOME=/tmp/hf,VLLM_CACHE_ROOT=/engine-cache/vllm,FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/$KEY_LEADER,TRITON_CACHE_DIR=/engine-cache/triton,DG_JIT_CACHE_DIR=/engine-cache/deepgemm/$KEY_LEADER,TRTLLM_DG_CACHE_DIR=/engine-cache/trtllm-deepgemm/$KEY_LEADER,TORCHINDUCTOR_CACHE_DIR=/engine-cache/inductor/$KEY_LEADER,CUDA_CACHE_PATH=/engine-cache/cuda/$KEY_LEADER,PYTHONPYCACHEPREFIX=/engine-cache/pycache/$KEY_LEADER" "leader env"
+    "HF_HOME=/tmp/hf,VLLM_CACHE_ROOT=/engine-cache/vllm,FLASHINFER_WORKSPACE_BASE=/engine-cache/flashinfer/$KEY_LEADER,TRITON_CACHE_DIR=/engine-cache/triton,PYTHONPYCACHEPREFIX=/engine-cache/pycache/$KEY_LEADER" "leader env"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.volumes | map(.name) | join(",")' <<< "$after")" "dshm,engine-cache" "leader volumes"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[1].volumeMounts | map(.name) | join(",")' <<< "$after")" "dshm,engine-cache" "leader mounts"
 assert_eq "$(jq -c '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0]' <<< "$after")" '{"name":"proxy","image":"quay.io/x/proxy:1"}' "sidecar"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env | map(.name) | join(",")' <<< "$after")" \
-    "NCCL_DEBUG,VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,DG_JIT_CACHE_DIR,TRTLLM_DG_CACHE_DIR,TORCHINDUCTOR_CACHE_DIR,CUDA_CACHE_PATH,PYTHONPYCACHEPREFIX" "worker env"
+    "NCCL_DEBUG,VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "worker env"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="LWS: a template with FLASHINFER_WORKSPACE_DIR gets the FlashInfer half, emitted and never applied"
@@ -4018,7 +3856,7 @@ assert_contains "$doc" "#   flashinfer:"                                   # anc
 assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.leaderTemplate.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value')" "/engine-cache/flashinfer/$KEY_LEADER" "leader base"
 assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env[] | select(.name == "FLASHINFER_WORKSPACE_BASE") | .value')" "/engine-cache/flashinfer/$KEY_WORKER" "worker base"
 assert_eq "$(lws_get "$doc" '[.spec.leaderWorkerTemplate[].spec.volumes // [] | .[]] | length')" "0" "volumes (env only)"
-assert_contains "$doc" "FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"
+assert_contains "$doc" "FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
 assert_contains "$doc" "leader command AND the worker"
 assert_contains "$(cat "$WORK/lws.err")" "ns/w (leaderTemplate) BUILDS ITS FLASHINFER KERNELS AGAIN"
 assert_contains "$(cat "$WORK/lws.err")" "ns/w (workerTemplate) BUILDS ITS FLASHINFER KERNELS AGAIN"
@@ -4100,7 +3938,7 @@ assert_not_contains "$log" "not set in the pod spec"
 assert_contains "$doc" "preStop"
 assert_contains "$doc" "#   engine caches: owned externally; none is ours (see the report)"
 assert_contains "$doc" "the guard below is offered for whoever"
-assert_contains "$doc" "#     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH; do"
+assert_contains "$doc" "#     for v in VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX; do"
 assert_not_contains "$doc" "#   engine-cache:"
 assert_eq "$(ext_envnames "$doc")" "" "env the document writes"
 assert_eq "$(printf '%s\n' "$doc" | yq eval '[.spec.template.spec.volumes[]?.name] | join(" ")' - 2>/dev/null)" "" "volumes the document writes"
@@ -4174,7 +4012,7 @@ log="$(cat "$WORK/ext.err")"
 assert_contains "$log" "ns/w: engine caches are ours ($EXT_ANN=ours)."
 assert_contains "$log" "COMPILES FROM NOTHING"
 assert_contains "$doc" "#   engine-cache: the compile caches"
-assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH PYTHONPYCACHEPREFIX" "env the document writes"
+assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "env the document writes"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="engine-cache-owner with an unknown value: the patch as before, plus a warning naming the value"
@@ -4208,7 +4046,7 @@ log="$(cat "$WORK/ext.err")"
 assert_contains "$log" "COMPILES FROM NOTHING"
 assert_contains "$log" "container download shares the emptyDir jit, which holds an engine cache, and mounts claim model-pvc"
 assert_contains "$doc" "#   engine-cache: the compile caches"
-assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH PYTHONPYCACHEPREFIX" "env the document writes"
+assert_eq "$(ext_envnames "$doc")" "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "env the document writes"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="engine-cache-owner external, patched before it was annotated: the conflict and the revert"
@@ -4216,9 +4054,7 @@ reset; f_engine_cache_on_claim; ext_owner external
 before=$FAILED
 doc="$(ext_doc)"
 log="$(cat "$WORK/ext.err")"
-# The JIT caches #213 wrote under /engine-cache are traces of the patch too.
-assert_contains "$log" "CONFLICT: the pod spec still carries what an earlier make workload-patch wrote (the volume engine-cache) (CUDA_CACHE_PATH DG_JIT_CACHE_DIR PYTHONPYCACHEPREFIX TORCHINDUCTOR_CACHE_DIR TRTLLM_DG_CACHE_DIR VLLM_CACHE_ROOT under /engine-cache)"
-assert_not_contains "$log" "left to the owner, not patched"
+assert_contains "$log" "CONFLICT: the pod spec still carries what an earlier make workload-patch wrote (the volume engine-cache) (PYTHONPYCACHEPREFIX VLLM_CACHE_ROOT under /engine-cache)"
 assert_contains "$log" "remove the volume engine-cache, its mounts, and every cache variable that points under /engine-cache"
 assert_contains "$log" "delete the copies the manager stored while that was applied"
 assert_contains "$log" "Nothing more of ours is patched until it is reverted"
@@ -4291,55 +4127,6 @@ assert_contains "$(cat "$WORK/ext.err")" "store: claim jit-store, mounted read-w
 assert_not_contains "$(cat "$WORK/ext.err")" "mounts the store"
 [ "$FAILED" -eq "$before" ] && ok
 
-# Owned externally, the JIT caches beyond vLLM's own are the owner's whether
-# the pod spec sets them or not. The owner keeps VLLM_CACHE_ROOT on a claim
-# here, which is what made the JIT half fire: it would have written the four
-# beside it, into the owner's directory.
-f_ext_manager_on_claim() {
-    f_ext_manager
-    FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '(.spec.template.spec.volumes[] | select(.name == "jit")) = {"name":"jit","persistentVolumeClaim":{"claimName":"jit-pvc"}}')"
-}
-
-CASE="engine-cache-owner external, VLLM_CACHE_ROOT on a claim and no JIT cache set: no JIT half, no JIT warning, the four named as the owner's"
-reset; f_ext_manager_on_claim
-before=$FAILED
-doc="$(ext_doc)"
-log="$(cat "$WORK/ext.err")"
-assert_contains "$log" "ns/w: engine caches owned externally ($EXT_ANN=external)"
-assert_contains "$log" "left to the owner, not patched: DG_JIT_CACHE_DIR, TRTLLM_DG_CACHE_DIR, TORCHINDUCTOR_CACHE_DIR, CUDA_CACHE_PATH."
-assert_contains "$log" "every cache variable is set in the pod spec: deferred to the owner"
-assert_not_contains "$log" "BUILDS ITS JIT KERNELS AGAIN"
-assert_not_contains "$doc" "#   jit:"
-# The guard offered to the owner names the four; no entry of ours does.
-assert_not_contains "$doc" "name: DG_JIT_CACHE_DIR"
-assert_not_contains "$doc" "/var/cache/jit"
-assert_eq "$(ext_envnames "$doc")" "" "env the document writes"
-# The note make scaledobjects-plan prints says nothing about the JIT caches either.
-assert_not_contains "$(so_enginecache_note ns deployments w "$POD_DEPLOY")" "JIT kernels"
-# Without the annotation the same pod spec gets the JIT half, under its claim.
-ext_owner -
-doc="$(ext_doc)"
-assert_contains "$(cat "$WORK/ext.err")" "BUILDS ITS JIT KERNELS AGAIN"
-assert_contains "$doc" "value: /var/cache/jit/deepgemm/"
-[ "$FAILED" -eq "$before" ] && ok
-
-CASE="engine-cache-owner external, the owner sets one JIT cache: the rest named, none patched"
-reset; f_ext_manager_on_claim
-FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [{"name":"DG_JIT_CACHE_DIR","value":"/var/cache/jit/deepgemm"}]')"
-before=$FAILED
-doc="$(ext_doc)"
-log="$(cat "$WORK/ext.err")"
-assert_contains "$log" "left to the owner, not patched: TRTLLM_DG_CACHE_DIR, TORCHINDUCTOR_CACHE_DIR, CUDA_CACHE_PATH."
-assert_not_contains "$log" "BUILDS ITS JIT KERNELS AGAIN"
-assert_eq "$(ext_envnames "$doc")" "" "env the document writes"
-# Every one set: nothing left to name.
-FIXTURE="$(printf '%s' "$FIXTURE" | jq -c '.spec.template.spec.containers[0].env += [
-    {"name":"TRTLLM_DG_CACHE_DIR","value":"/var/cache/jit/t"},{"name":"TORCHINDUCTOR_CACHE_DIR","value":"/var/cache/jit/i"},
-    {"name":"CUDA_CACHE_PATH","valueFrom":{"configMapKeyRef":{"name":"c","key":"k"}}}]')"
-ext_doc >/dev/null
-assert_not_contains "$(cat "$WORK/ext.err")" "left to the owner, not patched"
-[ "$FAILED" -eq "$before" ] && ok
-
 CASE="engine-cache-owner external, every variable covered, --apply-engine-cache: refused, non-zero exit"
 reset; LIST_FIXTURE="$(serving_list)"; f_ext_manager
 before=$FAILED
@@ -4396,7 +4183,7 @@ assert_contains "$log" "ns/w (leaderTemplate): engine caches owned externally"
 assert_contains "$log" "ns/w (workerTemplate) COMPILES FROM NOTHING"
 assert_eq "$(lws_get "$doc" '.spec.leaderWorkerTemplate.leaderTemplate')" "null" "leader in the document"
 assert_eq "$(lws_get "$doc" '[.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env[].name] | join(" ")')" \
-    "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH PYTHONPYCACHEPREFIX" "worker env"
+    "VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR PYTHONPYCACHEPREFIX" "worker env"
 assert_contains "$doc" "#   engine caches: owned externally in leaderTemplate; none is ours"
 assert_contains "$doc" "#   engine-cache: the compile caches"
 [ "$FAILED" -eq "$before" ] && ok
@@ -4752,7 +4539,7 @@ assert_eq "$PATCH_CALLS" "1" "kubectl patch calls"
 assert_eq "$(jq -r '[.[] | select(.path | contains("leaderTemplate"))] | length' <<< "$PATCH_BODY")" "0" "leaderTemplate ops"
 after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not apply: $PATCH_BODY"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env | map(.name) | join(",")' <<< "$after")" \
-    "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,DG_JIT_CACHE_DIR,TRTLLM_DG_CACHE_DIR,TORCHINDUCTOR_CACHE_DIR,CUDA_CACHE_PATH,PYTHONPYCACHEPREFIX" "worker env"
+    "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "worker env"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate | has("leaderTemplate")' <<< "$after")" "false" "no leaderTemplate created"
 [ "$FAILED" -eq "$before" ] && ok
 
@@ -4765,7 +4552,7 @@ after="$(json_patch_apply "$FIXTURE" "$PATCH_BODY")" || fail "the patch does not
 assert_eq "$(jq -c '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[1]' <<< "$after")" \
     '{"name":"metrics","image":"quay.io/x/exporter:1","env":[{"name":"PORT","value":"9400"}]}' "sidecar"
 assert_eq "$(jq -r '.spec.leaderWorkerTemplate.workerTemplate.spec.containers[0].env | map(.name) | join(",")' <<< "$after")" \
-    "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,DG_JIT_CACHE_DIR,TRTLLM_DG_CACHE_DIR,TORCHINDUCTOR_CACHE_DIR,CUDA_CACHE_PATH,PYTHONPYCACHEPREFIX" "engine env"
+    "VLLM_CACHE_ROOT,FLASHINFER_WORKSPACE_BASE,TRITON_CACHE_DIR,PYTHONPYCACHEPREFIX" "engine env"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="LWS apply: the warning reads the rollout strategy the LWS declares"

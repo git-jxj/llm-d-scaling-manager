@@ -4,8 +4,12 @@
 per-variable rule over the four variables on main, the report, the conflict
 and its revert, the refusal, and `engine-cache-keys` / `-verify`; see
 [An external cache manager](../reference/workload-preparation.md#an-external-cache-manager).
-Not built: the five variables of the cache-variable PR (#213), the bytecode
-offer for images before vLLM v0.32, and the start-time decisions.
+Not built: the bytecode offer for images before vLLM v0.32, and the
+start-time decisions. Dropped: the five variables of the cache-variable PR
+(#213). A GPU run found that `VLLM_CACHE_ROOT` already keeps DeepGEMM and the
+compiled model, and that the rest saves no measurable start time; see
+[What `VLLM_CACHE_ROOT` already covers](../reference/workload-preparation.md#what-vllm_cache_root-already-covers).
+The variable lists below predate that result.
 
 **What you do.** If another component owns your engine's compile caches:
 

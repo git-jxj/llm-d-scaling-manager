@@ -92,7 +92,7 @@ check(mount["name"] == vols[0]["name"] and mount["mountPath"] == "/engine-cache"
 script = c["args"][0]
 check("$(" not in script and "$$" not in script, "the command carries no $( or $$ (Kubernetes rewrites both)")
 loop = re.search(r"^for d in (.*); do$", script, re.M)
-check(loop is not None and set(loop.group(1).split()) == {"vllm", "flashinfer", "triton", "pycache", "deepgemm", "trtllm-deepgemm", "inductor", "cuda"}, "one mkdir loop over the cache directories, Python bytecode (pycache) and the JIT caches (deepgemm, trtllm-deepgemm, inductor, cuda) included: %s" % (loop.group(1) if loop else None))
+check(loop is not None and set(loop.group(1).split()) == {"vllm", "flashinfer", "triton", "pycache"}, "one mkdir loop over the four cache directories, Python bytecode (pycache) included: %s" % (loop.group(1) if loop else None))
 check('mkdir -p "/engine-cache/$d"' in script and 'chmod 1777 "/engine-cache/$d"' in script, "each made, then world-writable and sticky")
 check('touch "/engine-cache/$MARKER"' in script and env["MARKER"]["value"] == ".prepared", "the marker is written after the directories, its name from the environment")
 check("trap 'exit 0' TERM" in script and "sleep 3600" in script, "then the pod stays, so numberReady counts prepared nodes")
@@ -240,9 +240,8 @@ echo a > "$Y/seed/pycache/k1/usr/lib/python3/vllm/a.cpython-312.pyc"; echo b > "
 sed -n "/^preparer_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$Y/seed|g; s|/engine-cache|$Y/cache|g; s|^trap .*||" > "$Y/p.sh"
 SEED_MARKER=.seeded SEED_ID=shared:pyc MARKER=.prepared NODE_NAME=n1 "$SH" "$Y/p.sh" > "$Y/run1.out" 2>&1; rc=$?
 mode="$(stat -c %a "$Y/cache/pycache" 2>/dev/null)"
-jitmodes="$(stat -c %a "$Y/cache/deepgemm" "$Y/cache/trtllm-deepgemm" "$Y/cache/inductor" "$Y/cache/cuda" 2>/dev/null | sort -u | paste -sd' ')"
-[ "$rc" = 0 ] && [ "$mode" = 1777 ] && [ "$jitmodes" = 1777 ] && grep -q "pycache,deepgemm,trtllm-deepgemm,inductor,cuda}" "$Y/run1.out" \
-    && ok "preparer: pycache/ and the JIT cache directories are made 1777, beside vllm/, flashinfer/ and triton/, and the log names them" || fail "preparer pycache: rc=$rc mode=${mode:-none} jit modes=${jitmodes:-none} $(cat "$Y/run1.out")"
+[ "$rc" = 0 ] && [ "$mode" = 1777 ] && grep -q "pycache}" "$Y/run1.out" \
+    && ok "preparer: pycache/ is made 1777, beside vllm/, flashinfer/ and triton/, and the log names it" || fail "preparer pycache: rc=$rc mode=${mode:-none} $(cat "$Y/run1.out")"
 [ "$(cat "$Y/cache/pycache/k1/usr/lib/python3/vllm/a.cpython-312.pyc" 2>/dev/null)" = a ] && grep -q "1 file(s) copied" "$Y/run1.out" \
     && ok "seed: an image's bytecode under pycache/<key> is merged onto the node" || fail "seed pycache: $(cat "$Y/run1.out"; ls -R "$Y/cache" | head -20)"
 sed -n "/^publish_script() {/,/^SCRIPT$/p" deploy/enginecache.sh | sed '1,2d;$d' | sed "s|/seed|$Y/pseed|g; s|/engine-cache|$Y/node|g" > "$Y/pub.sh"
@@ -1803,19 +1802,6 @@ for f in config/warmpool/warmpool-deployment.yaml deploy/warmpool.sh test/e2e/fi
     grep -q 'FLASHINFER_WORKSPACE_BASE' "$ROOT/$f" || fi_wp="$fi_wp $f"
 done
 [ -z "$fi_wp" ] && ok "flashinfer: the warm pool manifest, script and e2e fixture set FLASHINFER_WORKSPACE_BASE" || fail "flashinfer: no FLASHINFER_WORKSPACE_BASE in:$fi_wp"
-
-# Seed and publish copy every cache directory the preparer makes but cuda/:
-# the driver keeps one index file per cache, and two nodes' indexes merged file
-# by file are not one valid index. The preparer makes all eight.
-ec_loops="$(grep -n '^ *for d in vllm ' "$ROOT/deploy/enginecache.sh")"
-ec_prep="$(printf '%s\n' "$ec_loops" | grep -c 'pycache deepgemm trtllm-deepgemm inductor cuda; do$')"
-ec_copy="$(printf '%s\n' "$ec_loops" | grep -c 'pycache deepgemm trtllm-deepgemm inductor; do$')"
-ec_all="$(printf '%s\n' "$ec_loops" | grep -c .)"
-if [ "$ec_prep" = 1 ] && [ "$ec_copy" = 2 ] && [ "$ec_all" = 3 ]; then
-    ok "JIT caches: the preparer makes deepgemm/, trtllm-deepgemm/, inductor/ and cuda/; seed and publish copy all but cuda/"
-else
-    fail "JIT caches: directory loops in deploy/enginecache.sh (prepare $ec_prep/1, copy $ec_copy/2, all $ec_all/3): $ec_loops"
-fi
 
 # The guard loop lives in nine copies: the one workload-patch emits, the
 # docs, the six scenario guards and the warm pool manifest. They must say the
