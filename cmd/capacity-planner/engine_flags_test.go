@@ -67,7 +67,7 @@ func TestEngineNotes_EachUnmodeledConfiguration(t *testing.T) {
 			pv.state.Params.EffectiveMaxBatchedTokens = 256
 			pv.state.Params.CUDAGraphCaptureMax = 1024 // the graphs hold the batch: the budget alone binds
 			pv.state.Params.SpeculativeConfig = `{"method":"mtp","num_speculative_tokens":3}`
-		}, stepBudgetBindsBatch, "200 sequences a rank x 4 tokens a step past a step budget of 256; the engine runs at most 64"},
+		}, stepBudgetBindsBatch, "200 sequences a rank x 4 tokens a step past a step budget of 256; full drafts for at most 64"},
 		{"enforce eager", func(pv *pricedVariant) { pv.state.Params.EnforceEager = true },
 			pastCUDAGraphCeiling, "no CUDA graphs: every step runs eager"},
 		{"capture below the batch", func(pv *pricedVariant) { pv.state.Params.CUDAGraphCaptureMax = 64 },
@@ -134,6 +134,12 @@ func TestEngineNotes_TheEdgesAreNotFlagged(t *testing.T) {
 		{"the rows' shape", func(pv *pricedVariant) {
 			pv.state.LineRows = []whatif.LineRow{{K: 0.5, KVPerRequest: 5000}}
 		}},
+		{"a longer shape than the rows'", func(pv *pricedVariant) {
+			pv.state.LineRows = []whatif.LineRow{{K: 0.5, KVPerRequest: 1000}}
+		}},
+		{"a distilled R1 is dense", func(pv *pricedVariant) { pv.state.Params.ModelPath = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B" }},
+		{"Gemma 1 2B is full attention", func(pv *pricedVariant) { pv.state.Params.ModelPath = "google/gemma-2b-it" }},
+		{"a dense Granite 4", func(pv *pricedVariant) { pv.state.Params.ModelPath = "ibm-granite/granite-4.0-micro" }},
 		{"another shape inside the rows' batch", func(pv *pricedVariant) {
 			pv.state.LineRows = []whatif.LineRow{{K: 0.8, KVPerRequest: 1000}}
 		}},

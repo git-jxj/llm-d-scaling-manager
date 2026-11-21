@@ -77,15 +77,15 @@ that point.
 | --- | --- | --- |
 | `MoEDataParallel` | MoE with expert parallelism and more than one data-parallel rank. The ranks step together at the busiest rank's pace, but the fill priced is the mean over ranks, so the busiest rank can run out of KV first. | Leave headroom below the band's top. |
 | `StepBudgetBindsBatch` | The batch priced, times 1 plus the speculative tokens, is more than the step budget (`--max-num-batched-tokens`). The engine runs fewer sequences than the knee assumes. Wide-EP engines with a batched all-to-all default to 256 tokens a step. | Raise the budget, or price at the budget's batch with `--batch-cap`. |
-| `PastCUDAGraphCeiling` | The batch priced is past the largest CUDA graph the engine captures, or the engine runs without graphs (`--enforce-eager`, `-O0`). Those steps run slower than the line. | Raise `--max-cudagraph-capture-size`, or lower `--batch-cap`. |
-| `HybridAttention` | Sliding-window, chunked-local or linear layers (gpt-oss, Gemma 2 and 3, Llama 4, Qwen3-Next, Nemotron-H, Jamba, Granite 4). KV per request and the ITL line are not those of full attention. | Treat the figure as a rough guess. |
-| `MLAAttention` | Multi-head latent attention (DeepSeek V2 and V3, Kimi K2). KV is small, so the batch cap or the step budget usually bounds the batch. The detail says which one. | Nothing. This flag is for information. |
-| `HostBoundTPOTTail` | A TPOT percentile on an engine whose per-token latency with an empty cache is under 5 ms. The tail is host jitter and reads low. | Size on the mean TPOT, or record finer TPOT buckets. |
+| `PastCUDAGraphCeiling` | The batch priced is past the largest CUDA graph the engine captures, or the engine runs without graphs (`--enforce-eager`, `-O0`). Those steps run slower than the line. | Drop `--enforce-eager`; raise `--max-cudagraph-capture-size` (SGLang: `--cuda-graph-max-bs`); or lower `--batch-cap`. |
+| `HybridAttention` | Sliding-window, chunked-local or linear layers (gpt-oss, Gemma 2 and 3, Llama 4, Qwen3-Next, Nemotron-H, Jamba, Granite 4.0-H, Kimi Linear, MiniMax-M1, Command A). KV per request and the ITL line are not those of full attention. | Treat the figure as a rough guess. |
+| `MLAAttention` | Multi-head latent attention (DeepSeek V2, V3 and R1, Kimi K2, Mistral Large 3). KV is small, so the batch cap or the step budget usually bounds the batch. The CLI's `flags:` line says which one. | Nothing. This flag is for information. |
+| `HostBoundTPOTTail` | A TPOT percentile on an engine whose per-token latency with an empty cache is under 5 ms. The tail is host jitter and reads low. | Size on the mean TPOT. |
 | `KVConnectorUnmodeled`, `KVOffload` | A KV connector other than NIXL, or KV offloading past GPU memory. The KV transfer was modeled on NIXL only, and only the GPU's KV is priced. | Treat the figure as a rough guess. |
 | `SGLangNoMixedChunk` | An aggregated SGLang Pod without `--enable-mixed-chunk`. Each prefill step stalls every running sequence. | Add `--enable-mixed-chunk`. |
 | `ExtensibleKVCache` | vLLM v0.34's extensible KV cache. The KV capacity read at start-up can grow later. | Record after the cache has grown, or turn it off. |
 | `DefaultBatchCapBelowRelease` | The arguments set no `--max-num-seqs`, so the planner priced 256. This vLLM release runs 1024 on this accelerator, so the decode figures can ask for up to 4x too many replicas. | Set `--max-num-seqs` on the engine, or pass `--batch-cap`. |
-| `BatchBeyondFit` | The shape asked holds more than 2x more or less KV per request than the rows the ITL line came from, and the batch priced is larger than any those rows held. ITL also rises with the batch's tokens, which the line does not carry to a new shape. | Record a window at this shape. |
+| `BatchBeyondFit` | The shape asked holds less than half the KV per request of the rows the ITL line came from, and the batch priced is larger than any those rows held. ITL also rises with the batch's tokens, which the line does not carry to a new shape. | Record a window at this shape. |
 
 ## The planner and the controller disagree on TPOT
 

@@ -26,6 +26,7 @@ func TestCUDAGraphCaptureMaxFromFlags(t *testing.T) {
 		{"compilation config none", []string{"--compilation-config", `{"cudagraph_mode": "NONE"}`}, CUDAGraphsOff},
 		{"dotted", []string{"--compilation-config.max_cudagraph_capture_size", "32"}, 32},
 		{"O0", []string{"-O0"}, CUDAGraphsOff},
+		{"O0 then a mode", []string{"-O0", "--compilation-config", `{"cudagraph_mode": "FULL"}`}, 0},
 		{"O3", []string{"-O3"}, 0},
 		{"optimization level 0", []string{"--optimization-level", "0"}, CUDAGraphsOff},
 		{"unreadable", []string{"--max-cudagraph-capture-size", "lots"}, 0},

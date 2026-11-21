@@ -71,8 +71,13 @@ func applyCUDAGraphs(key, value string, params *EngineParams) applyResult {
 		}
 		params.CUDAGraphCaptureMax = v
 	case "cudagraph_mode":
-		if strings.EqualFold(strings.Trim(value, `"' `), "none") {
+		switch {
+		case strings.EqualFold(strings.Trim(value, `"' `), "none"):
 			params.CUDAGraphCaptureMax = CUDAGraphsOff
+		case params.CUDAGraphCaptureMax == CUDAGraphsOff:
+			// A later mode turns the graphs back on after -O0: the
+			// default capture again.
+			params.CUDAGraphCaptureMax = 0
 		}
 	case "optimization_level":
 		if strings.TrimSpace(value) == "0" {

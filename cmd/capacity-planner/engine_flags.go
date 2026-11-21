@@ -64,8 +64,8 @@ const (
 	// default of 256 where the engine's release runs 1024 on its accelerator:
 	// the decode figures can over-ask up to four times.
 	defaultBatchCapBelowRelease whatif.Flag = "DefaultBatchCapBelowRelease"
-	// batchBeyondFit is a shape whose KV per request differs more than
-	// shapeFitRatio times from the rows the line was read on, priced at a
+	// batchBeyondFit is a shape whose KV per request is under 1/shapeFitRatio
+	// of the rows' the line was read on, priced at a
 	// per-rank batch past the largest those rows held: ITL also rises with the
 	// batch's tokens past the GEMM roofline, which a line in fill alone does
 	// not carry across shapes (issue #309).
@@ -88,9 +88,14 @@ const shapeFitRatio = 2.0
 // hybridModels and mlaModels are fragments of a model's name, lowercased, that
 // name a hybrid-attention or an MLA family.
 var (
-	hybridModels = []string{"gpt-oss", "gemma-2", "gemma-3", "gemma2", "gemma3", "llama-4", "llama4",
-		"qwen3-next", "nemotron-h", "jamba", "granite-4", "mamba", "falcon-h1"}
-	mlaModels = []string{"deepseek-v2", "deepseek-v3", "deepseek-r1", "deepseek-coder-v2", "kimi-k2", "moonlight"}
+	hybridModels = []string{"gpt-oss", "gemma-2-", "gemma-3-", "gemma2-", "gemma3-", "gemma-3n", "llama-4", "llama4",
+		"qwen3-next", "nemotron-h", "jamba", "granite-4.0-h", "mamba", "falcon-h1", "kimi-linear",
+		"minimax-m1", "minimax-text-01", "command-r7b", "command-a"}
+	mlaModels = []string{"deepseek-v2", "deepseek-v3", "deepseek-r1", "deepseek-coder-v2", "kimi-k2", "moonlight",
+		"mistral-large-3", "longcat"}
+	// notMLA are fragments that name a dense model inside an MLA family's
+	// name: DeepSeek-R1-Distill-Qwen and -Llama are dense.
+	notMLA = []string{"distill"}
 )
 
 // engineNote is one engine flag and what it rests on.
@@ -122,8 +127,8 @@ func (pv pricedVariant) engineNotes() []engineNote {
 	}
 	k := p.SpeculativeTokens()
 	if budget := p.StepBudget(); budget > 0 && batch > 0 && batch*int64(1+k) > budget {
-		add(stepBudgetBindsBatch, "%d sequences a rank x %d tokens a step past a step budget of %d; the engine runs at most %d",
-			batch, 1+k, budget, budget/int64(1+k))
+		add(stepBudgetBindsBatch, "%d sequences a rank x %d tokens a step past a step budget of %d; full drafts for at most %d",
+			batch, 1+k, budget, (budget+int64(k))/int64(1+k))
 	}
 	if ceiling, ok := p.GraphCeiling(pv.state.BatchCap); ok && batch > ceiling {
 		if ceiling == 0 {
@@ -139,7 +144,7 @@ func (pv pricedVariant) engineNotes() []engineNote {
 	if fam := familyOf(model, hybridModels); fam != "" {
 		add(hybridAttention, "%s: KV per request and ITL are not those of full attention", fam)
 	}
-	if fam := familyOf(model, mlaModels); fam != "" {
+	if fam := familyOf(model, mlaModels); fam != "" && familyOf(model, notMLA) == "" {
 		add(mlaAttention, "%s: %s", fam, pv.mlaBinds())
 	}
 	if c := p.KVConnector; c != "" && !strings.Contains(strings.ToLower(c), "nixl") {
@@ -160,7 +165,10 @@ func (pv pricedVariant) engineNotes() []engineNote {
 			pv.perRank, pv.state.Accelerator, def)
 	}
 	if seen, fitKV, ok := pv.fitBatch(); ok && batch > seen && pv.decode.KVPerRequest > 0 {
-		if r := pv.decode.KVPerRequest / fitKV; r > shapeFitRatio || r < 1/shapeFitRatio {
+		// Only a shorter shape: with more KV a request than the rows, a
+		// fill holds fewer sequences than the line was read with, and the
+		// line reads the ITL high, the safe side.
+		if r := pv.decode.KVPerRequest / fitKV; r < 1/shapeFitRatio {
 			add(batchBeyondFit, "KV %s a request against the rows' %s; up to %d sequences a rank priced, %d seen",
 				num(round(pv.decode.KVPerRequest)), num(round(fitKV)), batch, seen)
 		}
