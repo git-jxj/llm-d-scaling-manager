@@ -67,8 +67,9 @@ type Prefill struct {
 	// and processor sharing holds at any cv while it is at most
 	// MaxPSPromptSupport. 0 is no bound: the gamma runs on and the spread
 	// alone decides (MaxPSPromptCV). The slo analyzer sets it with
-	// slo.SwitchTTFTPromptSupport, the planner by its replay (issue
-	// llm-d-incubation/llm-d-scaling-manager#304).
+	// slo.SwitchTTFTPromptSupport, the planner where its replay turns that
+	// switch on (off by default, and not in learnreplay.PlannerSwitches;
+	// issue llm-d-incubation/llm-d-scaling-manager#304).
 	PromptMaxRatio float64
 	// ArrivalCV2 is Ca^2, the arrivals' squared coefficient of variation:
 	// Kingman's 1 + Cs^2 becomes Ca^2 + Cs^2 in the mean wait, and the wait's

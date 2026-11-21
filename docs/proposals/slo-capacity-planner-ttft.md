@@ -1727,8 +1727,8 @@ allow: 8000-token prompts in a (5000, 10000] bucket read cv 0.31 against a
 true 0.06, so every 8k answer was flagged although processor sharing held on
 those steps, and the gamma of cv 0.31 put 19.8% of the prompts above 10000
 tokens, where the bucket proves there are none (p90 own time about 11% high
-on Qwen3-32B 8k). The planner (switch `slo-ttft-prompt-support`, planner-only)
-reads the longest prompt the histogram allows, the highest bucket bound that
+on Qwen3-32B 8k). With the switch `slo-ttft-prompt-support` on (planner-only,
+off by default), the planner reads the longest prompt the histogram allows, the highest bucket bound that
 holds requests, over the mean (`whatif.PromptSpread.MaxRatio`), and prices it
 (`Prefill.PromptMaxRatio`):
 

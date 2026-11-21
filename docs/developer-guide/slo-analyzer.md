@@ -31,7 +31,8 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   `D`'s per-token part is net of the pull (`netOfPull`). Past a prompt cv of
   `MaxPSPromptCV` (0.25) a price is the larger of that and first come
   (`ttftPlan.price`, flagged `SpreadBeyondProcessorSharing`), unless the
-  longest prompt is at most `MaxPSPromptSupport` (1.6) times the mean
+  longest prompt is at most `MaxPSPromptSupport` (1.6) times the mean with
+  `slo-ttft-prompt-support` on
   (`Prefill.BeyondProcessorSharing`). Off, a first-come wait on the busiest
   pod (`prefillPlan.engineWait`).
 - `PromptSupport` (`slo-ttft-prompt-support`, planner-only, off from the
