@@ -256,6 +256,13 @@ type shapeSample struct {
 //     the fill a low-fill fleet has.
 //   - saturation.SwitchPrefillVPFloorServed: a lower-bound V_P raised to the
 //     highest computed-token rate a pod was seen to sustain.
+//   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
+//     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
+//     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
+//     It only ever lowers the cap: the knee and the sequences a replica is
+//     priced at fall, and the line is read at the knee's lower fill, so the
+//     ITL and TPOT at the knee fall with it. No committed recording runs a
+//     budget under its cap times 1 + k, so no golden moves with it on.
 //   - slo.SwitchTTFTHopUnqueued: the router hop of the decode term read off
 //     windows whose prefill pods held no queue. The planner reads its own
 //     decode term windows (state_ttft.go), so it reads the switch from here
@@ -273,11 +280,6 @@ type shapeSample struct {
 // but its p90 TTFT on the B-off and B-on phases still reads 15% to 23% under
 // and its p90 TPOT up to 22% under there (32% on the first warm-up's
 // B-onset, 39% on the bursty C phases), so both stay off.
-//
-// saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
-// either: no recording holds an engine whose step budget runs fewer
-// sequences than its cap (MTP, wide EP), so there is no backtest to turn it
-// on with (issue llm-d-incubation/llm-d-scaling-manager#302).
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -286,6 +288,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 		saturation.SwitchPrefillVPFloorServed:   true,
+		saturation.SwitchPlannerCapAtStepBudget: true,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,
 	}}

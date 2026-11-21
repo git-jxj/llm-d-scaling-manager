@@ -303,6 +303,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// holds it (heldBy).
 	slo.SwitchTTFTQuietTransfer: nil,
 
+	// llm-d-incubation/llm-d-scaling-manager#302 on the slo price: off from
+	// the constructor, so every golden replay runs it off. On, it moves
+	// nothing either: no committed recording runs a step budget under its
+	// cap times 1 + k. Its unit test holds it (heldBy).
+	slo.SwitchCapAtStepBudget: nil,
+
 	// ev-shindin/llm-scaling-manager#276 on the slo line: KVreq with the spread of output lengths. It moves
 	// no golden: of those that list slo, only the four staircases read the
 	// output histogram, at D 1.000. Its unit test holds it (heldBy); the CLI,
@@ -1678,6 +1684,9 @@ var heldBy = map[string][]heldTest{
 	},
 	// Runs the switch on and off and asserts both.
 	slo.SwitchTTFTQuietTransfer: {{"../slo", "TestTTFT_TheQuietTransferSwitch"}, {"../slo", "TestTTFT_TheHeldTransferAgesOut"}},
+	// llm-d-incubation/llm-d-scaling-manager#302: off from the constructor,
+	// and the price's cap on and off.
+	slo.SwitchCapAtStepBudget: {{"../slo", "TestCapAtStepBudget_TheSwitch"}},
 	// ev-shindin/llm-scaling-manager#276 on the slo line: it runs the switch on and off through Analyze and
 	// asserts both (the replica's rate halved at D 2 on, as it was off).
 	slo.SwitchKVPerRequestOutputDispersion: {
