@@ -389,7 +389,7 @@ func TestAtReplicas_CellAtTheSLOStatistics(t *testing.T) {
 		c := row.Cell
 		assert.Equal(t, "p95", c.TTFT.Statistic, row.Label)
 		assert.Equal(t, wantRows[i].TTFT[0].Figure, c.TTFT.Figure, row.Label)
-		if c.TPOT.Statistic == "mean" {
+		if c.TPOT.Statistic == whatifapi.ReportStatisticName(0) {
 			assert.Nil(t, wantRows[i].TPOTPercentile.Value, "%s: the mean stands in only where the p99 is refused", row.Label)
 			continue
 		}
@@ -404,7 +404,7 @@ func TestAtReplicas_CellAtTheSLOStatistics(t *testing.T) {
 
 	q.TPOT = &whatifapi.ReportTarget{Seconds: 0.030}
 	for _, row := range stairReport(t, q).Shapes[0].Table {
-		assert.Equal(t, "mean", row.Cell.TPOT.Statistic, row.Label)
+		assert.Equal(t, whatifapi.ReportStatisticName(0), row.Cell.TPOT.Statistic, row.Label)
 		assert.Equal(t, row.TPOTMean, row.Cell.TPOT.Figure, row.Label)
 	}
 }
