@@ -1101,6 +1101,15 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	saturation.SwitchITLHoldSteadySlope:     nil,
 	saturation.SwitchITLLineAtFloor:         nil,
+	// llm-d-incubation/llm-d-scaling-manager#279: R_q by interval-censored
+	// maximum likelihood. Planner-only, off; read by the planner's answer,
+	// not the replay, so no learner golden moves. Its unit tests hold it.
+	saturation.SwitchTPOTRatioCensored: nil,
+	// llm-d-incubation/llm-d-scaling-manager#301: a P/D decode's residence
+	// holds the decode engine's TTFT. Planner-only, off; read by the
+	// planner's answer, not the replay, so no learner golden moves. Its
+	// unit tests hold it.
+	saturation.SwitchDecodeResidencePull: nil,
 	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
 	// where the variant's ITL line reaches the policy's TPOT objective. On
 	// from the constructor; no committed golden has a decode line it trusts
@@ -1450,6 +1459,18 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestBootstrapLines_ResamplesAreLiftedAsTheLineIs"},
 		{".", "TestITLLineAtFloor_TheStaircaseLineThroughItsFloor"},
 		{".", "TestITLLineAtFloor_OnlyAPDDecodeRole"},
+	},
+	saturation.SwitchTPOTRatioCensored: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_ReadsTheBucketMassNotItsEdge"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_RefusesAsTheEdgeReadDoes"},
+		{"../../../../cmd/capacity-planner", "TestTPOTRatio_TheCensoredReadOnTheSwitch"},
+	},
+	saturation.SwitchDecodeResidencePull: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/whatif", "TestDecode_ResidenceHoldsTheKVFromThePull"},
+		{"../../../signals/whatif", "TestDecode_ResidenceRefusesABadHeldBefore"},
+		{"../../../../cmd/capacity-planner", "TestDecodeResidence_TheDecodeEngineTTFTOnTheSwitch"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},

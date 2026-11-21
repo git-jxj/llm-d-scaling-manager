@@ -569,6 +569,13 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
 			AssumedB:  pv.itlB.Applied,
 		}
+		if st.DecodeResidencePull && slices.ContainsFunc(st.Variants, func(v learnreplay.VariantState) bool {
+			return domain.CanonicalRole(v.Role) == domain.RolePrefill
+		}) {
+			// A P/D decode holds the KV from the pull: the decode engine's
+			// TTFT at the prompt priced (saturation.SwitchDecodeResidencePull).
+			pv.decode.HeldBefore = vs.DecodeTTFT.EngineTTFT.At(pv.shape.ILeff)
+		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)
 		}
@@ -768,7 +775,10 @@ func onHostBound(res whatif.Result, pv pricedVariant, r resolvedRatio) whatif.Re
 func (f *answerFlags) tpotRatioRead(st *learnreplay.State, q float64) (whatif.TPOTRatio, []whatif.Flag, *whatif.Unanswerable) {
 	r, flags, refused := whatif.TPOTRatio{}, []whatif.Flag(nil), &whatif.Unanswerable{Reason: whatif.NoTPOTHistogram,
 		Detail: "the recording carries no TPOT histogram; pass --assume-tpot-ratio for a flagged answer"}
-	if len(st.TPOTWindows) > 0 {
+	switch {
+	case len(st.TPOTWindows) > 0 && st.TPOTRatioCensored:
+		r, flags, refused = whatif.TPOTRatioCensored(st.TPOTWindows, q)
+	case len(st.TPOTWindows) > 0:
 		r, flags, refused = whatif.TPOTRatioFromWindows(st.TPOTWindows, q)
 	}
 	coarse := refused == nil && slices.Contains(flags, whatif.CoarseTPOTBucket)

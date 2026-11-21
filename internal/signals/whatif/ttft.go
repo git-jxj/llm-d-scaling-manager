@@ -389,6 +389,10 @@ func (d DecodeTTFT) at(i float64) float64 {
 	return d.Seconds * max(1, i/d.PromptTokens)
 }
 
+// At is the decode term for a prompt of i tokens, as the TTFT prices it:
+// 0 when unmeasured.
+func (d DecodeTTFT) At(i float64) float64 { return d.at(i) }
+
 // TTFTTarget is a TTFT service level, end to end.
 type TTFTTarget struct {
 	// Seconds is the target.

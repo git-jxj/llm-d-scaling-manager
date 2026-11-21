@@ -44,6 +44,14 @@ type Decode struct {
 	// BelowBand says how the line is read below the band; the zero value
 	// reads it at the band's bottom, as the controller prices.
 	BelowBand BelowBand
+	// HeldBefore is the seconds a request holds its KV on the decode replica
+	// before its first output token: on a P/D fleet the KV pull and the
+	// first step, the decode engine's own TTFT (issue
+	// llm-d-incubation/llm-d-scaling-manager#301). Residence is then
+	// HeldBefore + OL * ITL(k), not OL * ITL(k) alone: at 8k prompts and 26
+	// output tokens the pull is about a third of it. 0, as the controller
+	// prices, leaves it out.
+	HeldBefore float64
 	// AssumedB says the caller stated Line's intercept B and refitted the
 	// slope through it (the capacity planner's --assume-itl-b): a line on the
 	// default intercept is then priced, not refused (PinnedDefaultB), and the
@@ -90,6 +98,8 @@ func (d Decode) check() *Unanswerable {
 		u = refuse(NoBatchCap, fmt.Sprintf("replica cap %d", d.ReplicaCap))
 	case !Finite(d.OutputTokens) || !(d.OutputTokens > 0) || !Finite(d.KVPerRequest) || !(d.KVPerRequest > 0):
 		u = refuse(NoTraffic, fmt.Sprintf("output %g tokens, KV per request %g tokens", d.OutputTokens, d.KVPerRequest))
+	case !Finite(d.HeldBefore) || d.HeldBefore < 0:
+		u = refuse(InvalidInput, fmt.Sprintf("held before the first token %g s, want a finite value of at least 0", d.HeldBefore))
 	// The band's top must hold one whole request: a replica that cannot
 	// serves none, and the closed form would price a fraction of one.
 	case math.Floor(d.Band.Hi*d.CapacityTokens/d.KVPerRequest) < 1:
@@ -229,7 +239,13 @@ func (d Decode) replicaRate(k float64) float64 {
 	if !(seqs > 0) || !(itlSec > 0) {
 		return 0
 	}
-	return seqs / (itlSec * d.OutputTokens)
+	return seqs / d.residence(itlSec)
+}
+
+// residence is a request's seconds on the replica at step time itlSec:
+// HeldBefore, then OL steps.
+func (d Decode) residence(itlSec float64) float64 {
+	return max(d.HeldBefore, 0) + d.OutputTokens*itlSec
 }
 
 // chainMu is the rate a replica holding m sequences completes them:
@@ -240,7 +256,7 @@ func (d Decode) replicaRate(k float64) float64 {
 // same rate by construction.
 func (d Decode) chainMu(m float64) float64 {
 	k := min(max(m*d.KVPerRequest/d.CapacityTokens, d.lowestFill()), d.Band.Hi)
-	return m / (d.OutputTokens * d.Line.ITLAt(k))
+	return m / d.residence(d.Line.ITLAt(k))
 }
 
 // kneeRate is the fleet's knee, N_d * chainMu(c): N_d * c / (OL * ITL(k_full)).
@@ -249,9 +265,10 @@ func (d Decode) kneeRate() float64 {
 }
 
 // fillAtReplicaRate is the closed-form fill one replica runs at while it
-// carries lam requests a second (Little's law, residence OL*ITL(k)):
+// carries lam requests a second (Little's law, residence H + OL*ITL(k), H
+// the HeldBefore):
 //
-//	k(lam) = lam*OL*B / (C/KVreq - lam*OL*A)
+//	k(lam) = lam*(H + OL*B) / (C/KVreq - lam*OL*A)
 //
 // It is valid while the denominator is positive and the sequences are under
 // the slots (the fill under slotFill); ok is false past that, where the
@@ -262,6 +279,9 @@ func (d Decode) fillAtReplicaRate(lam float64) (k float64, ok bool) {
 		return 0, false
 	}
 	k = lam * d.OutputTokens * d.Line.B / den
+	if d.HeldBefore > 0 {
+		k = lam * (d.HeldBefore + d.OutputTokens*d.Line.B) / den
+	}
 	if !Finite(k) || k > d.full().slotFill {
 		return 0, false
 	}
