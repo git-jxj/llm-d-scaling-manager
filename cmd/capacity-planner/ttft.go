@@ -626,12 +626,18 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		p.Replicas, pf.in.ReplicasFrom = f.prefill, "--prefill"
 		pf.in.Replicas = f.prefill
 	}
-	if f.imbalanceAcrossCounts {
+	switch {
+	case f.fixedImbalance > 0 && p.Replicas >= 2:
+		// The report's sensitivity to f (fSensitivity): one f at every
+		// count, not a reading.
+		p.Imbalance, p.ImbalanceAssumed = min(float64(p.Replicas), f.fixedImbalance), true
+		pf.in.ImbalanceSource = fmt.Sprintf("%s for the sensitivity to f", num(f.fixedImbalance))
+	case f.imbalanceAcrossCounts:
 		p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAcross(ps, p.Replicas)
 		if p.ImbalanceAssumed {
 			pf.assume("f %s on %d pods (%s)", num(p.Imbalance), p.Replicas, pf.in.ImbalanceSource)
 		}
-	} else {
+	default:
 		p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAt(ps, p.Replicas)
 		if p.ImbalanceAssumed {
 			pf.assume("f %s on %d pods (none learned at that count)", num(p.Imbalance), p.Replicas)

@@ -13,7 +13,8 @@ import (
 // The imbalance f across pod counts (llm-d-incubation/llm-d-scaling-manager#169,
 // item 5). P1 learns f only at a count the fleet has run at
 // (prefill.Estimate.FByPods); the planner asks about the counts it has not.
-// With DefaultImbalanceAcrossCounts on, both the SLO analyzer and the CLI read
+// With the switch on (DefaultImbalanceAcrossCounts for the SLO analyzer,
+// DefaultPlannerImbalanceAcrossCounts for the capacity planner), both read
 // f at any count through ImbalanceReadings.At: a count P1 learned keeps its
 // own f, any other is read off a curve fitted to the counts learned and the
 // raw share, and with no count learned f is at least FreshImbalance.
@@ -57,14 +58,26 @@ import (
 // excess at three pods is about 0.04, so de-biased those read about 1.08 to
 // 1.10 and 1.04 to 1.06: the curve stands at or above them.
 
-// DefaultImbalanceAcrossCounts is the default of reading f across pod counts
-// (ImbalanceReadings.At), for the CLI (--imbalance-across-counts), the
-// planner API and the SLO analyzer (slo.SwitchTTFTImbalanceAcrossCounts)
-// alike: off, so an unlearned count is priced at min(N, max(ImbalanceFloor,
+// DefaultImbalanceAcrossCounts is the SLO analyzer's default of reading f
+// across pod counts (ImbalanceReadings.At,
+// slo.SwitchTTFTImbalanceAcrossCounts): off, so an unlearned count is priced at min(N, max(ImbalanceFloor,
 // f)) as before. Opt-in first: one GPU run at three pods backs the curve and
 // FreshImbalance. The default flips after a check at a count none of the
 // learned ones covers, and once FByPods survives a restart.
 const DefaultImbalanceAcrossCounts = false
+
+// DefaultPlannerImbalanceAcrossCounts is the capacity planner's default of
+// reading f across pod counts (--imbalance-across-counts, and its server):
+// on, where the SLO analyzer's (DefaultImbalanceAcrossCounts) is off. The
+// planner prices counts the recording never ran at, which is where the floor
+// misprices (issue llm-d-incubation/llm-d-scaling-manager#300): with f 1.00
+// learned at two pods, three at max(ImbalanceFloor, f) = 1.5 have the same
+// busiest share as two, so the third pod buys no prefill knee and the count
+// search steps from two to four. The curve reads 1.00 at three. Neither
+// reason the analyzer's default waits on holds for a replay: it reads its
+// recording whole, so no restart loses FByPods, and the report prints the
+// answer at f 1 and at ImbalanceFloor beside it.
+const DefaultPlannerImbalanceAcrossCounts = true
 
 // FreshImbalance is the least f at a count above one with no count learned,
 // with DefaultImbalanceAcrossCounts on. Not a constant of any fleet: it stands
