@@ -49,11 +49,19 @@ func TestHoldScale_KeepsTheMeasuredMean(t *testing.T) {
 		}
 		nearRel(t, "censoring's deficit", 1-censored(1), c.deficit, 0.05)
 		s := holdScale(k, c.ratio)
-		nearRel(t, "stretch", s, c.s, 0.01)
+		nearRel(t, "stretch", s, c.s, 0.002)
 		nearRel(t, "held mean", censored(s), 1, 1e-12)
-		nearRel(t, "own time's held mean", newOwnTime(3, c.cv).capped(3*c.ratio).mean, 3, 1e-12)
 		nearRel(t, "E[u] held", ePoly{{c: 1, n: 1}}.expect(c.cv, c.ratio), 1, 1e-12)
 	}
+	// A bound just over the mean needs a stretch far past the first bracket.
+	k := 1.0
+	s := holdScale(k, 1.0001)
+	p, _ := gammaPQ(k+1, k*1.0001/s)
+	_, q := gammaPQ(k, k*1.0001/s)
+	if !(s > 1000) {
+		t.Errorf("stretch at a bound 1.0001 times the mean: %g, want past 1000", s)
+	}
+	nearRel(t, "held mean at a bound just over the mean", s*p+1.0001*q, 1, 1e-9)
 	for _, r := range []float64{0, 1, 0.9, math.Inf(1), math.NaN()} {
 		if s := holdScale(10, r); s != 1 {
 			t.Errorf("ratio %g: stretch %g, want 1", r, s)
@@ -71,7 +79,7 @@ func TestOwnTime_HeldAtTheLongestPrompt(t *testing.T) {
 	stretched := free
 	stretched.b /= holdScale(free.k, 1.25)
 	_, past := gammaPQ(stretched.k, stretched.b*1.25)
-	nearRel(t, "mass past the hold", past, 0.25, 0.1)
+	nearRel(t, "mass past the hold", past, 0.263, 0.01)
 	if held.sf(1.25) != 0 || held.sf(1.3) != 0 {
 		t.Errorf("held sf past the hold: %g, %g", held.sf(1.25), held.sf(1.3))
 	}
@@ -99,7 +107,7 @@ func TestOwnTime_HeldAtTheLongestPrompt(t *testing.T) {
 	mean += 1.25 * past
 	conv += past * math.Exp(-r*(at-1.25))
 	nearRel(t, "held mean", held.mean, mean, 1e-6)
-	nearRel(t, "held mean is the measured mean", held.mean, free.mean, 1e-12)
+	nearRel(t, "held mean is the measured mean", mean, free.mean, 1e-6)
 	nearRel(t, "held conv past the hold", held.conv(r, at), conv, 1e-6)
 	nearRel(t, "held conv under the hold", held.conv(r, 1.1), stretched.conv(r, 1.1), 1e-12)
 

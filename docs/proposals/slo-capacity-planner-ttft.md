@@ -1762,9 +1762,12 @@ reaches 2000, so nothing clears them; only the held gamma moves them, by a
 few percent, and 2 of their p95 figures go under (0.976, 0.987): the tail
 past twice the mean that the hold removes was holding them up. A hold that
 only censored, and so read the mean short, moved 34 figures under, the
-lowest at 0.89. What is left is the cv the buckets' width reads holding up
-a TTFT tail the rest of the model reads low. The switch stays off until that
-is found.
+lowest at 0.89. Two causes are still standing, and the switch stays off
+until they are told apart: the cv the buckets' width reads holding up a TTFT
+tail the rest of the model reads low, or the wait side, which still prices
+the unheld cv (Kingman's `Cs²`, the Lundberg root, the PS stages' `Cs²`)
+although the held prompt varies less (cv 0.23 held at 1.25 against the 0.31
+read).
 
 **Checked against a simulation** of the same tandem stages
 (`TestPS_AgainstATandemSimulation`, 180,000 requests a point, `V_P` unmargined):

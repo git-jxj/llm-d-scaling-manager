@@ -104,7 +104,8 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
 // SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTJointInputs,
 // SwitchTTFTPromptSupport and SwitchKVPerRequestOutputDispersion; a name it
-// does not know is an error, and sets nothing. Never called on a production path; a test holds that.
+// does not know is an error, and sets nothing. Never called on a production
+// path; a test holds that.
 func (a *Analyzer) SetSwitchesForReplay(switches map[string]bool) error {
 	rest := maps.Clone(switches)
 	fields := a.switchFields()

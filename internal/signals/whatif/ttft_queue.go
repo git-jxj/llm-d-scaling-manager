@@ -19,7 +19,8 @@ import "math"
 // variation (an exponential at cv 1, the page's assumed spread), and
 // deterministic at cv 0. c is seconds per prompt token.
 type ownTime struct {
-	// mean is E[I]*c, in seconds, with or without a hold (capped keeps it).
+	// mean is E[I]*c, in seconds, with or without a hold (capped keeps it,
+	// up to holdScale's reach).
 	mean float64
 	// k and b are the gamma's shape, 1/cv^2, and rate, 1/(mean*cv^2), the
 	// rate divided by holdScale with a hold; both 0 when det.
@@ -60,7 +61,10 @@ func (o ownTime) capped(hold float64) ownTime {
 // censored at ratio (above 1), keeps its mean: E[min(sX, ratio)] =
 // s P(k+1, k ratio/s) + ratio Q(k, k ratio/s) = 1. The censored mean rises
 // with s from under 1 at s = 1 toward ratio, so the root is unique and at
-// least 1. It is 1 where there is nothing to hold.
+// least 1. It is 1 where there is nothing to hold. A measured prompt cannot
+// put the root out of reach (its cv^2 is at most ratio - 1); an assumed wide
+// cv with a bound just over the mean can need s past 2^61, where it stops
+// and the held mean reads short of 1.
 func holdScale(k, ratio float64) float64 {
 	if !(k > 0) || !(ratio > 1) || !Finite(ratio) {
 		return 1
