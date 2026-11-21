@@ -1143,23 +1143,25 @@ torch.compile:
 
 A warm start still writes about 1 MB outside the engine cache: a few small
 Inductor kernels under `/tmp/torchinductor_<user>`, two files under
-`~/.tensorrt_llm`, and a few files no cache variable covers. Keeping the first
-two as well (`DG_JIT_CACHE_DIR`, `TRTLLM_DG_CACHE_DIR`,
-`TORCHINDUCTOR_CACHE_DIR` and `CUDA_CACHE_PATH` on the engine cache) did not
-shorten a start by more than starts vary, so `make workload-patch` does not set
-them. Measured on Qwen3-30B-A3B-FP8, one H200, vLLM 0.34:
+`~/.tensorrt_llm`, and two files no cache variable covers. Pointing four more
+variables at the engine cache (`DG_JIT_CACHE_DIR`, `TRTLLM_DG_CACHE_DIR`,
+`TORCHINDUCTOR_CACHE_DIR`, `CUDA_CACHE_PATH`) keeps the Inductor and
+TensorRT-LLM files too, but did not shorten a warm start by more than starts
+vary, so `make workload-patch` does not set them. Measured on
+Qwen3-30B-A3B-FP8, one H200, a vLLM 0.34 development build:
 
-| Start | Seconds to `/health` |
+| Start | Seconds from container start to `/health` |
 | --- | --- |
 | cold engine cache | 198.5, 207.2 |
 | warm, what `make workload-patch` sets | 50.0, 51.0, 51.1 |
-| warm, with the four variables above on the engine cache | 48.5 |
+| warm, with the four variables on the engine cache (one start) | 48.5 |
 | the first start after adding the four | 140.5, 144.0 |
 
 **If `VLLM_CACHE_ROOT` is on the engine cache, leave `DG_JIT_CACHE_DIR`
 unset.** Setting it to another directory moves DeepGEMM out of
-`$VLLM_CACHE_ROOT/deep_gemm`, so the first start on each node builds every
-kernel again: about 90 s on the model above, nearly all of it DeepGEMM warmup.
+`$VLLM_CACHE_ROOT/deep_gemm`, so the first start on each node (once per claim
+on a shared claim) builds every kernel again: about 90 s on the model above,
+nearly all of it DeepGEMM warmup.
 
 #### Check the cache without a second start
 
