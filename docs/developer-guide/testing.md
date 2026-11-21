@@ -641,7 +641,7 @@ these changes:
    target of 2s at the 95th percentile. Name it as `scalingPolicy:
    slo-watch` in the trigger metadata of both the decode and the prefill
    ScaledObject. See
-   [the slo section of the scaling policy reference](../reference/scaling-policy.md#slo-observe-only).
+   [the slo section of the scaling policy reference](../reference/scaling-policy.md#slo-observes-bounds-decode-packing).
 
    Write the tier into the map the model actually reads. If the model's
    namespace has its own `scaling-manager-scaling-policy-config`, that map replaces

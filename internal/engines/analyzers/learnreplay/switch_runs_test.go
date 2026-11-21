@@ -1098,6 +1098,12 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillAEngineTiming:   nil,
 	saturation.SwitchPrefillQueueByCapacity: nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
+	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
+	// where the variant's ITL line reaches the policy's TPOT objective. On
+	// from the constructor; no committed golden has a decode line it trusts
+	// at a target it binds, so off alone from all on moves nothing. Its unit
+	// tests hold it (heldBy).
+	saturation.SwitchK2BatchAtITLTarget: nil,
 	// llm-d-incubation/llm-d-scaling-manager#188 prices a resident reading
 	// above the whole context as read: off from the constructor, so every
 	// golden replay runs it off, and off alone from all on moves nothing. Its
@@ -1357,6 +1363,11 @@ func withSeams(more, rows map[string][]string) map[string][]string {
 // test that holds the same on either side is a control, not a hold, and is
 // not listed here.
 var heldBy = map[string][]heldTest{
+	// llm-d-incubation/llm-d-scaling-manager#258: each fails with the switch
+	// off.
+	saturation.SwitchK2BatchAtITLTarget: {
+		{"../saturation", "TestK2BatchAtITLTarget_ThroughAnalyze"},
+	},
 	// llm-d-incubation/llm-d-scaling-manager#220: each runs the switch on
 	// and off and asserts both.
 	saturation.SwitchStartHeldThroughRollout: {

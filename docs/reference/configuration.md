@@ -289,7 +289,7 @@ for every model, on a named tier for a class of models (a trigger picks it with
 | Name | Where set | Default | What it changes | Applies |
 | --- | --- | --- | --- | --- |
 | **`analyzers`** | Policy, any entry | `saturation` alone | Add `throughput` to size from token throughput too, or `slo` to report latency targets. The model is sized to the largest need ([analyzers](scaling-policy.md#configuring-analyzers)) | live; enabling `throughput` for the first time needs a restart |
-| **`slo.ttft.target`**, `slo.ttft.percentile` | Policy, tier entry | none; percentile `90` | Time-to-first-token target. Reported only: the `slo` analyzer never changes a replica count ([slo](scaling-policy.md#slo-observe-only)) | live |
+| **`slo.ttft.target`**, `slo.ttft.percentile` | Policy, tier entry | none; percentile `90` | Time-to-first-token target. Reported only: the `slo` analyzer never changes a replica count ([slo](scaling-policy.md#slo-observes-bounds-decode-packing)) | live |
 | **`slo.tpot.target`** | Policy, tier entry | none | Mean time-per-output-token target. Reported only | live |
 
 ### Scale to zero and back

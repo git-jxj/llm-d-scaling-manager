@@ -1956,18 +1956,22 @@ It never changes a scaling decision.
 The `WARNING: load imbalanced` log line states the `idleAfterReady` and
 `sustainFor` in force.
 
-### `slo` (observe only)
+### `slo` (observes, bounds decode packing)
 
 Latency targets, and the analyzer that judges a model against them. **On this
-release it reports and does not decide**: replica counts still come from the
-saturation analyzer. A policy written now stays observe-only when enforcement
-ships, because enforcing will need an explicit `slo.mode: enforce`. Use it to
-see whether a tier meets an SLO before anything sizes a fleet from one.
+release the analyzer reports and does not decide**: replica counts still come
+from the saturation analyzer. One exception: a `tpot` target bounds how far
+saturation packs a decode replica, so a decode role can be sized larger
+([below](#how-a-tpot-target-bounds-decode-packing)). Enforcing the targets
+beyond that will need an explicit `slo.mode: enforce`. Use the analyzer to see
+whether a tier meets an SLO before anything sizes a fleet from one.
 Experimental: its figures have not been checked against a live router yet.
 
-One thing about turning it on **can** change scaling: a tier that lists
+Two things about turning it on **can** change scaling. A tier that lists
 `analyzers:` replaces the list it would inherit, and with it saturation's
-`score` and `parameters:`, unless it writes them out (step 3 below).
+`score` and `parameters:`, unless it writes them out (step 3 below). And a
+`tpot` target bounds how many requests saturation packs onto a decode
+replica, as above.
 
 **Before you start**
 
@@ -2176,7 +2180,9 @@ got over a whole run, score their own per-request records.
   alone is logged once as `SLO policy is half-configured`, and is not an error.
 - **Keep `saturation` in the list.** The list replaces the inherited one, and
   saturation is what sizes the fleet. Left out, it still runs but sizes
-  nothing, and since `slo` only observes, the model would hold where it is.
+  nothing, and since `slo` only observes (a `tpot` target bounds what
+  saturation sizes, and nothing sizes without it), the model would hold where
+  it is.
 - **The block is replaced whole by an override**, not merged per objective: a
   per-model entry that sets only `ttft` has no `tpot`.
 - **A model gets the tier through its variants** (each names one in its
@@ -2211,6 +2217,42 @@ got over a whole run, score their own per-request records.
 - **Non-streaming requests are not counted**, and TPOT only counts responses
   that carry `usage`. `llmsm_slo_window_requests` is the judged count; nothing
   publishes the share of the model's traffic it is.
+
+#### How a TPOT target bounds decode packing
+
+Saturation sizes a decode replica by how many tokens it can hold while busy.
+Nothing in that figure prices latency, and the more a decode replica holds,
+the slower each token. When saturation counts a decode replica as able to
+hold many requests, it orders fewer replicas and packs each one fuller. On a
+GPU run, one decode replica carried the requests three had held, and TPOT p90
+rose from 12 to 15-16 ms.
+
+With a `tpot` target set and `slo` listed, saturation holds each decode
+replica at the KV-cache fill where its variant's ITL line (below) reaches the
+target, wherever it trusts that line. A fill the line reaches outside the ITL
+band is held at the band's edge, where the line was fitted. At the lower edge
+(0.15 by default) a replica is held at under a fifth of the KV the 0.80
+threshold allows, so a tight target can ask for up to about five times the
+decode replicas. A target at or under the line's intercept, which no number
+of replicas meets, bounds nothing (`target-unreachable`).
+
+- **Only on a line the variant measured.** A line borrowed from another
+  variant, or resting on the default intercept, bounds nothing, and
+  saturation sizes as before. `itlBoundWhy` on the
+  `k2-itl-bound` line names the reason.
+- **Saturation's own line.** Saturation fits its own ITL line. The SLO
+  analyzer's `llmsm_slo_fill` comes from a fit of its own, so the two fills
+  can differ.
+- **Decode only.** Prefill and aggregated variants are not bound.
+- **The mean, not the busiest replica.** The line is fitted on the mean fill,
+  so a replica above the mean runs above the target.
+- **Where to read it.** At `--v=3`, each decode replica of a model with a
+  `tpot` target logs a `k2-itl-bound` line. `k2BatchBound` is `itl` when the target held it and
+  `none` when it did not. `k2Unbounded` and `k2` are the figure before and
+  after. `nSteady` and `nITL` are requests per engine rank under the batch
+  flags and under the target, and `itlTargetFill` is the fill.
+- **No target, no bound.** Without a `tpot` target, or with `slo` unlisted,
+  nothing changes.
 
 **Details: what the TPOT target would ask of each variant**
 
@@ -2318,7 +2360,8 @@ registration order and invokes its `Analyze` method.
 > saturation runs for every model, listed or not, and when it is not listed
 > it only supplies the units and the variants. A policy with no `analyzers`
 > section lists saturation alone. `slo` never sizes anything: it only
-> observes.
+> observes. Its `tpot` target bounds how far saturation packs a decode
+> replica ([how a TPOT target bounds decode packing](#how-a-tpot-target-bounds-decode-packing)).
 >
 > - **Nothing listed can size a role.** With saturation unlisted, the role
 >   holds where it is: no scale-up, no scale-down. On a P/D model the other
@@ -2402,7 +2445,9 @@ post-merge. Either way saturation alone sizes the model.
 >   then does not grow either, since decode grown against a frozen prefill
 >   is capacity prefill cannot feed. Add `saturation` to the list to keep
 >   saturation sizing the model.
-> - **`slo` listed beside `saturation`.** No change: `slo` only observes.
+> - **`slo` listed beside `saturation`.** `slo` only observes, but a `tpot`
+>   target bounds how far saturation packs a decode replica
+>   ([how a TPOT target bounds decode packing](#how-a-tpot-target-bounds-decode-packing)).
 > - **Dashboards and alerts on `llmsm_analyzer_*`.** These series gain
 >   `analyzer_name="CompositeSignal"`. A panel or alert that sums across
 >   `analyzer_name` now counts demand at least twice; filter it on

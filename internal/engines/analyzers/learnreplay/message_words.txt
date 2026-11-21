@@ -536,6 +536,7 @@ abort
 about
 above
 above-band
+above-band-line
 above-context
 aboveBand
 aboveBandHeld
@@ -677,6 +678,7 @@ backlogGrowth.fraction
 backlogGrowth.minRequests
 backlogRequests
 bad
+bad-band
 balanced
 band
 bare
@@ -989,6 +991,7 @@ deduced
 deepep_low_latency
 deeper
 default
+default-intercept
 defaultPolicy
 defaults
 defect
@@ -1526,6 +1529,7 @@ itlBandFloors
 itlBaselineStash
 itlBaselines
 itlBeta
+itlBoundWhy
 itlCycles
 itlFills
 itlForgotten
@@ -1538,6 +1542,10 @@ itlReadsEngines
 itlRefused
 itlResidualPct
 itlSamples
+itlTargetClamp
+itlTargetFill
+itlTargetSec
+itlTargetSource
 itlWindows
 itlWithheldLogged
 itlZero
@@ -1563,11 +1571,13 @@ k1-bound
 k1-memory
 k1MemoryBound
 k2
+k2-batch-held-at-itl-target
 k2-compute
 k2-decision
 k2-decode-budget-at-computed-prompt
 k2-first-reading-waits-for-a-second
 k2-held-dropped
+k2-itl-bound
 k2-key-bucket-held
 k2-key-bucket-moved
 k2-obs-admitted
@@ -1576,6 +1586,7 @@ k2-unsettled-joined
 k2-unsettled-window
 k2-waits-after-a-rollout
 k2-waits-after-controller-restart
+k2BatchBound
 k2Borrows
 k2ComputeBound
 k2Cycles
@@ -1590,6 +1601,7 @@ k2Settle.maxRise
 k2Settle.rateFraction
 k2Source
 k2Stash
+k2Unbounded
 k2WindowArgs
 k2stash|
 k2|
@@ -1956,6 +1968,8 @@ n/a
 nDecErrPct
 nDecGPS
 nDecModel
+nITL
+nSteady
 name
 named
 names
@@ -2020,6 +2034,7 @@ no-replicas
 no-seqs
 no-series
 no-shape
+no-tpot-target
 no-waiting
 noDemandFor
 noITL
@@ -2049,6 +2064,7 @@ noout
 nor
 not
 not-actionable
+not-decode
 not-detected
 not-learned
 not-ready
@@ -2097,6 +2113,7 @@ one
 one-minute
 one-pod
 one-sided
+one-sided-line
 ones
 only
 onset
@@ -2206,6 +2223,7 @@ per-model
 per-replica
 per-request
 per-role
+per-step-line
 perModel
 perReplicaCapacity
 perReplicaRate
@@ -2814,6 +2832,7 @@ slo-itl-tier-hysteresis
 slo-itl-waits-after-controller-restart
 slo-kv-per-request-output-dispersion
 slo-model
+slo-tpot
 slo-transient
 slo-ttft
 slo-ttft-decode-gate-charge
@@ -2982,6 +3001,7 @@ taken
 taken-by-another-borrower
 takes
 target
+target-unreachable
 targetFill
 targetReduce
 targetReplicas
