@@ -126,8 +126,10 @@ const SwitchKVPerRequestHitsResident = "kv-per-request-hits-resident"
 // hit takes a reading too. Off, as SwitchKVPerRequestHitsResident prices it.
 // It needs SwitchKVPerRequestHitsResident on, and moves nothing without it.
 //
-// Off from the constructor: the controller keeps the bound until a GPU check
-// on a prefix-heavy P/D workload shows decode is not under-sized with it gone.
+// On from the constructor (v0.12.3). A GPU check on a P/D decode with no KV
+// beyond its context asked for decode replicas within one of off at every
+// load; the case above the context rests on the unit tests and the replay.
+// A replay turns it off.
 const SwitchKVPerRequestAboveContext = "kv-per-request-above-context"
 
 // Which bound, if any, a reading was held to (withResidentKV), as derived-mu

@@ -27,6 +27,14 @@ func aboveOn(t *testing.T) func(*SaturationAnalyzer) {
 	}
 }
 
+// aboveOff turns the switch off, as a replay does: the switch is on from the
+// constructor.
+func aboveOff(t *testing.T) func(*SaturationAnalyzer) {
+	return func(a *SaturationAnalyzer) {
+		require.NoError(t, a.SetSwitchesForReplay(map[string]bool{"kv-per-request-above-context": false}))
+	}
+}
+
 // aboveOnSGLang is aboveOn on an SGLang engine.
 func aboveOnSGLang(t *testing.T) func(*SaturationAnalyzer) {
 	return func(a *SaturationAnalyzer) {
@@ -52,7 +60,7 @@ func TestKVAboveContext_AReadingAboveTheContextIsPricedAsRead(t *testing.T) {
 	assert.Equal(t, "above-context", on["residentKVBound"])
 	assert.Equal(t, "above-context", on["residentKVBoundFleet"])
 
-	off := hitMu(t, cachingRow(0.9, 30), nil)
+	off := hitMu(t, cachingRow(0.9, 30), aboveOff(t))
 	assert.InDelta(t, 1050, off["kvReqPerSeq"], 1e-9)
 	assert.Equal(t, "upper", off["residentKVBound"])
 	assert.Less(t, on["rate"], off["rate"], "more KV a request, fewer sequences, a lower mu")
@@ -80,7 +88,7 @@ func TestKVAboveContext_TheCountGateTakesTheReading(t *testing.T) {
 	assert.Equal(t, "above-context", on["residentKVBound"])
 	assert.InDelta(t, 68_000.0/3000, on["seqs"], 1e-9)
 
-	off := hitMu(t, cachingRow(0.3, 10), nil)
+	off := hitMu(t, cachingRow(0.3, 10), aboveOff(t))
 	assert.InDelta(t, 550, off["kvReqPerSeq"], 1e-9)
 	assert.Equal(t, "no-reading", off["residentKVBound"])
 }
@@ -110,7 +118,7 @@ func TestKVAboveContext_FewLongRequestsBelowTheContextAreNoReading(t *testing.T)
 	above := hitMu(t, row(2_000_000, 8, 220_000), aboveOn(t))
 	assert.Equal(t, residentBoundAboveContext, above["residentKVBound"])
 	assert.InDelta(t, 220_000, above["kvReqPerSeq"], 1e-6)
-	off := hitMu(t, row(2_000_000, 8, 220_000), nil)
+	off := hitMu(t, row(2_000_000, 8, 220_000), aboveOff(t))
 	assert.Equal(t, residentBoundNoReading, off["residentKVBound"])
 	assert.InDelta(t, 10_500, off["kvReqPerSeq"], 1e-6)
 }
@@ -137,7 +145,7 @@ func TestKVAboveContext_RequestsPullingTheirKVHoldIt(t *testing.T) {
 	on := hitMu(t, rm, aboveOn(t))
 	assert.Equal(t, residentBoundLower, on["residentKVBound"])
 	assert.InDelta(t, 10_500, on["kvReqPerSeq"], 1e-6, "not 85,500")
-	off := hitMu(t, rm, nil)
+	off := hitMu(t, rm, aboveOff(t))
 	assert.Equal(t, residentBoundNoHit, off["residentKVBound"])
 
 	// Requests waiting for capacity hold no KV: with all 30 of them waiting
@@ -156,7 +164,7 @@ func TestKVAboveContext_AFewLongPromptsAreNoReading(t *testing.T) {
 	on := hitMu(t, noHitRow(500_000, 3, 121_500), aboveOn(t))
 	assert.Equal(t, residentBoundNoReading, on["residentKVBound"])
 	assert.InDelta(t, 10_500, on["kvReqPerSeq"], 1e-6, "not 40,500")
-	off := hitMu(t, noHitRow(500_000, 3, 121_500), nil)
+	off := hitMu(t, noHitRow(500_000, 3, 121_500), aboveOff(t))
 	assert.Equal(t, residentBoundNoHit, off["residentKVBound"])
 
 	// Eight such requests are read as they are: the scrape cannot tell a
@@ -172,7 +180,7 @@ func TestKVAboveContext_ALaggingRunningCountIsNoReading(t *testing.T) {
 	on := hitMu(t, noHitRow(500_000, 6, 210_000), aboveOn(t))
 	assert.Equal(t, residentBoundNoReading, on["residentKVBound"])
 	assert.InDelta(t, 10_500, on["kvReqPerSeq"], 1e-6, "not 35,000")
-	off := hitMu(t, noHitRow(500_000, 6, 210_000), nil)
+	off := hitMu(t, noHitRow(500_000, 6, 210_000), aboveOff(t))
 	assert.Equal(t, residentBoundNoHit, off["residentKVBound"])
 }
 
@@ -224,7 +232,7 @@ func TestKVAboveContext_ANoHitShapeIsReadAboveItsContext(t *testing.T) {
 	assert.InDelta(t, 1050, held["kvReqPerSeq"], 1e-9, "1000 a request is below the context: held at it")
 	assert.Equal(t, residentBoundLower, held["residentKVBound"])
 
-	off := hitMu(t, noHit, nil)
+	off := hitMu(t, noHit, aboveOff(t))
 	assert.InDelta(t, 1050, off["kvReqPerSeq"], 1e-9)
 	assert.Equal(t, residentBoundNoHit, off["residentKVBound"])
 }
@@ -240,9 +248,16 @@ func TestKVAboveContext_NothingWithoutHitsResident(t *testing.T) {
 	assert.Equal(t, residentBoundOff, got["residentKVBound"])
 }
 
-// The controller keeps the bound: the switch is off in a new analyzer.
-func TestKVAboveContext_OffFromTheConstructor(t *testing.T) {
+// The controller prices a reading above the context as read: the switch is
+// on in a new analyzer, and an analyzer with no replay switches set prices
+// TestKVAboveContext_AReadingAboveTheContextIsPricedAsRead's 3000 tokens a
+// request as read, not at the context of 1050.
+func TestKVAboveContext_OnFromTheConstructor(t *testing.T) {
 	fields := NewSaturationAnalyzer(capacity.NewStore()).switchFields()
 	require.Contains(t, fields, "kv-per-request-above-context")
-	assert.False(t, *fields["kv-per-request-above-context"])
+	assert.True(t, *fields["kv-per-request-above-context"])
+
+	got := hitMu(t, cachingRow(0.9, 30), nil)
+	assert.InDelta(t, 3000, got["kvReqPerSeq"], 1e-9, "priced as read, not at the context")
+	assert.Equal(t, "above-context", got["residentKVBound"])
 }
