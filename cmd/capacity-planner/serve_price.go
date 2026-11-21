@@ -72,7 +72,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
 		serveSelfCheck: req.SelfCheck != nil && *req.SelfCheck,
 		seed:           whatif.DefaultResampling().Seed, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
-		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
+		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
 		src = *req.Source
@@ -400,7 +400,7 @@ func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
 	f := answerFlags{question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant, hint: s.hint, hintSet: true,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{"ttft": true, "headroom": true}, warn: io.Discard,
 		decode: k.Decode, prefill: k.Prefill, headroom: k.Headroom, priceRouterWait: whatif.DefaultPriceRouterWait,
-		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: s.imbalanceAcrossCounts}
+		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: s.imbalanceAcrossCounts}
 	set := func(name string) { f.set[name] = true }
 	if k.PromptTokens > 0 {
 		f.inputTokens = k.PromptTokens
@@ -444,6 +444,9 @@ func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
 		f.arrivalCV2 = *k.ArrivalCV2
 		set("arrival-cv2")
 	}
+	if err := f.assumeFlowControl(a); err != nil {
+		return nil, apiError(err)
+	}
 	if err := f.checkTTFT(); err != nil {
 		return nil, apiError(err)
 	}
@@ -465,6 +468,31 @@ func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
 		sf.ratio = f.ratioFor(s.st, k.TPOTPercentile)
 	}
 	return sf, nil
+}
+
+// assumeFlowControl sets the flags assume's flow control stands for: the
+// CLI's --flow-control, and --router-wait-in-prefill or --price-router-wait,
+// each marked set as the CLI's parse marks it, so a switch that is on puts
+// the figures outside the validated envelope there too (statedOutside).
+func (f *answerFlags) assumeFlowControl(a whatifapi.Assume) error {
+	if err := a.CheckFlowControl(); err != nil {
+		return usageError{err}
+	}
+	if a.FlowControl != "" {
+		f.flowControl = a.FlowControl
+		f.set["flow-control"] = true
+	}
+	switch a.RouterWait {
+	case whatifapi.RouterWaitNone:
+		f.routerWaitInPrefill, f.priceRouterWait = false, false
+	case whatifapi.RouterWaitInPrefill:
+		f.routerWaitInPrefill, f.priceRouterWait = true, false
+		f.set["router-wait-in-prefill"] = true
+	case whatifapi.RouterWaitGateStage:
+		f.priceRouterWait, f.routerWaitInPrefill = true, false
+		f.set["price-router-wait"] = true
+	}
+	return nil
 }
 
 // servedFleet is one fleet, priced figure by figure as the CLI prices it. It

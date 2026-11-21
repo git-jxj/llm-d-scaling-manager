@@ -156,7 +156,7 @@ const minPromptCV = 1e-4
 const MaxPSPromptCV = 0.25
 
 // DefaultPriceRouterWait is TTFTFleet.PriceRouterWait's default, for the CLI
-// (--price-router-wait), the planner API and the SLO analyzer
+// (--price-router-wait), the planner API (assume.routerWait gateStage) and the SLO analyzer
 // (slo.SwitchTTFTRouterWait) alike: off, so a TTFT past the prefill onset is
 // flagged AboveFlowControlOnset, a miss. On (opt-in) prices the gate as a
 // stage (ttft_gate.go). It reads at least 0.9 of the client at the mean, p90
@@ -164,17 +164,26 @@ const MaxPSPromptCV = 0.25
 // held, and moves no figure below the onsets
 // (TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient); off, the price
 // reads short there (TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep).
-// One held step is not enough to make it the default: a cluster staircase
-// with several held steps between the onset and MaxRouterWaitKneeShare of
-// the knee gates that.
+// One held step is not enough to make it the default, and the backtests of
+// four runs' flow-control-on phases (router v0.11.0, 41 steps past the
+// prefill onset) keep it off: the gate there either held or collapsed on its
+// TTL, at nearly one rate, so at held steps the stage read up to 5.1 times
+// the router's TTFT, at all 15 collapses it still read more than 20 % short,
+// and at 2 of the 26 held steps too (docs/developer-guide/testing.md, "Flow
+// control past the prefill onset, backtested"). Router v1.0.0 releases no
+// burst to one pod, so the stage is not its model.
 const DefaultPriceRouterWait = false
 
 // DefaultRouterWaitInPrefill is TTFTFleet.RouterWaitInPrefill's default, for
 // the CLI (--router-wait-in-prefill): off, so a TTFT past the prefill onset
-// is flagged AboveFlowControlOnset, a miss. The planner API and the SLO
-// analyzer have no switch for it. Measured on router v1.0.0 at six bursty
-// steps of one fleet (Ca^2 4, up to 0.88 of the prefill knee); no Poisson
-// step past the onset has been run on v1.0.0, so it is not the default.
+// is flagged AboveFlowControlOnset, a miss. The planner API states it as
+// assume.routerWait inPrefill; the SLO analyzer has no switch for it.
+// Measured on router v1.0.0 at six bursty steps of one fleet (Ca^2 4, up to
+// 0.88 of the prefill knee); no Poisson step past the onset has been run on
+// v1.0.0, and those recordings hold no saturation cycle, so no backtest
+// replays them. The planner cannot read the router's version, and on v0.11.0
+// the backtests read this figure more than 20 % short at 18 of 41 steps past
+// the onset, 15 of them where the gate collapsed: so it is not the default.
 const DefaultRouterWaitInPrefill = false
 
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
@@ -196,7 +205,11 @@ const MaxRouterWaitKneeShare = 0.9
 // DefaultPSOnsets is TTFTFleet.PSOnsets's default, for the CLI
 // (--ps-onsets) and the SLO analyzer (slo.SwitchTTFTPSOnsets) alike: off.
 // The placement it switches to is derived, not measured: the second
-// staircase could not tell it from the first-come one.
+// staircase could not tell it from the first-come one, and on the Qwen3-32B
+// staircase, at the engine's own running cap, it put bucket C's onset past a
+// step that measured a wait of seconds, where the first-come onset fell
+// between the last step with no wait and the first with one
+// (TestPSOnsets_TheQ32CrossingKeepsThemOff).
 const DefaultPSOnsets = false
 
 // DefaultChargeDecodeGate is TTFTFleet.ChargeDecodeGate's default, for the
@@ -1108,7 +1121,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	pk := pl.pf.knee()
 	out := TTFT{PrefillKnee: pk, Onsets: pl.onsets, Flags: append([]Flag(nil), pl.flags...)}
 	if rate >= pk {
-		u := refuse(Saturated, fmt.Sprintf("%g r/s at or above the prefill knee %g r/s", rate, pk))
+		u := refuse(Saturated, fmt.Sprintf("%.4g r/s at or above the prefill knee %.4g r/s", rate, pk))
 		return priced{u: &u}
 	}
 	// gated is the flow-control gate priced as a stage (ttft_gate.go): with
@@ -1118,7 +1131,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	var gated bool
 	if pl.fc.State == FlowControlOn {
 		if pl.d != nil && rate >= pl.onsets.Decode {
-			u := refuse(AboveDecodeOnset, fmt.Sprintf("%g r/s at or above the decode gate's onset %g r/s", rate, pl.onsets.Decode))
+			u := refuse(AboveDecodeOnset, fmt.Sprintf("%.4g r/s at or above the decode gate's onset %.4g r/s", rate, pl.onsets.Decode))
 			return priced{u: &u}
 		}
 		if rate >= pl.onsets.Prefill {
@@ -1204,7 +1217,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		var tail float64
 		wait, tail = pf.engineWait(rho)
 		if rho > 0 && (!Finite(tail) || !(tail > 0)) {
-			u := refuse(Saturated, fmt.Sprintf("no finite wait tail at %g r/s (decay rate %g)", rate, tail))
+			u := refuse(Saturated, fmt.Sprintf("no finite wait tail at %.4g r/s (decay rate %.3g)", rate, tail))
 			return priced{u: &u}
 		}
 		out.WaitScale = 1 / tail
@@ -1250,7 +1263,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		}
 		k, ok := d.fillAtReplicaRate(rate / float64(d.Replicas))
 		if !ok {
-			u := refuse(Saturated, fmt.Sprintf("no decode fill carries %g r/s", rate))
+			u := refuse(Saturated, fmt.Sprintf("no decode fill carries %.4g r/s", rate))
 			return priced{u: &u}
 		}
 		fill := k
@@ -1340,7 +1353,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		}
 		floored(&mean, &oldMean, a+pl.pf.own().mean+floorStep, oldMeanFloor)
 		if !Finite(mean) {
-			u := refuse(Saturated, fmt.Sprintf("no finite mean TTFT at %g r/s", rate))
+			u := refuse(Saturated, fmt.Sprintf("no finite mean TTFT at %.4g r/s", rate))
 			return priced{u: &u}
 		}
 		out.Seconds, out.Independent = mean, mean
@@ -1356,11 +1369,11 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	v, beta := split(b1, dec, q)
 	if !Finite(v) {
 		// Only within rounding of a knee, where the wait's scale overflows.
-		u := refuse(Saturated, fmt.Sprintf("no finite TTFT at %g r/s", rate))
+		u := refuse(Saturated, fmt.Sprintf("no finite TTFT at %.4g r/s", rate))
 		return priced{u: &u}
 	}
 	if !Finite(a + v + first) {
-		u := refuse(InvalidInput, fmt.Sprintf("no finite TTFT at %g r/s: a %g s, decode %g s", rate, a, first))
+		u := refuse(InvalidInput, fmt.Sprintf("no finite TTFT at %.4g r/s: a %g s, decode %g s", rate, a, first))
 		return priced{u: &u}
 	}
 	out.Seconds, out.DecodeShare = a+v+first, beta

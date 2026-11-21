@@ -417,8 +417,8 @@ type SaturationAnalyzer struct {
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	kvHitsResident bool
 	// kvAboveContext is SwitchKVPerRequestAboveContext (issue
-	// llm-d-incubation/llm-d-scaling-manager#188): off from the constructor;
-	// only a replay turns it on (SetSwitchesForReplay).
+	// llm-d-incubation/llm-d-scaling-manager#188): on from the constructor;
+	// a replay turns it off (SetSwitchesForReplay).
 	kvAboveContext bool
 	// itlFitsAggregated is SwitchITLFitsAggregated (ev-shindin/llm-scaling-manager#432): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
@@ -529,10 +529,18 @@ type SaturationAnalyzer struct {
 	// prefillQueueByCapacity is SwitchPrefillQueueByCapacity: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillQueueByCapacity bool
+	// muAtStepBudget is SwitchMuAtStepBudget, and plannerCapAtStepBudget
+	// SwitchPlannerCapAtStepBudget (step_budget_cap.go): both off from the
+	// constructor; the second is planner-only.
+	muAtStepBudget, plannerCapAtStepBudget bool
 	// prefillFBusyMinutes is SwitchPrefillFBusyMinutes, and
 	// itlHoldSteadySlope SwitchITLHoldSteadySlope: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillFBusyMinutes, itlHoldSteadySlope bool
+	// itlLineAtFloor is SwitchITLLineAtFloor: off from the constructor,
+	// planner-only; the analyzer accepts it for the planner's replay
+	// (learnreplay.StatesFrom reads it) and reads it nowhere.
+	itlLineAtFloor bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor
@@ -815,6 +823,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		batchCapZeroReplica:    true,
 		kvOutputDispersion:     true,
 		kvHitsResident:         true,
+		kvAboveContext:         true,
 		itlFitsAggregated:      true,
 		itlAggShapeTerm:        true,
 		itlAggSizes:            true,
