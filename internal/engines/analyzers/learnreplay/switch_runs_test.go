@@ -1116,6 +1116,14 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// golden replay runs it off, and off alone from all on moves nothing.
 	// Its unit tests hold it (heldBy).
 	saturation.SwitchDecodeOwesRouterBacklog: nil,
+	// llm-d-incubation/llm-d-scaling-manager#302 holds the derived mu, and
+	// the planner's batch cap, to the batch the step budget runs: both off
+	// from the constructor, so every golden replay runs them off, and off
+	// alone from all on moves nothing. On, they move nothing either: no
+	// committed recording runs a budget under its cap times 1 + k. Their unit
+	// tests hold them (heldBy).
+	saturation.SwitchMuAtStepBudget:         nil,
+	saturation.SwitchPlannerCapAtStepBudget: nil,
 	// llm-d-incubation/llm-d-scaling-manager#169 item 1: the ITL line's B
 	// pinned through the floor below the band while unlearned. Off from the
 	// constructor, so every golden replay runs it off, and off alone from
@@ -1408,6 +1416,18 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestDecodeRouterBacklog_DecodeBoundPDIsChargedTheQueue"},
 		{"../saturation", "TestDecodeRouterBacklog_PrefillBoundIsUnchanged"},
 		{"../saturation", "TestDecodeRouterBacklog_OffFromTheConstructor"},
+	},
+	// llm-d-incubation/llm-d-scaling-manager#302: each case runs the switch
+	// on and off and asserts both.
+	saturation.SwitchMuAtStepBudget: {
+		{"../saturation", "TestStepBudgetCap_OffFromTheConstructor"},
+		{"../saturation", "TestStepBudgetCap_DerivedMuAtTheBudgetsBatch"},
+		{"../saturation", "TestStepBudgetCap_DerivedMuAtSpeculativeTokens"},
+		{"../saturation", "TestStepBudgetCap_DerivedMuThroughAnalyze"},
+	},
+	saturation.SwitchPlannerCapAtStepBudget: {
+		{"../saturation", "TestStepBudgetCap_OffFromTheConstructor"},
+		{"../saturation", "TestStepBudgetCap_PlannerCapAtTheBudgetsBatch"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
 	// asserts both, and the first holds all six off from the constructor.
