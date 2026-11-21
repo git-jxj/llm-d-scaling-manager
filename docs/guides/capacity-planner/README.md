@@ -568,7 +568,10 @@ It replays the recording once and answers, for each shape and load:
   (opt-in), it is read off the pod counts that were learned, or 1.15 with
   none. The `checks` lines give each fleet tried and its numbers.
 - **Per shape:** utilization at the load (decode KV fill, batch slots, wait
-  probability; prefill utilization pooled and on the busiest pod), the
+  probability, and on a P/D fleet a `KV pull` row: the pull's load on each
+  decode pod, which the KV fill leaves out, and whether it is the larger wait
+  in TTFT, where the decode count, not the prefill count, moves TTFT;
+  prefill utilization pooled and on the busiest pod), the
   prefill, decode and fleet knees in req/s and output tok/s with what binds
   each, the operating point, the highest rate that holds the targets, and
   the SLO against each load. `e2e mean (sum)` is TTFT mean + (OL - 1) x TPOT

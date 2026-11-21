@@ -2,7 +2,6 @@ package whatif
 
 import (
 	"math"
-	"slices"
 )
 
 // The censored fit's search range for the lognormal's sigma: a TPOT
@@ -12,23 +11,25 @@ const (
 	censoredSigmaHi = 2.5
 )
 
-// TPOTRatioCensored learns R_q as TPOTRatioFromWindows does, but reads each
-// window by interval-censored maximum likelihood rather than at the q
-// bucket's upper edge (#279): a lognormal with the window's own mean
-// (_sum/_count) is fitted to its bucket counts, each count the mass between
-// two edges, and the window's ratio is that lognormal's q-quantile over its
-// mean, exp(sigma*z_q - sigma^2/2). The upper edge stays the ratio's top:
-// a window never reads above the edge reading (readWindow). R_q is the
-// median of the windows' ratios, with no order-statistic margin: the fit
-// already reads the bucket's mass, not its edge. The flags and the
-// refusals are TPOTRatioFromWindows's, and ByFill is learned the same way
-// by fill.
+// TPOTRatioCensored learns R_q as TPOTRatioFromWindows does, but reads it
+// by interval-censored maximum likelihood rather than at the q bucket's
+// upper edge (#279). Each window is a lognormal with its own mean
+// (_sum/_count) and one log-spread sigma shared by every window; each bucket
+// count is the mass between two edges, and sigma is the one that best
+// explains every window's counts at once. R_q is that lognormal's
+// q-quantile over its mean, exp(sigma*z_q - sigma^2/2), with no
+// order-statistic margin, never above the edge reading. One window does
+// not identify sigma where every request sits in one bucket (the
+// likelihood rises as sigma falls); pooled, the windows that spill into the
+// next bucket set it. With no window over two buckets the edge reading
+// stands. The flags and the refusals are TPOTRatioFromWindows's, and ByFill
+// is learned the same way by fill.
 func TPOTRatioCensored(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, *Unanswerable) {
 	edge, flags, refused := TPOTRatioFromWindows(windows, q)
 	if refused != nil {
 		return edge, flags, refused
 	}
-	global, ok := censoredMedian(windows, q)
+	global, ok := censoredPooled(windows, q)
 	if !ok {
 		return edge, flags, nil
 	}
@@ -44,7 +45,7 @@ func TPOTRatioCensored(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, *Una
 				}
 			}
 			r.ByFill[i].Value = r.Value
-			if v, ok := censoredMedian(in, q); ok && !b.Thin {
+			if v, ok := censoredPooled(in, q); ok && !b.Thin {
 				r.ByFill[i].Value = max(1, min(v, b.Learned))
 			}
 		}
@@ -56,67 +57,69 @@ func TPOTRatioCensored(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, *Una
 	return r, flags, nil
 }
 
-// censoredMedian is the median of the windows' censored ratios, ok false
-// where no window fits.
-func censoredMedian(windows []TPOTWindow, q float64) (float64, bool) {
-	var rs []float64
-	for _, w := range windows {
-		if r, ok := censoredWindow(w, q); ok {
-			rs = append(rs, r)
-		}
-	}
-	if len(rs) == 0 {
-		return 0, false
-	}
-	slices.Sort(rs)
-	n := len(rs)
-	if n%2 == 1 {
-		return rs[n/2], true
-	}
-	return (rs[n/2-1] + rs[n/2]) / 2, true
+// censoredCell is a bucket's count between two edges.
+type censoredCell struct{ lo, hi, n float64 }
+
+// censoredWindow is a window's mean and its counts by bucket; ok false for
+// a window with no observation, no positive mean, or buckets that do not
+// read.
+type censoredWindow struct {
+	mean  float64
+	cells []censoredCell
 }
 
-// censoredWindow is one window's q-quantile over its mean, from the
-// lognormal with the window's mean that best explains its bucket counts,
-// capped at the edge reading; ok false for a window with no observation,
-// no positive mean, or buckets that do not read.
-func censoredWindow(w TPOTWindow, q float64) (float64, bool) {
+// censoredCells reads a window for the fit.
+func censoredCells(w TPOTWindow, q float64) (censoredWindow, bool) {
 	if !(w.Count > 0) || !(w.Sum > 0) || len(w.Buckets) == 0 {
-		return 0, false
+		return censoredWindow{}, false
 	}
-	rd, empty, err := readWindow(w, q)
-	if err != nil || empty {
-		return 0, false
+	if _, empty, err := readWindow(w, q); err != nil || empty {
+		return censoredWindow{}, false
 	}
-	mean := w.Sum / w.Count
-	type cell struct{ lo, hi, n float64 }
-	var cells []cell
+	cw := censoredWindow{mean: w.Sum / w.Count}
 	lo, prev, running := 0.0, 0.0, 0.0
 	for _, b := range w.Buckets {
 		running = max(running, b.Count)
 		if n := running - prev; n > 0 {
-			cells = append(cells, cell{lo: lo, hi: b.UpperEdge, n: n})
+			cw.cells = append(cw.cells, censoredCell{lo: lo, hi: b.UpperEdge, n: n})
 		}
 		lo, prev = b.UpperEdge, running
 	}
-	if len(cells) == 0 {
+	return cw, len(cw.cells) > 0
+}
+
+// censoredPooled is the q-quantile over the mean of the lognormal whose
+// shared sigma best explains every window's counts, each at its own mean;
+// ok false where no window spreads over two buckets, which alone identify
+// sigma.
+func censoredPooled(windows []TPOTWindow, q float64) (float64, bool) {
+	var ws []censoredWindow
+	spread := false
+	for _, w := range windows {
+		if cw, ok := censoredCells(w, q); ok {
+			ws = append(ws, cw)
+			spread = spread || len(cw.cells) > 1
+		}
+	}
+	if !spread {
 		return 0, false
 	}
 	ll := func(sigma float64) float64 {
-		mu := math.Log(mean) - sigma*sigma/2
-		cdf := func(x float64) float64 {
-			switch {
-			case x <= 0:
-				return 0
-			case math.IsInf(x, 1):
-				return 1
-			}
-			return 0.5 * math.Erfc(-(math.Log(x)-mu)/(sigma*math.Sqrt2))
-		}
 		s := 0.0
-		for _, c := range cells {
-			p := cdf(c.hi) - cdf(c.lo)
-			s += c.n * math.Log(max(p, 1e-300))
+		for _, w := range ws {
+			mu := math.Log(w.mean) - sigma*sigma/2
+			cdf := func(x float64) float64 {
+				switch {
+				case x <= 0:
+					return 0
+				case math.IsInf(x, 1):
+					return 1
+				}
+				return 0.5 * math.Erfc(-(math.Log(x)-mu)/(sigma*math.Sqrt2))
+			}
+			for _, c := range w.cells {
+				s += c.n * math.Log(max(cdf(c.hi)-cdf(c.lo), 1e-300))
+			}
 		}
 		return s
 	}
@@ -145,5 +148,5 @@ func censoredWindow(w TPOTWindow, q float64) (float64, bool) {
 	if !Finite(r) || !(r > 0) {
 		return 0, false
 	}
-	return min(r, rd.ratio), true
+	return r, true
 }

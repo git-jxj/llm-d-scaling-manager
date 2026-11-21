@@ -3,8 +3,9 @@ package saturation
 // SwitchTPOTRatioCensored is the replay switch for the capacity planner's
 // R_q read by interval-censored maximum likelihood (whatif.TPOTRatioCensored)
 // rather than at the q bucket's upper edge plus an order-statistic margin
-// (whatif.TPOTRatioFromWindows): a lognormal with each window's own mean is
-// fitted to its bucket counts, the edge reading kept as its top (issue
+// (whatif.TPOTRatioFromWindows): a lognormal at each window's own mean, one
+// spread shared by every window, is fitted to the bucket counts, the edge
+// reading kept as its top (issue
 // llm-d-incubation/llm-d-scaling-manager#279). The analyzer accepts the
 // switch and does nothing with it: R_q is the planner's reading of the TPOT
 // windows its replay collects (learnreplay.State.TPOTRatioCensored), and the

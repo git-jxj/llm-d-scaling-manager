@@ -61,3 +61,38 @@ func TestTPOTRatioCensored_RefusesAsTheEdgeReadDoes(t *testing.T) {
 	require.NotNil(t, u)
 	assert.Equal(t, TPOTQuantileUnbounded, u.Reason)
 }
+
+// A window whose every request sits in one bucket does not identify the
+// spread: the likelihood rises as sigma falls, and the fit read a ratio of
+// about 1 (on the Qwen3-32B shape-A phase, p90 TPOT 22 ms against a measured
+// 38). Such a window keeps the edge reading.
+func TestTPOTRatioCensored_OneBucketKeepsTheEdgeReading(t *testing.T) {
+	w := TPOTWindow{Sum: 1.5, Count: 100, SumMeasured: true,
+		Buckets: []HistogramBucket{{UpperEdge: 0.010, Count: 0}, {UpperEdge: 0.020, Count: 100}, {UpperEdge: math.Inf(1), Count: 100}}}
+	ws := []TPOTWindow{w, w, w}
+	edge, _, u := TPOTRatioFromWindows(ws, 0.9)
+	require.Nil(t, u)
+	got, _, u := TPOTRatioCensored(ws, 0.9)
+	require.Nil(t, u)
+	assert.InDelta(t, edge.Value, got.Value, 1e-12)
+	assert.Greater(t, got.Value, 1.05)
+}
+
+// Pooled, the windows that spill into the next bucket set the spread for
+// those that do not: one-bucket windows beside lognormal ones (sigma 0.25 at
+// a 15 ms mean on the router's 10, 20, 40 ms edges) read a ratio well above
+// 1 and never above the edge reading.
+func TestTPOTRatioCensored_PooledWindowsSetTheSpread(t *testing.T) {
+	edges := []float64{0.010, 0.020, 0.040, math.Inf(1)}
+	one := TPOTWindow{Sum: 1.5, Count: 100, SumMeasured: true,
+		Buckets: []HistogramBucket{{UpperEdge: 0.010, Count: 0}, {UpperEdge: 0.020, Count: 100}, {UpperEdge: 0.040, Count: 100}, {UpperEdge: math.Inf(1), Count: 100}}}
+	spill := lognormalWindow(100, 0.015, 0.25, edges)
+	ws := []TPOTWindow{one, one, one, one, spill, spill, spill}
+	edge, _, u := TPOTRatioFromWindows(ws, 0.9)
+	require.Nil(t, u)
+	got, _, u := TPOTRatioCensored(ws, 0.9)
+	require.Nil(t, u)
+	assert.Greater(t, got.Value, 1.1)
+	assert.Less(t, got.Value, trueRatio(0.9, 0.25)+1e-9)
+	assert.LessOrEqual(t, got.Value, edge.Value)
+}

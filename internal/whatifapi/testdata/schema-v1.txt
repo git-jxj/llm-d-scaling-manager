@@ -903,6 +903,10 @@ report.shapes[].utilization object
 report.shapes[].utilization.decode object
 report.shapes[].utilization.decode.bandTop number
 report.shapes[].utilization.decode.kvFill Figure
+report.shapes[].utilization.decode.kvPull object
+report.shapes[].utilization.decode.kvPull.setsTTFT boolean
+report.shapes[].utilization.decode.kvPull.utilization number
+report.shapes[].utilization.decode.kvPull.wait number
 report.shapes[].utilization.decode.slots int64
 report.shapes[].utilization.decode.slotsOccupied Figure
 report.shapes[].utilization.decode.waitProbability Figure

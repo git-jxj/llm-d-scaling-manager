@@ -769,7 +769,9 @@ function decodeUse(d) {
   if (!d || !d.kvFill || d.kvFill.value == null) return "decode " + refusalText(d && d.kvFill);
   const wait = d.waitProbability && d.waitProbability.value != null ? `, ${pct(d.waitProbability.value)} of requests wait for a slot` : "";
   const slots = d.slotsOccupied && d.slotsOccupied.value != null ? `, ${Math.round(d.slotsOccupied.value)} of ${d.slots} batch slots busy` : "";
-  return `decode KV ${pct(d.kvFill.value)} full (of ${pct(d.bandTop)} usable)${slots}${wait}`;
+  const pull = d.kvPull ? `; KV pull ${pct(d.kvPull.utilization)} busy per decode pod` +
+    (d.kvPull.setsTTFT ? ", the larger wait in TTFT (the decode count sets TTFT)" : "") : "";
+  return `decode KV ${pct(d.kvFill.value)} full (of ${pct(d.bandTop)} usable)${slots}${wait}${pull}`;
 }
 
 // prefillUse is prefill's utilization at the load, in words.

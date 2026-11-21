@@ -169,6 +169,7 @@ func TestPS_TheMeanIsTheStretchesAndTheWork(t *testing.T) {
 	pull := p.PromptTokens * p.TransferSecondsPerToken
 	rd := rate / 2 * pull
 	nearRel(t, "pull stretch", r.Parts.KVPullWait, pull*rd/(1-rd), 1e-12)
+	nearRel(t, "pull utilization", r.Parts.KVPullUtilization, rd, 1e-12)
 	sum := r.Parts.EngineWait + r.Parts.KVPullWait + r.Parts.OwnPrefill + r.Parts.DecodeWait + r.Parts.DecodeEngine + r.Parts.RouterHop
 	nearRel(t, "mean", r.Seconds, sum, 1e-12)
 }

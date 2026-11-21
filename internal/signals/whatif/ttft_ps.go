@@ -233,9 +233,10 @@ func (m stageMix) withWait(wait waitTail) (_ stageMix, ok bool) {
 }
 
 // psParts are the PS stages' mean stretches, in seconds: the prefill pods',
-// over the requests, and the KV pull's.
+// over the requests, and the KV pull's; pullRho is the pull stage's
+// utilization on one decode pod.
 type psParts struct {
-	prefill, pull float64
+	prefill, pull, pullRho float64
 }
 
 // psStages is the PS side of the plan at rate: the prefill pods, and with
@@ -275,7 +276,7 @@ func (pl prefillPlan) psStages(rate float64, decodePods int, pooled bool) (stage
 	}
 	var mix stageMix
 	var parts psParts
-	parts.pull = pull.g * pull.es
+	parts.pull, parts.pullRho = pull.g*pull.es, lam2*es2
 	u := ePoly{{c: base, n: 1}}
 	for _, c := range classes {
 		if !(c.share > 0) {

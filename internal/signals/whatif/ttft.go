@@ -1202,7 +1202,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 			return m, nil
 		}
 		mixes[key{}] = withGate(m, false)
-		out.Parts.EngineWait, out.Parts.KVPullWait = parts.prefill, parts.pull
+		out.Parts.EngineWait, out.Parts.KVPullWait, out.Parts.KVPullUtilization = parts.prefill, parts.pull, parts.pullRho
 	} else {
 		theta := pf.waitScale(rho)
 		var tail float64

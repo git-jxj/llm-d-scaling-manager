@@ -300,6 +300,23 @@ type ReportDecodeUse struct {
 	SlotsOccupied   Figure `json:"slotsOccupied"`
 	Slots           int64  `json:"slots"`
 	WaitProbability Figure `json:"waitProbability"`
+	// KVPull is the KV pull on the decode pods, where the TTFT prices it as
+	// a processor-sharing stage on them (a P/D fleet with a decode line);
+	// nil where it does not. The KV fill and the slots leave it out.
+	KVPull *ReportKVPull `json:"kvPull,omitempty"`
+}
+
+// ReportKVPull is the KV pull's load on the decode pods at the load judged.
+type ReportKVPull struct {
+	// Utilization is the pull stage's utilization on one decode pod.
+	Utilization float64 `json:"utilization"`
+	// Wait is the pull's mean stretch, in seconds: the time a pull shares
+	// its pod beyond its own work.
+	Wait float64 `json:"wait"`
+	// SetsTTFT says the pull is the larger wait in TTFT: larger than decode
+	// admission's and than the prefill side's, so the decode count, not the
+	// prefill count, moves TTFT here.
+	SetsTTFT bool `json:"setsTTFT"`
 }
 
 // ReportPrefillUse is prefill's utilization: the load over the prefill knee

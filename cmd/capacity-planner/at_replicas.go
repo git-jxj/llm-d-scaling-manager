@@ -458,6 +458,13 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 	d := s.Utilization.Decode
 	fmt.Fprintf(b, "  %-14sKV fill %s (band top %s), slots %s of %d, wait p %s\n", "decode",
 		figText(d.KVFill, "%.3f", 1), num(d.BandTop), figText(d.SlotsOccupied, "%.0f", 1), d.Slots, figText(d.WaitProbability, "%.3f", 1))
+	if k := d.KVPull; k != nil {
+		pull := fmt.Sprintf("utilization %.3f per decode pod, mean wait %s", k.Utilization, msText(k.Wait))
+		if k.SetsTTFT {
+			pull += ": the larger wait in TTFT, so the decode count sets TTFT"
+		}
+		fmt.Fprintf(b, "  %-14s%s\n", "KV pull", pull)
+	}
 	p := s.Utilization.Prefill
 	pre := fmt.Sprintf("utilization pooled %s, worst pod %s", figText(p.Pooled, "%.2f", 1), figText(p.WorstPod, "%.2f", 1))
 	if p.Imbalance > 0 {
