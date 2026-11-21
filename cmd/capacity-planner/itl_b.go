@@ -129,18 +129,44 @@ func (f *answerFlags) assumeIntercept(pv *pricedVariant) {
 			ms(a.Seconds), ms(vs.BelowBandITL), vs.BelowBandFill)
 		return
 	}
-	got := itl.Refit(vs.Readings.All, vs.Readings.Steady, a.Seconds, vs.MinSettled, vs.OneSided)
-	switch {
-	case got.PinnedAtBPrior || got.PinnedAtLeastITL:
-		a.Why = "the line is priced one-sided past the cap, at a prior, not through B"
-		return
-	case got.Tier != whatif.TierPinnedB || !itl.ValidModel(got.Model.A, got.Model.B) || math.Abs(got.Model.B-a.Seconds) > 1e-12:
-		a.Why = fmt.Sprintf("no slope fits the line's readings through B %s: it is at or above what they read", ms(a.Seconds))
+	got, why := refitThrough(*vs, a.Seconds)
+	if why != "" {
+		a.Why = why
 		return
 	}
 	a.Applied, a.DefaultA = true, vs.Line.A
 	vs.Line, vs.LineReadings, vs.Baseline = got.Model, got.Read, a.Seconds
 	pv.stated = append(pv.stated, "--assume-itl-b")
+}
+
+// refitThrough is the line refitted through B on vs's readings, with the
+// tracker's choice of fit (itl.Refit), or why no line runs through B.
+func refitThrough(vs learnreplay.VariantState, b float64) (itl.Refitted, string) {
+	got := itl.Refit(vs.Readings.All, vs.Readings.Steady, b, vs.MinSettled, vs.OneSided)
+	switch {
+	case got.PinnedAtBPrior || got.PinnedAtLeastITL:
+		return got, "the line is priced one-sided past the cap, at a prior, not through B"
+	case got.Tier != whatif.TierPinnedB || !itl.ValidModel(got.Model.A, got.Model.B) || math.Abs(got.Model.B-b) > 1e-12:
+		return got, fmt.Sprintf("no slope fits the line's readings through B %s: it is at or above what they read", ms(b))
+	}
+	return got, ""
+}
+
+// floorAssumption is the B --assume-itl-b floor would price the line at, or
+// why it would not: the floor's intercept (floorB), and a line refitted
+// through it (refitThrough). The hint offers the floor only where it works.
+func floorAssumption(vs learnreplay.VariantState) (float64, string) {
+	if !vs.Refitted || len(vs.LineReadings) == 0 {
+		return 0, "the replay does not reproduce this pinned-B line from its readings"
+	}
+	b, why := floorB(vs)
+	if why != "" {
+		return 0, why
+	}
+	if _, why := refitThrough(vs, b); why != "" {
+		return 0, why
+	}
+	return b, ""
 }
 
 // floorB is the intercept of the line through the floor read below the band
@@ -210,12 +236,26 @@ func (pv pricedVariant) pinnedDefaultBHint() string {
 	if pv.state.Tier != whatif.TierPinnedB {
 		return fmt.Sprintf("; a %s line cannot take a stated B: answer at a cycle where the line is pinned-B", pv.state.Tier)
 	}
-	floor := ""
-	if pv.state.Tier == whatif.TierPinnedB && pv.state.Refitted {
-		if b, why := floorB(pv.state); why == "" {
-			floor = fmt.Sprintf(" (here %s, through the floor of %s at fill %.2f)", ms(b), ms(pv.state.BelowBandITL), pv.state.BelowBandFill)
-		}
+	if !pv.state.Refitted || len(pv.state.LineReadings) == 0 {
+		return "; no stated B can price it: the replay does not reproduce this pinned-B line from its readings, so it cannot be refitted"
 	}
+	b, why := floorAssumption(pv.state)
+	if why != "" {
+		// The floor gives no B here: offering it would only be declined
+		// (issue llm-d-incubation/llm-d-scaling-manager#277).
+		// A floor read caps a stated B: every reading below the band is
+		// B + A k, so at least B (assumeIntercept).
+		api, cli := "assume.itlB in seconds", "--assume-itl-b 12ms states one"
+		if f := pv.state.BelowBandITL; f > 0 {
+			api = fmt.Sprintf("assume.itlB in seconds, at most the floor's %.4g", f)
+			cli = fmt.Sprintf("--assume-itl-b with a duration at most the floor's %s states one", ms(f))
+		}
+		if pv.api {
+			return "; state B for a flagged answer: " + api + " (on the page, Assume a term, ITL B); the floor gives none here: " + why
+		}
+		return "; state B for a flagged answer: " + cli + "; the floor gives none here: " + why
+	}
+	floor := fmt.Sprintf(" (here %s, through the floor of %s at fill %.2f)", ms(b), ms(pv.state.BelowBandITL), pv.state.BelowBandFill)
 	if pv.api {
 		return "; state B for a flagged answer: assume.itlBFromFloor true takes it from the floor below the band" + floor +
 			", or assume.itlB in seconds (on the page, Assume a term, ITL B)"
