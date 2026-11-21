@@ -152,9 +152,9 @@ func itlBNotUsed(steps []BacktestStep) (int, string) {
 }
 
 // Stated is what an answer stated in place of what its source gave. The
-// self-check replays the recording with the planner's terms (Assume, but
-// TPOTRatio) and the arrivals' Ca^2, which price the recording's own
-// traffic; it runs without a TPOT ratio, one percentile's where the check
+// self-check replays the recording with the planner's terms and the
+// router's flow control and wait (Assume, but TPOTRatio) and the arrivals'
+// Ca^2, which price the recording's own traffic; it runs without a TPOT ratio, one percentile's where the check
 // scores p90 on the recording's own, and without stated lengths, a traffic
 // other than the one it scores against.
 type Stated struct {
@@ -185,7 +185,7 @@ func (st *Stated) outside() bool {
 		return false
 	}
 	a := st.Assume
-	return st.Outside || a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor
+	return st.Outside || a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor || a.RouterWait != ""
 }
 
 // replayed is the request terms the self-check replays st with, and their
@@ -247,6 +247,24 @@ func (st *Stated) words(a Assume, cv2 *float64, prompt, output float64) []string
 		out = append(out, "assume.itlBFromFloor")
 	}
 	add("--assume-itl-b", "assume.itlB", a.ITLB, dur)
+	switch {
+	case a.FlowControl == "":
+	case st.CLI:
+		out = append(out, "--flow-control "+a.FlowControl)
+	default:
+		out = append(out, "assume.flowControl "+a.FlowControl)
+	}
+	switch {
+	case a.RouterWait == "":
+	case !st.CLI:
+		out = append(out, "assume.routerWait "+a.RouterWait)
+	case a.RouterWait == RouterWaitInPrefill:
+		out = append(out, "--router-wait-in-prefill")
+	case a.RouterWait == RouterWaitGateStage:
+		out = append(out, "--price-router-wait")
+	default:
+		out = append(out, "--router-wait-in-prefill=false --price-router-wait=false")
+	}
 	arrivalKey := st.arrivalKey
 	if arrivalKey == "" {
 		arrivalKey = "arrivalCV2"

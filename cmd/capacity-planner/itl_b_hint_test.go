@@ -9,6 +9,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // The PinnedDefaultB hint offers --assume-itl-b floor only where the floor
@@ -75,4 +76,12 @@ func TestSelfCheckStatedSwitches(t *testing.T) {
 	require.Len(t, st.Replayed, 1)
 	assert.Contains(t, st.Replayed[0], "--imbalance-across-counts=")
 	assert.True(t, st.Outside)
+
+	// The router's flow control and wait replay, as backtest takes them.
+	f = answerFlags{flowControl: "on", routerWaitInPrefill: true, set: map[string]bool{"flow-control": true, "router-wait-in-prefill": true}}
+	st, err = f.stated()
+	require.NoError(t, err)
+	assert.Empty(t, st.Other)
+	assert.Equal(t, "on", st.Assume.FlowControl)
+	assert.Equal(t, whatifapi.RouterWaitInPrefill, st.Assume.RouterWait)
 }

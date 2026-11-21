@@ -97,16 +97,27 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 	if f.set["assume-output-tokens"] {
 		st.OutputTokens = f.outputTokens
 	}
-	// The fits price at the switches' defaults (servedState.fleetAt): what
-	// the answer set of them off its default is named as run without.
+	// The router's flow control and wait replay as assume.flowControl and
+	// assume.routerWait, as backtest's flags of the same names state them.
+	if f.set["flow-control"] {
+		st.Assume.FlowControl = f.flowControl
+	}
+	switch {
+	case f.priceRouterWait == whatif.DefaultPriceRouterWait && f.routerWaitInPrefill == whatif.DefaultRouterWaitInPrefill:
+	case f.priceRouterWait:
+		st.Assume.RouterWait = whatifapi.RouterWaitGateStage
+	case f.routerWaitInPrefill:
+		st.Assume.RouterWait = whatifapi.RouterWaitInPrefill
+	default:
+		st.Assume.RouterWait = whatifapi.RouterWaitNone
+	}
+	// The fits price at the other switches' defaults (servedState.fleetAt):
+	// what the answer set of them off its default is named as run without.
 	for _, o := range []struct {
 		name, value string
 		moved       bool
 	}{
 		{"batch-cap", strconv.FormatInt(f.batchCap, 10), f.batchCap != 0},
-		{"flow-control", f.flowControl, f.flowControl != ""},
-		{"price-router-wait", strconv.FormatBool(f.priceRouterWait), f.priceRouterWait != whatif.DefaultPriceRouterWait},
-		{"router-wait-in-prefill", strconv.FormatBool(f.routerWaitInPrefill), f.routerWaitInPrefill != whatif.DefaultRouterWaitInPrefill},
 		{"ps-onsets", strconv.FormatBool(f.psOnsets), f.psOnsets != whatif.DefaultPSOnsets},
 		{"prefill-running-cap", strconv.Itoa(f.prefillRunningCap), f.prefillRunningCap != 0},
 		{"charge-decode-gate", strconv.FormatBool(f.chargeDecodeGate), f.chargeDecodeGate != whatif.DefaultChargeDecodeGate},

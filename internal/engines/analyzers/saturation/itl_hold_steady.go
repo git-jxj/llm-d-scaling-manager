@@ -13,6 +13,9 @@ package saturation
 // llm-d-incubation/llm-d-scaling-manager#266). Off, the fallback refits, as
 // before this switch. Planner-only and off from the constructor; the
 // planner's replay does not turn it on yet (learnreplay.PlannerSwitches):
-// with the line held, the planner's predicted decode KV fill reads about
-// half what the pods held, and TTFT and TPOT read under what was measured.
+// the line it holds has the B of the plateau's last full fit, under the
+// engines' floor, so the planner predicts less decode KV fill than the pods
+// held and reads TTFT and TPOT under what was measured
+// (SwitchITLLineAtFloor lifts it; issue
+// llm-d-incubation/llm-d-scaling-manager#274).
 const SwitchITLHoldSteadySlope = "itl-hold-steady-slope"

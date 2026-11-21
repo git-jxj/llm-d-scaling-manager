@@ -315,6 +315,9 @@ func (sc *Scenario) checkAssume() error {
 	if a.TPOTRatio != nil && (sc.TPOT == nil || sc.TPOT.Statistic == statisticMean) {
 		return InputErrorf("assume.tpotRatio needs a TPOT percentile (slo.tpot.statistic pNN)")
 	}
+	if err := a.CheckFlowControl(); err != nil {
+		return err
+	}
 	switch {
 	case a.ITLB != nil && a.ITLBFromFloor:
 		return InputErrorf("assume.itlB and assume.itlBFromFloor both state B; give one")
