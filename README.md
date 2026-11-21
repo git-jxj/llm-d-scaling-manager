@@ -78,7 +78,7 @@ more. Admin and owner each use their own kubeconfig snapshot: set
 `SMT_KUBECONFIG` to the one to use.
 
 ```bash
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:30e265ebcdd7ff110faa6adb3aac92afad0a314cc28a9df12cc35e6f73d50855
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:fc34a5e01283b5167e3e1accc0e7421ae6dccc42652d50e493a5f2a12ee59695
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }

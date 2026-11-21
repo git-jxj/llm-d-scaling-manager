@@ -114,14 +114,49 @@ p90 TTFT within 20% in 2 of 7 steps (median ratio 1.34); p90 TPOT within 20% in 
   Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
 ```
 
+An answer given stated inputs is checked with them. With
+`--assume-vp`, `--assume-a`, `--assume-prompt-cv`, `--assume-router-hop`,
+`--assume-itl-b`, `--arrival-cv2`, `--flow-control`, `--router-wait-in-prefill`
+or `--price-router-wait`, the recording is replayed with the same values, and
+the line names them:
+
+```text
+Self-check, replayed with the stated --assume-prompt-cv 0.06 (flagged as stated): tested on ...
+```
+
+A stated V_P, a, router hop, ITL B or router wait also puts the figures outside the
+validated region, and the line says so. A stated TPOT ratio
+(`--assume-tpot-ratio`), stated lengths (`--assume-input-tokens`,
+`--assume-output-tokens`) and the other opt-in switches (`--batch-cap`,
+`--ps-onsets`, `--prefill-running-cap`, `--charge-decode-gate`) are not
+replayed: the check scores p90 TPOT on the recording's own ratio, the
+recording's own traffic, and the switches' defaults. The line ends
+`It ran without the stated ...` to say so. Where a stated ITL B is not used
+at the fits (the line is held there), the line says in how many steps. On the
+server, a report or day plan that states inputs carries the source's
+self-check, which ran before anything was stated, with the same ending.
+
 On the page it is a badge beside the source, with the same lines under it.
 
 | Badge | Means |
 | --- | --- |
-| ok | The planner predicted this recording well, over 12 steps or more with 70% of them within 20%: you can size from its figures. |
-| weak | It held, but over fewer than 12 steps or with fewer than 70% of them within 20%. Size with care. |
-| inconsistent | The planner and this recording disagree: the median ratio is outside 0.8 to 1.25, fewer than half the steps are within 20%, or the planner called the fleet overloaded in half the steps where it served. The line says which figures not to trust. |
+| held on its own steps (`ok` in JSON) | The planner predicted this recording's own steps well: 12 steps or more at 4 load levels or more, 70% of them within 20%, a median ratio from 0.95 to 1.25, and the within share still at least half when the levels are resampled. It tested only the rates and replica counts the recording ran: it says nothing of other fleets. |
+| weak | It held, but over fewer than 12 steps or 4 load levels, with fewer than 70% of the steps within 20%, leaning low (a median ratio from 0.80 to 0.95), or with a within share that could be under half once the levels are resampled. Size with care. |
+| inconsistent | The planner and this recording disagree. The line says which figures not to trust, and why: the median ratio is outside 0.80 to 1.25; fewer than half the steps are within 20%; more than 15% of the steps read more than 20% low, or any one read under 0.67 of measured; at 0.8 to 1.0 of the knee the worst tenth of the steps (3 or more) read outside 0.67 to 2 times measured; the planner called the fleet overloaded in half the steps where it served; or it called the fleet overloaded in steps where the fleet's measured p90 TTFT stayed within 1.5x of the median of its steps below 0.8 of the knee, so its queue did not grow (2 or more, and a fifth of those steps): the knee reads low. |
 | not run | The recording is shorter than an hour, carries no latency, or is not a P/D fleet; fewer than 6 steps could be scored for each figure (the refusals are named); or, on the server, it ran out of its time budget. The line says which. |
+
+The steps are not independent: a load level holds for several steps, and
+both cuts come from one recording. The line counts the load levels (a run of
+steps at one fleet and a rate within 15% of the level's first; one step off a
+level the run returns to stays in it), and the
+within share's bound resamples whole levels.
+
+The line ends with what the check tested: `It tested 2.10 to 9.84 r/s at 2
+prefill + 2 decode`. An `at-replicas` verdict at another rate, fleet or
+shape says `not covered by the self-check`. A verdict that rests on the
+figures an inconsistent self-check names says `not trusted`, and the command
+exits 4 (`verdict.trust` and `exitCode` in the JSON); the verdict is still
+printed.
 
 On **inconsistent**, the answer offers an issue to file: a link to a new
 GitHub issue, prefilled with diagnostics. It holds the planner's version,
@@ -192,9 +227,9 @@ On the page: **Blind: predict now, compare later**, under the check.
 Size from the planner when, below the load it thinks the fleet can carry:
 
 - the p90 TTFT is within 20% in most of the steps it gave a figure for;
-- the median ratio is between about 0.95 and 1.2 (leaning a little high
+- the median ratio is between 0.95 and 1.25 (leaning a little high
   costs replicas, leaning low costs the SLO);
-- it read few steps more than 20% low;
+- it read few steps more than 20% low (15% or fewer), and none under 0.67;
 - it gave no figure only where the fleet really was overloaded.
 
 ## If the result is bad
@@ -232,7 +267,11 @@ Size from the planner when, below the load it thinks the fleet can carry:
 | `--ttft-target` | | Judge each step against a target too: `500ms@p90`. The summary counts the steps predicted to meet it that measured a miss. |
 | `--measured` | `auto` | `router`, `engine`, or `auto` (the router's where recorded). |
 | `--assume-vp`, `--assume-a` | | A prefill pod's prompt tokens per second, and its fixed latency, where the part it learned from held none. Flagged. |
+| `--assume-prompt-cv` | each step's | The prompts' spread, 0 to 3, in place of the one each step reads from the histogram, which is coarse on long prompts. Flagged. |
+| `--assume-router-hop`, `--assume-itl-b` | | The router hop, and decode's ITL B (`12ms`, or `floor`), as an answer's flags of the same names: check an answer with the inputs it stated. Flagged. |
 | `--allow-config-mismatch` | off | Score a test of another configuration, with the difference printed. |
+| `--flow-control` | inferred | `on` or `off`: the router's flow control, in place of what the fit's queue series says. To score a test that ran with flow control on against a fit that ran with it off, add `--allow-config-mismatch` too. |
+| `--router-wait-in-prefill`, `--price-router-wait` | off | How a step past the prefill flow-control onset carries the router's wait: `--router-wait-in-prefill` for router v1.0.0, `--price-router-wait` for v0.11.0. Off, the step is flagged `AboveFlowControlOnset`. Set at most one: together they are refused. |
 | `-o json` | text | The same answer as `POST /v1/backtest` ([the API](api.md#the-backtest)). |
 
 The command exits 0 when it judged at least one step, 3 when it judged none,
