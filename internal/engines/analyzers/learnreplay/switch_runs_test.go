@@ -1100,6 +1100,7 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillFBusyMinutes:    nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	saturation.SwitchITLHoldSteadySlope:     nil,
+	saturation.SwitchITLLineAtFloor:         nil,
 	// llm-d-incubation/llm-d-scaling-manager#309: the planner's ITL batch
 	// term past the roofline. No analyzer reads it, so no golden replay
 	// moves; its unit tests hold it (heldBy).
@@ -1452,6 +1453,13 @@ var heldBy = map[string][]heldTest{
 		{".", "TestStateAt_BatchTermThroughTheReplay"},
 		{"../../../signals/whatif", "TestFitBatchTerm_FindsTheTermAcrossShapes"},
 		{"../../../signals/whatif", "TestBatchTerm_PricesTheStepPastTheRoof"},
+	saturation.SwitchITLLineAtFloor: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/whatif", "TestLiftToFloor_ALineUnderItsFloorIsRaised"},
+		{"../../../signals/whatif", "TestLiftToFloor_ALineAtOrOverItsFloorIsKept"},
+		{"../../../signals/whatif", "TestBootstrapLines_ResamplesAreLiftedAsTheLineIs"},
+		{".", "TestITLLineAtFloor_TheStaircaseLineThroughItsFloor"},
+		{".", "TestITLLineAtFloor_OnlyAPDDecodeRole"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},

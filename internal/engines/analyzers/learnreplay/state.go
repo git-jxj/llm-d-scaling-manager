@@ -200,6 +200,14 @@ type VariantState struct {
 	// top of Line, zero where a gate refused it. The zero value while the
 	// switch is off.
 	BatchFit whatif.BatchFit
+	// LineAtFloor says the replay lifts a decode line to that floor
+	// (saturation.SwitchITLLineAtFloor, whatif.LiftToFloor), and LineLift
+	// how far, in seconds, Line's intercept was raised to pass through it; 0
+	// where it was not. Baseline and LineReadings are the fit's, before the
+	// lift. A resample of the line is lifted by the same rule wherever
+	// LineAtFloor is set, whether or not the line itself was.
+	LineAtFloor bool
+	LineLift    float64
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -250,7 +258,24 @@ type shapeSample struct {
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
 // TTFT and TPOT under what was measured, because it predicts less decode KV
-// fill than the pods held. It stays off until that is fixed.
+// fill than the pods held. Nor is saturation.SwitchITLLineAtFloor, which
+// fixes that fill (issue llm-d-incubation/llm-d-scaling-manager#274) and
+// only helps with the hold: alone it lifts the steeper line the hold
+// replaces, and reads TPOT higher still. With both, the planner's mean TTFT
+// and TPOT on the public staircase's B phases (8000/200, Poisson) come
+// within 13% of measured (TPOT 0.80 on the second warm-up's B-onset phase),
+// but its p90 TTFT on the B-off and B-on phases still reads 15% to 23% under
+// and its p90 TPOT up to 22% under there (32% on the first warm-up's
+// B-onset, 39% on the bursty C phases), so both stay off.
+//
+// saturation.SwitchITLBatchTerm is not listed either: the ITL term past the
+// roofline (issue llm-d-incubation/llm-d-scaling-manager#309) is fitted on
+// the residuals of a variant's own line, and no committed recording
+// identifies it. On the Qwen3-32B warm-up alone the fitted slope is 0.003 ms
+// per sequence and removes 0.4% of the residuals' error, which the gates
+// refuse; it takes the warm-up and the 1k-prompt A-off phase together (n_roof
+// 120 per rank, 0.034 ms per sequence) to read it, so a recording of one
+// shape cannot. A replay turns it on by name.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -358,6 +383,8 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		arrivals []float64
 		ranges   = map[string]ShapeRange{}
 	)
+	// Read once: the switches are set before the replay starts.
+	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
@@ -450,6 +477,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
 		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
+		st.Variants[i].liftToFloor(lineAtFloor && st.disaggregated())
 	}
 	var out map[int]*State
 	if len(snaps) > 0 {
@@ -465,6 +493,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
 			b := sn.below[s.Variants[i].Variant]
 			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b[0], b[1]
+			s.Variants[i].liftToFloor(lineAtFloor && s.disaggregated())
 		}
 		out[c] = s
 	}
@@ -810,6 +839,31 @@ func (vs *VariantState) refit() {
 	if got := itl.RefitAboveBand(vs.Readings.Above, vs.Readings.AboveSteady, vs.MinSettled); got.Tier != "" && sameLine(got.Model, vs.Line) {
 		vs.Tier, vs.LineReadings, vs.Refitted = whatif.TierAboveBand, got.Read, true
 	}
+}
+
+// disaggregated reports a P/D model: one with a prefill variant
+// (domain.HasPrefill), as the analyzer reads it.
+func (st *State) disaggregated() bool {
+	roles := make(map[string]string, len(st.Variants))
+	for _, v := range st.Variants {
+		roles[v.Variant] = v.Role
+	}
+	return domain.HasPrefill(roles)
+}
+
+// liftToFloor raises a decode variant's line to the floor read below the
+// band, when on is set (saturation.SwitchITLLineAtFloor; whatif.LiftToFloor):
+// the caller sets it only for a P/D model (State.disaggregated). It runs
+// after the refit, which finds the readings of the line as fitted. Only a
+// decode role of a P/D model: an aggregated variant's readings below the
+// band carry prefill chunks, which would read a floor its decode steps do
+// not have, and the evidence for the lift is P/D decode alone.
+func (vs *VariantState) liftToFloor(on bool) {
+	if !on || domain.CanonicalRole(vs.Role) != domain.RoleDecode {
+		return
+	}
+	vs.LineAtFloor = true
+	vs.Line, vs.LineLift = whatif.LiftToFloor(vs.Tier, vs.Line, whatif.LineFloor{ITL: vs.BelowBandITL, Fill: vs.BelowBandFill})
 }
 
 // ShapeRange is the range of a variant's per-cycle mean lengths and prefix-hit
