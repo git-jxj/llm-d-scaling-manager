@@ -440,9 +440,9 @@ function shapeTokens(s) {
 
 // reportShapeProblem is why s is not a shape the report reads, "" when it is.
 function reportShapeProblem(s) {
-  if (s === "measured") return "";
+  if (s === "measured" || s === "load") return "";
   const m = REPORT_SHAPE.exec(typeof s === "string" ? s : "");
-  if (!m) return "a shape is measured, or IL/OL[/hit] in tokens (8k/200, 1k/4k/0.3)";
+  if (!m) return "a shape is measured, load, or IL/OL[/hit] in tokens (8k/200, 1k/4k/0.3)";
   for (const t of [m[1], m[3]]) {
     const n = shapeTokens(t);
     if (!(n >= 1 && n <= MAX_SHAPE_TOKENS)) return "a length is 1 to 1024k tokens";
@@ -555,6 +555,7 @@ function refusalText(f) {
 // REPORT_FLAG_WORDS are the flags a report carries most, in a short phrase.
 // The rest are counted, and their codes kept for a tooltip.
 const REPORT_FLAG_WORDS = {
+  ShapeLoadMismatch: "prices the load at a shape more than 20% off the traffic that made it",
   AssumedITLB: "assumes the decode ITL B",
   UnvalidatedTTFT: "TTFT is not validated",
   AssumedVP: "assumes the prefill speed you typed",
@@ -714,6 +715,8 @@ function reportView(r) {
       summary: `${s.label}: IL ${Math.round(s.inputTokens)}, OL ${Math.round(s.outputTokens)}, prefix hit ${Number(s.prefixHitRate).toFixed(2)} (${s.source})`,
       lines: [
         s.extrapolated ? `Extrapolated: ${s.extrapolatedWhy}.` : "",
+        s.loadShape ? `The load's cycles (${s.loadShape.cycles}, cycles ${s.loadShape.fromCycle}-${s.loadShape.toCycle}) ran at IL ${Math.round(s.loadShape.inputTokens)}, OL ${Math.round(s.loadShape.outputTokens)}` +
+          (s.loadShape.mismatch ? ": SHAPE/LOAD MISMATCH, the load is priced at a shape more than 20% off the traffic that made it; ask the shape load to price it at its own." : ".") : "",
         `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
           `Operating point ${rate(c.operating)}; the most that meets every target ${rate(c.maxAtSLO)}.`,
         `At the load: ${decodeUse(u.decode)}; ${prefillUse(u.prefill)}.`,
@@ -834,16 +837,17 @@ function roleLines(v) {
 }
 
 // LOAD_STATISTICS are the load statistics a report judges at.
-const LOAD_STATISTICS = ["p95", "mean", "peak"];
+const LOAD_STATISTICS = ["p95", "mean", "peak", "p95-modulation"];
 
 // loadLine is the load the source saw, in words: the statistic judged at,
 // and the mean, p95 and peak beside it.
 function loadLine(l) {
   if (!l || !l.rate || l.rate.value == null) return "No load recorded: " + refusalText(l && l.rate) + ".";
   const at = l.statistic === "stated" ? `the stated load of ${roundRate(l.rate.value)} r/s`
-    : `the ${l.statistic || "observed"} load of ${roundRate(l.rate.value)} r/s`;
-  const seen = [["mean", l.mean], ["p95", l.p95], ["peak", l.peak]].filter(([, x]) => x != null).map(([k, x]) => `${k} ${roundRate(x)}`);
+    : `the ${l.statistic === "p95-modulation" ? "p95 less counting noise" : l.statistic || "observed"} load of ${roundRate(l.rate.value)} r/s`;
+  const seen = [["mean", l.mean], ["p95", l.p95], ["peak", l.peak], ["p95 less counting noise", l.p95Modulation]].filter(([, x]) => x != null).map(([k, x]) => `${k} ${roundRate(x)}`);
   // Under 20 busy cycles the p95 is the peak: too few to tell them apart.
-  const peakNote = l.p95IsPeak && l.statistic === "p95" ? " (= peak: fewer than 20 cycles)" : "";
+  const peakNote = l.p95IsPeak && l.statistic === "p95" ? " (= peak: fewer than 20 cycles)"
+    : l.p95IsPeak && l.statistic === "p95-modulation" ? " (from the peak: fewer than 20 cycles)" : "";
   return `Judged at ${at}${peakNote}` + (seen.length ? `; the source saw ${seen.join(", ")} r/s over ${l.cyclesWithTraffic} busy cycles.` : ".");
 }

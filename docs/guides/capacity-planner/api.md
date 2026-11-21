@@ -331,9 +331,9 @@ Every field but `inputsId` has a default.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `fleet.prefill`, `fleet.decode` | the recorded counts | The fleet to judge. |
-| `shapes` | `["measured"]` | Request shapes, at most 6: `measured`, or `IL/OL[/hit]` in tokens, `k` for 1024 (`8k/200`, `1k/4k/0.3`). |
+| `shapes` | `["measured"]` | Request shapes, at most 6: `measured`, `load` (the shape of the cycles the load judged at was read from), or `IL/OL[/hit]` in tokens, `k` for 1024 (`8k/200`, `1k/4k/0.3`). |
 | `loads` | `["50%", "80%", "100%", "seen"]` | The tables' rates, at most 8: a share of each shape's fleet knee (`80%`), a rate (`5r/s`), `seen`, or the load seen grown (`seen x1.5`, also `seen×1.5` or `seen*1.5`): a what-if with its own column and its own verdict in `shapes[].growth`. |
-| `loadStatistic` | `p95` | Which statistic of the source's per-cycle arrival rate to judge at: `mean`, `p95` or `peak`. Not with `loadSeen`. |
+| `loadStatistic` | `p95` | Which statistic of the source's per-cycle arrival rate to judge at: `mean`, `p95`, `peak`, or `p95-modulation`, the p95 with the 1-minute rate's counting noise taken out. Not with `loadSeen`. |
 | `loadSeen` | the source's rate at `loadStatistic` | The load to judge at, requests per second. |
 | `loadSeenX` | none | An alias that adds `seen xN` to `loads`. It never changes the load judged at. |
 | `arrivalCV2` | 1 (Poisson) | The arrivals' Ca^2, as a plan's `traffic.arrivalCV2`. |
@@ -348,9 +348,9 @@ The answer:
 | Field | Holds |
 | --- | --- |
 | `fleet` | The fleet judged: `prefill`, `decode`, their variants, and `prefillFrom`/`decodeFrom` (`recording` or `asked`). |
-| `load` | The load judged at (`rate`, the same as `seen`, as a figure that carries the refusal when there is none), the load seen and its `source` (`observed`, `asked` or `none`), the `statistic` judged (`mean`, `p95`, `peak`, or `stated`), `cycles` read and `cyclesWithTraffic`, the per-cycle `mean`, `p95` and `peak` (each a 1-minute rate), `p95IsPeak` below 20 cycles, and `rolling`, the busiest 2 minutes' mean, idle and failed reads counted as 0. |
+| `load` | The load judged at (`rate`, the same as `seen`, as a figure that carries the refusal when there is none), the load seen and its `source` (`observed`, `asked` or `none`), the `statistic` judged (`mean`, `p95`, `peak`, `p95-modulation`, or `stated`), `cycles` read and `cyclesWithTraffic`, the per-cycle `mean`, `p95` and `peak` (each a 1-minute rate), `p95Modulation` (the p95 less the counting noise a 1-minute rate carries, mean/60 in variance: mean + (p95 - mean) x the modulation's share of the standard deviation), `p95IsPeak` below 20 cycles, and `rolling`, the busiest 2 minutes' mean, idle and failed reads counted as 0. |
 | `loads` | The tables' rates, in order: the summary's columns. |
-| `shapes[]` | One per shape asked, in order. `extrapolated` is true when IL, OL or the prefix-hit rate lies outside the per-cycle means the source saw, with `extrapolatedWhy`. |
+| `shapes[]` | One per shape asked, in order. `extrapolated` is true when IL, OL or the prefix-hit rate lies outside the per-cycle means the source saw, with `extrapolatedWhy`. `loadShape` is the shape of the cycles the load was read from (`statistic`, `inputTokens`, `outputTokens`, `prefixHitRate`, each cycle weighted by its request rate; `cycles`, `fromCycle`, `toCycle`), absent with a stated load or when none of those cycles read a shape; for `p95-modulation` it is read at the p95's cycles; `mismatch` is true, and the shape flagged `ShapeLoadMismatch`, when a measured shape's prompt or output length lies more than 20% off it. |
 | `shapes[].utilization` | At the load judged: decode's KV fill, batch slots occupied of the fleet's slots, and wait probability; prefill's utilization pooled and on the busiest pod. |
 | `shapes[].capacity` | The prefill, decode and fleet knees, the operating point and the highest rate that holds every target (`maxAtSLO`), each with output tokens a second and what binds it. |
 | `shapes[].table[]` | One row per load: TTFT at each statistic, TPOT mean and percentile, and `e2eMeanSum`, TTFT mean + (OL - 1) x TPOT mean, a sum of means and not a percentile. `cell` is the row in the summary: TTFT p90, the TPOT percentile (the mean where it is refused; `tpot.statistic` says which), and `mark`, the SLO judged at its own statistics (`met`, `missed`, `missed at onset` for a TTFT past the prefill flow-control onset, `saturated`, `unknown`, `no target`). |

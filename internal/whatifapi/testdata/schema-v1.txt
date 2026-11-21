@@ -729,6 +729,7 @@ report.load.cyclesWithTraffic number
 report.load.mean number
 report.load.p95 number
 report.load.p95IsPeak boolean
+report.load.p95Modulation number
 report.load.peak number
 report.load.rate Figure
 report.load.rolling object
@@ -857,6 +858,15 @@ report.shapes[].growth[].verdict.verdict string
 report.shapes[].growth[].x number
 report.shapes[].inputTokens number
 report.shapes[].label string
+report.shapes[].loadShape object
+report.shapes[].loadShape.cycles number
+report.shapes[].loadShape.fromCycle number
+report.shapes[].loadShape.inputTokens number
+report.shapes[].loadShape.mismatch boolean
+report.shapes[].loadShape.outputTokens number
+report.shapes[].loadShape.prefixHitRate number
+report.shapes[].loadShape.statistic string
+report.shapes[].loadShape.toCycle number
 report.shapes[].outputTokens number
 report.shapes[].prefixHitRate number
 report.shapes[].source string
