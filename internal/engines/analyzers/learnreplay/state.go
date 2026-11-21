@@ -252,8 +252,9 @@ type shapeSample struct {
 //   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
 //     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
 //     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
-//     It only ever lowers the cap, so the knee and the sequences a replica
-//     is priced at: never a latency figure. No committed recording runs a
+//     It only ever lowers the cap: the knee and the sequences a replica is
+//     priced at fall, and the line is read at the knee's lower fill, so the
+//     ITL and TPOT at the knee fall with it. No committed recording runs a
 //     budget under its cap times 1 + k, so no golden moves with it on.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
