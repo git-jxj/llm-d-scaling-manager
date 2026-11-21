@@ -9,6 +9,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // The decode line's intercept B, stated where the recording measured none
@@ -130,18 +131,52 @@ func (f *answerFlags) assumeIntercept(pv *pricedVariant) {
 			ms(a.Seconds), ms(vs.BelowBandITL), vs.BelowBandFill)
 		return
 	}
-	got := itl.Refit(vs.Readings.All, vs.Readings.Steady, a.Seconds, vs.MinSettled, vs.OneSided)
-	switch {
-	case got.PinnedAtBPrior || got.PinnedAtLeastITL:
-		a.Why = "the line is priced one-sided past the cap, at a prior, not through B"
-		return
-	case got.Tier != whatif.TierPinnedB || !itl.ValidModel(got.Model.A, got.Model.B) || math.Abs(got.Model.B-a.Seconds) > 1e-12:
-		a.Why = fmt.Sprintf("no slope fits the line's readings through B %s: it is at or above what they read", ms(a.Seconds))
+	got, why := refitThrough(*vs, a.Seconds)
+	if why != "" {
+		a.Why = why
 		return
 	}
 	a.Applied, a.DefaultA = true, vs.Line.A
 	vs.Line, vs.LineReadings, vs.Baseline = got.Model, got.Read, a.Seconds
 	pv.stated = append(pv.stated, "--assume-itl-b")
+}
+
+// oneSidedLine is why no B refits a line priced one-sided past the cap.
+const oneSidedLine = "the line is priced one-sided past the cap, at a prior, not through B"
+
+// refitThrough is the line refitted through B on vs's readings, with the
+// tracker's choice of fit (itl.Refit), or why no line runs through B.
+func refitThrough(vs learnreplay.VariantState, b float64) (itl.Refitted, string) {
+	got := itl.Refit(vs.Readings.All, vs.Readings.Steady, b, vs.MinSettled, vs.OneSided)
+	switch {
+	case got.PinnedAtBPrior || got.PinnedAtLeastITL:
+		return got, oneSidedLine
+	case got.Tier != whatif.TierPinnedB || !itl.ValidModel(got.Model.A, got.Model.B) || math.Abs(got.Model.B-b) > 1e-12:
+		return got, fmt.Sprintf("no slope fits the line's readings through B %s: it is at or above what they read", ms(b))
+	}
+	return got, ""
+}
+
+// floorAssumption is the B --assume-itl-b floor would price the line at, or
+// why it would not: the floor's intercept (floorB), and a line refitted
+// through it (refitThrough). The hint offers the floor only where it works.
+func floorAssumption(vs learnreplay.VariantState) (float64, string) {
+	if !vs.Refitted || len(vs.LineReadings) == 0 {
+		return 0, "the replay does not reproduce this pinned-B line from its readings"
+	}
+	// A line priced one-sided past the cap takes no B at all: probed with
+	// one under the default, whatever the floor gives.
+	if _, why := refitThrough(vs, itl.DefaultBaselineSec/2); why == oneSidedLine {
+		return 0, why
+	}
+	b, why := floorB(vs)
+	if why != "" {
+		return 0, why
+	}
+	if _, why := refitThrough(vs, b); why != "" {
+		return 0, why
+	}
+	return b, ""
 }
 
 // floorB is the intercept of the line through the floor read below the band
@@ -186,11 +221,11 @@ func (pv pricedVariant) itlBNotUsed() string {
 	case !a.Asked || a.Applied:
 		return ""
 	case pv.api && a.Source == itlBFromFloor:
-		return "ITL B not assumed (assume.itlBFromFloor): " + a.Why
+		return whatifapi.StatedITLBNotUsed + "assume.itlBFromFloor): " + a.Why
 	case pv.api:
-		return "ITL B not assumed (assume.itlB): " + a.Why
+		return whatifapi.StatedITLBNotUsed + "assume.itlB): " + a.Why
 	}
-	return "ITL B not assumed (--assume-itl-b): " + a.Why
+	return whatifapi.StatedITLBNotUsed + "--assume-itl-b): " + a.Why
 }
 
 // itlBRowText is the ITL B row: what was assumed, or why nothing was; empty
@@ -202,6 +237,15 @@ func (pv pricedVariant) itlBRowText() string {
 	return strings.TrimPrefix(pv.itlBNotUsed(), "ITL B ")
 }
 
+// noLineHint is what to do about a variant that learned no ITL line: the
+// line needs decode's KV-cache use to span 0.30 or more (troubleshooting.md,
+// NoLine). It names both sources' words, so that the CLI's refusal and the
+// API's are the same.
+func (pv pricedVariant) noLineHint() string {
+	return "; the line needs a window in which decode's KV-cache use spans 0.30 or more: answer at a later cycle where one is " +
+		"learned (--cycle; source.cycle on the API), or record a busier window"
+}
+
 // pinnedDefaultBHint is what a PinnedDefaultB refusal adds: how to state B,
 // in the words of the question's source, or why the stated B was not used.
 func (pv pricedVariant) pinnedDefaultBHint() string {
@@ -211,16 +255,36 @@ func (pv pricedVariant) pinnedDefaultBHint() string {
 	if pv.state.Tier != whatif.TierPinnedB {
 		return fmt.Sprintf("; a %s line cannot take a stated B: answer at a cycle where the line is pinned-B", pv.state.Tier)
 	}
-	floor := ""
-	if pv.state.Tier == whatif.TierPinnedB && pv.state.Refitted {
-		if b, why := floorB(pv.state); why == "" {
-			floor = fmt.Sprintf(" (here %s, through the floor of %s at fill %.2f)", ms(b), ms(pv.state.BelowBandITL), pv.state.BelowBandFill)
-		}
+	if !pv.state.Refitted || len(pv.state.LineReadings) == 0 {
+		return "; no stated B can price it: the replay does not reproduce this pinned-B line from its readings, so it cannot be refitted"
 	}
+	b, why := floorAssumption(pv.state)
+	if why == oneSidedLine {
+		// Its price is set by the cap: a stated B would be declined too.
+		return "; no stated B can price it: " + why
+	}
+	if why != "" {
+		// The floor gives no B here: offering it would only be declined
+		// (issue llm-d-incubation/llm-d-scaling-manager#277).
+		// A floor read caps a stated B: every reading below the band is
+		// B + A k, so at least B (assumeIntercept).
+		api, cli := "assume.itlB in seconds", "--assume-itl-b 12ms states one"
+		if f := pv.state.BelowBandITL; f > 0 {
+			api = fmt.Sprintf("assume.itlB in seconds, at most the floor's %.4g", f)
+			cli = fmt.Sprintf("--assume-itl-b with a duration at most the floor's %s states one", ms(f))
+		}
+		if pv.api {
+			return "; state B for a flagged answer: " + api + " (on the page, Assume a term, ITL B); the floor gives none here: " + why
+		}
+		return "; state B for a flagged answer: " + cli + "; the floor gives none here: " + why
+	}
+	// The floor caps a stated B here too.
+	f := pv.state.BelowBandITL
+	floor := fmt.Sprintf(" (here %s, through the floor of %s at fill %.2f)", ms(b), ms(f), pv.state.BelowBandFill)
 	if pv.api {
 		return "; state B for a flagged answer: assume.itlBFromFloor true takes it from the floor below the band" + floor +
-			", or assume.itlB in seconds (on the page, Assume a term, ITL B)"
+			fmt.Sprintf(", or assume.itlB in seconds, at most the floor's %.4g (on the page, Assume a term, ITL B)", f)
 	}
 	return "; state B for a flagged answer: --assume-itl-b floor takes it from the floor below the band" + floor +
-		", or --assume-itl-b 12ms states one"
+		fmt.Sprintf(", or --assume-itl-b with a duration at most the floor's %s states one", ms(f))
 }

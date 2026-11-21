@@ -1091,6 +1091,9 @@ priced.
 - **What a router window needs.** Steady rate and prompt, and no cycle with the
   router holding requests: the router's mean starts before flow control, and a
   held window would count the queue in R. A line needs every median above 0.
+  The planner also needs no cycle whose prefill pods held requests waiting for
+  compute (`slo-ttft-hop-unqueued`). With flow control off, that queue sits in
+  the engines and passes the other gates, and its R is the queue's timing.
 - **What admits a minute.** A row with a read mean of both, at least 0.05 r/s,
   its prompt steady to 15%, no speculation, its slot queue read and empty (an
   unknown queue is not an empty one, so SGLang, which publishes none, takes the
@@ -1872,9 +1875,9 @@ default, in the CLI, the planner API and the SLO analyzer alike.
   `AboveFlowControlOnset` and is judged by its figure. No figure moves. It is
   one setting with one default (`whatif.DefaultPriceRouterWait`, off) for both
   consumers: `--price-router-wait` in the CLI, and the replay switch
-  `slo-ttft-router-wait` in the SLO analyzer. The planner API reads fleets
-  the way the CLI does and has no switch, so it always answers with the
-  default. `FlowControlWaitPriced` is on the analyzer's flag series, at 0
+  `slo-ttft-router-wait` in the SLO analyzer. The planner API states it as
+  `assume.routerWait` (`gateStage`, `inPrefill` or `none`); absent, it
+  answers with the default. `FlowControlWaitPriced` is on the analyzer's flag series, at 0
   while the switch is off.
 - **Where the switch takes.** Only on processor sharing, at a prompt cv up to
   0.25 (`MaxPSPromptCV`), and at a rate up to 0.9 of the prefill knee
@@ -2054,20 +2057,31 @@ issue proposed (above).
 - The router hop's per-token part is already learned (`prefill.HopFit`,
   `Base + PerToken*I`; 1.41 µs a token on the second staircase's warm-up, 11.3
   ms at 8000 tokens). On the Qwen3-32B staircase the warm-up learned 25.6 µs a
-  token (54 windows; 4 ms at 1000 tokens, 183 ms at 8000). The phases' 606
+  token (54 windows). The line gives 4 ms at 1000 tokens and 183 ms at 8000. It
+  was priced as 26 ms and 205 ms, because its negative intercept is clamped to 0. The phases' 606
   windows, replayed, fit 6.6 ms + 2.7 µs a token (95% bootstrap: 5.7 to 8.6 ms,
   0.8 to 3.6 µs), 9 ms at 1000 tokens and 28 ms at 8000. The 1000-token
   windows are tight (quartiles 8 to 12 ms); the 8000-token ones are not
   (quartiles -42 to +109 ms), because R is a difference of means of a few
   seconds read about 36 s apart. So the warm-up's slope read high, which
-  prices more, not less. The fit needs no change.
+  prices more, not less. It cost the planner its low-load TTFT, though
+  (llm-d-incubation/llm-d-scaling-manager#281). The warm-up's 8k windows all
+  fall in a burst at the prefill knee, with the prefill pods holding 6 to 38
+  requests in their capacity queue and a mean TTFT of 4 to 17 s. Over its first
+  half they read R at 0.03 to 0.56 s and put 0.31 s of hop on every 8k prompt.
+  Measured at low load, the router's mean less the two engines' was about 0.
+  Backtested on its own second half, its p90 TTFT read a median 1.90x high
+  over 9 steps. At 0.27 r/s it priced a mean of 1.02 s, where the router
+  measured 0.56 s. The planner's replay therefore reads R only from windows whose
+  prefill pods held no queue (`slo-ttft-hop-unqueued`, off in S1). On the
+  warm-up, R is then held at its 1k windows' 4 ms.
 
 ## As built: the router stage
 
 `TTFTFleet.PriceRouterWait`, on, now prices EPP flow control's gate past the
 prefill onset as a stage of the TTFT (`internal/signals/whatif/ttft_gate.go`).
 It is **opt-in and off by default** (`whatif.DefaultPriceRouterWait`) in the
-CLI (`--price-router-wait`), the planner API (no switch, the default) and the
+CLI (`--price-router-wait`), the planner API (`assume.routerWait: gateStage`) and the
 SLO analyzer (replay switch `slo-ttft-router-wait`): by default a TTFT past
 the onset is flagged `AboveFlowControlOnset`, a miss, as before. With it on,
 below the onsets and with flow control off no figure moves. It meets its
