@@ -69,7 +69,8 @@ type ReportQuery struct {
 	// Loads are the table's rates; none is 50%, 80%, 100% and seen.
 	Loads []ReportLoadAsk
 	// LoadStatistic is the statistic of the source's per-cycle arrival rate
-	// judged at (LoadMean, LoadP95, LoadPeak); "" is DefaultLoadStatistic.
+	// judged at (LoadMean, LoadP95, LoadPeak, LoadP95Modulation); "" is
+	// DefaultLoadStatistic.
 	LoadStatistic string
 	// LoadSeen is the load to judge at; 0 is the source's. LoadSeenX, when
 	// above 0 and not 1, adds the growth load "seen xLoadSeenX" to Loads.

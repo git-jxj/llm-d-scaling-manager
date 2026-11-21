@@ -81,6 +81,6 @@ const ShapeLoad = "load"
 // ShapeLoadMismatch reports whether a shape of prompt il and output ol
 // differs from the load's by more than ShapeLoadTolerance in either length.
 func ShapeLoadMismatch(il, ol float64, load ReportLoadShape) bool {
-	off := func(x, ref float64) bool { return ref > 0 && math.Abs(x/ref-1) > ShapeLoadTolerance }
+	off := func(x, ref float64) bool { return x > 0 && ref > 0 && math.Abs(x/ref-1) > ShapeLoadTolerance }
 	return off(il, load.InputTokens) || off(ol, load.OutputTokens)
 }

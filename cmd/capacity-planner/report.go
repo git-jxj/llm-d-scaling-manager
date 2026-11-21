@@ -469,9 +469,12 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 	l.Seen = &seen
 	r.load, r.loadStat = seen, l.Statistic
 	l.Rate = whatifapi.FigureOf(whatif.Answer{Value: r.load}, unitRate, false)
-	r.loadWords = fmt.Sprintf("the %s load of %s", l.Statistic, rateWords(r.load))
+	r.loadWords = fmt.Sprintf("the %s load of %s", statWords(l.Statistic), rateWords(r.load))
 	if l.P95IsPeak && l.Statistic == whatifapi.LoadP95 {
 		r.loadWords = "the p95 load (= peak, few cycles) of " + rateWords(r.load)
+	}
+	if l.P95IsPeak && l.Statistic == whatifapi.LoadP95Modulation {
+		r.loadWords = "the p95 load less counting noise (from the peak, few cycles) of " + rateWords(r.load)
 	}
 }
 

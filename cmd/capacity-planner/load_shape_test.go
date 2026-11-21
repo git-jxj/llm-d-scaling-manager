@@ -75,6 +75,22 @@ func TestAtReplicasP95Modulation(t *testing.T) {
 	assert.Equal(t, whatifapi.LoadP95Modulation, m.Load.Statistic)
 }
 
+// With no decode variant named, as POST /v1/report asks of a model of one,
+// the load's shape is read off the model's only variant that is not
+// prefill; with two such and none named, off none.
+func TestDecodeShapeSeriesUnnamed(t *testing.T) {
+	series := []learnreplay.CycleShape{{Cycle: 1, InputTokens: 1000}}
+	st := &learnreplay.State{Variants: []learnreplay.VariantState{{Variant: "p", Role: "prefill", ShapeSeries: []learnreplay.CycleShape{{Cycle: 1}}},
+		{Variant: "d", Role: "decode", ShapeSeries: series}}}
+	r := &reporter{st: st, s: &servedState{}}
+	assert.Equal(t, series, r.decodeShapeSeries())
+	r.s.decodeVariant = "d"
+	assert.Equal(t, series, r.decodeShapeSeries())
+	st.Variants = append(st.Variants, learnreplay.VariantState{Variant: "d2", Role: "decode"})
+	r.s.decodeVariant = ""
+	assert.Nil(t, r.decodeShapeSeries(), "two decode variants and none named")
+}
+
 // The load's cycles: the p95's are every cycle at or above it, the peak's
 // its cycle, the mean's every cycle with traffic; numbered from 1.
 func TestLoadCycles(t *testing.T) {

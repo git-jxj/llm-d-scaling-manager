@@ -442,7 +442,7 @@ function shapeTokens(s) {
 function reportShapeProblem(s) {
   if (s === "measured" || s === "load") return "";
   const m = REPORT_SHAPE.exec(typeof s === "string" ? s : "");
-  if (!m) return "a shape is measured, or IL/OL[/hit] in tokens (8k/200, 1k/4k/0.3)";
+  if (!m) return "a shape is measured, load, or IL/OL[/hit] in tokens (8k/200, 1k/4k/0.3)";
   for (const t of [m[1], m[3]]) {
     const n = shapeTokens(t);
     if (!(n >= 1 && n <= MAX_SHAPE_TOKENS)) return "a length is 1 to 1024k tokens";
@@ -836,14 +836,14 @@ function roleLines(v) {
 }
 
 // LOAD_STATISTICS are the load statistics a report judges at.
-const LOAD_STATISTICS = ["p95", "mean", "peak"];
+const LOAD_STATISTICS = ["p95", "mean", "peak", "p95-modulation"];
 
 // loadLine is the load the source saw, in words: the statistic judged at,
 // and the mean, p95 and peak beside it.
 function loadLine(l) {
   if (!l || !l.rate || l.rate.value == null) return "No load recorded: " + refusalText(l && l.rate) + ".";
   const at = l.statistic === "stated" ? `the stated load of ${roundRate(l.rate.value)} r/s`
-    : `the ${l.statistic || "observed"} load of ${roundRate(l.rate.value)} r/s`;
+    : `the ${l.statistic === "p95-modulation" ? "p95 less counting noise" : l.statistic || "observed"} load of ${roundRate(l.rate.value)} r/s`;
   const seen = [["mean", l.mean], ["p95", l.p95], ["peak", l.peak], ["p95 less counting noise", l.p95Modulation]].filter(([, x]) => x != null).map(([k, x]) => `${k} ${roundRate(x)}`);
   // Under 20 busy cycles the p95 is the peak: too few to tell them apart.
   const peakNote = l.p95IsPeak && l.statistic === "p95" ? " (= peak: fewer than 20 cycles)" : "";

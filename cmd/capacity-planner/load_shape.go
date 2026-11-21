@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
@@ -73,12 +75,22 @@ func loadShapeOf(series []learnreplay.CycleShape, cycles []int, stat string) *wh
 	return out
 }
 
-// decodeShapeSeries is the shape series of the decode variant priced.
+// decodeShapeSeries is the shape series of the decode variant priced: the
+// one named, or with none named (POST /v1/report on a model of one decode
+// variant), the model's only variant that is not prefill.
 func (r *reporter) decodeShapeSeries() []learnreplay.CycleShape {
+	var only []learnreplay.CycleShape
+	n := 0
 	for _, v := range r.st.Variants {
-		if v.Variant == r.s.decodeVariant {
+		if r.s.decodeVariant != "" && v.Variant == r.s.decodeVariant {
 			return v.ShapeSeries
 		}
+		if domain.CanonicalRole(v.Role) != domain.RolePrefill {
+			only, n = v.ShapeSeries, n+1
+		}
+	}
+	if r.s.decodeVariant == "" && n == 1 {
+		return only
 	}
 	return nil
 }
@@ -119,6 +131,15 @@ func (r *reporter) shapeLoad(rs *whatifapi.ReportShape) {
 	}
 }
 
+// statWords is a load statistic in words: p95-modulation is "p95 less
+// counting noise", the others their names.
+func statWords(stat string) string {
+	if stat == whatifapi.LoadP95Modulation {
+		return "p95 less counting noise"
+	}
+	return stat
+}
+
 // loadShapeText is a shape's load shape line, "" with none.
 func loadShapeText(s whatifapi.ReportShape) string {
 	ls := s.LoadShape
@@ -126,7 +147,7 @@ func loadShapeText(s whatifapi.ReportShape) string {
 		return ""
 	}
 	which := map[string]string{whatifapi.LoadMean: "every cycle with traffic", whatifapi.LoadPeak: "the peak",
-		whatifapi.LoadP95: "the p95 and above", whatifapi.LoadP95Modulation: "the p95 and above"}[ls.Statistic]
+		whatifapi.LoadP95: "the p95 and above", whatifapi.LoadP95Modulation: "the p95's cycles, the p95 and above"}[ls.Statistic]
 	line := fmt.Sprintf("  the load's cycles (%s: %d, cycles %d-%d): IL %s OL %s, prefix hit %.2f", which, ls.Cycles, ls.FromCycle, ls.ToCycle,
 		num(round(ls.InputTokens)), num(round(ls.OutputTokens)), ls.PrefixHitRate)
 	if ls.Mismatch {

@@ -514,7 +514,7 @@ It replays the recording once and answers, for each shape and load:
 
 - **Load judged.** The p95 of the arrival rate the window read, one reading
   per cycle with traffic. The report prints the mean, p95 and peak, and the
-  busiest 2 minutes (a rolling mean). `--load-statistic mean|p95|peak` picks
+  busiest 2 minutes (a rolling mean). `--load-statistic mean|p95|peak|p95-modulation` picks
   the one judged; `--load-seen` states a load instead. The mean hides a busy
   part: on the staircase sample it is 31.6 r/s, the p95 41.7 and the peak
   43.2.
