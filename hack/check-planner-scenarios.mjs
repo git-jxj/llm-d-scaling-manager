@@ -588,6 +588,8 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     {role: "prefill", spare: false}]})) === JSON.stringify(["Decode: has a replica to spare (3 decode hold).", "Prefill: no replica to spare."]));
   check("a p95 that is the peak says so", loadLine({rate: {value: 12}, statistic: "p95", p95IsPeak: true, p95: 12, peak: 12, cyclesWithTraffic: 9})
     .startsWith("Judged at the p95 load of 12 r/s (= peak: fewer than 20 cycles);"));
+  check("a p95 less noise of few cycles says so", loadLine({rate: {value: 11}, statistic: "p95-modulation", p95IsPeak: true, p95: 12, cyclesWithTraffic: 9})
+    .includes("(from the peak: fewer than 20 cycles)"));
   check("the p95 less counting noise is said in words", loadLine({rate: {value: 11}, statistic: "p95-modulation", p95: 12, p95Modulation: 11, cyclesWithTraffic: 40})
     .startsWith("Judged at the p95 less counting noise load of 11 r/s; the source saw p95 12, p95 less counting noise 11 r/s"));
   check("a half rounds up", ctx.roundRate(62.55) === "62.6");
@@ -659,7 +661,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 320;
+const EXPECTED_CASES = 321;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

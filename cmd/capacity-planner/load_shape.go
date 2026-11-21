@@ -51,13 +51,21 @@ func loadShapeOf(series []learnreplay.CycleShape, cycles []int, stat string) *wh
 	for _, c := range cycles {
 		want[c] = true
 	}
-	var at []learnreplay.CycleShape
+	var at, read []learnreplay.CycleShape
 	var total float64
 	for _, x := range series {
 		if want[x.Cycle] {
 			at = append(at, x)
-			total += max(x.RequestRate, 0)
+			if x.RequestRate > 0 {
+				read = append(read, x)
+				total += x.RequestRate
+			}
 		}
+	}
+	// Weighted by request rate over the cycles that read one; alike where
+	// none did.
+	if len(read) > 0 {
+		at = read
 	}
 	if len(at) == 0 {
 		return nil
@@ -66,7 +74,7 @@ func loadShapeOf(series []learnreplay.CycleShape, cycles []int, stat string) *wh
 	for _, x := range at {
 		w := 1 / float64(len(at))
 		if total > 0 {
-			w = max(x.RequestRate, 0) / total
+			w = x.RequestRate / total
 		}
 		out.InputTokens += w * x.InputTokens
 		out.OutputTokens += w * x.OutputTokens
@@ -104,8 +112,13 @@ func (r *reporter) resolveLoadShapes() error {
 		}
 		ls := r.loadShape
 		if ls == nil {
-			why := "the load was stated (--load-seen), so it was read at no cycle"
-			if r.loadStat != loadStated {
+			var why string
+			switch r.loadStat {
+			case loadStated:
+				why = "the load was stated (--load-seen), so it was read at no cycle"
+			case "":
+				why = "the source saw no traffic, so there is no load to read a shape at"
+			default:
 				why = "no cycle the load was read from read a shape"
 			}
 			return whatifapi.InputErrorf("shape %s: %s; state the lengths (IL/OL)", whatifapi.ShapeLoad, why)

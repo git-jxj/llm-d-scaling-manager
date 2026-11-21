@@ -555,6 +555,7 @@ function refusalText(f) {
 // REPORT_FLAG_WORDS are the flags a report carries most, in a short phrase.
 // The rest are counted, and their codes kept for a tooltip.
 const REPORT_FLAG_WORDS = {
+  ShapeLoadMismatch: "prices the load at a shape more than 20% off the traffic that made it",
   AssumedITLB: "assumes the decode ITL B",
   UnvalidatedTTFT: "TTFT is not validated",
   AssumedVP: "assumes the prefill speed you typed",
@@ -846,6 +847,7 @@ function loadLine(l) {
     : `the ${l.statistic === "p95-modulation" ? "p95 less counting noise" : l.statistic || "observed"} load of ${roundRate(l.rate.value)} r/s`;
   const seen = [["mean", l.mean], ["p95", l.p95], ["peak", l.peak], ["p95 less counting noise", l.p95Modulation]].filter(([, x]) => x != null).map(([k, x]) => `${k} ${roundRate(x)}`);
   // Under 20 busy cycles the p95 is the peak: too few to tell them apart.
-  const peakNote = l.p95IsPeak && l.statistic === "p95" ? " (= peak: fewer than 20 cycles)" : "";
+  const peakNote = l.p95IsPeak && l.statistic === "p95" ? " (= peak: fewer than 20 cycles)"
+    : l.p95IsPeak && l.statistic === "p95-modulation" ? " (from the peak: fewer than 20 cycles)" : "";
   return `Judged at ${at}${peakNote}` + (seen.length ? `; the source saw ${seen.join(", ")} r/s over ${l.cyclesWithTraffic} busy cycles.` : ".");
 }

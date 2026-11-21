@@ -293,7 +293,7 @@ func (r *reporter) growth(np, nd int) ([]whatifapi.ReportGrowth, error) {
 			continue
 		}
 		r.load, r.peak = l.X*seen, l.X*peak
-		r.loadWords = fmt.Sprintf("%s x the %s load (%s)", num(l.X), r.loadStat, rateWords(r.load))
+		r.loadWords = fmt.Sprintf("%s x the %s load (%s)", num(l.X), statWords(r.loadStat), rateWords(r.load))
 		ev, err := r.evaluate(np, nd)
 		if err != nil {
 			return nil, err
