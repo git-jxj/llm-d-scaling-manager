@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -55,17 +56,22 @@ func TestKVPull_TheUtilizationRow(t *testing.T) {
 	s.Utilization.Decode.KVPull = &whatifapi.ReportKVPull{Utilization: 0.62, Wait: &wait, SetsTTFT: true}
 	var b strings.Builder
 	shapeText(&b, s)
-	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait 50.0 ms: the larger wait in TTFT, so more decode pods cut its mean most\n")
+	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait 50.0 ms: the larger mean wait in TTFT sits on the decode pods\n")
 
 	s.Utilization.Decode.KVPull.SetsTTFT = false
 	b.Reset()
 	shapeText(&b, s)
 	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait 50.0 ms\n")
 
-	s.Utilization.Decode.KVPull.Wait = nil
+	s.Utilization.Decode.KVPull.Wait, s.Utilization.Decode.KVPull.Unpriced = nil, whatifapi.KVPullTTFTRefused
 	b.Reset()
 	shapeText(&b, s)
-	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait unpriced (TTFT refused, or priced first come)\n")
+	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait unpriced (TTFT refused)\n")
+
+	s.Utilization.Decode.KVPull.Unpriced = whatifapi.KVPullFirstCome
+	b.Reset()
+	shapeText(&b, s)
+	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait unpriced (TTFT priced first come: prompts too uneven for processor sharing)\n")
 
 	s.Utilization.Decode.KVPull.Utilization = 1.25
 	b.Reset()
@@ -125,19 +131,34 @@ func TestKVPull_TheRowStandsWhereThePullSaturates(t *testing.T) {
 func TestKVPull_NoZeroWaitWhereFirstComePrices(t *testing.T) {
 	// One prefill pod at 5 r/s, prompt cv 2: first come's queue is the
 	// larger; at cv 1 processor sharing prices the pull's wait.
-	at := func(cv float64) *whatifapi.ReportKVPull {
+	// The mean TTFT at the seen load answers at both cvs: a refused TTFT
+	// also leaves the wait out, and would pass this test for that reason.
+	at := func(cv float64) (*whatifapi.ReportKVPull, whatifapi.ReportStat) {
 		q := stairQuery(1, 2, 5)
 		q.TTFT = &whatifapi.ReportTarget{Seconds: 0.2, Percentile: 0.95}
+		q.TTFTPercentiles = []float64{0}
 		q.Assume.PromptCV = &cv
-		kv := stairReport(t, q).Shapes[0].Utilization.Decode.KVPull
+		s := stairReport(t, q).Shapes[0]
+		kv := s.Utilization.Decode.KVPull
 		require.NotNil(t, kv, "cv %g", cv)
-		return kv
+		i := slices.IndexFunc(s.Table, func(r whatifapi.ReportRow) bool { return r.Load == "seen" })
+		require.GreaterOrEqual(t, i, 0, "cv %g: no seen row", cv)
+		require.Len(t, s.Table[i].TTFT, 1)
+		mean := s.Table[i].TTFT[0]
+		require.Equal(t, "mean", mean.Statistic)
+		require.Nil(t, mean.Refused, "cv %g: the mean TTFT answers", cv)
+		require.NotNil(t, mean.Value, "cv %g", cv)
+		return kv, mean
 	}
-	ps := at(1)
+	ps, psMean := at(1)
 	require.NotNil(t, ps.Wait)
 	assert.Greater(t, *ps.Wait, 0.0)
-	fc := at(2)
+	fc, fcMean := at(2)
 	assert.InDelta(t, ps.Utilization, fc.Utilization, 1e-12, "the pull's load does not depend on the queue priced")
+	assert.Contains(t, fcMean.Flags, string(whatif.SpreadBeyondProcessorSharing), "cv 2 prices first come")
+	assert.Greater(t, *fcMean.Value, *psMean.Value, "first come's mean is the larger at cv 2")
 	assert.Nil(t, fc.Wait, "first come prices no pull wait")
+	assert.Equal(t, whatifapi.KVPullFirstCome, fc.Unpriced)
+	assert.Empty(t, ps.Unpriced)
 	assert.False(t, fc.SetsTTFT)
 }

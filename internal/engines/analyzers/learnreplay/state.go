@@ -89,6 +89,11 @@ type State struct {
 	// engine's TTFT before its OL steps (saturation.SwitchDecodeResidencePull,
 	// whatif.Decode.HeldBefore).
 	DecodeResidencePull bool
+	// DecodeBurstFill says a decode figure priced at a stated arrival Ca^2
+	// above 1 reads its TPOT at the fill a request sees beside the
+	// clustered arrivals (saturation.SwitchDecodeBurstFill,
+	// whatif.Decode.ArrivalCV2).
+	DecodeBurstFill bool
 	// Prefill is each prefill variant at the cycle, by name, as a TTFT
 	// question reads it (state_ttft.go).
 	Prefill []PrefillState
@@ -281,6 +286,11 @@ type shapeSample struct {
 // than the edge does, and on the Qwen3-32B recordings lower than the
 // measured p90 interpolated in its bucket, so it is off until a backtest
 // shows it at or above what was measured.
+//
+// saturation.SwitchDecodeBurstFill, planner-only, reads a decode's TPOT at
+// the fill a request sees beside clustered arrivals, from a stated
+// --arrival-cv2 (issue llm-d-incubation/llm-d-scaling-manager#291 (b)): at
+// Poisson, and with no Ca^2 stated, it moves no figure.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -391,6 +401,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
 	censored := opts.Switches[PackageSaturation][saturation.SwitchTPOTRatioCensored]
 	residence := opts.Switches[PackageSaturation][saturation.SwitchDecodeResidencePull]
+	burst := opts.Switches[PackageSaturation][saturation.SwitchDecodeBurstFill]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
@@ -476,7 +487,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		return nil, nil, fmt.Errorf("learnreplay: the replay ended after %d of the %d cycles of %s/%s", n, cycle, ns, model)
 	}
 	st.FirstAt, st.TPOTWindows, st.EngineTPOTWindows, st.Cycles = firstAt, windows, engine, total
-	st.ArrivalRates, st.TPOTRatioCensored, st.DecodeResidencePull = arrivals, censored, residence
+	st.ArrivalRates, st.TPOTRatioCensored, st.DecodeResidencePull, st.DecodeBurstFill = arrivals, censored, residence, burst
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
@@ -491,7 +502,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		s := sn.st
 		s.FirstAt, s.Cycles = firstAt, total
 		s.TPOTWindows, s.EngineTPOTWindows = slices.Clone(windows[:sn.windows]), slices.Clone(engine[:sn.engine])
-		s.ArrivalRates, s.TPOTRatioCensored, s.DecodeResidencePull = slices.Clone(arrivals[:sn.arrived]), censored, residence
+		s.ArrivalRates, s.TPOTRatioCensored, s.DecodeResidencePull, s.DecodeBurstFill = slices.Clone(arrivals[:sn.arrived]), censored, residence, burst
 		for i := range s.Variants {
 			s.Variants[i].ReadingsFrom, s.Variants[i].ReadingsTo = cyclesSpanned(s.Variants[i].LineReadings, cycleAt)
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]

@@ -1110,6 +1110,11 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// planner's answer, not the replay, so no learner golden moves. Its
 	// unit tests hold it.
 	saturation.SwitchDecodeResidencePull: nil,
+	// llm-d-incubation/llm-d-scaling-manager#291 (b): the decode fill a
+	// request sees beside clustered arrivals. Planner-only, off; read by the
+	// planner's answer at a stated Ca^2, not the replay, so no learner
+	// golden moves. Its unit tests hold it.
+	saturation.SwitchDecodeBurstFill: nil,
 	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
 	// where the variant's ITL line reaches the policy's TPOT objective. On
 	// from the constructor; no committed golden has a decode line it trusts
@@ -1470,7 +1475,8 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestTPOTRatioCensored_ByFillNeverAboveTheBucketsOwnEdge"},
 		{"../../../signals/whatif", "TestTPOTRatioCensored_KeepsTheMassPastTheLastEdge"},
 		{"../../../../cmd/capacity-planner", "TestTPOTRatio_TheCensoredReadOnTheSwitch"},
-		{"../../../../cmd/capacity-planner", "TestTPOTRatio_TheCensoredReadIsNotSwappedForTheEngines"},
+		{"../../../../cmd/capacity-planner", "TestTPOTRatio_TheCensoredReadIsNotSwappedForACoarseEngine"},
+		{"../../../../cmd/capacity-planner", "TestTPOTRatio_AFineEngineStandsOverTheFit"},
 		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
 	},
 	saturation.SwitchDecodeResidencePull: {
@@ -1479,6 +1485,14 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestDecode_ResidenceOfOneTokenIsTheTTFT"},
 		{"../../../signals/whatif", "TestDecode_ResidenceRefusesABadHeldBefore"},
 		{"../../../../cmd/capacity-planner", "TestDecodeResidence_TheDecodeEngineTTFTOnTheSwitch"},
+		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
+	},
+	saturation.SwitchDecodeBurstFill: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/whatif", "TestDecode_ClusteredArrivalsRaiseTheFillARequestSees"},
+		{"../../../signals/whatif", "TestDecode_RateForTPOTInvertsTheClusteredFill"},
+		{"../../../signals/whatif", "TestDecode_TheClusteredFillStopsAtTheFullBatch"},
+		{"../../../../cmd/capacity-planner", "TestDecodeBurst_TheStatedCa2OnTheSwitch"},
 		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {

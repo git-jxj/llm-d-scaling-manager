@@ -404,9 +404,12 @@ func gammaPart(m, v float64) ownTime {
 // rate, in requests per second over the fleet: the rate over the decode pods
 // times the prompt's pull time, as TTFTAt prices it
 // (TTFTParts.KVPullUtilization). Unlike the TTFT it is read where the TTFT is
-// refused, at or above 1 where the pull saturates the decode pods. 0 where
-// the TTFT does not price the pull as a stage: no processor sharing, no
-// decode line, no transfer, or a fleet or rate the TTFT refuses as input.
+// refused, at or above 1 where the pull saturates the decode pods, and at a
+// prompt spread past MaxPSPromptCV, where the TTFT is the larger of
+// processor sharing's and first come's: there it is the pull's load even
+// where first come's price is taken and TTFTParts.KVPullUtilization is 0. 0
+// where the fleet prices no pull stage: no processor sharing, no decode
+// line, no transfer, or a fleet or rate the TTFT refuses as input.
 func KVPullUtilization(fl TTFTFleet, rate float64) float64 {
 	if checkRate(rate) != nil {
 		return 0

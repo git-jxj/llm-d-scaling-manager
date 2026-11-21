@@ -129,7 +129,11 @@ that step is in it; the fill is
 residence in the admission chain and the knee. A TTFT read with requests
 waiting on decode capacity is a queue, and a waiting request holds no KV: it is
 not used, nor is an unread one or one from a window whose decode backlog is
-unread, and the figures are flagged `ResidenceUnread`. `H` is read at the
+unread, and the figures are flagged `ResidenceUnread`. An engine that does not
+export `num_requests_waiting_by_reason{reason="capacity"}` (vLLM releases
+before it, other engines) never says why its requests wait, so its backlog is
+always unread and the switch prices no residence there: the figures stay at the
+closed form, the low (optimistic) side, flagged. `H` is read at the
 recorded load and held at every rate, and it times the batch slots too, where a
 request pulling its KV holds cache but not yet a running slot: a knee the slots
 bind is priced low. With `H = 0` every figure is the closed form
@@ -143,6 +147,26 @@ target do drop); alone it moves the 0.6B staircase's mean TPOT further over (r1 
 read low (r2 C at Ca² 4, mean TPOT 0.79 to 0.85, steps read low 18 to 3 of 30):
 it should go on with them (nothing enforces it).
 
+**The fill a request sees under clustered arrivals, behind a switch (#291 (b)).**
+Little's law gives the time-average fill; a request is counted where requests
+arrive, and clustered arrivals put more of them beside it. For a stationary
+stream with interarrival `Ca²` the arrivals expected beside a typical one, beyond
+the rate's share, number `Ca² − 1` (the counts' variance over a long window is
+`Ca²` times their mean); a decode replica of `N_d` taking a share at random holds
+`e = (Ca² − 1)/N_d` of them, all taken as overlapping the request's residence
+(hundreds of steps against clusters of a few interarrival times; where the
+residence is short this reads high). The request's steps run at `ITL(k + e·KVreq/C)`,
+so the fill is the fixed point
+`k = λ_rep·(H + S·B + S·A·ε) / (C/KVreq − λ_rep·S·A)`, `ε = e·KVreq/C`, `S` the
+steps, and the mean TPOT is `ITL(k + ε)`, never past `k_full`. The line was fitted
+at the engines' own arrivals (Poisson on every recording that states none), so
+only the excess over Poisson is priced: `Ca² ≤ 1` prices none. The knee is
+unchanged (a full batch is no fuller). It reads the `Ca²` stated with
+`--arrival-cv2`, flagged `AssumedArrivalCV2` on the decode figures. Planner-only
+replay switch `decode-burst-fill`. The per-cycle rates of a held step are not
+used: their spread is the counts' noise (`cv² ≈ Ca²/(60λ)`), well under the
+clustering inside a cycle.
+
 The pull also loads the decode pods while their KV fill reads near idle: with
 processor sharing on (the CLI's default) the pull is a stage on each decode pod,
 `E[I]·κ/BW` of work at `λ/N_d`. The report's decode utilization carries it as a
@@ -151,9 +175,11 @@ mean wait), on a P/D fleet with a decode line and a transfer, and says when it i
 the larger wait in TTFT, on its own larger than decode admission's and than the
 prefill side's. The row stands where the TTFT is refused, with its utilization
 and no wait: at 1 or above the pull saturates the decode pods, the refusal's
-reason. Where the pull is the larger mean wait, more decode pods, not more prefill
-pods, cut the mean TTFT most, as on the 0.6B warm-up at 9 prefill, where decode 2, 3 and 4
-gave p95 TTFT 322, 218 and 198 ms at a KV fill under 0.01. A missed TTFT names
+reason; and at a prompt spread past processor sharing's, where first come's larger
+price is taken and no pull stage is priced, with its utilization and no wait
+(`unpriced` says which). Where the pull is the larger mean wait, that wait sits on
+the decode pods, not the prefill pods: on the 0.6B warm-up at 9 prefill, decode 2, 3
+and 4 gave p95 TTFT 322, 218 and 198 ms at a KV fill under 0.01. A missed TTFT names
 the pull, not decode admission, in the verdict's reason.
 
 Corrections: on the decode side `KVreq` is the measured resident KV per running request, or the whole context `IL + D·OL/2` with no reading (a prefix hit saves decode KV only where running requests share the blocks). The analyzers price `KVreq = ILeff + D·OL/2` with the output spread
@@ -275,7 +301,8 @@ the case is held on built windows (`TestEngineTPOT_TheOrder`). A refusal priced 
 
 **R_q by censored likelihood, behind a switch (#279).** Read at the `q`
 bucket's upper edge and then at an order-statistic margin, the planner's p90/p50
-read 1.55 on the Qwen3-32B shape-A phase against a measured 1.27 to 1.31.
+read 1.55 on the Qwen3-32B shape-A phase against a measured 1.27 to 1.31 (#279,
+at v0.12.2; 1.57 in this branch's replay).
 `whatif.TPOTRatioCensored` fits every window a lognormal at the window's own
 mean (`_sum/_count`) with one log-spread `σ` shared by all, each bucket count the
 mass between two edges, and reads `R_q` as that lognormal's `q`-quantile over its
@@ -290,8 +317,11 @@ with none, or a fit at the floor of the `σ` range, the edge reading stands. By
 fill, each bucket is fitted on its own windows, never above that bucket's own
 edge reading, and one whose windows do not identify `σ` takes the global `R_q`
 capped there. Flags and refusals are the edge reading's; a fitted read is not
-replaced by the engine histogram's edge reading where the router's buckets are
-coarse, since the fit is what reads inside them. Requests past a window's last
+replaced by a coarse engine histogram's edge reading where the router's buckets
+are coarse, since the fit is what reads inside them, but a fine engine reading
+stands over it, as without the switch: it is a measurement where the fit is a
+model of one, and the switch then never refuses a host-bound variant's
+percentile that it priced off. Requests past a window's last
 finite edge are a cell of their own. Planner-only replay switch `tpot-ratio-censored`, off: on the
 Qwen3-32B shape-A phase it reads p90 over p50 at about 1.22 where the edge read 1.57
 (against a measured 1.27 to 1.31),
@@ -1327,7 +1357,7 @@ TTFT: the decode answers are as they were.
 | `--ttft-percentile 90` | `replicas-to-slo`: the percentile. Default: the policy's `slo.ttft`, else 90. On `slo-to-rate`, beside a plain `--ttft` |
 | `--assume-vp 30000` | `V_P`, prompt tokens per second, in place of the learned one, as every `--assume-*` flag overrides the recording. Neither rescaled nor margined |
 | `--assume-prompt-cv 1` | The prompt's `cv`, 0 to 3, in place of the measured one or the default 2, flagged `AssumedPromptSpread`, with any measured figure beside it (`promptCVRead` in the JSON). At 0 the JSON's `promptCV` is absent and `promptCVSource` says `assumed` |
-| `--arrival-cv2 4` | `Ca²` at the prefill queue, above 0, in place of Poisson's 1, flagged `AssumedArrivalCV2`. 0 is refused: P3 reads it as Poisson. Decode's admission chain has no `Ca²`, so on a decode line it stays Poisson, and `AssumedPoissonArrivals` stays. The closing note then quotes no P2 row: those were read at Poisson. Assumed, and not validated: the one bursty bucket says nothing of the model at any other `Ca²` ([the staircase](slo-capacity-planner-ttft.md#ground-truth-and-the-staircase)) |
+| `--arrival-cv2 4` | `Ca²` at the prefill queue, above 0, in place of Poisson's 1, flagged `AssumedArrivalCV2`. 0 is refused: P3 reads it as Poisson. Decode's admission chain has no `Ca²`, so on a decode line it stays Poisson, and `AssumedPoissonArrivals` stays; with the replay switch `decode-burst-fill` the decode's TPOT is read at the fill a request sees beside the clustered arrivals, flagged `AssumedArrivalCV2`. The closing note then quotes no P2 row: those were read at Poisson. Assumed, and not validated: the one bursty bucket says nothing of the model at any other `Ca²` ([the staircase](slo-capacity-planner-ttft.md#ground-truth-and-the-staircase)) |
 | `--assume-router-hop 8ms` | The hop between the router and the engines, in place of the learned or default one, flagged `RouterHopAssumed` |
 | `--prefill N` | Prefill pods to price; 0 takes the serving pods at the cycle |
 | `--prefill-variant V` | The prefill variant to price, when the model has several: the CLI prices one fleet, and a usage error says so otherwise. It gets the whole rate, named as assumed |

@@ -571,9 +571,10 @@ It replays the recording once and answers, for each shape and load:
   probability, and on a P/D fleet with a KV transfer, TTFT priced as
   processor sharing (the default), a `KV pull` row: the pull's load on each
   decode pod, which the KV fill leaves out, and whether it is the larger mean
-  wait in TTFT, where more decode pods, not more prefill pods, cut the mean
-  TTFT most; at 1 or more the pull saturates the decode pods and TTFT is
-  refused;
+  wait in TTFT, which then sits on the decode pods, not the prefill pods; at
+  1 or more the pull saturates the decode pods and TTFT is refused; its wait
+  is unpriced where TTFT is refused, or priced first come because the prompts
+  are too uneven for processor sharing;
   prefill utilization pooled and on the busiest pod), the
   prefill, decode and fleet knees in req/s and output tok/s with what binds
   each, the operating point, the highest rate that holds the targets, and

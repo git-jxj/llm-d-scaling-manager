@@ -921,6 +921,7 @@ report.shapes[].utilization.decode.bandTop number
 report.shapes[].utilization.decode.kvFill Figure
 report.shapes[].utilization.decode.kvPull object
 report.shapes[].utilization.decode.kvPull.setsTTFT boolean
+report.shapes[].utilization.decode.kvPull.unpriced string
 report.shapes[].utilization.decode.kvPull.utilization number
 report.shapes[].utilization.decode.kvPull.wait number
 report.shapes[].utilization.decode.slots int64

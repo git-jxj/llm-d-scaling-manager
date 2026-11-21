@@ -483,6 +483,14 @@ func TestPS_KVPullUtilizationIsTheTTFTs(t *testing.T) {
 	if got := KVPullUtilization(sat, 7); got < 1 {
 		t.Errorf("a saturated pull reads %g, want at least 1", got)
 	}
+	// Past MaxPSPromptCV first come's larger mean is priced, with no pull
+	// stage: the part reads 0 and the pull's load stands.
+	wide := psFleet(2, 1)
+	wideTTFT := psTTFT(t, wide, 10, 0)
+	if !slices.Contains(wideTTFT.Flags, SpreadBeyondProcessorSharing) || wideTTFT.Parts.KVPullUtilization != 0 {
+		t.Errorf("cv 2: want first come priced, no pull part: flags %v, part %g", wideTTFT.Flags, wideTTFT.Parts.KVPullUtilization)
+	}
+	nearRel(t, "cv 2 pull utilization", KVPullUtilization(wide, 10), KVPullUtilization(psFleet(0.0577, 1), 10), 1e-12)
 	fc := psFleet(0.0577, 1)
 	fc.ProcessorSharing = false
 	noDecode := psFleet(0.0577, 1)

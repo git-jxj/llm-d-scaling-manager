@@ -107,6 +107,7 @@
           },
           "kvPull": {
             "utilization": 1.2567072654765727,
+            "unpriced": "ttftRefused",
             "setsTTFT": false
           }
         },

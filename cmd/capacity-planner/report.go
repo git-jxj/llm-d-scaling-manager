@@ -952,7 +952,13 @@ func (r *reporter) use(u *whatifapi.ReportUse, base *servedFleet, ev fleetEval) 
 		if rho := whatif.KVPullUtilization(base.pf.fleet, r.load); rho > 0 {
 			kv := &whatifapi.ReportKVPull{Utilization: rho}
 			mean := base.pf.priced(func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, r.load, 0) })
-			if t, ok := mean.(whatif.TTFT); ok && t.Parts.KVPullUtilization > 0 {
+			t, ok := mean.(whatif.TTFT)
+			switch {
+			case !ok:
+				kv.Unpriced = whatifapi.KVPullTTFTRefused
+			case !(t.Parts.KVPullUtilization > 0):
+				kv.Unpriced = whatifapi.KVPullFirstCome
+			default:
 				w := t.Parts.KVPullWait
 				kv.Wait, kv.SetsTTFT = &w, pullSetsTTFT(t.Parts)
 			}
@@ -1499,8 +1505,8 @@ func ttftWaits(p whatif.TTFTParts) (prefill, decode float64) {
 
 // pullSetsTTFT says the KV pull is the larger wait in TTFT: on its own
 // larger than the prefill side's wait and than decode admission's. The
-// decode count then moves TTFT while decode's KV fill and slots read near
-// idle.
+// larger mean wait in TTFT then sits on the decode pods, while decode's KV
+// fill and slots read near idle.
 func pullSetsTTFT(p whatif.TTFTParts) bool {
 	prefill, _ := ttftWaits(p)
 	return p.KVPullWait > prefill && p.KVPullWait > p.DecodeWait

@@ -521,8 +521,10 @@ func noRoleHint(variants []pricedVariant) string {
 
 // residenceUnread is a P/D decode figure priced, on
 // saturation.SwitchDecodeResidencePull, without the KV pull in its residence:
-// the decode engine read no TTFT, or read it with requests waiting on decode
-// capacity, whose wait holds no KV.
+// the decode engine read no finite TTFT, read it with requests waiting on
+// decode capacity, whose wait holds no KV, or read it in a window whose
+// decode backlog is unread (always, on an engine without
+// num_requests_waiting_by_reason).
 const residenceUnread whatif.Flag = "ResidenceUnread"
 
 // decodeVariants is the variants a question prices: every variant that is not
@@ -592,6 +594,13 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			} else {
 				pv.flags = append(pv.flags, residenceUnread)
 			}
+		}
+		if st.DecodeBurstFill && f.set["arrival-cv2"] && f.arrivalCV2 > 1 {
+			// Clustered arrivals put more sequences beside a request than
+			// the time average (saturation.SwitchDecodeBurstFill): its
+			// TPOT is read at that fill, from the Ca^2 stated, and says so.
+			pv.decode.ArrivalCV2 = f.arrivalCV2
+			pv.flags = append(pv.flags, assumedArrivalCV2)
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)
@@ -790,11 +799,15 @@ func onHostBound(res whatif.Result, pv pricedVariant, r resolvedRatio) whatif.Re
 
 // tpotRatioRead is R_q as the histograms read it (tpotRatioFor). Where the
 // censored fit reads the router's buckets (saturation.SwitchTPOTRatioCensored),
-// it reads inside a coarse bucket rather than at its edge, so the engine's
-// edge reading does not replace it: the switch is the remedy for the coarse
-// grid. Where the fit does not read, the router's edge reading falls back to
-// the engine's as without the switch.
+// it reads inside a coarse bucket rather than at its edge, so a coarse
+// engine's edge reading does not replace it: the switch is the remedy for
+// the coarse grid. A fine engine reading is a measurement where the fit is a
+// model of one, and stands as without the switch, so the switch never
+// refuses (hostBoundRefusal) what it priced off. Where the fit does not
+// read, the router's edge reading falls back to the engine's as without the
+// switch.
 func (f *answerFlags) tpotRatioRead(st *learnreplay.State, q float64) (whatif.TPOTRatio, []whatif.Flag, *whatif.Unanswerable) {
+	f.engineTPOT = false
 	r, flags, refused := whatif.TPOTRatio{}, []whatif.Flag(nil), &whatif.Unanswerable{Reason: whatif.NoTPOTHistogram,
 		Detail: "the recording carries no TPOT histogram; pass --assume-tpot-ratio for a flagged answer"}
 	switch {
@@ -802,6 +815,12 @@ func (f *answerFlags) tpotRatioRead(st *learnreplay.State, q float64) (whatif.TP
 		var fitted bool
 		r, flags, refused, fitted = whatif.TPOTRatioCensoredFit(st.TPOTWindows, q)
 		if fitted {
+			if slices.Contains(flags, whatif.CoarseTPOTBucket) && len(st.EngineTPOTWindows) > 0 {
+				if er, eflags, erefused := whatif.EngineTPOTRatio(st.EngineTPOTWindows, q); erefused == nil && !slices.Contains(eflags, whatif.CoarseTPOTBucket) {
+					f.engineTPOT = true
+					return er, eflags, nil
+				}
+			}
 			return r, flags, refused
 		}
 	case len(st.TPOTWindows) > 0:

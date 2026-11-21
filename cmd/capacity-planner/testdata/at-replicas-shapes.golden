@@ -46,7 +46,7 @@ shape 1k/1k: IL 1024 OL 1024, prefix hit 0.00 (asked)
   EXTRAPOLATED: IL 1024 outside the 7989-8014 seen; OL 1024 outside the 200-201 seen
 utilization at the load judged
   decode        KV fill saturated (band top 0.8), slots saturated of 512, wait p saturated
-  KV pull       utilization 0.161 per decode pod, mean wait unpriced (TTFT refused, or priced first come)
+  KV pull       utilization 0.161 per decode pod, mean wait unpriced (TTFT refused)
   prefill       utilization pooled 0.11, worst pod 0.11 (f 1)
   verdict       UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.2x the fleet knee of 35.6 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2).
                 x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (35.6 r/s); needs 1 prefill + 4 decode (has 2 + 2).
