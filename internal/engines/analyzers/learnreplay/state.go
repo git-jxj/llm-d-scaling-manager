@@ -13,6 +13,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
@@ -166,7 +167,8 @@ type VariantState struct {
 	CapacityTokens float64
 	// BatchCap is the cap per engine rank the analyzer prices the variant
 	// at, BatchCapSource where it came from (flags, declared, learned,
-	// default; "" with none), and Ranks the engine ranks per replica.
+	// default, or step-budget with saturation.SwitchPlannerCapAtStepBudget
+	// on; "" with none), and Ranks the engine ranks per replica.
 	BatchCap       int64
 	BatchCapSource string
 	Ranks          int
@@ -261,6 +263,10 @@ type shapeSample struct {
 //     median of the busiest minutes, not of every minute.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
+//   - slo.SwitchTTFTHopUnqueued: the router hop of the decode term read off
+//     windows whose prefill pods held no queue. The planner reads its own
+//     decode term windows (state_ttft.go), so it reads the switch from here
+//     even where the recording has no slo analyzer to set it on.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
@@ -294,6 +300,11 @@ type shapeSample struct {
 // bursty phases' mean TPOT back to what was measured, but it is off: with
 // it, the hold, the lift and the residence all on, other figures still read
 // under what was measured.
+//
+// saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
+// either: no recording holds an engine whose step budget runs fewer
+// sequences than its cap (MTP, wide EP), so there is no backtest to turn it
+// on with (issue llm-d-incubation/llm-d-scaling-manager#302).
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -301,6 +312,8 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
+	}, PackageSLO: {
+		slo.SwitchTTFTHopUnqueued: true,
 	}}
 }
 
@@ -385,6 +398,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	opts.Mode = Normal
 	opts.Switches = withPlannerSwitches(opts.Switches)
 	opts.discardRecording = true
+	opts.sloOptional = true
 	var (
 		st       *State
 		stateErr error
@@ -394,7 +408,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		engine   []whatif.TPOTWindow
 		shapes   = map[string][]shapeSample{}
 		resident = map[string][]residentSample{}
-		ttft     = newTTFTSamples()
+		ttft     = newTTFTSamples(opts.Switches[PackageSLO][slo.SwitchTTFTHopUnqueued])
 		lines    = newLineSamples()
 		cycleAt  = map[time.Time]int{}
 		arrivals []float64

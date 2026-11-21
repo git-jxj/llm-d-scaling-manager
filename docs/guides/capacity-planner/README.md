@@ -530,9 +530,10 @@ It replays the recording once and answers, for each shape and load:
   `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
   repeatable: `80%` of that shape's fleet knee, `5r/s`, `seen`, or
   `seen x1.5`). A cell
-  such as `617/3.2m @18.49 ok` is TTFT p90 617 ms and, its p90 refused
-  as host-bound, TPOT mean 3.2 ms at 18.49 r/s, and the SLO's own
-  statistics are met there. The mark is `ok`
+  such as `617/3.2m @18.49 ok` is the TTFT and TPOT at the statistics the
+  SLO judges (here TTFT p90 617 ms and, its p90 refused as host-bound,
+  TPOT mean 3.2 ms, marked `m`; with no target, TTFT p90 and the
+  `--tpot-percentile`) at 18.49 r/s, and both targets are met there. The mark is `ok`
   met, `MISS` missed, `MISS*` missed because the rate is past the prefill
   flow-control onset (the router queues) though the figure is within, `SAT`
   saturated, `?` not judged. A TPOT ending in `m` is the mean, where the
@@ -583,7 +584,11 @@ It replays the recording once and answers, for each shape and load:
 
 The targets are the policy's unless `--ttft` and `--tpot` set them. Exit 0
 means the report answered, whatever the verdict, saturated fleets included;
-exit 3 means a shape's verdict is NOT JUDGED. Scripts read the verdict from
+exit 3 means a shape's verdict is NOT JUDGED; exit 4 means the report
+answered and the self-check found the figures a verdict rests on
+inconsistent with the recording (the verdict says `self-check: not
+trusted`; [the self-check](check.md#the-self-check-beside-every-answer)).
+Scripts read the verdict from
 `-o json`
 (`shapes[].verdict.verdict`), which prints the same report as
 [`POST /v1/report`](api.md#the-report).
@@ -597,7 +602,7 @@ prefill engine  vLLM release not recorded
 load judged     41.70 r/s, the p95 of the 282 of 289 cycles with traffic
 load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/s; busiest 2m0s (8 cycles): 42.13 r/s
 SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
-cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
+cell = TTFT p90 ms / TPOT mean ms @ the rate priced, r/s; - refused (the shape's table says why)
 mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
 summary                     50%                 80%                  5r/s               seen            seen x1.2
   measured                  617/3.2m @18.49 ok  1944/6.8m @29.59 ok  388/3.1m @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
