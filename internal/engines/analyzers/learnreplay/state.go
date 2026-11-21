@@ -240,8 +240,11 @@ type shapeSample struct {
 //     median of the busiest minutes, not of every minute.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
-//   - saturation.SwitchITLHoldSteadySlope: an ITL slope fitted on steady
-//     readings held, not refitted on unsteady ones alone.
+//
+// saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
+// the line it holds is right at a given fill, and the planner then reads
+// TTFT and TPOT under what was measured, because it predicts less decode KV
+// fill than the pods held. It stays off until that is fixed.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -249,7 +252,6 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
-		saturation.SwitchITLHoldSteadySlope:     true,
 	}}
 }
 

@@ -54,25 +54,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 18.19105340615044,
+        "value": 15.558621050610526,
         "unit": "r/s",
+        "band": {
+          "lo": 18.167214717191346,
+          "hi": 21.256048595718926
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -85,7 +93,7 @@
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -111,25 +119,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -140,7 +156,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -166,25 +182,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -195,7 +219,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -221,25 +245,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -250,7 +282,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -276,25 +308,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -305,7 +345,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -327,40 +367,48 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2,
+        "decode": 3,
         "atLeast": true
       },
       "limit": {
-        "value": 36.38210681230088,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
         "prefill": 2,
         "decode": 2
       },
-      "verdict": "match",
+      "verdict": "under",
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -382,40 +430,48 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2,
+        "decode": 3,
         "atLeast": true
       },
       "limit": {
-        "value": 36.38210681230088,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
         "prefill": 2,
         "decode": 2
       },
-      "verdict": "match",
+      "verdict": "under",
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -437,40 +493,48 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2,
+        "decode": 3,
         "atLeast": true
       },
       "limit": {
-        "value": 36.38210681230088,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
         "prefill": 2,
         "decode": 2
       },
-      "verdict": "match",
+      "verdict": "under",
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -492,40 +556,48 @@
       },
       "status": "sized",
       "needed": {
-        "decode": 2,
+        "decode": 3,
         "atLeast": true
       },
       "limit": {
-        "value": 36.38210681230088,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
         "prefill": 2,
         "decode": 2
       },
-      "verdict": "match",
+      "verdict": "under",
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -551,25 +623,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 54.57316021845132,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -580,7 +660,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -606,25 +686,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 54.57316021845132,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -635,7 +723,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -661,25 +749,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 54.57316021845132,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -690,7 +786,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -716,25 +812,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 54.57316021845132,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -745,7 +849,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -771,25 +875,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 54.57316021845132,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -800,7 +912,7 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -826,25 +938,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 54.57316021845132,
+        "value": 46.67586315183158,
         "unit": "r/s",
+        "band": {
+          "lo": 54.50164415157404,
+          "hi": 63.76814578715678
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -856,7 +976,7 @@
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -882,25 +1002,33 @@
         "atLeast": true
       },
       "limit": {
-        "value": 18.19105340615044,
+        "value": 15.558621050610526,
         "unit": "r/s",
+        "band": {
+          "lo": 18.167214717191346,
+          "hi": 21.256048595718926
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "hadLimit": {
-        "value": 36.38210681230088,
+        "value": 31.117242101221052,
         "unit": "r/s",
+        "band": {
+          "lo": 36.33442943438269,
+          "hi": 42.51209719143785
+        },
         "boundBy": [
           "band top"
         ],
         "flags": [
           "AssumedShape",
-          "HeldLine"
+          "ExtrapolatedFill"
         ]
       },
       "actual": {
@@ -913,7 +1041,7 @@
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "HeldLine"
+        "ExtrapolatedFill"
       ]
     }
   ],
@@ -926,14 +1054,14 @@
         "max": 35.72
       },
       "needed": {
-        "decode": 2,
+        "decode": 3,
         "atLeast": true
       },
       "actual": {
         "prefill": 2,
         "decode": 2
       },
-      "verdict": "match",
+      "verdict": "under",
       "sized": 9,
       "unmet": 0
     },
@@ -967,7 +1095,7 @@
       "atLeast": true
     },
     "neededReplicaHours": {
-      "decode": 3.0000000000000004
+      "decode": 3.3333333333333335
     },
     "hadReplicaHours": {
       "decode": 2.666666666666666
@@ -982,6 +1110,7 @@
     },
     "hadGpuHoursAll": 5.333333333333332,
     "underHours": [
+      "2026-11-06T02:00:00Z",
       "2026-11-06T03:00:00Z"
     ],
     "overHours": [],
@@ -992,9 +1121,9 @@
       "refused": 0,
       "tooLittleData": 0,
       "noData": 0,
-      "under": 6,
+      "under": 10,
       "over": 2,
-      "match": 8,
+      "match": 4,
       "sizedForMean": 3,
       "sizedForP95": 13,
       "sizedForMax": 0,

@@ -48,8 +48,7 @@ Where to find it:
 
 One run so far: Qwen3-32B at tensor parallelism 2 on H200, 2 prefill and 2
 decode Pods. It climbed a ladder of 6 load levels, from 0.40 to 0.90 of the
-knee (for short prompts, 0.36 to 0.81 of the knee the planner now names),
-each judged over 7 to 22 minutes. Each level ran twice, once with the
+knee, each judged over 7 to 22 minutes. Each level ran twice, once with the
 router's flow control off and once on. The client timed every request.
 
 So "n=12 at 6 load levels" is 6 load levels, each read twice. The planner
@@ -62,42 +61,42 @@ This table is generated from the rows the planner ships:
 <!-- envelope-table: begin (go test ./cmd/capacity-planner -run TestStaircaseQ32 -update) -->
 | Figure | Shape | Error | Range | Readings | Knee share | Flow control |
 | --- | --- | --- | --- | --- | --- | --- |
-| decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +15% | one-sided | 1 |  | off |
+| decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 1 | -4..+2% | bracket | 1 |  | on |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 4 | -7..-4% | bracket | 1 |  | on |
-| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | -15..+0% | p10-p90, min-max -17..+0% | 12 at 6 load levels | 0.358 to 0.805 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -4..-2% | p10-p90, min-max -4..-2% | 12 at 6 load levels | 0.084 to 0.190 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -6..-4% | p10-p90, min-max -6..-4% | 10 at 6 load levels | 0.084 to 0.179 | any |
+| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +2..+15% | p10-p90, min-max +1..+18% | 12 at 6 load levels | 0.400 to 0.900 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -2..+1% | p10-p90, min-max -3..+1% | 12 at 6 load levels | 0.096 to 0.215 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -4..-2% | p10-p90, min-max -5..-1% | 10 at 6 load levels | 0.096 to 0.203 | any |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 4 | at most +3% | one-sided | 1 |  | off |
-| rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | at most +6% | one-sided | 1 | 0.825 to 0.875 | off, on |
-| rate-at-ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | at most +6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
+| rate-at-ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
 | rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
 | rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
 | rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | at most +0% | one-sided | 2 | 0.740 to 0.875 | off, on |
 | rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | at most +2% | one-sided | 2 | 0.740 to 0.875 | off, on |
-| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -8..+2% | p10-p90, min-max -9..+3% | 12 at 6 load levels | 0.358 to 0.805 | off, on |
-| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -4..+3% | p10-p90, min-max -6..+4% | 12 at 6 load levels | 0.358 to 0.805 | off, on |
-| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -6..+2% | p10-p90, min-max -7..+3% | 12 at 6 load levels | 0.358 to 0.805 | off, on |
+| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -4..+18% | p10-p90, min-max -5..+18% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | +0..+14% | p10-p90, min-max -2..+16% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
+| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -3..+12% | p10-p90, min-max -4..+14% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
 | ttft mean | 8000-token prompts, 200 out, Ca^2 1 | +29..+95% | p10-p90, min-max +27..+149% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
 | ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | +18..+108% | p10-p90, min-max +15..+156% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
 | ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | +18..+102% | p10-p90, min-max +5..+174% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
 | ttft mean | 8000-token prompts, 200 out, Ca^2 4 | +30..+93% | p10-p90, min-max +22..+127% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
 | ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | +45..+131% | p10-p90, min-max +33..+167% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
-| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +43..+145% | p10-p90, min-max +37..+186% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +44..+145% | p10-p90, min-max +37..+186% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
 <!-- envelope-table: end -->
 
 What this says:
 
-- **Short prompts:** the planner is close. TTFT reads from about 9% fast to
-  4% slow, mean TPOT from 17% fast to on the mark.
-- **Mean TPOT on long prompts:** within a few percent, from 6% fast to 2% fast.
-- **Long prompts:** TTFT reads 5% to 190% slow, more so near the knee.
+- **Short prompts:** the planner is close. TTFT reads up to about 18% slow,
+  mean TPOT up to 18% slow.
+- **Mean TPOT on long prompts:** within a few percent, from 5% fast to 1% slow.
+- **Long prompts:** TTFT reads 15% to 190% slow, more so near the knee.
   Sizing for TTFT therefore errs on the side of more Pods than needed.
-- **Knees, flow control off:** long prompts held to the knee the planner
-  names: at most about 3% high, since the hold rule cannot see a fleet short
-  by less. Short prompts held every step run, up to 15.6 r/s, against a
-  predicted 17.5: at most about 15% high.
+- **Knees, flow control off:** every phase held at the knee the planner
+  names. The run stopped there, and its hold rule cannot see a fleet short
+  by less than 3%, so the knee is "not exceeded within the steps run": at
+  most about 3% high.
 - **Flow control on:** the fleet stops at the router's onset, not at the
   knee: 5% to 25% under it in this run. The knee is outside with flow control
   on; read the onset's label instead. For bursty traffic the router started

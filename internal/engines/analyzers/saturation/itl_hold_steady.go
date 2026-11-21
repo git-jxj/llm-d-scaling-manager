@@ -11,6 +11,8 @@ package saturation
 // staircase that raised A from 31 to 42 ms per unit of fill and put the
 // decode knee about 25% low (issue
 // llm-d-incubation/llm-d-scaling-manager#266). Off, the fallback refits, as
-// before this switch. Planner-only: off from the constructor;
-// learnreplay.StateAt turns it on (learnreplay.PlannerSwitches).
+// before this switch. Planner-only and off from the constructor; the
+// planner's replay does not turn it on yet (learnreplay.PlannerSwitches):
+// with the line held, the planner's predicted decode KV fill reads about
+// half what the pods held, and TTFT and TPOT read under what was measured.
 const SwitchITLHoldSteadySlope = "itl-hold-steady-slope"

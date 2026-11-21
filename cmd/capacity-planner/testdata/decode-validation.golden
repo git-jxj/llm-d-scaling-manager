@@ -22,7 +22,7 @@ ols-sweep ns-01/model-02 freeze 136 of 226 variant-01 pinned-B; tpot -3.9% over 
 ols-sweep ns-01/model-02 freeze 136 of 226 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity
 ols-sweep-slo ns-01/model-02 freeze 50 of 83 variant-01 held; tpot +10.5% over 33 rows, OUT of +-10%, unclamped +10.5%, 0 below the band, 0 above it; knee +67.9% over 7 rows, OUT of +-15%
 ols-sweep-slo ns-01/model-02 freeze 50 of 83 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity
-ols-sweep-slo-restart ns-01/model-02 freeze 86 of 143 variant-01 held; tpot -9.2% over 54 rows, in of +-10%, unclamped -9.2%, 3 below the band, 0 above it; knee +102.2% over 5 rows, OUT of +-15%
+ols-sweep-slo-restart ns-01/model-02 freeze 86 of 143 variant-01 pinned-B; tpot -8.5% over 54 rows, in of +-10%, unclamped -8.5%, 3 below the band, 0 above it; knee +99.1% over 5 rows, OUT of +-15%
 ols-sweep-slo-restart ns-01/model-02 freeze 86 of 143 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity
 pd-restart ns-01/model-02 freeze 140 of 233 variant-01 no-line; tpot SKIPPED no line at the freeze; knee SKIPPED no line at the freeze
 pd-restart ns-01/model-02 freeze 140 of 233 variant-02 prefill; own SKIPPED P1 refused V_P: NoPrefillCapacity

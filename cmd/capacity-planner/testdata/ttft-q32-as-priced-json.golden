@@ -25,7 +25,7 @@
       "variant": "variant-01",
       "inputs": {
         "line": {
-          "a": 0.035931416279983516,
+          "a": 0.04249685049858612,
           "b": 0.010425088112190157,
           "tier": "held",
           "readings": 0,
@@ -88,11 +88,11 @@
       "results": {
         "knee": {
           "answer": {
-            "value": 19.220524594519528,
+            "value": 16.95075000755562,
             "unit": "r/s",
             "basis": {
               "fill": 0.795841134150669,
-              "kneeRate": 19.220524594519528,
+              "kneeRate": 16.95075000755562,
               "floor": 0,
               "uncapped": 0,
               "boundBy": [
@@ -116,8 +116,8 @@
             "value": 3.440468108887058,
             "unit": "r/s",
             "basis": {
-              "fill": 0.04380573529403669,
-              "kneeRate": 19.220524594519528,
+              "fill": 0.04504851800465884,
+              "kneeRate": 16.95075000755562,
               "floor": 0,
               "uncapped": 0,
               "boundBy": [],
@@ -139,11 +139,11 @@
         },
         "meanTPOT": {
           "answer": {
-            "value": 0.011999090222490955,
+            "value": 0.012339508247017008,
             "unit": "s",
             "basis": {
-              "fill": 0.04380573529403669,
-              "kneeRate": 19.220524594519528,
+              "fill": 0.04504851800465884,
+              "kneeRate": 16.95075000755562,
               "floor": 0.0108191875128338,
               "uncapped": 0,
               "boundBy": [],
@@ -160,11 +160,11 @@
             ],
             "validation": {
               "validated": true,
-              "label": "validated: error -4..-2% (p10-p90, min-max -4..-2%, n=12 at 6 load levels; q32 staircase)",
+              "label": "validated: error -2..+1% (p10-p90, min-max -3..+1%, n=12 at 6 load levels; q32 staircase)",
               "source": "q32 staircase",
               "shape": "8000-token prompts, 200 out, Ca^2 1",
-              "errorLo": -0.0380271839739309,
-              "errorHi": -0.02035507213857739,
+              "errorLo": -0.022639057179420663,
+              "errorHi": 0.005997936162890238,
               "readings": 12
             }
           }
@@ -257,7 +257,7 @@
         },
         "ttft": {
           "answer": {
-            "value": 7.5961725443506705,
+            "value": 7.599109523510692,
             "unit": "s",
             "basis": {
               "fill": 0,
@@ -282,26 +282,26 @@
               "HeldLine"
             ],
             "parts": {
-              "independent": 7.5961725443506705,
-              "pooled": 7.5961725443506705,
-              "decodeShare": 8.720076903839984e-44,
+              "independent": 7.599109523510692,
+              "pooled": 7.599109523510692,
+              "decodeShare": 7.567059772573089e-41,
               "engineWait": 2.800006577142657,
               "kvPullWait": 0.0009052648279237142,
               "ownPrefill": 0.8063670010530012,
-              "decodeWait": 1.10520224205528e-44,
+              "decodeWait": 1.1201927286682039e-41,
               "firstStep": 0,
-              "decodeEngine": 0.014777960271475946,
+              "decodeEngine": 0.017714939431497434,
               "routerHop": 0,
               "prefillUtilization": 0.8499999999999999,
               "vpMarginApplied": 0.05,
               "waitScale": 0,
               "waitOffset": 0,
-              "decodeWaitProbability": 8.720076903839984e-44,
+              "decodeWaitProbability": 7.567059772573089e-41,
               "prefillKnee": 4.0476095398671275,
-              "decodeKnee": 19.220524594519528
+              "decodeKnee": 16.95075000755562
             },
             "sensitivity": {
-              "lo": 3.827248126362012,
+              "lo": 3.830185105522033,
               "hi": 1870592203661731.8,
               "refused": "Saturated"
             },

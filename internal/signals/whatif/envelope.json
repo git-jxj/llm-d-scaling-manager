@@ -39,7 +39,7 @@
           "hi": 0.05
         }
       },
-      "errorHi": 0.1522819221664813,
+      "errorHi": 0.0308980019033116,
       "spread": "one-sided",
       "readings": 1
     },
@@ -186,13 +186,13 @@
           "lo": 0,
           "hi": 0.05
         },
-        "minKneeShare": 0.358,
-        "maxKneeShare": 0.805
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
-      "errorLo": -0.15118743740486132,
-      "errorHi": -0.00413602194255752,
-      "errorMin": -0.17220802286512416,
-      "errorMax": -0.0021695557857278613,
+      "errorLo": 0.01937956897345683,
+      "errorHi": 0.1500795711476635,
+      "errorMin": 0.01117245818605217,
+      "errorMax": 0.18285613387036004,
       "spread": "p10-p90",
       "readings": 12,
       "levels": 6
@@ -232,13 +232,13 @@
           "lo": 0,
           "hi": 0.05
         },
-        "minKneeShare": 0.084,
-        "maxKneeShare": 0.19
+        "minKneeShare": 0.096,
+        "maxKneeShare": 0.215
       },
-      "errorLo": -0.0380271839739309,
-      "errorHi": -0.02035507213857739,
-      "errorMin": -0.04065881580563868,
-      "errorMax": -0.019843461790868377,
+      "errorLo": -0.022639057179420663,
+      "errorHi": 0.005997936162890238,
+      "errorMin": -0.0265944871629753,
+      "errorMax": 0.006849223516752545,
       "spread": "p10-p90",
       "readings": 12,
       "levels": 6
@@ -278,13 +278,13 @@
           "lo": 0,
           "hi": 0.05
         },
-        "minKneeShare": 0.084,
-        "maxKneeShare": 0.179
+        "minKneeShare": 0.096,
+        "maxKneeShare": 0.203
       },
-      "errorLo": -0.05808795771062366,
-      "errorHi": -0.04056316640428782,
-      "errorMin": -0.06338521960126586,
-      "errorMax": -0.03975682437845118,
+      "errorLo": -0.04034253903555983,
+      "errorHi": -0.01919403571184507,
+      "errorMin": -0.04603155096266953,
+      "errorMax": -0.01344015520763131,
       "spread": "p10-p90",
       "readings": 10,
       "levels": 6
@@ -442,7 +442,7 @@
         "minKneeShare": 0.825,
         "maxKneeShare": 0.875
       },
-      "errorHi": 0.05565580645774326,
+      "errorHi": -0.05554930556504423,
       "spread": "one-sided",
       "readings": 1
     },
@@ -501,7 +501,7 @@
         "minKneeShare": 0.825,
         "maxKneeShare": 0.875
       },
-      "errorHi": 0.05565580645774326,
+      "errorHi": -0.05554930556504423,
       "spread": "one-sided",
       "readings": 1
     },
@@ -793,13 +793,13 @@
           "lo": 0,
           "hi": 0.05
         },
-        "minKneeShare": 0.358,
-        "maxKneeShare": 0.805
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
-      "errorLo": -0.08417383992273991,
-      "errorHi": 0.01721656303778305,
-      "errorMin": -0.0891103984582754,
-      "errorMax": 0.030600190491735235,
+      "errorLo": -0.035704607952240786,
+      "errorHi": 0.17708330513519988,
+      "errorMin": -0.047117945531881866,
+      "errorMax": 0.18349318201274034,
       "spread": "p10-p90",
       "readings": 12,
       "levels": 6
@@ -856,13 +856,13 @@
           "lo": 0,
           "hi": 0.05
         },
-        "minKneeShare": 0.358,
-        "maxKneeShare": 0.805
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
-      "errorLo": -0.04306418608379229,
-      "errorHi": 0.030567609298789038,
-      "errorMin": -0.057961023249592625,
-      "errorMax": 0.036986223021963305,
+      "errorLo": -0.0031686417060293563,
+      "errorHi": 0.14038369691279728,
+      "errorMin": -0.024295264666893912,
+      "errorMax": 0.16221102053842684,
       "spread": "p10-p90",
       "readings": 12,
       "levels": 6
@@ -919,13 +919,13 @@
           "lo": 0,
           "hi": 0.05
         },
-        "minKneeShare": 0.358,
-        "maxKneeShare": 0.805
+        "minKneeShare": 0.4,
+        "maxKneeShare": 0.9
       },
-      "errorLo": -0.058395323788680405,
-      "errorHi": 0.01952158129246416,
-      "errorMin": -0.06912933473652338,
-      "errorMax": 0.03140576900809111,
+      "errorLo": -0.025180533509062283,
+      "errorHi": 0.11868427243975517,
+      "errorMin": -0.039051401224804994,
+      "errorMax": 0.14463264690048216,
       "spread": "p10-p90",
       "readings": 12,
       "levels": 6
@@ -985,10 +985,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": 0.28968846084208005,
-      "errorHi": 0.9461374810622216,
-      "errorMin": 0.26798355585456335,
-      "errorMax": 1.4850703650587147,
+      "errorLo": 0.29110810447187335,
+      "errorHi": 0.9477453954515686,
+      "errorMin": 0.2693569109842153,
+      "errorMax": 1.486565592670619,
       "spread": "p10-p90",
       "readings": 12,
       "levels": 6
@@ -1048,10 +1048,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": 0.18074239966690364,
-      "errorHi": 1.0784756558764739,
-      "errorMin": 0.1526537327630082,
-      "errorMax": 1.5604613665793705,
+      "errorLo": 0.18155186244861887,
+      "errorHi": 1.0792975325275418,
+      "errorMin": 0.1534425180325436,
+      "errorMax": 1.561173147263153,
       "spread": "p10-p90",
       "readings": 12,
       "levels": 6
@@ -1111,10 +1111,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": 0.1809283038400695,
-      "errorHi": 1.019397125637665,
-      "errorMin": 0.05359765474670719,
-      "errorMax": 1.737724561860444,
+      "errorLo": 0.18163413114669424,
+      "errorHi": 1.0200383921476248,
+      "errorMin": 0.05422850378021993,
+      "errorMax": 1.7383267089432048,
       "spread": "p10-p90",
       "readings": 12,
       "levels": 6
@@ -1174,10 +1174,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.85
       },
-      "errorLo": 0.2998751991524332,
-      "errorHi": 0.92773011325315,
-      "errorMin": 0.2227809503256506,
-      "errorMax": 1.2668877502689182,
+      "errorLo": 0.30088085623245236,
+      "errorHi": 0.9285281735301888,
+      "errorMin": 0.22372696292809846,
+      "errorMax": 1.2677408152481973,
       "spread": "p10-p90",
       "readings": 9,
       "levels": 6
@@ -1237,10 +1237,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.85
       },
-      "errorLo": 0.4534183955266668,
-      "errorHi": 1.3062209370413917,
-      "errorMin": 0.33303123169517423,
-      "errorMax": 1.6703411119933103,
+      "errorLo": 0.4538122908523821,
+      "errorHi": 1.3066435260412201,
+      "errorMin": 0.33353665994757353,
+      "errorMax": 1.6707845432105413,
       "spread": "p10-p90",
       "readings": 9,
       "levels": 6
@@ -1300,10 +1300,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.85
       },
-      "errorLo": 0.4348501468058025,
-      "errorHi": 1.4477753496934191,
-      "errorMin": 0.3718165065415713,
-      "errorMax": 1.8597414797472025,
+      "errorLo": 0.4352480473757116,
+      "errorHi": 1.448125450208511,
+      "errorMin": 0.37223788543537983,
+      "errorMax": 1.8601115469016247,
       "spread": "p10-p90",
       "readings": 9,
       "levels": 6

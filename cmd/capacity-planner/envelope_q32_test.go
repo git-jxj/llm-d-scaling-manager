@@ -727,11 +727,11 @@ func TestStaircaseQ32_WithoutProcessorSharingTheErrorsMove(t *testing.T) {
 		}
 	}
 	t.Logf("without processor sharing, lines moved by kind: %v of %d", moved, len(wantLines))
-	// 45 of the 47 steps (2 print the same either way), all
+	// 43 of the 47 steps (the 4 every model refuses at the knee stay), all
 	// 12 rate readings, and 14 of the 23 rows. The 9 that stay are the 8
 	// TPOT, knee and onset rows, which processor sharing does not price, and
 	// one rate row whose bound prints the same either way.
-	assert.Equal(t, map[string]int{"step": 45, "rate": 12, "envelope": 14}, moved)
+	assert.Equal(t, map[string]int{"step": 43, "rate": 12, "envelope": 14}, moved)
 }
 
 // The prompt's spread keeps a figure priced on the default spread out: the
