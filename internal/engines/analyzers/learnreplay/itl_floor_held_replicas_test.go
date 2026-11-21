@@ -43,13 +43,13 @@ type heldTable struct {
 // asks for one more on 5 cycles, where its held B, under the default, prices
 // a lower mu.
 var heldReplicaTables = []heldTable{
-	{"e1", 762, 0, 0, 0, 0, 1431, 1431, 5.270, 5.270},
-	{"e1-tuned", 748, 0, 0, 0, 0, 1386, 1386, 4.808, 4.808},
+	{"e1", 762, 0, 0, 0, 0, 1439, 1439, 5.270, 5.270},
+	{"e1-tuned", 748, 0, 0, 0, 0, 1387, 1387, 4.783, 4.783},
 	{"pd-restart", 233, 0, 0, 0, 0, 830, 830, 6.294, 6.294},
 	{"ttft-staircase-b-off", 289, 64, 0, 0, 0, 283, 283, 21.785, 21.785},
-	{"ttft-staircase-b-on", 289, 23, 0, 0, 0, 284, 284, 22.481, 22.481},
-	{"ttft-staircase-c-on", 292, 49, 0, 0, 0, 286, 286, 22.161, 22.065},
-	{"ttft-three-pods", 203, 43, 5, 0, 5, 482, 487, 4.147, 4.023},
+	{"ttft-staircase-b-on", 289, 23, 0, 0, 0, 284, 284, 22.473, 22.473},
+	{"ttft-staircase-c-on", 292, 49, 0, 0, 0, 286, 286, 22.135, 22.049},
+	{"ttft-three-pods", 203, 43, 5, 0, 5, 482, 487, 4.146, 4.019},
 }
 
 // The replicas the decode role asks for with the B last read from the floor

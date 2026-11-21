@@ -335,7 +335,7 @@ engine.Composite,2026-11-04T19:23:28.098807303Z,ns-01/model-02,variant-01,"{""Va
 engine.Composite,2026-11-04T19:23:28.098807303Z,ns-01/model-02,variant-02,"{""Variant"":""variant-02"",""SpareFraction"":0.15000000000000013,""NeedsScaleUp"":false}"
 engine.Composite,2026-11-04T19:23:43.121043436Z,ns-01/model-02,variant-01,"{""Variant"":""variant-01"",""SpareFraction"":0.30000000000000004,""NeedsScaleUp"":false}"
 engine.Composite,2026-11-04T19:23:43.121043436Z,ns-01/model-02,variant-02,"{""Variant"":""variant-02"",""SpareFraction"":-0.12573564383548486,""NeedsScaleUp"":true}"
-engine.Composite,2026-11-04T19:23:58.143074939Z,ns-01/model-02,variant-01,"{""Variant"":""variant-01"",""SpareFraction"":0.30000000000000004,""NeedsScaleUp"":false}"
+engine.Composite,2026-11-04T19:23:58.143074939Z,ns-01/model-02,variant-01,"{""Variant"":""variant-01"",""SpareFraction"":0.2307815536500628,""NeedsScaleUp"":false}"
 engine.Composite,2026-11-04T19:23:58.143074939Z,ns-01/model-02,variant-02,"{""Variant"":""variant-02"",""SpareFraction"":-0.12481483794617043,""NeedsScaleUp"":true}"
 engine.Composite,2026-11-04T19:24:13.167258571Z,ns-01/model-02,variant-01,"{""Variant"":""variant-01"",""SpareFraction"":0.031783887437084046,""NeedsScaleUp"":true}"
 engine.Composite,2026-11-04T19:24:13.167258571Z,ns-01/model-02,variant-02,"{""Variant"":""variant-02"",""SpareFraction"":-0.12554988125607536,""NeedsScaleUp"":true}"
