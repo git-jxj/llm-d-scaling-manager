@@ -423,6 +423,13 @@ type ReportNeeded struct {
 	Alternatives []FleetCounts `json:"alternatives,omitempty"`
 	Unmet        string        `json:"unmet,omitempty"`
 	MaxReplicas  int           `json:"maxReplicas"`
+	// DecodeAtErrorBound is the decode replicas the load needs when the
+	// decode knee reads as high as its validation allows, DecodeKneeError
+	// (a share: the envelope row's upper error, or the 0.6B goldens' upper
+	// end outside every row); never below Decode. 0 where the knee or the
+	// load is not a figure.
+	DecodeAtErrorBound int     `json:"decodeAtErrorBound,omitempty"`
+	DecodeKneeError    float64 `json:"decodeKneeError,omitempty"`
 }
 
 // ReportRole is one role's standing at the load: Spare says one replica

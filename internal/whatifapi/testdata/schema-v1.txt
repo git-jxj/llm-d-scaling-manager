@@ -901,6 +901,8 @@ report.shapes[].growth[].verdict.needed.alternatives[] object
 report.shapes[].growth[].verdict.needed.alternatives[].decode number
 report.shapes[].growth[].verdict.needed.alternatives[].prefill number
 report.shapes[].growth[].verdict.needed.decode number
+report.shapes[].growth[].verdict.needed.decodeAtErrorBound number
+report.shapes[].growth[].verdict.needed.decodeKneeError number
 report.shapes[].growth[].verdict.needed.decodeOnly boolean
 report.shapes[].growth[].verdict.needed.maxReplicas number
 report.shapes[].growth[].verdict.needed.prefill number
@@ -973,6 +975,8 @@ report.shapes[].verdict.needed.alternatives[] object
 report.shapes[].verdict.needed.alternatives[].decode number
 report.shapes[].verdict.needed.alternatives[].prefill number
 report.shapes[].verdict.needed.decode number
+report.shapes[].verdict.needed.decodeAtErrorBound number
+report.shapes[].verdict.needed.decodeKneeError number
 report.shapes[].verdict.needed.decodeOnly boolean
 report.shapes[].verdict.needed.maxReplicas number
 report.shapes[].verdict.needed.prefill number

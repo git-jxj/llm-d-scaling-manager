@@ -541,7 +541,9 @@ It replays the recording once and answers, for each shape and load:
     target at the window's peak too, since removing capacity is the costly
     mistake.
   - RIGHT-SIZED: the fleet holds, and no role has a replica to spare.
-  - NOT JUDGED: a figure the verdict needs is refused (the sentence says
+  - NOT JUDGED: the window contradicts the model (its own fleet carried
+    more than 1.25x the knee for 3 minutes), or a figure the verdict needs
+    is refused (the sentence says
     which), there is no load, or the prefill side is not priced and decode
     alone holds. With no prefill speed learned, decode alone is judged
     ("(decode only)"): the report never calls such a fleet right-sized or
@@ -604,8 +606,17 @@ verdicts
                             x1.2 (50.0 r/s): UNDER-PROVISIONED: 2.8x the fleet knee (18.2 r/s); needs 6 prefill + 7 decode (has 2 + 2) (prefill f 1.5 assumed at 6 pods).
 ```
 
-Read the `not validated` lines after each shape (not shown above): the decode knee read 44% to 103%
-high on the goldens, and TTFT is not validated.
+Read the label under the decode knee in each shape's capacity table: inside
+the region a run measured it reads `validated in-sample: one-sided, error at
+most +3%`; outside it, the `not validated` lines after the shape add that the
+knee read 44% to 103% high on the 0.6B goldens, and the needed fleet gives the
+decode count at that error beside the point answer
+([accuracy](accuracy.md#what-was-measured)). TTFT is not validated.
+
+A verdict is NOT JUDGED when the window contradicts the model: the fleet
+priced, or a smaller one, carried more than 1.25x the fleet knee for 3
+minutes without a break. The summary says how far and for how long; the
+knee reads low for that window, so no fleet is sized on it.
 
 ## Plan replicas over a day
 

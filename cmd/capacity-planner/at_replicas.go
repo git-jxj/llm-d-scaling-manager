@@ -466,6 +466,9 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 			tok = fmt.Sprintf("%.0f", *row.rate.OutputTokensPerSecond)
 		}
 		fmt.Fprintf(b, capLayout, row.label, fmt.Sprintf("%.2f", *row.rate.Value), tok, row.rate.Binds)
+		if row.rate.Validation != nil {
+			fmt.Fprintf(b, "  %-18s%s\n", "", row.rate.Validation.Label)
+		}
 	}
 	b.WriteString(tableText(s.Table))
 	b.WriteString("checks\n")

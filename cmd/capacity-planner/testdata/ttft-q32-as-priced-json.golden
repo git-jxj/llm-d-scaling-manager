@@ -160,11 +160,11 @@
             ],
             "validation": {
               "validated": true,
-              "label": "validated: error -2..+1% (p10-p90, min-max -3..+1%, n=12 at 6 load levels; q32 staircase)",
+              "label": "validated in-sample: error -3..+1% (min-max, n=6 load levels, 12 readings; q32 staircase)",
               "source": "q32 staircase",
               "shape": "8000-token prompts, 200 out, Ca^2 1",
-              "errorLo": -0.022639057179420663,
-              "errorHi": 0.005997936162890238,
+              "errorLo": -0.0265944871629753,
+              "errorHi": 0.006849223516752545,
               "readings": 12
             }
           }

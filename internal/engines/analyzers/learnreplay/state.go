@@ -101,6 +101,11 @@ type State struct {
 	// it (QueryModelArrivalRate): 0 where it read none, which a failed query
 	// and an idle cycle both read as.
 	ArrivalRates []float64
+	// ServingReplicas is each variant's serving replicas at every cycle up
+	// to Cycle, by variant, aligned with ArrivalRates: the cycle's
+	// CurrentReplicas less its PendingReplicas, -1 at a cycle whose input
+	// did not name the variant. It is the fleet that carried each rate.
+	ServingReplicas map[string][]int
 }
 
 // VariantState is one variant's learned state at the cycle: everything the
@@ -365,6 +370,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		lines    = newLineSamples()
 		cycleAt  = map[time.Time]int{}
 		arrivals []float64
+		serving  = map[string][]int{}
 		ranges   = map[string]ShapeRange{}
 	)
 	// Read once: the switches are set before the replay starts.
@@ -395,6 +401,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		cycleAt[ev.Now] = n
 		fill, fillOK := decodeFill(in.ReplicaMetrics, rolesOf(in))
 		arrivals = append(arrivals, in.ArrivalRate)
+		noteServing(serving, in.VariantStates, len(arrivals))
 		if w, ok := tpotWindow(in.RouterLatency); ok {
 			windows = append(windows, withFill(w, fill, fillOK))
 		}
@@ -454,7 +461,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		return nil, nil, fmt.Errorf("learnreplay: the replay ended after %d of the %d cycles of %s/%s", n, cycle, ns, model)
 	}
 	st.FirstAt, st.TPOTWindows, st.EngineTPOTWindows, st.Cycles = firstAt, windows, engine, total
-	st.ArrivalRates = arrivals
+	st.ArrivalRates, st.ServingReplicas = arrivals, servingUpTo(serving, len(arrivals))
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
@@ -470,6 +477,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		s.FirstAt, s.Cycles = firstAt, total
 		s.TPOTWindows, s.EngineTPOTWindows = slices.Clone(windows[:sn.windows]), slices.Clone(engine[:sn.engine])
 		s.ArrivalRates = slices.Clone(arrivals[:sn.arrived])
+		s.ServingReplicas = servingUpTo(serving, sn.arrived)
 		for i := range s.Variants {
 			s.Variants[i].ReadingsFrom, s.Variants[i].ReadingsTo = cyclesSpanned(s.Variants[i].LineReadings, cycleAt)
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
@@ -873,4 +881,38 @@ func noteRanges(ranges map[string]ShapeRange, shapes map[string][]shapeSample, n
 		r.Cycles++
 		ranges[v] = r
 	}
+}
+
+// noteServing appends each variant's serving replicas at cycle n (1-based)
+// to serving: CurrentReplicas less PendingReplicas, never below 0. A
+// variant first named at a later cycle reads -1 at the cycles before it,
+// and one the cycle does not name reads -1 at it.
+func noteServing(serving map[string][]int, states []domain.VariantReplicaState, n int) {
+	for _, vs := range states {
+		row := serving[vs.VariantName]
+		for len(row) < n-1 {
+			row = append(row, -1)
+		}
+		if len(row) < n {
+			row = append(row, max(vs.CurrentReplicas-vs.PendingReplicas, 0))
+		}
+		serving[vs.VariantName] = row
+	}
+}
+
+// servingUpTo is serving cut or padded with -1 to n cycles, each row its own
+// copy; nil with no variant.
+func servingUpTo(serving map[string][]int, n int) map[string][]int {
+	if len(serving) == 0 {
+		return nil
+	}
+	out := make(map[string][]int, len(serving))
+	for v, row := range serving {
+		r := slices.Clone(row[:min(len(row), n)])
+		for len(r) < n {
+			r = append(r, -1)
+		}
+		out[v] = r
+	}
+	return out
 }
