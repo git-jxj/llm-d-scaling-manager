@@ -158,8 +158,9 @@ const SwitchTTFTMeasuredSpread = "slo-ttft-measured-spread"
 // every 8k answer SpreadBeyondProcessorSharing although processor sharing
 // held there, and its gamma put 19.8% of the prompts above 10000 (issue
 // llm-d-incubation/llm-d-scaling-manager#304). Off, the gamma runs on and the
-// cv alone decides, as before. Planner-only (learnreplay.PlannerSwitches):
-// off from the constructor.
+// cv alone decides, as before. Planner-only: off from the constructor, and
+// not turned on in the planner's replay either (learnreplay.PlannerSwitches
+// says why).
 const SwitchTTFTPromptSupport = "slo-ttft-prompt-support"
 
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:

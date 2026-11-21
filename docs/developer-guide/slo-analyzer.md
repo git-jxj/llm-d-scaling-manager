@@ -40,7 +40,11 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   requests), priced as `Prefill.PromptMaxRatio`: the prompt's gamma is
   censored there (`ownTime.capped` on first come, `ePoly.expect`'s hold on
   processor sharing), and the bound, not the cv, decides processor sharing.
-  Off, `MaxRatio` is zeroed in `promptSpread` and the gamma runs on.
+  Off, `MaxRatio` is zeroed in `promptSpread` and the gamma runs on. The
+  planner's replay does not turn it on either (`learnreplay.PlannerSwitches`):
+  on, its backtests read TTFT under measured where they read at or above it.
+  A backtest step carries its own histogram's bound beside its cv
+  (`whatifapi.Knobs.PromptMaxRatio`).
 - `PriceRouterWait` (`slo-ttft-router-wait`, opt-in, off, the CLI's
   `--price-router-wait` default): above the prefill onset, up to
   `MaxRouterWaitKneeShare` of the knee, prices the flow-control gate as a

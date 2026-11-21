@@ -638,9 +638,8 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// to drop. Its unit test holds it (heldBy).
 	slo.SwitchTTFTMeasuredTransfer: nil,
 	// The prompt held at the longest its histogram allows, planner-only (off
-	// from the constructor), so it moves no learner golden: no learner replay
-	// turns it on. Its unit tests hold it (heldBy); the planner goldens it
-	// moves are named in its PR.
+	// from the constructor) and not in PlannerSwitches, so it moves no
+	// golden: no replay turns it on. Its unit tests hold it (heldBy).
 	slo.SwitchTTFTPromptSupport: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds

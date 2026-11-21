@@ -271,13 +271,15 @@ type shapeSample struct {
 // llm-d-incubation/llm-d-scaling-manager#304): it holds the prompt at the
 // longest its computed-token histogram allows, and a bound at
 // whatif.MaxPSPromptSupport or under prices processor sharing alone. Both
-// are right of the traffic, and both lower the TTFT: on the q32 staircase
-// backtests (the split and the warm-up fits) 27 TTFT figures that read at or
-// above measured read under it, by up to 6% (p90 and p95 on the 8000-token
-// B and C phases, where the bound clears processor sharing, and on the
-// 1000-token A phases, whose bound of 2 times the mean does not). The cv a
-// bucket's width reads was holding up a TTFT the rest of the model reads
-// low, so it stays off until that is found.
+// are right of the traffic, and both lower the TTFT: on the Qwen3-32B and
+// 0.6B staircase backtests, each step priced at its own histogram's cv and
+// bound, 34 TTFT figures that read at or above measured read under it, the
+// lowest at 0.89 of measured. Most are p90 and p95 on the 8000-token phases,
+// where the bound (1.25) clears processor sharing; some are on the
+// 1000-token phases, whose prompts straddle the 1000 bucket bound, so the
+// bound is 2 times the mean and clears nothing, and only the held gamma
+// moves them. The cv a bucket's width reads was holding up a TTFT the rest
+// of the model reads low, so it stays off until that is found.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,

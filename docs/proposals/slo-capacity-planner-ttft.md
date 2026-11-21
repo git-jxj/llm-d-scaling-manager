@@ -1745,6 +1745,20 @@ With no bound (mass past the last bucket, or no histogram) the gamma runs on
 and the cv decides, as before. The queue's `Cs²` stays the cv read, the
 widest the buckets allow.
 
+**Off by default, in the planner too.** A backtest prices each step at its
+own histogram's cv and bound (`whatifapi.Knobs.PromptMaxRatio`). On the
+Qwen3-32B and 0.6B staircase backtests (the split, and the phases fitted on
+their warm-ups), turning the switch on moves 34 TTFT figures that read at or
+above measured to under it, the lowest at 0.89 of measured: mostly p90 and
+p95 on the 8000-token phases, where the bound clears processor sharing. The
+1000-token phases read cv 0.6 and stay `SpreadBeyondProcessorSharing`: their
+prompts sit around 1000 tokens, either side of the 1000 bucket bound, so the
+highest bucket holding requests is (1000, 2000] and the bound is 2 times the
+mean, past 1.6. The buckets cannot tell those prompts from a spread that
+reaches 2000, so nothing clears them; only the held gamma moves them, by a
+few percent. The cv the buckets' width reads was holding up a TTFT the rest
+of the model reads low, so the switch stays off until that is found.
+
 **Checked against a simulation** of the same tandem stages
 (`TestPS_AgainstATandemSimulation`, 180,000 requests a point, `V_P` unmargined):
 
