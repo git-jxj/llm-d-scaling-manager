@@ -128,6 +128,44 @@ func TestReport_ContradictsOnlyAtTheShapePriced(t *testing.T) {
 		r.st.ServingReplicas["d2"][i] = 1
 	}
 	assert.Empty(t, r.contradicted(2, 2, base), "2 + 1 decode across the role's variants is more than the 2 priced")
+
+	// A variant not named at a cycle (-1) leaves the fleet there unknown:
+	// 2 + (-1) is no fleet of 1.
+	r = contradictsReporter(cycles(10, 22), 12, 2, 3)
+	r.st.Variants = append(r.st.Variants, learnreplay.VariantState{Variant: "d2", Role: "decode"})
+	r.st.ServingReplicas["d2"] = make([]int, 40)
+	for _, i := range cycles(10, 22) {
+		r.st.ServingReplicas["d2"][i] = -1
+	}
+	assert.Empty(t, r.contradicted(2, 2, base), "3 decode served; the second variant's -1 does not make it 2")
+
+	// Each cycle is read at its own index: with a larger fleet right after
+	// the 12 hot cycles, the run is 12, not 11.
+	r = contradictsReporter(cycles(10, 22), 12, 2, 2)
+	r.st.ServingReplicas["d"][22] = 3
+	assert.Contains(t, r.contradicted(2, 2, base), "(12 cycles)")
+	r = contradictsReporter(cycles(10, 22), 12, 2, 2)
+	r.st.Variants[1].ShapeSeries[9].InputTokens = 8000
+	assert.Contains(t, r.contradicted(2, 2, base), "(12 cycles)", "a cycle of another shape just before")
+}
+
+// Only a load past the knee is withheld for a window served past it, and
+// only a shape priced heavier than the load's: a lighter one's knee holds
+// an UNDER the more (#297).
+func TestReport_NotJudgedUnderOnlyWhereTheKneeReadsLow(t *testing.T) {
+	past := fleetEval{kneeOK: true, knee: 4, binds: roleDecodeWord, decodeKnee: whatif.Answer{Value: 4}, under: true, pastOperating: true}
+	r := contradictsReporter(cycles(10, 22), 12, 2, 2)
+	require.True(t, r.notJudgedUnder(2, 2, past, &whatifapi.ReportVerdict{}))
+	missed := past
+	missed.pastOperating = false
+	assert.False(t, r.notJudgedUnder(2, 2, missed, &whatifapi.ReportVerdict{}), "a latency target missed under the knee")
+
+	r = contradictsReporter(nil, 1, 2, 2)
+	r.pv.shape = shape.Shape{AvgInputTokens: 700, AvgOutputTokens: 700}
+	r.loadShape = &whatifapi.ReportLoadShape{InputTokens: 1000, OutputTokens: 1000}
+	assert.False(t, r.notJudgedUnder(2, 2, fleetEval{}, &whatifapi.ReportVerdict{}), "priced lighter than the load")
+	r.pv.shape = shape.Shape{AvgInputTokens: 1000, AvgOutputTokens: 1250}
+	assert.True(t, r.notJudgedUnder(2, 2, fleetEval{}, &whatifapi.ReportVerdict{}), "priced 25% heavier in output")
 }
 
 // A would-be UNDER on a load whose cycles ran at another shape than the

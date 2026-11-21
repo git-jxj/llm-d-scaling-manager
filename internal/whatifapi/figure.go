@@ -122,9 +122,10 @@ type Validation struct {
 	// are the row that holds the figure, absent outside it. The errors are
 	// signed shares, the model over the measured figure less 1; one absent
 	// is unbounded on its side. Spread is the kind of range they are
-	// ("min-max" or "p10-p90"); Readings the readings the range rests on,
-	// Levels the independent load levels among them, and Holdout that the
-	// run never tuned the planner (false: in-sample).
+	// ("min-max", "p10-p90", "bracket" or "one-sided"); Readings the
+	// readings the range rests on, Levels the independent load levels among
+	// them; Holdout is true only for a row whose run never tuned the planner,
+	// and absent for an in-sample row.
 	Source   string   `json:"source,omitempty"`
 	Shape    string   `json:"shape,omitempty"`
 	ErrorLo  *float64 `json:"errorLo,omitempty"`

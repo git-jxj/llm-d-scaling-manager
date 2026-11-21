@@ -1286,7 +1286,7 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 // A window contradicts the model when the fleet priced, or a smaller one,
 // served more than contradictShare times the fleet knee the model prices
 // for it, at the shape priced, for contradictSpan or longer without a
-// break: a load the model says saturates the fleet was carried for
+// break: a load the model says saturates the fleet was served for
 // minutes. A verdict priced on that knee would say UNDER-PROVISIONED of a
 // fleet the window shows holding, so none is given (#297).
 const (
@@ -1310,7 +1310,10 @@ const (
 // (contradicted). Only an UNDER is withheld: neither says the fleet holds.
 func (r *reporter) notJudgedUnder(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) bool {
 	why, lead := r.phasesDiffer(), phasesWords
-	if why == "" {
+	if why == "" && base.pastOperating {
+		// Only a load past the knee is in question: a latency target missed
+		// under it is the queue model's, which a window served past the knee
+		// says nothing of.
 		why, lead = r.contradicted(np, nd, base), contradictsWords
 	}
 	if why == "" {
@@ -1323,11 +1326,15 @@ func (r *reporter) notJudgedUnder(np, nd int, base fleetEval, v *whatifapi.Repor
 }
 
 // phasesDiffer says how the load's cycles ran at another shape than the
-// measured shape priced, "" where they did not or a shape was stated.
+// measured shape priced, "" where they did not or a shape was stated. Only
+// a shape priced heavier than the load's in a length (more than
+// whatifapi.ShapeLoadTolerance over it) withholds: its knee reads low for
+// the load, while an UNDER priced on a lighter shape's knee holds the more.
 func (r *reporter) phasesDiffer() string {
 	ls := r.loadShape
 	il, ol := r.pv.shape.AvgInputTokens, r.pv.shape.AvgOutputTokens
-	if !r.sh.Measured || ls == nil || !whatifapi.ShapeLoadMismatch(il, ol, *ls) {
+	heavier := func(x, ref float64) bool { return x > 0 && ref > 0 && x/ref-1 > whatifapi.ShapeLoadTolerance }
+	if !r.sh.Measured || ls == nil || !(heavier(il, ls.InputTokens) || heavier(ol, ls.OutputTokens)) {
 		return ""
 	}
 	return fmt.Sprintf("the load's cycles ran at IL %s OL %s, the shape priced is IL %s OL %s, so the knee is of other traffic and "+
@@ -1360,7 +1367,7 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 			return ""
 		}
 	case roleDecodeWord:
-		if a, ok := base.decodeKnee.(whatif.Answer); ok && slices.Contains(a.Basis.BoundBy, whatif.BoundBandTop) && r.pv.decode.Band.Hi > 0 {
+		if a, ok := base.decodeKnee.(whatif.Answer); ok && slices.Contains(a.Basis.BoundBy, whatif.BoundBandTop) && r.pv.decode.Band.Hi > 0 && r.pv.decode.Band.Hi <= 1 {
 			share /= r.pv.decode.Band.Hi
 		}
 	}
@@ -1370,6 +1377,10 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 	}
 	n := len(r.st.ArrivalRates)
 	dec, pre, served := make([]int, n), make([]int, n), make([]float64, n)
+	// unknown marks a cycle whose fleet cannot be read (a variant not named
+	// there, -1), or where more than one decode variant served: the knee and
+	// the shape are the priced variant's alone.
+	unknown, decodeVariants := make([]bool, n), make([]int, n)
 	hasPrefill := false
 	for _, v := range r.st.Variants {
 		rows := r.st.ServingReplicas[v.Variant]
@@ -1386,7 +1397,16 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 				}
 			}
 		}
-		for i := 0; i < n && i < len(rows); i++ {
+		for i := range n {
+			switch {
+			case i >= len(rows) || rows[i] < 0:
+				unknown[i] = true
+				continue
+			case domain.CanonicalRole(v.Role) != domain.RolePrefill && rows[i] > 0:
+				if decodeVariants[i]++; decodeVariants[i] > 1 {
+					unknown[i] = true
+				}
+			}
 			into[i] += rows[i]
 		}
 	}
@@ -1400,7 +1420,7 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 		atShape := ok && c.InputTokens > 0 && c.OutputTokens > 0 &&
 			!whatifapi.ShapeLoadMismatch(c.InputTokens, c.OutputTokens, whatifapi.ReportLoadShape{InputTokens: il, OutputTokens: ol})
 		x := served[i]
-		if !atShape || !(whatif.Finite(x) && x > over) || !within(dec[i], nd) || (checkPrefill && !within(pre[i], np)) {
+		if unknown[i] || !atShape || !(whatif.Finite(x) && x > over) || !within(dec[i], nd) || (checkPrefill && !within(pre[i], np)) {
 			run, runPeak = 0, 0
 			continue
 		}

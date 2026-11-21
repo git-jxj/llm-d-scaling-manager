@@ -60,8 +60,8 @@ planner prices both phases the same below the onset, so the two readings of
 a level are one reading of the planner, and the count is 6. Over 6 values a
 10th and a 90th percentile are just the second-lowest and the second-highest,
 so under 10 independent levels the label gives the lowest and the highest.
-The error grows with load: on long prompts the mean TTFT reads about +27% at
-0.40 of the knee and +63% to +149% at 0.90. The range on a label covers the
+The error grows with load: on long prompts the mean TTFT reads about +7% at
+0.40 of the knee and +58% to +141% at 0.90. The range on a label covers the
 whole band of load it names.
 
 **In-sample.** This run is also one of the planner's goldens
@@ -72,13 +72,17 @@ tuning has been measured yet; when one is, its rows will print `validated on
 a holdout`.
 
 **The decode knee.** Inside its region (the row below) the decode knee held
-to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, it
-read 44% to 103% high. `at-replicas` prints the label under the decode knee
+to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, three
+knees read 43% to 99% high and one 42% low; the planner says 44% to 103%,
+the older reading, which sizes above the highest. `at-replicas` prints the label under the decode knee
 in its capacity table, says the 0.6B range under `not validated` only when
 the knee is outside, and sizes decode at the label's upper error inside the
 region, or at 103% outside it, beside the point answer
-(`needed.decodeAtErrorBound`). The JSON's `readings` is the raw count; the
-label's `n=` gives the independent load levels first.
+(`needed.decodeAtErrorBound`). In the JSON, `readings` is the raw count and
+`levels` the independent load levels (the label's `n=` gives them first);
+`spread` is the kind of range (`min-max`, `p10-p90`, `bracket` or
+`one-sided`), and `holdout` is true only for a row whose run never tuned
+the planner.
 
 This table is generated from the rows the planner ships:
 
@@ -112,10 +116,14 @@ This table is generated from the rows the planner ships:
 
 What this says:
 
-- **Short prompts:** the planner is close. TTFT reads up to about 18% slow,
-  mean TPOT up to 18% slow.
+- **Short prompts:** the planner is close. TTFT reads from about 18% fast
+  (the mean, at the lightest step) to 9% slow, and mean TPOT up to 18% slow.
+  A figure that reads fast promises a TTFT the fleet will not deliver. At
+  light load (0.4 of the knee) the p90 read 13% fast and the mean 18% fast:
+  add that much before you compare a short-prompt TTFT with your SLO.
 - **Mean TPOT on long prompts:** within a few percent, from 5% fast to 1% slow.
-- **Long prompts:** TTFT reads 15% to 190% slow, more so near the knee.
+- **Long prompts:** TTFT reads from 4% fast to 184% slow. It is mostly slow,
+  and more so near the knee.
   Sizing for TTFT therefore errs on the side of more Pods than needed.
 - **Knees, flow control off:** every phase held at the knee the planner
   names. The run stopped there, and its hold rule cannot see a fleet short
@@ -125,8 +133,9 @@ What this says:
   knee: 5% to 25% under it in this run. The knee is outside with flow control
   on; read the onset's label instead. For bursty traffic the router started
   holding requests 4% to 7% before the onset the planner names.
-- **Rates:** the fleet held every rate the planner named at its target. The
-  run's steps did not go far enough to say how much more.
+- **Rates:** the fleet held every rate the planner named at its target. For
+  short prompts the true rate lies between the planner's and 6% above it. For
+  long prompts the run's steps did not go far enough to say how much more.
 
 A figure counts as inside only if every input that priced it is one the run
 priced:
