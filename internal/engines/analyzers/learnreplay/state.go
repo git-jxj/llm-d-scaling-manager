@@ -154,7 +154,8 @@ type VariantState struct {
 	CapacityTokens float64
 	// BatchCap is the cap per engine rank the analyzer prices the variant
 	// at, BatchCapSource where it came from (flags, declared, learned,
-	// default; "" with none), and Ranks the engine ranks per replica.
+	// default, or step-budget with saturation.SwitchPlannerCapAtStepBudget
+	// on; "" with none), and Ranks the engine ranks per replica.
 	BatchCap       int64
 	BatchCapSource string
 	Ranks          int
@@ -269,20 +270,19 @@ type shapeSample struct {
 //
 // slo.SwitchTTFTPromptSupport is planner-only too but not listed (issue
 // llm-d-incubation/llm-d-scaling-manager#304): it holds the prompt at the
-// longest its computed-token histogram allows, and a bound at
-// whatif.MaxPSPromptSupport or under prices processor sharing alone. Both
-// lower the TTFT: on the Qwen3-32B and
-// 0.6B staircase backtests, each step priced at its own histogram's cv and
-// bound, 34 TTFT figures that read at or above measured read under it, the
-// lowest at 0.89 of measured. Most are p90 and p95 on the 8000-token phases,
-// where the bound (1.25) clears processor sharing; some are on the
-// 1000-token phases, whose prompts straddle the 1000 bucket bound, so the
-// bound is 2 times the mean and clears nothing, and only the held gamma
-// moves them. Part of that is the hold itself: the gamma is fitted at the
-// measured mean and then held, so the held prompt's mean reads 3% to 4%
-// under the measured one at these spreads (a mean-preserving hold is the
-// next step). The rest is the cv a bucket's width reads holding up a TTFT
-// the rest of the model reads low. It stays off until both are settled.
+// longest its computed-token histogram allows, keeping the measured mean,
+// and a bound at whatif.MaxPSPromptSupport or under prices processor sharing
+// alone. On the Qwen3-32B and 0.6B staircase backtests, each step priced at
+// its own histogram's cv and bound, 15 TTFT figures that read at or above
+// measured read under it, the lowest at 0.92 of measured: 13 are p90 and p95
+// where the bound clears processor sharing, 2 are p95 on the 1000-token
+// phases, where the hold at twice the mean removes the tail that held them
+// up. It stays off until the term that reads that tail low is found.
+//
+// saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
+// either: no recording holds an engine whose step budget runs fewer
+// sequences than its cap (MTP, wide EP), so there is no backtest to turn it
+// on with (issue llm-d-incubation/llm-d-scaling-manager#302).
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
