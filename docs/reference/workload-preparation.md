@@ -427,10 +427,13 @@ says so when the cluster has SecurityContextConstraints:
 
 On node-local NVMe the loader still matters when the page cache is cold.
 `--safetensors-load-strategy prefetch` cuts the weights load by a quarter to a
-third, and the `instanttensor` loader (direct I/O) by a little more. Measured on
-one H200 node, vLLM 0.34.0, the model's pages dropped from the page cache
-before each start, median of three starts (the weights load from the engine
-log, then container start to `/health`):
+third, and the `instanttensor` loader (direct I/O) by a little more. To `/health`
+that is 5 to 25 s, a tenth to a sixth of the start. On an MoE with expert parallel on one node,
+`--enable-ep-weight-filter` alone was fastest, and it keeps the page cache warm
+for later starts. Measured on one H200 node, vLLM 0.34.0, the image and compile
+caches warm from one earlier start, the model's pages dropped from the page
+cache before each start; median of three starts (the weights load of the
+slowest rank from the engine log, then container start to `/health`):
 
 | Loader flags | Qwen3-32B, TP=1, 61 GiB | Qwen3-235B-A22B-FP8, TP=4 with expert parallel, 223 GiB |
 | --- | --- | --- |
@@ -442,15 +445,17 @@ log, then container start to `/health`):
 
 - **`instanttensor`** reads around the page cache: after a start, under 0.2 %
   of the model is in memory, so a later start on the node cannot gain from a
-  warm cache. It needs an image that ships the `instanttensor` package.
+  warm cache. It needs an image that ships the `instanttensor` package; check
+  with `python3 -c 'import instanttensor'` in the image.
 - **`--enable-ep-weight-filter`** on one node: each rank parses only its own
   experts, but every expert is local to some rank, so the node still reads the
   whole model (223 GiB in every row). Prefetch reads whole files, so with
   prefetch the filter gains little. Across nodes, the filter would also cut
   each node's read; that was not measured.
-- **The first start with a new loader flag can compile again.**
-  `--enable-ep-weight-filter` is part of vLLM's compile-cache key: the first
-  start with it took 167 s, the next ones 123 s and 122 s.
+- **`--enable-ep-weight-filter` changes vLLM's compile-cache key** (prefetch
+  and `instanttensor` do not): the first start with it compiled again (39 s)
+  and took 167 s, the next ones 123 s and 122 s. Fill the cache with a start
+  that uses the same flags as the engines.
 
 The benchmark standup has the same measure under
 `BENCHMARK_MODEL_HOSTPATH=<dir>`; what the harness does with it is in
