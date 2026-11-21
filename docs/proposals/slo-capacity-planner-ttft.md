@@ -1756,8 +1756,13 @@ prompts sit around 1000 tokens, either side of the 1000 bucket bound, so the
 highest bucket holding requests is (1000, 2000] and the bound is 2 times the
 mean, past 1.6. The buckets cannot tell those prompts from a spread that
 reaches 2000, so nothing clears them; only the held gamma moves them, by a
-few percent. The cv the buckets' width reads was holding up a TTFT the rest
-of the model reads low, so the switch stays off until that is found.
+few percent. Part of the move is the hold itself: the gamma is fitted at the
+measured mean and then held, so the held prompt's mean reads 3% to 4% under
+the measured one at these spreads (4.3% at cv 0.31 held at 1.25, 3.4% at cv
+0.61 held at 2). A hold that keeps the mean (the gamma rescaled so that its
+held mean is the measured one) is the next step; the rest is the cv the
+buckets' width reads holding up a TTFT the rest of the model reads low. The
+switch stays off until both are settled.
 
 **Checked against a simulation** of the same tandem stages
 (`TestPS_AgainstATandemSimulation`, 180,000 requests a point, `V_P` unmargined):

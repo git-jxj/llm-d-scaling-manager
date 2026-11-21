@@ -259,10 +259,13 @@ func ReadPromptSpread(pooled map[float64]float64, mean float64) PromptSpread {
 		}
 	}
 	cv := math.Sqrt(max(second/below/(mean*mean)-1, 0))
+	// At least 1: the mean may sit a rounding past the top bound
+	// (promptSecondMoment's tolerance), and no bound is under the mean.
+	ratio := max(top/mean, 1)
 	if !Finite(cv) || cv > PromptCVStop {
-		return PromptSpread{CV: PromptCVStop, MaxRatio: top / mean, Clamped: true}
+		return PromptSpread{CV: PromptCVStop, MaxRatio: ratio, Clamped: true}
 	}
-	return PromptSpread{CV: cv, MaxRatio: top / mean}
+	return PromptSpread{CV: cv, MaxRatio: ratio}
 }
 
 // promptBucket is one histogram bucket, (lo, hi], and the requests in it.

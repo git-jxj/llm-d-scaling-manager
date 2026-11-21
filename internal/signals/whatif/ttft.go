@@ -777,7 +777,7 @@ type ttftPlan struct {
 	// ps is TTFTFleet.ProcessorSharing.
 	ps bool
 	// psCapped is ps at a prompt spread past MaxPSPromptCV, with no support
-	// bound clearing it (prefillPlan.psCapped): each price is the larger of
+	// bound clearing it (Prefill.BeyondProcessorSharing): each price is the larger of
 	// processor sharing's and first come's.
 	psCapped bool
 	// routerWait is TTFTFleet.PriceRouterWait or RouterWaitInPrefill where it
