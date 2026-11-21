@@ -145,13 +145,18 @@ const (
 // (llm-d-incubation/llm-d-scaling-manager#305).
 const SettleShare = 0.2
 
-// relaxationSeconds is the M/G/1 relaxation time of one prefill pod's queue:
-// t_r = 2 rho E[S] (1 + Cs^2) / (1 - rho)^2, with E[S] a pod's service time
-// (the pods over the fleet's prefill knee), rho the step's rate over that
-// knee and Cs the prompt spread priced (a pod's service time follows the
-// prompt; the fixed latency a would narrow it, so this errs long). It is
-// +Inf at or past the knee, and 0 where nothing prices it.
-func relaxationSeconds(rate, prefillKnee float64, pods int, cv float64) float64 {
+// relaxationSeconds is the relaxation time of the prefill fleet's queue,
+// pooled as the planner prices it (the router sends each prompt to the pod
+// with the least queued): t_r = 2 rho E[S] (Ca^2 + Cs^2) / (N (1 - rho)^2),
+// with E[S] a pod's service time (the pods over the fleet's prefill knee),
+// N the pods, rho the step's rate over that knee, Ca^2 the arrivals' spread
+// priced (1 for random arrivals) and Cs the prompt spread priced (a pod's
+// service time follows the prompt; the fixed latency a would narrow it).
+// The knee carries the V_P margin and the pods' imbalance, so rho and E[S]
+// read high and t_r errs long: a step near the knee is more often left
+// unscored than scored wrongly. One pod gives the M/G/1 figure. It is +Inf
+// at or past the knee, and 0 where nothing prices it.
+func relaxationSeconds(rate, prefillKnee float64, pods int, ca2, cv float64) float64 {
 	if !(rate > 0) || !(prefillKnee > 0) || pods <= 0 {
 		return 0
 	}
@@ -160,32 +165,42 @@ func relaxationSeconds(rate, prefillKnee float64, pods int, cv float64) float64 
 		return math.Inf(1)
 	}
 	es := float64(pods) / prefillKnee
-	return 2 * rho * es * (1 + cv*cv) / ((1 - rho) * (1 - rho))
+	return 2 * rho * es * (ca2 + cv*cv) / (float64(pods) * (1 - rho) * (1 - rho))
 }
 
 // settles says a queue of relaxation time tr settles inside a measurement
 // window of window seconds: tr is at most SettleShare of it.
 func settles(tr, window float64) bool { return tr <= SettleShare*window }
 
-// backlogWait is the mean extra wait over a step of dt seconds of a fluid
-// backlog of q requests carried into it, served at mu while requests arrive
-// at lambda: the backlog drains at mu - lambda, or grows past the knee, and
-// a request waits the backlog over mu. It is 0 with no backlog.
-func backlogWait(q, lambda, mu, dt float64) float64 {
+// backlogAt is a fluid backlog of q requests at the start of a step, t
+// seconds into it, served at mu while requests arrive at lambda.
+func backlogAt(q, lambda, mu, t float64) float64 { return max(0, q+(lambda-mu)*t) }
+
+// backlogWait is the extra wait a fluid backlog of q requests carried into a
+// step of dt seconds adds over the step's measurement window, its last w
+// seconds: the mean of the backlog over mu across the window, and the most
+// (at the window's start where it drains, its end where it grows), for an
+// upper bound. Both are 0 with no backlog.
+func backlogWait(q, lambda, mu, dt, w float64) (mean, most float64) {
 	if !(q > 0) || !(mu > 0) || !(dt > 0) {
-		return 0
+		return 0, 0
 	}
-	drain := mu - lambda
-	var mean float64
+	a := max(0, dt-max(w, 0))
+	qa, qb := backlogAt(q, lambda, mu, a), backlogAt(q, lambda, mu, dt)
+	most = max(qa, qb) / mu
+	if !(dt > a) {
+		return qa / mu, most
+	}
+	// The backlog is linear in t until it empties: the area under it.
+	var area float64
 	switch {
-	case drain <= 0:
-		mean = q - drain*dt/2
-	case q/drain >= dt:
-		mean = q - drain*dt/2
+	case qb > 0 || lambda >= mu:
+		area = (qa + qb) / 2 * (dt - a)
 	default:
-		mean = q * (q / drain) / (2 * dt)
+		empty := qa / (mu - lambda)
+		area = qa / 2 * min(empty, dt-a)
 	}
-	return mean / mu
+	return area / (dt - a) / mu, most
 }
 
 // statP90 is the statistic a verdict leads with.
@@ -1172,6 +1187,7 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 	end := q.test.series[st.anchor].At
 	switch {
 	case !(in.rate > 0):
+		fl.idle(q.step.Seconds())
 		out.Excluded, out.Detail = ExcludedNoTraffic, "no requests arrived"
 		return out
 	case st.windowStart.Before(first.Add(q.settle)) || (q.settle == 0 && st.windowStart.Before(first)):
@@ -1193,18 +1209,19 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		return out
 	}
 	if pred.prefillKnee != nil {
-		if tr := relaxationSeconds(in.rate, *pred.prefillKnee, in.prefill, pred.promptCV); tr > 0 && !math.IsInf(tr, 1) {
+		if tr := relaxationSeconds(in.rate, *pred.prefillKnee, in.prefill, pred.ca2, pred.promptCV); tr > 0 && !math.IsInf(tr, 1) {
 			out.RelaxationSeconds = ptr(tr)
 			out.Unsettled = !settles(tr, st.windowSeconds)
 		}
-		if w := fl.step(in.rate, *pred.prefillKnee, q.step.Seconds()); w > 0 {
+		fl.mu = *pred.prefillKnee
+		if w, most := fl.step(in.rate, *pred.prefillKnee, q.step.Seconds(), st.windowSeconds); w > 0 {
 			out.Backlog, out.BacklogWait = ptr(fl.carried), ptr(w)
 			for i := range pred.ttft {
 				if v := pred.ttft[i].Value; v != nil {
 					pred.ttft[i].Value = ptr(*v + w)
 				}
 				if b := pred.ttftBound[i]; b != nil {
-					pred.ttftBound[i] = ptr(*b + w)
+					pred.ttftBound[i] = ptr(*b + most)
 				}
 			}
 		}
@@ -1234,21 +1251,39 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 // past the prefill knee in one step is still queued at the next.
 type fluid struct {
 	// q is the backlog at the end of the last step, and carried the one
-	// carried into the step being priced.
-	q, carried float64
+	// carried into the step being priced; mu is the knee it was last
+	// served at.
+	q, carried, mu float64
 }
 
 // reset drops the backlog: a step that did not price, or had no cycle,
 // breaks the chain.
-func (f *fluid) reset() { f.q, f.carried = 0, 0 }
+func (f *fluid) reset() { f.q, f.carried, f.mu = 0, 0, 0 }
 
 // step carries the backlog through one step of dt seconds at rate lambda
-// and prefill knee mu, and is the mean wait it adds to the step's TTFT.
-func (f *fluid) step(lambda, mu, dt float64) float64 {
+// and prefill knee mu, and is the mean and the most wait it adds over the
+// step's measurement window, its last w seconds (backlogWait). A rate or a
+// knee that is no number breaks the chain.
+func (f *fluid) step(lambda, mu, dt, w float64) (mean, most float64) {
+	if math.IsNaN(lambda) || math.IsNaN(mu) || math.IsNaN(dt) {
+		f.reset()
+		return 0, 0
+	}
 	f.carried = f.q
-	w := backlogWait(f.q, lambda, mu, dt)
-	f.q = max(0, f.q+(lambda-mu)*dt)
-	return w
+	mean, most = backlogWait(f.q, lambda, mu, dt, w)
+	f.q = backlogAt(f.q, lambda, mu, dt)
+	return mean, most
+}
+
+// idle drains the backlog through a step with no requests, at the knee mu
+// last priced.
+func (f *fluid) idle(dt float64) {
+	if f.mu > 0 {
+		f.q = backlogAt(f.q, 0, f.mu, dt)
+	} else {
+		f.q = 0
+	}
+	f.carried = 0
 }
 
 // scoreStep sets beside a step's predictions what the fleet measured: the
@@ -1351,8 +1386,9 @@ type prediction struct {
 	// knee is the lower knee of the fleet that priced, decodeKnee decode's
 	// and prefillKnee prefill's; nil with none.
 	knee, decodeKnee, prefillKnee *float64
-	// promptCV is the prompt spread priced.
-	promptCV float64
+	// promptCV is the prompt spread priced, and ca2 the arrivals' (1 for
+	// random arrivals).
+	promptCV, ca2 float64
 }
 
 // predict prices one step at each statistic: the TTFT as a report's table
@@ -1442,9 +1478,12 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			if v, ok := valueOf(fl.PrefillKnee()); ok && v > 0 {
 				out.prefillKnee = ptr(v)
 			}
-			out.promptCV = whatif.AssumedPromptCV
+			out.promptCV, out.ca2 = whatif.AssumedPromptCV, 1
 			if cv != nil {
 				out.promptCV = *cv
+			}
+			if p.cv2 != nil {
+				out.ca2 = *p.cv2
 			}
 		}
 		out.ttft, out.ttftBound = append(out.ttft, tf), append(out.ttftBound, tb)
