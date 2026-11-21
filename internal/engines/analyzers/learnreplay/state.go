@@ -245,6 +245,18 @@ type shapeSample struct {
 // the line it holds is right at a given fill, and the planner then reads
 // TTFT and TPOT under what was measured, because it predicts less decode KV
 // fill than the pods held. It stays off until that is fixed.
+//
+// One controller switch is turned off here instead, the planner's only off:
+//
+//   - saturation.SwitchITLFloorBaselineHeld: a decode line with no full fit
+//     keeps the B it last read from its floor below the band after the
+//     floor's readings are 30 minutes old (issue
+//     llm-d-incubation/llm-d-scaling-manager#333). On from the controller's
+//     constructor, for a fleet held in the band. The planner reads B from the
+//     floor of the last 30 minutes only, as before, and refuses a line with
+//     none (PinnedDefaultB): held, it priced decode on hours of the
+//     staircase and three-pods recordings it refused, and no check yet says
+//     those figures do not read under what was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -252,6 +264,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
+		saturation.SwitchITLFloorBaselineHeld:   false,
 	}}
 }
 

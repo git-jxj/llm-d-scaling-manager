@@ -88,6 +88,11 @@ type heldSlope struct {
 	// below the band (Admission.BaselineFromFloor), 0 otherwise: a hold
 	// pairs a with the B it was fitted through (pin), never with another.
 	floorB float64
+	// floorBAt is when floorB was last read from a floor below the band:
+	// the cycle floorIntercept admitted it, kept while a later fit pins
+	// through it held (Admission.HoldsFloorBaseline). Zero for none, or for
+	// one of unknown age (a snapshot written without it).
+	floorBAt time.Time
 	// steady: a was fitted on steady readings, by the full fit or by the
 	// pinned fit while DefaultMinSamples of them were held
 	// (Admission.HoldsSteadySlope).
@@ -146,6 +151,12 @@ type Reading struct {
 	// readings.
 	PinnedAtFloor bool
 	Floor, FloorK float64
+	// FloorBHeld is set with PinnedAtFloor when this cycle read no B from a
+	// floor and the line was pinned through the key's last one
+	// (Admission.HoldsFloorBaseline). FloorBAt is when the B pinned through
+	// was read from a floor: this cycle when it was, zero when unknown.
+	FloorBHeld bool
+	FloorBAt   time.Time
 
 	// What the window was offered this cycle, by why a row was turned away.
 	// Offered counts the readings the window kept; BelowBand those it dropped
@@ -491,13 +502,19 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 		r.Floor, r.FloorK = floor.ITLSec, floor.K
 	}
 	floorB := 0.0
+	var floorBAt time.Time
 	if !r.BaselineLearned {
 		baseline = DefaultBaselineSec
-		if haveFloor {
-			if pinned, ok := pinnedReadings(obs, steadyObs); ok {
-				if b, ok := floorIntercept(pinned, floor); ok {
-					baseline, floorB = b, b
-				}
+		pinned, havePinned := pinnedReadings(obs, steadyObs)
+		if haveFloor && havePinned {
+			if b, ok := floorIntercept(pinned, floor); ok {
+				baseline, floorB, floorBAt = b, b, now
+			}
+		}
+		if floorB == 0 && havePinned && adm.BaselineFromFloor && adm.HoldsFloorBaseline {
+			if b, at, ok := t.heldFloorB(key, pinned, adm); ok {
+				baseline, floorB, floorBAt = b, b, at
+				r.FloorBHeld = true
 			}
 		}
 	}
@@ -570,6 +587,9 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 		}
 		r.Model, r.Tier, r.SlopeHeld = Model{A: held.a, B: held.pin(baseline, r.BaselineLearned)}, TierPinnedB, true
 		r.PinnedAtFloor = !r.BaselineLearned && held.floorB > 0
+		if r.PinnedAtFloor {
+			r.FloorBAt = held.floorBAt
+		}
 		r.SlopeFittedAt = held.fittedAt
 		return r
 	}
@@ -586,11 +606,45 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 		r.PriorBeyondReadings = r.PinnedAtBPrior && beyond
 	}
 	t.mu.Lock()
-	t.slopes[key] = heldSlope{a: heldA, fittedAt: now, args: adm.Args, floorB: floorB, steady: !c.everyReading}
+	t.slopes[key] = heldSlope{a: heldA, fittedAt: now, args: adm.Args, floorB: floorB, floorBAt: floorBAt, steady: !c.everyReading}
 	t.mu.Unlock()
 	r.Model, r.Tier, r.PinnedAtFloor = m, TierPinnedB, floorB > 0
+	r.FloorBAt = floorBAt
 	r.FitRows, r.FitPods = len(c.read), fitPods(c.read)
 	return r
+}
+
+// heldFloorB is the B key's last pinned fit was pinned through when that was
+// a floor's (heldSlope.floorB), for a cycle that reads none
+// (Admission.HoldsFloorBaseline), and when it was read from the floor.
+//
+// The floor is read from readings at most DefaultObservationMaxAge old
+// (pruneBelowBand), so a fleet held inside the band longer than that, none of
+// its replicas below it, reads no floor; without the hold its line went back
+// to DefaultBaselineSec, and its slope stepped up with no change in load
+// (issue llm-d-incubation/llm-d-scaling-manager#333). B is the engine's own
+// floor and does not move with the load, so the last one read holds as a
+// learned B does: until a newer floor or a full fit replaces it, or the key is
+// swept. It ends sooner only where the evidence says otherwise: a slope fitted
+// under other engine arguments (Admission.mayHold's rule), or a pinned reading
+// under it, which no line through it can pass (every reading is B plus A
+// times its fill).
+func (t *Tracker) heldFloorB(key string, pinned []Observation, adm Admission) (float64, time.Time, bool) {
+	t.mu.Lock()
+	held, have := t.slopes[key]
+	t.mu.Unlock()
+	if !have || !(held.floorB > 0) || math.IsInf(held.floorB, 0) {
+		return 0, time.Time{}, false
+	}
+	if adm.Args != "" && held.args != "" && adm.Args != held.args {
+		return 0, time.Time{}, false
+	}
+	for _, o := range pinned {
+		if o.ITLSec > 0 && o.ITLSec < held.floorB {
+			return 0, time.Time{}, false
+		}
+	}
+	return held.floorB, held.floorBAt, true
 }
 
 // oneSidedLine is the pinned fit c, through baseline, set against the line
@@ -1384,6 +1438,9 @@ type Slope struct {
 	// below the band (Admission.BaselineFromFloor), 0 otherwise: restored,
 	// a hold pairs A with it, as before the restart (heldSlope.pin).
 	FloorB float64
+	// FloorBAt is when FloorB was last read from a floor (heldSlope.floorBAt),
+	// zero when unknown.
+	FloorBAt time.Time
 }
 
 // Slopes returns a copy of every key's last fitted A.
@@ -1392,7 +1449,7 @@ func (t *Tracker) Slopes() map[string]Slope {
 	defer t.mu.Unlock()
 	out := make(map[string]Slope, len(t.slopes))
 	for key, s := range t.slopes {
-		out[key] = Slope{A: s.a, FittedAt: s.fittedAt, Args: s.args, FloorB: s.floorB}
+		out[key] = Slope{A: s.a, FittedAt: s.fittedAt, Args: s.args, FloorB: s.floorB, FloorBAt: s.floorBAt}
 	}
 	return out
 }
@@ -1418,11 +1475,11 @@ func (t *Tracker) RestoreSlope(key string, s Slope) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, have := t.slopes[key]; !have {
-		floorB := s.FloorB
+		floorB, floorBAt := s.FloorB, s.FloorBAt
 		if !(floorB > 0) || math.IsInf(floorB, 0) {
-			floorB = 0
+			floorB, floorBAt = 0, time.Time{}
 		}
-		t.slopes[key] = heldSlope{a: s.A, fittedAt: s.FittedAt, args: s.Args, floorB: floorB}
+		t.slopes[key] = heldSlope{a: s.A, fittedAt: s.FittedAt, args: s.Args, floorB: floorB, floorBAt: floorBAt}
 		t.restored[key] = struct{}{}
 	}
 }

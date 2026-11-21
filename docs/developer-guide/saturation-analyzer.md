@@ -1114,13 +1114,63 @@ second, at TPOT p90 16 ms both. A full fit, here only in overload, ends the
 floor's B as before. The run had no `tpot` target, so it did not exercise the
 TPOT bound on a floor-pinned line; its unit tests hold that.
 
-The floor is read again each cycle, not stored: its readings age out after
-`itl.DefaultObservationMaxAge` (30 min). A fleet held inside the band for
-longer than that, with no replica below it, loses the floor, and its line
-goes back to the default B until it next runs at low load (a 2026-11-21
-probe: pinned at the floor to 29.0 min in the band, the default from
-29.2 min, the slope 40 % steeper). That is the line it priced before this
-switch.
+The floor is read again each cycle from readings at most
+`itl.DefaultObservationMaxAge` (30 min) old. A fleet held inside the band for
+longer than that, with no replica below it, reads no floor. Without the next
+switch its line went back to the default B until it next ran at low load (a
+2026-11-21 probe: pinned at the floor to 29.0 min in the band, the default
+from 29.2 min, the slope 40 % steeper), a step in decode capacity with no
+change in load.
+
+#### The floor's B held (issue #333)
+
+Under `SwitchITLFloorBaselineHeld` (`saturation-itl-floor-baseline-held`, on
+from the constructor, a replay turns it off; `itl_baseline_floor.go`) the
+admission sets `itl.Admission.HoldsFloorBaseline`. A key with no learned B
+that reads no floor B this cycle (no floor, or `floorIntercept` refused it)
+is pinned through the B it last read from a floor (`Tracker.heldFloorB`):
+
+- **Where it is kept.** On the key's held slope (`heldSlope.floorB`, with
+  `floorBAt`, when it was read from a floor), which every pinned fit writes
+  again with the B it pinned through. The learned-state snapshot carries it
+  (`SlopeSnapshot.FloorB`, and `FloorBAt`, absent when unknown), and a
+  restored slope brings it back with its stamp; a stamp past the clock skew
+  comes back as unknown.
+- **How it ages.** As a learned B does: it is swept and forgotten with the
+  key, and a slope is restored only within `BucketRetention` of its last
+  fit. No age of its own ends it.
+- **What ends it.** A newer floor's B replaces it, a full fit's learned B
+  replaces it, and the evidence against it ends it: a pinned reading under
+  it (no line through it passes one), or a slope fitted under other engine
+  arguments (`Admission.mayHold`'s rule). The line is then on the default,
+  as before. It is kept through a change of request shape, as a learned B
+  is; the floor's readings are not (`floorOnShapeChange`).
+- **The planner.** The capacity planner's replay turns it off
+  (`learnreplay.PlannerSwitches`): held, it priced decode on hours of the
+  staircase and three-pods recordings the planner refuses `PinnedDefaultB`,
+  and no check yet says those figures do not read under what was measured.
+- **Log.** With the switch on, a floor-pinned `itl-fit` also logs
+  `floorBHeld` (this cycle read no floor) and `floorBAge` (how long ago the
+  B was read from a floor, `-1s` when unknown); off, the line is as it was.
+
+`TestITLFloorBaselineHeld_AnalyzeHoldsTheFloorThroughAnHourInTheBand` runs a
+decode fleet through `Analyze` for an hour in the band after a stretch below
+it: B, the slope and the service rate are flat on all 240 cycles; with the
+switch off B steps from 1.6 ms to the 6 ms default at 30 min, the slope
+falls 43 % and the service rate rises 26 % (on this line, under the default,
+the step asks for fewer replicas; on a line over it, as on the GPU check's
+fleet, it asks for more).
+
+`TestGoldens_ITLFloorBaselineHeldReplicas` holds what it moves against the
+floor alone. e1, e1-tuned and pd-restart do not move. The staircases hold the
+floor's B on 64, 23 and 49 cycles where it went back to the default, and ask
+for no replica more or fewer; three-pods holds it on 43 cycles and asks for
+one replica more on 5 (482 to 487 replica-cycles). No cycle of any fixture
+asks for fewer. Replayed on the live recordings of two GPU runs (fourteen
+recordings, every arm), it moves no decode ask on any cycle. On two arms the
+line went back to the default B mid-run for about 12 minutes (9.8 ms to
+6.0 ms, then 11.7 ms), where the readings' mean fill came under twice the
+floor's and `floorIntercept` refused it; held, it keeps 9.8 ms there.
 
 #### When a replica's settle starts (learner PR 4a)
 

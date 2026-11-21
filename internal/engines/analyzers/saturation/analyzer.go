@@ -558,6 +558,10 @@ type SaturationAnalyzer struct {
 	// llm-d-incubation/llm-d-scaling-manager#169, itl_baseline_floor.go): on
 	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	itlBaselineFromFloor bool
+	// itlFloorBaselineHeld is SwitchITLFloorBaselineHeld (issue
+	// llm-d-incubation/llm-d-scaling-manager#333, itl_baseline_floor.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
+	itlFloorBaselineHeld bool
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
 	// (SetSwitchesForReplay).
@@ -848,6 +852,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillAQuadratic:      true,
 		itlOneSidedAtCap:       true,
 		itlBaselineFromFloor:   true,
+		itlFloorBaselineHeld:   true,
 		itlTierHysteresis:      true,
 		itlClearsOnRevision:    true,
 		floorRaisesVariants:    true,

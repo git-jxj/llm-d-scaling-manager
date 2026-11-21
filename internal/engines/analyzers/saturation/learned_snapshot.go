@@ -224,6 +224,11 @@ type SlopeSnapshot struct {
 	// below the band (SwitchITLBaselineFromFloor), absent otherwise, so a
 	// snapshot written with the switch off is as it was.
 	FloorB float64 `json:"floorB,omitempty" learnrec:"omitzero"`
+	// FloorBAt is when FloorB was last read from a floor, absent when
+	// unknown (SwitchITLFloorBaselineHeld holds FloorB past the floor's
+	// readings, and the stamp says how old it is). A document written
+	// before the field restores FloorB of unknown age.
+	FloorBAt time.Time `json:"floorBAt,omitzero" learnrec:"omitzero"`
 }
 
 // StartSampleSnapshot is a start estimate's count of the distinct Pods it
@@ -667,7 +672,7 @@ func (a *SaturationAnalyzer) exportLearnedState() LearnedState {
 		if s.ITLSlopes == nil {
 			s.ITLSlopes = map[string]SlopeSnapshot{}
 		}
-		s.ITLSlopes[k] = SlopeSnapshot{A: sl.A, FittedAt: sl.FittedAt, Args: sl.Args, FloorB: sl.FloorB}
+		s.ITLSlopes[k] = SlopeSnapshot{A: sl.A, FittedAt: sl.FittedAt, Args: sl.Args, FloorB: sl.FloorB, FloorBAt: sl.FloorBAt}
 	}
 	for k, v := range a.startSeconds {
 		s.StartSeconds[k] = v
@@ -1555,7 +1560,13 @@ func (a *SaturationAnalyzer) installLocked(s LearnedState, windowsUnder string, 
 		if sl, ok := s.ITLSlopes[k]; ok && latency && finitePositive(sl.A) {
 			if fittedAt, inTime := notFuture(sl.FittedAt, now); inTime && !fittedAt.IsZero() &&
 				now.Sub(fittedAt) <= h.BucketRetention {
-				a.itlTracker.RestoreSlope(k, itl.Slope{A: sl.A, FittedAt: fittedAt, Args: sl.Args, FloorB: sl.FloorB})
+				// A floor stamp past the skew is of unknown age, never
+				// younger than now.
+				floorBAt, floorInTime := notFuture(sl.FloorBAt, now)
+				if !floorInTime {
+					floorBAt = time.Time{}
+				}
+				a.itlTracker.RestoreSlope(k, itl.Slope{A: sl.A, FittedAt: fittedAt, Args: sl.Args, FloorB: sl.FloorB, FloorBAt: floorBAt})
 			}
 		}
 		if t, ok := s.StartSeconds[k]; ok && finitePositive(t) {

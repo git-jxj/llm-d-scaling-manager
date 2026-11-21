@@ -994,6 +994,13 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 		"ttft-three-pods/lines.csv", "ttft-three-pods/results.csv",
 		"ttft-three-pods/variant-capacities.csv",
 	},
+
+	// llm-d-incubation/llm-d-scaling-manager#333, on from the constructor:
+	// with SwitchITLBaselineFromFloor on, the B a key last read from its
+	// floor is held on the cycles that read none, not dropped to the 6 ms
+	// default. Alone from all off it moves nothing: with the floor off there
+	// is no floor B to hold.
+	saturation.SwitchITLFloorBaselineHeld: nil,
 })
 
 // learner4b2Seams is learner PR 4b-2's switches, earlier seams now (merged
@@ -1503,6 +1510,17 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/itl", "TestBelowBandPoint_ReadsOnlyUnderTheBandNow"},
 		{"../../../signals/itl", "TestFloorIntercept_NeedsTheGap"},
 		{".", "TestGoldens_ITLBaselineFromFloorReplicas"},
+	},
+	saturation.SwitchITLFloorBaselineHeld: {
+		{"../saturation", "TestITLFloorBaselineHeld_OnFromTheConstructor"},
+		{"../saturation", "TestITLFloorBaselineHeld_AnalyzeHoldsTheFloorThroughAnHourInTheBand"},
+		{"../saturation", "TestITLFloorBaselineHeld_ASnapshotKeepsTheStamp"},
+		{"../../../signals/itl", "TestTracker_AFleetHeldInTheBandKeepsItsFloorB"},
+		{"../../../signals/itl", "TestTracker_ANewerFloorReplacesTheHeldB"},
+		{"../../../signals/itl", "TestTracker_EvidenceAgainstTheHeldBEndsIt"},
+		{"../../../signals/itl", "TestTracker_AFullFitOverridesTheHeldB"},
+		{"../../../signals/itl", "TestTracker_ARestoredHeldBHoldsAfterARestart"},
+		{"../../../signals/itl", "TestTracker_ASweepForgetsTheHeldB"},
 	},
 	saturation.SwitchITLAdaptiveBandFloor: {
 		{"../saturation", "TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine"},
