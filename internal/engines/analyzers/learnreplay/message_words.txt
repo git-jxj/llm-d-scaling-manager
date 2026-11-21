@@ -1387,6 +1387,7 @@ hicache_size
 hierarchical
 high
 highSeconds
+higher
 highest
 highestGroup
 hint
@@ -3267,11 +3268,13 @@ vllm:spec_decode_num_accepted_tokens_total
 volume
 vp
 vpAboveSlopeBound
+vpFlooredAtServed
 vpLowerBound
 vpLowerBoundReason
 vpPromptTokens
 vpRefused
 vpSamples
+vpServedPeak
 vpSource
 wait
 waitBeforeReverseMove
