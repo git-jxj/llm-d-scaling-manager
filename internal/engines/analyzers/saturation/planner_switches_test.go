@@ -19,7 +19,7 @@ import (
 // The capacity planner's switches, through Analyze: off from the
 // constructor, so the controller never runs them (TestPlannerSwitches_OffFromTheConstructor).
 
-// TestPlannerSwitches_OffFromTheConstructor holds the eight planner-only
+// TestPlannerSwitches_OffFromTheConstructor holds the eleven planner-only
 // switches off in a new analyzer: the controller's behaviour is P1's.
 func TestPlannerSwitches_OffFromTheConstructor(t *testing.T) {
 	a := NewSaturationAnalyzer(capacity.NewStore())
