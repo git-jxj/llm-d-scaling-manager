@@ -116,6 +116,7 @@ backtest.steps[].tpot[].measured number
 backtest.steps[].tpot[].measuredBucket object
 backtest.steps[].tpot[].measuredBucket.hi number
 backtest.steps[].tpot[].measuredBucket.lo number
+backtest.steps[].tpot[].outsideBucket string
 backtest.steps[].tpot[].predicted Figure
 backtest.steps[].tpot[].ratio number
 backtest.steps[].tpot[].statistic string
@@ -129,6 +130,7 @@ backtest.steps[].ttft[].measured number
 backtest.steps[].ttft[].measuredBucket object
 backtest.steps[].ttft[].measuredBucket.hi number
 backtest.steps[].ttft[].measuredBucket.lo number
+backtest.steps[].ttft[].outsideBucket string
 backtest.steps[].ttft[].predicted Figure
 backtest.steps[].ttft[].ratio number
 backtest.steps[].ttft[].statistic string
@@ -680,6 +682,7 @@ prediction.steps[].tpot[].measured number
 prediction.steps[].tpot[].measuredBucket object
 prediction.steps[].tpot[].measuredBucket.hi number
 prediction.steps[].tpot[].measuredBucket.lo number
+prediction.steps[].tpot[].outsideBucket string
 prediction.steps[].tpot[].predicted Figure
 prediction.steps[].tpot[].ratio number
 prediction.steps[].tpot[].statistic string
@@ -693,6 +696,7 @@ prediction.steps[].ttft[].measured number
 prediction.steps[].ttft[].measuredBucket object
 prediction.steps[].ttft[].measuredBucket.hi number
 prediction.steps[].ttft[].measuredBucket.lo number
+prediction.steps[].ttft[].outsideBucket string
 prediction.steps[].ttft[].predicted Figure
 prediction.steps[].ttft[].ratio number
 prediction.steps[].ttft[].statistic string

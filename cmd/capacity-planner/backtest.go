@@ -303,7 +303,7 @@ func pointText(ps []whatifapi.BacktestPoint, stat string) string {
 		switch {
 		case p.AboveHistogram || p.Unscored == whatifapi.UnscoredAboveHistogram:
 			meas = ">top"
-		case p.Unscored == whatifapi.UnscoredUnresolvable:
+		case p.MeasuredBucket != nil:
 			meas += "~"
 		}
 		return pred + "/" + meas + mark
@@ -373,7 +373,7 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 		fmt.Fprintf(&b, "TTFT target: %s %s\n", t.Statistic, fmtSeconds(*t.Target))
 	}
 	b.WriteString("\neach step: predicted/measured (* inside the conditions our accuracy benchmarks cover; " +
-		"~ measured in a histogram bucket too wide to score)\n")
+		"~ measured in a histogram bucket too wide to place it, scored only where the prediction falls outside it)\n")
 	const layout = "%-16s %7s %5s  %-19s %-19s %-17s %-17s %s\n"
 	fmt.Fprintf(&b, layout, "step (UTC)", "rate", "P+D", "TTFT mean", "TTFT p90", "TPOT mean", "TPOT p90", "")
 	for _, s := range bt.Steps {

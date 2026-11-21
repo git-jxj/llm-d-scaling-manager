@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // bkRouter is a router window of rate r: TTFT buckets ttft (cumulative
@@ -38,18 +39,18 @@ func statIndex(t *testing.T, q float64) int {
 	return -1
 }
 
-// A measured percentile is scored only where the bucket it fell in is
-// narrow against the measured mean (#291). The 0.6B staircase's B phase:
-// TTFT buckets 0.2 to 0.4 s around a mean of 0.16 s, TPOT 5 to 10 ms
-// around 7.5 ms. Interpolated, the p90 reads the grid; it is shown, with
-// its bucket, and not scored. Where the buckets are fine it is scored.
+// A measured percentile is placed only where the bucket it fell in is no
+// wider than 20% of its lower edge (#291). The 0.6B staircase's B phase:
+// TTFT buckets 0.2 to 0.4 s, TPOT 5 to 10 ms. Interpolated, the p90 reads
+// the grid; with the prediction inside the bucket it is shown, with its
+// bucket, and not scored. Where the buckets are fine it is scored.
 func TestBacktest_APercentileInACoarseBucketIsUnresolvable(t *testing.T) {
 	p90 := statIndex(t, 0.9)
 	coarse := measuredOf(LatencySample{Router: bkRouter(10, [][2]float64{{0.2, 0.7}, {0.4, 1}}, 0.16,
 		[][2]float64{{0.005, 0.3}, {0.01, 1}}, 0.0075)}, MeasuredRouter, 300, true)
-	require.NotNil(t, coarse.ttftBucket[p90], "TTFT p90 in 0.2 to 0.4 s around 0.16 s")
+	require.NotNil(t, coarse.ttftBucket[p90], "TTFT p90 in 0.2 to 0.4 s")
 	assert.Equal(t, Band{Lo: 0.2, Hi: 0.4}, *coarse.ttftBucket[p90])
-	require.NotNil(t, coarse.tpotBucket[p90], "TPOT p90 in 5 to 10 ms around 7.5 ms")
+	require.NotNil(t, coarse.tpotBucket[p90], "TPOT p90 in 5 to 10 ms")
 	assert.Equal(t, Band{Lo: 0.005, Hi: 0.01}, *coarse.tpotBucket[p90])
 	assert.Nil(t, coarse.ttftBucket[statIndex(t, 0)], "the mean is no bucket's")
 
@@ -57,15 +58,16 @@ func TestBacktest_APercentileInACoarseBucketIsUnresolvable(t *testing.T) {
 	p := scoredPoint(pred, coarse.ttft[p90], coarse.requests, coarse.ttftTop, coarse.ttftWhy[p90], coarse.ttftBucket[p90])
 	assert.Equal(t, UnscoredUnresolvable, p.Unscored)
 	assert.Nil(t, p.Ratio, "not scored")
+	assert.Empty(t, p.OutsideBucket)
 	require.NotNil(t, p.Measured, "the interpolated figure is still shown")
 	assert.InDelta(t, 0.2+0.2*(0.9-0.7)/0.3, *p.Measured, 1e-12)
 	assert.Equal(t, &Band{Lo: 0.2, Hi: 0.4}, p.MeasuredBucket)
 
-	// Buckets 10 ms wide around a 115 ms mean place the p90: scored.
+	// Buckets 1.09x and 1.2x their lower edge place the p90: scored.
 	fine := measuredOf(LatencySample{Router: bkRouter(10, [][2]float64{{0.1, 0.1}, {0.11, 0.5}, {0.12, 0.95}, {0.2, 1}}, 0.115,
 		[][2]float64{{0.010, 0.5}, {0.012, 0.95}, {0.05, 1}}, 0.011)}, MeasuredRouter, 300, true)
 	assert.Nil(t, fine.ttftBucket[p90])
-	assert.Nil(t, fine.tpotBucket[p90])
+	assert.Nil(t, fine.tpotBucket[p90], "10 to 12 ms is 1.2x, on the edge: placed")
 	p = scoredPoint(pred, fine.ttft[p90], fine.requests, fine.ttftTop, fine.ttftWhy[p90], fine.ttftBucket[p90])
 	assert.Empty(t, p.Unscored)
 	require.NotNil(t, p.Ratio)
@@ -79,15 +81,74 @@ func TestBacktest_APercentileInACoarseBucketIsUnresolvable(t *testing.T) {
 	assert.True(t, p.AboveHistogram)
 }
 
-// With no measured mean the bucket's lower edge stands for it: a bucket is
-// scored when its upper edge is at most 1.4 times its lower.
-func TestBacktest_ABucketWithNoMeanIsJudgedOnItsEdges(t *testing.T) {
-	h, ok := histOf([]domain.LatencyBucket{{UpperBound: 0.010, Rate: 0.5}, {UpperBound: 0.014, Rate: 0.95},
+// A bucket is judged against its own lower edge, not the mean: a
+// percentile below the mean sits in a bucket the mean says nothing about.
+// TPOT 5 to 10 ms is 2x its edge, and 17% of a 30 ms mean: the p50 in it
+// is not placed. The first bucket, from 0, never places one.
+func TestBacktest_ABucketIsJudgedOnItsOwnEdge(t *testing.T) {
+	m := measuredOf(LatencySample{Router: bkRouter(10, [][2]float64{{0.2, 0.5}, {0.22, 1}}, 0.2,
+		[][2]float64{{0.005, 0.3}, {0.01, 0.6}, {0.012, 0.7}, {0.1, 1}}, 0.03)}, MeasuredRouter, 300, true)
+	p50 := statIndex(t, 0.5)
+	require.NotNil(t, m.tpotBucket[p50], "a percentile below the mean in a 2x bucket")
+	assert.Equal(t, Band{Lo: 0.005, Hi: 0.01}, *m.tpotBucket[p50])
+
+	h, ok := histOf([]domain.LatencyBucket{{UpperBound: 0.010, Rate: 0.5}, {UpperBound: 0.012, Rate: 0.95},
 		{UpperBound: 0.025, Rate: 1}, {UpperBound: math.Inf(1), Rate: 1}})
 	require.True(t, ok)
-	assert.Nil(t, h.coarseBucket(0.9, nil), "10 to 14 ms: 1.4x")
-	assert.Equal(t, &Band{Lo: 0.014, Hi: 0.025}, h.coarseBucket(0.97, nil), "14 to 25 ms: 1.8x")
-	assert.Equal(t, &Band{Lo: 0, Hi: 0.010}, h.coarseBucket(0.3, nil), "a first bucket from 0 never places one")
+	assert.Nil(t, h.coarseBucket(0.9), "10 to 12 ms: 1.2x")
+	assert.Equal(t, &Band{Lo: 0.012, Hi: 0.025}, h.coarseBucket(0.97), "12 to 25 ms: 2.1x")
+	assert.Equal(t, &Band{Lo: 0, Hi: 0.010}, h.coarseBucket(0.3), "a first bucket from 0 never places one")
+}
+
+// A prediction wholly outside the coarse bucket the measured percentile
+// fell in is a certain miss: scored against the nearer edge, never within,
+// and read low under the bucket where even its lower edge says so. The
+// split recording's p90 TTFT predicted at 5.09 s against a bucket of 15 to
+// 20 s is such a miss, not an unknown.
+func TestBacktest_APredictionOutsideACoarseBucketIsScoredAtItsEdge(t *testing.T) {
+	p90 := statIndex(t, 0.9)
+	m := measuredOf(LatencySample{Router: bkRouter(10, [][2]float64{{15, 0.7}, {20, 1}}, 11.4,
+		[][2]float64{{0.01, 1}}, 0.005)}, MeasuredRouter, 300, true)
+	require.NotNil(t, m.ttftBucket[p90])
+	at := func(v float64) BacktestPoint {
+		return scoredPoint(BacktestPoint{Statistic: statP90, Predicted: Figure{Value: ptr(v)}}, m.ttft[p90], m.requests,
+			m.ttftTop, m.ttftWhy[p90], m.ttftBucket[p90])
+	}
+	under := at(5.09)
+	require.NotNil(t, under.Ratio)
+	assert.Equal(t, OutsideUnder, under.OutsideBucket)
+	assert.InDelta(t, 5.09/15, *under.Ratio, 1e-12)
+	assert.Equal(t, &Band{Lo: 15, Hi: 20}, under.MeasuredBucket)
+	over := at(30)
+	require.NotNil(t, over.Ratio)
+	assert.Equal(t, OutsideOver, over.OutsideBucket)
+	assert.InDelta(t, 1.5, *over.Ratio, 1e-12)
+	near := at(14.5) // under the bucket, by less than 20% of its edge
+	assert.Equal(t, OutsideUnder, near.OutsideBucket)
+	assert.Equal(t, UnscoredUnresolvable, at(17).Unscored)
+
+	steps := []BacktestStep{{TTFT: []BacktestPoint{{}, {}, under, {}}}, {TTFT: []BacktestPoint{{}, {}, over, {}}},
+		{TTFT: []BacktestPoint{{}, {}, near, {}}}}
+	ttft, _ := scoresOf(steps)
+	sc := ttft[p90]
+	assert.Equal(t, 3, sc.All.Steps)
+	assert.InDelta(t, 0.0, *sc.All.Within, 1e-12, "a certain miss is never within")
+	assert.Equal(t, 1, sc.All.Low, "5.09 s is read low by its edge; 14.5 s may be within 20% of the truth")
+}
+
+// A measured percentile beside a refusal keeps its bucket, and the range a
+// saturated fleet served at is the bucket, not the figure the grid set.
+func TestBacktest_ARefusedStepKeepsTheMeasuredBucket(t *testing.T) {
+	p90 := statIndex(t, 0.9)
+	m := measuredOf(LatencySample{Router: bkRouter(10, [][2]float64{{0.2, 0.7}, {0.4, 1}}, 0.16,
+		[][2]float64{{0.01, 1}}, 0.005)}, MeasuredRouter, 300, true)
+	sat := BacktestPoint{Statistic: statP90, Predicted: Figure{Refused: &Refusal{Reason: string(whatif.Saturated)}}}
+	p := scoredPoint(sat, m.ttft[p90], m.requests, m.ttftTop, m.ttftWhy[p90], m.ttftBucket[p90])
+	assert.Equal(t, UnscoredRefused, p.Unscored)
+	assert.Equal(t, &Band{Lo: 0.2, Hi: 0.4}, p.MeasuredBucket)
+	ttft, _ := scoresOf([]BacktestStep{{TTFT: []BacktestPoint{{}, {}, p, {}}}})
+	require.NotNil(t, ttft[p90].PastKnee)
+	assert.Equal(t, Band{Lo: 0.2, Hi: 0.4}, *ttft[p90].PastKnee)
 }
 
 // The summary counts an unresolvable percentile apart: out of the steps
@@ -117,6 +178,16 @@ func TestBacktest_UnresolvableIsOutOfTheScore(t *testing.T) {
 	assert.Zero(t, sc.All.Low, "the steps a coarse bucket read low are not counted low")
 }
 
+// An upper bound is judged against a coarse bucket's edges: covered at or
+// over its upper edge, not at or under its lower, unknown between.
+func TestBacktest_CoverageInACoarseBucketIsByItsEdges(t *testing.T) {
+	b := &Band{Lo: 0.2, Hi: 0.4}
+	for bound, want := range map[float64][2]bool{0.5: {true, true}, 0.4: {true, true}, 0.2: {false, true}, 0.3: {false, false}} {
+		c, known := coveredBy(BacktestPoint{Bound: ptr(bound), Measured: ptr(0.35), MeasuredBucket: b})
+		assert.Equal(t, want, [2]bool{c, known}, "bound %g", bound)
+	}
+}
+
 // scoresAt is a figure's scores: the mean scored in meanSteps steps with
 // median ratio meanBias, the p90 in p90Steps with p90Bias and unresolvable
 // in the rest of n.
@@ -142,7 +213,7 @@ func TestBacktest_TheMeanIsTheQuotedFigure(t *testing.T) {
 	require.NotNil(t, quoted)
 	assert.Equal(t, statisticMean, quoted.Statistic)
 	assert.True(t, strings.HasPrefix(line, "mean TPOT: within 20% of measured in 10 of the 10 five-minute steps scored"), line)
-	assert.Contains(t, line, "p90 TPOT not scored in 10: the measured p90 fell in a histogram bucket wider than 40% of the measured mean")
+	assert.Contains(t, line, "p90 TPOT not scored in 10: the measured p90 fell in a histogram bucket wider than 20% of its lower edge")
 
 	line, _ = verdictPart("TTFT", scoresAt(10, 1.02, 4, 0.85, 10), "five-minute steps")
 	assert.Contains(t, line, "p90 TTFT: within 20% in 4 of 4, median ratio 0.85.")
@@ -164,14 +235,20 @@ func TestBacktest_TheMeanIsTheQuotedFigure(t *testing.T) {
 	assert.Zero(t, f.Steps)
 }
 
-// A TTFT target inside the bucket the measured percentile fell in is not
-// judged on the measured side; outside it, the bucket decides.
-func TestBacktest_ATargetInsideACoarseBucketIsUnknown(t *testing.T) {
+// A TTFT target is judged against a coarse bucket's edges: a histogram
+// bucket counts requests over its lower edge up to its upper, so a target
+// at the lower edge is missed, at the upper met, and inside unknown.
+func TestBacktest_ATargetIsJudgedOnACoarseBucketsEdges(t *testing.T) {
 	m := measuredOf(LatencySample{Router: bkRouter(1000, [][2]float64{{0.2, 0.7}, {0.4, 1}}, 0.16,
 		[][2]float64{{0.01, 1}}, 0.005)}, MeasuredRouter, 300, true)
 	points := []BacktestPoint{{}, {}, {Predicted: Figure{Value: ptr(0.25)}}, {}}
-	for target, want := range map[float64]string{0.3: judgedUnknown, 0.15: judgedMissed, 0.4: judgedMet, 0.5: judgedMet} {
+	for target, want := range map[float64]string{0.3: judgedUnknown, 0.15: judgedMissed, 0.2: judgedMissed, 0.4: judgedMet, 0.5: judgedMet} {
 		j := judgeTarget(&ReportTarget{Percentile: 0.9, Seconds: target}, points, m)
 		assert.Equal(t, want, j.Measured, "target %g", target)
 	}
+	// The first bucket, from 0, is coarse: a target inside it is unknown.
+	low := measuredOf(LatencySample{Router: bkRouter(1000, [][2]float64{{0.1, 0.95}, {0.4, 1}}, 0.05,
+		[][2]float64{{0.01, 1}}, 0.005)}, MeasuredRouter, 300, true)
+	assert.Equal(t, judgedUnknown, judgeTarget(&ReportTarget{Percentile: 0.9, Seconds: 0.05}, points, low).Measured)
+	assert.Equal(t, judgedMet, judgeTarget(&ReportTarget{Percentile: 0.9, Seconds: 0.1}, points, low).Measured)
 }

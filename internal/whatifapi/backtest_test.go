@@ -214,7 +214,16 @@ func TestBacktest_ScoresAgainstTheHistogram(t *testing.T) {
 		require.NotNil(t, p.Measured, p.Statistic)
 		assert.InDelta(t, want[p.Statistic], *p.Measured, 1e-9, p.Statistic)
 		if p.Ratio != nil {
-			assert.InDelta(t, *p.Predicted.Value / *p.Measured, *p.Ratio, 1e-12)
+			// Outside a bucket too wide to place the figure, the ratio is
+			// over the bucket's nearer edge.
+			ref := *p.Measured
+			switch p.OutsideBucket {
+			case OutsideUnder:
+				ref = p.MeasuredBucket.Lo
+			case OutsideOver:
+				ref = p.MeasuredBucket.Hi
+			}
+			assert.InDelta(t, *p.Predicted.Value/ref, *p.Ratio, 1e-12, p.Statistic)
 			require.NotNil(t, p.Bound)
 			assert.InDelta(t, 1.1**p.Predicted.Value, *p.Bound, 1e-12, "the bound is the top of the span")
 		}

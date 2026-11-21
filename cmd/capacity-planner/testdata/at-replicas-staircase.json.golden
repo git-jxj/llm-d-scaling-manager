@@ -258,7 +258,7 @@
             "statistic": "p90",
             "refused": {
               "reason": "TPOTBucketTooWide",
-              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
+              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the router's TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
               "flags": [
                 "CoarseTPOTBucket"
               ]
@@ -372,7 +372,7 @@
             "statistic": "p90",
             "refused": {
               "reason": "TPOTBucketTooWide",
-              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
+              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the router's TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
               "flags": [
                 "CoarseTPOTBucket"
               ]
@@ -450,8 +450,8 @@
           "tpotPercentile": {
             "statistic": "p90",
             "refused": {
-              "reason": "TPOTBucketTooWide",
-              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
+              "reason": "Saturated",
+              "detail": "rate 36.984638260324516 r/s at or above the knee 36.984638260324516 r/s",
               "flags": [
                 "CoarseTPOTBucket"
               ]
@@ -511,8 +511,8 @@
           "tpotPercentile": {
             "statistic": "p90",
             "refused": {
-              "reason": "TPOTBucketTooWide",
-              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
+              "reason": "Saturated",
+              "detail": "rate 41.7 r/s at or above the knee 36.984638260324516 r/s",
               "flags": [
                 "CoarseTPOTBucket"
               ]
