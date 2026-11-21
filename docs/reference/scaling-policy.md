@@ -2282,8 +2282,10 @@ of replicas meets, bounds nothing (`target-unreachable`).
   load, below the band, in the last 30 minutes, so the bound applies to it
   after a stretch at low load. It needs at least 10 such readings, and the
   replicas' fill now at twice the low-load fill or more. That B is kept
-  while the fleet stays inside the band, past the 30 minutes, until a newer
-  low-load stretch or a full fit replaces it, or a reading under it ends it.
+  while the fleet stays inside the band, past the 30 minutes, and across a
+  controller restart. A newer low-load stretch or a full fit replaces it.
+  A rollout, a change of request shape or of engine arguments ends it, and
+  so do readings under it.
   Before any low load, its line rests on the 6 ms default intercept and
   bounds nothing (`default-intercept`). The B read this way can come out under the true
   intercept, which prices a steeper line and usually asks for more decode

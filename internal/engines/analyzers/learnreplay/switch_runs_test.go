@@ -1671,6 +1671,9 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/itl", "TestTracker_AFullFitOverridesTheHeldB"},
 		{"../../../signals/itl", "TestTracker_ARestoredHeldBHoldsAfterARestart"},
 		{"../../../signals/itl", "TestTracker_ASweepForgetsTheHeldB"},
+		{"../../../signals/itl", "TestTracker_ARolloutOrShapeMoveEndsTheHeldB"},
+		{"../../../signals/itl", "TestTracker_ARefusedFloorUnderTheHeldBEndsIt"},
+		{"../../../signals/itl", "TestHeldFloorContradicted_ReadsAQuantile"},
 	},
 	saturation.SwitchITLAdaptiveBandFloor: {
 		{"../saturation", "TestITLAdaptiveBandFloor_ALowFillFleetLearnsItsLine"},

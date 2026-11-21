@@ -34,14 +34,12 @@ type heldTable struct {
 // heldReplicaTables is each fixture's table as measured, frozen.
 //
 // e1, e1-tuned and pd-restart do not move: every cycle that pins through
-// the floor reads one. The staircases and three-pods do: their decode lines
-// are pinned through the floor, and on the cycles that read none (the floor
-// below the band dropped while the model's shape changes, or the pinned fit
-// too close to the floor's fill for its intercept) the line went back to the
-// 6 ms default; held, it keeps the last floor's B. No fixture asks for fewer
-// replicas on any cycle. The staircases ask for none more either; three-pods
-// asks for one more on 5 cycles, where its held B, under the default, prices
-// a lower mu.
+// the floor reads one. The staircases do: on the cycles that read no floor B
+// (the pinned fit too close to the floor's fill for its intercept, or the
+// floor's readings aged out) the line went back to the 6 ms default; held,
+// it keeps the last floor's B, and no replica ask moves. Three-pods does not
+// move: the cycles it would hold are in a shape change, which ends the hold
+// (heldSlope.floorBGone). No fixture asks for fewer replicas on any cycle.
 var heldReplicaTables = []heldTable{
 	{"e1", 762, 0, 0, 0, 0, 1439, 1439, 5.270, 5.270},
 	{"e1-tuned", 748, 0, 0, 0, 0, 1387, 1387, 4.783, 4.783},
@@ -49,7 +47,7 @@ var heldReplicaTables = []heldTable{
 	{"ttft-staircase-b-off", 289, 64, 0, 0, 0, 283, 283, 21.785, 21.785},
 	{"ttft-staircase-b-on", 289, 23, 0, 0, 0, 284, 284, 22.473, 22.473},
 	{"ttft-staircase-c-on", 292, 49, 0, 0, 0, 286, 286, 22.135, 22.049},
-	{"ttft-three-pods", 203, 43, 5, 0, 5, 482, 487, 4.146, 4.019},
+	{"ttft-three-pods", 203, 0, 0, 0, 0, 482, 482, 4.146, 4.146},
 }
 
 // The replicas the decode role asks for with the B last read from the floor

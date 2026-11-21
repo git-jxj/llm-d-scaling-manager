@@ -93,6 +93,12 @@ type heldSlope struct {
 	// through it held (Admission.HoldsFloorBaseline). Zero for none, or for
 	// one of unknown age (a snapshot written without it).
 	floorBAt time.Time
+	// floorBGone says floorB's floor was read under an engine or a request
+	// shape the key no longer runs: a rollout or a shape move dropped the
+	// floor's readings (clearWindowLocked, ForgetFloor). A hold of a still
+	// pairs a with floorB (pin), but a pinned fit no longer pins through it
+	// (heldFloorB).
+	floorBGone bool
 	// steady: a was fitted on steady readings, by the full fit or by the
 	// pinned fit while DefaultMinSamples of them were held
 	// (Admission.HoldsSteadySlope).
@@ -512,7 +518,7 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 			}
 		}
 		if floorB == 0 && havePinned && adm.BaselineFromFloor && adm.HoldsFloorBaseline {
-			if b, at, ok := t.heldFloorB(key, pinned, adm); ok {
+			if b, at, ok := t.heldFloorB(key, pinned, floor, haveFloor, adm); ok {
 				baseline, floorB, floorBAt = b, b, at
 				r.FloorBHeld = true
 			}
@@ -625,26 +631,52 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 // (issue llm-d-incubation/llm-d-scaling-manager#333). B is the engine's own
 // floor and does not move with the load, so the last one read holds as a
 // learned B does: until a newer floor or a full fit replaces it, or the key is
-// swept. It ends sooner only where the evidence says otherwise: a slope fitted
-// under other engine arguments (Admission.mayHold's rule), or a pinned reading
-// under it, which no line through it can pass (every reading is B plus A
-// times its fill).
-func (t *Tracker) heldFloorB(key string, pinned []Observation, adm Admission) (float64, time.Time, bool) {
+// swept. It ends sooner where the evidence says otherwise:
+//
+//   - a rollout or a shape move dropped the floor it was read from
+//     (heldSlope.floorBGone): it was read under an engine or a shape the key
+//     no longer runs, and an old shape's floor sets a B under the truth;
+//   - a slope fitted under other engine arguments (Admission.mayHold's rule);
+//   - a floor read this cycle, though refused by floorIntercept, under it: a
+//     floor's ITL is an upper bound on B;
+//   - the pinned readings' low quantile under it (heldFloorContradicted): no
+//     line through it passes them, since every reading is B plus A times its
+//     fill.
+func (t *Tracker) heldFloorB(key string, pinned []Observation, floor Observation, haveFloor bool, adm Admission) (float64, time.Time, bool) {
 	t.mu.Lock()
 	held, have := t.slopes[key]
 	t.mu.Unlock()
-	if !have || !(held.floorB > 0) || math.IsInf(held.floorB, 0) {
+	if !have || held.floorBGone || !(held.floorB > 0) || math.IsInf(held.floorB, 0) {
 		return 0, time.Time{}, false
 	}
 	if adm.Args != "" && held.args != "" && adm.Args != held.args {
 		return 0, time.Time{}, false
 	}
-	for _, o := range pinned {
-		if o.ITLSec > 0 && o.ITLSec < held.floorB {
-			return 0, time.Time{}, false
-		}
+	if haveFloor && floor.ITLSec > 0 && floor.ITLSec < held.floorB {
+		return 0, time.Time{}, false
+	}
+	if heldFloorContradicted(pinned, held.floorB) {
+		return 0, time.Time{}, false
 	}
 	return held.floorB, held.floorBAt, true
+}
+
+// heldFloorContradicted reports whether the pinned readings say b is above
+// the engine's intercept: their BelowBandQuantile quantile by ITL (the least
+// of fewer than ten) is under b. A quantile, not the least, as the floor
+// itself is read: one noisy reading does not end the hold.
+func heldFloorContradicted(pinned []Observation, b float64) bool {
+	xs := make([]float64, 0, len(pinned))
+	for _, o := range pinned {
+		if o.ITLSec > 0 && !math.IsInf(o.ITLSec, 0) {
+			xs = append(xs, o.ITLSec)
+		}
+	}
+	if len(xs) == 0 {
+		return false
+	}
+	slices.Sort(xs)
+	return xs[int(BelowBandQuantile*float64(len(xs)))] < b
 }
 
 // oneSidedLine is the pinned fit c, through baseline, set against the line
@@ -1295,9 +1327,21 @@ func (t *Tracker) clearWindowLocked(key string) bool {
 		}
 	}
 	// The floor below the band was read under the engine or shape the
-	// window was: a rollout or a shape move clears it with them.
-	delete(t.belowBand, key)
+	// window was: a rollout or a shape move clears it with them, and the B a
+	// pinned fit held from it (heldSlope.floorBGone).
+	t.dropFloorLocked(key)
 	return had
+}
+
+// dropFloorLocked drops key's readings below the band, and marks the B its
+// held slope was fitted through from them as gone (heldSlope.floorBGone).
+// Called with t.mu held.
+func (t *Tracker) dropFloorLocked(key string) {
+	delete(t.belowBand, key)
+	if h, ok := t.slopes[key]; ok && h.floorB > 0 {
+		h.floorBGone = true
+		t.slopes[key] = h
+	}
 }
 
 // ForgetFloor drops key's readings below the band
@@ -1306,7 +1350,7 @@ func (t *Tracker) clearWindowLocked(key string) bool {
 func (t *Tracker) ForgetFloor(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.belowBand, key)
+	t.dropFloorLocked(key)
 }
 
 // ForgetFloors drops every key's readings below the band
@@ -1441,6 +1485,9 @@ type Slope struct {
 	// FloorBAt is when FloorB was last read from a floor (heldSlope.floorBAt),
 	// zero when unknown.
 	FloorBAt time.Time
+	// FloorBGone is heldSlope.floorBGone: a rollout or a shape move dropped
+	// FloorB's floor, so a pinned fit no longer pins through it.
+	FloorBGone bool
 }
 
 // Slopes returns a copy of every key's last fitted A.
@@ -1449,7 +1496,7 @@ func (t *Tracker) Slopes() map[string]Slope {
 	defer t.mu.Unlock()
 	out := make(map[string]Slope, len(t.slopes))
 	for key, s := range t.slopes {
-		out[key] = Slope{A: s.a, FittedAt: s.fittedAt, Args: s.args, FloorB: s.floorB, FloorBAt: s.floorBAt}
+		out[key] = Slope{A: s.a, FittedAt: s.fittedAt, Args: s.args, FloorB: s.floorB, FloorBAt: s.floorBAt, FloorBGone: s.floorBGone}
 	}
 	return out
 }
@@ -1479,7 +1526,8 @@ func (t *Tracker) RestoreSlope(key string, s Slope) {
 		if !(floorB > 0) || math.IsInf(floorB, 0) {
 			floorB, floorBAt = 0, time.Time{}
 		}
-		t.slopes[key] = heldSlope{a: s.A, fittedAt: s.FittedAt, args: s.Args, floorB: floorB, floorBAt: floorBAt}
+		t.slopes[key] = heldSlope{a: s.A, fittedAt: s.FittedAt, args: s.Args, floorB: floorB, floorBAt: floorBAt,
+			floorBGone: floorB > 0 && s.FloorBGone}
 		t.restored[key] = struct{}{}
 	}
 }

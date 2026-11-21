@@ -273,7 +273,7 @@ type shapeSample struct {
 // sequences than its cap (MTP, wide EP), so there is no backtest to turn it
 // on with (issue llm-d-incubation/llm-d-scaling-manager#302).
 //
-// One controller switch is turned off here instead, the planner's only off:
+// One controller switch, on from its constructor, is turned off here:
 //
 //   - saturation.SwitchITLFloorBaselineHeld: a decode line with no full fit
 //     keeps the B it last read from its floor below the band after the

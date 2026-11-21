@@ -77,6 +77,12 @@ func TestTracker_AFleetHeldInTheBandKeepsItsFloorB(t *testing.T) {
 	if stepAt < 0 {
 		t.Fatalf("negative control: off, the line never left the floor's B in %d cycles", len(off))
 	}
+	if at := time.Duration(stepAt) * 15 * time.Second; at < 25*time.Minute || at > 31*time.Minute {
+		t.Fatalf("negative control: off, the step at %s, want it where the floor ages out (%s)", at, DefaultObservationMaxAge)
+	}
+	if held != len(on)-stepAt {
+		t.Errorf("on: held on %d cycles, want every cycle from the step off (%d)", held, len(on)-stepAt)
+	}
 	r := off[stepAt]
 	if !(r.Model.A > floorTrue.A*1.2) || r.PinnedAtFloor {
 		t.Errorf("negative control: off at %s, line %+v (pinned at the floor %v), want the default B and a steeper slope",
@@ -234,5 +240,67 @@ func TestTracker_ASweepForgetsTheHeldB(t *testing.T) {
 	tr.Sweep(start.Add(4*time.Hour), func(string) bool { return true })
 	if _, ok := tr.Slopes()["k"]; ok {
 		t.Errorf("the held B outlived the sweep: %+v", tr.Slopes()["k"])
+	}
+}
+
+// A rollout or a shape move drops the floor the held B was read from, and
+// the B with it: it was read under an engine or a shape the key no longer
+// runs. The next pinned fit is on the default B, as without the hold.
+func TestTracker_ARolloutOrShapeMoveEndsTheHeldB(t *testing.T) {
+	start := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	later := start.Add(time.Duration(180) * 15 * time.Second)
+	for name, drop := range map[string]func(*Tracker){
+		"shape move (ForgetFloor)": func(tr *Tracker) { tr.ForgetFloor("k") },
+		"rollout (ClearWindow)":    func(tr *Tracker) { tr.ClearWindow("k") },
+	} {
+		tr := NewTracker()
+		rs := inBandFor(tr, heldAdm, floorTrue, 160, start)
+		if !rs[len(rs)-1].FloorBHeld {
+			t.Fatalf("%s: premise: the B is held; got %+v", name, rs[len(rs)-1])
+		}
+		drop(tr)
+		if got := tr.Slopes()["k"]; !got.FloorBGone || got.FloorB != floorTrue.B {
+			t.Errorf("%s: exported %+v, want B %g marked gone", name, got, floorTrue.B)
+		}
+		var r Reading
+		for c := range 12 {
+			r = tr.Observe("k", "v", floorRows(bandCycle(c), floorTrue.A, floorTrue.B, start), heldAdm, later.Add(time.Duration(c)*15*time.Second))
+		}
+		if r.FloorBHeld || r.PinnedAtFloor || r.Model.B != DefaultBaselineSec {
+			t.Errorf("%s: line %+v (held %v), want the default B", name, r.Model, r.FloorBHeld)
+		}
+	}
+}
+
+// A floor read this cycle that floorIntercept refuses still bounds the held
+// B: a floor's ITL is an upper bound on B, so a held B over it ends.
+func TestTracker_ARefusedFloorUnderTheHeldBEndsIt(t *testing.T) {
+	tr := NewTracker()
+	tr.slopes["k"] = heldSlope{a: 0.05, floorB: 0.012}
+	pinned := []Observation{{K: 0.35, ITLSec: 0.03}}
+	if _, _, ok := tr.heldFloorB("k", pinned, Observation{K: 0.2, ITLSec: 0.011}, true, heldAdm); ok {
+		t.Errorf("held a B of 12 ms over a floor read at 11 ms")
+	}
+	if b, _, ok := tr.heldFloorB("k", pinned, Observation{K: 0.2, ITLSec: 0.013}, true, heldAdm); !ok || b != 0.012 {
+		t.Errorf("a floor at 13 ms ended the held 12 ms (%g, %v)", b, ok)
+	}
+}
+
+// One noisy reading under the held B does not end it; the readings' low
+// quantile under it does.
+func TestHeldFloorContradicted_ReadsAQuantile(t *testing.T) {
+	xs := make([]Observation, 0, 21)
+	for i := range 20 {
+		xs = append(xs, Observation{K: 0.35, ITLSec: 0.03 + float64(i)*1e-4})
+	}
+	if heldFloorContradicted(append(xs, Observation{K: 0.35, ITLSec: 0.005}), 0.012) {
+		t.Errorf("one reading under the B ended it")
+	}
+	low := make([]Observation, 0, 20)
+	for range 20 {
+		low = append(low, Observation{K: 0.35, ITLSec: 0.011})
+	}
+	if !heldFloorContradicted(low, 0.012) {
+		t.Errorf("every reading under the B did not end it")
 	}
 }

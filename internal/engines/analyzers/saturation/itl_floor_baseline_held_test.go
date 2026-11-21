@@ -111,6 +111,9 @@ func TestITLFloorBaselineHeld_AnalyzeHoldsTheFloorThroughAnHourInTheBand(t *test
 		}
 	}
 	require.Positive(t, stepAt, "negative control: off, B never left the floor's")
+	stepTime := time.Duration(stepAt) * 15 * time.Second
+	require.True(t, stepTime >= 25*time.Minute && stepTime <= 31*time.Minute,
+		"negative control: off, the step at %s, want it where the floor ages out", stepTime)
 	assert.InDelta(t, tracedModel.B, off.b[stepAt-1], 0.0002, "off: the floor's B until it aged out")
 	// tracedModel's B is under the default, so here the step flattens the
 	// slope and raises the service rate (fewer replicas); over it, as on the

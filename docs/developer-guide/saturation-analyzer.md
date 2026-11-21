@@ -1191,15 +1191,26 @@ is pinned through the B it last read from a floor (`Tracker.heldFloorB`):
 - **How it ages.** As a learned B does: it is swept and forgotten with the
   key, and a slope is restored only within `BucketRetention` of its last
   fit. No age of its own ends it.
-- **What ends it.** A newer floor's B replaces it, a full fit's learned B
-  replaces it, and the evidence against it ends it: a pinned reading under
-  it (no line through it passes one), or a slope fitted under other engine
-  arguments (`Admission.mayHold`'s rule). The line is then on the default,
-  as before. It is kept through a change of request shape, as a learned B
-  is; the floor's readings are not (`floorOnShapeChange`).
+- **What ends it.** A newer floor's B replaces it, and a full fit's learned
+  B replaces it. Evidence against it ends it:
+  - a rollout or a shape move that drops the floor's readings
+    (`clearWindowLocked`, `floorOnShapeChange`). The B was read under an
+    engine or a shape the key no longer runs (`heldSlope.floorBGone`,
+    exported as `SlopeSnapshot.FloorBGone`). An old shape's floor sets a B
+    under the truth, which is why the floor itself is dropped there.
+  - a floor read this cycle that sits under the held B, even one
+    `floorIntercept` refused. A floor's ITL is an upper bound on B.
+  - the pinned readings' 10th percentile by ITL under it, since no line
+    through B passes readings below it. One noisy reading does not end it.
+  - a slope fitted under other engine arguments (`Admission.mayHold`'s
+    rule).
+
+  The pinned line is then on the default B, as before. A slope already held
+  (too few settled readings) still pairs its A with the B it was fitted
+  through (`heldSlope.pin`), as before this switch.
 - **The planner.** The capacity planner's replay turns it off
   (`learnreplay.PlannerSwitches`): held, it priced decode on hours of the
-  staircase and three-pods recordings the planner refuses `PinnedDefaultB`,
+  staircase-b-off and three-pods recordings that the planner refuses as `PinnedDefaultB`,
   and no check yet says those figures do not read under what was measured.
 - **Log.** With the switch on, a floor-pinned `itl-fit` also logs
   `floorBHeld` (this cycle read no floor) and `floorBAge` (how long ago the
@@ -1216,9 +1227,10 @@ fleet, it asks for more).
 `TestGoldens_ITLFloorBaselineHeldReplicas` holds what it moves against the
 floor alone. e1, e1-tuned and pd-restart do not move. The staircases hold the
 floor's B on 64, 23 and 49 cycles where it went back to the default, and ask
-for no replica more or fewer; three-pods holds it on 43 cycles and asks for
-one replica more on 5 (482 to 487 replica-cycles). No cycle of any fixture
-asks for fewer. Replayed on the live recordings of two GPU runs (fourteen
+for no replica more or fewer. Three-pods does not move: every cycle it would
+hold is in a shape change, which ends the hold (before that rule, it held
+43 cycles and asked one replica more on 5). No cycle of any fixture asks for
+fewer. Replayed on the live recordings of two GPU runs (fourteen
 recordings, every arm), it moves no decode ask on any cycle. On two arms the
 line went back to the default B mid-run for about 12 minutes (9.8 ms to
 6.0 ms, then 11.7 ms), where the readings' mean fill came under twice the
