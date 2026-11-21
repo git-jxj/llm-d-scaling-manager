@@ -1424,7 +1424,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../saturation", "TestMoEBusiestRank_OnlyExpertParallelDataParallel"},
 		{"../saturation", "TestMoEBusiestRank_LineReadAtTheBusiestRank"},
-		{"../../../signals/itl", "TestObserve_BusiestRankFill"},
+		{"../saturation", "TestBusiestRankRows"},
 		{".", "TestLineSamples_BusiestRankRowsAndRatio"},
 		{".", "TestLineSamples_BusiestRatioMedianOfLoadedRows"},
 		{"../../../../cmd/capacity-planner", "TestBusiestRank_ReplayToPrice"},

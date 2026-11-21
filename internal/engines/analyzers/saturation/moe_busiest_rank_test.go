@@ -85,3 +85,22 @@ func busiestRankReadingK(t *testing.T, on bool) float64 {
 	require.Len(t, all, 1, "the replica's one reading")
 	return all[0].K
 }
+
+// The rows the line reads at the busiest rank: each fill times the row's
+// busiest/mean ratio, at most 1; a row with no ratio keeps its mean, and the
+// caller's rows are not changed.
+func TestBusiestRankRows(t *testing.T) {
+	rows := []domain.ReplicaMetrics{
+		{PodName: "in", EngineRanks: 8, KvCacheUsage: 0.4, MaxRankKvCacheUsage: 0.5,
+			KvUsageMean: 0.4, KvUsageMeanKnown: true, KvUsageInstant: 0.42, KvUsageInstantKnown: true},
+		{PodName: "full", EngineRanks: 8, KvCacheUsage: 0.9, MaxRankKvCacheUsage: 1, KvUsageMean: 0.95, KvUsageMeanKnown: true},
+		{PodName: "one", EngineRanks: 1, KvCacheUsage: 0.4, MaxRankKvCacheUsage: 0.4, KvUsageMean: 0.4, KvUsageMeanKnown: true},
+	}
+	got := busiestRankRows(rows)
+	assert.InDelta(t, 0.5, got[0].KvUsageForITL(), 1e-12)
+	assert.InDelta(t, rows[0].BusiestRankKvUsageForITL(), got[0].KvUsageForITL(), 1e-12)
+	assert.InDelta(t, 0.525, got[0].KvUsageInstant, 1e-12)
+	assert.InDelta(t, 1, got[1].KvUsageMean, 1e-12, "at most 1")
+	assert.InDelta(t, 0.4, got[2].KvUsageMean, 1e-12, "one rank: no ratio, the mean")
+	assert.InDelta(t, 0.4, rows[0].KvUsageMean, 1e-12, "the caller's rows are kept")
+}

@@ -1,13 +1,16 @@
 package saturation
 
 import (
+	"slices"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 )
 
 // SwitchMoEBusiestRank is the replay switch that fits the ITL line of a
 // data-parallel MoE engine against its busiest rank's KV fill, not the mean
-// over its ranks (itl.Admission.BusiestRankFill).
+// over its ranks (busiestRankRows).
 //
 // vLLM runs the data-parallel ranks of an expert-parallel MoE engine in
 // lockstep: each step is padded to the busiest rank's batch, idle ranks run
@@ -49,4 +52,23 @@ func (a *SaturationAnalyzer) BusiestRankFillFor(params *capacity.EngineParams) b
 		local = min(params.DataParallelSizeLocal, local)
 	}
 	return local > 1
+}
+
+// busiestRankRows is rows with each fill the ITL pairs with carried to the
+// busiest rank: KvUsageMean and KvUsageInstant times the row's
+// busiest/mean rank fill ratio (domain.ReplicaMetrics.BusiestRankFillRatio),
+// at most 1, so KvUsageForITL reads BusiestRankKvUsageForITL. A row with no
+// ratio read (one rank, or either series missing) keeps its mean. rows
+// itself is not changed.
+func busiestRankRows(rows []domain.ReplicaMetrics) []domain.ReplicaMetrics {
+	out := slices.Clone(rows)
+	for i := range out {
+		r, ok := out[i].BusiestRankFillRatio()
+		if !ok {
+			continue
+		}
+		out[i].KvUsageMean = min(out[i].KvUsageMean*r, 1)
+		out[i].KvUsageInstant = min(out[i].KvUsageInstant*r, 1)
+	}
+	return out
 }

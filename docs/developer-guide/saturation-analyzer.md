@@ -941,10 +941,10 @@ replay-only: no CLI flag or API field sets it, and it is not in
 expert-parallel MoE engine in lockstep, so a pod steps at its busiest rank,
 while its balancer evens out request counts, not KV. On, for a vLLM variant
 with expert parallelism over more than one local data-parallel rank
-(`SaturationAnalyzer.BusiestRankFillFor`), `itl.Admission.BusiestRankFill`
-reads each row's `k` at the busiest rank
-(`domain.ReplicaMetrics.BusiestRankKvUsageForITL`), so the line and the band
-are that rank's. The replay does the same for its rows and its TPOT fill
+(`SaturationAnalyzer.BusiestRankFillFor`), `fitLines` hands the ITL tracker
+its rows with each fill carried to the busiest rank (`busiestRankRows`, the
+fill times `domain.ReplicaMetrics.BusiestRankFillRatio`, at most 1), so the
+line and the band are that rank's. The tracker itself is unchanged. The replay does the same for its rows and its TPOT fill
 (`learnreplay.fillForITL`), and keeps the median busiest/mean ratio of the
 rows whose busiest rank fills the band's bottom or more
 (`VariantState.BusiestRankRatio`): the ratio is read on a loaded pod's peak

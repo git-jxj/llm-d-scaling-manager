@@ -586,7 +586,7 @@ func (c *cycle) fitLines() {
 			CapMaxPreemptionRate: c.cfg.ITLCapPreemptionRate(), Steady: c.tune.steadiness(),
 			SlopeHoldFor: c.a.Horizons().BucketRetention, Args: windowArgs(params),
 			TierHysteresis: c.a.tierHysteresisOn(), BaselineFromFloor: c.a.baselineFromFloorOn(),
-			HoldsSteadySlope: c.a.itlHoldSteadySlope, BusiestRankFill: c.a.BusiestRankFillFor(params)}
+			HoldsSteadySlope: c.a.itlHoldSteadySlope}
 		// When each replica's settle began: the engine's settle tracker
 		// (itl_settle.go).
 		c.a.itlSettleAdmission(&adm, c.input.Namespace, c.input.ModelID)
@@ -619,6 +619,11 @@ func (c *cycle) fitLines() {
 		// A decode variant's window is kept through a shape change; the
 		// floor below the band is not (itl_baseline_floor.go).
 		c.a.floorOnShapeChange(variantKey, role, adm, c.shapeChanging)
+		if c.a.BusiestRankFillFor(params) {
+			// A lockstep data-parallel MoE engine's line is read at its
+			// busiest rank (moe_busiest_rank.go).
+			rows = busiestRankRows(rows)
+		}
 		reading := c.a.noteITL(variantKey, rows, variant, adm, c.a.now(), itlLogger)
 		c.a.noteITLOneSided(variantKey, reading)
 		// The line as a learner: its report and learner-write (itl_learner.go).

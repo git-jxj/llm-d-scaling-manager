@@ -27,14 +27,6 @@ type Admission struct {
 	// MaxNumSeqsSource is where MaxNumSeqs came from, for the log only
 	// (flags, declared, MaxNumSeqsSourceNone): nothing here reads it.
 	MaxNumSeqsSource string
-	// BusiestRankFill reads each row's k at its busiest engine rank
-	// (domain.ReplicaMetrics.BusiestRankKvUsageForITL) rather than the mean
-	// over its ranks, so the band and the line are the busiest rank's: the
-	// rank a lockstep data-parallel MoE engine steps at (issue
-	// llm-d-incubation/llm-d-scaling-manager#312). Set by the saturation
-	// analyzer under its planner-only switch alone; false reads the mean, as
-	// before.
-	BusiestRankFill bool
 	// CapMaxPreemptionRate is the most preemptions per second a capped
 	// replica may show over the ITL's window and still be read above MaxK.
 	// The policy key analyzerTuning.itlBand.capMaxPreemptionRate sets it; zero, the default,

@@ -341,9 +341,6 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 		// The k paired with the row's ITL: over the same minute as its rate
 		// when the collector read that (issue ev-shindin/llm-scaling-manager#393).
 		k := rm.KvUsageForITL()
-		if adm.BusiestRankFill {
-			k = rm.BusiestRankKvUsageForITL()
-		}
 		// Judged before the switch and noted after it, so a row that is no
 		// reading -- k below the band, no ITL yet -- still says where the
 		// replica's load is.
