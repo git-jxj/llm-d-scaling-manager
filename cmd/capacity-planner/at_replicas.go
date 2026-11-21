@@ -371,7 +371,7 @@ func reportText(r *whatifapi.ReportResponse) string {
 func loadText(l whatifapi.ReportLoad) string {
 	s := figText(l.Rate, "%.2f r/s", 1)
 	switch l.Source {
-	case "observed":
+	case sourceObserved:
 		s += fmt.Sprintf(", the %s of the %d of %d cycles with traffic", l.Statistic, l.CyclesWithTraffic, l.Cycles)
 	case sourceAsked:
 		s += " (--load-seen)"

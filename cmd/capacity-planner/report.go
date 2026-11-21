@@ -447,11 +447,11 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 	case r.q.LoadSeen > 0:
 		seen, l.Source, l.Statistic = r.q.LoadSeen, sourceAsked, loadStated
 	case r.loadRefused != nil:
-		l.Source = "observed"
+		l.Source = sourceObserved
 		l.Rate = whatifapi.FigureOf(*r.loadRefused, unitRate, false)
 		return
 	case len(rates) > 0:
-		seen, l.Source = stats[l.Statistic], "observed"
+		seen, l.Source = stats[l.Statistic], sourceObserved
 		r.peak = stats[whatifapi.LoadPeak]
 	default:
 		l.Source = "none"
@@ -1564,3 +1564,6 @@ func measuredText(pv pricedVariant) string {
 
 // sourceAsked is a figure the question stated rather than the source read.
 const sourceAsked = "asked"
+
+// sourceObserved is a load the source read.
+const sourceObserved = "observed"
