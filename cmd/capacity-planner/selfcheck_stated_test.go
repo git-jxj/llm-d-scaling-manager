@@ -42,7 +42,11 @@ func selfCheckOf(t *testing.T, args ...string) statedCheck {
 // histogram, so the default cv 2) --assume-prompt-cv 0.06 moves the
 // self-check's TTFT ratio with the answer's figures, and its line names
 // the input. Before issue llm-d-incubation/llm-d-scaling-manager#277 the line
-// was the same with and without it.
+// was the same with and without it. The self-check scores the mean
+// (#291): under processor sharing the mean TTFT does not depend on the
+// prompt's spread, and at a cv past whatif.MaxPSPromptCV the larger of
+// processor sharing's and first come's is priced, so the narrower spread
+// never prices it higher; it moves the percentiles.
 func TestSelfCheckReplaysTheStatedPromptCV(t *testing.T) {
 	withSelfCheck(t)
 	plain := selfCheckOf(t, selfCheckQ32...)
@@ -55,7 +59,7 @@ func TestSelfCheckReplaysTheStatedPromptCV(t *testing.T) {
 	require.NotNil(t, cv.TTFT)
 	require.NotNil(t, plain.TTFT.Bias)
 	require.NotNil(t, cv.TTFT.Bias)
-	assert.Less(t, *cv.TTFT.Bias, *plain.TTFT.Bias, "a narrower spread prices a lower TTFT, at the fits as in the answer")
+	assert.LessOrEqual(t, *cv.TTFT.Bias, *plain.TTFT.Bias, "a narrower spread never prices a higher mean TTFT, at the fits as in the answer")
 }
 
 // The self-check replays the recording with the ITL B the answer states: on
