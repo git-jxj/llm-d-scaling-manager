@@ -94,6 +94,10 @@ const (
 // force, and would hold k2 if the chain's figure rose past it.
 const itlBoundNotBinding = domain.DecodePackingNotBinding
 
+// itlBoundNoKV is why a bound that applies held nothing because the replica
+// reported no KV capacity to hold k2 at: inert, not k2-under-bound.
+const itlBoundNoKV = "no-kv-capacity"
+
 // Where the fill the line reaches the target at was held to the ITL band
 // (itlBatchBound.clamp): the line was not fitted past it.
 const (
@@ -319,7 +323,7 @@ func steadyBatchAt(params *capacity.EngineParams, batchCap int64, avgInput, avgO
 // means (DecodePackingBoundInert).
 func DecodePackingInertReasons() []string {
 	return []string{itlBoundNoLine, itlBoundBorrowed, itlBoundOneSided, itlBoundAboveBand, itlBoundDefaultB,
-		itlBoundPerStep, itlBoundUnreach, itlBoundBadBand}
+		itlBoundPerStep, itlBoundUnreach, itlBoundBadBand, itlBoundNoKV}
 }
 
 // noteDecodePacking keeps what a TPOT objective made of each decode

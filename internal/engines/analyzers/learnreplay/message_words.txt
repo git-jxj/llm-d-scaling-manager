@@ -2028,6 +2028,7 @@ no-hit
 no-itl
 no-itl-line
 no-k
+no-kv-capacity
 no-limiter
 no-line
 no-listed-analyzer-sizes-role
@@ -2533,6 +2534,7 @@ replicasByVariant
 replicasImplied
 replicasToMove
 replicaset
+report
 report-only
 reportOnly
 reported

@@ -41,8 +41,8 @@ type decodePackingModel struct {
 
 // decodePackingInert is one variant's inert episode.
 type decodePackingInert struct {
-	// reason is why the bound does not apply (domain.DecodePacking.Reason);
-	// since is when it was first seen with this reason.
+	// reason is why the bound does not apply (domain.DecodePacking.Reason)
+	// on the last cycle; since is when the episode started.
 	reason string
 	since  time.Time
 	// reported is whether the Warning was recorded for this episode.
@@ -75,11 +75,16 @@ func (e *Engine) reportDecodePacking(namespace, modelID string, packing map[stri
 			delete(state.inert, variant)
 			continue
 		}
+		// One episode while the bound stays inert, whatever the reason: a
+		// reason that alternates (borrowed-line, then no-line) must not
+		// restart the hold, nor re-arm the Warning. The message names the
+		// reason in force when it is recorded.
 		ep := state.inert[variant]
-		if ep == nil || ep.reason != p.Reason {
-			ep = &decodePackingInert{reason: p.Reason, since: now}
+		if ep == nil {
+			ep = &decodePackingInert{since: now}
 			state.inert[variant] = ep
 		}
+		ep.reason = p.Reason
 		if ep.reported || now.Sub(ep.since) < decodePackingInertHold {
 			continue
 		}
@@ -99,6 +104,17 @@ func (e *Engine) reportDecodePacking(namespace, modelID string, packing map[stri
 		}
 	}
 	state.published = current
+}
+
+// forgetDecodePacking deletes one model's decode packing series and its
+// inert episodes: the model was not priced this cycle (onNothingObserved).
+func (e *Engine) forgetDecodePacking(namespace, modelID string) {
+	modelKey := utils.GetNamespacedKey(namespace, modelID)
+	if _, ok := e.decodePacking[modelKey]; !ok {
+		return
+	}
+	e.metricsEmitter.DeleteDecodePackingForModel(namespace, modelID)
+	delete(e.decodePacking, modelKey)
 }
 
 // variantNamed is the Variant named name in namespace, or nil.
@@ -135,6 +151,7 @@ func decodePackingInertMessage(reason string) string {
 		"per-step-line":      "its ITL line is per engine step on a speculating engine, not per token",
 		"target-unreachable": "the target is at or under the ITL its line reads at an empty cache, so no number of replicas meets it; raise slo.tpot",
 		"bad-band":           "the ITL band (analyzerTuning.itlBand) is not a range inside (0, 1]",
+		"no-kv-capacity":     "its replicas report no KV cache capacity, so there is no fill to hold k2 at",
 	}[reason]
 	if why == "" {
 		why = "read the k2-itl-bound line at --v=3"

@@ -16,7 +16,7 @@ func TestWarnTPOTPercentile(t *testing.T) {
 			!strings.Contains(got, "slo.tpot is the mean") || !strings.Contains(got, "latency-definitions.md") {
 			t.Errorf("%s: %q", target, got)
 		}
-		if _, pct, _ := strings.Cut(target, "@"); !strings.Contains(got, "the "+pct+" runs above it") {
+		if _, pct, _ := strings.Cut(target, "@"); !strings.Contains(got, "the "+pct+" runs above the mean") {
 			t.Errorf("%s: the percentile is not named: %q", target, got)
 		}
 	}
@@ -30,8 +30,9 @@ func TestWarnTPOTPercentile(t *testing.T) {
 	warnTPOTPercentile(nil, "30ms@p99")
 }
 
-// Each command that takes a TPOT target warns on a percentile one, before it
-// reads its source: the warning does not depend on the answer.
+// slo-to-rate and at-replicas warn on a percentile TPOT target before they
+// read their source: the warning does not depend on the answer. day-plan
+// warns once its source resolves (dayplan.go).
 func TestTPOTPercentileWarnedByEachCommand(t *testing.T) {
 	for _, args := range [][]string{
 		{"slo-to-rate", "--tpot", "30ms@p99", "--recording", "/nonexistent.jsonl.gz", "--model", "m"},

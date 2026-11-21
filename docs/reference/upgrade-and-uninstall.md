@@ -131,7 +131,7 @@ changed, and there is no compatibility path. Reinstall.
 
 ### Upgrading from v0.12.2
 
-Apply the new release the same way as v0.12.2. Nothing to change first.
+[Upgrade](#upgrade) as for any release. Nothing to change first.
 
 #### A TPOT target that bounds nothing is now visible
 
@@ -145,7 +145,8 @@ variant of a model whose policy sets `slo.tpot` and lists `slo`:
 - `llmsm_decode_packing_k2_tokens{k2="unbounded|bounded"}` gives k2 before
   and after the bound;
 - a `DecodePackingBoundInert` Warning event is recorded on the ScaledObject
-  once the target has bounded nothing for 15 minutes.
+  once the target has bounded nothing for 15 minutes, once per episode (and
+  once more after a controller restart, if it is still inert).
 
 Nothing sizes differently. Find the variants a target does not bound:
 
@@ -155,10 +156,10 @@ llmsm_decode_packing_bound{bound="none", reason!="k2-under-bound"}
 
 What each reason means: [the metrics](prometheus.md#llmsm_decode_packing_bound).
 
-### Upgrading from v0.12.1
+### Upgrading from v0.12.1 to v0.12.2
 
-Apply the v0.12.2 release the same way as v0.12.1, then work through each
-part below that applies to you.
+[Upgrade](#upgrade) as for any release, then work through each part below
+that applies to you.
 
 #### Re-apply the alerts
 
@@ -184,12 +185,14 @@ preStop sleep plus the engine's `--shutdown-timeout` plus 15 s. Before, it set
 server:
 
 1. Run `make workload-patch NAMESPACE=<ns>`.
-2. A workload without a preStop hook gets a longer grace period where it
-   needs one. Apply the patch with your next planned rollout: it restarts
-   every replica.
-3. A workload that already has a preStop hook is only reported, never
-   rewritten. Raise its grace period in your chart values to the figure the
-   report gives.
+2. A workload that already has a preStop hook is only reported, never
+   rewritten. That includes every workload an earlier `workload-patch`
+   patched, since that patch added the hook. Raise its
+   `terminationGracePeriodSeconds` by hand, in your chart values, to the
+   figure the report gives.
+3. A workload without a preStop hook gets the longer grace period in the
+   patch file the command writes. Apply it as you applied the first one,
+   with your next planned rollout: it restarts every replica.
 
 What it reads: [Sizing the grace period](workload-preparation.md#sizing-the-grace-period).
 
@@ -214,7 +217,7 @@ To bound it, any of:
    a percentile target cannot be written there
    ([what each component measures](latency-definitions.md)). On v0.12.2 the
    only way to see whether it applied is the `k2-itl-bound` line at
-   `--v=3`; from v0.12.3, `llmsm_decode_packing_bound`.
+   `--v=3`; from the next release, `llmsm_decode_packing_bound`.
 2. **Lower the decode's `--max-num-seqs`.** It caps the batch whatever the
    target.
 3. **Hold replicas** with `minReplicaCount` on the decode ScaledObject.

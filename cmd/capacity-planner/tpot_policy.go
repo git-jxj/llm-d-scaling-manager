@@ -22,6 +22,7 @@ func warnTPOTPercentile(warn io.Writer, target string) {
 	}
 	fmt.Fprintf(warn, "%s: warning: --tpot %s is a percentile. A scaling policy's slo.tpot is the mean of the "+
 		"router's per-request TPOT and takes no percentile, so this target cannot be written into the policy: "+
-		"there, write the mean TPOT this answer reads at the replicas you choose. The controller holds that mean, "+
-		"and the %s runs above it. See docs/reference/latency-definitions.md.\n", progName, target, pct)
+		"there, write the mean TPOT this answer reads at the replicas you choose. The controller bounds decode "+
+		"packing at that target where its ITL line allows (a mean ITL, not this per-request %s), and the %s runs "+
+		"above the mean. See docs/reference/latency-definitions.md.\n", progName, target, pct, pct)
 }

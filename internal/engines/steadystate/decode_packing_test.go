@@ -73,8 +73,9 @@ func TestReportDecodePacking_Series(t *testing.T) {
 
 // The Warning is recorded once a TPOT target has bounded nothing for
 // decodePackingInertHold, once per episode: not again while it stays inert,
-// again after the bound applied in between, and from the start when the
-// reason changes. A bound in force that holds nothing is not inert.
+// whatever the reason, and again after the bound applied in between. A
+// reason that alternates does not restart the hold. A bound in force that
+// holds nothing is not inert.
 func TestReportDecodePacking_InertEvent(t *testing.T) {
 	e, _ := analyzerSeriesEngine(t)
 	rec := record.NewFakeRecorder(20)
@@ -94,11 +95,9 @@ func TestReportDecodePacking_InertEvent(t *testing.T) {
 	assert.Contains(t, ev[0], "minReplicaCount")
 	assert.Empty(t, cycle(2*decodePackingInertHold, packingNoLine), "once per episode")
 
-	// The reason changes: a new episode, its own hold.
+	// The reason changes: the same episode, already reported.
 	assert.Empty(t, cycle(2*decodePackingInertHold+time.Minute, packingBorrowed))
-	ev = cycle(3*decodePackingInertHold+time.Minute, packingBorrowed)
-	require.Len(t, ev, 1)
-	assert.Contains(t, ev[0], "(borrowed-line)")
+	assert.Empty(t, cycle(3*decodePackingInertHold+time.Minute, packingBorrowed), "a new reason is not a new episode")
 
 	// Bound in force, holding nothing: not inert, and it ends the episode.
 	assert.Empty(t, cycle(4*decodePackingInertHold, packingUnder))
@@ -109,6 +108,42 @@ func TestReportDecodePacking_InertEvent(t *testing.T) {
 	// Held by the target: never a Warning.
 	assert.Empty(t, cycle(7*decodePackingInertHold, packingHeld))
 	assert.Empty(t, cycle(9*decodePackingInertHold, packingHeld))
+
+	// A reason that alternates faster than the hold still reports, with the
+	// reason in force then.
+	start := 10 * decodePackingInertHold
+	got := make([]string, 0, 1)
+	for i := range 4 {
+		p := packingNoLine
+		if i%2 == 1 {
+			p = packingBorrowed
+		}
+		got = append(got, cycle(start+time.Duration(i)*decodePackingInertHold/2, p)...)
+	}
+	require.Len(t, got, 1, "alternating reasons are one episode")
+	assert.Contains(t, got[0], "(no-line)")
+}
+
+// A model with nothing observed (parked, or its scrape lost) loses its
+// series, and its inert episode starts again when it returns.
+func TestReportDecodePacking_ParkedModel(t *testing.T) {
+	e, registry := analyzerSeriesEngine(t)
+	rec := record.NewFakeRecorder(20)
+	e.Recorder = rec
+	vars := packingVariants("d1")
+	t0 := time.Unix(1_700_000_000, 0)
+	e.observeNow = func() time.Time { return t0 }
+	e.reportDecodePacking("ns", "m", packingOf(map[string]*domain.DecodePacking{"d1": packingNoLine}), vars, t0)
+	require.NotEmpty(t, seriesLabels(t, registry, constants.LLMSMDecodePackingBound, constants.LabelVariantName))
+	e.onNothingObserved("ns", "m")
+	assert.Empty(t, seriesLabels(t, registry, constants.LLMSMDecodePackingBound, constants.LabelVariantName))
+	assert.Empty(t, seriesLabels(t, registry, constants.LLMSMDecodePackingK2Tokens, constants.LabelVariantName))
+	back := t0.Add(2 * time.Hour)
+	e.reportDecodePacking("ns", "m", packingOf(map[string]*domain.DecodePacking{"d1": packingNoLine}), vars, back)
+	assert.Empty(t, drainEvents(rec), "the park is not an inert bound: the hold starts again")
+	e.reportDecodePacking("ns", "m", packingOf(map[string]*domain.DecodePacking{"d1": packingNoLine}), vars,
+		back.Add(decodePackingInertHold))
+	assert.Len(t, drainEvents(rec), 1)
 }
 
 // Every reason the analyzer can give an inert bound has its own message,

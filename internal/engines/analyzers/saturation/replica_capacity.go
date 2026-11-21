@@ -800,6 +800,10 @@ func (a *SaturationAnalyzer) computeK2(
 		outputDispersion, ranks, kvCeiling, unbounded, k2, held)
 	d := k2Decision{k2: k2, src: src, recordable: recordable, borrowed: borrowed, refused: refused}
 	d.packingBound, d.packingReason, d.packingKnown = decodePackingOf(batchCap.itl, held)
+	if d.packingKnown && !held && batchCap.itl.applies() && kvCeiling <= 0 {
+		// In force, but with no KV read there is nothing to hold k2 at.
+		d.packingReason = itlBoundNoKV
+	}
 	if d.packingKnown {
 		d.unbounded = unbounded
 	}

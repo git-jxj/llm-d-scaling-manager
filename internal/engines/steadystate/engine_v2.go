@@ -675,6 +675,9 @@ func (e *Engine) evictStaleLearnedState(ctx context.Context) {
 func (e *Engine) onNothingObserved(namespace, modelID string) {
 	e.zeroObservedReplicas(namespace, modelID)
 	e.dropServiceRateSeries(namespace, modelID)
+	// Nothing priced, so no k2 bound either; and a park is not an inert
+	// bound, so its episode starts again when the model returns.
+	e.forgetDecodePacking(namespace, modelID)
 	// No ready replica, so no distribution: a parked role must not keep
 	// reporting the imbalance it had.
 	e.forgetLoadBalance(namespace, modelID)
@@ -1471,7 +1474,7 @@ func (e *Engine) collectV2ModelRequest(
 	e.recordAnalyzerMetrics(namespace, modelID, append(slices.Clone(namedResults), composite))
 	if t := e.analyzers.saturationCaps().packing; t != nil {
 		if packing, ok := t.TakeDecodePacking(namespace, modelID); ok {
-			e.reportDecodePacking(namespace, modelID, packing, variants, time.Now())
+			e.reportDecodePacking(namespace, modelID, packing, variants, e.observeClock())
 		}
 	}
 	logAnalyzerResult(ctx, modelID, namespace, composite)

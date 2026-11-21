@@ -1999,13 +1999,17 @@ they are absent. They are deleted with the model. Labels are `namespace` (the
 model's namespace, scraped as `exported_namespace`), `model_name` and
 `variant_name`, plus `controller_instance` when `CONTROLLER_INSTANCE` is set.
 Nothing scales on them: the bound is already in `llmsm_analyzer_target`.
+A model with no replica rows (parked at zero, or its scrape lost) loses them
+until it is priced again. The SLO analyzer's `llmsm_slo_fill` is the same
+target read on its own fit of the line, so the two fills can differ. A
+variant served only by warm-pool bridges reports the bridge's k2.
 
 ### `llmsm_decode_packing_bound`
 - **Type**: Gauge, always 1
 - **Description**: Whether the TPOT target bounded how far the decode variant is packed this cycle, and why.
 - **Labels**:
   - `bound`: `itl` (the target lowered k2) or `none` (it did not)
-  - `reason`: with `itl`, `slo-tpot`. With `none`: `k2-under-bound` (the bound is in force, and the k2 was already under it), or why the bound did not apply: `no-line` (the variant has no ITL line yet), `borrowed-line` (its line is a sibling's), `one-sided-line` (held at a prior), `above-band-line` (fitted above the ITL band), `default-intercept` (its intercept is the 6 ms default, not measured), `per-step-line` (a step-time line on a speculating engine), `target-unreachable` (the target is at or under the line's intercept, so no number of replicas meets it), `bad-band` (the ITL band is not a range inside (0, 1])
+  - `reason`: with `itl`, `slo-tpot`. With `none`: `k2-under-bound` (the bound is in force, and the k2 was already under it), or why the bound did not apply: `no-line` (the variant has no ITL line yet), `borrowed-line` (its line is a sibling's), `one-sided-line` (held at a prior), `above-band-line` (fitted above the ITL band), `default-intercept` (its intercept is the 6 ms default, not measured), `per-step-line` (a step-time line on a speculating engine), `target-unreachable` (the target is at or under the line's intercept, so no number of replicas meets it), `bad-band` (the ITL band is not a range inside (0, 1]), `no-kv-capacity` (the replica reports no KV capacity to hold k2 at)
 - **Use Case**: A decode variant with a TPOT target that is sized as if it had none: every `reason` but `slo-tpot` and `k2-under-bound`. After 15 minutes of it the variant also gets one `DecodePackingBoundInert` Warning event ([Events](monitoring.md#events)).
 - **Example**: decode variants whose TPOT target bounds nothing:
   ```promql
