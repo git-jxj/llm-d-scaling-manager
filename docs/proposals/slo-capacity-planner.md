@@ -664,7 +664,7 @@ are SKIPPED for that refusal, or for no saturated window off a ramp:
 | `ttft-staircase-b-off` | -18.7% | -18.7% | 210 | 23 | **out** |
 | `ttft-staircase-b-on` | -22.1% | -22.1% | 227 | 1 | **out** |
 | `ttft-staircase-c-on` | -21.2% | -21.2% | 227 | 2 | **out** |
-| `ttft-three-pods` | -9.4% | -9.4% | 237 | 44 | in |
+| `ttft-three-pods` | -9.4% | -9.4% | 237 | 40 | in |
 
 **What it says.**
 
@@ -675,7 +675,8 @@ are SKIPPED for that refusal, or for no saturated window off a ramp:
   each is priced at the band's bottom. Unclamped it still reads 32.6% slow. `e1`
   model-02 and `e1-tuned` model-02 are in bound only through
   the clamp: unclamped both read 39.1% fast. Those are lines the planner refuses.
-- **Decode knee:** four figures, all out, from 44.4% to 103.4% high. Two are
+- **Decode knee:** four figures, all out: three high, from 43.0% to 99.1%, and `mu-paths`
+  variant-02 41.5% low. Two are
   synthetic. The other two are `ols-sweep-slo` runs, recorded before `QueueMin`, so
   a "saturated window" is a queue seen at one instant, not a busy minute. Treat the
   knee as not validated: no golden saturates a line the planner answers on, off a

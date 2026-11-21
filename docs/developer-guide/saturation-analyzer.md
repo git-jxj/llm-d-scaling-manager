@@ -205,9 +205,9 @@ The clamp keeps the reading to the hit term:
 - Above the upper bound, with `kv-per-request-above-context` off (a replay, or
   SGLang): the prompt length lags the workload, or a P/D decode has allocated
   KV for requests still pulling it from prefill. The reading moves towards no
-  discount. With the switch on (the default since v0.12.3), those requests are
-  counted in `holdingNotRunning` and the bound is dropped; see the #188
-  paragraph below.
+  discount. With the switch on (the default since v0.12.3), the bound is
+  dropped, and on a P/D decode the requests holding KV without running are
+  counted (`holdingNotRunning`); see the #188 paragraph below.
 
 With no reading, the price stays `ILeff + D x OL/2`, as before. No reading
 means no replica in the band, a missing running-requests or KV series, or
@@ -254,8 +254,8 @@ turn it off) and prices the reading by
 the capacity planner's rule, `shape.PriceResident`: held at the discount from
 below, priced as read above the context, held at the context on SGLang. A
 shape with no hit is read too. `residentKVBound` is then `above-context` for a
-reading over twice the context, and `upper` only for SGLang held at the
-context. The count gate is taken at the reading where it is above the whole
+reading over twice the context, and `upper` for SGLang held at the context
+or where the switch-off price wins (below). The count gate is taken at the reading where it is above the whole
 context (`countGateKV`), and at `KVreq` below it. Few requests sharing a
 prefix read at most the context each, so they stay no reading. A reading above
 the context is KV the engine holds beyond prompt and output; at the discounted
@@ -265,11 +265,13 @@ recording that reads three times the context at a fill of 0.15-0.35. Not every
 reading above the context is KV held beyond prompt and output, so with the
 switch on three more rules apply. On the decode of a P/D model (a decode
 variant beside a prefill one) the tokens are spread over the requests that
-hold KV without running as well (`holdingNotRunning`: `LandedQueueLength`
-where `LandedQueueKnown`, else the waiting queue less the requests waiting
-for capacity where `CapacityQueueKnown`). Those are the requests whose KV
-landed and wait for the next step, and on an older vLLM also those still
-pulling it. A decode pulling 30 prompts beside 4 running would otherwise read
+hold KV without running as well (`holdingNotRunning`: the waiting queue
+less the requests waiting for capacity where `CapacityQueueKnown`, vLLM
+0.20+, and at least `LandedQueueLength` where `LandedQueueKnown`, vLLM
+0.32+). Those are the requests still pulling their KV from prefill and those
+whose KV landed and wait for the next step. Both counts are one-minute peaks
+against an instant KV reading; the `derived-mu` line logs them as
+`residentHolding`. A decode pulling 30 prompts beside 4 running would otherwise read
 8 times the context. An aggregated replica counts its running requests only:
 its deferred requests are not pulled KV. A reading above the context needs
 at least 8 running requests (`minAboveContextSequences`; the held count is a
@@ -277,7 +279,9 @@ one-minute peak and does not count toward it): a few long prompts in a mixed wor
 running count that lags the KV, read several times the context with nothing
 held beyond it. Above 8 the scrape cannot tell a long tail from extra KV, so
 k prompts L times the shape's among n still lift the reading by about
-`k x (L - 1) / n`. And the price is never under the switch-off one:
+`k x (L - 1) / n`.
+
+And the price is never under the switch-off one:
 `withResidentKV` prices the reading both ways (`priceResidentReading`) and
 takes the larger, with the off bound where it wins, so the held requests and
 the guard can keep a reading from going higher but never take it under

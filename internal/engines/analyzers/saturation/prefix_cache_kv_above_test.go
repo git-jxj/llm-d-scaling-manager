@@ -170,13 +170,13 @@ func TestKVAboveContext_RequestsPullingTheirKVHoldIt(t *testing.T) {
 }
 
 // The requests held without running are counted on the decode of a
-// prefill/decode split only, and by the landed series where the replica
-// publishes it. Ten running requests and ten deferred hold 420,000 tokens
-// against a context of 10,500: over the 20 that hold them on a P/D decode,
-// 21,000 a request; over the 10 running on an aggregated replica, whose
-// deferred requests hold no pulled KV, 42,000. A P/D decode whose landed
-// series reads 0 counts none of the ten (the pulling ones are not read):
-// 42,000.
+// prefill/decode split only. Ten running requests and ten deferred hold
+// 420,000 tokens against a context of 10,500: over the 20 that hold them on
+// a P/D decode, 21,000 a request; over the 10 running on an aggregated
+// replica, whose deferred requests hold no pulled KV, 42,000. A landed
+// series of 0 does not drop the ten (the ones still pulling hold their
+// blocks too), and a replica that publishes only the landed series counts
+// those.
 func TestKVAboveContext_HoldersAreCountedOnADisaggregatedDecode(t *testing.T) {
 	rm := noHitRow(1_000_000, 10, 420_000)
 	rm.QueueLength, rm.CapacityQueueLength, rm.CapacityQueueKnown = 10, 0, true
@@ -187,10 +187,12 @@ func TestKVAboveContext_HoldersAreCountedOnADisaggregatedDecode(t *testing.T) {
 
 	rm.LandedQueueLength, rm.LandedQueueKnown = 0, true
 	landed := pdMu(t, rm, aboveOn(t))
-	assert.InDelta(t, 42_000, landed["kvReqPerSeq"], 1e-6, "the landed series is the count where known")
-	rm.LandedQueueLength = 10
+	assert.InDelta(t, 21_000, landed["kvReqPerSeq"], 1e-6, "the pulling requests still count")
+	assert.EqualValues(t, 10, landed["residentHolding"])
+
+	rm.CapacityQueueKnown, rm.LandedQueueLength = false, 10
 	landed = pdMu(t, rm, aboveOn(t))
-	assert.InDelta(t, 21_000, landed["kvReqPerSeq"], 1e-6)
+	assert.InDelta(t, 21_000, landed["kvReqPerSeq"], 1e-6, "the landed series where the queue is not split by reason")
 }
 
 // Three running requests with 40,000-token prompts in a shape whose mean is

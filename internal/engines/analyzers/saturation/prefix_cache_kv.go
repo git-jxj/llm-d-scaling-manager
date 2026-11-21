@@ -125,6 +125,9 @@ const SwitchKVPerRequestHitsResident = "kv-per-request-hits-resident"
 // above the context, except on SGLang, held at the context; a shape with no
 // hit takes a reading too. Off, as SwitchKVPerRequestHitsResident prices it.
 // It needs SwitchKVPerRequestHitsResident on, and moves nothing without it.
+// On never prices under off: withResidentKV takes the larger of the two.
+// The requests holding KV without running count on the decode of a P/D
+// model only.
 //
 // On from the constructor (v0.12.3). A GPU check on a P/D decode with no KV
 // beyond its context asked for decode replicas within one of off at every
@@ -140,8 +143,9 @@ const (
 	// residentBoundLower is a reading below the shape's KVreq, priced at it.
 	residentBoundLower = "lower"
 	// residentBoundUpper is a reading above the shape with no hit, priced at
-	// it: with SwitchKVPerRequestAboveContext off, or on an engine that
-	// over-reads there (residentRule.heldAtContext).
+	// it: with SwitchKVPerRequestAboveContext off, on an engine that
+	// over-reads there (residentRule.heldAtContext), or with it on where the
+	// switch-off price is the larger (withResidentKV).
 	residentBoundUpper = "upper"
 	// residentBoundAboveContext is a reading above shape.AboveContextFactor
 	// times the shape with no hit, priced as read
@@ -166,8 +170,8 @@ const residentSpreadTolerance = 0.05
 // whatever the shape: one request is one age, not a fleet's.
 const minResidentFloor = 2
 
-// minAboveContextSequences is the fewest requests a reading above the whole
-// context is taken from (SwitchKVPerRequestAboveContext). The shape is the
+// minAboveContextSequences is the fewest running requests a reading above
+// the whole context is taken from (SwitchKVPerRequestAboveContext). The shape is the
 // mean of the requests that completed, not of the ones running now, and a
 // few running requests can be the long tail of a mixed workload: three
 // 40,000-token prompts in a shape of 10,000 read 40,500 a request, four
@@ -179,8 +183,10 @@ const minResidentFloor = 2
 // the scrape) is caught the same way only when it is small. The count is of
 // the requests running, not of all that hold KV (residentReading.holders):
 // the requests held without running are one-minute peaks, not the scrape's
-// instant, and must not carry a running count under it past the gate. On a
-// day-long P/D recording every reading came from 12 or more requests.
+// instant, and must not carry a running count under it past the gate. Below
+// the count the switch-off price stands (withResidentKV): on a shape with a
+// hit, the context. On a day-long P/D recording every reading came from 12 or
+// more requests.
 const minAboveContextSequences = 8
 
 // residentReading is the KV the fleet's running requests hold, summed, how
@@ -222,21 +228,26 @@ func (r residentReading) perHolder(rule residentRule) float64 {
 // for the next step. vLLM allocates their blocks before the pull, and counts
 // them in num_requests_waiting, not running (the file comment).
 //
-// Where the replica counts the landed ones (LandedQueueKnown, vLLM 0.32+),
-// they are the count: the requests still pulling are left out, which reads
-// a request higher, not lower. Otherwise they are the waiting queue less the
-// requests waiting for capacity, which hold none; 0 where the replica does
-// not split its queue by reason. Only a decode of a prefill/decode split
-// counts them (fleetResidentKVPerRequest): on an aggregated replica the
-// deferred part of the queue is not requests holding pulled KV.
+// They are the waiting queue less the requests waiting for capacity, which
+// hold none (CapacityQueueKnown, vLLM 0.20+): the pulling and the landed
+// ones. Where the replica also counts the landed ones (LandedQueueKnown,
+// vLLM 0.32+), at least those: the landed series alone leaves out the
+// requests still pulling, which hold their blocks too. 0 where the replica
+// says neither. Both are one-minute peaks against an instant reading of the
+// KV, so they can count a request admitted since; withResidentKV's floor at
+// the switch-off price bounds what that costs. Only a decode of a
+// prefill/decode split counts them (fleetResidentKVPerRequest): on an
+// aggregated replica the deferred part of the queue is not requests holding
+// pulled KV.
 func holdingNotRunning(rm domain.ReplicaMetrics) int {
+	n := 0
+	if rm.CapacityQueueKnown {
+		n = rm.QueueLength - rm.CapacityQueueLength
+	}
 	if rm.LandedQueueKnown {
-		return max(0, rm.LandedQueueLength)
+		n = max(n, rm.LandedQueueLength)
 	}
-	if !rm.CapacityQueueKnown {
-		return 0
-	}
-	return max(0, rm.QueueLength-rm.CapacityQueueLength)
+	return max(0, n)
 }
 
 // perSeq is the KV a running request holds, or 0 with none running.
@@ -404,7 +415,7 @@ func countGateKV(s shape.Shape, r residentReading, rule residentRule) float64 {
 //
 // On, the price is never under the one the switch off gives (v0.12.2's):
 // withResidentKV takes the larger of the two, and the off bound where it is
-// the larger. The requests held without running only spread a reading over
+// the larger (residentBoundUpper or residentBoundNone). The requests held without running only spread a reading over
 // more requests, and the guard only drops one; neither may take a price
 // below what was read with them left out.
 func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.Shape, string) {
@@ -412,7 +423,7 @@ func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.
 	if !rule.aboveContext {
 		return on, bound
 	}
-	if off, offBound := priceResidentReading(s, r, residentRule{}); off.KVreq > on.KVreq {
+	if off, offBound := priceResidentReading(s, r, residentRule{heldAtContext: rule.heldAtContext}); off.KVreq > on.KVreq {
 		return off, offBound
 	}
 	return on, bound
