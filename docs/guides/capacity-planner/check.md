@@ -73,6 +73,17 @@ How to read it:
   figure at that mean is comparable. Neither TTFT nor TPOT is scored there.
   A load past the knee shorter than the measurement window is therefore
   never scored; the summary counts such steps.
+- **TTFT not settled**: a step so near the prefill knee that the prefill
+  queue does not settle inside its measurement window. Its relaxation time,
+  2 rho S (1 + cv^2) / (1 - rho)^2 for a pod's service time S, the share
+  of the knee rho and the prompt spread cv priced, is over a fifth of the
+  window: the window's TTFT is still on its way to the steady state the
+  planner prices. Its TTFT is not scored ("unsettled"); its TPOT is.
+- **A backlog carried over**: where a step ran past the prefill knee, what
+  it could not serve is still queued at the next step (a fluid queue: it
+  grows by the rate less the knee over the step, and drains at the knee
+  less the rate). The next steps' TTFT predictions add the mean wait of that
+  backlog; each such step shows it (`backlog`, `backlogWait`).
 
 Below that are each step and then the scores: the mean, p50, p90 and p95 of
 TTFT and TPOT, then the same split by load. The page draws the same steps over

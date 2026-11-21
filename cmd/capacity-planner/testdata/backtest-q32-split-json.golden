@@ -286,7 +286,8 @@
           "ratio": 1.019178534909875,
           "inRegion": false
         }
-      ]
+      ],
+      "relaxationSeconds": 0.027157786550758182
     },
     {
       "start": "2026-11-14T08:25:00Z",
@@ -531,7 +532,8 @@
           "ratio": 1.0191785349098752,
           "inRegion": false
         }
-      ]
+      ],
+      "relaxationSeconds": 0.029488705941989452
     },
     {
       "start": "2026-11-14T08:30:00Z",
@@ -774,7 +776,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.021237956589287926
     },
     {
       "start": "2026-11-14T08:35:00Z",
@@ -1017,7 +1020,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.04625538570753724
     },
     {
       "start": "2026-11-14T08:40:00Z",
@@ -1260,7 +1264,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.04108326541539099
     },
     {
       "start": "2026-11-14T08:45:00Z",
@@ -1503,7 +1508,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.05288634305181787
     },
     {
       "start": "2026-11-14T08:50:00Z",
@@ -1746,7 +1752,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.0745210259827324
     },
     {
       "start": "2026-11-14T08:55:00Z",
@@ -1989,7 +1996,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.05913798862855547
     },
     {
       "start": "2026-11-14T09:00:00Z",
@@ -2226,7 +2234,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.06651159258518567
     },
     {
       "start": "2026-11-14T09:05:00Z",
@@ -2463,7 +2472,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.08825929455010309
     },
     {
       "start": "2026-11-14T09:10:00Z",
@@ -2700,7 +2710,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.0806481378757949
     },
     {
       "start": "2026-11-14T09:15:00Z",
@@ -2939,7 +2950,8 @@
           "ratio": 1.0210852258684513,
           "inRegion": false
         }
-      ]
+      ],
+      "relaxationSeconds": 13.550008822107865
     },
     {
       "start": "2026-11-14T09:20:00Z",
@@ -3117,7 +3129,7 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 1.084138194982387,
+            "value": 1.1244333331590628,
             "unit": "s",
             "sensitivity": {
               "lo": 0.8897918570332576,
@@ -3142,15 +3154,15 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.6967273281552127,
+          "bound": 1.7370224663318885,
           "measured": 10.679724569931018,
-          "ratio": 0.10151368491606985,
+          "ratio": 0.10528673523331564,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.8797942094319352,
+            "value": 0.920089347608611,
             "unit": "s",
             "sensitivity": {
               "lo": 0.7457727696693102,
@@ -3176,15 +3188,15 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 1.330649705329828,
+          "bound": 1.370944843506504,
           "measured": 11.086387434554974,
-          "ratio": 0.0793580609216055,
+          "ratio": 0.08299271092951345,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 1.9974818421614273,
+            "value": 2.037776980338103,
             "unit": "s",
             "sensitivity": {
               "lo": 1.5712675191962289,
@@ -3209,15 +3221,15 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 3.4290573465456693,
+          "bound": 3.469352484722345,
           "measured": 17.5625,
-          "ratio": 0.11373562090598874,
+          "ratio": 0.11603000599789912,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.393768873979713,
+            "value": 2.434064012156389,
             "unit": "s",
             "sensitivity": {
               "lo": 1.867224804086991,
@@ -3242,9 +3254,9 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 4.316657117124819,
+          "bound": 4.356952255301495,
           "measured": 18.781249999999996,
-          "ratio": 0.1274552478658084,
+          "ratio": 0.12960074607155483,
           "inRegion": false
         }
       ],
@@ -3338,7 +3350,10 @@
           "ratio": 1.0224337677824553,
           "inRegion": false
         }
-      ]
+      ],
+      "relaxationSeconds": 2.082576454480065,
+      "backlog": 14.254052007068907,
+      "backlogWait": 0.040295138176675856
     },
     {
       "start": "2026-11-14T09:30:00Z",
@@ -3575,7 +3590,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.07690594840420503
     },
     {
       "start": "2026-11-14T09:35:00Z",
@@ -3812,7 +3828,8 @@
           "inRegion": false,
           "unscored": "fewRequests"
         }
-      ]
+      ],
+      "relaxationSeconds": 0.07186980633268855
     }
   ],
   "summary": {

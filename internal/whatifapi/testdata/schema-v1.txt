@@ -89,6 +89,8 @@ backtest.split string
 backtest.step number
 backtest.steps array
 backtest.steps[] object
+backtest.steps[].backlog number
+backtest.steps[].backlogWait number
 backtest.steps[].cycles number
 backtest.steps[].decode number
 backtest.steps[].decodeKneeShare number
@@ -102,6 +104,7 @@ backtest.steps[].prefill number
 backtest.steps[].promptCV number
 backtest.steps[].promptTokens number
 backtest.steps[].rate number
+backtest.steps[].relaxationSeconds number
 backtest.steps[].requests number
 backtest.steps[].start string
 backtest.steps[].target object
@@ -127,6 +130,7 @@ backtest.steps[].ttft[].predicted Figure
 backtest.steps[].ttft[].ratio number
 backtest.steps[].ttft[].statistic string
 backtest.steps[].ttft[].unscored string
+backtest.steps[].unsettled boolean
 backtest.summary object
 backtest.summary.byLoad array
 backtest.summary.byLoad[] object
@@ -648,6 +652,8 @@ prediction.settle number
 prediction.step number
 prediction.steps array
 prediction.steps[] object
+prediction.steps[].backlog number
+prediction.steps[].backlogWait number
 prediction.steps[].cycles number
 prediction.steps[].decode number
 prediction.steps[].decodeKneeShare number
@@ -661,6 +667,7 @@ prediction.steps[].prefill number
 prediction.steps[].promptCV number
 prediction.steps[].promptTokens number
 prediction.steps[].rate number
+prediction.steps[].relaxationSeconds number
 prediction.steps[].requests number
 prediction.steps[].start string
 prediction.steps[].target object
@@ -686,6 +693,7 @@ prediction.steps[].ttft[].predicted Figure
 prediction.steps[].ttft[].ratio number
 prediction.steps[].ttft[].statistic string
 prediction.steps[].ttft[].unscored string
+prediction.steps[].unsettled boolean
 prediction.whatifSchema string
 prediction.window object
 prediction.window.cycles number
