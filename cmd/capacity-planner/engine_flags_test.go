@@ -88,8 +88,18 @@ func TestEngineNotes_EachUnmodeledConfiguration(t *testing.T) {
 		{"SGLang aggregated without mixed chunk", func(pv *pricedVariant) {
 			pv.state.Params.Engine, pv.state.Role = inferenceengine.EngineSGLang, domain.RoleBoth
 		}, sglangNoMixedChunk, "prefill steps stall the decode batch"},
-		{"extensible KV cache", func(pv *pricedVariant) { pv.state.Params.VLLMVersion = capacity.VLLMVersion{Minor: 34} },
+		// Every dense v0.34 engine that keeps the default is flagged, on
+		// purpose: the capacity a recording read at start-up may not be what
+		// the engine holds later.
+		{"extensible KV cache, a dense v0.34 default", func(pv *pricedVariant) { pv.state.Params.VLLMVersion = capacity.VLLMVersion{Minor: 34} },
 			extensibleKVCache, "vLLM 0.34: KV capacity can grow past what start-up read"},
+		{"a budget under the batch without speculation", func(pv *pricedVariant) {
+			pv.state.Params.EffectiveMaxBatchedTokens = 128
+		}, stepBudgetBindsBatch, "200 sequences a rank past a step budget of 128 tokens"},
+		{"MLA, the band unknown", func(pv *pricedVariant) {
+			pv.state.Params.ModelPath = "deepseek-ai/DeepSeek-V3"
+			pv.decode.Band.Hi, pv.perRank, pv.state.Params.EffectiveMaxBatchedTokens = 0, 0, 0
+		}, mlaAttention, "deepseek-v3: nothing known binds"},
 		{"the parser's default cap on an H200", func(pv *pricedVariant) {
 			pv.state.Params.MaxNumSeqsSet, pv.state.BatchCapSource = false, batchCapSourceDefault
 		}, defaultBatchCapBelowRelease, "priced at 256 a rank; vLLM on H200 defaults to 1024: state --max-num-seqs or --batch-cap"},
@@ -138,6 +148,7 @@ func TestEngineNotes_TheEdgesAreNotFlagged(t *testing.T) {
 			pv.state.LineRows = []whatif.LineRow{{K: 0.5, KVPerRequest: 1000}}
 		}},
 		{"a distilled R1 is dense", func(pv *pricedVariant) { pv.state.Params.ModelPath = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B" }},
+		{"R1-0528-Qwen3 is dense", func(pv *pricedVariant) { pv.state.Params.ModelPath = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B" }},
 		{"Gemma 1 2B is full attention", func(pv *pricedVariant) { pv.state.Params.ModelPath = "google/gemma-2b-it" }},
 		{"a dense Granite 4", func(pv *pricedVariant) { pv.state.Params.ModelPath = "ibm-granite/granite-4.0-micro" }},
 		{"another shape inside the rows' batch", func(pv *pricedVariant) {

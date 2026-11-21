@@ -94,8 +94,9 @@ var (
 	mlaModels = []string{"deepseek-v2", "deepseek-v3", "deepseek-r1", "deepseek-coder-v2", "kimi-k2", "moonlight",
 		"mistral-large-3", "longcat"}
 	// notMLA are fragments that name a dense model inside an MLA family's
-	// name: DeepSeek-R1-Distill-Qwen and -Llama are dense.
-	notMLA = []string{"distill"}
+	// name: DeepSeek-R1-Distill-Qwen and -Llama, and DeepSeek-R1-0528-Qwen3,
+	// are dense.
+	notMLA = []string{"distill", "qwen", "llama"}
 )
 
 // engineNote is one engine flag and what it rests on.
@@ -127,8 +128,12 @@ func (pv pricedVariant) engineNotes() []engineNote {
 	}
 	k := p.SpeculativeTokens()
 	if budget := p.StepBudget(); budget > 0 && batch > 0 && batch*int64(1+k) > budget {
-		add(stepBudgetBindsBatch, "%d sequences a rank x %d tokens a step past a step budget of %d; full drafts for at most %d",
-			batch, 1+k, budget, (budget+int64(k))/int64(1+k))
+		if k > 0 {
+			add(stepBudgetBindsBatch, "%d sequences a rank x %d tokens a step past a step budget of %d; full drafts for at most %d",
+				batch, 1+k, budget, budget/int64(1+k))
+		} else {
+			add(stepBudgetBindsBatch, "%d sequences a rank past a step budget of %d tokens", batch, budget)
+		}
 	}
 	if ceiling, ok := p.GraphCeiling(pv.state.BatchCap); ok && batch > ceiling {
 		if ceiling == 0 {
@@ -221,11 +226,11 @@ func (pv pricedVariant) pricedBatchPerRank() int64 {
 func (pv pricedVariant) mlaBinds() string {
 	d := pv.decode
 	ranks := float64(max(pv.state.Ranks, 1))
-	kv := math.Inf(1)
-	if d.CapacityTokens > 0 && d.KVPerRequest > 0 {
-		kv = d.Band.Hi * d.CapacityTokens / d.KVPerRequest / ranks
+	kv, by := math.Inf(1), "nothing known binds"
+	if d.CapacityTokens > 0 && d.KVPerRequest > 0 && d.Band.Hi > 0 {
+		kv, by = d.Band.Hi*d.CapacityTokens/d.KVPerRequest/ranks, "the KV binds"
 	}
-	bound, by := kv, "the KV binds"
+	bound := kv
 	if pv.perRank > 0 && float64(pv.perRank) < bound {
 		bound, by = float64(pv.perRank), "the batch cap binds"
 	}
