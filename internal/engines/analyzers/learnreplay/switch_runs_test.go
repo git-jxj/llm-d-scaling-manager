@@ -1100,6 +1100,7 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillFBusyMinutes:    nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	saturation.SwitchITLHoldSteadySlope:     nil,
+	saturation.SwitchITLLineAtFloor:         nil,
 	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
 	// where the variant's ITL line reaches the policy's TPOT objective. On
 	// from the constructor; no committed golden has a decode line it trusts
@@ -1458,6 +1459,14 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/itl", "TestTracker_AnUnsteadySlopeIsNotHeld"},
 		{"../../../signals/itl", "TestTracker_ASteadySlopeHoldEnds"},
 		{"../saturation", "TestITLHoldSteadySlope_ARampDownThroughAnalyze"},
+	},
+	saturation.SwitchITLLineAtFloor: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/whatif", "TestLiftToFloor_ALineUnderItsFloorIsRaised"},
+		{"../../../signals/whatif", "TestLiftToFloor_ALineAtOrOverItsFloorIsKept"},
+		{"../../../signals/whatif", "TestBootstrapLines_ResamplesAreLiftedAsTheLineIs"},
+		{".", "TestITLLineAtFloor_TheStaircaseLineThroughItsFloor"},
+		{".", "TestITLLineAtFloor_OnlyAPDDecodeRole"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},
