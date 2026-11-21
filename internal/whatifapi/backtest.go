@@ -163,6 +163,10 @@ func relaxationSeconds(rate, prefillKnee float64, pods int, cv float64) float64 
 	return 2 * rho * es * (1 + cv*cv) / ((1 - rho) * (1 - rho))
 }
 
+// settles says a queue of relaxation time tr settles inside a measurement
+// window of window seconds: tr is at most SettleShare of it.
+func settles(tr, window float64) bool { return tr <= SettleShare*window }
+
 // backlogWait is the mean extra wait over a step of dt seconds of a fluid
 // backlog of q requests carried into it, served at mu while requests arrive
 // at lambda: the backlog drains at mu - lambda, or grows past the knee, and
@@ -1191,7 +1195,7 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 	if pred.prefillKnee != nil {
 		if tr := relaxationSeconds(in.rate, *pred.prefillKnee, in.prefill, pred.promptCV); tr > 0 && !math.IsInf(tr, 1) {
 			out.RelaxationSeconds = ptr(tr)
-			out.Unsettled = tr > SettleShare*st.windowSeconds
+			out.Unsettled = !settles(tr, st.windowSeconds)
 		}
 		if w := fl.step(in.rate, *pred.prefillKnee, q.step.Seconds()); w > 0 {
 			out.Backlog, out.BacklogWait = ptr(fl.carried), ptr(w)

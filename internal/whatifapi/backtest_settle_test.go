@@ -26,6 +26,11 @@ func TestRelaxationSeconds(t *testing.T) {
 	assert.True(t, math.IsInf(relaxationSeconds(knee, knee, 2, 0.06), 1), "at the knee it never settles")
 	assert.Zero(t, relaxationSeconds(1, 0, 2, 0.06), "no knee priced")
 	assert.Zero(t, relaxationSeconds(0, knee, 2, 0.06), "no traffic")
+	// A five-minute window takes a relaxation time of up to 60 s: rho 0.85
+	// with the measured spread settles, rho 0.9 and the assumed spread do not.
+	assert.True(t, settles(relaxationSeconds(0.85*knee, knee, 2, 0.06), 300))
+	assert.False(t, settles(relaxationSeconds(0.9*knee, knee, 2, 0.06), 300))
+	assert.False(t, settles(relaxationSeconds(0.85*knee, knee, 2, 2), 300))
 }
 
 // A fluid backlog: what runs past the knee in one step is queued at the
