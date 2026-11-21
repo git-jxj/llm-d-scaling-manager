@@ -163,6 +163,7 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		// (ttft.go).
 		SwitchTTFTPrice:            &a.ttftPrice,
 		SwitchTTFTMeasuredSpread:   &a.ttftMeasuredSpread,
+		SwitchTTFTPromptSupport:    &a.ttftPromptSupport,
 		SwitchTTFTMeasuredTransfer: &a.ttftMeasuredTransfer,
 		SwitchTTFTQuietTransfer:    &a.ttftQuietTransfer,
 		// The decode term of a TTFT on a decode line (ttft.go).

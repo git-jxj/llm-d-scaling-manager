@@ -30,8 +30,17 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   the KV pull are processor-sharing stages (`prefillPlan.psStages`), and
   `D`'s per-token part is net of the pull (`netOfPull`). Past a prompt cv of
   `MaxPSPromptCV` (0.25) a price is the larger of that and first come
-  (`ttftPlan.price`, flagged `SpreadBeyondProcessorSharing`). Off, a
-  first-come wait on the busiest pod (`prefillPlan.engineWait`).
+  (`ttftPlan.price`, flagged `SpreadBeyondProcessorSharing`), unless the
+  longest prompt is at most `MaxPSPromptSupport` (1.6) times the mean
+  (`Prefill.BeyondProcessorSharing`). Off, a first-come wait on the busiest
+  pod (`prefillPlan.engineWait`).
+- `PromptSupport` (`slo-ttft-prompt-support`, planner-only, off from the
+  constructor): the spread carries the longest prompt its histogram allows
+  over the mean (`PromptSpread.MaxRatio`, the highest bucket bound holding
+  requests), priced as `Prefill.PromptMaxRatio`: the prompt's gamma is
+  censored there (`ownTime.capped` on first come, `ePoly.expect`'s hold on
+  processor sharing), and the bound, not the cv, decides processor sharing.
+  Off, `MaxRatio` is zeroed in `promptSpread` and the gamma runs on.
 - `PriceRouterWait` (`slo-ttft-router-wait`, opt-in, off, the CLI's
   `--price-router-wait` default): above the prefill onset, up to
   `MaxRouterWaitKneeShare` of the knee, prices the flow-control gate as a

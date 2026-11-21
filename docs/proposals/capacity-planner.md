@@ -182,8 +182,9 @@ The rule: **no number on screen without what it rests on.**
     decode gate's charge (`--charge-decode-gate`): both are unvalidated and
     off by default, and the API answers at the shared defaults so that a
     page it draws is the controller's.
-  - `SpreadBeyondProcessorSharing`: the prompt cv is above 0.25, so the TTFT
-    is the larger of the processor-sharing and first-come prices.
+  - `SpreadBeyondProcessorSharing`: the prompt cv is above 0.25 and the
+    histogram does not hold every prompt within 1.6 times the mean, so the
+    TTFT is the larger of the processor-sharing and first-come prices.
 - **Refusals are gaps, never zeros.** A curve point the engine refuses is
   absent, with the reason on hover (`Saturated`, `AboveDecodeOnset`,
   `TargetBelowFloor`). A refused limit prints the reason in place of a number.

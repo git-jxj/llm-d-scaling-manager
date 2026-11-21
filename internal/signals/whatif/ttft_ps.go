@@ -69,7 +69,8 @@ import (
 //
 // Past a prompt cv of MaxPSPromptCV the price is the larger of this and the
 // first-come queue's (ttftPlan.price): no run has validated processor
-// sharing at a wide spread.
+// sharing at a wide spread. A bound on the longest prompt at
+// MaxPSPromptSupport or under clears it (Prefill.BeyondProcessorSharing).
 
 // psStage is one processor-sharing stage on one pod: mean work es, in
 // seconds, at arrival rate lam, as functions of the prompt's relative size u.
@@ -167,7 +168,12 @@ func (p ePoly) times(q ePoly) ePoly {
 // expect is E[p(u)] for u a gamma of mean 1 and coefficient of variation cv
 // (1 at cv 0): E[u^n exp(-a u)] = prod_{j<n} (k + j)/k * (1 + a/k)^-(k + n),
 // k = 1/cv^2, and u^n exp(-a) at cv 0.
-func (p ePoly) expect(cv float64) float64 {
+//
+// With hold above 1 (Prefill.PromptMaxRatio) u is that gamma censored at
+// hold, min(u, hold), the prompt no longer than its bound:
+// E[u^n exp(-a u); u <= hold] is the term above times P(k + n, (k + a) hold),
+// and the mass past hold adds hold^n exp(-a hold) Q(k, k hold). 0 is none.
+func (p ePoly) expect(cv, hold float64) float64 {
 	var sum float64
 	for _, t := range p {
 		if t.c == 0 {
@@ -181,6 +187,11 @@ func (p ePoly) expect(cv float64) float64 {
 		m := math.Exp(-(k + float64(t.n)) * math.Log1p(t.a/k))
 		for j := range t.n {
 			m *= (k + float64(j)) / k
+		}
+		if hold > 1 && Finite(hold) {
+			below, _ := gammaPQ(k+float64(t.n), (k+t.a)*hold)
+			_, past := gammaPQ(k, k*hold)
+			m = m*below + math.Pow(hold, float64(t.n))*math.Exp(-t.a*hold)*past
 		}
 		sum += t.c * m
 	}
@@ -277,6 +288,8 @@ func (pl prefillPlan) psStages(rate float64, decodePods int, pooled bool) (stage
 	var parts psParts
 	parts.pull = pull.g * pull.es
 	u := ePoly{{c: base, n: 1}}
+	// The prompt held at its bound (Prefill.PromptMaxRatio), 0 with none.
+	hold := pl.p.PromptMaxRatio
 	for _, c := range classes {
 		if !(c.share > 0) {
 			continue
@@ -298,12 +311,12 @@ func (pl prefillPlan) psStages(rate float64, decodePods int, pooled bool) (stage
 					plus(pre.extra().times(pull.extra()).scale(2)),
 			},
 		} {
-			w := part.w.expect(pl.cv)
+			w := part.w.expect(pl.cv, hold)
 			if !(w > 1e-12) {
 				continue
 			}
-			m1 := u.times(part.w).plus(part.e1).expect(pl.cv) / w
-			m2 := u.times(u).times(part.w).plus(u.times(part.e1).scale(2)).plus(part.e2).expect(pl.cv) / w
+			m1 := u.times(part.w).plus(part.e1).expect(pl.cv, hold) / w
+			m2 := u.times(u).times(part.w).plus(u.times(part.e1).scale(2)).plus(part.e2).expect(pl.cv, hold) / w
 			mix.w = append(mix.w, c.share*w)
 			mix.b = append(mix.b, block{own: gammaPart(m1, m2-m1*m1)})
 		}

@@ -1719,6 +1719,29 @@ sharing's and the first-come queue's, flagged `SpreadBeyondProcessorSharing`,
 until a run at a wide spread validates processor sharing there. S1's assumed
 cv 2 is always past it.
 
+**The prompt's support.** The cv a histogram reads is the widest its buckets
+allow: 8000-token prompts in a (5000, 10000] bucket read cv 0.31 against a
+true 0.06, so every 8k answer was flagged although processor sharing held on
+those steps, and the gamma of cv 0.31 put 19.8% of the prompts above 10000
+tokens, where the bucket proves there are none (p90 own time about 11% high
+on Qwen3-32B 8k). The planner (switch `slo-ttft-prompt-support`, planner-only)
+reads the longest prompt the histogram allows, the highest bucket bound that
+holds requests, over the mean (`whatif.PromptSpread.MaxRatio`), and prices it
+(`Prefill.PromptMaxRatio`):
+
+- the prompt is its gamma censored at that bound: the mass past it sits on it,
+  so no own time is longer than a prompt the histogram proves exists. The
+  mean of the own time reads under the unheld one by the mass moved, a few
+  percent at the 8k bucket;
+- processor sharing is priced alone, whatever the cv, while the bound is at
+  most 1.6 times the mean (`whatif.MaxPSPromptSupport`, under the 1.67 at
+  which the gamma at cv 0.25 has its 99th percentile): no prompt is long
+  enough for chunked prefill to serve it first come. The 8k steps sit at 1.25.
+
+With no bound (mass past the last bucket, or no histogram) the gamma runs on
+and the cv decides, as before. The queue's `Cs²` stays the cv read, the
+widest the buckets allow.
+
 **Checked against a simulation** of the same tandem stages
 (`TestPS_AgainstATandemSimulation`, 180,000 requests a point, `V_P` unmargined):
 

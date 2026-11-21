@@ -13,6 +13,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
@@ -240,6 +241,10 @@ type shapeSample struct {
 //     median of the busiest minutes, not of every minute.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
+//   - slo.SwitchTTFTPromptSupport: the prompt held at the longest the
+//     computed-token histogram allows, which also decides processor sharing.
+//     The planner reads its own prompt windows (state_ttft.go), so it reads
+//     the switch from here even where the recording has no slo analyzer.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
@@ -252,6 +257,8 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
+	}, PackageSLO: {
+		slo.SwitchTTFTPromptSupport: true,
 	}}
 }
 
@@ -336,6 +343,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	opts.Mode = Normal
 	opts.Switches = withPlannerSwitches(opts.Switches)
 	opts.discardRecording = true
+	opts.sloOptional = true
 	var (
 		st       *State
 		stateErr error
@@ -351,6 +359,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		arrivals []float64
 		ranges   = map[string]ShapeRange{}
 	)
+	ttft.promptSupport = opts.Switches[PackageSLO][slo.SwitchTTFTPromptSupport]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false

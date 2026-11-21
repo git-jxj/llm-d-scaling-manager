@@ -19,11 +19,14 @@ import "math"
 // variation (an exponential at cv 1, the page's assumed spread), and
 // deterministic at cv 0. c is seconds per prompt token.
 type ownTime struct {
-	// mean is E[I]*c, in seconds.
+	// mean is E[I]*c, in seconds: the held gamma's mean with a hold.
 	mean float64
-	// k and b are the gamma's shape, 1/cv^2, and rate, 1/(mean*cv^2); both 0
-	// when det.
+	// k and b are the gamma's shape, 1/cv^2, and rate, 1/(mean*cv^2), at the
+	// unheld mean; both 0 when det.
 	k, b float64
+	// hold is the longest own time, where the gamma is censored (capped):
+	// the mass the gamma puts past it sits on it. 0 is none.
+	hold float64
 	// det is a constant own time (cv 0).
 	det bool
 }
@@ -36,12 +39,34 @@ func newOwnTime(mean, cv float64) ownTime {
 	return ownTime{mean: mean, k: 1 / cv2, b: 1 / (mean * cv2)}
 }
 
+// capped is the own time held at hold, the longest the prompt's bound
+// allows (Prefill.PromptMaxRatio): the gamma censored there, its mass past
+// hold set on hold, so no own time is longer than a prompt the histogram
+// proves there is. Its mean, E[min(X, hold)] = E[X] P(k+1, b hold) +
+// hold Q(k, b hold), reads under the unheld mean by the mass the gamma put
+// past the bound. A hold of 0 (no bound), or at or under the mean, leaves
+// it, as does a constant own time.
+func (o ownTime) capped(hold float64) ownTime {
+	if o.det || !(hold > o.mean) || !Finite(hold) {
+		return o
+	}
+	p1, _ := gammaPQ(o.k+1, o.b*hold)
+	_, q := gammaPQ(o.k, o.b*hold)
+	o.mean = o.mean*p1 + hold*q
+	o.hold = hold
+	return o
+}
+
 // quantile is the own time's q-th percentile, q in (0, 1).
 func (o ownTime) quantile(q float64) float64 {
 	if o.det {
 		return o.mean
 	}
-	return gammaQuantile(o.k, q) / o.b
+	x := gammaQuantile(o.k, q) / o.b
+	if o.hold > 0 {
+		x = min(x, o.hold)
+	}
+	return x
 }
 
 // sf is P(own > t).
@@ -53,6 +78,9 @@ func (o ownTime) sf(t float64) float64 {
 		if t < o.mean {
 			return 1
 		}
+		return 0
+	}
+	if o.hold > 0 && t >= o.hold {
 		return 0
 	}
 	_, q := gammaPQ(o.k, o.b*t)
@@ -79,6 +107,13 @@ func (o ownTime) conv(r, t float64) float64 {
 			return 0
 		}
 		return math.Exp(-r * (t - o.mean))
+	}
+	if o.hold > 0 && t > o.hold {
+		// The density's part up to hold, run on to t, and the mass on hold.
+		_, q := gammaPQ(o.k, o.b*o.hold)
+		unheld := o
+		unheld.hold = 0
+		return math.Exp(-r*(t-o.hold)) * (unheld.conv(r, o.hold) + q)
 	}
 	k, b := o.k, o.b
 	if z := b - r; z > 0 {
