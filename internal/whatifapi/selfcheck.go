@@ -495,7 +495,7 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 		ttft bool
 	}{{sc.TTFT, true}, {sc.TPOT, false}} {
 		if x.f != nil {
-			pts, overloaded := selfCheckPoints(steps, x.ttft)
+			pts, overloaded := selfCheckPoints(steps, x.ttft, x.f.Statistic)
 			x.f.scoreSteps(pts, overloaded, x.ttft)
 		}
 	}

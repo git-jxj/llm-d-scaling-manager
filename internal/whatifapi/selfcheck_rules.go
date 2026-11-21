@@ -62,10 +62,12 @@ type scPoint struct {
 	measured float64
 }
 
-// selfCheckPoints is the p90 figure's scored steps among steps (TTFT, or
-// TPOT with decode false), oldest first, and the measured figure of each
-// judged step the planner called overloaded.
-func selfCheckPoints(steps []BacktestStep, ttft bool) (pts []scPoint, overloaded []float64) {
+// selfCheckPoints is the figure's scored steps at statistic among steps
+// (TTFT, or TPOT with ttft false), oldest first, and the measured figure of
+// each judged step the planner called overloaded. statistic is the one the
+// figure is judged at (SelfCheckFigure.Statistic), so that the step-level
+// rules read the steps its score was drawn from.
+func selfCheckPoints(steps []BacktestStep, ttft bool, statistic string) (pts []scPoint, overloaded []float64) {
 	for _, st := range steps {
 		if st.Excluded != "" {
 			continue
@@ -74,7 +76,7 @@ func selfCheckPoints(steps []BacktestStep, ttft bool) (pts []scPoint, overloaded
 		if ttft {
 			ps, band = st.TTFT, st.Load
 		}
-		i := slices.IndexFunc(ps, func(p BacktestPoint) bool { return p.Statistic == statP90 })
+		i := slices.IndexFunc(ps, func(p BacktestPoint) bool { return p.Statistic == statistic })
 		if i < 0 {
 			continue
 		}
