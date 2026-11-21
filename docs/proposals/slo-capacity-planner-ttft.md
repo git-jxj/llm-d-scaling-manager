@@ -1726,7 +1726,7 @@ cv 2 is always past it.
 allow: 8000-token prompts in a (5000, 10000] bucket read cv 0.31 against a
 true 0.06, so every 8k answer was flagged although processor sharing held on
 those steps, and the gamma of cv 0.31 put 19.8% of the prompts above 10000
-tokens, where the bucket proves there are none (p90 own time about 11% high
+tokens, where the bucket proves there are none (p90 own time about 13% high
 on Qwen3-32B 8k). With the switch `slo-ttft-prompt-support` on (planner-only,
 off by default), the planner reads the longest prompt the histogram allows, the highest bucket bound that
 holds requests, over the mean (`whatif.PromptSpread.MaxRatio`), and prices it
@@ -1734,8 +1734,9 @@ holds requests, over the mean (`whatif.PromptSpread.MaxRatio`), and prices it
 
 - the prompt is its gamma censored at that bound: the mass past it sits on it,
   so no own time is longer than a prompt the histogram proves exists. The
-  mean of the own time reads under the unheld one by the mass moved, a few
-  percent at the 8k bucket;
+  gamma is stretched first (`holdScale`), so the held prompt's mean is still
+  the measured mean: censoring alone would read it 4.3% short at cv 0.31
+  held at 1.25, 3.4% at cv 0.61 held at 2;
 - processor sharing is priced alone, whatever the cv, while the bound is at
   most 1.6 times the mean (`whatif.MaxPSPromptSupport`, under the 1.67 at
   which the gamma at cv 0.25 has its 99th percentile): no prompt is long
@@ -1748,21 +1749,22 @@ widest the buckets allow.
 **Off by default, in the planner too.** A backtest prices each step at its
 own histogram's cv and bound (`whatifapi.Knobs.PromptMaxRatio`). On the
 Qwen3-32B and 0.6B staircase backtests (the split, and the phases fitted on
-their warm-ups), turning the switch on moves 34 TTFT figures that read at or
-above measured to under it, the lowest at 0.89 of measured: mostly p90 and
-p95 on the 8000-token phases, where the bound clears processor sharing. The
+their warm-ups), turning the switch on moves 15 TTFT figures that read at or
+above measured to under it, the lowest at 0.92 of measured. 13 of the 15 are
+p90 and p95 where the bound clears processor sharing (8000-token phases, and
+one 2.7k step of the split): processor sharing priced alone reads the tail
+up to 8% under what the pods served. The
 1000-token phases read cv 0.6 and stay `SpreadBeyondProcessorSharing`: their
 prompts sit around 1000 tokens, either side of the 1000 bucket bound, so the
 highest bucket holding requests is (1000, 2000] and the bound is 2 times the
 mean, past 1.6. The buckets cannot tell those prompts from a spread that
 reaches 2000, so nothing clears them; only the held gamma moves them, by a
-few percent. Part of the move is the hold itself: the gamma is fitted at the
-measured mean and then held, so the held prompt's mean reads 3% to 4% under
-the measured one at these spreads (4.3% at cv 0.31 held at 1.25, 3.4% at cv
-0.61 held at 2). A hold that keeps the mean (the gamma rescaled so that its
-held mean is the measured one) is the next step; the rest is the cv the
-buckets' width reads holding up a TTFT the rest of the model reads low. The
-switch stays off until both are settled.
+few percent, and 2 of their p95 figures go under (0.976, 0.987): the tail
+past twice the mean that the hold removes was holding them up. A hold that
+only censored, and so read the mean short, moved 34 figures under, the
+lowest at 0.89. What is left is the cv the buckets' width reads holding up
+a TTFT tail the rest of the model reads low. The switch stays off until that
+is found.
 
 **Checked against a simulation** of the same tandem stages
 (`TestPS_AgainstATandemSimulation`, 180,000 requests a point, `V_P` unmargined):

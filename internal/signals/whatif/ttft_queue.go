@@ -19,10 +19,10 @@ import "math"
 // variation (an exponential at cv 1, the page's assumed spread), and
 // deterministic at cv 0. c is seconds per prompt token.
 type ownTime struct {
-	// mean is E[I]*c, in seconds: the held gamma's mean with a hold.
+	// mean is E[I]*c, in seconds, with or without a hold (capped keeps it).
 	mean float64
-	// k and b are the gamma's shape, 1/cv^2, and rate, 1/(mean*cv^2), at the
-	// unheld mean; both 0 when det.
+	// k and b are the gamma's shape, 1/cv^2, and rate, 1/(mean*cv^2), the
+	// rate divided by holdScale with a hold; both 0 when det.
 	k, b float64
 	// hold is the longest own time, where the gamma is censored (capped):
 	// the mass the gamma puts past it sits on it. 0 is none.
@@ -42,19 +42,46 @@ func newOwnTime(mean, cv float64) ownTime {
 // capped is the own time held at hold, the longest the prompt's bound
 // allows (Prefill.PromptMaxRatio): the gamma censored there, its mass past
 // hold set on hold, so no own time is longer than a prompt the histogram
-// proves there is. Its mean, E[min(X, hold)] = E[X] P(k+1, b hold) +
-// hold Q(k, b hold), reads under the unheld mean by the mass the gamma put
-// past the bound. A hold of 0 (no bound), or at or under the mean, leaves
-// it, as does a constant own time.
+// proves there is. The gamma is first stretched by holdScale, so the held
+// mean E[min(sX, hold)] is the measured mean: censoring alone would take the
+// mass past the bound off it and read the prompt shorter than it was. A hold
+// of 0 (no bound), or at or under the mean, leaves it, as does a constant
+// own time.
 func (o ownTime) capped(hold float64) ownTime {
 	if o.det || !(hold > o.mean) || !Finite(hold) {
 		return o
 	}
-	p1, _ := gammaPQ(o.k+1, o.b*hold)
-	_, q := gammaPQ(o.k, o.b*hold)
-	o.mean = o.mean*p1 + hold*q
+	o.b /= holdScale(o.k, hold/o.mean)
 	o.hold = hold
 	return o
+}
+
+// holdScale is the stretch s at which a gamma of mean 1 and shape k,
+// censored at ratio (above 1), keeps its mean: E[min(sX, ratio)] =
+// s P(k+1, k ratio/s) + ratio Q(k, k ratio/s) = 1. The censored mean rises
+// with s from under 1 at s = 1 toward ratio, so the root is unique and at
+// least 1. It is 1 where there is nothing to hold.
+func holdScale(k, ratio float64) float64 {
+	if !(k > 0) || !(ratio > 1) || !Finite(ratio) {
+		return 1
+	}
+	mean := func(s float64) float64 {
+		p, _ := gammaPQ(k+1, k*ratio/s)
+		_, q := gammaPQ(k, k*ratio/s)
+		return s*p + ratio*q
+	}
+	lo, hi := 1.0, 2.0
+	for i := 0; i < 60 && mean(hi) < 1; i++ {
+		lo, hi = hi, 2*hi
+	}
+	for i := 0; i < 200 && hi-lo > 1e-14*hi; i++ {
+		if mid := (lo + hi) / 2; mean(mid) < 1 {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return (lo + hi) / 2
 }
 
 // quantile is the own time's q-th percentile, q in (0, 1).

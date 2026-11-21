@@ -169,12 +169,22 @@ func (p ePoly) times(q ePoly) ePoly {
 // (1 at cv 0): E[u^n exp(-a u)] = prod_{j<n} (k + j)/k * (1 + a/k)^-(k + n),
 // k = 1/cv^2, and u^n exp(-a) at cv 0.
 //
-// With hold above 1 (Prefill.PromptMaxRatio) u is that gamma censored at
-// hold, min(u, hold), the prompt no longer than its bound:
-// E[u^n exp(-a u); u <= hold] is the term above times P(k + n, (k + a) hold),
-// and the mass past hold adds hold^n exp(-a hold) Q(k, k hold). 0 is none.
+// With hold above 1 (Prefill.PromptMaxRatio) u is that gamma stretched by s
+// (holdScale) and censored at hold, min(s u, hold): the prompt no longer than
+// its bound, its mean still 1 (ownTime.capped). E[(s u)^n exp(-a s u);
+// s u <= hold] is s^n times the term above at a s, times
+// P(k + n, (k + a s) hold/s), and the mass past hold adds
+// hold^n exp(-a hold) Q(k, k hold/s). 0 is none.
 func (p ePoly) expect(cv, hold float64) float64 {
 	var sum float64
+	held := hold > 1 && Finite(hold)
+	k, s := 0.0, 1.0
+	if cv != 0 {
+		k = 1 / (cv * cv)
+		if held {
+			s = holdScale(k, hold)
+		}
+	}
 	for _, t := range p {
 		if t.c == 0 {
 			continue
@@ -183,15 +193,15 @@ func (p ePoly) expect(cv, hold float64) float64 {
 			sum += t.c * math.Exp(-t.a)
 			continue
 		}
-		k := 1 / (cv * cv)
-		m := math.Exp(-(k + float64(t.n)) * math.Log1p(t.a/k))
+		a := t.a * s
+		m := math.Exp(-(k + float64(t.n)) * math.Log1p(a/k))
 		for j := range t.n {
 			m *= (k + float64(j)) / k
 		}
-		if hold > 1 && Finite(hold) {
-			below, _ := gammaPQ(k+float64(t.n), (k+t.a)*hold)
-			_, past := gammaPQ(k, k*hold)
-			m = m*below + math.Pow(hold, float64(t.n))*math.Exp(-t.a*hold)*past
+		if held {
+			below, _ := gammaPQ(k+float64(t.n), (k+a)*hold/s)
+			_, past := gammaPQ(k, k*hold/s)
+			m = math.Pow(s, float64(t.n))*m*below + math.Pow(hold, float64(t.n))*math.Exp(-t.a*hold)*past
 		}
 		sum += t.c * m
 	}

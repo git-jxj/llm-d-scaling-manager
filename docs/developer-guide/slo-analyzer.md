@@ -39,6 +39,7 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   constructor): the spread carries the longest prompt its histogram allows
   over the mean (`PromptSpread.MaxRatio`, the highest bucket bound holding
   requests), priced as `Prefill.PromptMaxRatio`: the prompt's gamma is
+  stretched so its held mean stays the measured mean (`holdScale`) and
   censored there (`ownTime.capped` on first come, `ePoly.expect`'s hold on
   processor sharing), and the bound, not the cv, decides processor sharing.
   Off, `MaxRatio` is zeroed in `promptSpread` and the gamma runs on. The
