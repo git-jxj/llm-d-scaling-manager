@@ -169,6 +169,7 @@ External
 ExtrapolatedFill
 FMA
 Failed
+FailedCreate
 FitNotSettled
 Fix
 FlowControlInferredOff
@@ -303,6 +304,7 @@ NoShortPrompts
 NoStepSpread
 NoTPOTHistogram
 NoTraffic
+NodeAffinity
 NonPositiveDecodeBase
 NonPositiveDecodePlane
 NonPositiveHop
@@ -317,6 +319,7 @@ OUTSIDE
 OnePod
 Optimization
 Optimizer
+OutOf
 OutputSpreadUnread
 OverheadMeasured
 P
@@ -391,6 +394,7 @@ ReplicaSet
 ReplicaSets
 Replicas
 Resolved
+ResourceQuota
 Restored
 Retention
 Retrying
@@ -428,6 +432,7 @@ SingularFit
 Skipping
 SpreadBeyondProcessorSharing
 StartOptimizeLoop
+Starting
 StatefulSet
 Successfully
 T
@@ -464,6 +469,7 @@ UP
 URL
 Unable
 Unexpected
+UnexpectedAdmissionError
 Unmarshal
 Until
 Unusable
@@ -530,6 +536,7 @@ abort
 about
 above
 above-band
+above-band-line
 above-context
 aboveBand
 aboveBandHeld
@@ -560,6 +567,7 @@ adding
 address
 addressable
 admission
+admission-rejected
 admission.maxTokensOverCompletions
 admission.siblingMuTolerance
 admit
@@ -568,6 +576,7 @@ admitted
 adopted-raw
 affectedPods
 after
+afterSeconds
 again
 against
 age
@@ -587,6 +596,7 @@ all2all_backend
 allMark
 allMarkAt
 all_metrics
+allocate
 allocation
 allocation.NewLimiterFromConfig
 allocation.NewNoOpLimiter
@@ -629,6 +639,7 @@ args
 arguments
 arrivalRate
 arrivals
+arrived
 arriving
 arrivingPromptTokens
 arrivingRead
@@ -667,6 +678,7 @@ backlogGrowth.fraction
 backlogGrowth.minRequests
 backlogRequests
 bad
+bad-band
 balanced
 band
 bare
@@ -882,6 +894,7 @@ constrains
 constraint
 constraints
 container
+container-config
 contains
 contamination-heterogeneity
 context_length
@@ -906,7 +919,10 @@ counter
 counting
 counts
 covers
+crash-loop
+crash-looping
 create
+created
 creation
 crept
 critical
@@ -975,6 +991,7 @@ deduced
 deepep_low_latency
 deeper
 default
+default-intercept
 defaultPolicy
 defaults
 defect
@@ -1005,7 +1022,9 @@ derivedMu
 derivedOK
 derivedRate
 desiredReplicas
+detail
 detected
+device
 device_memory_utilization
 did
 differ
@@ -1164,6 +1183,7 @@ excluded
 exclusive
 exist
 exists
+exit
 expect
 expected
 expects
@@ -1350,6 +1370,7 @@ has
 have
 head
 headroom
+health
 health-probe-bind-address
 held
 heldAt
@@ -1413,6 +1434,7 @@ if
 ignored
 ignoring
 image
+image-pull
 image_spec
 imbalanced
 immutable
@@ -1476,6 +1498,7 @@ itl-baseline-stamped
 itl-fit
 itl-fit-declined
 itl-gps-mismatch
+itl-hold-steady-slope
 itl-idle-needs-evidence
 itl-keeps-the-settle-through-a-missing-row
 itl-line
@@ -1507,6 +1530,7 @@ itlBandFloors
 itlBaselineStash
 itlBaselines
 itlBeta
+itlBoundWhy
 itlCycles
 itlFills
 itlForgotten
@@ -1519,6 +1543,10 @@ itlReadsEngines
 itlRefused
 itlResidualPct
 itlSamples
+itlTargetClamp
+itlTargetFill
+itlTargetSec
+itlTargetSource
 itlWindows
 itlWithheldLogged
 itlZero
@@ -1544,11 +1572,13 @@ k1-bound
 k1-memory
 k1MemoryBound
 k2
+k2-batch-held-at-itl-target
 k2-compute
 k2-decision
 k2-decode-budget-at-computed-prompt
 k2-first-reading-waits-for-a-second
 k2-held-dropped
+k2-itl-bound
 k2-key-bucket-held
 k2-key-bucket-moved
 k2-obs-admitted
@@ -1557,6 +1587,7 @@ k2-unsettled-joined
 k2-unsettled-window
 k2-waits-after-a-rollout
 k2-waits-after-controller-restart
+k2BatchBound
 k2Borrows
 k2ComputeBound
 k2Cycles
@@ -1571,6 +1602,7 @@ k2Settle.maxRise
 k2Settle.rateFraction
 k2Source
 k2Stash
+k2Unbounded
 k2WindowArgs
 k2stash|
 k2|
@@ -1610,6 +1642,7 @@ kube_pod_status_phase
 kube_pod_status_ready
 kube_pod_status_ready_time
 kube_replicaset_owner
+kubelet
 kueue
 kueue-gate
 kueue-lender-release
@@ -1936,6 +1969,8 @@ n/a
 nDecErrPct
 nDecGPS
 nDecModel
+nITL
+nSteady
 name
 named
 names
@@ -1990,6 +2025,7 @@ no-listed-analyzer-sizes-role
 no-node-fits
 no-output-length
 no-overhead
+no-pods
 no-prefill-capacity
 no-prefill-reading
 no-pull
@@ -1999,6 +2035,7 @@ no-replicas
 no-seqs
 no-series
 no-shape
+no-tpot-target
 no-waiting
 noDemandFor
 noITL
@@ -2022,11 +2059,13 @@ nominal
 nominal-lent-out
 non-nil
 none
+noneArrivedSince
 none|
 noout
 nor
 not
 not-actionable
+not-decode
 not-detected
 not-learned
 not-ready
@@ -2057,6 +2096,8 @@ occupancy-unknown
 of
 off
 offered
+offers
+often
 ok
 ok|
 old
@@ -2073,6 +2114,7 @@ one
 one-minute
 one-pod
 one-sided
+one-sided-line
 ones
 only
 onset
@@ -2117,6 +2159,7 @@ over-state
 over-stated
 overMax
 overQuotaGPUs
+overdue
 overflows
 overhead
 overlap
@@ -2181,6 +2224,7 @@ per-model
 per-replica
 per-request
 per-role
+per-step-line
 perModel
 perReplicaCapacity
 perReplicaRate
@@ -2217,6 +2261,8 @@ planning
 planningFrom
 plans
 plateauCycles
+platform
+plugin
 pod
 pod-template-hash
 pod/
@@ -2259,8 +2305,10 @@ prefill-capacity-observe
 prefill-capacity-observed
 prefill-catchup
 prefill-demand-held
+prefill-f-busy-minutes
 prefill-knee
 prefill-latency
+prefill-queue-by-capacity
 prefill-required
 prefill-spare
 prefill-throughput-bound-reading
@@ -2447,6 +2495,7 @@ released-to-lender
 releasing
 relieve
 remaining
+remediation
 remove
 removed
 removedNamespaces
@@ -2513,6 +2562,7 @@ rest
 rest-client-timeout
 restart
 restarted
+restarting
 restore
 restored
 restoredKeys
@@ -2621,6 +2671,7 @@ saturation.TakeRestoreOutcomes
 saturation.borrowLine
 saturation.publishLine
 saturation/capacity
+say
 says
 sc
 scale
@@ -2660,6 +2711,8 @@ scheduler
 scheduler-queue-demand
 scheduler-queue-prefill-share-capped
 scheduler-queue-prefill-share-dropped
+scheduling
+scheduling-gated
 scope
 scope/quotas/namespaceQuotas/exclude/kueue
 score
@@ -2781,6 +2834,7 @@ slo-itl-tier-hysteresis
 slo-itl-waits-after-controller-restart
 slo-kv-per-request-output-dispersion
 slo-model
+slo-tpot
 slo-transient
 slo-ttft
 slo-ttft-decode-gate-charge
@@ -2949,6 +3003,7 @@ taken
 taken-by-another-borrower
 takes
 target
+target-unreachable
 targetFill
 targetReduce
 targetReplicas
@@ -3128,6 +3183,7 @@ unreadable
 unresolved
 unrouted
 unroutedReady
+unschedulable
 unservable
 unsigned
 unsizable

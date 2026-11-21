@@ -398,7 +398,8 @@ line is read below the band only when two things hold:
   upper bound on the engine's floor by construction, so reading below the band
   from it errs high. The default intercept (`itl.DefaultBaselineSec`, 6 ms), a
   `borrowed` line's donor `B` and a line of unknown tier are guesses. A
-  `pinned-B` or `held` line on the default `B` is refused (`PinnedDefaultB`).
+  `pinned-B` or `held` line on the default `B` is refused (`PinnedDefaultB`),
+  unless B is stated (`--assume-itl-b`, flagged `AssumedITLB`; #225).
 - **A floor was read below the band**: the 10th percentile of the variant's
   latest mean ITLs (at most 240) read off a ramp at a fill under the band's
   bottom, the readings the fit drops as idle, from at least 10 of them.
@@ -1054,7 +1055,7 @@ Every answer is an `Answer{Value, Band, Basis, Flags}` or an
 | Reason | When |
 | --- | --- |
 | `NoLine` | No ITL line, or an invalid fit |
-| `PinnedDefaultB` | Only a `pinned-B` fit on the default 6 ms intercept |
+| `PinnedDefaultB` | Only a `pinned-B` fit on the default 6 ms intercept; `--assume-itl-b` prices it, flagged |
 | `NoCapacity` | No KV capacity reading or flag, or one whose band top holds no whole request |
 | `NoBatchCap` | No batch cap known |
 | `NoRoleMap` | Standalone with neither a kubeconfig nor `--role-of` |
@@ -1094,6 +1095,11 @@ TTFT model's (P3) are listed in
 Exit codes: `0` every role answered; `3` a role refused (output still printed);
 `2` usage or input error; `1` internal error. `whatif.ExitCode` applies them:
 `2` if any result is `InvalidInput`, else `3` if any is refused, else `0`.
+A command stopped by SIGINT or SIGTERM exits `130` or `143` and says so on
+stderr; one that has not stopped 5 s after the signal is cut off, and a second
+signal stops it at once (`execute` in `cmd/capacity-planner/main.go`). `serve`
+is not cut off at 5 s: it stops within its `--shutdown-timeout`. After `130` or
+`143`, stdout or a file being written may be incomplete.
 
 ### Recording mode, as built (D3)
 
@@ -1605,6 +1611,14 @@ roles[].inputs.kvPerRequest number
 roles[].inputs.kvPerRequestSource string
 roles[].inputs.line object
 roles[].inputs.line.a number
+roles[].inputs.line.assumedB object
+roles[].inputs.line.assumedB.applied boolean
+roles[].inputs.line.assumedB.defaultA number
+roles[].inputs.line.assumedB.floorFill number
+roles[].inputs.line.assumedB.floorSeconds number
+roles[].inputs.line.assumedB.seconds number
+roles[].inputs.line.assumedB.source string
+roles[].inputs.line.assumedB.why string
 roles[].inputs.line.b number
 roles[].inputs.line.borrowedFrom string
 roles[].inputs.line.check object
@@ -1957,6 +1971,48 @@ roles[].ttft.vpPromptTokens number
 roles[].ttft.vpSource string
 roles[].variant string
 schemaVersion number
+selfCheck object
+selfCheck.checks array
+selfCheck.checks[] object
+selfCheck.checks[].detail string
+selfCheck.checks[].name string
+selfCheck.checks[].passed boolean
+selfCheck.folds array
+selfCheck.folds[] object
+selfCheck.folds[].fitTo string
+selfCheck.folds[].judged number
+selfCheck.folds[].testFrom string
+selfCheck.folds[].testTo string
+selfCheck.issueUrl string
+selfCheck.line string
+selfCheck.seconds number
+selfCheck.status string
+selfCheck.tpot object
+selfCheck.tpot.bias number
+selfCheck.tpot.judged number
+selfCheck.tpot.low number
+selfCheck.tpot.overloaded number
+selfCheck.tpot.pastKnee object
+selfCheck.tpot.pastKnee.hi number
+selfCheck.tpot.pastKnee.lo number
+selfCheck.tpot.refused map
+selfCheck.tpot.statistic string
+selfCheck.tpot.steps number
+selfCheck.tpot.within number
+selfCheck.trust string
+selfCheck.ttft object
+selfCheck.ttft.bias number
+selfCheck.ttft.judged number
+selfCheck.ttft.low number
+selfCheck.ttft.overloaded number
+selfCheck.ttft.pastKnee object
+selfCheck.ttft.pastKnee.hi number
+selfCheck.ttft.pastKnee.lo number
+selfCheck.ttft.refused map
+selfCheck.ttft.statistic string
+selfCheck.ttft.steps number
+selfCheck.ttft.within number
+selfCheck.why string
 source object
 source.firstAt string
 source.firstCycle number

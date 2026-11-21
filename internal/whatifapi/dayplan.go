@@ -42,6 +42,15 @@ type SeriesSample struct {
 	// OtherPods is the serving pods of prefill and decode variants other
 	// than the priced ones.
 	OtherPods int
+	// PromptComputedRate, PromptRequestRate and PromptBuckets are the
+	// prefill pods' computed prompt tokens and requests a second and their
+	// pooled computed-token histogram (learnreplay.CycleSample), for a
+	// backtest's prompt spread; zero and nil with none.
+	PromptComputedRate, PromptRequestRate float64
+	PromptBuckets                         map[float64]float64
+	// FlowControlSeries says the cycle read the router's flow-control queue
+	// series.
+	FlowControlSeries bool
 }
 
 // The day plan's defaults and bounds.
@@ -147,11 +156,13 @@ type DayPlanRequest struct {
 // DayPlanResponse is a day plan: every bucket, the hours they make, the
 // summary, and what the source could not price.
 type DayPlanResponse struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	WhatifSchema  string `json:"whatifSchema"`
-	DayPlanID     string `json:"dayPlanId"`
-	InputsID      string `json:"inputsId"`
-	Banner        string `json:"banner"`
+	// SelfCheck is the planner checked on the source the plan reads.
+	SelfCheck     *SelfCheck `json:"selfCheck,omitempty"`
+	SchemaVersion int        `json:"schemaVersion"`
+	WhatifSchema  string     `json:"whatifSchema"`
+	DayPlanID     string     `json:"dayPlanId"`
+	InputsID      string     `json:"inputsId"`
+	Banner        string     `json:"banner"`
 	// From and To are the first bucket's start and the last bucket's end.
 	From time.Time `json:"from"`
 	To   time.Time `json:"to"`
@@ -368,6 +379,7 @@ func (s *Server) dayPlan(ctx context.Context, req DayPlanRequest) ([]byte, error
 			return nil, err
 		}
 		out.SchemaVersion, out.WhatifSchema, out.DayPlanID, out.InputsID, out.Banner = SchemaVersion, s.whatifSchema, id, e.id, banner
+		out.SelfCheck = e.doc.SelfCheck
 		body, err := marshal(out)
 		if err != nil {
 			return nil, err
@@ -391,6 +403,9 @@ func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest, whatifSchem
 	out, err := q.plan(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if res.Folds != nil {
+		out.SelfCheck = SelfCheckOf(ctx, res, SelfCheckInfo{PlannerVersion: res.PlannerVersion})
 	}
 	out.SchemaVersion, out.WhatifSchema, out.DayPlanID, out.InputsID, out.Banner = SchemaVersion, whatifSchema,
 		contentID("dayplan", q.key()), e.id, banner
@@ -654,7 +669,12 @@ func refusalHint(term string, reason whatif.Reason) string {
 		return "The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail."
 	case reason == whatif.TargetBelowFloor:
 		return "The TPOT target is under decode's TPOT at zero load: no replica count meets it. Raise the TPOT target."
-	case (term == termTPOT || term == termDecodeKnee) && (reason == whatif.NoLine || reason == whatif.PinnedDefaultB):
+	case (term == termTPOT || term == termDecodeKnee) && reason == whatif.PinnedDefaultB:
+		// The line prices decode's knee too: asking no TPOT does not help.
+		return "The decode ITL line rests on the 6 ms default intercept B (PinnedDefaultB), so neither TPOT nor the decode knee is priced: " +
+			"state B, flagged as assumed: --assume-itl-b floor (from the floor read below the band) or --assume-itl-b 12ms, " +
+			"or in the API assume.itlBFromFloor or assume.itlB."
+	case (term == termTPOT || term == termDecodeKnee) && reason == whatif.NoLine:
 		// The line prices decode's knee too: asking no TPOT does not help.
 		return "The source fitted no decode ITL line it can price (" + string(reason) + "), so neither TPOT nor the decode knee is priced: " +
 			"record a window with decode under varied load (docs/guides/record-for-capacity-planner)."

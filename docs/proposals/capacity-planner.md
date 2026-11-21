@@ -1098,7 +1098,7 @@ the requests) still waits on shares per bucket.
 **Decision.** Each release ships the planner without a checkout: an image,
 `ghcr.io/llm-d-incubation/llm-d-scaling-manager/capacity-planner:<tag>`,
 and binaries `capacity-planner-<tag>-<os>-<arch>` for linux and darwin,
-amd64 and arm64, beside the other release files. The guide leads with them;
+amd64 and arm64, and windows amd64 (`.exe`), beside the other release files. The guide leads with them;
 `make capacity-planner` stays as the alternative.
 
 **Why.** An operator who only installs from the release files had no way

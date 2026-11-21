@@ -1254,7 +1254,7 @@ the analyzer asked for.
 ### SLO Analyzer Metrics
 
 Published for a model whose policy lists the `slo` analyzer and sets
-[`slo` targets](scaling-policy.md#slo-observe-only), while the model has
+[`slo` targets](scaling-policy.md#slo-observes-bounds-decode-packing), while the model has
 replicas. On this release they describe, and do not decide: no replica count
 is computed from them.
 
@@ -1265,8 +1265,9 @@ is computed from them.
 - **Runbook.** The SLO alerts, and an empty SLO dashboard row, are worked
   through in [A model misses, or is never judged against, its SLO](troubleshooting.md#a-model-misses-or-is-never-judged-against-its-slo).
   All three carry `component: slo`: the analyzer only observes on this
-  release, so route on it if a tuning finding should go to a ticket queue
-  rather than page.
+  release (a `tpot` target only bounds how far saturation packs decode), so
+  route on it if a tuning finding should go to a ticket queue rather than
+  page.
 - **Labels.** Every series also carries `controller_instance` when
   `CONTROLLER_INSTANCE` is set. Prometheus scrapes the model's namespace as
   `exported_namespace`; `namespace` is then the controller's. **In PromQL, match
@@ -1287,7 +1288,7 @@ reads higher than what clients saw over a whole run.
 | `llmsm_slo_objective_ratio` | gauge | `namespace`, `model_name`, `objective`, `statistic` | TTFT only: the share of requests the objective promises within its target, `0.90` for `statistic="p90"`. Present whenever the objective is set. | `LLMSMModelSLOAttainmentLow` compares the request-weighted `llmsm_slo_attainment_ratio` with it. |
 | `llmsm_slo_window_requests` | gauge | `namespace`, `model_name`, `objective`, `statistic` | Requests the router recorded for **this objective** over the window, judged or not. Present whenever the router reported that objective's histogram. For TPOT it is `0`, not absent, when clients do not send `stream_options.include_usage` (the router needs the usage block to count output tokens). Counts streaming requests only: nothing publishes the share of the model's traffic it is. | Present with `observed` absent and `excluded` all 0: too few requests to judge. Absent on a busy model: the router's histograms are not scraped. |
 | `llmsm_slo_excluded` | gauge | `namespace`, `model_name`, `objective`, `reason` | `1` for the reason this objective's window is not judged this cycle, `0` for the others; all `0` while it is judged. The reasons and rules are listed below the table. | Expected around every wake and scale-up. The share of time excluded, for either objective, is `avg_over_time(max by (exported_namespace, model_name) (llmsm_slo_excluded)[1d:5m])`. Near 1: the fleet never holds still long enough to be judged. |
-| `llmsm_slo_fill` | gauge | `namespace`, `model_name`, `variant_name`, `objective` | The KV fill, as a fraction of physical KV, the variant's SLO capacity is priced at, before any scale-up headroom: where its mean inter-token latency meets the TPOT target, clamped to the ITL band (`analyzerTuning.itlBand.minObservableK`, `analyzerTuning.itlBand.maxObservableK`; [0.15, 0.80] by default), and lowered to the fill the engine can reach when `max_num_seqs` (or `--max-num-active-seqs`, when lower or when `max_num_seqs` is not stated) binds. Clamped or capped, the line's ITL there is below the target. Absent when the variant could not be priced: see `llmsm_slo_source`. | Compare with `kvCacheThreshold` (0.80 by default), the fill saturation prices a replica at before headroom. Lower: the target needs more replicas than the tier gives; [scaling-policy](scaling-policy.md#slo-observe-only) has the query for how many. At 0.80, the top of the clamp, the target does not bind; with a `kvCacheThreshold` above 0.80 it cannot show slack. |
+| `llmsm_slo_fill` | gauge | `namespace`, `model_name`, `variant_name`, `objective` | The KV fill, as a fraction of physical KV, the variant's SLO capacity is priced at, before any scale-up headroom: where its mean inter-token latency meets the TPOT target, clamped to the ITL band (`analyzerTuning.itlBand.minObservableK`, `analyzerTuning.itlBand.maxObservableK`; [0.15, 0.80] by default), and lowered to the fill the engine can reach when `max_num_seqs` (or `--max-num-active-seqs`, when lower or when `max_num_seqs` is not stated) binds. Clamped or capped, the line's ITL there is below the target. Absent when the variant could not be priced: see `llmsm_slo_source`. | Compare with `kvCacheThreshold` (0.80 by default), the fill saturation prices a replica at before headroom. Lower: the target needs more replicas than the tier gives; [scaling-policy](scaling-policy.md#slo-observes-bounds-decode-packing) has the query for how many. At 0.80, the top of the clamp, the target does not bind; with a `kvCacheThreshold` above 0.80 it cannot show slack. |
 | `llmsm_slo_predicted_itl_seconds` | gauge | `namespace`, `model_name`, `variant_name` | The mean inter-token latency the variant's fitted line predicts at the fill it would actually run at, once `scaleUpThreshold` headroom is applied, never below the bottom of the fitted range. | It is the latency margin an SLO tier would really have. It differs per accelerator for the same `scaleUpThreshold`. |
 | `llmsm_slo_source` | gauge | `namespace`, `model_name`, `variant_name`, `source` | `1` for where the variant's SLO pricing came from, `0` for the others. See the source values below. Absent for a variant not priced for TPOT (a prefill variant). | See the source values below. |
 | `llmsm_slo_predicted_ttft_seconds` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | Shadow, prefill variants of a P/D model only. The TTFT predicted at the variant's current rate, at the objective's percentile. **It is an estimate, not a bound:** at the assumed prompt spread it reads high, and at the spread actually sent it reads low. Absent when the model refuses the rate, or when `llmsm_slo_ttft_reason` is a refusal. | Against `llmsm_slo_observed_seconds{objective="ttft"}`, with the query below. Nothing sizes from it. See [reading the TTFT prediction](#reading-the-ttft-prediction). |
@@ -1465,6 +1466,7 @@ model reads all of them `0`, including the two marked "on every answer":
 | `VPLowerBound` | `V_P` is a lower bound. |
 | `AFromEngineTiming` | Capacity planner only, never on this metric: the fixed latency `a` was fitted from the prefill engines' own timing, because the fleet had too few quiet minutes. TTFT on such a fleet is not validated. |
 | `AdaptedBandFloor` | Capacity planner only, never on this metric: the decode latency line was read with the KV-fill band's floor lowered to the fill the fleet had, because it never filled far enough above the default floor. |
+| `AssumedITLB` | Capacity planner only, never on this metric: the decode latency line's intercept B was stated (`--assume-itl-b`, API `assume.itlB` or `assume.itlBFromFloor`) in place of the 6 ms default, and its slope refitted through it. |
 | `VPAboveSlopeBound` | `V_P` is above what the low-load fit allows: one of the two is wrong. |
 | `VPShapeMoved` | The mean prompt is more than 1.2 times away from the one `V_P` was learned at, with no curve to rescale by. |
 | `VPScaledToPrompt` | `V_P` was rescaled to a longer prompt. It read 1.5% high on the one measured point. |
@@ -1868,6 +1870,12 @@ when a figure changes.
   }
   ```
 
+### `llmsm_replicas_not_arriving`
+- **Type**: Gauge
+- **Description**: Replicas a variant asked for that are not Ready, once none has arrived for longer than twice the role's start time (at least 5 minutes). A replica arriving restarts that clock, so a rollout or a scale-up making progress is not reported. Absent otherwise. Supply counts only the Ready ones.
+- **Labels**: `namespace` (the variant's; scraped as `exported_namespace`), `variant_name`, `role` (`prefill`, `decode` or `both`), `reason`: why, read from the variant's pods: `admission-rejected`, `unschedulable`, `scheduling-gated`, `image-pull`, `crash-loop`, `container-config`, `failed`, `not-ready`, `starting`, `no-pods` or `unknown`; optional `controller_instance`. One series per variant at most.
+- **Use Case**: Backs `LLMSMReplicasNotArriving`. The node and the pods' own message are in the `ReplicasNotArriving` event and in `replicasNotArriving` of the controller-status ConfigMap; see [troubleshooting](troubleshooting.md#replicas-asked-for-never-arrive).
+
 ### Error tracking
 
 ### `llmsm_errors_total`
@@ -2187,6 +2195,7 @@ notifications link to it.
 | `LLMSMConstraintProviderSkipped` | warning | 10m | a declared limiter has been left out of decisions (`provider`, `reason`); the others still bound, so models scale past what it would allow | `node_read_denied`: (cluster admin) `make setup-prereqs`, or drop `gpu-inventory`. `failed`: the `GPU constraint provider skipped` log line says why | [T: GPUs held](troubleshooting.md#gpus-held-or-quota-spent) |
 | `LLMSMGPUResourceExhausted` | warning | 5m | GPU-labeled nodes report zero allocatable GPUs of a type. Only with a `gpu-inventory` limiter | (cluster admin) check the nodes' allocatable GPUs and the device-plugin pods. No alert does not mean GPUs are free: the metric exists only with that limiter | [T: GPUs held](troubleshooting.md#gpus-held-or-quota-spent) |
 | `LLMSMReplicaScalingThrashing` | warning | 10m | more than 2 cycles per minute for one variant whose decision was not `no-change`. The counter rises on every such cycle, so it fires on flapping **and** on a scale-up the workload never catches up with: actuation stuck, Pods Pending, slow replica starts | read the model's `scaling-decision` lines: `tgt` alternating is flapping; `tgt` steady above `curr` is actuation not landing | [T: flapping](troubleshooting.md#a-model-is-flapping), [T: actuation stuck](troubleshooting.md#desired-is-not-current-actuation-stuck) |
+| `LLMSMReplicasNotArriving` | warning | 5m | `llmsm_replicas_not_arriving` above 0: a variant has fewer Ready replicas than it asked for, and none has arrived for longer than twice its start time (at least 5 minutes). Grouped without `reason`, so a cause that changes does not restart it | the `reason` label, then the `ReplicasNotArriving` event for the node and the pods' message; `admission-rejected` is a node for the platform to fix (cordon it) | [T: never arrive](troubleshooting.md#replicas-asked-for-never-arrive) |
 | `LLMSMModelWillNotScaleToZero` | info | 15m | blocked reason `variant-floor` or `policy-forbids-zero`: the configuration asks to park and forbids it | make the two halves agree | [will not park](../guides/scale-to-zero/README.md#when-a-model-will-not-park) |
 | `LLMSMKueueReaderStale` | warning | 5m | `llmsm_quota_borrow_withheld{reason="stale"}` in two or more namespaces of one quota entry, one alert per entry (the value is the count): the entry's Kueue read failed or is older than twice the refresh interval. Borrowing there is frozen: nothing new is borrowed, nothing is given back | the log line `external quota source unreadable` names the read; to hand capacity back meanwhile, lower the borrowing model's `maxReplicaCount` on its ScaledObject | [T: reader stale](troubleshooting.md#llmsmkueuereaderstale) |
 | `LLMSMKueueReaderStaleNamespace` | warning | 5m | the same, per namespace, only while it is the entry's only stale namespace: an entry covering this namespace alone whose Kueue read failed, or this namespace's ResourceQuota read failing (at the default `refreshInterval` that becomes `resourcequota-unreadable` before 5 minutes) | as above | [T: reader stale](troubleshooting.md#llmsmkueuereaderstale) |

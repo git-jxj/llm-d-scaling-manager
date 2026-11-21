@@ -108,20 +108,20 @@
         },
         "prefill": {
           "pooled": {
-            "value": 0.8341141924586217
+            "value": 0.8341141924586216
           },
           "worstPod": {
-            "value": 0.8367633818321522
+            "value": 0.8344509907536243
           },
-          "imbalance": 1.0031760511899717
+          "imbalance": 1.000403779600021
         }
       },
       "capacity": {
         "prefillKnee": {
-          "value": 49.834876746990204,
+          "value": 49.97297679800123,
           "unit": "r/s",
           "sensitivity": {
-            "lo": 36.83447411734059,
+            "lo": 36.936548068087866,
             "hi": 57.49212809657225
           },
           "boundBy": [
@@ -132,8 +132,8 @@
             "AssumedVP",
             "AssumedPromptSpread"
           ],
-          "outputTokensPerSecond": 9965.768139324824,
-          "binds": "prefill compute: N_p 2 x V_P / (f 1.003 x 8001 tokens)"
+          "outputTokensPerSecond": 9993.38480416363,
+          "binds": "prefill compute: N_p 2 x V_P / (f 1.000 x 8001 tokens)"
         },
         "decodeKnee": {
           "value": 36.984638260324516,
@@ -164,10 +164,10 @@
           "binds": "0.85 x fleet knee (scaleUpThreshold)"
         },
         "maxAtSLO": {
-          "value": 29.70906603248329,
+          "value": 29.70909151273409,
           "unit": "r/s",
           "sensitivity": {
-            "lo": 29.071335426327515,
+            "lo": 29.080696748963284,
             "hi": 29.89653130704545
           },
           "boundBy": [
@@ -185,7 +185,7 @@
             "AssumedA",
             "ExtrapolatedFill"
           ],
-          "outputTokensPerSecond": 5941.09352810832,
+          "outputTokensPerSecond": 5941.098623541242,
           "binds": "TTFT p90, end to end"
         },
         "headroom": 0.85,
@@ -200,11 +200,11 @@
           "ttft": [
             {
               "statistic": "p50",
-              "value": 0.11173489666855463,
+              "value": 0.11148087635414407,
               "unit": "s",
               "sensitivity": {
                 "lo": 0.0959109705813649,
-                "hi": 0.16510656795726303
+                "hi": 0.1645091694292482
               },
               "floor": 0.057518296999330115,
               "flags": [
@@ -222,11 +222,11 @@
             },
             {
               "statistic": "p90",
-              "value": 0.6165689606774934,
+              "value": 0.6165671959370481,
               "unit": "s",
               "sensitivity": {
                 "lo": 0.5814796633223659,
-                "hi": 0.6952656919576171
+                "hi": 0.6937554628166404
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -269,17 +269,17 @@
             ]
           },
           "e2eMeanSum": {
-            "value": 0.867949898264616,
+            "value": 0.8679493112275836,
             "unit": "s"
           },
           "cell": {
             "ttft": {
               "statistic": "p90",
-              "value": 0.6165689606774934,
+              "value": 0.6165671959370481,
               "unit": "s",
               "sensitivity": {
                 "lo": 0.5814796633223659,
-                "hi": 0.6952656919576171
+                "hi": 0.6937554628166404
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -319,11 +319,11 @@
           "ttft": [
             {
               "statistic": "p50",
-              "value": 0.2159068258940632,
+              "value": 0.21504508689248691,
               "unit": "s",
               "sensitivity": {
                 "lo": 0.16941481636720168,
-                "hi": 0.4773812861330592
+                "hi": 0.4724346897605075
               },
               "floor": 0.057518296999330115,
               "flags": [
@@ -341,11 +341,11 @@
             },
             {
               "statistic": "p90",
-              "value": 1.943689150486154,
+              "value": 1.9436772560594027,
               "unit": "s",
               "sensitivity": {
                 "lo": 1.8525390376963151,
-                "hi": 2.2335687010863206
+                "hi": 2.2291078068065557
               },
               "floor": 0.3409952075116344,
               "flags": [
@@ -388,17 +388,17 @@
             ]
           },
           "e2eMeanSum": {
-            "value": 2.073930744709211,
+            "value": 2.0739272891258693,
             "unit": "s"
           },
           "cell": {
             "ttft": {
               "statistic": "p90",
-              "value": 1.943689150486154,
+              "value": 1.9436772560594027,
               "unit": "s",
               "sensitivity": {
                 "lo": 1.8525390376963151,
-                "hi": 2.2335687010863206
+                "hi": 2.2291078068065557
               },
               "floor": 0.3409952075116344,
               "flags": [

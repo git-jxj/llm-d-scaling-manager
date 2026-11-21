@@ -38,6 +38,8 @@ type wireOutput struct {
 	// Error is a usage or internal error met before any answer, with -o
 	// json: the output then holds only it, the question and the exit code.
 	Error *wireError `json:"error,omitempty"`
+	// SelfCheck is the planner checked on the recording beside the answer.
+	SelfCheck *whatifapi.SelfCheck `json:"selfCheck,omitempty"`
 }
 
 // wireError is an error met before any answer.
@@ -248,6 +250,33 @@ type wireLine struct {
 	TierChanges int `json:"tierChanges"`
 	// Check is the line against the recording's rows, absent with no line.
 	Check *wireLineCheck `json:"check,omitempty"`
+	// AssumedB is what --assume-itl-b did to the line, absent without it.
+	AssumedB *wireAssumedB `json:"assumedB,omitempty"`
+}
+
+// wireAssumedB is a stated intercept B (interceptAssumption) on the wire.
+// Source is stated or floor; Applied says the line was refitted through
+// Seconds, and Why, when it was not, says why. FloorSeconds and FloorFill
+// are the floor below the band B was read from, DefaultA the slope on the
+// default intercept.
+type wireAssumedB struct {
+	Source       string  `json:"source"`
+	Applied      bool    `json:"applied"`
+	Seconds      float64 `json:"seconds,omitempty"`
+	Why          string  `json:"why,omitempty"`
+	FloorSeconds float64 `json:"floorSeconds,omitempty"`
+	FloorFill    float64 `json:"floorFill,omitempty"`
+	DefaultA     float64 `json:"defaultA,omitempty"`
+}
+
+// wireAssumed is pv's stated intercept on the wire, nil with none asked.
+func wireAssumed(pv pricedVariant) *wireAssumedB {
+	a := pv.itlB
+	if !a.Asked {
+		return nil
+	}
+	return &wireAssumedB{Source: a.Source, Applied: a.Applied, Seconds: a.Seconds, Why: a.Why,
+		FloorSeconds: a.FloorSeconds, FloorFill: a.FloorFill, DefaultA: a.DefaultA}
 }
 
 // wireLineCheck is whatif.LineCheck on the wire. Status is ok,
@@ -396,7 +425,10 @@ type wireTTFTParts struct {
 	PrefillKnee           float64 `json:"prefillKnee"`
 	DecodeKnee            float64 `json:"decodeKnee"`
 	// RouterWait and BurstWait are the flow-control gate's waits, absent
-	// unless it is priced past the prefill onset (FlowControlWaitPriced).
+	// unless it is priced as a stage past the prefill onset
+	// (FlowControlWaitPriced with --price-router-wait; with
+	// --router-wait-in-prefill the wait is inside the prefill figure and
+	// they stay absent).
 	RouterWait float64 `json:"routerWait,omitempty"`
 	BurstWait  float64 `json:"burstWait,omitempty"`
 	// Onsets are the flow-control onsets, absent with flow control off.
@@ -517,7 +549,8 @@ func newWireOutput(question string, f *answerFlags, st *learnreplay.State, varia
 			FirstCycle: 1, LastCycle: st.Cycle, TotalCycles: st.Cycles, FirstAt: st.FirstAt, LastAt: st.At},
 		Bands: &wireBands{Method: "block bootstrap", BlockCycles: r.Block, Resamples: r.Resamples, Seed: r.Seed,
 			LoPercent: 10, HiPercent: 90},
-		Note: footer(st, variants),
+		Note:      footer(st, variants),
+		SelfCheck: f.checked,
 	}
 	if o := f.captured; o != nil {
 		roles := "role-of"
@@ -557,7 +590,7 @@ func inputsOf(f *answerFlags, pv pricedVariant) *wireInputs {
 		Line: wireLine{A: pv.decode.Line.A, B: pv.decode.Line.B, Tier: pv.state.Tier,
 			BorrowedFrom: pv.state.BorrowedFrom, Readings: len(pv.state.LineReadings),
 			Resamples: pv.lines.Drawn, TierChanges: pv.lines.TierChanges(),
-			FromCycle: pv.state.ReadingsFrom, ToCycle: pv.state.ReadingsTo, Check: wireCheck(pv)},
+			FromCycle: pv.state.ReadingsFrom, ToCycle: pv.state.ReadingsTo, Check: wireCheck(pv), AssumedB: wireAssumed(pv)},
 		FillBand:       wireInterval{Lo: pv.decode.Band.Lo, Hi: pv.decode.Band.Hi},
 		CapacityTokens: pv.decode.CapacityTokens, KVPerRequest: pv.decode.KVPerRequest, KVPerRequestSource: pv.kvSource,
 		Shape: wireShape{InputTokens: pv.shape.AvgInputTokens, InputSource: shapeMeasured,

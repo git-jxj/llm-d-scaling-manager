@@ -38,12 +38,12 @@ and under **Inputs**; the API puts it in `refused`.
 
 | Reason | What it means | Fix |
 | --- | --- | --- |
-| `NoPrefillCapacity` | No prefill capacity V_P: the prefill Pods never queued long enough to learn it. SGLang always lands here; it exports no computed-token series. | Record a busier window, or assume V_P (**Assume a term**, API `assume.vp`). |
+| `NoPrefillCapacity` | No prefill capacity V_P: the prefill Pods never queued for compute long enough to learn it (deferred requests, such as those waiting for a cached prefix to load, do not count). SGLang always lands here; it exports no computed-token series. | Record a busier window, or assume V_P (**Assume a term**, API `assume.vp`). |
 | `NoFixedLatency` | No fixed latency a: it is learned from low-load minutes at more than one prompt length. | Record a window with quiet minutes and mixed prompts, or assume a (`assume.a`). |
 | `NoFixedLatency` with detail `P1 refused a: NoPromptSpread` or `TooFewLowLoadMinutes` | The quiet minutes did not span enough prompt lengths, or were too few, to tell the fixed cost a from the per-token cost. | As for `NoFixedLatency`. |
 | `NoImbalance` | More than one prefill Pod and no f, the busiest Pod's share of the work. f = 1 is never assumed silently. | Record a window in which every prefill Pod carried load. |
 | `NoLine` | No inter-token latency line to price TPOT from. | Record a window in which KV-cache use spans 0.30 or more ([what the line needs](metrics.md#what-your-prometheus-must-keep)). |
-| `PinnedDefaultB` | The decode line was fitted on a 6 ms default intercept, never measured on this engine, so decode is not priced. Common, even on a busy window, whether recorded with `capture` or by the controller. | No assumption clears it yet, on the page, the API or the CLI ([#225](https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/225)). A longer window, or a recording the controller made over a longer run, may carry a measured intercept. |
+| `PinnedDefaultB` | The decode line rests on a 6 ms default for its intercept B, the per-token latency with the cache empty. No engine measured it. Common on real P/D windows. | Add `--assume-itl-b floor` (API `assume.itlBFromFloor: true`) to take B from what the decode Pods read at low KV fill, or a value: `--assume-itl-b 12ms` (API `assume.itlB: 0.012`; page **Assume a term**, ITL B in ms, which shows the floor's value: the page has no floor switch). Figures are flagged `AssumedITLB`. On a `held` or `borrowed` line it does nothing: pick a cycle where the line is `pinned-B` (`--cycle N`, the page's **Cycle** box). |
 | `NoCapacity`, `NoBatchCap` | No KV capacity, or no batch cap, for the replica. | Make sure Prometheus keeps `vllm:cache_config_info`; pass the engine arguments (`--engine-args`, and `--prefill-engine-args` for a P/D fleet) or `--batch-cap` when you record or serve. |
 | `NoTPOTHistogram` | A TPOT percentile asked with no ratio R_q of percentile to mean. | Type an assumed ratio (**TPOT percentile**, API `assume.tpotRatio`), or ask for the mean. |
 | `TargetBelowFloor` | The target is under what any number of replicas reaches. | Raise the target. More replicas do not help. |
@@ -60,7 +60,7 @@ for a queue: the engine does not report why requests wait (SGLang, or vLLM
 before v0.20.0). If the floor is seconds where your clients see far less, it
 was measured while decode was saturated. Answer at an earlier cycle or window.
 
-A figure flagged `AssumedShape`, `AssumedTPOTRatio` or with an assumed term
+A figure flagged `AssumedShape`, `AssumedTPOTRatio`, `AssumedITLB` or with an assumed term
 stands, but rests on a value you typed. The **Flags** drawer says what clears
 each flag. A TPOT percentile flagged `GlobalTPOTRatio` is priced at a fill the
 source saw fewer than 5 windows at; record a window with more time at that load.

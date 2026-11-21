@@ -70,7 +70,8 @@ func apiError(err error) error {
 // the recorded counts as the CLI would, the TTFT at the policy's statistic.
 func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest) (*whatifapi.Resolved, error) {
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
-		seed: whatif.DefaultResampling().Seed, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
+		serveSelfCheck: req.SelfCheck != nil && *req.SelfCheck,
+		seed:           whatif.DefaultResampling().Seed, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
@@ -214,7 +215,10 @@ func (s *servedSources) Sources(context.Context) (whatifapi.SourcesResponse, err
 		}
 	}
 	if s.uploads != nil {
-		out.Recordings = append(out.Recordings, s.uploads.names()...)
+		out.Uploads = s.uploads.list()
+		for _, l := range out.Uploads {
+			out.Recordings = append(out.Recordings, l.Name)
+		}
 	}
 	if s.recordings == "" {
 		return out, nil
@@ -343,7 +347,7 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 	}
 	content := strings.Join([]string{hex.EncodeToString(sum[:]), st.Namespace, st.ModelID, strconv.Itoa(st.Cycle), prefill,
 		variants[0].state.Variant, f.prefillVariant, f.variant}, "\x00")
-	series, err := seriesOf(data.open, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
+	series, latency, err := seriesAndLatencyOf(data.open, st, learnreplay.SeriesVariants{Prefill: prefill, Decode: variants[0].state.Variant})
 	if err != nil {
 		return nil, apiError(err)
 	}
@@ -354,8 +358,14 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 		Content: content,
 		Pricer:  pricer,
 		Series:  series,
+		Latency: latency,
 	}
-	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(res.Inputs))
+	res.Config = runConfigOf(st, variants[0].state.Variant, prefill)
+	if f.selfCheckOn() {
+		res.Folds, res.PlannerVersion = f.foldFits(variants[0].state.Variant, f.prefillVariant), selfCheckVersion()
+		res.Content += "\x00self-check"
+	}
+	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(latency) + sizeOf(res.Inputs))
 	return res, nil
 }
 
@@ -421,6 +431,14 @@ func (s *servedState) fleetAt(k whatifapi.Knobs) (*servedFleet, error) {
 	if a.TPOTRatio != nil {
 		f.tpotRatio = *a.TPOTRatio
 		set("assume-tpot-ratio")
+	}
+	switch {
+	case a.ITLBFromFloor:
+		f.assumeITLB = itlBFloor
+		set("assume-itl-b")
+	case a.ITLB != nil:
+		f.assumeITLB = seconds(*a.ITLB).String()
+		set("assume-itl-b")
 	}
 	if k.ArrivalCV2 != nil {
 		f.arrivalCV2 = *k.ArrivalCV2

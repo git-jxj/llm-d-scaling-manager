@@ -160,6 +160,15 @@
 //	                       none is usable.
 //	scalerCASha256         the sha256 of the DER of the first certificate in
 //	                       scalerCACert, in hex.
+//	replicasNotArriving    present while a variant has had fewer Ready
+//	                       replicas than its scale target asks for, for
+//	                       longer than twice its start time (at least 5
+//	                       minutes): one line per variant, sorted,
+//	                       "<namespace>/<variant> (<role>): <ready>/<asked>
+//	                       Ready since <RFC 3339 time>: <reason> ...", the
+//	                       reason read from its pods with the node and the
+//	                       pods' own message. At most 20 lines, then
+//	                       "+<n> more". Mirrors llmsm_replicas_not_arriving.
 //
 // limiter, limiterWarnings and utilizationShare are recomputed from the applied configuration
 // in the same update that records policyResourceVersion, so they never lag
@@ -292,6 +301,10 @@ const (
 	// certificate.
 	KeyScalerCACert   = "scalerCACert"
 	KeyScalerCASha256 = "scalerCASha256"
+	// KeyReplicasNotArriving lists the variants whose asked-for replicas have
+	// not arrived for longer than twice their start time, one per line, with
+	// why. Absent when none.
+	KeyReplicasNotArriving = "replicasNotArriving"
 )
 
 // PodListDeniedMessage is the KeyPodListDenied value.
@@ -873,6 +886,20 @@ func (p *Publisher) SetResolvedAccelerators(accelerators []string) {
 	}
 	sorted := slices.Compact(slices.Sorted(slices.Values(accelerators)))
 	p.update(func(d map[string]string) { d[KeyResolvedAccelerators] = strings.Join(sorted, ",") })
+}
+
+// SetReplicasNotArriving records the variants whose replicas have not
+// arrived, one line each; empty removes the key.
+func (p *Publisher) SetReplicasNotArriving(lines []string) {
+	if p == nil {
+		return
+	}
+	const maxLines = 20
+	sorted := slices.Sorted(slices.Values(lines))
+	if len(sorted) > maxLines {
+		sorted = append(sorted[:maxLines], fmt.Sprintf("+%d more", len(lines)-maxLines))
+	}
+	p.update(func(d map[string]string) { setOrDelete(d, KeyReplicasNotArriving, strings.Join(sorted, "\n")) })
 }
 
 // setOrDelete sets key to value, or removes it when value is empty.

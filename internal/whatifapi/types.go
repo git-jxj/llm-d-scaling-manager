@@ -26,6 +26,10 @@ type InputsRequest struct {
 	// several of a role (the CLI's --prefill-variant and --variant).
 	PrefillVariant string `json:"prefillVariant,omitempty"`
 	DecodeVariant  string `json:"decodeVariant,omitempty"`
+	// SelfCheck asks the planner be checked on the source beside its
+	// inputs (SelfCheck); absent, the server's default (on, unless the
+	// server was started with --no-self-check).
+	SelfCheck *bool `json:"selfCheck,omitempty"`
 }
 
 // The source kinds.
@@ -63,6 +67,9 @@ type InputsResponse struct {
 	Terms         []Term     `json:"terms"`
 	// Assumed is every input the source did not give, in words.
 	Assumed []string `json:"assumed"`
+	// SelfCheck is the planner checked on this source: the folds of it
+	// fitted on earlier cycles predicting later ones. Absent when not asked.
+	SelfCheck *SelfCheck `json:"selfCheck,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's
@@ -333,12 +340,17 @@ type Objective struct {
 
 // Assume is a typed value for a learned term, as the CLI's --assume-* flags
 // give it, each raising the engine's own flag. A and RouterHop are seconds.
+// ITLB is the decode line's intercept B in seconds, and ITLBFromFloor takes
+// it from the floor read below the band: either is the CLI's --assume-itl-b,
+// used only on a line on the default intercept (PinnedDefaultB).
 type Assume struct {
-	VP        *float64 `json:"vp,omitempty"`
-	A         *float64 `json:"a,omitempty"`
-	PromptCV  *float64 `json:"promptCV,omitempty"`
-	TPOTRatio *float64 `json:"tpotRatio,omitempty"`
-	RouterHop *float64 `json:"routerHop,omitempty"`
+	VP            *float64 `json:"vp,omitempty"`
+	A             *float64 `json:"a,omitempty"`
+	PromptCV      *float64 `json:"promptCV,omitempty"`
+	TPOTRatio     *float64 `json:"tpotRatio,omitempty"`
+	RouterHop     *float64 `json:"routerHop,omitempty"`
+	ITLB          *float64 `json:"itlB,omitempty"`
+	ITLBFromFloor bool     `json:"itlBFromFloor,omitempty"`
 }
 
 // ViewRequest switches the optional views on.
@@ -568,6 +580,20 @@ type SourcesResponse struct {
 	RecordingsTruncated bool     `json:"recordingsTruncated,omitempty"`
 	// Upload is set when the server takes uploads (POST /v1/recordings).
 	Upload *UploadInfo `json:"upload,omitempty"`
+	// Uploads are the uploads kept, newest first, as Recordings lists their
+	// names, each with the file name it was sent under, its size and when.
+	Uploads []UploadedRecording `json:"uploads,omitempty"`
+}
+
+// UploadedRecording is one upload kept: Name, which a recording source
+// gives; FileName, the file name it was last sent under (UploadFileName),
+// empty when none was given, a label never used to name a file; Bytes, its
+// size as sent; UploadedAt, when it was last sent (RFC 3339, UTC).
+type UploadedRecording struct {
+	Name       string `json:"name"`
+	FileName   string `json:"fileName,omitempty"`
+	Bytes      int    `json:"bytes"`
+	UploadedAt string `json:"uploadedAt"`
 }
 
 // UploadInfo is what a server that takes uploads takes.
@@ -577,11 +603,14 @@ type UploadInfo struct {
 }
 
 // UploadResponse is POST /v1/recordings: the name a recording source gives
-// the recording uploaded, which the server chose, and its size as sent.
+// the recording uploaded, which the server chose, its size as sent, and the
+// file name and time it is listed with (UploadedRecording).
 type UploadResponse struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Name          string `json:"name"`
 	Bytes         int    `json:"bytes"`
+	FileName      string `json:"fileName,omitempty"`
+	UploadedAt    string `json:"uploadedAt"`
 }
 
 // SizeRequest is POST /v1/size: the fewest replicas per role whose fleet

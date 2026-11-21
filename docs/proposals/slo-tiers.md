@@ -929,12 +929,19 @@ prompts of which half hit 1800 tokens give `I_eff` of 2000 or 200, a `cv` of
   is not the histogram's own `_sum ÷ _count`, so the two can cover different
   requests. A mean above the buckets' upper-bound mean proves they do, and the
   reading is refused as assumed ([as built](#as-built-q1)).
-- The second moment uses each bucket's **upper bound**, `Σ n_b·u_b² ÷ Σ n_b`,
-  so `cv² = E_u[I²] ÷ mean² − 1` reads at or above the truth when both count the
-  same requests. vLLM's token buckets
-  are coarse (1-2-5 steps), so it can read well high: constant 3000-token
-  prompts read about `cv` 1.3 in the 2000-5000 bucket. That costs replicas,
-  not safety.
+- The second moment is the **largest the buckets allow at the mean**, so
+  `cv² = E[I²] ÷ mean² − 1` reads at or above the truth when both count the
+  same requests. Inside a bucket `(l, u]` the second moment at a given mean is
+  largest with the mass on the two edges, and each token of mean added there
+  adds `l + u`. So the reading puts the mass on the lower edges and raises the
+  mean in the top buckets first. vLLM's token buckets are coarse (1-2-5
+  steps), so it can still read high: constant 3000-token prompts read `cv`
+  0.47 in the 2000-5000 bucket, and the staircase's 8k prompts (true `cv`
+  about 0.06) read 0.31 in the 5000-10000 one. That costs replicas, not
+  safety. The first build took every request at its bucket's upper bound,
+  `Σ n_b·u_b² ÷ Σ n_b`, which read those two at 1.3 and 0.75 (issue #266).
+  A mean below the buckets' lower-bound mean also proves two populations, and
+  reads that way, at the upper bounds.
 - Mass in the `+Inf` bucket has no upper bound: `cv` is set to 3 and flagged
   `PromptSpreadClamped`. So is any measured `cv` above 3, where the p90
   stops being monotone (below).
@@ -1267,8 +1274,9 @@ exists) and passes on the PR; each switch is also held by the golden runs.
 7. `routing-bound` at `f ÷ N_p` ≥ 0.8, with `predicted_ttft` present and no
    per-replica rate.
 8. `VPPromptTokens` per source, passed through `PrefillFromEstimate` with the curve; P3's `VPShapeMoved` (no curve, above 1.2x either way, not at or below it, and at 0) and `VPScaledToPrompt` copied to the flag series.
-9. The measured `cv`: upper-bound second moment reads at or above the true
-   `cv` on a bucketed sample; pooled over pods; `+Inf` mass and `cv` > 3
+9. The measured `cv`: the mean-bounded second moment reads at or above the
+   true `cv` on a bucketed sample, and at or below every request at its
+   upper bound; pooled over pods; `+Inf` mass and `cv` > 3
    give 3 and `PromptSpreadClamped`; the 2000/1800 counterexample reads 0.82
    or more.
 10. The assumed `cv` 2 with `AssumedPromptSpread`.
@@ -1525,13 +1533,13 @@ held `cv` as `clamped`.
 
 Why not one cycle: at 40 requests a minute with 2% of prompts at 20000 tokens and
 the rest at 1800, true `cv` 1.2, a single minute holds no long prompt 45% of the
-time and reads 0.48 with no flag. `TestPromptWindow_ARareLongPrompt` replays it:
+time and reads 0.33 with no flag. `TestPromptWindow_ARareLongPrompt` replays it:
 
-| Read | Misses the long prompts (0.48) | Reads under 1 |
+| Read | Misses the long prompts (0.33) | Reads under 1 |
 | --- | --- | --- |
 | One cycle | 43.7% of cycles | as missed, or more |
-| Window, 15 s cycle | 1.2% | 11.1% |
-| Window, 60 s cycle | 0 | 1.1% |
+| Window, 15 s cycle | 1.5% | 17.9% |
+| Window, 60 s cycle | 0 | 1.3% |
 
 At 15 s a cycle the 20 samples overlap, so they span under 6 minutes of requests,
 not 20.
@@ -1562,9 +1570,10 @@ different requests: a pod in a rollout may carry no histogram, and the requests
 finishing in a window are not the ones that prefilled in it. A mean above the
 buckets' upper-bound mean proves that, so the reading is `Assumed` and
 `AssumedPromptSpread` stands. It does not read as `cv` 0, which the second moment
-alone would give, or as a small `cv` just above 0. Past that check `cv` is at
-least the buckets' own spread about their upper-bound mean
-(`TestReadPromptSpread_TheFloorPastTheCheck`). A mean inside the bound can still
+alone would give, or as a small `cv` just above 0. Past that check `cv` is the
+widest spread the buckets can hold at the mean (or, for a mean below their
+lower edges, every request at its upper bound), so it is at or above any spread
+they allow there (`TestReadPromptSpread_BetweenTheTruthAndTheUpperEdges`). A mean inside the bound can still
 be another population's: no histogram can show that, so a pod missing from the
 histogram whose prompts have the same mean and a wider spread reads low.
 

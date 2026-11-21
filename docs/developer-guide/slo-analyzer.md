@@ -1,7 +1,7 @@
 # The slo analyzer and the shared ITL tracker
 
 How the `slo` analyzer works, for whoever changes it. Operators read
-[`slo` (observe only)](../reference/scaling-policy.md#slo-observe-only); the
+[`slo`](../reference/scaling-policy.md#slo-observes-bounds-decode-packing); the
 design and its open questions are in the
 [proposal](../proposals/slo-tiers.md).
 

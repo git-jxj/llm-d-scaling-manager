@@ -1,6 +1,7 @@
 package prefill
 
 import (
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"reflect"
@@ -236,6 +237,115 @@ func TestCapacity_BusyMinutesOlderThanTheWindowAreExcluded(t *testing.T) {
 		est := run(NewObserver(), cs...)
 		assert.Equal(t, tc.busy, est.VPBusyMinutes, "at %v", tc.at)
 		assert.Equal(t, tc.want, est.VPSource, "at %v", tc.at)
+	}
+}
+
+// A prefill pod that loads long cached prefixes holds deferred requests at
+// almost any load: its waiting count stays above zero while nothing waits for
+// compute. Three minutes at 30k tok/s with a capacity queue, then five
+// minutes at a quieter 10k with only deferred requests waiting. With
+// Cycle.QueueByCapacity the quiet minutes are neither busy nor queued, and
+// V_P is the 30k peak; off, they are busy minutes, and V_P is the load they
+// served, as P1 shipped. With nothing but deferred waits, on refuses V_P.
+func TestCapacity_ADeferredWaitIsNotAQueue(t *testing.T) {
+	row := func(rate float64, capacity int) domain.ReplicaMetrics {
+		rm := queued("p-0", rate, 3)
+		rm.CapacityQueueKnown, rm.CapacityQueueLength = true, capacity
+		return rm
+	}
+	for _, tc := range []struct {
+		name       string
+		byCap      bool
+		peak       bool
+		want       float64
+		source     Source
+		busy       int
+		refusal    Refusal
+		lowerBound bool
+	}{
+		{"on, peak then deferred", true, true, 30000, SourcePeakUnderQueue, 0, "", true},
+		{"off, peak then deferred", false, true, 10000, SourceBusyMinutes, 5, "", false},
+		{"on, deferred only", true, false, 0, "", 0, NoPrefillCapacity, false},
+		{"off, deferred only", false, false, 10000, SourceBusyMinutes, 5, "", false},
+	} {
+		o := NewObserver()
+		if tc.peak {
+			for i := range 3 {
+				c := cycle(t0.Add(time.Duration(i)*minute), row(30000, 2))
+				c.QueueByCapacity = tc.byCap
+				o.Observe(c)
+			}
+		}
+		var est Estimate
+		for i := range 5 {
+			c := cycle(t0.Add(time.Hour+time.Duration(i)*minute), row(10000, 0))
+			c.QueueMin = map[string]float64{"p-0": 2}
+			c.QueueByCapacity = tc.byCap
+			est = o.Observe(c)
+		}
+		assert.Equal(t, tc.busy, est.VPBusyMinutes, tc.name)
+		assert.Equal(t, tc.want, est.VP, tc.name)
+		assert.Equal(t, tc.source, est.VPSource, tc.name)
+		assert.Equal(t, tc.refusal, est.VPRefused, tc.name)
+		assert.Equal(t, tc.lowerBound, est.VPLowerBound, tc.name)
+	}
+}
+
+// A capacity queue is a queue with Cycle.QueueByCapacity on, and without the
+// capacity series (an older vLLM) the whole count still is: five busy
+// minutes at 24k are V_P on and off alike.
+func TestCapacity_ACapacityQueueIsStillAQueue(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		known    bool
+		capacity int
+	}{
+		{"capacity queue", true, 2},
+		{"no capacity series", false, 0},
+	} {
+		for _, byCap := range []bool{false, true} {
+			o := NewObserver()
+			var est Estimate
+			for i := range 5 {
+				rm := queued("p-0", 24000, 3)
+				rm.CapacityQueueKnown, rm.CapacityQueueLength = tc.known, tc.capacity
+				c := cycle(t0.Add(time.Duration(i)*minute), rm)
+				c.QueueMin = map[string]float64{"p-0": 2}
+				c.QueueByCapacity = byCap
+				est = o.Observe(c)
+			}
+			name := fmt.Sprintf("%s, by capacity %v", tc.name, byCap)
+			assert.Equal(t, 5, est.VPBusyMinutes, name)
+			assert.Equal(t, 24000.0, est.VP, name)
+			assert.Equal(t, SourceBusyMinutes, est.VPSource, name)
+		}
+	}
+}
+
+// With Cycle.QueueByCapacity, a minute with no capacity queue ends a run of
+// queued minutes, deferred requests waiting or not: three minutes at 20k
+// whose middle one waited for nothing but a prefix are no peak on, and a
+// 20k peak off.
+func TestCapacity_AMinuteWithNoCapacityQueueEndsTheRun(t *testing.T) {
+	for _, byCap := range []bool{false, true} {
+		o := NewObserver()
+		var est Estimate
+		for i, capacity := range []int{2, 0, 2} {
+			rm := queued("p-0", 20000, 3)
+			rm.CapacityQueueKnown, rm.CapacityQueueLength = true, capacity
+			c := cycle(t0.Add(time.Duration(i)*minute), rm)
+			c.QueueByCapacity = byCap
+			est = o.Observe(c)
+		}
+		name := fmt.Sprintf("by capacity %v", byCap)
+		if byCap {
+			assert.Equal(t, NoPrefillCapacity, est.VPRefused, name)
+			assert.Equal(t, 1, est.VPLongestQueuedRun, name)
+			continue
+		}
+		assert.Equal(t, 3, est.VPLongestQueuedRun, name)
+		assert.Equal(t, SourcePeakUnderQueue, est.VPSource, name)
+		assert.Equal(t, 20000.0, est.VP, name)
 	}
 }
 

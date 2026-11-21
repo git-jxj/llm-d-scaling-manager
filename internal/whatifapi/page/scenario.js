@@ -25,7 +25,7 @@ const MAX_SCENARIOS = 50, MAX_NAME = 80, MAX_LINK = 4096, MAX_FILE = 65536;
 // the free names (a recording, a namespace, a model, a variant, a bucket),
 // and the keys with a fixed set of values or a form of their own (edges).
 const LINK_NUMBERS = new Set(["cycle", "prefill", "decode", "rate", "ttft", "tpot", "ratio", "headroom", "out", "max",
-  "vp", "a", "promptCV", "routerHop"]);
+  "vp", "a", "promptCV", "routerHop", "itlB"]);
 const LINK_NAMES = new Set(["recording", "namespace", "model", "prefillVariant", "decodeVariant", "priceAs"]);
 const STAT_WORD = /^(mean|p[0-9]{1,2}(\.[0-9]{1,3})?)$/;
 const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD,
@@ -244,6 +244,25 @@ function scenarioTitle(clauses) {
   const parts = clauses.map(cleanName).filter(Boolean);
   while (parts.length > 1 && parts.join(", ").length > MAX_NAME) parts.pop();
   return cleanName(parts.join(", "));
+}
+
+// recordingLabel is how the source picker shows the recording named name: a
+// file in --recordings by its name; an upload, one of uploads (GET
+// /v1/sources), by the file name it was sent under, its size and when it was
+// sent (UTC), then the start of its hash, which names it. The file name is
+// the client's: cleaned here as a typed name is, isolated so that a
+// right-to-left name cannot reorder what follows it, and shown as text
+// alone.
+function recordingLabel(name, uploads) {
+  const u = Array.isArray(uploads) ? uploads.find(x => x && x.name === name) : undefined;
+  if (!u) return name;
+  const bytes = Number(u.bytes) || 0;
+  const kib = Math.max(1, Math.round(bytes / 1024));
+  const size = kib < 1024 ? `${kib} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
+  const when = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(String(u.uploadedAt || ""));
+  const hash = name.startsWith("upload:") ? name.slice(7, 19) : name;
+  const file = cleanName(u.fileName || "") || "unnamed";
+  return `\u2068${file}\u2069 (${size}${when ? `, ${when[1]} ${when[2]}Z` : ""}) · upload ${hash}`;
 }
 
 // sourceProblem is why a link's source cannot be opened against a server
@@ -522,7 +541,7 @@ const REFUSAL_WORDS = {
   NoFixedLatency: "no prefill fixed latency learned (assume a to price it)",
   NoTPOTHistogram: "no TPOT histogram to read a percentile from",
   TPOTBucketTooWide: "the TPOT histogram is too coarse for a percentile",
-  PinnedDefaultB: "the decode line rests on a default, not a measurement",
+  PinnedDefaultB: "the decode line rests on a default, not a measurement (type ITL B under Assume a term to price it)",
   NoLine: "no decode line learned",
   NoTraffic: "no traffic to judge",
 };
@@ -536,6 +555,7 @@ function refusalText(f) {
 // REPORT_FLAG_WORDS are the flags a report carries most, in a short phrase.
 // The rest are counted, and their codes kept for a tooltip.
 const REPORT_FLAG_WORDS = {
+  AssumedITLB: "assumes the decode ITL B",
   UnvalidatedTTFT: "TTFT is not validated",
   AssumedVP: "assumes the prefill speed you typed",
   AssumedA: "assumes the prefill fixed latency you typed",

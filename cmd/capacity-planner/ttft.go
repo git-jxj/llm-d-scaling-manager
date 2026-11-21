@@ -133,6 +133,8 @@ func (f *answerFlags) checkTTFT() error {
 		return usagef("--prefill %d, want 0 (the recorded count) or more", f.prefill)
 	case f.set["prefill-running-cap"] && (f.prefillRunningCap < 0 || f.prefillRunningCap > whatif.MaxRunningCap):
 		return usagef("--prefill-running-cap %d, want 0 (unknown) to %d", f.prefillRunningCap, whatif.MaxRunningCap)
+	case f.priceRouterWait && f.routerWaitInPrefill:
+		return usagef("--price-router-wait and --router-wait-in-prefill price the same wait two ways (router v0.11.0's gate, v1.0.0's): set one")
 	case f.set["prefill-running-cap"] && !f.psOnsets:
 		return usagef("--prefill-running-cap is read only with --ps-onsets")
 	case f.set["charge-decode-gate"] && f.chargeDecodeGate && f.question != rateQuestion:
@@ -391,6 +393,16 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		in: wireTTFT{Percentile: q.q, TargetSeconds: q.seconds, Assumed: []string{}}}
 	if pv != nil {
 		pf.in.DecodeVariant = pv.state.Variant
+		// Before any refusal: decode is priced on a stated B whether or not
+		// prefill prices.
+		if w := pv.itlBWords(); w != "" {
+			pf.assume("%s", w)
+			pf.stated = append(pf.stated, "--assume-itl-b")
+		}
+		// Asked and not used: said where the asker reads, not dropped.
+		if w := pv.itlBNotUsed(); w != "" {
+			pf.assume("%s", w)
+		}
 		if domain.CanonicalRole(pv.state.Role) == domain.RoleBoth {
 			pf.refused = aggregatedRefusal(pv.state.Variant)
 			return pf
@@ -419,6 +431,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	// whatif gates it on processor sharing itself
 	// (whatif.TTFTFleet.PriceRouterWait).
 	pf.fleet.PriceRouterWait = f.priceRouterWait
+	pf.fleet.RouterWaitInPrefill = f.routerWaitInPrefill
 	// Off by default, as in the SLO analyzer (whatif.DefaultPSOnsets,
 	// whatif.DefaultChargeDecodeGate).
 	pf.fleet.PSOnsets, pf.fleet.ChargeDecodeGate = f.psOnsets, f.chargeDecodeGate
@@ -446,8 +459,10 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 
 // onsetNotes says what --ps-onsets and --charge-decode-gate did to the fleet,
 // as --price-router-wait shows FlowControlWaitPriced: the placement of the
-// prefill onset, and whether the decode gate was charged. Nothing with
-// neither flag, so the default output does not move.
+// prefill onset, and whether the decode gate was charged; and that
+// --router-wait-in-prefill took the router's wait as inside the prefill
+// price, which leaves the same flag as --price-router-wait. Nothing with
+// none of the three, so the default output does not move.
 func (f *answerFlags) onsetNotes(pf *pricedFleet) {
 	if f.psOnsets {
 		switch p, ok := whatif.PrefillOnsetPlacement(pf.fleet); {
@@ -474,6 +489,19 @@ func (f *answerFlags) onsetNotes(pf *pricedFleet) {
 			pf.assume("the mean capped where the decode gate is closed %s%% of the time (--charge-decode-gate)", num(100*whatif.MaxDecodeGateClosedShare))
 		default:
 			pf.assume("%s (--charge-decode-gate)", g)
+		}
+	}
+	if f.routerWaitInPrefill {
+		switch {
+		case pf.fleet.FlowControl.State != whatif.FlowControlOn:
+			pf.assume("--router-wait-in-prefill not applied: flow control is not on")
+		case !pf.fleet.ProcessorSharing:
+			pf.assume("--router-wait-in-prefill not applied: prefill is priced first come")
+		case !(pf.fleet.Prefill.PromptCV <= whatif.MaxPSPromptCV):
+			pf.assume("--router-wait-in-prefill not applied: prompt cv %s is past %s, where processor sharing is not validated",
+				num(pf.fleet.Prefill.PromptCV), num(whatif.MaxPSPromptCV))
+		default:
+			pf.assume("the router's wait past the prefill onset inside the prefill price, measured on router v1.0.0 (--router-wait-in-prefill)")
 		}
 	}
 }

@@ -73,7 +73,7 @@ func priceBudget(t *testing.T, rm domain.ReplicaMetrics, role string, on bool) *
 	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchK2DecodeBudgetAtComputedPrompt: on}))
 	cfg := &config.ScalingPolicy{KvCacheThreshold: 0.8, ScaleUpThreshold: 0.85, QueueLengthThreshold: 5}
 	rc := a.computeReplicaCapacity(rm, cfg, tuningOf(cfg), "test-model", "test-ns", 32, role, "H100",
-		outputKeys{k2: budgetOut, mu: budgetOut}, budgetOut, budgetIn, 0, whatif.DerivedMu{}, servedRates{}, false, false, replicaRouting{}, false, logr.Discard())
+		outputKeys{k2: budgetOut, mu: budgetOut}, budgetOut, budgetIn, 0, whatif.DerivedMu{}, servedRates{}, false, false, replicaRouting{}, false, itlBatchBound{}, logr.Discard())
 	require.NotNil(t, rc)
 	return rc
 }
@@ -111,12 +111,18 @@ func ceilReplicas(demand, scaleUp float64, perReplica int64) int {
 	return c
 }
 
-func TestK2DecodeBudget_SpeculationIsPricedOnlyWhereItIsRead(t *testing.T) {
-	// No acceptance read: a step takes one token and emits one, so N = 256 x
-	// 700 / (1,600 + 700) = 77.9, capped at 64: 64 x 80,350 x 4.
+func TestK2DecodeBudget_UnreadAcceptanceStillTakesTheStepsBudget(t *testing.T) {
+	// No acceptance read: a step still takes 1 + k = 4 tokens of budget, and
+	// is read to emit 4, the fewest steps (175): N = 256 x 175 / (1,600 +
+	// 4 x 175) = 19.5 a rank. Charged one token a step, as before, it read
+	// 77.9, capped at 64; read to emit one, 40.7.
 	rm := budgetRow()
 	rm.SpecAcceptedPerStep, rm.SpecAcceptedPerStepKnown = 0, false
-	assert.Equal(t, int64(64*80_350*budgetRanks), priceBudget(t, rm, domain.RoleDecode, true).EffectiveCapacity)
+	n := 256.0 * 175 / (1_600 + 4*175)
+	got := priceBudget(t, rm, domain.RoleDecode, true).EffectiveCapacity
+	assert.InDelta(t, n*80_350*budgetRanks, float64(got), float64(budgetRanks), "the step's 1 + k is charged without the acceptance")
+	assert.Less(t, got, int64(64*80_350*budgetRanks), "not the one-token step's 64 a rank")
+	assert.Less(t, float64(got), 256.0*700/(1_600+4*700)*80_350*budgetRanks, "not one token emitted a step: 40.7 a rank")
 }
 
 func TestK2DecodeBudget_NoComputedPromptIsPricedAsBefore(t *testing.T) {
@@ -151,36 +157,47 @@ func TestK2DecodeBudget_TheComputedPromptIsHeldToThePrompt(t *testing.T) {
 
 // Through Analyze, on a P/D model: the decode variant's PerReplicaCapacity.
 func TestK2DecodeBudget_ThroughAnalyze(t *testing.T) {
+	run := func(on bool) float64 {
+		return decodeBudgetCapacity(t, map[string]bool{SwitchK2DecodeBudgetAtComputedPrompt: on})
+	}
+	assert.Equal(t, 713_688.0, run(false))
+	assert.Equal(t, 7_911_384.0, run(true))
+}
+
+// decodeBudgetCapacity runs three cycles of budgetRow beside a prefill
+// replica with the switches sw set, and returns the decode variant's
+// PerReplicaCapacity, which the derived k2 (P3) must price. Nil sw leaves
+// every switch at its constructor default.
+func decodeBudgetCapacity(t *testing.T, sw map[string]bool) float64 {
+	t.Helper()
 	states := []domain.VariantReplicaState{
 		{VariantName: decodeVariant, Role: domain.RoleDecode, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 32},
 		{VariantName: pdPrefillVariant, Role: domain.RolePrefill, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 32},
 	}
-	run := func(on bool) float64 {
-		store := capacity.NewStore()
-		store.Update("test-ns", "test-model", decodeVariant, capacity.Record{
-			GpuCount: 32, EngineParams: budgetParams(), LearnedFrom: "deployment",
-		}, time.Now())
-		a := NewSaturationAnalyzer(store)
-		require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchK2DecodeBudgetAtComputedPrompt: on}))
-		clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
-		a.now = func() time.Time { return clock }
-		in := makeAnalyzerInput([]domain.ReplicaMetrics{budgetRow(), pdPrefillRow()}, states)
-		var res *domain.AnalyzerResult
-		for range 3 {
-			var err error
-			res, err = a.Analyze(context.Background(), in)
-			require.NoError(t, err)
-			clock = clock.Add(15 * time.Second)
-		}
-		for _, vc := range res.VariantCapacities {
-			if vc.VariantName == decodeVariant {
-				require.True(t, strings.HasPrefix(vc.Reason, "P3"), "the derived k2 prices it: %s", vc.Reason)
-				return vc.PerReplicaCapacity
-			}
-		}
-		t.Fatal("no decode capacity")
-		return 0
+	store := capacity.NewStore()
+	store.Update("test-ns", "test-model", decodeVariant, capacity.Record{
+		GpuCount: 32, EngineParams: budgetParams(), LearnedFrom: "deployment",
+	}, time.Now())
+	a := NewSaturationAnalyzer(store)
+	if sw != nil {
+		require.NoError(t, a.SetSwitchesForReplay(sw))
 	}
-	assert.Equal(t, 713_688.0, run(false))
-	assert.Equal(t, 7_911_384.0, run(true))
+	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return clock }
+	in := makeAnalyzerInput([]domain.ReplicaMetrics{budgetRow(), pdPrefillRow()}, states)
+	var res *domain.AnalyzerResult
+	for range 3 {
+		var err error
+		res, err = a.Analyze(context.Background(), in)
+		require.NoError(t, err)
+		clock = clock.Add(15 * time.Second)
+	}
+	for _, vc := range res.VariantCapacities {
+		if vc.VariantName == decodeVariant {
+			require.True(t, strings.HasPrefix(vc.Reason, "P3"), "the derived k2 prices it: %s", vc.Reason)
+			return vc.PerReplicaCapacity
+		}
+	}
+	t.Fatal("no decode capacity")
+	return 0
 }

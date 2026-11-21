@@ -163,6 +163,25 @@ type Admission struct {
 	// that prices DefaultTierSafeMargin more (tier_latch.go). Without it, as
 	// before, each cycle chooses alone.
 	TierHysteresis bool
+	// HoldsSteadySlope keeps a key's last A, when it was fitted on steady
+	// readings, in place of a pinned fit on every reading: the fit the
+	// window falls back to once fewer than DefaultMinSamples of its readings
+	// are steady (pinnedReadings). That fallback is for a fleet that has not
+	// settled yet. On a fleet that has, it is a ramp-down's readings: the
+	// minute's ITL still covers the load that just stopped while its mean
+	// fill falls, so each reads a steep slope, and the fit took them once
+	// the steady ones had aged out (issue
+	// llm-d-incubation/llm-d-scaling-manager#266). The hold ends where every
+	// hold does (SlopeHoldFor, Args), and a fit on steady readings replaces
+	// it; until then a fleet whose load keeps moving, such as a saturated
+	// one, keeps the A of its last steady fit, even where its slope has
+	// since risen and the held line prices under it; unlike the tier
+	// latch's hold, this one has no safe-side margin. A declined every-reading
+	// fit is still declined, not held. A key never fitted on steady
+	// readings holds nothing. Without it, as before, the fallback refits.
+	// The saturation analyzer sets it under a planner-only switch
+	// (saturation.SwitchITLHoldSteadySlope).
+	HoldsSteadySlope bool
 	// TierPrice is what a targeted line's price reads of the engine
 	// (PricedRate). The slo analyzer sets it; a line priced at a fixed fill
 	// has no need of it.

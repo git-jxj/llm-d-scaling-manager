@@ -26,6 +26,7 @@ var pageFiles = map[string]pageFile{
 	"/page/planner.js":  {"page/planner.js", "text/javascript; charset=utf-8"},
 	"/page/scenario.js": {"page/scenario.js", "text/javascript; charset=utf-8"},
 	"/page/dayplan.js":  {"page/dayplan.js", "text/javascript; charset=utf-8"},
+	"/page/backtest.js": {"page/backtest.js", "text/javascript; charset=utf-8"},
 	"/page/planner.css": {"page/planner.css", "text/css; charset=utf-8"},
 }
 

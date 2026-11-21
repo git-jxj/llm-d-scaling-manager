@@ -526,6 +526,13 @@ type SaturationAnalyzer struct {
 	// constructor, planner-only; the capacity planner's replay turns them on
 	// (learnreplay.PlannerSwitches).
 	prefillALowLoadPerRank, prefillAEngineTiming bool
+	// prefillQueueByCapacity is SwitchPrefillQueueByCapacity: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillQueueByCapacity bool
+	// prefillFBusyMinutes is SwitchPrefillFBusyMinutes, and
+	// itlHoldSteadySlope SwitchITLHoldSteadySlope: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillFBusyMinutes, itlHoldSteadySlope bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor
@@ -535,13 +542,18 @@ type SaturationAnalyzer struct {
 	itlFills         map[string][]engineFill
 	itlBandFloors    map[string]bandFloor
 	// k2DecodeBudget is SwitchK2DecodeBudgetAtComputedPrompt (issue
-	// llm-d-incubation/llm-d-scaling-manager#201, decode_budget.go): off
-	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
+	// llm-d-incubation/llm-d-scaling-manager#201, decode_budget.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	k2DecodeBudget bool
 	// decodeLandedNeedsBound is SwitchDecodeLandedNeedsABound (issue
-	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): off
-	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
+	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	decodeLandedNeedsBound bool
+	// k2AtITLTarget is SwitchK2BatchAtITLTarget (issue
+	// llm-d-incubation/llm-d-scaling-manager#258, k2_itl_bound.go): on from
+	// the constructor; a replay turns it off (SetSwitchesForReplay). It
+	// bounds nothing without a TPOT objective.
+	k2AtITLTarget bool
 	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
 	// (itl_baseline_floor.go): off from the constructor; only a replay
 	// turns it on.
@@ -827,6 +839,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		k2FirstReadingWaits:    true,
 		joinedFromFirstServed:  true,
 		itlPerToken:            true,
+		k2AtITLTarget:          true,
 		itlWithheldLogged:      make(map[string]itlWithheldReasons),
 		itlReadsEngines:        make(map[string]bool),
 		k2Pending:              make(map[string]*k2PendingReadings),
@@ -842,6 +855,8 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillKeepsPrompts:    true,
 		prefillBusyShare:       true,
 		lowerBoundCapsShare:    true,
+		k2DecodeBudget:         true,
+		decodeLandedNeedsBound: true,
 		drainHaircut:           FirstReadHaircut,
 		itlOneSidedLast:        make(map[string]itlOneSidedRecord),
 		prefillObserver:        prefill.NewObserver(),

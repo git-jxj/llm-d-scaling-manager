@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="page/planner.css">
 <script src="page/scenario.js" defer></script>
 <script src="page/dayplan.js" defer></script>
+<script src="page/backtest.js" defer></script>
 <script src="page/planner.js" defer></script>
 </head>
 <body>
@@ -17,7 +18,9 @@
     <div class="sub">
       <span id="what">No inputs loaded</span>
       <span class="chip src" id="srcchip" hidden></span>
+      <span class="chip selfcheck" id="sccheck" hidden></span>
     </div>
+    <div class="selfcheckbox" id="scbox" hidden></div>
     <details id="source" class="card source">
       <summary>Source: <span id="srcsum">choosing</span></summary>
       <form id="srcform" class="row">
@@ -177,8 +180,9 @@
         <div class="field"><label for="a-a">a, fixed latency, ms</label><input type="number" id="a-a" min="0" step="1"><span class="hint" id="l-a"></span></div>
         <div class="field"><label for="a-cv">Prompt cv</label><input type="number" id="a-cv" min="0" step="0.1"><span class="hint" id="l-cv"></span></div>
         <div class="field"><label for="a-hop">Router hop, ms</label><input type="number" id="a-hop" min="0" step="1"><span class="hint" id="l-hop"></span></div>
+        <div class="field"><label for="a-itlb">Decode ITL B (per-token latency, cache empty), ms</label><input type="number" id="a-itlb" min="0.001" step="0.5"><span class="hint" id="l-itlb"></span></div>
       </div>
-      <div class="hint">A typed value replaces the learned one and flags every figure that rests on it. Leave a box empty to use the source's.</div>
+      <div class="hint">A typed value replaces the learned one and flags every figure that rests on it. Leave a box empty to use the source's. ITL B is used only where decode is refused PinnedDefaultB; the assumed list says when it was not.</div>
     </details>
   </section>
 
@@ -270,6 +274,54 @@
       <details><summary>Table view: every bucket, with why a bucket was not sized</summary><div id="daybuckets"></div></details>
       <ul class="daynotes" id="daynotes"></ul>
     </div>
+  </section>
+
+  <section class="card dayplan backtest" id="backtest" aria-labelledby="bttitle">
+    <h2 id="bttitle">Check the planner against a period it did not see</h2>
+    <p class="hint">Learns from the first part of the source, then predicts the latency of the rest from that period's traffic and
+      replica counts only, never from its measured latency, and compares with what the fleet measured. Or learn from the source and
+      test on another recording of the same configuration. Load a recording of a few hours in Source first.</p>
+    <div class="row">
+      <fieldset class="kind">
+        <legend>Test on</legend>
+        <label><input type="radio" name="btmode" value="split" id="btsplitmode" checked> the rest of this source</label>
+        <label><input type="radio" name="btmode" value="other" id="btothermode"> another recording</label>
+      </fieldset>
+      <div class="field" data-btmode="split"><label for="btsplit">Fit on the first <output id="btsplitout">60%</output></label>
+        <input id="btsplit" type="range" min="10" max="90" step="5" value="60"></div>
+      <div class="field" data-btmode="other" hidden><label for="bttest">Test recording</label>
+        <select id="bttest"></select></div>
+      <div class="field"><label for="btstep">Step</label>
+        <select id="btstep"><option selected>5m</option><option>15m</option><option>30m</option></select></div>
+      <label class="check"><input type="checkbox" id="btallow"> Test another configuration anyway</label>
+      <button type="button" id="btrun" disabled>Run</button>
+    </div>
+    <div id="btout" hidden>
+      <ul class="daysum" id="btsum"></ul>
+      <div class="legend" id="btlegend"></div>
+      <svg id="btchart" viewBox="0 0 960 420" role="img" aria-labelledby="bttitle btdesc"></svg>
+      <p class="sr" id="btdesc"></p>
+      <details><summary>Table view: the scores</summary><div id="btscores"></div></details>
+      <details><summary>Table view: every step</summary><div id="btsteps"></div></details>
+      <ul class="daynotes" id="btnotes"></ul>
+    </div>
+    <details class="blind" id="blind">
+      <summary>Blind: predict now, compare later</summary>
+      <p class="hint">Predict a window from its load alone, a recording with its latency taken out
+        (<code>capacity-planner strip-latency</code>), and keep the prediction file. Later, compare it with the same window
+        measured. The file carries a hash of its inputs and of itself: a file edited and not rehashed, or a window of another load, is
+        refused. The hash shows an edit; it does not sign the file.</p>
+      <div class="row">
+        <div class="field"><label for="bpwindow">Window to predict</label><select id="bpwindow"></select></div>
+        <button type="button" id="bprun" disabled>Predict</button>
+        <span id="bpout"></span>
+      </div>
+      <div class="row">
+        <div class="field"><label for="bcfile">Prediction file</label><input id="bcfile" type="file" accept=".json,application/json"></div>
+        <div class="field"><label for="bcmeasured">The same window, measured</label><select id="bcmeasured"></select></div>
+        <button type="button" id="bcrun">Compare</button>
+      </div>
+    </details>
   </section>
 
   <section class="card report" id="reportcard" aria-labelledby="reporttitle">

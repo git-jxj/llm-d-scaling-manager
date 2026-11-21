@@ -192,6 +192,13 @@ const (
 	// InferencePool selects while another variant of its model is routed: it is
 	// held at its replica count and its replicas are not counted as supply.
 	K8SEventHeldNotInPool = "HeldNotInInferencePool"
+	// K8SEventReplicasNotArriving is a Warning on a ScaledObject: its variant
+	// has fewer Ready replicas than it asked for, for longer than its start
+	// time, and why.
+	K8SEventReplicasNotArriving = "ReplicasNotArriving"
+	// K8SEventReplicasArrived is a Normal event after a
+	// K8SEventReplicasNotArriving: the variant has what it asked for again.
+	K8SEventReplicasArrived = "ReplicasArrived"
 	// K8SEventConfigEntryRejected is a Warning on a scaling-policy ConfigMap
 	// one of whose entries was rejected.
 	K8SEventConfigEntryRejected = "ConfigEntryRejected"

@@ -85,6 +85,9 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	// read once per cycle so every replica and the fleet shape agree: the
 	// derived k2 then prices no spread (replicaOutputDispersion).
 	shapeChanging bool,
+	// itlBound is the fill at which the variant's ITL line reaches the TPOT
+	// objective, the bound on its k2 (k2ITLBound).
+	itlBound itlBatchBound,
 	logger logr.Logger,
 ) *capacity.ReplicaCapacity {
 	if rm.TotalKvCapacityTokens <= 0 {
@@ -246,6 +249,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		// What a decode replica's budget is spent on (decode_budget.go).
 		batchCap.budget = decodeStepBudget(rm, role, engineParams)
 	}
+	batchCap.itl = itlBound
 	d := a.computeK2(
 		historyKey,
 		modelID, namespace, rm.VariantName,
@@ -783,6 +787,14 @@ func (a *SaturationAnalyzer) computeK2(
 		// Priced at the unadmitted reading, not at the chain's lower bound.
 		borrowed = k2Borrow{}
 	}
+	// Whatever priced it, a decode replica is held where its variant's ITL
+	// line reaches the policy's TPOT objective (SwitchK2BatchAtITLTarget,
+	// k2_itl_bound.go), and so is the figure the store keeps.
+	unbounded := k2
+	k2, held := itlBoundedK2(k2, batchCap.itl, kvCeiling)
+	recordable, _ = itlBoundedK2(recordable, batchCap.itl, kvCeiling)
+	logITLBound(logger, modelID, namespace, variantName, src, engineParams, batchCap, avgInput, avgOutput,
+		outputDispersion, ranks, kvCeiling, unbounded, k2, held)
 	return k2Decision{k2: k2, src: src, recordable: recordable, borrowed: borrowed, refused: refused}
 }
 

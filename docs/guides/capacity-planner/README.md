@@ -30,12 +30,14 @@ capacity planner's pages:
 | [The HTTP API](api.md) | calling the API yourself: every endpoint, field, flag and error, the plan budget, and Kubernetes authentication |
 | [The metrics it needs](metrics.md) | every series it reads, and what your Prometheus must keep |
 | [Troubleshooting](troubleshooting.md) | every refusal and error, with its fix |
+| [Check the planner on your own data](check.md) | fit it on part of a recording, predict the rest, and compare with what the fleet measured |
 | [How accurate each figure is](accuracy.md) | what `validated: error ...` and `OUTSIDE VALIDATED REGION` mean, and what was measured |
 
 ## Prerequisites
 
 - [ ] One of: Docker (or Podman); `curl` and `cosign` for a binary (linux or
-  darwin, amd64 or arm64; on Windows, the linux binary in WSL); or a clone of
+  darwin, amd64 or arm64, or windows amd64 from v0.12.2 on; before v0.12.2, on
+  Windows, the linux binary in WSL); or a clone of
   this repository and Go 1.26 or later.
   `cosign` 3.0 or later checks the image and the binary; 2.4 is enough for the
   binary only.
@@ -109,7 +111,7 @@ use:
 
 <!-- guide:get.binary start -->
 ```bash
-# Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64; on Windows, the linux binary in WSL.
+# Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64; on Windows, the .exe below (v0.12.2 or later).
 # Check it against SHA256SUMS and its signature (cosign 2.4 or later), as for the other release files. On macOS,
 # use shasum -a 256 -c - for sha256sum -c -.
 export V=<release, v0.12.0 or later> OS=linux ARCH=amd64
@@ -124,6 +126,27 @@ mkdir -p bin && install -m 0755 ${B} bin/capacity-planner
 bin/capacity-planner version
 ```
 <!-- guide:get.binary end -->
+
+On Windows:
+
+<!-- guide:get.windows start -->
+```bash
+# On Windows (amd64), from Git Bash, which has curl and sha256sum. cosign as above, when you have it.
+# The planner commands below run as written in Git Bash.
+export V=<release, v0.12.2 or later>
+B=capacity-planner-${V}-windows-amd64.exe
+URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
+curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
+grep " ${B}$" SHA256SUMS | sha256sum -c -
+mkdir -p bin && cp ${B} bin/capacity-planner.exe
+bin/capacity-planner.exe version
+```
+<!-- guide:get.windows end -->
+
+In PowerShell, `Get-FileHash -Algorithm SHA256 <file>` prints the hash to
+compare with the file's line in `SHA256SUMS`. On Windows, open the page
+with `start http://127.0.0.1:8080/`; `serve --allow-upload` keeps uploads
+in `%TMP%` (usually `%TEMP%`), and Ctrl-C stops it and removes them.
 
 Or build it from a checkout:
 
@@ -375,9 +398,16 @@ The `kvPerRequest` term says where its figure came from:
 A source that did not see enough load cannot learn every term, and the page
 then shows refusals instead of numbers. Open **Assume a term the source did
 not learn** and type a value: the prefill rate V_P, the fixed latency a, the
-prompt cv or the router hop. The learned value, or the reason it is missing,
-is shown under each box. A typed value flags every figure that rests on it.
-[Each reason and its fix](troubleshooting.md#refused-figures).
+prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
+it is missing, is shown under each box. A typed value flags every figure that
+rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
+
+Decode refused with `PinnedDefaultB` is the common case on a real P/D window:
+the latency line's intercept B, the per-token latency with the cache empty,
+was never measured. The **ITL B** box shows the B the floor below the band
+gives; type it, or your own. On the CLI, `--assume-itl-b floor` uses that B
+and `--assume-itl-b 12ms` states one. Figures on it are flagged
+`AssumedITLB` and read as outside the validated region.
 
 A fleet whose load never goes quiet still gets two terms, each flagged:
 
@@ -520,8 +550,12 @@ It replays the recording once and answers, for each shape and load:
   UNDER and OVER name the fleet needed: the smallest that holds every
   target at the load with headroom, found by the same search as
   [`POST /v1/size`](api.md#the-size), for example "needs 3 prefill +
-  3 decode (has 2 + 2)". Other mixes of the same size that hold are listed
-  too. With the prefill side not priced it says "needs at least 3 decode".
+  3 decode (has 2 + 2)". A role it cuts must hold at the window's peak
+  too, as a spare must, so it never cuts a role the sentence says has no
+  spare unless it also adds replicas of the other role, and then it says
+  so ("trading prefill for decode"). Other mixes of the same size that
+  hold are listed too. With the prefill side not priced it says "needs at
+  least 3 decode".
   Each role's standing is in the sentence ("decode: one fewer holds even
   at the peak 43.2 r/s; prefill: no spare (1.9% under its operating
   point)"), with any prefill imbalance f that no run learned at that pod

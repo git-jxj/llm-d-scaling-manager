@@ -79,7 +79,7 @@ type checkingUploader struct {
 	done  chan error
 }
 
-func (u *checkingUploader) Upload(ctx context.Context, body io.Reader) (UploadResponse, bool, error) {
+func (u *checkingUploader) Upload(ctx context.Context, body io.Reader, _ string) (UploadResponse, bool, error) {
 	if _, err := io.ReadAll(body); err != nil {
 		u.done <- err
 		return UploadResponse{}, false, err

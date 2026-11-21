@@ -19,12 +19,13 @@ import (
 // The capacity planner's switches, through Analyze: off from the
 // constructor, so the controller never runs them (TestPlannerSwitches_OffFromTheConstructor).
 
-// TestPlannerSwitches_OffFromTheConstructor holds the three planner-only
+// TestPlannerSwitches_OffFromTheConstructor holds the six planner-only
 // switches off in a new analyzer: the controller's behaviour is P1's.
 func TestPlannerSwitches_OffFromTheConstructor(t *testing.T) {
 	a := NewSaturationAnalyzer(capacity.NewStore())
 	fields := a.switchFields()
-	for _, name := range []string{SwitchPrefillALowLoadPerRank, SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor} {
+	for _, name := range []string{SwitchPrefillALowLoadPerRank, SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
+		SwitchPrefillFBusyMinutes, SwitchITLAdaptiveBandFloor, SwitchITLHoldSteadySlope} {
 		require.Contains(t, fields, name)
 		assert.False(t, *fields[name], "%s is planner-only: off from the constructor", name)
 	}
@@ -312,4 +313,158 @@ func TestITLAdaptiveBandFloor_HeldThenReleasedThroughAnalyze(t *testing.T) {
 	}
 	_, ok = cycle(0.20, 0.55)
 	assert.False(t, ok, "released on the release spread's cycle %d in a row", adaptiveBandReleaseCycles)
+}
+
+// deferredPrefillCycle runs one cycle of a P/D model whose prefill pod
+// computes 10k tok/s with three requests waiting all minute, none of them for
+// capacity: deferred, as while a cached prefix loads. It returns the
+// variant's estimate.
+func (h *observeHarness) deferredPrefillCycle() prefill.Estimate {
+	h.t.Helper()
+	states := []domain.VariantReplicaState{
+		{VariantName: "decode", Role: domain.RoleDecode, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+		{VariantName: "prefill", Role: domain.RolePrefill, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+	}
+	dec := makeReplicaMetrics("decode-0", "decode", 5000, 16000, 0, 4000, 500)
+	pre := makeReplicaMetrics("prefill-0", "prefill", 0, 16000, 3, 2000, 1)
+	pre.RequestRate, pre.RequestRateKnown = 5, true
+	pre.PrefillComputedTokenRate, pre.PrefillComputedTokenRateKnown = 10000, true
+	pre.QueueMin, pre.QueueMinKnown = 2, true
+	pre.CapacityQueueLength, pre.CapacityQueueKnown = 0, true
+	_, err := h.a.Analyze(h.ctx, makeAnalyzerInput([]domain.ReplicaMetrics{dec, pre}, states))
+	require.NoError(h.t, err)
+	h.clock = h.clock.Add(time.Minute)
+	est, _, ok := h.a.PrefillEstimate("test-ns", "test-model", "prefill")
+	require.True(h.t, ok)
+	return est
+}
+
+// Through Analyze: on, a prefill pod whose waiting requests are all deferred
+// never queued for compute, and V_P is refused; off, its minutes are busy and
+// V_P is the load it served.
+func TestPrefillQueueByCapacity_DeferredWaitsThroughAnalyze(t *testing.T) {
+	run := func(on bool) prefill.Estimate {
+		h := newObserveHarness(t, &capacity.EngineParams{Engine: inferenceengine.EngineVLLM})
+		require.NoError(t, h.a.SetSwitchesForReplay(map[string]bool{SwitchPrefillQueueByCapacity: on}))
+		var est prefill.Estimate
+		for range 10 {
+			est = h.deferredPrefillCycle()
+		}
+		return est
+	}
+	on := run(true)
+	assert.Equal(t, prefill.NoPrefillCapacity, on.VPRefused, "%+v", on)
+	assert.Zero(t, on.VP)
+
+	off := run(false)
+	assert.Empty(t, off.VPRefused, "%+v", off)
+	assert.Equal(t, 10000.0, off.VP)
+}
+
+// twoPrefillCycle runs one cycle of a P/D model with two prefill pods that
+// serve perPod requests a minute between them on average, the first w times
+// the second's share. It returns the variant's estimate.
+func (h *observeHarness) twoPrefillCycle(perPod, w float64) prefill.Estimate {
+	h.t.Helper()
+	states := []domain.VariantReplicaState{
+		{VariantName: "decode", Role: domain.RoleDecode, AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+		{VariantName: "prefill", Role: domain.RolePrefill, AcceleratorName: "H100", CurrentReplicas: 2, GPUsPerReplica: 1},
+	}
+	rows := make([]domain.ReplicaMetrics, 0, 3)
+	rows = append(rows, makeReplicaMetrics("decode-0", "decode", 5000, 16000, 0, 4000, 500))
+	for i, share := range []float64{w, 1} {
+		pre := makeReplicaMetrics(fmt.Sprintf("prefill-%d", i), "prefill", 0, 16000, 0, 2000, 1)
+		rr := 2 * perPod / 60 * share / (w + 1)
+		pre.RequestRate, pre.RequestRateKnown = rr, true
+		pre.PrefillComputedTokenRate, pre.PrefillComputedTokenRateKnown = rr*2000, true
+		rows = append(rows, pre)
+	}
+	_, err := h.a.Analyze(h.ctx, makeAnalyzerInput(rows, states))
+	require.NoError(h.t, err)
+	h.clock = h.clock.Add(time.Minute)
+	est, _, ok := h.a.PrefillEstimate("test-ns", "test-model", "prefill")
+	require.True(h.t, ok)
+	return est
+}
+
+// Through Analyze: twenty light minutes at 3:1 and ten busy ones at 1.1:1.
+// On, f is the busy minutes' (raw 1.048, less the chance excess); off, the
+// light minutes set the median (raw 1.5).
+func TestPrefillFBusyMinutes_LightMinutesThroughAnalyze(t *testing.T) {
+	run := func(on bool) prefill.Estimate {
+		h := newObserveHarness(t, &capacity.EngineParams{Engine: inferenceengine.EngineVLLM})
+		require.NoError(t, h.a.SetSwitchesForReplay(map[string]bool{SwitchPrefillFBusyMinutes: on}))
+		for range 20 {
+			h.twoPrefillCycle(150, 3)
+		}
+		var est prefill.Estimate
+		for range 10 {
+			est = h.twoPrefillCycle(1500, 1.1)
+		}
+		return est
+	}
+	on, off := run(true), run(false)
+	require.Empty(t, on.FRefused, "%+v", on)
+	require.Empty(t, off.FRefused, "%+v", off)
+	assert.InDelta(t, 1.033, on.F, 0.005)
+	assert.InDelta(t, 1.454, off.F, 0.01)
+	assert.Equal(t, off.FSamples, on.FSamples, "the same minutes are kept")
+}
+
+// holdRampCycle runs one decode cycle of three replicas at fill k reading
+// ITL itl, at the analyzer's clock, and returns the variant's line.
+func holdRampCycle(t *testing.T, a *SaturationAnalyzer, v string, k, itlSec float64) domain.ServiceRateSignal {
+	t.Helper()
+	states := []domain.VariantReplicaState{
+		{VariantName: v, Role: domain.RoleDecode, AcceleratorName: srAccel, CurrentReplicas: 3, GPUsPerReplica: 1},
+	}
+	rows := make([]domain.ReplicaMetrics, 0, 3)
+	for i := range 3 {
+		rm := makeReplicaMetrics(fmt.Sprintf("%s-%d", v, i), v, int64(k*16000), 16000, 0, 6000, 1000)
+		rm.Ready = true
+		rm.KvUsageInstant = k
+		rm.AvgITL, rm.AvgITLKnown = itlSec, itlSec > 0
+		rows = append(rows, rm)
+	}
+	ctx, _ := observedCtx(t)
+	res, err := a.Analyze(ctx, makeAnalyzerInput(rows, states))
+	require.NoError(t, err)
+	return srSignal(t, res, v)
+}
+
+// Through Analyze, issue llm-d-incubation/llm-d-scaling-manager#266: a
+// plateau at fill 0.75, a ramp-down whose ITL still reads the plateau's, and
+// a long idle. On, the line keeps the plateau's slope to the end; off, the
+// ramp-down's readings are fitted once the plateau's steady ones are gone,
+// and the line ends steeper.
+func TestITLHoldSteadySlope_ARampDownThroughAnalyze(t *testing.T) {
+	const v = "decode-ramp"
+	run := func(on bool) (last, plateau domain.ServiceRateSignal) {
+		a := srAnalyzer(v)
+		require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchITLHoldSteadySlope: on}))
+		clock := propStart
+		a.now = func() time.Time { return clock }
+		itlSec := tracedModel.ITLAt(0.75)
+		for range 40 {
+			plateau = holdRampCycle(t, a, v, 0.75, itlSec)
+			clock = clock.Add(15 * time.Second)
+		}
+		for _, k := range []float64{0.6, 0.5, 0.4, 0.3} {
+			last = holdRampCycle(t, a, v, k, itlSec)
+			clock = clock.Add(15 * time.Second)
+		}
+		for range 160 {
+			last = holdRampCycle(t, a, v, 0, 0)
+			clock = clock.Add(15 * time.Second)
+		}
+		return last, plateau
+	}
+	on, onPlateau := run(true)
+	off, offPlateau := run(false)
+	require.True(t, onPlateau.HasLine, "premise: the plateau fits a line")
+	require.InDelta(t, onPlateau.LineSlope, offPlateau.LineSlope, 1e-12, "premise: the switch moves nothing on the plateau")
+	require.True(t, on.HasLine)
+	require.True(t, off.HasLine)
+	assert.InDelta(t, onPlateau.LineSlope, on.LineSlope, 1e-9, "on, the plateau's slope holds")
+	assert.Greater(t, off.LineSlope, 1.3*offPlateau.LineSlope, "off, the ramp-down's slope is fitted")
 }

@@ -97,6 +97,9 @@ func logSeries(k, y float64) float64 {
 	if y == 0 {
 		return -math.Log(k)
 	}
+	if k > 0 && y >= asymptoticSeriesFrom && y >= 4*k {
+		return logSeriesLarge(k, y)
+	}
 	ly := math.Log(y)
 	// The terms rise to about n = y, then fall faster than geometrically.
 	// They are summed in logs against a running maximum, rescaling the sum
@@ -113,6 +116,39 @@ func logSeries(k, y float64) float64 {
 		}
 		if float64(n) > y && lt < top-40 {
 			return top + math.Log(sum)
+		}
+	}
+	return math.NaN() // did not converge: never a partial sum
+}
+
+// asymptoticSeriesFrom is the least y at which logSeries reads its sum from
+// the asymptotic expansion (logSeriesLarge) rather than term by term. The
+// direct sum needs about y terms, each an Lgamma, a Log and an Exp: a TTFT
+// tail whose wait is short beside the request's own time asks for y in the
+// tens of thousands, some 2e5 times a figure, and one at-replicas ran for
+// over 20 minutes. At y = 64 the expansion's error is of order y e^-y, far
+// below float64's precision.
+const asymptoticSeriesFrom = 64
+
+// logSeriesLarge is logSeries for y >= asymptoticSeriesFrom and y >= 4k, by
+// the asymptotic expansion of the same sum. The sum is the integral over s in
+// [0, 1] of s^(k-1) exp(y s); with u = 1 - s it is exp(y) times the integral
+// of (1-u)^(k-1) exp(-y u), and Watson's lemma expands that as
+//
+//	sum_{j>=0} (1-k)_j / y^(j+1),  (1-k)_j = (1-k)(2-k)...(j-k)
+//
+// up to a part of relative order y e^-y/k from u near 1. Each term is the
+// last times (j-k)/y, at most 1/4 in size while j <= 2k (y >= 4k), so the
+// terms fall at once and the sum stays above 2/3; it stops when a term no
+// longer moves the sum, after a handful of terms at the y the model asks.
+// At an integer k the terms end at j = k and the sum is exact.
+func logSeriesLarge(k, y float64) float64 {
+	term, sum := 1.0, 1.0
+	for j := 1; j < maxSeriesTerms; j++ {
+		term *= (float64(j) - k) / y
+		sum += term
+		if math.Abs(term) <= 1e-17*math.Abs(sum) {
+			return y - math.Log(y) + math.Log(sum)
 		}
 	}
 	return math.NaN() // did not converge: never a partial sum

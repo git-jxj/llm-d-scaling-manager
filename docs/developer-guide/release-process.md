@@ -47,8 +47,9 @@ instead.
    `ghcr.io/<repository owner>/llm-d-scaling-manager/capacity-planner:<tag>`
    (`Dockerfile.capacity-planner`, entry point the `capacity-planner`
    binary), and the release files `capacity-planner-<tag>-<os>-<arch>` for
-   linux and darwin, amd64 and arm64, in `SHA256SUMS` and signed like the
-   others. The planner replays recordings with the controller's learners, so
+   linux and darwin, amd64 and arm64, and
+   `capacity-planner-<tag>-windows-amd64.exe`, in `SHA256SUMS` and signed
+   like the others. The planner replays recordings with the controller's learners, so
    it is never released apart from the controller
    ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
    `config/capacity-planner` (the planner in a cluster) names the image by
@@ -171,8 +172,9 @@ draft release for the tag existed before the run, it attached the files to
 that one instead. A release that is already **published** is never changed: a
 run whose files differ from the attached ones fails, and one whose files are
 identical uploads nothing. In **Releases**, open the draft, check that the
-files are there (each `.yaml`, `scaling-manager-tools-<tag>.tar.gz`, the four
-`capacity-planner-<tag>-<os>-<arch>` binaries, `SHA256SUMS`, and a
+files are there (each `.yaml`, `scaling-manager-tools-<tag>.tar.gz`, the five
+`capacity-planner-<tag>-<os>-<arch>` binaries (the windows one `.exe`),
+`SHA256SUMS`, and a
 `.sigstore.json` for each), paste the release notes, and publish.
 
 Before publishing, check the tools image too: the `release-tools` job

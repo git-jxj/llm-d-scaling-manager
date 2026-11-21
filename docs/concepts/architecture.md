@@ -170,7 +170,9 @@ registration; there is no other custom resource.
    and how much capacity the model needs for its load. Every other analyzer
    the policy lists (throughput, a custom one) works out the replicas it needs
    too, and the model is sized to the largest of those needs, in saturation's
-   units. The `slo` analyzer only observes and never changes the decision.
+   units. The `slo` analyzer only observes and never changes the decision,
+   except that a `tpot` target bounds how far saturation packs a decode
+   replica ([TPOT and decode packing](../reference/scaling-policy.md#how-a-tpot-target-bounds-decode-packing)).
 3. **Decide.** The optimizer splits that capacity across the model's
    variants. With no limiter it grows the variant with the lowest cost per
    unit of capacity (`variantCost` over what one replica serves) first. With

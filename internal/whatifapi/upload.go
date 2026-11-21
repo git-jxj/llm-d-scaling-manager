@@ -8,7 +8,9 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"strings"
 	"time"
+	"unicode"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -38,14 +40,65 @@ const uploadIdle = time.Minute
 // user's browser.
 var uploadTypes = []string{"application/octet-stream", "application/gzip"}
 
+// UploadFileNameParam is the query parameter an upload may give its file's
+// name in (POST /v1/recordings?filename=run.jsonl.gz): shown beside the
+// upload so that people can tell uploads apart, cleaned (UploadFileName),
+// and never used to name a file.
+const UploadFileNameParam = "filename"
+
+// maxUploadFileName bounds an upload's file name, in characters: the page's
+// bound on a name (MAX_NAME in scenario.js).
+const maxUploadFileName = 80
+
+// maxUploadFileMarks bounds the combining marks kept in a row: an accent or
+// a vowel sign, not a pile of them drawn over the text around it.
+const maxUploadFileMarks = 2
+
+// blankLetters are letters drawn as nothing (Hangul fillers): a name of
+// them would look empty, or pad one name to look like another.
+const blankLetters = "\u115f\u1160\u3164\uffa0"
+
+// UploadFileName is name as an upload's label: the last element of a path;
+// letters, digits, up to two combining marks after a letter, and
+// ` ._-+()[],=@` kept, every other character, a direction control or a
+// blank letter among them, replaced by '_'; trimmed, at most 80
+// characters. Empty when nothing is left.
+func UploadFileName(name string) string {
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	var b strings.Builder
+	n, marks, afterLetter := 0, 0, false
+	for _, r := range name {
+		if n == maxUploadFileName {
+			break
+		}
+		mark := unicode.In(r, unicode.Mn, unicode.Mc)
+		switch {
+		case mark && afterLetter && marks < maxUploadFileMarks:
+			marks++
+		case (unicode.IsLetter(r) && !strings.ContainsRune(blankLetters, r)) || unicode.IsDigit(r):
+			afterLetter, marks = unicode.IsLetter(r), 0
+		case strings.ContainsRune(" ._-+()[],=@", r):
+			afterLetter, marks = false, 0
+		default:
+			r, afterLetter, marks = '_', false, 0
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // Uploader keeps a recording uploaded with POST /v1/recordings
 // (cmd/capacity-planner's).
 type Uploader interface {
 	// Upload reads body, the recording as sent, and keeps it when it reads
-	// as a recording. created is false when the same bytes were kept
-	// before. An error reading body is returned wrapped, so that a body past
-	// the server's bound is told apart (http.MaxBytesError).
-	Upload(ctx context.Context, body io.Reader) (out UploadResponse, created bool, err error)
+	// as a recording, with fileName (UploadFileName, or empty) as its label.
+	// created is false when the same bytes were kept before. An error
+	// reading body is returned wrapped, so that a body past the server's
+	// bound is told apart (http.MaxBytesError).
+	Upload(ctx context.Context, body io.Reader, fileName string) (out UploadResponse, created bool, err error)
 }
 
 // TooLargeError is an upload past one of the server's bounds: 413, with its
@@ -104,7 +157,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithDeadline(r.Context(), end)
 	defer cancel()
 	in := &idleReader{r: http.MaxBytesReader(w, r.Body, s.uploadMax), rc: rc, idle: s.uploadIdle, end: end}
-	out, created, err := s.uploader.Upload(ctx, in)
+	out, created, err := s.uploader.Upload(ctx, in, UploadFileName(r.URL.Query().Get(UploadFileNameParam)))
 	// A context ended once end has passed is the cap, not a client gone: as
 	// a read cut off, 408.
 	pastEnd := !time.Now().Before(end) && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled))

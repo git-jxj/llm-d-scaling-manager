@@ -88,6 +88,10 @@ type heldSlope struct {
 	// below the band (Admission.BaselineFromFloor), 0 otherwise: a hold
 	// pairs a with the B it was fitted through (pin), never with another.
 	floorB float64
+	// steady: a was fitted on steady readings, by the full fit or by the
+	// pinned fit while DefaultMinSamples of them were held
+	// (Admission.HoldsSteadySlope).
+	steady bool
 }
 
 // pin is the intercept a hold of h pairs with, for a key whose learned B is
@@ -503,6 +507,9 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 		c, r.TierHeld = t.dwellTier(key, c, tierInputs{obs: obs, steady: steadyObs, baseline: baseline,
 			learned: r.BaselineLearned, set: r.Ready, minSettled: s.MinSettledSamples}, adm, now)
 	}
+	if adm.HoldsSteadySlope && c.tier == TierPinnedB && c.everyReading && t.holdsSteadySlope(key, adm, now) {
+		c = fitChoice{hold: true}
+	}
 	if c.tier == TierOLS {
 		// B is what is remembered as the key's: B is the hardware floor,
 		// A the contention that moves with the workload, kept only for
@@ -519,7 +526,7 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 				t.baselines[key] = c.model.B
 				t.baselineAt[key] = newestOf(steadyObs, now)
 			}
-			t.slopes[key] = heldSlope{a: c.model.A, fittedAt: now, args: adm.Args}
+			t.slopes[key] = heldSlope{a: c.model.A, fittedAt: now, args: adm.Args, steady: true}
 			t.mu.Unlock()
 		}
 		r.Model, r.Tier = c.model, TierOLS
@@ -579,7 +586,7 @@ func (t *Tracker) Observe(key, variant string, rows []domain.ReplicaMetrics, adm
 		r.PriorBeyondReadings = r.PinnedAtBPrior && beyond
 	}
 	t.mu.Lock()
-	t.slopes[key] = heldSlope{a: heldA, fittedAt: now, args: adm.Args, floorB: floorB}
+	t.slopes[key] = heldSlope{a: heldA, fittedAt: now, args: adm.Args, floorB: floorB, steady: !c.everyReading}
 	t.mu.Unlock()
 	r.Model, r.Tier, r.PinnedAtFloor = m, TierPinnedB, floorB > 0
 	r.FitRows, r.FitPods = len(c.read), fitPods(c.read)
@@ -779,6 +786,9 @@ type fitChoice struct {
 	tier           string
 	hold, declined bool
 	read           []Observation
+	// everyReading: the pinned fit read every reading of the main window,
+	// fewer than DefaultMinSamples being steady (pinnedReadings).
+	everyReading bool
 }
 
 // chooseFit is Observe's choice of fit over a key's readings, in one place
@@ -799,11 +809,21 @@ func chooseFit(obs, steady []Observation, ready bool, baseline float64, minSettl
 	if !settled || len(pinned) < minSettled {
 		return fitChoice{hold: true}
 	}
+	every := len(steady) < DefaultMinSamples
 	m, ok := FitPinnedB(pinned, baseline)
 	if !ok {
-		return fitChoice{declined: true, read: pinned}
+		return fitChoice{declined: true, read: pinned, everyReading: every}
 	}
-	return fitChoice{model: m, tier: TierPinnedB, read: pinned}
+	return fitChoice{model: m, tier: TierPinnedB, read: pinned, everyReading: every}
+}
+
+// holdsSteadySlope reports whether key holds an A fitted on steady readings
+// that adm may hold at now (Admission.HoldsSteadySlope).
+func (t *Tracker) holdsSteadySlope(key string, adm Admission, now time.Time) bool {
+	t.mu.Lock()
+	held, have := t.slopes[key]
+	t.mu.Unlock()
+	return have && held.steady && adm.mayHold(held, now)
 }
 
 // Refitted is a line fitted again from readings a key's windows held, by the
