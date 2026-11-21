@@ -91,7 +91,7 @@ It is replay-only too.
 
 `slo-ttft-hop-unqueued` (off) sets which router windows teach the decode
 term's hop R (`prefill.DecodeTermCycle.HopUnqueued`). On, a window counts
-only when none of its cycles had a prefill row with requests waiting for
+only when none of its cycles had a serving prefill row with requests waiting for
 compute: the capacity part of the waiting count where the pod publishes it,
 else the whole count. Off, as before, a queued window counts too. Its R is
 then the queue's timing: two means of many seconds, read over different

@@ -1,8 +1,8 @@
 Over the 1 h 13 min the planner did not see:
-p90 TTFT: within 20% of measured in 2 of the 9 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans high (median ratio 1.32); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90.
-p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps scored (a figure, and enough measured requests); it leans low (median ratio 0.94). 5 had too few requests to measure a p90.
+p90 TTFT: within 20% of measured in 2 of the 7 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans high (median ratio 1.35). For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90.
+p90 TPOT: within 20% of measured in 8 of the 8 five-minute steps scored (a figure, and enough measured requests); it leans low (median ratio 0.94). 5 had too few requests to measure a p90.
 None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
-Judged 15 of 16 five-minute steps; not judged: 1 warm-up.
+Judged 13 of 16 five-minute steps; not judged: 1 warm-up, 2 a burst near the knee in its window.
 
 fit:  warmup.jsonl.gz, 2026-11-14 07:09 to 2026-11-14 08:22 UTC, 291 cycles
 test: warmup.jsonl.gz, 2026-11-14 08:22 to 2026-11-14 09:35 UTC, 289 cycles (one recording split: 50%)
@@ -22,26 +22,26 @@ step (UTC)          rate   P+D  TTFT p50            TTFT p90            TPOT p50
 2026-11-14 09:00    0.30   2+2  579ms/516ms         861ms/-             13ms/15ms         18ms/-            judged
 2026-11-14 09:05    0.29   2+2  669ms/508ms         1.0s/-              13ms/15ms         18ms/-            judged
 2026-11-14 09:10    0.27   2+2  667ms/509ms         996ms/-             13ms/15ms         18ms/-            judged
-2026-11-14 09:15    3.09   2+2  1.7s/11.7s          4.7s/17.7s          13ms/15ms         18ms/19ms         judged
+2026-11-14 09:15    3.09   2+2  1.7s/11.7s          4.7s/17.7s          13ms/15ms         18ms/19ms         not judged: a burst near the knee in its window
 2026-11-14 09:20    4.13   2+2  overloaded/12.2s    overloaded/17.9s    13ms/14ms         18ms/19ms         judged
-2026-11-14 09:25    2.02   2+2  880ms/11.1s         2.0s/17.6s          13ms/14ms         18ms/19ms         judged
+2026-11-14 09:25    2.02   2+2  880ms/11.1s         2.0s/17.6s          13ms/14ms         18ms/19ms         not judged: a burst near the knee in its window
 2026-11-14 09:30    0.26   2+2  666ms/515ms         993ms/-             13ms/15ms         18ms/-            judged
 2026-11-14 09:35    0.24   2+2  665ms/516ms         989ms/-             13ms/15ms         18ms/-            judged
 
 score over the steps with a figure
             steps  median  within     read    typical     worst-10%  under upper 
                     ratio     20% >20% low       miss          miss        bound 
-TTFT mean      14    1.19     43%        2      1.23x         5.15x          85% 1 refused Saturated
-TTFT p50       14    1.12     50%        3      1.23x         6.94x          77% 1 refused Saturated
-TTFT p90        9    1.32     22%        2      1.38x         8.79x          88% 1 refused Saturated, 5 fewRequests
-TTFT p95        3    0.31      0%        2      3.20x         7.85x          50% 1 refused Saturated, 11 fewRequests
-TPOT mean      15    0.98    100%        0      1.02x         1.11x            - 
-TPOT p50       15    0.88    100%        0      1.14x         1.14x            - 
-TPOT p90       10    0.94    100%        0      1.06x         1.06x            - 5 fewRequests
-TPOT p95        4    1.02    100%        0      1.02x         1.02x            - 11 fewRequests
+TTFT mean      12    1.21     50%        0      1.21x         1.25x          92% 1 refused Saturated
+TTFT p50       12    1.13     58%        1      1.15x         1.31x          83% 1 refused Saturated
+TTFT p90        7    1.35     29%        0      1.35x         1.87x         100% 1 refused Saturated, 5 fewRequests
+TTFT p95        1    2.19      0%        0      2.19x         2.19x         100% 1 refused Saturated, 11 fewRequests
+TPOT mean      13    0.99    100%        0      1.01x         1.02x            - 
+TPOT p50       13    0.88    100%        0      1.14x         1.14x            - 
+TPOT p90        8    0.94    100%        0      1.06x         1.06x            - 5 fewRequests
+TPOT p95        2    1.02    100%        0      1.02x         1.02x            - 11 fewRequests
 
 by load (the step's rate over the load the planner thinks the fleet can carry): steps, median ratio, within 20%
-below 0.8 of the knee     TTFT (14 steps): mean 14 1.19 43% p90 9 1.32 22%  TPOT (15 steps): mean 15 0.98 100% p90 10 0.94 100%
+below 0.8 of the knee     TTFT (12 steps): mean 12 1.21 50% p90 7 1.35 29%  TPOT (13 steps): mean 13 0.99 100% p90 8 0.94 100%
 0.8 to 1.0 of the knee    TTFT (0 steps): mean 0 - - p90 0 - -  TPOT (0 steps): mean 0 - - p90 0 - -
 past the knee             TTFT (1 step): mean 0 - - p90 0 - -  TPOT (0 steps): mean 0 - - p90 0 - -
 

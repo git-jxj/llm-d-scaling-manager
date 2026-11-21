@@ -165,6 +165,11 @@ func (r *replayer) setSwitches() error {
 			err = r.sat.SetSwitchesForReplay(sw)
 		case PackageSLO:
 			if r.slo == nil && r.opts.sloOptional {
+				// No analyzer to set them on, but the names are still
+				// checked: a misspelled one is an error here too.
+				if err := slo.New(nil, nil).SetSwitchesForReplay(sw); err != nil {
+					return fmt.Errorf("learnreplay: %w", err)
+				}
 				continue
 			}
 			if r.slo == nil {

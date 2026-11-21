@@ -2057,7 +2057,8 @@ issue proposed (above).
 - The router hop's per-token part is already learned (`prefill.HopFit`,
   `Base + PerToken*I`; 1.41 µs a token on the second staircase's warm-up, 11.3
   ms at 8000 tokens). On the Qwen3-32B staircase the warm-up learned 25.6 µs a
-  token (54 windows; 4 ms at 1000 tokens, 183 ms at 8000). The phases' 606
+  token (54 windows). The line gives 4 ms at 1000 tokens and 183 ms at 8000. It
+  was priced as 26 ms and 205 ms, because its negative intercept is clamped to 0. The phases' 606
   windows, replayed, fit 6.6 ms + 2.7 µs a token (95% bootstrap: 5.7 to 8.6 ms,
   0.8 to 3.6 µs), 9 ms at 1000 tokens and 28 ms at 8000. The 1000-token
   windows are tight (quartiles 8 to 12 ms); the 8000-token ones are not
@@ -2069,8 +2070,9 @@ issue proposed (above).
   requests in their capacity queue and a mean TTFT of 4 to 17 s. Over its first
   half they read R at 0.03 to 0.56 s and put 0.31 s of hop on every 8k prompt.
   Measured at low load, the router's mean less the two engines' was about 0.
-  Backtested on its own second half, the p90 TTFT read 1.90x high at
-  0.27 r/s. The planner's replay therefore reads R only from windows whose
+  Backtested on its own second half, its p90 TTFT read a median 1.90x high
+  over 9 steps. At 0.27 r/s it priced a mean of 1.02 s, where the router
+  measured 0.56 s. The planner's replay therefore reads R only from windows whose
   prefill pods held no queue (`slo-ttft-hop-unqueued`, off in S1). On the
   warm-up, R is then held at its 1k windows' 4 ms.
 

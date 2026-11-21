@@ -90,8 +90,9 @@ What this says:
 
 - **Short prompts:** the planner is close. TTFT reads from about 18% fast
   (the mean, at the lightest step) to 9% slow, and mean TPOT up to 18% slow.
-  Fast is the costly side: at 0.4 of the knee, size short-prompt TTFT
-  with that margin.
+  A figure that reads fast promises a TTFT the fleet will not deliver. At
+  light load (0.4 of the knee) the p90 read 13% fast and the mean 18% fast:
+  add that much before you compare a short-prompt TTFT with your SLO.
 - **Mean TPOT on long prompts:** within a few percent, from 5% fast to 1% slow.
 - **Long prompts:** TTFT reads from 4% fast to 184% slow. It is mostly slow,
   and more so near the knee.
@@ -104,8 +105,9 @@ What this says:
   knee: 5% to 25% under it in this run. The knee is outside with flow control
   on; read the onset's label instead. For bursty traffic the router started
   holding requests 4% to 7% before the onset the planner names.
-- **Rates:** the fleet held every rate the planner named at its target. The
-  run's steps did not go far enough to say how much more.
+- **Rates:** the fleet held every rate the planner named at its target. For
+  short prompts the true rate lies between the planner's and 6% above it. For
+  long prompts the run's steps did not go far enough to say how much more.
 
 A figure counts as inside only if every input that priced it is one the run
 priced:

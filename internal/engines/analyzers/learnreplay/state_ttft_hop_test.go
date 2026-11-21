@@ -42,6 +42,9 @@ func TestPlannerSwitches_TheSLOSwitchNeedsNoSLOAnalyzer(t *testing.T) {
 	sw := map[string]map[string]bool{PackageSLO: PlannerSwitches()[PackageSLO]}
 	r := &replayer{opts: Options{Switches: sw, sloOptional: true}}
 	assert.NoError(t, r.setSwitches())
+	r.opts.Switches = map[string]map[string]bool{PackageSLO: {"slo-no-such-switch": true}}
+	assert.Error(t, r.setSwitches(), "a misspelled slo switch is an error with no slo analyzer too")
+	r.opts.Switches = sw
 	r.opts.sloOptional = false
 	assert.Error(t, r.setSwitches(), "outside the planner, slo switches on a run with no slo analyzer are an error")
 }

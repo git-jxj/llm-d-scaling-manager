@@ -849,8 +849,8 @@ the run's frozen curve.
 
 The TTFT readings are 6 load levels, each with flow control off and on (C on: 3
 levels, below its onset). The two phases share the model's figure, so the error
-grows with the knee share within a row: B's mean reads +27% at 0.40 of the knee
-and +63% to +149% at 0.90.
+grows with the knee share within a row: B's mean reads +7% at 0.40 of the knee
+and +58% to +141% at 0.90.
 
 **Negative controls.**
 

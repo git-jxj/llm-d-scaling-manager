@@ -480,7 +480,8 @@ func hopOver(cycles []engineCycle, router float64, span time.Duration, unqueued 
 
 // prefillQueued says a serving prefill row holds requests waiting for compute:
 // its capacity queue where the row reads one (the deferred part is not a
-// queue, as Cycle.QueueByCapacity reads it), else its whole waiting count.
+// queue, as Cycle.QueueByCapacity reads it), else its whole waiting count. An
+// unread waiting count reads as none, as queuedForCapacity reads it.
 func prefillQueued(rows []domain.ReplicaMetrics) bool {
 	for _, rm := range rows {
 		if !Serving(rm) {
