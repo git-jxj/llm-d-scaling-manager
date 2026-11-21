@@ -533,6 +533,24 @@ It replays the recording once and answers, for each shape and load:
   r/s, ran at 1000/500 tokens while the measured shape is 4569/1855: the
   measured shape needs 14 prefill + 23 decode, `--shape load` 4 + 2, what
   `day-plan` sizes the same rate at.
+- **Not the default.** `--shape load` and `p95-modulation` (here and in
+  `day-plan --size-for`) are opt-in. A model change becomes the default only
+  where the recordings show it moves no figure to read under what was
+  measured. `--shape load` fails that: on the decode-only sample
+  (`throughput-sweep`) it prices TPOT at the p95 load, 26.9 r/s, at 2.79 ms
+  against 3.14 ms at the measured shape, and the decode engines measured
+  3.34 to 3.65 ms in those very cycles. It does read closer on the Qwen3-32B
+  warm-up (TTFT p90 941 ms at the load's 1k prompts, where the measured
+  shape saturates; the run measured 287 ms at that rate). Before it can be
+  the default, decode's TPOT at the load's own shape must stop reading
+  under there. `p95-modulation` moved the judged load by at most 0.06 r/s
+  (0.2%) on every recording we hold, and no verdict or need. In `day-plan`
+  it sizes for up to 23% less at a bucket and moved one bucket's need on
+  three of seven recordings, by one replica (the Qwen3-32B warm-ups at 0.4
+  and 4.7 r/s, and the guide's sample at 2 r/s). Every recording we hold is
+  a staircase or a sweep, whose loads swing; the case it is for, a steady
+  low rate on a slow model, needs a recording of its own, with its latency,
+  to show the fleet sized at the modulated load still holds the SLO.
 - **Growth.** `--load "seen x1.5"` (also `seen×1.5`, `seen*1.5`) asks what
   50% more traffic does: a column of its own and a short `x1.5 (...)` line
   under the verdict. It never changes the verdict at the load seen.
@@ -690,7 +708,7 @@ alone. A higher `--ttft` sizes them.
   mean|p95|p95-modulation|max` sets it; the table and each bucket say which
   was used. `p95-modulation` is the p95 less the counting noise of a
   1-minute rate, as in `at-replicas`: a bucket of a steady stream is sized
-  near its mean. It is not the default; see "Not the default" below.
+  near its mean. It is not the default; see "Not the default" under `at-replicas` above.
   `--bucket 15m` sets the bucket.
 - **Scale-up lead.** A replica must be Ready when its bucket starts, so it
   starts one start time before. The plan takes each role's start time from
