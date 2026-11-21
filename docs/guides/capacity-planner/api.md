@@ -394,12 +394,12 @@ target under the zero-load floor) leaves prefill unsized and decode sized
 alone, on its knee times headroom (and its TPOT, where that prices); when
 decode's knee is refused too, nothing is sized. Each lands in `refused`. Only a
 rate no fleet within `maxReplicas` serves is a bucket's own `unmet`.
-When a gap in the source at least 2 minutes long (any, not only the
-largest) has a cycle on either side of it in the busiest sized bucket (the one of the highest
-sized rate: the gap cuts into it, or covers a bucket beside it), that bucket
-is refused `WindowGapAtPeak` (term `window`, flag `WindowGapAtPeak`): the gap
-could hide busier minutes than it read. The next busiest bucket takes its
-place, and is refused too while the gap borders it. The CLI
+When any gap of 2 minutes or more has a cycle on either side of it in the
+busiest sized bucket (the one of the highest sized rate: the gap cuts into
+it, or covers a bucket beside it), that bucket is refused `WindowGapAtPeak`
+(term `window`, flag `WindowGapAtPeak`): the gap could hide busier minutes
+than it read. The next busiest bucket takes its place, and is refused too
+while a gap borders it. The CLI
 exits 3 when `refused` is not empty, a bucket is unmet, or no bucket was
 sized, and prints the plan either way.
 

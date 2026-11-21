@@ -1104,7 +1104,8 @@ func (q *dayQuestion) refuseGapAtPeak(out *DayPlanResponse) {
 			strings.Join(gaps, "; ")),
 		Hint: "Capture the window again so that it holds the gap's minutes, or, from Prometheus, plan a window without the gap " +
 			"(--from and --to; in the API, the inputs request's source.from and source.to).",
-		Effect: "The busiest bucket is not sized; the busiest need is read from the buckets left, and may read low."})
+		Effect: "Each busiest bucket a gap borders is not sized, down to the first that none borders; the busiest need is read " +
+			"from the buckets left, and may read low."})
 }
 
 // appendNew appends each of xs not already in s.
