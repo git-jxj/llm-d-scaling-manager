@@ -636,7 +636,7 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 			fixed = max(fixed, v)
 		}
 		p.Imbalance, p.ImbalanceAssumed = min(float64(p.Replicas), fixed), true
-		pf.in.ImbalanceSource = fmt.Sprintf("%s for the sensitivity to f", num(f.fixedImbalance))
+		pf.in.ImbalanceSource = num(f.fixedImbalance) + " for the sensitivity to f"
 	case f.imbalanceAcrossCounts && learnedAnyCount(ps):
 		// The curve needs a count P1 learned: with none, its
 		// whatif.FreshImbalance is the analyzer's figure after a restart,

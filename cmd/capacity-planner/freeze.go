@@ -463,8 +463,7 @@ func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b fre
 	}
 	a := answerFlags{question: "freeze", cycle: "last", decode: b.Decode, prefill: b.Prefill,
 		inputTokens: b.Prompt, outputTokens: b.Output, assumeVP: f.assumeVP, seed: 1,
-		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts,
-		set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
+		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
 	if f.assumeVP > 0 {
 		a.set["assume-vp"] = true
 	}

@@ -472,8 +472,8 @@ func TestITLHoldSteadySlope_ARampDownThroughAnalyze(t *testing.T) {
 
 // noisyLowLoadCycle runs one cycle of the harness's P/D model with one
 // prefill pod at a rate that holds it at occupancy 0.085 on prompts of ieff
-// tokens, its service time m times the pod's, its TTFT overhead overhead
-// seconds. It returns the variant's estimate.
+// tokens, its service time m times the pod's and its TTFT overhead the
+// given seconds. It returns the variant's estimate.
 func (h *observeHarness) noisyLowLoadCycle(ieff, m, overhead float64) prefill.Estimate {
 	h.t.Helper()
 	states := []domain.VariantReplicaState{
