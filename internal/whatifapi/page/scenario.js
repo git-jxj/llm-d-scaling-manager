@@ -697,7 +697,9 @@ function reportView(r) {
       const m = REPORT_MARKS[row.cell.mark] || ["unknown", "?"];
       const rate = sameRate[i] ? "" : ` @ ${roundRate(row.rate)} r/s`;
       if (isFloor(f.tpot)) floors = true;
-      const parts = [`TTFT ${msText(f.ttft, false)}`, `TPOT ${msText(f.tpot, true)}`];
+      // A TPOT target's percentile refused leaves the mean, which says so.
+      const tpotMean = slo && slo.tpot && slo.tpot.statistic !== "mean" && f.tpot.statistic === "mean" && f.tpot.value != null ? " (mean)" : "";
+      const parts = [`TTFT ${msText(f.ttft, false)}`, `TPOT ${msText(f.tpot, true)}${tpotMean}`];
       if (rate) parts.push(rate.trim());
       return {text: parts.join(" · ").replace(" · @", " @"), parts, cls: m[0], word: m[1]};
     }),
