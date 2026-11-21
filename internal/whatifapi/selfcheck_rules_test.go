@@ -162,3 +162,78 @@ func TestReport_JudgeTrust(t *testing.T) {
 	r.JudgeTrust()
 	assert.Empty(t, r.Shapes[0].Verdict.Trust)
 }
+
+// A day plan's bucket says what the self-check says of its verdict, as a
+// report's verdict does: not trusted when the verdict rests on figures it
+// found inconsistent (TTFT where the bucket priced prefill, TPOT always),
+// else not covered at a sized rate or a fleet it did not test; nothing on
+// a bucket refused or not sized, or with no self-check run. The hour takes
+// its worst bucket's opening words, and the summary counts both.
+func TestDayPlan_JudgeTrust(t *testing.T) {
+	h0 := time.Date(2026, 11, 14, 7, 0, 0, 0, time.UTC)
+	cov := &SelfCheckCoverage{RateLo: 1, RateHi: 10, Fleets: []FleetCounts{{Prefill: 2, Decode: 2}}}
+	bucket := func(min int, verdict string, rate float64, prefill bool) DayBucket {
+		b := DayBucket{Start: h0.Add(time.Duration(min) * time.Minute), Verdict: verdict, SizedRate: ptr(rate), Actual: &FleetCounts{Prefill: 2, Decode: 2}}
+		if !prefill {
+			b.Flags = []string{FlagPrefillNotPriced}
+		}
+		return b
+	}
+	plan := func(untrusted []string) *DayPlanResponse {
+		return &DayPlanResponse{
+			SelfCheck: &SelfCheck{Status: SelfCheckInconsistent, Untrusted: untrusted, Covered: cov},
+			Buckets: []DayBucket{
+				bucket(0, DayVerdictUnder, 5, true),    // 07:00 priced prefill
+				bucket(5, DayVerdictOver, 5, false),    // 07:05 decode alone
+				bucket(60, DayVerdictMatch, 12, false), // 08:00 past the rates tested
+				bucket(65, DayVerdictRefused, 5, true), // 08:05 refused
+				{Start: h0.Add(70 * time.Minute)},      // 08:10 not sized
+				bucket(120, DayVerdictUnder, 5, false), // 09:00 covered
+			},
+			Hours: []DayHour{{Start: h0}, {Start: h0.Add(time.Hour)}, {Start: h0.Add(2 * time.Hour)}},
+		}
+	}
+
+	p := plan([]string{"ttft"})
+	p.JudgeTrust()
+	assert.Equal(t, TrustNot+": the self-check found this recording's TTFT figures inconsistent with it, and this verdict rests on them", p.Buckets[0].Trust)
+	assert.Empty(t, p.Buckets[1].Trust, "decode sized alone rests on no TTFT figure")
+	assert.Equal(t, TrustNotCovered+": it tested 1.00 to 10.00 r/s at 2 prefill + 2 decode; this verdict is at 12.00 r/s at 2 prefill + 2 decode", p.Buckets[2].Trust)
+	assert.Empty(t, p.Buckets[3].Trust, "a refused bucket")
+	assert.Empty(t, p.Buckets[4].Trust, "a bucket not sized")
+	assert.Empty(t, p.Buckets[5].Trust)
+	assert.Equal(t, []string{TrustNot, TrustNotCovered, ""}, []string{p.Hours[0].Trust, p.Hours[1].Trust, p.Hours[2].Trust})
+	assert.Equal(t, 1, p.Summary.Counts.Untrusted)
+	assert.Equal(t, 1, p.Summary.Counts.NotCovered)
+
+	p = plan([]string{"tpot"})
+	p.JudgeTrust()
+	for _, i := range []int{0, 1, 2, 5} {
+		assert.Contains(t, p.Buckets[i].Trust, TrustNot+": the self-check found this recording's TPOT figures", "bucket %d: TPOT sizes every bucket", i)
+	}
+	assert.Equal(t, 4, p.Summary.Counts.Untrusted)
+	assert.Zero(t, p.Summary.Counts.NotCovered, "not trusted outranks not covered")
+
+	p = plan([]string{"ttft", "tpot"})
+	p.JudgeTrust()
+	assert.Contains(t, p.Buckets[0].Trust, "TTFT and TPOT figures")
+	assert.Contains(t, p.Buckets[1].Trust, "TPOT figures")
+	assert.NotContains(t, p.Buckets[1].Trust, "TTFT")
+
+	p = plan([]string{"ttft"})
+	p.Buckets[0].Start = h0.Add(10 * time.Minute)
+	p.Buckets[1], p.Buckets[2] = bucket(0, DayVerdictMatch, 12, false), p.Buckets[1]
+	p.JudgeTrust()
+	assert.Equal(t, TrustNot, p.Hours[0].Trust, "not trusted outranks a not covered bucket met before it in the hour")
+
+	p = plan([]string{"ttft", "tpot"})
+	p.SelfCheck.Status = SelfCheckNotRun
+	p.JudgeTrust()
+	for _, b := range p.Buckets {
+		assert.Empty(t, b.Trust)
+	}
+	assert.Zero(t, p.Summary.Counts.Untrusted)
+	p.SelfCheck = nil
+	p.JudgeTrust()
+	assert.Zero(t, p.Summary.Counts.Untrusted)
+}

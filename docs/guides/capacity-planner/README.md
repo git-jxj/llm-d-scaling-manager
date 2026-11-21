@@ -688,6 +688,14 @@ alone. A higher `--ttft` sizes them.
 - **Too little data.** A bucket with fewer than 30 requests (`--min-requests`)
   is not sized. A bucket no cycle fell in has no data. Neither counts as under
   or over. A plan that sizes no bucket at all exits 3.
+- **Self-check.** As with `at-replicas`, a bucket's verdict that rests on
+  figures the self-check found inconsistent says `not trusted` beside its
+  hour, with a line under the buckets saying how many, and the plan exits 4
+  (3 takes precedence). A bucket priced prefill rests on the TTFT and TPOT
+  figures; decode sized alone on the TPOT figures. A bucket whose sized rate,
+  on the fleet it had, the self-check did not test says `not covered by the
+  self-check`, and changes no exit code. A refused or unsized bucket says
+  neither.
 - **Had.** The median serving pods of the priced prefill and decode variants
   over the bucket; the rate is the model's (`OtherVariantsServed` where
   another variant also served). The fleet it had is judged whole, at the

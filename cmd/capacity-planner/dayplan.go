@@ -116,10 +116,15 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 
 // dayPlanExit is the day plan's exit: 3 when the source refused a term, a
 // bucket's rate is beyond the bound, or no bucket was sized at all, as a
-// refused role exits elsewhere; the output is printed either way.
+// refused role exits elsewhere; else whatifapi.ExitUntrusted when a
+// bucket's verdict rests on figures the self-check found inconsistent, as
+// at-replicas exits; the output is printed either way.
 func dayPlanExit(p *whatifapi.DayPlanResponse) error {
 	if len(p.Refused) > 0 || p.Summary.Counts.Unmet > 0 || p.Summary.Counts.Sized == 0 {
 		return exitStatus(3)
+	}
+	if p.Summary.Counts.Untrusted > 0 {
+		return exitStatus(whatifapi.ExitUntrusted)
 	}
 	return nil
 }
@@ -309,6 +314,9 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		if h.Unmet > 0 {
 			verdict += fmt.Sprintf(", %d bucket(s) beyond %d replicas", h.Unmet, max(p.MaxReplicas.Prefill, p.MaxReplicas.Decode))
 		}
+		if h.Trust != "" {
+			verdict += "; " + h.Trust
+		}
 		fmt.Fprintf(&b, layout, h.Start.Format("2006-01-02 15:04"), mean, p95, np, nd, ap, ad, verdict)
 	}
 	s := p.Summary
@@ -316,6 +324,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	fmt.Fprintf(&b, "\nbuckets: %d sized (%d under, %d over, %d match; %d for the p95, %d for the mean, %d for the max), "+
 		"%d beyond the bound, %d refused, %d too little data, %d no data\n",
 		c.Sized, c.Under, c.Over, c.Match, c.SizedForP95, c.SizedForMean, c.SizedForMax, c.Unmet, c.Refused, c.TooLittleData, c.NoData)
+	b.WriteString(dayTrustText(p))
 	hours := func(r *whatifapi.RoleHours) string {
 		if r.Prefill == nil {
 			return fmt.Sprintf("%.2f decode (prefill not priced in %d of the %d)", r.Decode, c.PrefillNotPriced, c.Sized)
@@ -353,6 +362,32 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	}
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// dayTrustText is what the self-check says of the buckets' verdicts, a line
+// for each way it does not trust them, with how many, then one line for
+// those it does not cover; empty when it says nothing of any.
+func dayTrustText(p *whatifapi.DayPlanResponse) string {
+	var b strings.Builder
+	var words []string
+	n := map[string]int{}
+	for _, bk := range p.Buckets {
+		if !strings.HasPrefix(bk.Trust, whatifapi.TrustNot+":") {
+			continue
+		}
+		if n[bk.Trust] == 0 {
+			words = append(words, bk.Trust)
+		}
+		n[bk.Trust]++
+	}
+	for _, w := range words {
+		fmt.Fprintf(&b, "self-check: %d bucket(s) %s.\n", n[w], w)
+	}
+	if c := p.Summary.Counts.NotCovered; c > 0 && p.SelfCheck != nil && p.SelfCheck.Covered != nil {
+		fmt.Fprintf(&b, "self-check: %d bucket(s) %s: it tested %s, not the rate each was sized for on the fleet it had.\n",
+			c, whatifapi.TrustNotCovered, p.SelfCheck.Covered.Words())
+	}
+	return b.String()
 }
 
 // neededText is a needed fleet in words: decode sized alone is a lower
