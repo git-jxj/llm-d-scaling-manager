@@ -11,6 +11,16 @@ const (
 	censoredSigmaHi = 2.5
 )
 
+// A window spreads over two buckets, and so helps identify sigma, only
+// where its second-fullest bucket holds real mass: at least
+// censoredSpreadCount requests and censoredSpreadShare of the window. A
+// sliver spilled past an edge (one request in a hundred) otherwise sets the
+// spread for every window pooled with it.
+const (
+	censoredSpreadCount = 3.0
+	censoredSpreadShare = 0.02
+)
+
 // TPOTRatioCensored learns R_q as TPOTRatioFromWindows does, but reads it
 // by interval-censored maximum likelihood rather than at the q bucket's
 // upper edge (#279). Each window is a lognormal with its own mean
@@ -21,9 +31,13 @@ const (
 // order-statistic margin, never above the edge reading. One window does
 // not identify sigma where every request sits in one bucket (the
 // likelihood rises as sigma falls); pooled, the windows that spill into the
-// next bucket set it. With no window over two buckets the edge reading
-// stands. The flags and the refusals are TPOTRatioFromWindows's, and ByFill
-// is learned the same way by fill.
+// next bucket set it. With no window over two buckets (censoredSpreads), or
+// a fit at the floor of the sigma range, the edge reading stands. The flags
+// and the refusals are TPOTRatioFromWindows's. ByFill is learned the same
+// way, each bucket on its own windows, and never read above that bucket's
+// own edge reading: a bucket whose windows do not identify sigma takes the
+// global R_q capped there, and a thin bucket the global R_q, as the edge
+// read gives it. Learned is the bucket's reading before the raise over fill.
 func TPOTRatioCensored(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, *Unanswerable) {
 	edge, flags, refused := TPOTRatioFromWindows(windows, q)
 	if refused != nil {
@@ -44,9 +58,16 @@ func TPOTRatioCensored(windows []TPOTWindow, q float64) (TPOTRatio, []Flag, *Una
 					in = append(in, w)
 				}
 			}
-			r.ByFill[i].Value = r.Value
-			if v, ok := censoredPooled(in, q); ok && !b.Thin {
+			switch {
+			case b.Thin:
+				r.ByFill[i].Value = r.Value
+			default:
+				v, ok := censoredPooled(in, q)
+				if !ok {
+					v = r.Value
+				}
 				r.ByFill[i].Value = max(1, min(v, b.Learned))
+				r.ByFill[i].Learned = r.ByFill[i].Value
 			}
 		}
 		// Raised, never falling, as the fill rises: as fillRatios keeps it.
@@ -88,17 +109,35 @@ func censoredCells(w TPOTWindow, q float64) (censoredWindow, bool) {
 	return cw, len(cw.cells) > 0
 }
 
+// spreads says a window holds real mass in two buckets: its second-fullest
+// holds at least censoredSpreadCount requests and censoredSpreadShare of
+// them all.
+func (w censoredWindow) spreads() bool {
+	var total, first, second float64
+	for _, c := range w.cells {
+		total += c.n
+		switch {
+		case c.n > first:
+			first, second = c.n, first
+		case c.n > second:
+			second = c.n
+		}
+	}
+	return second >= censoredSpreadCount && second >= censoredSpreadShare*total
+}
+
 // censoredPooled is the q-quantile over the mean of the lognormal whose
 // shared sigma best explains every window's counts, each at its own mean;
-// ok false where no window spreads over two buckets, which alone identify
-// sigma.
+// ok false where no window spreads over two buckets (spreads), which alone
+// identify sigma, or where the fit lands on the floor of the sigma range,
+// a spread the counts do not set.
 func censoredPooled(windows []TPOTWindow, q float64) (float64, bool) {
 	var ws []censoredWindow
 	spread := false
 	for _, w := range windows {
 		if cw, ok := censoredCells(w, q); ok {
 			ws = append(ws, cw)
-			spread = spread || len(cw.cells) > 1
+			spread = spread || cw.spreads()
 		}
 	}
 	if !spread {
@@ -143,6 +182,9 @@ func censoredPooled(windows []TPOTWindow, q float64) (float64, bool) {
 		}
 	}
 	sigma := (a + b) / 2
+	if sigma <= censoredSigmaLo*ratio {
+		return 0, false
+	}
 	z := math.Sqrt2 * math.Erfinv(2*q-1)
 	r := math.Exp(sigma*z - sigma*sigma/2)
 	if !Finite(r) || !(r > 0) {

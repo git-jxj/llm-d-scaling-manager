@@ -48,9 +48,11 @@ type Decode struct {
 	// before its first output token: on a P/D fleet the KV pull and the
 	// first step, the decode engine's own TTFT (issue
 	// llm-d-incubation/llm-d-scaling-manager#301). Residence is then
-	// HeldBefore + OL * ITL(k), not OL * ITL(k) alone: at 8k prompts and 26
-	// output tokens the pull is about a third of it. 0, as the controller
-	// prices, leaves it out.
+	// HeldBefore + (OL - 1) * ITL(k), not OL * ITL(k): the TTFT ends at the
+	// first output token, so that step is in it. At 8k prompts and 26 output
+	// tokens the pull is about a third of the residence. 0, as the controller
+	// prices, leaves it out. It must be a TTFT read with no decode backlog: a
+	// request waiting for decode capacity holds no KV.
 	HeldBefore float64
 	// AssumedB says the caller stated Line's intercept B and refitted the
 	// slope through it (the capacity planner's --assume-itl-b): a line on the
@@ -243,13 +245,24 @@ func (d Decode) replicaRate(k float64) float64 {
 }
 
 // residence is a request's seconds on the replica at step time itlSec:
-// HeldBefore, then OL steps.
+// HeldBefore, then the steps after it (steps).
 func (d Decode) residence(itlSec float64) float64 {
-	return max(d.HeldBefore, 0) + d.OutputTokens*itlSec
+	return d.HeldBefore + d.steps()*itlSec
+}
+
+// steps is the output steps a request takes on the replica after
+// HeldBefore: OL with none, OL - 1 with one, since the decode engine's TTFT
+// that HeldBefore is read from ends at the first output token, so its step
+// is already in it.
+func (d Decode) steps() float64 {
+	if d.HeldBefore > 0 {
+		return max(d.OutputTokens-1, 0)
+	}
+	return d.OutputTokens
 }
 
 // chainMu is the rate a replica holding m sequences completes them:
-// m / (OL * ITL(k_m)), with k_m = m*KVreq/C clamped to [lowestFill, band.Hi]
+// m / residence(ITL(k_m)), OL * ITL(k_m) with no HeldBefore, with k_m = m*KVreq/C clamped to [lowestFill, band.Hi]
 // (below the band only a measured intercept is read at the fill itself). The
 // admission chain's state m completes at chainMu(min(m, c)), and the knee is
 // N_d * chainMu(c): one formula, so the chain and the knee saturate at the
@@ -259,28 +272,33 @@ func (d Decode) chainMu(m float64) float64 {
 	return m / d.residence(d.Line.ITLAt(k))
 }
 
-// kneeRate is the fleet's knee, N_d * chainMu(c): N_d * c / (OL * ITL(k_full)).
+// kneeRate is the fleet's knee, N_d * chainMu(c): N_d * c / residence(ITL(k_full)),
+// N_d * c / (OL * ITL(k_full)) with no HeldBefore.
 func (d Decode) kneeRate() float64 {
 	return float64(d.Replicas) * d.chainMu(d.full().slots)
 }
 
 // fillAtReplicaRate is the closed-form fill one replica runs at while it
-// carries lam requests a second (Little's law, residence H + OL*ITL(k), H
-// the HeldBefore):
+// carries lam requests a second (Little's law, residence H + S*ITL(k), H
+// the HeldBefore, S its steps):
 //
-//	k(lam) = lam*(H + OL*B) / (C/KVreq - lam*OL*A)
+//	k(lam) = lam*(H + S*B) / (C/KVreq - lam*S*A)
 //
 // It is valid while the denominator is positive and the sequences are under
 // the slots (the fill under slotFill); ok is false past that, where the
 // replica is saturated.
 func (d Decode) fillAtReplicaRate(lam float64) (k float64, ok bool) {
-	den := d.CapacityTokens/d.KVPerRequest - lam*d.OutputTokens*d.Line.A
+	s := d.steps()
+	den := d.CapacityTokens/d.KVPerRequest - lam*s*d.Line.A
 	if !(den > 0) {
 		return 0, false
 	}
-	k = lam * d.OutputTokens * d.Line.B / den
+	// With no HeldBefore the sum is left out, so the controller's figure is
+	// the same to the last bit as before the term.
 	if d.HeldBefore > 0 {
-		k = lam * (d.HeldBefore + d.OutputTokens*d.Line.B) / den
+		k = lam * (d.HeldBefore + s*d.Line.B) / den
+	} else {
+		k = lam * s * d.Line.B / den
 	}
 	if !Finite(k) || k > d.full().slotFill {
 		return 0, false
@@ -289,7 +307,7 @@ func (d Decode) fillAtReplicaRate(lam float64) (k float64, ok bool) {
 }
 
 // KneeRate is the rate, in requests per second over the fleet, at which the
-// decode replicas saturate, N_d * c / (OL * ITL(k_full)) (question 2, step 1):
+// decode replicas saturate, N_d * c / residence(ITL(k_full)) (question 2, step 1):
 // the knee. Basis.KneeRate repeats it, Basis.Fill is k_full, Basis.BoundBy
 // names whether the band's top or the batch cap set the slots, and
 // BelowFittedBand flags a knee read at the band's bottom because the slots

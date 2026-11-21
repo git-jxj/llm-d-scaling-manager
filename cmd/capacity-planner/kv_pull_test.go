@@ -11,8 +11,8 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
-// The KV pull is named as the larger wait in TTFT only where the decode
-// side's wait beats the prefill side's and the pull is its larger part
+// The KV pull is named as the larger wait in TTFT only where it is, on its
+// own, larger than the prefill side's wait and than decode admission's
 // (issue #301: decode idle by its KV fill, yet the decode count sets TTFT).
 func TestKVPull_SetsTTFTOnlyAsTheLargerWait(t *testing.T) {
 	for _, c := range []struct {
@@ -25,6 +25,7 @@ func TestKVPull_SetsTTFTOnlyAsTheLargerWait(t *testing.T) {
 		{"admission is the decode side's larger part", whatif.TTFTParts{EngineWait: 0.02, KVPullWait: 0.02, DecodeWait: 0.03}, false},
 		{"the router's wait counts on the prefill side", whatif.TTFTParts{EngineWait: 0.01, RouterWait: 0.03, BurstWait: 0.02, KVPullWait: 0.05}, false},
 		{"no pull", whatif.TTFTParts{EngineWait: 0.01}, false},
+		{"the decode side beats prefill only with admission added", whatif.TTFTParts{EngineWait: 0.04, KVPullWait: 0.03, DecodeWait: 0.02}, false},
 	} {
 		assert.Equal(t, c.want, pullSetsTTFT(c.p), c.name)
 	}
@@ -38,14 +39,20 @@ func TestKVPull_ARoleWordNamesThePull(t *testing.T) {
 	assert.True(t, strings.HasPrefix(why, "the KV pull on the decode pods"), why)
 	role, why = ttftRole(whatif.TTFT{Parts: whatif.TTFTParts{EngineWait: 0.02, KVPullWait: 0.01, DecodeWait: 0.03}}, fleetEval{})
 	assert.Equal(t, roleDecodeWord, role)
+	assert.True(t, strings.HasPrefix(why, "the decode side, a 40 ms mean wait (admission 30 ms, the KV pull 10 ms)"), why)
+	role, why = ttftRole(whatif.TTFT{Parts: whatif.TTFTParts{EngineWait: 0.02, DecodeWait: 0.03}}, fleetEval{})
+	assert.Equal(t, roleDecodeWord, role)
 	assert.True(t, strings.HasPrefix(why, "decode admission"), why)
+	role, _ = ttftRole(whatif.TTFT{Parts: whatif.TTFTParts{EngineWait: 0.04, KVPullWait: 0.03, DecodeWait: 0.02}}, fleetEval{})
+	assert.Equal(t, roleDecodeWord, role, "the decode side is still the larger wait, though the pull alone is not")
 }
 
 // Decode's utilization carries a KV pull row where the pull is priced, and
 // says when it sets TTFT; with none priced there is no row.
 func TestKVPull_TheUtilizationRow(t *testing.T) {
 	var s whatifapi.ReportShape
-	s.Utilization.Decode.KVPull = &whatifapi.ReportKVPull{Utilization: 0.62, Wait: 0.05, SetsTTFT: true}
+	wait := 0.05
+	s.Utilization.Decode.KVPull = &whatifapi.ReportKVPull{Utilization: 0.62, Wait: &wait, SetsTTFT: true}
 	var b strings.Builder
 	shapeText(&b, s)
 	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait 50.0 ms: the larger wait in TTFT, so the decode count sets TTFT\n")
@@ -54,6 +61,16 @@ func TestKVPull_TheUtilizationRow(t *testing.T) {
 	b.Reset()
 	shapeText(&b, s)
 	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait 50.0 ms\n")
+
+	s.Utilization.Decode.KVPull.Wait = nil
+	b.Reset()
+	shapeText(&b, s)
+	assert.Contains(t, b.String(), "  KV pull       utilization 0.620 per decode pod, mean wait unpriced (TTFT refused)\n")
+
+	s.Utilization.Decode.KVPull.Utilization = 1.25
+	b.Reset()
+	shapeText(&b, s)
+	assert.Contains(t, b.String(), "  KV pull       utilization 1.250 per decode pod, saturated: TTFT is refused\n")
 
 	s.Utilization.Decode.KVPull = nil
 	b.Reset()
@@ -76,6 +93,26 @@ func TestKVPull_TheStaircaseNamesThePullWhileDecodeIdles(t *testing.T) {
 	require.NotNil(t, two.WaitProbability.Value)
 	assert.Less(t, *two.WaitProbability.Value, 0.01, "decode admits every request at once")
 	assert.True(t, two.KVPull.SetsTTFT)
-	assert.Greater(t, two.KVPull.Wait, four.KVPull.Wait)
+	require.NotNil(t, two.KVPull.Wait)
+	require.NotNil(t, four.KVPull.Wait)
+	assert.Greater(t, *two.KVPull.Wait, *four.KVPull.Wait)
 	assert.InEpsilon(t, two.KVPull.Utilization/2, four.KVPull.Utilization, 1e-9)
+}
+
+// Where the pull saturates the decode pods the TTFT is refused, and the row
+// stays: the pull's utilization, at or above 1, with no wait (review of
+// #301's row: it vanished exactly where it binds).
+func TestKVPull_TheRowStandsWhereThePullSaturates(t *testing.T) {
+	q := stairQuery(9, 2, 30)
+	q.TTFT = &whatifapi.ReportTarget{Seconds: 0.2, Percentile: 0.95}
+	at30 := stairReport(t, q).Shapes[0].Utilization.Decode.KVPull
+	require.NotNil(t, at30)
+	rate := 30 * 1.2 / at30.Utilization
+	q = stairQuery(9, 2, rate)
+	q.TTFT = &whatifapi.ReportTarget{Seconds: 0.2, Percentile: 0.95}
+	kv := stairReport(t, q).Shapes[0].Utilization.Decode.KVPull
+	require.NotNil(t, kv, "at %.1f r/s", rate)
+	assert.InDelta(t, 1.2, kv.Utilization, 1e-9)
+	assert.Nil(t, kv.Wait)
+	assert.False(t, kv.SetsTTFT)
 }

@@ -934,6 +934,24 @@ p90 TTFT on the B-off and B-on phases reads 15% to 23% under; the lift alone,
 on the steeper line the hold replaces, reads TPOT higher still (1.84 to
 2.06).
 
+Two more planner-only switches, both off, price the decode side of a P/D
+fleet; the analyzer accepts them and does not read them.
+`saturation.SwitchDecodeResidencePull` (issue
+llm-d-incubation/llm-d-scaling-manager#301) holds a request's KV on the
+decode pod from the KV pull, not from its first token:
+`whatif.Decode.HeldBefore` is the decode engine's TTFT at the prompt priced
+(`learnreplay.VariantState.DecodeTTFT.EngineTTFT`), and the residence is
+`HeldBefore + (OL - 1) * ITL(k)`, since that TTFT ends at the first output
+token. A TTFT read with requests waiting on decode capacity is not used
+(a waiting request holds no KV), nor is an unread one; the figures are then
+flagged `ResidenceUnread`. It goes on only together with the hold and the
+lift. `saturation.SwitchTPOTRatioCensored` (issue
+llm-d-incubation/llm-d-scaling-manager#279) reads `R_q` by a pooled
+interval-censored lognormal fit of the bucket counts
+(`whatif.TPOTRatioCensored`), never above the upper-edge reading; it stays
+off because on the Qwen3-32B recordings it reads the p90 TPOT under the
+measured p90 interpolated in its bucket.
+
 A saturated fleet has few steady readings: `k` swings between above the band
 and its dips into it by more than `DefaultMaxKDrift`, and on a two-namespace
 run the steady readings numbered 0 on almost every cycle. So the pinned fit

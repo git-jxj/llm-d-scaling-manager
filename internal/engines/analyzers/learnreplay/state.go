@@ -269,6 +269,18 @@ type shapeSample struct {
 // but its p90 TTFT on the B-off and B-on phases still reads 15% to 23% under
 // and its p90 TPOT up to 22% under there (32% on the first warm-up's
 // B-onset, 39% on the bursty C phases), so both stay off.
+//
+// saturation.SwitchDecodeResidencePull, planner-only, holds a P/D decode's
+// KV from the pull (issue llm-d-incubation/llm-d-scaling-manager#301): alone
+// it adds no step read under measured, but it raises the over-reads; with
+// the hold and the lift it brings most of the bursty phases' under-reads
+// back. It goes on with those two or not at all, so it stays off with them.
+// saturation.SwitchTPOTRatioCensored, planner-only, reads R_q from the
+// bucket counts, not the bucket's upper edge (issue
+// llm-d-incubation/llm-d-scaling-manager#279): it reads a p90 TPOT lower
+// than the edge does, and on the Qwen3-32B recordings lower than the
+// measured p90 interpolated in its bucket, so it is off until a backtest
+// shows it at or above what was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,

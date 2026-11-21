@@ -96,3 +96,63 @@ func TestTPOTRatioCensored_PooledWindowsSetTheSpread(t *testing.T) {
 	assert.Less(t, got.Value, trueRatio(0.9, 0.25)+1e-9)
 	assert.LessOrEqual(t, got.Value, edge.Value)
 }
+
+// A sliver spilled past an edge, one request in a hundred, does not set the
+// spread (review of #279's fit): it is no real mass in a second bucket, and
+// pooled with one-bucket windows it read a ratio well under the edge
+// reading the counts can support. The edge reading stands.
+func TestTPOTRatioCensored_ASliverDoesNotSetTheSpread(t *testing.T) {
+	one := TPOTWindow{Sum: 1.5, Count: 100, SumMeasured: true,
+		Buckets: []HistogramBucket{{UpperEdge: 0.010, Count: 0}, {UpperEdge: 0.020, Count: 100}, {UpperEdge: 0.040, Count: 100}, {UpperEdge: math.Inf(1), Count: 100}}}
+	sliver := one
+	sliver.Buckets = []HistogramBucket{{UpperEdge: 0.010, Count: 0}, {UpperEdge: 0.020, Count: 99}, {UpperEdge: 0.040, Count: 100}, {UpperEdge: math.Inf(1), Count: 100}}
+	ws := []TPOTWindow{one, one, one, one, sliver}
+	edge, _, u := TPOTRatioFromWindows(ws, 0.9)
+	require.Nil(t, u)
+	got, _, u := TPOTRatioCensored(ws, 0.9)
+	require.Nil(t, u)
+	assert.InDelta(t, edge.Value, got.Value, 1e-12)
+}
+
+// By fill, each bucket's windows are fitted alone and never read above
+// that bucket's own edge reading. The 0.4 to 0.6 bucket's windows spread
+// (sigma 0.5 at 15 ms) and read near the truth; the 0 to 0.2 bucket's sit
+// in one bucket, 25 to 50 ms at a 45 ms mean, an edge reading of 1.11: they
+// do not identify sigma, and take the global R_q capped there, not the
+// global R_q of 1.5 the spreading windows set.
+func TestTPOTRatioCensored_ByFillNeverAboveTheBucketsOwnEdge(t *testing.T) {
+	edges := []float64{0.010, 0.025, 0.050, 0.075, math.Inf(1)}
+	ws := make([]TPOTWindow, 0, 10)
+	for range 5 {
+		one := TPOTWindow{Sum: 4.5, Count: 100, SumMeasured: true, Fill: 0.1, FillKnown: true,
+			Buckets: []HistogramBucket{{UpperEdge: 0.010, Count: 0}, {UpperEdge: 0.025, Count: 0}, {UpperEdge: 0.050, Count: 100},
+				{UpperEdge: 0.075, Count: 100}, {UpperEdge: math.Inf(1), Count: 100}}}
+		spread := lognormalWindow(2000, 0.015, 0.5, edges)
+		spread.Fill, spread.FillKnown = 0.5, true
+		ws = append(ws, one, spread)
+	}
+	edge, _, u := TPOTRatioFromWindows(ws, 0.9)
+	require.Nil(t, u)
+	require.Len(t, edge.ByFill, 5)
+	got, _, u := TPOTRatioCensored(ws, 0.9)
+	require.Nil(t, u)
+	require.Len(t, got.ByFill, 5)
+	assert.Greater(t, got.Value, 1.3, "the spreading windows set the global R_q")
+
+	low := got.ByFill[0]
+	assert.InDelta(t, 0.050/0.045, edge.ByFill[0].Learned, 1e-9)
+	assert.LessOrEqual(t, low.Value, edge.ByFill[0].Learned, "the global R_q is capped at the bucket's own edge")
+	assert.InDelta(t, low.Value, low.Learned, 1e-12, "Learned is the bucket's own reading")
+
+	mid := got.ByFill[2]
+	assert.InEpsilon(t, trueRatio(0.9, 0.5), mid.Learned, 0.05)
+	assert.LessOrEqual(t, mid.Learned, edge.ByFill[2].Learned)
+	for i, b := range got.ByFill {
+		if i > 0 {
+			assert.GreaterOrEqual(t, b.Value, got.ByFill[i-1].Value, "never falling as the fill rises")
+		}
+		if b.Thin {
+			assert.GreaterOrEqual(t, b.Value, got.Value, "a thin bucket reads the global R_q, raised")
+		}
+	}
+}

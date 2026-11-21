@@ -519,6 +519,12 @@ func noRoleHint(variants []pricedVariant) string {
 		"(capture --role-of, or a role label such as llm-d.ai/role)", len(variants))
 }
 
+// residenceUnread is a P/D decode figure priced, on
+// saturation.SwitchDecodeResidencePull, without the KV pull in its residence:
+// the decode engine read no TTFT, or read it with requests waiting on decode
+// capacity, whose wait holds no KV.
+const residenceUnread whatif.Flag = "ResidenceUnread"
+
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
 // --variant names.
@@ -574,7 +580,14 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}) {
 			// A P/D decode holds the KV from the pull: the decode engine's
 			// TTFT at the prompt priced (saturation.SwitchDecodeResidencePull).
-			pv.decode.HeldBefore = vs.DecodeTTFT.EngineTTFT.At(pv.shape.ILeff)
+			// One read with requests waiting on decode capacity is a queue,
+			// and a waiting request holds no KV: it is not priced, nor is an
+			// unread one, and the figures say so (residenceUnread).
+			if et := vs.DecodeTTFT.EngineTTFT; et.Waiting == 0 && et.At(pv.shape.ILeff) > 0 {
+				pv.decode.HeldBefore = et.At(pv.shape.ILeff)
+			} else {
+				pv.flags = append(pv.flags, residenceUnread)
+			}
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)

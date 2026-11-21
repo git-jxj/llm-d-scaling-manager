@@ -122,14 +122,17 @@ valid while the denominator is positive and `n` is under the cap.
 
 **Residence from the KV pull, behind a switch (#301).** A P/D decode replica
 holds a request's KV from the start of its pull, not from its first token, so
-its residence is `H + OL·ITL(k)`, `H` the decode engine's TTFT at the prompt
-(`whatif.Decode.HeldBefore`), and the fill is
-`k = λ_rep·(H + OL·B) / (C/KVreq − λ_rep·OL·A)`, with the same residence in
-the admission chain and the knee. With `H = 0` every figure is the closed form
+its residence is `H + (OL − 1)·ITL(k)`, `H` the decode engine's TTFT at the
+prompt (`whatif.Decode.HeldBefore`), which ends at the first output token, so
+that step is in it; the fill is
+`k = λ_rep·(H + (OL − 1)·B) / (C/KVreq − λ_rep·(OL − 1)·A)`, with the same
+residence in the admission chain and the knee. A TTFT read with requests
+waiting on decode capacity is a queue, and a waiting request holds no KV: it is
+not used, nor is an unread one, and the figures are flagged `ResidenceUnread`. With `H = 0` every figure is the closed form
 above, exactly. At 8k prompts and 26 output tokens `H` is about a third of the
 residence; at 1000/1000 under 1%. Planner-only replay switch
-`decode-residence-pull`, off. It only raises the fill, so no figure reads lower
-with it; alone it moves the 0.6B staircase's mean TPOT further over (r1 B,
+`decode-residence-pull`, off. It only raises the fill, so no TPOT reads lower
+with it (the knee and the rate for a target do drop); alone it moves the 0.6B staircase's mean TPOT further over (r1 B,
 1.36 to 1.56 of measured), where the line already reads high. Beside
 `itl-hold-steady-slope` and `itl-line-at-floor` it lifts the bursty phases they
 read low (r2 C at Ca² 4, mean TPOT 0.79 to 0.85, steps read low 18 to 3 of 30):
@@ -139,8 +142,11 @@ The pull also loads the decode pods while their KV fill reads near idle: with
 processor sharing on (the CLI's default) the pull is a stage on each decode pod,
 `E[I]·κ/BW` of work at `λ/N_d`. The report's decode utilization carries it as a
 `KV pull` row (`utilization.decode.kvPull`: the stage's utilization per pod and its
-mean wait), and says when it is the larger wait in TTFT, larger than decode
-admission's and than the prefill side's: there the decode count, not the prefill
+mean wait), on a P/D fleet with a decode line and a transfer, and says when it is
+the larger wait in TTFT, on its own larger than decode admission's and than the
+prefill side's. The row stands where the TTFT is refused, with its utilization
+and no wait: at 1 or above the pull saturates the decode pods, the refusal's
+reason. Where the pull is the larger wait, the decode count, not the prefill
 count, moves TTFT, as on the 0.6B warm-up at 9 prefill, where decode 2, 3 and 4
 gave p95 TTFT 322, 218 and 198 ms at a KV fill under 0.01. A missed TTFT names
 the pull, not decode admission, in the verdict's reason.
@@ -263,8 +269,8 @@ the case is held on built windows (`TestEngineTPOT_TheOrder`). A refusal priced 
 `AssumedTPOTRatio`, as an answer does.
 
 **R_q by censored likelihood, behind a switch (#279).** Read at the `q`
-bucket's upper edge and then at an order-statistic margin, `R_q` priced p90/p50
-at 1.55 on the Qwen3-32B shape-A phase against a measured 1.27 to 1.31.
+bucket's upper edge and then at an order-statistic margin, the planner's p90/p50
+read 1.55 on the Qwen3-32B shape-A phase against a measured 1.27 to 1.31.
 `whatif.TPOTRatioCensored` fits every window a lognormal at the window's own
 mean (`_sum/_count`) with one log-spread `σ` shared by all, each bucket count the
 mass between two edges, and reads `R_q` as that lognormal's `q`-quantile over its
@@ -273,7 +279,12 @@ mean, `exp(σ·z_q − σ²/2)`, with no margin and never above the edge reading
 bucket does not identify `σ` (its likelihood rises as `σ` falls): fitted alone,
 the windows' median read a ratio of 1.01 on the Qwen3-32B shape-A phase, p90
 TPOT 22 ms against a measured 38. Pooled, the windows that spill into the next
-bucket set `σ`; with none, the edge reading stands. Flags and refusals are the
+bucket set `σ`, where the second-fullest bucket holds real mass (3 requests and
+2% of the window: a sliver past an edge would set it for every window pooled);
+with none, or a fit at the floor of the `σ` range, the edge reading stands. By
+fill, each bucket is fitted on its own windows, never above that bucket's own
+edge reading, and one whose windows do not identify `σ` takes the global `R_q`
+capped there. Flags and refusals are the
 edge reading's. Planner-only replay switch `tpot-ratio-censored`, off: on the
 Qwen3-32B phases it reads p90 over p50 at about 1.15 where the edge read 1.56,
 and the router's 10, 20 and 40 ms buckets hold the measured p50 and p90 in the

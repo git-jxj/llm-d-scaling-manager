@@ -942,12 +942,20 @@ func (r *reporter) use(u *whatifapi.ReportUse, base *servedFleet, ev fleetEval) 
 	case whatif.Unanswerable:
 		u.Decode.WaitProbability = whatifapi.FigureOf(a, "", false)
 	}
-	// The mean TTFT's parts, with no span: the waits are means whatever the
-	// percentile judged.
-	mean := base.pf.priced(func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, r.load, 0) })
-	if t, ok := mean.(whatif.TTFT); ok && t.Parts.KVPullUtilization > 0 {
-		u.Decode.KVPull = &whatifapi.ReportKVPull{Utilization: t.Parts.KVPullUtilization, Wait: t.Parts.KVPullWait,
-			SetsTTFT: pullSetsTTFT(t.Parts)}
+	// The KV pull's utilization stands where the TTFT is refused, the pull
+	// saturating among the reasons; its wait is the mean TTFT's part, with
+	// no span (a mean whatever the percentile judged), and absent where that
+	// TTFT is refused.
+	if base.pf.refused == nil {
+		if rho := whatif.KVPullUtilization(base.pf.fleet, r.load); rho > 0 {
+			kv := &whatifapi.ReportKVPull{Utilization: rho}
+			mean := base.pf.priced(func(fl whatif.TTFTFleet) whatif.Result { return whatif.TTFTAt(fl, r.load, 0) })
+			if t, ok := mean.(whatif.TTFT); ok {
+				w := t.Parts.KVPullWait
+				kv.Wait, kv.SetsTTFT = &w, pullSetsTTFT(t.Parts)
+			}
+			u.Decode.KVPull = kv
+		}
 	}
 	pk, ok := ev.prefillKnee.(whatif.Answer)
 	if !ok {
@@ -1469,8 +1477,11 @@ func ttftRole(t whatif.Result, e fleetEval) (role, why string) {
 	prefillWait, decodeWait := ttftWaits(p)
 	switch {
 	case pullSetsTTFT(p):
-		return roleDecodeWord, fmt.Sprintf("the KV pull on the decode pods, a %s mean wait (decode admission %s), is the larger wait in TTFT",
-			secondsWords(p.KVPullWait), secondsWords(p.DecodeWait))
+		return roleDecodeWord, fmt.Sprintf("the KV pull on the decode pods, a %s mean wait (decode admission %s, the prefill side %s), is the larger wait in TTFT",
+			secondsWords(p.KVPullWait), secondsWords(p.DecodeWait), secondsWords(prefillWait))
+	case decodeWait > prefillWait && p.KVPullWait > 0:
+		return roleDecodeWord, fmt.Sprintf("the decode side, a %s mean wait (admission %s, the KV pull %s), is the larger wait in TTFT",
+			secondsWords(decodeWait), secondsWords(p.DecodeWait), secondsWords(p.KVPullWait))
 	case decodeWait > prefillWait:
 		return roleDecodeWord, fmt.Sprintf("decode admission, a %s mean wait, is the larger wait in TTFT", secondsWords(decodeWait))
 	}
@@ -1484,13 +1495,13 @@ func ttftWaits(p whatif.TTFTParts) (prefill, decode float64) {
 	return p.EngineWait + p.RouterWait + p.BurstWait, p.DecodeWait + p.KVPullWait
 }
 
-// pullSetsTTFT says the KV pull is the larger wait in TTFT: the decode side's
-// wait is larger than the prefill side's, and the pull is its larger part.
-// The decode count then moves TTFT while decode's KV fill and slots read
-// near idle.
+// pullSetsTTFT says the KV pull is the larger wait in TTFT: on its own
+// larger than the prefill side's wait and than decode admission's. The
+// decode count then moves TTFT while decode's KV fill and slots read near
+// idle.
 func pullSetsTTFT(p whatif.TTFTParts) bool {
-	prefill, decode := ttftWaits(p)
-	return decode > prefill && p.KVPullWait > p.DecodeWait
+	prefill, _ := ttftWaits(p)
+	return p.KVPullWait > prefill && p.KVPullWait > p.DecodeWait
 }
 
 // missWords is one missed target in words.
