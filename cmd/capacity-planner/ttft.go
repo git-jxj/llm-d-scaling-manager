@@ -698,10 +698,16 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	// --assume-* flag overrides the recording, with the read figure beside it.
 	spread := ps.PromptWindow.Spread()
 	p.PromptCV, p.PromptCVAssumed = spread.CV, spread.Assumed
-	if ps.PromptSupport && !f.set["assume-prompt-cv"] {
+	switch {
+	case !ps.PromptSupport:
+	case !f.set["assume-prompt-cv"]:
 		// The longest prompt the histogram allows, over its mean: a figure
 		// of the traffic, as the cv is (slo.SwitchTTFTPromptSupport).
 		p.PromptMaxRatio = spread.MaxRatio
+	default:
+		// A stated cv carries a bound only where it was read from a
+		// histogram too (a backtest's step): a typed one has none.
+		p.PromptMaxRatio = f.statedPromptMaxRatio
 	}
 	pf.in.PromptCV, pf.in.PromptCVSource = spread.CV, shapeMeasured
 	switch {
