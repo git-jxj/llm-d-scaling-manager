@@ -1100,6 +1100,10 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	saturation.SwitchPrefillFBusyMinutes:    nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	saturation.SwitchITLHoldSteadySlope:     nil,
+	// llm-d-incubation/llm-d-scaling-manager#309: the planner's ITL batch
+	// term past the roofline. No analyzer reads it, so no golden replay
+	// moves; its unit tests hold it (heldBy).
+	saturation.SwitchITLBatchTerm: nil,
 	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
 	// where the variant's ITL line reaches the policy's TPOT objective. On
 	// from the constructor; no committed golden has a decode line it trusts
@@ -1441,6 +1445,13 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/itl", "TestTracker_AnUnsteadySlopeIsNotHeld"},
 		{"../../../signals/itl", "TestTracker_ASteadySlopeHoldEnds"},
 		{"../saturation", "TestITLHoldSteadySlope_ARampDownThroughAnalyze"},
+	},
+	saturation.SwitchITLBatchTerm: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{".", "TestBatchSamples_FitsTheDecodeVariantWithTheSwitch"},
+		{".", "TestStateAt_BatchTermThroughTheReplay"},
+		{"../../../signals/whatif", "TestFitBatchTerm_FindsTheTermAcrossShapes"},
+		{"../../../signals/whatif", "TestBatchTerm_PricesTheStepPastTheRoof"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},

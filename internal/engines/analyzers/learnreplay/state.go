@@ -194,6 +194,12 @@ type VariantState struct {
 	// itl.BelowBandMinReadings, where the line is not read below the band.
 	// BelowBandFill is the fill that reading was taken at, 0 with none.
 	BelowBandITL, BelowBandFill float64
+	// BatchFit is the ITL batch term fitted on the variant's rows up to the
+	// cycle, on the residuals of Line (whatif.FitBatchTerm,
+	// saturation.SwitchITLBatchTerm); its Term is what the planner prices on
+	// top of Line, zero where a gate refused it. The zero value while the
+	// switch is off.
+	BatchFit whatif.BatchFit
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -347,6 +353,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		resident = map[string][]residentSample{}
 		ttft     = newTTFTSamples()
 		lines    = newLineSamples()
+		batch    = newBatchSamples(opts.Switches[PackageSaturation][saturation.SwitchITLBatchTerm])
 		cycleAt  = map[time.Time]int{}
 		arrivals []float64
 		ranges   = map[string]ShapeRange{}
@@ -399,6 +406,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		}
 		ttft.noteJoint(in, ev.Now, args, sglang)
 		lines.note(in, n, ev.Now)
+		batch.note(in)
 		ttft.noteTerm(in, ev.Now, args)
 		if n == cycle || early[n] {
 			s := r.stateOf(in, n, ev.Now, shapes)
@@ -410,6 +418,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 				}
 			}
 			r.fillTTFT(s, in, ttft)
+			batch.fit(s)
 			if n == cycle {
 				st = s
 				return true

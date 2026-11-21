@@ -569,6 +569,13 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
 			AssumedB:  pv.itlB.Applied,
 		}
+		// The batch term past the roofline, where the replay fitted one
+		// (saturation.SwitchITLBatchTerm), on the line it was fitted against:
+		// a stated intercept refits the line, and the term's residuals were
+		// not read against that one.
+		if !pv.itlB.Applied {
+			pv.decode.Batch = vs.BatchFit.Term
+		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)
 		}
