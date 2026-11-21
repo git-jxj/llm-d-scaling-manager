@@ -9,6 +9,8 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // decodeOf is st's decode variant.
@@ -60,4 +62,39 @@ func TestITLLineAtFloor_TheStaircaseLineThroughItsFloor(t *testing.T) {
 	assert.Zero(t, steep.LineLift, "the pinned fit reads over its floor: nothing to lift")
 	assert.True(t, steep.LineAtFloor, "its resamples are still lifted where they read under it")
 	assert.GreaterOrEqual(t, steep.Line.ITLAt(steep.BelowBandFill), steep.BelowBandITL)
+}
+
+// Only a decode variant of a P/D model is lifted: a variant serving both
+// roles, one of no role, a prefill variant, and a decode variant of a model
+// with no prefill variant keep their line, and their resamples are not lifted
+// either.
+func TestITLLineAtFloor_OnlyAPDDecodeRole(t *testing.T) {
+	under := func(role string) VariantState {
+		return VariantState{Variant: "v-" + role, Role: role, Tier: whatif.TierPinnedB,
+			Line: itl.Model{A: 0.03125, B: 0.00113}, BelowBandITL: 0.00175, BelowBandFill: 0.0006}
+	}
+	cases := []struct {
+		name     string
+		variants []VariantState
+		lifted   bool
+	}{
+		{"decode of a P/D model", []VariantState{under(domain.RolePrefill), under(domain.RoleDecode)}, true},
+		{"both roles", []VariantState{under(domain.RoleBoth)}, false},
+		{"no role", []VariantState{under("")}, false},
+		{"decode with no prefill variant", []VariantState{under(domain.RoleDecode)}, false},
+	}
+	for _, c := range cases {
+		st := &State{Variants: c.variants}
+		v := st.Variants[len(st.Variants)-1]
+		v.liftToFloor(st.disaggregated())
+		assert.Equal(t, c.lifted, v.LineAtFloor, c.name)
+		assert.Equal(t, c.lifted, v.LineLift > 0, c.name)
+		if !c.lifted {
+			assert.Equal(t, c.variants[len(c.variants)-1].Line, v.Line, c.name)
+		}
+	}
+	p := under(domain.RolePrefill)
+	p.liftToFloor(true)
+	assert.False(t, p.LineAtFloor, "a prefill variant is never lifted")
+	assert.Equal(t, under(domain.RolePrefill).Line, p.Line)
 }

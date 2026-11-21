@@ -37,8 +37,9 @@ func (f LineFloor) ok() bool {
 // and a shift up prices a higher ITL at every fill, never a lower one. That
 // is not itl.FloorIntercept's rule, which pivots the line through the floor
 // and its readings' mean and so lowers A: on the staircase's B-off phase the
-// shifted line reads 7.36 ms at the fill of 0.18 where 7.6 ms was measured,
-// and the pivoted one about 7.1 ms. A held line has no readings to pivot
+// shifted line reads 7.34 ms at the fill of 0.18 where 7.6 ms was measured
+// (7.36 ms on the unit test's floor at 0.0006), and the pivoted one about
+// 7.1 ms. A held line has no readings to pivot
 // about either.
 func LiftToFloor(tier string, line itl.Model, floor LineFloor) (itl.Model, float64) {
 	if !floor.ok() || !MeasuredIntercept(tier, line) || !itl.ValidModel(line.A, line.B) {

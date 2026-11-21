@@ -257,9 +257,10 @@ type shapeSample struct {
 // only helps with the hold: alone it lifts the steeper line the hold
 // replaces, and reads TPOT higher still. With both, the planner's mean TTFT
 // and TPOT on the public staircase's B phases (8000/200, Poisson) come
-// within 13% of measured, but its p90 TTFT on the B-off and B-on phases
-// still reads 15% to 23% under and its p90 TPOT up to 32% under (39% on the
-// bursty C phases), so both stay off.
+// within 13% of measured (TPOT 0.80 on the second warm-up's B-onset phase),
+// but its p90 TTFT on the B-off and B-on phases still reads 15% to 23% under
+// and its p90 TPOT up to 22% under there (32% on the first warm-up's
+// B-onset, 39% on the bursty C phases), so both stay off.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -458,7 +459,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
 		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
-		st.Variants[i].liftToFloor(lineAtFloor)
+		st.Variants[i].liftToFloor(lineAtFloor && st.disaggregated())
 	}
 	var out map[int]*State
 	if len(snaps) > 0 {
@@ -474,7 +475,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
 			b := sn.below[s.Variants[i].Variant]
 			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b[0], b[1]
-			s.Variants[i].liftToFloor(lineAtFloor)
+			s.Variants[i].liftToFloor(lineAtFloor && s.disaggregated())
 		}
 		out[c] = s
 	}
@@ -822,12 +823,23 @@ func (vs *VariantState) refit() {
 	}
 }
 
+// disaggregated reports a P/D model: one with a prefill variant
+// (domain.HasPrefill), as the analyzer reads it.
+func (st *State) disaggregated() bool {
+	roles := make(map[string]string, len(st.Variants))
+	for _, v := range st.Variants {
+		roles[v.Variant] = v.Role
+	}
+	return domain.HasPrefill(roles)
+}
+
 // liftToFloor raises a decode variant's line to the floor read below the
-// band, when on is set (saturation.SwitchITLLineAtFloor; whatif.LiftToFloor).
-// It runs after the refit, which finds the readings of the line as fitted.
-// Only a P/D decode role: an aggregated variant's readings below the band
-// carry prefill chunks, which would read a floor its decode steps do not
-// have, and the evidence for the lift is P/D decode alone.
+// band, when on is set (saturation.SwitchITLLineAtFloor; whatif.LiftToFloor):
+// the caller sets it only for a P/D model (State.disaggregated). It runs
+// after the refit, which finds the readings of the line as fitted. Only a
+// decode role of a P/D model: an aggregated variant's readings below the
+// band carry prefill chunks, which would read a floor its decode steps do
+// not have, and the evidence for the lift is P/D decode alone.
 func (vs *VariantState) liftToFloor(on bool) {
 	if !on || domain.CanonicalRole(vs.Role) != domain.RoleDecode {
 		return

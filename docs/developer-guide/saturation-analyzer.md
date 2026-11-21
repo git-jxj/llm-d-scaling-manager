@@ -889,8 +889,8 @@ to 2.65 requests/s for two and a half minutes.
 a planner-only switch, off in the controller and, for now, in the capacity
 planner's replay too: with it on, the planner predicts less decode KV fill
 than the pods held, and reads TTFT and TPOT low (see the floor lift below).
-With it, a key whose last `A` was fitted on steady readings then holds it instead of refitting on
-every reading. After a load stops, the window's last readings are the
+With it, a key whose last `A` was fitted on steady readings then holds it
+instead of refitting on every reading. After a load stops, the window's last readings are the
 ramp-down's: each minute's ITL still covers the load that stopped while its
 mean fill falls, so they read a steep slope. On the public staircase they
 raised `A` from 31 to 42 ms per unit of fill once the plateau's steady

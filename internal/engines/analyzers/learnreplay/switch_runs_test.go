@@ -1449,6 +1449,7 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestLiftToFloor_ALineAtOrOverItsFloorIsKept"},
 		{"../../../signals/whatif", "TestBootstrapLines_ResamplesAreLiftedAsTheLineIs"},
 		{".", "TestITLLineAtFloor_TheStaircaseLineThroughItsFloor"},
+		{".", "TestITLLineAtFloor_OnlyAPDDecodeRole"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},
