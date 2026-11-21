@@ -191,6 +191,7 @@ func TestAtReplicas_RightSizedNamesACheaperMix(t *testing.T) {
 	assert.Empty(t, v.Grow, "a right-sized fleet grows no role")
 	assert.NotContains(t, v.Summary, "needs", "the verdict sentence is unchanged")
 	assert.Contains(t, spareText(v.Needed), "7 prefill + 8 decode = 64 GPUs")
+	assert.Contains(t, v.Reason, "A mix of fewer GPUs also holds: 7 prefill + 8 decode (has 8 + 7)")
 
 	v = verdict(plain)
 	require.Equal(t, whatifapi.VerdictRight, v.Verdict, v.Reason)

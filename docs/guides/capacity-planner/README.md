@@ -568,7 +568,8 @@ It replays the recording once and answers, for each shape and load:
   `--spare N` adds N replicas of each role to the fleet needed, on the same
   line: the fleet that still holds with N replicas of each role lost (see
   [Size for failures, minReplicaCount and quota](#size-for-failures-minreplicacount-and-quota)).
-  On a right-sized fleet the spare is added to the fleet judged. When no
+  On a right-sized fleet the spare is added to the fleet judged, or to the
+  mix of fewer GPUs when one holds. When no
   fleet within the bound holds, there is no `needed` line.
   Each role's standing is in the sentence ("decode: one fewer holds even
   at the peak 43.2 r/s; prefill: no spare (1.9% under its operating
@@ -745,7 +746,8 @@ Then map the answer onto the ScaledObject and the quota:
   window, and add the spare. Below it, a failure at the trough leaves the
   role under its need for a whole replica start.
 - **`maxReplicaCount`** per role: that role's largest need over the day (the
-  `need P` and `need D` columns of the day plan's hours) plus the spare, with room for the growth you plan for (`--load-seen-x`). Take
+  largest `needed.prefill` and `needed.decode` over the day plan's
+  `buckets[]` in `-o json`) plus the spare, with room for the growth you plan for (`--load-seen-x`). Take
   each role's own largest need over the buckets, not the busiest bucket's
   mix: each role scales on its own signal, and the prefill need need not peak
   where the rate does. Between the two bounds the autoscaler sets the count.

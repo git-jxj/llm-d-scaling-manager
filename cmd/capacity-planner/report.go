@@ -1239,12 +1239,16 @@ func (r *reporter) rightSizedNeed(np, nd int, base fleetEval, v *whatifapi.Repor
 	judged := whatifapi.FleetCounts{Prefill: np, Decode: nd}
 	if whatifapi.WeighsGPUs(g) {
 		grow := v.Grow
-		if _, _, err := r.needed(np, nd, base, v); err != nil {
+		words, notes, err := r.needed(np, nd, base, v)
+		if err != nil {
 			return err
 		}
 		v.Grow = grow
 		n := v.Needed
 		if n.Unmet == "" && (whatifapi.FleetCounts{Prefill: n.Prefill, Decode: n.Decode}).Cost(g) < judged.Cost(g) {
+			// The sentence is the right-sized one; the cheaper mix, and any
+			// f it rests on, are in the reason.
+			v.Reason += ". A mix of fewer GPUs also holds: " + strings.TrimPrefix(words, "needs ") + noteText(notes)
 			return nil
 		}
 		v.Needed = nil

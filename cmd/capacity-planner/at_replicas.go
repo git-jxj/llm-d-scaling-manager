@@ -447,6 +447,10 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 		fmt.Fprintf(b, "  %-14s%s\n", "", growthText(g))
 	}
 	if t := spareText(s.Verdict.Needed); t != "" {
+		if s.Verdict.Verdict == whatifapi.VerdictRight && s.Verdict.Needed.Minimizes != "" {
+			// The fleet judged holds: the line names a cheaper mix, not a need.
+			t = "a mix of fewer GPUs also holds: " + t
+		}
 		fmt.Fprintf(b, "  %-14s%s\n", "needed", t)
 	}
 

@@ -820,7 +820,13 @@ const NEEDS_CLAUSE = /;?\s*needs [^;()]*\(has \d+ \+ \d+\)(,? or \d+ \+ \d+)*/;
 function neededText(n, has, verdict) {
   // A right-sized fleet carries a needed fleet only for its spare or a
   // cheaper mix in GPUs: no "needs" chip beside a fleet that holds.
-  if (!n || verdict === "RIGHT-SIZED") return "";
+  if (!n) return "";
+  if (verdict === "RIGHT-SIZED") {
+    const w = n.withSpare, gp = g => g != null ? ` = ${g} GPUs` : "";
+    if (n.minimizes) return `a mix of fewer GPUs also holds: ${n.prefill} prefill + ${n.decode} decode${gp(n.gpus)}` +
+      (w ? `; with ${w.spare} spare of each role ${w.fleet.prefill} + ${w.fleet.decode}${gp(w.gpus)}` : "");
+    return w ? `with ${w.spare} spare of each role: ${w.fleet.prefill} prefill + ${w.fleet.decode} decode${gp(w.gpus)}` : "";
+  }
   if (n.unmet) return `no fleet up to ${n.maxReplicas} replicas serves this (${n.unmet} does not reach the load)`;
   const now = has ? ` (has ${has.prefill} + ${has.decode})` : "";
   if (n.decodeOnly) return `needs at least ${n.decode} decode${has ? ` (has ${has.decode})` : ""}; prefill is not priced`;
