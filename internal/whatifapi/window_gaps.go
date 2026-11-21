@@ -38,6 +38,23 @@ type WindowGaps struct {
 	LargestGapTo      *time.Time `json:"largestGapTo,omitempty"`
 	// Flagged is MissingShare above WindowGapShare (FlagWindowGaps).
 	Flagged bool `json:"flagged"`
+	// long is every gap at least RollingWindow long, oldest first: those
+	// that could hide a busiest stretch of their own (GapAt).
+	long []gapSpan
+}
+
+// gapSpan is one gap: the cycles either side of it, and its length beyond
+// one cycle time.
+type gapSpan struct {
+	from, to time.Time
+	seconds  float64
+}
+
+// words is the gap in words: "15m0s from 02:42 to 02:58Z", the times being
+// the cycles either side of it.
+func (s gapSpan) words() string {
+	return fmt.Sprintf("%s from %s to %sZ", time.Duration(s.seconds*float64(time.Second)).Round(time.Second),
+		s.from.Format("15:04"), s.to.Format("15:04"))
 }
 
 // WindowGapsOf is the gaps of a window whose cycles were read at times,
@@ -79,8 +96,12 @@ func WindowGapsOf(times []time.Time) *WindowGaps {
 			continue
 		}
 		missing += int(d/cycle+0.5) - 1
-		if gap := d - cycle; gap > g.LargestGapSeconds {
+		gap := d - cycle
+		if gap > g.LargestGapSeconds {
 			g.LargestGapSeconds, largest = gap, i
+		}
+		if gap >= RollingWindow.Seconds() {
+			g.long = append(g.long, gapSpan{from: times[i].UTC(), to: times[i+1].UTC(), seconds: gap})
 		}
 	}
 	if largest >= 0 {
@@ -93,6 +114,34 @@ func WindowGapsOf(times []time.Time) *WindowGaps {
 	return g
 }
 
+// ReasonWindowGapAtPeak refuses a load, or a day plan's bucket, read beside a
+// gap that could hide busier minutes than any the window holds: a gap at
+// least RollingWindow long borders the window's busiest stretch (GapAt).
+const ReasonWindowGapAtPeak = "WindowGapAtPeak"
+
+// GapAt is, in words, a gap that could hide the window's peak: one at least
+// RollingWindow long, so that it could hold a busiest stretch of its own,
+// with a cycle either side of it in [from, to], the busiest stretch the
+// window shows ("15m0s from 02:42 to 02:58Z"; the longest such gap). Every
+// gap that long counts, not only the largest. "" when none borders it, and
+// on a nil window.
+func (g *WindowGaps) GapAt(from, to time.Time) string {
+	if g == nil {
+		return ""
+	}
+	in := func(t time.Time) bool { return !t.Before(from) && !t.After(to) }
+	var at *gapSpan
+	for i, s := range g.long {
+		if (in(s.from) || in(s.to)) && (at == nil || s.seconds > at.seconds) {
+			at = &g.long[i]
+		}
+	}
+	if at == nil {
+		return ""
+	}
+	return at.words()
+}
+
 // Text is the gaps in words for a window that misses cycles, "" for one that
 // misses none: "289 cycles expected, 229 present (21% missing), largest gap
 // 15m0s from 02:42 to 02:58Z", the times being the cycles either side of it.
@@ -102,8 +151,7 @@ func (g *WindowGaps) Text() string {
 	}
 	s := fmt.Sprintf("%d cycles expected, %d present (%.0f%% missing)", g.ExpectedCycles, g.PresentCycles, 100*g.MissingShare)
 	if g.LargestGapFrom != nil {
-		s += fmt.Sprintf(", largest gap %s from %s to %sZ", time.Duration(g.LargestGapSeconds*float64(time.Second)).Round(time.Second),
-			g.LargestGapFrom.Format("15:04"), g.LargestGapTo.Format("15:04"))
+		s += ", largest gap " + gapSpan{from: *g.LargestGapFrom, to: *g.LargestGapTo, seconds: g.LargestGapSeconds}.words()
 	}
 	if g.Flagged {
 		s += " " + FlagWindowGaps

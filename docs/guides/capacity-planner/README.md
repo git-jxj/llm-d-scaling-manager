@@ -608,7 +608,11 @@ holes) gets a `window gaps` line under the header line: the cycles the span
 should hold, those present, and the largest gap between the cycles either
 side of it, ending `WindowGaps` above 5% missing (JSON `source.gaps`). The
 load and the figures are read from the cycles present, so a gap over the
-busy spell reads the load low: capture the window again. A gap is any
+busy spell reads the load low: capture the window again. When a gap at
+least 2 minutes long (any, not only the largest) borders the busiest stretch (a cycle
+either side of it lies in the busiest 2 minutes, or is the busiest cycle),
+the observed load is refused, `WindowGapAtPeak`: the verdict is `NOT JUDGED`
+and the command exits 3. State the load with `--load-seen` to judge anyway. A gap is any
 stretch with no cycle for the model, so a model parked at zero, or a cycle
 time changed mid-window, reads as one too. A scrape that misses only the
 engine's series still leaves a cycle, and is not counted.
@@ -699,7 +703,11 @@ alone. A higher `--ttft` sizes them.
   should hold, how many it has, and the largest gap; above 5% missing it
   ends `WindowGaps`. JSON: `gaps`. A bucket inside a gap has no data, and
   one a gap cuts into is sized from the cycles present: a gap over the
-  busiest hours sizes them low. Capture again over the busy hours.
+  busiest hours sizes them low. Capture again over the busy hours. When a gap
+  at least 2 minutes long (any, not only the largest) borders the busiest sized bucket
+  (it cuts into it, or covers a bucket beside it), that bucket is refused,
+  `WindowGapAtPeak`, the busiest need is read from the buckets left, and the
+  plan exits 3.
 - **Had.** The median serving pods of the priced prefill and decode variants
   over the bucket; the rate is the model's (`OtherVariantsServed` where
   another variant also served). The fleet it had is judged whole, at the

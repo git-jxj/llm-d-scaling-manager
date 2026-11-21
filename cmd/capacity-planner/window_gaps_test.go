@@ -22,6 +22,14 @@ import (
 // 15-minute hole, as the review simulated (issue #315).
 func gappedRecording(t *testing.T) string {
 	t.Helper()
+	return holedRecording(t, func(_ time.Time, d time.Duration) bool { return d >= 20*time.Minute && d < 35*time.Minute })
+}
+
+// holedRecording is the staircase without the events drop picks, by their
+// time and their time since the first event, written to a temporary file
+// with the rest renumbered.
+func holedRecording(t *testing.T, drop func(now time.Time, sinceFirst time.Duration) bool) string {
+	t.Helper()
 	in, err := os.Open(stairBOn)
 	require.NoError(t, err)
 	defer func() { _ = in.Close() }()
@@ -41,7 +49,7 @@ func gappedRecording(t *testing.T) string {
 		if first.IsZero() {
 			first = ev.Now
 		}
-		if d := ev.Now.Sub(first); d >= 20*time.Minute && d < 35*time.Minute {
+		if drop(ev.Now, ev.Now.Sub(first)) {
 			dropped++
 			continue
 		}

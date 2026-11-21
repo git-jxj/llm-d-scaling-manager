@@ -325,3 +325,58 @@ func TestDayQuestionRefusals(t *testing.T) {
 		assert.Contains(t, err.Error(), c.want, name)
 	}
 }
+
+// The busiest sized bucket is refused while the window's largest gap borders
+// it, and the next busiest takes its place; a gap away from it refuses
+// nothing.
+func TestRefuseGapAtPeak(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 16, 0, 0, 0, time.UTC)
+	step := 5 * time.Minute
+	sized := func(i int, rate float64) DayBucket {
+		return DayBucket{Start: t0.Add(time.Duration(i) * step), SizedRate: &rate, Status: BucketSized, Verdict: DayVerdictMatch,
+			Needed: &DayNeeded{Decode: int(rate)}}
+	}
+	// Cycles every 15 s over 12 buckets, none in buckets 4-5 (16:20-16:30):
+	// the gap runs from bucket 3's last cycle to bucket 6's first.
+	times := cyclesAt(t0, 12*20, func(i int) bool { return i >= 80 && i < 120 })
+	plan := func(rates []float64) *DayPlanResponse {
+		out := &DayPlanResponse{Refused: []DayRefusal{}, Gaps: WindowGapsOf(times)}
+		for i, r := range rates {
+			if i == 4 || i == 5 {
+				out.Buckets = append(out.Buckets, DayBucket{Start: t0.Add(time.Duration(i) * step), Status: BucketNoData})
+				continue
+			}
+			out.Buckets = append(out.Buckets, sized(i, r))
+		}
+		q := &dayQuestion{step: step}
+		q.refuseGapAtPeak(out)
+		q.countRefused(out)
+		return out
+	}
+
+	// Bucket 6 is the busiest and bucket 3 the next: both border the gap and
+	// are refused; bucket 7 is then the busiest and stands.
+	p := plan([]float64{1, 2, 3, 8, 0, 0, 9, 7, 5, 4, 3, 2})
+	for _, i := range []int{3, 6} {
+		b := p.Buckets[i]
+		assert.Equal(t, BucketRefused, b.Status, "bucket %d", i)
+		assert.Equal(t, DayVerdictRefused, b.Verdict)
+		assert.Nil(t, b.Needed)
+		assert.Contains(t, b.Flags, FlagWindowGapAtPeak)
+	}
+	assert.Equal(t, BucketSized, p.Buckets[7].Status)
+	require.Len(t, p.Refused, 1)
+	r := p.Refused[0]
+	assert.Equal(t, ReasonWindowGapAtPeak, r.Reason)
+	assert.Equal(t, termWindow, r.Term)
+	assert.Equal(t, 2, r.Buckets)
+	assert.Contains(t, r.Detail, "10m0s from 16:19 to 16:30Z")
+	assert.NotEmpty(t, r.Hint)
+
+	// The busiest bucket is away from the gap: nothing is refused.
+	p = plan([]float64{1, 2, 3, 4, 0, 0, 5, 7, 9, 4, 3, 2})
+	assert.Empty(t, p.Refused)
+	for _, b := range p.Buckets {
+		assert.NotEqual(t, BucketRefused, b.Status)
+	}
+}

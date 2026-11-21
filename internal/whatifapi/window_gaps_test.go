@@ -63,3 +63,38 @@ func TestWindowGapsOf(t *testing.T) {
 	var none *WindowGaps
 	assert.Empty(t, none.Text())
 }
+
+// GapAt names a gap at least RollingWindow long with a cycle either side of
+// it in the stretch, whether or not it is the largest; a shorter gap, or one
+// away from the stretch, is not named.
+func TestGapAt(t *testing.T) {
+	t0 := time.Date(2026, 11, 6, 2, 18, 0, 0, time.UTC)
+	at := func(i int) time.Time { return t0.Add(time.Duration(i) * 15 * time.Second) }
+	// Cycles 100-159 missing: the gap runs from cycle 99 to cycle 160.
+	holed := WindowGapsOf(cyclesAt(t0, 289, func(i int) bool { return i >= 100 && i < 160 }))
+	const words = "15m0s from 02:42 to 02:58Z"
+	assert.Equal(t, words, holed.GapAt(at(92), at(99)), "the stretch ends on the cycle before the gap")
+	assert.Equal(t, words, holed.GapAt(at(160), at(167)), "the stretch starts on the cycle after the gap")
+	assert.Equal(t, words, holed.GapAt(at(99), at(99)), "the peak cycle is the one before the gap")
+	assert.Empty(t, holed.GapAt(at(10), at(17)), "a stretch away from the gap")
+	assert.Empty(t, holed.GapAt(at(90), at(98)), "a stretch that ends a cycle before the gap")
+
+	// Seven cycles missing (1m45s) is shorter than RollingWindow: it could
+	// not hold a busiest stretch of its own.
+	short := WindowGapsOf(cyclesAt(t0, 289, func(i int) bool { return i >= 100 && i < 107 }))
+	require.Less(t, short.LargestGapSeconds, RollingWindow.Seconds())
+	assert.Empty(t, short.GapAt(at(92), at(99)))
+	// Eight (2m0s) is as long as it, and is named.
+	eight := WindowGapsOf(cyclesAt(t0, 289, func(i int) bool { return i >= 100 && i < 108 }))
+	assert.Equal(t, "2m0s from 02:42 to 02:45Z", eight.GapAt(at(92), at(99)))
+
+	// Two gaps: the 5-minute one beside the stretch is named, though the
+	// 15-minute one elsewhere is the largest.
+	two := WindowGapsOf(cyclesAt(t0, 289, func(i int) bool { return (i >= 20 && i < 80) || (i >= 200 && i < 220) }))
+	require.InDelta(t, 15*60, two.LargestGapSeconds, 1e-9)
+	assert.Equal(t, "5m0s from 03:07 to 03:13Z", two.GapAt(at(192), at(199)))
+
+	var none *WindowGaps
+	assert.Empty(t, none.GapAt(t0, at(288)))
+	assert.Empty(t, WindowGapsOf(cyclesAt(t0, 289, nil)).GapAt(t0, at(288)), "no gap")
+}

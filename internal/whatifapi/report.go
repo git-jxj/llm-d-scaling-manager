@@ -250,7 +250,9 @@ type ReportFleet struct {
 // read it.
 type ReportLoad struct {
 	// Rate is the load judged at: Seen as a figure, which carries the
-	// refusal (NoTraffic) when the source saw no load.
+	// refusal (NoTraffic) when the source saw no load, or
+	// (ReasonWindowGapAtPeak) when a gap in the source could hide its
+	// peak; a stated load (LoadSeen) is never refused.
 	Rate Figure `json:"rate"`
 	// Seen is the load the source saw at Statistic, or the one asked in its
 	// place, and Source which ("observed", "asked" or "none"). The verdict
