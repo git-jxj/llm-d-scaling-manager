@@ -31,7 +31,7 @@ capacity planner's pages:
 | [The metrics it needs](metrics.md) | every series it reads, and what your Prometheus must keep |
 | [Troubleshooting](troubleshooting.md) | every refusal and error, with its fix |
 | [Check the planner on your own data](check.md) | fit it on part of a recording, predict the rest, and compare with what the fleet measured |
-| [How accurate each figure is](accuracy.md) | what `validated: error ...` and `OUTSIDE VALIDATED REGION` mean, and what was measured |
+| [How accurate each figure is](accuracy.md) | what `validated in-sample: error ...` and `OUTSIDE VALIDATED REGION` mean, and what was measured |
 
 ## Prerequisites
 

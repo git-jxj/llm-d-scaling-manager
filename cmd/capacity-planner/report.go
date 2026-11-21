@@ -1150,7 +1150,8 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 
 // verdict judges the fleet at the load:
 //   - UNDER-PROVISIONED on a known miss at the load judged;
-//   - NOT JUDGED when its own check is not judged, or when the prefill side
+//   - NOT JUDGED when the window contradicts the model (contradicted), when
+//     its own check is not judged, or when the prefill side
 //     does not price and decode alone holds;
 //   - OVER-PROVISIONED when a role has a replica to spare: one fewer of it
 //     holds the whole fleet at the load judged, and the role's own check

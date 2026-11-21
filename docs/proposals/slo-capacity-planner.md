@@ -723,9 +723,11 @@ mutation-checked:
 ### Calibration envelope, as built
 
 Every figure the planner prints carries the envelope's verdict
-(`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated: error
-LO..HI% (RANGE, n=N; SOURCE)` when a measured row's region holds it, `OUTSIDE
-VALIDATED REGION (why)` when none does. Validated means measured, not accurate.
+(`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated
+in-sample: error LO..HI% (RANGE, n=N[ load levels, M readings]; SOURCE)` when
+a measured row's region holds it (`validated on a holdout` for a row whose run
+never tuned the planner, `EnvelopeRow.Holdout`), `OUTSIDE VALIDATED REGION
+(why)` when none does. Validated means measured, not accurate.
 For an operator's reading:
 [how accurate each figure is](../guides/capacity-planner/accuracy.md).
 
@@ -757,8 +759,9 @@ until a run prices it:
 A row also says what kind of range its error is, and over how many independent
 readings:
 
-- p10-p90 with min-max, for 5 or more point readings;
-- min-max, under 5;
+- p10-p90 with min-max, for 10 or more independent load levels (readings
+  that repeat a level count once: `EnvelopeRow.Independent`);
+- min-max, under 10;
 - a bracket between ladder steps;
 - one-sided, where the run stopped short.
 

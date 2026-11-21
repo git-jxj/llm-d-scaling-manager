@@ -65,7 +65,7 @@ The error grows with load: on long prompts the mean TTFT reads about +27% at
 whole band of load it names.
 
 **In-sample.** This run is also one of the planner's goldens
-(`TestStaircaseQ32`), and constants the planner ships were read from it. Its
+(one of its test fixtures), and constants the planner ships were read from it. Its
 errors are how well the planner fits the run it was tuned on, so treat them
 as a floor on the error at another fleet, not a bound. No run kept out of
 tuning has been measured yet; when one is, its rows will print `validated on
@@ -75,8 +75,10 @@ a holdout`.
 to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, it
 read 44% to 103% high. `at-replicas` prints the label under the decode knee
 in its capacity table, says the 0.6B range under `not validated` only when
-the knee is outside, and sizes decode at the label's upper error beside the
-point answer (`needed.decodeAtErrorBound`).
+the knee is outside, and sizes decode at the label's upper error inside the
+region, or at 103% outside it, beside the point answer
+(`needed.decodeAtErrorBound`). The JSON's `readings` is the raw count; the
+label's `n=` gives the independent load levels first.
 
 This table is generated from the rows the planner ships:
 
