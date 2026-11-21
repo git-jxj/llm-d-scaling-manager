@@ -571,10 +571,12 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		// The batch term past the roofline, where the replay fitted one
 		// (saturation.SwitchITLBatchTerm), on the line it was fitted against:
-		// a stated intercept refits the line, and the term's residuals were
-		// not read against that one.
-		if !pv.itlB.Applied {
+		// a stated intercept refits the line, and a line lifted to its floor
+		// (saturation.SwitchITLLineAtFloor) is not the one whose residuals
+		// the term was read on.
+		if !pv.itlB.Applied && !(vs.LineLift > 0) && !vs.BatchFit.Term.IsZero() {
 			pv.decode.Batch = vs.BatchFit.Term
+			pv.flags = append(pv.flags, itlBatchTerm)
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)
@@ -618,6 +620,11 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 	}
 	return out, nil
 }
+
+// itlBatchTerm is a decode priced with the ITL term past the roofline the
+// replay fitted (saturation.SwitchITLBatchTerm, whatif.Decode.Batch): every
+// ITL the answer reads is the line's plus that term at the batch it holds.
+const itlBatchTerm whatif.Flag = "ITLBatchTerm"
 
 // resampling is the bands' bootstrap: the page's, from --seed.
 func (f *answerFlags) resampling() whatif.Resampling {

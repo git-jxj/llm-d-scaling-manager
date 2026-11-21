@@ -10,6 +10,8 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
@@ -110,4 +112,22 @@ func TestStateAt_BatchTermThroughTheReplay(t *testing.T) {
 			assert.Equal(t, want.Variants[i].BatchFit, got.Variants[i].BatchFit, "cycle %d", c)
 		}
 	}
+}
+
+// A speculating vLLM variant is not fitted: its rows read the step's mean ITL
+// while its line may be per accepted token, so their residuals are not the
+// batch's cost.
+func TestBatchSamples_ASpeculatingVariantIsRefused(t *testing.T) {
+	line := itl.Model{A: 0.03, B: 0.012}
+	b := newBatchSamples(true)
+	for _, in := range batchFixture(line) {
+		b.note(in)
+	}
+	spec := &capacity.EngineParams{Engine: inferenceengine.EngineVLLM, SpeculativeConfig: `{"method":"mtp","num_speculative_tokens":1}`}
+	st := &State{Variants: []VariantState{{Variant: "v", Role: "decode", Line: line, Ranks: 1, Params: spec}}}
+	b.fit(st)
+	fit := st.Variants[0].BatchFit
+	assert.Equal(t, whatif.BatchTermSpeculative, fit.Why)
+	assert.True(t, fit.Term.IsZero())
+	assert.Equal(t, 200, fit.Rows)
 }

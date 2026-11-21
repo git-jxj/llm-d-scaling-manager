@@ -59,10 +59,10 @@ func (b *batchSamples) note(in domain.AnalyzerInput) {
 }
 
 // fit sets each decode variant's BatchFit in s from the rows noted so far:
-// on the residuals of the line it was priced on, a sequence counted 1+k_spec
-// batch tokens and split over the replica's engine ranks. A variant with no
-// line, or a prefill one, keeps the zero fit, as does every variant while the
-// switch is off.
+// on the residuals of the line it was priced on, a sequence one batch token
+// split over the replica's engine ranks. A variant with no line, or a
+// prefill one, keeps the zero fit, as does every variant while the switch is
+// off; a speculating vLLM variant is refused (whatif.BatchTermSpeculative).
 func (b *batchSamples) fit(s *State) {
 	if !b.on {
 		return
@@ -72,6 +72,14 @@ func (b *batchSamples) fit(s *State) {
 		if domain.CanonicalRole(v.Role) == domain.RolePrefill || v.Line.IsZero() {
 			continue
 		}
-		v.BatchFit = whatif.FitBatchTerm(v.Line, b.rows[v.Variant], max(v.Ranks, 1), v.Params.SpeculativeTokens())
+		if v.Params.SpeculatesPerStep() {
+			// The rows are the step's mean ITL (rm.AvgITL), as the replay's
+			// line rows are, while the analyzer may fit the line per
+			// accepted token (saturation.SwitchITLPerToken): residuals of
+			// the one against the other are not the batch's cost.
+			v.BatchFit = whatif.BatchFit{Rows: len(b.rows[v.Variant]), Why: whatif.BatchTermSpeculative}
+			continue
+		}
+		v.BatchFit = whatif.FitBatchTerm(v.Line, b.rows[v.Variant], max(v.Ranks, 1), 0)
 	}
 }

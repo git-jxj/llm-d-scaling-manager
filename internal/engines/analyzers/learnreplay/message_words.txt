@@ -987,6 +987,7 @@ decodeTTFT
 decodeTTFTPrompt
 decodeTermRefused
 decodeVariant
+decoding
 deduced
 deepep_low_latency
 deeper

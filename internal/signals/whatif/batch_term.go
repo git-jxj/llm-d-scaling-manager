@@ -120,6 +120,10 @@ const (
 	batchTermCandidates = 33
 )
 
+// BatchTermSpeculative is why a speculating variant is not fitted (BatchFit.Why):
+// its rows read the step's mean ITL, and its line may be per accepted token.
+const BatchTermSpeculative = "speculative decoding: the rows read a step, the line may read a token"
+
 // BatchFit is what FitBatchTerm read of a variant's rows.
 type BatchFit struct {
 	// Term is the accepted term, zero when Why is set.

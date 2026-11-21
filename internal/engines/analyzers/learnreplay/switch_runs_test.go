@@ -1450,9 +1450,12 @@ var heldBy = map[string][]heldTest{
 	saturation.SwitchITLBatchTerm: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{".", "TestBatchSamples_FitsTheDecodeVariantWithTheSwitch"},
+		{".", "TestBatchSamples_ASpeculatingVariantIsRefused"},
 		{".", "TestStateAt_BatchTermThroughTheReplay"},
 		{"../../../signals/whatif", "TestFitBatchTerm_FindsTheTermAcrossShapes"},
 		{"../../../signals/whatif", "TestBatchTerm_PricesTheStepPastTheRoof"},
+		{"../../../../cmd/capacity-planner", "TestBatchTerm_DecodeVariantsPricesTheReplaysTerm"},
+	},
 	saturation.SwitchITLLineAtFloor: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/whatif", "TestLiftToFloor_ALineUnderItsFloorIsRaised"},
