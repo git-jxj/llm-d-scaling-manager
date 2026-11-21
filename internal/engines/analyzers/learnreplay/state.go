@@ -330,7 +330,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		st                       *State
 		windows, engine, arrived int
 		rows                     map[string][]whatif.LineRow
-		below                    map[string]float64
+		below                    map[string][2]float64 // ITL seconds, fill
 	}
 	snaps := map[int]*snap{}
 	opts.Mode = Normal
@@ -415,10 +415,11 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 				return true
 			}
 			sn := &snap{st: s, windows: len(windows), engine: len(engine), arrived: len(arrivals),
-				rows: map[string][]whatif.LineRow{}, below: map[string]float64{}}
+				rows: map[string][]whatif.LineRow{}, below: map[string][2]float64{}}
 			for _, v := range s.Variants {
 				sn.rows[v.Variant] = slices.Clone(lines.rows(v.Variant))
-				sn.below[v.Variant] = lines.leastBelowBand(v.Variant)
+				itlSec, fill := lines.leastBelowBand(v.Variant)
+				sn.below[v.Variant] = [2]float64{itlSec, fill}
 			}
 			snaps[n] = sn
 		}
@@ -453,7 +454,8 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		for i := range s.Variants {
 			s.Variants[i].ReadingsFrom, s.Variants[i].ReadingsTo = cyclesSpanned(s.Variants[i].LineReadings, cycleAt)
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
-			s.Variants[i].BelowBandITL = sn.below[s.Variants[i].Variant]
+			b := sn.below[s.Variants[i].Variant]
+			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b[0], b[1]
 		}
 		out[c] = s
 	}
