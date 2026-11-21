@@ -263,18 +263,25 @@ the context is KV the engine holds beyond prompt and output; at the discounted
 from `minK x reading / context`, so neither gate would ever take it on a
 recording that reads three times the context at a fill of 0.15-0.35. Not every
 reading above the context is KV held beyond prompt and output, so with the
-switch on two more rules apply. The tokens are spread over the requests that
-hold KV without running as well (`holdingNotRunning`: the waiting queue less
-the requests waiting for capacity, on any replica that splits its queue by
-reason). On the decode side of a P/D split those are the requests pulling
-their KV from prefill or waiting for the next step after it landed. A decode pulling
-30 prompts beside 4 running would otherwise read 8 times the context. And a
-reading above the context needs at least 8 such requests
-(`minAboveContextSequences`): a few long prompts in a mixed workload, or a
+switch on three more rules apply. On the decode of a P/D model (a decode
+variant beside a prefill one) the tokens are spread over the requests that
+hold KV without running as well (`holdingNotRunning`: `LandedQueueLength`
+where `LandedQueueKnown`, else the waiting queue less the requests waiting
+for capacity where `CapacityQueueKnown`). Those are the requests whose KV
+landed and wait for the next step, and on an older vLLM also those still
+pulling it. A decode pulling 30 prompts beside 4 running would otherwise read
+8 times the context. An aggregated replica counts its running requests only:
+its deferred requests are not pulled KV. A reading above the context needs
+at least 8 running requests (`minAboveContextSequences`; the held count is a
+one-minute peak and does not count toward it): a few long prompts in a mixed workload, or a
 running count that lags the KV, read several times the context with nothing
 held beyond it. Above 8 the scrape cannot tell a long tail from extra KV, so
 k prompts L times the shape's among n still lift the reading by about
-`k x (L - 1) / n`. The switch is on from the constructor since v0.12.3; a
+`k x (L - 1) / n`. And the price is never under the switch-off one:
+`withResidentKV` prices the reading both ways (`priceResidentReading`) and
+takes the larger, with the off bound where it wins, so the held requests and
+the guard can keep a reading from going higher but never take it under
+v0.12.2's (`TestKVAboveContext_OnIsNeverUnderOff`). The switch is on from the constructor since v0.12.3; a
 replay turns it off. A GPU check on a P/D decode with no KV beyond its context
 cleared it of harm: on and off asked for decode replicas within one of each
 other at every load. That run had no reading above the context, so the case

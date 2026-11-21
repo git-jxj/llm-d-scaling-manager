@@ -176,14 +176,18 @@ const minResidentFloor = 2
 // spread is not bounded either: k prompts L times the shape's among n lift
 // the reading by about k x (L - 1) / n, and nothing in the scrape tells them
 // apart. A running count that lags the KV it is read against (6 of 20 at
-// the scrape) is caught the same way only when it is small. On a day-long
-// P/D recording every reading came from 12 or more requests.
+// the scrape) is caught the same way only when it is small. The count is of
+// the requests running, not of all that hold KV (residentReading.holders):
+// the requests held without running are one-minute peaks, not the scrape's
+// instant, and must not carry a running count under it past the gate. On a
+// day-long P/D recording every reading came from 12 or more requests.
 const minAboveContextSequences = 8
 
 // residentReading is the KV the fleet's running requests hold, summed, how
 // many they are, the summed capacity of the replicas they run on, and the
 // band's lower edge they were read at. holding is the requests that hold KV
-// without running, where the replica says (holdingNotRunning).
+// without running, on the decode side of a prefill/decode split where the
+// replica says (holdingNotRunning); 0 elsewhere.
 type residentReading struct {
 	tokens    float64
 	running   int
@@ -216,10 +220,19 @@ func (r residentReading) perHolder(rule residentRule) float64 {
 // on the decode side of a prefill/decode split, those waiting for their KV
 // from prefill (WAITING_FOR_REMOTE_KVS) and those whose KV has landed and wait
 // for the next step. vLLM allocates their blocks before the pull, and counts
-// them in num_requests_waiting, not running (the file comment). They are the
-// waiting queue less the requests waiting for capacity, which hold none; 0
-// where the replica does not split its queue by reason.
+// them in num_requests_waiting, not running (the file comment).
+//
+// Where the replica counts the landed ones (LandedQueueKnown, vLLM 0.32+),
+// they are the count: the requests still pulling are left out, which reads
+// a request higher, not lower. Otherwise they are the waiting queue less the
+// requests waiting for capacity, which hold none; 0 where the replica does
+// not split its queue by reason. Only a decode of a prefill/decode split
+// counts them (fleetResidentKVPerRequest): on an aggregated replica the
+// deferred part of the queue is not requests holding pulled KV.
 func holdingNotRunning(rm domain.ReplicaMetrics) int {
+	if rm.LandedQueueKnown {
+		return max(0, rm.LandedQueueLength)
+	}
 	if !rm.CapacityQueueKnown {
 		return 0
 	}
@@ -290,9 +303,12 @@ func minResidentOf(noHit shape.Shape) int {
 // RunningRequests), so they describe the same requests. A replica lent by the
 // warm pool is not counted, as the ITL line counts none (noteITL), and nor is
 // one whose live capacity is unread or the collector's overflow sentinel
-// (whatif.CapacityTokens): its tokens in use are unknown.
+// (whatif.CapacityTokens): its tokens in use are unknown. The requests that
+// hold KV without running are counted on a decode of a model that has a
+// prefill role only (holdingNotRunning).
 func fleetResidentKVPerRequest(replicas []domain.ReplicaMetrics, rolesByVariant map[string]string, minK float64) residentReading {
 	r := residentReading{minK: minK}
+	split := domain.HasPrefill(rolesByVariant)
 	for _, rm := range replicas {
 		if !rm.Ready || rm.FromWarmPool || !generatesOutput(rm, rolesByVariant) {
 			continue
@@ -308,7 +324,9 @@ func fleetResidentKVPerRequest(replicas []domain.ReplicaMetrics, rolesByVariant 
 		}
 		r.tokens += rm.KvUsageInstant * float64(rm.TotalKvCapacityTokens)
 		r.running += rm.RunningRequests
-		r.holding += holdingNotRunning(rm)
+		if split && domain.CanonicalRole(rolesByVariant[rm.VariantName]) == domain.RoleDecode {
+			r.holding += holdingNotRunning(rm)
+		}
 		r.capTokens += float64(rm.TotalKvCapacityTokens)
 	}
 	return r
@@ -382,8 +400,27 @@ func countGateKV(s shape.Shape, r residentReading, rule residentRule) float64 {
 // tokens are spread over the requests that hold KV without running as well
 // (residentReading.holders): a decode pulling 30 prompts beside 4 running
 // would read 8 times the context over the running 4. A reading above the
-// context needs minAboveContextSequences of them.
+// context needs minAboveContextSequences running requests.
+//
+// On, the price is never under the one the switch off gives (v0.12.2's):
+// withResidentKV takes the larger of the two, and the off bound where it is
+// the larger. The requests held without running only spread a reading over
+// more requests, and the guard only drops one; neither may take a price
+// below what was read with them left out.
 func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.Shape, string) {
+	on, bound := priceResidentReading(s, r, rule)
+	if !rule.aboveContext {
+		return on, bound
+	}
+	if off, offBound := priceResidentReading(s, r, residentRule{}); off.KVreq > on.KVreq {
+		return off, offBound
+	}
+	return on, bound
+}
+
+// priceResidentReading is withResidentKV under rule alone, with no floor at the
+// switch-off price.
+func priceResidentReading(s shape.Shape, r residentReading, rule residentRule) (shape.Shape, string) {
 	if !(s.KVreq > 0) {
 		return s, residentBoundNoReading
 	}
@@ -404,7 +441,7 @@ func withResidentKV(s shape.Shape, r residentReading, rule residentRule) (shape.
 		return s, residentBoundNoReading
 	}
 	if rule.aboveContext {
-		if measured > s.Context() && n < minAboveContextSequences {
+		if measured > s.Context() && r.running < minAboveContextSequences {
 			return s, residentBoundNoReading
 		}
 		kv, how := s.PriceResident(measured, rule.heldAtContext)

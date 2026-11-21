@@ -643,12 +643,12 @@ coincide there, unless a row sits under the variant's floor below the band.
 | Golden | Tier at the freeze | Mean TPOT error | Unclamped | Rows | Rows clamped | Against ±10% | Knee error | Windows | Against ±15% |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `ols-sweep` | pinned-B | -3.9% | -3.9% | 87 | 7 | in | SKIPPED: 2 windows | | |
-| `ols-sweep-slo` | held | +10.5% | +10.5% | 33 | 0 | **out** | +70.1% | 7 | **out** |
-| `ols-sweep-slo-restart` | pinned-B | -8.5% | -8.5% | 54 | 3 | in | +103.4% | 5 | **out** |
+| `ols-sweep-slo` | held | +10.5% | +10.5% | 33 | 0 | **out** | +67.9% | 7 | **out** |
+| `ols-sweep-slo-restart` | pinned-B | -8.5% | -8.5% | 54 | 3 | in | +99.1% | 5 | **out** |
 | `throughput-sweep` | held | +3.5% | +3.5% | 33 | 0 | in | SKIPPED: none off a ramp | | |
 | `throughput-sweep-restart` | held | +50.1% | +32.6% | 124 | 124, all below | **out** | SKIPPED: none off a ramp | | |
-| `mu-paths` variant-01 (synthetic) | ols | -4.9% | 0.0% | 76 | 38 above | in | +76.3% | 38 | **out** |
-| `mu-paths` variant-02 (synthetic) | ols | -9.8% | 0.0% | 95 | 57 above | in | +44.4% | 19 | **out** |
+| `mu-paths` variant-01 (synthetic) | ols | -4.9% | 0.0% | 76 | 38 above | in | +43.0% | 38 | **out** |
+| `mu-paths` variant-02 (synthetic) | ols | -9.8% | 0.0% | 95 | 57 above | in | -41.5% | 19 | **out** |
 | `mu-paths` variant-03 (synthetic) | ols | 0.0% | 0.0% | 57 | 0 | in | SKIPPED: none off a ramp | | |
 
 **On a line the planner refuses** (`PinnedDefaultB`, or held from one), so the tool

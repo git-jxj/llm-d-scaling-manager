@@ -47,6 +47,13 @@ func cachingRow(kv float64, running int) domain.ReplicaMetrics {
 // returns the first derived-mu line.
 func hitsMu(t *testing.T, rows []domain.ReplicaMetrics, edit func(*SaturationAnalyzer)) map[string]any {
 	t.Helper()
+	return hitsMuOf(t, rows, edit)
+}
+
+// hitsMuOf is hitsMu with more variant states beside variant-d's: a prefill
+// variant makes variant-d the decode of a prefill/decode split.
+func hitsMuOf(t *testing.T, rows []domain.ReplicaMetrics, edit func(*SaturationAnalyzer), more ...domain.VariantReplicaState) map[string]any {
+	t.Helper()
 	ctx, logs := observedCtx(t)
 	store := capacity.NewStore()
 	store.Update("test-ns", "test-model", "variant-d", capacity.Record{
@@ -58,10 +65,10 @@ func hitsMu(t *testing.T, rows []domain.ReplicaMetrics, edit func(*SaturationAna
 	if edit != nil {
 		edit(a)
 	}
-	in := makeAnalyzerInput(rows, []domain.VariantReplicaState{
+	in := makeAnalyzerInput(rows, append([]domain.VariantReplicaState{
 		{VariantName: "variant-d", Role: domain.RoleDecode, AcceleratorName: "H200",
 			CurrentReplicas: len(rows), GPUsPerReplica: 1},
-	})
+	}, more...))
 	_, err := a.Analyze(ctx, in)
 	require.NoError(t, err)
 	fields := requireLogged(t, logs, "derived-mu")

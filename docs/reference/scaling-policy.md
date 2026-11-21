@@ -1707,12 +1707,16 @@ Since v0.12.3:
 
 - A reading above the context, taken over at least 8 requests, is priced as
   read. Expect more decode replicas where such a reading holds.
-- Requests that wait for something other than capacity are counted with the
-  running ones: their KV is in the tokens in use. On a P/D decode these are
-  the requests still pulling their KV from prefill, or waiting a step after it
-  landed. vLLM 0.20 and later reports them, through
-  `vllm:num_requests_waiting_by_reason`. This lowers the reading, so on its
-  own it asks for fewer decode replicas, not more.
+- On the decode of a P/D model, requests that hold KV without running are
+  counted with the running ones: their KV is in the tokens in use. These are
+  the requests whose KV landed from prefill and wait a step
+  (`vllm:num_requests_kv_fetch_by_stage{stage="completed_waiting"}`, vLLM
+  0.32 and later), or, on an older vLLM, every request waiting for something
+  other than capacity (`vllm:num_requests_waiting_by_reason`, vLLM 0.20 and
+  later). An aggregated replica counts its running requests only.
+- The price is never under the one v0.12.2 gave: where the requests held
+  without running would spread a reading under it, v0.12.2's price stands.
+  A reading above the context still needs at least 8 running requests.
 - SGLang is still held at the context: it reports its busiest rank against
   the whole pod, which reads high on a pod of several ranks.
 - The `derived-mu` line at `--v=3` (`LLMSM_VERBOSITY=3`, see
