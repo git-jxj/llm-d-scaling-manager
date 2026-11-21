@@ -14,7 +14,7 @@ import (
 // per steps at one fleet, every step within but those bad says are not.
 func stair(levels, per int, bad func(level, step int) bool) []scPoint {
 	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	var out []scPoint
+	out := make([]scPoint, 0, levels*per)
 	for l := range levels {
 		for s := range per {
 			within := bad == nil || !bad(l, s)
@@ -100,7 +100,7 @@ func TestReport_JudgeTrust(t *testing.T) {
 	cov := &SelfCheckCoverage{RateLo: 1, RateHi: 10, Fleets: []FleetCounts{{Prefill: 2, Decode: 2}}}
 	report := func(untrusted []string, rate float64, scope, source, verdict string, ttftTarget bool) *ReportResponse {
 		r := &ReportResponse{Fleet: ReportFleet{Prefill: 2, Decode: 2}, Load: ReportLoad{Rate: Figure{Value: ptr(rate)}},
-			Shapes: []ReportShape{{Source: source, Verdict: ReportVerdict{Verdict: verdict, Scope: scope}}},
+			Shapes:    []ReportShape{{Source: source, Verdict: ReportVerdict{Verdict: verdict, Scope: scope}}},
 			SelfCheck: &SelfCheck{Status: SelfCheckInconsistent, Untrusted: untrusted, Covered: cov}}
 		if ttftTarget {
 			r.SLO.TTFT = &ReportObjective{Statistic: "p90", Target: 2}
