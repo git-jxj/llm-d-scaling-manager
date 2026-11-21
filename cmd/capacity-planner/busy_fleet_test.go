@@ -63,7 +63,8 @@ func busyFleetRecording(t *testing.T) string {
 // groups of one engine row in groupOf: the variants state groupOf times the
 // rows as replicas, and the router serves groupOf times the rows' rate, as
 // on a fleet of multi-Pod groups whose rows report one rank of several
-// (issue llm-d-incubation/llm-d-scaling-manager#331). 1 is the busy fleet.
+// (issue llm-d-incubation/llm-d-scaling-manager#331). 1 is the busy fleet,
+// its router serving the rows' rate.
 func busyFleetRecordingOf(t *testing.T, groupOf int) string {
 	t.Helper()
 	var buf bytes.Buffer
@@ -104,10 +105,8 @@ func busyFleetRecordingOf(t *testing.T, groupOf int) string {
 				{VariantName: "pre", CurrentReplicas: 2 * groupOf, DesiredReplicas: 2 * groupOf, GPUsPerReplica: 4, Role: domain.RolePrefill, AcceleratorName: "H100"},
 			},
 		}
-		if groupOf > 1 {
-			for _, rm := range rows[:9] {
-				in.ArrivalRate += float64(groupOf) * rm.RequestRate
-			}
+		for _, rm := range rows[:9] {
+			in.ArrivalRate += float64(groupOf) * rm.RequestRate
 		}
 		rec.Record(learnreplay.KindCaptureCycle, at, learnreplay.CaptureCycle{Input: learnrec.InputOf(in)})
 	}

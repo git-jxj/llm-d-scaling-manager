@@ -30,6 +30,17 @@ func TestSampleOfKeepsTheEngineRateAndTheReplicas(t *testing.T) {
 	all := sampleOf(in, at, SeriesVariants{})
 	assert.Equal(t, 11, all.DecodeReplicas, "d1's and d2's")
 
+	// A replica still starting is not a serving one; a row of an unsplit
+	// variant serves the router's traffic too; a queue is noted.
+	in.VariantStates[1].PendingReplicas = 3
+	in.ReplicaMetrics = append(in.ReplicaMetrics, domain.ReplicaMetrics{VariantName: "b1", Ready: true, RequestRate: 2, RequestRateKnown: true})
+	in.VariantStates = append(in.VariantStates, domain.VariantReplicaState{VariantName: "b1", Role: domain.RoleBoth, CurrentReplicas: 1})
+	in.SchedulerQueue = &domain.SchedulerQueueMetrics{QueueSize: 4}
+	s = sampleOf(in, at, SeriesVariants{Prefill: "p1", Decode: "d1"})
+	assert.Equal(t, 5, s.DecodeReplicas, "8 less the 3 starting")
+	assert.Equal(t, 11.0, s.EngineRate, "the unsplit row's 2 r/s too")
+	assert.True(t, s.RouterQueued)
+
 	in.VariantStates[0].Role = domain.RoleDecode
 	assert.Zero(t, sampleOf(in, at, SeriesVariants{Prefill: "p1", Decode: "d1"}).PrefillReplicas, "no prefill variant stated")
 }

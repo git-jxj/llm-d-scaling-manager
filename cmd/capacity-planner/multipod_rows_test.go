@@ -27,14 +27,21 @@ func TestResolve_RefusesEngineRowsThatCountOneRankInFour(t *testing.T) {
 	res, err := resolve(busyFleetRecordingOf(t, 1))
 	require.NoError(t, err)
 	assert.Empty(t, whatifapi.EngineRowsShort(res.Series))
+	compared := 0
+	for _, s := range res.Series {
+		if s.RateKnown && s.Rate > 0 && s.EngineRate > 0 {
+			compared++
+		}
+	}
+	assert.Greater(t, compared, 100, "the rates were compared, and agreed")
 
 	_, err = resolve(busyFleetRecordingOf(t, 4))
 	require.Error(t, err)
 	assert.True(t, whatifapi.IsInputError(err), err)
-	assert.Contains(t, err.Error(), "the decode engine rows report")
+	assert.Contains(t, err.Error(), "the engine rows report")
 	assert.Contains(t, err.Error(), "(25%)")
-	assert.Contains(t, err.Error(), "9 decode engine rows stand for 36 replicas")
-	assert.Contains(t, err.Error(), "2 prefill engine rows stand for 8 replicas")
+	assert.Contains(t, err.Error(), "9 decode engine rows stand for 36 serving replicas")
+	assert.Contains(t, err.Error(), "2 prefill engine rows stand for 8 serving replicas")
 	assert.Contains(t, err.Error(), "multi-Pod group")
 
 	// The CLI's answers read the same rows, and refuse them too.
@@ -42,6 +49,6 @@ func TestResolve_RefusesEngineRowsThatCountOneRankInFour(t *testing.T) {
 		io.Discard, io.Discard)
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "an input error")
-	assert.Contains(t, err.Error(), "9 decode engine rows stand for 36 replicas")
+	assert.Contains(t, err.Error(), "9 decode engine rows stand for 36 serving replicas")
 	assert.Contains(t, err.Error(), "multi-Pod group")
 }

@@ -6,16 +6,19 @@ import (
 	"strings"
 )
 
-// EngineRateTolerance is how far, either way, the request rate the decode
-// rows report may be from the router's over a window before the rows are
-// taken not to stand for the fleet (EngineRowsShort): 20%, wider than a
-// window's edges and a replica starting or draining move it.
+// EngineRateTolerance is how far under the router's rate the request rate
+// the engine rows report may be over a window before the rows are taken not
+// to stand for the fleet (EngineRowsShort): 20%, wider than a window's edges
+// and a replica starting or draining move it. Rows reading over the router
+// are not refused: rows that leave ranks out can only read under it, and
+// traffic sent to the Pods past the router (a warm-up, an adapter named
+// apart from its base model) reads over it.
 const EngineRateTolerance = 0.2
 
-// MinRowsPerReplica is the median engine rows a replica may have, over the
-// cycles that state replicas, before the rows are taken not to stand for the
-// fleet (EngineRowsShort): a replica is one engine row, and fewer is a
-// replica whose engine the recording did not read.
+// MinRowsPerReplica is the median engine rows a serving replica may have,
+// over the cycles that state replicas, before the rows are taken not to
+// stand for the fleet (EngineRowsShort): a replica is one engine row, and
+// fewer is a replica whose engine the recording did not read.
 const MinRowsPerReplica = 0.75
 
 // minEngineRateCycles is the fewest cycles with both rates read that
@@ -31,49 +34,61 @@ const minEngineRateCycles = 4
 // low by the ranks left out (issue
 // llm-d-incubation/llm-d-scaling-manager#331). Two checks, either refuses:
 //
-//   - the decode rows' summed request rate against the router's, over the
-//     cycles that read both, outside EngineRateTolerance either way;
-//   - the serving rows of a role against the replicas its variant states
-//     give, the median over the cycles that state them, under
+//   - the rows' summed request rate (SeriesSample.EngineRate) against the
+//     router's, over the cycles that read both and whose router queue held
+//     nothing (a queue's arrivals run ahead of what the engines complete),
+//     more than EngineRateTolerance under it;
+//   - a role's serving rows against the serving replicas its variants
+//     state, the median over the cycles that state them, under
 //     MinRowsPerReplica.
 func EngineRowsShort(series []SeriesSample) string {
 	var why []string
 	var engine, router float64
 	n := 0
 	for _, s := range series {
-		if s.RateKnown && s.Rate > 0 && s.EngineRate > 0 {
+		if s.RateKnown && s.Rate > 0 && s.EngineRate > 0 && !s.RouterQueued {
 			engine += s.EngineRate
 			router += s.Rate
 			n++
 		}
 	}
 	if n >= minEngineRateCycles {
-		if r := engine / router; r < 1-EngineRateTolerance || r > 1+EngineRateTolerance {
-			why = append(why, fmt.Sprintf("the decode engine rows report %.3g r/s against the router's %.3g r/s (%.0f%%)",
+		if r := engine / router; r < 1-EngineRateTolerance {
+			why = append(why, fmt.Sprintf("the engine rows report %.3g r/s against the router's %.3g r/s (%.0f%%)",
 				engine/float64(n), router/float64(n), 100*r))
 		}
 	}
+	type count struct {
+		ratio          float64
+		rows, replicas int
+	}
 	for _, role := range []struct {
 		name string
-		rows func(SeriesSample) (rows, replicas int)
+		of   func(SeriesSample) (rows, replicas int)
 	}{
 		{"prefill", func(s SeriesSample) (int, int) { return s.Prefill, s.PrefillReplicas }},
 		{"decode", func(s SeriesSample) (int, int) { return s.Decode, s.DecodeReplicas }},
 	} {
-		var ratios []float64
-		rows, replicas := 0, 0
+		var counts []count
 		for _, s := range series {
-			if r, m := role.rows(s); m > 0 {
-				ratios = append(ratios, float64(r)/float64(m))
-				rows, replicas = r, m
+			if r, m := role.of(s); m > 0 {
+				counts = append(counts, count{float64(r) / float64(m), r, m})
 			}
 		}
-		if len(ratios) == 0 {
+		if len(counts) == 0 {
 			continue
 		}
-		slices.Sort(ratios)
-		if med := ratios[len(ratios)/2]; med < MinRowsPerReplica {
-			why = append(why, fmt.Sprintf("%d %s engine rows stand for %d replicas (last cycle stated)", rows, role.name, replicas))
+		slices.SortStableFunc(counts, func(a, b count) int {
+			switch {
+			case a.ratio < b.ratio:
+				return -1
+			case a.ratio > b.ratio:
+				return 1
+			}
+			return 0
+		})
+		if med := counts[len(counts)/2]; med.ratio < MinRowsPerReplica {
+			why = append(why, fmt.Sprintf("%d %s engine rows stand for %d serving replicas (the median cycle)", med.rows, role.name, med.replicas))
 		}
 	}
 	if len(why) == 0 {

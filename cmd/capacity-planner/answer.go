@@ -259,11 +259,17 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 	if err != nil {
 		return nil, err
 	}
-	series, _, err := seriesAndLatencyOf(src.open, st, learnreplay.SeriesVariants{})
+	// The variants asked, as the API's series counts the priced ones; an
+	// empty name counts every variant of the role.
+	cycles, err := learnreplay.SeriesFrom(src.open, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID},
+		learnreplay.SeriesVariants{Prefill: f.prefillVariant, Decode: f.variant})
+	if cerr := src.unchanged(); cerr != nil {
+		return nil, cerr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	if why := whatifapi.EngineRowsShort(series); why != "" {
+	if why := whatifapi.EngineRowsShort(seriesSamplesOf(cycles)); why != "" {
 		// Every per-replica rate and knee would read low by the ranks the
 		// rows leave out (issue llm-d-incubation/llm-d-scaling-manager#331).
 		return nil, usagef("%s: %s; the planner reads a replica as its engine rows, so it answers nothing from this recording", name, why)
