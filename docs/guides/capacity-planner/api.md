@@ -349,7 +349,7 @@ The answer:
 | --- | --- |
 | `source` | What was read: the namespace, the model, the cycle and `totalCycles`, `firstAt` and `lastAt`, and `gaps`: the window's `cycleSeconds` (the lower median of the time between distinct cycles), `expectedCycles` its span holds at that cycle time, `presentCycles`, `missingShare`, the `largestGapSeconds` with `largestGapFrom` and `largestGapTo`, and `flagged` (`WindowGaps`) above 5% missing. `gaps` is absent with fewer than three distinct cycles. |
 | `fleet` | The fleet judged: `prefill`, `decode`, their variants, and `prefillFrom`/`decodeFrom` (`recording` or `asked`). |
-| `load` | The load judged at (`rate`, the same as `seen`, as a figure that carries the refusal when there is none: `NoTraffic`, or `WindowGapAtPeak` when a gap in the source at least 2 minutes long (any, not only the largest) has the cycle on either side of it in the busiest 2 minutes (`rolling`) or is the cycle of the highest rate, so the gap could hide a busier stretch; the verdict is then `NOT JUDGED`, exit 3; a stated `loadSeen` is never refused), the load seen and its `source` (`observed`, `asked` or `none`), the `statistic` judged (`mean`, `p95`, `peak`, or `stated`), `cycles` read and `cyclesWithTraffic`, the per-cycle `mean`, `p95` and `peak` (each a 1-minute rate), `p95IsPeak` below 20 cycles, and `rolling`, the busiest 2 minutes' mean, idle and failed reads counted as 0, counted in the window's own cycle time (`source.gaps.cycleSeconds` when it misses cycles). |
+| `load` | The load judged at (`rate`, the same as `seen`, as a figure that carries the refusal when there is none: `NoTraffic`, or `WindowGapAtPeak`: see below), the load seen and its `source` (`observed`, `asked` or `none`), the `statistic` judged (`mean`, `p95`, `peak`, or `stated`), `cycles` read and `cyclesWithTraffic`, the per-cycle `mean`, `p95` and `peak` (each a 1-minute rate), `p95IsPeak` below 20 cycles, and `rolling`, the busiest 2 minutes' mean, idle and failed reads counted as 0, counted in the window's own cycle time (`source.gaps.cycleSeconds` when it misses cycles). |
 | `loads` | The tables' rates, in order: the summary's columns. |
 | `shapes[]` | One per shape asked, in order. `extrapolated` is true when IL, OL or the prefix-hit rate lies outside the per-cycle means the source saw, with `extrapolatedWhy`. |
 | `shapes[].utilization` | At the load judged: decode's KV fill, batch slots occupied of the fleet's slots, and wait probability; prefill's utilization pooled and on the busiest pod. |
@@ -361,6 +361,14 @@ The answer:
 
 Each shape and load is priced from the one replay the inputs resolved: a
 report replays nothing.
+
+The load observed is refused `WindowGapAtPeak` when a gap in the source could
+hide a busier stretch than any it holds: the gap is at least 2 minutes long
+(any gap, not only the largest), and the cycle on either side of it lies in
+the busiest 2 minutes (`rolling`) or is the cycle of the highest rate. A
+gap's length is the time between the cycles either side of it less one
+cycle. The verdict is then `NOT JUDGED`, and the CLI exits 3. A stated
+`loadSeen` is never refused.
 
 ## The day plan
 
@@ -408,7 +416,7 @@ bucket when the stated length lies outside what the buckets observed.
 | `hours[]` | Per UTC hour: the rate over its cycles, the need of its busiest sized bucket (the one of the highest sized rate), the fewest pods it had, `unmet` (buckets beyond the bound), and the verdict: `under` when any bucket was under or beyond the bound, `refused` when every bucket with data was refused, `over` when every sized bucket was over. |
 | `summary` | `peakNeeded` and `minNeeded` (the needs of the busiest and the quietest sized buckets), replica-hours and GPU-hours needed and had over the sized buckets (absent when none was sized; prefill's hours and the GPU-hours also when any sized bucket did not price prefill, `counts.prefillNotPriced`), `hadReplicaHoursAll` and `hadGpuHoursAll` over every bucket with data, `underHours`, `overHours`, `refusedHours`, and the counts, including how many buckets were sized for each statistic. |
 | `searched` | How many fleets the plan priced. |
-| `refused[]` | Every term the source cannot price at any rate, with `role`, `term` (`ttft`, `tpot`, `decodeKnee`, `fleet`, or `window` for the busiest bucket refused `WindowGapAtPeak`), `reason`, `detail`, `hint` (what to do), `effect` (what the plan did instead) and `buckets`. Empty when every term priced. |
+| `refused[]` | Every term the source cannot price at any rate, and the busiest bucket refused beside a gap (term `window`), with `role`, `term` (`ttft`, `tpot`, `decodeKnee`, `fleet`, or `window` for the busiest bucket refused `WindowGapAtPeak`), `reason`, `detail`, `hint` (what to do), `effect` (what the plan did instead) and `buckets`. Empty when every term priced. |
 | `notes` | What it does not price: scale-up lag (it sizes steady state), and the prefix hit rate. A note names the source's gaps when its cycles do not cover its span. |
 | `gaps` | The source's gaps, as the report's `source.gaps`. |
 

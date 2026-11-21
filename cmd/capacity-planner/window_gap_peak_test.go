@@ -58,6 +58,7 @@ func TestAtReplicas_RefusesAGapAtThePeak(t *testing.T) {
 	text, code := runCmd(t, args()...)
 	assert.Equal(t, 3, code, text)
 	assert.Contains(t, text, "a window gap at the peak", text)
+	assert.NotContains(t, text, "a window gap at the peak, the p95", "a refused load names no statistic read")
 	assert.Contains(t, text, whatifapi.VerdictNotJudged+": a gap in the window borders its busiest stretch", text)
 	assert.Contains(t, text, "--load-seen", text)
 

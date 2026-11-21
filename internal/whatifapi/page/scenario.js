@@ -543,6 +543,7 @@ const REFUSAL_WORDS = {
   TPOTBucketTooWide: "the TPOT histogram is too coarse for a percentile",
   PinnedDefaultB: "the decode line rests on a default, not a measurement (type ITL B under Assume a term to price it)",
   NoLine: "no decode line learned",
+  WindowGapAtPeak: "a gap in the window borders its busiest minutes: the load may read low (capture again, or state the load)",
   NoTraffic: "no traffic to judge",
 };
 

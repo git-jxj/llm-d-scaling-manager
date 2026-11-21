@@ -127,9 +127,9 @@ const (
 	// FlagFleetRefused is a bucket whose fleet limit the source refuses at
 	// more replicas than one (Refused, term fleet).
 	FlagFleetRefused = "FleetRefused"
-	// FlagWindowGapAtPeak is a bucket refused because the window's largest
-	// gap borders it while it is the busiest sized bucket (Refused, term
-	// window; refuseGapAtPeak).
+	// FlagWindowGapAtPeak is a bucket refused because a gap in the window,
+	// at least RollingWindow long, borders it while it is the busiest sized
+	// bucket (Refused, term window; refuseGapAtPeak).
 	FlagWindowGapAtPeak = "WindowGapAtPeak"
 	// FlagOtherVariantsServed is a bucket in which a prefill or decode
 	// variant other than the priced ones served: the rate is the model's,
@@ -636,8 +636,8 @@ const (
 	// termFleet is a fleet's limit refused at more replicas than one, which
 	// the probe at one replica a role did not see.
 	termFleet = "fleet"
-	// termWindow is the busiest bucket, refused beside the window's largest
-	// gap (refuseGapAtPeak).
+	// termWindow is the busiest bucket, refused beside a gap in the window
+	// (refuseGapAtPeak).
 	termWindow = "window"
 )
 
@@ -1062,7 +1062,7 @@ func (q *dayQuestion) countRefused(out *DayPlanResponse) {
 		flag := map[string]string{termTPOT: FlagTPOTNotPriced, termTTFT: FlagPrefillNotPriced, termFleet: FlagFleetRefused,
 			termWindow: FlagWindowGapAtPeak}[r.Term]
 		for _, b := range out.Buckets {
-			if (flag != "" && slices.Contains(b.Flags, flag)) || (r.Term == termDecodeKnee && b.Status == BucketRefused) {
+			if (flag != "" && slices.Contains(b.Flags, flag)) || (r.Term == termDecodeKnee && b.Status == BucketRefused && !slices.Contains(b.Flags, FlagWindowGapAtPeak)) {
 				r.Buckets++
 			}
 		}
@@ -1103,7 +1103,7 @@ func (q *dayQuestion) refuseGapAtPeak(out *DayPlanResponse) {
 		Detail: fmt.Sprintf("A gap in the window (%s) borders its busiest bucket: the load in the gap was not read and may have been higher.",
 			strings.Join(gaps, "; ")),
 		Hint: "Capture the window again so that it holds the gap's minutes, or, from Prometheus, plan a window without the gap " +
-			"(--from and --to; API source.from and source.to).",
+			"(--from and --to; in the API, the inputs request's source.from and source.to).",
 		Effect: "The busiest bucket is not sized; the busiest need is read from the buckets left, and may read low."})
 }
 

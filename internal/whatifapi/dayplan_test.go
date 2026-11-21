@@ -340,7 +340,8 @@ func TestRefuseGapAtPeak(t *testing.T) {
 	// the gap runs from bucket 3's last cycle to bucket 6's first.
 	times := cyclesAt(t0, 12*20, func(i int) bool { return i >= 80 && i < 120 })
 	plan := func(rates []float64) *DayPlanResponse {
-		out := &DayPlanResponse{Refused: []DayRefusal{}, Gaps: WindowGapsOf(times)}
+		// A decode knee refused elsewhere counts none of the window's buckets.
+		out := &DayPlanResponse{Refused: []DayRefusal{{Role: roleDecode, Term: termDecodeKnee, Reason: "NoLine"}}, Gaps: WindowGapsOf(times)}
 		for i, r := range rates {
 			if i == 4 || i == 5 {
 				out.Buckets = append(out.Buckets, DayBucket{Start: t0.Add(time.Duration(i) * step), Status: BucketNoData})
@@ -365,8 +366,9 @@ func TestRefuseGapAtPeak(t *testing.T) {
 		assert.Contains(t, b.Flags, FlagWindowGapAtPeak)
 	}
 	assert.Equal(t, BucketSized, p.Buckets[7].Status)
-	require.Len(t, p.Refused, 1)
-	r := p.Refused[0]
+	require.Len(t, p.Refused, 2)
+	assert.Zero(t, p.Refused[0].Buckets, "a bucket refused for a gap is not the decode knee's")
+	r := p.Refused[1]
 	assert.Equal(t, ReasonWindowGapAtPeak, r.Reason)
 	assert.Equal(t, termWindow, r.Term)
 	assert.Equal(t, 2, r.Buckets)
@@ -375,7 +377,7 @@ func TestRefuseGapAtPeak(t *testing.T) {
 
 	// The busiest bucket is away from the gap: nothing is refused.
 	p = plan([]float64{1, 2, 3, 4, 0, 0, 5, 7, 9, 4, 3, 2})
-	assert.Empty(t, p.Refused)
+	assert.Len(t, p.Refused, 1, "only the decode knee's")
 	for _, b := range p.Buckets {
 		assert.NotEqual(t, BucketRefused, b.Status)
 	}

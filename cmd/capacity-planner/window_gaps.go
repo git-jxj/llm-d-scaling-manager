@@ -83,5 +83,5 @@ func gapAtPeak(rates []float64, times []time.Time, g *whatifapi.WindowGaps, roll
 	}
 	return &whatif.Unanswerable{Reason: whatif.Reason(whatifapi.ReasonWindowGapAtPeak),
 		Detail: fmt.Sprintf("a gap in the window, %s, borders %s: the load in the gap was not read and may have been higher; "+
-			"capture the window again, or state the load with --load-seen", gap, at)}
+			"capture the window again, or state the load with --load-seen (API loadSeen)", gap, at)}
 }

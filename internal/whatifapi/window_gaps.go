@@ -124,7 +124,8 @@ const ReasonWindowGapAtPeak = "WindowGapAtPeak"
 // with a cycle either side of it in [from, to], the busiest stretch the
 // window shows ("15m0s from 02:42 to 02:58Z"; the longest such gap). Every
 // gap that long counts, not only the largest. "" when none borders it, and
-// on a nil window.
+// on a nil window. It reads gaps WindowGapsOf kept, which JSON does not
+// carry: on a WindowGaps decoded from JSON it is always "".
 func (g *WindowGaps) GapAt(from, to time.Time) string {
 	if g == nil {
 		return ""
