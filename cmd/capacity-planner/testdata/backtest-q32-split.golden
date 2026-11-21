@@ -11,30 +11,30 @@ measured: the router's histograms (server side, the same scrape as the inputs): 
 
 each step: predicted/measured (* inside the conditions our accuracy benchmarks cover)
 step (UTC)          rate   P+D  TTFT p50            TTFT p90            TPOT p50          TPOT p90          
-2026-11-14 08:20    1.06   2+2  172ms/154ms         351ms/196ms         13ms/15ms         18ms/19ms         not judged: warm-up
-2026-11-14 08:25    1.10   2+2  169ms/152ms         363ms/194ms         13ms/15ms         18ms/19ms         judged
-2026-11-14 08:30    0.57   2+2  234ms/305ms         395ms/389ms         13ms/15ms         18ms/19ms         judged
-2026-11-14 08:35    0.58   2+2  346ms/305ms         540ms/389ms         13ms/15ms         18ms/19ms         judged
-2026-11-14 08:40    0.52   2+2  345ms/305ms         536ms/389ms         13ms/15ms         18ms/19ms         judged
-2026-11-14 08:45    0.43   2+2  406ms/477ms         703ms/596ms         13ms/15ms         18ms/19ms         judged
-2026-11-14 08:50    0.42   2+2  501ms/462ms         792ms/598ms         13ms/15ms         18ms/19ms         judged
-2026-11-14 08:55    0.35   2+2  498ms/460ms         781ms/579ms         13ms/15ms         18ms/19ms         judged
-2026-11-14 09:00    0.30   2+2  579ms/516ms         861ms/-             13ms/15ms         18ms/-            judged
-2026-11-14 09:05    0.29   2+2  669ms/508ms         1.0s/-              13ms/15ms         18ms/-            judged
-2026-11-14 09:10    0.27   2+2  667ms/509ms         996ms/-             13ms/15ms         18ms/-            judged
+2026-11-14 08:20    1.06   2+2  175ms/154ms         354ms/196ms         13ms/15ms         18ms/19ms         not judged: warm-up
+2026-11-14 08:25    1.10   2+2  172ms/152ms         366ms/194ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 08:30    0.57   2+2  237ms/305ms         398ms/389ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 08:35    0.58   2+2  349ms/305ms         543ms/389ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 08:40    0.52   2+2  348ms/305ms         539ms/389ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 08:45    0.43   2+2  409ms/477ms         706ms/596ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 08:50    0.42   2+2  504ms/462ms         795ms/598ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 08:55    0.35   2+2  501ms/460ms         784ms/579ms         13ms/15ms         18ms/19ms         judged
+2026-11-14 09:00    0.30   2+2  582ms/516ms         864ms/-             13ms/15ms         18ms/-            judged
+2026-11-14 09:05    0.29   2+2  672ms/508ms         1.0s/-              13ms/15ms         18ms/-            judged
+2026-11-14 09:10    0.27   2+2  670ms/509ms         999ms/-             13ms/15ms         18ms/-            judged
 2026-11-14 09:15    3.09   2+2  1.7s/11.7s          4.7s/17.7s          13ms/15ms         18ms/19ms         not judged: a burst near the knee in its window
 2026-11-14 09:20    4.13   2+2  overloaded/12.2s    overloaded/17.9s    13ms/14ms         18ms/19ms         judged
-2026-11-14 09:25    2.02   2+2  880ms/11.1s         2.0s/17.6s          13ms/14ms         18ms/19ms         not judged: a burst near the knee in its window
-2026-11-14 09:30    0.26   2+2  666ms/515ms         993ms/-             13ms/15ms         18ms/-            judged
-2026-11-14 09:35    0.24   2+2  665ms/516ms         989ms/-             13ms/15ms         18ms/-            judged
+2026-11-14 09:25    2.02   2+2  883ms/11.1s         2.0s/17.6s          13ms/14ms         18ms/19ms         not judged: a burst near the knee in its window
+2026-11-14 09:30    0.26   2+2  669ms/515ms         996ms/-             13ms/15ms         18ms/-            judged
+2026-11-14 09:35    0.24   2+2  668ms/516ms         992ms/-             13ms/15ms         18ms/-            judged
 
 score over the steps with a figure
             steps  median  within     read    typical     worst-10%  under upper 
                     ratio     20% >20% low       miss          miss        bound 
-TTFT mean      12    1.21     50%        0      1.21x         1.25x          92% 1 refused Saturated
-TTFT p50       12    1.13     58%        1      1.15x         1.31x          83% 1 refused Saturated
-TTFT p90        7    1.35     29%        0      1.35x         1.87x         100% 1 refused Saturated, 5 fewRequests
-TTFT p95        1    2.19      0%        0      2.19x         2.19x         100% 1 refused Saturated, 11 fewRequests
+TTFT mean      12    1.21     50%        0      1.21x         1.27x          92% 1 refused Saturated
+TTFT p50       12    1.14     58%        1      1.15x         1.32x          83% 1 refused Saturated
+TTFT p90        7    1.35     29%        0      1.35x         1.88x         100% 1 refused Saturated, 5 fewRequests
+TTFT p95        1    2.21      0%        0      2.21x         2.21x         100% 1 refused Saturated, 11 fewRequests
 TPOT mean      13    0.99    100%        0      1.01x         1.02x            - 
 TPOT p50       13    0.88    100%        0      1.14x         1.14x            - 
 TPOT p90        8    0.94    100%        0      1.06x         1.06x            - 5 fewRequests

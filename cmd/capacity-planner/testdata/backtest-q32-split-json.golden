@@ -61,13 +61,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.19497859533877515,
+            "value": 0.1979877934216009,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.1774851429158114,
-              "hi": 0.21943716600924945
+              "lo": 0.18049434099863715,
+              "hi": 0.22244636409207524
             },
-            "floor": 0.18672773535337214,
+            "floor": 0.1897369334361979,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -87,21 +87,21 @@
               "outside": "prompt cv 0.65, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.21943716600924945,
+          "bound": 0.22244636409207524,
           "measured": 0.15973311976091337,
-          "ratio": 1.2206522706788472,
+          "ratio": 1.2394911820287906,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.1721987120952646,
+            "value": 0.17520791017809034,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.15708641761577075,
-              "hi": 0.19458947389384873
+              "lo": 0.16009561569859648,
+              "hi": 0.19759867197667447
             },
-            "floor": 0.1641603960388305,
+            "floor": 0.16716959412165627,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -122,21 +122,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.19458947389384873,
+          "bound": 0.19759867197667447,
           "measured": 0.15361010830324912,
-          "ratio": 1.1210115922535437,
+          "ratio": 1.1406014364120098,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.35108322476488024,
+            "value": 0.354092422847706,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.31715264376985025,
-              "hi": 0.4017067748936555
+              "lo": 0.320161841852676,
+              "hi": 0.40471597297648126
             },
-            "floor": 0.33035234598215574,
+            "floor": 0.3333615440649815,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -156,21 +156,21 @@
               "outside": "prompt cv 0.65, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.4017067748936555,
+          "bound": 0.40471597297648126,
           "measured": 0.19649819494584841,
-          "ratio": 1.7866994903522286,
+          "ratio": 1.8020136161825195,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.4187250943803287,
+            "value": 0.4217342924631544,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.37726396178521215,
-              "hi": 0.4792886989394752
+              "lo": 0.3802731598680379,
+              "hi": 0.4822978970223009
             },
-            "floor": 0.39317173672330313,
+            "floor": 0.39618093480612887,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -190,9 +190,9 @@
               "outside": "prompt cv 0.65, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.4792886989394752,
+          "bound": 0.4822978970223009,
           "measured": 0.2515,
-          "ratio": 1.6649109120490206,
+          "ratio": 1.6768759143664191,
           "inRegion": false
         }
       ],
@@ -306,13 +306,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.19525988096106217,
+            "value": 0.19826907904388796,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.17769603482008417,
-              "hi": 0.21984468040576194
+              "lo": 0.18070523290290996,
+              "hi": 0.22285387848858773
             },
-            "floor": 0.18672773535337214,
+            "floor": 0.1897369334361979,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -332,21 +332,21 @@
               "outside": "prompt cv 0.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.21984468040576194,
+          "bound": 0.22285387848858773,
           "measured": 0.15648108103198008,
-          "ratio": 1.2478178171657497,
+          "ratio": 1.2670482446588394,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.1693267327798283,
+            "value": 0.17233593086265409,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.154410395059287,
-              "hi": 0.19156886753526592
+              "lo": 0.1574195931421128,
+              "hi": 0.19457806561809166
             },
-            "floor": 0.16069824741528824,
+            "floor": 0.163707445498114,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -367,21 +367,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.19156886753526592,
+          "bound": 0.19457806561809166,
           "measured": 0.15235690235690236,
-          "ratio": 1.1113820913946741,
+          "ratio": 1.1311330710764258,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.3625309281204526,
+            "value": 0.36554012620327836,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.32742447756392157,
-              "hi": 0.4149317668394886
+              "lo": 0.3304336756467473,
+              "hi": 0.41794096492231436
             },
-            "floor": 0.34112414635622995,
+            "floor": 0.3441333444390557,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -401,21 +401,21 @@
               "outside": "prompt cv 0.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.4149317668394886,
+          "bound": 0.41794096492231436,
           "measured": 0.19424242424242427,
-          "ratio": 1.8663838733190226,
+          "ratio": 1.8818758447282657,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.43733446397503695,
+            "value": 0.4403436620578627,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.39393941729753135,
-              "hi": 0.49987632836401685
+              "lo": 0.3969486153803571,
+              "hi": 0.5028855264468426
             },
-            "floor": 0.41062749081053235,
+            "floor": 0.4136366888933581,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -435,9 +435,9 @@
               "outside": "prompt cv 0.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.49987632836401685,
+          "bound": 0.5028855264468426,
           "measured": 0.19947811447811448,
-          "ratio": 2.192393211251346,
+          "ratio": 2.2074785658061478,
           "inRegion": false
         }
       ],
@@ -551,13 +551,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.2505684585162914,
+            "value": 0.2535776565991172,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.22793637353087656,
-              "hi": 0.28190461399143885
+              "lo": 0.23094557161370233,
+              "hi": 0.28491381207426464
             },
-            "floor": 0.2428210666334236,
+            "floor": 0.24583026471624936,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -577,21 +577,21 @@
               "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.28190461399143885,
+          "bound": 0.28491381207426464,
           "measured": 0.28878969641179236,
-          "ratio": 0.8676502715630119,
+          "ratio": 0.8780703042726793,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.2338596824118189,
+            "value": 0.23686888049464466,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.21325099702805478,
-              "hi": 0.2631784451997688
+              "lo": 0.21626019511088054,
+              "hi": 0.26618764328259453
             },
-            "floor": 0.22808880339464133,
+            "floor": 0.2310980014774671,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -612,21 +612,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.2631784451997688,
+          "bound": 0.26618764328259453,
           "measured": 0.3047945205479452,
-          "ratio": 0.7672699692612486,
+          "ratio": 0.7771428438700702,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.39515799527725554,
+            "value": 0.3981671933600813,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.35725595337648886,
-              "hi": 0.4510439577982311
+              "lo": 0.3602651514593146,
+              "hi": 0.4540531558810568
             },
-            "floor": 0.3760380125177142,
+            "floor": 0.3790472106005399,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -646,21 +646,21 @@
               "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.4510439577982311,
+          "bound": 0.4540531558810568,
           "measured": 0.38863013698630144,
-          "ratio": 1.0167970974705551,
+          "ratio": 1.0245401873558664,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.4529208353699394,
+            "value": 0.4559300334527651,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.408501917744068,
-              "hi": 0.5189772176459249
+              "lo": 0.41151111582689376,
+              "hi": 0.5219864157287506
             },
-            "floor": 0.42774479196439835,
+            "floor": 0.4307539900472241,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -680,7 +680,7 @@
               "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.5189772176459249,
+          "bound": 0.5219864157287506,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -794,13 +794,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.36587564166138226,
+            "value": 0.368884839744208,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.33090099201541673,
-              "hi": 0.4149117843049183
+              "lo": 0.33391019009824247,
+              "hi": 0.41792098238774406
             },
-            "floor": 0.34839410498146806,
+            "floor": 0.3514033030642938,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -820,21 +820,21 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.4149117843049183,
+          "bound": 0.41792098238774406,
           "measured": 0.2924626517905444,
-          "ratio": 1.2510166321114213,
+          "ratio": 1.26130580258978,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.3455811967357048,
+            "value": 0.34859039481853055,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.3138640065665564,
-              "hi": 0.3911720277656716
+              "lo": 0.3168732046493821,
+              "hi": 0.39418122584849735
             },
-            "floor": 0.33515585790411007,
+            "floor": 0.3381650559869358,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -855,21 +855,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.3911720277656716,
+          "bound": 0.39418122584849735,
           "measured": 0.30487804878048785,
-          "ratio": 1.1335063252931117,
+          "ratio": 1.14337649500478,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.5400643058792629,
+            "value": 0.5430735039620886,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.4852918935723945,
-              "hi": 0.6248357830856215
+              "lo": 0.48830109165522023,
+              "hi": 0.6278449811684472
             },
-            "floor": 0.5008001283775305,
+            "floor": 0.5038093264603563,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -889,21 +889,21 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.6248357830856215,
+          "bound": 0.6278449811684472,
           "measured": 0.38878048780487806,
-          "ratio": 1.389123998811153,
+          "ratio": 1.3968640942563133,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.6122464231132478,
+            "value": 0.6152556211960736,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.5471735825676796,
-              "hi": 0.7127279368895412
+              "lo": 0.5501827806505053,
+              "hi": 0.7157371349723669
             },
-            "floor": 0.5563337564514519,
+            "floor": 0.5593429545342776,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -923,7 +923,7 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.7127279368895412,
+          "bound": 0.7157371349723669,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1037,13 +1037,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.36404695859443126,
+            "value": 0.367056156677257,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.3295356265388089,
-              "hi": 0.41225185601986075
+              "lo": 0.33254482462163465,
+              "hi": 0.4152610541026865
             },
-            "floor": 0.34839410498146806,
+            "floor": 0.3514033030642938,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1063,21 +1063,21 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.41225185601986075,
+          "bound": 0.4152610541026865,
           "measured": 0.2856090154126568,
-          "ratio": 1.2746339889461993,
+          "ratio": 1.2851700642114634,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.3445136965270249,
+            "value": 0.34752289460985064,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.3130283260689884,
-              "hi": 0.38943935475940333
+              "lo": 0.31603752415181413,
+              "hi": 0.39244855284222907
             },
-            "floor": 0.33515585790411007,
+            "floor": 0.3381650559869358,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1098,21 +1098,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.38943935475940333,
+          "bound": 0.39244855284222907,
           "measured": 0.3047297297297298,
-          "ratio": 1.130554924301545,
+          "ratio": 1.1404298980544987,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.5362522853988034,
+            "value": 0.5392614834816292,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.482464843606877,
-              "hi": 0.6185846378653714
+              "lo": 0.48547404168970276,
+              "hi": 0.6215938359481972
             },
-            "floor": 0.5008001283775305,
+            "floor": 0.5038093264603563,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1132,21 +1132,21 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.6185846378653714,
+          "bound": 0.6215938359481972,
           "measured": 0.38851351351351354,
-          "ratio": 1.380266751983007,
+          "ratio": 1.3880121661788019,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.6064435675206743,
+            "value": 0.6094527656035,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.5434137373623128,
-              "hi": 0.7045941558995854
+              "lo": 0.5464229354451385,
+              "hi": 0.7076033539824111
             },
-            "floor": 0.5563337564514519,
+            "floor": 0.5593429545342776,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1166,7 +1166,7 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.7045941558995854,
+          "bound": 0.7076033539824111,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1280,13 +1280,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.4375563368711556,
+            "value": 0.4405655349539813,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.3956606839179368,
-              "hi": 0.49605556211095303
+              "lo": 0.39866988200076253,
+              "hi": 0.49906476019377877
             },
-            "floor": 0.41877613054683105,
+            "floor": 0.4217853286296568,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1306,21 +1306,21 @@
               "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.49605556211095303,
+          "bound": 0.49906476019377877,
           "measured": 0.44559392949153775,
-          "ratio": 0.9819620688514455,
+          "ratio": 0.9887152983809849,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.4061816089556605,
+            "value": 0.40919080703848626,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.3683530663344949,
-              "hi": 0.46093876788088783
+              "lo": 0.3713622644173206,
+              "hi": 0.46394796596371357
             },
-            "floor": 0.39232007584587164,
+            "floor": 0.3953292739286974,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1341,21 +1341,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.46093876788088783,
+          "bound": 0.46394796596371357,
           "measured": 0.4769230769230769,
-          "ratio": 0.8516711155521914,
+          "ratio": 0.8579807244355357,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.7026861202105172,
+            "value": 0.705695318293343,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6320121020969324,
-              "hi": 0.8092899608050744
+              "lo": 0.6350213001797581,
+              "hi": 0.8122991588879002
             },
-            "floor": 0.6580058232481993,
+            "floor": 0.6610150213310251,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1375,21 +1375,21 @@
               "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.8092899608050744,
+          "bound": 0.8122991588879002,
           "measured": 0.5958974358974358,
-          "ratio": 1.179206484002159,
+          "ratio": 1.1842563430912383,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.8091255316187047,
+            "value": 0.8121347297015304,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7260199207940722,
-              "hi": 0.9355619600691264
+              "lo": 0.7290291188768979,
+              "hi": 0.9385711581519521
             },
-            "floor": 0.7508603536947374,
+            "floor": 0.7538695517775631,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1409,7 +1409,7 @@
               "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.9355619600691264,
+          "bound": 0.9385711581519521,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1523,13 +1523,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.5322139217164414,
+            "value": 0.5352231197992672,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.47999363452873955,
-              "hi": 0.6056498711058104
+              "lo": 0.4830028326115653,
+              "hi": 0.6086590691886361
             },
-            "floor": 0.5043449968954394,
+            "floor": 0.5073541949782652,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1549,21 +1549,21 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.6056498711058104,
+          "bound": 0.6086590691886361,
           "measured": 0.4571019186429141,
-          "ratio": 1.164322222266156,
+          "ratio": 1.1709054326183674,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.5013284360901613,
+            "value": 0.504337634172987,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.4541984714599348,
-              "hi": 0.5694823817060075
+              "lo": 0.45720766954276054,
+              "hi": 0.5724915797888332
             },
-            "floor": 0.4847870667594077,
+            "floor": 0.48779626484223343,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1584,21 +1584,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.5694823817060075,
+          "bound": 0.5724915797888332,
           "measured": 0.46216216216216216,
-          "ratio": 1.0847457389085362,
+          "ratio": 1.0912568692631883,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.7918496805059153,
+            "value": 0.794858878588741,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7097761976879536,
-              "hi": 0.9199479084350056
+              "lo": 0.7127853957707794,
+              "hi": 0.9229571065178314
             },
-            "floor": 0.7295067075413093,
+            "floor": 0.732515905624135,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1618,21 +1618,21 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.9199479084350056,
+          "bound": 0.9229571065178314,
           "measured": 0.5983783783783783,
-          "ratio": 1.323326024332379,
+          "ratio": 1.328354946151013,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.901472778150462,
+            "value": 0.9044819762332877,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.8031372387698663,
-              "hi": 1.0518969713795463
+              "lo": 0.806146436852692,
+              "hi": 1.054906169462372
             },
-            "floor": 0.811551015350594,
+            "floor": 0.8145602134334198,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1652,7 +1652,7 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.0518969713795463,
+          "bound": 1.054906169462372,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1766,13 +1766,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.5268204064147163,
+            "value": 0.529829604497542,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.47597434975564434,
-              "hi": 0.597786526969248
+              "lo": 0.4789835478384701,
+              "hi": 0.6007957250520738
             },
-            "floor": 0.5043449968954394,
+            "floor": 0.5073541949782652,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1792,21 +1792,21 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.597786526969248,
+          "bound": 0.6007957250520738,
           "measured": 0.4312884716497502,
-          "ratio": 1.22150356674163,
+          "ratio": 1.2284807949325787,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.49819280901456564,
+            "value": 0.5012020070973914,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.45174772487325343,
-              "hi": 0.5643654207010759
+              "lo": 0.45475692295607917,
+              "hi": 0.5673746187839016
             },
-            "floor": 0.4847870667594077,
+            "floor": 0.48779626484223343,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1827,21 +1827,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.5643654207010759,
+          "bound": 0.5673746187839016,
           "measured": 0.4597014925373134,
-          "ratio": 1.083731110518698,
+          "ratio": 1.0902770933612085,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.7806221389604648,
+            "value": 0.7836313370432906,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7014583427318789,
-              "hi": 0.9015140202377433
+              "lo": 0.7044675408147046,
+              "hi": 0.904523218320569
             },
-            "floor": 0.7295067075413093,
+            "floor": 0.732515905624135,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1861,21 +1861,21 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.9015140202377433,
+          "bound": 0.904523218320569,
           "measured": 0.5791044776119403,
-          "ratio": 1.3479815286172976,
+          "ratio": 1.3531778242757853,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.8839267822844644,
+            "value": 0.8869359803672902,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.791212125711568,
-              "hi": 1.027988078518518
+              "lo": 0.7942213237943937,
+              "hi": 1.0309972766013438
             },
-            "floor": 0.811551015350594,
+            "floor": 0.8145602134334198,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1895,7 +1895,7 @@
               "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.027988078518518,
+          "bound": 1.0309972766013438,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2009,13 +2009,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.606442156927399,
+            "value": 0.6094513550102247,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.5475761782776729,
-              "hi": 0.6886028668276212
+              "lo": 0.5505853763604986,
+              "hi": 0.6916120649104469
             },
-            "floor": 0.5804425001749269,
+            "floor": 0.5834516982577527,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2034,21 +2034,21 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.6886028668276212,
+          "bound": 0.6916120649104469,
           "measured": 0.6027313297882382,
-          "ratio": 1.00615668533518,
+          "ratio": 1.0111492880656254,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.5785269217682378,
+            "value": 0.5815361198510636,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.5243229354690588,
-              "hi": 0.6534916565647023
+              "lo": 0.5273321335518846,
+              "hi": 0.656500854647528
             },
-            "floor": 0.5637729906760345,
+            "floor": 0.5667821887588602,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2068,21 +2068,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.6534916565647023,
+          "bound": 0.656500854647528,
           "measured": 0.5164383561643836,
-          "ratio": 1.120224543476959,
+          "ratio": 1.1260513726559056,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.8606561036674626,
+            "value": 0.8636653017502883,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7728377592856563,
-              "hi": 0.9962160415317521
+              "lo": 0.7758469573684821,
+              "hi": 0.9992252396145779
             },
-            "floor": 0.8031245048360542,
+            "floor": 0.80613370291888,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2101,20 +2101,20 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.9962160415317521,
+          "bound": 0.9992252396145779,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.9686401652004536,
+            "value": 0.9716493632832793,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.8652313206204276,
-              "hi": 1.13228536486364
+              "lo": 0.8682405187032534,
+              "hi": 1.1352945629464657
             },
-            "floor": 0.8816543202557752,
+            "floor": 0.8846635183386009,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2133,7 +2133,7 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.13228536486364,
+          "bound": 1.1352945629464657,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2246,13 +2246,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.7026945927685895,
+            "value": 0.7057037908514152,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6335066037684975,
-              "hi": 0.7996748769098284
+              "lo": 0.6365158018513233,
+              "hi": 0.8026840749926542
             },
-            "floor": 0.6685425066540762,
+            "floor": 0.671551704736902,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2271,21 +2271,21 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.7996748769098284,
+          "bound": 0.8026840749926542,
           "measured": 0.5632544194282914,
-          "ratio": 1.2475616143089143,
+          "ratio": 1.2529041344543934,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.6685553875997583,
+            "value": 0.671564585682584,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6052813138808785,
-              "hi": 0.756466543421288
+              "lo": 0.6082905119637042,
+              "hi": 0.7594757415041138
             },
-            "floor": 0.6492445592260145,
+            "floor": 0.6522537573088403,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2305,21 +2305,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.756466543421288,
+          "bound": 0.7594757415041138,
           "measured": 0.5083333333333333,
-          "ratio": 1.3151909264257542,
+          "ratio": 1.3211106603591818,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 1.0017316626193415,
+            "value": 1.0047408607021673,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.8977168736533311,
-              "hi": 1.1646689105016297
+              "lo": 0.9007260717361568,
+              "hi": 1.1676781085844554
             },
-            "floor": 0.9263368718338878,
+            "floor": 0.9293460699167135,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2338,20 +2338,20 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.1646689105016297,
+          "bound": 1.1676781085844554,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.130839873015931,
+            "value": 1.1338490710987568,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.0073445341931484,
-              "hi": 1.3273230445787751
+              "lo": 1.0103537322759741,
+              "hi": 1.3303322426616009
             },
-            "floor": 1.0172492198910308,
+            "floor": 1.0202584179738565,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2370,7 +2370,7 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.3273230445787751,
+          "bound": 1.3303322426616009,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2483,13 +2483,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.6999419067689691,
+            "value": 0.7029511048517948,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6314557271999434,
-              "hi": 0.7956626976975025
+              "lo": 0.6344649252827691,
+              "hi": 0.7986718957803283
             },
-            "floor": 0.6685425066540762,
+            "floor": 0.671551704736902,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2508,21 +2508,21 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.7956626976975025,
+          "bound": 0.7986718957803283,
           "measured": 0.5618409130133719,
-          "ratio": 1.2458008851916953,
+          "ratio": 1.2511568463065352,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.6670322735879533,
+            "value": 0.670041471670779,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.604110930836893,
-              "hi": 0.7541802388658033
+              "lo": 0.6071201289197188,
+              "hi": 0.7571894369486291
             },
-            "floor": 0.6492445592260145,
+            "floor": 0.6522537573088403,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2542,21 +2542,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.7541802388658033,
+          "bound": 0.7571894369486291,
           "measured": 0.5088235294117647,
-          "ratio": 1.3109304798838388,
+          "ratio": 1.3168445107980629,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.9957896811558513,
+            "value": 0.998798879238677,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.8933589603286334,
-              "hi": 1.1546819620357536
+              "lo": 0.8963681584114591,
+              "hi": 1.1576911601185793
             },
-            "floor": 0.9263368718338878,
+            "floor": 0.9293460699167135,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2575,20 +2575,20 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.1546819620357536,
+          "bound": 1.1576911601185793,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.1220001939980822,
+            "value": 1.1250093920809079,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.0012049375656127,
-              "hi": 1.3139395947168724
+              "lo": 1.0042141356484384,
+              "hi": 1.3169487927996981
             },
-            "floor": 1.0172492198910308,
+            "floor": 1.0202584179738565,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2607,7 +2607,7 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.3139395947168724,
+          "bound": 1.3169487927996981,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2722,13 +2722,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 2.2123301284046413,
+            "value": 2.215339326487467,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.4483949939092717,
+              "lo": 1.4514041919920975,
               "hiRefused": "Saturated"
             },
-            "floor": 0.6685425066540762,
+            "floor": 0.671551704736902,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2748,19 +2748,19 @@
             }
           },
           "measured": 11.393436724167085,
-          "ratio": 0.19417583842037558,
+          "ratio": 0.1944399552233805,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 1.6861648032380514,
+            "value": 1.6891740013208771,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.1362872801866624,
+              "lo": 1.139296478269488,
               "hiRefused": "Saturated"
             },
-            "floor": 0.6492445592260145,
+            "floor": 0.6522537573088403,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2781,19 +2781,19 @@
             }
           },
           "measured": 11.699766355140188,
-          "ratio": 0.14411952786537913,
+          "ratio": 0.14437672941893867,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 4.706993102316957,
+            "value": 4.710002300399783,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.9130234773525983,
+              "lo": 2.916032675435424,
               "hiRefused": "Saturated"
             },
-            "floor": 0.9263368718338878,
+            "floor": 0.9293460699167135,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2813,19 +2813,19 @@
             }
           },
           "measured": 17.71590909090909,
-          "ratio": 0.26569300385111755,
+          "ratio": 0.26586286237022505,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 5.896181381234252,
+            "value": 5.899190579317077,
             "unit": "s",
             "sensitivity": {
-              "lo": 3.576436024591831,
+              "lo": 3.5794452226746567,
               "hiRefused": "Saturated"
             },
-            "floor": 1.0172492198910308,
+            "floor": 1.0202584179738565,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2845,7 +2845,7 @@
             }
           },
           "measured": 18.857954545454543,
-          "ratio": 0.31266282708563675,
+          "ratio": 0.31282239890322555,
           "inRegion": false
         }
       ],
@@ -3117,13 +3117,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 1.084138194982387,
+            "value": 1.0871473930652127,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.8897918570332576,
-              "hi": 1.6967273281552127
+              "lo": 0.8928010551160833,
+              "hi": 1.6997365262380384
             },
-            "floor": 0.6685425066540762,
+            "floor": 0.671551704736902,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3142,21 +3142,21 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.6967273281552127,
+          "bound": 1.6997365262380384,
           "measured": 10.679724569931018,
-          "ratio": 0.10151368491606985,
+          "ratio": 0.10179545230277738,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.8797942094319352,
+            "value": 0.8828034075147609,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7457727696693102,
-              "hi": 1.330649705329828
+              "lo": 0.7487819677521359,
+              "hi": 1.3336589034126538
             },
-            "floor": 0.6492445592260145,
+            "floor": 0.6522537573088403,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3176,21 +3176,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 1.330649705329828,
+          "bound": 1.3336589034126538,
           "measured": 11.086387434554974,
-          "ratio": 0.0793580609216055,
+          "ratio": 0.07962949272033971,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 1.9974818421614273,
+            "value": 2.000491040244253,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.5712675191962289,
-              "hi": 3.4290573465456693
+              "lo": 1.5742767172790546,
+              "hi": 3.4320665446284955
             },
-            "floor": 0.9263368718338878,
+            "floor": 0.9293460699167135,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3209,21 +3209,21 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 3.4290573465456693,
+          "bound": 3.4320665446284955,
           "measured": 17.5625,
-          "ratio": 0.11373562090598874,
+          "ratio": 0.11390696314558024,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.393768873979713,
+            "value": 2.396778072062539,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.867224804086991,
-              "hi": 4.316657117124819
+              "lo": 1.8702340021698167,
+              "hi": 4.319666315207645
             },
-            "floor": 1.0172492198910308,
+            "floor": 1.0202584179738565,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3242,9 +3242,9 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 4.316657117124819,
+          "bound": 4.319666315207645,
           "measured": 18.781249999999996,
-          "ratio": 0.1274552478658084,
+          "ratio": 0.12761547139101706,
           "inRegion": false
         }
       ],
@@ -3358,13 +3358,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.6985337055416673,
+            "value": 0.701542903624493,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6303944258563628,
-              "hi": 0.7936340099998707
+              "lo": 0.6334036239391886,
+              "hi": 0.7966432080826964
             },
-            "floor": 0.6685425066540762,
+            "floor": 0.671551704736902,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3383,21 +3383,21 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.7936340099998707,
+          "bound": 0.7966432080826964,
           "measured": 0.5856390279438183,
-          "ratio": 1.192771779562272,
+          "ratio": 1.1979100950420156,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.6662319722777045,
+            "value": 0.6692411703605302,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6034854997132261,
-              "hi": 0.7530078641610677
+              "lo": 0.6064946977960518,
+              "hi": 0.7560170622438934
             },
-            "floor": 0.6492445592260145,
+            "floor": 0.6522537573088403,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3417,21 +3417,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.7530078641610677,
+          "bound": 0.7560170622438934,
           "measured": 0.5145161290322581,
-          "ratio": 1.2948709179065103,
+          "ratio": 1.3007195160612186,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.9927922211376999,
+            "value": 0.9958014192205257,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.891146316007389,
-              "hi": 1.149677059209886
+              "lo": 0.8941555140902148,
+              "hi": 1.1526862572927117
             },
-            "floor": 0.9263368718338878,
+            "floor": 0.9293460699167135,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3450,20 +3450,20 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.149677059209886,
+          "bound": 1.1526862572927117,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.1177721051172596,
+            "value": 1.1207813032000853,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.9980856172730842,
-              "hi": 1.3071565495427617
+              "lo": 1.0010948153559098,
+              "hi": 1.3101657476255875
             },
-            "floor": 1.0172492198910308,
+            "floor": 1.0202584179738565,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3482,7 +3482,7 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.3071565495427617,
+          "bound": 1.3101657476255875,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3595,13 +3595,13 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.6966921860855104,
+            "value": 0.6997013841683362,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6290217123686043,
-              "hi": 0.790956131665857
+              "lo": 0.63203091045143,
+              "hi": 0.7939653297486827
             },
-            "floor": 0.6685425066540762,
+            "floor": 0.671551704736902,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3620,21 +3620,21 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.790956131665857,
+          "bound": 0.7939653297486827,
           "measured": 0.5885588761385477,
-          "ratio": 1.1837255614194626,
+          "ratio": 1.1888383856496716,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.66521206711178,
+            "value": 0.6682212651946058,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6027024859341014,
-              "hi": 0.7514906234254577
+              "lo": 0.6057116840169271,
+              "hi": 0.7544998215082834
             },
-            "floor": 0.6492445592260145,
+            "floor": 0.6522537573088403,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3654,21 +3654,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.7514906234254577,
+          "bound": 0.7544998215082834,
           "measured": 0.5160714285714286,
-          "ratio": 1.288992240770231,
+          "ratio": 1.2948232128338382,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.9887899943222548,
+            "value": 0.9917991924050805,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.8882060840543642,
-              "hi": 1.14295616210841
+              "lo": 0.8912152821371899,
+              "hi": 1.1459653601912356
             },
-            "floor": 0.9263368718338878,
+            "floor": 0.9293460699167135,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3687,20 +3687,20 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.14295616210841,
+          "bound": 1.1459653601912356,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.1120606828537372,
+            "value": 1.115069880936563,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.9938923172134244,
-              "hi": 1.297924100482953
+              "lo": 0.9969015152962502,
+              "hi": 1.3009332985657787
             },
-            "floor": 1.0172492198910308,
+            "floor": 1.0202584179738565,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3719,7 +3719,7 @@
               "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.297924100482953,
+          "bound": 1.3009332985657787,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3832,9 +3832,9 @@
         "statistic": "mean",
         "all": {
           "steps": 12,
-          "bias": 1.207137673151951,
-          "medianError": 0.20705218737388348,
-          "p90Error": 0.25101663211142133,
+          "bias": 1.213195444987297,
+          "medianError": 0.21309914921039175,
+          "p90Error": 0.26704824465883936,
           "coverage": 0.9166666666666666,
           "within": 0.5,
           "coverageSteps": 12,
@@ -3863,9 +3863,9 @@
         "statistic": "p50",
         "all": {
           "steps": 12,
-          "bias": 1.125389733889252,
-          "medianError": 0.15365516500522625,
-          "p90Error": 0.3109304798838388,
+          "bias": 1.1357814845654621,
+          "medianError": 0.1543987942382421,
+          "p90Error": 0.31684451079806286,
           "coverage": 0.8333333333333334,
           "within": 0.5833333333333334,
           "coverageSteps": 12,
@@ -3894,9 +3894,9 @@
         "statistic": "p90",
         "all": {
           "steps": 7,
-          "bias": 1.3479815286172976,
-          "medianError": 0.34798152861729753,
-          "p90Error": 0.8663838733190226,
+          "bias": 1.3531778242757853,
+          "medianError": 0.35317782427578526,
+          "p90Error": 0.8818758447282656,
           "coverage": 1,
           "within": 0.2857142857142857,
           "coverageSteps": 7,
@@ -3926,9 +3926,9 @@
         "statistic": "p95",
         "all": {
           "steps": 1,
-          "bias": 2.192393211251346,
-          "medianError": 1.1923932112513458,
-          "p90Error": 1.1923932112513458,
+          "bias": 2.2074785658061478,
+          "medianError": 1.2074785658061478,
+          "p90Error": 1.2074785658061478,
           "coverage": 1,
           "within": 0,
           "coverageSteps": 1,
@@ -4060,9 +4060,9 @@
             "statistic": "mean",
             "all": {
               "steps": 12,
-              "bias": 1.207137673151951,
-              "medianError": 0.20705218737388348,
-              "p90Error": 0.25101663211142133,
+              "bias": 1.213195444987297,
+              "medianError": 0.21309914921039175,
+              "p90Error": 0.26704824465883936,
               "coverage": 0.9166666666666666,
               "within": 0.5,
               "coverageSteps": 12,
@@ -4083,9 +4083,9 @@
             "statistic": "p50",
             "all": {
               "steps": 12,
-              "bias": 1.125389733889252,
-              "medianError": 0.15365516500522625,
-              "p90Error": 0.3109304798838388,
+              "bias": 1.1357814845654621,
+              "medianError": 0.1543987942382421,
+              "p90Error": 0.31684451079806286,
               "coverage": 0.8333333333333334,
               "within": 0.5833333333333334,
               "coverageSteps": 12,
@@ -4106,9 +4106,9 @@
             "statistic": "p90",
             "all": {
               "steps": 7,
-              "bias": 1.3479815286172976,
-              "medianError": 0.34798152861729753,
-              "p90Error": 0.8663838733190226,
+              "bias": 1.3531778242757853,
+              "medianError": 0.35317782427578526,
+              "p90Error": 0.8818758447282656,
               "coverage": 1,
               "within": 0.2857142857142857,
               "coverageSteps": 7,
@@ -4131,9 +4131,9 @@
             "statistic": "p95",
             "all": {
               "steps": 1,
-              "bias": 2.192393211251346,
-              "medianError": 1.1923932112513458,
-              "p90Error": 1.1923932112513458,
+              "bias": 2.2074785658061478,
+              "medianError": 1.2074785658061478,
+              "p90Error": 1.2074785658061478,
               "coverage": 1,
               "within": 0,
               "coverageSteps": 1,
