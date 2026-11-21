@@ -200,8 +200,10 @@ the fleet served. Busy minutes of a single-rank pod are `V_P` itself and are
 not floored, and with no source the answer stays `NoPrefillCapacity`: a peak
 with no queue cannot tell capacity from the offered load. The planner also
 prices no TTFT at or past a knee priced from a lower bound: such a rate is
-refused `PastLowerBoundKnee`, not `Saturated`, and backtest and the
-self-check count the step as not priced, not overloaded. The controller's
+refused `PastLowerBoundKnee`, not `Saturated` (past decode's knee it is
+`Saturated`, past the decode gate's onset under flow control
+`AboveDecodeOnset`), and backtest and the self-check count the step as not
+priced, not overloaded. The controller's
 SLO analyzer is unchanged.
 
 The **low-load slope** of service time against prompt length is an upper bound,

@@ -149,3 +149,65 @@ func TestCapacity_AServedRunIsOnePods(t *testing.T) {
 	assert.Equal(t, 10000.0, est.VP)
 	assert.Equal(t, 10000.0, est.VPServedPeak)
 }
+
+// served is p-0 computing rate tok/s of 4000-token prompts with no queue.
+func served(rate float64) domain.ReplicaMetrics {
+	rm := queued("p-0", rate, 0)
+	rm.RequestRate = rate / 4000
+	return rm
+}
+
+// The back-pressure bound is floored too, and a floored V_P carries the
+// served run's prompt: three minutes at 30k tok/s of 4000-token prompts
+// over a 20k bound.
+func TestCapacity_TheBackPressureBoundIsFloored(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		o := NewObserver()
+		var est Estimate
+		for i := range 3 {
+			c := cycle(t0.Add(time.Duration(i)*minute), served(30000))
+			c.Bound = Bound{Tokens: 20000, Samples: MinBoundSamples}
+			c.VPFloorServed = on
+			est = o.Observe(c)
+		}
+		assert.Equal(t, SourceBackPressureBound, est.VPSource, "on %v", on)
+		assert.True(t, est.VPLowerBound, "on %v", on)
+		if !on {
+			assert.Equal(t, 20000.0, est.VP)
+			assert.False(t, est.VPFlooredAtServed)
+			continue
+		}
+		assert.Equal(t, 30000.0, est.VP)
+		assert.Equal(t, 4000.0, est.VPPromptTokens, "the served run's prompt")
+		assert.Equal(t, PeakRun, est.VPSamples)
+		assert.True(t, est.VPFlooredAtServed)
+	}
+}
+
+// Busy minutes of a data-parallel pod are a lower bound and are floored:
+// three minutes at 36k tok/s of 4000-token prompts, then five busy minutes
+// at 24k of 1000-token ones on a two-rank pod.
+func TestCapacity_DataParallelBusyMinutesAreFloored(t *testing.T) {
+	o := NewObserver()
+	var est Estimate
+	for i := range 3 {
+		rm := served(36000)
+		rm.EngineRanks = 2
+		c := cycle(t0.Add(time.Duration(i)*minute), rm)
+		c.VPFloorServed = true
+		o.Observe(c)
+	}
+	for i := range 5 {
+		rm := queued("p-0", 24000, 3)
+		rm.EngineRanks = 2
+		c := cycle(t0.Add(time.Duration(3+i)*minute), rm)
+		c.QueueMin = map[string]float64{"p-0": 2}
+		c.VPFloorServed = true
+		est = o.Observe(c)
+	}
+	assert.Equal(t, SourceBusyMinutes, est.VPSource)
+	assert.Equal(t, DataParallelRanks, est.VPLowerBoundReason)
+	assert.Equal(t, 36000.0, est.VP)
+	assert.Equal(t, 4000.0, est.VPPromptTokens)
+	assert.True(t, est.VPFlooredAtServed)
+}

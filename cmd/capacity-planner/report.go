@@ -1495,6 +1495,8 @@ func refusalWords(res whatif.Result) string {
 		return "the router's flow-control thresholds are not known"
 	case whatif.Saturated, whatif.AboveDecodeOnset:
 		return "the fleet is saturated there"
+	case whatif.PastLowerBoundKnee:
+		return "the prefill knee rests on a lower bound of V_P, and the true knee may be higher; --assume-vp states one"
 	case whatif.NoTPOTHistogram, whatif.TPOTBucketTooWide, whatif.TPOTQuantileUnbounded:
 		return "the TPOT histogram cannot give that percentile; judge TPOT at the mean"
 	case whatif.NoTraffic:
