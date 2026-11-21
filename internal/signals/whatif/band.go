@@ -64,6 +64,10 @@ type Refit struct {
 	// would hold the slope holds its A, as for any other. The zero value is
 	// the pinned fit alone, as before.
 	OneSided itl.Admission
+	// Floor, when set, lifts each resample's line to it as the line itself
+	// was lifted (LiftToFloor), so the band is around the line the planner
+	// prices. The zero value lifts nothing.
+	Floor LineFloor
 }
 
 // Resample is one bootstrap line: the line fitted from one resample, the
@@ -274,6 +278,7 @@ func refit(all, steady []itl.Observation, fit Refit) (Resample, bool) {
 	if tier == "" {
 		return Resample{}, false
 	}
+	got.Model, _ = LiftToFloor(tier, got.Model, fit.Floor)
 	return Resample{Line: got.Model, Tier: tier, TierChanged: tier != fit.Tier}, true
 }
 

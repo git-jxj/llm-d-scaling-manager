@@ -153,6 +153,12 @@ func TestCheckDayPlan(t *testing.T) {
 		"a bad headroom":  {DayPlanRequest{Headroom: ptr(1.5)}, "headroom"},
 		"classes":         {DayPlanRequest{Traffic: &Traffic{Classes: &Classes{}}}, "traffic.classes"},
 		"a bad mix":       {DayPlanRequest{Traffic: &Traffic{Mix: &Mix{PromptTokens: -1}}}, "traffic.mix.promptTokens"},
+		// The terms a plan states in place of its source's (the self-check's
+		// Stated) are checked before the replay too.
+		"a bad V_P":        {DayPlanRequest{Assume: &Assume{VP: ptr(-1.0)}}, "assume.vp"},
+		"a bad a":          {DayPlanRequest{Assume: &Assume{A: ptr(-1.0)}}, "assume.a"},
+		"a bad arrivalCV2": {DayPlanRequest{Traffic: &Traffic{ArrivalCV2: ptr(-1.0)}}, "arrivalCV2"},
+		"stated terms":     {DayPlanRequest{Assume: &Assume{VP: ptr(30000.0)}, Traffic: &Traffic{ArrivalCV2: ptr(2.0)}}, ""},
 	} {
 		err := CheckDayPlan(c.req)
 		if c.want == "" {

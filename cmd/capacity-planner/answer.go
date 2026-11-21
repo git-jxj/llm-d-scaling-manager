@@ -595,8 +595,14 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			}
 		}
 		if vs.Refitted {
-			pv.lines = whatif.BootstrapLines(vs.Readings, whatif.Refit{Tier: vs.Tier, Line: vs.Line,
-				Baseline: vs.Baseline, MinSettled: vs.MinSettled, OneSided: vs.OneSided}, f.resampling())
+			fit := whatif.Refit{Tier: vs.Tier, Line: vs.Line, Baseline: vs.Baseline, MinSettled: vs.MinSettled, OneSided: vs.OneSided}
+			if vs.LineAtFloor {
+				// Each resample lifted by the line's rule
+				// (saturation.SwitchITLLineAtFloor), whether or not
+				// the line itself was.
+				fit.Floor = whatif.LineFloor{ITL: vs.BelowBandITL, Fill: vs.BelowBandFill}
+			}
+			pv.lines = whatif.BootstrapLines(vs.Readings, fit, f.resampling())
 		}
 		out = append(out, pv)
 	}
@@ -640,7 +646,7 @@ func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 	a, ok := r.(whatif.Answer)
 	if !ok {
 		if u, ok := r.(whatif.Unanswerable); ok && u.Reason == whatif.NoLine && pv.state.Line.IsZero() {
-			u.Detail = fmt.Sprintf("no ITL line learned by cycle %d", pv.cycle)
+			u.Detail = fmt.Sprintf("no ITL line learned by cycle %d", pv.cycle) + pv.noLineHint()
 			return u
 		}
 		if u, ok := r.(whatif.Unanswerable); ok && u.Reason == whatif.PinnedDefaultB {
