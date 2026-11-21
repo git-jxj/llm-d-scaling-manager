@@ -52,6 +52,30 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   `BoundDecodeGateCharge`, which `decodeBound` does not read as decode-bound.
 - The last two are replay-only in the analyzer: `SetSwitchesForReplay` is
   the only way on, and no policy key sets them.
+- `PrefixAttention` (`slo-ttft-prefix-attention`, planner-only, off from the
+  constructor and not in `learnreplay.PlannerSwitches`, so off in the
+  planner too): a prefix hit's cost (issue #311). The planner reads it
+  through `learnreplay.PrefillState.PrefixAttention`; the analyzer prices
+  nothing with it. On:
+  - V_P's rescale along the curve reads `I_eff + 2h`, `h` the cached
+    tokens, not `I_eff` (`Prefill.shapedVP`, `attentionSpan`). Each
+    computed token attends over the cached ones too: at 32k with a 75% hit
+    a pod computes the 8k a fresh 8k prompt does, but V_P reads about 1.7x
+    high without it. It needs both whole prompts; with either unknown, the
+    rescale is as before.
+  - The planner nets an assumed prompt by the prefill variant's hit rate,
+    not the decode variant's (`pricedFleet.effectivePrompt`).
+  - The KV transfer scales with the tokens it moves, the whole prompt less
+    the decode variant's hits (`pricedFleet.transferPerToken`).
+
+  On whatever the switch says, `prefill.Estimate` records the whole prompt
+  and the hit rate V_P was read at (`VPWholePromptTokens`,
+  `VPPromptHitRate`), and `VPShapeMoved` is raised where the hits moved
+  (`Prefill.prefixMoved`): the hit rate by more than
+  `MaterialPrefixHitShare` (0.1), or the whole prompt by more than
+  `MaxVPShapeRatio` with a hit on either side. A state that recorded no
+  whole prompt raises nothing new. No committed recording has a prefix
+  hit, so no golden moves.
 
 One more switch sets an input, not a `TTFTFleet` field:
 `slo-ttft-imbalance-across-counts` (off, the CLI's `--imbalance-across-counts`

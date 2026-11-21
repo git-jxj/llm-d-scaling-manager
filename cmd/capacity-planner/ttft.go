@@ -129,6 +129,8 @@ func (f *answerFlags) checkTTFT() error {
 		return usagef("--flow-control %q, want on or off", f.flowControl)
 	case f.set["assume-a"] && f.assumeA <= 0:
 		return usagef("--assume-a %s, want a duration above 0", f.assumeA)
+	case f.set["assume-transfer-base"] && f.assumeTransferBase < 0:
+		return usagef("--assume-transfer-base %s, want a duration of 0 or more", f.assumeTransferBase)
 	case f.prefill < 0:
 		return usagef("--prefill %d, want 0 (the recorded count) or more", f.prefill)
 	case f.set["prefill-running-cap"] && (f.prefillRunningCap < 0 || f.prefillRunningCap > whatif.MaxRunningCap):
@@ -150,7 +152,7 @@ func (f *answerFlags) checkTTFT() error {
 // ttftFlagged reports whether any flag asks about TTFT.
 func (f *answerFlags) ttftFlagged() bool {
 	return slices.ContainsFunc([]string{"ttft", "ttft-percentile", "assume-vp", "assume-a", "assume-prompt-cv", "arrival-cv2", "assume-router-hop",
-		"prefill", "prefill-variant"},
+		"assume-transfer-base", "prefill", "prefill-variant"},
 		func(name string) bool { return f.set[name] })
 }
 
@@ -259,6 +261,11 @@ type pricedFleet struct {
 	assumedVP bool
 	// statedCV is a cv --assume-prompt-cv supplied, in in.PromptCV.
 	statedCV bool
+	// prefixAttention is slo.SwitchTTFTPrefixAttention, as the replay read
+	// it (PrefillState.PrefixAttention), and prefillServed the prefill
+	// variant's measured shape: its hit rate is what the prefill pods skip.
+	prefixAttention bool
+	prefillServed   learnreplay.MeasuredShape
 	// flags are the fleet's own, beside P3's.
 	flags []whatif.Flag
 	// inputsText is where the fleet's inputs came from, for the human
@@ -413,9 +420,10 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		return pf
 	}
 	pf.variant = ps.Variant
+	pf.prefixAttention = ps.PrefixAttention
 	for _, vs := range st.Variants {
 		if vs.Variant == ps.Variant {
-			pf.prefillTP = vs.TensorParallel
+			pf.prefillTP, pf.prefillServed = vs.TensorParallel, vs.Shape
 		}
 	}
 	pf.in.PrefillEngine = variantEngine(st, ps.Variant)
@@ -565,7 +573,7 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 			pf.in.VPLearned = &vp
 		}
 		est.VP, est.VPRefused, est.VPLowerBound, est.VPAboveSlopeBound = f.assumeVP, "", false, false
-		est.VPPromptTokens = 0
+		est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = 0, 0, 0
 		pf.assumedVP = true
 		pf.in.VPSource = shapeAssumed
 		pf.assume("V_P %s tok/s (--assume-vp)", num(f.assumeVP))
@@ -679,16 +687,25 @@ func imbalanceAt(ps *learnreplay.PrefillState, pods int) (f float64, assumed boo
 func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState) {
 	p := &pf.fleet.Prefill
 	pv := pf.pv
+	// The whole prompt and the hit rate beside E[I_eff], so V_P is flagged
+	// where the hits moved from those it was read at (Prefill.prefixMoved):
+	// each the one the prompt priced was netted by. Unread, both stay 0.
+	p.PrefixAttention = pf.prefixAttention
 	switch {
 	case f.set["assume-input-tokens"]:
-		p.PromptTokens = pf.effectivePrompt(f.inputTokens)
+		p.PromptTokens, p.PromptHitRate = pf.effectivePrompt(f.inputTokens)
+		p.WholePromptTokens = f.inputTokens
 		pf.in.PromptSource = shapeAssumed
 		pf.assume("prompt %s tokens "+assumeInputTokensWords, num(round(p.PromptTokens)))
 	case ps.PromptTokens > 0:
 		p.PromptTokens, pf.in.PromptSource = ps.PromptTokens, shapeMeasured
 		pf.in.PromptFromCycle, pf.in.PromptToCycle = ps.PromptFromCycle, ps.PromptToCycle
+		if hit, ok := pf.prefillHit(); ok {
+			p.WholePromptTokens, p.PromptHitRate = pf.prefillServed.InputTokens, hit
+		}
 	case pv != nil && pv.shape.ILeff > 0:
-		p.PromptTokens, pf.in.PromptSource = pv.shape.ILeff, "decode shape"
+		p.PromptTokens, p.PromptHitRate = pf.effectivePrompt(pv.shape.AvgInputTokens)
+		p.WholePromptTokens, pf.in.PromptSource = pv.shape.AvgInputTokens, "decode shape"
 		pf.assume("prompt %s tokens (the decode variant's; no computed-token rate on the prefill rows)", num(round(p.PromptTokens)))
 	}
 	pf.in.PromptTokens = p.PromptTokens
@@ -719,17 +736,73 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	}
 
 	if pv != nil && pv.state.DecodeTTFT.TransferSeconds > 0 && ps.PromptTokens > 0 {
-		p.TransferSecondsPerToken = pv.state.DecodeTTFT.TransferSeconds / ps.PromptTokens
+		p.TransferSecondsPerToken = pf.transferPerToken(ps.PromptTokens, f.assumeTransferBase.Seconds())
+	} else if f.set["assume-transfer-base"] {
+		pf.assume("--assume-transfer-base not applied: no KV transfer measured on the decode rows")
 	}
 }
 
-// effectivePrompt is an assumed prompt less the prefix hits of the decode
-// variant's shape; with none, the prompt as given.
-func (pf *pricedFleet) effectivePrompt(il float64) float64 {
-	if pf.pv == nil {
-		return il
+// transferPerToken is the KV transfer per computed prompt token the price
+// folds into a request's own latency (whatif.Prefill.TransferSecondsPerToken):
+// the decode rows' measured mean transfer T over read, the prompt the prefill
+// pods computed, as before. A stated base b (--assume-transfer-base; the
+// recording does not split T into a fixed and a per-token part, so it has no
+// default but 0) is a fixed part per request, and T - b goes with the tokens
+// moved. With slo.SwitchTTFTPrefixAttention on and the decode variant's
+// shape read, the tokens moved are the whole prompt less the decode
+// variant's prefix hits, I*(1 - decode hit), as read and as asked (the KV
+// pull moves what decode does not hold); off, the computed prompt. The
+// transfer is b + (T - b)*moved/movedRead per request, spread over the
+// question's computed prompt: exact at the mean, proportional around it.
+func (pf *pricedFleet) transferPerToken(read, base float64) float64 {
+	t := pf.pv.state.DecodeTTFT.TransferSeconds
+	asked := pf.fleet.Prefill.PromptTokens
+	moved, movedRead := asked, read
+	if m := pf.pv.state.Shape; pf.prefixAttention && m.InputTokens > 0 && pf.pv.shape.ILeff > 0 {
+		moved, movedRead = pf.pv.shape.ILeff, m.InputTokens*(1-m.PrefixHitRate)
 	}
-	return pf.pv.shape.ILeff
+	if base == 0 && moved == asked && movedRead == read {
+		return t / read
+	}
+	dur := func(s float64) time.Duration { return time.Duration(math.Round(s * float64(time.Second))) }
+	switch {
+	case base > t:
+		pf.assume("KV transfer base %s above the %s measured: priced at the measured, with no per-token part", dur(base), dur(t))
+		base = t
+	case base > 0:
+		pf.assume("KV transfer base %s a request (--assume-transfer-base), the rest of the %s measured per token moved", dur(base), dur(t))
+	}
+	if !(asked > 0) || !(movedRead > 0) {
+		return t / read
+	}
+	return (base + (t-base)*moved/movedRead) / asked
+}
+
+// effectivePrompt is an assumed whole prompt il less its prefix hits, and the
+// hit rate taken off: the decode variant's shape's, or with no decode
+// variant none. With slo.SwitchTTFTPrefixAttention on, the prefill
+// variant's where its shape was read (prefillHit): the prefill pods compute
+// the prompt less their own hits, not decode's.
+func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {
+	if pf.prefixAttention {
+		if hit, ok := pf.prefillHit(); ok {
+			return il * (1 - hit), hit
+		}
+	}
+	if pf.pv == nil {
+		return il, 0
+	}
+	return pf.pv.shape.ILeff, pf.pv.shape.PrefixHitRate
+}
+
+// prefillHit is the prefill variant's measured prefix-cache hit rate, false
+// where its shape was not read (no cycle with traffic).
+func (pf *pricedFleet) prefillHit() (float64, bool) {
+	s := pf.prefillServed
+	if s.Cycles == 0 || !(s.InputTokens > 0) || !(s.PrefixHitRate >= 0 && s.PrefixHitRate < 1) {
+		return 0, false
+	}
+	return s.PrefixHitRate, true
 }
 
 // sideOmitted is an input left out of the price.
