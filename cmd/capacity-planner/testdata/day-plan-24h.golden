@@ -1,7 +1,7 @@
 Day plan for ns/model-02, 2026-11-01 00:00 to 2026-11-02 00:00 UTC, buckets of 5m0s, each sized for the p95 of its cycle rates (default; the mean where a bucket holds fewer than 20 cycles)
 SLO: TTFT p95 500ms, TPOT mean 4ms; headroom 0.85. TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.
 
-each hour: a fleet that holds every bucket in it (each role's most), the busiest bucket's own fleet, the fewest pods it had, and the fleet it had judged whole at each bucket's rate
+each hour: a fleet that holds every bucket in it (priced again at each), the busiest bucket's own fleet, the fewest pods it had, and the fleet it had judged whole at each bucket's rate
 hour (UTC)        rate mean  rate p95 need P need D busiest  had P  had D  
 2026-11-01 00:00       4.75      5.88      1      1     1+1      2      3  over (waste)
 2026-11-01 01:00       3.47      4.33      1      1     1+1      2      3  over (waste)
@@ -13,7 +13,7 @@ hour (UTC)        rate mean  rate p95 need P need D busiest  had P  had D
 2026-11-01 07:00       4.75      5.94      1      1     1+1      2      3  over (waste)
 2026-11-01 08:00       6.32      7.70      1      1     1+1      2      3  over (waste)
 2026-11-01 09:00       8.08      9.80      1      1     1+1      2      3  over (waste)
-2026-11-01 10:00       9.91     11.88      2      2     1+2      2      3  over (waste)
+2026-11-01 10:00       9.91     11.88      1      2     1+2      2      3  over (waste)
 2026-11-01 11:00      11.67     13.79      2      2     2+2      2      3  over (waste)
 2026-11-01 12:00      13.24     15.52      2      2     2+2      2      3  over (waste)
 2026-11-01 13:00      14.54     16.86      2      2     2+2      2      3  over (waste)
@@ -39,6 +39,6 @@ flags: UnvalidatedTTFT, AssumedVP, AssumedPromptSpread, TransferOmitted, DecodeT
 note: Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.
 note: Each bucket is sized for the p95 of its cycles' rates. A p95 needs 20 cycles in the bucket; with fewer the bucket is sized for its mean, which is less conservative (FewCyclesForP95).
 note: Needed is the fewest replicas whose fleet limit, at the SLO and headroom 0.85, reaches the rate: the fewest in all, ties to fewer decode (POST /v1/size's search, whatifapi.SmallestFleet). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: under when its limit falls short, over when one replica fewer of either role would still serve it.
-note: An hour's need, and the peak, is a fleet that holds every sized bucket in it: each role's most over the buckets, priced again at each bucket's rate and shape. It holds them all, but is not searched for the fewest: a smaller mix may hold them too. The busiest bucket's own fleet is given beside it (busiest); it need not hold a bucket of a lower rate but longer requests.
+note: An hour's need, and the peak, is a fleet that holds every sized bucket in it, priced again at each bucket's rate and shape: the fewest of the buckets' own fleets that holds them all, else each role's most over them. It is not searched for the fewest: a smaller mix may hold them too. The busiest bucket's own fleet is given beside it (busiest); it need not hold a bucket of a lower rate but longer requests.
 note: A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.
 note: Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.

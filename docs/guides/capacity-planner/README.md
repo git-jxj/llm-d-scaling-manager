@@ -637,7 +637,7 @@ REFUSED prefill's TTFT (TargetBelowFloor), in 4 buckets: target 0.5 s at or belo
   what to do: The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail.
   what the plan did: Prefill is not sized: decode is sized alone, on its TPOT target and its knee times headroom.
 
-each hour: a fleet that holds every bucket in it (each role's most), the busiest bucket's own fleet, the fewest pods it had, and the fleet it had judged whole at each bucket's rate
+each hour: a fleet that holds every bucket in it (priced again at each), the busiest bucket's own fleet, the fewest pods it had, and the fleet it had judged whole at each bucket's rate
 hour (UTC)        rate mean  rate p95 need P need D busiest  had P  had D
 2026-11-01 21:00       0.73      1.00      1      1     1+1      1      1  ok
 2026-11-01 22:00       6.88     29.68    >=5    >=4     4+2      1      1  UNDER (SLO risk)
@@ -659,8 +659,9 @@ alone. A higher `--ttft` sizes them.
   and headroom: the fewest in all, ties going to fewer decode replicas, as
   **What fleet does this traffic need?** finds them. Another mix may serve the
   rate too.
-- **An hour's need.** A fleet that holds every bucket of the hour: each
-  role's most over its buckets, priced again at each bucket's rate and shape
+- **An hour's need.** A fleet that holds every bucket of the hour, priced
+  again at each bucket's rate and shape: the fewest of the buckets' own
+  fleets that holds them all, else each role's most over them
   (`NOT CONFIRMED` where it falls short at one). It is not the busiest
   bucket's: above, 22:15 runs 29.8 r/s of 500-token outputs and needs 4
   prefill and 2 decode, but 22:05 runs 9.5 r/s of 2500-token outputs and

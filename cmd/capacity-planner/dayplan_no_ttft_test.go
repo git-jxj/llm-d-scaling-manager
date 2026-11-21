@@ -33,10 +33,8 @@ func TestDayPlanChecksFlagsBeforeTheReplay(t *testing.T) {
 }
 
 // With no TTFT target, day-plan sizes decode alone, as at-replicas judges
-// decode alone, rather than refusing the plan after the replay. The b-on
-// staircase's policy sets a TTFT target; --ttft is the only way to ask
-// none there, so the no-target case runs on the sample recording, whose
-// policy sets none.
+// decode alone, rather than refusing the plan after the replay. --ttft cannot
+// ask none, so the case runs on the sample recording, whose policy sets none.
 func TestDayPlanNoTTFTTargetSizesDecode(t *testing.T) {
 	p, code := dayJSON(t, "--recording", olsSweep, "--model", "model-02", "--assume-vp", "30000", "--tpot", "4ms")
 	require.Nil(t, p.TTFT, "the sample's policy sets no TTFT target")

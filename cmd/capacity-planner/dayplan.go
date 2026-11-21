@@ -292,7 +292,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 			what, r.Reason, r.Buckets, r.Detail, r.Hint, r.Effect)
 	}
 	b.WriteString("\n")
-	b.WriteString("each hour: a fleet that holds every bucket in it (each role's most), the busiest bucket's own fleet, the fewest pods it had, " +
+	b.WriteString("each hour: a fleet that holds every bucket in it (priced again at each), the busiest bucket's own fleet, the fewest pods it had, " +
 		"and the fleet it had judged whole at each bucket's rate\n")
 	const layout = "%-17s %9s %9s %6s %6s %7s %6s %6s  %s\n"
 	fmt.Fprintf(&b, layout, "hour (UTC)", "rate mean", "rate p95", "need P", "need D", "busiest", "had P", "had D", "")

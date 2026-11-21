@@ -276,9 +276,9 @@ type DayBucket struct {
 type DayHour struct {
 	Start time.Time `json:"start"`
 	Rate  *DayRate  `json:"rate,omitempty"`
-	// Needed is a fleet that holds every sized bucket of the hour: each
-	// role's most over them (holdingFleet), priced again at each bucket's
-	// rate and shape. Busiest is the fleet of the one bucket of the highest
+	// Needed is a fleet that holds every sized bucket of the hour, priced
+	// again at each bucket's rate and shape: the fewest of the buckets' own
+	// fleets that holds them all, else each role's most (holding). Busiest is the fleet of the one bucket of the highest
 	// sized rate, which need not hold the others: a bucket of long outputs
 	// at a lower rate can need more decode.
 	Needed  *DayNeeded `json:"needed,omitempty"`
@@ -1151,9 +1151,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		fmt.Sprintf("Needed is the fewest replicas whose fleet limit, at the SLO and headroom %.2f, reaches the rate: the fewest in all, ties to fewer decode "+
 			"(POST /v1/size's search, whatifapi.SmallestFleet). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: "+
 			"under when its limit falls short, over when one replica fewer of either role would still serve it.", q.sc.Headroom),
-		"An hour's need, and the peak, is a fleet that holds every sized bucket in it: each role's most over the buckets, priced again at each bucket's "+
-			"rate and shape. It holds them all, but is not searched for the fewest: a smaller mix may hold them too. The busiest bucket's own fleet is "+
-			"given beside it (busiest); it need not hold a bucket of a lower rate but longer requests.",
+		"An hour's need, and the peak, is a fleet that holds every sized bucket in it, priced again at each bucket's rate and shape: the fewest of "+
+			"the buckets' own fleets that holds them all, else each role's most over them. It is not searched for the fewest: a smaller mix may hold "+
+			"them too. The busiest bucket's own fleet is given beside it (busiest); it need not hold a bucket of a lower rate but longer requests.",
 		fmt.Sprintf("A bucket with fewer than %.0f requests is not sized (too little data); a bucket no cycle fell in has no data.", q.minRequests),
 		"Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. "+
 			"A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.")
@@ -1240,10 +1240,8 @@ func (q *dayQuestion) holds(ctx context.Context, p, d int, idx []int, sized map[
 	return true, nil
 }
 
-// confirmHolding prices each hour's need, and the peak, again at every
-// sized bucket it is to hold. Each role's most, over buckets that each hold
-// at their own fleet, holds them all where a fleet's limit rises with its
-// replicas; where it does not, the need is marked not confirmed.
+// confirmHolding sets each hour's need, and the peak, to a fleet priced
+// again at every sized bucket it is to hold (holding).
 func (q *dayQuestion) confirmHolding(ctx context.Context, out *DayPlanResponse, sized map[int]sizedBucket) error {
 	byHour := map[time.Time][]int{}
 	var all []int
@@ -1255,36 +1253,88 @@ func (q *dayQuestion) confirmHolding(ctx context.Context, out *DayPlanResponse, 
 		byHour[h] = append(byHour[h], i)
 		all = append(all, i)
 	}
-	// p is the most prefill over the buckets that priced it, whatever the
-	// need says: a bucket sized decode alone is held on decode.
-	check := func(n *DayNeeded, idx []int) (bool, error) {
-		p := 0
-		for _, i := range idx {
-			if x := out.Buckets[i].Needed; x != nil && x.Prefill != nil {
-				p = max(p, *x.Prefill)
-			}
-		}
-		return q.holds(ctx, p, n.Decode, idx, sized)
-	}
 	for i := range out.Hours {
 		hr := &out.Hours[i]
 		if hr.Needed == nil {
 			continue
 		}
-		ok, err := check(hr.Needed, byHour[hr.Start])
+		n, ok, err := q.holding(ctx, out.Buckets, byHour[hr.Start], sized)
 		if err != nil {
 			return err
 		}
-		hr.NotConfirmed = !ok
+		hr.Needed, hr.NotConfirmed = n, !ok
 	}
-	if n := out.Summary.PeakNeeded; n != nil {
-		ok, err := check(n, all)
+	if out.Summary.PeakNeeded != nil {
+		n, ok, err := q.holding(ctx, out.Buckets, all, sized)
 		if err != nil {
 			return err
 		}
-		out.Summary.PeakNotConfirmed = !ok
+		out.Summary.PeakNeeded, out.Summary.PeakNotConfirmed = n, !ok
 	}
 	return nil
+}
+
+// holding is a fleet that holds every sized bucket of idx, and whether it
+// was confirmed to. The buckets' own fleets are tried first, fewest
+// replicas first and the busiest bucket's first among equals: the search
+// breaks a tie between mixes toward fewer decode, so two buckets of one
+// shape can need 2+1 and 1+2, and the busier one's 1+2 holds both, where
+// each role's most, 2+2, buys a replica no bucket needs. Only when none of
+// them holds every bucket is each role's most taken (holdingFleet), which
+// holds them where a fleet's limit rises with its replicas, and is not
+// confirmed where it does not. A bucket sized decode alone is held on
+// decode; where any was, the need is a lower bound (AtLeast).
+func (q *dayQuestion) holding(ctx context.Context, buckets []DayBucket, idx []int, sized map[int]sizedBucket) (*DayNeeded, bool, error) {
+	bs := make([]*DayBucket, 0, len(idx))
+	for _, i := range idx {
+		bs = append(bs, &buckets[i])
+	}
+	most := holdingFleet(bs)
+	if most == nil {
+		return nil, true, nil
+	}
+	priced := slices.ContainsFunc(bs, func(b *DayBucket) bool { return b.Needed.Prefill != nil })
+	cands := slices.Clone(bs)
+	slices.SortStableFunc(cands, func(a, b *DayBucket) int {
+		ta, tb := a.Needed.Decode+valueOrZeroInt(a.Needed.Prefill), b.Needed.Decode+valueOrZeroInt(b.Needed.Prefill)
+		if ta != tb {
+			return ta - tb
+		}
+		switch {
+		case *a.SizedRate > *b.SizedRate:
+			return -1
+		case *a.SizedRate < *b.SizedRate:
+			return 1
+		}
+		return 0
+	})
+	for _, c := range cands {
+		n := c.Needed
+		if priced && n.Prefill == nil {
+			continue
+		}
+		ok, err := q.holds(ctx, valueOrZeroInt(n.Prefill), n.Decode, idx, sized)
+		if err != nil {
+			return nil, false, err
+		}
+		if ok {
+			out := &DayNeeded{Decode: n.Decode, AtLeast: most.AtLeast}
+			if n.Prefill != nil {
+				out.Prefill = ptrInt(*n.Prefill)
+			}
+			return out, true, nil
+		}
+	}
+	ok, err := q.holds(ctx, valueOrZeroInt(most.Prefill), most.Decode, idx, sized)
+	return most, ok, err
+}
+
+// valueOrZeroInt is *p, or 0 when p is nil.
+func valueOrZeroInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // countRefused counts, for each refusal, the buckets of its role and term
@@ -1327,11 +1377,12 @@ func peakBucket(b DayBucket, best *DayBucket, low bool) bool {
 }
 
 // hoursOf is the buckets by UTC hour. An hour's need is a fleet that holds
-// every sized bucket in it, each role's most over them (holdingFleet): the
-// fleet its busiest bucket needed does not hold a bucket of a lower rate and
-// longer requests, which can need more of one role. The busiest bucket's
-// fleet is kept beside it (Busiest). The plan prices the need again at each
-// bucket (confirmHolding).
+// every sized bucket in it: here each role's most over them (holdingFleet),
+// which the plan then replaces with the fewest of the buckets' own fleets
+// that holds them all, priced again at each (confirmHolding). The fleet its
+// busiest bucket needed need not hold a bucket of a lower rate and longer
+// requests, which can need more of one role; it is kept beside the need
+// (Busiest).
 func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 	var out []DayHour
 	byHour := map[time.Time][]SeriesSample{}
