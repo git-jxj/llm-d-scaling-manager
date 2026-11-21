@@ -180,9 +180,9 @@ func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
 	assert.Equal(t, whatifapi.ScopeFleet, v.Scope)
 	// The staircase-b decode knee is outside its validated region: the
 	// caveat says so, and the needed fleet gives decode at the 0.6B goldens'
-	// 103% (#297): the replica cut is not safe at that bound.
+	// 99.1% (#297): the replica cut is not safe at that bound.
 	assert.Contains(t, v.Summary, "decode knee outside its validated region")
-	assert.Contains(t, v.Summary, "needs 2 prefill + 2 decode (has 2 + 3), 3 decode if the decode knee reads 103% high")
+	assert.Contains(t, v.Summary, "needs 2 prefill + 2 decode (has 2 + 3), 3 decode if the decode knee reads 99% high")
 	require.Len(t, v.Checks, 3)
 	for _, c := range v.Checks {
 		assert.True(t, strings.HasPrefix(c.Reason, "20.00 r/s "), "each fleet is checked at the load: %s", c.Reason)

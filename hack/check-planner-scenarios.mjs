@@ -594,6 +594,15 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   const vs = verdictLine({verdict: "UNDER-PROVISIONED", needed: {prefill: 5, decode: 5, maxReplicas: 32},
     summary: "UNDER-PROVISIONED: 1.6x the fleet knee (38.1 r/s); needs 5 prefill + 5 decode (has 2 + 2)."}, "", has);
   check("a short growth sentence loses only the clause", vs.rest === "1.6x the fleet knee (38.1 r/s).", vs.rest);
+  const bound = {prefill: 3, decode: 3, decodeAtErrorBound: 6, decodeKneeError: 0.991, maxReplicas: 32};
+  check("the chip gives the decode count at the knee's error bound", neededText(bound, has) ===
+    "needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high", neededText(bound, has));
+  const vb = verdictLine({verdict: "UNDER-PROVISIONED", needed: bound,
+    summary: "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 3 pods)."}, "", has);
+  check("the sentence does not keep the bound count", vb.rest === "at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates (prefill f 1.5 assumed at 3 pods).", vb.rest);
+  const vo = verdictLine({verdict: "OVER-PROVISIONED", needed: {prefill: 2, decode: 2, decodeAtErrorBound: 3, decodeKneeError: 0.991, maxReplicas: 32},
+    summary: "OVER-PROVISIONED: at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.9% under its operating point); needs 2 prefill + 2 decode (has 2 + 3), 3 decode if the decode knee reads 99% high."}, "", {prefill: 2, decode: 3});
+  check("an OVER sentence does not hang the bound count on prefill", vo.rest === "at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.9% under its operating point).", vo.rest);
   check("each role says whether it has a replica to spare", JSON.stringify(roleLines({roles: [{role: "decode", spare: true, detail: "3 decode hold"},
     {role: "prefill", spare: false}]})) === JSON.stringify(["Decode: has a replica to spare (3 decode hold).", "Prefill: no replica to spare."]));
   check("a p95 that is the peak says so", loadLine({rate: {value: 12}, statistic: "p95", p95IsPeak: true, p95: 12, peak: 12, cyclesWithTraffic: 9})
@@ -671,7 +680,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 325;
+const EXPECTED_CASES = 328;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

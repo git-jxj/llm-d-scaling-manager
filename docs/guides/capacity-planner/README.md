@@ -531,8 +531,8 @@ It replays the recording once and answers, for each shape and load:
   output length is flagged `ShapeLoadMismatch`, and `--shape load` prices
   the load at its own cycles' shape. On the guide's sample the p95, 29.7
   r/s, ran at 1000/500 tokens while the measured shape is 4569/1855: the
-  measured shape needs 14 prefill + 23 decode, `--shape load` 4 + 2, what
-  `day-plan` sizes the same rate at.
+  report gives no verdict on the measured shape (NOT JUDGED, exit 3), and
+  `--shape load` needs 4 + 2, what `day-plan` sizes the same rate at.
 - **Growth.** `--load "seen x1.5"` (also `seen×1.5`, `seen*1.5`) asks what
   50% more traffic does: a column of its own and a short `x1.5 (...)` line
   under the verdict. It never changes the verdict at the load seen.
@@ -616,20 +616,20 @@ summary                     50%                80%                 5r/s         
   1k/1k EXTRAPOLATED        133/3.1 @17.78 ok  152/5.6 @28.45 ok   125/3.1 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
   16k/200/0.3 EXTRAPOLATED  667/3.2 @9.08 ok   1015/6.8 @14.53 ok  567/3.1 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
 verdicts
-  measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 103% high (prefill f 1.5 assumed at 3 pods).
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (37.0 r/s); needs 4 prefill + 4 decode (has 2 + 2), 7 decode if the decode knee reads 103% high (prefill f 1.5 assumed at 4 pods).
-  1k/1k EXTRAPOLATED        UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.2x the fleet knee of 35.6 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 103% high.
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (35.6 r/s); needs 1 prefill + 4 decode (has 2 + 2), 7 decode if the decode knee reads 103% high.
-  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 2.3x the fleet knee of 18.2 r/s, the fleet saturates; needs 5 prefill + 6 decode (has 2 + 2), 11 decode if the decode knee reads 103% high (prefill f 1.5 assumed at 5 pods).
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 2.8x the fleet knee (18.2 r/s); needs 6 prefill + 7 decode (has 2 + 2), 14 decode if the decode knee reads 103% high (prefill f 1.5 assumed at 6 pods).
+  measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 3 pods).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (37.0 r/s); needs 4 prefill + 4 decode (has 2 + 2), 7 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 4 pods).
+  1k/1k EXTRAPOLATED        UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.2x the fleet knee of 35.6 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high.
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (35.6 r/s); needs 1 prefill + 4 decode (has 2 + 2), 7 decode if the decode knee reads 99% high.
+  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 2.3x the fleet knee of 18.2 r/s, the fleet saturates; needs 5 prefill + 6 decode (has 2 + 2), 11 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 5 pods).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 2.8x the fleet knee (18.2 r/s); needs 6 prefill + 7 decode (has 2 + 2), 13 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 6 pods).
 ```
 
 Read the label under the decode knee in each shape's capacity table: inside
 the region a run measured it reads `validated in-sample: one-sided, error at
-most +3%`; outside it, the `not validated` lines after the shape add that the
-knee read 44% to 103% high on the 0.6B goldens. The needed fleet gives the
-decode count at the label's upper error beside the point answer: +3% inside
-the region, 103% outside it
+most +3%`; outside it, the `not validated` lines at the end of the report add
+that the knee read 43% to 99% high on the 0.6B goldens. The needed fleet gives
+the decode count at the label's upper error beside the point answer: +3%
+inside the region, 99% outside it
 ([accuracy](accuracy.md#what-was-measured)). TTFT is not validated.
 
 A verdict that would be UNDER-PROVISIONED is NOT JUDGED instead in two

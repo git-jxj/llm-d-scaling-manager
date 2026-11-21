@@ -124,8 +124,9 @@ type Validation struct {
 	// is unbounded on its side. Spread is the kind of range they are
 	// ("min-max", "p10-p90", "bracket" or "one-sided"); Readings the
 	// readings the range rests on, Levels the independent load levels among
-	// them; Holdout is true only for a row whose run never tuned the planner,
-	// and absent for an in-sample row.
+	// them; Holdout is set with every row, true only for a row whose run
+	// never tuned the planner and false for an in-sample one, and absent
+	// outside every row.
 	Source   string   `json:"source,omitempty"`
 	Shape    string   `json:"shape,omitempty"`
 	ErrorLo  *float64 `json:"errorLo,omitempty"`
@@ -133,7 +134,7 @@ type Validation struct {
 	Spread   string   `json:"spread,omitempty"`
 	Readings int      `json:"readings,omitempty"`
 	Levels   int      `json:"levels,omitempty"`
-	Holdout  bool     `json:"holdout,omitempty"`
+	Holdout  *bool    `json:"holdout,omitempty"`
 	// Outside is why no row holds the figure.
 	Outside string `json:"outside,omitempty"`
 }
@@ -143,7 +144,8 @@ func ValidationOf(v whatif.Validation) *Validation {
 	w := &Validation{Validated: v.Validated(), Label: v.String(), Outside: v.Outside}
 	if r := v.Row; r != nil {
 		w.Source, w.Shape, w.ErrorLo, w.ErrorHi, w.Readings = r.Source, r.Shape, r.ErrorLo, r.ErrorHi, r.Readings
-		w.Spread, w.Levels, w.Holdout = r.Spread, r.Levels, r.Holdout
+		holdout := r.Holdout
+		w.Spread, w.Levels, w.Holdout = r.Spread, r.Levels, &holdout
 	}
 	return w
 }

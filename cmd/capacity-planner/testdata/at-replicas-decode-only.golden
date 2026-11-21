@@ -35,5 +35,5 @@ checks
 flags: DecodeOnly; ExtrapolatedFill; CoarseTPOTBucket; EngineTPOTHistogram; ShapeLoadMismatch
 
 not validated:
-  - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 44% to 103% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
+  - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 43% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
   - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile

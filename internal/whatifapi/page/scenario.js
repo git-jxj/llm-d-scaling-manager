@@ -723,7 +723,8 @@ function reportView(r) {
         s.extrapolated ? `Extrapolated: ${s.extrapolatedWhy}.` : "",
         s.loadShape ? `The load's cycles (${s.loadShape.cycles}, cycles ${s.loadShape.fromCycle}-${s.loadShape.toCycle}) ran at IL ${Math.round(s.loadShape.inputTokens)}, OL ${Math.round(s.loadShape.outputTokens)}` +
           (s.loadShape.mismatch ? ": SHAPE/LOAD MISMATCH, the load is priced at a shape more than 20% off the traffic that made it; ask the shape load to price it at its own." : ".") : "",
-        `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
+        `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}` +
+          (c.decodeKnee && c.decodeKnee.validation ? ` (decode knee ${c.decodeKnee.validation.label})` : "") + `; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
           `Operating point ${rate(c.operating)}; the most that meets every target ${rate(c.maxAtSLO)}.`,
         `At the load: ${decodeUse(u.decode)}; ${prefillUse(u.prefill)}.`,
         ...roleLines(s.verdict),
@@ -820,20 +821,22 @@ function verdictLine(v, fallback, has) {
   return {verdict: word, text, rest, needs, unmet: !!(v && v.needed && v.needed.unmet), trust: (v && v.trust) || ""};
 }
 
-// NEEDS_CLAUSE is the "needs P prefill + D decode (has p + d), or a + b"
-// clause of a summary.
-const NEEDS_CLAUSE = /;?\s*needs [^;()]*\(has \d+ \+ \d+\)(,? or \d+ \+ \d+)*/;
+// NEEDS_CLAUSE is the "needs P prefill + D decode (has p + d), N decode if
+// the decode knee reads E% high, or a + b" clause of a summary.
+const NEEDS_CLAUSE = /;?\s*needs [^;()]*\(has \d+ \+ \d+\)(, (more than )?\d+ decode if the decode knee reads \d+% high)?(,? or \d+ \+ \d+)*/;
 
 // neededText is the fleet a verdict needs, in words: "needs 3 prefill +
-// 4 decode (has 2 + 2)", "or 4 + 3" for each alternative, "at least" where
+// 4 decode (has 2 + 2)", the decode count if the decode knee reads as high
+// as its label allows, "or 4 + 3" for each alternative, "at least" where
 // the prefill side is not priced, or the bound no fleet within serves.
 function neededText(n, has) {
   if (!n) return "";
   if (n.unmet) return `no fleet up to ${n.maxReplicas} replicas serves this (${n.unmet} does not reach the load)`;
   const now = has ? ` (has ${has.prefill} + ${has.decode})` : "";
-  if (n.decodeOnly) return `needs at least ${n.decode} decode${has ? ` (has ${has.decode})` : ""}; prefill is not priced`;
+  const bound = n.decodeAtErrorBound > n.decode ? `, ${n.decodeAtErrorBound >= n.maxReplicas ? "at least " : ""}${n.decodeAtErrorBound} decode if the decode knee reads ${Math.round((n.decodeKneeError || 0) * 100)}% high` : "";
+  if (n.decodeOnly) return `needs at least ${n.decode} decode${has ? ` (has ${has.decode})` : ""}${bound}; prefill is not priced`;
   const alt = (n.alternatives || []).map(a => `or ${a.prefill} + ${a.decode}`).join(", ");
-  return `needs ${n.prefill} prefill + ${n.decode} decode${now}` + (alt ? ", " + alt : "");
+  return `needs ${n.prefill} prefill + ${n.decode} decode${now}${bound}` + (alt ? ", " + alt : "");
 }
 
 // roleLines is a verdict's per-role judgment: a line per role, whether it has

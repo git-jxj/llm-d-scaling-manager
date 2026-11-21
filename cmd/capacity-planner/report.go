@@ -52,13 +52,15 @@ const maxPromptTailQ = 0.95
 // cellTTFTQ is the TTFT percentile a summary cell prints with no TTFT target.
 const cellTTFTQ = 0.9
 
-// decodeKneeGoldensLow and decodeKneeGoldensHigh are how high the decode
-// knee read on the 0.6B goldens, outside every region the envelope
-// validates it in (docs/proposals/slo-capacity-planner.md, "Measured on the
-// goldens"): the error a decode knee outside its region is sized at.
+// decodeKneeGoldensLow and decodeKneeGoldensHigh are the lowest and the
+// highest of the decode knees that read high on the 0.6B goldens, outside
+// every region the envelope validates it in (testdata/decode-validation.golden,
+// docs/proposals/slo-capacity-planner.md, "Measured on the goldens"; a test
+// pins them to the file): the error a decode knee outside its region is
+// sized at.
 const (
-	decodeKneeGoldensLow  = 0.44
-	decodeKneeGoldensHigh = 1.03
+	decodeKneeGoldensLow  = 0.43
+	decodeKneeGoldensHigh = 0.991
 )
 
 // decodeKneeOutside says what a decode knee outside its validated region
@@ -1302,6 +1304,11 @@ const (
 	phasesWords      = "the load and the shape priced are of different traffic:"
 )
 
+// phasesOutputFloor is the fewest output tokens a shape priced must run
+// over the load's, beside the relative tolerance, to withhold an UNDER
+// whose knee prefill sets (phasesDiffer).
+const phasesOutputFloor = 64
+
 // notJudgedUnder makes v NOT JUDGED, and says so, where an UNDER-PROVISIONED
 // verdict would rest on a reading the window itself does not support: the
 // load judged ran at another shape than the measured one priced
@@ -1309,7 +1316,7 @@ const (
 // the window's own fleet served past the knee at the shape priced
 // (contradicted). Only an UNDER is withheld: neither says the fleet holds.
 func (r *reporter) notJudgedUnder(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) bool {
-	why, lead := r.phasesDiffer(), phasesWords
+	why, lead := r.phasesDiffer(base.binds), phasesWords
 	if why == "" && base.pastOperating {
 		// Only a load past the knee is in question: a latency target missed
 		// under it is the queue model's, which a window served past the knee
@@ -1330,11 +1337,15 @@ func (r *reporter) notJudgedUnder(np, nd int, base fleetEval, v *whatifapi.Repor
 // a shape priced heavier than the load's in a length (more than
 // whatifapi.ShapeLoadTolerance over it) withholds: its knee reads low for
 // the load, while an UNDER priced on a lighter shape's knee holds the more.
-func (r *reporter) phasesDiffer() string {
+// Where prefill sets the knee, an output longer by fewer than
+// phasesOutputFloor tokens does not withhold: a few output tokens move a
+// prefill knee little (8 against 21 on the 32B warm-ups).
+func (r *reporter) phasesDiffer(binds string) string {
 	ls := r.loadShape
 	il, ol := r.pv.shape.AvgInputTokens, r.pv.shape.AvgOutputTokens
 	heavier := func(x, ref float64) bool { return x > 0 && ref > 0 && x/ref-1 > whatifapi.ShapeLoadTolerance }
-	if !r.sh.Measured || ls == nil || !(heavier(il, ls.InputTokens) || heavier(ol, ls.OutputTokens)) {
+	olHeavier := ls != nil && heavier(ol, ls.OutputTokens) && (binds != rolePrefill || ol-ls.OutputTokens >= phasesOutputFloor)
+	if !r.sh.Measured || ls == nil || !(heavier(il, ls.InputTokens) || olHeavier) {
 		return ""
 	}
 	return fmt.Sprintf("the load's cycles ran at IL %s OL %s, the shape priced is IL %s OL %s, so the knee is of other traffic and "+
@@ -1350,7 +1361,10 @@ func (r *reporter) phasesDiffer() string {
 // (within whatifapi.ShapeLoadTolerance in each length), every role served
 // at least one replica and at most the replicas priced (CurrentReplicas
 // less PendingReplicas, summed over the role's variants), and the decode
-// replicas served above the share times the fleet knee. The share is
+// replicas served above the share times the fleet knee; a cycle lighter
+// than the shape priced in the length the binding role's knee goes by
+// (prompt for prefill, output for decode) counts its rate scaled down by
+// that ratio, as its own knee is that much higher. The share is
 // contradictShare, over the band's top where that sets the decode knee:
 // such a knee stops at the highest fill the line was fitted to, short of a
 // full replica. Cycles are counted at the mean cycle time.
@@ -1420,6 +1434,17 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 		atShape := ok && c.InputTokens > 0 && c.OutputTokens > 0 &&
 			!whatifapi.ShapeLoadMismatch(c.InputTokens, c.OutputTokens, whatifapi.ReportLoadShape{InputTokens: il, OutputTokens: ol})
 		x := served[i]
+		if atShape {
+			// A cycle lighter than the shape priced, within the tolerance,
+			// has a knee higher by up to its share: its served rate counts
+			// at the shape priced, so it does not pass for a contradiction.
+			switch base.binds {
+			case rolePrefill:
+				x *= min(1, c.InputTokens/il)
+			case roleDecodeWord:
+				x *= min(1, c.OutputTokens/ol)
+			}
+		}
 		if unknown[i] || !atShape || !(whatif.Finite(x) && x > over) || !within(dec[i], nd) || (checkPrefill && !within(pre[i], np)) {
 			run, runPeak = 0, 0
 			continue
@@ -1659,19 +1684,25 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 // load needs at the operating point when the knee reads as high as its label
 // allows, ceil(load x (1 + e) / (headroom x knee per replica)), e the upper
 // error of the envelope row that validates the knee, or the 0.6B goldens'
-// decodeKneeGoldensHigh outside every row (#297). It says the count in
-// words where it is above the point estimate out.Decode, "" otherwise.
+// decodeKneeGoldensHigh outside every row (#297), capped at out.MaxReplicas
+// as the search is. It says the count in words where it is above the point
+// estimate out.Decode, "" otherwise.
 func (r *reporter) atBound(base fleetEval, nd int, out *whatifapi.ReportNeeded) string {
 	d, e, ok := r.decodeAtBound(base, nd)
 	if !ok {
 		return ""
 	}
 	d = max(d, out.Decode)
+	more := ""
+	if out.MaxReplicas > 0 && d > out.MaxReplicas {
+		// The search sizes no fleet past its bound; nor does the bound count.
+		d, more = out.MaxReplicas, "more than "
+	}
 	out.DecodeAtErrorBound, out.DecodeKneeError = d, e
 	if d <= out.Decode {
 		return ""
 	}
-	return fmt.Sprintf(", %d decode if the decode knee reads %.0f%% high", d, e*100)
+	return fmt.Sprintf(", %s%d decode if the decode knee reads %.0f%% high", more, d, e*100)
 }
 
 // decodeAtBound is the decode replicas the load needs at the operating
@@ -1685,13 +1716,17 @@ func (r *reporter) decodeAtBound(base fleetEval, nd int) (int, float64, bool) {
 	}
 	e := decodeKneeGoldensHigh
 	if r.kneeV.Validated() {
-		e = 0
-		if hi := r.kneeV.Row.ErrorHi; hi != nil {
-			e = max(*hi, 0)
+		// A row with no upper error is unbounded on that side: no count.
+		hi := r.kneeV.Row.ErrorHi
+		if hi == nil || !whatif.Finite(*hi) {
+			return 0, 0, false
 		}
+		e = max(*hi, 0)
 	}
-	// Tolerance: a load exactly at a count's operating point needs that count.
-	return int(math.Ceil(r.load*(1+e)/(r.headroom*k/float64(nd)) - 1e-9)), e, true
+	// Tolerance: a load exactly at a count's operating point needs that
+	// count. A tiny knee is held short of the int range; atBound caps it.
+	x := math.Ceil(r.load*(1+e)/(r.headroom*k/float64(nd)) - 1e-9)
+	return int(min(x, math.MaxInt32)), e, true
 }
 
 // targetWords names what a holding fleet holds: every target, or its

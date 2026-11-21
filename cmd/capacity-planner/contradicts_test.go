@@ -2,6 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -147,6 +152,35 @@ func TestReport_ContradictsOnlyAtTheShapePriced(t *testing.T) {
 	r = contradictsReporter(cycles(10, 22), 12, 2, 2)
 	r.st.Variants[1].ShapeSeries[9].InputTokens = 8000
 	assert.Contains(t, r.contradicted(2, 2, base), "(12 cycles)", "a cycle of another shape just before")
+
+	// Two decode variants serving in one cycle leave the fleet unknown: the
+	// knee and the shape are the priced variant's alone. 1 + 1 is within
+	// the 2 priced, so only the unknown mark keeps it from contradicting.
+	r = contradictsReporter(cycles(10, 22), 12, 2, 1)
+	d2 := make([]learnreplay.CycleShape, 40)
+	r.st.ServingReplicas["d2"] = make([]int, 40)
+	for i := range d2 {
+		d2[i] = learnreplay.CycleShape{Cycle: i + 1, InputTokens: 1000, OutputTokens: 1000, RequestRate: 1}
+	}
+	for _, i := range cycles(10, 22) {
+		r.st.ServingReplicas["d2"][i], d2[i].RequestRate = 1, 6
+	}
+	r.st.Variants = append(r.st.Variants, learnreplay.VariantState{Variant: "d2", Role: "decode", ShapeSeries: d2})
+	assert.Empty(t, r.contradicted(2, 2, base), "a second decode variant served")
+
+	// A cycle lighter than the shape priced, within 20%, has a knee higher
+	// by that much: 5.2 r/s at OL 820 is 4.3 r/s at OL 1000, under 1.25x 4.
+	r = contradictsReporter(cycles(10, 22), 5.2, 2, 2)
+	for _, i := range cycles(10, 22) {
+		r.st.Variants[1].ShapeSeries[i].OutputTokens = 820
+	}
+	assert.Empty(t, r.contradicted(2, 2, base), "lighter output, decode binds")
+	pre = fleetEval{kneeOK: true, knee: 4, binds: rolePrefill, prefillKnee: whatif.Answer{Value: 4}}
+	assert.NotEmpty(t, r.contradicted(2, 2, pre), "the output does not move a prefill knee")
+	for _, i := range cycles(10, 22) {
+		r.st.Variants[1].ShapeSeries[i].InputTokens = 820
+	}
+	assert.Empty(t, r.contradicted(2, 2, pre), "lighter prompt, prefill binds")
 }
 
 // Only a load past the knee is withheld for a window served past it, and
@@ -184,6 +218,17 @@ func TestReport_NotJudgedWhereTheLoadRanAtAnotherShape(t *testing.T) {
 	r.sh.Measured = true
 	r.loadShape = &whatifapi.ReportLoadShape{InputTokens: 8500, OutputTokens: 28}
 	assert.False(t, r.notJudgedUnder(2, 2, fleetEval{}, &whatifapi.ReportVerdict{}), "the same traffic")
+
+	// The 32B staircase warm-ups: 8 output tokens against 21 priced, 8k
+	// prompts. Where prefill sets the knee, fewer than phasesOutputFloor
+	// tokens longer does not withhold; where decode sets it, it does; and
+	// a longer output withholds either way.
+	r.loadShape = &whatifapi.ReportLoadShape{InputTokens: 7995, OutputTokens: 8}
+	r.pv.shape = shape.Shape{AvgInputTokens: 8005, AvgOutputTokens: 21}
+	assert.False(t, r.notJudgedUnder(2, 2, fleetEval{binds: rolePrefill}, &whatifapi.ReportVerdict{}), "13 tokens longer, prefill binds")
+	assert.True(t, r.notJudgedUnder(2, 2, fleetEval{binds: roleDecodeWord}, &whatifapi.ReportVerdict{}), "13 tokens longer, decode binds")
+	r.pv.shape = shape.Shape{AvgInputTokens: 8005, AvgOutputTokens: 8 + phasesOutputFloor}
+	assert.True(t, r.notJudgedUnder(2, 2, fleetEval{binds: rolePrefill}, &whatifapi.ReportVerdict{}), "the floor longer, prefill binds")
 }
 
 // The q32 warm-up's hot cycles (5-34, 65-90) ran at 1000/1000, up to 3.8x
@@ -201,7 +246,7 @@ func TestAtReplicas_Q32HotCyclesOfAnotherShapeDoNotContradict(t *testing.T) {
 	assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Summary)
 }
 
-// On the ols-sweep the load's cycles ran at about 1000/560 while the shape
+// On the ols-sweep the load's cycles ran at about 1000/500 while the shape
 // priced is the last cycles' 4569/1855: v0.12.2 called the window's own
 // 1 + 1 UNDER-PROVISIONED at 14.8x that shape's knee, needing 18 decode.
 // The verdict is NOT JUDGED and says the load and the shape priced are of
@@ -230,7 +275,8 @@ func TestAtReplicas_TheOLSSweepLoadIsOfAnotherShape(t *testing.T) {
 
 // Decode sized at the knee's error bound: ceil(load x (1 + e) / (headroom x
 // knee per replica)), e the validating row's upper error, the 0.6B goldens'
-// 103% outside every row, never below the point answer (#297).
+// 99.1% outside every row, never below the point answer nor past the
+// search's bound, and none for a row unbounded above (#297).
 func TestReport_DecodeAtTheErrorBound(t *testing.T) {
 	hi := 0.03
 	inside := whatif.Validation{Row: &whatif.EnvelopeRow{ErrorHi: &hi}}
@@ -248,8 +294,8 @@ func TestReport_DecodeAtTheErrorBound(t *testing.T) {
 		// 17 r/s at 0.85 x 10 per replica: 2 at the point, 2.06 at +3% is 3.
 		{"inside, +3% crosses a replica", inside, 17, 2, 3, 0.03, ", 3 decode if the decode knee reads 3% high"},
 		{"inside, +3% stays", inside, 16, 2, 2, 0.03, ""},
-		// 17 x 2.03 / 8.5 = 4.06: 5.
-		{"outside, the goldens' 103%", outside, 17, 2, 5, decodeKneeGoldensHigh, ", 5 decode if the decode knee reads 103% high"},
+		// 17 x 1.991 / 8.5 = 3.98: 4.
+		{"outside, the goldens' 99.1%", outside, 17, 2, 4, decodeKneeGoldensHigh, ", 4 decode if the decode knee reads 99% high"},
 		{"never below the point", inside, 1, 4, 4, 0.03, ""},
 		{"exactly at the operating point", inside, 8.5 / 1.03, 1, 1, 0.03, ""},
 	} {
@@ -265,4 +311,40 @@ func TestReport_DecodeAtTheErrorBound(t *testing.T) {
 	out := &whatifapi.ReportNeeded{Decode: 2}
 	assert.Empty(t, r.atBound(fleetEval{decodeKnee: whatif.Unanswerable{Reason: whatif.NoLine}}, 2, out))
 	assert.Zero(t, out.DecodeAtErrorBound, "no knee, no bound")
+
+	// A row with no upper error bounds nothing: no count, not the point.
+	open := whatif.Validation{Row: &whatif.EnvelopeRow{}}
+	r = &reporter{load: 17, headroom: 0.85, kneeV: open}
+	out = &whatifapi.ReportNeeded{Decode: 2}
+	assert.Empty(t, r.atBound(base, 2, out))
+	assert.Zero(t, out.DecodeAtErrorBound, "unbounded above")
+
+	// Past the search's bound the count reads the bound, and says more.
+	r = &reporter{load: 17, headroom: 0.85, kneeV: outside}
+	out = &whatifapi.ReportNeeded{Decode: 2, MaxReplicas: 3}
+	assert.Equal(t, ", more than 3 decode if the decode knee reads 99% high", r.atBound(base, 2, out))
+	assert.Equal(t, 3, out.DecodeAtErrorBound)
+	tiny := fleetEval{decodeKnee: whatif.Answer{Value: 1e-300}}
+	out = &whatifapi.ReportNeeded{Decode: 2, MaxReplicas: 32}
+	r.atBound(tiny, 2, out)
+	assert.Equal(t, 32, out.DecodeAtErrorBound, "a tiny knee does not overflow the count")
+}
+
+// The 0.6B goldens' range the planner says and sizes at is the lowest and
+// the highest of the decode knees that read high in
+// testdata/decode-validation.golden.
+func TestDecodeKneeGoldensMatchTheTable(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "decode-validation.golden"))
+	require.NoError(t, err)
+	re := regexp.MustCompile(`knee \+([0-9.]+)% over`)
+	ms := re.FindAllStringSubmatch(string(b), -1)
+	high := make([]float64, 0, len(ms))
+	for _, m := range ms {
+		x, err := strconv.ParseFloat(m[1], 64)
+		require.NoError(t, err)
+		high = append(high, x/100)
+	}
+	require.NotEmpty(t, high, "no decode knee read high in the table")
+	assert.InDelta(t, slices.Min(high), decodeKneeGoldensLow, 1e-9)
+	assert.InDelta(t, slices.Max(high), decodeKneeGoldensHigh, 1e-9)
 }

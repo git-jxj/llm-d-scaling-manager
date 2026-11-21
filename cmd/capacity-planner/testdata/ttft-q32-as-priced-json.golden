@@ -167,7 +167,8 @@
               "errorHi": 0.006849223516752545,
               "spread": "min-max",
               "readings": 12,
-              "levels": 6
+              "levels": 6,
+              "holdout": false
             }
           }
         }

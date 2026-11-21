@@ -42,8 +42,12 @@ Where to find it:
 - **CLI text:** after each figure, one label a line.
 - **CLI JSON (`-o json`):** `validation` on each answer. It holds
   `validated`, `label`, `errorLo` and `errorHi` (shares, not percent),
-  `readings` and `outside`. A refused figure, and the operating rate, which
-  is an input, have none.
+  `readings` and `outside`; inside a measured row also `source`, `shape`,
+  `spread` (the kind of range: `min-max`, `p10-p90`, `bracket` or
+  `one-sided`), `levels` (the independent load levels among the readings)
+  and `holdout` (true only for a row whose run never tuned the planner,
+  false for an in-sample one). A refused figure, and the operating rate,
+  which is an input, have none.
 - **API (`POST /v1/plan`):** `validation` on the knees, the TTFT at the rate,
   the rate at the target, the TPOT's two points and the limits. Curve points
   and the marginal steps carry none.
@@ -73,16 +77,14 @@ a holdout`.
 
 **The decode knee.** Inside its region (the row below) the decode knee held
 to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, three
-knees read 43% to 99% high and one 42% low; the planner says 44% to 103%,
-the older reading, which sizes above the highest. `at-replicas` prints the label under the decode knee
+knees read 43% to 99% high and one 42% low; the planner says the same 43% to
+99%. `at-replicas` prints the label under the decode knee
 in its capacity table, says the 0.6B range under `not validated` only when
 the knee is outside, and sizes decode at the label's upper error inside the
-region, or at 103% outside it, beside the point answer
-(`needed.decodeAtErrorBound`). In the JSON, `readings` is the raw count and
-`levels` the independent load levels (the label's `n=` gives them first);
-`spread` is the kind of range (`min-max`, `p10-p90`, `bracket` or
-`one-sided`), and `holdout` is true only for a row whose run never tuned
-the planner.
+region, or at 99.1% outside it, beside the point answer
+(`needed.decodeAtErrorBound`, at most the search's `maxReplicas`). The
+label's `n=` gives the independent load levels first, then the raw
+readings.
 
 This table is generated from the rows the planner ships:
 
