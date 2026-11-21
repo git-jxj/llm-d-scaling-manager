@@ -16,17 +16,19 @@ import (
 // run here is not the hand-written case's run, whose rows report none and
 // price the default start.
 //
-// TestClosedLoopProbe_ARestoredFirstSightDoesNotTakeAFleetBelowNeed is not
-// run here: its fleet orders need on occupancy alone once no replica queues,
-// and no threshold tried moved it (the drain time, the first-read haircut,
-// steadyFor, the scale-up target, the stabilization window), so at each start
-// it would pass whatever changed. Its own comment says it holds the outcome,
-// not the bound. Measured at 15 s, 90 s and 463 s it stays at 17 for a need
-// of 17 through the restart, restored or waiting.
+// The two restored-first-sight cases are not run here. Measured at every
+// start, the fleet with the first sights restored and the fleet that waits
+// are the same on every cycle, so their comparisons hold whatever changes.
+// Their own comments say they hold the outcome, not the bound.
 //
-// A case with a load step is judged at verdictHorizon, as the start probes
-// are: at 463 s the decode step's backlog clears at 44m9s, past its 40 min
-// horizon.
+// The decode-step cases run on the shortest-queue router at every start and
+// are judged at verdictHorizon, as the start probes are: at 463 s the decode
+// step's backlog clears at 44m9s, past its 40 min horizon. At 463 s on this
+// router the decode step ends over the bound with or without a restart (23
+// replicas for a need of 17, bound 20.5: the
+// liveness/floor/closed-loop-*-start-463s-jsq ledger rows,
+// ev-shindin/llm-scaling-manager#520), so there a restart case is held to its
+// no-restart control rather than to the verdict.
 
 // atStart is pc with its replicas starting in start, judged at
 // verdictHorizon for a load step at step (zero for none).
@@ -36,22 +38,26 @@ func atStart(pc probeCase, step, start time.Duration) probeCase {
 	return pc
 }
 
-// coldStart is the slowest of learnertest.MeasuredStarts: a cold JIT cache.
-const coldStart = 463 * time.Second
-
-// decodeStepAt is a restartStepCase at start (atStart). At coldStart it runs
-// on the even split, as TestClosedLoopProbe_StartingReplicasAreCreditedNotReordered
-// does. The difference, named: at the shortest-queue limit the decode step
-// ends at 23 replicas for a need of 17 at a 463 s start, restart or not,
-// over the 20.5 bound at the backlog allowance (the
-// liveness/floor/closed-loop-*-start-463s-jsq ledger rows,
-// ev-shindin/llm-scaling-manager#520), so a case there restates those rows.
+// decodeStepAt is a restartStepCase at start (atStart).
 func decodeStepAt(pc probeCase, start time.Duration) probeCase {
-	pc.queueBlind = pc.queueBlind || start >= coldStart
 	return atStart(pc, restartStepAt, start)
 }
 
-// TestClosedLoopProbe_ASteeringRouterKeepsARightMinorityFigure, at each start.
+// settlesUnlessCold requires r to end within tolerance of need, below
+// learnertest.ColdStart; at it, r may end over the bound no further than
+// control does.
+func settlesUnlessCold(t *testing.T, start time.Duration, r, control probeResult) {
+	t.Helper()
+	if start < learnertest.ColdStart {
+		require.Empty(t, r.verdict())
+		return
+	}
+	require.LessOrEqual(t, r.final, control.final, "at the cold start: ended over the run without the restart")
+	require.LessOrEqual(t, r.peak, control.peak, "at the cold start: peaked over the run without the restart")
+}
+
+// TestClosedLoopProbeAtStarts_ASteeringRouterKeepsARightMinorityFigure runs
+// TestClosedLoopProbe_ASteeringRouterKeepsARightMinorityFigure at each start.
 //
 // Measured: peak 23, 29 and 26 at 15 s, 90 s and 463 s for a need of 17,
 // final 18, 19 and 18; never under need.
@@ -65,62 +71,63 @@ func TestClosedLoopProbeAtStarts_ASteeringRouterKeepsARightMinorityFigure(t *tes
 	})
 }
 
-// TestClosedLoopProbe_AControllerRestartBeforeALoadStepSettlesAtNeed, with
-// the queue priced by drain time (the default), at each start.
+// TestClosedLoopProbeAtStarts_AControllerRestartBeforeALoadStepSettlesAtNeed
+// runs TestClosedLoopProbe_AControllerRestartBeforeALoadStepSettlesAtNeed,
+// with the queue priced by drain time (the default), at each start.
 //
 // The difference, named: at 15 s and 90 s the restart costs the step no time
 // under need, and at 463 s it costs one cycle (15 s under need, against none
-// without the restart; final 19 and peak 22 for a need of 17), the figure
-// analyzer-learner.md's start-probe table records for restart-before-step at
-// 463 s.
+// without the restart; final 23 and peak 24, as without it). The proposal's
+// start-probe table has the same 15 s for restart-before-step at 463 s.
+//
+// Negative control, in the test: with the queue not priced by drain time
+// (SwitchQueuePricedAsDrain off) the restart leaves the step under need for
+// 1m15s, 3m30s and 8m0s at 15 s, 90 s and 463 s, against none without it.
 func TestClosedLoopProbeAtStarts_AControllerRestartBeforeALoadStepSettlesAtNeed(t *testing.T) {
 	learnertest.AtMeasuredStarts(t, func(t *testing.T, start time.Duration) {
-		control := runProbe(t, decodeStepAt(restartStepCase(0, false, 0), start))
-		require.Empty(t, control.verdict(), "premise: without a restart the step settles at need")
-		r := runProbe(t, decodeStepAt(restartStepCase(15*time.Minute, false, 0), start))
-		t.Logf("need %d, final %d, peak %d; under need for %s, against %s without the restart",
-			r.need, r.final, r.peak, r.underFor, control.underFor)
-		require.Empty(t, r.verdict())
 		allowance := time.Duration(0)
-		if start >= coldStart {
+		if start >= learnertest.ColdStart {
 			allowance = propCycle
 		}
-		require.LessOrEqual(t, r.underFor, control.underFor+allowance, "the first read prices the step the restart left without a mu")
+		for _, on := range []bool{true, false} {
+			sw := map[string]bool{SwitchQueuePricedAsDrain: on}
+			ctl := decodeStepAt(restartStepCase(0, false, 0), start)
+			ctl.switches = sw
+			control := runProbe(t, ctl)
+			pc := decodeStepAt(restartStepCase(15*time.Minute, false, 0), start)
+			pc.switches = sw
+			r := runProbe(t, pc)
+			t.Logf("queue priced as drain %v: need %d, final %d, peak %d; under need for %s, against %s without the restart (final %d, peak %d)",
+				on, r.need, r.final, r.peak, r.underFor, control.underFor, control.final, control.peak)
+			if !on {
+				require.Greater(t, r.underFor, control.underFor+allowance, "negative control: off, the restart costs the step its floor")
+				continue
+			}
+			settlesUnlessCold(t, start, control, control)
+			settlesUnlessCold(t, start, r, control)
+			require.LessOrEqual(t, r.underFor, control.underFor+allowance, "the first read prices the step the restart left without a mu")
+		}
 	})
 }
 
-// TestClosedLoopProbe_ARestoredFirstSightCarriesTheStep, at each start.
-func TestClosedLoopProbeAtStarts_ARestoredFirstSightCarriesTheStep(t *testing.T) {
-	learnertest.AtMeasuredStarts(t, func(t *testing.T, start time.Duration) {
-		control := decodeStepAt(restartStepCase(15*time.Minute, true, 0), start)
-		base := runProbe(t, control)
-		withSight := control
-		withSight.sightings = true
-		r := runProbe(t, withSight)
-		cycles, lower, higher := traceDelta(r.trace, base.trace)
-		t.Logf("need %d, final %d, peak %d; under need for %s, against %s with the snapshot alone; fleet differs on %d cycles, lower by %d at most, higher by %d",
-			r.need, r.final, r.peak, r.underFor, base.underFor, cycles, lower, higher)
-		require.EqualValues(t, 4, r.sightings, "premise: every replica's first sight came back")
-		require.Empty(t, r.verdict())
-		require.LessOrEqual(t, r.underFor, base.underFor, "skipping the wait never leaves the fleet under need for longer")
-	})
-}
-
-// TestClosedLoopProbe_AShortStabilizationThroughARestartSettlesAtNeed, at
-// each start.
+// TestClosedLoopProbeAtStarts_AShortStabilizationThroughARestartSettlesAtNeed
+// runs TestClosedLoopProbe_AShortStabilizationThroughARestartSettlesAtNeed at
+// each start. At 463 s both windows end at 23 replicas (the ledger rows);
+// the short window ends no higher than the default one.
 func TestClosedLoopProbeAtStarts_AShortStabilizationThroughARestartSettlesAtNeed(t *testing.T) {
 	learnertest.AtMeasuredStarts(t, func(t *testing.T, start time.Duration) {
 		long := runProbe(t, decodeStepAt(restartStepCase(15*time.Minute, false, 0), start))
 		short := runProbe(t, decodeStepAt(restartStepCase(15*time.Minute, false, 2*time.Minute), start))
-		t.Logf("need %d, final %d, peak %d; under need for %s at 120 s, %s at 300 s", short.need, short.final, short.peak,
-			short.underFor, long.underFor)
-		require.Empty(t, short.verdict())
+		t.Logf("need %d, final %d, peak %d; under need for %s at 120 s, %s at 300 s; final %d at 300 s", short.need, short.final, short.peak,
+			short.underFor, long.underFor, long.final)
+		settlesUnlessCold(t, start, short, long)
 		require.Equal(t, long.underFor, short.underFor)
 	})
 }
 
-// TestClosedLoopProbe_ASlowReplicaInsideTheServedBoundStaysUnderTheBound's
-// negative control, at each start: with the unread replicas not credited
+// TestClosedLoopProbeAtStarts_WithoutTheUnreadCreditASlowReplicaTakesTheFleetOverTheBound
+// runs TestClosedLoopProbe_ASlowReplicaInsideTheServedBoundStaysUnderTheBound's
+// negative control at each start: with the unread replicas not credited
 // (SwitchMuUnreadAtTarget off) the slow period takes the fleet over the
 // bound at every start.
 //

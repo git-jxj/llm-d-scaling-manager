@@ -49,7 +49,7 @@ import (
 
 // probeStarts is the measured range of a replica's start
 // (learnertest.MeasuredStarts).
-var probeStarts = learnertest.MeasuredStarts
+var probeStarts = learnertest.MeasuredStarts()
 
 // probeRouter is one of the two bounds on the real router a start probe runs
 // under, and the suffix its case names carry.

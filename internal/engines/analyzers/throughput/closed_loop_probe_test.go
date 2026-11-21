@@ -327,7 +327,7 @@ func TestThroughputProbe_ARestartJustBeforeAStepAboveTheBandSettlesAtNeed(t *tes
 // pass at "each start" for the wrong reason.
 func TestThroughputProbe_TheStartReachesTheFleet(t *testing.T) {
 	last := -1
-	for _, start := range learnertest.MeasuredStarts {
+	for _, start := range learnertest.MeasuredStarts() {
 		r := runProbe(t, restartCase(15*time.Second, start), NewThroughputAnalyzer)
 		above := r.reasons[itlReasonT2AboveBand]
 		t.Logf("start %s: %d cycles priced above the band; %s", start, above, r)
