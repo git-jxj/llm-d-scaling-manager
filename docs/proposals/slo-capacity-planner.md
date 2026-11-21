@@ -1998,6 +1998,8 @@ selfCheck.folds[].testTo string
 selfCheck.issueUrl string
 selfCheck.line string
 selfCheck.seconds number
+selfCheck.stated array
+selfCheck.stated[] string
 selfCheck.status string
 selfCheck.tpot object
 selfCheck.tpot.bias number
@@ -2025,6 +2027,8 @@ selfCheck.ttft.statistic string
 selfCheck.ttft.steps number
 selfCheck.ttft.within number
 selfCheck.why string
+selfCheck.withoutStated array
+selfCheck.withoutStated[] string
 source object
 source.firstAt string
 source.firstCycle number
