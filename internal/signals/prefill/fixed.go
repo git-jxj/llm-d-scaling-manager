@@ -1,6 +1,7 @@
 package prefill
 
 import (
+	"cmp"
 	"math"
 	"slices"
 )
@@ -173,25 +174,40 @@ const (
 	SingularFit LineReason = "SingularFit"
 )
 
-// fixed sets a on est from the key's low-load samples; lineOnly fits the
-// line alone, as P1 shipped.
-func (est *Estimate) fixed(ks *keyState, disaggregated, lineOnly bool) {
-	if !disaggregated {
+// fixed sets a on est from the key's low-load samples. c.ALineOnly fits the
+// line alone, as P1 shipped; c.ALowLoadByRate judges low load by rate
+// (lowLoadByRate); c.AMedianOverhead adds the median overhead, not the least.
+func (est *Estimate) fixed(ks *keyState, c Cycle) {
+	if !c.Disaggregated {
 		est.ARefused = AggregatedRefused
 		return
 	}
-	var xs, ys []float64
-	overhead, overheadOK := 0.0, false
+	lineOnly := c.ALineOnly
+	var low []sample
 	for _, name := range ks.podNames() {
 		for _, s := range ks.pods[name].samples {
-			if !s.lowLoad {
-				continue
-			}
-			xs, ys = append(xs, s.ieff), append(ys, s.svc)
-			if s.overheadOK && (!overheadOK || s.overhead < overhead) {
-				overhead, overheadOK = s.overhead, true
+			if s.lowLoad {
+				low = append(low, s)
 			}
 		}
+	}
+	if c.ALowLoadByRate {
+		low = lowLoadByRate(low)
+	}
+	var xs, ys, overheads []float64
+	overhead, overheadOK := 0.0, false
+	for _, s := range low {
+		xs, ys = append(xs, s.ieff), append(ys, s.svc)
+		if !s.overheadOK {
+			continue
+		}
+		overheads = append(overheads, s.overhead)
+		if !overheadOK || s.overhead < overhead {
+			overhead, overheadOK = s.overhead, true
+		}
+	}
+	if c.AMedianOverhead && overheadOK {
+		overhead = median(overheads)
 	}
 	est.ASamples = len(xs)
 	if len(xs) < MinFixedSamples {
@@ -254,6 +270,39 @@ func (est *Estimate) fixed(ks *keyState, disaggregated, lineOnly bool) {
 		est.AOverhead, est.AOverheadKnown = overhead, true
 		est.A += overhead
 	}
+}
+
+// lowLoadByRate is the candidates that are low load by rate
+// (Cycle.ALowLoadByRate, issue llm-d-incubation/llm-d-scaling-manager#306):
+// a minute's request rate times its prompt cluster's reference service time
+// at most LowLoadOccupancy. The test P1 shipped reads the minute's own
+// service time, so at a given rate a minute whose prefill ran slow is cut
+// and one that ran fast is kept: it selects on the response it then fits,
+// and the intercept reads low. Here the service time the rate is read
+// against is one figure for every minute of a prompt length: the median
+// service time of the slower-rate half of the candidates within
+// MaxClusterWidth of its prompt either way (at least one). The half is
+// chosen by rate, so no minute's outcome decides whether it is kept.
+func lowLoadByRate(cands []sample) []sample {
+	out := make([]sample, 0, len(cands))
+	for _, s := range cands {
+		var near []sample
+		for _, o := range cands {
+			if o.ieff <= MaxClusterWidth*s.ieff && s.ieff <= MaxClusterWidth*o.ieff {
+				near = append(near, o)
+			}
+		}
+		slices.SortStableFunc(near, func(a, b sample) int { return cmp.Compare(a.rankRate, b.rankRate) })
+		near = near[:(len(near)+1)/2]
+		svcs := make([]float64, len(near))
+		for i, o := range near {
+			svcs[i] = o.svc
+		}
+		if s.rankRate*median(svcs) <= LowLoadOccupancy {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // quadFit is the quadratic s = a + b*I + c*I*I, the standard error of a, the
