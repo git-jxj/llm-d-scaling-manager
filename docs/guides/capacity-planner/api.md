@@ -225,7 +225,7 @@ is the model's own, which the source does not carry.
 | `slo.ttft` | the policy's | `statistic` `mean` or `pNN`, `target` in seconds. A TTFT target is required. `bucketTargets` sets a target per bucket of the per-bucket view, keyed by bucket name. |
 | `slo.tpot` | the policy's (a mean) | `statistic` `mean`, `pNN` or `none`. |
 | `headroom` | the policy's `scaleUpThreshold` | (0, 1]. |
-| `assume` | none | `vp`, `a` (seconds), `promptCV`, `tpotRatio`, `routerHop` (seconds), `itlB` (seconds), as the CLI's `--assume-*` flags; or `itlBFromFloor: true`, the CLI's `--assume-itl-b floor`. Each is flagged. `itlB` and `itlBFromFloor` act only on a `pinned-B` line refused `PinnedDefaultB` (not a `held` or `borrowed` one); the inputs' `itlBFloor` term is the B the floor gives. |
+| `assume` | none | `vp`, `a` (seconds), `promptCV`, `tpotRatio`, `routerHop` (seconds), `itlB` (seconds), as the CLI's `--assume-*` flags; or `itlBFromFloor: true`, the CLI's `--assume-itl-b floor`. Each is flagged. `itlB` and `itlBFromFloor` act only on a `pinned-B` line refused `PinnedDefaultB` (not a `held` or `borrowed` one); the inputs' `itlBFloor` term is the B the floor gives. `flowControl` (`on` or `off`) states the router's flow control, the CLI's `--flow-control`. `routerWait` is how a TTFT past the prefill flow-control onset carries the router's wait: `inPrefill` (`--router-wait-in-prefill`, router v1.0.0), `gateStage` (`--price-router-wait`, router v0.11.0) or `none`; absent, the CLI's default, `none`. |
 | `views.allTrafficPerBucket` | off | The per-bucket view: one line per bucket, "if all traffic were bucket b". |
 | `bucketEdges` | 1024, 4096, 8192, 32768, 131072 | The per-bucket view's upper edges, in tokens. Needs `views.allTrafficPerBucket`. |
 
@@ -341,7 +341,7 @@ Every field but `inputsId` has a default.
 | `slo.ttft`, `slo.tpot` | the policy's targets | `statistic` (`mean` or `pNN`) and `target` in seconds. |
 | `ttftStatistics` | `["p50", "p90"]` | The TTFT statistics the tables print, at most 4. |
 | `tpotStatistic` | `p90` | The TPOT percentile printed beside the mean; `mean` for the mean alone. |
-| `assume` | none | As for a plan: `vp`, `a`, `promptCV`, `routerHop`, `tpotRatio`, `itlB`, `itlBFromFloor`. |
+| `assume` | none | As for a plan: `vp`, `a`, `promptCV`, `routerHop`, `tpotRatio`, `itlB`, `itlBFromFloor`, `flowControl`, `routerWait`. |
 
 The answer:
 

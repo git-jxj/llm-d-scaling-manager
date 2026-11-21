@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -29,6 +30,15 @@ type backtestFlags struct {
 	arrivalCV2, assumeVP                  float64
 	assumeA                               time.Duration
 	allowMismatch                         bool
+	// flowControl, routerWaitInPrefill and priceRouterWait are the TTFT
+	// flags of the same names (answer.go), as assume.flowControl and
+	// assume.routerWait.
+	flowControl                          string
+	routerWaitInPrefill, priceRouterWait bool
+	// assumePromptCV is --assume-prompt-cv, read where promptCVSet: the
+	// prompts' cv in place of the one each step reads (assume.promptCV).
+	assumePromptCV float64
+	promptCVSet    bool
 }
 
 // runBacktest is `capacity-planner backtest`: the planner fitted on one
@@ -52,7 +62,11 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.StringVar(&f.measured, "measured", whatifapi.MeasuredAuto, "the latency scored against: auto (the router's where recorded), router or engine")
 	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, where the fit learned none (flagged)")
 	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, where the fit learned none (flagged)")
+	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompts' coefficient of variation, 0 to 3, in place of the one each step reads from the histogram (flagged)")
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
+	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the fit's queue series (flagged as stated)")
+	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0)")
+	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0)")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
 		return err
@@ -60,6 +74,7 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	if f.output != outputText && f.output != outputJSON {
 		return usagef("-o %q, want text or json", f.output)
 	}
+	fs.Visit(func(fl *flag.Flag) { f.promptCVSet = f.promptCVSet || fl.Name == "assume-prompt-cv" })
 	ctrllog.SetLogger(logr.Discard())
 	req, err := f.request()
 	if err != nil {
@@ -136,14 +151,32 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 	if f.arrivalCV2 != 0 {
 		req.ArrivalCV2 = &f.arrivalCV2
 	}
-	if f.assumeVP > 0 || f.assumeA > 0 {
-		req.Assume = &whatifapi.Assume{}
-		if f.assumeVP > 0 {
-			req.Assume.VP = &f.assumeVP
+	a := whatifapi.Assume{FlowControl: f.flowControl}
+	if f.assumeVP > 0 {
+		a.VP = &f.assumeVP
+	}
+	if f.assumeA > 0 {
+		a.A = ptrTo(f.assumeA.Seconds())
+	}
+	if f.promptCVSet {
+		if !(f.assumePromptCV >= 0 && f.assumePromptCV <= whatif.PromptCVStop) {
+			return req, usagef("--assume-prompt-cv %g, want a cv from 0 to %g", f.assumePromptCV, whatif.PromptCVStop)
 		}
-		if f.assumeA > 0 {
-			req.Assume.A = ptrTo(f.assumeA.Seconds())
-		}
+		a.PromptCV = &f.assumePromptCV
+	}
+	switch {
+	case f.routerWaitInPrefill && f.priceRouterWait:
+		return req, usagef("--price-router-wait and --router-wait-in-prefill price the same wait two ways (router v0.11.0's gate, v1.0.0's): set one")
+	case f.priceRouterWait:
+		a.RouterWait = whatifapi.RouterWaitGateStage
+	case f.routerWaitInPrefill == whatif.DefaultRouterWaitInPrefill:
+	case f.routerWaitInPrefill:
+		a.RouterWait = whatifapi.RouterWaitInPrefill
+	default:
+		a.RouterWait = whatifapi.RouterWaitNone
+	}
+	if a != (whatifapi.Assume{}) {
+		req.Assume = &a
 	}
 	o, err := objectiveOf("ttft-target", f.ttft)
 	if err != nil {

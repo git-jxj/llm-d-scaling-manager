@@ -343,6 +343,9 @@ type Objective struct {
 // ITLB is the decode line's intercept B in seconds, and ITLBFromFloor takes
 // it from the floor read below the band: either is the CLI's --assume-itl-b,
 // used only on a line on the default intercept (PinnedDefaultB).
+//
+// FlowControl and RouterWait are the router's flow control, as the CLI's
+// --flow-control, --router-wait-in-prefill and --price-router-wait state it.
 type Assume struct {
 	VP            *float64 `json:"vp,omitempty"`
 	A             *float64 `json:"a,omitempty"`
@@ -351,7 +354,35 @@ type Assume struct {
 	RouterHop     *float64 `json:"routerHop,omitempty"`
 	ITLB          *float64 `json:"itlB,omitempty"`
 	ITLBFromFloor bool     `json:"itlBFromFloor,omitempty"`
+	// FlowControl is the router's flow control stated, FlowControlOn or
+	// FlowControlOff, in place of its inference from the queue series
+	// (--flow-control); absent, inferred.
+	FlowControl string `json:"flowControl,omitempty"`
+	// RouterWait is how a TTFT past the prefill flow-control onset carries
+	// the router's wait: RouterWaitInPrefill (--router-wait-in-prefill,
+	// router v1.0.0), RouterWaitGateStage (--price-router-wait, router
+	// v0.11.0) or RouterWaitNone (not priced: the figure is flagged
+	// AboveFlowControlOnset, a miss); absent, the CLI's default.
+	RouterWait string `json:"routerWait,omitempty"`
 }
+
+// The values Assume.FlowControl takes.
+const (
+	FlowControlOn  = "on"
+	FlowControlOff = "off"
+)
+
+// The values Assume.RouterWait takes.
+const (
+	// RouterWaitNone leaves the wait unpriced, flagged.
+	RouterWaitNone = "none"
+	// RouterWaitInPrefill takes the router's wait as inside the
+	// processor-sharing prefill price (whatif.TTFTFleet.RouterWaitInPrefill).
+	RouterWaitInPrefill = "inPrefill"
+	// RouterWaitGateStage prices the gate as a stage in front of prefill
+	// (whatif.TTFTFleet.PriceRouterWait).
+	RouterWaitGateStage = "gateStage"
+)
 
 // ViewRequest switches the optional views on.
 type ViewRequest struct {
