@@ -1417,16 +1417,17 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestDecodeRouterBacklog_PrefillBoundIsUnchanged"},
 		{"../saturation", "TestDecodeRouterBacklog_OffFromTheConstructor"},
 	},
-	// llm-d-incubation/llm-d-scaling-manager#302: each case runs the switch
-	// on and off and asserts both.
+	// llm-d-incubation/llm-d-scaling-manager#302: the first holds both off
+	// from the constructor; the others run the switch on and off.
 	saturation.SwitchMuAtStepBudget: {
 		{"../saturation", "TestStepBudgetCap_OffFromTheConstructor"},
-		{"../saturation", "TestStepBudgetCap_DerivedMuAtTheBudgetsBatch"},
 		{"../saturation", "TestStepBudgetCap_DerivedMuAtSpeculativeTokens"},
-		{"../saturation", "TestStepBudgetCap_DerivedMuThroughAnalyze"},
+		{"../saturation", "TestStepBudgetCap_DenseEngineUnmoved"},
+		{"../saturation", "TestStepBudgetCap_ZeroReplicaAtTheBudgetsBatch"},
 	},
 	saturation.SwitchPlannerCapAtStepBudget: {
 		{"../saturation", "TestStepBudgetCap_OffFromTheConstructor"},
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../saturation", "TestStepBudgetCap_PlannerCapAtTheBudgetsBatch"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and

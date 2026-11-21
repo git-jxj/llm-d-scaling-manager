@@ -33,13 +33,15 @@ const SwitchMuAtStepBudget = "mu-at-step-budget"
 // (learnreplay.PlannerSwitches), for the same lack of a recording.
 const SwitchPlannerCapAtStepBudget = "planner-cap-at-step-budget"
 
-// batchCapStepBudget is a batch cap the step budget lowered (atStepBudget).
-const batchCapStepBudget = "step budget"
-
 // atStepBudget is p held to the batch params' step budget runs, with its
 // source batchCapStepBudget where that lowers it; p itself with on false, on
 // an engine other than vLLM (SGLang's chunked prefill size is not a decode
-// step budget), or where the budget is unknown.
+// step budget), where the budget is unknown, or where p is no cap (a zero
+// perRank stays zero: the budget alone is not a cap any reader prices).
+//
+// k is num_speculative_tokens as the flags state it; an MTP engine that
+// leaves it to the model's default reads k = 0 and is held to the budget
+// alone, the lenient side.
 func atStepBudget(p pricedBatchCap, params *capacity.EngineParams, on bool) pricedBatchCap {
 	if !on || params == nil || params.Engine == inferenceengine.EngineSGLang {
 		return p

@@ -36,25 +36,6 @@ func TestStepBudgetCap_OffFromTheConstructor(t *testing.T) {
 	require.Contains(t, ReplaySwitchNames(), SwitchPlannerCapAtStepBudget)
 }
 
-// The derived mu through Analyze, where the budget binds: a rank with a
-// budget of 64 tokens and a cap of 256 runs 64 sequences a step on, a quarter
-// of the mu off; at 128, half. The KV holds 544, so the cap of 256 binds off.
-func TestStepBudgetCap_DerivedMuAtTheBudgetsBatch(t *testing.T) {
-	on := func(a *SaturationAnalyzer) { a.muAtStepBudget = true }
-	small := deploymentParams()
-	small.EffectiveMaxBatchedTokens = 64
-	off := stepDerivedMu(t, small, nil)
-	assert.InDelta(t, 256, off["seqs"], 1e-9)
-
-	got := stepDerivedMu(t, small, on)
-	assert.InDelta(t, 64, got["seqs"], 1e-9)
-	assert.Equal(t, batchCapStepBudget, got["batchCapSource"])
-	assert.InDelta(t, off["rate"].(float64)/4, got["rate"], 1e-9, "same line and fill: a quarter of the sequences")
-
-	small.EffectiveMaxBatchedTokens = 128
-	assert.InDelta(t, 128, stepDerivedMu(t, small, on)["seqs"], 1e-9)
-}
-
 // At MTP k = 3 and a budget of 256, the wide-EP default: 64 sequences on, a
 // quarter of the mu off; at k = 1, 128.
 func TestStepBudgetCap_DerivedMuAtSpeculativeTokens(t *testing.T) {
@@ -98,9 +79,21 @@ func stepDerivedMu(t *testing.T, params *capacity.EngineParams, edit func(*Satur
 	return fields
 }
 
-// Through Analyze the switch moves nothing where the budget holds the cap:
-// a dense engine at 8192 tokens a step against a cap of 256.
-func TestStepBudgetCap_DerivedMuThroughAnalyze(t *testing.T) {
+// The zero-replica estimate is held as the live replica's mu is: at MTP k = 3
+// and a budget of 256, 64 sequences a rank on, so the order from zero agrees
+// with the price once a pod runs; off, as before.
+func TestStepBudgetCap_ZeroReplicaAtTheBudgetsBatch(t *testing.T) {
+	off := zeroReplicaEstimateOf(t, wideEPMTP(), 1, nil)
+	on := zeroReplicaEstimateOf(t, wideEPMTP(), 1, func(a *SaturationAnalyzer) { a.muAtStepBudget = true })
+	assert.EqualValues(t, 256, off["batchCap"])
+	assert.EqualValues(t, 64, on["batchCap"])
+	assert.Equal(t, batchCapStepBudget, on["batchCapSource"])
+	assert.Less(t, on["derivedCapacity"].(int64), off["derivedCapacity"].(int64))
+}
+
+// The switch moves nothing where the budget holds the cap: a dense engine at
+// 8192 tokens a step against a cap of 256.
+func TestStepBudgetCap_DenseEngineUnmoved(t *testing.T) {
 	dense := deploymentParams()
 	on := stepDerivedMu(t, dense, func(a *SaturationAnalyzer) { a.muAtStepBudget = true })
 	off := stepDerivedMu(t, dense, nil)

@@ -20,8 +20,10 @@ func TestStepBudgetCap(t *testing.T) {
 		{"wide EP, no spec", 256, 256, 0, 256},
 		{"dense, the cap binds", 256, 8192, 3, 256},
 		{"budget unknown", 256, 0, 3, 256},
-		{"no cap", 0, 256, 3, 64},
+		{"no cap stays no cap", 0, 256, 3, 0},
 		{"negative k is none", 256, 128, -2, 128},
+		{"the last request is cut, not skipped", 256, 250, 3, 63},
+		{"k=2 at 256", 256, 256, 2, 86},
 	} {
 		assert.Equal(t, c.want, StepBudgetCap(c.perRank, c.budget, c.k), c.name)
 	}
