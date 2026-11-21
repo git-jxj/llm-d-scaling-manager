@@ -554,9 +554,9 @@ type SaturationAnalyzer struct {
 	// the constructor; a replay turns it off (SetSwitchesForReplay). It
 	// bounds nothing without a TPOT objective.
 	k2AtITLTarget bool
-	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
-	// (itl_baseline_floor.go): off from the constructor; only a replay
-	// turns it on.
+	// itlBaselineFromFloor is SwitchITLBaselineFromFloor (issue
+	// llm-d-incubation/llm-d-scaling-manager#169, itl_baseline_floor.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	itlBaselineFromFloor bool
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
@@ -847,6 +847,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillBusyMinutes:     true,
 		prefillAQuadratic:      true,
 		itlOneSidedAtCap:       true,
+		itlBaselineFromFloor:   true,
 		itlTierHysteresis:      true,
 		itlClearsOnRevision:    true,
 		floorRaisesVariants:    true,

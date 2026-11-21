@@ -25,8 +25,10 @@ import (
 // read at no fill, B would be high by A times that fill, and the line would
 // price under the truth past its readings. The one-sided rule
 // (SwitchITLOneSidedAtCap) is set against the pinned fit as against the
-// default. A learned B ends it. Off, as before, the default. Off from the
-// constructor: the controller keeps the default until a GPU check clears it.
+// default. A learned B ends it. Off, as before, the default. On from the
+// constructor since a GPU check on a Qwen3-32B P/D fleet on H200, where the
+// B it pinned sat 4 % under the measured low-load TPOT floor; a replay turns
+// it off.
 const SwitchITLBaselineFromFloor = "saturation-itl-baseline-from-floor"
 
 // baselineFromFloorOn reports SwitchITLBaselineFromFloor.

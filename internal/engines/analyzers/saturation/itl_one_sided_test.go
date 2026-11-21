@@ -529,7 +529,11 @@ func TestITLOneSided_TheHeldSlopeKeepsThePriceAndEndsWithTheHold(t *testing.T) {
 	require.True(t, o.lastHeld-o.lastFit <= time.Hour && o.firstSilent-o.lastFit > time.Hour,
 		"the hold ended %s after the last fit, want just past 1h", o.firstSilent-o.lastFit)
 
-	off := run(map[string]bool{SwitchITLOneSidedAtCap: false})
+	// The control turns SwitchITLBaselineFromFloor off too: on, the idle
+	// replicas' floor below the band pins B at the truth's, and the line
+	// through it is the truth with or without the one-sided rule. The
+	// default B is the case the rule exists for.
+	off := run(map[string]bool{SwitchITLOneSidedAtCap: false, SwitchITLBaselineFromFloor: false})
 	require.Less(t, off.held.ITLAt(oneSidedK), truth, "negative control: off, the held line was not under the truth")
 }
 

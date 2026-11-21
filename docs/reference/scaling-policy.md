@@ -2239,7 +2239,12 @@ of replicas meets, bounds nothing (`target-unreachable`).
 - **Only on a line the variant measured.** A line borrowed from another
   variant, or resting on the default intercept, bounds nothing, and
   saturation sizes as before. `itlBoundWhy` on the
-  `k2-itl-bound` line names the reason.
+  `k2-itl-bound` line names the reason. A variant whose replicas never
+  spread far enough in fill to fit the intercept B (the usual case: the
+  router balances them) takes B from the lowest latency its replicas read
+  at low load, below the band, so the bound applies to it once it has run
+  at low load. Until then its line rests on the 6 ms default intercept and
+  bounds nothing (`default-intercept`).
 - **Saturation's own line.** Saturation fits its own ITL line. The SLO
   analyzer's `llmsm_slo_fill` comes from a fit of its own, so the two fills
   can differ.

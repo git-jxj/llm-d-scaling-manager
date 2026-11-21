@@ -16,16 +16,34 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 )
 
-// The B-from-floor switch is off from the constructor, so the controller
-// keeps the default B; a replay turns it on.
-func TestITLBaselineFromFloor_OffFromTheConstructor(t *testing.T) {
+// The B-from-floor switch is on from the constructor: a key with no learned
+// B is pinned through the floor read below the band, not the 6 ms default. A
+// replay turns it off, and the line is back on the default.
+func TestITLBaselineFromFloor_OnFromTheConstructor(t *testing.T) {
+	pinnedB := func(a *SaturationAnalyzer) itl.Reading {
+		// As Analyze builds it (analyze.go): the switch read from the analyzer.
+		adm := itl.Admission{BaselineFromFloor: a.baselineFromFloorOn()}
+		start := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+		floorCycles(a, 0.05, 20, adm, start)
+		return floorCycles(a, 0.30, 12, adm, start.Add(20*15*time.Second))
+	}
+
 	a := NewSaturationAnalyzer(capacity.NewStore())
 	fields := a.switchFields()
 	require.Contains(t, fields, SwitchITLBaselineFromFloor)
-	assert.False(t, *fields[SwitchITLBaselineFromFloor], "off from the constructor")
-	assert.False(t, a.baselineFromFloorOn())
-	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{SwitchITLBaselineFromFloor: true}))
-	assert.True(t, a.baselineFromFloorOn(), "a replay turns it on")
+	assert.True(t, *fields[SwitchITLBaselineFromFloor], "on from the constructor")
+	on := pinnedB(a)
+	require.Equal(t, itl.TierPinnedB, on.Tier, "premise: one fill, no full fit")
+	assert.True(t, on.PinnedAtFloor, "pinned through the floor")
+	// The readings lie on ITL = 0.05 k + 0.012: the floor's line finds B.
+	assert.InDelta(t, 0.012, on.Model.B, 0.0005, "B from the floor")
+
+	off := NewSaturationAnalyzer(capacity.NewStore())
+	require.NoError(t, off.SetSwitchesForReplay(map[string]bool{SwitchITLBaselineFromFloor: false}))
+	assert.False(t, off.baselineFromFloorOn(), "a replay turns it off")
+	r := pinnedB(off)
+	assert.False(t, r.PinnedAtFloor)
+	assert.InDelta(t, itl.DefaultBaselineSec, r.Model.B, 1e-12, "off: the default B")
 }
 
 // The itl-fit line is as it was with the switch off, and names the floor

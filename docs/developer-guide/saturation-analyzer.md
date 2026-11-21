@@ -1063,8 +1063,9 @@ each analyzer's arguments map lazily, under its own lock.
 A key learns B only from a full fit. Many never make one: on the e1 and
 staircase recordings nearly every published line is pinned at the 6 ms
 default. Under `SwitchITLBaselineFromFloor`
-(`saturation-itl-baseline-from-floor`, off; `itl_baseline_floor.go`) the
-admission sets `itl.Admission.BaselineFromFloor`:
+(`saturation-itl-baseline-from-floor`, on from the constructor, a replay
+turns it off; `itl_baseline_floor.go`) the admission sets
+`itl.Admission.BaselineFromFloor`:
 
 - **Readings.** The tracker keeps each key's steady readings below the band
   (`k < MinK`, the replica past its settle and its fill still), the latest
@@ -1100,6 +1101,16 @@ floor pins 9.3-12.3 ms, and decode asks for one replica fewer on 18 of 762
 cycles. On the staircases and three-pods it pins 0.4-3.8 ms, under the
 default (b-on's own full fits learned 1.4-2.4 ms): mu falls 12-31 %,
 and three-pods asks for one replica more on 31 of 203 cycles.
+
+It is on from the constructor after a GPU check on a Qwen3-32B P/D fleet on
+H200 (TP 2, prefill pinned at 2, decode between 1 and 3). Replayed with the
+switch on, the decode line at 8 requests a second, with no full fit, was
+pinned at B 10.7-10.9 ms; the clients' TPOT 10th percentile at 1 request a
+second was 11.4 ms, 4 % above it, on two separate runs. The off arm's
+recording replayed with the switch on gave the same B within 0.3 ms. Live,
+decode asked for 2 replicas with the switch on and off at 8 requests a
+second, at TPOT p90 16 ms both. A full fit, here only in overload, ends the
+floor's B as before.
 
 #### When a replica's settle starts (learner PR 4a)
 
