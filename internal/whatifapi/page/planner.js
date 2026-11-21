@@ -61,6 +61,7 @@ const FLAG_WORDS = {
   AFromEngineTiming: ["a, the fixed latency, was fitted from the engine's own prefill timing on a fleet too busy for low-load minutes, not from quiet minutes.", "a low-load window that fits a"],
   AssumedITLB: ["The decode ITL line's intercept B, its latency per token with the cache empty, is the value you typed or the one the floor below the band gives, not a measured one; the slope was refitted through it.", "a recording whose decode line measured its own B (a full fit)"],
   BusiestRankFill: ["The decode ITL line, its band and every fill named were read at the busiest rank of a data-parallel MoE engine, whose ranks step in lockstep; a replica holds the sequences of its mean fill, the busiest rank's over the ratio read.", "a recording of the engine at data parallelism one, or the switch off"],
+  ITLBatchTerm: ["The decode ITL was read as the line plus a term that grows with the batch per engine rank past a roofline, fitted on the line's residuals over the running request counts.", "a recording whose rows cannot tell the term from the line's slope"],
   AdaptedBandFloor: ["The decode ITL line was read over a KV-fill band whose floor the replay lowered to the fleet's fill, below the policy's floor.", "readings at the policy's fill floor or above"],
   PromptSpreadAbovePeak: ["The prompt cv is past the peak for this percentile: a larger cv can price a shorter floor and a higher rate.", "a measured prompt spread"],
   PromptSpreadClamped: ["The measured prompt spread was clamped at its stop.", "a prompt histogram with wider bounds"],

@@ -212,6 +212,12 @@ type VariantState struct {
 	// and always with BusiestRankFill false.
 	BusiestRankFill  bool
 	BusiestRankRatio float64
+	// BatchFit is the ITL batch term fitted on the variant's rows up to the
+	// cycle, on the residuals of Line (whatif.FitBatchTerm,
+	// saturation.SwitchITLBatchTerm); its Term is what the planner prices on
+	// top of Line, zero where a gate refused it. The zero value while the
+	// switch is off.
+	BatchFit whatif.BatchFit
 	// LineAtFloor says the replay lifts a decode line to that floor
 	// (saturation.SwitchITLLineAtFloor, whatif.LiftToFloor), and LineLift
 	// how far, in seconds, Line's intercept was raised to pass through it; 0
@@ -299,6 +305,15 @@ type shapeSample struct {
 // synthetic. No recording in the goldens is of such an engine, so nothing
 // shows it does not read a figure under what was measured; a replay turns it
 // on by name.
+//
+// saturation.SwitchITLBatchTerm is not listed either: the ITL term past the
+// roofline (issue llm-d-incubation/llm-d-scaling-manager#309) is fitted on
+// the residuals of a variant's own line, and no committed recording
+// identifies it. On the Qwen3-32B warm-up alone the fitted slope is 0.003 ms
+// per sequence and removes 0.4% of the residuals' error, which the gates
+// refuse; it takes the warm-up and the 1k-prompt A-off phase together (n_roof
+// 120 per rank, 0.034 ms per sequence) to read it, so a recording of one
+// shape cannot. A replay turns it on by name.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -407,6 +422,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		resident = map[string][]residentSample{}
 		ttft     = newTTFTSamples(opts.Switches[PackageSLO][slo.SwitchTTFTHopUnqueued])
 		lines    = newLineSamples()
+		batch    = newBatchSamples(opts.Switches[PackageSaturation][saturation.SwitchITLBatchTerm])
 		cycleAt  = map[time.Time]int{}
 		arrivals []float64
 		times    []time.Time
@@ -469,6 +485,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		}
 		ttft.noteJoint(in, ev.Now, args, sglang)
 		lines.note(in, n, ev.Now, busiest)
+		batch.note(in)
 		ttft.noteTerm(in, ev.Now, args)
 		if n == cycle || early[n] {
 			s := r.stateOf(in, n, ev.Now, shapes)
@@ -480,6 +497,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 				}
 			}
 			r.fillTTFT(s, in, ttft)
+			batch.fit(s)
 			if n == cycle {
 				st = s
 				return true

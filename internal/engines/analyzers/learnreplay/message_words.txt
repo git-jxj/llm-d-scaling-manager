@@ -1000,6 +1000,7 @@ decodeTTFT
 decodeTTFTPrompt
 decodeTermRefused
 decodeVariant
+decoding
 deduced
 deepep_low_latency
 deeper
@@ -1234,6 +1235,7 @@ fallbackSource
 falls
 false
 fell
+few
 fewer
 field
 fields
@@ -1314,6 +1316,7 @@ frozen
 full
 future
 g
+gain
 gap
 gaps
 gate
@@ -1511,6 +1514,7 @@ itl-aggregated-shape-term
 itl-aggregated-sizes
 itl-aggregated-spec-unknown
 itl-baseline-stamped
+itl-batch-term
 itl-fit
 itl-fit-declined
 itl-gps-mismatch
@@ -2583,6 +2587,7 @@ residentKVBoundFleet
 residentKVPerSeq
 residentRunning
 residual
+residuals
 resolve
 resolved
 resolves
@@ -2622,6 +2627,7 @@ revisions
 rho
 rhoP
 rhoPull
+rise
 rises
 role
 role-of
@@ -2634,6 +2640,7 @@ rolling
 rollout
 rolloutHeld
 rollouts
+roof
 room
 rose
 round

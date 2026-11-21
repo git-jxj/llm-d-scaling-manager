@@ -546,6 +546,10 @@ type SaturationAnalyzer struct {
 	// moeBusiestRank is SwitchMoEBusiestRank (moe_busiest_rank.go): off
 	// from the constructor, planner-only.
 	moeBusiestRank bool
+	// itlBatchTerm is SwitchITLBatchTerm (itl_batch_term.go): off from the
+	// constructor, planner-only. No analyzer reads it: the capacity
+	// planner's replay fits and prices the term.
+	itlBatchTerm bool
 	// itlLineAtFloor is SwitchITLLineAtFloor: off from the constructor,
 	// planner-only; the analyzer accepts it for the planner's replay
 	// (learnreplay.StatesFrom reads it) and reads it nowhere.
