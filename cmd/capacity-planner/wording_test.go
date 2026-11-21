@@ -46,15 +46,15 @@ func TestNoLine_SaysWhatToDo(t *testing.T) {
 	out, code := runCmd(t, "replicas-to-slo", "--recording", olsSweep, "--cycle", "1")
 	require.Equal(t, 3, code, out)
 	assert.Contains(t, out, "no ITL line learned by cycle 1; the line needs a window in which decode's KV-cache use spans 0.30 or more: "+
-		"answer at a later cycle (--cycle) where one is learned, or record a busier window")
+		"answer at a later cycle where one is learned (--cycle; source.cycle on the API), or record a busier window")
 }
 
-// On the API the hint names the API's key for the cycle, not the flag.
-func TestNoLine_APISaysSourceCycle(t *testing.T) {
+// The hint is the same on the CLI and the API (TestServeParity holds their
+// refusals equal), and names both ways to pick a cycle.
+func TestNoLine_HintIsTheSameOnTheAPI(t *testing.T) {
 	h := pricedVariant{api: true}.noLineHint()
-	assert.Contains(t, h, "answer at a later cycle (source.cycle)")
-	assert.NotContains(t, h, "--cycle")
-	assert.Contains(t, pricedVariant{}.noLineHint(), "(--cycle)")
+	assert.Equal(t, pricedVariant{}.noLineHint(), h)
+	assert.Contains(t, h, "--cycle; source.cycle on the API")
 }
 
 // longFloat is a number printed to more digits than anyone reads.
