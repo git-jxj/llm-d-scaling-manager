@@ -114,6 +114,8 @@ func TestDayPlanNoTTFTTargetSizesDecodeAlone(t *testing.T) {
 		said = said || (len(n) > 15 && n[:15] == "No TTFT target:")
 	}
 	assert.True(t, said, "a note says why prefill is not sized: %q", p.Notes)
+	assert.Contains(t, p.Notes, "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). "+
+		"The fleet's limit, which decode admission can hold down, is not priced.")
 
 	// A target asked prices prefill, policy or none.
 	asked, err := DayPlanWith(t, &stubResolver{noPolicyTTFT: true}, DayPlanRequest{SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: ptr(0.2)}}})
@@ -140,6 +142,7 @@ func TestCheckDayPlan(t *testing.T) {
 		want string
 	}{
 		"nothing":         {DayPlanRequest{}, ""},
+		"TPOT to policy":  {DayPlanRequest{SLO: &SLORequest{TPOT: &Objective{Statistic: "mean"}}}, ""},
 		"no TTFT, a TPOT": {DayPlanRequest{SLO: &SLORequest{TPOT: &Objective{Statistic: "mean", Target: ptr(0.03)}}}, ""},
 		"a bad step":      {DayPlanRequest{Step: "1s"}, "step"},
 		"a bad sizeFor":   {DayPlanRequest{SizeFor: "p50"}, "sizeFor"},

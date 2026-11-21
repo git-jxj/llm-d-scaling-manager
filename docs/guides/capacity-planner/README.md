@@ -643,7 +643,7 @@ hour (UTC)        rate mean  rate p95 need P need D busiest  had P  had D
 2026-11-01 22:00       6.88     29.68    >=5    >=4     4+2      1      1  UNDER (SLO risk)
 
 buckets: 11 sized (9 under, 0 over, 2 match; 11 for the p95, 0 for the mean, 0 for the max), 0 beyond the bound, 0 refused, 2 too little data, 0 no data
-needed: to hold every bucket at least 5 prefill + 4 decode (prefill not priced in every bucket); the busiest bucket alone 4 prefill + 2 decode, the quietest 1 prefill + 1 decode (each the fewest replicas in all; another mix may serve too)
+needed: to hold every bucket at least 5 prefill + 4 decode (prefill not priced in some buckets); the busiest bucket alone 4 prefill + 2 decode, the quietest 1 prefill + 1 decode (each the fewest replicas in all; another mix may serve too)
 replica-hours over the 11 sized buckets: needed 1.75 decode (prefill not priced in 4 of the 11), had 0.92 decode (prefill not priced in 4 of the 11)
 had over every bucket with data: 1.08 prefill + 1.08 decode replica-hours, 2.17 GPU-hours (GPUs per replica: 1 prefill, 1 decode)
 hours under (SLO risk): 22:00
@@ -662,11 +662,12 @@ alone. A higher `--ttft` sizes them.
 - **An hour's need.** A fleet that holds every bucket of the hour: each
   role's most over its buckets, priced again at each bucket's rate and shape
   (`NOT CONFIRMED` where it falls short at one). It is not the busiest
-  bucket's: above, 22:10 runs 29.6 r/s of short outputs and needs 4 prefill
-  and 2 decode, but 22:05 runs 9.5 r/s of 2500-token outputs and needs 4
-  decode, so the hour needs 4 decode. The `busiest` column is the busiest
-  bucket's own fleet. The summary's need holds every bucket of the window
-  the same way.
+  bucket's: above, 22:15 runs 29.8 r/s of 500-token outputs and needs 4
+  prefill and 2 decode, but 22:05 runs 9.5 r/s of 2500-token outputs and
+  needs 4 decode, and 22:40 runs 15.9 r/s of 1400-token prompts and needs 5
+  prefill. Four buckets sized decode alone, so the need is a lower bound
+  (`>=`). The `busiest` column is the busiest bucket's own fleet. The
+  summary's need holds every bucket of the window the same way.
 - **Sized for.** Each bucket is sized for the p95 of its cycles' rates when it
   holds 20 cycles or more (5 minutes at a 15 s cycle), else for their mean,
   which is less conservative, flagged `FewCyclesForP95`. `--size-for

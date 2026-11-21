@@ -7,8 +7,8 @@ REFUSED prefill's TTFT (NoPrefillCapacity), in 16 buckets: P1 refused V_P of var
 
 each hour: a fleet that holds every bucket in it (each role's most), the busiest bucket's own fleet, the fewest pods it had, and the fleet it had judged whole at each bucket's rate
 hour (UTC)        rate mean  rate p95 need P need D busiest  had P  had D  
-2026-11-06 02:00      25.81     34.52      -    >=3   -+>=3      2      2  UNDER (SLO risk)
-2026-11-06 03:00      37.64     42.50      -    >=3   -+>=3      2      2  UNDER (SLO risk)
+2026-11-06 02:00      25.81     34.52      -    >=3    D>=3      2      2  UNDER (SLO risk)
+2026-11-06 03:00      37.64     42.50      -    >=3    D>=3      2      2  UNDER (SLO risk)
 
 buckets: 16 sized (10 under, 2 over, 4 match; 13 for the p95, 3 for the mean, 0 for the max), 0 beyond the bound, 0 refused, 0 too little data, 0 no data
 needed: to hold every bucket at least 3 decode (prefill not priced); the busiest bucket alone at least 3 decode (prefill not priced), the quietest at least 1 decode (prefill not priced) (each the fewest replicas in all; another mix may serve too)

@@ -369,7 +369,9 @@ beside it. It reads the cycles of the source the `inputsId` was resolved
 from: the whole recording, or the whole Prometheus window. For a day, resolve
 a 24-hour window. It takes the size's `slo`, `assume`, `headroom` and
 `maxReplicas`, and `traffic` with `mix` and `arrivalCV2` only (a rate is a
-400: each bucket's rate is its own), and three more:
+400: each bucket's rate is its own), and three more. Unlike a size, it needs no
+TTFT target: with none in `slo.ttft` or the policy, prefill is not sized,
+decode is sized alone, and nothing goes into `refused`.
 
 | Key | Default | Notes |
 | --- | --- | --- |

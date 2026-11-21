@@ -462,9 +462,16 @@ func (q *dayQuestion) key() any {
 // is sized for, the request floor, the bound, the traffic, the targets'
 // statistics and the headroom. The CLI checks its flags with it before the
 // replay, which can take minutes; dayQuestionOf checks the rest against the
-// inputs.
+// inputs. A target left to the policy is taken as set: the stand-in policy
+// sets both.
 func CheckDayPlan(req DayPlanRequest) error {
-	_, err := dayQuestionOfRequest(req)
+	if _, err := dayQuestionOfRequest(req); err != nil {
+		return err
+	}
+	stand := InputsResponse{Fleet: FleetInfo{Prefill: &RoleInfo{Replicas: 1}, Decode: RoleInfo{Replicas: 1}},
+		Policy: PolicyInfo{Headroom: 1, TTFT: &PolicyObjective{Statistic: defaultTTFTStatistic, Seconds: 1},
+			TPOT: &PolicyObjective{Statistic: statisticMean, Seconds: 1}}}
+	_, _, err := dayScenarioOf(&stand, "", req)
 	return err
 }
 
@@ -498,13 +505,6 @@ func dayQuestionOfRequest(req DayPlanRequest) (*dayQuestion, error) {
 		q.sizeFor, q.sizeFromReq = req.SizeFor, true
 	default:
 		return nil, InputErrorf("sizeFor %q, want %s, %s or %s", req.SizeFor, SizeForMean, SizeForP95, SizeForMax)
-	}
-	// The scenario's own checks, on inputs that set every default: what
-	// they refuse here, they refuse on any source.
-	stand := InputsResponse{Fleet: FleetInfo{Prefill: &RoleInfo{Replicas: 1}, Decode: RoleInfo{Replicas: 1}},
-		Policy: PolicyInfo{Headroom: 1}}
-	if _, _, err := dayScenarioOf(&stand, "", req); err != nil {
-		return nil, err
 	}
 	return q, nil
 }
@@ -1166,12 +1166,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		out.Notes = append(out.Notes, "No TTFT target: the request asks none and the policy sets none, so prefill is not sized "+
 			"(PrefillNotPriced) and decode is sized alone, on "+how+". State one to size prefill: --ttft 2s@p90, or in the API slo.ttft.target.")
 	}
-	for _, r := range out.Refused {
-		if r.Term == termTTFT || q.noTTFT {
-			out.Notes = append(out.Notes, "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). "+
-				"The fleet's limit, which decode admission can hold down, is not priced.")
-			break
-		}
+	if q.noTTFT || slices.ContainsFunc(out.Refused, func(r DayRefusal) bool { return r.Term == termTTFT }) {
+		out.Notes = append(out.Notes, "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). "+
+			"The fleet's limit, which decode admission can hold down, is not priced.")
 	}
 	return out, nil
 }
@@ -1236,7 +1233,7 @@ func (q *dayQuestion) holds(ctx context.Context, p, d int, idx []int, sized map[
 			return false, err
 		}
 		s.g.z.rate = s.rate
-		if !s.g.z.meets(v) {
+		if !s.g.z.decodeMeets(v) || !s.g.z.meets(v) {
 			return false, nil
 		}
 	}

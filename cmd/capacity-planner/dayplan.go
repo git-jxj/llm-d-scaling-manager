@@ -307,8 +307,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		}
 		busiest := "-"
 		if n := h.Busiest; n != nil {
-			bp, bd := neededCells(n)
-			busiest = bp + "+" + bd
+			busiest = busiestCell(n)
 		}
 		if h.Actual != nil {
 			ap, ad = strconv.Itoa(h.Actual.Prefill), strconv.Itoa(h.Actual.Decode)
@@ -379,7 +378,7 @@ func neededText(n *whatifapi.DayNeeded) string {
 	case n.Prefill == nil:
 		return fmt.Sprintf("at least %d decode (prefill not priced)", n.Decode)
 	case n.AtLeast:
-		return fmt.Sprintf("at least %d prefill + %d decode (prefill not priced in every bucket)", *n.Prefill, n.Decode)
+		return fmt.Sprintf("at least %d prefill + %d decode (prefill not priced in some buckets)", *n.Prefill, n.Decode)
 	}
 	return fmt.Sprintf("%d prefill + %d decode", *n.Prefill, n.Decode)
 }
@@ -398,6 +397,15 @@ func neededCells(n *whatifapi.DayNeeded) (prefill, decode string) {
 		}
 	}
 	return prefill, decode
+}
+
+// busiestCell is the busiest bucket's fleet in one cell: "4+2", or "D>=3"
+// where it sized decode alone.
+func busiestCell(n *whatifapi.DayNeeded) string {
+	if n.Prefill == nil {
+		return "D>=" + strconv.Itoa(n.Decode)
+	}
+	return strconv.Itoa(*n.Prefill) + "+" + strconv.Itoa(n.Decode)
 }
 
 // valueOrZero is *p, or 0 when p is nil.

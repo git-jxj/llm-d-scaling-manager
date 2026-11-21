@@ -302,7 +302,7 @@ function dayBucketAt(plan, t) {
 // a lower bound.
 function dayNeededText(n) {
   if (n.prefill == null) return `at least ${n.decode} decode (prefill not priced)`;
-  return n.atLeast ? `at least ${n.prefill} prefill, ${n.decode} decode (prefill not priced in every bucket)` : `${n.prefill} prefill, ${n.decode} decode`;
+  return n.atLeast ? `at least ${n.prefill} prefill, ${n.decode} decode (prefill not priced in some buckets)` : `${n.prefill} prefill, ${n.decode} decode`;
 }
 
 // dayTip is the tooltip of a bucket: every value at that time, as rows of
@@ -346,7 +346,7 @@ function dayHoursTable(plan) {
   const n = x => x == null ? "-" : esc(String(x));
   let s = "<table><tr><th>hour (UTC)</th><th>rate mean</th><th>rate p95</th><th>needed P</th><th>needed D</th><th>busiest bucket</th><th>had P</th><th>had D</th><th>beyond the bound</th><th></th></tr>";
   for (const h of plan.hours) {
-    const busiest = h.busiest ? `${h.busiest.prefill != null ? h.busiest.prefill : "-"}+${h.busiest.decode}` : "-";
+    const busiest = !h.busiest ? "-" : h.busiest.prefill != null ? `${h.busiest.prefill}+${h.busiest.decode}` : `D>=${h.busiest.decode}`;
     const verdict = (h.verdict ? DAY_VERDICT[h.verdict] : "not sized") + (h.notConfirmed ? ", need not confirmed" : "");
     const atLeast = h.needed && h.needed.atLeast ? ">=" : "";
     s += `<tr><td>${esc(h.start.slice(0, 16).replace("T", " "))}</td><td>${h.rate ? dayFmt(h.rate.mean) : "-"}</td><td>${h.rate ? dayFmt(h.rate.p95) : "-"}</td>` +
