@@ -561,7 +561,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		perRank := pv.perRank
 		pv.decode = whatif.Decode{
-			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
+			Line: vs.Line, Band: band, CapacityTokens: busiestRankCapacity(vs),
 			KVPerRequest: pv.residentKV(), OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
 			// A typed B is a guess: the line is not read below the band from
@@ -577,6 +577,9 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		}
 		if vs.Shape.OutputDispersion == 0 {
 			pv.flags = append(pv.flags, whatif.OutputSpreadUnread)
+		}
+		if vs.BusiestRankFill {
+			pv.flags = append(pv.flags, busiestRankFill)
 		}
 		if st.ITLBandFloor > 0 {
 			pv.bandFloor, pv.bandPolicyFloor = st.ITLBandFloor, st.ITLBandPolicyFloor
@@ -604,6 +607,27 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		return nil, usagef("--variant %q: no decode variant of that name at this cycle", f.variant)
 	}
 	return out, nil
+}
+
+// busiestRankFill is a decode line read at the busiest engine rank of a
+// data-parallel MoE engine (learnreplay.VariantState.BusiestRankFill): every
+// fill the answer names is that rank's, and the replica holds the sequences
+// of its mean fill, that fill over the busiest/mean ratio read.
+const busiestRankFill whatif.Flag = "BusiestRankFill"
+
+// busiestRankCapacity is the KV capacity a decode variant is priced at: its
+// own, or, for a line read at the busiest rank of a data-parallel MoE engine
+// (learnreplay.VariantState.BusiestRankFill), its own over the busiest/mean
+// rank fill ratio read. The line and the band are the busiest rank's, and
+// the sequences a replica holds at a busiest-rank fill k are those of the
+// mean fill k/ratio: the band's top prices the mean at Hi/ratio, where the
+// busiest rank reaches Hi (issue llm-d-incubation/llm-d-scaling-manager#312).
+// Without a ratio read it is the capacity, the least the busiest rank needs.
+func busiestRankCapacity(vs learnreplay.VariantState) float64 {
+	if vs.BusiestRankFill && vs.BusiestRankRatio > 1 {
+		return vs.CapacityTokens / vs.BusiestRankRatio
+	}
+	return vs.CapacityTokens
 }
 
 // resampling is the bands' bootstrap: the page's, from --seed.

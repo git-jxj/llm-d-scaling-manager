@@ -194,6 +194,18 @@ type VariantState struct {
 	// itl.BelowBandMinReadings, where the line is not read below the band.
 	// BelowBandFill is the fill that reading was taken at, 0 with none.
 	BelowBandITL, BelowBandFill float64
+	// BusiestRankFill says the line, its readings, its band and its rows are
+	// read at the variant's busiest engine rank, not the mean over its ranks:
+	// a data-parallel MoE engine under saturation.SwitchMoEBusiestRank, whose
+	// ranks step in lockstep with the busiest (issue
+	// llm-d-incubation/llm-d-scaling-manager#312). BusiestRankRatio is the
+	// median busiest/mean rank fill ratio of its latest rows whose busiest
+	// rank filled the band's bottom or more
+	// (domain.ReplicaMetrics.BusiestRankFillRatio): the planner prices the
+	// mean fill at a busiest-rank fill k at k over it. 0 where none was read,
+	// and always with BusiestRankFill false.
+	BusiestRankFill  bool
+	BusiestRankRatio float64
 }
 
 // MeasuredShape is the shape a variant served over the cycles it had
@@ -331,6 +343,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		windows, engine, arrived int
 		rows                     map[string][]whatif.LineRow
 		below                    map[string][2]float64 // ITL seconds, fill
+		ratios                   map[string]float64
 	}
 	snaps := map[int]*snap{}
 	opts.Mode = Normal
@@ -375,7 +388,13 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			firstAt = ev.Now
 		}
 		cycleAt[ev.Now] = n
-		fill, fillOK := decodeFill(in.ReplicaMetrics, rolesOf(in))
+		// The variants whose line the analyzer reads at the busiest rank
+		// (saturation.SwitchMoEBusiestRank): every fill below is read there.
+		busiest := func(variant string) bool {
+			rec := r.store.Get(in.Namespace, in.ModelID, variant)
+			return rec != nil && r.sat.BusiestRankFillFor(rec.EngineParams)
+		}
+		fill, fillOK := decodeFill(in.ReplicaMetrics, rolesOf(in), busiest)
 		arrivals = append(arrivals, in.ArrivalRate)
 		if w, ok := tpotWindow(in.RouterLatency); ok {
 			windows = append(windows, withFill(w, fill, fillOK))
@@ -398,7 +417,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			return rec != nil && rec.EngineParams != nil && rec.EngineParams.Engine == inferenceengine.EngineSGLang
 		}
 		ttft.noteJoint(in, ev.Now, args, sglang)
-		lines.note(in, n, ev.Now)
+		lines.note(in, n, ev.Now, busiest)
 		ttft.noteTerm(in, ev.Now, args)
 		if n == cycle || early[n] {
 			s := r.stateOf(in, n, ev.Now, shapes)
@@ -415,11 +434,12 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 				return true
 			}
 			sn := &snap{st: s, windows: len(windows), engine: len(engine), arrived: len(arrivals),
-				rows: map[string][]whatif.LineRow{}, below: map[string][2]float64{}}
+				rows: map[string][]whatif.LineRow{}, below: map[string][2]float64{}, ratios: map[string]float64{}}
 			for _, v := range s.Variants {
 				sn.rows[v.Variant] = slices.Clone(lines.rows(v.Variant))
 				itlSec, fill := lines.leastBelowBand(v.Variant)
 				sn.below[v.Variant] = [2]float64{itlSec, fill}
+				sn.ratios[v.Variant] = lines.busiestRatio(v.Variant)
 			}
 			snaps[n] = sn
 		}
@@ -441,6 +461,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
 		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
+		st.Variants[i].BusiestRankRatio = lines.busiestRatio(st.Variants[i].Variant)
 	}
 	var out map[int]*State
 	if len(snaps) > 0 {
@@ -456,6 +477,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
 			b := sn.below[s.Variants[i].Variant]
 			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b[0], b[1]
+			s.Variants[i].BusiestRankRatio = sn.ratios[s.Variants[i].Variant]
 		}
 		out[c] = s
 	}
@@ -760,6 +782,7 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 			}
 			vs.MaxModelLenUnresolved = slices.Contains(params.Unresolved, "max_model_len") || slices.Contains(params.Unresolved, "context_length")
 		}
+		vs.BusiestRankFill = r.sat.BusiestRankFillFor(params)
 		vs.BatchCap, vs.BatchCapSource = r.sat.PricingBatchCap(in.Namespace, in.ModelID, vc.VariantName, params, learning)
 		st.Variants = append(st.Variants, vs)
 	}

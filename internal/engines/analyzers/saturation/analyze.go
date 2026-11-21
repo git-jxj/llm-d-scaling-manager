@@ -586,7 +586,7 @@ func (c *cycle) fitLines() {
 			CapMaxPreemptionRate: c.cfg.ITLCapPreemptionRate(), Steady: c.tune.steadiness(),
 			SlopeHoldFor: c.a.Horizons().BucketRetention, Args: windowArgs(params),
 			TierHysteresis: c.a.tierHysteresisOn(), BaselineFromFloor: c.a.baselineFromFloorOn(),
-			HoldsSteadySlope: c.a.itlHoldSteadySlope}
+			HoldsSteadySlope: c.a.itlHoldSteadySlope, BusiestRankFill: c.a.BusiestRankFillFor(params)}
 		// When each replica's settle began: the engine's settle tracker
 		// (itl_settle.go).
 		c.a.itlSettleAdmission(&adm, c.input.Namespace, c.input.ModelID)
