@@ -350,7 +350,7 @@ function dayHoursTable(plan) {
     const busiest = !h.busiest ? "-" : h.busiest.prefill != null ? `${h.busiest.prefill}+${h.busiest.decode}` : `D>=${h.busiest.decode}`;
     const verdict = (h.verdict ? DAY_VERDICT[h.verdict] : "not sized") + (h.notConfirmed ? ", need not confirmed" : "");
     const atLeast = h.needed && h.needed.atLeast ? ">=" : "";
-    const had = role => h.actual == null ? null : h.actual[role] + (h.notServing && h.notServing[role] ? ` (+${h.notServing[role]})` : "");
+    const had = role => h.actual == null ? null : h.actual[role] + (h.notServing && h.notServing[role] ? `(+${h.notServing[role]})` : "");
     s += `<tr><td>${esc(h.start.slice(0, 16).replace("T", " "))}</td><td>${h.rate ? dayFmt(h.rate.mean) : "-"}</td><td>${h.rate ? dayFmt(h.rate.p95) : "-"}</td>` +
       `<td>${n(h.needed && h.needed.prefill != null ? atLeast + h.needed.prefill : null)}</td><td>${n(h.needed ? atLeast + h.needed.decode : null)}</td>` +
       `<td>${esc(busiest)}</td><td>${n(had("prefill"))}</td><td>${n(had("decode"))}</td>` +

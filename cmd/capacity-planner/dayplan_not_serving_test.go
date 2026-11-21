@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,4 +58,25 @@ func TestDayPlanHadSaysWhatWasAskedAndNotServing(t *testing.T) {
 	assert.Contains(t, row, " "+strconv.Itoa(p.Hours[0].Actual.Decode)+"(+1) ", "had D, with 1 asked and not serving")
 	assert.Contains(t, out, "had (+n): n more replicas were asked for and not serving")
 	assert.Equal(t, 2, strings.Count(out, "(+"), "the hour and the line under the table; the other hours had none")
+}
+
+// On a real recording, the P/D restart, a decode pod restarted: a bucket
+// says it was not ready, and an hour reads its had and (+n) off one bucket
+// (one that had that few serving and that many not ready), never the
+// fewest of one bucket beside the restart of another.
+func TestDayPlanNotServingOnARestart(t *testing.T) {
+	p, _ := dayJSON(t, "--recording", stairDir+"pd-restart/recording.jsonl.gz")
+	assert.True(t, slices.ContainsFunc(p.Buckets, func(b whatifapi.DayBucket) bool { return b.NotServing != nil }),
+		"the restart shows as a replica not serving")
+	for _, h := range p.Hours {
+		if h.NotServing == nil {
+			continue
+		}
+		require.NotNil(t, h.Actual)
+		hour := h.Start
+		assert.True(t, slices.ContainsFunc(p.Buckets, func(b whatifapi.DayBucket) bool {
+			return b.Start.Truncate(time.Hour).Equal(hour) && b.Actual != nil && b.NotServing != nil &&
+				b.Actual.Decode == h.Actual.Decode && b.NotServing.Decode == h.NotServing.Decode
+		}), "%s: had D %d (+%d) from one bucket", hour, h.Actual.Decode, h.NotServing.Decode)
+	}
 }

@@ -13,9 +13,10 @@ import (
 // Beside the pods it had, a bucket says the replicas asked for and not
 // serving: the median over its cycles, as had's. Here 10:00 had 2 prefill
 // and 2 decode serving with 1 decode asked and not serving in 12 of its 20
-// cycles (a quota held it), and 1 prefill in 5 (under the median); 10:05
-// had none. The hour takes each role's most; a note says what it is, and a
-// plan with none says nothing of it.
+// cycles (starting, or held unschedulable), and 1 prefill in 5 (under the
+// median); 10:05 had none. The hour reads its bucket of the fewest serving,
+// the most at a tie; a note says what it is, and a plan with none says
+// nothing of it.
 func TestDayPlanSaysWhatWasAskedAndNotServing(t *testing.T) {
 	res, err := (&stubResolver{}).Resolve(t.Context(), InputsRequest{})
 	require.NoError(t, err)
@@ -45,6 +46,24 @@ func TestDayPlanSaysWhatWasAskedAndNotServing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, p.Hours[0].NotServing)
 	assert.False(t, hasNote(p.Notes, "asked for and not serving"), "%q", p.Notes)
+}
+
+// An hour's had and (+n) read off one bucket: the one with the fewest of
+// the role serving. A replica serving in one bucket and restarting in the
+// next is not counted twice.
+func TestHourNotServingReadsTheBucketOfTheFewest(t *testing.T) {
+	b := func(had, not int) *DayBucket {
+		x := &DayBucket{Actual: &FleetCounts{Prefill: 1, Decode: had}}
+		if not > 0 {
+			x.NotServing = &FleetCounts{Decode: not}
+		}
+		return x
+	}
+	had := &FleetCounts{Prefill: 1, Decode: 1}
+	assert.Equal(t, &FleetCounts{Decode: 1}, hourNotServing(had, []*DayBucket{b(2, 0), b(1, 1)}), "1 serving and 1 restarting: 1(+1)")
+	assert.Nil(t, hourNotServing(had, []*DayBucket{b(1, 0), b(2, 1)}), "the restart is in the bucket of 2: 1, not 1(+1)")
+	assert.Equal(t, &FleetCounts{Decode: 2}, hourNotServing(had, []*DayBucket{b(1, 1), b(1, 2)}), "the most at a tie")
+	assert.Nil(t, hourNotServing(nil, nil))
 }
 
 // hasNote says a note holds s.

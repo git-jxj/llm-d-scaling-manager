@@ -196,8 +196,8 @@ try {
   ab.notServing = {prefill: 0, decode: 1};
   asked.hours[0].notServing = {prefill: 0, decode: 1};
   check("the tip says what was asked and not serving", dayTip(asked, ab).rows.some(r => r[0] === "asked, not serving" && r[1] === "0 prefill, 1 decode"));
-  check("the hour table says it beside had D", dayHoursTable(asked).includes(`<td>${asked.hours[0].actual.decode} (+1)</td>`));
-  check("but not beside had P, at 0", !dayHoursTable(asked).includes(`<td>${asked.hours[0].actual.prefill} (+0)</td>`));
+  check("the hour table says it beside had D", dayHoursTable(asked).includes(`<td>${asked.hours[0].actual.decode}(+1)</td>`));
+  check("but not beside had P, at 0", !dayHoursTable(asked).includes(`<td>${asked.hours[0].actual.prefill}(+0)</td>`));
   check("none asked, none said", !dayHoursTable(plan).includes("(+") && !dayTip(plan, b).rows.some(r => r[0] === "asked, not serving"));
 
   // Everything a plan carries is text, never markup: a flag, a reason, a

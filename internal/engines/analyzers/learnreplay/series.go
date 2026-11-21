@@ -53,11 +53,12 @@ type CycleSample struct {
 	// series (domain.AnalyzerInput.FlowControlSeries).
 	FlowControlSeries bool
 	// PrefillNotServing and DecodeNotServing are the counted variants'
-	// replicas asked for and not serving at the cycle: each variant's
-	// asked, the larger of the last decision (DesiredReplicas) and the
-	// replicas it had (CurrentReplicas), less those ready (CurrentReplicas
-	// less PendingReplicas). A replica the quota never let start, and one
-	// still starting, count; 0 where the cycle states neither.
+	// replicas asked for and not serving at the cycle: replicas that exist
+	// and are not ready (PendingReplicas: the workload's status.replicas
+	// less its readyReplicas), starting, unschedulable, or held by an
+	// admission gate such as Kueue's. A replica its controller never
+	// created, a ResourceQuota refusing its pod, is not in the recording
+	// and not counted. For a LeaderWorkerSet a replica is a group.
 	PrefillNotServing, DecodeNotServing int
 }
 
@@ -154,8 +155,7 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 		if !counted(vs.VariantName, domain.CanonicalRole(vs.Role)) {
 			continue
 		}
-		ready := max(vs.CurrentReplicas-vs.PendingReplicas, 0)
-		notServing := max(max(vs.DesiredReplicas, vs.CurrentReplicas)-ready, 0)
+		notServing := max(vs.PendingReplicas, 0)
 		switch domain.CanonicalRole(vs.Role) {
 		case domain.RolePrefill:
 			s.PrefillGPUs = max(s.PrefillGPUs, vs.GPUsPerReplica)
