@@ -262,7 +262,7 @@ const usage = "usage: capacity-planner at-replicas|backtest|capture|compare|day-
 // commandHelp is what each command answers or does, in the order help lists
 // them: the questions first, then the checks, then the tools.
 var commandHelp = []struct{ name, what string }{
-	{"at-replicas", "judge a fleet of N prefill and decode replicas at the load the window saw: knees, SLO against load, " +
+	{"at-replicas", "judge a fleet of N prefill and decode replicas at the load the window saw (and the loads --load asks): knees, SLO against load, " +
 		"a verdict, and how many replicas it needs (the answer to \"how many replicas?\")"},
 	{"replicas-to-slo", "the latency a fleet of N replicas gives: its knee, the operating rate below it, and the TPOT " +
 		"(and TTFT) there; it does not search for a replica count (at-replicas does)"},

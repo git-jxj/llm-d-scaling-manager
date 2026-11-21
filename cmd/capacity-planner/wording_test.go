@@ -49,6 +49,14 @@ func TestNoLine_SaysWhatToDo(t *testing.T) {
 		"answer at a later cycle (--cycle) where one is learned, or record a busier window")
 }
 
+// On the API the hint names the API's key for the cycle, not the flag.
+func TestNoLine_APISaysSourceCycle(t *testing.T) {
+	h := pricedVariant{api: true}.noLineHint()
+	assert.Contains(t, h, "answer at a later cycle (source.cycle)")
+	assert.NotContains(t, h, "--cycle")
+	assert.Contains(t, pricedVariant{}.noLineHint(), "(--cycle)")
+}
+
 // longFloat is a number printed to more digits than anyone reads.
 var longFloat = regexp.MustCompile(`\d\.\d{5,}`)
 
