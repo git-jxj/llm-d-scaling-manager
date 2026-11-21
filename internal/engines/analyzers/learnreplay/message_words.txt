@@ -2819,6 +2819,7 @@ slo
 slo-
 slo-batch-cap-admission
 slo-batch-cap-per-rank
+slo-cap-at-step-budget
 slo-itl-files-learner-reports
 slo-itl-forget-reaches-the-line
 slo-itl-idle-needs-evidence

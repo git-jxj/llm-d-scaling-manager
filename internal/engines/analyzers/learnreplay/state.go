@@ -241,16 +241,17 @@ type shapeSample struct {
 //     median of the busiest minutes, not of every minute.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
+//   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
+//     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
+//     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
+//     It only ever lowers the cap, so the knee and the sequences a replica
+//     is priced at: never a latency figure. No committed recording runs a
+//     budget under its cap times 1 + k, so no golden moves with it on.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
 // TTFT and TPOT under what was measured, because it predicts less decode KV
 // fill than the pods held. It stays off until that is fixed.
-//
-// saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
-// either: no recording holds an engine whose step budget runs fewer
-// sequences than its cap (MTP, wide EP), so there is no backtest to turn it
-// on with (issue llm-d-incubation/llm-d-scaling-manager#302).
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -258,6 +259,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
+		saturation.SwitchPlannerCapAtStepBudget: true,
 	}}
 }
 
