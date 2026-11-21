@@ -73,7 +73,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.IntVar(&f.maxDecode, "max-decode", 0, "the most decode replicas a bucket is sized to; 0 is 32")
 	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, in place of the learned one (flagged)")
 	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, in place of the learned one (flagged)")
-	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, in place of the measured one (flagged)")
+	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, 0 to 3, in place of the measured one or the default 2 (flagged)")
 	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the router hop, in place of the learned one (flagged)")
 	fs.StringVar(&f.assumeITLB, "assume-itl-b", "", "the decode line's intercept B (12ms), or floor for B from the floor read below the band, "+
 		"where the source measured none (PinnedDefaultB); the slope is refitted through it (flagged AssumedITLB)")

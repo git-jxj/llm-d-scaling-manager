@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,15 +42,23 @@ const (
 )
 
 // The self-check's rules: a figure is inconsistent with its recording when
-// its median ratio lies outside [selfCheckBiasLo, selfCheckBiasHi] or fewer
-// than selfCheckWithinLo of its steps are within BacktestTolerance; weak
-// when fewer than selfCheckWithinOK are, or it was scored over fewer than
-// selfCheckStepsOK steps. Fewer than selfCheckMinSteps scored steps judge
-// nothing. The planner calling the fleet overloaded in selfCheckSaturated
-// or more of the judged steps, where the fleet measured a figure, is
-// inconsistent too.
+// its median ratio lies outside [selfCheckBiasFail, selfCheckBiasHi], fewer than
+// selfCheckWithinLo of its steps are within BacktestTolerance, more than
+// selfCheckLowShare read low or any one under selfCheckFloor, its worst
+// tenth near the knee reads outside [selfCheckFloor, selfCheckNearKneeHi],
+// or it called the fleet overloaded where it served unqueued
+// (selfcheck_rules.go); weak when its median ratio lies under
+// selfCheckBiasLo (the window is lopsided: reading low costs an SLO, reading
+// high costs replicas), fewer than selfCheckWithinOK are within,
+// it was scored over fewer than selfCheckStepsOK steps or
+// selfCheckLevelsOK load levels, or the within share's bootstrap bound over
+// the levels is under selfCheckWithinLo. Fewer than selfCheckMinSteps
+// scored steps judge nothing. The planner calling the fleet overloaded in
+// selfCheckSaturated or more of the judged steps, where the fleet measured
+// a figure, is inconsistent too.
 const (
-	selfCheckBiasLo    = 0.8
+	selfCheckBiasFail  = 0.8
+	selfCheckBiasLo    = 0.95
 	selfCheckBiasHi    = 1.25
 	selfCheckWithinLo  = 0.5
 	selfCheckWithinOK  = 0.7
@@ -87,6 +96,14 @@ type SelfCheck struct {
 	// steps; absent where not scored.
 	TTFT *SelfCheckFigure `json:"ttft,omitempty"`
 	TPOT *SelfCheckFigure `json:"tpot,omitempty"`
+	// Untrusted names the figures an inconsistent self-check says not to
+	// trust: "ttft" (prefill sizing and the TTFT figures), "tpot" (decode
+	// sizing and the TPOT figures). An answer whose verdict rests on one
+	// says so (ReportVerdict.Trust).
+	Untrusted []string `json:"untrusted,omitempty"`
+	// Covered is the rates and fleets the self-check tested; an answer at
+	// another is not covered by it. Absent where no step was judged.
+	Covered *SelfCheckCoverage `json:"covered,omitempty"`
 	// Folds is each cut: what was fitted, what was predicted.
 	Folds []SelfCheckFold `json:"folds"`
 	// Checks is each rule, passed or not.
@@ -97,6 +114,238 @@ type SelfCheck struct {
 	// Seconds is what the self-check took, its fits' replay apart (shared
 	// with the answer's).
 	Seconds float64 `json:"seconds"`
+	// Stated is the answer's stated inputs the recording was replayed with,
+	// in the words of the question's source: every figure they move is
+	// flagged. WithoutStated is the answer's stated inputs the self-check
+	// ran without. Each is absent with none.
+	Stated        []string `json:"stated,omitempty"`
+	WithoutStated []string `json:"withoutStated,omitempty"`
+	// notUsed is what the line adds of a stated ITL B the fits did not use;
+	// outside says a replayed term puts the figures outside the validated
+	// region.
+	notUsed string
+	outside bool
+}
+
+// StatedITLBNotUsed opens the words of a refusal whose stated ITL B was not
+// used (a held line, a floor that gives no intercept), as a Pricer writes
+// them: the self-check counts its steps.
+const StatedITLBNotUsed = "ITL B not assumed ("
+
+// tail is what the line adds after its result: a stated ITL B the fits did
+// not use, and the stated inputs the self-check ran without.
+func (sc *SelfCheck) tail() string {
+	return sc.notUsed + withoutStatedSentence(sc.WithoutStated)
+}
+
+// itlBNotUsed is how many judged steps a stated ITL B was not used in, at
+// p90 TPOT, and the first one's why; 0 with none.
+func itlBNotUsed(steps []BacktestStep) (int, string) {
+	n, why := 0, ""
+	for _, st := range steps {
+		if st.Excluded != "" {
+			continue
+		}
+		for _, p := range st.TPOT {
+			r := p.Predicted.Refused
+			if p.Statistic != statP90 || r == nil {
+				continue
+			}
+			i := strings.Index(r.Detail, StatedITLBNotUsed)
+			if i < 0 {
+				continue
+			}
+			if n++; why == "" {
+				why = r.Detail[i+len(StatedITLBNotUsed):]
+				if j := strings.Index(why, "): "); j >= 0 {
+					why = why[j+len("): "):]
+				}
+			}
+			break
+		}
+	}
+	return n, why
+}
+
+// Stated is what an answer stated in place of what its source gave. The
+// self-check replays the recording with the planner's terms and the
+// router's flow control and wait (Assume, but TPOTRatio) and the arrivals'
+// Ca^2, which price the recording's own traffic; it runs without a TPOT ratio, one percentile's where the check
+// scores p90 on the recording's own, and without stated lengths, a traffic
+// other than the one it scores against.
+type Stated struct {
+	Assume     Assume
+	ArrivalCV2 *float64
+	// PromptTokens and OutputTokens are stated mean lengths, 0 the
+	// observed ones.
+	PromptTokens, OutputTokens float64
+	// Other is what else the answer set that its fits do not price with
+	// (the CLI's opt-in switches, a stated batch cap), in words: the
+	// self-check names it as run without. Replayed is what else the fits
+	// do price with, in words, and Outside says it puts the figures
+	// outside the validated region.
+	Other    []string
+	Replayed []string
+	Outside  bool
+	// CLI names them as the CLI's flags; false, as the API's keys.
+	CLI bool
+	// arrivalKey is the API's key of ArrivalCV2; empty, arrivalCV2.
+	arrivalKey string
+}
+
+// outside says the terms st replays put a figure outside the validated
+// region (the CLI's flagsOutside, and a stated B, which does once it
+// applies); a stated prompt spread and arrivals are inside.
+func (st *Stated) outside() bool {
+	if st == nil {
+		return false
+	}
+	a := st.Assume
+	return st.Outside || a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor || a.RouterWait != ""
+}
+
+// replayed is the request terms the self-check replays st with, and their
+// words.
+func (st *Stated) replayed() (BacktestRequest, []string) {
+	var req BacktestRequest
+	if st == nil {
+		return req, nil
+	}
+	a := st.Assume
+	a.TPOTRatio = nil
+	if a != (Assume{}) {
+		req.Assume = &a
+	}
+	req.ArrivalCV2 = st.ArrivalCV2
+	return req, append(st.words(a, st.ArrivalCV2, 0, 0), st.Replayed...)
+}
+
+// notReplayed is the words of st the self-check runs without.
+func (st *Stated) notReplayed() []string {
+	if st == nil {
+		return nil
+	}
+	return append(st.words(Assume{TPOTRatio: st.Assume.TPOTRatio}, nil, st.PromptTokens, st.OutputTokens), st.Other...)
+}
+
+// all is every input st states, in words.
+func (st *Stated) all() []string {
+	if st == nil {
+		return nil
+	}
+	return append(append(st.words(st.Assume, st.ArrivalCV2, st.PromptTokens, st.OutputTokens), st.Replayed...), st.Other...)
+}
+
+// words names the inputs given, as the CLI's flags or the API's keys, each
+// with its value.
+func (st *Stated) words(a Assume, cv2 *float64, prompt, output float64) []string {
+	var out []string
+	num := func(x float64) string { return strconv.FormatFloat(x, 'g', -1, 64) }
+	dur := func(x float64) string { return time.Duration(math.Round(x * float64(time.Second))).String() }
+	add := func(flag, key string, x *float64, cli func(float64) string) {
+		switch {
+		case x == nil:
+		case st.CLI:
+			out = append(out, flag+" "+cli(*x))
+		default:
+			out = append(out, key+" "+num(*x))
+		}
+	}
+	add("--assume-vp", "assume.vp", a.VP, num)
+	add("--assume-a", "assume.a", a.A, dur)
+	add("--assume-prompt-cv", "assume.promptCV", a.PromptCV, num)
+	add("--assume-router-hop", "assume.routerHop", a.RouterHop, dur)
+	add("--assume-tpot-ratio", "assume.tpotRatio", a.TPOTRatio, num)
+	switch {
+	case a.ITLBFromFloor && st.CLI:
+		out = append(out, "--assume-itl-b floor")
+	case a.ITLBFromFloor:
+		out = append(out, "assume.itlBFromFloor")
+	}
+	add("--assume-itl-b", "assume.itlB", a.ITLB, dur)
+	switch {
+	case a.FlowControl == "":
+	case st.CLI:
+		out = append(out, "--flow-control "+a.FlowControl)
+	default:
+		out = append(out, "assume.flowControl "+a.FlowControl)
+	}
+	switch {
+	case a.RouterWait == "":
+	case !st.CLI:
+		out = append(out, "assume.routerWait "+a.RouterWait)
+	case a.RouterWait == RouterWaitInPrefill:
+		out = append(out, "--router-wait-in-prefill")
+	case a.RouterWait == RouterWaitGateStage:
+		out = append(out, "--price-router-wait")
+	default:
+		out = append(out, "--router-wait-in-prefill=false --price-router-wait=false")
+	}
+	arrivalKey := st.arrivalKey
+	if arrivalKey == "" {
+		arrivalKey = "arrivalCV2"
+	}
+	add("--arrival-cv2", arrivalKey, cv2, num)
+	if prompt > 0 {
+		add("--assume-input-tokens", "traffic.mix.promptTokens", &prompt, num)
+	}
+	if output > 0 {
+		add("--assume-output-tokens", "traffic.mix.outputTokens", &output, num)
+	}
+	return out
+}
+
+// RanWithout is sc as the answer of an input st states prints it: a
+// self-check read with the source, before any answer stated anything, ran
+// without every input st states, and says so. sc is not changed; with
+// nothing stated it is returned as it is.
+func (sc *SelfCheck) RanWithout(st *Stated) *SelfCheck {
+	words := st.all()
+	if sc == nil || len(words) == 0 {
+		return sc
+	}
+	out := *sc
+	out.WithoutStated = words
+	if sc.Status == SelfCheckNotRun {
+		out.Line = sc.Line + notRunWithSentence(words)
+	} else {
+		out.Line = sc.Line + withoutStatedSentence(words)
+	}
+	return &out
+}
+
+// notRunWithSentence is what the line of a self-check not run adds of the
+// stated inputs it was not run with.
+func notRunWithSentence(words []string) string {
+	return " It was not run with the stated " + strings.Join(words, ", ") + " either."
+}
+
+// withoutStatedSentence is what a self-check's line adds of the stated
+// inputs it ran without.
+func withoutStatedSentence(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	return " It ran without the stated " + strings.Join(words, ", ") + ": what the answer prices on them is not checked."
+}
+
+// selfCheckNotRunHead opens the line of a self-check not run.
+const selfCheckNotRunHead = "Self-check not run"
+
+// lead is the line's opening, head, naming the stated inputs the recording
+// was replayed with.
+func (sc *SelfCheck) lead(head string) string {
+	if len(sc.Stated) == 0 {
+		return head
+	}
+	flag := "flagged as stated"
+	if sc.outside {
+		flag += ", outside the validated region"
+	}
+	if head == selfCheckNotRunHead {
+		return fmt.Sprintf("Self-check with the stated %s (%s) not run", strings.Join(sc.Stated, ", "), flag)
+	}
+	return fmt.Sprintf("%s, replayed with the stated %s (%s)", head, strings.Join(sc.Stated, ", "), flag)
 }
 
 // SelfCheckFigure is one figure's score over the folds.
@@ -112,6 +361,17 @@ type SelfCheckFigure struct {
 	Judged     int   `json:"judged"`
 	Overloaded int   `json:"overloaded"`
 	PastKnee   *Band `json:"pastKnee,omitempty"`
+	// Levels is the independent load levels the scored steps fall in, and
+	// WithinBound the within share's lower bound over them (a cluster
+	// bootstrap's 10th percentile); MinRatio the lowest step's ratio;
+	// NearKnee the steps at 0.8 to 1.0 of the knee; ServedPastKnee the
+	// steps called overloaded that the fleet served unqueued
+	// (selfcheck_rules.go).
+	Levels         int                `json:"levels"`
+	WithinBound    *float64           `json:"withinBound,omitempty"`
+	MinRatio       *float64           `json:"minRatio,omitempty"`
+	NearKnee       *SelfCheckNearKnee `json:"nearKnee,omitempty"`
+	ServedPastKnee int                `json:"servedPastKnee"`
 	// Refused is the other refusals, by reason.
 	Refused map[string]int `json:"refused"`
 }
@@ -137,6 +397,10 @@ type SelfCheckInfo struct {
 	PlannerVersion string
 	// Now is the clock the cost is read with; nil is time.Now.
 	Now func() time.Time
+	// Stated is what the answer stated, nil nothing: the self-check
+	// replays the recording with what of it prices the recording's own
+	// traffic, and names the rest it ran without (Stated).
+	Stated *Stated
 }
 
 // SelfCheckOf checks the planner on the recording res was resolved from,
@@ -158,7 +422,14 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	defer func() { sc.Seconds = now().Sub(t0).Seconds() }()
 	notRun := func(why string) *SelfCheck {
 		sc.Why = why
-		sc.Line = "Self-check not run: " + why + "."
+		sc.Line = sc.lead(selfCheckNotRunHead) + ": " + why + "." + sc.tail()
+		if sc.Stated == nil {
+			// Stopped before any replay: nothing stated was replayed.
+			if words := info.Stated.all(); len(words) > 0 {
+				sc.WithoutStated = words
+				sc.Line += notRunWithSentence(words)
+			}
+		}
 		return sc
 	}
 	switch {
@@ -174,6 +445,8 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	case len(folds) == 0:
 		return notRun("no fit was read at an earlier cycle")
 	}
+	req, stated := info.Stated.replayed()
+	sc.Stated, sc.WithoutStated, sc.outside = stated, info.Stated.notReplayed(), info.Stated.outside()
 	folds = slices.Clone(folds)
 	slices.SortFunc(folds, func(a, b FoldFit) int { return a.At.Compare(b.At) })
 	answered := e.series[len(e.series)-1].At
@@ -188,7 +461,7 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 			until = folds[i+1].At
 		}
 		fit := &inputsEntry{id: e.id + "#fit", doc: e.doc, pricer: f.Pricer, series: e.series, config: e.config}
-		q, err := questionOf(fit, e, BacktestRequest{}, f.At, until, "self-check", false)
+		q, err := questionOf(fit, e, req, f.At, until, "self-check", false)
 		if err != nil {
 			refusals = append(refusals, err.Error())
 			sc.Checks = append(sc.Checks, SelfCheckRule{Name: "fold", Passed: false,
@@ -212,8 +485,21 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	if len(sc.Folds) == 0 {
 		return notRun("no fold could be backtested (" + strings.Join(refusals, "; ") + ")")
 	}
+	if n, why := itlBNotUsed(steps); n > 0 && len(sc.Stated) > 0 {
+		sc.notUsed = fmt.Sprintf(" The stated ITL B was not used in %d steps: %s.", n, strings.TrimSuffix(why, "."))
+	}
 	sum := summarize(steps, false)
 	sc.TTFT, sc.TPOT = selfCheckFigure(sum.TTFT, sum.Judged), selfCheckFigure(sum.TPOT, sum.Judged)
+	for _, x := range []struct {
+		f    *SelfCheckFigure
+		ttft bool
+	}{{sc.TTFT, true}, {sc.TPOT, false}} {
+		if x.f != nil {
+			pts, overloaded := selfCheckPoints(steps, x.ttft, x.f.Statistic)
+			x.f.scoreSteps(pts, overloaded, x.ttft)
+		}
+	}
+	sc.Covered = coverageOf(steps)
 	span := sc.Folds[len(sc.Folds)-1].TestTo.Sub(sc.Folds[0].FitTo)
 	sc.judge(e, span, info)
 	return sc
@@ -259,6 +545,7 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 			sc.Checks = append(sc.Checks, rule)
 			bad = append(bad, rule.Detail)
 			trustNot = append(trustNot, x.what)
+			sc.Untrusted = append(sc.Untrusted, strings.ToLower(x.name))
 			parts = append(parts, fmt.Sprintf("%s: called the fleet overloaded in %d of %d steps it served", x.name, f.Overloaded, f.Judged))
 			judged = append(judged, x.name)
 			continue
@@ -270,19 +557,18 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 		}
 		judged = append(judged, x.name)
 		within := float64(f.Within) / float64(f.Steps)
-		parts = append(parts, fmt.Sprintf("p90 %s within 20%% in %d of %d steps (median ratio %.2f)", x.name, f.Within, f.Steps, *f.Bias))
-		biasOK := *f.Bias >= selfCheckBiasLo && *f.Bias <= selfCheckBiasHi
-		sc.Checks = append(sc.Checks,
-			SelfCheckRule{Name: strings.ToLower(x.name) + "-bias", Passed: biasOK,
-				Detail: fmt.Sprintf("median ratio %.2f, want %.2f to %.2f", *f.Bias, selfCheckBiasLo, selfCheckBiasHi)},
-			SelfCheckRule{Name: strings.ToLower(x.name) + "-within", Passed: within >= selfCheckWithinLo,
-				Detail: fmt.Sprintf("within 20%% in %.0f%% of the steps, want %.0f%% or more", within*100, selfCheckWithinLo*100)})
+		parts = append(parts, fmt.Sprintf("p90 %s within 20%% in %d of %d steps at %d load levels (median ratio %.2f)", x.name, f.Within, f.Steps,
+			f.Levels, *f.Bias))
+		name := strings.ToLower(x.name)
+		rules, failed, loose := sc.figureRules(name, x.name, f, within)
+		sc.Checks = append(sc.Checks, rules...)
 		switch {
-		case !biasOK || within < selfCheckWithinLo:
-			bad = append(bad, fmt.Sprintf("p90 %s: median ratio %.2f, within 20%% in %.0f%% of %d steps", x.name, *f.Bias, within*100, f.Steps))
+		case len(failed) > 0:
+			bad = append(bad, fmt.Sprintf("p90 %s: %s", x.name, strings.Join(failed, "; ")))
 			trustNot = append(trustNot, x.what)
-		case within < selfCheckWithinOK || f.Steps < selfCheckStepsOK:
-			weak = append(weak, fmt.Sprintf("p90 %s within 20%% in %.0f%% of %d steps", x.name, within*100, f.Steps))
+			sc.Untrusted = append(sc.Untrusted, name)
+		case len(loose) > 0:
+			weak = append(weak, fmt.Sprintf("p90 %s: %s", x.name, strings.Join(loose, "; ")))
 			trustOK = append(trustOK, x.what+" (loosely)")
 		default:
 			trustOK = append(trustOK, x.what)
@@ -305,11 +591,11 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 		if len(why) > 0 {
 			sc.Why += " (" + strings.Join(why, "; ") + ")"
 		}
-		sc.Line = "Self-check not run: " + sc.Why + "."
+		sc.Line = sc.lead(selfCheckNotRunHead) + ": " + sc.Why + "." + sc.tail()
 		return
 	}
-	sc.Line = fmt.Sprintf("Self-check: tested on the last %s of this recording, each part predicted from a fit on what came before it, %s.",
-		durationWords(span), strings.Join(parts, "; "))
+	sc.Line = fmt.Sprintf("%s: tested on the last %s of this recording, each part predicted from a fit on what came before it, %s.",
+		sc.lead("Self-check"), durationWords(span), strings.Join(parts, "; ")) + sc.coveredSentence() + sc.tail()
 	switch {
 	case len(bad) > 0:
 		sc.Status = SelfCheckInconsistent
@@ -330,6 +616,61 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 	}
 }
 
+// figureRules judges one scored figure, named name ("ttft") and label
+// ("TTFT"), within the share of its steps within: every rule, what failed
+// (inconsistent) and what is loose (weak), each in words.
+func (sc *SelfCheck) figureRules(name, label string, f *SelfCheckFigure, within float64) (rules []SelfCheckRule, failed, loose []string) {
+	rule := func(suffix string, passed bool, detail string) {
+		rules = append(rules, SelfCheckRule{Name: name + "-" + suffix, Passed: passed, Detail: detail})
+		if !passed {
+			failed = append(failed, detail)
+		}
+	}
+	rule("bias", *f.Bias >= selfCheckBiasFail && *f.Bias <= selfCheckBiasHi,
+		fmt.Sprintf("median ratio %.2f, want %.2f to %.2f", *f.Bias, selfCheckBiasFail, selfCheckBiasHi))
+	rule("within", within >= selfCheckWithinLo,
+		fmt.Sprintf("within 20%% in %.0f%% of the steps, want %.0f%% or more", within*100, selfCheckWithinLo*100))
+	low := float64(f.Low) / float64(f.Steps)
+	rule("low", low <= selfCheckLowShare,
+		fmt.Sprintf("read more than 20%% low in %d of %d steps (%.0f%%), want %.0f%% or fewer", f.Low, f.Steps, low*100, selfCheckLowShare*100))
+	if f.MinRatio != nil {
+		rule("floor", *f.MinRatio >= selfCheckFloor,
+			fmt.Sprintf("the lowest step read %.2f of measured, want %.2f or more", *f.MinRatio, selfCheckFloor))
+	}
+	if k := f.NearKnee; k != nil && k.Steps >= selfCheckNearKneeMin {
+		rule("near-knee", k.Worst >= selfCheckFloor && k.Worst <= selfCheckNearKneeHi,
+			fmt.Sprintf("at 0.8 to 1.0 of the knee the worst tenth of %d steps read %.2f of measured, want %.2f to %.2f",
+				k.Steps, k.Worst, selfCheckFloor, selfCheckNearKneeHi))
+	}
+	if f.Overloaded > 0 && name == "ttft" {
+		served := f.ServedPastKnee >= selfCheckServedMin && float64(f.ServedPastKnee) >= selfCheckServedShare*float64(f.Overloaded)
+		rule("knee", !served,
+			fmt.Sprintf("called the fleet overloaded in %d steps; in %d of them it measured a p90 %s within %.1fx of its steps below 0.8 of the knee, "+
+				"so its queue did not grow: the knee reads low", f.Overloaded, f.ServedPastKnee, label, selfCheckServedX))
+	}
+	if *f.Bias >= selfCheckBiasFail && *f.Bias < selfCheckBiasLo {
+		loose = append(loose, fmt.Sprintf("it leans low (median ratio %.2f, under %.2f)", *f.Bias, selfCheckBiasLo))
+	}
+	if within < selfCheckWithinOK || f.Steps < selfCheckStepsOK {
+		loose = append(loose, fmt.Sprintf("within 20%% in %.0f%% of %d steps", within*100, f.Steps))
+	}
+	if f.Levels < selfCheckLevelsOK {
+		loose = append(loose, fmt.Sprintf("%d independent load levels, fewer than %d", f.Levels, selfCheckLevelsOK))
+	}
+	if b := f.WithinBound; b != nil && *b < selfCheckWithinLo {
+		loose = append(loose, fmt.Sprintf("the within share could be as low as %.0f%% over the load levels", *b*100))
+	}
+	return rules, failed, loose
+}
+
+// coveredSentence is what the line adds of what the self-check tested.
+func (sc *SelfCheck) coveredSentence() string {
+	if sc.Covered == nil {
+		return ""
+	}
+	return " It tested " + sc.Covered.Words() + ": an answer at another rate or fleet is not covered by it."
+}
+
 // selfCheckIssueRepo is the repository a self-check's issue is offered in.
 const selfCheckIssueRepo = "https://github.com/llm-d-incubation/llm-d-scaling-manager/issues/new"
 
@@ -344,6 +685,9 @@ const selfCheckIssueTemplate = "planner-self-check.yml"
 func selfCheckIssueURL(sc *SelfCheck, e *inputsEntry, info SelfCheckInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "planner: %s\nself-check: %s\n", info.PlannerVersion, sc.Status)
+	if len(sc.Stated) > 0 {
+		fmt.Fprintf(&b, "stated: %s\n", strings.Join(sc.Stated, ", "))
+	}
 	for _, r := range sc.Checks {
 		switch {
 		case r.Passed:
@@ -367,6 +711,7 @@ func selfCheckIssueURL(sc *SelfCheck, e *inputsEntry, info SelfCheckInfo) string
 		}
 		fmt.Fprintf(&b, "%s p90: steps %d, within20 %d, median ratio %s, read low %d, judged %d, overloaded %d", x.name, x.f.Steps, x.f.Within,
 			bias, x.f.Low, x.f.Judged, x.f.Overloaded)
+		fmt.Fprintf(&b, ", levels %d, served past knee %d", x.f.Levels, x.f.ServedPastKnee)
 		for _, r := range slices.Sorted(maps.Keys(x.f.Refused)) {
 			fmt.Fprintf(&b, ", refused %s %d", r, x.f.Refused[r])
 		}
