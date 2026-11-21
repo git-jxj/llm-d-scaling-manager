@@ -540,6 +540,8 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("a p99 TPOT SLO shows the cell's p99", at99({mark: "met", tpot: {statistic: "p99", value: 0.0251}}) === "TTFT 500 ms · TPOT 25 ms",
     at99({mark: "met", tpot: {statistic: "p99", value: 0.0251}}));
   check("a p99 TPOT SLO never shows the table's p90; the mean says so", at99({mark: "met"}) === "TTFT 500 ms · TPOT 7.0 ms (mean)",at99({mark: "met"}));
+  check("a verdict carries what the self-check says of it", S("verdictLine")({verdict: "RIGHT-SIZED", summary: "RIGHT-SIZED: holds.", trust: "not trusted: x"}).trust === "not trusted: x");
+  check("a verdict the self-check says nothing of has no trust", S("verdictLine")({verdict: "RIGHT-SIZED", summary: "RIGHT-SIZED: holds."}).trust === "");
   check("a TTFT is read at the SLO's statistic, not the first one", v.rows[0].cells[0].text.startsWith("TTFT 637 ms"), v.rows[0].cells[0].text);
   check("a cell's parts stay apart for wrapping", JSON.stringify(vp.rows[0].cells[0].parts) === JSON.stringify(["TTFT 500 ms", "TPOT 16 ms"]));
 
