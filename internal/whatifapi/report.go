@@ -224,6 +224,9 @@ type ReportSource struct {
 	TotalCycles int       `json:"totalCycles"`
 	FirstAt     time.Time `json:"firstAt"`
 	LastAt      time.Time `json:"lastAt"`
+	// Gaps is how much of the span from FirstAt to LastAt the cycles read
+	// cover; absent with fewer than three cycles.
+	Gaps *WindowGaps `json:"gaps,omitempty"`
 }
 
 // ReportFleet is the fleet judged.

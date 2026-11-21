@@ -603,6 +603,13 @@ verdicts
 Read the `not validated` lines after each shape (not shown above): the decode knee read 44% to 103%
 high on the goldens, and TTFT is not validated.
 
+A window whose cycles do not cover its span (a capture or recording with
+holes) gets a `window gaps` line under the first: the cycles the span should
+hold, those present, and the largest gap, ending `WindowGaps` above 5%
+missing (JSON `source.gaps`). The load and the figures are read from the
+cycles present, so a gap over the busy spell reads the load low: capture
+the window again.
+
 ## Plan replicas over a day
 
 How many prefill and decode replicas did your traffic need, hour by hour,
@@ -684,6 +691,12 @@ alone. A higher `--ttft` sizes them.
 - **Too little data.** A bucket with fewer than 30 requests (`--min-requests`)
   is not sized. A bucket no cycle fell in has no data. Neither counts as under
   or over. A plan that sizes no bucket at all exits 3.
+- **Gaps in the source.** When the source's cycles do not cover its span (a
+  capture or a recording with holes), a note says how many cycles the span
+  should hold, how many it has, and the largest gap; above 5% missing it
+  ends `WindowGaps`. JSON: `gaps`. A bucket inside a gap has no data, and
+  one a gap cuts into is sized from the cycles present: a gap over the
+  busiest hours sizes them low. Capture again over the busy hours.
 - **Had.** The median serving pods of the priced prefill and decode variants
   over the bucket; the rate is the model's (`OtherVariantsServed` where
   another variant also served). The fleet it had is judged whole, at the

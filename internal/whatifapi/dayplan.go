@@ -188,6 +188,9 @@ type DayPlanResponse struct {
 	Searched int `json:"searched"`
 	// Notes are what the plan does not price, in words.
 	Notes []string `json:"notes"`
+	// Gaps is how much of the source's span its cycles cover; absent with
+	// fewer than three cycles. A bucket inside a gap has no data.
+	Gaps *WindowGaps `json:"gaps,omitempty"`
 }
 
 // DayRefusal is a term the source cannot price at any rate: the role it
@@ -1003,6 +1006,16 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		}
 	}
 	out.Hours = hoursOf(series, out.Buckets)
+	times := make([]time.Time, len(series))
+	for i, x := range series {
+		times[i] = x.At
+	}
+	slices.SortFunc(times, time.Time.Compare)
+	out.Gaps = WindowGapsOf(times)
+	if g := out.Gaps.Text(); g != "" {
+		out.Notes = append(out.Notes, "Window gaps: "+g+". A bucket inside a gap has no data, and one a gap cuts into is sized "+
+			"from the cycles present: a gap over the busiest hours sizes them low.")
+	}
 	out.Summary = summaryOf(out.Buckets, out.Hours, q.step, gpus)
 	out.Notes = append(out.Notes,
 		"Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",

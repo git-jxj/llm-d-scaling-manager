@@ -140,7 +140,7 @@ func buildReport(ctx context.Context, st *learnreplay.State, s *servedState, q w
 	np, nd := r.counts(base)
 	out := &whatifapi.ReportResponse{Question: reportQuestion, Shapes: []whatifapi.ReportShape{}, NotValidated: []string{}}
 	out.Source = whatifapi.ReportSource{Namespace: st.Namespace, Model: st.ModelID, Cycle: st.Cycle, TotalCycles: st.Cycles,
-		FirstAt: st.FirstAt, LastAt: st.At}
+		FirstAt: st.FirstAt, LastAt: st.At, Gaps: whatifapi.WindowGapsOf(st.CycleTimes)}
 	out.Fleet = whatifapi.ReportFleet{Prefill: np, Decode: nd, PrefillVariant: base.pf.variant, DecodeVariant: base.pv.state.Variant,
 		PrefillFrom: from(q.Prefill), DecodeFrom: from(q.Decode),
 		DecodeEngine: engineInfo(base.pv.state.Params)}

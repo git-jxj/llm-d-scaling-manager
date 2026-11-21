@@ -347,6 +347,7 @@ The answer:
 
 | Field | Holds |
 | --- | --- |
+| `source` | What was read: the namespace, the model, the cycle and `totalCycles`, `firstAt` and `lastAt`, and `gaps`: the window's `cycleSeconds` (the median time between cycles), `expectedCycles` its span holds at that cycle time, `presentCycles`, `missingShare`, the `largestGapSeconds` with `largestGapFrom` and `largestGapTo`, and `flagged` (`WindowGaps`) above 5% missing. `gaps` is absent with fewer than three cycles. |
 | `fleet` | The fleet judged: `prefill`, `decode`, their variants, and `prefillFrom`/`decodeFrom` (`recording` or `asked`). |
 | `load` | The load judged at (`rate`, the same as `seen`, as a figure that carries the refusal when there is none), the load seen and its `source` (`observed`, `asked` or `none`), the `statistic` judged (`mean`, `p95`, `peak`, or `stated`), `cycles` read and `cyclesWithTraffic`, the per-cycle `mean`, `p95` and `peak` (each a 1-minute rate), `p95IsPeak` below 20 cycles, and `rolling`, the busiest 2 minutes' mean, idle and failed reads counted as 0. |
 | `loads` | The tables' rates, in order: the summary's columns. |
@@ -402,7 +403,8 @@ bucket when the stated length lies outside what the buckets observed.
 | `summary` | `peakNeeded` and `minNeeded` (the needs of the busiest and the quietest sized buckets), replica-hours and GPU-hours needed and had over the sized buckets (absent when none was sized; prefill's hours and the GPU-hours also when any sized bucket did not price prefill, `counts.prefillNotPriced`), `hadReplicaHoursAll` and `hadGpuHoursAll` over every bucket with data, `underHours`, `overHours`, `refusedHours`, and the counts, including how many buckets were sized for each statistic. |
 | `searched` | How many fleets the plan priced. |
 | `refused[]` | Every term the source cannot price at any rate, with `role`, `term` (`ttft`, `tpot`, `decodeKnee`), `reason`, `detail`, `hint` (what to do), `effect` (what the plan did instead) and `buckets`. Empty when every term priced. |
-| `notes` | What it does not price: scale-up lag (it sizes steady state), and the prefix hit rate. |
+| `notes` | What it does not price: scale-up lag (it sizes steady state), and the prefix hit rate. A note names the source's gaps when its cycles do not cover its span. |
+| `gaps` | The source's gaps, as the report's `source.gaps`. |
 
 ```bash
 curl -s http://127.0.0.1:8080/v1/dayplan -H 'Content-Type: application/json' -d '{

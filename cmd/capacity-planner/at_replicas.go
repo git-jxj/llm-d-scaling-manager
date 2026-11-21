@@ -333,6 +333,9 @@ func reportText(r *whatifapi.ReportResponse) string {
 	}
 	fmt.Fprintf(&b, "%s/%s  P/D %s + %d decode (%s)  window %s, cycle %d of %d\n", r.Source.Namespace, r.Source.Model,
 		prefill, fl.Decode, fl.DecodeVariant, windowText(r.Source), r.Source.Cycle, r.Source.TotalCycles)
+	if g := r.Source.Gaps.Text(); g != "" {
+		fmt.Fprintf(&b, "%-16s%s: the load and the figures are read from the cycles present\n", "window gaps", g)
+	}
 	if e := fl.DecodeEngine; e != nil {
 		fmt.Fprintf(&b, "%-16s%s\n", "decode engine", engineInfoText(e))
 	}
