@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -13,29 +14,12 @@ import (
 	"github.com/go-logr/logr"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // defaultDayWindow is day-plan's Prometheus window when --from and --to are
 // left out: the last day, ending now.
 const defaultDayWindow = 24 * time.Hour
-
-// seriesOf is every cycle of st's model in the recording data, as the API's
-// day plan reads them, counted for the variants v names.
-func seriesOf(src learnreplay.Source, st *learnreplay.State, v learnreplay.SeriesVariants) ([]whatifapi.SeriesSample, error) {
-	cycles, err := learnreplay.SeriesFrom(src, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID}, v)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]whatifapi.SeriesSample, len(cycles))
-	for i, c := range cycles {
-		out[i] = whatifapi.SeriesSample{At: c.At, Rate: c.ArrivalRate, RateKnown: c.RateKnown, Prefill: c.PrefillPods, Decode: c.DecodePods,
-			PrefillGPUs: c.PrefillGPUs, DecodeGPUs: c.DecodeGPUs, PromptTokens: c.PromptTokens, OutputTokens: c.OutputTokens,
-			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods}
-	}
-	return out, nil
-}
 
 // dayPlanFlags are day-plan's flags.
 type dayPlanFlags struct {
@@ -48,6 +32,11 @@ type dayPlanFlags struct {
 	assumeVP, assumePromptCV                 float64
 	assumeA, assumeRouterHop                 time.Duration
 	inputTokens, outputTokens                float64
+	// assumeITLB is --assume-itl-b, as answerFlags' (itl_b.go), and
+	// assumeITLBSet says it was given, empty or not.
+	assumeITLB    string
+	assumeITLBSet bool
+	noSelfCheck   bool
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -64,6 +53,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.window.namespace, "namespace", "", "the model's namespace (with --prometheus, the namespace to capture: required)")
 	fs.IntVar(&f.window.batchCap, "batch-cap", 0, "with --prometheus, the engine's batch cap the window is captured with")
 	fs.StringVar(&f.recording, "recording", "", "a learner recording (.jsonl or .jsonl.gz); this or --prometheus is required")
+	fs.BoolVar(&f.noSelfCheck, "no-self-check", false, "do not check the planner on the recording beside the plan")
 	fs.StringVar(&f.model, "model", "", "the model; empty takes the source's only model")
 	fs.StringVar(&f.prefillVariant, "prefill-variant", "", "the prefill variant, when the model has several")
 	fs.StringVar(&f.decodeVariant, "variant", "", "the decode variant, when the model has several")
@@ -79,6 +69,8 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, in place of the learned one (flagged)")
 	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, in place of the measured one (flagged)")
 	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the router hop, in place of the learned one (flagged)")
+	fs.StringVar(&f.assumeITLB, "assume-itl-b", "", "the decode line's intercept B (12ms), or floor for B from the floor read below the band, "+
+		"where the source measured none (PinnedDefaultB); the slope is refitted through it (flagged AssumedITLB)")
 	fs.Float64Var(&f.inputTokens, "assume-input-tokens", 0, "price every bucket at this mean prompt, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "price every bucket at this mean output, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
@@ -88,6 +80,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if f.output != outputText && f.output != outputJSON {
 		return usagef("-o %q, want text or json", f.output)
 	}
+	fs.Visit(func(fl *flag.Flag) { f.assumeITLBSet = f.assumeITLBSet || fl.Name == "assume-itl-b" })
 	// The analyzers the replay runs log through controller-runtime, which
 	// the CLI never shows.
 	ctrllog.SetLogger(logr.Discard())
@@ -111,7 +104,9 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 		enc.SetIndent("", "  ")
 		err = enc.Encode(plan)
 	} else {
-		err = writeDayPlanText(out, res.Inputs, plan)
+		if _, err = io.WriteString(out, selfCheckText(plan.SelfCheck)); err == nil {
+			err = writeDayPlanText(out, res.Inputs, plan)
+		}
 	}
 	if err != nil {
 		return err
@@ -142,7 +137,8 @@ var resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*wh
 // resolve reads the source as serve resolves it: a recording by its file,
 // or a Prometheus window, the last day by default.
 func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.Resolved, error) {
-	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant}
+	check := defaultSelfCheck && !f.noSelfCheck
+	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant, SelfCheck: &check}
 	src := &servedSources{warn: warn}
 	switch {
 	case f.recording != "" && f.window.prometheus != "":
@@ -213,6 +209,18 @@ func (f *dayPlanFlags) request() (whatifapi.DayPlanRequest, error) {
 	}
 	if f.assumeRouterHop > 0 {
 		a.RouterHop, typed = ptrTo(f.assumeRouterHop.Seconds()), true
+	}
+	if f.assumeITLBSet {
+		floor, b, err := parseAssumeITLB(f.assumeITLB)
+		if err != nil {
+			return req, err
+		}
+		if floor {
+			a.ITLBFromFloor = true
+		} else {
+			a.ITLB = ptrTo(b.Seconds())
+		}
+		typed = true
 	}
 	if typed {
 		req.Assume = &a

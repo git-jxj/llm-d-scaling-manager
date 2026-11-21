@@ -104,6 +104,10 @@ when no variant of the model names a tier.
   another model's already takes the whole contended budget; a larger value
   only risks overflowing the fair-share arithmetic that every model in the GPU
   budget shares.
+- An external analyzer definition that uses `demand`, `target`,
+  `targetReduce` or `emptyIsMissing` and cannot run. The whole definition is
+  dropped, not one field; see
+  [External analyzers](#external-analyzers-analyzerdefinitions).
 
 The scaling manager acts as if the entry did not set the field. The model then
 gets the value of the layer below: the tier, then `default`, then the built-in
@@ -1672,7 +1676,27 @@ script, or `--max-num-seqs $VAR` with the value from an `envFrom`), it assumes
 vLLM's 256. An engine whose real cap is lower is then priced as if it held
 more than it can.
 
-This matters under **flow control**. The router holds the queue, the engine's
+**P/D decode and `--max-num-batched-tokens`.** The token budget can bind
+before the cap. A P/D decode's budget is charged only the prompt tokens the
+decode computes itself, not the whole prompt: the rest of its KV arrives from
+prefill. Before v0.12.2 the whole prompt was charged, so a decode with a small
+budget and long prompts was priced 10-18x below its capacity. Since v0.12.2:
+
+- Expect fewer decode replicas, and a higher per-token latency where the
+  fleet had headroom. Decode is packed up to its KV cache and its
+  `--max-num-seqs` per rank. Nothing caps that packing at a TPOT target yet.
+- A short burst of requests whose KV has just landed on a decode with room
+  no longer records a saturated capacity.
+- A capacity learned before the upgrade keeps pricing until it ages out. To
+  drop it now, [reset the variant](troubleshooting.md#reset-one-variants-learned-state).
+- No setting turns this off. If per-token latency rises past what you accept,
+  lower the decode's `--max-num-seqs`: it caps the batch per rank, and the
+  derived capacity reads it. Or raise the decode ScaledObject's
+  `minReplicaCount` ([trigger reference](scaledobject-trigger.md)).
+- An engine that does not publish the computed prompt (SGLang) is still
+  charged the whole prompt.
+
+A cap read too high matters most under **flow control**. The router holds the queue, the engine's
 own queue stays under `queueLengthThreshold`, and the replica is never seen
 full. A sequence-bound replica is then priced at its KV cache. Measured at a
 true capacity of 0.42 of the cache, that is 1.9 times the truth: about half
@@ -1932,18 +1956,22 @@ It never changes a scaling decision.
 The `WARNING: load imbalanced` log line states the `idleAfterReady` and
 `sustainFor` in force.
 
-### `slo` (observe only)
+### `slo` (observes, bounds decode packing)
 
 Latency targets, and the analyzer that judges a model against them. **On this
-release it reports and does not decide**: replica counts still come from the
-saturation analyzer. A policy written now stays observe-only when enforcement
-ships, because enforcing will need an explicit `slo.mode: enforce`. Use it to
-see whether a tier meets an SLO before anything sizes a fleet from one.
+release the analyzer reports and does not decide**: replica counts still come
+from the saturation analyzer. One exception: a `tpot` target bounds how far
+saturation packs a decode replica, so a decode role can be sized larger
+([below](#how-a-tpot-target-bounds-decode-packing)). Enforcing the targets
+beyond that will need an explicit `slo.mode: enforce`. Use the analyzer to see
+whether a tier meets an SLO before anything sizes a fleet from one.
 Experimental: its figures have not been checked against a live router yet.
 
-One thing about turning it on **can** change scaling: a tier that lists
+Two things about turning it on **can** change scaling. A tier that lists
 `analyzers:` replaces the list it would inherit, and with it saturation's
-`score` and `parameters:`, unless it writes them out (step 3 below).
+`score` and `parameters:`, unless it writes them out (step 3 below). And a
+`tpot` target bounds how many requests saturation packs onto a decode
+replica, as above.
 
 **Before you start**
 
@@ -2152,7 +2180,9 @@ got over a whole run, score their own per-request records.
   alone is logged once as `SLO policy is half-configured`, and is not an error.
 - **Keep `saturation` in the list.** The list replaces the inherited one, and
   saturation is what sizes the fleet. Left out, it still runs but sizes
-  nothing, and since `slo` only observes, the model would hold where it is.
+  nothing, and since `slo` only observes (a `tpot` target bounds what
+  saturation sizes, and nothing sizes without it), the model would hold where
+  it is.
 - **The block is replaced whole by an override**, not merged per objective: a
   per-model entry that sets only `ttft` has no `tpot`.
 - **A model gets the tier through its variants** (each names one in its
@@ -2187,6 +2217,42 @@ got over a whole run, score their own per-request records.
 - **Non-streaming requests are not counted**, and TPOT only counts responses
   that carry `usage`. `llmsm_slo_window_requests` is the judged count; nothing
   publishes the share of the model's traffic it is.
+
+#### How a TPOT target bounds decode packing
+
+Saturation sizes a decode replica by how many tokens it can hold while busy.
+Nothing in that figure prices latency, and the more a decode replica holds,
+the slower each token. When saturation counts a decode replica as able to
+hold many requests, it orders fewer replicas and packs each one fuller. On a
+GPU run, one decode replica carried the requests three had held, and TPOT p90
+rose from 12 to 15-16 ms.
+
+With a `tpot` target set and `slo` listed, saturation holds each decode
+replica at the KV-cache fill where its variant's ITL line (below) reaches the
+target, wherever it trusts that line. A fill the line reaches outside the ITL
+band is held at the band's edge, where the line was fitted. At the lower edge
+(0.15 by default) a replica is held at under a fifth of the KV the 0.80
+threshold allows, so a tight target can ask for up to about five times the
+decode replicas. A target at or under the line's intercept, which no number
+of replicas meets, bounds nothing (`target-unreachable`).
+
+- **Only on a line the variant measured.** A line borrowed from another
+  variant, or resting on the default intercept, bounds nothing, and
+  saturation sizes as before. `itlBoundWhy` on the
+  `k2-itl-bound` line names the reason.
+- **Saturation's own line.** Saturation fits its own ITL line. The SLO
+  analyzer's `llmsm_slo_fill` comes from a fit of its own, so the two fills
+  can differ.
+- **Decode only.** Prefill and aggregated variants are not bound.
+- **The mean, not the busiest replica.** The line is fitted on the mean fill,
+  so a replica above the mean runs above the target.
+- **Where to read it.** At `--v=3`, each decode replica of a model with a
+  `tpot` target logs a `k2-itl-bound` line. `k2BatchBound` is `itl` when the target held it and
+  `none` when it did not. `k2Unbounded` and `k2` are the figure before and
+  after. `nSteady` and `nITL` are requests per engine rank under the batch
+  flags and under the target, and `itlTargetFill` is the fill.
+- **No target, no bound.** Without a `tpot` target, or with `slo` unlisted,
+  nothing changes.
 
 **Details: what the TPOT target would ask of each variant**
 
@@ -2294,7 +2360,8 @@ registration order and invokes its `Analyze` method.
 > saturation runs for every model, listed or not, and when it is not listed
 > it only supplies the units and the variants. A policy with no `analyzers`
 > section lists saturation alone. `slo` never sizes anything: it only
-> observes.
+> observes. Its `tpot` target bounds how far saturation packs a decode
+> replica ([how a TPOT target bounds decode packing](#how-a-tpot-target-bounds-decode-packing)).
 >
 > - **Nothing listed can size a role.** With saturation unlisted, the role
 >   holds where it is: no scale-up, no scale-down. On a P/D model the other
@@ -2378,7 +2445,9 @@ post-merge. Either way saturation alone sizes the model.
 >   then does not grow either, since decode grown against a frozen prefill
 >   is capacity prefill cannot feed. Add `saturation` to the list to keep
 >   saturation sizing the model.
-> - **`slo` listed beside `saturation`.** No change: `slo` only observes.
+> - **`slo` listed beside `saturation`.** `slo` only observes, but a `tpot`
+>   target bounds how far saturation packs a decode replica
+>   ([how a TPOT target bounds decode packing](#how-a-tpot-target-bounds-decode-packing)).
 > - **Dashboards and alerts on `llmsm_analyzer_*`.** These series gain
 >   `analyzer_name="CompositeSignal"`. A panel or alert that sums across
 >   `analyzer_name` now counts demand at least twice; filter it on
@@ -2412,43 +2481,153 @@ data:
       - name: queue-depth
 ```
 
-A full example, with a body per inference engine, is
+A full example, with a body per inference engine and the optional settings
+below, is
 [`config/samples/analyzers/external-analyzers.yaml`](../../config/samples/analyzers/external-analyzers.yaml).
+
+#### Size a P/D model: one demand query per role
+
+A single `query` gives demand for the whole model, so it cannot size a P/D
+model: prefill and decode replicas serve different things. Give one demand
+query per role instead, with `demand:` in place of `query:`:
+
+```yaml
+analyzerDefinitions:
+  queue-depth:
+    demand:
+      - match: { role: prefill }
+        query: sum(prefill_queue{namespace="{{.namespace}}",model_name="{{.modelID}}"})
+        threshold: "3"             # optional: this role's own threshold
+      - match: { role: decode }
+        query: sum(decode_queue{namespace="{{.namespace}}",model_name="{{.modelID}}"})
+    threshold: "5"                 # used by a rule that sets none
+```
+
+- `role` is the role the scaling manager resolved for the variant (its
+  `llm-d.ai/role` label), not a metric label: `prefill`, `decode`, or `both`
+  for a model that is not split. One definition can carry all three, so it
+  serves P/D and aggregated models alike.
+- A role with no rule is not sized by this analyzer. A model none of whose
+  roles has a rule is skipped: no query runs for it. The model-level
+  `llmsm_analyzer_demand` series is the sum of the roles that have a rule. If the policy lists
+  this analyzer without `saturation`, a role with no rule holds where it
+  is, and the other role does not grow either.
+- If any rule's query fails, the analyzer reports nothing for the model that
+  cycle. For up to three cycles no role of the model scales down, including a
+  role it has no rule for.
+
+#### Measure the per-replica target
+
+A `threshold` is a constant. To measure what one replica serves instead, add
+a `target:` query that returns one series per Pod:
+
+```yaml
+analyzerDefinitions:
+  kv-tokens:
+    query: sum(my_kv_tokens_in_use{namespace="{{.namespace}}",model_name="{{.modelID}}"})
+    threshold: "50000"             # used where no target query answers; recommended
+    target:
+      - queries:                   # tried in order; the first that answers wins
+          - query: sum by (pod) (epp_kv_capacity{namespace="{{.namespace}}"})
+            e: epp                 # a name for the log line
+          - query: sum by (pod) (vllm_kv_capacity{namespace="{{.namespace}}"})
+            e: vllm
+    targetReduce: avg              # avg (default), median, min or max
+```
+
+- Each series must keep a `pod` (or `pod_name`) label: that is how its value
+  is matched to a variant. The value is what one replica serves: several
+  series of one Pod (one per engine rank, say) are added up first. For an
+  LWS group, the group's figure on its leader Pod; other Pods of the group
+  are not matched. A Pod the scaling manager does not count, and a
+  value of 0 or less, or not a number, are skipped.
+- A variant's Pods are reduced to one value with `targetReduce`.
+- The queries are tried in order for each variant, and stop once every
+  variant has a value. With verbose logging, the log line
+  `external analyzer measured a per-replica target` names the one that
+  answered (`e`).
+- A variant no query answers for, such as one with no Pod running, uses the
+  `threshold` of its role's rule, then the definition's. With neither, it is
+  not sized this cycle, so a variant at zero replicas cannot grow: set a
+  `threshold` too. Every role needs a threshold or a target rule that serves
+  it, or the definition is refused. If no variant has a value, the analyzer reports
+  nothing for the model, as when a query fails.
+- On a P/D model, a target rule can name a role (`match: { role: decode }`).
+  A rule with no `match` serves every role no other target rule names.
+
+#### Treat an empty result as missing
+
+By default, a demand query that matches no series reads as 0 demand. A
+renamed metric or a label typo reads that way too, and listed alone the
+analyzer then lets the model scale down. The first time a query returns
+nothing for a model, the log says `External analyzer demand query returned
+no series` (once per query and model).
+
+Set `emptyIsMissing: true` to read an empty result as missing instead:
+
+```yaml
+analyzerDefinitions:
+  queue-depth:
+    query: sum(my_queue_depth{namespace="{{.namespace}}",model_name="{{.modelID}}"})
+    threshold: "5"
+    emptyIsMissing: true
+```
+
+The analyzer then reports nothing for the model that cycle, as when the query
+fails: for up to three cycles no role of the model scales down, and after
+that the analyzer no longer counts until its query returns a series again. A
+series with the value 0 is still 0 demand.
+
+Some signals have no series at all when there is no load. For such a role,
+set `orZero: true` on its demand rule: its empty result reads as 0 even with
+`emptyIsMissing` on.
+
+#### Fields
 
 | Field | Meaning |
 |---|---|
-| `query` | PromQL for the model's **total** demand. Every series it returns is summed, after series of Pods that are gone are dropped. `{{.namespace}}` and `{{.modelID}}` are escaped and filled in. |
-| `threshold` | What one scale-target replica (a Pod, or an LWS group) can serve, in the query's unit. A string, greater than 0. |
-| `engines` | Optional: a `query`/`threshold` pair per inference engine (`vllm`, `sglang`). The model's engine picks the body; the top-level pair is ignored when `engines` is set. A model whose engine has no body is not sized by this analyzer. |
+| `query` | PromQL for the model's **total** demand. Every series it returns is summed, after series of Pods that are gone are dropped. `{{.namespace}}` and `{{.modelID}}` are escaped and filled in. Set `query` or `demand`, not both. |
+| `threshold` | What one scale-target replica (a Pod, or an LWS group) can serve, in the query's unit. A string, greater than 0. Required unless every role has its own (a demand rule's `threshold`) or a target rule that serves it. |
+| `demand` | One rule per role: `match.role` (`prefill`, `decode` or `both`), `query`, and optionally `threshold` and `orZero`. |
+| `target` | Rules that measure the threshold per Pod: an optional `match.role`, and `queries`, each a `query` and an optional `e`. |
+| `targetReduce` | How a variant's Pods' targets become one value: `avg` (default), `median`, `min` or `max`. Needs `target`. |
+| `emptyIsMissing` | `true` reads a demand query that returns no series as missing, not 0. Default `false`. |
+| `engines` | Optional: a body per inference engine (`vllm`, `sglang`), each with the fields above. The model's engine picks the body. A model whose engine has no body is not sized by this analyzer. |
 
 What to know before you rely on one:
 
 - **Units are yours to get right.** Use a `sum(...)` query. `count()` and
   `avg()` count engine instances, not Pods; collapse them by Pod first
   (`count(count by (pod) (...))`).
-- **Model-level only**. It reports demand for the whole
-  model, not per role, so it **cannot size a P/D model**; the log says
-  `listed analyzer reports no per-role demand`. It can still hold one: when
-  its query fails, no role of the model scales down for up to three cycles.
-- **The threshold is a constant.** It does not learn per-replica capacity;
-  a target query is planned.
-- **An empty result is 0 demand.** If the query matches nothing, the
-  analyzer asks for 0 replicas. Listed alone, that lets the model scale
-  down; beside saturation, saturation's larger need wins. Treating an empty
-  result as missing is planned. A query that
-  **fails** is no reading instead: for three cycles no role of the model
-  scales down, then it stops counting.
+- **A single `query` cannot size a P/D model.** It reports demand for the
+  whole model, not per role; the log says `listed analyzer reports no
+  per-role demand`. It can still hold one: when its query fails, no role of
+  the model scales down for up to three cycles. Use `demand:` rules.
+- **An empty result is 0 demand** unless you set `emptyIsMissing`. Beside
+  saturation, saturation's larger need wins; listed alone, it lets the model
+  scale down. A query that **fails** is no reading: for three cycles no role
+  of the model scales down, then it stops counting.
 - **Its own `scaleUpThreshold`/`scaleDownBoundary` decide nothing**, as for
   every analyzer other than saturation (see
   [Per-analyzer threshold overrides](#engine-post-step-formula)).
 - **Where it is read.** Only from the `default` entry in the controller's
   namespace. On any other entry, or in a namespace-local ConfigMap, it is
   logged and ignored; a policy there can still list it by name.
-- **Bad definitions are skipped.** An empty query, a threshold that does not
-  parse or is 0 or less, or a name a built-in analyzer already uses is logged
-  and skipped; the other definitions still run. A threshold of `"NaN"` is
-  accepted and then sizes nothing, so check the value. Changes apply on the next cycle,
-  with no restart.
+- **Bad definitions are skipped.** A definition that uses `demand`, `target`,
+  `targetReduce` or `emptyIsMissing` is checked when the ConfigMap is read;
+  if it cannot run, it is dropped with a warning and a `ConfigFieldIgnored`
+  Event that name the analyzer and the field, for example
+  `analyzerDefinitions="queue-depth": this analyzer is not defined: demand[0].match.role: "prefil" is not a role`.
+  A top-level `query` or `threshold` left beside `engines` counts as an
+  error once any of those fields is used; without them it is ignored, as
+  before. The other definitions and the rest of the entry still apply. A policy that
+  lists the dropped name runs without it, as if it were not defined, until
+  the definition is fixed. A definition
+  without those fields is checked when it is built, as before: an empty
+  query, a threshold that does not parse or is 0 or less, or a name a
+  built-in analyzer already uses is logged and skipped. A threshold of
+  `"NaN"` is accepted there and then sizes nothing, so check the value.
+  Changes apply on the next cycle, with no restart.
 - **Who may edit it.** The query runs as written against the shared
   Prometheus, so treat write access to that ConfigMap as privileged.
 

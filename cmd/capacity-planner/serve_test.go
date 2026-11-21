@@ -279,16 +279,21 @@ func parityCases() []parityCase {
 }
 
 // Every JSON golden in testdata has its parity case: a day plan's in
-// dayPlanParity (TestDayPlanAPIParity), every other in parityCases.
+// dayPlanParity (TestDayPlanAPIParity), a backtest's in backtestParity
+// (TestBacktestAPIParity), every other in parityCases.
 func TestServeParityCoversEveryJSONGolden(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("testdata", "*-json.golden"))
 	require.NoError(t, err)
 	names := make([]string, 0, len(paths))
-	var days []string
+	var days, backtests []string
 	for _, p := range paths {
 		name := strings.TrimSuffix(filepath.Base(p), ".golden")
 		if strings.HasPrefix(name, "day-plan-") {
 			days = append(days, name)
+			continue
+		}
+		if strings.HasPrefix(name, "backtest-") {
+			backtests = append(backtests, name)
 			continue
 		}
 		names = append(names, name)
@@ -297,6 +302,7 @@ func TestServeParityCoversEveryJSONGolden(t *testing.T) {
 	slices.Sort(dayCovered)
 	require.Len(t, days, 2, "the day plan's JSON goldens")
 	assert.Equal(t, days, dayCovered)
+	assert.Equal(t, backtestParity, backtests, "the backtest's JSON goldens")
 	cases := parityCases()
 	covered := make([]string, 0, len(cases))
 	for _, c := range cases {

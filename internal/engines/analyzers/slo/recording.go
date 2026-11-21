@@ -184,6 +184,10 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		// The decode engine's TTFT read off its calm cycles, off by default
 		// (ttft_fleet.go, llm-d-incubation/llm-d-scaling-manager#169).
 		SwitchTTFTLowLoadDecodeTTFT: &a.ttftLowLoadDecodeTTFT,
+		// A prefill variant sized on TTFT, the joint a₀ where P1 refused a,
+		// off by default (ttft_prefill_ask.go,
+		// llm-d-incubation/llm-d-scaling-manager#131).
+		SwitchTTFTSizesPrefill: &a.ttftSizesPrefill,
 		// J1: the joint prefill and decode model's inputs, in shadow
 		// (ttft_joint.go).
 		SwitchTTFTJointInputs: &a.ttftJointInputs,

@@ -116,6 +116,7 @@ Exit codes: `0` done; `2` your input (a bad flag, no replica with a KV-cache
 series in the namespace and window, a window too large without `--force`);
 `1` anything else, usually a failed Prometheus query, which the message names.
 The answer commands add `3`: a role refused, with the reason printed.
+`130` or `143`: stopped by Ctrl-C or SIGTERM, and the output may be incomplete.
 [What to do about each](../capacity-planner/troubleshooting.md#recording-a-window).
 
 `replicas-to-slo` and `slo-to-rate` also take the [capture flags](#capture-flags)
@@ -615,6 +616,10 @@ capacity-planner slo-to-rate     --recording run.jsonl.gz --tpot 4ms --ttft 200m
   is then all that bounds decode. When the recording has no usable line
   (`NoLine`, `PinnedDefaultB`), the `decode` and `fleet` rows are refused, exit
   `3`; the `prefill` row is still priced.
+- **`PinnedDefaultB`** means the line's intercept B was never measured. Give
+  `--assume-itl-b floor` (B from the low-fill latency the decode Pods read) or
+  `--assume-itl-b 12ms` for a flagged answer. The `ITL B` row says which B
+  was used.
 - **The `line check` row** compares the token rate the latency line predicts
   with the rate the decode rows reported. `MISMATCH` (a median error above
   15%, flagged `LineMismatch`): do not size from it. `at another shape`: the
@@ -665,7 +670,8 @@ from idle, while it settles, and this command reads them, so its inputs can
 lean on a warm-up the analyzer never saw.
 
 Exit codes for all of these: `0` answered, `3` a refusal, `2` a usage error,
-`1` anything else. The full CLI reference is in
+`1` anything else. `130` or `143`: stopped by Ctrl-C or SIGTERM, and the output
+may be incomplete. The full CLI reference is in
 [the planner's design](../../proposals/slo-capacity-planner.md#cli-reference).
 
 ## See also

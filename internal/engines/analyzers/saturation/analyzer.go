@@ -235,6 +235,14 @@ type SaturationAnalyzer struct {
 	// startCountsRestored is SwitchStartCountedPodsRestored: on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	startCountsRestored bool
+	// startRolledAt is, per start key, the last cycle that saw its variant
+	// rolling out (SwitchStartHeldThroughRollout): a Pod created before it is
+	// taken to have started during the rollout. Not in the snapshot: a restart forgets a
+	// rollout that has ended, and reads one still running afresh.
+	startRolledAt map[string]time.Time
+	// startHoldsRollout is SwitchStartHeldThroughRollout: on from the
+	// constructor; a replay turns it off (SetSwitchesForReplay).
+	startHoldsRollout bool
 	// startOutliers counts consecutive start-time samples rejected as
 	// implausible for a variant, so a genuine change of hardware is eventually
 	// admitted rather than rejected forever against a stale estimate.
@@ -518,6 +526,13 @@ type SaturationAnalyzer struct {
 	// constructor, planner-only; the capacity planner's replay turns them on
 	// (learnreplay.PlannerSwitches).
 	prefillALowLoadPerRank, prefillAEngineTiming bool
+	// prefillQueueByCapacity is SwitchPrefillQueueByCapacity: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillQueueByCapacity bool
+	// prefillFBusyMinutes is SwitchPrefillFBusyMinutes, and
+	// itlHoldSteadySlope SwitchITLHoldSteadySlope: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillFBusyMinutes, itlHoldSteadySlope bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor
@@ -527,13 +542,18 @@ type SaturationAnalyzer struct {
 	itlFills         map[string][]engineFill
 	itlBandFloors    map[string]bandFloor
 	// k2DecodeBudget is SwitchK2DecodeBudgetAtComputedPrompt (issue
-	// llm-d-incubation/llm-d-scaling-manager#201, decode_budget.go): off
-	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
+	// llm-d-incubation/llm-d-scaling-manager#201, decode_budget.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	k2DecodeBudget bool
 	// decodeLandedNeedsBound is SwitchDecodeLandedNeedsABound (issue
-	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): off
-	// from the constructor; only a replay turns it on (SetSwitchesForReplay).
+	// llm-d-incubation/llm-d-scaling-manager#201, pd_decode_queue.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	decodeLandedNeedsBound bool
+	// k2AtITLTarget is SwitchK2BatchAtITLTarget (issue
+	// llm-d-incubation/llm-d-scaling-manager#258, k2_itl_bound.go): on from
+	// the constructor; a replay turns it off (SetSwitchesForReplay). It
+	// bounds nothing without a TPOT objective.
+	k2AtITLTarget bool
 	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
 	// (itl_baseline_floor.go): off from the constructor; only a replay
 	// turns it on.
@@ -743,6 +763,8 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		startCountedReady:      make(map[string]time.Time),
 		startCountedRestored:   make(map[string]time.Time),
 		startCountsRestored:    true,
+		startRolledAt:          make(map[string]time.Time),
+		startHoldsRollout:      true,
 		startOutliers:          make(map[string]int),
 		startOutlierPods:       make(map[string]map[string]startRunPod),
 		startConfirmsByPod:     true,
@@ -817,6 +839,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		k2FirstReadingWaits:    true,
 		joinedFromFirstServed:  true,
 		itlPerToken:            true,
+		k2AtITLTarget:          true,
 		itlWithheldLogged:      make(map[string]itlWithheldReasons),
 		itlReadsEngines:        make(map[string]bool),
 		k2Pending:              make(map[string]*k2PendingReadings),
@@ -832,6 +855,8 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillKeepsPrompts:    true,
 		prefillBusyShare:       true,
 		lowerBoundCapsShare:    true,
+		k2DecodeBudget:         true,
+		decodeLandedNeedsBound: true,
 		drainHaircut:           FirstReadHaircut,
 		itlOneSidedLast:        make(map[string]itlOneSidedRecord),
 		prefillObserver:        prefill.NewObserver(),
@@ -1124,6 +1149,13 @@ func (a *SaturationAnalyzer) evictStaleHistory() Evicted {
 			delete(a.startSeconds, key)
 			delete(a.startOutliers, key)
 			evicted.StartEstimates++
+		}
+	}
+	// A variant held from its first start has a rollout mark and no
+	// estimate: its own loop.
+	for key := range a.startRolledAt {
+		if a.variantIsStale(key, now, variantTimeout) {
+			delete(a.startRolledAt, key)
 		}
 	}
 	// The start learner's per-key state goes with its key's liveness, as

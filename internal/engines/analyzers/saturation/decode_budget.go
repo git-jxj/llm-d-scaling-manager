@@ -28,8 +28,12 @@ import (
 // emitted. A replica that reports neither rate is priced as before. Off, as
 // before, at I + O.
 //
-// Off from the constructor: on the controller's goldens it moves decode's
-// derived k2, and the default changes only after review.
+// On from the constructor (v0.12.2): a P/D decode's capacity is no longer
+// read 10-18x low where B is small. The batch it prices is the budget's
+// throughput ceiling, with no latency term: a fleet with headroom is packed
+// to fewer decode replicas at a higher per-token latency, bounded only by the
+// engine (issue llm-d-incubation/llm-d-scaling-manager#258 is the TPOT-aware
+// cap). A replay turns it off.
 const SwitchK2DecodeBudgetAtComputedPrompt = "k2-decode-budget-at-computed-prompt"
 
 // stepBudget is how one engine rank's token budget is spent per request, for
@@ -52,9 +56,10 @@ type stepBudget struct {
 // (SwitchK2DecodeBudgetAtComputedPrompt), and the zero value -- I + O -- for
 // any other role, or a replica that reports no computed prompt or no
 // completions. The prompt is held to [0, AvgInputTokens]: a replica cannot
-// compute more of the prompt than there is. Speculation is priced only where
-// the flags state num_speculative_tokens and the replica reports its
-// acceptance; otherwise a step takes one token and emits one.
+// compute more of the prompt than there is. Where the flags state
+// num_speculative_tokens k, a step takes 1 + k of budget; it emits 1 + the
+// accepted draft tokens where the replica reports its acceptance, and 1 + k
+// where it does not: the smallest batch the flags allow. Without k a step takes one token and emits one.
 func decodeStepBudget(rm domain.ReplicaMetrics, role string, params *capacity.EngineParams) stepBudget {
 	if domain.CanonicalRole(role) != domain.RoleDecode {
 		return stepBudget{}
@@ -68,10 +73,17 @@ func decodeStepBudget(rm domain.ReplicaMetrics, role string, params *capacity.En
 		prompt = min(prompt, rm.AvgInputTokens)
 	}
 	b := stepBudget{set: true, prompt: prompt, stepTokens: 1, emitted: 1}
-	if k := params.SpeculativeTokens(); k > 0 && rm.SpecAcceptedPerStepKnown &&
-		finiteNonNegative(rm.SpecAcceptedPerStep) {
+	// The budget a step takes, 1 + k, is set by the flags alone; only what it
+	// emits needs the acceptance reading. Unread, a step is read to emit
+	// 1 + k: the fewest steps a request lives, so its computed prompt weighs
+	// most a step and the batch is the smallest the flags allow. Charged one
+	// token a step instead, a rank at k = 3 read up to four times its batch.
+	if k := params.SpeculativeTokens(); k > 0 {
 		b.stepTokens = float64(1 + k)
-		b.emitted = 1 + min(rm.SpecAcceptedPerStep, float64(k))
+		b.emitted = float64(1 + k)
+		if rm.SpecAcceptedPerStepKnown && finiteNonNegative(rm.SpecAcceptedPerStep) {
+			b.emitted = 1 + min(rm.SpecAcceptedPerStep, float64(k))
+		}
 	}
 	return b
 }

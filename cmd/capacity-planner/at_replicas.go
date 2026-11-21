@@ -24,7 +24,7 @@ func runAtReplicas(ctx context.Context, args []string, out, warn io.Writer) erro
 // atReplicasRefused are the answer flags at-replicas does not read: it prices
 // on the API's fleet (servedState), which takes the defaults for them, and
 // states lengths with --shape.
-var atReplicasRefused = []string{"seed", "price-router-wait", "ps-onsets", "prefill-running-cap", "charge-decode-gate",
+var atReplicasRefused = []string{"seed", "price-router-wait", "router-wait-in-prefill", "ps-onsets", "prefill-running-cap", "charge-decode-gate",
 	"assume-input-tokens", "assume-output-tokens"}
 
 // listFlag is a repeatable flag: each use adds its value.
@@ -90,7 +90,8 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 		for i, pv := range variants {
 			names[i] = pv.state.Variant
 		}
-		return usagef("the model has %d decode variants (%s); name one with --variant", len(names), strings.Join(names, ", "))
+		return usagef("the model has %d decode variants (%s); name one with --variant%s", len(names), strings.Join(names, ", "),
+			noRoleHint(variants))
 	}
 	if _, err := f.prefillState(st); err != nil {
 		return err
@@ -106,6 +107,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	}
 	rep.SchemaVersion = whatifapi.SchemaVersion
 	rep.Source.Recording = f.recording
+	rep.SelfCheck = f.checked
 	if f.output == outputJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -217,6 +219,18 @@ func (f *answerFlags) reportQuery(rf reportFlags) (whatifapi.ReportQuery, error)
 	}
 	if f.set["assume-tpot-ratio"] {
 		a.TPOTRatio = &f.tpotRatio
+	}
+	if f.set["assume-itl-b"] {
+		floor, b, err := parseAssumeITLB(f.assumeITLB)
+		if err != nil {
+			return q, err
+		}
+		if floor {
+			a.ITLBFromFloor = true
+		} else {
+			x := b.Seconds()
+			a.ITLB = &x
+		}
 	}
 	if f.set["arrival-cv2"] {
 		q.ArrivalCV2 = &f.arrivalCV2

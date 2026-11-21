@@ -443,8 +443,9 @@ func TestSpecialFunctionsRefuseWithNaN(t *testing.T) {
 		// doubling.
 		"gammaQuantile above 1": gammaQuantile(1, 1.5),
 		// The terms still rise at n = 1e6 (they peak near n = y), so the
-		// series is cut before it converges: NaN, not the partial sum.
-		"logSeries cut before it converges": logSeries(1, 1e7),
+		// series is cut before it converges: NaN, not the partial sum. At
+		// y < 4k the asymptotic expansion is not read (logSeriesLarge).
+		"logSeries cut before it converges": logSeries(1e7, 1e7),
 	} {
 		if !math.IsNaN(v) {
 			t.Errorf("%s: %g, want NaN", name, v)

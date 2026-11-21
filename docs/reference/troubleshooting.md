@@ -28,7 +28,8 @@ LOGS="kubectl logs -n $NS -l app.kubernetes.io/name=scaling-manager --tail=-1"
 | one replica full while others idle | `LLMSMLoadImbalanced`; `llmsm_load_imbalanced == 1`; log `WARNING: load imbalanced` | the router's scorer weights (`prefix-cache-scorer` above `queue-scorer`, `active-request-scorer`, `kv-cache-utilization-scorer`), prefix caching off on the engines | [uneven load](#one-replica-is-saturated-while-others-idle) |
 | replicas never move, though `llmsm_desired_replicas` does | `llmsm_passive_mode{mode=~"hold\|observe\|observe-unsafe"} == 1`; `Passive mode entered` in the log; `PassiveRecommendation` Events | the model is passive: `LLMSM_PASSIVE`, or `passive: true` on a scaling-policy entry | [passive](#a-passive-model-does-not-scale) |
 | desired is not current | `llmsm_desired_replicas != llmsm_current_replicas` for many cycles | HPA stabilization window, KEDA not reaching the scaler, Pods Pending (GPUs, ResourceQuota), slow starts | [actuation stuck](#desired-is-not-current-actuation-stuck) |
-| a DisaggregatedSet role never moves | `RoleWriterRefused`, `RoleReplicasConflict` or `RoleReplicasWriteFailed` on the set; no `RoleReplicasWritten` | the role writer off or without its grant, the set refused (no model-id, bad bounds, slices above 1), another field manager owns `replicas`, a passive model, the 5-minute scale-down window | [DisaggregatedSet role](#a-disaggregatedset-role-is-not-scaled) |
+| replicas asked for never become Ready | `LLMSMReplicasNotArriving`; `llmsm_replicas_not_arriving` above 0; `ReplicasNotArriving` events | a node rejecting pods at admission, no GPU free, a Kueue gate, an image that does not pull, a crash loop, a ResourceQuota | [never arrive](#replicas-asked-for-never-arrive) |
+| a DisaggregatedSet role never moves | `RoleWriterRefused`, `RoleReplicasConflict`, `RoleReplicasWriteFailed` or `RoleScaleDownRefused` on the set; no `RoleReplicasWritten` | the role writer off or without its grant, the set refused (no model-id, bad bounds, slices above 1), another field manager owns `replicas`, a scale-down the cluster refuses until a drain, a passive model, the 5-minute scale-down window | [DisaggregatedSet role](#a-disaggregatedset-role-is-not-scaled) |
 | replicas dropped under Kueue borrowing | fewer replicas with no scale-down asked for; `llmsm_model_scaling_blocked{reason=~"lender-reclaimed\|borrow-unplaced\|released-to-lender"}`; `BorrowedCapacityReleased` Event | Kueue preempted, a borrowed replica did not place and was released, a waiting lender was handed it back (opt-in), demand fell | [replicas dropped](#replicas-dropped-under-kueue-borrowing) |
 | a lender's replica Pending after Kueue preempted | the lender's new pod `Pending` with no node; a borrower's Workload evicted with reason `Preempted`; later `reason="borrow-unplaced"` | Kueue preempts by priority, not by node: the GPUs it freed form no node the replica fits | [replicas dropped](#replicas-dropped-under-kueue-borrowing) |
 | a Kueue-backed quota was never read | `LLMSMKueueNeverRead`; `llmsm_kueue_never_read == 1`; log `external quota source unreadable and never read` | Kueue CRDs absent, the controller may not list ClusterQueues, Kueue down at start | [never read](#a-kueue-backed-quota-was-never-read) |
@@ -527,6 +528,55 @@ chain in order:
 4. **Slow starts.** Pods created but not Ready for minutes: compare
    `llmsm_replica_start_seconds` with what you expect, and see
    [Preparing a workload](workload-preparation.md).
+
+## Replicas asked for never arrive
+
+**Symptom**: `LLMSMReplicasNotArriving` fires, or a `ReplicasNotArriving`
+event appears on a ScaledObject. A variant has fewer Ready replicas than it
+asked for, and none has arrived for longer than twice its start time (at
+least 5 minutes). A rollout or a scale-up that lands a replica now and then
+is not reported.
+
+1. **Read the cause.** The event and the status line say why, from the pods:
+   ```bash
+   kubectl get events -n <ns> --field-selector reason=ReplicasNotArriving
+   kubectl get configmap scaling-manager-controller-status -n "$NS" \
+     -o jsonpath='{.data.replicasNotArriving}'
+   ```
+   A line reads like this:
+   ```
+   models/decode (decode): 1/2 Ready, none arrived since 2026-11-20T10:00:00Z: admission-rejected on node gpu-node-7: UnexpectedAdmissionError: Allocate failed due to no healthy devices present; cannot allocate unhealthy devices rdma/ib
+   ```
+2. **Act on the reason.**
+
+   | reason | what it means | what to do |
+   | --- | --- | --- |
+   | `admission-rejected` | the scheduler places pods on a node and its kubelet refuses them, usually because a device plugin reports devices unhealthy that the node still advertises. The ReplicaSet replaces each pod on the same node, so rejected pods pile up | (cluster admin) cordon the node (`kubectl cordon <node>`), then fix its devices: the device plugin, the GPU operator, node remediation. Delete the rejected pods, selected by the variant's pod labels: `kubectl delete pods -n <ns> -l <key>=<value> --field-selector=status.phase=Failed` |
+   | `unschedulable` | no node fits; the line carries the scheduler's message, for example `Insufficient nvidia.com/gpu` | free GPUs, or lower the model's max; see [GPUs held](#gpus-held-or-quota-spent) |
+   | `scheduling-gated` | Kueue has not admitted the pods | see [Kueue borrowing alerts](#kueue-borrowing-alerts) and [GPUs held](#gpus-held-or-quota-spent) |
+   | `image-pull` | the image does not pull | check the image name and the pull secret |
+   | `crash-loop` | the engine starts and exits; the line has the last exit reason | `kubectl logs -n <ns> <pod> --previous` |
+   | `container-config` | the container cannot be created: a missing Secret or ConfigMap | `kubectl describe pod -n <ns> <pod>` |
+   | `failed` | pods ended Failed for another reason (evicted, killed) | `kubectl describe pod -n <ns> <pod>` |
+   | `not-ready` | the engine runs and its readiness probe does not pass | the engine's log; a node with broken networking hangs a multi-GPU engine here |
+   | `starting` | pods are still pulling or loading, slower than usual | see [Preparing a workload](workload-preparation.md) |
+   | `no-pods` | the workload controller created no pods | `kubectl get events -n <ns> --field-selector reason=FailedCreate`; often a ResourceQuota |
+   | `unknown` | the controller could not list the pods | the controller's log |
+
+**What the scaling manager does.** It counts only Ready replicas as supply.
+Pods that are rejected, unschedulable, gated or failing are not counted as on
+their way either, and neither is a pod that has not become Ready in twice its
+role's start time (at least 5 minutes), so the controller orders replacements.
+On a cold node, where pulling the image or the weights takes longer than
+usual, that can order one replica too many; it is removed once both arrive. That last rule
+applies only once the start time is measured or declared on the ScaledObject,
+and not to LeaderWorkerSet groups of more than one pod. It
+does not cordon, taint or steer pods away from a node: node health is the
+platform's to judge, for every workload on the node at once.
+
+The report lifts when a replica arrives (a `ReplicasArrived` event); the
+variant must then keep what it asked for for a minute before its record is
+dropped. It restarts its clock when the controller restarts.
 
 ## GPUs held or quota spent
 
@@ -1545,6 +1595,10 @@ log is from before the upgrade and no longer applies.
      [Ownership](disaggregatedset.md#ownership-of-replicas).
    - `RoleReplicasWriteFailed`: the set refused the write; the message has the
      API's answer.
+   - `RoleScaleDownRefused`: the cluster refused a lower count, typically
+     an admission policy that wants a drain first. The writer holds the
+     role there. See
+     [When the cluster refuses a scale-down](disaggregatedset.md#when-the-cluster-refuses-a-scale-down).
 2. No events at all: check the writer runs. The controller log says
    `DisaggregatedSet role writer is on` at start. If it says
    `may not list DisaggregatedSets`, the grant is missing: install with
@@ -1567,9 +1621,12 @@ pages.
 
 **On this release the slo analyzer only observes**, so neither alert means the
 autoscaler failed: the fleet is sized by the saturation analyzer, and a miss
-says that tier's thresholds do not meet the SLO. It is a tuning finding to act
+says that tier's thresholds do not meet the SLO. A `tpot` target does bound
+how far saturation packs decode, but only on a decode line the variant
+measured: read `itlBoundWhy` on the `k2-itl-bound` line
+([TPOT and decode packing](scaling-policy.md#how-a-tpot-target-bounds-decode-packing)). It is a tuning finding to act
 on in working hours, not an outage. Set up in
-[`slo` (observe only)](scaling-policy.md#slo-observe-only).
+[`slo`](scaling-policy.md#slo-observes-bounds-decode-packing).
 
 The `llmsm_slo_*` series carry the model's namespace as `exported_namespace`
 (see [the labels](prometheus.md#slo-analyzer-metrics)); filter on that, not on
@@ -1613,7 +1670,7 @@ for:
   (`kubectl edit scaledobject <so> -n <ns>`; where a tool generates the
   ScaledObject, change it there, or the next apply undoes it), or
 - lower the tier's `scaleUpThreshold` (and write the tier's other fields out,
-  see [Turn it on](scaling-policy.md#slo-observe-only), step 3).
+  see [Turn it on](scaling-policy.md#slo-observes-bounds-decode-packing), step 3).
 
 **3. Then find the cause**, per objective:
 

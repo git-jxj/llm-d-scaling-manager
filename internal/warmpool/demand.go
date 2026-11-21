@@ -61,7 +61,9 @@ type Demand struct {
 	// having: nine seconds on a model's first admission buys a warm set several
 	// times larger.
 	//
-	// Zero inherits the workload's value, which is the previous behaviour.
+	// Zero inherits the workload's value, which is the previous behaviour; a
+	// workload that names none gets defaultGPUMemoryUtilization, never vLLM's
+	// own default (1.0 from v0.34).
 	GPUMemoryUtilization float64
 
 	// Serving reports how many replicas of a VARIANT are actually taking
@@ -482,16 +484,36 @@ var warmableFlags = map[string]bool{
 	"--enable-sleep-mode":            true,
 }
 
-// withGPUMemoryUtilization applies the pool's own value, if it has one.
+// defaultGPUMemoryUtilization is what a warm copy runs at when neither the pool
+// nor the workload names a value.
+//
+// Never left to vLLM: from v0.34 its default is 1.0 (the extensible KV cache
+// takes every byte free after warmup), which leaves no room for the sleepers
+// beside the awake engine. 0.9 is the controller flag's own default.
+//
+// The cost, on any vLLM: the value is part of the torch.compile cache key, so a
+// warm copy of a workload that names none no longer shares its compile cache
+// (on v0.26 that workload runs at 0.92: CacheConfig.gpu_memory_utilization's
+// default in vllm/config/cache.py at v0.26.0). One extra compile per model.
+const defaultGPUMemoryUtilization = 0.9
+
+// withGPUMemoryUtilization applies the pool's own value, if it has one, and
+// makes sure a warm copy always carries --gpu-memory-utilization.
 //
 // Replaces rather than appends when the workload already names it: two
 // occurrences would leave the engine's behaviour up to argparse's last-wins
 // rule, and the pool's intent up to a reader's guess.
+//
+// A value that is not positive (zero, negative or NaN) inherits the
+// workload's; a workload that names none gets defaultGPUMemoryUtilization.
 func withGPUMemoryUtilization(options string, value float64) string {
-	if value <= 0 {
-		return options
-	}
 	const flag = "--gpu-memory-utilization"
+	if !(value > 0) {
+		if hasFlag(options, flag) {
+			return options
+		}
+		value = defaultGPUMemoryUtilization
+	}
 
 	fields := strings.Fields(options)
 	out := make([]string, 0, len(fields)+2)
@@ -509,6 +531,16 @@ func withGPUMemoryUtilization(options string, value float64) string {
 	return strings.Join(out, " ")
 }
 
+// hasFlag reports whether options name flag, as "--flag value" or "--flag=value".
+func hasFlag(options, flag string) bool {
+	for _, field := range strings.Fields(options) {
+		if name, _, _ := strings.Cut(field, "="); name == flag {
+			return true
+		}
+	}
+	return false
+}
+
 // normaliseOptions keeps the flags a warm copy must match, drops everything
 // else, and adds what it cannot do without.
 //
@@ -522,6 +554,13 @@ func normaliseOptions(options string) string {
 	out := make([]string, 0, len(fields)+1)
 	for i := 0; i < len(fields); i++ {
 		name, inline, hasInline := strings.Cut(fields[i], "=")
+		// vLLM's parser takes --gpu_memory_utilization for
+		// --gpu-memory-utilization. Matched in the dashed form, or a workload
+		// writing underscores loses the flag here and its warm copy runs at
+		// the pool's default rather than at the workload's value.
+		if rest, ok := strings.CutPrefix(name, "--"); ok {
+			name = "--" + strings.ReplaceAll(rest, "_", "-")
+		}
 		if !strings.HasPrefix(name, "-") {
 			// A bare word: the launcher, the module, or a value whose flag was
 			// dropped. Either way it is not ours to pass on.

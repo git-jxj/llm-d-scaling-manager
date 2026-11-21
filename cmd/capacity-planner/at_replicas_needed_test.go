@@ -52,7 +52,10 @@ func TestAtReplicas_NeededRisesWithLoad(t *testing.T) {
 				}
 				assert.True(t, holds(n.Prefill, n.Decode), "%s: %d + %d at %g r/s", shape, n.Prefill, n.Decode, load)
 				// Holding is monotone in each count, so no fleet of fewer in
-				// all holds when none of one fewer does.
+				// all holds when none of one fewer does. r.peak is unset, so
+				// needed asks nothing at the peak, and holding at the load is
+				// the whole test; with a peak above the load this oracle
+				// would also have to ask a cut role at the peak.
 				for d := 1; d <= total-2; d++ {
 					assert.False(t, holds(total-1-d, d), "%s at %g r/s: %d + %d holds, fewer than %d + %d",
 						shape, load, total-1-d, d, n.Prefill, n.Decode)

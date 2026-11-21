@@ -1,0 +1,12 @@
+# What the launcher unit tests import. vLLM is stubbed by the tests, so it is
+# not here. make test-warmpool-launcher runs them; CI installs this first.
+pytest==8.4.2
+fastapi==0.121.2
+httpx==0.28.1
+uvloop==0.22.1
+# Not the image's psutil (7.2, from the vLLM base): test_wait_einval.py mocks
+# the 7.2 EINVAL behaviour rather than relying on the installed version.
+psutil==7.1.3
+pydantic==2.12.4
+nvidia-ml-py==13.615.71
+kubernetes==35.0.0

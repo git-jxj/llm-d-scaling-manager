@@ -25,7 +25,8 @@ import (
 // the model in internal/signals/whatif: the TTFT predicted at the current rate,
 // and the rate per replica at which the bounded TTFT meets the target. Both go
 // to llmsm_slo_* series and the cycle log, and nothing else: the analyzer's result
-// is unchanged, a prefill variant stays no-data, so no replica count moves.
+// is unchanged, a prefill variant stays no-data, so no replica count moves
+// (SwitchTTFTSizesPrefill, off by default, sizes it; ttft_prefill_ask.go).
 // Aggregated variants wait for the what-if M1.
 //
 // The prediction is not a bound, and which way it errs depends on the prompt
@@ -374,14 +375,16 @@ func rowsOf(rows []domain.ReplicaMetrics, variants []string) []domain.ReplicaMet
 }
 
 // priceTTFTVariants prices every prefill variant of the model against the TTFT
-// target and logs each; nil with no target or the switch off.
+// target and logs each; nil with no target or the switch off. With
+// SwitchTTFTSizesPrefill on, asks is each priced variant's least pod count
+// the model prices under the target (prefillAsk); nil otherwise.
 //
 // The estimate is read before any lock of this analyzer is taken, and the
 // windows lock a.mu for themselves (prefill_estimates.go, the lock order).
 func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerInput, cfg *config.ScalingPolicy,
-	fleet fleetReading, lines []ttftDecodeLine, router *domain.RouterLatency, now time.Time) []metrics.SLOTTFTReading {
+	fleet fleetReading, lines []ttftDecodeLine, router *domain.RouterLatency, now time.Time) ([]metrics.SLOTTFTReading, map[string]int) {
 	if !a.ttftPrice || cfg.SLO == nil || cfg.SLO.TTFT == nil {
-		return nil
+		return nil, nil
 	}
 	var prefills, decodes []string
 	readyPrefill := 0
@@ -395,7 +398,7 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 		}
 	}
 	if len(prefills) == 0 {
-		return nil
+		return nil, nil
 	}
 	target := whatif.TTFTTarget{Seconds: cfg.SLO.TTFT.Target.Seconds(), Percentile: float64(cfg.SLO.TTFTPercentile()) / 100}
 	statistic := "p" + strconv.Itoa(cfg.SLO.TTFTPercentile())
@@ -462,19 +465,21 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 		t := whatif.TermFromEstimate(est)
 		term = &t
 	}
-	arrival := input.ArrivalRate
-	if !(arrival > 0) || !whatif.Finite(arrival) {
-		arrival = fleet.requestRate
-	}
+	arrival := modelArrival(input, fleet)
 	joint := a.noteJoint(input, fleet, prefills, decodes, prefillRows, decodeRows, arrival, term, now)
 
 	view := &prefill.Settle{View: a.settleView(), Model: utils.GetNamespacedKey(input.Namespace, input.ModelID)}
 	var out []metrics.SLOTTFTReading
+	var asks map[string]int
 	for _, v := range prefills {
 		pods := fleet.ready[v]
 		rows := rowsOf(fleet.rows, []string{v})
 		est, fresh := a.prefillEstimate(input.Namespace, input.ModelID, v, now)
 		est = withInvertedVP(est, joint)
+		var aFromJoint bool
+		if a.ttftSizesPrefill {
+			est, aFromJoint = withJointFixedLatency(est, joint)
+		}
 		var estimateAt time.Time
 		if fresh {
 			estimateAt = now
@@ -490,12 +495,20 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 			decodeTTFT:   measured, term: term, legacyDecodeSum: !a.ttftDecodeTerm, flow: flow, mismatch: mismatch,
 			processorSharing: a.ttftProcessorSharing, routerWait: a.ttftRouterWait,
 			psOnsets: a.ttftPSOnsets, decodeGateCharge: a.ttftDecodeGateCharge,
-			acrossCounts: a.ttftImbalanceAcrossCounts,
+			acrossCounts: a.ttftImbalanceAcrossCounts, aFromJoint: aFromJoint,
 		}
 		in.outputSpreadUnread = a.outputSpreadUnread(fleet)
 		p := gateOrPrice(&in, fresh, arrival, target)
 		if onTTFTPriced != nil {
 			onTTFTPriced(in, arrival, target)
+		}
+		if a.ttftSizesPrefill && p.reason == constants.SLOTTFTReasonPriced {
+			if n, ok := prefillAsk(in, arrival, target); ok {
+				if asks == nil {
+					asks = map[string]int{}
+				}
+				asks[v] = n
+			}
 		}
 		out = append(out, metrics.SLOTTFTReading{
 			Variant: v, Statistic: statistic, Predicted: p.published(), PerReplica: p.perReplica,
@@ -505,7 +518,7 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 		logTTFT(logger, input, v, in, p, arrival, target)
 		logJoint(logger, input, v, joint)
 	}
-	return out
+	return out, asks
 }
 
 // onTTFTPriced, when set, is called with each variant's inputs, rate and
@@ -705,7 +718,7 @@ func logTTFT(logger logr.Logger, input domain.AnalyzerInput, variant string, in 
 		"onsetPrefill", onsetPrefill, "onsetDecode", onsetDecode, "flags", p.flags,
 		// The inputs.
 		"vp", in.est.VP, "vpSource", vpSource(in.est), "vpPromptTokens", in.est.VPPromptTokens,
-		"estimateAt", in.estimateAt, "a", in.est.A, "f", p.f, "fSource", fSource, "fRaw", in.shares.largest,
+		"estimateAt", in.estimateAt, "a", in.est.A, "aSource", aSource(in.est, in.aFromJoint), "f", p.f, "fSource", fSource, "fRaw", in.shares.largest,
 		"fRawLeast", in.shares.least, "fRawWindowFull", in.shares.full, "otherPrefillPods", in.otherPods,
 		"prompt", in.prompt, "cv", in.spread.CV, "cvSource", cvSource, "transferPerToken", in.transfer,
 		"decodeVariant", in.decodeVariant, "decodeTTFT", in.decodeTTFT.Seconds,

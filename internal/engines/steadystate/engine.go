@@ -318,6 +318,13 @@ type Engine struct {
 	// again. See pruneBlockedModels.
 	lastBlockedModels map[string]blockedModelRef
 
+	// notArriving tracks the replicas variants asked for that have not
+	// arrived (replicas_not_arriving.go). Nil until the first cycle.
+	notArriving *notArrivingTracker
+	// cycleScaleTargets is this cycle's active scale targets, keyed
+	// namespace/target (utils.ActiveVariants), for the report above.
+	cycleScaleTargets map[string]scaletarget.ScaleTargetAccessor
+
 	// optimizer is the V2 scaling optimizer that produces VariantDecisions from
 	// AnalyzerResults. Selected per-cycle from the declared limiters:
 	// CostAwareOptimizer when none is declared, GreedyByScoreOptimizer when one is.
@@ -695,20 +702,53 @@ func toExternalDefinition(label string, def config.ExternalAnalyzerDef) (externa
 	bodies := make(map[string]external.Body)
 	if len(def.Engines) > 0 {
 		for engine, body := range def.Engines {
-			th, err := strconv.ParseFloat(body.Threshold, 64)
+			b, err := toExternalBody(body.Query, body.Threshold, body.ExternalAnalyzerRules)
 			if err != nil {
-				return external.Definition{}, fmt.Errorf("engine %q: threshold %q: %w", engine, body.Threshold, err)
+				return external.Definition{}, fmt.Errorf("engine %q: %w", engine, err)
 			}
-			bodies[engine] = external.Body{Query: body.Query, Threshold: th}
+			bodies[engine] = b
 		}
 	} else {
-		th, err := strconv.ParseFloat(def.Threshold, 64)
+		b, err := toExternalBody(def.Query, def.Threshold, def.ExternalAnalyzerRules)
 		if err != nil {
-			return external.Definition{}, fmt.Errorf("threshold %q: %w", def.Threshold, err)
+			return external.Definition{}, err
 		}
-		bodies[""] = external.Body{Query: def.Query, Threshold: th}
+		bodies[""] = b
 	}
 	return external.Definition{Label: label, Bodies: bodies}, nil
+}
+
+// toExternalBody converts one catalog body. A body without the rule form
+// (config.ExternalAnalyzerRules) needs a threshold that parses, as it always
+// has; in the rule form a threshold may be left out where a role rule or a
+// target supplies P, which external.New checks.
+func toExternalBody(query, threshold string, rules config.ExternalAnalyzerRules) (external.Body, error) {
+	parse := func(s string) (float64, error) {
+		if s == "" && rules.IsSet() {
+			return 0, nil
+		}
+		return strconv.ParseFloat(s, 64)
+	}
+	th, err := parse(threshold)
+	if err != nil {
+		return external.Body{}, fmt.Errorf("threshold %q: %w", threshold, err)
+	}
+	b := external.Body{Query: query, Threshold: th, TargetReduce: rules.TargetReduce, EmptyIsMissing: rules.EmptyIsMissing}
+	for i, r := range rules.Demand {
+		rth, err := parse(r.Threshold)
+		if err != nil {
+			return external.Body{}, fmt.Errorf("demand[%d].threshold %q: %w", i, r.Threshold, err)
+		}
+		b.Demand = append(b.Demand, external.DemandRule{Role: r.Match.Role, Query: r.Query, Threshold: rth, OrZero: r.OrZero})
+	}
+	for _, r := range rules.Target {
+		t := external.TargetRule{Role: r.Match.Role}
+		for _, q := range r.Queries {
+			t.Queries = append(t.Queries, external.TargetQuery{Query: q.Query, E: q.E})
+		}
+		b.Target = append(b.Target, t)
+	}
+	return b, nil
 }
 
 // StartOptimizeLoop starts the optimization loop for the saturation engine.
@@ -863,11 +903,12 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 
 	e.VariantEnricher.Refresh(ctx) // resolve the scale target of anything newly registered
 
-	activeVAs, _, err := utils.ActiveVariants(ctx, e.client, e.Variants)
+	activeVAs, activeTargets, err := utils.ActiveVariants(ctx, e.client, e.Variants)
 	if err != nil {
 		logger.Error(err, "Unable to get active variant autoscalings")
 		return err
 	}
+	e.cycleScaleTargets = activeTargets
 	// Here, not with the analyzer series: those go with the active set, and a
 	// fleet at zero replicas is exactly what these series are kept for.
 	e.retainLearnerSeries(ctx)
@@ -901,6 +942,8 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		// a named model will never park. With no models left, every such assertion
 		// is about a workload that is gone.
 		e.evictAllBlockedModels()
+		// No variant asks for a replica, so none is missing one.
+		e.reportReplicasNotArriving(ctx, nil, nil, nil, time.Now())
 		// No active model resolves an accelerator: say so, or the status keeps
 		// the last busy cycle's list after a scale-to-zero, and a controller
 		// started with every model at zero never sets the key at all.
@@ -1077,6 +1120,8 @@ func constrainedMessage(d *domain.VariantDecision) string {
 // recordEvent ensures only one event is recorded per VA in an optimization cycle.
 // Exception: K8SEventResourceConstrained events bypass deduplication and can be
 // recorded alongside other event types (e.g., ScaledUp + ResourceConstrained).
+// The ReplicasNotArriving and ReplicasArrived events do not go through it
+// (recordArrivalEvent): they are rate-limited by their own report.
 func (e *Engine) recordEvent(
 	va *llmdvariant.Variant,
 	eventType, reason, message string,
@@ -1730,6 +1775,10 @@ func (e *Engine) optimizeV2(
 		modelTiers[utils.GetNamespacedKey(namespace, modelID)] = variantTiers(modelVAs)
 	}
 
+	// Before the early return below: a model none of whose replicas ever
+	// arrived produces no request, and is the one that most needs reporting.
+	e.reportReplicasNotArriving(ctx, modelGroups, modelScaleTargets, requests, time.Now())
+
 	if len(requests) == 0 {
 		// Active variants, none of which produced a request: every model FAILED
 		// collection this cycle. Nothing is published for the warm pool here,
@@ -2306,6 +2355,7 @@ func (e *Engine) assembleModelData(
 	// threaded to the optimizer (via ModelScalingRequest.Variants) as the source
 	// of truth for variant identity/cost/accelerator.
 	variantMetadata := variantmeta.Discover(ctx, modelVAs, scaleTargets, k8sClient, observeAccelerators(e.Config))
+	e.withholdOverdueArrivals(ctx, modelID, variantMetadata)
 	replicaMetrics = e.routeModel(ctx, modelID, namespace, variantMetadata, modelVAs, variants,
 		scaleTargets, replicaMetrics, k8sClient, time.Now())
 	variantStates := make([]domain.VariantReplicaState, 0, len(variantMetadata))

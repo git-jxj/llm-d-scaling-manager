@@ -38,6 +38,8 @@ directory from `make engine-cache`, or a claim you already have
 (`LLMSM_ENGINE_CACHE_CLAIM`). Applying that half is its own opt-in
 ([Engine caches on the node's disk](#engine-caches-on-the-nodes-disk)). The
 rest of the start path is a checklist, below.
+If another component owns the caches, see
+[An external cache manager](#an-external-cache-manager).
 
 > Part of the [deployment guide](../../deploy/). For what to watch once it is
 > running, see [Watching what the scaling manager decides](monitoring.md).
@@ -431,6 +433,14 @@ measured here.
 The benchmark standup has the same measure under
 `BENCHMARK_MODEL_HOSTPATH=<dir>`; what the harness does with it is in
 [Benchmark the scaling manager](../guides/benchmarking/README.md#replica-start-time-in-the-harness).
+
+**A warm page cache is not guaranteed.** Some deployments drop the weight
+files from memory at engine start or right after the load, to give the RAM
+to a CPU KV tier (vLLM's `--release-weight-page-cache`, or a `posix_fadvise(POSIX_FADV_DONTNEED)`
+walk over the model mount). On those nodes expect the cold load, ~10 s more on
+Qwen3-32B ([start time](start-time.md#qwen3-32b-on-one-h200)). The scaling
+manager's replica start estimate is measured from the third start on, so it
+includes this.
 
 ### Gate replicas on the weights
 
@@ -1150,6 +1160,10 @@ cache, keyed by image: `/engine-cache/<dir>/<image key>`, with `<dir>` one of
 - **Nodes prepared before these variables** lack the four directories. Run
   `make engine-cache` again: it makes them, 1777 like the others. Until then
   the guard falls back to the engine default for each.
+- **Engine caches owned [externally](#an-external-cache-manager)**: the four
+  are the owner's whether the pod spec sets them or not. `make workload-patch`
+  patches none of them, writes no JIT half and no `BUILDS ITS JIT KERNELS
+  AGAIN` warning, and names the ones the pod spec leaves unset.
 - **Seed and publish** copy `deepgemm/`, `trtllm-deepgemm/` and `inductor/`.
   `cuda/` stays on its node: the driver keeps one index file per cache, and two
   nodes' indexes merged file by file are not one valid index.
@@ -1357,6 +1371,111 @@ The benchmark standup has the same measure under
 That, and the harness's own steps on the engine's start path, are in
 [Benchmark the scaling manager](../guides/benchmarking/README.md#replica-start-time-in-the-harness).
 
+### An external cache manager
+
+Use this when another component owns the engine's compile caches: usually a
+sidecar that restores them before the engine starts and publishes them to a
+shared store after it has served.
+
+1. Annotate the **pod template**, not the Deployment:
+   ```yaml
+   spec:
+     template:
+       metadata:
+         annotations:
+           scaling-manager.llmd.ai/engine-cache-owner: external
+   ```
+   On a LeaderWorkerSet or a DisaggregatedSet role, annotate each template
+   the manager runs in. Each template is decided on its own annotation.
+2. Run `make workload-patch NAMESPACE=<ns>` and read the report.
+
+Adding the annotation changes the pod template, so it **restarts every
+replica**, and each restart of a large model is a cold start. Add it with your
+next planned rollout.
+
+**What `external` changes.** The cache variables are `VLLM_CACHE_ROOT`,
+`FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR` and `PYTHONPYCACHEPREFIX`.
+
+- A variable the engine container sets in the pod spec is the owner's. The
+  patch writes no variable, mount or volume for it.
+- A variable it does not set is patched as before, under `/engine-cache`, and
+  the report names it. A value set only inside the image counts as not set:
+  repeat it in the pod spec, under the owner's directory, to leave it to the
+  owner.
+- `FLASHINFER_WORKSPACE_DIR` without `FLASHINFER_WORKSPACE_BASE` is left to the
+  owner, with a warning: FlashInfer reads only `FLASHINFER_WORKSPACE_BASE`.
+- The [JIT caches beyond vLLM's own](#jit-caches-beyond-vllms-own)
+  (`DG_JIT_CACHE_DIR`, `TRTLLM_DG_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR`,
+  `CUDA_CACHE_PATH`) are the owner's whether the pod spec sets them or not:
+  none is patched, and the report names those it leaves unset. Patched under
+  `/engine-cache`, they would split one engine's caches across two stores, and
+  the copies the owner shares would lack them. One that points under
+  `/engine-cache` is the trace of an earlier patch: the conflict below.
+- When every variable is set, the report says the caches are deferred to the
+  owner. `LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true` (`--apply-engine-cache`)
+  then refuses and the run exits non-zero: there is nothing of ours to apply.
+- `FLASHINFER_WORKSPACE_BASE` written without `VLLM_CACHE_ROOT` beside it is
+  emitted, never applied, as the [FlashInfer half](#flashinfer-kernels) is.
+- The drain half, the weights half and the [weights gate](#gate-replicas-on-the-weights)
+  do not change.
+- The emitted file, when one is written, still carries the writable guard,
+  for whoever owns the container command. Restored files must be writable by
+  the engine's user, or FlashInfer fails instead of compiling.
+
+`make engine-cache-keys` prints no key for an annotated pod, and says its
+caches are managed elsewhere; one whose `VLLM_CACHE_ROOT` is still under
+`/engine-cache` is the conflict below, and its key is printed. `make engine-cache-verify` in a namespace with
+no engine-cache DaemonSet says the same and exits 0, when every engine pod
+there is annotated; an engine pod of ours there still fails it.
+
+`ours`, or no annotation, is today's behaviour. Any other value (`External`,
+`yes`) is treated as `ours`, with a warning that names it.
+
+**What the report shows:**
+
+```
+ns/qwen-decode: engine caches owned externally (scaling-manager.llmd.ai/engine-cache-owner=external)
+    store: claim jit-store, mounted read-write by cache-sync in every pod, ...
+    TRITON_CACHE_DIR: not set in the pod spec; patched under /engine-cache. ...
+```
+
+The store line reads `not visible in the pod spec; check who can write it` when
+the store is mounted somewhere the pod spec does not show.
+
+**Without the annotation**, a container that shares the engine's cache
+`emptyDir` and also mounts storage (a claim, hostPath, NFS, CSI or ephemeral
+volume) gets a suggestion to add it. The patch does not change: a weights
+downloader with scratch space has the same shape.
+
+**Patched before it was annotated.** The pod spec still carries our
+`engine-cache` volume, or cache variables under `/engine-cache`. The report
+flags a conflict, gives no all-clear, and writes nothing more of ours until
+you revert. `--apply-engine-cache` is refused for it, with a non-zero exit.
+
+1. Remove the `engine-cache` volume, its mounts, every cache variable that
+   points under `/engine-cache`, and our engine-cache guard if the container
+   command carries one, in the chart that owns the pod spec. (If you set
+   `LLMSM_ENGINE_CACHE_VOLUME_NAME` or `LLMSM_ENGINE_CACHE_PATH` when you
+   patched, set them again now: the conflict is found by those names.)
+2. Delete the copies the manager stored while our patch was applied. They lack
+   the moved caches, and are restored until the manager replaces them.
+3. Run `make workload-patch` again.
+
+If that volume was a shared ReadWriteMany claim rather than the node-local one
+`make engine-cache` makes: several pods compiling into one claim have lost
+files, and left a pod Running and never Ready.
+
+**Trust.** Compiled caches are code. With a shared store, one bad copy reaches
+every node that starts that key, and stays until it is replaced.
+
+- Whoever can write the store runs code in every later pod of that key. Where
+  every pod publishes, every pod can write it; the report says so.
+- Prefer a publisher you control as the only writer, with serving pods
+  mounting the store read-only.
+- The engine container should never mount the store itself. The report warns
+  when it does.
+- Pin images by digest, so the cached code is tied to the image you checked.
+
 ## The engine's memory budget (`gpuMemoryUtilization`)
 
 **`gpuMemoryUtilization` has to follow the model.** vLLM reads it as a fraction
@@ -1439,9 +1558,56 @@ routing to it meanwhile. So the window covers new arrivals still being sent here
 as well as generations already running. That is why the emitted patch sleeps 45s,
 not the 30s above. If the engine has a drain endpoint, call that instead.
 
-Set `terminationGracePeriodSeconds` above the preStop duration plus the longest
-generation. The grace period is the total budget; the kubelet sends SIGKILL when
-it expires, whatever the hook is doing.
+The grace period is the total budget: the kubelet sends SIGKILL when it
+expires, whatever the hook is doing. How long it must be is
+[below](#sizing-the-grace-period).
+
+### Sizing the grace period
+
+The grace period must cover the whole drain:
+
+```
+terminationGracePeriodSeconds >= preStop sleep + --shutdown-timeout + 15
+```
+
+The engine gets SIGTERM only after the preStop hook ends. With vLLM's
+`--shutdown-timeout N`, it then waits up to N seconds for in-flight requests
+before it exits. The 15 seconds are for the exit itself. Without
+`--shutdown-timeout`, the preStop sleep is the only drain, and it is what has
+to cover your longest generation.
+
+Example: `--shutdown-timeout 90` and the 45 s preStop the patch adds need at
+least 150 s. A grace of 120 is 30 s short: it cuts the last 15 s of the drain
+and leaves no time to exit.
+
+What `make workload-patch` does with it:
+
+- **No preStop hook on the engine.** The patch adds the hook and sets the grace
+  to the largest of the current value, `LLMSM_DRAIN_GRACE_SECONDS`, and
+  `LLMSM_DRAIN_SLEEP_SECONDS + --shutdown-timeout + 15`.
+- **A preStop hook already there.** Nothing is written. If the grace is shorter
+  than the hook's sleep plus `--shutdown-timeout` plus 15, the console says so
+  (`Scale-down can still cut in-flight requests ... Set
+  terminationGracePeriodSeconds to at least N`), and the workload is left out of
+  the all-clear. Fix the grace where the pod spec is owned.
+- **LeaderWorkerSet and DisaggregatedSet.** The same check runs on the leader
+  and the worker template of a LeaderWorkerSet, and on the leader template of
+  each role of a set (its worker template when it has no leader). It is
+  reported, never written. `make scaledobjects-plan` checks the leader template
+  only.
+
+How the numbers are read:
+
+- `--shutdown-timeout N`, `--shutdown-timeout=N` and `--shutdown_timeout`, in
+  `args` or inside a `sh -c` command. The last one wins, as in vLLM. Not set
+  means 0.
+- The hook's sleep: a `sleep` action's `seconds`, or the sum of every
+  `sleep N` (`N`, `Ns` or `Nm`) in an `exec` hook. A sleep inside a loop counts
+  once; sleeps on two branches of an `if`, or one sent to the background, both
+  count.
+- A value it cannot read (an `httpGet` hook, `sleep infinity`, a timeout in a
+  variable, more than nine digits) counts as 0 s, and the message says so. Read the numbers in the
+  message against your hook before you raise the grace.
 
 `make scaledobjects-plan` reports a missing hook per workload, because
 registering a ScaledObject is when scale-down becomes possible:
@@ -1509,8 +1675,9 @@ kubectl get deploy -n <ns> -o custom-columns=NAME:.metadata.name,GRACE:.spec.tem
 A null grace period or preStop in either output means the key path is wrong for
 your chart version. Last check: `make scaledobjects-plan` drops the
 `Scale-down will cut in-flight requests` note once the engine container has a
-preStop hook. It ignores the grace period (`so_drain_note` in
-`deploy/lib/scaledobject.sh`), so check that with the `kubectl` line above.
+preStop hook. It then checks the grace period only against the hook's sleep
+and `--shutdown-timeout` ([above](#sizing-the-grace-period)), not against your
+longest generation, so check that with the `kubectl` line above.
 
 ### On a LeaderWorkerSet
 
@@ -1765,7 +1932,7 @@ objects. Read what it prints first:
 | `LLMSM_WORKLOAD_PATCH_APPLY` | `false` | `true` also applies the drain half to the live workloads |
 | `LLMSM_WEIGHTS_NODE_AFFINITY` | `preferred` | the weights gate's node affinity: `preferred`, `required` or `none` ([Gate replicas on the weights](#gate-replicas-on-the-weights)) |
 | `LLMSM_WEIGHTS_WAIT_TIMEOUT` | `3600` | seconds the `wait-for-weights` init container waits for the node's copy before it exits 1 |
-| `LLMSM_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered |
+| `LLMSM_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered, and it is raised to the preStop sleep plus `--shutdown-timeout` plus 15 when that is longer ([Sizing the grace period](#sizing-the-grace-period)) |
 | `LLMSM_DRAIN_SLEEP_SECONDS` | `45` | the preStop sleep — the drain window itself |
 | `LLMSM_MODEL_PVC_NAME` | discovered, else `model-pvc` | the claim the emitted weights volume names. Setting it wins over discovery |
 | `LLMSM_MODEL_VOLUME_NAME` | `model-storage` | the volume name in the emitted patch |

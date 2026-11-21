@@ -30,7 +30,9 @@ import (
 //
 // The count is in scale-target units. On a LeaderWorkerSet a replica is a
 // group, so pods are matched by the set's name label and counted by distinct
-// group index: a group that still has any pod scheduled still holds GPUs. That
+// group (lwsGroupKey: child LeaderWorkerSet and group index, so a
+// DisaggregatedSet rollout's two groups 0 are two): a group that still has any
+// pod scheduled still holds GPUs. That
 // over-counts a half-drained group, which is the safe direction -- it delays a
 // release, never invents one.
 //
@@ -62,11 +64,11 @@ func heldReplicaCount(ctx context.Context, k8sClient client.Client, namespace st
 			held++
 			continue
 		}
-		idx, ok := p.Labels[lwsv1.GroupIndexLabelKey]
+		key, ok := lwsGroupKey(p)
 		if !ok {
 			continue
 		}
-		groups[idx]++
+		groups[key]++
 	}
 	if !group {
 		return held, held, true
@@ -93,7 +95,8 @@ func PlacedReplicas(ctx context.Context, k8sClient client.Client, namespace stri
 
 // PlacedGroups is PlacedReplicas and, on a LeaderWorkerSet, each group some
 // but not all of whose pods hold a node or are nominated for one, in group
-// index order: a node one of its pods holds, and each such pod's GPUs. The
+// index order (compareGroupKey; groups are told apart by lwsGroupKey): a node
+// one of its pods holds, and each such pod's GPUs. The
 // in-flight ledger holds the rest of such a group's pods in that node's
 // topology domain (WN2): a leader bound before its workers exist leaves the
 // group unplaced, and holding the whole group anew found no hole for it.
@@ -117,14 +120,14 @@ func PlacedGroups(ctx context.Context, k8sClient client.Client, namespace string
 			placed++
 			continue
 		}
-		idx, ok := p.Labels[lwsv1.GroupIndexLabelKey]
+		key, ok := lwsGroupKey(p)
 		if !ok {
 			continue
 		}
-		g := groups[idx]
+		g := groups[key]
 		if g == nil {
 			g = &domain.PartialReplica{}
-			groups[idx] = g
+			groups[key] = g
 		}
 		if g.Node == "" {
 			g.Node = p.Spec.NodeName
@@ -138,14 +141,51 @@ func PlacedGroups(ctx context.Context, k8sClient client.Client, namespace string
 		return placed, nil, true
 	}
 	size := max(int(scaleTarget.GetGroupSize()), 1)
-	for _, idx := range slices.SortedFunc(maps.Keys(groups), compareGroupIndex) {
-		if g := groups[idx]; len(g.PlacedGPUs) >= size {
+	for _, key := range slices.SortedFunc(maps.Keys(groups), compareGroupKey) {
+		if g := groups[key]; len(g.PlacedGPUs) >= size {
 			placed++
 		} else {
 			partial = append(partial, *g)
 		}
 	}
 	return placed, partial, true
+}
+
+// lwsGroupKey is the key of the LeaderWorkerSet group pod p belongs to: its
+// group index, prefixed with its LeaderWorkerSet's name when it carries one.
+// A DisaggregatedSet role spans one child LeaderWorkerSet per revision, each
+// with its own group 0: keyed by group index alone, two revisions' groups 0
+// read as one group for as long as a rollout runs. ok is false for a pod with
+// no group index.
+func lwsGroupKey(p *corev1.Pod) (key string, ok bool) {
+	idx, ok := p.Labels[lwsv1.GroupIndexLabelKey]
+	if !ok {
+		return "", false
+	}
+	if set := p.Labels[lwsv1.SetNameLabelKey]; set != "" {
+		return set + "/" + idx, true
+	}
+	return idx, true
+}
+
+// compareGroupKey orders lwsGroupKey keys by group index (compareGroupIndex),
+// then by LeaderWorkerSet name.
+func compareGroupKey(a, b string) int {
+	setA, idxA := splitGroupKey(a)
+	setB, idxB := splitGroupKey(b)
+	if c := compareGroupIndex(idxA, idxB); c != 0 {
+		return c
+	}
+	return strings.Compare(setA, setB)
+}
+
+// splitGroupKey splits an lwsGroupKey key into its LeaderWorkerSet name, ""
+// when it has none, and its group index. A LeaderWorkerSet name holds no "/".
+func splitGroupKey(key string) (set, idx string) {
+	if set, idx, ok := strings.Cut(key, "/"); ok {
+		return set, idx
+	}
+	return "", key
 }
 
 // compareGroupIndex orders LeaderWorkerSet group indexes numerically, those

@@ -102,6 +102,23 @@ func keepBelowBand(xs []Observation, x Observation) []Observation {
 	return xs
 }
 
+// BelowBandPoint is the floor of readings, as BelowBandFloor reads it from
+// their ITLs, with the fill it was read at; ok is false with fewer than
+// BelowBandMinReadings. Every reading is taken as below the band: the
+// capacity planner keeps only those (whatif.BelowBand.LeastITL).
+func BelowBandPoint(readings []Observation) (Observation, bool) {
+	return belowBandPoint(readings, math.Inf(1))
+}
+
+// FloorIntercept is the intercept B of the line through floor and the mean
+// point of readings, the rule the tracker pins B by under
+// Admission.BaselineFromFloor (floorIntercept), for the capacity planner to
+// state B from the floor where the line's own is the default. ok is false
+// where floorIntercept refuses.
+func FloorIntercept(readings []Observation, floor Observation) (float64, bool) {
+	return floorIntercept(readings, floor)
+}
+
 // floorIntercept is the B that puts the pinned fit over pinned through the
 // floor reading at its own fill: the pinned fit's line passes through the
 // mean point (kbar, ITLbar) of its readings (pinnedSlope), so the line

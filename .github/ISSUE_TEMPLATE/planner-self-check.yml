@@ -1,0 +1,25 @@
+name: Capacity planner self-check
+description: "The capacity planner's self-check found its model and a recording disagreeing. The planner fills the diagnostics; read them before you submit."
+title: "planner self-check: "
+labels: ["needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The planner prefilled the diagnostics below. They hold no model, namespace, variant or pod name, no recording and no request rate. Read them, and remove anything you do not want to share, before you submit.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Filled by the planner's self-check.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What were you sizing?
+      description: Optional. The question you asked the planner, and anything about the fleet you are happy to share.
+    validations:
+      required: false

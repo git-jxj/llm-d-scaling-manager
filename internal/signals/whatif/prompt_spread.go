@@ -181,15 +181,29 @@ const promptMeanTolerance = 1e-9
 // is not the histogram's own mean: nothing queries the histogram's _sum or
 // _count, and the two rates can cover different requests.
 //
-// The second moment uses each bucket's upper bound, so when mean and histogram
-// count the same requests cv reads at or above the truth: that costs replicas,
-// not safety. They do not always: a pod in a rollout may carry no histogram, and
-// the requests finishing in a window are not the ones that prefilled in it. So
-// a mean above the buckets' upper-bound mean proves two populations, and the
-// reading is refused as Assumed, not read as cv 0 or close to it. That bound
-// also covers cv just above 0: past the check, cv is at least the buckets' own
-// spread about their upper-bound mean. A mean inside the bound can still be
-// another population's, which no histogram can show.
+// The second moment is the largest any prompts in the buckets can have at
+// mean, so when mean and histogram count the same requests cv reads at or
+// above the truth: that costs replicas, not safety. Within a bucket (l, u] the
+// second moment at a given bucket mean is largest with the bucket's mass on
+// its two edges, and each token of mean moved into the bucket adds l + u to
+// it. So the mass starts on the lower edges and the mean is raised to mean in
+// the top buckets first (promptSecondMoment). Every 8k prompt in a (5000,
+// 10000] bucket at a mean of 8000 read cv 0.31; the bucket's upper bound
+// alone read 0.75, and the truth on the staircase was about 0.06. The bound
+// is no tighter than that: those buckets also hold prompts split between
+// 5000 and 10000 at that mean.
+//
+// The mean and the histogram do not always count the same requests: a pod in
+// a rollout may carry no histogram, and the requests finishing in a window are
+// not the ones that prefilled in it. So a mean above the buckets' upper-bound
+// mean proves two populations, and the reading is refused as Assumed, not
+// read as cv 0 or close to it. A mean below their lower-bound mean proves the
+// same, and reads every request at its bucket's upper bound, high, the safe
+// side. One population's mean is never on the lower edges, but a mean read a
+// little low can fall under them: constant 5050-token prompts read cv 0.10 at
+// their mean and 1.73 at a mean 1% low; every request at its upper bound read
+// them at 1.71 either way. A mean inside the bounds can still be another
+// population's, which no histogram can show.
 //
 // Mass past the last finite bound has no upper bound, so cv is the top and
 // Clamped, as is a cv above it. With no histogram, no request in it, or no mean
@@ -207,23 +221,60 @@ func ReadPromptSpread(pooled map[float64]float64, mean float64) PromptSpread {
 		}
 	}
 	slices.Sort(bounds)
-	var first, second, below float64
+	buckets := make([]promptBucket, 0, len(bounds))
+	var below, lower float64
 	for _, u := range bounds {
 		// Rates over a window can dip between bounds; a dip is no mass.
-		n := max(pooled[u]-below, 0)
-		first += n * u
-		second += n * u * u
+		buckets = append(buckets, promptBucket{lo: lower, hi: u, n: max(pooled[u]-below, 0)})
 		below = max(below, pooled[u])
+		lower = u
 	}
 	if total > below {
 		return PromptSpread{CV: PromptCVStop, Clamped: true}
 	}
-	if mean > first/total*(1+promptMeanTolerance) {
+	// The buckets count below requests: the +Inf rate can read under the
+	// last bound's, each series' rate extrapolated on its own. The mean is
+	// spread over the requests the buckets hold, or the mass left on the
+	// lower edges would pull the reading under what they allow.
+	second, ok := promptSecondMoment(buckets, mean*below)
+	if !ok {
 		return assumed
 	}
-	cv := math.Sqrt(max(second/total/(mean*mean)-1, 0))
+	cv := math.Sqrt(max(second/below/(mean*mean)-1, 0))
 	if !Finite(cv) || cv > PromptCVStop {
 		return PromptSpread{CV: PromptCVStop, Clamped: true}
 	}
 	return PromptSpread{CV: cv}
+}
+
+// promptBucket is one histogram bucket, (lo, hi], and the requests in it.
+type promptBucket struct{ lo, hi, n float64 }
+
+// promptSecondMoment is the largest sum of squared prompts the buckets can
+// hold at a sum of prompts tokens: the mass on the lower edges, then moved up
+// to the upper edges top bucket first, until the sum is tokens. False is a sum
+// above the upper edges' (two populations). A sum below the lower edges' is
+// read at the upper edges, the largest second moment the buckets hold at all.
+func promptSecondMoment(buckets []promptBucket, tokens float64) (float64, bool) {
+	var lower, upper, second, upperSecond float64
+	for _, b := range buckets {
+		lower += b.n * b.lo
+		upper += b.n * b.hi
+		second += b.n * b.lo * b.lo
+		upperSecond += b.n * b.hi * b.hi
+	}
+	if tokens > upper*(1+promptMeanTolerance) {
+		return 0, false
+	}
+	if tokens < lower {
+		return upperSecond, true
+	}
+	need := tokens - lower
+	for i := len(buckets) - 1; i >= 0 && need > 0; i-- {
+		b := buckets[i]
+		moved := min(need, b.n*(b.hi-b.lo))
+		second += moved * (b.lo + b.hi)
+		need -= moved
+	}
+	return second, true
 }

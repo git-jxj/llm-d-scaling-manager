@@ -52,6 +52,13 @@ input[type=number] { width: 80px; font-variant-numeric: tabular-nums; }
 .chip.assumed::before, .chip.flagged::before { content: "\26A0"; color: var(--warning); }
 .chip.refused::before { content: "\2715"; color: var(--critical); }
 .chip b { color: var(--text-primary); font-weight: 600; }
+/* The self-check's badge and its lines, under the source. */
+.chip.sc-ok::before { content: "\25CF"; color: var(--good); }
+.chip.sc-weak::before, .chip.sc-notRun::before { content: "\26A0"; color: var(--warning); }
+.chip.sc-inconsistent::before { content: "\2715"; color: var(--critical); }
+.selfcheckbox { font-size: 13px; margin: 4px 0 8px; }
+.selfcheckbox p { margin: 2px 0; }
+.selfcheckbox .scwhy, .selfcheckbox .sctrust { color: var(--text-secondary); }
 .banner { border: 1px solid var(--warning); border-left-width: 4px; border-radius: 8px; padding: 8px 12px; font-size: 13px;
   margin-bottom: 8px; background: var(--surface-1); }
 .banner::before { content: "\26A0  "; color: var(--warning); }
@@ -217,6 +224,21 @@ svg .dunder, .legend .dunder { fill: var(--critical); fill-opacity: 0.12; stroke
 svg .dunmet, .legend .dunmet { stroke: none; }
 svg .hatchl { stroke: var(--muted); stroke-width: 1.5; }
 svg .pnote { fill: var(--text-secondary); font-size: 12px; }
+/* The planner checked: the p90 band a wash of its hue, steps not judged
+   greyed. */
+#btchart { width: 100%; height: auto; display: block; margin-top: 8px; }
+#btout.stale { opacity: 0.45; transition: opacity 0.2s; }
+svg .btband, .legend .btband { fill: var(--series-2); fill-opacity: 0.14; stroke: none; }
+svg .btgrey, .legend .btgrey { fill: var(--muted); fill-opacity: 0.16; stroke: none; }
+svg .btclip { fill: var(--text-secondary); font-size: 10px; }
+svg .dot { stroke: none; }
+svg .dot.hollow, .legend .dot.hollow { fill-opacity: 0; stroke-width: 1.5; }
+svg .dot.hollow.c-0, .legend .dot.hollow.c-0 { stroke: var(--series-1); }
+svg .btsat, .legend .btsat { fill: var(--critical); fill-opacity: 0.55; stroke: none; }
+@media (prefers-color-scheme: dark) {
+  svg .btband, .legend .btband { fill-opacity: 0.28; }
+  svg .btgrey, .legend .btgrey { fill-opacity: 0.3; }
+}
 .c-rate { stroke: var(--series-1); fill: var(--series-1); }
 .c-need { stroke: var(--series-2); fill: var(--series-2); }
 .c-had { stroke: var(--muted); fill: var(--muted); }

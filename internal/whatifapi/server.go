@@ -58,6 +58,12 @@ type Config struct {
 	// WhatifSchema names the CLI schema the answer, refusal and flag shapes
 	// follow ("schema-v3").
 	WhatifSchema string
+	// PlannerVersion is the planner's release, stamped on a prediction.
+	PlannerVersion string
+	// SelfCheck is whether inputs self-check when the request does not say
+	// (InputsRequest.SelfCheck): the CLI's serve sets it unless
+	// --no-self-check.
+	SelfCheck bool
 	// MaxPlans and MaxInputs are how many plans and how many inputs are
 	// priced at once; past them a request is 503 with Retry-After. 0 is the
 	// default: GOMAXPROCS plans, DefaultMaxInputs inputs.
@@ -113,11 +119,13 @@ func (e BudgetError) Error() string {
 // inputsId, a response per scenarioId and per sizeId, a curve set per fleet,
 // and the limits per fleet and targets.
 type Server struct {
-	resolver     Resolver
-	whatifSchema string
-	inputs       *lru[*inputsEntry]
-	plans        *lru[[]byte]
-	sizes        *lru[[]byte]
+	resolver       Resolver
+	whatifSchema   string
+	plannerVersion string
+	selfCheck      bool
+	inputs         *lru[*inputsEntry]
+	plans          *lru[[]byte]
+	sizes          *lru[[]byte]
 	// searches is each size's search, by sizeId, kept before its answer's
 	// plan is priced: a size whose plan failed is not searched again.
 	searches *lru[*SizeResponse]
@@ -159,6 +167,10 @@ type inputsEntry struct {
 	// series is the source's cycles, for a day plan; nil where the
 	// Resolver gave none.
 	series []SeriesSample
+	// latency and config are the source's for a backtest (Resolved.Latency,
+	// Resolved.Config).
+	latency []LatencySample
+	config  RunConfig
 	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
 	bytes int
 }
@@ -187,7 +199,7 @@ func New(c Config) *Server {
 	if uploadMax <= 0 {
 		uploadMax = DefaultUploadBytes
 	}
-	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, inputs: newWeighedLRU(defaultInputs, inputsBytes, entryBytes),
+	return &Server{resolver: c.Resolver, whatifSchema: c.WhatifSchema, plannerVersion: c.PlannerVersion, selfCheck: c.SelfCheck, inputs: newWeighedLRU(defaultInputs, inputsBytes, entryBytes),
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
@@ -216,6 +228,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/size", s.handleSize)
 	mux.HandleFunc("POST /v1/report", s.handleReport)
 	mux.HandleFunc("POST /v1/dayplan", s.handleDayPlan)
+	mux.HandleFunc("POST /v1/backtest", s.handleBacktest)
+	mux.HandleFunc("POST /v1/predict", s.handlePredict)
+	mux.HandleFunc("POST /v1/compare", s.handleCompare)
 	mux.HandleFunc("GET /v1/sources", s.handleSources)
 	mux.HandleFunc("POST "+UploadPath, s.handleUpload)
 	mux.HandleFunc("GET /{$}", servePage)
@@ -268,6 +283,11 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { <-s.inputSlots }()
+	check := s.selfCheck
+	if req.SelfCheck != nil {
+		check = *req.SelfCheck
+	}
+	req.SelfCheck = &check
 	res, err := s.resolver.Resolve(r.Context(), req)
 	if err != nil {
 		writeErr(w, err)
@@ -276,10 +296,18 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	doc := res.Inputs
 	doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 	doc.InputsID = contentID("inputs", res.Content)
+	if check && (doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
+		// The self-check is bounded as a plan is; out of time it is not run,
+		// and the inputs are still answered.
+		sctx, cancel := context.WithTimeoutCause(r.Context(), s.planBudget, errPlanBudget)
+		doc.SelfCheck = SelfCheckOf(sctx, res, SelfCheckInfo{PlannerVersion: s.plannerVersion})
+		cancel()
+	}
 	// The entry kept is the first caller's, but each caller is answered with
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.
-	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, bytes: res.Bytes})
+	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
+		config: res.Config, bytes: res.Bytes})
 	body, err := marshal(doc)
 	if err != nil {
 		writeErr(w, err)
@@ -405,11 +433,16 @@ func LoopbackOnly(next http.Handler) http.Handler {
 // is read) is 415; an unknown field, a second value, or a body past maxBody
 // is a 400.
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	return readJSONUpTo(w, r, v, maxBody)
+}
+
+// readJSONUpTo is readJSON with a body of at most limit bytes.
+func readJSONUpTo(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
 		writeError(w, http.StatusUnsupportedMediaType, fmt.Errorf("content type %q, want application/json", r.Header.Get("Content-Type")))
 		return false
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("request body: %w", err))
@@ -447,6 +480,8 @@ func writeBody(w http.ResponseWriter, body []byte) {
 // for anything else.
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
+	case errors.As(err, new(ConfigMismatchError)):
+		writeErrorReason(w, http.StatusBadRequest, err, ReasonConfigMismatch)
 	case IsInputError(err):
 		writeError(w, http.StatusBadRequest, err)
 	case errors.Is(err, errUnknownInputs):

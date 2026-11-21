@@ -103,6 +103,16 @@ spec:
         summary: "llm-d-scaling-manager scaling thrashing detected for {{ $labels.exported_namespace }}/{{ $labels.variant_name }}"
         description: "Variant {{ $labels.exported_namespace }}/{{ $labels.variant_name }} scaling at {{ $value | printf \"%.3f\" }}/sec (>2/min threshold) sustained for 10+ minutes, indicating possible thrashing. Review scaling thresholds and consider adjusting stabilization window or thresholds."
 
+    - alert: LLMSMReplicasNotArriving
+      expr: max by (exported_namespace, variant_name, role) (llmsm_replicas_not_arriving) > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        runbook_url: "https://github.com/llm-d-incubation/llm-d-scaling-manager/blob/main/docs/reference/troubleshooting.md#replicas-asked-for-never-arrive"
+        summary: "{{ $value }} replica(s) of {{ $labels.exported_namespace }}/{{ $labels.variant_name }} ({{ $labels.role }}) asked for and not Ready"
+        description: "The variant's scale target asks for more replicas than are Ready, and none has arrived for longer than twice its start time (at least 5 minutes), and that has lasted 5 more minutes. Grouped without the reason label, so a cause that changes does not restart the alert. The reason label of llmsm_replicas_not_arriving is read from the pods: admission-rejected (the kubelet refuses the pod on a node, usually a device it advertises but cannot allocate), unschedulable, scheduling-gated, image-pull, crash-loop, container-config, failed, not-ready, starting, no-pods or unknown. The ReplicasNotArriving event on the ScaledObject and replicasNotArriving in the scaling-manager-controller-status ConfigMap name the node and the pods' own message. Supply counts only the Ready ones. A bad node is for the platform to fix (device plugin, GPU operator, node remediation): cordon it to stop new pods landing there."
+
     - alert: LLMSMModelWillNotScaleToZero
       expr: llmsm_model_scaling_blocked{reason=~"variant-floor|policy-forbids-zero"} == 1
       for: 15m

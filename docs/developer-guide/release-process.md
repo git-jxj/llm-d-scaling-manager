@@ -47,8 +47,9 @@ instead.
    `ghcr.io/<repository owner>/llm-d-scaling-manager/capacity-planner:<tag>`
    (`Dockerfile.capacity-planner`, entry point the `capacity-planner`
    binary), and the release files `capacity-planner-<tag>-<os>-<arch>` for
-   linux and darwin, amd64 and arm64, in `SHA256SUMS` and signed like the
-   others. The planner replays recordings with the controller's learners, so
+   linux and darwin, amd64 and arm64, and
+   `capacity-planner-<tag>-windows-amd64.exe`, in `SHA256SUMS` and signed
+   like the others. The planner replays recordings with the controller's learners, so
    it is never released apart from the controller
    ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)).
    `config/capacity-planner` (the planner in a cluster) names the image by
@@ -60,6 +61,17 @@ instead.
    `config/warmpool` and `deploy/warmpool.sh` name it by tag, like the
    controller's `newTag`: `:main` between releases (published by
    `ci-main-image.yaml`), the release's tag on a release commit.
+8. **The warm-pool launcher image**, under the same tag:
+   `ghcr.io/<repository owner>/llm-d-scaling-manager/warmpool-launcher:<tag>`
+   (`Dockerfile.warmpool-launcher`: the launcher in `warmpool/supervisor/` on
+   the vLLM base). Jobs `release-warmpool-launcher-build` (the reusable
+   `ci-warmpool-launcher.yaml`, one leg per platform on its own runner) and
+   `release-warmpool-launcher`, which joins them into one index and signs it.
+   Nothing installs it by default yet, so the release files do not wait for it
+   ([warmpool/README.md](../../warmpool/README.md#the-image-built-from-it)).
+   PRs that touch the launcher build both platforms with the same workflow,
+   without pushing; before the first release that carries these jobs,
+   dispatch it with **push** ([Prerequisites](#prerequisites)).
 
 A tag is released only from `main`, or from its own line's
 `release-MAJOR.MINOR` branch (a `v0.10.2` from `release-0.10`) once that line
@@ -75,6 +87,10 @@ the tagged commit equal the tag. See [Patch releases](#patch-releases).
   access ([first release](#the-first-release-to-a-new-package)).
 - [ ] The commit you will tag passed its PR checks, including the e2e runs. The
   release reruns the PR checks, not the e2e suites.
+- [ ] Before the first release that carries the warm-pool launcher jobs:
+  `ci-warmpool-launcher.yaml` dispatched on `main` with **push**
+  checked, and both legs green. The PR job builds both platforms but never
+  pushes, so this is the first push by digest.
 
 The workflow checks where a tag is, not who reviewed it. Review on `main` and
 `release-*` is enforced only by the repository's branch rules, if set.
@@ -156,8 +172,9 @@ draft release for the tag existed before the run, it attached the files to
 that one instead. A release that is already **published** is never changed: a
 run whose files differ from the attached ones fails, and one whose files are
 identical uploads nothing. In **Releases**, open the draft, check that the
-files are there (each `.yaml`, `scaling-manager-tools-<tag>.tar.gz`, the four
-`capacity-planner-<tag>-<os>-<arch>` binaries, `SHA256SUMS`, and a
+files are there (each `.yaml`, `scaling-manager-tools-<tag>.tar.gz`, the five
+`capacity-planner-<tag>-<os>-<arch>` binaries (the windows one `.exe`),
+`SHA256SUMS`, and a
 `.sigstore.json` for each), paste the release notes, and publish.
 
 Before publishing, check the tools image too: the `release-tools` job
@@ -317,6 +334,11 @@ The capacity planner image is a third, `llm-d-scaling-manager/capacity-planner`,
 created by the first release that carries the `release-capacity-planner` job:
 the same two settings apply.
 
+The warm-pool launcher image is a fifth, `llm-d-scaling-manager/warmpool-launcher`.
+The dispatch of `ci-warmpool-launcher.yaml` with **push** in
+[Prerequisites](#prerequisites) creates it, private. Right after that
+dispatch, make it Public and give this repository **Write**, as above.
+
 The warm-pool proxy image is a fourth, `llm-d-scaling-manager/warmpool-proxy`.
 It is created by the first push to `main` after `ci-main-image.yaml` gained
 the proxy build, or by the first release with the `release-warmpool-proxy`
@@ -336,6 +358,9 @@ its image: `docker run --rm ghcr.io/sigstore/cosign/cosign:v3.0.6 verify ...`.
 
 Record the index digest in the release notes, so users can deploy by digest:
 `docker buildx imagetools inspect "$IMAGE:vX.Y.Z"` prints it as `Digest:`.
+Do the same for the warm-pool launcher image (`$IMAGE/warmpool-launcher`):
+the `release-warmpool-launcher` job summary prints its digest and its
+`cosign verify` command, which takes the same identity as below.
 
 ```bash
 IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager

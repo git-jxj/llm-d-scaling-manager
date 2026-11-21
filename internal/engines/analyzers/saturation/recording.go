@@ -128,8 +128,11 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchITLAggregatedSizes, SwitchPrefillCapacityObserve,
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
-// SwitchPrefillAEngineTiming, SwitchITLAdaptiveBandFloor,
+// SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
+// SwitchPrefillFBusyMinutes, SwitchITLAdaptiveBandFloor,
+// SwitchITLHoldSteadySlope,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
+// SwitchK2BatchAtITLTarget,
 // SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
 // SwitchPrefillBoundHeldConfidence, SwitchThroughputFloorRaisesVariants,
 // SwitchQueuePricedAsDrain, SwitchFloorTrustReadsCompletions,
@@ -200,6 +203,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// Learner PR 5d: counted Pods survive a restart (start_est.go).
 		SwitchStartCountedPodsRestored: &a.startCountsRestored,
 
+		// llm-d-incubation/llm-d-scaling-manager#220: a start that overlapped
+		// a rollout is not folded (start_est.go).
+		SwitchStartHeldThroughRollout: &a.startHoldsRollout,
+
 		// ev-shindin/llm-scaling-manager#276: the spread of output lengths in the KV per request.
 		SwitchKVPerRequestOutputDispersion: &a.kvOutputDispersion,
 
@@ -250,16 +257,31 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// Off from the constructor.
 		SwitchPrefillALowLoadPerRank: &a.prefillALowLoadPerRank,
 		SwitchPrefillAEngineTiming:   &a.prefillAEngineTiming,
+		// The planner's V_P queue: the capacity part of the waiting count
+		// only, where vLLM publishes it (prefill.queuedForCapacity). Off
+		// from the constructor.
+		SwitchPrefillQueueByCapacity: &a.prefillQueueByCapacity,
+		// The planner's f: the median of the busiest minutes
+		// (prefill.Cycle.FBusyMinutes). Off from the constructor.
+		SwitchPrefillFBusyMinutes: &a.prefillFBusyMinutes,
 		// The planner's ITL band floor on a low-fill fleet
 		// (itl_band_floor.go). Off from the constructor.
 		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,
+		// The planner's held ITL slope: an A fitted on steady readings is
+		// held, not refitted on every reading (itl.Admission.HoldsSteadySlope).
+		// Off from the constructor.
+		SwitchITLHoldSteadySlope: &a.itlHoldSteadySlope,
 		// Issue llm-d-incubation/llm-d-scaling-manager#201: a decode's
 		// derived k2 charges its budget the prompt it computes
 		// (decode_budget.go), and a landed request is a decode's backlog
 		// only where the replica can be at a bound (pd_decode_queue.go).
-		// Both off from the constructor.
+		// Both on from the constructor since v0.12.2.
 		SwitchK2DecodeBudgetAtComputedPrompt: &a.k2DecodeBudget,
 		SwitchDecodeLandedNeedsABound:        &a.decodeLandedNeedsBound,
+		// Issue llm-d-incubation/llm-d-scaling-manager#258: the derived k2's
+		// batch held where the variant's ITL line reaches the policy's TPOT
+		// objective (k2_itl_bound.go). On from the constructor.
+		SwitchK2BatchAtITLTarget: &a.k2AtITLTarget,
 		// The ITL line's B pinned at the floor read below the band while
 		// unlearned (itl_baseline_floor.go). Off from the constructor.
 		SwitchITLBaselineFromFloor: &a.itlBaselineFromFloor,

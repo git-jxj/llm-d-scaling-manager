@@ -3,12 +3,14 @@ package variantmeta
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
@@ -51,6 +53,12 @@ func routeDSet() *unstructured.Unstructured {
 // routeDSetRole is the scale target of role, through its role scaler.
 func routeDSetRole(t *testing.T, role string, replicas int64) scaletarget.ScaleTargetAccessor {
 	t.Helper()
+	return routeDSetRoleOf(t, routeDSet(), role, replicas)
+}
+
+// routeDSetRoleOf is the scale target of role of set, through its role scaler.
+func routeDSetRoleOf(t *testing.T, set *unstructured.Unstructured, role string, replicas int64) scaletarget.ScaleTargetAccessor {
+	t.Helper()
 	scaler := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": constants.DisaggregatedSetAPIVersion,
 		"kind":       constants.DisaggregatedSetRoleScalerKind,
@@ -64,7 +72,7 @@ func routeDSetRole(t *testing.T, role string, replicas int64) scaletarget.ScaleT
 		"spec":   map[string]any{"replicas": replicas},
 		"status": map[string]any{"replicas": replicas},
 	}}
-	acc, err := scaletarget.NewDisaggregatedSetRoleAccessor(scaler, routeDSet())
+	acc, err := scaletarget.NewDisaggregatedSetRoleAccessor(scaler, set)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +151,120 @@ func TestRouteDisaggregatedSetRoles(t *testing.T) {
 			m := metas[0]
 			if m.HeldUnrouted != tc.decodeHeld || len(m.UnroutedPods) != tc.decodeUnroutedPods {
 				t.Fatalf("decode held=%t pods=%v, want held=%t and %d leader Pod(s)", m.HeldUnrouted, m.UnroutedPods, tc.decodeHeld, tc.decodeUnroutedPods)
+			}
+		})
+	}
+}
+
+// releaseLabel is a Pod label the pool selector requires besides the role's.
+// The template keeps it "true"; a rollout or drain tool sets it "false" on one
+// group's Pods, which keeps that group Ready and out of traffic.
+const releaseLabel = "example.com/production-released"
+
+// releasedDSet is routeDSet with releaseLabel "true" on every role's template.
+func releasedDSet() *unstructured.Unstructured {
+	set := routeDSet()
+	roles, _, _ := unstructured.NestedSlice(set.Object, "spec", "roles")
+	for _, r := range roles {
+		path := []string{"spec", "leaderWorkerTemplate", "workerTemplate", "metadata", "labels"}
+		labels, _, _ := unstructured.NestedStringMap(r.(map[string]any), path...)
+		labels[releaseLabel] = "true"
+		if err := unstructured.SetNestedStringMap(r.(map[string]any), labels, path...); err != nil {
+			panic(err)
+		}
+	}
+	if err := unstructured.SetNestedSlice(set.Object, roles, "spec", "roles"); err != nil {
+		panic(err)
+	}
+	return set
+}
+
+// releasedDSetPod is the Pod at the given worker index in the given decode
+// group of the child LeaderWorkerSet lws (one per revision), Ready, with
+// releaseLabel set to released.
+func releasedDSetPod(lws, group, worker, released string) *corev1.Pod {
+	p := routeDSetPod("decode", worker)
+	p.Name = lws + "-" + group + "-" + worker
+	p.Labels[lwsv1.SetNameLabelKey] = lws
+	p.Labels[lwsv1.GroupIndexLabelKey] = group
+	p.Labels[releaseLabel] = released
+	return p
+}
+
+// releasedGroup is both Pods of one decode group, leader and worker, with
+// releaseLabel released.
+func releasedGroup(lws, group, released string) []*corev1.Pod {
+	return []*corev1.Pod{releasedDSetPod(lws, group, "0", released), releasedDSetPod(lws, group, "1", released)}
+}
+
+// A DisaggregatedSet group taken out of the pool by a release label is Ready
+// and serves nothing, so it is not supply: the pool selects the role's
+// template (the label is "true" there), so the role is selected and not held,
+// and each relabelled group is counted once, through its leader -- workers are
+// never counted, only named, so the group's row goes whichever Pod the
+// collector named it for. During a rollout two revisions each have a group 0; they are
+// told apart by their Pods, not by group index, so holding one revision's
+// group 0 out leaves the other's counted.
+func TestRouteDisaggregatedSetReleaseLabel(t *testing.T) {
+	pool := map[string]string{"llm-d.ai/role": "decode", releaseLabel: "true"}
+	for _, tc := range []struct {
+		name     string
+		replicas int64
+		groups   [][]*corev1.Pod
+		unrouted []string
+	}{
+		{name: "every group released", replicas: 2,
+			groups: [][]*corev1.Pod{releasedGroup("glm-decode-old", "0", "true"), releasedGroup("glm-decode-old", "1", "true")}},
+		{name: "group 1 held out", replicas: 2,
+			groups:   [][]*corev1.Pod{releasedGroup("glm-decode-old", "0", "true"), releasedGroup("glm-decode-old", "1", "false")},
+			unrouted: []string{"glm-decode-old-1-0"}},
+		{name: "only a worker relabelled: workers are not consulted", replicas: 2,
+			groups: [][]*corev1.Pod{releasedGroup("glm-decode-old", "0", "true"), {
+				releasedDSetPod("glm-decode-old", "1", "0", "true"), releasedDSetPod("glm-decode-old", "1", "1", "false")}}},
+		{name: "rollout: the new revision's group 0 held out, the old one released", replicas: 3,
+			groups: [][]*corev1.Pod{releasedGroup("glm-decode-old", "0", "true"), releasedGroup("glm-decode-old", "1", "true"),
+				releasedGroup("glm-decode-new", "0", "false")},
+			unrouted: []string{"glm-decode-new-0-0"}},
+		{name: "rollout: the old revision's group 0 drained out, the new one released", replicas: 3,
+			groups: [][]*corev1.Pod{releasedGroup("glm-decode-old", "0", "false"), releasedGroup("glm-decode-new", "0", "true"),
+				releasedGroup("glm-decode-new", "1", "true")},
+			unrouted: []string{"glm-decode-old-0-0"}},
+		{name: "rollout: both revisions' group 0 held out", replicas: 3,
+			groups: [][]*corev1.Pod{releasedGroup("glm-decode-old", "0", "false"), releasedGroup("glm-decode-old", "1", "true"),
+				releasedGroup("glm-decode-new", "0", "false")},
+			unrouted: []string{"glm-decode-new-0-0", "glm-decode-old-0-0"}},
+		{name: "every group held out: the role is still selected by its template", replicas: 2,
+			groups:   [][]*corev1.Pod{releasedGroup("glm-decode-old", "0", "false"), releasedGroup("glm-decode-old", "1", "false")},
+			unrouted: []string{"glm-decode-old-0-0", "glm-decode-old-1-0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			objs := make([]client.Object, 0, 2*len(tc.groups))
+			for _, g := range tc.groups {
+				for _, p := range g {
+					objs = append(objs, p)
+				}
+			}
+			c := heldClient(t, objs...)
+			targets := map[string]scaletarget.ScaleTargetAccessor{"ns/glm-decode": routeDSetRoleOf(t, releasedDSet(), "decode", tc.replicas)}
+			running := []llmdvariant.Variant{dsetVariant("decode")}
+			metas := Discover(context.Background(), running, targets, c, DeclaredOnly)
+			res := Route(context.Background(), metas, running, nil, targets, c, lister([]map[string]string{pool}, nil))
+			if len(res) != 1 || !res[0].Known || !res[0].Routed {
+				t.Fatalf("model routing %+v, want routed and known", res)
+			}
+			if !slices.Equal(res[0].Selected, []string{"v-decode"}) || len(res[0].Held) != 0 {
+				t.Fatalf("selected %v held %v, want the role selected by its template and not held", res[0].Selected, res[0].Held)
+			}
+			// tc.unrouted are the leaders (worker index 0); each group's
+			// worker (index 1) is named beside it.
+			named := make([]string, 0, 2*len(tc.unrouted))
+			for _, leader := range tc.unrouted {
+				named = append(named, leader, strings.TrimSuffix(leader, "-0")+"-1")
+			}
+			slices.Sort(named)
+			want := routeWant{unrouted: len(tc.unrouted), ready: len(tc.unrouted), pods: named, known: true}
+			if got := gotRoute(metas[0]); !routeEqual(got, want) {
+				t.Fatalf("decode routing %+v, want %+v", got, want)
 			}
 		})
 	}

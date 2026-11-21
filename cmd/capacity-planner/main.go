@@ -30,6 +30,15 @@
 //	                                 [--listen 127.0.0.1:8080] [--auth none|kubernetes --tls-cert-file F --tls-key-file F [--token-audiences A,...]]
 //	                                 [--listen-all-in-container (in a container: --listen 0.0.0.0:PORT, no auth)]
 //	                                 [--allow-upload [--upload-max-size 256Mi]]
+//	capacity-planner backtest        (--recording FILE [--split 60% | --fit-until T] | --fit FILE --test FILE)
+//	                                 [--step 5m] [--settle 2m] [--ttft-target 500ms@p90] [--arrival-cv2 C]
+//	                                 [--measured auto|router|engine] [--assume-vp V] [--assume-a D] [--allow-config-mismatch] [-o json]
+//	capacity-planner strip-latency   -in FILE -o FILE
+//	capacity-planner predict         --fit FILE --window FILE -o prediction.json [--csv FILE] [--step 5m] [--settle 2m]
+//	                                 [--measure-window 5m] [--model M] [--variant V] [--prefill-variant V]
+//	                                 [--arrival-cv2 C] [--assume-vp V] [--assume-a D] [--allow-config-mismatch]
+//	capacity-planner compare         --prediction FILE --measured FILE [--ttft-target 500ms@p90] [--measured-by auto|router|engine]
+//	                                 [--model M] [--variant V] [--prefill-variant V] [-o json]
 //	capacity-planner version         (the release and commit; the controller of the recordings is released under the same tag)
 //
 // capture writes the window's cycle inputs (internal/whatifsource);
@@ -50,6 +59,15 @@
 // there, the knees, the SLO against load and a verdict (report.go); POST
 // /v1/report answers the same.
 //
+// backtest fits on one window and predicts another from its inputs alone,
+// beside what the fleet measured there (backtest.go, POST /v1/backtest;
+// docs/guides/capacity-planner/check.md).
+//
+// strip-latency, predict and compare are the backtest in two steps: a
+// window's load is predicted to a file carrying hashes of its inputs and of
+// itself (predict.go, strip.go; POST /v1/predict and /v1/compare), and
+// compared later with the same window measured.
+//
 // serve runs the capacity planner's HTTP API on the same code paths
 // (serve.go, internal/whatifapi; docs/developer-guide/capacity-planner-serve.md).
 //
@@ -57,7 +75,8 @@
 // output is still printed); 2 a usage or input error (a bad flag, an
 // unreadable or malformed capture or recording, overlapping --role-of
 // selectors, a window too large without --force); 1 anything else (a failed
-// Prometheus query, a Generate or a replay that fails inside the analyzers).
+// Prometheus query, a Generate or a replay that fails inside the analyzers);
+// 130 or 143 stopped by SIGINT or SIGTERM (execute).
 //
 // The command was named whatif before. Run under that name (make
 // capacity-planner also builds bin/whatif), it works the same and first
@@ -76,6 +95,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/go-logr/logr"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -118,16 +138,94 @@ func main() {
 	// The analyzers the replay runs log through controller-runtime: with no
 	// logger set it prints a stack trace on a run of 30 s or more.
 	ctrllog.SetLogger(logr.Discard())
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
-	stop()
-	if err != nil {
-		var s exitStatus
-		if !errors.As(err, &s) {
-			fmt.Fprintln(os.Stderr, progName+":", err)
-		}
-		os.Exit(exitCode(err))
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	os.Exit(execute(os.Args[1:], os.Stdout, os.Stderr, sigs, stopGrace))
+}
+
+// stopGrace is how long a command has, once SIGINT or SIGTERM ends its
+// context, to return before the process exits without it. Every command
+// reads its context between figures, so this is a backstop for a figure
+// that runs long, not the usual way out.
+const stopGrace = 5 * time.Second
+
+// selfStopping are the commands that stop on their own clock once their
+// context ends: serve gives requests in flight its --shutdown-timeout.
+// stopGrace does not cut them; a second signal still does.
+var selfStopping = map[string]bool{"serve": true}
+
+// signalName is SIGINT or SIGTERM by that name, any other signal as Go
+// names it.
+func signalName(sig os.Signal) string {
+	switch sig {
+	case os.Interrupt:
+		return "SIGINT"
+	case syscall.SIGTERM:
+		return "SIGTERM"
 	}
+	return sig.String()
+}
+
+// execute runs the command args name and returns the process's exit code.
+// SIGINT or SIGTERM on sigs ends the command's context; a command that then
+// returns a context error, or has not returned within grace (unless it is
+// selfStopping), or meets a second signal, is stopped: execute says so on
+// warn and returns 128 plus the signal's number (130 for SIGINT, 143 for
+// SIGTERM). A command that still returns its own answer or error after the
+// signal (serve, shut down cleanly) exits as it would have.
+func execute(args []string, out, warn io.Writer, sigs <-chan os.Signal, grace time.Duration) int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, args, out, warn) }()
+	var sig os.Signal
+	select {
+	case err := <-done:
+		return finish(err, warn)
+	case sig = <-sigs:
+	}
+	cancel()
+	var cut <-chan time.Time
+	if len(args) == 0 || !selfStopping[args[0]] {
+		t := time.NewTimer(grace)
+		defer t.Stop()
+		cut = t.C
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			return finish(err, warn)
+		}
+		fmt.Fprintf(warn, "%s: stopped by %s\n", progName, signalName(sig))
+	case <-cut:
+		fmt.Fprintf(warn, "%s: stopped by %s: the command did not stop within %s, so it was cut off\n", progName, signalName(sig), grace)
+	case s := <-sigs:
+		fmt.Fprintf(warn, "%s: stopped by a second signal (%s)\n", progName, signalName(s))
+	}
+	return signalExitCode(sig)
+}
+
+// finish is the exit code for the error a command returned, which it
+// prints to warn unless it is an exitStatus, whose output is already
+// printed.
+func finish(err error, warn io.Writer) int {
+	if err == nil {
+		return 0
+	}
+	var s exitStatus
+	if !errors.As(err, &s) {
+		fmt.Fprintln(warn, progName+":", err)
+	}
+	return exitCode(err)
+}
+
+// signalExitCode is the shell's exit code for a process a signal stopped:
+// 128 plus the signal's number, or 1 where a signal has no number.
+func signalExitCode(sig os.Signal) int {
+	if s, ok := sig.(syscall.Signal); ok {
+		return 128 + int(s)
+	}
+	return 1
 }
 
 // usageError is a usage or input error: exit 2.
@@ -159,7 +257,7 @@ func exitCode(err error) int {
 	return 1
 }
 
-const usage = "usage: capacity-planner at-replicas|capture|day-plan|freeze|generate|joint-ttft|replicas-to-slo|serve|slo-to-rate|version [flags]; -h after a command lists its flags"
+const usage = "usage: capacity-planner at-replicas|backtest|capture|compare|day-plan|freeze|generate|joint-ttft|predict|replicas-to-slo|serve|slo-to-rate|strip-latency|version [flags]; -h after a command lists its flags"
 
 // command is one subcommand: it parses its own flags from args and writes
 // what it reports to out, and its warnings to warn (stderr).
@@ -168,6 +266,10 @@ type command func(ctx context.Context, args []string, out, warn io.Writer) error
 // commands is every subcommand, by name.
 var commands = map[string]command{
 	"at-replicas":     runAtReplicas,
+	"backtest":        runBacktest,
+	"compare":         runCompare,
+	"predict":         runPredict,
+	"strip-latency":   runStripLatency,
 	"capture":         runCapture,
 	"day-plan":        runDayPlan,
 	"freeze":          runFreeze,
@@ -186,6 +288,18 @@ func run(ctx context.Context, args []string, out, warn io.Writer) error {
 	ctrllog.SetLogger(logr.Discard())
 	if len(args) == 0 {
 		return usageError{errors.New(usage)}
+	}
+	switch args[0] {
+	case "help", "-h", "-help", "--help":
+		if len(args) > 1 && args[1] != "help" {
+			cmd, ok := commands[args[1]]
+			if !ok {
+				return usagef("unknown command %q; %s", args[1], usage)
+			}
+			return cmd(ctx, []string{"-h"}, out, warn)
+		}
+		_, err := fmt.Fprintln(out, usage)
+		return err
 	}
 	cmd, ok := commands[args[0]]
 	if !ok {

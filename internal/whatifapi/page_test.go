@@ -48,6 +48,7 @@ func TestPageServed(t *testing.T) {
 		"/page/planner.js":  {"text/javascript; charset=utf-8", "FLAG_WORDS"},
 		"/page/scenario.js": {"text/javascript; charset=utf-8", "function linkProblem"},
 		"/page/dayplan.js":  {"text/javascript; charset=utf-8", "function dayPlanSVG"},
+		"/page/backtest.js": {"text/javascript; charset=utf-8", "function btSVG"},
 		"/page/planner.css": {"text/css; charset=utf-8", "prefers-color-scheme: dark"},
 	} {
 		rec := get(h, path, "")
@@ -122,15 +123,17 @@ func TestPageLoadsNothingExternal(t *testing.T) {
 		}
 	}
 	html := pageText(t, "index.html")
-	// Three scripts by src, scenario.js first, then dayplan.js, which calls
-	// its esc, then planner.js, which calls both.
-	assert.Equal(t, 3, strings.Count(html, "<script"), "three scripts, by src")
+	// Four scripts by src, scenario.js first, then dayplan.js, which calls
+	// its esc, then backtest.js, which calls both, then planner.js, which
+	// calls all three.
+	assert.Equal(t, 4, strings.Count(html, "<script"), "four scripts, by src")
 	assert.Less(t, strings.Index(html, `<script src="page/scenario.js" defer></script>`), strings.Index(html, `<script src="page/dayplan.js" defer></script>`))
-	assert.Less(t, strings.Index(html, `<script src="page/dayplan.js" defer></script>`), strings.Index(html, `<script src="page/planner.js" defer></script>`))
+	assert.Less(t, strings.Index(html, `<script src="page/dayplan.js" defer></script>`), strings.Index(html, `<script src="page/backtest.js" defer></script>`))
+	assert.Less(t, strings.Index(html, `<script src="page/backtest.js" defer></script>`), strings.Index(html, `<script src="page/planner.js" defer></script>`))
 	assert.GreaterOrEqual(t, strings.Index(html, `<script src="page/scenario.js" defer></script>`), 0)
 	// The page reaches its files and the API by paths relative to itself, so
 	// that a proxy may serve it under a prefix.
-	for _, name := range []string{"planner.js", "scenario.js", "dayplan.js"} {
+	for _, name := range []string{"planner.js", "scenario.js", "dayplan.js", "backtest.js"} {
 		js := pageText(t, name)
 		for _, abs := range []string{`"/v1/`, "`/v1/", `'/v1/`, `"/page/`} {
 			assert.NotContains(t, js, abs, "an absolute path in %s", name)
@@ -233,7 +236,7 @@ func TestPageSavesAndCompares(t *testing.T) {
 	astart := strings.Index(js, "const ASSUMABLE = [")
 	require.GreaterOrEqual(t, astart, 0, "ASSUMABLE not found")
 	assumed := regexp.MustCompile(`key: "([A-Za-z]+)"`).FindAllStringSubmatch(js[astart:astart+strings.Index(js[astart:], "];")], -1)
-	require.Len(t, assumed, 4, "the assumed terms' keys")
+	require.Len(t, assumed, 5, "the assumed terms' keys")
 	lstart, lend := strings.Index(sjs, "const LINK_NUMBERS"), strings.Index(sjs, "// CONTROL is")
 	require.True(t, lstart >= 0 && lend > lstart, "the link's keys not found")
 	admitted := sjs[lstart:lend]
@@ -421,7 +424,7 @@ func TestPageJudgesTheFleet(t *testing.T) {
 func TestPageScriptsDeclareEachFunctionOnce(t *testing.T) {
 	decl := regexp.MustCompile(`(?m)^(?:async )?function (\w+)\(`)
 	seen := map[string]string{}
-	for _, file := range []string{"scenario.js", "dayplan.js", "planner.js"} {
+	for _, file := range []string{"scenario.js", "dayplan.js", "backtest.js", "planner.js"} {
 		for _, m := range decl.FindAllStringSubmatch(pageText(t, file), -1) {
 			if prev, ok := seen[m[1]]; ok {
 				t.Errorf("function %s is declared in %s and in %s", m[1], prev, file)

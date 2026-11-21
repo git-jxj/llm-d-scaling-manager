@@ -641,7 +641,7 @@ these changes:
    target of 2s at the 95th percentile. Name it as `scalingPolicy:
    slo-watch` in the trigger metadata of both the decode and the prefill
    ScaledObject. See
-   [the slo section of the scaling policy reference](../reference/scaling-policy.md#slo-observe-only).
+   [the slo section of the scaling policy reference](../reference/scaling-policy.md#slo-observes-bounds-decode-packing).
 
    Write the tier into the map the model actually reads. If the model's
    namespace has its own `scaling-manager-scaling-policy-config`, that map replaces
@@ -782,7 +782,8 @@ in the validation table only, left out for size and test time; their recordings
 are outside the repository.
 `ttft_staircase_test.go` freezes what the recordings say of S2's gate and of the
 flow-control series. The load driver and the run's other files live outside
-the repository.
+the repository. `ttft_sizes_prefill_staircase_test.go` replays them with
+`slo-ttft-sizes-prefill` on and off.
 
 The `throughput-sweep` and `throughput-sweep-restart` goldens are one run
 of the `ols-sweep` scenario with the throughput analyzer listed beside
@@ -1974,7 +1975,9 @@ built: the router stage"). The second run's onset steps are replayed by
 `TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset` and
 `TestStaircaseR2_TheStepWithARouterWaitReadsShort`, the Qwen3-32B run's by
 `TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep` and
-`TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient`. A bucket's `measureAboveOnset` in the spec adds steps at those
+`TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient`, and the router v1.0.0
+A/B's steps, for the opt-in `--router-wait-in-prefill`, by
+`TestRouterV1_TheWaitIsInsidePrefill`. A bucket's `measureAboveOnset` in the spec adds steps at those
 multiples of its frozen prefill onset, after its scored steps and held the same way.
 They are never scored: no crossing, knee or falsifier reads them. The report's "Above
 the prefill onset" table lists every flow-control-on step past the onset, with the
@@ -2667,7 +2670,7 @@ test, lint or e2e, so retarget it to `main` before review.
 | `ci-pr-checks.yaml` / `lint-and-test` | golangci-lint v2.9.0, `make build`, `make test` | `make lint build test` |
 | `ci-pr-checks.yaml` / `deploy-scripts-check` | `make lint-deploy-scripts`, with yq pinned to v4.54.1 | `make lint-deploy-scripts`, with yq v4.54.1 on `PATH` |
 | `ci-pr-checks.yaml` / `tools-image` | builds `Dockerfile.tools` for `linux/arm64` and `linux/amd64`, runs `hack/check-tools-image.sh` against the amd64 image, then the release's blocking Trivy scan; skipped step by step when a PR changes only docs or metadata | `make tools-image-check` (needs docker with BuildKit) |
-| `ci-pr-checks.yaml` / `capacity-planner-image` | builds `Dockerfile.capacity-planner` for `linux/arm64` and `linux/amd64`, runs `hack/check-capacity-planner-image.sh` against the amd64 image (start it as the guide does, `POST /v1/inputs` on a committed recording and `POST /v1/plan`, 200 and a TTFT curve; a foreign Host is 403; `0.0.0.0` without `--listen-all-in-container` exits 2), then the blocking Trivy scan, then `hack/check-capacity-planner-dist.sh` (the four release binaries, `-trimpath` and ldflags, `version` on the host one); skipped step by step when a PR changes only docs or metadata | `make capacity-planner-image-check` (needs docker with BuildKit, curl and jq), `bash hack/check-capacity-planner-dist.sh` |
+| `ci-pr-checks.yaml` / `capacity-planner-image` | builds `Dockerfile.capacity-planner` for `linux/arm64` and `linux/amd64`, runs `hack/check-capacity-planner-image.sh` against the amd64 image (start it as the guide does, `POST /v1/inputs` on a committed recording and `POST /v1/plan`, 200 and a TTFT curve; a foreign Host is 403; `0.0.0.0` without `--listen-all-in-container` exits 2), then the blocking Trivy scan, then `hack/check-capacity-planner-dist.sh` (the five release binaries, `-trimpath` and ldflags, `version` on the host one, the windows-only files vetted and their tests built); skipped step by step when a PR changes only docs or metadata | `make capacity-planner-image-check` (needs docker with BuildKit, curl and jq), `bash hack/check-capacity-planner-dist.sh` |
 | `ci-pr-checks.yaml` / `docs-check` | `make guides-check` (guide blocks vs `guide.yaml`, plus `hack/check-doc-links.py`), `make warmpool-check`, `make dashboards-check` | the same three targets (needs Python with PyYAML) |
 | `ci-pr-checks.yaml` / `kustomize-build` | `kustomize build` of the cluster-scoped kubernetes, namespace-scoped kubernetes and namespace-scoped openshift overlays | `make kustomize`, then `bin/kustomize build config/overlays/<scope>/<env> > /dev/null` |
 | `ci-pr-checks.yaml` / `e2e-tests-smoke` | `make test-e2e-smoke-with-setup` on a fresh Kind cluster, then the release's blocking Trivy scan (fixable CRITICAL) of the image it built; skipped when a PR changes only docs or metadata | `CREATE_CLUSTER=true make test-e2e-smoke-with-setup` |

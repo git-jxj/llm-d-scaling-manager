@@ -172,8 +172,10 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 	// by reason: "capacity" waits for KV blocks or a batch slot, "deferred"
 	// was skipped for a transient reason -- on a prefill/decode split, mostly
 	// a decode request whose KV is still in flight from prefill. The analyzer
-	// reads these on decode of a disaggregated model only
-	// (saturation.decodeCapacityView); everything else keeps the full count.
+	// reads these on decode of a disaggregated model
+	// (saturation.decodeCapacityView), and the capacity planner on prefill,
+	// for what counts as a queue when V_P is learned
+	// (saturation.SwitchPrefillQueueByCapacity).
 	// An older vLLM publishes no such series and the collector leaves the
 	// replica's CapacityQueueKnown false.
 	registry.MustRegister(source.QueryTemplate{

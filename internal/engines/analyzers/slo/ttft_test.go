@@ -633,7 +633,7 @@ func TestTTFT_TheMeasuredSpreadSwitch(t *testing.T) {
 
 // S1 reads cv from the window the CLI reads, not from the cycle. A rare long
 // prompt that fell in an earlier minute is still in it: read from this minute
-// alone, cv is 0.48, unflagged, where the same traffic in the CLI is above 1.
+// alone, cv is 0.22, unflagged, where the same traffic in the CLI is above 1.
 func TestTTFT_TheSpreadIsTheWindowsNotTheCycles(t *testing.T) {
 	inf := math.Inf(1)
 	minute := func(long float64) []domain.ReplicaMetrics {
@@ -654,7 +654,9 @@ func TestTTFT_TheSpreadIsTheWindowsNotTheCycles(t *testing.T) {
 		assert.Equal(t, cli.Spread(), got, "S1 and the CLI, cycle %d", i)
 	}
 	alone := whatif.ReadPromptSpread(whatif.PoolComputedBuckets(nil, minute(0)), 1800)
-	assert.InDelta(t, 0.484, alone.CV, 0.001, "this minute alone")
+	// 1800 in (1000, 2000]: at most 20% at 1000 and 80% at 2000.
+	assert.InDelta(t, math.Sqrt((3000.0*1800-1000*2000)/(1800*1800)-1), alone.CV, 1e-9, "this minute alone")
+	assert.InDelta(t, 0.222, alone.CV, 0.001, "this minute alone")
 	assert.False(t, cli.Spread().Assumed)
 	assert.Greater(t, cli.Spread().CV, 1.0, "the window holds the long prompts")
 }

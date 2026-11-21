@@ -719,6 +719,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	},
 	settle.SwitchFirstSightRestored: nil,
 
+	// llm-d-incubation/llm-d-scaling-manager#220: a start that overlapped a
+	// rollout is not folded. No recording holds a variant rolling out while
+	// a Pod reports a start, so no golden moves; its unit tests hold it
+	// (heldBy).
+	saturation.SwitchStartHeldThroughRollout: nil,
+
 	// Issue ev-shindin/llm-scaling-manager#397: the prefill bound held at a lower confidence bound
 	// (saturation.SwitchPrefillBoundHeldConfidence): the window keeps its
 	// samples as read, and the bound priced is the larger of their mean and
@@ -916,6 +922,45 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 		"ttft-three-pods/composite-roles.csv", "ttft-three-pods/results.csv",
 		"ttft-three-pods/variant-capacities.csv",
 	},
+
+	// llm-d-incubation/llm-d-scaling-manager#201, on from the constructor
+	// since v0.12.2 (they were earlier seams, off, until then).
+	//
+	//   - SwitchK2DecodeBudgetAtComputedPrompt: a P/D decode's derived k2
+	//     (P3) charges its token budget the prompt it computes, not the
+	//     whole prompt. It moves the three fixtures whose decode is priced
+	//     at P3 with a stated --max-num-batched-tokens and reports the
+	//     computed prompt. Decode's PerReplicaCapacity rises at the median
+	//     7.4x on ttft-open-loop-long, 7.3x on ttft-saturated and 4.3x on
+	//     ttft-open-loop-short. It is held at k1 (K2Source k1-bound) on every
+	//     moved row of the first, all but two of the second, and a third of
+	//     the third. One ttft-saturated row, its first P3 cycle, moves from
+	//     P3-k2 to P4-k1. The store, the composite's supply and spare and the
+	//     warm pool's spare fraction move with it, and decode's utilization
+	//     falls where its demand stays. On the 20-40 cycles a fixture prices
+	//     decode's demand at 0.7 of its supply, that demand scales with the
+	//     supply and its utilization stays 0.7. No role's RequiredCapacity
+	//     moves. ttft-saturated's model-level RequiredCapacity, which pools
+	//     decode's new spare against prefill's need, falls on 65 cycles; a
+	//     P/D model is sized per role (RoleCapacities), and prefill's is
+	//     unchanged.
+	//   - SwitchDecodeLandedNeedsABound: a landed request is a decode's
+	//     backlog only where the replica can be at a bound. No committed
+	//     recording has a decode with landed requests below its bound, so it
+	//     moves no golden; its unit tests hold it (heldBy).
+	saturation.SwitchK2DecodeBudgetAtComputedPrompt: {
+		"ttft-open-loop-long/composite-results.csv", "ttft-open-loop-long/composite-roles.csv",
+		"ttft-open-loop-long/composite-variants.csv", "ttft-open-loop-long/results.csv",
+		"ttft-open-loop-long/store-records.csv", "ttft-open-loop-long/variant-capacities.csv",
+		"ttft-open-loop-short/composite-results.csv", "ttft-open-loop-short/composite-roles.csv",
+		"ttft-open-loop-short/composite-variants.csv", "ttft-open-loop-short/results.csv",
+		"ttft-open-loop-short/store-records.csv", "ttft-open-loop-short/variant-capacities.csv",
+		"ttft-open-loop-short/warm-pool-pressure.csv", "ttft-saturated/composite-results.csv",
+		"ttft-saturated/composite-roles.csv", "ttft-saturated/composite-variants.csv",
+		"ttft-saturated/results.csv", "ttft-saturated/store-records.csv",
+		"ttft-saturated/variant-capacities.csv", "ttft-saturated/warm-pool-pressure.csv",
+	},
+	saturation.SwitchDecodeLandedNeedsABound: nil,
 })
 
 // learner4b2Seams is learner PR 4b-2's switches, earlier seams now (merged
@@ -1051,14 +1096,16 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// (cmd/capacity-planner/testdata) move with them.
 	saturation.SwitchPrefillALowLoadPerRank: nil,
 	saturation.SwitchPrefillAEngineTiming:   nil,
+	saturation.SwitchPrefillQueueByCapacity: nil,
+	saturation.SwitchPrefillFBusyMinutes:    nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
-	// llm-d-incubation/llm-d-scaling-manager#201: a decode's derived k2
-	// charged the prompt it computes, and a landed request a backlog only
-	// where the decode can be at a bound. Off from the constructor, so every
-	// golden replay runs them off, and off alone from all on moves nothing.
-	// Their unit tests hold them (heldBy).
-	saturation.SwitchK2DecodeBudgetAtComputedPrompt: nil,
-	saturation.SwitchDecodeLandedNeedsABound:        nil,
+	saturation.SwitchITLHoldSteadySlope:     nil,
+	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
+	// where the variant's ITL line reaches the policy's TPOT objective. On
+	// from the constructor; no committed golden has a decode line it trusts
+	// at a target it binds, so off alone from all on moves nothing. Its unit
+	// tests hold it (heldBy).
+	saturation.SwitchK2BatchAtITLTarget: nil,
 	// llm-d-incubation/llm-d-scaling-manager#188 prices a resident reading
 	// above the whole context as read: off from the constructor, so every
 	// golden replay runs it off, and off alone from all on moves nothing. Its
@@ -1162,6 +1209,13 @@ var earlierSeams = withMoves(queueDrainSeamMoves, withMoves(floorVariantsSeamMov
 	// jumps a day and that window would have aged out anyway. No cluster
 	// recording forgets. Its unit tests hold it (heldBy).
 	slo.SwitchITLForgetReachesTheLine: nil,
+	// llm-d-incubation/llm-d-scaling-manager#131 sizes a prefill variant on
+	// TTFT, the joint a₀ standing where P1 refused a: off from the
+	// constructor, so every golden replay runs it off, and off alone from
+	// all on moves nothing. On, it moves the slo analyzer's rows wherever a
+	// prefill is priced; TestGoldens_TTFTSizesPrefillOnTheStaircases holds
+	// what it moves on the staircases, and its unit tests hold it (heldBy).
+	slo.SwitchTTFTSizesPrefill: nil,
 	// ev-shindin/llm-scaling-manager#277 prices a resident request at the KV it is measured to hold,
 	// between the prefix-cache hit rate's discount and none. It moves the
 	// derived mu, and the decode demand the floor prices from it, in the two
@@ -1311,16 +1365,30 @@ func withSeams(more, rows map[string][]string) map[string][]string {
 // test that holds the same on either side is a control, not a hold, and is
 // not listed here.
 var heldBy = map[string][]heldTest{
+	// llm-d-incubation/llm-d-scaling-manager#258: each fails with the switch
+	// off.
+	saturation.SwitchK2BatchAtITLTarget: {
+		{"../saturation", "TestK2BatchAtITLTarget_ThroughAnalyze"},
+	},
+	// llm-d-incubation/llm-d-scaling-manager#220: each runs the switch on
+	// and off and asserts both.
+	saturation.SwitchStartHeldThroughRollout: {
+		{"../saturation", "TestStartRollout_AStartDuringARolloutIsNotFolded"},
+		{"../saturation", "TestStartRollout_APodCreatedDuringARolloutIsNotFoldedAfterIt"},
+		{"../saturation", "TestStartRollout_AnalyzeHoldsStartsWhileRollingOut"},
+		{"../saturation", "TestStartRollout_ARowWithNoReadyTimeIsHeldAfterARollout"},
+		{"../saturation", "TestStartRollout_AHeldPodLeavesTheRunOfRefusedStarts"},
+	},
 	// llm-d-incubation/llm-d-scaling-manager#201: each runs the switch on
 	// and off and asserts both.
 	saturation.SwitchK2DecodeBudgetAtComputedPrompt: {
 		{"../saturation", "TestK2DecodeBudget_ADecodeIsNotChargedThePromptItDidNotCompute"},
 		{"../saturation", "TestK2DecodeBudget_ThroughAnalyze"},
-		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+		{"../saturation", "TestDecodeBudgetSwitches_OnFromTheConstructor"},
 	},
 	saturation.SwitchDecodeLandedNeedsABound: {
 		{"../saturation", "TestDecodeLandedNeedsABound_ARoomyDecodeRecordsNoK2"},
-		{"../saturation", "TestDecodeBudgetSwitches_OffFromTheConstructor"},
+		{"../saturation", "TestDecodeBudgetSwitches_OnFromTheConstructor"},
 	},
 	// llm-d-incubation/llm-d-scaling-manager#188: each runs the switch on
 	// and off and asserts both.
@@ -1342,7 +1410,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestDecodeRouterBacklog_OffFromTheConstructor"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
-	// asserts both, and the first holds all three off from the constructor.
+	// asserts both, and the first holds all six off from the constructor.
 	saturation.SwitchPrefillALowLoadPerRank: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
@@ -1352,6 +1420,27 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPrefillAEngineTiming_ABusyGroupLearnsA"},
 		{"../../../signals/prefill", "TestTiming_ABusyFleetLearnsAFromEngineTiming"},
 		{"../../../signals/prefill", "TestTiming_LongPromptsAreFlaggedNotRefused"},
+	},
+	saturation.SwitchPrefillQueueByCapacity: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_ADeferredWaitIsNotAQueue"},
+		{"../../../signals/prefill", "TestCapacity_ACapacityQueueIsStillAQueue"},
+		{"../saturation", "TestPrefillQueueByCapacity_DeferredWaitsThroughAnalyze"},
+		{"../../../signals/prefill", "TestCapacity_AMinuteWithNoCapacityQueueEndsTheRun"},
+	},
+	saturation.SwitchPrefillFBusyMinutes: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestImbalance_TheBusiestMinutesSetF"},
+		{"../../../signals/prefill", "TestImbalance_TooFewBusyMinutesTakeTheBusiest"},
+		{"../../../signals/prefill", "TestImbalance_BusyIsComputedTokensNotRequests"},
+		{"../saturation", "TestPrefillFBusyMinutes_LightMinutesThroughAnalyze"},
+	},
+	saturation.SwitchITLHoldSteadySlope: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/itl", "TestTracker_ASteadySlopeHoldsThroughARampDown"},
+		{"../../../signals/itl", "TestTracker_AnUnsteadySlopeIsNotHeld"},
+		{"../../../signals/itl", "TestTracker_ASteadySlopeHoldEnds"},
+		{"../saturation", "TestITLHoldSteadySlope_ARampDownThroughAnalyze"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},
@@ -1485,6 +1574,16 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadDropsTheHold"},
 		{"../slo", "TestTTFT_TheLowLoadDecodeTTFTUnreadRows"},
 		{".", "TestGoldens_TTFTLowLoadDecodeTTFTOnTheStaircases"},
+	},
+	// The first and last run the switch on and off and assert both; the
+	// others hold the constructor's off and the two halves alone.
+	slo.SwitchTTFTSizesPrefill: {
+		{"../slo", "TestTTFT_TheSizesPrefillSwitch"},
+		{"../slo", "TestTTFT_TheSizesPrefillOffFromTheConstructor"},
+		{"../slo", "TestTTFT_WithJointFixedLatency"},
+		{"../slo", "TestTTFT_PrefillAsk"},
+		{"../slo", "TestTTFT_SizePrefill"},
+		{".", "TestGoldens_TTFTSizesPrefillOnTheStaircases"},
 	},
 	// The first runs the switch on and off through Analyze and asserts both;
 	// the model row replays the staircase goldens with it on.
@@ -1923,6 +2022,12 @@ func TestGoldens_ASwitchWithTwoRowsPanics(t *testing.T) {
 // base digests of the outputs a throughput switch could move that the
 // expectation does not name, so the measured rows need no new lookup.
 var switchBase = withDigests(staircaseBase, map[string]string{
+	// llm-d-incubation/llm-d-scaling-manager#201's budget switch, at main
+	// 22745c3, where it was off from the constructor.
+	"ttft-open-loop-long/store-records.csv":  "898a6947e053f7f89eeb8a944ea43ecd7ff1d38250763f576efe42c847a076df",
+	"ttft-open-loop-short/store-records.csv": "8a16f127a4de2ab2c877c39fae242c2e1bd25c2c71b6b5702cb449c40a88eed0",
+	"ttft-saturated/store-records.csv":       "79ba58cb43e4653b9c2f02ec09ca29f27319921f69ff3be79d83984748f82e54",
+
 	"acceptance/results.csv":            "7aef7e7391f761fe984f89720d61b0583048b330989c449098dce8ec2d285981",
 	"acceptance/variant-capacities.csv": "47ad82ad3c017924b6cc5398d9578ddd28ab95fdc547adcec6decb69abcc91b3",
 	"engine/composite-holds.csv":        "ce02c822639f90959858c2ddc1e4681dc5b65d281a13d033520cfaa9945d3e0c",

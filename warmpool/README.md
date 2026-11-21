@@ -41,36 +41,96 @@ exists to pair transient requester Pods with launchers. A pool needs none of it:
 the scaling manager already runs a control loop, knows the InferencePools, and decides what
 should be warm.
 
+## Which launcher image to use
+
+A pool's engines run the launcher image's vLLM, not the workload's. Pick the
+image whose vLLM matches the workload:
+
+| workload's vLLM | pool | launcher image |
+| --- | --- | --- |
+| v0.26 | pool of Pods | FMA's `launcher`, pinned in `config/warmpool/warmpool-deployment.yaml` (the default; nothing to pass) |
+| v0.26 | pool of groups | `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless`, with `--launcher-image` ([groups](../docs/guides/warm-pool/groups.md)) |
+| v0.34.0 | either | `ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher`, from the release that carries it, with `--launcher-image`. Not yet run on a GPU |
+| any other | either | none published; build one from FMA's launcher on that vLLM |
+
 ## What is copied, and from where
 
-Copied from `ev-shindin/llm-d-fast-model-actuation`, branch `feat/reuse-by-model`,
-commit **`65ba31b`** (upstream `2c01cf8`, plus the port-conflict reclaim fix in
-`aa072ef` and the follower-rank fix in `65ba31b`):
+Upstream base: Fast Model Actuation **v0.8.0**, commit
+**`3f67d2c4c5c51baa6016fc24630222decd94971f`**, directory
+`inference_server/launcher/`. Three changes on top (plus one comment whose
+issue number became a full link):
+
+1. **The follower-rank fix**: a rank > 0 of a multi-node engine runs vLLM's
+   headless executor instead of an API server, as vLLM's own `run_headless`
+   does, with its checks and its SIGTERM handling. One case is refused
+   instead: `--headless` on a node that is rank 0 of its own data-parallel
+   group, where vLLM would start headless data-parallel engines. The scaling
+   manager does not warm data parallelism across Pods. First carried in fork
+   commit `65ba31b` of `ev-shindin/llm-d-fast-model-actuation`; not upstream.
+2. **The vLLM v0.34 import paths**: v0.34 moved `make_arg_parser`,
+   `validate_parsed_serve_args`, `cli_env_setup` and `run_server`.
+3. **`_wait_procs`**: psutil 7.2, which the vLLM v0.34 image ships, re-raises
+   `EINVAL` from its pidfd wait for a process being reaped
+   ([giampaolo/psutil#2715](https://github.com/giampaolo/psutil/issues/2715)),
+   so a DELETE that had to SIGKILL failed with HTTP 500. The wrapper treats
+   `EINVAL` as gone, re-checks the rest, and keeps waiting. Upstream FMA v0.8.0
+   has the same bug.
 
 | file | origin | why it earns its place |
 | --- | --- | --- |
-| `supervisor/launcher.py` | `inference_server/launcher/launcher.py` | spawns and supervises vLLM engines inside one container. Proven: every 2-3 s wake measured on the test cluster came from an instance it created |
-| `supervisor/gputranslator.py` | `inference_server/launcher/gputranslator.py` | GPU UUID ↔ index mapping via pynvml, with a mock mode for tests |
-| `supervisor/tests/` | the same tree | the evidence the above works; kept so adaptation is not blind |
+| `supervisor/launcher.py` | `inference_server/launcher/launcher.py`, with the three changes | spawns and supervises vLLM engines inside one container. Proven: every 2-3 s wake measured on the test cluster came from an instance it created |
+| `supervisor/gputranslator.py` | `inference_server/launcher/gputranslator.py`, unchanged | GPU UUID ↔ index mapping via pynvml, with a mock mode for tests |
+| `supervisor/build_check.py` | ours | the image build's check against the real vLLM (below) |
+| `supervisor/tests/` | `inference_server/launcher/tests/`, with the vLLM stubs moved to the v0.34 paths; `test_follower_rank.py` is ours | the launcher's unit tests |
 
-> **Vendored, not maintained here.** These files are a copy taken at fork commit
-> `65ba31b`; edit them upstream and re-copy rather than in place.
->
-> Which image runs depends on the pool. A SINGLE-POD pool runs upstream
-> `launcher:v0.8.0`, pinned by digest in
-> `config/warmpool/warmpool-deployment.yaml` -- a different build from this copy,
-> and it does not need the follower fix because a group of one has no follower. A
-> GROUP pool must be given `--launcher-image` naming a build that carries it:
-> `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless`, whose `launcher.py` is
-> byte-identical to this copy (verified by extracting it from the published
-> image). That build is v0.6.4 plus the follower fix, so group pools do not yet
-> have v0.8.0's eviction fixes (stopping the engine's whole process group, and a
-> stop that does not block the launcher). Nothing automatic keeps the three in step; this copy fell a commit
-> behind the image once already, which hid the very fix that makes group pools
-> work from anyone reading it here.
->
-> The tests under `supervisor/tests/` came with the source and are not wired into
-> any make target or CI job.
+v0.8.0 over the old v0.6.4 base brings two fixes the pool wants: deleting an
+instance stops its whole process group, so lingering engine children no longer
+keep GPU memory; and a delete no longer blocks the launcher's API while it
+waits.
+
+To move to a newer upstream: merge the new upstream `launcher.py` with this
+one (`git merge-file`, the old upstream as base), keep the three changes, and
+update the base commit here and in the header of `launcher.py`.
+
+### The image built from it
+
+`Dockerfile.warmpool-launcher` builds
+`ghcr.io/llm-d-incubation/llm-d-scaling-manager/warmpool-launcher` from this
+copy:
+
+- **Base:** vLLM **v0.34.0**, the vLLM project's own build, pinned by digest. It
+  is pulled from the registry vLLM's release pipeline pushes to
+  (`public.ecr.aws/q9t5s3a7/vllm-release-repo`), not Docker Hub; the digest is
+  the same as `vllm/vllm-openai:v0.34.0`.
+- **On top:** `nvidia-ml-py` and `kubernetes` at pinned versions, installed
+  with every package of the base as a constraint, so none of vLLM's own
+  packages moves, and the two files above.
+- **Checked at build time** (`supervisor/build_check.py`, mounted for that one
+  step, not shipped): the build imports the launcher against the real vLLM and
+  checks the vLLM version, that every vLLM call the launcher makes still binds,
+  the engine-config attributes the follower reads, the `/sleep`, `/wake_up` and
+  `/is_sleeping` routes and the drain's `mode=wait` the scaling manager uses,
+  and psutil's EINVAL handling. A vLLM change there fails the build, not a pool
+  Pod. The unit tests cannot catch it: they stub vLLM.
+- **Released** with every scaling-manager release, under the same tag, for
+  `linux/amd64` and `linux/arm64`, signed with cosign.
+- **One vLLM only.** A pool's engines run the launcher image's vLLM, not the
+  workload's, so this image is for workloads on vLLM v0.34.0. This copy also
+  imports the v0.34 module layout only; it does not run on v0.26 to v0.33. For
+  workloads on older vLLM, use FMA's images.
+
+Build it locally with `make docker-build-warmpool-launcher` (it pulls about
+10 GB). Run the unit tests with `make test-warmpool-launcher`; CI runs both on
+any PR that touches this directory.
+
+> **Not the default yet, and not yet run on a GPU.** Pools still run FMA's
+> images: a SINGLE-POD pool runs upstream `launcher:v0.8.0` (vLLM v0.26.0),
+> pinned by digest in `config/warmpool/warmpool-deployment.yaml`, and a GROUP
+> pool runs `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` given with
+> `--launcher-image`. That image's `launcher.py` is the old fork copy (v0.6.4
+> plus the follower fix, without v0.8.0's eviction fixes), not this one. To try this image, pass it with `--launcher-image`. Moving the default
+> waits for GPU checks on vLLM v0.34: switch time, output across sleep and
+> wake, eviction, sleeper host memory, and `--gpu-memory-utilization`.
 
 ## The split of responsibilities
 
@@ -93,7 +153,7 @@ likely to change, and it must be changeable without touching the data plane.
 
 All four are done. Note where: three of them turned out to be decisions the scaling manager
 makes when CALLING the launcher, not modifications to the launcher itself, which
-is why the copy here runs unmodified.
+is why the copy here carries only the three changes listed above.
 
 1. **The Pod holds the GPUs.** Done in the manifest. The pool Deployment requests `nvidia.com/gpu`, and
    the supervisor allocates the container's own devices among instances rather

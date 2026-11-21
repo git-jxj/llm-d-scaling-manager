@@ -59,6 +59,7 @@ const FLAG_WORDS = {
   AssumedArrivalCV2: ["The arrival burstiness Ca² is a value you set.", "nothing: a stated assumption"],
   AssumedA: ["a, the fixed latency, is the value you typed, not a learned one.", "a low-load window that fits a"],
   AFromEngineTiming: ["a, the fixed latency, was fitted from the engine's own prefill timing on a fleet too busy for low-load minutes, not from quiet minutes.", "a low-load window that fits a"],
+  AssumedITLB: ["The decode ITL line's intercept B, its latency per token with the cache empty, is the value you typed or the one the floor below the band gives, not a measured one; the slope was refitted through it.", "a recording whose decode line measured its own B (a full fit)"],
   AdaptedBandFloor: ["The decode ITL line was read over a KV-fill band whose floor the replay lowered to the fleet's fill, below the policy's floor.", "readings at the policy's fill floor or above"],
   PromptSpreadAbovePeak: ["The prompt cv is past the peak for this percentile: a larger cv can price a shorter floor and a higher rate.", "a measured prompt spread"],
   PromptSpreadClamped: ["The measured prompt spread was clamped at its stop.", "a prompt histogram with wider bounds"],
@@ -75,7 +76,7 @@ const BUCKET_NOTE = "If all traffic were bucket b: each line is its own fleet's 
 const TERM_NAMES = {
   vp: "V_P", a: "a", imbalance: "f", promptTokens: "prompt", promptCV: "prompt cv",
   transferSecondsPerToken: "KV transfer", routerHop: "router hop", itlA: "ITL a", itlB: "ITL b",
-  itlLine: "ITL line", capacityTokens: "KV capacity", kvPerRequest: "KV per request", batchCap: "batch cap", maxModelLen: "context window",
+  itlLine: "ITL line", itlBFloor: "ITL b from the floor", capacityTokens: "KV capacity", kvPerRequest: "KV per request", batchCap: "batch cap", maxModelLen: "context window",
   tpotRatio: "R_q", prefill: "prefill",
 };
 
@@ -238,13 +239,14 @@ async function start() {
   }
   const s = state.sources;
   el("ns").innerHTML = s.namespaces.map(n => `<option${n === s.namespace ? " selected" : ""}>${esc(n)}</option>`).join("");
-  el("rec").innerHTML = s.recordings.map(n => `<option>${esc(n)}</option>`).join("");
+  s.uploads = s.uploads || [];
+  el("rec").innerHTML = s.recordings.map(n => `<option value="${esc(n)}">${esc(recordingLabel(n, s.uploads))}</option>`).join("");
   el("rectrunc").hidden = !s.recordingsTruncated;
   el("kprom").disabled = !s.prometheus;
   el("krec").disabled = s.recordings.length === 0;
   el("upfield").hidden = !s.upload;
   if (s.upload) {
-    el("uphint").textContent = `.jsonl or .jsonl.gz, at most ${mib(s.upload.maxBytes)}. The server keeps the last 4 until it restarts; everyone who opens this page sees them.`;
+    el("uphint").textContent = `.jsonl or .jsonl.gz, at most ${mib(s.upload.maxBytes)}. The server keeps the last 4 until it restarts; everyone who opens this page sees them, with their file names.`;
   }
   // The page opens on a Prometheus window, the last hour ending now; a
   // server with recordings alone opens on its first.
@@ -387,8 +389,9 @@ function mib(n) {
 
 // uploadRecording sends the file picked to the server (POST v1/recordings),
 // showing how much of it has gone, then picks it as the recording and loads
-// it. The server names it; the file's own name is never sent. XMLHttpRequest,
-// not fetch: only it reports an upload's progress.
+// it. The server names it by its bytes; the file's own name is sent as a
+// label (?filename=), listed beside it and never used on disk.
+// XMLHttpRequest, not fetch: only it reports an upload's progress.
 function uploadRecording() {
   const file = el("upfile").files[0];
   if (!file) {
@@ -405,7 +408,7 @@ function uploadRecording() {
   // A server taking another upload answers 503: tried again as api() does.
   const send = attempt => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "v1/recordings");
+    xhr.open("POST", "v1/recordings?filename=" + encodeURIComponent(file.name));
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = e => {
       if (e.lengthComputable) setStatus(`Uploading ${file.name}: ${Math.floor(100 * e.loaded / e.total)}%`);
@@ -436,16 +439,20 @@ function uploadRecording() {
       return;
     }
     const s = state.sources;
-    if (!s.recordings.includes(doc.name)) {
-      s.recordings.unshift(doc.name);
-      el("rec").insertAdjacentHTML("afterbegin", `<option>${esc(doc.name)}</option>`);
+    s.uploads = [{name: doc.name, fileName: doc.fileName, bytes: doc.bytes, uploadedAt: doc.uploadedAt},
+      ...s.uploads.filter(u => u.name !== doc.name)];
+    s.recordings = [doc.name, ...s.recordings.filter(n => n !== doc.name)];
+    const rec = el("rec");
+    for (const o of Array.from(rec.options)) {
+      if (o.value === doc.name) o.remove();
     }
+    rec.insertAdjacentHTML("afterbegin", `<option value="${esc(doc.name)}">${esc(recordingLabel(doc.name, s.uploads))}</option>`);
     el("rec").value = doc.name;
     el("cycle").value = 0;
     el("krec").disabled = false;
     el("krec").checked = true;
     showKind();
-    setStatus(`Uploaded ${file.name} as ${doc.name}.`);
+    setStatus(`Uploaded ${file.name} as ${recordingLabel(doc.name, s.uploads)}.`);
     loadInputs();
   };
   send(0);
@@ -456,6 +463,7 @@ function uploadRecording() {
 function forgetUpload(name) {
   const s = state.sources;
   s.recordings = s.recordings.filter(n => n !== name);
+  s.uploads = (s.uploads || []).filter(u => u.name !== name);
   const rec = el("rec");
   for (const o of Array.from(rec.options)) {
     if (o.value === name) o.remove();
@@ -467,6 +475,14 @@ function forgetUpload(name) {
 // policy's SLO and headroom, the observed mix. The rate starts at the
 // operating point the first plan returns: the source carries no rate.
 function setInputs(inputs) {
+  const badge = selfCheckBadge(inputs.selfCheck);
+  el("sccheck").hidden = !badge;
+  el("scbox").hidden = !badge;
+  if (badge) {
+    el("sccheck").textContent = badge.text;
+    el("sccheck").className = "chip selfcheck " + badge.cls;
+    el("scbox").innerHTML = selfCheckHTML(inputs.selfCheck);
+  }
   el("rrun").disabled = false;
   state.reportGen = (state.reportGen || 0) + 1;
   el("rresult").hidden = true;
@@ -476,6 +492,17 @@ function setInputs(inputs) {
   el("dayout").hidden = true;
   el("dayrun").disabled = !inputs.fleet.prefill;
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
+  state.bt = null;
+  el("btout").hidden = true;
+  el("btrun").disabled = !inputs.fleet.prefill;
+  el("btrun").title = inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
+  const loaded = inputs.source && inputs.source.name;
+  const others = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded).map(n => `<option>${esc(n)}</option>`).join("");
+  el("bttest").innerHTML = others;
+  el("bpwindow").innerHTML = others;
+  el("bcmeasured").innerHTML = (state.sources ? state.sources.recordings : []).map(n => `<option>${esc(n)}</option>`).join("");
+  el("bprun").disabled = !inputs.fleet.prefill;
+  el("bpout").textContent = "";
   state.priceFailed = false;
   clearPlan();
   state.size = null;
@@ -519,12 +546,16 @@ function setInputs(inputs) {
 }
 
 // ASSUMABLE are the terms a scenario may type: the box, the API's key, the
-// inputs' term, and the box's unit per the term's (ms for seconds).
+// inputs' term, and the box's unit per the term's (ms for seconds). refusedAs
+// is the term the inputs name instead when the source refused it: ITL B is
+// refused with the whole line (PinnedDefaultB), and floor is the term giving
+// the B the floor below the band would price at.
 const ASSUMABLE = [
   {box: "vp", key: "vp", term: "vp", scale: 1},
   {box: "a", key: "a", term: "a", scale: 1000},
   {box: "cv", key: "promptCV", term: "promptCV", scale: 1},
   {box: "hop", key: "routerHop", term: "routerHop", scale: 1000},
+  {box: "itlb", key: "itlB", term: "itlB", refusedAs: "itlLine", floor: "itlBFloor", scale: 1000},
 ];
 
 // showLearned puts each assumable term's learned value, or its refusal,
@@ -533,10 +564,14 @@ function showLearned(inputs) {
   let refused = false;
   for (const a of ASSUMABLE) {
     el("a-" + a.box).value = "";
-    const t = inputs.terms.find(x => x.name === a.term);
+    // A line refused for any other reason (NoLine) has no B to state.
+    const t = inputs.terms.find(x => x.name === a.term) ||
+      (a.refusedAs && inputs.terms.find(x => x.name === a.refusedAs && x.refused && x.refused.reason === "PinnedDefaultB"));
     let text = "not read";
     if (t && t.refused) {
       text = "refused: " + t.refused.reason;
+      const floor = a.floor && inputs.terms.find(x => x.name === a.floor && x.value != null);
+      if (floor) text += "; the floor below the band gives " + fmtNum(floor.value * a.scale);
       refused = true;
     } else if (t) {
       text = "learned " + fmtNum(t.value * a.scale);
@@ -2007,6 +2042,157 @@ function wire() {
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
+  el("btrun").onclick = runBacktest;
+  el("bprun").onclick = runPredict;
+  el("bcrun").onclick = runCompare;
+  const btStale = () => { if (state.bt) el("btout").classList.add("stale"); };
+  el("btsplit").oninput = () => { el("btsplitout").textContent = el("btsplit").value + "%"; btStale(); };
+  el("btstep").onchange = el("bttest").onchange = el("btallow").onchange = btStale;
+  el("btsplitmode").onchange = el("btothermode").onchange = () => {
+    const other = el("btothermode").checked;
+    document.querySelector('[data-btmode="split"]').hidden = other;
+    document.querySelector('[data-btmode="other"]').hidden = !other;
+    btStale();
+  };
+}
+
+// ---- Check the planner (POST /v1/backtest) ----
+
+// runBacktest fits the planner on the first part of the source (or on the
+// source, testing another recording) and draws predicted against measured.
+async function runBacktest() {
+  if (!state.inputs) return;
+  const inputsId = state.inputs.inputsId, t0 = performance.now();
+  el("btrun").disabled = true;
+  el("btout").classList.add("stale");
+  setStatus("Checking the planner: fitting, then pricing each step of the test (seconds to a minute)...");
+  try {
+    const req = {inputsId, step: el("btstep").value};
+    if (el("btallow").checked) req.allowConfigMismatch = true;
+    if (el("btothermode").checked) {
+      const name = el("bttest").value;
+      if (!name) throw new Error("pick a test recording");
+      const test = await api("POST", "v1/inputs", {model: state.inputs.model, source: {kind: "recording", name},
+        decodeVariant: state.inputs.fleet.decode.variant,
+        prefillVariant: state.inputs.fleet.prefill ? state.inputs.fleet.prefill.variant : undefined});
+      req.testInputsId = test.inputsId;
+    } else {
+      req.split = el("btsplit").value + "%";
+    }
+    const out = await api("POST", "v1/backtest", req);
+    if (!state.inputs || inputsId !== state.inputs.inputsId) return;
+    state.bt = out;
+    renderBacktest();
+    setStatus(`Checked ${out.steps.length} steps in ${((performance.now() - t0) / 1000).toFixed(1)} s.`);
+  } catch (e) {
+    setStatus("Could not check the planner: " + e.message, true);
+  } finally {
+    el("btrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+    el("btout").classList.remove("stale");
+  }
+}
+
+// btInputsOf resolves a recording of the loaded model and variants.
+async function btInputsOf(name) {
+  return api("POST", "v1/inputs", {model: state.inputs.model, source: {kind: "recording", name},
+    decodeVariant: state.inputs.fleet.decode.variant,
+    prefillVariant: state.inputs.fleet.prefill ? state.inputs.fleet.prefill.variant : undefined});
+}
+
+// btDownload offers text as a file to save.
+function btDownload(link, name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type}));
+  state.btBlobs = (state.btBlobs || []).concat([a.href]);
+  a.download = name;
+  a.textContent = name;
+  link.append(" ", a);
+}
+
+// runPredict predicts the chosen window on the loaded source and offers
+// the prediction file, as JSON and as CSV.
+async function runPredict() {
+  if (!state.inputs) return;
+  const name = el("bpwindow").value;
+  if (!name) { setStatus("Pick the window to predict.", true); return; }
+  el("bprun").disabled = true;
+  el("bpout").textContent = "";
+  for (const u of state.btBlobs || []) URL.revokeObjectURL(u);
+  state.btBlobs = [];
+  setStatus("Predicting the window from its load alone (seconds to a minute)...");
+  try {
+    const win = await btInputsOf(name);
+    const req = {inputsId: state.inputs.inputsId, windowInputsId: win.inputsId, step: el("btstep").value};
+    if (el("btallow").checked) req.allowConfigMismatch = true;
+    const p = await api("POST", "v1/predict", req);
+    const base = "prediction-" + p.predictionHash.slice(0, 12);
+    const out = el("bpout");
+    out.textContent = `Predicted ${p.steps.filter(s => !s.excluded).length} of ${p.steps.length} steps. Save:`;
+    btDownload(out, base + ".json", JSON.stringify(p, null, 2) + "\n", "application/json");
+    btDownload(out, base + ".csv", btPredictionCSV(p), "text/csv");
+    setStatus("Prediction ready: keep the file, and compare it later with the same window measured.");
+  } catch (e) {
+    setStatus("Could not predict: " + e.message, true);
+  } finally {
+    el("bprun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+  }
+}
+
+// runCompare scores a saved prediction against the chosen window measured,
+// and draws it as a check.
+async function runCompare() {
+  const file = el("bcfile").files[0];
+  if (!file) { setStatus("Choose the prediction file.", true); return; }
+  if (!state.inputs) { setStatus("Load a source first: its model names the window.", true); return; }
+  el("bcrun").disabled = true;
+  setStatus("Comparing the prediction with the window measured...");
+  try {
+    let prediction;
+    try {
+      prediction = JSON.parse(await file.text());
+    } catch (e) {
+      throw new Error("the file is not JSON: " + e.message);
+    }
+    const measured = await btInputsOf(el("bcmeasured").value);
+    const out = await api("POST", "v1/compare", {prediction, inputsId: measured.inputsId});
+    state.bt = out;
+    renderBacktest();
+    el("btout").classList.remove("stale");
+    setStatus(`Compared ${out.steps.length} steps.`);
+  } catch (e) {
+    setStatus("Could not compare: " + e.message, true);
+  } finally {
+    el("bcrun").disabled = false;
+  }
+}
+
+// renderBacktest draws the check: the verdict and what was not judged, the
+// two charts on one time axis, the legend, the scores and the notes.
+function renderBacktest() {
+  const bt = state.bt;
+  el("btout").hidden = false;
+  const lines = btSummaryText(bt);
+  el("btsum").innerHTML = lines.map((t, i) => `<li>${i === 0 ? "<b>" + esc(t) + "</b>" : esc(t)}</li>`).join("");
+  const g = btSVG(bt), svg = el("btchart");
+  svg.setAttribute("viewBox", g.viewBox);
+  svg.innerHTML = g.markup;
+  el("btlegend").innerHTML = btLegend();
+  el("btdesc").textContent = lines.join(" ");
+  el("btscores").innerHTML = btScoreTable(bt);
+  el("btsteps").innerHTML = btStepTable(bt);
+  el("btnotes").innerHTML = bt.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(bt.banner)}</li>`;
+  const xh = svg.querySelector(".xh"), tip = el("tip");
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) * g.W / r.width;
+    const s = vx < g.L || vx > g.L + g.pw ? null : btStepAt(bt, g.x0 + (vx - g.L) / g.pw * (g.x1 - g.x0));
+    if (!s) { svg.onmouseleave(); return; }
+    xh.setAttribute("x1", vx); xh.setAttribute("x2", vx); xh.setAttribute("visibility", "visible");
+    tip.innerHTML = btTipHTML(bt, s);
+    tip.hidden = false;
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 360) + "px";
+    tip.style.top = (e.clientY + 14) + "px";
+  };
+  svg.onmouseleave = () => { xh.setAttribute("visibility", "hidden"); tip.hidden = true; };
 }
 
 // ---- The day plan ----

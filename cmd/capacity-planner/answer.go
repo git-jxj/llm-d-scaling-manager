@@ -21,6 +21,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifsource"
 )
 
@@ -40,6 +41,12 @@ const (
 // and what to assume about it.
 type answerFlags struct {
 	recording, cycle, model, variant, output string
+	// noSelfCheck is --no-self-check; serveSelfCheck the server's request
+	// to self-check (selfCheckOn). folds is the states read at the folds'
+	// cuts, and checked the self-check the answer prints with it.
+	noSelfCheck, serveSelfCheck bool
+	folds                       map[int]*learnreplay.State
+	checked                     *whatifapi.SelfCheck
 	// regularOnly refuses a --recording that is no regular file rather than
 	// read it whole: the server's (openRecording).
 	regularOnly bool
@@ -53,6 +60,9 @@ type answerFlags struct {
 	inputTokens, outputTokens float64
 	headroom, tpotRatio       float64
 	seed                      uint64
+	// assumeITLB is --assume-itl-b: the decode line's intercept B, a
+	// duration or "floor", where the recording measured none (itl_b.go).
+	assumeITLB string
 	// ttft, ttftPercentile, assumeVP, assumePromptCV, arrivalCV2, prefill and
 	// prefillVariant are the TTFT half's flags (ttft.go); inputBucket only
 	// refuses per-bucket answers.
@@ -72,6 +82,9 @@ type answerFlags struct {
 	// priceRouterWait is --price-router-wait, a TTFT flag (ttft.go): opt-in,
 	// off by default.
 	priceRouterWait bool
+	// routerWaitInPrefill is --router-wait-in-prefill, a TTFT flag (ttft.go):
+	// opt-in, off by default, measured on router v1.0.0 only.
+	routerWaitInPrefill bool
 	// psOnsets is --ps-onsets, chargeDecodeGate --charge-decode-gate and
 	// prefillRunningCap --prefill-running-cap, TTFT flags (ttft.go): off by
 	// default, as in the SLO analyzer.
@@ -103,6 +116,7 @@ type capturedWindow struct {
 
 func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.recording, "recording", "", "a learner recording (.jsonl or .jsonl.gz) to answer from; this or --prometheus is required")
+	fs.BoolVar(&f.noSelfCheck, "no-self-check", false, "do not check the planner on the recording beside the answer")
 	fs.StringVar(&f.cycle, "cycle", "last", "the model's cycle to answer at: a number from 1, or last")
 	fs.StringVar(&f.model, "model", "", "the model to answer for; empty takes the recording's only model")
 	fs.StringVar(&f.window.namespace, "namespace", "", "the model's namespace; empty matches any (with --prometheus, the namespace to capture: required)")
@@ -114,6 +128,8 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "mean output length to price at, in place of the recorded one (flagged)")
 	fs.Float64Var(&f.headroom, "headroom", 0, "the operating point as a fraction of the knee; default the policy's scaleUpThreshold")
 	fs.Float64Var(&f.tpotRatio, "assume-tpot-ratio", 0, "R_q, a TPOT percentile over its mean, assumed rather than learned (flagged)")
+	fs.StringVar(&f.assumeITLB, "assume-itl-b", "", "the decode line's intercept B (12ms), or floor for B from the floor read below the band, "+
+		"where the recording measured none (PinnedDefaultB); the slope is refitted through it (flagged AssumedITLB)")
 	fs.Uint64Var(&f.seed, "seed", whatif.DefaultResampling().Seed, "the seed of the bands' bootstrap")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	fs.StringVar(&f.output, "output", outputText, "output: text or json (the same as -o)")
@@ -128,6 +144,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.prefillVariant, "prefill-variant", "", "the prefill variant to price, when the model has several")
 	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency one request pays on a prefill pod (11ms), in place of the learned one (flagged)")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "opt-in, validated at one staircase step: price the flow-control gate past the prefill onset, its wait at the router and behind the burst it releases to one prefill pod (FlowControlWaitPriced); off, the wait is flagged AboveFlowControlOnset, a miss")
+	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "opt-in, measured on router v1.0.0 only, at six bursty steps: take the router's wait past the prefill onset, up to 0.9 of the prefill knee, as inside the processor-sharing prefill price, so the figure stands (FlowControlWaitPriced) and a rate answer may pass the onset; reads short on router v0.11.0")
 	fs.BoolVar(&f.psOnsets, "ps-onsets", whatif.DefaultPSOnsets, "experimental, unvalidated: place the prefill flow-control onset on the processor-sharing model, the prompts past --prefill-running-cap counted as waiting")
 	fs.IntVar(&f.prefillRunningCap, "prefill-running-cap", 0, "with --ps-onsets, the most prompts a prefill pod computes at once (about max_num_batched_tokens over the prompt); 0 (unknown, the default) takes the lower of processor sharing at 1 and first come")
 	fs.BoolVar(&f.chargeDecodeGate, "charge-decode-gate", whatif.DefaultChargeDecodeGate, "experimental, unvalidated, slo-to-rate only: charge the time the decode flow-control gate is closed below its onset to the rate answer")
@@ -160,6 +177,11 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 		return usagef("--assume-input-tokens %g, want a finite length of at least 0", f.inputTokens)
 	case f.set["assume-output-tokens"] && !(f.outputTokens > 0 && finite(f.outputTokens)):
 		return usagef("--assume-output-tokens %g, want a finite length above 0", f.outputTokens)
+	}
+	if f.set["assume-itl-b"] {
+		if _, _, err := parseAssumeITLB(f.assumeITLB); err != nil {
+			return err
+		}
 	}
 	if _, err := f.cycleNumber(); err != nil {
 		return err
@@ -233,7 +255,12 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 		return nil, err
 	}
 	defer func() { _ = src.Close() }()
-	return f.stateOf(ctx, name, src)
+	st, err := f.stateOf(ctx, name, src)
+	if err != nil {
+		return nil, err
+	}
+	f.checkRecording(ctx, st, src)
+	return st, nil
 }
 
 // stateOf is readState on a recording already opened: src, and the name its
@@ -250,8 +277,7 @@ func (f *answerFlags) stateOf(ctx context.Context, name string, src *recordingSo
 		return nil, err
 	}
 	cycle, _ := f.cycleNumber()
-	st, err := learnreplay.StateFrom(ctx, src.open, learnreplay.Options{},
-		learnreplay.StateQuery{Namespace: f.window.namespace, ModelID: f.model, Cycle: cycle})
+	st, err := f.readStates(ctx, src.open, learnreplay.StateQuery{Namespace: f.window.namespace, ModelID: f.model, Cycle: cycle})
 	if cerr := src.unchanged(); cerr != nil {
 		return nil, cerr
 	}
@@ -338,11 +364,11 @@ func (f *answerFlags) captureAndGenerate(ctx context.Context) ([]byte, error) {
 func (f *answerFlags) sourceLine(st *learnreplay.State) string {
 	o := f.captured
 	if o == nil {
-		return ""
+		return selfCheckText(f.checked)
 	}
 	return fmt.Sprintf("answered for %s/%s from %s, %s to %s every %s (captured and generated in memory)\n",
 		st.Namespace, st.ModelID, redactedURL(f.window.prometheus),
-		o.from.Format(time.RFC3339), o.to.Format(time.RFC3339), o.step)
+		o.from.Format(time.RFC3339), o.to.Format(time.RFC3339), o.step) + selfCheckText(f.checked)
 }
 
 // prometheus reports whether the flags ask to answer from Prometheus
@@ -391,6 +417,10 @@ type pricedVariant struct {
 	// every figure outside the envelope (statedOutside).
 	model  string
 	stated []string
+	// itlB is what --assume-itl-b did to the line (assumeIntercept), and api
+	// says the question came through the API, whose words a hint uses.
+	itlB interceptAssumption
+	api  bool
 }
 
 // Where the decode KV per request came from (pricedVariant.residentKV), as
@@ -475,6 +505,20 @@ func (pv *pricedVariant) residentKV() float64 {
 // assumed reports a shape the flags assumed, in part or whole.
 func (pv pricedVariant) assumed() bool { return pv.assumedIL || pv.assumedOL || pv.assumedHit }
 
+// noRoleHint is what to add to "the model has N decode variants" when every
+// one of them reads as both roles (an empty role reads as both), which is what
+// a capture gives a P/D fleet when it could not tell the roles apart. Naming
+// one would then price a prefill variant as decode; the fix is the role map.
+func noRoleHint(variants []pricedVariant) string {
+	for _, pv := range variants {
+		if domain.CanonicalRole(pv.state.Role) != domain.RoleBoth {
+			return ""
+		}
+	}
+	return fmt.Sprintf("; all %d were recorded as serving both roles. For a P/D fleet, record again with each Pod's role "+
+		"(capture --role-of, or a role label such as llm-d.ai/role)", len(variants))
+}
+
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
 // --variant names.
@@ -489,7 +533,10 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.variant != "" && vs.Variant != f.variant {
 			continue
 		}
-		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside()}
+		pv := pricedVariant{state: vs, cycle: st.Cycle, model: st.ModelID, stated: f.statedOutside(),
+			api: f.hintSource() == hintAPIRecording || f.hintSource() == hintAPIPrometheus}
+		f.assumeIntercept(&pv)
+		vs = pv.state
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
 			il, pv.assumedIL = f.inputTokens, true
@@ -517,10 +564,16 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			Line: vs.Line, Band: band, CapacityTokens: vs.CapacityTokens,
 			KVPerRequest: pv.residentKV(), OutputTokens: pv.shape.AvgOutputTokens,
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
-			BelowBand: whatif.BelowBand{Read: true, LeastITL: vs.BelowBandITL},
+			// A typed B is a guess: the line is not read below the band from
+			// it. A B from the floor puts the line through the floor itself.
+			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
+			AssumedB:  pv.itlB.Applied,
 		}
 		if pv.assumed() {
 			pv.flags = append(pv.flags, whatif.AssumedShape)
+		}
+		if pv.itlB.Applied {
+			pv.flags = append(pv.flags, assumedITLB)
 		}
 		if vs.Shape.OutputDispersion == 0 {
 			pv.flags = append(pv.flags, whatif.OutputSpreadUnread)
@@ -588,6 +641,10 @@ func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 	if !ok {
 		if u, ok := r.(whatif.Unanswerable); ok && u.Reason == whatif.NoLine && pv.state.Line.IsZero() {
 			u.Detail = fmt.Sprintf("no ITL line learned by cycle %d", pv.cycle)
+			return u
+		}
+		if u, ok := r.(whatif.Unanswerable); ok && u.Reason == whatif.PinnedDefaultB {
+			u.Detail += pv.pinnedDefaultBHint()
 			return u
 		}
 		return r
@@ -901,11 +958,11 @@ func wantsJSON(args []string) bool {
 
 // asJSONError writes err, a command's error before any answer was written,
 // as a JSON error object when args asked for JSON, and ends with its exit
-// code. Any other error, and an exit status (the output already written),
-// passes through.
+// code. Any other error, an exit status (the output already written), and a
+// run stopped by its context (a signal: execute says so) pass through.
 func asJSONError(question string, args []string, out io.Writer, err error) error {
 	var s exitStatus
-	if err == nil || errors.As(err, &s) || !wantsJSON(args) {
+	if err == nil || errors.As(err, &s) || errors.Is(err, context.Canceled) || !wantsJSON(args) {
 		return err
 	}
 	code := exitCode(err)

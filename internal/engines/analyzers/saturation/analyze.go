@@ -256,6 +256,10 @@ type cycle struct {
 	// itlHeld marks a variant whose own line is its last slope held for want
 	// of readings (itl.Reading.SlopeHeld), not a fit made this cycle.
 	itlHeld map[string]bool
+	// itlDistrust says, per variant with a line, why the derived k2's batch
+	// may not be held at it (k2ITLDistrust): "" for the variant's own line
+	// fitted this cycle with a measured intercept.
+	itlDistrust map[string]string
 	// reportedMu is, per variant, the derived mu of each of its own
 	// replicas that was reported and not priced (itlLineReportOnly), for the
 	// service-rate signal. Written by priceReplicas.
@@ -472,6 +476,7 @@ func (c *cycle) fitLines() {
 	c.itlModels = make(map[string]itl.Model, len(c.gpusByVariant))
 	c.itlBorrowedFrom = make(map[string]string, len(c.gpusByVariant))
 	c.itlHeld = make(map[string]bool, len(c.gpusByVariant))
+	c.itlDistrust = make(map[string]string, len(c.gpusByVariant))
 	c.itlSamples = make(map[string]int, len(c.gpusByVariant))
 	c.agg = make(map[string]*aggCycle)
 	variants := make([]string, 0, len(c.gpusByVariant))
@@ -524,7 +529,9 @@ func (c *cycle) fitLines() {
 		role := c.rolesByVariant[variant]
 		c.a.noteReplicaStartFor(startNote{key: variantKey, namespace: c.input.Namespace,
 			modelID: c.input.ModelID, variant: variant, role: domain.CanonicalRole(role),
-			seed: c.startSeedByVariant[variant]}, c.input.ReplicaMetrics, c.logger)
+			seed:           c.startSeedByVariant[variant],
+			revisionsMixed: mixed[variant],
+		}, c.input.ReplicaMetrics, c.logger)
 
 		if !c.a.itlLineRole(role) {
 			continue
@@ -578,7 +585,8 @@ func (c *cycle) fitLines() {
 		adm := itl.Admission{MinK: lo, MaxK: hi, MaxNumSeqs: atCap.perRank, MaxNumSeqsSource: atCap.source,
 			CapMaxPreemptionRate: c.cfg.ITLCapPreemptionRate(), Steady: c.tune.steadiness(),
 			SlopeHoldFor: c.a.Horizons().BucketRetention, Args: windowArgs(params),
-			TierHysteresis: c.a.tierHysteresisOn(), BaselineFromFloor: c.a.baselineFromFloorOn()}
+			TierHysteresis: c.a.tierHysteresisOn(), BaselineFromFloor: c.a.baselineFromFloorOn(),
+			HoldsSteadySlope: c.a.itlHoldSteadySlope}
 		// When each replica's settle began: the engine's settle tracker
 		// (itl_settle.go).
 		c.a.itlSettleAdmission(&adm, c.input.Namespace, c.input.ModelID)
@@ -665,6 +673,7 @@ func (c *cycle) fitLines() {
 			}
 			c.itlModels[variant] = own
 			c.itlHeld[variant] = reading.SlopeHeld
+			c.itlDistrust[variant] = k2ITLDistrust(reading)
 			if aggOn {
 				c.agg[variant] = c.a.resolveAggregated(aggLine{model: own, g: aggG, sigma: aggSigma, sigmaOK: aggSigmaOK,
 					perStep: perStepLine, shapeChanging: c.shapeChanging, gNow: gNow, key: variantKey, physicsKey: physicsKey})
@@ -697,6 +706,7 @@ func (c *cycle) fitLines() {
 		}
 		c.itlModels[variant] = borrowed
 		c.itlBorrowedFrom[variant] = from
+		c.itlDistrust[variant] = itlBoundBorrowed
 		if aggOn {
 			// A borrowed line prices at the lender's shape (lineShape), never
 			// at the borrower's shape now.
@@ -848,7 +858,7 @@ func (c *cycle) priceReplicas(ctx context.Context) ([]capacity.ReplicaCapacity, 
 			c.fleetHitRate, priced, served[rm.VariantName], downstreamSaturated, mixed[rm.VariantName],
 			replicaRouting{
 				kvFromInstant: c.tune.kvFromInstant(raw, c.busyNowRoles[domain.CanonicalRole(role)]),
-			}, c.shapeChanging, c.logger)
+			}, c.shapeChanging, c.k2ITLBound(rm.VariantName), c.logger)
 		if rc != nil {
 			// A derived figure inherits the borrowed-ness of the line it came
 			// from. Set here rather than threaded through

@@ -807,6 +807,20 @@ so_enginecache_note() {
     gaps="$(so_workload_gaps "$ns" "$resource" "$name" "$pod")" || return 0
     IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc fi jit <<< "$gaps"
     [ -n "$engine" ] || return 0
+    # Owned externally (so_cache_owner_read): only a variable the pod spec
+    # does not set is a gap, and a leftover of our patch is one too.
+    local cown cown_raw ccov cours_vol cours_env cstore cstore_eng cshape eemit="" ext_fidir=0 ext_jit="" want_engine=0
+    local want_pyc=0 pyckey="" pycwhy=""
+    if so_cache_owner_read "$ns" "$resource" "$name" "$pod" "$engine" && [ "$cown" = external ]; then
+        so_cache_owner_plan
+        case "$pyc" in unset|mount:*) eemit="${eemit:+$eemit }PYTHONPYCACHEPREFIX" ;; esac
+        if [ -n "$cours_vol$cours_env" ]; then
+            printf '%s' "Engine caches owned externally ($SO_CACHE_OWNER_ANNOTATION=external), but the pod spec still carries what make workload-patch wrote (${cours_vol:+the ${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache} volume}${cours_vol:+${cours_env:+, }}${cours_env}), so the manager publishes copies without those caches: remove them; see docs/reference/workload-preparation.md#an-external-cache-manager."
+        elif [ -n "$eemit" ]; then
+            printf '%s' "Engine caches owned externally ($SO_CACHE_OWNER_ANNOTATION=external), but the pod spec does not set ${eemit// /, }, so the engine keeps those outside the owner's directory and compiles them on every start. Set them in the pod spec, under the owner's directory; see docs/reference/workload-preparation.md#an-external-cache-manager."
+        fi
+        return 0
+    fi
     local also=""
     case "$pyc" in
         unset|mount:*) also=" Its Python bytecode is compiled again in every container too (PYTHONPYCACHEPREFIX is unset)." ;;
@@ -893,6 +907,264 @@ so_jit_env() {
         esac
         printf '        - name: %s\n          value: %s\n' "$n" "$(so_flashinfer_base "$base/$dir" "$image")"
     done
+}
+
+# ---------------------------------------------------------------------------
+# Engine caches another component owns (docs/proposals/external-jit-cache.md).
+#
+# A cache manager -- usually a sidecar -- can restore the compile caches into
+# the pod before the engine starts and publish them after it has served. Its
+# pod spec already points the cache variables into its own directory, and
+# moving them to /engine-cache would leave the manager sharing copies without
+# them. The pod template says who owns them:
+#
+#   scaling-manager.llmd.ai/engine-cache-owner: external | ours
+#
+# external: a cache variable the engine container sets is left to the owner
+# (no variable, mount or volume of ours for it); one it does not set is
+# patched as before, and named. ours, or no annotation: as before. Any other
+# value: as before, with a warning naming it.
+# ---------------------------------------------------------------------------
+
+# SO_CACHE_OWNER_ANNOTATION is the pod-template annotation that names the owner.
+SO_CACHE_OWNER_ANNOTATION="scaling-manager.llmd.ai/engine-cache-owner"
+# SO_CACHE_OWNER_VLLM_VARS are the vLLM cache variables the engine-cache half
+# sets; PYTHONPYCACHEPREFIX, any Python engine's, is decided by the bytecode
+# half (a value set in the pod spec is already left alone there).
+SO_CACHE_OWNER_VLLM_VARS="VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE TRITON_CACHE_DIR"
+# SO_CACHE_OWNER_JIT_VARS are the JIT caches beyond vLLM's own (so_jit_env).
+# Owned externally, they are the owner's whether the pod spec sets them or
+# not (so_cache_owner_plan); they are read here so that one still pointing
+# under our mount is found as the trace of an earlier patch.
+SO_CACHE_OWNER_JIT_VARS="DG_JIT_CACHE_DIR TRTLLM_DG_CACHE_DIR TORCHINDUCTOR_CACHE_DIR CUDA_CACHE_PATH"
+
+# so_cache_owner_read reads, for the pod template at $4 of $2/$3 in $1 and its
+# engine container $5, who owns the engine caches, and sets in the caller:
+#   cown       external, ours, unknown, or empty (no annotation)
+#   cown_raw   the annotation value, for the warning on an unknown one
+#   ccov       the cache variables the engine container sets (value or
+#              valueFrom), space-separated; FLASHINFER_WORKSPACE_DIR included
+#   cours_vol  the claim of our engine-cache volume (a claim named by
+#              LLMSM_ENGINE_CACHE_VOLUME_NAME) when the template has one: the
+#              trace of a patch applied before the annotation
+#   cours_env  the cache variables whose value lies under our mount path
+#   cstore     the manager store as the pod spec shows it, "<what>|<mode>|
+#              <container>|<volume>", or empty
+#   cstore_eng the store volume when the engine container mounts it too
+#   cshape     without the annotation: "<container>|<emptyDir>|<what>" when an
+#              emptyDir holding an engine cache is shared with a container
+#              that mounts storage -- the shape of a cache manager, and of a
+#              weights downloader with scratch space
+# Returns 1 when the object cannot be read.
+so_cache_owner_read() {
+    local ns="$1" resource="$2" name="$3" pod="$4" engine="$5" out rec owner
+    cown="" cown_raw="" ccov="" cours_vol="" cours_env="" cstore="" cstore_eng="" cshape=""
+    out="$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null)" || return 1
+    [ -n "$out" ] || return 1
+    # NOTE: no apostrophes in this program (single-quoted shell string).
+    rec="$(printf '%s' "$out" | jq -r --argjson p "$pod" --arg eng "$engine" \
+        --arg ann "$SO_CACHE_OWNER_ANNOTATION" \
+        --arg evol "${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}" \
+        --arg emount "${LLMSM_ENGINE_CACHE_PATH:-/engine-cache}" \
+        --arg vars "$SO_CACHE_OWNER_VLLM_VARS PYTHONPYCACHEPREFIX FLASHINFER_WORKSPACE_DIR $SO_CACHE_OWNER_JIT_VARS" '
+        def under($m): . == $m or $m == "/" or startswith($m + "/");
+        def what: if .persistentVolumeClaim != null then "claim " + (.persistentVolumeClaim.claimName // "?")
+                  elif .hostPath != null then "hostPath " + (.hostPath.path // "?")
+                  elif .nfs != null then "NFS " + (.nfs.server // "?") + ":" + (.nfs.path // "?")
+                  elif .csi != null then "CSI volume " + .name
+                  else "ephemeral volume " + .name end;
+        ( getpath($p)
+          // (if ($p | length) > 0 and ($p | last) == "leaderTemplate"
+              then getpath($p[:-1] + ["workerTemplate"]) else null end)
+          // {} ) as $t
+        | ($t.spec // {}) as $s
+        | ([ $s.containers[]? | select(.name == $eng) ] | first // {}) as $e
+        | ($vars | split(" ")) as $vs
+        | ($t.metadata.annotations // {}) as $a
+        | ([ $s.volumes[]? | select(.persistentVolumeClaim != null or .hostPath != null
+                                     or .nfs != null or .csi != null or .ephemeral != null) ]) as $stores
+        | ([ $stores[].name ]) as $storenames
+        | ([ $s.volumes[]? | select(.emptyDir != null) | .name ]) as $empties
+        | ([ $e.volumeMounts[]? | select(.name as $n | $empties | index($n)) ]) as $shared
+        | ([ $e.env[]? | select(.name as $n | $vs | index($n)) | (.value // "") | select(. != "") ]) as $vals
+        | ([ ($s.initContainers // [])[], ($s.containers // [])[] | select(.name != $eng)
+             | . as $c
+             | ([ $c.volumeMounts[]? | select(.name as $n | $shared | map(.name) | index($n)) | .name ]) as $sh
+             | ([ $c.volumeMounts[]? | select(.name as $n | $storenames | index($n)) ]) as $st
+             | select(($sh | length) > 0 and ($st | length) > 0)
+             | { c: $c.name, sh: $sh, vol: $st[0].name,
+                 mode: (if $st[0].readOnly == true then "read-only" else "read-write" end),
+                 what: ([ $stores[] | select(.name == $st[0].name) | what ] | first) } ]) as $cands
+        # The candidates whose shared emptyDir holds a cache variable: the
+        # manager, ahead of a weights downloader that only shares scratch.
+        | ([ $cands[] | . as $k
+             | ([ $shared[] | select(.name as $n | $k.sh | index($n)) | .mountPath ]) as $paths
+             | select([ $vals[] as $v | $paths[] as $m | $v | under($m) ] | any)
+             | . + { ed: ([ $shared[] | select(.name as $n | $k.sh | index($n)) | .name ] | first) } ]) as $hold
+        | ([ $hold[0] // empty | "\(.c)|\(.ed)|\(.what)" ] | first // "") as $shape
+        | ($hold[0] // $cands[0]) as $pick
+        | [ (if $a | has($ann) then "v:" + ($a[$ann] | tostring) else "-" end),
+            ([ $vs[] as $v | select([ $e.env[]? | select(.name == $v) ] | length > 0) | $v ] | join(" ")),
+            ([ $s.volumes[]? | select(.name == $evol and .persistentVolumeClaim != null) | .persistentVolumeClaim.claimName ] | first // ""),
+            ([ $e.env[]? | select(.name as $n | $vs | index($n)) | select((.value // "") | under($emount)) | .name ] | unique | join(" ")),
+            ([ $pick // empty | "\(.what)|\(.mode)|\(.c)|\(.vol)" ] | first // ""),
+            ([ $pick // empty | .vol as $v | select([ $e.volumeMounts[]? | select(.name == $v) ] | length > 0) | $v ] | first // ""),
+            $shape
+          ] | map(gsub("[\u001f\n\r]"; " ")) | join("\u001f")' 2>/dev/null)" || return 1
+    IFS=$'\037' read -r owner ccov cours_vol cours_env cstore cstore_eng cshape <<< "$rec"
+    case "$owner" in
+        -) cown="" ;;
+        v:external) cown=external ;;
+        v:ours) cown=ours ;;
+        *) cown=unknown cown_raw="${owner#v:}" ;;
+    esac
+    return 0
+}
+
+# so_cache_owner_plan runs inside so_workload_patch_plan when the owner is
+# external, before the engine-cache half is judged. Each vLLM cache variable
+# the pod spec sets is the owner's; the rest go in eemit, which the emitted
+# body writes one by one. FLASHINFER_WORKSPACE_DIR alone counts as the
+# owner's FlashInfer choice: it is not patched, and the warning about it is
+# addressed to the owner (ext_fidir). The JIT caches beyond vLLM's own are
+# the owner's even when the pod spec does not set them: the JIT half would
+# write them beside VLLM_CACHE_ROOT, in the owner's directory, and patching
+# them under ours would split one engine's caches across two stores. Those
+# it leaves unset go in ext_jit, which the report names; jit is cleared, so
+# no JIT half is planned. cachevol and fi are reset, so the judgement below
+# says nothing about caches that are not ours to fix.
+so_cache_owner_plan() {
+    local v
+    eemit="" ext_fidir=0 ext_jit=""
+    case "${jit:-}" in *"|"*) ext_jit="${jit#*|}" ;; esac
+    jit=""
+    # vLLM as so_workload_gaps tells it: the image names it, or the command
+    # runs `vllm serve` (a model path that merely contains vllm is not one).
+    local isvllm=0
+    case "$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')" in *vllm*) isvllm=1 ;; esac
+    case "$(printf '%s' "$argv" | tr '[:upper:]' '[:lower:]')" in *"vllm serve"*) isvllm=1 ;; esac
+    case "$isvllm" in
+        1)
+            for v in $SO_CACHE_OWNER_VLLM_VARS; do
+                case " $ccov " in *" $v "*) continue ;; esac
+                if [ "$v" = FLASHINFER_WORKSPACE_BASE ]; then
+                    case " $ccov " in *" FLASHINFER_WORKSPACE_DIR "*) ext_fidir=1; continue ;; esac
+                fi
+                eemit="${eemit:+$eemit }$v"
+            done ;;
+    esac
+    # A pod spec that still carries our patch (cours_*) is a conflict to
+    # revert first: adding more of ours to it would only deepen it.
+    if [ -n "$cours_vol$cours_env" ]; then
+        eemit="" want_pyc=0 pyckey="" pycwhy=""
+    fi
+    [ -z "$eemit" ] || want_engine=1
+    cachevol=owner
+    case "$fi" in dir:*) fi="" ;; esac
+}
+
+# so_cache_owner_report says, against $who, what so_cache_owner_read and the
+# plan decided. Called after so_workload_patch_plan, so want_engine, eemit,
+# want_pyc and pycdir are known.
+so_cache_owner_report() {
+    local who="$1" v ours="" claim emount="${LLMSM_ENGINE_CACHE_PATH:-/engine-cache}"
+    local doc="docs/reference/workload-preparation.md#an-external-cache-manager"
+    case "$cown" in
+        ours)
+            log_info "  $who: engine caches are ours ($SO_CACHE_OWNER_ANNOTATION=ours)." ;;
+        unknown)
+            log_warning "  $who: $SO_CACHE_OWNER_ANNOTATION=$cown_raw is neither external nor ours, so it is treated as ours. Set it to external if another component owns the engine caches; see $doc." ;;
+        "")
+            if [ -n "$cshape" ]; then
+                IFS='|' read -r v claim ours <<< "$cshape"
+                log_info "  $who: container $v shares the emptyDir $claim, which holds an engine cache, and mounts $ours. If $v manages the engine caches, annotate the pod template with $SO_CACHE_OWNER_ANNOTATION=external and run this again; see $doc. The patch is written as if it does not."
+            fi ;;
+        external)
+            log_info "  $who: engine caches owned externally ($SO_CACHE_OWNER_ANNOTATION=external)"
+            if [ -n "$cstore" ]; then
+                local swhat smode sc svol
+                IFS='|' read -r swhat smode sc svol <<< "$cstore"
+                if [ "$smode" = read-write ]; then
+                    log_info "    store: $swhat, mounted read-write by $sc in every pod, so any pod can publish a copy every later pod restores; see $doc"
+                else
+                    log_info "    store: $swhat, mounted read-only by $sc; see $doc"
+                fi
+                [ -z "$cstore_eng" ] || log_warning "    the engine container mounts the store $cstore_eng itself: an engine that is compromised can write code every later pod loads. Mount it in the manager only; see $doc."
+            else
+                log_info "    store: not visible in the pod spec; check who can write it ($doc)"
+            fi
+            for v in $eemit; do
+                ours="${ours:+$ours }$v"
+                log_warning "    $v: not set in the pod spec; patched under $emount. A value set only in the image counts as not set: set it in the pod spec, under the owner's directory, to leave it to the owner."
+                # The trim applies it only beside VLLM_CACHE_ROOT.
+                if [ "$v" = FLASHINFER_WORKSPACE_BASE ]; then
+                    case " $eemit " in
+                        *" VLLM_CACHE_ROOT "*) : ;;
+                        *) log_warning "    FLASHINFER_WORKSPACE_BASE is in the emitted file only: without VLLM_CACHE_ROOT beside it, LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE never applies it. Put it in the chart." ;;
+                    esac
+                fi
+            done
+            if [ "${want_pyc:-0}" -eq 1 ]; then
+                ours="${ours:+$ours }PYTHONPYCACHEPREFIX"
+                log_warning "    PYTHONPYCACHEPREFIX: not set in the pod spec; patched under ${pycdir:-$emount}. Set it in the pod spec, under the owner's directory, to leave it to the owner."
+            fi
+            [ "${ext_fidir:-0}" -eq 0 ] \
+                || log_warning "    FLASHINFER_WORKSPACE_DIR: left to the owner, but FlashInfer does not read it, so its kernels are built again on every start. The owner should set FLASHINFER_WORKSPACE_BASE instead."
+            # Never patched, owned externally (so_cache_owner_plan); said so
+            # the owner knows which JIT caches it does not keep.
+            [ -z "${ext_jit:-}" ] \
+                || log_info "    ${ext_jit// /, }: not set in the pod spec, and not patched: owned externally, the JIT caches beyond vLLM's own are left to the owner. Where the engine uses them (DeepGEMM, Inductor outside the vLLM compile, the driver's PTX cache), they are built again in every container until the owner sets them under its directory; see $doc."
+            if [ -n "$cours_vol$cours_env" ]; then
+                # A conflict is a gap, never an all-clear (ext_conflict_names).
+                ext_conflict_names="${ext_conflict_names:-}${ext_conflict_names:+; }$who"
+            elif [ -z "$ours" ]; then
+                log_info "    every cache variable is set in the pod spec: deferred to the owner, nothing of ours is patched. The writable guard is offered for the owner's command in the emitted file, when one is written, and in $doc"
+                ext_full_names="${ext_full_names:-}${ext_full_names:+; }$who"
+            fi
+            if [ -n "$cours_vol" ] || [ -n "$cours_env" ]; then
+                log_warning "    CONFLICT: the pod spec still carries what an earlier make workload-patch wrote${cours_vol:+ (the volume ${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache})}${cours_env:+ (${cours_env} under $emount)}, so the manager publishes copies without those caches. To revert:"
+                log_warning "      1. remove the volume ${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}, its mounts, and every cache variable that points under $emount, in the chart that owns the pod spec; and, if the container command carries our engine-cache guard, the guard too (the emitted file offers the current one to the owner);"
+                log_warning "      2. delete the copies the manager stored while that was applied: they lack the moved caches, and are restored until the manager replaces them."
+                claim="${cours_vol:-}"
+                case "$claim" in
+                    ""|volume) : ;;
+                    engine-cache) : ;;
+                    *) log_warning "      $claim is not the node-local claim make engine-cache makes. If it is a shared ReadWriteMany claim, several pods compiling into one claim have lost files and left a pod Running and never Ready." ;;
+                esac
+                log_warning "      Nothing more of ours is patched until it is reverted; run make workload-patch again after, and a cache variable the pod spec does not set is then patched and named."
+            fi ;;
+    esac
+}
+
+# so_cache_owner_lws_line says which owner each template of LeaderWorkerSet
+# $1 got, when they differ. $2 is "<template>=<owner>" pairs.
+so_cache_owner_lws_line() {
+    local who="$1" pairs="$2" p first="" differ=0 text=""
+    for p in $pairs; do
+        [ -n "$first" ] || first="${p#*=}"
+        [ "${p#*=}" = "$first" ] || differ=1
+        case "${p#*=}" in
+            external) text="${text:+$text, }${p%%=*} external" ;;
+            ours) text="${text:+$text, }${p%%=*} ours" ;;
+            unknown) text="${text:+$text, }${p%%=*} ours (unknown value)" ;;
+            *) text="${text:+$text, }${p%%=*} ours (not annotated)" ;;
+        esac
+    done
+    [ "$differ" -eq 0 ] || log_warning "  $who: the templates are annotated differently, and each is decided on its own: $text."
+}
+
+# so_cache_owner_comment prints the line an emitted document carries for a
+# template whose engine caches are owned externally: which variables are
+# still ours. ${1} names the template on a LeaderWorkerSet.
+so_cache_owner_comment() {
+    local ours="${eemit:-}"
+    [ "${want_pyc:-0}" -eq 0 ] || ours="${ours:+$ours }PYTHONPYCACHEPREFIX"
+    if [ -n "$ours" ]; then
+        printf '#   engine caches: owned externally%s; only %s %s ours (see the report)\n' \
+            "${1:+ in $1}" "$ours" "$(case "$ours" in *" "*) echo are ;; *) echo is ;; esac)"
+    else
+        printf '#   engine caches: owned externally%s; none is ours (see the report)\n' "${1:+ in $1}"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1092,6 +1364,16 @@ so_workload_weights_can_apply() {
 # prepared" either.
 so_workload_enginecache_can_apply() {
     local ns="$1" name="$2" doc="$3" claim ds ready want d_resource d_spec d_paths
+    # Engine caches owned externally can leave FLASHINFER_WORKSPACE_BASE as
+    # the only variable of ours. The trim never applies it without
+    # VLLM_CACHE_ROOT beside it, so the volume would go live with nothing
+    # pointing into it: emitted only, like the FlashInfer half.
+    so_workload_doc_shape "$doc" || return 1
+    if [ "$(yq eval "[$d_spec.volumes[]? | select(.name == \"${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}\")] | length" "$doc" 2>/dev/null)" != 0 ] \
+       && [ "$(yq eval "[$d_spec.containers[].env[]? | select(.name == \"VLLM_CACHE_ROOT\" or .name == \"TRITON_CACHE_DIR\" or .name == \"PYTHONPYCACHEPREFIX\")] | length" "$doc" 2>/dev/null)" = 0 ]; then
+        log_warning "  $ns/$name: the engine-cache volume is emitted, NOT applied -- the only cache variable of ours is FLASHINFER_WORKSPACE_BASE, which is applied only beside VLLM_CACHE_ROOT; put it in the chart with the volume."
+        return 1
+    fi
     so_workload_volume_can_apply "$ns" "$name" "$doc" "${LLMSM_ENGINE_CACHE_VOLUME_NAME:-engine-cache}" engine-cache LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE || return 1
     claim="${LLMSM_ENGINE_CACHE_CLAIM:-engine-cache}"; claim="${claim%%:*}"
     if [ "$claim" = "engine-cache" ]; then
@@ -1514,7 +1796,16 @@ llmsm_workload_patch() {
     # dset_gaps: DisaggregatedSet roles so_workload_report_dsets found a gap
     # in. Reported, never patched, and never part of the all-clear.
     local dset_gaps=0
+    # short_grace: workloads with a preStop hook whose grace period is shorter
+    # than the drain their own pod spec asks for (so_drain_short). Reported,
+    # never patched, and never part of the all-clear.
+    local short_grace=0
     local listing names doc_rc index_lines tool doc_ns doc_name doc_kind write_rc
+    # ext_full_names: workloads whose engine caches are owned externally with
+    # every cache variable set (so_cache_owner_report); ext_rc: 1 when the
+    # engine-cache half was asked for and refused for them.
+    # ext_conflict_names: the same, still carrying our earlier patch.
+    local ext_full_names="" ext_conflict_names="" ext_rc=0
 
     # The tool check this path never had. `make workload-patch` sources the
     # libraries directly instead of going through deploy/install.sh, so
@@ -1538,6 +1829,15 @@ llmsm_workload_patch() {
         case "${!tool:-x}" in
             *[!a-z0-9-]*|-*|*-) log_warning "$tool must be a DNS-1123 label (lower-case letters, digits, -), not '${!tool}'."; return 1 ;;
         esac
+    done
+    # Whole seconds, checked once: they are added up below, and `45s` in an
+    # arithmetic expansion ends the run rather than one line of it.
+    # Normalised to decimal once (0120 is octal 80 to a YAML 1.1 reader).
+    for tool in LLMSM_DRAIN_GRACE_SECONDS LLMSM_DRAIN_SLEEP_SECONDS; do
+        case "${!tool:-1}" in
+            *[!0-9]*|??????????*) log_warning "$tool must be a whole number of seconds (at most nine digits), not '${!tool}'."; return 1 ;;
+        esac
+        [ -z "${!tool:-}" ] || printf -v "$tool" '%s' "$(( 10#${!tool} ))"
     done
     # Two volumes of one name is a document the API server rejects, and with
     # both opt-ins a refusal that quotes two claim names on one line.
@@ -1618,6 +1918,20 @@ llmsm_workload_patch() {
 
     found=$(grep -c '^apiVersion:' "$tmp" 2>/dev/null) || found=0
 
+    # Asked to apply the engine-cache half where it has nothing to carry: the
+    # caches are owned externally and the pod spec sets every variable. Said
+    # once, and the run is non-zero, since what was asked for did not happen.
+    if [ "$apply" = "true" ] && [ "${LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE:-false}" = "true" ]; then
+        if [ -n "$ext_full_names" ]; then
+            log_warning "LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true is refused for $ext_full_names: the engine caches are owned externally ($SO_CACHE_OWNER_ANNOTATION=external) and the pod spec sets every cache variable, so there is no engine-cache half to apply. Nothing of it was sent."
+            ext_rc=1
+        fi
+        if [ -n "$ext_conflict_names" ]; then
+            log_warning "LLMSM_WORKLOAD_PATCH_APPLY_ENGINE_CACHE=true is refused for $ext_conflict_names: the engine caches are owned externally, and the pod spec still carries our earlier engine-cache patch (the CONFLICT above). Nothing of it was sent; revert it first."
+            ext_rc=1
+        fi
+    fi
+
     if [ "$found" -eq 0 ]; then
         # Four different answers, and only one of them is the good news. They
         # used to share a single log_success, which is how an all-clear came to be
@@ -1634,14 +1948,19 @@ llmsm_workload_patch() {
             log_warning "Nothing was written: all $scanned workload(s) were skipped (see above)."
             return 0
         fi
-        if [ "$((scanned - skipped - lws_undrained - dset_gaps))" -gt 0 ]; then
-            log_success "$((scanned - skipped - lws_undrained - dset_gaps)) model server(s) already drain on scale-down and keep their weights on a volume; no vLLM among them compiles from nothing, and none recompiles its Python bytecode."
+        if [ -n "$ext_conflict_names" ]; then
+            # Not an all-clear: the earlier patch is still in the pod spec.
+            log_warning "Engine caches owned externally, but still carrying our earlier engine-cache patch: $ext_conflict_names. Revert it as the CONFLICT above says; nothing else was found to patch."
+        elif [ "$((scanned - skipped - lws_undrained - dset_gaps - short_grace))" -gt 0 ]; then
+            log_success "$((scanned - skipped - lws_undrained - dset_gaps - short_grace)) model server(s) already drain on scale-down and keep their weights on a volume; no vLLM among them compiles from nothing, and none recompiles its Python bytecode."
         fi
         [ "$lws_undrained" -gt 0 ] && log_warning "  $lws_undrained LeaderWorkerSet(s) keep their caches but do not drain on scale-down (see above); that is set by hand."
         [ "$dset_gaps" -gt 0 ] && log_warning "  $dset_gaps DisaggregatedSet role(s) need changes to their role template (see above); that is set by hand, in the set's owner."
+        [ "$short_grace" -gt 0 ] && log_warning "  $short_grace model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain (see above); that is set by hand."
         [ "$skipped" -gt 0 ] && log_warning "  $skipped other workload(s) were skipped and were not checked."
+        [ -z "$ext_full_names" ] || log_info "  Engine caches left to an external owner: $ext_full_names (see above)."
         so_workload_patch_clear_stale "$out"
-        return 0
+        return "$ext_rc"
     fi
 
     # Counted from the documents, so it survives whatever apply mode does or
@@ -1678,6 +1997,10 @@ llmsm_workload_patch() {
         log_warning "  They set FLASHINFER_WORKSPACE_DIR, which FlashInfer does not read (workload-patch wrote"
         log_warning "  it before v0.12.1). $out sets FLASHINFER_WORKSPACE_BASE under the same path, keyed by"
         log_warning "  image. It is emitted, not applied: put it in your chart values and remove FLASHINFER_WORKSPACE_DIR."
+    fi
+    if [ "$short_grace" -gt 0 ]; then
+        log_warning "$short_grace model server(s) have a preStop hook but a grace period shorter than, or not checkable against, their drain (see above)."
+        log_warning "  That is not in $out: raise terminationGracePeriodSeconds where the pod spec is owned."
     fi
 
     needs_jit=$(grep -c '^#   jit:' "$tmp" 2>/dev/null) || needs_jit=0
@@ -1771,6 +2094,7 @@ llmsm_workload_patch() {
     log_info "  Apply it where the pod spec is owned -- your modelservice values, or the chart that made it."
     [ "$apply" != "true" ] && log_info "  To patch the live objects anyway: LLMSM_WORKLOAD_PATCH_APPLY=true make workload-patch"
     [ "$unreadable" -eq 1 ] && rc=1
+    [ "$ext_rc" -eq 0 ] || rc=1
     return "$rc"
 }
 
@@ -2281,6 +2605,12 @@ so_workload_patch_plan() {
             pyckey="" ;;
     esac
 
+    # Engine caches owned externally: only the variables the pod spec leaves
+    # unset are ours (so_cache_owner_plan).
+    if [ "${cown:-}" = external ]; then
+        so_cache_owner_plan
+    fi
+
     case "$cachevol" in
         unset)
             want_engine=1
@@ -2406,7 +2736,23 @@ so_workload_patch_cache_body() {
           value: ${mountpath}/huggingface
 CACHEENV
         fi
-        if [ "$want_engine" -eq 1 ]; then
+        if [ "$want_engine" -eq 1 ] && [ -n "${eemit:-}" ]; then
+            # Owned externally: only the variables the pod spec does not set,
+            # each on its own; the owner's entries are not written at all.
+            echo "        # Engine caches owned externally ($SO_CACHE_OWNER_ANNOTATION=external):"
+            echo "        # only the cache variables the pod spec does not set are ours."
+            local ev evalue
+            for ev in $eemit; do
+                case "$ev" in
+                    VLLM_CACHE_ROOT) evalue="${emount}/vllm" ;;
+                    FLASHINFER_WORKSPACE_BASE) evalue="$(so_flashinfer_base "${emount}/flashinfer" "${image}")" ;;
+                    TRITON_CACHE_DIR) evalue="${emount}/triton" ;;
+                    *) continue ;;
+                esac
+                echo "        - name: ${ev}"
+                echo "          value: ${evalue}"
+            done
+        elif [ "$want_engine" -eq 1 ]; then
             cat <<ENGINEENV
         # The three caches vLLM keeps between runs. They are keyed by a hash of
         # the engine config, so a changed model, flag or version misses rather
@@ -2642,7 +2988,18 @@ ENGINENEED
     # FLASHINFER_WORKSPACE_BASE, which the old guard does not check, so the
     # file must carry the guard that replaces it. hack/check-workload-gaps.sh
     # runs this text.
-    if [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ] || [ "$want_jit" -eq 1 ]; then
+    # Owned externally, the guard is still offered: restored files the engine
+    # cannot write make FlashInfer fail instead of compiling.
+    if [ "${cown:-}" = external ]; then
+        cat <<'OWNERGUARD'
+#
+#   Engine caches owned externally: the guard below is offered for whoever
+#   owns the container command. Files the manager restores must be writable
+#   by the engine's user; where they are not, FlashInfer fails instead of
+#   compiling.
+OWNERGUARD
+    fi
+    if [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ] || [ "$want_jit" -eq 1 ] || [ "${cown:-}" = external ]; then
         cat <<'ENGINEGUARD'
 #
 #   Keep the engine tolerant of a cache path that turns out not to
@@ -2767,7 +3124,12 @@ ENGINEGUARD
         # on vLLM 0.26 (torch 2.11): compile 5.1 -> 0.8 s, same output. From
         # 0.27 it is the default (torch >= 2.12), so it is not set there; below
         # 0.26 it was never measured, so it is not set there either.
-        if [ "$want_engine" -eq 1 ] && [ "${LLMSM_ENGINE_CACHE_AOT:-true}" != "false" ]; then
+        # Not for an owner VLLM_CACHE_ROOT: what it compiles is the owner's.
+        local aot_ours=1
+        if [ -n "${eemit:-}" ]; then
+            case " $eemit " in *" VLLM_CACHE_ROOT "*) : ;; *) aot_ours=0 ;; esac
+        fi
+        if [ "$want_engine" -eq 1 ] && [ "$aot_ours" -eq 1 ] && [ "${LLMSM_ENGINE_CACHE_AOT:-true}" != "false" ]; then
             cat <<'AOTGUARD'
 #     # vLLM 0.26 loads its compile as one AOT artefact only when asked (the
 #     # default from 0.27). Released 0.26.x only, a +local suffix included;
@@ -2937,9 +3299,36 @@ so_workload_patch_doc() {
     fi
 
     [ "${prestop:-0}" -eq 0 ] && want_drain=1
+    # The engine's own drain time (so_drain_times). Without a hook it sizes the
+    # grace period written below; with one, nothing is written and a grace
+    # period too short for it is reported (so_drain_short).
+    local dtimes="" dhook dsleep dtimeout=0 dunread dshort
+    if dtimes="$(so_drain_times "$ns" "$resource" "$name" "$pod" "$engine")"; then
+        IFS=$'\037' read -r dhook dsleep dtimeout dunread <<< "$dtimes"
+    elif [ "$want_drain" -eq 1 ]; then
+        log_warning "  $ns/$name: could not read the pod spec again for --shutdown-timeout; the grace period below is sized without it."
+    fi
+    case ",${dunread:-}," in *,timeout,*)
+        [ "$want_drain" -eq 1 ] && log_warning "  $ns/$name: --shutdown-timeout is not a number this can read; the grace period below is sized without it. Add it to terminationGracePeriodSeconds by hand." ;;
+    esac
+    if [ "$want_drain" -eq 0 ]; then
+        dshort="$(so_drain_short "$ns" "$resource" "$name" "$pod" "$engine" "${grace:-30}" "$dtimes")"
+        if [ -n "$dshort" ]; then
+            log_warning "  $ns/$name: $dshort"
+            short_grace=$(( ${short_grace:-0} + 1 ))
+        fi
+    fi
 
     who="$ns/$name"
+    # Who owns the engine caches (so_cache_owner_read); eemit and ext_fidir
+    # are set by so_cache_owner_plan.
+    local cown cown_raw ccov cours_vol cours_env cstore cstore_eng cshape eemit="" ext_fidir=0 ext_jit=""
+    if ! so_cache_owner_read "$ns" "$resource" "$name" "$pod" "$engine"; then
+        log_warning "  Could not read $resource/$name in $ns -- skipped. It is not being reported as healthy; it was not readable."
+        return 3
+    fi
     so_workload_patch_plan
+    so_cache_owner_report "$who"
     # A proposal, never a half: it rides along as a comment on whatever
     # document this writes, and on the console either way.
     local kvnote="" kvsay=""
@@ -2969,10 +3358,20 @@ GATEWHY
         # to print the old value in a comment while quietly reducing it.
         grace_want="${LLMSM_DRAIN_GRACE_SECONDS:-120}"
         [ "${grace:-30}" -gt "$grace_want" ] && grace_want="$grace"
+        # ...nor set it below what the drain needs: the preStop sleep, then the
+        # engine's --shutdown-timeout, then the margin.
+        local dneed=$(( $(so_drain_int "${LLMSM_DRAIN_SLEEP_SECONDS:-45}" 45) + ${dtimeout:-0} + SO_DRAIN_MARGIN_SECONDS ))
+        [ "$dneed" -gt "$grace_want" ] && grace_want="$dneed"
         cat <<DRAINWHY
 #   drain: ${engine} declares no preStop hook; terminationGracePeriodSeconds is ${grace:-30}.
 #          A replica removed mid-stream cuts the responses it is still writing.
 DRAINWHY
+        if [ "${dtimeout:-0}" -gt 0 ]; then
+            cat <<DRAINTIMEOUT
+#          Its --shutdown-timeout is ${dtimeout} s, so the drain needs ${LLMSM_DRAIN_SLEEP_SECONDS:-45} s of preStop
+#          + ${dtimeout} s + ${SO_DRAIN_MARGIN_SECONDS} s = ${dneed} s.
+DRAINTIMEOUT
+        fi
     fi
     if [ "$want_cache" -eq 1 ]; then
         cat <<CACHEWHY
@@ -2980,13 +3379,14 @@ DRAINWHY
 #          mounted volume, so every scale-up fetches the weights again.
 CACHEWHY
     fi
-    if [ "$want_engine" -eq 1 ]; then
+    if [ "$want_engine" -eq 1 ] && [ "$cown" != external ]; then
         cat <<ENGINEWHY
 #   engine-cache: the compile caches (torch.compile, FlashInfer, Triton, and
 #          DeepGEMM, Inductor and CUDA where it uses them) are on no volume
 #          that outlives the pod, so every start compiles from nothing.
 ENGINEWHY
     fi
+    [ "$cown" != external ] || so_cache_owner_comment
     if [ "$want_pyc" -eq 1 ]; then
         cat <<PYCWHY
 #   bytecode: ${engine} sets no PYTHONPYCACHEPREFIX, so every container compiles
@@ -3024,7 +3424,8 @@ HEAD
         cat <<GRACE
       # The kubelet sends SIGKILL when this expires, hook or not, so it is the
       # total budget rather than the drain window. The drain window is the
-      # preStop sleep below; this only has to be comfortably larger.
+      # preStop sleep below plus the engine's --shutdown-timeout; this covers
+      # both with at least ${SO_DRAIN_MARGIN_SECONDS} s to spare.
       terminationGracePeriodSeconds: ${grace_want}
 GRACE
     fi
@@ -3348,8 +3749,13 @@ so_workload_patch_doc_lws() {
     local mountpath claim claim_found=0 emount evol eclaim esub eclaim_found=0
     local any_cache=0 any_engine=0 any_pyc=0 any_evol=0 any_fib=0 any_jit=0 first_model=""
     local plan_lws=1 hooked=1 lgrace="" wgrace=""
+    local dshort="" lws_short=0
     local -a t_name=() t_engine=() t_image=() t_cache=() t_eng=() t_pyc=() t_evol=() t_pycdir=() t_pyckey=()
     local -a t_fib=() t_fibase=() t_jit=() t_jitbase=() t_jitmiss=()
+    # Engine-cache owner, per template (so_cache_owner_read).
+    local cown cown_raw ccov cours_vol cours_env cstore cstore_eng cshape eemit="" ext_fidir=0 ext_jit=""
+    local owner_pairs="" any_ext=0 any_engine_ours=0 any_eemit="" all_eemit=1
+    local -a t_eemit=() t_cown=()
 
     if ! obj="$(kubectl get leaderworkersets "$name" -n "$ns" -o json 2>/dev/null)" || [ -z "$obj" ] \
        || ! tmpls="$(printf '%s' "$obj" | jq -r '(.spec.leaderWorkerTemplate // {}) as $w
@@ -3379,7 +3785,21 @@ so_workload_patch_doc_lws() {
         want_cache=0 want_engine=0 want_pyc=0 want_evol=0 pycdir="" pyckey="" pycwhy="" model=""
         want_fib=0 fibase="" want_jit=0 jitbase="" jitmiss=""
         who="$ns/$name ($t)"
+        eemit="" ext_fidir=0 ext_jit=""
+        if ! so_cache_owner_read "$ns" leaderworkersets "$name" "$pod" "$engine"; then
+            log_warning "  Could not read leaderworkersets/$name in $ns -- skipped. It is not being reported as healthy; it was not readable."
+            return 3
+        fi
         so_workload_patch_plan
+        so_cache_owner_report "$who"
+        owner_pairs="${owner_pairs:+$owner_pairs }$t=${cown:-none}"
+        t_eemit[n]="$eemit" t_cown[n]="$cown"
+        if [ "$cown" = external ]; then
+            any_ext=1
+            any_eemit="${any_eemit:+$any_eemit }$eemit"
+        elif [ "$want_engine" -eq 1 ]; then
+            any_engine_ours=1 all_eemit=0
+        fi
         if [ -z "$model" ] && [ -n "$argv" ]; then
             log_warning "  $who: the model could not be identified from the command (passed in a variable?), so whether its weights persist was not judged."
         fi
@@ -3387,6 +3807,15 @@ so_workload_patch_doc_lws() {
         so_weights_lws_notice "$ns" "$name" "$t" "$engine" "$obj"
         [ "${prestop:-0}" -eq 1 ] || hooked=0
         case "$t" in leaderTemplate) lgrace="${grace:-30}" ;; workerTemplate) wgrace="${grace:-30}" ;; esac
+        # A hooked template whose grace period is shorter than its own drain
+        # (so_drain_short): said per template, counted once per LWS below.
+        if [ "${prestop:-0}" -eq 1 ]; then
+            dshort="$(so_drain_short "$ns" leaderworkersets "$name" "$pod" "$engine" "${grace:-30}")"
+            if [ -n "$dshort" ]; then
+                log_warning "  LeaderWorkerSet $ns/$name ($t): $dshort"
+                lws_short=1
+            fi
+        fi
         [ "$want_cache" -eq 1 ] && [ -z "$first_model" ] && first_model="$model"
         t_name[n]="$t" t_engine[n]="$engine" t_image[n]="$image"
         t_cache[n]="$want_cache" t_eng[n]="$want_engine" t_pyc[n]="$want_pyc" t_evol[n]="$want_evol"
@@ -3400,7 +3829,11 @@ so_workload_patch_doc_lws() {
         [ "$want_jit" -eq 1 ] && any_jit=1
         halves=""
         [ "$want_cache" -eq 1 ] && halves="$halves, weights"
-        [ "$want_engine" -eq 1 ] && halves="$halves, engine-cache"
+        if [ "$want_engine" -eq 1 ] && [ -n "$eemit" ]; then
+            halves="$halves, engine-cache (only $eemit; owned externally)"
+        elif [ "$want_engine" -eq 1 ]; then
+            halves="$halves, engine-cache"
+        fi
         [ "$want_pyc" -eq 1 ] && halves="$halves, bytecode"
         [ "$want_fib" -eq 1 ] && halves="$halves, flashinfer"
         [ "$want_jit" -eq 1 ] && halves="$halves, jit"
@@ -3412,12 +3845,15 @@ so_workload_patch_doc_lws() {
     done
 
     [ "$n" -gt 0 ] || return 2
+    so_cache_owner_lws_line "LeaderWorkerSet $ns/$name" "$owner_pairs"
     # No drain half is ever written, so the line says what to do by hand --
     # and stays quiet once every template has a hook and the worker outlasts
     # the leader.
     if [ "$hooked" -eq 0 ] || { [ -n "$lgrace" ] && [ -n "$wgrace" ] && [ "$wgrace" -lt "$lgrace" ]; }; then
         log_warning "  LeaderWorkerSet $ns/$name: no drain half -- a worker that stops first aborts the leader's in-flight generations whatever hook either pod has. Add a preStop to the leader AND the worker, with the worker terminationGracePeriodSeconds at least the leader one; see docs/reference/workload-preparation.md#on-a-leaderworkerset."
         lws_undrained=$(( ${lws_undrained:-0} + 1 ))
+    elif [ "$lws_short" -eq 1 ]; then
+        short_grace=$(( ${short_grace:-0} + 1 ))
     fi
     # Checked and nothing missing: 0, the same answer a healthy Deployment gets.
     [ "$any_cache" -eq 1 ] || [ "$any_engine" -eq 1 ] || [ "$any_pyc" -eq 1 ] || [ "$any_fib" -eq 1 ] || [ "$any_jit" -eq 1 ] || return 0
@@ -3434,13 +3870,18 @@ HDR
 #          mounted volume, so every scale-up fetches the weights again.
 CACHEWHY
     fi
-    if [ "$any_engine" -eq 1 ]; then
+    if [ "$any_engine_ours" -eq 1 ]; then
         cat <<ENGINEWHY
 #   engine-cache: the compile caches (torch.compile, FlashInfer, Triton, and
 #          DeepGEMM, Inductor and CUDA where it uses them) are on no volume
 #          that outlives the pod, so every start compiles from nothing.
 ENGINEWHY
     fi
+    for ((i = 0; i < n; i++)); do
+        [ "${t_cown[i]}" = external ] || continue
+        eemit="${t_eemit[i]}" want_pyc="${t_pyc[i]}"
+        so_cache_owner_comment "${t_name[i]}"
+    done
     if [ "$any_pyc" -eq 1 ]; then
         cat <<PYCWHY
 #   bytecode: the engine sets no PYTHONPYCACHEPREFIX, so every container compiles
@@ -3486,6 +3927,7 @@ HEAD
         pycdir="${t_pycdir[i]}" pyckey="${t_pyckey[i]}" image="${t_image[i]}"
         want_fib="${t_fib[i]}" fibase="${t_fibase[i]}"
         want_jit="${t_jit[i]}" jitbase="${t_jitbase[i]}" jitmiss="${t_jitmiss[i]}"
+        eemit="${t_eemit[i]}"
         [ "$want_cache" -eq 1 ] || [ "$want_engine" -eq 1 ] || [ "$want_pyc" -eq 1 ] || [ "$want_fib" -eq 1 ] || [ "$want_jit" -eq 1 ] || continue
         cat <<TEMPLATE
     ${t_name[i]}:
@@ -3496,6 +3938,11 @@ TEMPLATE
         so_workload_patch_cache_body | sed 's/^/  /'
     done
     want_cache="$any_cache" want_engine="$any_engine" want_pyc="$any_pyc" want_evol="$any_evol" want_fib="$any_fib" want_jit="$any_jit"
+    # The notes see the group: the owner guard when any template is owned
+    # externally, and the AOT line only when some template's VLLM_CACHE_ROOT
+    # is ours.
+    cown=""; [ "$any_ext" -eq 0 ] || cown=external
+    eemit=""; [ "$all_eemit" -eq 0 ] || eemit="${any_eemit:-none}"
     so_workload_patch_notes
     if [ "$any_engine" -eq 1 ] || [ "$any_pyc" -eq 1 ] || [ "$any_fib" -eq 1 ] || [ "$any_jit" -eq 1 ]; then
         cat <<'LWSGUARD'
@@ -3508,9 +3955,98 @@ LWSGUARD
     fi
 }
 
+# SO_DRAIN_MARGIN_SECONDS is what the grace period keeps beyond the preStop
+# sleep and the engine's --shutdown-timeout: the engine still has to exit after
+# its drain ends, and the kubelet does not wait for that.
+SO_DRAIN_MARGIN_SECONDS=15
+
+# so_drain_int prints $1 when it is a whole number of seconds (at most nine
+# digits, read as decimal), else $2. Arithmetic on a value like `45s` would
+# otherwise end the whole run, not just one line.
+so_drain_int() {
+    case "$1" in
+        ""|*[!0-9]*|??????????*) printf '%s' "$2" ;;
+        *) printf '%s' "$(( 10#$1 ))" ;;
+    esac
+}
+
+# so_drain_times prints how long the engine container $5 of the pod template
+# at $4 takes to drain, as four \037-separated fields:
+#
+#   hook \037 sleep \037 timeout \037 unread
+#
+# hook is 1 when the container has a preStop hook. sleep is how long that hook
+# sleeps: a sleep action's seconds, or the sum of every `sleep N` (N, Ns or Nm)
+# in an exec hook; 0 when it has neither. timeout is the engine's
+# --shutdown-timeout, the last one on the command line as argparse reads it;
+# 0 when it is not set. vLLM waits up to that long for in-flight requests after
+# SIGTERM, and SIGTERM comes only once the hook ends, so the pod needs
+# sleep + timeout before the kubelet kills it.
+#
+# unread names what is there but is not a number this can read: "sleep" (a
+# hook with no sleep in it, an httpGet, `sleep infinity`), "timeout" (a
+# variable), or both, comma-separated. Each then counts as 0 s, so a grace
+# period found too short from these numbers is too short in fact.
+#
+# The template falls back from leaderTemplate to workerTemplate the way
+# so_workload_gaps does, and the container is the one so_workload_gaps chose.
+# Returns 1 and prints nothing when the object cannot be read.
+so_drain_times() {
+    local ns="$1" resource="$2" name="$3" pod="$4" engine="$5" out
+    out=$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null) || return 1
+    [ -n "$out" ] || return 1
+    # NOTE: no apostrophes in this program; it is a single-quoted shell string.
+    printf '%s' "$out" | jq -r --argjson p "$pod" --arg c "$engine" '
+        ( getpath($p)
+          // (if ($p | length) > 0 and ($p | last) == "leaderTemplate"
+              then getpath($p[:-1] + ["workerTemplate"]) else null end)
+          // {} ) as $t
+        | ([ $t.spec.containers[]? | select(.name == $c) ] | first) as $e
+        | ($e.lifecycle.preStop // null) as $h
+        | ( ($h.exec.command // []) | map(tostring | gsub("[\n\r]"; " ")) | join(" ") ) as $hcmd
+        | [ $hcmd | scan("(?:^|[^A-Za-z0-9_.-])sleep[ \t]+([0-9]{1,9})([sm]?)(?![A-Za-z0-9_.])")
+            | (.[0] | tonumber) * (if .[1] == "m" then 60 else 1 end) ] as $sleeps
+        | ( ($h.sleep.seconds | type) == "number" and $h.sleep.seconds >= 0 and $h.sleep.seconds < 1000000000 ) as $action
+        | ( if $h == null then 0 elif $action then $h.sleep.seconds else ($sleeps | add // 0) end ) as $sleep
+        | ( $h != null and ($action | not) and ($sleeps | length) == 0 ) as $sleepunread
+        | ( (($e.command // []) + ($e.args // [])) | map(tostring | gsub("[\n\r]"; " ")) | join(" ") ) as $argv
+        | ( [ $argv | scan("(?:^|[^A-Za-z0-9_-])--shutdown[-_]timeout(?:=|[ \t]+)([^ \t;&|]*)")
+              | .[0] | gsub("[\"" + ([39] | implode) + "]"; "") ] | last ) as $to
+        | ( $to != null and ($to | test("^[0-9]{1,9}$")) ) as $toread
+        | [ (if $h == null then 0 else 1 end),
+            $sleep,
+            (if $toread then ($to | tonumber) else 0 end),
+            ([ (if $sleepunread then "sleep" else empty end),
+               (if $to != null and ($toread | not) then "timeout" else empty end) ] | join(","))
+          ] | map(tostring) | join("\u001f")' 2>/dev/null || return 1
+}
+
+# so_drain_short prints why the grace period $6 of the engine $5 is too short
+# for the drain its own pod spec asks for, and nothing when it is long enough
+# or the engine has no preStop hook (so_drain_note says that). The rule:
+# sleep + --shutdown-timeout + the margin. $7, when given, is what
+# so_drain_times already printed for this template, so it is not read twice.
+# An object that cannot be read is said to be unknown, never long enough.
+so_drain_short() {
+    local ns="$1" resource="$2" name="$3" pod="$4" engine="$5" grace="${6:-30}" times="${7:-}"
+    local hook sleep timeout unread need extra=""
+    if [ -z "$times" ] && ! times="$(so_drain_times "$ns" "$resource" "$name" "$pod" "$engine")"; then
+        printf '%s' "Could not read the pod spec again, so whether terminationGracePeriodSeconds (${grace}) covers the preStop hook and --shutdown-timeout of ${engine} is unknown -- this is not a report that it does."
+        return 0
+    fi
+    IFS=$'\037' read -r hook sleep timeout unread <<< "$times"
+    [ "${hook:-0}" -eq 1 ] || return 0
+    need=$(( sleep + timeout + SO_DRAIN_MARGIN_SECONDS ))
+    [ "$grace" -lt "$need" ] || return 0
+    case ",$unread," in *,sleep,*) extra="${extra} The hook's own duration could not be read and counts as 0 s." ;; esac
+    case ",$unread," in *,timeout,*) extra="${extra} --shutdown-timeout is not a number this can read and counts as 0 s." ;; esac
+    printf '%s' "Scale-down can still cut in-flight requests: ${engine} has a preStop hook, but draining needs ${sleep} s of preStop + ${timeout} s of --shutdown-timeout + ${SO_DRAIN_MARGIN_SECONDS} s = ${need} s, and terminationGracePeriodSeconds is ${grace}; the kubelet kills the pod then.${extra} Set terminationGracePeriodSeconds to at least ${need} where the pod spec is owned -- see docs/reference/workload-preparation.md#sizing-the-grace-period."
+}
+
 so_drain_note() {
     local ns="$1" resource="$2" name="$3" pod="$4"
     local gaps engine prestop grace pvcs onvol argv cachevol image pyc fi jit
+    local times hook sleep timeout unread hint=""
 
     # preStop is checked on the ENGINE, not pod-wide. The previous copy counted
     # containers with a hook across the whole pod, so an llm-d deployment whose
@@ -3522,11 +4058,21 @@ so_drain_note() {
     fi
     IFS=$'\037' read -r engine prestop grace pvcs onvol argv cachevol image pyc fi jit <<< "$gaps"
     [ -n "$engine" ] || return 0
-    # A hook of any shape counts. Whether it drains for long enough is the
-    # operator's judgement, and guessing at a threshold would produce a warning
-    # nobody can act on.
-    [ "${prestop:-0}" -gt 0 ] && return 0
-    printf '%s' "Scale-down will cut in-flight requests: ${engine} declares no preStop hook, and terminationGracePeriodSeconds is ${grace:-30}. A replica removed mid-stream terminates the responses it is still writing. The pod spec belongs to the model server's chart rather than to the scaling manager -- see docs/reference/operations.md#draining-before-scale-down."
+    # A hook of any shape counts as a hook. Whether the grace period covers it
+    # is judged only from what the pod spec itself states: the hook's sleep and
+    # the engine's --shutdown-timeout (so_drain_short).
+    if [ "${prestop:-0}" -gt 0 ]; then
+        so_drain_short "$ns" "$resource" "$name" "$pod" "$engine" "${grace:-30}"
+        return 0
+    fi
+    if times="$(so_drain_times "$ns" "$resource" "$name" "$pod" "$engine")"; then
+        IFS=$'\037' read -r hook sleep timeout unread <<< "$times"
+        local dsl
+        dsl="$(so_drain_int "${LLMSM_DRAIN_SLEEP_SECONDS:-45}" 45)"
+        [ "${timeout:-0}" -gt 0 ] && hint=" Its --shutdown-timeout is ${timeout} s, so with a ${dsl} s preStop the grace period needs at least $(( dsl + timeout + SO_DRAIN_MARGIN_SECONDS )) s."
+        case ",$unread," in *,timeout,*) hint=" Its --shutdown-timeout is not a number this can read; the grace period needs a ${dsl} s preStop, that timeout and ${SO_DRAIN_MARGIN_SECONDS} s more." ;; esac
+    fi
+    printf '%s' "Scale-down will cut in-flight requests: ${engine} declares no preStop hook, and terminationGracePeriodSeconds is ${grace:-30}. A replica removed mid-stream terminates the responses it is still writing.${hint} The pod spec belongs to the model server's chart rather than to the scaling manager -- see docs/reference/workload-preparation.md#draining-before-scale-down."
     return 0
 }
 

@@ -138,6 +138,26 @@ const SwitchStartBlendsFirstSamples = "start-blends-first-samples"
 // replay turns it off (SetSwitchesForReplay).
 const SwitchStartCountedPodsRestored = "start-counted-pods-restored"
 
+// SwitchStartHeldThroughRollout is the replay switch for issue
+// llm-d-incubation/llm-d-scaling-manager#220: a Pod that started while its
+// variant was rolling out -- Ready while its rows report two revisions, or
+// created before the last cycle that saw them, or, until that mark expires
+// (up to an hour), Ready at a time its row does not report -- is counted,
+// never folded into the start estimate nor into a run of refused starts. Such a start is the rollout's: a new revision's
+// first, cold starts, or a scale-up waiting on a DisaggregatedSet rollout
+// that can run for hours. Its Ready time is still observed in
+// llmsm_replica_start_seconds.
+//
+// The rows decide, not the scale target's status: scaletarget.RollingOut
+// also reads true while a scale write is not yet observed, and for a
+// LeaderWorkerSet-backed role while a new group starts, and those starts
+// are the ones to learn from. So a rollout that never shows two revisions
+// at once (one replica, replaced in place) is not held, and a canary held
+// below a LeaderWorkerSet partition, or a Deployment stuck mid-rollout,
+// holds every start while it lasts. Off, every start is folded as before.
+// On from the constructor; a replay turns it off (SetSwitchesForReplay).
+const SwitchStartHeldThroughRollout = "start-held-through-rollout"
+
 // The estimate gauge's sources (llmsm_replica_start_seconds_estimate), and the
 // start learner's: the 70 s default, the ScaledObject's seed, or a start
 // measured on a Pod of the variant.
@@ -157,6 +177,9 @@ type startNote struct {
 	key, namespace, modelID, variant, role string
 	// seed is the variant's replicaStartSeconds, 0 when unset.
 	seed float64
+	// revisionsMixed is whether the variant's rows report more than one
+	// revision this cycle (SwitchStartHeldThroughRollout).
+	revisionsMixed bool
 }
 
 // startFigures is a key's start estimate as each reader takes it
@@ -333,6 +356,9 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 		byPod bool
 	}
 	var rejected []outlier
+	// heldByRollout names the Pods whose start overlapped a rollout this
+	// cycle (SwitchStartHeldThroughRollout): counted, not folded.
+	var heldByRollout []string
 	observed := 0
 	present := make(map[string]struct{}, len(replicas))
 	// endsRun is an in-range start from a Pod not in the open run, this
@@ -347,6 +373,7 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 	// never visit a key that has no window.
 	now := a.now()
 	a.noteVariantSeen(key, now)
+	rolling, rolledAt := a.noteStartRolloutLocked(key, note.revisionsMixed, now)
 	for _, rm := range replicas {
 		if seen, ok := startPodKey(key, variantName, rm); ok {
 			present[seen] = struct{}{}
@@ -389,6 +416,17 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 			continue
 		}
 		if !(rm.StartSeconds > 0) {
+			continue
+		}
+		if a.startOverlapsRollout(rm, rolling, rolledAt) {
+			// Counted, so it is never folded on a later cycle either, and
+			// out of any run of refused starts, whose median it would join.
+			a.startSeenPods[seen] = now
+			if run := a.startOutlierPods[key]; run != nil {
+				delete(run, seen)
+			}
+			heldByRollout = append(heldByRollout, rm.PodName)
+			metrics.ObserveReplicaStartSeconds(namespace, variantName, rm.StartSeconds)
 			continue
 		}
 		// The guard compares with the measured estimate, the only one
@@ -504,6 +542,11 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 		}
 		logger.V(logging.DEFAULT).Info("replica-start-outlier-rejected", append(kv, "reason", reason)...)
 	}
+	if len(heldByRollout) > 0 {
+		logger.V(logging.DEBUG).Info("replica-start-held-through-rollout",
+			"namespace", namespace, "variant", variantName, "pods", heldByRollout,
+			"reason", "the Pod started while its variant was rolling out, so its start is the rollout's")
+	}
 	if confirmed != nil {
 		logger.V(logging.DEFAULT).Info("replica-start-change-confirmed",
 			"namespace", namespace, "variant", variantName,
@@ -532,6 +575,52 @@ func (a *SaturationAnalyzer) noteReplicaStartFor(
 			"lowSeconds", startSeedLowFactor*f.prior, "highSeconds", startSeedHighFactor*f.prior,
 			"publishedSeconds", f.published, "sizedSeconds", f.sized, "podsNeeded", startConfirmPods)
 	}
+}
+
+// noteStartRolloutLocked records whether key's variant is rolling out this
+// cycle -- its rows report two revisions -- and returns it with the last
+// cycle that saw it rolling out, zero when none is remembered. A mark older
+// than maxRestoredStartSeconds is dropped: a Pod created before it and Ready
+// only now reports no credible start. With SwitchStartHeldThroughRollout off
+// nothing is kept. Callers hold a.mu.
+func (a *SaturationAnalyzer) noteStartRolloutLocked(key string, revisionsMixed bool, now time.Time) (bool, time.Time) {
+	if !a.startHoldsRollout {
+		return false, time.Time{}
+	}
+	if revisionsMixed {
+		a.startRolledAt[key] = now
+		return true, now
+	}
+	at, ok := a.startRolledAt[key]
+	if ok && now.Sub(at) > time.Duration(maxRestoredStartSeconds)*time.Second {
+		delete(a.startRolledAt, key)
+		return false, time.Time{}
+	}
+	return false, at
+}
+
+// startOverlapsRollout reports whether the start rm reports overlapped a
+// rollout of its variant (SwitchStartHeldThroughRollout): the variant is
+// rolling out now, or the Pod was created before rolledAt, the last cycle
+// that saw it rolling out. The Pod was created StartSeconds before it became
+// Ready. A row with no Ready time cannot place its start, so after a rollout
+// it is held: read from now, a Pod created during the rollout would pass.
+func (a *SaturationAnalyzer) startOverlapsRollout(rm domain.ReplicaMetrics, rolling bool, rolledAt time.Time) bool {
+	if !a.startHoldsRollout {
+		return false
+	}
+	if rolling {
+		return true
+	}
+	if rolledAt.IsZero() {
+		return false
+	}
+	ready := a.readySince(rm)
+	if ready.IsZero() {
+		return true
+	}
+	created := ready.Add(-time.Duration(rm.StartSeconds * float64(time.Second)))
+	return created.Before(rolledAt)
 }
 
 // claimRestoredCountLocked says whether the Pod seen (key|namespace|pod), not

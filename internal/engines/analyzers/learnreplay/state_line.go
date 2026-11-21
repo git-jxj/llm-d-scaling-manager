@@ -34,20 +34,27 @@ type lineSamples struct {
 	// below is each variant's latest mean ITLs read below the band, off a
 	// ramp, at most itl.BelowBandWindow of them: the readings the line's fit
 	// drops as idle, and the floor below the band is read from
-	// (whatif.BelowBand.LeastITL, itl.BelowBandFloor).
-	below map[string][]float64
+	// (whatif.BelowBand.LeastITL, itl.BelowBandFloor), each with its fill.
+	below map[string][]itl.Observation
 }
 
 func newLineSamples() *lineSamples {
 	return &lineSamples{steady: map[string][]whatif.LineRow{}, ramps: map[string][]whatif.LineRow{},
-		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}, below: map[string][]float64{}}
+		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}, below: map[string][]itl.Observation{}}
 }
 
 // leastBelowBand is the variant's floor below the band, in seconds
-// (itl.BelowBandFloor, the rule the tracker pins B at under
-// itl.Admission.BaselineFromFloor); 0 with too few readings.
-func (l *lineSamples) leastBelowBand(variant string) float64 {
-	return itl.BelowBandFloor(l.below[variant])
+// (itl.BelowBandFloor), and the fill it was read at (itl.BelowBandPoint);
+// both 0 with too few readings. The tracker's floor under
+// itl.Admission.BaselineFromFloor is read by the same quantile, but over its
+// last DefaultObservationMaxAge only; this one keeps the latest
+// itl.BelowBandWindow readings of any age.
+func (l *lineSamples) leastBelowBand(variant string) (itlSec, fill float64) {
+	p, ok := itl.BelowBandPoint(l.below[variant])
+	if !ok {
+		return 0, 0
+	}
+	return p.ITLSec, p.K
 }
 
 // rows is the variant's rows, of all three.
@@ -76,7 +83,7 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 		ramp := l.onRamp(rm.PodName, fillAt{k: k, kvReq: s.KVreq, at: at}, steady)
 		if !ramp && k > 0 && k < bottom && rm.ITLState() == domain.ITLFinite && rm.AvgITL > 0 && !math.IsInf(rm.AvgITL, 0) {
 			b := l.below[rm.VariantName]
-			b = append(b, rm.AvgITL)
+			b = append(b, itl.Observation{K: k, ITLSec: rm.AvgITL, Timestamp: at})
 			if len(b) > itl.BelowBandWindow {
 				b = b[len(b)-itl.BelowBandWindow:]
 			}

@@ -43,8 +43,9 @@ get:
         --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
   binary:
     note: |
-      Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64. Check it against SHA256SUMS and its
-      signature (cosign 2.4 or later), as for the other release files. On macOS, use shasum -a 256 -c - for sha256sum -c -.
+      Or the binary for your platform: OS linux or darwin, ARCH amd64 or arm64; on Windows, the .exe below (v0.12.2 or later).
+      Check it against SHA256SUMS and its signature (cosign 2.4 or later), as for the other release files. On macOS,
+      use shasum -a 256 -c - for sha256sum -c -.
     run: |
       export V=<release, v0.12.0 or later> OS=linux ARCH=amd64
       B=capacity-planner-${V}-${OS}-${ARCH}
@@ -56,6 +57,18 @@ get:
         --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/${V}"
       mkdir -p bin && install -m 0755 ${B} bin/capacity-planner
       bin/capacity-planner version
+  windows:
+    note: |
+      On Windows (amd64), from Git Bash, which has curl and sha256sum. cosign as above, when you have it.
+      The planner commands below run as written in Git Bash.
+    run: |
+      export V=<release, v0.12.2 or later>
+      B=capacity-planner-${V}-windows-amd64.exe
+      URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
+      curl -fsSL -O ${URL}/${B} -O ${URL}/${B}.sigstore.json -O ${URL}/SHA256SUMS
+      grep " ${B}$" SHA256SUMS | sha256sum -c -
+      mkdir -p bin && cp ${B} bin/capacity-planner.exe
+      bin/capacity-planner.exe version
   checkout:
     note: Or from a clone of the release you run, with Go 1.26 or later.
     run: |
@@ -121,13 +134,14 @@ tunnel:
 fleet:
   check:
     note: |
-      From a clone, on the staircase sample: two prefill and two decode replicas, judged at the load it saw, with
-      what that load grown by a fifth does beside it, for its own shape and two it never saw. The sample learned no prefill
-      speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at 50%, 80% and 100%
-      of the knee and the load seen.
+      On the staircase sample, downloaded as the first sample was: two prefill and two decode replicas, judged at the
+      load it saw, with what that load grown by a fifth does beside it, for its own shape and two it never saw. The
+      sample learned no prefill speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at
+      50%, 80% and 100% of the knee and the load seen.
     run: |
-      bin/capacity-planner at-replicas \
-        --recording internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz \
+      curl -fsSL -o recordings/ttft-staircase-b-on.jsonl.gz \
+        https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz
+      bin/capacity-planner at-replicas --recording recordings/ttft-staircase-b-on.jsonl.gz \
         --assume-vp 200000 --assume-a 20ms --ttft 2s@p90 --tpot 30ms \
         --shape measured --shape 1k/1k --shape 16k/200/0.3 \
         --load 50% --load 80% --load 5r/s --load seen --load-seen-x 1.2

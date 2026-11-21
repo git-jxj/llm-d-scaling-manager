@@ -38,10 +38,13 @@ kind: ConfigMap
 # by the controller before substitution.
 #
 # A query that FAILS is an error: the analyzer reports nothing that cycle, and
-# for up to three cycles the roles it covers (every role, when it reports none)
-# do not scale down. A query that returns NO SERIES reads as zero demand, a
-# real reading: listed alone, the analyzer then lets the model scale down.
-# Treating an empty result as missing is planned (issue ev-shindin/llm-scaling-manager#344).
+# for up to three cycles no role of the model scales down. A query that returns
+# NO SERIES reads as zero demand, a real reading: listed alone, the analyzer
+# then lets the model scale down. Set `emptyIsMissing: true` on a definition to
+# read no series as missing instead, like a failed query (see queue-depth below).
+#
+# P/D: one `query` is demand for the whole model and cannot size prefill and
+# decode. Give one `demand` rule per role instead (see queue-depth below).
 metadata:
   name: scaling-policy-config
   # Definitions are cluster-scope: they must live in the controller's namespace.
@@ -77,6 +80,22 @@ data:
       pool-queue:
         query: sum(max_over_time(llm_d_epp_average_queue_size{namespace="{{.namespace}}"}[1m]))
         threshold: "5"
+
+      # ── Per-role analyzer for a P/D model: one demand query per role, matched
+      # by the role the scaling manager resolved for the variant (llm-d.ai/role),
+      # not by a metric label. A role with no rule is not sized by this analyzer.
+      # The engine metric has no role label, so each query picks its role's Pods
+      # by name here; match the pattern to how your Pods are named.
+      # emptyIsMissing reads a query that returns no series as missing, not 0.
+      queue-depth:
+        emptyIsMissing: true
+        threshold: "8"                # used by a rule that sets none
+        demand:
+          - match: { role: prefill }
+            query: sum(max_over_time(vllm:num_requests_waiting{namespace="{{.namespace}}",model_name="{{.modelID}}",pod=~".*-prefill-.*"}[1m]))
+            threshold: "4"
+          - match: { role: decode }
+            query: sum(max_over_time(vllm:num_requests_waiting{namespace="{{.namespace}}",model_name="{{.modelID}}",pod=~".*-decode-.*"}[1m]))
 
   # A policy tier SELECTS and weights them by name. It cannot define one.
   interactive: |
