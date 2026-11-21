@@ -905,7 +905,8 @@ so_jit_env() {
             CUDA_CACHE_PATH) dir=cuda ;;
             *) continue ;;
         esac
-        printf '        - name: %s\n          value: %s\n' "$n" "$(so_flashinfer_base "$base/$dir" "$image")"
+        printf '        - name: %s\n' "$n"
+        printf '          value: %s\n' "$(so_flashinfer_base "$base/$dir" "$image")"
     done
 }
 
