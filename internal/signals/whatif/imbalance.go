@@ -76,7 +76,9 @@ const DefaultImbalanceAcrossCounts = false
 // search steps from two to four. The curve reads 1.00 at three. Neither
 // reason the analyzer's default waits on holds for a replay: it reads its
 // recording whole, so no restart loses FByPods, and the report prints the
-// answer at f 1 and at ImbalanceFloor beside it.
+// answer at f 1 and at ImbalanceFloor beside it. With no count learned the
+// planner keeps the floor: FreshImbalance is the analyzer's figure for the
+// minutes after a restart, not a reading of the fleet.
 const DefaultPlannerImbalanceAcrossCounts = true
 
 // FreshImbalance is the least f at a count above one with no count learned,

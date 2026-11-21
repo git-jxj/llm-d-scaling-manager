@@ -535,7 +535,7 @@ type SaturationAnalyzer struct {
 	prefillFBusyMinutes, itlHoldSteadySlope bool
 	// prefillALowLoadByRate is SwitchPrefillALowLoadByRate, and
 	// prefillAMedianOverhead SwitchPrefillAMedianOverhead: off from the
-	// constructor, planner-only (learnreplay.PlannerSwitches).
+	// constructor, planner-only, not yet turned on by the planner's replay.
 	prefillALowLoadByRate, prefillAMedianOverhead bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's

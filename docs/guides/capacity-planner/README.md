@@ -559,8 +559,9 @@ It replays the recording once and answers, for each shape and load:
   Each role's standing is in the sentence ("decode: one fewer holds even
   at the peak 43.2 r/s; prefill: no spare (1.9% under its operating
   point)"), with any prefill imbalance f that no run learned at that pod
-  count. That f is read off the pod counts that were learned, or 1.15 with
-  none (`--imbalance-across-counts=false` assumes at least 1.5 instead).
+  count. That f is read off the pod counts that were learned; with none
+  learned, or with `--imbalance-across-counts=false`, it is assumed at
+  least 1.5.
   Since no run measured it, the sentence also gives the fleet needed at f 1
   and at f 1.5 on every count above one prefill pod ("at f 1 needs 3 + 3,
   at f 1.5 needs 4 + 3", or "the same at f 1 to 1.5"), and `-o json` gives

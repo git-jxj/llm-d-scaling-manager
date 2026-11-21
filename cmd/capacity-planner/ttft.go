@@ -637,7 +637,10 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		}
 		p.Imbalance, p.ImbalanceAssumed = min(float64(p.Replicas), fixed), true
 		pf.in.ImbalanceSource = fmt.Sprintf("%s for the sensitivity to f", num(f.fixedImbalance))
-	case f.imbalanceAcrossCounts:
+	case f.imbalanceAcrossCounts && learnedAnyCount(ps):
+		// The curve needs a count P1 learned: with none, its
+		// whatif.FreshImbalance is the analyzer's figure after a restart,
+		// not a reading, and the floor below stands.
 		p.Imbalance, p.ImbalanceAssumed, pf.in.ImbalanceSource = imbalanceAcross(ps, p.Replicas)
 		if p.ImbalanceAssumed {
 			pf.assume("f %s on %d pods (%s)", num(p.Imbalance), p.Replicas, pf.in.ImbalanceSource)
@@ -662,6 +665,16 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 func imbalanceAcross(ps *learnreplay.PrefillState, pods int) (f float64, assumed bool, source string) {
 	r := whatif.ImbalanceReadingsOf(ps.Estimate, ps.Pods, ps.RawShare).At(pods)
 	return r.F, r.Assumed, r.Source
+}
+
+// learnedAnyCount is whether P1 learned f at any prefill count above one.
+func learnedAnyCount(ps *learnreplay.PrefillState) bool {
+	for pods, f := range ps.Estimate.FByPods {
+		if pods >= 2 && f >= 1 && !math.IsInf(f, 0) {
+			return true
+		}
+	}
+	return false
 }
 
 // imbalanceAt is f at pods, by S1's decision 1: P1's own at that count, else

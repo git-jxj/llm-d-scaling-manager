@@ -238,10 +238,6 @@ type shapeSample struct {
 //     counted by its capacity part only, so deferred waits are not a queue.
 //   - saturation.SwitchPrefillFBusyMinutes: f, the prefill imbalance, the
 //     median of the busiest minutes, not of every minute.
-//   - saturation.SwitchPrefillALowLoadByRate: a's low-load minutes read by
-//     their rate against their prompt cluster's service time, not their own.
-//   - saturation.SwitchPrefillAMedianOverhead: a's overhead the median of
-//     the low-load minutes', not the least.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
 //
@@ -249,14 +245,21 @@ type shapeSample struct {
 // the line it holds is right at a given fill, and the planner then reads
 // TTFT and TPOT under what was measured, because it predicts less decode KV
 // fill than the pods held. It stays off until that is fixed.
+//
+// saturation.SwitchPrefillALowLoadByRate and SwitchPrefillAMedianOverhead
+// (issue llm-d-incubation/llm-d-scaling-manager#306) are planner-only and
+// not listed yet either. Both raise a, and every TTFT the planner prices
+// with it: on the staircase backtests and the Qwen3-32B validation table no
+// figure moves under what was measured (a 9.0 to 14.3 ms on Qwen3-32B, 11.0
+// to 13.2 ms on ols-sweep). Turning them on moves the worked example the
+// planner's pages and hand-computed tests are built on, and the day plan's
+// verdicts, so it is its own change.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
 		saturation.SwitchPrefillAEngineTiming:   true,
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
-		saturation.SwitchPrefillALowLoadByRate:  true,
-		saturation.SwitchPrefillAMedianOverhead: true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 	}}
 }
