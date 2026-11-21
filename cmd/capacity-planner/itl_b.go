@@ -9,6 +9,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // The decode line's intercept B, stated where the recording measured none
@@ -211,11 +212,11 @@ func (pv pricedVariant) itlBNotUsed() string {
 	case !a.Asked || a.Applied:
 		return ""
 	case pv.api && a.Source == itlBFromFloor:
-		return "ITL B not assumed (assume.itlBFromFloor): " + a.Why
+		return whatifapi.StatedITLBNotUsed + "assume.itlBFromFloor): " + a.Why
 	case pv.api:
-		return "ITL B not assumed (assume.itlB): " + a.Why
+		return whatifapi.StatedITLBNotUsed + "assume.itlB): " + a.Why
 	}
-	return "ITL B not assumed (--assume-itl-b): " + a.Why
+	return whatifapi.StatedITLBNotUsed + "--assume-itl-b): " + a.Why
 }
 
 // itlBRowText is the ITL B row: what was assumed, or why nothing was; empty

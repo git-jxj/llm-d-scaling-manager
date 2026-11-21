@@ -96,6 +96,22 @@ p90 TTFT within 20% in 0 of 9 steps (median ratio 1.90); p90 TPOT within 20% in 
   Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
 ```
 
+An answer given stated inputs is checked with them. With
+`--assume-vp`, `--assume-a`, `--assume-prompt-cv`, `--assume-router-hop`,
+`--assume-itl-b` or `--arrival-cv2`, the recording is replayed with the same
+values, and the line names them:
+
+```text
+Self-check, replayed with the stated --assume-prompt-cv 0.06 (flagged, outside the validated region): tested on ...
+```
+
+A stated TPOT ratio (`--assume-tpot-ratio`) and stated lengths
+(`--assume-input-tokens`, `--assume-output-tokens`) are not replayed: the
+check scores p90 TPOT on the recording's own ratio, and the recording's own
+traffic. The line ends `It ran without the stated ...` to say so. On the
+server, a report or day plan that states inputs carries the source's
+self-check, which ran before anything was stated, with the same ending.
+
 On the page it is a badge beside the source, with the same lines under it.
 
 | Badge | Means |
@@ -214,6 +230,7 @@ Size from the planner when, below the load it thinks the fleet can carry:
 | `--ttft-target` | | Judge each step against a target too: `500ms@p90`. The summary counts the steps predicted to meet it that measured a miss. |
 | `--measured` | `auto` | `router`, `engine`, or `auto` (the router's where recorded). |
 | `--assume-vp`, `--assume-a` | | A prefill pod's prompt tokens per second, and its fixed latency, where the part it learned from held none. Flagged. |
+| `--assume-prompt-cv`, `--assume-router-hop`, `--assume-itl-b` | | The prompt cv, the router hop, and decode's ITL B (`12ms`, or `floor`), as an answer's flags of the same names: check an answer with the inputs it stated. Flagged. |
 | `--allow-config-mismatch` | off | Score a test of another configuration, with the difference printed. |
 | `-o json` | text | The same answer as `POST /v1/backtest` ([the API](api.md#the-backtest)). |
 

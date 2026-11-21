@@ -379,7 +379,8 @@ func (s *Server) dayPlan(ctx context.Context, req DayPlanRequest) ([]byte, error
 			return nil, err
 		}
 		out.SchemaVersion, out.WhatifSchema, out.DayPlanID, out.InputsID, out.Banner = SchemaVersion, s.whatifSchema, id, e.id, banner
-		out.SelfCheck = e.doc.SelfCheck
+		// The source's self-check was read before this plan stated anything.
+		out.SelfCheck = e.doc.SelfCheck.RanWithout(q.stated(false))
 		body, err := marshal(out)
 		if err != nil {
 			return nil, err
@@ -405,7 +406,7 @@ func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest, whatifSchem
 		return nil, err
 	}
 	if res.Folds != nil {
-		out.SelfCheck = SelfCheckOf(ctx, res, SelfCheckInfo{PlannerVersion: res.PlannerVersion})
+		out.SelfCheck = SelfCheckOf(ctx, res, SelfCheckInfo{PlannerVersion: res.PlannerVersion, Stated: q.stated(true)})
 	}
 	out.SchemaVersion, out.WhatifSchema, out.DayPlanID, out.InputsID, out.Banner = SchemaVersion, whatifSchema,
 		contentID("dayplan", q.key()), e.id, banner
@@ -433,6 +434,12 @@ func (q *dayQuestion) key() any {
 		MinRequests float64
 		Bound       FleetCounts
 	}{q.sc, q.step, q.sizeFor, q.minRequests, q.bound}
+}
+
+// stated is what the plan states in place of what its source gave, named
+// as the CLI's flags or the API's keys.
+func (q *dayQuestion) stated(cli bool) *Stated {
+	return &Stated{Assume: q.k.Assume, ArrivalCV2: q.k.ArrivalCV2, PromptTokens: q.k.PromptTokens, OutputTokens: q.k.OutputTokens, CLI: cli}
 }
 
 // dayQuestionOf checks req against e.

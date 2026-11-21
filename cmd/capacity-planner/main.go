@@ -32,11 +32,13 @@
 //	                                 [--allow-upload [--upload-max-size 256Mi]]
 //	capacity-planner backtest        (--recording FILE [--split 60% | --fit-until T] | --fit FILE --test FILE)
 //	                                 [--step 5m] [--settle 2m] [--ttft-target 500ms@p90] [--arrival-cv2 C]
-//	                                 [--measured auto|router|engine] [--assume-vp V] [--assume-a D] [--allow-config-mismatch] [-o json]
+//	                                 [--measured auto|router|engine] [--assume-vp V] [--assume-a D] [--assume-prompt-cv CV]
+//	                                 [--assume-router-hop D] [--assume-itl-b B|floor] [--allow-config-mismatch] [-o json]
 //	capacity-planner strip-latency   -in FILE -o FILE
 //	capacity-planner predict         --fit FILE --window FILE -o prediction.json [--csv FILE] [--step 5m] [--settle 2m]
 //	                                 [--measure-window 5m] [--model M] [--variant V] [--prefill-variant V]
-//	                                 [--arrival-cv2 C] [--assume-vp V] [--assume-a D] [--allow-config-mismatch]
+//	                                 [--arrival-cv2 C] [--assume-vp V] [--assume-a D] [--assume-prompt-cv CV]
+//	                                 [--assume-router-hop D] [--assume-itl-b B|floor] [--allow-config-mismatch]
 //	capacity-planner compare         --prediction FILE --measured FILE [--ttft-target 500ms@p90] [--measured-by auto|router|engine]
 //	                                 [--model M] [--variant V] [--prefill-variant V] [-o json]
 //	capacity-planner version         (the release and commit; the controller of the recordings is released under the same tag)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -29,6 +30,30 @@ type backtestFlags struct {
 	arrivalCV2, assumeVP                  float64
 	assumeA                               time.Duration
 	allowMismatch                         bool
+	// assumePromptCV, assumeRouterHop and assumeITLB are the answers' own
+	// --assume-* flags, so that a backtest checks an answer with the inputs
+	// it stated (issue llm-d-incubation/llm-d-scaling-manager#277); set is
+	// the flags given.
+	assumePromptCV  float64
+	assumeRouterHop time.Duration
+	assumeITLB      string
+	set             map[string]bool
+}
+
+// registerAssume registers the --assume-* flags backtest and predict take.
+func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
+	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, where the fit learned none (flagged)")
+	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, where the fit learned none (flagged)")
+	fs.Float64Var(&f.assumePromptCV, "assume-prompt-cv", 0, "the prompt's coefficient of variation, 0 to 3, in place of the measured one or the default 2 (flagged)")
+	fs.DurationVar(&f.assumeRouterHop, "assume-router-hop", 0, "the hop between the router and the engines (8ms), in place of the learned or default one (flagged)")
+	fs.StringVar(&f.assumeITLB, "assume-itl-b", "", "the decode line's intercept B (12ms), or floor for B from the floor read below the band, "+
+		"where the fit measured none (PinnedDefaultB); the slope is refitted through it (flagged AssumedITLB)")
+}
+
+// parsed records the flags given, once fs is parsed.
+func (f *backtestFlags) parsed(fs *flag.FlagSet) {
+	f.set = map[string]bool{}
+	fs.Visit(func(fl *flag.Flag) { f.set[fl.Name] = true })
 }
 
 // runBacktest is `capacity-planner backtest`: the planner fitted on one
@@ -50,13 +75,13 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.StringVar(&f.ttft, "ttft-target", "", "a TTFT target to judge each step by, predicted and measured: 500ms or 500ms@p90")
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "the test's arrivals' Ca^2, when known; default Poisson (1), flagged")
 	fs.StringVar(&f.measured, "measured", whatifapi.MeasuredAuto, "the latency scored against: auto (the router's where recorded), router or engine")
-	fs.Float64Var(&f.assumeVP, "assume-vp", 0, "V_P, a prefill pod's prompt tokens per second, where the fit learned none (flagged)")
-	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency on a prefill pod, where the fit learned none (flagged)")
+	f.registerAssume(fs)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
+	f.parsed(fs)
 	if f.output != outputText && f.output != outputJSON {
 		return usagef("-o %q, want text or json", f.output)
 	}
@@ -136,14 +161,12 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 	if f.arrivalCV2 != 0 {
 		req.ArrivalCV2 = &f.arrivalCV2
 	}
-	if f.assumeVP > 0 || f.assumeA > 0 {
-		req.Assume = &whatifapi.Assume{}
-		if f.assumeVP > 0 {
-			req.Assume.VP = &f.assumeVP
-		}
-		if f.assumeA > 0 {
-			req.Assume.A = ptrTo(f.assumeA.Seconds())
-		}
+	a, err := f.assume()
+	if err != nil {
+		return req, err
+	}
+	if a != (whatifapi.Assume{}) {
+		req.Assume = &a
 	}
 	o, err := objectiveOf("ttft-target", f.ttft)
 	if err != nil {
@@ -151,6 +174,42 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 	}
 	req.TTFT = o
 	return req, nil
+}
+
+// assume is the terms the --assume-* flags state, checked as an answer
+// checks them: V_P and a above 0, as before, and the rest where given.
+func (f *backtestFlags) assume() (whatifapi.Assume, error) {
+	var a whatifapi.Assume
+	if f.assumeVP > 0 {
+		a.VP = &f.assumeVP
+	}
+	if f.assumeA > 0 {
+		a.A = ptrTo(f.assumeA.Seconds())
+	}
+	if f.set["assume-prompt-cv"] {
+		if !(f.assumePromptCV >= 0 && f.assumePromptCV <= whatif.PromptCVStop) {
+			return a, usagef("--assume-prompt-cv %g, want a cv from 0 to %g: past that the rate stops falling as the cv rises", f.assumePromptCV, whatif.PromptCVStop)
+		}
+		a.PromptCV = &f.assumePromptCV
+	}
+	if f.set["assume-router-hop"] {
+		if f.assumeRouterHop < 0 {
+			return a, usagef("--assume-router-hop %s, want a duration of 0 or more", f.assumeRouterHop)
+		}
+		a.RouterHop = ptrTo(f.assumeRouterHop.Seconds())
+	}
+	if f.set["assume-itl-b"] {
+		floor, b, err := parseAssumeITLB(f.assumeITLB)
+		if err != nil {
+			return a, err
+		}
+		if floor {
+			a.ITLBFromFloor = true
+		} else {
+			a.ITLB = ptrTo(b.Seconds())
+		}
+	}
+	return a, nil
 }
 
 // resolveBacktest resolves one recording at cycle (0 the last): the

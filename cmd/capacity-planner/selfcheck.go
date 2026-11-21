@@ -67,8 +67,68 @@ func (f *answerFlags) checkRecording(ctx context.Context, st *learnreplay.State,
 			Folds: []whatifapi.SelfCheckFold{}, Checks: []whatifapi.SelfCheckRule{}}
 		return
 	}
-	f.checked = whatifapi.SelfCheckOf(ctx, res, whatifapi.SelfCheckInfo{PlannerVersion: selfCheckVersion()})
+	stated, err := f.stated()
+	if err != nil {
+		f.checked = &whatifapi.SelfCheck{Status: whatifapi.SelfCheckNotRun, Why: err.Error(), Line: "Self-check not run: " + err.Error() + ".",
+			Folds: []whatifapi.SelfCheckFold{}, Checks: []whatifapi.SelfCheckRule{}}
+		return
+	}
+	f.checked = whatifapi.SelfCheckOf(ctx, res, whatifapi.SelfCheckInfo{PlannerVersion: selfCheckVersion(), Stated: stated})
 	f.checked.Seconds = time.Since(t0).Seconds()
+}
+
+// stated is what the flags state in place of what the recording gave: the
+// self-check replays it with the answer's own terms (issue
+// llm-d-incubation/llm-d-scaling-manager#277).
+func (f *answerFlags) stated() (*whatifapi.Stated, error) {
+	a, err := f.assume()
+	if err != nil {
+		return nil, err
+	}
+	st := &whatifapi.Stated{Assume: a, CLI: true}
+	if f.set["arrival-cv2"] {
+		st.ArrivalCV2 = &f.arrivalCV2
+	}
+	if f.set["assume-input-tokens"] {
+		st.PromptTokens = f.inputTokens
+	}
+	if f.set["assume-output-tokens"] {
+		st.OutputTokens = f.outputTokens
+	}
+	return st, nil
+}
+
+// assume is the terms the --assume-* flags state, as the API's assume
+// takes them.
+func (f *answerFlags) assume() (whatifapi.Assume, error) {
+	var a whatifapi.Assume
+	if f.set["assume-vp"] {
+		a.VP = &f.assumeVP
+	}
+	if f.set["assume-a"] {
+		a.A = ptrTo(f.assumeA.Seconds())
+	}
+	if f.set["assume-prompt-cv"] {
+		a.PromptCV = &f.assumePromptCV
+	}
+	if f.set["assume-router-hop"] {
+		a.RouterHop = ptrTo(f.assumeRouterHop.Seconds())
+	}
+	if f.set["assume-tpot-ratio"] {
+		a.TPOTRatio = &f.tpotRatio
+	}
+	if f.set["assume-itl-b"] {
+		floor, b, err := parseAssumeITLB(f.assumeITLB)
+		if err != nil {
+			return a, err
+		}
+		if floor {
+			a.ITLBFromFloor = true
+		} else {
+			a.ITLB = ptrTo(b.Seconds())
+		}
+	}
+	return a, nil
 }
 
 // selfCheckText is the self-check as the CLI prints it beside an answer:

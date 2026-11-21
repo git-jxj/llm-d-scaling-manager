@@ -428,7 +428,7 @@ is in [Check the planner](check.md).
 | `ttft` | | A target (`statistic`, `target` seconds) to judge each step by, predicted and measured. |
 | `arrivalCV2` | Poisson | The test's Ca^2: 1 is random arrivals, higher is burstier. |
 | `measured` | `auto` | `router`, `engine`, or `auto`. |
-| `assume` | | Terms the fit did not learn, as a plan's `assume`. Every figure they move is flagged. |
+| `assume` | | Terms the fit did not learn, as a plan's `assume` (`vp`, `a`, `promptCV` up to 3, `routerHop`, `itlB` or `itlBFromFloor`; a value out of range is a 400). Every figure they move is flagged. |
 | `allowConfigMismatch` | false | A test of another model is a 400. A test whose recorded configuration differs from the fit's is a 400 with `reason` `ConfigMismatch`, naming each field: the roles, the flow-control series (read over each side's cycles), and per role the accelerator, GPUs, vLLM release and every engine setting the capacity fingerprint holds (parallelism, dtypes, batch and context limits, speculative decoding, KV connector, prefix caching, checkpoint, image). A setting a side could not read is not compared. True prices it, with the difference in `config.differences` and the notes. A test that is the fit's own source, or starts before the fit ends, is a 400. |
 
 | Key | What it is |
@@ -466,6 +466,8 @@ turns it off for that source.
 | `checks[]` | Each rule: `name`, `passed`, `detail`. |
 | `issueUrl` | With `inconsistent`: a new-issue page prefilled with diagnostics that hold no name, no rate and no recording, for the user to review and file. |
 | `seconds` | What the self-check took, its fits' replay apart (shared with the answer's). |
+| `stated` | The answer's stated inputs the recording was replayed with (`--assume-itl-b floor`, `assume.promptCV 0.06`), named as the question's source names them. Absent with none. |
+| `withoutStated` | The answer's stated inputs the self-check ran without: a TPOT ratio, stated lengths, and on a report or day plan from the server every stated input (the source's self-check ran before them). The line says so. Absent with none. |
 
 ## Predict and compare
 

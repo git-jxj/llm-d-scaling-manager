@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,6 +98,172 @@ type SelfCheck struct {
 	// Seconds is what the self-check took, its fits' replay apart (shared
 	// with the answer's).
 	Seconds float64 `json:"seconds"`
+	// Stated is the answer's stated inputs the recording was replayed with,
+	// in the words of the question's source: every figure they move is
+	// flagged, and outside the validated region. WithoutStated is the
+	// answer's stated inputs the self-check ran without. Each is absent
+	// with none.
+	Stated        []string `json:"stated,omitempty"`
+	WithoutStated []string `json:"withoutStated,omitempty"`
+	// notUsed is what the line adds of a stated ITL B the fits did not use.
+	notUsed string
+}
+
+// StatedITLBNotUsed opens the words of a refusal whose stated ITL B was not
+// used (a held line, a floor that gives no intercept), as a Pricer writes
+// them: the self-check counts its steps.
+const StatedITLBNotUsed = "ITL B not assumed ("
+
+// tail is what the line adds after its result: a stated ITL B the fits did
+// not use, and the stated inputs the self-check ran without.
+func (sc *SelfCheck) tail() string {
+	return sc.notUsed + withoutStatedSentence(sc.WithoutStated)
+}
+
+// itlBNotUsed is how many judged steps a stated ITL B was not used in, at
+// p90 TPOT, and the first one's why; 0 with none.
+func itlBNotUsed(steps []BacktestStep) (int, string) {
+	n, why := 0, ""
+	for _, st := range steps {
+		if st.Excluded != "" {
+			continue
+		}
+		for _, p := range st.TPOT {
+			r := p.Predicted.Refused
+			if p.Statistic != statP90 || r == nil {
+				continue
+			}
+			i := strings.Index(r.Detail, StatedITLBNotUsed)
+			if i < 0 {
+				continue
+			}
+			if n++; why == "" {
+				why = r.Detail[i+len(StatedITLBNotUsed):]
+				if j := strings.Index(why, "): "); j >= 0 {
+					why = why[j+len("): "):]
+				}
+			}
+		}
+	}
+	return n, why
+}
+
+// Stated is what an answer stated in place of what its source gave. The
+// self-check replays the recording with the planner's terms (Assume, but
+// TPOTRatio) and the arrivals' Ca^2, which price the recording's own
+// traffic; it runs without a TPOT ratio, one percentile's where the check
+// scores p90 on the recording's own, and without stated lengths, a traffic
+// other than the one it scores against.
+type Stated struct {
+	Assume     Assume
+	ArrivalCV2 *float64
+	// PromptTokens and OutputTokens are stated mean lengths, 0 the
+	// observed ones.
+	PromptTokens, OutputTokens float64
+	// CLI names them as the CLI's flags; false, as the API's keys.
+	CLI bool
+}
+
+// replayed is the request terms the self-check replays st with, and their
+// words.
+func (st *Stated) replayed() (BacktestRequest, []string) {
+	var req BacktestRequest
+	if st == nil {
+		return req, nil
+	}
+	a := st.Assume
+	a.TPOTRatio = nil
+	if a != (Assume{}) {
+		req.Assume = &a
+	}
+	req.ArrivalCV2 = st.ArrivalCV2
+	return req, st.words(a, st.ArrivalCV2, 0, 0)
+}
+
+// notReplayed is the words of st the self-check runs without.
+func (st *Stated) notReplayed() []string {
+	if st == nil {
+		return nil
+	}
+	return st.words(Assume{TPOTRatio: st.Assume.TPOTRatio}, nil, st.PromptTokens, st.OutputTokens)
+}
+
+// all is every input st states, in words.
+func (st *Stated) all() []string {
+	if st == nil {
+		return nil
+	}
+	return st.words(st.Assume, st.ArrivalCV2, st.PromptTokens, st.OutputTokens)
+}
+
+// words names the inputs given, as the CLI's flags or the API's keys, each
+// with its value.
+func (st *Stated) words(a Assume, cv2 *float64, prompt, output float64) []string {
+	var out []string
+	num := func(x float64) string { return strconv.FormatFloat(x, 'g', -1, 64) }
+	dur := func(x float64) string { return time.Duration(math.Round(x * float64(time.Second))).String() }
+	add := func(flag, key string, x *float64, cli func(float64) string) {
+		switch {
+		case x == nil:
+		case st.CLI:
+			out = append(out, flag+" "+cli(*x))
+		default:
+			out = append(out, key+" "+num(*x))
+		}
+	}
+	add("--assume-vp", "assume.vp", a.VP, num)
+	add("--assume-a", "assume.a", a.A, dur)
+	add("--assume-prompt-cv", "assume.promptCV", a.PromptCV, num)
+	add("--assume-router-hop", "assume.routerHop", a.RouterHop, dur)
+	add("--assume-tpot-ratio", "assume.tpotRatio", a.TPOTRatio, num)
+	switch {
+	case a.ITLBFromFloor && st.CLI:
+		out = append(out, "--assume-itl-b floor")
+	case a.ITLBFromFloor:
+		out = append(out, "assume.itlBFromFloor")
+	}
+	add("--assume-itl-b", "assume.itlB", a.ITLB, dur)
+	add("--arrival-cv2", "arrivalCV2", cv2, num)
+	if prompt > 0 {
+		add("--assume-input-tokens", "traffic.mix.promptTokens", &prompt, num)
+	}
+	if output > 0 {
+		add("--assume-output-tokens", "traffic.mix.outputTokens", &output, num)
+	}
+	return out
+}
+
+// RanWithout is sc as the answer of an input st states prints it: a
+// self-check read with the source, before any answer stated anything, ran
+// without every input st states, and says so. sc is not changed; with
+// nothing stated it is returned as it is.
+func (sc *SelfCheck) RanWithout(st *Stated) *SelfCheck {
+	words := st.all()
+	if sc == nil || len(words) == 0 {
+		return sc
+	}
+	out := *sc
+	out.WithoutStated = words
+	out.Line = sc.Line + withoutStatedSentence(words)
+	return &out
+}
+
+// withoutStatedSentence is what a self-check's line adds of the stated
+// inputs it ran without.
+func withoutStatedSentence(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	return " It ran without the stated " + strings.Join(words, ", ") + ": what the answer prices on them is not checked."
+}
+
+// lead is the line's opening, head, naming the stated inputs the recording
+// was replayed with.
+func (sc *SelfCheck) lead(head string) string {
+	if len(sc.Stated) == 0 {
+		return head
+	}
+	return fmt.Sprintf("%s, replayed with the stated %s (flagged, outside the validated region)", head, strings.Join(sc.Stated, ", "))
 }
 
 // SelfCheckFigure is one figure's score over the folds.
@@ -137,6 +304,10 @@ type SelfCheckInfo struct {
 	PlannerVersion string
 	// Now is the clock the cost is read with; nil is time.Now.
 	Now func() time.Time
+	// Stated is what the answer stated, nil nothing: the self-check
+	// replays the recording with what of it prices the recording's own
+	// traffic, and names the rest it ran without (Stated).
+	Stated *Stated
 }
 
 // SelfCheckOf checks the planner on the recording res was resolved from,
@@ -158,7 +329,7 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	defer func() { sc.Seconds = now().Sub(t0).Seconds() }()
 	notRun := func(why string) *SelfCheck {
 		sc.Why = why
-		sc.Line = "Self-check not run: " + why + "."
+		sc.Line = sc.lead("Self-check not run") + ": " + why + "." + sc.tail()
 		return sc
 	}
 	switch {
@@ -174,6 +345,8 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	case len(folds) == 0:
 		return notRun("no fit was read at an earlier cycle")
 	}
+	req, stated := info.Stated.replayed()
+	sc.Stated, sc.WithoutStated = stated, info.Stated.notReplayed()
 	folds = slices.Clone(folds)
 	slices.SortFunc(folds, func(a, b FoldFit) int { return a.At.Compare(b.At) })
 	answered := e.series[len(e.series)-1].At
@@ -188,7 +361,7 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 			until = folds[i+1].At
 		}
 		fit := &inputsEntry{id: e.id + "#fit", doc: e.doc, pricer: f.Pricer, series: e.series, config: e.config}
-		q, err := questionOf(fit, e, BacktestRequest{}, f.At, until, "self-check", false)
+		q, err := questionOf(fit, e, req, f.At, until, "self-check", false)
 		if err != nil {
 			refusals = append(refusals, err.Error())
 			sc.Checks = append(sc.Checks, SelfCheckRule{Name: "fold", Passed: false,
@@ -211,6 +384,9 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	}
 	if len(sc.Folds) == 0 {
 		return notRun("no fold could be backtested (" + strings.Join(refusals, "; ") + ")")
+	}
+	if n, why := itlBNotUsed(steps); n > 0 && len(sc.Stated) > 0 {
+		sc.notUsed = fmt.Sprintf(" The stated ITL B was not used in %d steps: %s.", n, strings.TrimSuffix(why, "."))
 	}
 	sum := summarize(steps, false)
 	sc.TTFT, sc.TPOT = selfCheckFigure(sum.TTFT, sum.Judged), selfCheckFigure(sum.TPOT, sum.Judged)
@@ -305,11 +481,11 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 		if len(why) > 0 {
 			sc.Why += " (" + strings.Join(why, "; ") + ")"
 		}
-		sc.Line = "Self-check not run: " + sc.Why + "."
+		sc.Line = sc.lead("Self-check not run") + ": " + sc.Why + "." + sc.tail()
 		return
 	}
-	sc.Line = fmt.Sprintf("Self-check: tested on the last %s of this recording, each part predicted from a fit on what came before it, %s.",
-		durationWords(span), strings.Join(parts, "; "))
+	sc.Line = fmt.Sprintf("%s: tested on the last %s of this recording, each part predicted from a fit on what came before it, %s.",
+		sc.lead("Self-check"), durationWords(span), strings.Join(parts, "; ")) + sc.tail()
 	switch {
 	case len(bad) > 0:
 		sc.Status = SelfCheckInconsistent
@@ -344,6 +520,9 @@ const selfCheckIssueTemplate = "planner-self-check.yml"
 func selfCheckIssueURL(sc *SelfCheck, e *inputsEntry, info SelfCheckInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "planner: %s\nself-check: %s\n", info.PlannerVersion, sc.Status)
+	if len(sc.Stated) > 0 {
+		fmt.Fprintf(&b, "stated: %s\n", strings.Join(sc.Stated, ", "))
+	}
 	for _, r := range sc.Checks {
 		switch {
 		case r.Passed:

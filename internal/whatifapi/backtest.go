@@ -686,6 +686,15 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		q.promptCV = whole.promptCV
 	}
 	if a := req.Assume; a != nil {
+		// A backtest prices every statistic, percentiles among them, so a
+		// TPOT ratio is checked as a percentile's.
+		sc := Scenario{Assume: *a, TPOT: &ResolvedObjective{Statistic: statP90}}
+		if err := sc.checkAssume(); err != nil {
+			return nil, err
+		}
+		if a.PromptCV != nil && *a.PromptCV > whatif.PromptCVStop {
+			return nil, InputErrorf("assume.promptCV %g, want a cv from 0 to %g", *a.PromptCV, whatif.PromptCVStop)
+		}
 		q.assume = *a
 		q.assumed = append(q.assumed, "terms typed in for the fit (assume): every figure they move is flagged")
 	}
