@@ -984,9 +984,10 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	//   - e1 and e1-tuned: mu 0.89-1.00 of off, decode's demand up to 1.09x
 	//     on 67-70 cycles. No RequiredCapacity moves.
 	//   - ols-sweep, ols-sweep-slo-restart and throughput-sweep-restart (the
-	//     simulator's decode of 1024 blocks): on a few cycles the simulator
-	//     reads 5,000-6,000 tokens a request over 10 running and 1 to 3
-	//     landed, against a context of about 1,300, and mu falls to as low as
+	//     simulator's decode of 1024 blocks): at a prompt-length step, new
+	//     prompts of about 6,000 tokens run while the completed requests'
+	//     mean still reads about 1,000, so the running requests read 5,000-7,000
+	//     tokens each, 4-5 times the shape's context, and mu falls to as low as
 	//     0.24-0.28 of off. RequiredCapacity goes from 0 to above it on 2, 3
 	//     and 3 cycles, and on 10 more of throughput-sweep-restart it rises
 	//     1.1-1.9x: decode asks up to 2, 3 and 3 replicas more, on 2, 3 and 5

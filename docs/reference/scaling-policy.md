@@ -1697,8 +1697,8 @@ budget and long prompts was priced 10-18x below its capacity. Since v0.12.2:
   charged the whole prompt.
 
 **A decode request that holds more KV than its context.** Where the engine
-reports its running requests, a decode's derived service rate is priced at the
-KV each one is measured to hold: tokens in use over running requests. Before
+reports its running requests, a decode or aggregated replica's derived
+service rate is priced at the KV each one is measured to hold: tokens in use over running requests. Before
 v0.12.3 that reading was capped at the request's whole context: its prompt
 plus, on average, half its output. An engine that keeps more KV per request
 in the same cache, such as a sparse-attention indexer's keys or a speculative
@@ -1715,10 +1715,16 @@ Since v0.12.3:
   own it asks for fewer decode replicas, not more.
 - SGLang is still held at the context: it reports its busiest rank against
   the whole pod, which reads high on a pod of several ranks.
-- The `derived-mu` line at `--v=3` says `residentKVBound=above-context` where
+- The `derived-mu` line at `--v=3` (`LLMSM_VERBOSITY=3`, see
+  [install options](install-options.md)) says `residentKVBound=above-context` where
   the reading is more than twice the context. A reading between once and
   twice the context is also priced as read, and says `none`.
-- No setting turns this off.
+- No setting turns this off. If decode scales out further than the load
+  needs, compare `residentKVPerSeq` with `kvReqPerSeq` on the `derived-mu`
+  line. A reading several times the context on an engine with no indexer and
+  no draft model is a measurement fault: open an issue with that line. Until
+  then, cap the decode ScaledObject's `maxReplicaCount`
+  ([trigger reference](scaledobject-trigger.md)).
 
 A cap read too high matters most under **flow control**. The router holds the queue, the engine's
 own queue stays under `queueLengthThreshold`, and the replica is never seen

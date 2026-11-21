@@ -202,11 +202,12 @@ The clamp keeps the reading to the hit term:
 
 - Below the lower bound: requests part way through their prefill. Not taken as
   more sharing than the hit rate allows.
-- Above the upper bound: the prompt length lags the workload. Or, on the decode
-  side of a P/D split, vLLM has allocated KV for requests still pulling their
-  prompt's KV from prefill. Those requests wait, so they are not counted as
-  running. The reading then moves towards no discount. No gauge counts those
-  blocks, so they are not subtracted.
+- Above the upper bound, with `kv-per-request-above-context` off (a replay, or
+  SGLang): the prompt length lags the workload, or a P/D decode has allocated
+  KV for requests still pulling it from prefill. The reading moves towards no
+  discount. With the switch on (the default since v0.12.3), those requests are
+  counted in `holdingNotRunning` and the bound is dropped; see the #188
+  paragraph below.
 
 With no reading, the price stays `ILeff + D x OL/2`, as before. No reading
 means no replica in the band, a missing running-requests or KV series, or

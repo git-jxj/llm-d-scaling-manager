@@ -146,11 +146,13 @@ func throughputPaths(paths map[string]int64) map[string]int64 {
 // The floor check itself, on a fixture that exists now: mu-paths runs the
 // throughput analyzer in-process. With the steady gate on its replay reaches
 // full and pinned fits; with it off, neither, and the check names each. Its
-// settling count was zero by construction until the recording was taken
-// again for llm-d-incubation/llm-d-scaling-manager#188 (yv-a measured at 3,
-// learner_mupath_test.go): yv-a's readings now settle (64 with the line on
-// the tracker), so a settling floor holds on it with the line on and fails
-// with it off.
+// settling count was zero until the recording was taken again for
+// llm-d-incubation/llm-d-scaling-manager#188 (yv-a measured at 3,
+// learner_mupath_test.go). The new recording also carries the events the
+// recorder gained since the old one was made (settle.Observe,
+// throughput.NoteVariantsPresent), and its readings now settle (64 with the
+// line on the tracker), so a settling floor holds on it with the line on and
+// fails with it off.
 func TestGoldens_TheThroughputFloorCheckFails(t *testing.T) {
 	rec := readGoldenRecording(t, "mu-paths")
 	floor := throughputSweepFloor{fixture: "mu-paths", paths: map[string]int64{
