@@ -3,10 +3,10 @@
   "whatifSchema": "schema-v3",
   "backtestId": "sha256:8796c929aec8874cf1be7f35cc9a60b67f210b24dce81a4337695fb6ea8d179d",
   "banner": "The planner's figures are a model, not a bound: this check measures how far off they are on this fleet.",
-  "verdict": "Over the 1 h 13 min the planner did not see: p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90. p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps scored (a figure, and enough measured requests); it leans low (median ratio 0.94). 5 had too few requests to measure a p90. None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.",
+  "verdict": "Over the 1 h 13 min the planner did not see: p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans high (median ratio 1.90); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90. p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps scored (a figure, and enough measured requests); it leans low (median ratio 0.94). 5 had too few requests to measure a p90. None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.",
   "verdictLines": [
     "Over the 1 h 13 min the planner did not see:",
-    "p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans high (median ratio 2.66); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90.",
+    "p90 TTFT: within 20% of measured in 0 of the 9 five-minute steps scored (a figure, and enough measured requests); its errors are wide; it leans high (median ratio 1.90); it read 2 more than 20% low. For 1 more it gave no figure, calling the fleet overloaded; the fleet measured p90 17.9 s there. 5 had too few requests to measure a p90.",
     "p90 TPOT: within 20% of measured in 10 of the 10 five-minute steps scored (a figure, and enough measured requests); it leans low (median ratio 0.94). 5 had too few requests to measure a p90.",
     "None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet."
   ],
@@ -51,7 +51,7 @@
       "decode": 2,
       "promptTokens": 2011.6171558279852,
       "outputTokens": 31.35001119353058,
-      "promptCV": 1.7,
+      "promptCV": 0.65,
       "requests": 307.2413793103449,
       "kneeShare": 0.0665512667981759,
       "load": "below 0.8 of the knee",
@@ -61,11 +61,11 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.2842931454371615,
+            "value": 0.27675088210503773,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.26490313853158515,
-              "hi": 0.3150727715682315
+              "lo": 0.259257429682074,
+              "hi": 0.3012094527755121
             },
             "floor": 0.26850002211963475,
             "flags": [
@@ -83,25 +83,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.65, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.65, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.3150727715682315,
+          "bound": 0.3012094527755121,
           "measured": 0.15973311976091337,
-          "ratio": 1.7798008694921135,
+          "ratio": 1.732582964129638,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.11017347427217829,
+            "value": 0.24439791598156063,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.10265809230662985,
-              "hi": 0.12394212622079635
+              "lo": 0.2289615745013341,
+              "hi": 0.2674279442407988
             },
-            "floor": 0.09624653243968165,
+            "floor": 0.23474949308512116,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -122,21 +122,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.12394212622079635,
+          "bound": 0.2674279442407988,
           "measured": 0.15361010830324912,
-          "ratio": 0.7172280228764603,
+          "ratio": 1.591027561149055,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.7950807974604681,
+            "value": 0.5006262879288575,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7347340816801919,
-              "hi": 0.8924632629062692
+              "lo": 0.46726562028699997,
+              "hi": 0.5500334203582906
             },
-            "floor": 0.7355990477814416,
+            "floor": 0.4832974567456102,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -152,25 +152,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.65, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.65, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.8924632629062692,
+          "bound": 0.5500334203582906,
           "measured": 0.19649819494584841,
-          "ratio": 4.046249878679949,
+          "ratio": 2.547739881614799,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.162180575032104,
+            "value": 0.6006365193177867,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.0766300311634578,
-              "hi": 1.295949680116796
+              "lo": 0.5596651313035464,
+              "hi": 0.6587260236993251
             },
-            "floor": 1.0989753213380147,
+            "floor": 0.5772468426961892,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -186,13 +186,13 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.65, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.65, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.295949680116796,
+          "bound": 0.6587260236993251,
           "measured": 0.2515,
-          "ratio": 4.620996322195245,
+          "ratio": 2.388216776611478,
           "inRegion": false
         }
       ],
@@ -296,7 +296,7 @@
       "decode": 2,
       "promptTokens": 2003.734034855726,
       "outputTokens": 31.361373883799843,
-      "promptCV": 1.7,
+      "promptCV": 0.7,
       "requests": 321.72413793103453,
       "kneeShare": 0.0686759081795261,
       "load": "below 0.8 of the knee",
@@ -306,11 +306,11 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.28483208601587645,
+            "value": 0.2770321677273248,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.26530516332876236,
-              "hi": 0.31596926463414343
+              "lo": 0.25946832158634675,
+              "hi": 0.3016169671720246
             },
             "floor": 0.26850002211963475,
             "flags": [
@@ -328,25 +328,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.31596926463414343,
+          "bound": 0.3016169671720246,
           "measured": 0.15648108103198008,
-          "ratio": 1.8202333735006933,
+          "ratio": 1.7703876142746462,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.1106593347766021,
+            "value": 0.23982053153894128,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.10303936419556846,
-              "hi": 0.12471458736188813
+              "lo": 0.22457845249255987,
+              "hi": 0.26270888885104854
             },
-            "floor": 0.09624653243968165,
+            "floor": 0.22957168519150867,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -367,21 +367,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.12471458736188813,
+          "bound": 0.26270888885104854,
           "measured": 0.15235690235690236,
-          "ratio": 0.7263165177602392,
+          "ratio": 1.5740706710953716,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.7969227403676585,
+            "value": 0.5173226679381255,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7360959530819767,
-              "hi": 0.8954469665004768
+              "lo": 0.4827984131713625,
+              "hi": 0.5684839780742666
             },
-            "floor": 0.7355990477814416,
+            "floor": 0.4994071964101755,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -397,25 +397,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.8954469665004768,
+          "bound": 0.5684839780742666,
           "measured": 0.19424242424242427,
-          "ratio": 4.102722376307757,
+          "ratio": 2.6632836258905055,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.1641202318190311,
+            "value": 0.6279268474802103,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.078025612408842,
-              "hi": 1.2991764904782395
+              "lo": 0.5850133295397751,
+              "hi": 0.6887817028524629
             },
-            "floor": 1.0989753213380147,
+            "floor": 0.6033527529645182,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -431,13 +431,13 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.7, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.7, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.7, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.7, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.2991764904782395,
+          "bound": 0.6887817028524629,
           "measured": 0.19947811447811448,
-          "ratio": 5.835829333281327,
+          "ratio": 3.147848319716811,
           "inRegion": false
         }
       ],
@@ -541,7 +541,7 @@
       "decode": 2,
       "promptTokens": 2736.658031249494,
       "outputTokens": 31.601708646498352,
-      "promptCV": 0.9,
+      "promptCV": 0.45,
       "requests": 158.27586206896552,
       "kneeShare": 0.04781070785367809,
       "load": "below 0.8 of the knee",
@@ -555,7 +555,7 @@
             "unit": "s",
             "sensitivity": {
               "lo": 0.33750557321570546,
-              "hi": 0.39170391190315296
+              "hi": 0.3914738136762677
             },
             "floor": 0.3523902663182525,
             "flags": [
@@ -573,11 +573,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.9, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.9, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.45, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.39170391190315296,
+          "bound": 0.3914738136762677,
           "measured": 0.28878969641179236,
           "ratio": 1.2470585435554844,
           "inRegion": false
@@ -585,13 +585,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.2780417352724574,
+            "value": 0.337778771363303,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.2605090623487961,
-              "hi": 0.30387188227567336
+              "lo": 0.31683958222796954,
+              "hi": 0.36780274209793806
             },
-            "floor": 0.2686145008331684,
+            "floor": 0.3303574661172902,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -612,21 +612,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.30387188227567336,
+          "bound": 0.36780274209793806,
           "measured": 0.3047945205479452,
-          "ratio": 0.9122268168489613,
+          "ratio": 1.1082179914391515,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 0.7608669384207878,
+            "value": 0.5677809639216183,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7113347356101538,
-              "hi": 0.8316128936218057
+              "lo": 0.5303713814962767,
+              "hi": 0.6224785907337251
             },
-            "floor": 0.7445198253942911,
+            "floor": 0.5516225434285544,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -642,25 +642,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.9, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.9, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.45, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.8316128936218057,
+          "bound": 0.6224785907337251,
           "measured": 0.38863013698630144,
-          "ratio": 1.957817642041505,
+          "ratio": 1.4609802737496695,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 0.9653539250390635,
+            "value": 0.6498651406926041,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.9015701280241777,
-              "hi": 1.054134419359925
+              "lo": 0.6062507597985063,
+              "hi": 0.7113580885075177
             },
-            "floor": 0.9420244671081701,
+            "floor": 0.6289524907773762,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -676,11 +676,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.9, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.9, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.45, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.054134419359925,
+          "bound": 0.7113580885075177,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -784,7 +784,7 @@
       "decode": 2,
       "promptTokens": 4031.455274629611,
       "outputTokens": 31.675203186982515,
-      "promptCV": 0.75,
+      "promptCV": 0.35,
       "requests": 177.93103448275863,
       "kneeShare": 0.0717521491501882,
       "load": "below 0.8 of the knee",
@@ -816,8 +816,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
           "bound": 0.5767974445482714,
@@ -828,13 +828,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.44365348152813794,
+            "value": 0.5041901453696465,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.4138874512548399,
-              "hi": 0.4886895951025743
+              "lo": 0.47185471764658776,
+              "hi": 0.5512629958542344
             },
-            "floor": 0.42235101353108206,
+            "floor": 0.49048133723457366,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -855,21 +855,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.4886895951025743,
+          "bound": 0.5512629958542344,
           "measured": 0.30487804878048785,
-          "ratio": 1.4551834194122921,
+          "ratio": 1.65374367681244,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 1.0359659807452415,
+            "value": 0.773607833789473,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.9650769494549534,
-              "hi": 1.1404219197448766
+              "lo": 0.7193972449230994,
+              "hi": 0.8540684608929616
             },
-            "floor": 0.9988337774082476,
+            "floor": 0.7382102202053549,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -885,25 +885,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.1404219197448766,
+          "bound": 0.8540684608929616,
           "measured": 0.38878048780487806,
-          "ratio": 2.6646552829708217,
+          "ratio": 1.9898319438750558,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.2767059043674203,
+            "value": 0.8696591491152014,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.1876569741721101,
-              "hi": 1.4031138741513853
+              "lo": 0.8063155807528553,
+              "hi": 0.9614747864615507
             },
-            "floor": 1.2251122460465727,
+            "floor": 0.821263401645004,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -919,11 +919,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.4031138741513853,
+          "bound": 0.9614747864615507,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1027,7 +1027,7 @@
       "decode": 2,
       "promptTokens": 4002.5222984744014,
       "outputTokens": 31.406945237107067,
-      "promptCV": 0.75,
+      "promptCV": 0.35,
       "requests": 160.34482758620692,
       "kneeShare": 0.06470094823801698,
       "load": "below 0.8 of the knee",
@@ -1059,8 +1059,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
           "bound": 0.5741375162632139,
@@ -1071,13 +1071,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.44171243059910037,
+            "value": 0.5028173944499615,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.4123823075096855,
-              "hi": 0.4856811845512391
+              "lo": 0.47078685994148717,
+              "hi": 0.5491096285795174
             },
-            "floor": 0.42235101353108206,
+            "floor": 0.49048133723457366,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1098,21 +1098,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.4856811845512391,
+          "bound": 0.5491096285795174,
           "measured": 0.3047297297297298,
-          "ratio": 1.449521945203256,
+          "ratio": 1.6500437777958823,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 1.032219876410761,
+            "value": 0.7697888430520434,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.9623642730876163,
-              "hi": 1.1351162930378675
+              "lo": 0.7166178423677407,
+              "hi": 0.8488030090826982
             },
-            "floor": 0.9988337774082476,
+            "floor": 0.7382102202053549,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1128,25 +1128,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.1351162930378675,
+          "bound": 0.8488030090826982,
           "measured": 0.38851351351351354,
-          "ratio": 2.6568442036311763,
+          "ratio": 1.9813695438556942,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 1.2711603333386348,
+            "value": 0.8644149127576153,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.1836164312430422,
-              "hi": 1.394779516852484
+              "lo": 0.8025559460500005,
+              "hi": 0.9534246853094417
             },
-            "floor": 1.2251122460465727,
+            "floor": 0.821263401645004,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1162,11 +1162,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.394779516852484,
+          "bound": 0.9534246853094417,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1270,7 +1270,7 @@
       "decode": 2,
       "promptTokens": 4872.898766668621,
       "outputTokens": 31.403590884493028,
-      "promptCV": 1.3,
+      "promptCV": 0.45,
       "requests": 120,
       "kneeShare": 0.06405518266987224,
       "load": "below 0.8 of the knee",
@@ -1280,11 +1280,11 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.6406362239263286,
+            "value": 0.6343196374868583,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.597142716521794,
-              "hi": 0.7067120302300722
+              "lo": 0.5924239845336393,
+              "hi": 0.6928188627266556
             },
             "floor": 0.6155394311625337,
             "flags": [
@@ -1302,25 +1302,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.3, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.3, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.45, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.7067120302300722,
+          "bound": 0.6928188627266556,
           "measured": 0.44559392949153775,
-          "ratio": 1.4377130870192765,
+          "ratio": 1.4235374306168698,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.35835727822506014,
+            "value": 0.5935772285438664,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.33309705953632074,
-              "hi": 0.39940024318552514
+              "lo": 0.5549942517214065,
+              "hi": 0.649930798596725
             },
-            "floor": 0.33104974799396747,
+            "floor": 0.575973143357039,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1341,21 +1341,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.39940024318552514,
+          "bound": 0.649930798596725,
           "measured": 0.4769230769230769,
-          "ratio": 0.7513942930525455,
+          "ratio": 1.2445974146887522,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 1.6348484293164756,
+            "value": 1.0114375293798885,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.520236789922683,
-              "hi": 1.808582558495963
+              "lo": 0.9418637613715423,
+              "hi": 1.114786196320238
             },
-            "floor": 1.5709786999004165,
+            "floor": 0.9733188121032275,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1371,25 +1371,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.3, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.3, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.45, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 1.808582558495963,
+          "bound": 1.114786196320238,
           "measured": 0.5958974358974358,
-          "ratio": 2.743506400315945,
+          "ratio": 1.697334924518746,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.235984165584475,
+            "value": 1.1635471227796015,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.082040939066543,
-              "hi": 2.465257194511955
+              "lo": 1.0814069754152946,
+              "hi": 1.2807565359694086
             },
-            "floor": 2.169234715888254,
+            "floor": 1.1121871776709233,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1405,11 +1405,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.3, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.3, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.45, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.45, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.465257194511955,
+          "bound": 1.2807565359694086,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1513,7 +1513,7 @@
       "decode": 2,
       "promptTokens": 6011.597671277665,
       "outputTokens": 31.599781019356875,
-      "promptCV": 1.35,
+      "promptCV": 0.35,
       "requests": 130.34482758620692,
       "kneeShare": 0.07731107855434345,
       "load": "below 0.8 of the knee",
@@ -1523,11 +1523,11 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.7825982785283804,
+            "value": 0.7713806644553718,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7275298863646774,
-              "hi": 0.8686445023055916
+              "lo": 0.7191603772676698,
+              "hi": 0.8448166138447406
             },
             "floor": 0.7435117396343698,
             "flags": [
@@ -1545,25 +1545,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.8686445023055916,
+          "bound": 0.8448166138447406,
           "measured": 0.4571019186429141,
-          "ratio": 1.71208705675931,
+          "ratio": 1.687546328279516,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.4188556354598858,
+            "value": 0.7360092090992257,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.38754889316322333,
-              "hi": 0.4720533713083652
+              "lo": 0.6878776395275091,
+              "hi": 0.8064804927935082
             },
-            "floor": 0.3767421411530335,
+            "floor": 0.7142619251254088,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1584,21 +1584,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.4720533713083652,
+          "bound": 0.8064804927935082,
           "measured": 0.46216216216216216,
-          "ratio": 0.9062958194161271,
+          "ratio": 1.5925345460041727,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 2.0404790308777465,
+            "value": 1.1369659046668499,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.8920341157150844,
-              "hi": 2.2717167800012708
+              "lo": 1.0556319310576063,
+              "hi": 1.257456740258195
             },
-            "floor": 1.9364299971819094,
+            "floor": 1.0802517844706443,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1614,25 +1614,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.2717167800012708,
+          "bound": 1.257456740258195,
           "measured": 0.5983783783783783,
-          "ratio": 3.4100146405816005,
+          "ratio": 1.900078521800969,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.8126255630080785,
+            "value": 1.2805639107683788,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.6129904960565553,
-              "hi": 3.116995291997427
+              "lo": 1.185205561037782,
+              "hi": 1.4195909912902391
             },
-            "floor": 2.703832945730915,
+            "floor": 1.2029529480521906,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1648,11 +1648,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 3.116995291997427,
+          "bound": 1.4195909912902391,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1756,7 +1756,7 @@
       "decode": 2,
       "promptTokens": 6009.749850688852,
       "outputTokens": 31.670820753317823,
-      "promptCV": 1.35,
+      "promptCV": 0.35,
       "requests": 103.44827586206897,
       "kneeShare": 0.06323790349835187,
       "load": "below 0.8 of the knee",
@@ -1766,11 +1766,11 @@
         {
           "statistic": "mean",
           "predicted": {
-            "value": 0.7750311489396938,
+            "value": 0.7659871491536466,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7219021396095198,
-              "hi": 0.8559968594298765
+              "lo": 0.7151410924945746,
+              "hi": 0.8369532697081783
             },
             "floor": 0.7435117396343698,
             "flags": [
@@ -1788,25 +1788,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 0.8559968594298765,
+          "bound": 0.8369532697081783,
           "measured": 0.4312884716497502,
-          "ratio": 1.7970133678163727,
+          "ratio": 1.7760436448106722,
           "inRegion": false
         },
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.4108084356850855,
+            "value": 0.731973925155132,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.3812851273583838,
-              "hi": 0.4593126380452345
+              "lo": 0.6847452730612862,
+              "hi": 0.8001289340448213
             },
-            "floor": 0.3767421411530335,
+            "floor": 0.7142619251254088,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1827,21 +1827,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.4593126380452345,
+          "bound": 0.8001289340448213,
           "measured": 0.4597014925373134,
-          "ratio": 0.8936417269772965,
+          "ratio": 1.5922809410842158,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 2.0213727393398178,
+            "value": 1.1256556454741176,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.8781615405740602,
-              "hi": 2.2396175560780116
+              "lo": 1.0474146928782693,
+              "hi": 1.2419343259017621
             },
-            "floor": 1.9364299971819094,
+            "floor": 1.0802517844706443,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1857,25 +1857,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.2396175560780116,
+          "bound": 1.2419343259017621,
           "measured": 0.5791044776119403,
-          "ratio": 3.4905147818496856,
+          "ratio": 1.9437868104836566,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.7926062003382053,
+            "value": 1.2650234755702603,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.598769467115114,
-              "hi": 3.082440137604815
+              "lo": 1.1740811348998272,
+              "hi": 1.3956844044911516
             },
-            "floor": 2.703832945730915,
+            "floor": 1.2029529480521906,
             "flags": [
               "UnvalidatedTTFT",
               "VPShapeMoved",
@@ -1891,11 +1891,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 1.35, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 1.35, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.35, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.35, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 3.082440137604815,
+          "bound": 1.3956844044911516,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -1999,7 +1999,7 @@
       "decode": 2,
       "promptTokens": 6823.67357517895,
       "outputTokens": 31.47183876527625,
-      "promptCV": 0.85,
+      "promptCV": 0.3,
       "requests": 87.93103448275863,
       "kneeShare": 0.06326421647409962,
       "load": "below 0.8 of the knee",
@@ -2030,8 +2030,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.85, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.85, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
           "bound": 0.9654795409204143,
@@ -2042,13 +2042,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.6988390232660838,
+            "value": 0.8507144946756098,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.6513802864573002,
-              "hi": 0.7702499713476664
+              "lo": 0.7959987510838947,
+              "hi": 0.9291709799058984
             },
-            "floor": 0.6669120725259257,
+            "floor": 0.832389130167619,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2068,21 +2068,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.7702499713476664,
+          "bound": 0.9291709799058984,
           "measured": 0.5164383561643836,
-          "ratio": 1.3531896206478544,
+          "ratio": 1.6472720984434883,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 1.8531190264295159,
+            "value": 1.243080721115051,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.7273342310714423,
-              "hi": 2.0355434626987776
+              "lo": 1.1559817495484621,
+              "hi": 1.3728923005405398
             },
-            "floor": 1.7975396793564975,
+            "floor": 1.1903507008924046,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2097,24 +2097,24 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.85, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.85, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.0355434626987776,
+          "bound": 1.3728923005405398,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.3369042777498477,
+            "value": 1.381261427117359,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.1759673626442018,
-              "hi": 2.5634627957257963
+              "lo": 1.2804624421302195,
+              "hi": 1.526923700415634
             },
-            "floor": 2.2581500536108243,
+            "floor": 1.3077957739892776,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2129,11 +2129,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.85, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.85, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.5634627957257963,
+          "bound": 1.526923700415634,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2236,7 +2236,7 @@
       "decode": 2,
       "promptTokens": 8054.697294671378,
       "outputTokens": 31.400826451218162,
-      "promptCV": 0.75,
+      "promptCV": 0.3,
       "requests": 94.13793103448276,
       "kneeShare": 0.07128008885684746,
       "load": "below 0.8 of the knee",
@@ -2267,8 +2267,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
           "bound": 1.1202092934176622,
@@ -2279,13 +2279,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.8566821716579031,
+            "value": 0.9841831599269641,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7978031424832726,
-              "hi": 0.9457117299593449
+              "lo": 0.9202259259978389,
+              "hi": 1.0765997651708084
             },
-            "floor": 0.8149775552744316,
+            "floor": 0.9602159251550415,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2305,21 +2305,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.9457117299593449,
+          "bound": 1.0765997651708084,
           "measured": 0.5083333333333333,
-          "ratio": 1.6852764032614487,
+          "ratio": 1.936098019528454,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 2.0291893089240975,
+            "value": 1.4442772497798522,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.8889707967638156,
-              "hi": 2.2358390898950304
+              "lo": 1.341069172438558,
+              "hi": 1.5981249255419323
             },
-            "floor": 1.9564163094446154,
+            "floor": 1.374620654554684,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2334,24 +2334,24 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.2358390898950304,
+          "bound": 1.5981249255419323,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.5056450589300012,
+            "value": 1.6077179750715866,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.3295298236617867,
-              "hi": 2.7555576294300916
+              "lo": 1.4875438198803068,
+              "hi": 1.7829718215113426
             },
-            "floor": 2.4044488084580644,
+            "floor": 1.5105843940071797,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2366,11 +2366,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.7555576294300916,
+          "bound": 1.7829718215113426,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2473,7 +2473,7 @@
       "decode": 2,
       "promptTokens": 7975.749800362662,
       "outputTokens": 31.588420031638016,
-      "promptCV": 0.75,
+      "promptCV": 0.3,
       "requests": 76.55172413793103,
       "kneeShare": 0.06589121615976622,
       "load": "below 0.8 of the knee",
@@ -2504,8 +2504,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
           "bound": 1.1161971142053364,
@@ -2516,13 +2516,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.8537619864908254,
+            "value": 0.9823088015325163,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7955426501201801,
-              "hi": 0.9411756162790053
+              "lo": 0.9187656588870443,
+              "hi": 1.0736521460275055
             },
-            "floor": 0.8149775552744316,
+            "floor": 0.9602159251550415,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2542,21 +2542,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.9411756162790053,
+          "bound": 1.0736521460275055,
           "measured": 0.5088235294117647,
-          "ratio": 1.6779137306756107,
+          "ratio": 1.9305490897170843,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 2.023397822522417,
+            "value": 1.4384419914005884,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.8848014601838379,
-              "hi": 2.2278252988096248
+              "lo": 1.3368406676017617,
+              "hi": 1.5899076845051312
             },
-            "floor": 1.9564163094446154,
+            "floor": 1.374620654554684,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2571,24 +2571,24 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.2278252988096248,
+          "bound": 1.5899076845051312,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.497261368498057,
+            "value": 1.599538380994537,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.3234267544755824,
-              "hi": 2.7429463359102813
+              "lo": 1.4817185039606422,
+              "hi": 1.770306208517742
             },
-            "floor": 2.4044488084580644,
+            "floor": 1.5105843940071797,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2603,11 +2603,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.7429463359102813,
+          "bound": 1.770306208517742,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -2710,7 +2710,7 @@
       "decode": 2,
       "promptTokens": 8047.139401952468,
       "outputTokens": 9.868193980284868,
-      "promptCV": 0.75,
+      "promptCV": 0.3,
       "requests": 1039.6551724137933,
       "kneeShare": 0.7559118701451244,
       "load": "below 0.8 of the knee",
@@ -2741,8 +2741,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
           "measured": 11.393436724167085,
@@ -2752,13 +2752,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 1.8583030637498832,
+            "value": 2.0311238184547755,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.3883869483092763,
+              "lo": 1.4753327252905697,
               "hiRefused": "Saturated"
             },
-            "floor": 0.8149775552744316,
+            "floor": 0.9602159251550415,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2779,19 +2779,19 @@
             }
           },
           "measured": 11.699766355140188,
-          "ratio": 0.1588324935167149,
+          "ratio": 0.17360379316997382,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 6.098144340671859,
+            "value": 5.093329934377017,
             "unit": "s",
             "sensitivity": {
-              "lo": 4.037617719581618,
+              "lo": 3.298337682911831,
               "hiRefused": "Saturated"
             },
-            "floor": 1.9564163094446154,
+            "floor": 1.374620654554684,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2806,24 +2806,24 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
           "measured": 17.71590909090909,
-          "ratio": 0.34421853879353664,
+          "ratio": 0.2875003426716982,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 8.093104880665772,
+            "value": 6.259358648743998,
             "unit": "s",
             "sensitivity": {
-              "lo": 5.25290622394169,
+              "lo": 3.9552858770173427,
               "hiRefused": "Saturated"
             },
-            "floor": 2.4044488084580644,
+            "floor": 1.5105843940071797,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -2838,12 +2838,12 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
           "measured": 18.857954545454543,
-          "ratio": 0.4291613314242772,
+          "ratio": 0.33192139866795534,
           "inRegion": false
         }
       ],
@@ -2947,7 +2947,7 @@
       "decode": 2,
       "promptTokens": 8014.918932963609,
       "outputTokens": 7.503671386299662,
-      "promptCV": 0.75,
+      "promptCV": 0.3,
       "requests": 1241.3793103448277,
       "kneeShare": 1.0116383744975257,
       "load": "past the knee",
@@ -3103,7 +3103,7 @@
       "decode": 2,
       "promptTokens": 7998.414909107737,
       "outputTokens": 7.54262006686218,
-      "promptCV": 0.75,
+      "promptCV": 0.3,
       "requests": 524.4827586206898,
       "kneeShare": 0.4957762881314751,
       "load": "below 0.8 of the knee",
@@ -3117,7 +3117,7 @@
             "unit": "s",
             "sensitivity": {
               "lo": 1.2103262735410916,
-              "hi": 2.017685758959527
+              "hi": 2.0172617446630463
             },
             "floor": 0.9890769231619101,
             "flags": [
@@ -3134,11 +3134,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.017685758959527,
+          "bound": 2.0172617446630463,
           "measured": 10.679724569931018,
           "ratio": 0.1315270447559205,
           "inRegion": false
@@ -3146,13 +3146,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 1.1601850098171493,
+            "value": 1.225031348257935,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.0133300288169915,
-              "hi": 1.7371313109463093
+              "lo": 1.085780246167047,
+              "hi": 1.6631029901182153
             },
-            "floor": 0.8149775552744316,
+            "floor": 0.9602159251550415,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3172,21 +3172,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 1.7371313109463093,
+          "bound": 1.6631029901182153,
           "measured": 11.086387434554974,
-          "ratio": 0.10464950974029541,
+          "ratio": 0.11049869540366733,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 3.0060905580651927,
+            "value": 2.3855083493930804,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.5238032692861045,
-              "hi": 4.608313165179278
+              "lo": 1.9616030836788667,
+              "hi": 3.8182142473566607
             },
-            "floor": 1.9564163094446154,
+            "floor": 1.374620654554684,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3201,25 +3201,25 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 4.608313165179278,
+          "bound": 3.8182142473566607,
           "measured": 17.5625,
-          "ratio": 0.17116529867986863,
+          "ratio": 0.13582965690494408,
           "inRegion": false
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 3.8476100852033177,
+            "value": 2.794904929121392,
             "unit": "s",
             "sensitivity": {
-              "lo": 3.203940478335059,
-              "hi": 6.100117796294596
+              "lo": 2.2767541911642404,
+              "hi": 4.700876503187532
             },
-            "floor": 2.4044488084580644,
+            "floor": 1.5105843940071797,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3234,13 +3234,13 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 6.100117796294596,
+          "bound": 4.700876503187532,
           "measured": 18.781249999999996,
-          "ratio": 0.20486443049335473,
+          "ratio": 0.1488135735971457,
           "inRegion": false
         }
       ],
@@ -3344,7 +3344,7 @@
       "decode": 2,
       "promptTokens": 8015.392079417556,
       "outputTokens": 25.539211292321163,
-      "promptCV": 0.75,
+      "promptCV": 0.3,
       "requests": 73.44827586206897,
       "kneeShare": 0.06319677981122558,
       "load": "below 0.8 of the knee",
@@ -3375,8 +3375,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
           "bound": 1.1141684265077043,
@@ -3387,13 +3387,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.8522558744220394,
+            "value": 0.9813335392721502,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7943659525745214,
-              "hi": 0.9388660382727119
+              "lo": 0.917995364351318,
+              "hi": 1.072147813548639
             },
-            "floor": 0.8149775552744316,
+            "floor": 0.9602159251550415,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3413,21 +3413,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.9388660382727119,
+          "bound": 1.072147813548639,
           "measured": 0.5145161290322581,
-          "ratio": 1.656422075679199,
+          "ratio": 1.9072940261715772,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 2.020922482849808,
+            "value": 1.4355193565063116,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.8829640826047243,
-              "hi": 2.223785591349313
+              "lo": 1.3347062799176388,
+              "hi": 1.5857689021034702
             },
-            "floor": 1.9564163094446154,
+            "floor": 1.374620654554684,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3442,24 +3442,24 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.223785591349313,
+          "bound": 1.5857689021034702,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.4930746054931223,
+            "value": 1.5954595025630256,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.3203623084982192,
-              "hi": 2.736688513192589
+              "lo": 1.4787953481576024,
+              "hi": 1.7640352631340577
             },
-            "floor": 2.4044488084580644,
+            "floor": 1.5105843940071797,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3474,11 +3474,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.736688513192589,
+          "bound": 1.7640352631340577,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3581,7 +3581,7 @@
       "decode": 2,
       "promptTokens": 8017.039393221928,
       "outputTokens": 26.512622201765563,
-      "promptCV": 0.75,
+      "promptCV": 0.3,
       "requests": 67.24137931034484,
       "kneeShare": 0.05952254842685201,
       "load": "below 0.8 of the knee",
@@ -3612,8 +3612,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
           "bound": 1.1114905481736908,
@@ -3624,13 +3624,13 @@
         {
           "statistic": "p50",
           "predicted": {
-            "value": 0.850264864417981,
+            "value": 0.9800757216887946,
             "unit": "s",
             "sensitivity": {
-              "lo": 0.7928238831316626,
-              "hi": 0.9357836531586275
+              "lo": 0.9170148474324114,
+              "hi": 1.0701765052872048
             },
-            "floor": 0.8149775552744316,
+            "floor": 0.9602159251550415,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3650,21 +3650,21 @@
               "outside": "p50, measured mean, p90, p95"
             }
           },
-          "bound": 0.9357836531586275,
+          "bound": 1.0701765052872048,
           "measured": 0.5160714285714286,
-          "ratio": 1.647572055619617,
+          "ratio": 1.8991086648641002,
           "inRegion": false
         },
         {
           "statistic": "p90",
           "predicted": {
-            "value": 2.0176091110898486,
+            "value": 1.4316410561064594,
             "unit": "s",
             "sensitivity": {
-              "lo": 1.8805196191208213,
-              "hi": 2.2183513657245864
+              "lo": 1.3318869106132807,
+              "hi": 1.5802050271025392
             },
-            "floor": 1.9564163094446154,
+            "floor": 1.374620654554684,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3679,24 +3679,24 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.2183513657245864,
+          "bound": 1.5802050271025392,
           "inRegion": false,
           "unscored": "fewRequests"
         },
         {
           "statistic": "p95",
           "predicted": {
-            "value": 2.487483322200473,
+            "value": 1.5900218058200988,
             "unit": "s",
             "sensitivity": {
-              "lo": 2.3162824205837484,
-              "hi": 2.7283180836849743
+              "lo": 1.4749107711696243,
+              "hi": 1.756745226371713
             },
-            "floor": 2.4044488084580644,
+            "floor": 1.5105843940071797,
             "flags": [
               "UnvalidatedTTFT",
               "AssumedPromptSpread",
@@ -3711,11 +3711,11 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.75, measured 0.0462 to 0.0721)",
-              "outside": "prompt cv 0.75, measured 0.0462 to 0.0721"
+              "label": "OUTSIDE VALIDATED REGION (prompt cv 0.3, measured 0.0462 to 0.0721)",
+              "outside": "prompt cv 0.3, measured 0.0462 to 0.0721"
             }
           },
-          "bound": 2.7283180836849743,
+          "bound": 1.756745226371713,
           "inRegion": false,
           "unscored": "fewRequests"
         }
@@ -3828,7 +3828,7 @@
         "all": {
           "steps": 14,
           "bias": 1.734215236172119,
-          "medianError": 0.8007740280991164,
+          "medianError": 0.773213374409299,
           "p90Error": 3.498241624113693,
           "coverage": 0.9230769230769231,
           "within": 0,
@@ -3858,13 +3858,13 @@
         "statistic": "p50",
         "all": {
           "steps": 14,
-          "bias": 1.1327082187484079,
-          "medianError": 0.45234992365270943,
-          "p90Error": 5.295940949228779,
-          "coverage": 0.6153846153846154,
-          "within": 0.21428571428571427,
+          "bias": 1.6199033222238306,
+          "medianError": 0.651892691428124,
+          "p90Error": 4.760242801958304,
+          "coverage": 0.9230769230769231,
+          "within": 0.07142857142857142,
           "coverageSteps": 13,
-          "low": 4
+          "low": 2
         },
         "inRegion": {
           "steps": 0,
@@ -3889,9 +3889,9 @@
         "statistic": "p90",
         "all": {
           "steps": 9,
-          "bias": 2.6646552829708217,
-          "medianError": 1.905131151578687,
-          "p90Error": 4.842305699301267,
+          "bias": 1.900078521800969,
+          "medianError": 0.9813695438556942,
+          "p90Error": 6.362162452488687,
           "coverage": 0.875,
           "within": 0,
           "coverageSteps": 8,
@@ -3921,9 +3921,9 @@
         "statistic": "p95",
         "all": {
           "steps": 3,
-          "bias": 0.4291613314242772,
-          "medianError": 3.8812768404539475,
-          "p90Error": 4.835829333281327,
+          "bias": 0.33192139866795534,
+          "medianError": 2.147848319716811,
+          "p90Error": 5.719817123047575,
           "coverage": 0.5,
           "within": 0,
           "coverageSteps": 2,
@@ -4056,7 +4056,7 @@
             "all": {
               "steps": 14,
               "bias": 1.734215236172119,
-              "medianError": 0.8007740280991164,
+              "medianError": 0.773213374409299,
               "p90Error": 3.498241624113693,
               "coverage": 0.9230769230769231,
               "within": 0,
@@ -4078,13 +4078,13 @@
             "statistic": "p50",
             "all": {
               "steps": 14,
-              "bias": 1.1327082187484079,
-              "medianError": 0.45234992365270943,
-              "p90Error": 5.295940949228779,
-              "coverage": 0.6153846153846154,
-              "within": 0.21428571428571427,
+              "bias": 1.6199033222238306,
+              "medianError": 0.651892691428124,
+              "p90Error": 4.760242801958304,
+              "coverage": 0.9230769230769231,
+              "within": 0.07142857142857142,
               "coverageSteps": 13,
-              "low": 4
+              "low": 2
             },
             "inRegion": {
               "steps": 0,
@@ -4101,9 +4101,9 @@
             "statistic": "p90",
             "all": {
               "steps": 9,
-              "bias": 2.6646552829708217,
-              "medianError": 1.905131151578687,
-              "p90Error": 4.842305699301267,
+              "bias": 1.900078521800969,
+              "medianError": 0.9813695438556942,
+              "p90Error": 6.362162452488687,
               "coverage": 0.875,
               "within": 0,
               "coverageSteps": 8,
@@ -4126,9 +4126,9 @@
             "statistic": "p95",
             "all": {
               "steps": 3,
-              "bias": 0.4291613314242772,
-              "medianError": 3.8812768404539475,
-              "p90Error": 4.835829333281327,
+              "bias": 0.33192139866795534,
+              "medianError": 2.147848319716811,
+              "p90Error": 5.719817123047575,
               "coverage": 0.5,
               "within": 0,
               "coverageSteps": 2,

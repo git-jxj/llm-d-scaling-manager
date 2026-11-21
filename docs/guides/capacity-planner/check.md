@@ -92,7 +92,7 @@ what the fleet measured. The result comes first, in one line:
 
 ```text
 Self-check: tested on the last 1 h 13 min of this recording, each part predicted from a fit on what came before it,
-p90 TTFT within 20% in 0 of 9 steps (median ratio 2.67); p90 TPOT within 20% in 10 of 10 steps (median ratio 0.94). [inconsistent]
+p90 TTFT within 20% in 0 of 9 steps (median ratio 1.90); p90 TPOT within 20% in 10 of 10 steps (median ratio 0.94). [inconsistent]
   Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
 ```
 
