@@ -96,7 +96,9 @@ the same order as a cold start.
 The disk is not the reason. Measured with direct I/O, the shared RWX PVC reads
 at ~1.8 GB/s and local NVMe at ~5.2 GB/s, so an 8B model is a few seconds of
 I/O. The cost is the *load*: parsing safetensors, sharding and copying to the
-device runs at about 2 GB/s even from page cache.
+device runs at about 2 GB/s even from page cache. On a cold page cache the
+loader flags in [Weights on the node's disk](#weights-on-the-nodes-disk) cut
+it by a quarter or more.
 
 So the cache removes the *download*, not the *load*, and faster storage does not
 remove the load either. That takes a different mechanism: keeping a process
@@ -427,35 +429,47 @@ says so when the cluster has SecurityContextConstraints:
 
 On node-local NVMe the loader still matters when the page cache is cold.
 `--safetensors-load-strategy prefetch` cuts the weights load by a quarter to a
-third, and the `instanttensor` loader (direct I/O) by a little more. To `/health`
-that is 5 to 25 s, a tenth to a sixth of the start. On an MoE with expert parallel on one node,
-`--enable-ep-weight-filter` alone was fastest, and it keeps the page cache warm
-for later starts. Measured on one H200 node, vLLM 0.34.0, the image and compile
-caches warm from one earlier start, the model's pages dropped from the page
-cache before each start; median of three starts (the weights load of the
-slowest rank from the engine log, then container start to `/health`):
+third, and the `instanttensor` loader (direct I/O) by a little more. To
+`/health` that is 5 to 25 s, about 10 to 18 % of the start. These are engine
+arguments: add them to the `vllm serve` arguments of your Deployment or
+LeaderWorkerSet, and check that `vllm serve --help=all` lists the flag (or the
+`--load-format` choice) in your vLLM version. Measured on one H200 node, vLLM
+0.34.0, the image and compile caches warm from one earlier start, the model's
+pages dropped from the page cache before each start; median of three starts
+(the weights load is the slowest rank's, from the engine log; `/health` is
+counted from container start):
 
-| Loader flags | Qwen3-32B, TP=1, 61 GiB | Qwen3-235B-A22B-FP8, TP=4 with expert parallel, 223 GiB |
-| --- | --- | --- |
-| none (default, memory-mapped) | 17.6 s, 53.1 s | 61.4 s, 142.6 s |
-| `--safetensors-load-strategy prefetch` | 13.1 s, 47.7 s | 41.5 s, 122.0 s |
-| `--load-format instanttensor` | 11.0 s, 46.0 s | 37.7 s, 117.9 s |
-| `--enable-ep-weight-filter` | - | 35.1 s, 117.3 s |
-| `--enable-ep-weight-filter` and prefetch | - | 39.9 s, 123.0 s |
+| Loader flags | Qwen3-32B load | Qwen3-32B to `/health` | Qwen3-235B-A22B-FP8 load | Qwen3-235B-A22B-FP8 to `/health` |
+| --- | ---: | ---: | ---: | ---: |
+| none (default, memory-mapped) | 17.6 s | 53.1 s | 61.4 s | 142.6 s |
+| `--safetensors-load-strategy prefetch` | 13.1 s | 47.7 s | 41.5 s | 122.0 s |
+| `--load-format instanttensor` | 11.0 s | 46.0 s | 37.7 s | 117.9 s |
+| `--enable-ep-weight-filter` | - | - | 35.1 s | 117.3 s |
+| `--enable-ep-weight-filter` and prefetch | - | - | 39.9 s | 123.0 s |
+
+Qwen3-32B: TP=1, 61 GiB. Qwen3-235B-A22B-FP8: TP=4 with
+`--enable-expert-parallel`, 223 GiB.
 
 - **`instanttensor`** reads around the page cache: after a start, under 0.2 %
-  of the model is in memory, so a later start on the node cannot gain from a
-  warm cache. It needs an image that ships the `instanttensor` package; check
-  with `python3 -c 'import instanttensor'` in the image.
-- **`--enable-ep-weight-filter`** on one node: each rank parses only its own
-  experts, but every expert is local to some rank, so the node still reads the
-  whole model (223 GiB in every row). Prefetch reads whole files, so with
-  prefetch the filter gains little. Across nodes, the filter would also cut
-  each node's read; that was not measured.
+  of the model is in memory, so it pays its own read on every start. Choose it
+  where every start is cold, such as nodes that release the page cache (next
+  paragraph). Where the page cache is kept, the default loader's later starts
+  may be faster (not measured on 0.34). It needs an image that ships the
+  `instanttensor` package; check with `python3 -c 'import instanttensor'` in
+  the image.
+- **`--enable-ep-weight-filter`** gave the shortest load on the MoE (35.1 s),
+  tied `instanttensor` to `/health`, and leaves the page cache warm. It does
+  nothing without `--enable-expert-parallel` or with `--enable-eplb`. On one
+  node each rank parses only its own experts, but every expert is local to
+  some rank, so the node still reads the whole model (223 GiB in every row).
+  Do not combine it with prefetch, which reads whole files: the filter alone
+  loads 4.8 s faster. Across nodes, the filter would also cut each node's
+  read; that was not measured.
 - **`--enable-ep-weight-filter` changes vLLM's compile-cache key** (prefetch
   and `instanttensor` do not): the first start with it compiled again (39 s)
-  and took 167 s, the next ones 123 s and 122 s. Fill the cache with a start
-  that uses the same flags as the engines.
+  and took 167 s, the next ones 123 s and 122 s. Fill the
+  [engine cache](#engine-caches-on-the-nodes-disk) with a start that uses the
+  same flags as the engines.
 
 The benchmark standup has the same measure under
 `BENCHMARK_MODEL_HOSTPATH=<dir>`; what the harness does with it is in
