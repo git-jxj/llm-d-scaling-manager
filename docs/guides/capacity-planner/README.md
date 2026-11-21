@@ -695,8 +695,10 @@ alone. A higher `--ttft` sizes them.
   TPOT figures; decode sized alone on the TPOT figures. A bucket priced at a
   stated shape (`--assume-input-tokens`, `--assume-output-tokens`), or whose
   sized rate on the fleet it had the self-check did not test, says `not
-  covered by the self-check`, and changes no exit code. A refused or unsized bucket says
-  neither.
+  covered by the self-check`, and changes no exit code. A refused or unsized
+  bucket says neither, nor does a verdict on a fleet with no replica of a
+  role it prices (it rests on no figure); a bucket beyond the bound can be
+  not trusted but is not tested for coverage.
 - **Had.** The median serving pods of the priced prefill and decode variants
   over the bucket; the rate is the model's (`OtherVariantsServed` where
   another variant also served). The fleet it had is judged whole, at the

@@ -391,7 +391,7 @@ func dayTrustText(p *whatifapi.DayPlanResponse) string {
 		if p.SelfCheck != nil && p.SelfCheck.Covered != nil {
 			tested = p.SelfCheck.Covered.Words()
 		}
-		fmt.Fprintf(&b, "self-check: %d bucket(s) not covered: it tested %s, not the rate each was sized for on the fleet it had, or the shape stated.\n",
+		fmt.Fprintf(&b, "self-check: %d bucket(s) not covered: it tested %s, not the rate, fleet or shape each was priced at.\n",
 			c, tested)
 	}
 	return b.String()

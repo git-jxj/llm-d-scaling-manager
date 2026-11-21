@@ -246,7 +246,16 @@ func TestDayPlan_JudgeTrust(t *testing.T) {
 	assert.Empty(t, p.Buckets[5].Trust, "no figure, nothing to distrust")
 	assert.Equal(t, 3, p.Summary.Counts.Untrusted, "judged afresh: 0, 1 and 2, not added to the last call's")
 	assert.Zero(t, p.Summary.Counts.NotCovered)
-	assert.Equal(t, p.Summary.Counts.Untrusted, func() int { p.JudgeTrust(); return p.Summary.Counts.Untrusted }(), "a second call counts the same")
+	before := p.Summary.Counts.Untrusted
+	p.JudgeTrust()
+	assert.Equal(t, before, p.Summary.Counts.Untrusted, "a second call counts the same")
+	p.SelfCheck.Untrusted = nil
+	p.Buckets[2].Shape.Source = dayShapeStated
+	p.JudgeTrust()
+	assert.Contains(t, p.Buckets[2].Trust, "not this shape", "an unmet bucket priced at a stated shape is not covered either")
+	p.SelfCheck.Untrusted = []string{"tpot"}
+	p.Buckets[2].Shape.Source = ""
+	p.JudgeTrust()
 	assert.Equal(t, "TPOT", p.UntrustedFigures(p.Buckets[0]))
 	assert.Empty(t, p.UntrustedFigures(p.Buckets[5]))
 

@@ -61,7 +61,9 @@ func (sc *SelfCheck) notTrusted(rests []string) string {
 }
 
 // dayRestsOn is the figures a day plan bucket's verdict rests on: the TTFT
-// figures where it priced prefill, the TPOT figures always.
+// figures where it priced prefill, the TPOT figures always. No TTFT
+// target judges a bucket sized on decode alone (decodeLimit prices TPOT
+// and the knee only), unlike an at-replicas verdict of decode only scope.
 func dayRestsOn(b DayBucket) []string {
 	return restsOn(!slices.Contains(b.Flags, FlagPrefillNotPriced), false)
 }
@@ -167,10 +169,10 @@ func (p *DayPlanResponse) JudgeTrust() {
 		switch {
 		case b.Trust != "":
 			c.Untrusted++
-		case b.Status == BucketUnmet:
-			// Its verdict is the replica bound's, not the fleet it had.
 		case b.Shape.Source == dayShapeStated:
 			b.Trust = TrustNotCovered + ": it tested the recorded traffic, not this shape"
+		case b.Status == BucketUnmet:
+			// Its verdict is the replica bound's, not the fleet it had.
 		case b.SizedRate != nil && b.Actual != nil:
 			b.Trust = sc.notCovered(*b.SizedRate, b.Actual.Prefill, b.Actual.Decode)
 		}
