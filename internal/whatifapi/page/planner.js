@@ -10,6 +10,7 @@
 // FLAG_WORDS is every flag the engine raises, in plain words, and what clears
 // it. A flag missing here is shown by its name (TestPageNamesEveryFlag).
 const FLAG_WORDS = {
+  ShapeLoadMismatch: ["The measured shape (the last cycles') is more than 20% off the shape of the cycles the load was read from: the load is priced at traffic other than the traffic that made it.", "ask the shape load to price the load at its own cycles' shape"],
   UnvalidatedTTFT: ["The TTFT model is not validated, and its figures are not a bound. On the validation recordings (not this fleet) it read high at an assumed prompt spread and up to 33% low at the spread actually sent; the banner gives the figures.", "a fresh frozen staircase run that validates the model"],
   AssumedVP: ["V_P, the prefill token rate, is the value you typed, not a learned one.", "learn V_P: run at a load that keeps a prefill pod busy for a minute"],
   VPLowerBound: ["V_P comes from a lower bound (the peak under a queue): the limits under-promise.", "a window where a prefill pod is busy without a queue"],
