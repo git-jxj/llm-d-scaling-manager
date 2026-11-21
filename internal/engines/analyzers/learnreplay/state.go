@@ -154,7 +154,8 @@ type VariantState struct {
 	CapacityTokens float64
 	// BatchCap is the cap per engine rank the analyzer prices the variant
 	// at, BatchCapSource where it came from (flags, declared, learned,
-	// default; "" with none), and Ranks the engine ranks per replica.
+	// default, or step-budget with saturation.SwitchPlannerCapAtStepBudget
+	// on; "" with none), and Ranks the engine ranks per replica.
 	BatchCap       int64
 	BatchCapSource string
 	Ranks          int
@@ -266,6 +267,11 @@ type shapeSample struct {
 // but its p90 TTFT on the B-off and B-on phases still reads 15% to 23% under
 // and its p90 TPOT up to 22% under there (32% on the first warm-up's
 // B-onset, 39% on the bursty C phases), so both stay off.
+//
+// saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
+// either: no recording holds an engine whose step budget runs fewer
+// sequences than its cap (MTP, wide EP), so there is no backtest to turn it
+// on with (issue llm-d-incubation/llm-d-scaling-manager#302).
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
