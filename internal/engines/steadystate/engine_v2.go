@@ -804,6 +804,12 @@ func (e *Engine) pruneAnalyzerSeries(activeKeys map[string]bool) {
 			delete(e.lastAnalyzerSeries, modelKey)
 		}
 	}
+	for modelKey, state := range e.decodePacking {
+		if !activeKeys[modelKey] {
+			e.metricsEmitter.DeleteDecodePackingForModel(state.namespace, state.modelID)
+			delete(e.decodePacking, modelKey)
+		}
+	}
 	// Published before the model reached recordAnalyzerMetrics, so tracked
 	// apart from lastAnalyzerSeries.
 	e.retainLoadBalance(activeKeys)
@@ -818,6 +824,10 @@ func (e *Engine) pruneAnalyzerSeries(activeKeys map[string]bool) {
 // Safe to call repeatedly — it empties its own bookkeeping, so subsequent idle
 // cycles are no-ops.
 func (e *Engine) evictAllAnalyzerSeries() {
+	for modelKey, state := range e.decodePacking {
+		e.metricsEmitter.DeleteDecodePackingForModel(state.namespace, state.modelID)
+		delete(e.decodePacking, modelKey)
+	}
 	for modelKey, published := range e.publishedEngineConfig {
 		e.metricsEmitter.DeleteEngineConfigForModel(published.namespace, published.modelID)
 		delete(e.publishedEngineConfig, modelKey)
@@ -1459,6 +1469,11 @@ func (e *Engine) collectV2ModelRequest(
 	// what the other had published, and each variant's engine configuration
 	// with it.
 	e.recordAnalyzerMetrics(namespace, modelID, append(slices.Clone(namedResults), composite))
+	if t := e.analyzers.saturationCaps().packing; t != nil {
+		if packing, ok := t.TakeDecodePacking(namespace, modelID); ok {
+			e.reportDecodePacking(namespace, modelID, packing, variants, time.Now())
+		}
+	}
 	logAnalyzerResult(ctx, modelID, namespace, composite)
 
 	return &allocation.ModelScalingRequest{
