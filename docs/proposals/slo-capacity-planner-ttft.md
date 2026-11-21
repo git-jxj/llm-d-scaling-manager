@@ -1091,6 +1091,9 @@ priced.
 - **What a router window needs.** Steady rate and prompt, and no cycle with the
   router holding requests: the router's mean starts before flow control, and a
   held window would count the queue in R. A line needs every median above 0.
+  The planner also needs no cycle whose prefill pods held requests waiting for
+  compute (`slo-ttft-hop-unqueued`). With flow control off, that queue sits in
+  the engines and passes the other gates, and its R is the queue's timing.
 - **What admits a minute.** A row with a read mean of both, at least 0.05 r/s,
   its prompt steady to 15%, no speculation, its slot queue read and empty (an
   unknown queue is not an empty one, so SGLang, which publishes none, takes the
@@ -2060,7 +2063,16 @@ issue proposed (above).
   windows are tight (quartiles 8 to 12 ms); the 8000-token ones are not
   (quartiles -42 to +109 ms), because R is a difference of means of a few
   seconds read about 36 s apart. So the warm-up's slope read high, which
-  prices more, not less. The fit needs no change.
+  prices more, not less. It cost the planner its low-load TTFT, though
+  (llm-d-incubation/llm-d-scaling-manager#281). The warm-up's 8k windows all
+  fall in a burst at the prefill knee, with the prefill pods holding 6 to 38
+  requests in their capacity queue and a mean TTFT of 4 to 17 s. Over its first
+  half they read R at 0.03 to 0.56 s and put 0.31 s of hop on every 8k prompt.
+  Measured at low load, the router's mean less the two engines' was about 0.
+  Backtested on its own second half, the p90 TTFT read 1.90x high at
+  0.27 r/s. The planner's replay therefore reads R only from windows whose
+  prefill pods held no queue (`slo-ttft-hop-unqueued`, off in S1). On the
+  warm-up, R is then held at its 1k windows' 4 ms.
 
 ## As built: the router stage
 
