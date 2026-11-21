@@ -1093,6 +1093,8 @@ TTFT model's (P3) are listed in
 [its as-built section](slo-capacity-planner-ttft.md#as-built-p3).
 
 Exit codes: `0` every role answered; `3` a role refused (output still printed);
+`4` (at-replicas, and a report's `exitCode`) answered, and the self-check found
+the figures a verdict rests on inconsistent, `3` taking precedence;
 `2` usage or input error; `1` internal error. `whatif.ExitCode` applies them:
 `2` if any result is `InvalidInput`, else `3` if any is refused, else `0`.
 A command stopped by SIGINT or SIGTERM exits `130` or `143` and says so on

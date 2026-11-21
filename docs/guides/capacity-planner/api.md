@@ -461,8 +461,8 @@ turns it off for that source.
 | --- | --- |
 | `status` | `ok` (the page and the CLI say "held on its own steps"), `weak`, `inconsistent` or `notRun` ([the rules](check.md#the-self-check-beside-every-answer)). |
 | `line`, `why`, `trust` | The result in one sentence, what made the status, and which figures not to trust. |
-| `ttft`, `tpot` | The p90 scored over the folds: `steps`, `within`, `bias`, `low`, `judged`, `overloaded`, `pastKnee` (what the fleet measured where the planner gave no figure), `refused`; `levels` (the independent load levels the steps fall in), `withinBound` (the within share's lower bound over a bootstrap of the levels), `minRatio` (the lowest step's ratio), `nearKnee` (`steps` at 0.8 to 1.0 of the knee and the `worst` tenth's ratio), `servedPastKnee` (steps called overloaded that the fleet served unqueued). |
-| `untrusted` | With `inconsistent`: the figures not to trust, `ttft` and or `tpot`. A report's verdict that rests on one says so in `verdict.trust`, and the report's `exitCode` is 4. |
+| `ttft`, `tpot` | The p90 scored over the folds: `steps`, `within`, `bias`, `low`, `judged`, `overloaded`, `pastKnee` (what the fleet measured where the planner gave no figure), `refused`; `levels` (the independent load levels the steps fall in), `withinBound` (the within share's lower bound over a bootstrap of the levels), `minRatio` (the lowest step's ratio), `nearKnee` (`steps` at 0.8 to 1.0 of the knee and the `worst` tenth's ratio), `servedPastKnee` (TTFT only: steps called overloaded that the fleet served unqueued). |
+| `untrusted` | With `inconsistent`: the figures not to trust, `ttft` and or `tpot`. A report's verdict that rests on one says so in `verdict.trust`, and the report's `exitCode` is 4 (3, a verdict not judged, takes precedence). |
 | `covered` | What the check tested: `rateLo` and `rateHi` of its judged steps, and the `fleets` they ran. A report's verdict at another rate, fleet or shape says `not covered by the self-check` in `verdict.trust`. |
 | `folds[]` | Each cut: `fitTo`, `testFrom`, `testTo`, `judged`. |
 | `checks[]` | Each rule: `name`, `passed`, `detail`. |

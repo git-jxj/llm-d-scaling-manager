@@ -37,7 +37,9 @@ func TestSelfCheck_StepsAreReadByLevel(t *testing.T) {
 	pts := stair(4, 3, nil)
 	require.Len(t, levelsOf(pts), 4)
 	pts[4].nd = 3
-	assert.Len(t, levelsOf(pts), 6, "a step at another fleet is a level of its own, and so is the rest of its run")
+	assert.Len(t, levelsOf(pts), 4, "one step off a level the run returns to is noise, not a level")
+	pts[5].nd = 3
+	assert.Len(t, levelsOf(pts), 5, "a run at another fleet is a level of its own")
 
 	// 9 of 12 within: one level of 4 entirely off.
 	grouped := levelsOf(stair(4, 3, func(l, _ int) bool { return l == 2 }))
@@ -68,6 +70,11 @@ func TestSelfCheck_NearKneeAndServedPastKnee(t *testing.T) {
 	// The steps below 0.8 measured 0.4 s: 0.5 s is served, 0.7 s is not.
 	assert.Equal(t, 1, servedPastKnee(pts, []float64{0.5, 0.7, 3}))
 	assert.Equal(t, 0, servedPastKnee(nil, []float64{0.5}), "no step below 0.8: nothing to compare with")
+	ttft, tpot := &SelfCheckFigure{}, &SelfCheckFigure{}
+	ttft.scoreSteps(pts, []float64{0.5}, true)
+	tpot.scoreSteps(pts, []float64{0.5}, false)
+	assert.Equal(t, 1, ttft.ServedPastKnee)
+	assert.Equal(t, 0, tpot.ServedPastKnee, "a saturated decode queues in TTFT, not TPOT: TPOT does not score the knee")
 }
 
 // A self-check says what it tested, and an answer outside that is not
@@ -132,6 +139,17 @@ func TestReport_JudgeTrust(t *testing.T) {
 			assert.Equal(t, c.code, c.r.ExitCode)
 		})
 	}
+	// A growth what-if is judged at its own rate, and never moves the exit
+	// code.
+	g := &ReportResponse{Fleet: ReportFleet{Prefill: 2, Decode: 2}, Load: ReportLoad{Rate: Figure{Value: ptr(5)}},
+		Shapes: []ReportShape{{Source: "measured", Verdict: ReportVerdict{Verdict: VerdictRight},
+			Growth: []ReportGrowth{{Rate: 15, Verdict: ReportVerdict{Verdict: VerdictUnder}}}}},
+		SelfCheck: &SelfCheck{Status: SelfCheckWeak, Covered: cov}}
+	g.JudgeTrust()
+	assert.Empty(t, g.Shapes[0].Verdict.Trust)
+	assert.Contains(t, g.Shapes[0].Growth[0].Verdict.Trust, TrustNotCovered+": it tested 1.00 to 10.00 r/s")
+	assert.Equal(t, 0, g.ExitCode)
+
 	r := report([]string{"tpot"}, 5, ScopeFleet, "measured", VerdictUnder, false)
 	r.ExitCode, r.Shapes[0].Verdict.Trust = 3, ""
 	r.JudgeTrust()

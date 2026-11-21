@@ -62,6 +62,18 @@ func (r *ReportResponse) JudgeTrust() {
 			v.Trust = fmt.Sprintf("%s: it tested %s; this verdict is at %.2f r/s at %d prefill + %d decode", TrustNotCovered,
 				sc.Covered.Words(), rate, r.Fleet.Prefill, r.Fleet.Decode)
 		}
+		// A growth what-if rests on the same figures, at its own rate; it
+		// never moves the exit code, which is the verdict at the load's.
+		for j := range s.Growth {
+			g := &s.Growth[j]
+			switch {
+			case g.Verdict.Verdict == VerdictNotJudged || g.Verdict.Verdict == "":
+			case len(bad) > 0:
+				g.Verdict.Trust = v.Trust
+			case sc.Covered != nil && !sc.Covered.Covers(g.Rate, r.Fleet.Prefill, r.Fleet.Decode):
+				g.Verdict.Trust = fmt.Sprintf("%s: it tested %s; this what-if is at %.2f r/s", TrustNotCovered, sc.Covered.Words(), g.Rate)
+			}
+		}
 	}
 	if untrusted && r.ExitCode == 0 {
 		r.ExitCode = ExitUntrusted

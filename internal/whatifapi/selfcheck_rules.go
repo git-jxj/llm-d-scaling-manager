@@ -98,14 +98,26 @@ func selfCheckPoints(steps []BacktestStep, ttft bool) (pts []scPoint, overloaded
 
 // levelsOf cuts pts, oldest first, into load levels: a step starts a new
 // level when its fleet differs from the level's, or its rate lies more
-// than selfCheckLevelTol from the level's first rate.
+// than selfCheckLevelTol from the level's first rate. One step off a level
+// that the next steps return to is noise, not a level: it stays in the
+// level, so that a noisy step never splits one level into three.
 func levelsOf(pts []scPoint) [][]scPoint {
+	same := func(l []scPoint, p scPoint) bool {
+		first := l[0]
+		return p.np == first.np && p.nd == first.nd && math.Abs(p.rate-first.rate) <= selfCheckLevelTol*first.rate
+	}
 	var out [][]scPoint
-	for _, p := range pts {
+	for i := 0; i < len(pts); i++ {
+		p := pts[i]
 		if n := len(out); n > 0 {
-			first := out[n-1][0]
-			if p.np == first.np && p.nd == first.nd && math.Abs(p.rate-first.rate) <= selfCheckLevelTol*first.rate {
-				out[n-1] = append(out[n-1], p)
+			last := out[n-1]
+			switch {
+			case same(last, p):
+				out[n-1] = append(last, p)
+				continue
+			case i+1 < len(pts) && same(last, pts[i+1]):
+				out[n-1] = append(last, p, pts[i+1])
+				i++
 				continue
 			}
 		}
@@ -200,8 +212,11 @@ func servedPastKnee(pts []scPoint, overloaded []float64) int {
 
 // scoreSteps fills f's step-level reading of pts and overloaded: the
 // levels, the within share's bound, the lowest ratio, the steps near the
-// knee, and the steps called overloaded the fleet served unqueued.
-func (f *SelfCheckFigure) scoreSteps(pts []scPoint, overloaded []float64) {
+// knee, and, for TTFT (served), the steps called overloaded the fleet
+// served unqueued. A queue at a saturated decode shows in TTFT, not in
+// TPOT, which stays near the full batch's ITL: TPOT does not score the
+// knee.
+func (f *SelfCheckFigure) scoreSteps(pts []scPoint, overloaded []float64, served bool) {
 	levels := levelsOf(pts)
 	f.Levels = len(levels)
 	if len(pts) == 0 {
@@ -214,7 +229,9 @@ func (f *SelfCheckFigure) scoreSteps(pts []scPoint, overloaded []float64) {
 	}
 	f.MinRatio = ptr(lo)
 	f.NearKnee = nearKneeOf(pts)
-	f.ServedPastKnee = servedPastKnee(pts, overloaded)
+	if served {
+		f.ServedPastKnee = servedPastKnee(pts, overloaded)
+	}
 }
 
 // SelfCheckCoverage is what the self-check tested: the rates of its judged
