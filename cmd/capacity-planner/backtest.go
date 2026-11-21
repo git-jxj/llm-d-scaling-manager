@@ -152,6 +152,9 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 		req.ArrivalCV2 = &f.arrivalCV2
 	}
 	a := whatifapi.Assume{FlowControl: f.flowControl}
+	if err := a.CheckFlowControl(); err != nil {
+		return req, usagef("--flow-control %q, want on or off", f.flowControl)
+	}
 	if f.assumeVP > 0 {
 		a.VP = &f.assumeVP
 	}
