@@ -15,6 +15,7 @@ import (
 	"github.com/go-logr/logr"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -275,9 +276,9 @@ func leadOf(s string) (*whatifapi.DayLead, error) {
 			return nil, err
 		}
 		switch {
-		case role == "prefill" && l.Prefill == nil:
+		case role == rolePrefill && l.Prefill == nil:
 			l.Prefill = d
-		case role == "decode" && l.Decode == nil:
+		case role == domain.RoleDecode && l.Decode == nil:
 			l.Decode = d
 		default:
 			return nil, bad
