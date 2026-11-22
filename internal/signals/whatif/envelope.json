@@ -798,10 +798,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": -0.18068979485115422,
-      "errorHi": 0.08844978154340111,
-      "errorMin": -0.18068979485115422,
-      "errorMax": 0.08844978154340111,
+      "errorLo": -0.14795918666211594,
+      "errorHi": 0.11173933183090301,
+      "errorMin": -0.14795918666211594,
+      "errorMax": 0.11173933183090301,
       "spread": "min-max",
       "readings": 12,
       "levels": 6
@@ -861,10 +861,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": -0.1342811109325962,
-      "errorHi": 0.08817745445144043,
-      "errorMin": -0.1342811109325962,
-      "errorMax": 0.08817745445144043,
+      "errorLo": -0.10804066350056518,
+      "errorHi": 0.10577018361946622,
+      "errorMin": -0.10804066350056518,
+      "errorMax": 0.10577018361946622,
       "spread": "min-max",
       "readings": 12,
       "levels": 6
@@ -924,10 +924,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": -0.1364441296791612,
-      "errorHi": 0.08029924340724559,
-      "errorMin": -0.1364441296791612,
-      "errorMax": 0.08029924340724559,
+      "errorLo": -0.11300017753295954,
+      "errorHi": 0.09620158685099423,
+      "errorMin": -0.11300017753295954,
+      "errorMax": 0.09620158685099423,
       "spread": "min-max",
       "readings": 12,
       "levels": 6
@@ -987,10 +987,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": 0.06640457590342153,
-      "errorHi": 1.4053167352095586,
-      "errorMin": 0.06640457590342153,
-      "errorMax": 1.4053167352095586,
+      "errorLo": 0.07261027671427356,
+      "errorHi": 1.4076309751868568,
+      "errorMin": 0.07261027671427356,
+      "errorMax": 1.4076309751868568,
       "spread": "min-max",
       "readings": 12,
       "levels": 6
@@ -1050,10 +1050,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": 0.033249023083870455,
-      "errorHi": 1.5183913011764836,
-      "errorMin": 0.033249023083870455,
-      "errorMax": 1.5183913011764836,
+      "errorLo": 0.0368068411690583,
+      "errorHi": 1.5193848616101198,
+      "errorMin": 0.0368068411690583,
+      "errorMax": 1.5193848616101198,
       "spread": "min-max",
       "readings": 12,
       "levels": 6
@@ -1113,10 +1113,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.9
       },
-      "errorLo": -0.03834165544504897,
-      "errorHi": 1.709357667671545,
-      "errorMin": -0.03834165544504897,
-      "errorMax": 1.709357667671545,
+      "errorLo": -0.035498285857580525,
+      "errorHi": 1.7101500705708155,
+      "errorMin": -0.035498285857580525,
+      "errorMax": 1.7101500705708155,
       "spread": "min-max",
       "readings": 12,
       "levels": 6
@@ -1176,10 +1176,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.85
       },
-      "errorLo": 0.08392665743004746,
-      "errorHi": 1.2176670582183742,
-      "errorMin": 0.08392665743004746,
-      "errorMax": 1.2176670582183742,
+      "errorLo": 0.08819452890709822,
+      "errorHi": 1.219083496014398,
+      "errorMin": 0.08819452890709822,
+      "errorMax": 1.219083496014398,
       "spread": "min-max",
       "readings": 9,
       "levels": 6
@@ -1239,10 +1239,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.85
       },
-      "errorLo": 0.2518816204219321,
-      "errorHi": 1.6410702968961073,
-      "errorMin": 0.2518816204219321,
-      "errorMax": 1.6410702968961073,
+      "errorLo": 0.2541514471600077,
+      "errorHi": 1.6417267283632002,
+      "errorMin": 0.2541514471600077,
+      "errorMax": 1.6417267283632002,
       "spread": "min-max",
       "readings": 9,
       "levels": 6
@@ -1302,10 +1302,10 @@
         "minKneeShare": 0.4,
         "maxKneeShare": 0.85
       },
-      "errorLo": 0.31028976416549403,
-      "errorHi": 1.8405687043796481,
-      "errorMin": 0.31028976416549403,
-      "errorMax": 1.8405687043796481,
+      "errorLo": 0.3121781173306848,
+      "errorHi": 1.8410812671392165,
+      "errorMin": 0.3121781173306848,
+      "errorMax": 1.8410812671392165,
       "spread": "min-max",
       "readings": 9,
       "levels": 6

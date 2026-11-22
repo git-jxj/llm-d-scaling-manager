@@ -1,5 +1,5 @@
 role     est. rate at SLO   bound by                                 basis
-prefill  3.45 r/s           TTFT p90                                 validated: one-sided, error at most -6% (n=1, not crossed within the steps run; q32 staircase) [2.59 .. 4.06] at V_P and f +-15%
+prefill  3.45 r/s           TTFT p90                                 validated in-sample: one-sided, error at most -6% (n=1, not crossed within the steps run; q32 staircase) [2.59 .. 4.06] at V_P and f +-15%
          inputs V_P 17046 learned (peak-under-queue, at 7984 tokens); a 14.29 ms learned; f 1 (learned); N_p 2 (--prefill); prompt 8000 tokens (assumed); decode by its line, term measured, hop measured
          assumed prompt 8000 tokens (--assume-input-tokens); prompt cv 0.0577 (--assume-prompt-cv); flow control off (--flow-control); arrivals Ca^2 1 (--arrival-cv2); Poisson arrivals at decode admission (--arrival-cv2 does not reach it)
 fleet    3.44 r/s           operating-point cap                      OUTSIDE VALIDATED REGION (the operating-point cap is headroom times the knee: read the knee's verdict) [2.54 .. 3.96] at V_P and f +-15%
