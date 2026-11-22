@@ -59,7 +59,7 @@ func production(seed uint64) func(i int) noisyCycle {
 	rng := rand.New(rand.NewPCG(seed, 1))
 	u := func(spread float64) float64 { return 1 + spread*(2*rng.Float64()-1) }
 	return func(int) noisyCycle {
-		return noisyCycle{rate: 8 * u(0.3), prompt: 80000 * u(0.25), pre: 1.4 * u(0.2), de: 0.48 * u(0.2)}
+		return noisyCycle{rate: 6 * u(0.3), prompt: 30000 * u(0.25), pre: 0.9 * u(0.2), de: 0.3 * u(0.2)}
 	}
 }
 
@@ -67,7 +67,7 @@ func production(seed uint64) func(i int) noisyCycle {
 // every window, so off R is not learned and the assumed hop stands; on, R is
 // read from the windows' means and is the true remainder, flagged.
 func TestHop_WindowMeansRecoverRUnderPerCycleNoise(t *testing.T) {
-	const trueHop = 0.6
+	const trueHop = 0.25
 	off := noisyRun(false, 6*240, trueHop, production(7), nil)
 	assert.Equal(t, TooFewHopWindows, off.Refused, "off: no window passes the per-cycle gates")
 	assert.Zero(t, off.Windows)
@@ -78,7 +78,7 @@ func TestHop_WindowMeansRecoverRUnderPerCycleNoise(t *testing.T) {
 	assert.GreaterOrEqual(t, on.Windows, MinHopMeanWindows)
 	assert.InDelta(t, trueHop, on.Base, 1e-9, "each window's R is the router's mean less the engines' request-weighted means")
 	assert.Zero(t, on.PerToken)
-	assert.InDelta(t, 80000, on.HeldPromptTokens, 0.05*80000, "held at the median prompt, not the noise's low tail")
+	assert.InDelta(t, 30000, on.HeldPromptTokens, 0.05*30000, "held at the median prompt, not the noise's low tail")
 }
 
 // Negative control: a ramp, the reason the steadiness gates exist, is still
@@ -105,27 +105,27 @@ func TestHop_WindowMeansKeepARampOut(t *testing.T) {
 // Negative controls: the held and queued gates hold on window means, the
 // queue's whatever HopUnqueued says, and too few windows give no R.
 func TestHop_WindowMeansKeepTheHeldAndQueuedGates(t *testing.T) {
-	queued := noisyRun(true, 6*240, 0.6, production(3), func(_ int, c *DecodeTermCycle) {
+	queued := noisyRun(true, 6*240, 0.25, production(3), func(_ int, c *DecodeTermCycle) {
 		c.Prefill[0].CapacityQueueLength, c.Prefill[0].QueueLength = 2, 2
 		c.HopUnqueued = false
 	})
 	assert.Equal(t, TooFewHopWindows, queued.Refused)
 	assert.Zero(t, queued.Windows)
 
-	held := noisyRun(true, 6*240, 0.6, production(3), func(_ int, c *DecodeTermCycle) { c.RouterHeld = true })
+	held := noisyRun(true, 6*240, 0.25, production(3), func(_ int, c *DecodeTermCycle) { c.RouterHeld = true })
 	assert.Equal(t, TooFewHopWindows, held.Refused)
 	assert.Zero(t, held.Windows)
 
 	// Every fourth minute queued: the windows over it are out, the rest in.
-	some := noisyRun(true, 6*240, 0.6, production(3), func(i int, c *DecodeTermCycle) {
+	some := noisyRun(true, 6*240, 0.25, production(3), func(i int, c *DecodeTermCycle) {
 		if i%16 < 4 {
 			c.Prefill[0].CapacityQueueLength = 2
 		}
 	})
-	all := noisyRun(true, 6*240, 0.6, production(3), nil)
+	all := noisyRun(true, 6*240, 0.25, production(3), nil)
 	assert.Less(t, some.Windows, all.Windows)
 
-	short := noisyRun(true, 4*30, 0.6, production(3), nil)
+	short := noisyRun(true, 4*30, 0.25, production(3), nil)
 	assert.Equal(t, TooFewHopWindows, short.Refused, "half an hour of windows is the least")
 	assert.Positive(t, short.Windows)
 	assert.Less(t, short.Windows, MinHopMeanWindows)
@@ -137,7 +137,7 @@ func TestHop_WindowMeansKeepTheHeldAndQueuedGates(t *testing.T) {
 func TestHop_WindowMeansFitIsAMedian(t *testing.T) {
 	samples := make([]hopSample, 0, 40)
 	for i := range 40 {
-		r := 0.6
+		r := 0.25
 		if i%4 == 0 {
 			r = 5
 		}
@@ -145,7 +145,7 @@ func TestHop_WindowMeansFitIsAMedian(t *testing.T) {
 	}
 	f := fitHopMeans(samples)
 	require.Empty(t, f.Refused)
-	assert.InDelta(t, 0.6, f.Base, 1e-12)
+	assert.InDelta(t, 0.25, f.Base, 1e-12)
 	assert.InDelta(t, 1019.5, f.HeldPromptTokens, 1e-9)
 	assert.Equal(t, 40, f.Windows)
 

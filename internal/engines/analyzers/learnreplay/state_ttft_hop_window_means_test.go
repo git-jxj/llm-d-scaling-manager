@@ -30,10 +30,10 @@ func TestTerm_TheHopWindowMeansSwitch(t *testing.T) {
 				rate = 1.6
 			}
 			pre := prefillRow("p0", 2000*rate, rate)
-			pre.AvgTTFT, pre.AvgTTFTKnown, pre.AvgInputTokens, pre.AvgInputTokensRecent = 1.4, true, 85000, 85000
+			pre.AvgTTFT, pre.AvgTTFTKnown, pre.AvgInputTokens, pre.AvgInputTokensRecent = 0.9, true, 30000, 30000
 			pre.CapacityQueueKnown = true
-			in := pdInput(pre, decodeRow("d0", 0.48, rate))
-			in.RouterLatency = &domain.RouterLatency{WindowSeconds: 300, TTFTSumRate: 2.48, TTFTCountRate: 1}
+			in := pdInput(pre, decodeRow("d0", 0.3, rate))
+			in.RouterLatency = &domain.RouterLatency{WindowSeconds: 300, TTFTSumRate: 1.45, TTFTCountRate: 1}
 			s.noteTerm(in, time.Unix(int64(15*i), 0), args)
 		}
 		return s.terms["dec"].Estimate().Hop
@@ -44,7 +44,7 @@ func TestTerm_TheHopWindowMeansSwitch(t *testing.T) {
 	on := hop(true)
 	require.Empty(t, on.Refused)
 	assert.True(t, on.FromWindowMeans)
-	assert.InDelta(t, 0.6, on.Base, 1e-9, "the router's 2.48 s less the engines' 1.4 and 0.48")
+	assert.InDelta(t, 0.25, on.Base, 1e-9, "the router's 1.45 s less the engines' 0.9 and 0.3")
 }
 
 // StateAt reads the switch from its options: on the repo's Qwen3-32B warm-up,

@@ -265,10 +265,9 @@ type DecodeTermCycle struct {
 	// over least. They are there to keep out a ramp, which parts the
 	// router's request-weighted mean from the engines' cycle means. On a
 	// production fleet the one-minute rate and prompt a 15 s cycle reads
-	// move past both from noise alone, ramp or none: a day of a P/D fleet
-	// admitted no window of its 2871, and R was priced at the assumed
-	// AssumedRouterHopSeconds against a remainder near 0.6 s, a quarter of
-	// the router's TTFT.
+	// move past both from noise alone, ramp or none: a P/D fleet's day
+	// admitted no window, and R was priced at the assumed
+	// AssumedRouterHopSeconds against a measured remainder many times it.
 	//
 	// The rule, stated before any recording was read with it:
 	//   - Admission (hopOverMeans), per router window: the cycles enough and
