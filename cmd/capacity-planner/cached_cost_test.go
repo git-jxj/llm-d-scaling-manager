@@ -213,7 +213,7 @@ func meanBias(t *testing.T, out string) (float64, int) {
 	var bt whatifapi.BacktestResponse
 	require.NoError(t, json.Unmarshal([]byte(out), &bt), out)
 	for _, sc := range bt.Summary.TTFT {
-		if sc.Statistic == "mean" && sc.All.Bias != nil {
+		if sc.Statistic == statMean && sc.All.Bias != nil {
 			return *sc.All.Bias, sc.All.Steps
 		}
 	}
