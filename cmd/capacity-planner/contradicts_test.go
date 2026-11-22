@@ -233,9 +233,11 @@ func TestReport_NotJudgedWhereTheLoadRanAtAnotherShape(t *testing.T) {
 
 // The q32 warm-up's hot cycles (5-34, 65-90) ran at 1000/1000, up to 3.8x
 // the knee its last cycles' 8k/26 prices: they say nothing of that knee. A
-// stated load past the knee, which no load shape withholds, is judged
-// UNDER-PROVISIONED, not contradicted (v0.12.3's first #297 check called
-// it contradicted).
+// stated load past the knee, which no load shape withholds, is not
+// contradicted (v0.12.3's first #297 check called it contradicted). That
+// knee rests on a lower bound of V_P (VPLowerBound), so the load past it is
+// NOT JUDGED with the knee as at least its rate, not UNDER-PROVISIONED
+// (#280).
 func TestAtReplicas_Q32HotCyclesOfAnotherShapeDoNotContradict(t *testing.T) {
 	out, code := runCmd(t, "at-replicas", "--recording", q32Recording, "--ttft", "2s@p90", "--load-seen", "12", "-o", "json")
 	var rep whatifapi.ReportResponse
@@ -243,7 +245,8 @@ func TestAtReplicas_Q32HotCyclesOfAnotherShapeDoNotContradict(t *testing.T) {
 	require.NotEmpty(t, rep.Shapes)
 	v := rep.Shapes[0].Verdict
 	assert.NotContains(t, v.Summary, contradictsWords)
-	assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Summary)
+	assert.Equal(t, whatifapi.VerdictNotJudged, v.Verdict, v.Summary)
+	assert.Contains(t, v.Summary, "3.0x a prefill knee of at least 4.0 r/s: "+lowerBoundKneeWords)
 }
 
 // On the ols-sweep the load's cycles ran at about 1000/500 while the shape

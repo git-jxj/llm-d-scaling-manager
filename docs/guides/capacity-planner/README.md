@@ -715,6 +715,18 @@ cases, and no fleet is sized:
 
 Only an UNDER is withheld: neither case shows the fleet holding.
 
+A prefill knee priced from a V_P that is only a lower bound (flag
+`VPLowerBound`: the prefill Pods never queued for compute under load) is
+at least its rate, and the report says so: `>=` before it in the
+capacity table, `lowerBound` in the JSON, "at least" on the page. A load
+past its operating point, short of decode's, is NOT JUDGED, never
+saturated: the summary reads "3.1x a prefill knee of at least 4.0 r/s:
+the prefill knee rests on a lower bound of V_P, and the true knee may be
+higher, so whether the fleet saturates is not priced", and the summary
+cells at and past that knee are marked `LB`, not `SAT`. Past decode's own
+knee the fleet saturates whatever V_P is, and the verdict says so on
+decode's knee. `--assume-vp` states a V_P to price the prefill side.
+
 A window whose cycles do not cover its span (a capture or recording with
 holes) gets a `window gaps` line under the header line: the cycles the span
 should hold, those present, and the largest gap between the cycles either

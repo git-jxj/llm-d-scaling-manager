@@ -292,7 +292,7 @@ func windowText(s whatifapi.ReportSource) string {
 // color.
 var cellMarks = map[string]string{
 	whatifapi.CellMet: "ok", whatifapi.CellMissed: "MISS", whatifapi.CellOnset: "MISS*", whatifapi.CellSaturated: "SAT",
-	whatifapi.CellUnknown: "?", whatifapi.CellNoTarget: "",
+	whatifapi.CellPastLowerBound: "LB", whatifapi.CellUnknown: "?", whatifapi.CellNoTarget: "",
 }
 
 // shapeName is a shape's name in the summary and its section.
@@ -406,6 +406,7 @@ func summaryText(r *whatifapi.ReportResponse) string {
 	head = append(head, r.Loads...)
 	cells := make([][]string, 1, 1+len(r.Shapes))
 	cells[0] = head
+	lowerBound := false
 	for _, s := range r.Shapes {
 		row := []string{"  " + shapeName(s)}
 		for _, l := range r.Loads {
@@ -426,6 +427,7 @@ func summaryText(r *whatifapi.ReportResponse) string {
 				tp += "m"
 			}
 			text := fmt.Sprintf("%s/%s @%.2f", cellText(c.TTFT.Figure, "%.0f"), tp, s.Table[i].Rate)
+			lowerBound = lowerBound || c.Mark == whatifapi.CellPastLowerBound
 			if m := cellMarks[c.Mark]; m != "" {
 				text += " " + m
 			}
@@ -437,17 +439,22 @@ func summaryText(r *whatifapi.ReportResponse) string {
 	if tpot != whatifapi.ReportStatisticName(0) {
 		legend += fmt.Sprintf("; m the TPOT mean, where the %s is refused", tpot)
 	}
-	return legend + "\nmark = " + markLegend(r.SLO) + "\n" + columns(cells)
+	return legend + "\nmark = " + markLegend(r.SLO, lowerBound) + "\n" + columns(cells)
 }
 
 // markLegend says what a cell's mark judges: the SLO's own statistics, which
 // need not be the ones the cell prints.
-func markLegend(s whatifapi.ReportSLO) string {
+// lowerBound adds the LB mark where a cell carries it.
+func markLegend(s whatifapi.ReportSLO, lowerBound bool) string {
+	lb := ""
+	if lowerBound {
+		lb = ", LB at or past a prefill knee priced from a lower bound of V_P (the knee is at least that rate), so not judged saturated"
+	}
 	if s.TTFT == nil && s.TPOT == nil {
-		return "SAT saturated (no SLO target to judge)"
+		return "SAT saturated" + lb + " (no SLO target to judge)"
 	}
 	return fmt.Sprintf("the SLO (%s) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset "+
-		"(the router queues) though the figure is within, SAT saturated, ? not judged", sloText(s))
+		"(the router queues) though the figure is within, SAT saturated%s, ? not judged", sloText(s), lb)
 }
 
 // shapeText is one shape's detail.
@@ -516,7 +523,12 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 		if row.rate.OutputTokensPerSecond != nil {
 			tok = fmt.Sprintf("%.0f", *row.rate.OutputTokensPerSecond)
 		}
-		fmt.Fprintf(b, capLayout, row.label, fmt.Sprintf("%.2f", *row.rate.Value), tok, row.rate.Binds)
+		value, binds := fmt.Sprintf("%.2f", *row.rate.Value), row.rate.Binds
+		if row.rate.LowerBound {
+			// V_P is known only as a lower bound: the rate is at least this.
+			value, binds = ">="+value, binds+"; at least: V_P is a lower bound"
+		}
+		fmt.Fprintf(b, capLayout, row.label, value, tok, binds)
 		if row.rate.Validation != nil {
 			fmt.Fprintf(b, "  %-18s%s\n", "", row.rate.Validation.Label)
 		}

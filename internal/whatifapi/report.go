@@ -170,14 +170,17 @@ const (
 
 // The marks a summary cell carries. CellOnset is a TTFT miss that comes from
 // the rate being past the prefill flow-control onset, where the router
-// queues, and not from the figure.
+// queues, and not from the figure. CellPastLowerBound is a rate at or past a
+// prefill knee priced from a lower bound of V_P, short of decode's knee: the
+// true knee may be higher, so the rate is not judged saturated.
 const (
-	CellMet       = "met"
-	CellMissed    = "missed"
-	CellOnset     = "missed at onset"
-	CellSaturated = "saturated"
-	CellUnknown   = "unknown"
-	CellNoTarget  = "no target"
+	CellMet            = "met"
+	CellMissed         = "missed"
+	CellOnset          = "missed at onset"
+	CellSaturated      = "saturated"
+	CellPastLowerBound = "past a lower-bound knee"
+	CellUnknown        = "unknown"
+	CellNoTarget       = "no target"
 )
 
 // ReportResponse is POST /v1/report's answer, and capacity-planner
@@ -389,6 +392,9 @@ type ReportRate struct {
 	Figure
 	OutputTokensPerSecond *float64 `json:"outputTokensPerSecond,omitempty"`
 	Binds                 string   `json:"binds,omitempty"`
+	// LowerBound says the rate rests on a prefill speed (V_P) known only as
+	// a lower bound: the true rate is at least Value, and may be higher.
+	LowerBound bool `json:"lowerBound,omitempty"`
 }
 
 // ReportSLO is the targets the report judges by.
@@ -425,7 +431,7 @@ type ReportRow struct {
 // statistic its target is judged at (with no target, TTFT p90 and the
 // table's TPOT percentile; the TPOT mean where the percentile is refused:
 // TPOT.Statistic says which), and Mark, whether the SLO targets hold at the rate (CellMet,
-// CellMissed, CellOnset, CellSaturated, CellUnknown, CellNoTarget).
+// CellMissed, CellOnset, CellSaturated, CellPastLowerBound, CellUnknown, CellNoTarget).
 type ReportCell struct {
 	TTFT ReportStat `json:"ttft"`
 	TPOT ReportStat `json:"tpot"`
