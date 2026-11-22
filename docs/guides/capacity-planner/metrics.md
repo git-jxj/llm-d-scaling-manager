@@ -90,6 +90,11 @@ it.
 | `vllm:request_time_per_output_token_seconds_bucket` | histogram buckets | `le` | the engine's TPOT distribution, recorded | optional |
 | `vllm:nixl_xfer_time_seconds_sum` | histogram sum | | KV transfer time between prefill and decode | optional |
 | `vllm:nixl_xfer_time_seconds_count` | histogram count | | KV transfer time | optional |
+| `vllm:nixl_bytes_transferred_sum` | histogram sum | | bytes NIXL moved: with the transfer time above, a peer hit's load time per token; recorded | optional |
+| `vllm:kv_offload_load_bytes_total` | counter | | bytes an offload tier loaded into the GPU; recorded (vLLM 0.24 and later, with an `OffloadingConnector`) | optional |
+| `vllm:kv_offload_load_time_total` | counter | | seconds those loads took: a host, disk or peer hit's load time per token; recorded | optional |
+| `vllm:kv_offload_tiering_read_bytes_total` | counter | | bytes a tiering offload read from a peer or disk tier into its CPU tier; recorded (vLLM 0.28 and later) | optional |
+| `vllm:kv_offload_tiering_read_time_total` | counter | | seconds those reads took: added to a disk or peer hit's load time; recorded | optional |
 | `vllm:num_preemptions_total` | counter | | preemptions | optional |
 | `vllm:spec_decode_num_accepted_tokens_total` | counter | | accepted draft tokens: TPOT per token under speculative decoding | optional |
 
@@ -241,8 +246,8 @@ exports `lmcache:*` on the engine's own `/metrics`.
 | `vllm:kv_offload_total_time_total` | vLLM 0.16.0+, deprecated from 0.24.0; `transfer_type` | `OffloadingConnector` | needed for TTFT on cached fleets | before 0.24.0: no offload load time |
 | `vllm:kv_offload_tiering_chunk_queries_total` | vLLM 0.28.0+; `tier` | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | no hit rate per secondary tier |
 | `vllm:kv_offload_tiering_chunk_hits_total` | vLLM 0.28.0+; `tier` | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | no hit rate per secondary tier |
-| `vllm:kv_offload_tiering_read_bytes_total` | vLLM 0.28.0+ | `OffloadingConnector` with a tiering spec | diagnostic | none |
-| `vllm:kv_offload_tiering_read_time_total` | vLLM 0.28.0+ | `OffloadingConnector` with a tiering spec | diagnostic | none |
+| `vllm:kv_offload_tiering_read_bytes_total` | vLLM 0.28.0+ | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | no secondary-tier read volume |
+| `vllm:kv_offload_tiering_read_time_total` | vLLM 0.28.0+ | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | a disk or peer hit's read into the CPU tier left out of its load time |
 | `vllm:kv_offload_config_info` | vLLM 0.33.0+ | `OffloadingConnector` | diagnostic | offload sizes from the engine arguments only |
 | `vllm:nixl_bytes_transferred_sum` | vLLM 0.11.1+ | `NixlConnector` | needed for TTFT on cached fleets | no P/D transfer volume, so no time per byte |
 | `vllm:nixl_bytes_transferred_count` | vLLM 0.11.1+ | `NixlConnector` | needed for TTFT on cached fleets | as above |

@@ -98,7 +98,9 @@ manual:
       vllm:request_queue_time_seconds_sum vllm:request_queue_time_seconds_count
       vllm:request_queue_time_seconds_bucket vllm:request_prefill_time_seconds_sum
       vllm:request_prefill_time_seconds_count vllm:request_time_per_output_token_seconds_bucket
-      vllm:nixl_xfer_time_seconds_sum vllm:nixl_xfer_time_seconds_count vllm:num_preemptions_total
+      vllm:nixl_xfer_time_seconds_sum vllm:nixl_xfer_time_seconds_count vllm:nixl_bytes_transferred_sum
+      vllm:kv_offload_load_bytes_total vllm:kv_offload_load_time_total vllm:kv_offload_tiering_read_bytes_total
+      vllm:kv_offload_tiering_read_time_total vllm:num_preemptions_total
       vllm:spec_decode_num_accepted_tokens_total
       sglang:token_usage sglang:max_total_num_tokens sglang:inter_token_latency_seconds_sum
       sglang:inter_token_latency_seconds_count sglang:generation_tokens_total sglang:num_running_reqs

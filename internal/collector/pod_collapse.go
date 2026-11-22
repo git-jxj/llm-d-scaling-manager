@@ -363,6 +363,7 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 			return m.ExternalPrefixCacheQueryTokenRate, m.ExternalPrefixCacheQueryTokenRateKnown
 		})
 	pod.CachedTokenRateBySource = mergeSources(group)
+	pod.KVTransferRates = mergeTransfers(group)
 
 	pod.Metadata = mergeMetadata(group)
 	return pod

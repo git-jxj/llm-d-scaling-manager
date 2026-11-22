@@ -92,6 +92,15 @@ var agnosticReplicaQueries = []string{
 	registration.QueryExternalPrefixCacheHitTokenRate,
 	registration.QueryExternalPrefixCacheQueryTokenRate,
 	registration.QueryCachedTokenRateBySource,
+	// What loading those cached tokens cost: the KV moved into the GPU, read
+	// from a secondary tier, and moved by NIXL, in bytes and seconds,
+	// recorded only (registration/kv_transfers.go).
+	registration.QueryKVOffloadLoadByteRate,
+	registration.QueryKVOffloadLoadSecondsRate,
+	registration.QueryKVTierReadByteRate,
+	registration.QueryKVTierReadSecondsRate,
+	registration.QueryNIXLByteRate,
+	registration.QueryNIXLSecondsRate,
 }
 
 // ttftAgnosticQueries are the agnostic queries above that carry model_name
@@ -105,6 +114,12 @@ var ttftAgnosticQueries = []string{
 	registration.QueryExternalPrefixCacheHitTokenRate,
 	registration.QueryExternalPrefixCacheQueryTokenRate,
 	registration.QueryCachedTokenRateBySource,
+	registration.QueryKVOffloadLoadByteRate,
+	registration.QueryKVOffloadLoadSecondsRate,
+	registration.QueryKVTierReadByteRate,
+	registration.QueryKVTierReadSecondsRate,
+	registration.QueryNIXLByteRate,
+	registration.QueryNIXLSecondsRate,
 }
 
 // recordOnlyReplicaQueries are the replica queries above issued only while a
@@ -121,6 +136,14 @@ var recordOnlyReplicaQueries = map[string]bool{
 	registration.QueryExternalPrefixCacheHitTokenRate:   true,
 	registration.QueryExternalPrefixCacheQueryTokenRate: true,
 	registration.QueryCachedTokenRateBySource:           true,
+	// What loading them cost: read by the capacity planner only, from the
+	// recording (slo.SwitchTTFTTierLoad).
+	registration.QueryKVOffloadLoadByteRate:    true,
+	registration.QueryKVOffloadLoadSecondsRate: true,
+	registration.QueryKVTierReadByteRate:       true,
+	registration.QueryKVTierReadSecondsRate:    true,
+	registration.QueryNIXLByteRate:             true,
+	registration.QueryNIXLSecondsRate:          true,
 }
 
 // ttftReadReplicaQueries are the replica queries above that the TTFT pricing

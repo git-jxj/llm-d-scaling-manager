@@ -535,6 +535,7 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 		ExternalPrefixCacheQueryTokenRate:      data.externalQueryRate,
 		ExternalPrefixCacheQueryTokenRateKnown: data.externalQueryRateKnown,
 		CachedTokenRateBySource:                sortedSources(data.cachedBySource),
+		KVTransferRates:                        sortedTransfers(data.kvTransfers),
 		Metadata: &domain.ReplicaMetricsMetadata{
 			CollectedAt:     collectedAt,
 			Age:             freshnessAge,

@@ -86,8 +86,8 @@ var OptionalSeriesList = []OptionalSeries{
 	{Name: "vllm:kv_offload_total_time_total", Source: SourceVLLM, Tier: TierCachedFleet, By: "transfer_type"},
 	{Name: "vllm:kv_offload_tiering_chunk_queries_total", Source: SourceVLLM, Tier: TierCachedFleet, By: "tier"},
 	{Name: "vllm:kv_offload_tiering_chunk_hits_total", Source: SourceVLLM, Tier: TierCachedFleet, By: "tier"},
-	{Name: "vllm:kv_offload_tiering_read_bytes_total", Source: SourceVLLM, Tier: TierDiagnostic},
-	{Name: "vllm:kv_offload_tiering_read_time_total", Source: SourceVLLM, Tier: TierDiagnostic},
+	{Name: "vllm:kv_offload_tiering_read_bytes_total", Source: SourceVLLM, Tier: TierCachedFleet},
+	{Name: "vllm:kv_offload_tiering_read_time_total", Source: SourceVLLM, Tier: TierCachedFleet},
 	{Name: "vllm:kv_offload_config_info", Source: SourceVLLM, Tier: TierDiagnostic},
 	// vLLM: P/D transfer over NIXL, beyond the transfer time a capture
 	// replays.

@@ -630,6 +630,37 @@ type ReplicaMetrics struct {
 	// merge by summing each source's rate, and the pod has the split only
 	// when every rank had one. Nil when absent.
 	CachedTokenRateBySource []SourceRate `learnrec:"omitzero"`
+	// KVTransferRates is what the pod spent moving KV that it did not
+	// compute, over [1m], one entry per kind, sorted by kind
+	// (KVTransferOffloadLoad, KVTransferTierRead, KVTransferNIXL): bytes a
+	// second and seconds of transfer a second. A kind is present only when
+	// both of its rates were read, and a pod's ranks merge by summing, the
+	// pod having a kind only when every rank had it. Nil when none. Read by
+	// the capacity planner alone (slo.SwitchTTFTTierLoad).
+	KVTransferRates []KVTransferRate `learnrec:"omitzero"`
+}
+
+// The kinds of KVTransferRate.
+const (
+	// KVTransferOffloadLoad is the OffloadingConnector's loads from its
+	// offload medium into the GPU (vllm:kv_offload_load_bytes, _load_time).
+	KVTransferOffloadLoad = "offload_load"
+	// KVTransferTierRead is a tiering offload spec's reads from its
+	// secondary tiers, a peer or a file system, into its CPU tier
+	// (vllm:kv_offload_tiering_read_bytes, _read_time).
+	KVTransferTierRead = "tier_read"
+	// KVTransferNIXL is a NixlConnector's transfers
+	// (vllm:nixl_bytes_transferred, nixl_xfer_time_seconds).
+	KVTransferNIXL = "nixl"
+)
+
+// KVTransferRate is one kind of KV transfer on a pod
+// (ReplicaMetrics.KVTransferRates): ByteRate bytes a second, taking
+// SecondsRate seconds of transfer a second.
+type KVTransferRate struct {
+	Kind        string
+	ByteRate    float64
+	SecondsRate float64
 }
 
 // SourceRate is one tier's cached prompt tokens a second
