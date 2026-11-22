@@ -23,10 +23,10 @@ func TestTerm_TheDecodeSpeculatingHeldSwitch(t *testing.T) {
 		for i := range 40 {
 			pre := prefillRow("p0", 2600, 1)
 			pre.AvgInputTokens, pre.AvgInputTokensRecent = 2600, 2600
-			dec := decodeRow("d0", 0.48, 1.5)
+			dec := decodeRow("d0", 0.35, 1.5)
 			dec.AvgITL, dec.AvgITLKnown, dec.CapacityQueueKnown = 0.04, true, true
-			dec.AvgInputTokens, dec.AvgInputTokensRecent = 85000, 85000
-			dec.SpecAcceptedPerStep, dec.SpecAcceptedPerStepKnown = 1.85, true
+			dec.AvgInputTokens, dec.AvgInputTokensRecent = 40000, 40000
+			dec.SpecAcceptedPerStep, dec.SpecAcceptedPerStepKnown = 1.5, true
 			s.noteTerm(pdInput(pre, dec), time.Unix(int64(15*i), 0), args)
 		}
 		return whatif.TermFromEstimate(s.terms["dec"].Estimate())
@@ -39,9 +39,9 @@ func TestTerm_TheDecodeSpeculatingHeldSwitch(t *testing.T) {
 	assert.False(t, on.EngineOmitted)
 	assert.True(t, on.StepAssumed)
 	assert.Equal(t, prefill.TooFewDecodeMinutes, on.EngineRefused, "never in D's fit")
-	assert.Equal(t, 0.48, on.Engine.Base, "the decode engine's measured TTFT")
-	assert.InDelta(t, 0.04/2.85, on.FromITL, 1e-12)
-	assert.InDelta(t, whatif.AssumedDecodeStepSlope*2.85, on.PerStep, 1e-9)
+	assert.Equal(t, 0.35, on.Engine.Base, "the decode engine's measured TTFT")
+	assert.InDelta(t, 0.04/2.5, on.FromITL, 1e-12)
+	assert.InDelta(t, whatif.AssumedDecodeStepSlope*2.5, on.PerStep, 1e-9)
 
 	step := term(true, false)
 	assert.InDelta(t, 0.04, step.FromITL, 1e-12, "a per-step line reads the step as it is")

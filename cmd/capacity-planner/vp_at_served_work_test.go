@@ -11,13 +11,13 @@ import (
 
 // servedFleetCase is a P/D fleet's prefill side whose V_P is a lower bound
 // from a queue peak, with the prefill pods' sustained work above what it
-// serves: the client fleet's shape, 5 pods at 3270 computed tokens a request,
-// f 1.39, a V_P that gives a knee near 21.5 r/s, and 85536 tokens a second of
-// served work (26.2 r/s).
+// serves (synthetic): 4 pods at 2000 computed tokens a request, f 1.2, a V_P
+// that gives a knee near 24.1 r/s, and 60000 tokens a second of served work
+// (30 r/s).
 func servedFleetCase(on bool) *pricedFleet {
-	pf := &pricedFleet{vpAtServedOn: on, servedComputed: map[int]float64{5: 85536}, servedWork: map[int]float64{5: 85536}}
-	pf.fleet.Prefill = whatif.Prefill{VP: 19500, VPLowerBound: true, FixedLatency: 1.195, Imbalance: 1.39, Replicas: 5,
-		PromptTokens: 3270, PromptCV: 0.5}
+	pf := &pricedFleet{vpAtServedOn: on, servedComputed: map[int]float64{4: 60000}, servedWork: map[int]float64{4: 60000}}
+	pf.fleet.Prefill = whatif.Prefill{VP: 15250, VPLowerBound: true, FixedLatency: 0.1, Imbalance: 1.2, Replicas: 4,
+		PromptTokens: 2000, PromptCV: 0.5}
 	return pf
 }
 
@@ -41,7 +41,7 @@ func TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee(t *testing.T) {
 	require.True(t, ok)
 	kOn, ok := on.knee().(whatif.Answer)
 	require.True(t, ok)
-	floor := 85536 / 3270.0
+	floor := 60000 / 2000.0
 	assert.InDelta(t, floor, kOff.Value, 1e-9, "off: the knee is floored at the served work")
 	assert.InDelta(t, floor, kOn.Value, 1e-6, "on: the raised V_P gives the same knee")
 	assert.Contains(t, kOff.Flags, kneeAtServedWork)
@@ -64,7 +64,7 @@ func TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee(t *testing.T) {
 	// floor, but V_P is raised alike: the ratio does not depend on the prompt.
 	stated := servedFleetCase(true)
 	stated.servedComputed = nil
-	stated.fleet.Prefill.PromptTokens = 2 * 3270
+	stated.fleet.Prefill.PromptTokens = 2 * 2000
 	r2, ok := stated.servedRatio(stated.fleet.Prefill)
 	require.True(t, ok)
 	assert.InDelta(t, ratio, r2, 1e-9)
@@ -76,9 +76,9 @@ func TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee(t *testing.T) {
 func TestTTFT_VPAtServedWorkLeavesOtherFleets(t *testing.T) {
 	for name, edit := range map[string]func(pf *pricedFleet){
 		"no lower bound": func(pf *pricedFleet) { pf.fleet.Prefill.VPLowerBound = false },
-		"work below":     func(pf *pricedFleet) { pf.servedWork[5] = 1000 },
+		"work below":     func(pf *pricedFleet) { pf.servedWork[4] = 1000 },
 		"stated V_P":     func(pf *pricedFleet) { pf.assumedVP = true },
-		"other count":    func(pf *pricedFleet) { pf.fleet.Prefill.Replicas = 4 },
+		"other count":    func(pf *pricedFleet) { pf.fleet.Prefill.Replicas = 3 },
 	} {
 		pf := servedFleetCase(true)
 		edit(pf)

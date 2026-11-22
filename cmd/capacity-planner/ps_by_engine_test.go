@@ -31,13 +31,13 @@ func TestTTFT_PSByEngineReadsTheFlags(t *testing.T) {
 		on       bool
 		slots    int
 	}{
-		"client":        {psState(4, 8192, 4, true), 2664, true, 16},
-		"one rank":      {psState(4, 8192, 1, true), 2664, true, 4},
-		"budget unread": {psState(4, 0, 4, true), 2664, true, 16},
-		"budget under":  {psState(4, 2048, 4, true), 2664, false, 0},
-		"not chunked":   {psState(4, 8192, 4, false), 2664, false, 0},
-		"one sequence":  {psState(1, 8192, 4, true), 2664, false, 0},
-		"no params":     {&learnreplay.State{Variants: []learnreplay.VariantState{{Variant: "pre"}}}, 2664, false, 0},
+		"several ranks": {psState(8, 4096, 2, true), 1500, true, 16},
+		"one rank":      {psState(8, 4096, 1, true), 1500, true, 8},
+		"budget unread": {psState(8, 0, 2, true), 1500, true, 16},
+		"budget under":  {psState(8, 1024, 2, true), 1500, false, 0},
+		"not chunked":   {psState(8, 4096, 2, false), 1500, false, 0},
+		"one sequence":  {psState(1, 4096, 2, true), 1500, false, 0},
+		"no params":     {&learnreplay.State{Variants: []learnreplay.VariantState{{Variant: "pre"}}}, 1500, false, 0},
 	} {
 		for _, priced := range []float64{1000, 8000} {
 			pf := &pricedFleet{}

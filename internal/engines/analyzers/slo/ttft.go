@@ -252,11 +252,10 @@ const SwitchTTFTTierLoad = "slo-ttft-tier-load"
 // request waiting for capacity), where it is above the transfer's own
 // seconds; off, the transfer's seconds, as SwitchTTFTTierLoad prices them.
 // A loaded request is scheduled at a step boundary after its load, so it
-// waits longer than the transfer runs: on a P/D fleet with a CPU tier the
-// prefill queue time read 3 to 6 times the load counter's seconds per
-// request, and tracked the deferred requests by Little's law (correlation
-// 0.995). Planner-only: off from the constructor; the analyzer prices no
-// tier.
+// waits longer than the transfer runs: the prefill queue time is a step
+// boundary or more past the load counter's seconds, and follows the deferred
+// requests by Little's law. Planner-only: off from the constructor; the
+// analyzer prices no tier.
 const SwitchTTFTTierKVWait = "slo-ttft-tier-kv-wait"
 
 // SwitchTTFTPSByEngine is the replay switch for how the planner prices the
@@ -266,12 +265,12 @@ const SwitchTTFTTierKVWait = "slo-ttft-tier-kv-wait"
 // whatever the prompt's spread or the prompt priced (whatif.QueueProcessorSharing), falling back to the larger of that and
 // first come where the busiest pod likely holds more prompts than its
 // max_num_seqs times its data-parallel ranks. Off, as before: past
-// whatif.MaxPSPromptCV the price is the larger of the two. On a P/D fleet
-// whose prefill pods run 4 prompts a rank in 8192-token steps, the engines'
-// prefill time rose with load as processor sharing predicts (1.48x measured
-// against 1.44x) and their capacity queue stayed near empty, while the
-// first-come price put about 1.2 s of wait on each request at 17 r/s.
-// Planner-only: off from the constructor; the analyzer prices no fleet with it.
+// whatif.MaxPSPromptCV the price is the larger of the two. An engine that
+// runs several prompts a rank in chunked steps shares its steps: its prefill
+// time rises with load as processor sharing predicts and its capacity queue
+// stays near empty, while a first-come price puts a queue's wait on every
+// request. Planner-only: off from the constructor; the analyzer prices no
+// fleet with it.
 const SwitchTTFTPSByEngine = "slo-ttft-ps-by-engine"
 
 // SwitchTTFTCachedTokenCost is the replay switch for the cost of a cached

@@ -25,19 +25,19 @@ func tierRow(rate, whole, computed float64, cached map[string]float64, tr ...dom
 // engines' own counters give it: each transfer's seconds over the tokens it
 // moved, times the tokens a request had of those tiers.
 //
-// One pod, 2 requests a second of 85000-token prompts, 3% computed: 5100
-// tokens a second computed, 40000 from the GPU, 100000 from the host tier
-// and 20900 from a peer. The offload load moved the host and peer tokens,
-// 120900 a second, at 64 KiB a token in 0.5 s a second: 4.1 us a token,
-// and a request's 60450 of them 0.25 s. The tier read moved the peer's
-// 20900 in 0.1 s a second: 0.05 s a request. NIXL beside an offload load is
+// One pod, 2 requests a second of 50000-token prompts, 6% computed: 6000
+// tokens a second computed, 30000 from the GPU, 50000 from the host tier
+// and 14000 from a peer. The offload load moved the host and peer tokens,
+// 64000 a second, at 64 KiB a token in 0.5 s a second: 7.8 us a token,
+// and a request's 32000 of them 0.25 s. The tier read moved the peer's
+// 14000 in 0.1 s a second: 0.05 s a request. NIXL beside an offload load is
 // the P/D transfer and prices nothing.
 func TestPromptWindow_TierLoad(t *testing.T) {
 	const kib64 = 65536.0
-	cached := map[string]float64{SourceDevice: 40000, SourceHost: 100000, SourceP2P: 20900}
-	row := tierRow(2, 85000, 5100, cached,
-		domain.KVTransferRate{Kind: domain.KVTransferOffloadLoad, ByteRate: 120900 * kib64, SecondsRate: 0.5},
-		domain.KVTransferRate{Kind: domain.KVTransferTierRead, ByteRate: 20900 * kib64, SecondsRate: 0.1},
+	cached := map[string]float64{SourceDevice: 30000, SourceHost: 50000, SourceP2P: 14000}
+	row := tierRow(2, 50000, 6000, cached,
+		domain.KVTransferRate{Kind: domain.KVTransferOffloadLoad, ByteRate: 64000 * kib64, SecondsRate: 0.5},
+		domain.KVTransferRate{Kind: domain.KVTransferTierRead, ByteRate: 14000 * kib64, SecondsRate: 0.1},
 		domain.KVTransferRate{Kind: domain.KVTransferNIXL, ByteRate: 1e9, SecondsRate: 7})
 	w := &PromptWindow{}
 	for i := range 3 {
@@ -47,15 +47,15 @@ func TestPromptWindow_TierLoad(t *testing.T) {
 	if !ok {
 		t.Fatal("the rows read the split: want a tier load")
 	}
-	relNear(t, "whole prompt", tl.WholePromptTokens, 85000, 1e-12)
-	relNear(t, "outer share", tl.OuterShare, 120900.0/170000, 1e-12)
-	relNear(t, "host share", tl.Shares[SourceHost], 100000.0/170000, 1e-12)
+	relNear(t, "whole prompt", tl.WholePromptTokens, 50000, 1e-12)
+	relNear(t, "outer share", tl.OuterShare, 64000.0/100000, 1e-12)
+	relNear(t, "host share", tl.Shares[SourceHost], 50000.0/100000, 1e-12)
 	relNear(t, "load per request", tl.SecondsPerRequest, 0.25+0.05, 1e-12)
 	if len(tl.Transfers) != 2 || tl.Transfers[0].Kind != domain.KVTransferOffloadLoad || tl.Transfers[1].Kind != domain.KVTransferTierRead {
 		t.Fatalf("transfers %+v, want the offload load and the tier read, NIXL left out", tl.Transfers)
 	}
 	relNear(t, "bytes per token", tl.Transfers[0].BytesPerToken, kib64, 1e-12)
-	relNear(t, "bandwidth", tl.Transfers[0].BytesPerSecond, 120900*kib64/0.5, 1e-12)
+	relNear(t, "bandwidth", tl.Transfers[0].BytesPerSecond, 64000*kib64/0.5, 1e-12)
 	relNear(t, "seconds per token is bytes over bandwidth", tl.Transfers[0].SecondsPerToken,
 		tl.Transfers[0].BytesPerToken/tl.Transfers[0].BytesPerSecond, 1e-12)
 	if len(tl.Unmeasured) != 0 {

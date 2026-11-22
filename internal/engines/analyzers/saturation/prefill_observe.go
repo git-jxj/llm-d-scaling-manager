@@ -149,9 +149,9 @@ const SwitchPrefillVPWindowBest = "prefill-vp-window-best"
 // read off one V_P: the pods computed that work, so they compute at least
 // that fast. Off, as #280 and the served floor left it: only the knee is
 // raised, and a TTFT priced from the lower V_P reads the prefill pods past
-// their capacity at rates they served: on a P/D fleet of 5 prefill groups
-// whose knee was floored at 26.2 r/s, the mean TTFT at 80% of it read 43 s
-// against about 3 s measured. Planner-only, as SwitchPrefillALowLoadPerRank is.
+// their capacity at rates they served, so the TTFT just under the floored
+// knee reads many times what such a fleet measures. Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPAtServedWork = "prefill-vp-at-served-work"
 
 // SwitchPrefillVPOccupancyPlateau is the replay switch for V_P read without

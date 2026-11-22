@@ -14,7 +14,7 @@ import (
 // speculating D, decode is counted once: R is the router's mean less both
 // engines', so D + R is the router's mean less the prefill engine's.
 func TestHop_WindowMeansAndTheHeldSpeculatingDCountDecodeOnce(t *testing.T) {
-	const prefillTTFT, decodeTTFT, hop = 1.4, 0.48, 0.6
+	const prefillTTFT, decodeTTFT, hop = 1.1, 0.35, 0.25
 	run := func(spec bool) DecodeTermEstimate {
 		w := NewDecodeTermWindow()
 		at := termT0
@@ -25,9 +25,9 @@ func TestHop_WindowMeansAndTheHeldSpeculatingDCountDecodeOnce(t *testing.T) {
 			}
 			c := hopCycle(at, prefillTTFT+decodeTTFT+hop, rate, 2600)
 			c.Prefill[0].AvgTTFT = prefillTTFT
-			dec := decodeRow("d", decodeTTFT, 0.04, 85000)
+			dec := decodeRow("d", decodeTTFT, 0.04, 40000)
 			dec.RequestRate = rate
-			dec.SpecAcceptedPerStep, dec.SpecAcceptedPerStepKnown = 1.85, true
+			dec.SpecAcceptedPerStep, dec.SpecAcceptedPerStepKnown = 1.5, true
 			c.Decode = []domain.ReplicaMetrics{dec}
 			c.HopUnqueued, c.HopWindowMeans = true, true
 			c.SpeculatingHeld, c.ITLPerToken = spec, true

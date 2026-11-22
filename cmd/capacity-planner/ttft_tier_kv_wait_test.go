@@ -16,7 +16,7 @@ import (
 
 // tierWaitFactor is the fixture's engine queue time over its host tier's
 // load per request: a loaded request waits for a step boundary past its
-// transfer, as the client fleet's did at 3 to 6 times.
+// transfer; 4 is a synthetic factor.
 const tierWaitFactor = 4.0
 
 // kvWaitRecording is tierRecording(t, true) with each row that read the

@@ -13,7 +13,7 @@ import (
 func TestPromptWindow_TierWait(t *testing.T) {
 	cached := map[string]float64{SourceDevice: 40000, SourceHost: 100000}
 	row := func(rate, queue float64, capacity int, known bool) domain.ReplicaMetrics {
-		rm := tierRow(rate, 85000, 5100, cached, domain.KVTransferRate{Kind: domain.KVTransferOffloadLoad, ByteRate: 1e9, SecondsRate: 0.1})
+		rm := tierRow(rate, 50000, 3000, cached, domain.KVTransferRate{Kind: domain.KVTransferOffloadLoad, ByteRate: 1e9, SecondsRate: 0.1})
 		rm.AvgQueueTime, rm.AvgQueueTimeKnown = queue, true
 		rm.CapacityQueueKnown, rm.CapacityQueueLength = known, capacity
 		return rm
