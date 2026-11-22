@@ -428,6 +428,7 @@ inputs.policy.tpot.statistic string
 inputs.policy.ttft object
 inputs.policy.ttft.seconds number
 inputs.policy.ttft.statistic string
+inputs.prefillVPPlateau boolean
 inputs.schemaVersion number
 inputs.selfCheck object
 inputs.selfCheck.checks array
@@ -527,6 +528,7 @@ inputs.whatifSchema string
 inputsRequest object
 inputsRequest.decodeVariant string
 inputsRequest.model string
+inputsRequest.prefillVPPlateau boolean
 inputsRequest.prefillVariant string
 inputsRequest.selfCheck boolean
 inputsRequest.source object

@@ -37,9 +37,9 @@ func (f *answerFlags) selfCheckOn() bool {
 // self-checks, the states at the folds' cuts, in one replay.
 func (f *answerFlags) readStates(ctx context.Context, src learnreplay.Source, q learnreplay.StateQuery) (*learnreplay.State, error) {
 	if !f.selfCheckOn() {
-		return learnreplay.StateFrom(ctx, src, learnreplay.Options{}, q)
+		return learnreplay.StateFrom(ctx, src, f.replayOptions(), q)
 	}
-	st, folds, err := learnreplay.StatesFrom(ctx, src, learnreplay.Options{}, q, whatifapi.SelfCheckCycles)
+	st, folds, err := learnreplay.StatesFrom(ctx, src, f.replayOptions(), q, whatifapi.SelfCheckCycles)
 	f.folds = folds
 	return st, err
 }
@@ -134,6 +134,11 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 	}
 	if f.set["load-aware-router"] && f.loadAwareRouter != whatif.DefaultPlannerLoadAwareRouter {
 		st.Replayed, st.Outside = append(st.Replayed, "--load-aware-router="+strconv.FormatBool(f.loadAwareRouter)), true
+	}
+	// The folds are read in the answer's own replay (readStates), so they
+	// learn V_P from the plateau too.
+	if f.vpPlateau {
+		st.Replayed, st.Outside = append(st.Replayed, "--"+vpPlateauFlag), true
 	}
 	return st, nil
 }

@@ -498,6 +498,7 @@ VAs
 VLLM_ALL2ALL_BACKEND
 VLLM_USE_V1
 VPAboveSlopeBound
+VPFromPlateau
 VPLowerBound
 VPScaledToPrompt
 VPShapeMoved
@@ -1215,6 +1216,7 @@ exit
 expect
 expected
 expects
+experimental
 expert_parallel
 expert_parallel_size
 export
@@ -2182,6 +2184,7 @@ observed
 observed/historical/derived
 observedGPS
 occupancy
+occupancy-plateau
 occupancy-unknown
 of
 off
@@ -2413,6 +2416,7 @@ prefill-vp-at-served-work
 prefill-vp-floor-served
 prefill-vp-served-unqueued
 prefill-vp-window-best
+prefill-vp-occupancy-plateau
 prefillBoundHeld
 prefillBounds
 prefillDemandAfter
@@ -3424,6 +3428,10 @@ vpAboveSlopeBound
 vpFlooredAtServed
 vpLowerBound
 vpLowerBoundReason
+vpPlateau
+vpPlateauFlat
+vpPlateauMinutes
+vpPlateauSpan
 vpPromptTokens
 vpRefused
 vpSamples

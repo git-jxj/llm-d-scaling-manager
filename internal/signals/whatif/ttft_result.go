@@ -77,6 +77,11 @@ const (
 	// of the line, or the curve's 1/(b + c*I) at V_P's prompt length,
 	// prefill.Estimate.SlopeBound): one of the two readings is wrong.
 	VPAboveSlopeBound Flag = "VPAboveSlopeBound"
+	// VPFromPlateau is a V_P read from the occupancy plateau
+	// (prefill.SourceOccupancyPlateau), with no queue: experimental, the
+	// planner's opt-in --prefill-vp-plateau, never validated against a
+	// client. A plateau that is only a lower bound carries VPLowerBound too.
+	VPFromPlateau Flag = "VPFromPlateau"
 	// AssumedImbalance is f supplied by the caller rather than learned.
 	AssumedImbalance Flag = "AssumedImbalance"
 	// AssumedPromptSpread is a prompt coefficient of variation the caller

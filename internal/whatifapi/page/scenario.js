@@ -578,6 +578,7 @@ const REPORT_FLAG_WORDS = {
   HeldLine: "a decode line held from earlier",
   DecodeOnly: "decode only: prefill is not priced",
   VPLowerBound: "the prefill speed is a lower bound",
+  VPFromPlateau: "the prefill speed is from the occupancy plateau (experimental)",
 };
 
 // flagSummary is a shape's flags as short phrases, and the rest counted:

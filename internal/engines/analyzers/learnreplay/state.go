@@ -385,6 +385,18 @@ type shapeSample struct {
 // spread of the service time that no term prices. It stays off until one
 // does (docs/proposals/slo-capacity-planner-ttft.md).
 //
+// saturation.SwitchPrefillVPOccupancyPlateau is planner-only and not listed
+// (issue llm-d-incubation/llm-d-scaling-manager#368): it reads V_P without a
+// queue, from the plateau of the served computed tokens against the prefill
+// occupancy. On the public recordings its level reads 0.96 to 1.08 of the
+// V_P learned from a queue, and with it on no backtest figure moves under
+// what was measured. But where V_P was refused it mostly gives a lower bound
+// whose fleets still lack a (NoFixedLatency), and the only TTFT figures it
+// newly prices, on the 0.6B staircase warm-ups at a 75% split, read 1.5 to
+// 1500 times what was measured: they sit just under a knee priced from the
+// lower bound. One warm-up's self-check falls from weak to inconsistent with
+// it. It stays off until TTFT under a lower-bound knee is priced.
+//
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
 // llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is

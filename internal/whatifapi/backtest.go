@@ -745,7 +745,7 @@ func splitOf(e *inputsEntry, split, fitUntil string) (int, time.Time, string, er
 // cycle's time.
 func refitRequest(e *inputsEntry, cycle int, cutoff time.Time) (InputsRequest, error) {
 	d := e.doc
-	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant}
+	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant, PrefillVPPlateau: d.PrefillVPPlateau}
 	if d.Fleet.Prefill != nil {
 		in.PrefillVariant = d.Fleet.Prefill.Variant
 	}

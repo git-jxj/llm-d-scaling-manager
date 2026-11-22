@@ -30,6 +30,10 @@ type InputsRequest struct {
 	// inputs (SelfCheck); absent, the server's default (on, unless the
 	// server was started with --no-self-check).
 	SelfCheck *bool `json:"selfCheck,omitempty"`
+	// PrefillVPPlateau reads V_P from the occupancy plateau where no
+	// prefill pod queued (the CLI's --prefill-vp-plateau): experimental and
+	// off by default. Every figure priced from it is flagged VPFromPlateau.
+	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
 }
 
 // The source kinds.
@@ -70,6 +74,9 @@ type InputsResponse struct {
 	// SelfCheck is the planner checked on this source: the folds of it
 	// fitted on earlier cycles predicting later ones. Absent when not asked.
 	SelfCheck *SelfCheck `json:"selfCheck,omitempty"`
+	// PrefillVPPlateau says the source was read with V_P from the occupancy
+	// plateau (InputsRequest.PrefillVPPlateau); absent otherwise.
+	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's

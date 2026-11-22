@@ -131,7 +131,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
 // SwitchPrefillFBusyMinutes, SwitchPrefillVPFloorServed,
 // SwitchPrefillVPServedUnqueued, SwitchPrefillVPWindowBest,
-// SwitchPrefillVPAtServedWork,
+// SwitchPrefillVPAtServedWork, SwitchPrefillVPOccupancyPlateau,
 // SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 // SwitchITLAdaptiveBandFloor,
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
@@ -287,6 +287,11 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// served work: raised with it (cmd/capacity-planner). Off from the
 		// constructor.
 		SwitchPrefillVPAtServedWork: &a.prefillVPAtServedWork,
+		// Issue llm-d-incubation/llm-d-scaling-manager#368: the planner's
+		// V_P from the plateau of the served rate against the prefill
+		// occupancy (prefill.Cycle.VPOccupancyPlateau). Off from the
+		// constructor.
+		SwitchPrefillVPOccupancyPlateau: &a.prefillVPOccupancyPlateau,
 		// The planner's a: low load read by rate against the prompt
 		// cluster's service time, and the median overhead
 		// (prefill.Cycle.ALowLoadByRate, AMedianOverhead). Off from the

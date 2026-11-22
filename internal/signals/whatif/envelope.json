@@ -1330,7 +1330,8 @@
     "AboveFlowControlOnset": "past the flow-control onset, where the router's wait is not priced",
     "AssumedA": "a assumed, not learned",
     "AssumedVP": "V_P assumed, not learned",
-    "RouterHopAssumed": "router hop assumed, not learned"
+    "RouterHopAssumed": "router hop assumed, not learned",
+    "VPFromPlateau": "prefill speed from the occupancy plateau, experimental and never validated"
   },
   "never": {
     "operating-point-cap": "the operating-point cap is headroom times the knee: read the knee's verdict",

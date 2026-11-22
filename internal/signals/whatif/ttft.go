@@ -47,6 +47,9 @@ type Prefill struct {
 	// (issue llm-d-incubation/llm-d-scaling-manager#369). A V_P the caller
 	// supplies (VPAssumed) is priced as given.
 	VPServedOnly bool
+	// VPFromPlateau marks a V_P read from the occupancy plateau
+	// (VPFromPlateau).
+	VPFromPlateau bool
 	// FixedLatency is a, in seconds: the latency one request pays on a pod
 	// besides its prompt's work. It enters the request's own latency only,
 	// never the queue's work (busy-minute V_P is already net of it).
@@ -786,7 +789,7 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 			f  Flag
 		}{
 			{p.VPAssumed, AssumedVP}, {p.VPLowerBound, VPLowerBound}, {p.VPAboveSlopeBound, VPAboveSlopeBound},
-			{shape != "", shape}, {shape != VPShapeMoved && p.prefixMoved(), VPShapeMoved},
+			{p.VPFromPlateau, VPFromPlateau}, {shape != "", shape}, {shape != VPShapeMoved && p.prefixMoved(), VPShapeMoved},
 			{p.ImbalanceAssumed, AssumedImbalance}, {p.PromptCVAssumed, AssumedPromptSpread},
 			{p.TransferSecondsPerToken == 0, TransferOmitted},
 		} {

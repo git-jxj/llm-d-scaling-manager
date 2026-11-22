@@ -52,7 +52,11 @@ var (
 		// nothing either way: where it takes, the figure carries
 		// FlowControlWaitPriced, which is outside on its own, and off is how
 		// the run was priced (the SLO analyzer has no switch for it).
-		"router-wait-in-prefill"}
+		"router-wait-in-prefill",
+		// Set, it states nothing until the replay reads V_P from the plateau:
+		// each figure priced from it is then flagged VPFromPlateau, which
+		// no envelope row allows, so it, and it alone, reads outside.
+		vpPlateauFlag}
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
 		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "assume-transfer-base",

@@ -579,6 +579,9 @@ type SaturationAnalyzer struct {
 	// prefillVPAtServedWork is SwitchPrefillVPAtServedWork: off from the
 	// constructor, planner-only; the analyzer holds it for the name.
 	prefillVPAtServedWork bool
+	// prefillVPOccupancyPlateau is SwitchPrefillVPOccupancyPlateau: off
+	// from the constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillVPOccupancyPlateau bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor

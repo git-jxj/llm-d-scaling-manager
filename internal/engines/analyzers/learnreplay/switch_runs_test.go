@@ -1298,6 +1298,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// work. Planner-only, off; read by the planner's pricing, not the replay,
 	// so no learner golden moves. Its unit tests hold it.
 	saturation.SwitchPrefillVPAtServedWork: nil,
+	// llm-d-incubation/llm-d-scaling-manager#368: V_P from the occupancy
+	// plateau. Planner-only, off from the constructor, so every golden
+	// replay runs it off and off alone from all on moves nothing. Its unit
+	// tests hold it (heldBy).
+	saturation.SwitchPrefillVPOccupancyPlateau: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1747,6 +1752,16 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestCapacity_TheWindowKeepsAnOldQueuedPeak"},
 		{"../../../signals/prefill", "TestCapacity_ANewerHigherPeakWins"},
 		{"../../../signals/prefill", "TestCapacity_TheMemoryIsOnlyForAgedPeaks"},
+	},
+	saturation.SwitchPrefillVPOccupancyPlateau: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestPlateau_AFlatCurveIsVP"},
+		{"../../../signals/prefill", "TestPlateau_ARisingCurveIsALowerBound"},
+		{"../../../signals/prefill", "TestPlateau_UnderOneRequestInPrefillIsNoPlateau"},
+		{"../../../signals/prefill", "TestPlateau_AQueueLearnedVPWins"},
+		{"../../../signals/prefill", "TestPlateau_RaisesALowerBoundUnderIt"},
+		{"../../../signals/prefill", "TestPlateau_ARisingPlateauIsFlooredAtTheServedPeak"},
+		{"../saturation", "TestPrefillVPOccupancyPlateau_ThroughAnalyze"},
 	},
 	// The first holds it off from the constructor; the others run it on and
 	// off and assert both, in the window, through Analyze and in the

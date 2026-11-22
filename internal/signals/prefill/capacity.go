@@ -52,6 +52,10 @@ import (
 // reason (NeverQueued): a fleet whose pods never held a capacity queue for
 // PeakRun minutes in a row in Retention gets V_P as at least what its pods
 // computed, not no V_P at all.
+// With Cycle.VPOccupancyPlateau, a V_P refused here for want of a queue, or
+// a lower bound under it, is read from the plateau of the served rate
+// against the prefill occupancy (plateau.go): V_P where the curve flattened
+// in the window, a lower bound where it did not.
 //
 // Otherwise NoPrefillCapacity. SGLang always refuses: it publishes no
 // computed-token series.

@@ -154,6 +154,18 @@ const SwitchPrefillVPWindowBest = "prefill-vp-window-best"
 // against about 3 s measured. Planner-only, as SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPAtServedWork = "prefill-vp-at-served-work"
 
+// SwitchPrefillVPOccupancyPlateau is the replay switch for V_P read without
+// a queue (prefill.Cycle.VPOccupancyPlateau, prefill/plateau.go). On, a V_P
+// refused for want of a queue, or a lower bound under it, is read from the
+// plateau of a pod's served computed tokens against its requests in prefill
+// per engine (Little's law): V_P where the curve flattened in the window, a
+// lower bound where it was still rising. A V_P from busy minutes of a
+// single-rank pod, and a lower bound at or above the plateau, stand. Off,
+// the sources that need a queue only, as before this switch (issue
+// llm-d-incubation/llm-d-scaling-manager#368). Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillVPOccupancyPlateau = "prefill-vp-occupancy-plateau"
+
 // SwitchPrefillALowLoadByRate is the replay switch for which minutes the fit
 // of a reads as low load (prefill.Cycle.ALowLoadByRate). On, a quiet minute
 // (no queue) is low load when its request rate times its prompt cluster's
@@ -381,7 +393,7 @@ func (c *cycle) observePrefill() {
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
 			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes,
 			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued, VPWindowBest: a.prefillVPWindowBest,
-			ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
+			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)
 		c.logger.V(perReplicaLogLevel).Info("prefill-capacity-observed",
@@ -391,6 +403,8 @@ func (c *cycle) observePrefill() {
 			"vpLowerBoundReason", string(est.VPLowerBoundReason),
 			"vpRefused", string(est.VPRefused), "vpSamples", est.VPSamples,
 			"vpServedPeak", est.VPServedPeak, "vpFlooredAtServed", est.VPFlooredAtServed,
+			"vpPlateau", est.VPPlateau, "vpPlateauFlat", est.VPPlateauFlat,
+			"vpPlateauMinutes", est.VPPlateauMinutes, "vpPlateauSpan", est.VPPlateauSpan,
 			"slopeBound", est.SlopeBound, "vpAboveSlopeBound", est.VPAboveSlopeBound,
 			"a", est.A, "aIntercept", est.AIntercept, "aOverhead", est.AOverhead,
 			"aOverheadKnown", est.AOverheadKnown, "aRefused", string(est.ARefused), "aSamples", est.ASamples,

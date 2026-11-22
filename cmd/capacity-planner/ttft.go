@@ -735,6 +735,9 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 			pf.assume("V_P learned at +%s of the window, %s before the cycle priced (the peak under a queue, a lower bound)",
 				hoursWords(at.Sub(ps.WindowFrom)), hoursWords(ps.At.Sub(at)))
 		}
+		if est.VPSource == prefill.SourceOccupancyPlateau {
+			pf.assume(vpPlateauNote)
+		}
 	default:
 		why := fmt.Sprintf("no P1 estimate of %s at cycle %d", ps.Variant, cycle)
 		if ps.EstimateRead {
@@ -767,6 +770,7 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		// The caller's figure, for the prompt asked: neither rescaled nor
 		// margined (Prefill.shapedVP).
 		p.VPAssumed, p.VPMargin, p.CurveSlope, p.CurveCurvature = true, 0, 0, 0
+		p.VPFromPlateau = false
 	}
 	pf.in.VP, pf.in.VPPromptTokens = p.VP, p.VPPromptTokens
 	if p.VPServedOnly && !pf.assumedVP {
@@ -1389,6 +1393,9 @@ func footerNote(fleets []*pricedFleet) string {
 	}
 	if slices.ContainsFunc(fleets, func(pf *pricedFleet) bool { return pf.assumedA }) {
 		note += " a ASSUMED."
+	}
+	if slices.ContainsFunc(fleets, func(pf *pricedFleet) bool { return pf.fleet.Prefill.VPFromPlateau }) {
+		note += " V_P from the occupancy plateau (experimental, --" + vpPlateauFlag + "): every prefill and TTFT figure priced from it is OUTSIDE VALIDATED REGION."
 	}
 	return note
 }

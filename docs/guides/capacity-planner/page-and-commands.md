@@ -195,6 +195,28 @@ A fleet whose load never goes quiet still gets two terms, each flagged:
   never under 0.05. It raises it back only after the fill has spread 0.35 for
   2 minutes. The flag gives the floor used.
 
+**A fleet whose prefill never queues (experimental).** V_P is learned only
+from minutes in which a prefill pod queued, so such a fleet gets V_P refused
+(`NoPrefillCapacity`) or only a lower bound. `--prefill-vp-plateau` reads V_P
+instead from where the prompt tokens served stop rising with the requests in
+prefill per engine (the occupancy plateau). Where that curve has flattened
+the level is V_P; where it is still rising it is a lower bound, and the
+answer keeps the "at least" reading of a lower-bound knee. It is off by
+default and applies to the one command you pass it to: `slo-to-rate`,
+`replicas-to-slo`, `at-replicas`, `backtest`, `predict` and `day-plan` take
+it, and `POST /v1/inputs` takes `prefillVPPlateau` ([API](api.md)).
+Figures priced from it are flagged `VPFromPlateau` and read OUTSIDE
+VALIDATED REGION, and the assumed line says "prefill speed from the
+occupancy plateau (experimental, --prefill-vp-plateau)". The source of V_P
+is `occupancy-plateau` (`vpOrigin` in `-o json`). It is off by default
+because it has not been validated: on the public recordings its level reads
+0.96 to 1.08 of the V_P learned from a queue, but most fleets it gives a
+V_P to still lack a (`NoFixedLatency`), and TTFT priced just under a knee
+from its lower bound read far over what was measured. Try it to see what a
+fleet that never queued would need, for example
+`capacity-planner at-replicas --recording run.jsonl.gz --ttft 2s@p90 --prefill-vp-plateau`;
+do not size from it alone.
+
 **TTFT on a fleet that never goes quiet is not validated: prefill capacity
 V_P is a lower bound.** Such a fleet's prefill pods queue at every load, so
 the planner's prefill capacity is under what the fleet serves, and the decode
