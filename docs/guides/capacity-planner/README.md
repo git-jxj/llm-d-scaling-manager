@@ -431,6 +431,12 @@ A fleet whose load never goes quiet still gets two terms, each flagged:
   Where V_P is only a lower bound, the prefill knee is at least the rate the
   prefill Pods' sustained computed-token work serves at the prompt priced
   (see below, after the lower-bound knee).
+- **V_P raised with that knee** (`VPAtServedWork`, only with the replay
+  switch `prefill-vp-at-served-work` on; off by default). Where the knee was
+  raised to the served work, V_P is raised by the same ratio for the TTFT, so
+  the TTFT is priced from the V_P the knee rests on. Off, the TTFT is priced
+  from the lower V_P, and a rate under the raised knee can read the prefill
+  Pods past their capacity. The assumed line gives the ratio.
 - **A lower KV-fill floor for the decode latency line** (`AdaptedBandFloor`).
   The line is fitted over a range of KV fill. A fleet whose decode pods never
   fill far enough above the default floor (0.15) never gets the 0.30 range a

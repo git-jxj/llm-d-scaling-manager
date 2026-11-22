@@ -15,7 +15,7 @@ import (
 // f 1.39, a V_P that gives a knee near 21.5 r/s, and 85536 tokens a second of
 // served work (26.2 r/s).
 func servedFleetCase(on bool) *pricedFleet {
-	pf := &pricedFleet{vpAtServedOn: on, servedComputed: map[int]float64{5: 85536}}
+	pf := &pricedFleet{vpAtServedOn: on, servedComputed: map[int]float64{5: 85536}, servedWork: map[int]float64{5: 85536}}
 	pf.fleet.Prefill = whatif.Prefill{VP: 19500, VPLowerBound: true, FixedLatency: 1.195, Imbalance: 1.39, Replicas: 5,
 		PromptTokens: 3270, PromptCV: 0.5}
 	return pf
@@ -59,6 +59,15 @@ func TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee(t *testing.T) {
 	assert.Contains(t, on.flags, vpAtServedWork)
 	off.noteAtServedWork()
 	assert.NotContains(t, off.flags, vpAtServedWork)
+
+	// A stated prompt (a backtest step, --assume-input-tokens) keeps no knee
+	// floor, but V_P is raised alike: the ratio does not depend on the prompt.
+	stated := servedFleetCase(true)
+	stated.servedComputed = nil
+	stated.fleet.Prefill.PromptTokens = 2 * 3270
+	r2, ok := stated.servedRatio(stated.fleet.Prefill)
+	require.True(t, ok)
+	assert.InDelta(t, ratio, r2, 1e-9)
 }
 
 // Nothing moves where the knee is no lower bound, where the served work is
@@ -67,7 +76,7 @@ func TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee(t *testing.T) {
 func TestTTFT_VPAtServedWorkLeavesOtherFleets(t *testing.T) {
 	for name, edit := range map[string]func(pf *pricedFleet){
 		"no lower bound": func(pf *pricedFleet) { pf.fleet.Prefill.VPLowerBound = false },
-		"work below":     func(pf *pricedFleet) { pf.servedComputed[5] = 1000 },
+		"work below":     func(pf *pricedFleet) { pf.servedWork[5] = 1000 },
 		"stated V_P":     func(pf *pricedFleet) { pf.assumedVP = true },
 		"other count":    func(pf *pricedFleet) { pf.fleet.Prefill.Replicas = 4 },
 	} {

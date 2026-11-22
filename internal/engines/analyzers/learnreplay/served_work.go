@@ -32,6 +32,9 @@ type servedWorkSample struct {
 // the engines' own counter (domain.ReplicaMetrics.PrefillComputedTokenRate).
 type servedWork struct {
 	samples []servedWorkSample
+	// best is, by pod count, the highest stretch read from samples since
+	// forgotten (windowPeaks): a recording is read as a whole.
+	best map[int]float64
 }
 
 // note keeps one cycle and forgets what is older than prefill.Retention.
@@ -41,6 +44,14 @@ func (w *servedWork) note(s servedWorkSample) {
 	i := 0
 	for i < len(w.samples) && w.samples[i].at.Before(cut) {
 		i++
+	}
+	if i > 0 {
+		if w.best == nil {
+			w.best = map[int]float64{}
+		}
+		for pods, v := range w.stretches(0, i) {
+			w.best[pods] = max(w.best[pods], v)
+		}
 	}
 	w.samples = w.samples[i:]
 }
@@ -54,9 +65,27 @@ func (w *servedWork) note(s servedWorkSample) {
 // can compute at the traffic they ran: the floor under a prefill knee priced
 // from a lower bound (the planner's servedKneeFloor).
 func (w *servedWork) peaks() map[int]float64 {
+	return w.stretches(0, len(w.samples))
+}
+
+// windowPeaks is peaks over the whole window replayed: the stretches the
+// samples kept read, and those of samples forgotten past prefill.Retention.
+// The planner reads a recording as a whole, as prefill-vp-window-best keeps
+// the peak under a queue; work the pods kept up hours earlier is work that
+// many pods can do (saturation.SwitchPrefillVPAtServedWork).
+func (w *servedWork) windowPeaks() map[int]float64 {
+	out := w.peaks()
+	for pods, v := range w.best {
+		out[pods] = max(out[pods], v)
+	}
+	return out
+}
+
+// stretches is peaks over the stretches that start at samples lo to hi-1.
+func (w *servedWork) stretches(lo, hi int) map[int]float64 {
 	out := map[int]float64{}
 	n := len(w.samples)
-	for i := range n {
+	for i := lo; i < hi; i++ {
 		first := w.samples[i]
 		if !first.ok || first.pods < 1 {
 			continue

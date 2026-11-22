@@ -122,6 +122,15 @@ showed, and V_P is read from that counter. Details:
   what V_P's is compared with.
 - The measured shape is unchanged: its prompt is already the computed one.
 
+`TierKVWait` (`slo-ttft-tier-kv-wait`, planner-only, off from the constructor)
+prices the tier load, with `slo-ttft-tier-load` on, at the engine's measured
+wait for the KV instead of the transfer's seconds, where the wait is longer
+(`whatif.TierLoad.WaitPerRequest`: the mean `AvgQueueTime`, request-weighted,
+over the prefill rows with no request waiting for capacity). A loaded request
+is scheduled at a step boundary after its load, so it waits past the
+transfer. The wait is the one at the traffic read: it rises with load, and
+is held as read at the rate asked. The knee does not move.
+
 `TierLoad` (`slo-ttft-tier-load`, planner-only, off from the constructor)
 prices a cached prompt token that came from outside the GPU. A hit in the GPU
 prefix cache costs only the attention over it. A hit from a host, disk or

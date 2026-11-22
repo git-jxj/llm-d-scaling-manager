@@ -300,6 +300,14 @@ type pricedFleet struct {
 	// read it (PrefillState.VPAtServedWork): V_P raised with a knee floored at
 	// the served work, for the TTFT too (atServedWork).
 	vpAtServedOn bool
+	// servedWork is the prefill pods' sustained computed-token work by pod
+	// count over the whole window (learnreplay.PrefillState
+	// .ServedComputedWindow) whatever the prompt
+	// priced, for atServedWork alone: V_P and the work are both computed
+	// tokens a second, so the ratio between the knee and the floor does not
+	// depend on the prompt, stated or measured. servedComputed keeps the
+	// knee floor to the measured prompt, as before.
+	servedWork map[int]float64
 	// tierKVWaitOn is slo.SwitchTTFTTierKVWait, as the replay read it
 	// (PrefillState.TierKVWait): the tier load priced at the engine's
 	// measured wait for the KV (tierLoad).
@@ -471,6 +479,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.tierLoadOn = ps.TierLoad
 	pf.tierKVWaitOn = ps.TierKVWait
 	pf.vpAtServedOn = ps.VPAtServedWork
+	pf.servedWork = ps.ServedComputedWindow
 	for _, vs := range st.Variants {
 		if vs.Variant == ps.Variant {
 			pf.prefillTP, pf.prefillServed = vs.TensorParallel, vs.Shape
@@ -1344,7 +1353,7 @@ func (pf *pricedFleet) servedRatio(p whatif.Prefill) (float64, bool) {
 	if !ok || !k.HasFlag(whatif.VPLowerBound) || !(k.Value > 0) {
 		return 0, false
 	}
-	floor := pf.servedComputed[p.Replicas] / p.PromptTokens
+	floor := pf.servedWork[p.Replicas] / p.PromptTokens
 	if !whatif.Finite(floor) || !(floor > k.Value) {
 		return 0, false
 	}

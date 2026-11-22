@@ -1719,6 +1719,8 @@ var heldBy = map[string][]heldTest{
 	saturation.SwitchPrefillVPAtServedWork: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{".", "TestStateAt_TheVPAtServedWorkSwitchReachesThePrefillState"},
+		{".", "TestServedWork_WindowPeaksKeepTheForgotten"},
+		{".", "TestServedWork_TheStateReadsTheWindowWithTheSwitch"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_VPAtServedWorkLeavesOtherFleets"},
 	},

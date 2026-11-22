@@ -65,3 +65,42 @@ func TestServedWork_KeepsRetention(t *testing.T) {
 	servedAt(&w, t0.Add(prefill.Retention+time.Hour), 2, 20, 20, 20, 20, 20, 20, 20, 20, 20)
 	assert.InDelta(t, 20.0, w.peaks()[2], 1e-9)
 }
+
+// windowPeaks keeps the stretch peaks keeps for prefill.Retention: work the
+// pods kept up hours ago still counts, read over the whole window, and a later
+// higher stretch wins.
+func TestServedWork_WindowPeaksKeepTheForgotten(t *testing.T) {
+	var w servedWork
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	servedAt(&w, t0, 2, 90, 90, 90, 90, 90, 90, 90, 90, 90)
+	servedAt(&w, t0.Add(prefill.Retention+time.Hour), 2, 20, 20, 20, 20, 20, 20, 20, 20, 20)
+	assert.InDelta(t, 20.0, w.peaks()[2], 1e-9, "peaks forgets, as before")
+	assert.InDelta(t, 90.0, w.windowPeaks()[2], 1e-9, "the window keeps the busiest stretch")
+	servedAt(&w, t0.Add(2*prefill.Retention), 2, 120, 120, 120, 120, 120, 120, 120, 120, 120)
+	assert.InDelta(t, 120.0, w.windowPeaks()[2], 1e-9)
+}
+
+// The prefill state reads the window's peaks for the V_P raise only with
+// saturation.SwitchPrefillVPAtServedWork, and the retention's for the knee
+// floor either way.
+func TestServedWork_TheStateReadsTheWindowWithTheSwitch(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	for _, on := range []bool{false, true} {
+		s := newTTFTSamples(false)
+		s.vpAtServed = on
+		w := &servedWork{}
+		servedAt(w, t0, 5, 90, 90, 90, 90, 90, 90, 90, 90, 90)
+		servedAt(w, t0.Add(prefill.Retention+time.Hour), 5, 20, 20, 20, 20, 20, 20, 20, 20, 20)
+		s.served["pre"] = w
+		peaks, window := s.servedWorkOf("pre")
+		assert.InDelta(t, 20.0, peaks[5], 1e-9)
+		if on {
+			assert.InDelta(t, 90.0, window[5], 1e-9)
+		} else {
+			assert.Nil(t, window)
+		}
+	}
+	none, window := newTTFTSamples(false).servedWorkOf("pre")
+	assert.Nil(t, none)
+	assert.Nil(t, window)
+}

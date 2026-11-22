@@ -84,6 +84,9 @@ type PrefillState struct {
 	// prices a TTFT from V_P raised with a knee floored at the served work.
 	// Off unless the replay's options turn it on.
 	VPAtServedWork bool
+	// ServedComputedWindow is ServedComputed over the whole window replayed,
+	// read with VPAtServedWork alone (servedWork.windowPeaks); nil otherwise.
+	ServedComputedWindow map[int]float64
 	// WindowFrom and At are the replay's first cycle and the cycle read, for
 	// the age of a V_P read before the samples kept
 	// (prefill.Estimate.VPLearnedAt).
@@ -189,6 +192,20 @@ type ttftSamples struct {
 	// vpAtServed is saturation.SwitchPrefillVPAtServedWork
 	// (PrefillState.VPAtServedWork).
 	vpAtServed bool
+}
+
+// servedWorkOf is variant v's served work: its peaks over prefill.Retention
+// (PrefillState.ServedComputed), and with vpAtServed its peaks over the
+// whole window (PrefillState.ServedComputedWindow). nil where none is kept.
+func (t *ttftSamples) servedWorkOf(v string) (peaks, window map[int]float64) {
+	w := t.served[v]
+	if w == nil {
+		return nil, nil
+	}
+	if t.vpAtServed {
+		window = w.windowPeaks()
+	}
+	return w.peaks(), window
 }
 
 // newTTFTSamples returns empty windows; hopUnqueued is
@@ -505,9 +522,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		ps.TierLoad = t.tierLoad
 		ps.TierKVWait = t.tierKVWait
 		ps.VPAtServedWork = t.vpAtServed
-		if w := t.served[v]; w != nil {
-			ps.ServedComputed = w.peaks()
-		}
+		ps.ServedComputed, ps.ServedComputedWindow = t.servedWorkOf(v)
 		ps.Estimate, ps.EstimateRead = estimateAt(r.sat.PrefillEstimate, in.Namespace, in.ModelID, v, st.At)
 		st.Prefill = append(st.Prefill, ps)
 	}
