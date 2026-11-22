@@ -384,6 +384,9 @@ type pricedFleet struct {
 	// where the prompt priced is the one those pods computed, read off the
 	// same counter: the floor under a lower-bound knee (servedKneeFloor).
 	servedComputed map[int]float64
+	// cachedTokenCost is slo.SwitchTTFTCachedTokenCost, as the replay read
+	// it (PrefillState.CachedTokenCost): priceCachedLoad.
+	cachedTokenCost bool
 	// flags are the fleet's own, beside P3's.
 	flags []whatif.Flag
 	// inputsText is where the fleet's inputs came from, for the human
@@ -547,6 +550,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.tierKVWaitOn = ps.TierKVWait
 	pf.vpAtServedOn = ps.VPAtServedWork
 	pf.servedWork = ps.ServedComputedWindow
+	pf.cachedTokenCost = ps.CachedTokenCost
 	for _, vs := range st.Variants {
 		if vs.Variant == ps.Variant {
 			pf.prefillTP, pf.prefillServed = vs.TensorParallel, vs.Shape
@@ -577,6 +581,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	if ps.PSByEngine {
 		pf.psByEngine(st, ps)
 	}
+	pf.priceCachedLoad(f)
 	if f.set["assume-router-hop"] {
 		pf.assumedHop = &f.assumeRouterHop
 	}

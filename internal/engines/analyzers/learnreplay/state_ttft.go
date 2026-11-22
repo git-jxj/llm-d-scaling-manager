@@ -68,6 +68,11 @@ type PrefillState struct {
 	// queue as processor sharing where the engine's arguments say it shares
 	// its steps. Off unless the replay's options turn it on.
 	PSByEngine bool
+	// CachedTokenCost is slo.SwitchTTFTCachedTokenCost: the planner fits
+	// phi, the cost of a cached prompt token over a computed one, on the
+	// source's steps, and prices phi x cached / V_P in a request's own
+	// latency. Off unless the replay's options turn it on.
+	CachedTokenCost bool
 	// RawShare is f_raw, the busiest pod's share of the computed-token rate
 	// over the mean share, not de-biased: the largest over the latest
 	// whatif.TTFTWindowCycles cycles that read one at the cycle's pod count. A pod with
@@ -188,6 +193,9 @@ type ttftSamples struct {
 	tierKVWait bool
 	// psByEngine is slo.SwitchTTFTPSByEngine (PrefillState.PSByEngine).
 	psByEngine bool
+	// cachedTokenCost is slo.SwitchTTFTCachedTokenCost
+	// (PrefillState.CachedTokenCost).
+	cachedTokenCost bool
 	// hopUnqueued is slo.SwitchTTFTHopUnqueued, for the decode term's
 	// router windows (noteTerm).
 	hopUnqueued bool
@@ -530,6 +538,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		ps.PSByEngine = t.psByEngine
 		ps.VPAtServedWork = t.vpAtServed
 		ps.ServedComputed, ps.ServedComputedWindow = t.servedWorkOf(v)
+		ps.CachedTokenCost = t.cachedTokenCost
 		ps.Estimate, ps.EstimateRead = estimateAt(r.sat.PrefillEstimate, in.Namespace, in.ModelID, v, st.At)
 		st.Prefill = append(st.Prefill, ps)
 	}

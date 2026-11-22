@@ -246,6 +246,22 @@ const SwitchTTFTTierKVWait = "slo-ttft-tier-kv-wait"
 // Planner-only: off from the constructor; the analyzer prices no fleet with it.
 const SwitchTTFTPSByEngine = "slo-ttft-ps-by-engine"
 
+// SwitchTTFTCachedTokenCost is the replay switch for the cost of a cached
+// prompt token in the capacity planner. On: a request's own latency on a
+// prefill pod carries phi x cached / V_P beside its computed prompt, the
+// cached tokens being the whole prompt less the computed one, over every
+// tier (the prefill variant's computed-token hit,
+// whatif.PromptWindow.ComputedHit). phi, in [0, 1], is one figure per
+// fleet, fitted on the source's own steps (whatifapi.FitCachedTokenCost): a
+// token loaded from a host tier or a peer is not computed, but it is not
+// free either. The load is priced in the request's own latency only, never
+// in the pod's work: V_P is read from busy pods whose loads overlapped their
+// compute, so it already holds what the loads take of the pod. Where phi is
+// not fitted (too few steps, a V_P not learned under a queue, no material
+// cached share) it is 0, and nothing moves. Off, as before. Planner-only:
+// off from the constructor; the analyzer fits no phi.
+const SwitchTTFTCachedTokenCost = "slo-ttft-cached-token-cost"
+
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:
 // on, the pricing reads AvgKVTransferTime from the decode rows that carry one
 // (transferPerToken). Off, it reads none and raises whatif.TransferOmitted, as

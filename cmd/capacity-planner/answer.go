@@ -47,6 +47,13 @@ type answerFlags struct {
 	noSelfCheck, serveSelfCheck bool
 	folds                       map[int]*learnreplay.State
 	checked                     *whatifapi.SelfCheck
+	// cachedCost is phi as fitted on the source (fitCachedCosts), nil where
+	// none was; cachedPhi is the phi priced, and cachedPhiSet says it was
+	// stated by the fit's own pass (whatifapi.Knobs.CachedTokenCost), not
+	// fitted.
+	cachedCost   *whatifapi.CachedTokenCost
+	cachedPhi    float64
+	cachedPhiSet bool
 	// regularOnly refuses a --recording that is no regular file rather than
 	// read it whole: the server's (openRecording).
 	regularOnly bool

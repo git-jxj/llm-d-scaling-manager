@@ -572,6 +572,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	ttft.psByEngine = opts.Switches[PackageSLO][slo.SwitchTTFTPSByEngine]
 	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
 	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
+	ttft.cachedTokenCost = opts.Switches[PackageSLO][slo.SwitchTTFTCachedTokenCost]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false

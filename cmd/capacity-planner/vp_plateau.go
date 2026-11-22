@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
@@ -43,14 +44,27 @@ func plateauValidation(row *whatifapi.ReportRate, kind whatif.FigureKind, res wh
 }
 
 // replayOptions is the options the answer's replay runs with: the planner's
-// switches (learnreplay.PlannerSwitches), and with --prefill-vp-plateau the
-// occupancy plateau on as well. Off, they are the zero options, as before
-// the flag.
+// switches (learnreplay.PlannerSwitches), a test's (testReplaySwitches),
+// and with --prefill-vp-plateau the occupancy plateau on as well. With
+// neither, they are the zero options, as before the flag.
 func (f *answerFlags) replayOptions() learnreplay.Options {
-	if !f.vpPlateau {
+	sw := map[string]map[string]bool{}
+	for pkg, m := range testReplaySwitches {
+		sw[pkg] = maps.Clone(m)
+	}
+	if f.vpPlateau {
+		on(sw, learnreplay.PackageSaturation, saturation.SwitchPrefillVPOccupancyPlateau)
+	}
+	if len(sw) == 0 {
 		return learnreplay.Options{}
 	}
-	return learnreplay.Options{Switches: map[string]map[string]bool{
-		learnreplay.PackageSaturation: {saturation.SwitchPrefillVPOccupancyPlateau: true},
-	}}
+	return learnreplay.Options{Switches: sw}
+}
+
+// on turns the replay switch name of package pkg on in sw.
+func on(sw map[string]map[string]bool, pkg, name string) {
+	if sw[pkg] == nil {
+		sw[pkg] = map[string]bool{}
+	}
+	sw[pkg][name] = true
 }

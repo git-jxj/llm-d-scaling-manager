@@ -71,6 +71,10 @@ type InputsResponse struct {
 	Terms         []Term     `json:"terms"`
 	// Assumed is every input the source did not give, in words.
 	Assumed []string `json:"assumed"`
+	// CachedTokenCost is phi, the cost of a cached prompt token, as fitted
+	// on the source; absent where slo.SwitchTTFTCachedTokenCost is off or
+	// there is no prefill variant.
+	CachedTokenCost *CachedTokenCost `json:"cachedTokenCost,omitempty"`
 	// SelfCheck is the planner checked on this source: the folds of it
 	// fitted on earlier cycles predicting later ones. Absent when not asked.
 	SelfCheck *SelfCheck `json:"selfCheck,omitempty"`

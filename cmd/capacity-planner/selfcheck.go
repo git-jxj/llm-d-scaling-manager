@@ -33,6 +33,11 @@ func (f *answerFlags) selfCheckOn() bool {
 	return defaultSelfCheck && !f.noSelfCheck
 }
 
+// testReplaySwitches is the replay switches every answer reads its states
+// with, beside the planner's own (learnreplay.PlannerSwitches): nil but in a
+// test that turns a planner-only switch on through the CLI's whole path.
+var testReplaySwitches map[string]map[string]bool
+
 // readStates reads the state at the answer's cycle and, when the answer
 // self-checks, the states at the folds' cuts, in one replay.
 func (f *answerFlags) readStates(ctx context.Context, src learnreplay.Source, q learnreplay.StateQuery) (*learnreplay.State, error) {
@@ -63,7 +68,7 @@ func (f *answerFlags) checkRecording(ctx context.Context, st *learnreplay.State,
 	t0 := time.Now()
 	ss := &servedSources{warn: io.Discard}
 	info := whatifapi.SourceInfo{Kind: whatifapi.SourceRecording, Cycle: st.Cycle, TotalCycles: st.Cycles, FirstAt: st.FirstAt, LastAt: st.At}
-	res, err := ss.resolved(f, st, src, info)
+	res, err := ss.resolved(ctx, f, st, src, info)
 	if err != nil {
 		f.checked = &whatifapi.SelfCheck{Status: whatifapi.SelfCheckNotRun, Why: err.Error(), Line: "Self-check not run: " + err.Error() + ".",
 			Folds: []whatifapi.SelfCheckFold{}, Checks: []whatifapi.SelfCheckRule{}}

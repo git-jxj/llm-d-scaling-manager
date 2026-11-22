@@ -2958,6 +2958,7 @@ slo-model
 slo-tpot
 slo-transient
 slo-ttft
+slo-ttft-cached-token-cost
 slo-ttft-computed-hit
 slo-ttft-decode-gate-charge
 slo-ttft-decode-term
