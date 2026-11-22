@@ -323,6 +323,7 @@ roles[].results.ttft.answer.parts.prefillKnee number
 roles[].results.ttft.answer.parts.prefillUtilization number
 roles[].results.ttft.answer.parts.routerHop number
 roles[].results.ttft.answer.parts.routerWait number
+roles[].results.ttft.answer.parts.tierLoad number
 roles[].results.ttft.answer.parts.vpMarginApplied number
 roles[].results.ttft.answer.parts.waitOffset number
 roles[].results.ttft.answer.parts.waitScale number
@@ -405,6 +406,18 @@ roles[].ttft.routerHopPerTokenSeconds number
 roles[].ttft.routerHopRefused string
 roles[].ttft.routerHopSource string
 roles[].ttft.targetSeconds number
+roles[].ttft.tierLoad object
+roles[].ttft.tierLoad.fixedLatencyHolds boolean
+roles[].ttft.tierLoad.measuredSeconds number
+roles[].ttft.tierLoad.outerShare number
+roles[].ttft.tierLoad.seconds number
+roles[].ttft.tierLoad.shares map
+roles[].ttft.tierLoad.transfers array
+roles[].ttft.tierLoad.transfers[] object
+roles[].ttft.tierLoad.transfers[].bytesPerSecond number
+roles[].ttft.tierLoad.transfers[].bytesPerToken number
+roles[].ttft.tierLoad.transfers[].kind string
+roles[].ttft.tierLoad.transfers[].secondsPerToken number
 roles[].ttft.transferSecondsPerToken number
 roles[].ttft.transferSource string
 roles[].ttft.vp number
