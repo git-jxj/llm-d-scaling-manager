@@ -47,7 +47,11 @@ var (
 		"from", "to", "step", "force", "no-self-check",
 		// Set, it states nothing until it applies: assumeIntercept then adds
 		// --assume-itl-b to the variant's stated inputs, which puts its figures outside.
-		"assume-itl-b"}
+		"assume-itl-b",
+		// Set, it states nothing until the replay reads V_P from the plateau:
+		// each figure priced from it is then flagged VPFromPlateau, which
+		// no envelope row allows, so it, and it alone, reads outside.
+		vpPlateauFlag}
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait", "router-wait-in-prefill",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
 		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "assume-transfer-base",

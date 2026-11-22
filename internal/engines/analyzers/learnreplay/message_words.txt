@@ -494,6 +494,7 @@ VAs
 VLLM_ALL2ALL_BACKEND
 VLLM_USE_V1
 VPAboveSlopeBound
+VPFromPlateau
 VPLowerBound
 VPScaledToPrompt
 VPShapeMoved
@@ -1205,6 +1206,7 @@ exit
 expect
 expected
 expects
+experimental
 expert_parallel
 expert_parallel_size
 export

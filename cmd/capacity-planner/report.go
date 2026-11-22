@@ -943,6 +943,7 @@ func (r *reporter) capacity(c *whatifapi.ReportLimits, base *servedFleet, ev fle
 	if a, ok := ev.prefillKnee.(whatif.Answer); ok && slices.Contains(a.Flags, whatif.VPLowerBound) {
 		c.PrefillKnee.LowerBound = true
 	}
+	plateauValidation(&c.PrefillKnee, whatif.FigurePrefillKnee, ev.prefillKnee)
 	c.DecodeKnee = r.rate(ev.decodeKnee, ol, decodeBinds(ev.decodeKnee))
 	r.kneeV = decodeKneeValidation(r.pv.class(), ev.decodeKnee)
 	if c.DecodeKnee.Value != nil {
@@ -967,6 +968,11 @@ func (r *reporter) capacity(c *whatifapi.ReportLimits, base *servedFleet, ev fle
 	maxRate, binds := r.maxAtSLO(base, ev)
 	r.results = append(r.results, maxRate)
 	c.MaxAtSLO = r.rate(maxRate, ol, binds)
+	if ev.binds == rolePrefill {
+		plateauValidation(&c.FleetKnee, whatif.FigurePrefillKnee, ev.prefillKnee)
+		plateauValidation(&c.Operating, whatif.FigureOperatingCap, ev.prefillKnee)
+	}
+	plateauValidation(&c.MaxAtSLO, whatif.FigureRateAtTTFT, maxRate)
 }
 
 // rate is a rate row: the figure, the output tokens it carries, what binds.
