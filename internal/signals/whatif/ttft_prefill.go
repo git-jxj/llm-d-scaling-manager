@@ -50,7 +50,8 @@ func PrefillFromEstimate(est prefill.Estimate) (Prefill, *Unanswerable) {
 
 // ImbalanceUtilizationAt is the mean prefill pod utilization f was read at,
 // for f at pods (Prefill.ImbalanceUtilization): P1's load at that count over
-// vp, the V_P priced, where it learned one there, else the load of the
+// vp, the learned V_P (Prefill.VP; prefillPlan.rhoM rescales it to the
+// question's prompt), where it learned one there, else the load of the
 // minutes its F is the median of, else 0 (none read). Held to
 // MaxImbalanceUtilization.
 func ImbalanceUtilizationAt(est prefill.Estimate, pods int, vp float64) float64 {

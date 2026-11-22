@@ -135,7 +135,7 @@ func TestImbalanceUtilizationAt(t *testing.T) {
 	est := prefill.Estimate{FLoad: 3000, FByPods: map[int]float64{2: 1.1}, FLoadByPods: map[int]float64{2: 6000}}
 	relNear(t, "learned count", ImbalanceUtilizationAt(est, 2, 10000), 0.6, 1e-12)
 	relNear(t, "another count", ImbalanceUtilizationAt(est, 3, 10000), 0.3, 1e-12)
-	relNear(t, "over the V_P priced", ImbalanceUtilizationAt(est, 3, 20000), 0.15, 1e-12)
+	relNear(t, "over another V_P", ImbalanceUtilizationAt(est, 3, 20000), 0.15, 1e-12)
 	est.FLoadByPods[2] = 20000
 	relNear(t, "held below 1", ImbalanceUtilizationAt(est, 2, 10000), MaxImbalanceUtilization, 1e-12)
 	if got := ImbalanceUtilizationAt(prefill.Estimate{}, 2, 10000); got != 0 {

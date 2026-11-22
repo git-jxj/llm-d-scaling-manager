@@ -958,14 +958,15 @@ func (r *reporter) use(u *whatifapi.ReportUse, base *servedFleet, ev fleetEval) 
 	// longer N_p x V_P / (f x the prompt): both are read at the load.
 	f := max(base.pf.in.Imbalance, 1)
 	worst := r.load / pk.Value
+	pooled := worst / f
 	if p := base.pf.fleet.Prefill; p.LoadAwareRouter {
-		if fl, pooled, ok := whatif.PrefillLoadAt(p, r.load); ok {
-			f, worst = fl, fl*pooled
+		if fl, pl, ok := whatif.PrefillLoadAt(p, r.load); ok {
+			f, worst, pooled = fl, fl*pl, pl
 		}
 	}
 	u.Prefill.Imbalance = f
 	u.Prefill.WorstPod = whatifapi.FigureOf(whatif.Answer{Value: worst}, "", false)
-	u.Prefill.Pooled = whatifapi.FigureOf(whatif.Answer{Value: worst / f}, "", false)
+	u.Prefill.Pooled = whatifapi.FigureOf(whatif.Answer{Value: pooled}, "", false)
 }
 
 // slotsPerReplica is the batch slots of one decode replica: the cap, or the

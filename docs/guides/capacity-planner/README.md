@@ -569,7 +569,7 @@ It replays the recording once and answers, for each shape and load:
   then held up to the load it was measured at and falls to 1 as the pods
   fill, so the prefill knee is the pooled one less the margin; the inputs
   say so ("f 1.5 held to 0.35 utilization, then falling to 1 ..."). The
-  fleets at f 1 and f 1.5 fall the same way. A pod much busier than the
+  fleets at f 1 and f 1.5 are priced the same way. A pod much busier than the
   rest still saturates first. With no load measured for f, f is held. The
   recording does not say what the router scores, so the flag is off by
   default.
