@@ -153,6 +153,10 @@ type wireTTFT struct {
 	// measured, omitted, or "decode engine" where that TTFT holds it.
 	TransferSecondsPerToken float64 `json:"transferSecondsPerToken,omitempty"`
 	TransferSource          string  `json:"transferSource,omitempty"`
+	// TierLoad is the load of a request's cached KV from a tier outside
+	// the GPU, as slo.SwitchTTFTTierLoad prices it (tierLoad); absent with
+	// the switch off, or where it prices none.
+	TierLoad *wireTierLoad `json:"tierLoad,omitempty"`
 	// DecodeSide is how decode's part was priced: line, "decode engine" or
 	// omitted; the two figures are the decode engine's measured pair.
 	DecodeSide             string  `json:"decodeSide,omitempty"`
@@ -442,6 +446,10 @@ type wireTTFTParts struct {
 	// they stay absent).
 	RouterWait float64 `json:"routerWait,omitempty"`
 	BurstWait  float64 `json:"burstWait,omitempty"`
+	// TierLoad is the part of ownPrefill a request waits for its cached KV
+	// to load from a tier outside the GPU (wireTTFT.TierLoad), absent with
+	// none.
+	TierLoad float64 `json:"tierLoad,omitempty"`
 	// Onsets are the flow-control onsets, absent with flow control off.
 	Onsets *wireOnsets `json:"onsets,omitempty"`
 }
@@ -534,7 +542,7 @@ func toWireTTFT(r whatif.Result) *wireTTFTResult {
 			EngineWait: v.Parts.EngineWait, KVPullWait: v.Parts.KVPullWait,
 			KVPullUtilization: v.Parts.KVPullUtilization, OwnPrefill: v.Parts.OwnPrefill, DecodeWait: v.Parts.DecodeWait,
 			FirstStep: v.Parts.FirstStep, DecodeEngine: v.Parts.DecodeEngine, RouterHop: v.Parts.RouterHop,
-			RouterWait: v.Parts.RouterWait, BurstWait: v.Parts.BurstWait,
+			RouterWait: v.Parts.RouterWait, BurstWait: v.Parts.BurstWait, TierLoad: v.Parts.TierLoad,
 			PrefillUtilization: v.PrefillUtilization, VPMarginApplied: v.VPMarginApplied,
 			WaitScale: v.WaitScale, WaitOffset: v.WaitOffset, DecodeWaitProbability: v.DecodeWaitProbability,
 			PrefillKnee: v.PrefillKnee, DecodeKnee: v.DecodeKnee,

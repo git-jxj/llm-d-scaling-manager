@@ -326,7 +326,8 @@ type TTFTParts struct {
 	KVPullUtilization float64
 	// OwnPrefill is a + E[I_eff]/V_P, plus the part of decode's term that
 	// goes with the prompt: T_xfer on the old sum, the per-token parts of D
-	// and R with a DecodeTerm. It follows the prompt's quantile.
+	// and R with a DecodeTerm. It follows the prompt's quantile. It holds
+	// TierLoad too.
 	OwnPrefill float64
 	// DecodeWait is W_decode, the admission chain's mean wait.
 	DecodeWait float64
@@ -348,6 +349,11 @@ type TTFTParts struct {
 	// (ttft_gate.go). Both are 0 unless TTFTFleet.PriceRouterWait prices the
 	// gate, past the prefill onset (FlowControlWaitPriced).
 	RouterWait, BurstWait float64
+	// TierLoad is the load of a request's cached KV from a tier outside the
+	// GPU (Prefill.TierLoadSeconds), a part of OwnPrefill; 0 with none, and
+	// then left out of a freeze's JSON, which writes these parts as they
+	// are, so its output does not move with the switch off.
+	TierLoad float64 `json:",omitempty"`
 }
 
 // Onsets are the rates, in requests per second over the fleet, at which EPP

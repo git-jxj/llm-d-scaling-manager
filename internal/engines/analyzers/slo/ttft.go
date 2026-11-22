@@ -194,6 +194,30 @@ const SwitchTTFTPrefixAttention = "slo-ttft-prefix-attention"
 // stated prompt.
 const SwitchTTFTComputedHit = "slo-ttft-computed-hit"
 
+// SwitchTTFTTierLoad is the replay switch for a cached prompt token from a
+// tier outside the GPU in the capacity planner. vllm:prefix_cache_hits counts
+// the GPU prefix cache alone; a hit from a host, disk or peer tier is loaded
+// into the GPU first, and the price took it as free. On, where the prefill
+// rows read the cached tokens by tier (domain.ReplicaMetrics
+// .CachedTokenRateBySource) and the KV transfers (KVTransferRates):
+//
+//   - a request's TTFT carries the load of its cached tokens from outside
+//     the GPU (whatif.Prefill.TierLoadSeconds): the tokens each tier served
+//     times the bytes a token moved over the bandwidth the transfer read,
+//     whatif.PromptWindow.TierLoad, with no overlap with the request's own
+//     prefill (the OffloadingConnector loads before the request is
+//     scheduled), so an upper bound where a connector overlaps it;
+//   - with SwitchTTFTPrefixAttention on, the attention span's cached
+//     context is the whole prompt less the computed one, every tier's hits
+//     counted, not the GPU's hit rate (whatif.Prefill.CachedContextRead).
+//
+// A tier serving whatif.MinTierShare of the prompt or more with no transfer
+// reading, or no split by tier where the computed-token hit is material,
+// leaves the load out and flags it: no bandwidth is assumed. Off, as
+// before. Planner-only: off from the constructor; the analyzer prices no
+// tier.
+const SwitchTTFTTierLoad = "slo-ttft-tier-load"
+
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:
 // on, the pricing reads AvgKVTransferTime from the decode rows that carry one
 // (transferPerToken). Off, it reads none and raises whatif.TransferOmitted, as

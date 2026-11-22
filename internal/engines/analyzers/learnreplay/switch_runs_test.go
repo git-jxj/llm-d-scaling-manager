@@ -661,6 +661,13 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// whatif.MaterialPrefixHitMove, which no committed recording has, so it
 	// moves no golden. Its unit tests hold it (heldBy).
 	slo.SwitchTTFTComputedHit: nil,
+	// A cached token's load from a tier outside the GPU, and the attention
+	// span over every tier's cached context, in the planner, planner-only:
+	// the analyzer prices no tier, and the planner prices it only where the
+	// prefill rows read the cached tokens by tier, which no committed
+	// recording does, so it moves no golden. Its unit tests hold it
+	// (heldBy).
+	slo.SwitchTTFTTierLoad: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -2033,6 +2040,17 @@ var heldBy = map[string][]heldTest{
 		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitAStatedHitGoverns"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitNeedsAMaterialHit"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured"},
+	},
+	slo.SwitchTTFTTierLoad: {
+		{"../slo", "TestTTFT_TheTierLoadOffFromTheConstructor"},
+		{".", "TestStateAt_TheTierLoadSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestPromptWindow_TierLoad"},
+		{"../../../signals/whatif", "TestTTFT_TierLoadIsOwnLatency"},
+		{"../../../signals/whatif", "TestShapedVP_CachedContextSpan"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierLoadMatchesTheInjectedLoad"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierLoadUnmeasuredIsFlagged"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierLoadLowLoadAHoldsTheMeasuredLoad"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierLoadAttentionSpanFromTheComputedHit"},
 	},
 	// Issue ev-shindin/llm-scaling-manager#275's lift: an aggregated figure sizes once the GPS check has
 	// agreed. Both run the switch on and fail with it off: the first checks

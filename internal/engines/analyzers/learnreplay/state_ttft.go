@@ -54,6 +54,11 @@ type PrefillState struct {
 	// prompt it prices by the hit PromptWindow.ComputedHit reads, not by the
 	// prefix-cache hit rate. Off unless the replay's options turn it on.
 	ComputedHit bool
+	// TierLoad is slo.SwitchTTFTTierLoad: the planner prices the load of a
+	// cached token from a tier outside the GPU (PromptWindow.TierLoad), and
+	// reads the attention span from the whole prompt less the computed one.
+	// Off unless the replay's options turn it on.
+	TierLoad bool
 	// RawShare is f_raw, the busiest pod's share of the computed-token rate
 	// over the mean share, not de-biased: the largest over the latest
 	// whatif.TTFTWindowCycles cycles that read one at the cycle's pod count. A pod with
@@ -151,6 +156,8 @@ type ttftSamples struct {
 	prefixAttention bool
 	// computedHit is slo.SwitchTTFTComputedHit (PrefillState.ComputedHit).
 	computedHit bool
+	// tierLoad is slo.SwitchTTFTTierLoad (PrefillState.TierLoad).
+	tierLoad bool
 	// hopUnqueued is slo.SwitchTTFTHopUnqueued, for the decode term's
 	// router windows (noteTerm).
 	hopUnqueued bool
@@ -460,6 +467,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		ps.PromptSupport = t.promptSupport
 		ps.PrefixAttention = t.prefixAttention
 		ps.ComputedHit = t.computedHit
+		ps.TierLoad = t.tierLoad
 		ps.Estimate, ps.EstimateRead = estimateAt(r.sat.PrefillEstimate, in.Namespace, in.ModelID, v, st.At)
 		st.Prefill = append(st.Prefill, ps)
 	}

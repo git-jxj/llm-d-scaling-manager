@@ -182,6 +182,9 @@ type Analyzer struct {
 	// ttftComputedHit is SwitchTTFTComputedHit (ttft.go): off from the
 	// constructor, planner-only; the analyzer holds it for the name.
 	ttftComputedHit bool
+	// ttftTierLoad is SwitchTTFTTierLoad (ttft.go): off from the
+	// constructor, planner-only; the analyzer holds it for the name.
+	ttftTierLoad bool
 	// ttftQuietTransfer is SwitchTTFTQuietTransfer (ttft.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftQuietTransfer bool

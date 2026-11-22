@@ -910,6 +910,7 @@ container
 container-config
 contains
 contamination-heterogeneity
+context
 context_length
 continues
 contradicted
@@ -1072,6 +1073,7 @@ discarded
 discarding
 discover
 discovery
+disk
 distinctPods
 do
 docs/developer-guide/testing.md
@@ -1217,6 +1219,7 @@ exports
 external
 externalClusterQuotas
 externalNamespaceQuotas
+external_unspecified
 f
 fAtPods
 fPods
@@ -2250,6 +2253,7 @@ owning
 p
 p1
 p10-p90
+p2p
 packing
 page_size
 panic
@@ -2940,6 +2944,7 @@ slo-ttft-ps-onsets
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
 slo-ttft-sizes-prefill
+slo-ttft-tier-load
 slo-ttft-variant
 slo-variant
 slo.Analyze

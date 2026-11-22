@@ -271,6 +271,10 @@ type pricedFleet struct {
 	// window its hit is read from (whatif.PromptWindow.ComputedHit).
 	computedHit  bool
 	promptWindow *whatif.PromptWindow
+	// tierLoadOn is slo.SwitchTTFTTierLoad, as the replay read it
+	// (PrefillState.TierLoad): the load of a cached token from outside the
+	// GPU, and the attention span's cached context (tierLoad).
+	tierLoadOn bool
 	// flags are the fleet's own, beside P3's.
 	flags []whatif.Flag
 	// inputsText is where the fleet's inputs came from, for the human
@@ -430,6 +434,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.variant = ps.Variant
 	pf.prefixAttention = ps.PrefixAttention
 	pf.computedHit, pf.promptWindow = ps.ComputedHit, ps.PromptWindow
+	pf.tierLoadOn = ps.TierLoad
 	for _, vs := range st.Variants {
 		if vs.Variant == ps.Variant {
 			pf.prefillTP, pf.prefillServed = vs.TensorParallel, vs.Shape
@@ -808,6 +813,7 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	} else if f.set["assume-transfer-base"] {
 		pf.assume("--assume-transfer-base not applied: no KV transfer measured on the decode rows")
 	}
+	pf.tierLoad(ps)
 }
 
 // transferPerToken is the KV transfer per computed prompt token the price

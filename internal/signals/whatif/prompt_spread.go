@@ -84,6 +84,9 @@ type promptSample struct {
 	// one reading of the same requests, for ComputedHit.
 	wholeComputed, whole float64
 	buckets              map[float64]float64
+	// tiers is the cached tokens by tier and the KV transfers of the
+	// counted rows that read them, for TierLoad (tier_load.go).
+	tiers tierSample
 }
 
 // PromptWindow is a prefill variant's latest PromptWindowCycles cycles with
@@ -113,6 +116,7 @@ func (w *PromptWindow) Note(rows []domain.ReplicaMetrics, cycle int, at time.Tim
 				s.wholeComputed += rm.PrefillComputedTokenRate
 				s.whole += r * il
 			}
+			s.tiers.noteTiers(rm, r)
 		}
 	}
 	if !(s.computed > 0) {

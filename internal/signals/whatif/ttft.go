@@ -110,6 +110,20 @@ type Prefill struct {
 	// context, as if no token were cached. The replay switch
 	// slo.SwitchTTFTPrefixAttention, planner-only and off.
 	PrefixAttention bool
+	// CachedContextRead says CachedContextTokens and VPCachedContextTokens
+	// were read: the cached context of the question's mean request and of
+	// V_P's minutes, as the whole prompt less the computed one, every
+	// tier's hits counted (slo.SwitchTTFTTierLoad). With PrefixAttention
+	// on, shapedVP takes the attention span from them in place of the
+	// prefix-cache hit rates, which count the GPU's hits alone.
+	CachedContextRead                          bool
+	CachedContextTokens, VPCachedContextTokens float64
+	// TierLoadSeconds is the time a request waits for its cached KV to load
+	// from a tier outside the GPU (a host, disk or peer tier), in seconds:
+	// like a it enters the request's own latency, never the queue's work,
+	// and it is reported apart (TTFTParts.TierLoad). 0 is none
+	// (slo.SwitchTTFTTierLoad off, or no such hit).
+	TierLoadSeconds float64
 	// CurveSlope and CurveCurvature are b and c of P1's low-load curve
 	// s0 + b*I + c*I*I (prefill.Estimate.ASlope and ACurve, with AModel
 	// quadratic): a prompt of length I costs b + c*I per token in a busy
@@ -562,8 +576,13 @@ func (pl prefillPlan) atRate(rate float64) prefillPlan {
 // h + I_eff/2, so the curve's argument is I_eff + 2h (attentionSpan). With
 // PrefixAttention on, both whole prompts known (the hit rates are read with
 // them) and either hit rate above MaterialPrefixHitMove, the rescale reads
-// that argument at I_vp and at the question, h from each side's own hit rate;
-// otherwise I_eff stands for it, as if nothing were cached, and reads V_P
+// that argument at I_vp and at the question, h from each side's own hit rate.
+// With CachedContextRead (slo.SwitchTTFTTierLoad), h is each side's cached
+// context as read, the whole prompt less the computed one, and the span is
+// priced where either side's h is above MaterialPrefixHitMove of its whole
+// prompt: the prefix-cache hit rate counts the GPU's hits alone, and reads a
+// hit from a host, disk or peer tier as a miss though the prompt attends
+// over it. Otherwise I_eff stands for it, as if nothing were cached, and reads V_P
 // high at a hit (issue llm-d-incubation/llm-d-scaling-manager#311).
 func (p Prefill) shapedVP() (float64, Flag) {
 	if p.VPAssumed {
@@ -571,8 +590,14 @@ func (p Prefill) shapedVP() (float64, Flag) {
 	}
 	i, ivp := p.PromptTokens, p.VPPromptTokens
 	if p.CurveSlope > 0 && p.CurveCurvature > 0 && ivp > 0 {
-		if p.PrefixAttention && p.VPWholePromptTokens > 0 && p.WholePromptTokens > 0 &&
-			max(p.PromptHitRate, p.VPPromptHitRate) > MaterialPrefixHitMove {
+		switch {
+		case !p.PrefixAttention:
+		case p.CachedContextRead:
+			if h, hvp := p.CachedContextTokens, p.VPCachedContextTokens; max(h/(h+i), hvp/(hvp+ivp)) > MaterialPrefixHitMove {
+				i, ivp = i+2*h, ivp+2*hvp
+			}
+		case p.VPWholePromptTokens > 0 && p.WholePromptTokens > 0 &&
+			max(p.PromptHitRate, p.VPPromptHitRate) > MaterialPrefixHitMove:
 			i, ivp = attentionSpan(i, p.PromptHitRate), attentionSpan(ivp, p.VPPromptHitRate)
 		}
 		if i > ivp {
@@ -668,6 +693,11 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 		// A hit rate is read only beside a known whole prompt; with the whole
 		// prompt unknown, nothing reads it (shapedVP, prefixMoved).
 		u = refuse(InvalidInput, fmt.Sprintf("prefix hit rate %g, V_P's %g, want 0 <= hit < 1", p.PromptHitRate, p.VPPromptHitRate))
+	case !Finite(p.CachedContextTokens) || p.CachedContextTokens < 0 || !Finite(p.VPCachedContextTokens) || p.VPCachedContextTokens < 0:
+		u = refuse(InvalidInput, fmt.Sprintf("cached context %g tokens, V_P's %g, want finite values of at least 0",
+			p.CachedContextTokens, p.VPCachedContextTokens))
+	case !Finite(p.TierLoadSeconds) || p.TierLoadSeconds < 0:
+		u = refuse(InvalidInput, fmt.Sprintf("tier load %g s, want a finite value of at least 0", p.TierLoadSeconds))
 	case !Finite(p.CurveSlope) || p.CurveSlope < 0 || !Finite(p.CurveCurvature) || p.CurveCurvature < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("curve b %g, c %g, want finite values of at least 0", p.CurveSlope, p.CurveCurvature))
 	case !(p.VPMargin >= 0 && p.VPMargin <= MaxVPMargin):
@@ -1418,7 +1448,9 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	out.VPMarginApplied = pf.applied
 	rho := pf.utilization(rate)
 	own := pf.own()
-	a := pl.pf.p.FixedLatency
+	// The tier load waits as a does: a request's own, before its prefill.
+	a := pl.pf.p.FixedLatency + pl.pf.p.TierLoadSeconds
+	out.Parts.TierLoad = pl.pf.p.TierLoadSeconds
 	out.PrefillUtilization = rho
 	out.Parts.OwnPrefill = a + own.mean
 	// side is block 1 for a plan's own time: the worst pod's wait and the own
