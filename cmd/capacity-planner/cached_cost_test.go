@@ -87,9 +87,9 @@ func TestTTFT_CachedTokenCostAddsTheLoad(t *testing.T) {
 // load to price: a 0.05 computed-token hit moves nothing at any phi.
 func TestTTFT_CachedTokenCostNeedsACachedShare(t *testing.T) {
 	st := cachedCostState(true)
-	st.Prefill[0].PromptWindow = computedHitWindow(7600, 8000)
+	st.Prefill[0].PromptWindow = computedHitWindow(7600)
 	off := cachedCostState(false)
-	off.Prefill[0].PromptWindow = computedHitWindow(7600, 8000)
+	off.Prefill[0].PromptWindow = computedHitWindow(7600)
 	a := hitFleetOf(t, off, hitDecode(0, 0), fittedAt(1), "assume-input-tokens").fleet.Prefill.FixedLatency
 	pf := hitFleetOf(t, st, hitDecode(0, 0), fittedAt(1), "assume-input-tokens")
 	assert.Equal(t, a, pf.fleet.Prefill.FixedLatency)

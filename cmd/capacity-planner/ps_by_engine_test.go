@@ -11,8 +11,9 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
-// psState is a state whose prefill variant runs seqs prompts a rank on ranks
-// ranks in steps of budget tokens, chunked or not, as its flags state them.
+// psState is a state whose prefill variant runs seqs prompts a rank, with
+// ranks data-parallel ranks, in steps of budget tokens, chunked or not, as
+// its flags state them.
 func psState(seqs, budget int64, ranks int, chunked bool) *learnreplay.State {
 	p := &capacity.EngineParams{MaxNumSeqs: seqs, MaxNumSeqsSet: seqs > 0, MaxNumBatchedTokens: budget, ChunkedPrefillEnabled: chunked}
 	return &learnreplay.State{Variants: []learnreplay.VariantState{{Variant: "pre", Params: p, Ranks: ranks}}}

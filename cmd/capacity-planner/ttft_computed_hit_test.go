@@ -22,9 +22,10 @@ import (
 )
 
 // computedHitWindow is a prefill prompt window whose rows computed the given
-// number of tokens of each whole-token prompt, one request a second, over the
+// number of tokens of each 8000-token prompt, one request a second, over the
 // computed rate's minute.
-func computedHitWindow(computed, whole float64) *whatif.PromptWindow {
+func computedHitWindow(computed float64) *whatif.PromptWindow {
+	const whole = 8000
 	w := &whatif.PromptWindow{}
 	for i := range whatif.PromptWindowMinCycles {
 		w.Note([]domain.ReplicaMetrics{{Ready: true, PrefillComputedTokenRate: computed, PrefillComputedTokenRateKnown: true,
@@ -39,7 +40,7 @@ func computedHitWindow(computed, whole float64) *whatif.PromptWindow {
 // read it.
 func computedHitState(prefillHit float64, on bool) *learnreplay.State {
 	st := hitState(prefillHit, false)
-	st.Prefill[0].PromptWindow = computedHitWindow(2000, 8000)
+	st.Prefill[0].PromptWindow = computedHitWindow(2000)
 	st.Prefill[0].ComputedHit = on
 	return st
 }
@@ -93,7 +94,7 @@ func TestTTFT_ComputedHitAStatedHitGoverns(t *testing.T) {
 // switch on. Unread, the prefix-cache hit stands.
 func TestTTFT_ComputedHitNeedsAMaterialHit(t *testing.T) {
 	st := computedHitState(0, true)
-	st.Prefill[0].PromptWindow = computedHitWindow(7600, 8000)
+	st.Prefill[0].PromptWindow = computedHitWindow(7600)
 	pf := hitFleetOf(t, st, hitDecode(0, 0), answerFlags{inputTokens: 8000}, "assume-input-tokens")
 	assert.Equal(t, 8000.0, pf.fleet.Prefill.PromptTokens, "a 0.05 computed-token hit against none: as before")
 

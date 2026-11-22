@@ -157,7 +157,7 @@ try {
   check("decode-only draws no prefill needed", !hs.has("prefill-needed"));
   check("decode-only draws what prefill had", hs.has("prefill-actual"));
   check("the prefill panel says it is not sized", attrs(hg, "text").some(a => a["data-refused"] === "prefill") &&
-    texts(hg).some(t => t.includes("Prefill replicas not sized") && t.includes("NoPrefillCapacity")));
+    texts(hg).some(t => t.includes("Prefill replicas not sized") && t.includes(half.refused[0].reason)));
   check("the decode panel says its need is a lower bound", attrs(hg, "text").some(a => a["data-lower-bound"] === "decode") &&
     texts(hg).some(t => t.includes("needed is at least")));
   const priced = copy(plan);
@@ -168,7 +168,10 @@ try {
   check("but the decode panel says its lower bound", attrs(g.markup, "text").some(a => a["data-lower-bound"] === "decode"));
   check("the tip says at least", dayTip(half, half.buckets.find(x => x.needed)).rows.some(r => r[0] === "needed" && r[1].startsWith("at least")));
   check("no hatch for a refusal of the source", attrs(hg, "rect").filter(a => a["data-unmet"]).length === 0);
-  check("the refusals say what to do", dayRefusedHTML(half).includes("--assume-vp"));
+  // The b-on staircase's prefill pods never queued: V_P is the served peak, a
+  // lower bound (prefill-vp-served-unqueued), and a is what it lacks.
+  check("the decode-only golden lacks a", half.refused[0].reason === "NoFixedLatency", half.refused[0].reason);
+  check("the refusals say what to do", dayRefusedHTML(half).includes("--assume-a"));
   check("decode-only summary names no prefill figure", daySummaryText(half)[0].includes("prefill not priced"));
   const nothing = copy(half);
   nothing.buckets.forEach(b => { if (b.status === "sized") { b.status = "refused"; delete b.needed; b.verdict = "refused"; } });
