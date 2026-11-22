@@ -46,6 +46,9 @@ type backtestFlags struct {
 	// vpPlateau is --prefill-vp-plateau, as answerFlags' (vp_plateau.go):
 	// both sides are read with V_P from the occupancy plateau.
 	vpPlateau bool
+	// experimentalTTFT is --experimental-ttft, as answerFlags'
+	// (experimental_ttft.go): both sides are read with its switches on.
+	experimentalTTFT bool
 }
 
 // registerAssume registers the stated-input flags backtest and predict take.
@@ -60,6 +63,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's, on by default: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0); =false for router v0.11.0")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
+	fs.BoolVar(&f.experimentalTTFT, experimentalTTFTFlag, false, experimentalTTFTUsage)
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default
@@ -246,7 +250,7 @@ func (f *backtestFlags) assume() (whatifapi.Assume, error) {
 var resolveBacktest = func(ctx context.Context, f *backtestFlags, path string, cycle int, warn io.Writer) (*whatifapi.Resolved, error) {
 	src := &servedSources{warn: warn, recordings: filepath.Dir(path)}
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant,
-		PrefillVPPlateau: f.vpPlateau, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle}}
+		PrefillVPPlateau: f.vpPlateau, ExperimentalTTFT: f.experimentalTTFT, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle}}
 	res, err := src.Resolve(ctx, in)
 	if err != nil && whatifapi.IsInputError(err) {
 		return nil, usageError{err}

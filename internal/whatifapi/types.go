@@ -34,6 +34,11 @@ type InputsRequest struct {
 	// prefill pod queued (the CLI's --prefill-vp-plateau): experimental and
 	// off by default. Every figure priced from it is flagged VPFromPlateau.
 	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
+	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
+	// off by default (the CLI's --experimental-ttft): for demonstration,
+	// not validated. Every prefill and TTFT figure is flagged
+	// ExperimentalTTFT.
+	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
 }
 
 // The source kinds.
@@ -81,6 +86,9 @@ type InputsResponse struct {
 	// PrefillVPPlateau says the source was read with V_P from the occupancy
 	// plateau (InputsRequest.PrefillVPPlateau); absent otherwise.
 	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
+	// ExperimentalTTFT says the source was read with the experimental TTFT
+	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
+	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's

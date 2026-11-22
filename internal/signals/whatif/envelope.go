@@ -403,14 +403,17 @@ func (e Envelope) Judge(f Figure) Validation {
 	if f.Class.Topology == TopologyAggregated {
 		return Validation{Outside: "aggregated variants: never measured"}
 	}
-	// A V_P from the occupancy plateau is experimental: whatever else the
-	// figure matches, that is what it is outside by.
-	if slices.Contains(f.Flags, VPFromPlateau) {
-		why, ok := e.OutsideFlags[VPFromPlateau]
-		if !ok {
-			why = string(VPFromPlateau) + ": experimental, never measured"
+	// The experimental TTFT model and a V_P from the occupancy plateau are
+	// experimental: whatever else the figure matches, that is what it is
+	// outside by.
+	for _, fl := range []Flag{ExperimentalTTFT, VPFromPlateau} {
+		if slices.Contains(f.Flags, fl) {
+			why, ok := e.OutsideFlags[fl]
+			if !ok {
+				why = string(fl) + ": experimental, never measured"
+			}
+			return Validation{Outside: why}
 		}
-		return Validation{Outside: why}
 	}
 	// A statistic no row of the kind measured is named against all of them.
 	var stats []float64

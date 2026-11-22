@@ -56,7 +56,10 @@ var (
 		// Set, it states nothing until the replay reads V_P from the plateau:
 		// each figure priced from it is then flagged VPFromPlateau, which
 		// no envelope row allows, so it, and it alone, reads outside.
-		vpPlateauFlag}
+		vpPlateauFlag,
+		// The same: every prefill and TTFT figure it prices is flagged
+		// ExperimentalTTFT, which no envelope row allows.
+		experimentalTTFTFlag}
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
 		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "assume-transfer-base",

@@ -82,6 +82,10 @@ const (
 	// planner's opt-in --prefill-vp-plateau, never validated against a
 	// client. A plateau that is only a lower bound carries VPLowerBound too.
 	VPFromPlateau Flag = "VPFromPlateau"
+	// ExperimentalTTFT is a figure priced with the planner's opt-in
+	// --experimental-ttft: the TTFT model's switches that are off by
+	// default, on for one answer. For demonstration, never validated.
+	ExperimentalTTFT Flag = "ExperimentalTTFT"
 	// AssumedImbalance is f supplied by the caller rather than learned.
 	AssumedImbalance Flag = "AssumedImbalance"
 	// AssumedPromptSpread is a prompt coefficient of variation the caller

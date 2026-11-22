@@ -544,6 +544,9 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		return pf
 	}
 	pf.variant = ps.Variant
+	if f.experimentalTTFT {
+		pf.assume("%s", experimentalTTFTNote())
+	}
 	pf.prefixAttention = ps.PrefixAttention
 	pf.computedHit, pf.promptWindow = ps.ComputedHit, ps.PromptWindow
 	pf.tierLoadOn = ps.TierLoad
@@ -563,6 +566,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 		return pf
 	}
 	pf.fleet.Prefill = p
+	pf.fleet.Prefill.ExperimentalTTFT = f.experimentalTTFT
 	pf.fleet.ProcessorSharing = processorSharing
 	// A rate past a knee priced from a lower-bound V_P is not priced, not
 	// saturated (issue llm-d-incubation/llm-d-scaling-manager#280).
@@ -1414,6 +1418,9 @@ func footerNote(fleets []*pricedFleet) string {
 	}
 	if slices.ContainsFunc(fleets, func(pf *pricedFleet) bool { return pf.fleet.Prefill.VPFromPlateau }) {
 		note += " V_P from the occupancy plateau (experimental, --" + vpPlateauFlag + "): every prefill and TTFT figure priced from it is OUTSIDE VALIDATED REGION."
+	}
+	if slices.ContainsFunc(fleets, func(pf *pricedFleet) bool { return pf.fleet.Prefill.ExperimentalTTFT }) {
+		note += " Experimental TTFT model (--" + experimentalTTFTFlag + "): every prefill and TTFT figure is OUTSIDE VALIDATED REGION."
 	}
 	return note
 }

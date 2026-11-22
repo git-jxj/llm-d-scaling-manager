@@ -54,7 +54,8 @@ func (f *answerFlags) foldFits(decodeVariant, prefillVariant string) []whatifapi
 	out := make([]whatifapi.FoldFit, 0, len(f.folds))
 	for c, st := range f.folds {
 		out = append(out, whatifapi.FoldFit{Cycle: c, At: st.At, Pricer: &servedState{st: st, decodeVariant: decodeVariant,
-			prefillVariant: prefillVariant, hint: f.hintSource(), imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter}})
+			prefillVariant: prefillVariant, hint: f.hintSource(), imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter,
+			experimentalTTFT: f.experimentalTTFT}})
 	}
 	return out
 }
@@ -144,6 +145,9 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 	// learn V_P from the plateau too.
 	if f.vpPlateau {
 		st.Replayed, st.Outside = append(st.Replayed, "--"+vpPlateauFlag), true
+	}
+	if f.experimentalTTFT {
+		st.Replayed, st.Outside = append(st.Replayed, "--"+experimentalTTFTFlag), true
 	}
 	return st, nil
 }

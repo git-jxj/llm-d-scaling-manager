@@ -130,6 +130,7 @@ var notOnTheTTFTPath = map[string]string{
 	"TierUnstable":              "decode line",
 	"TransferHeld":              "joint model",
 	"VPFromPlateau":             "planner only: the controller never reads V_P from the occupancy plateau",
+	"ExperimentalTTFT":          "planner only: the CLI's --experimental-ttft",
 }
 
 // Every flag the whatif package declares is on the TTFT series' list, the

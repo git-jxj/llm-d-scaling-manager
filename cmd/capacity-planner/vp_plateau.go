@@ -32,12 +32,16 @@ const vpPlateauUsage = "experimental, opt-in, unvalidated: where no prefill pod 
 // vpPlateauNote is the note an answer priced from the plateau's V_P carries.
 const vpPlateauNote = "prefill speed from the occupancy plateau (experimental, --" + vpPlateauFlag + ")"
 
-// plateauValidation labels a report row priced from the plateau's V_P with
-// the envelope's verdict on it, OUTSIDE VALIDATED REGION by VPFromPlateau.
-// A row priced otherwise, or one already judged, is left as it was.
+// plateauValidation labels a report row priced from the plateau's V_P, or
+// with --experimental-ttft, with the envelope's verdict on it, OUTSIDE
+// VALIDATED REGION by VPFromPlateau or ExperimentalTTFT. A row priced
+// otherwise, or one already judged, is left as it was.
 func plateauValidation(row *whatifapi.ReportRate, kind whatif.FigureKind, res whatif.Result) {
 	flags := resultFlags(res)
-	if row.Value == nil || row.Validation != nil || !slices.Contains(flags, whatif.VPFromPlateau) {
+	experimental := slices.ContainsFunc(flags, func(f whatif.Flag) bool {
+		return f == whatif.VPFromPlateau || f == whatif.ExperimentalTTFT
+	})
+	if row.Value == nil || row.Validation != nil || !experimental {
 		return
 	}
 	row.Validation = whatifapi.ValidationOf(whatif.DefaultEnvelope().Judge(whatif.Figure{Kind: kind, Flags: flags}))
@@ -45,8 +49,9 @@ func plateauValidation(row *whatifapi.ReportRate, kind whatif.FigureKind, res wh
 
 // replayOptions is the options the answer's replay runs with: the planner's
 // switches (learnreplay.PlannerSwitches), a test's (testReplaySwitches),
-// and with --prefill-vp-plateau the occupancy plateau on as well. With
-// neither, they are the zero options, as before the flag.
+// with --prefill-vp-plateau the occupancy plateau on as well, and with
+// --experimental-ttft every switch experimentalTTFT names. With none, they
+// are the zero options, as before the flags.
 func (f *answerFlags) replayOptions() learnreplay.Options {
 	sw := map[string]map[string]bool{}
 	for pkg, m := range testReplaySwitches {
@@ -54,6 +59,11 @@ func (f *answerFlags) replayOptions() learnreplay.Options {
 	}
 	if f.vpPlateau {
 		on(sw, learnreplay.PackageSaturation, saturation.SwitchPrefillVPOccupancyPlateau)
+	}
+	if f.experimentalTTFT {
+		for _, s := range experimentalTTFT() {
+			on(sw, s.pkg, s.name)
+		}
 	}
 	if len(sw) == 0 {
 		return learnreplay.Options{}

@@ -64,6 +64,15 @@ flagged `VPLowerBound` as well. It gets its own `inputsId`, so plans,
 reports, backtests and day plans on it never mix with the default's
 ([the page](page-and-commands.md#when-a-term-is-refused)).
 
+`experimentalTTFT: true` prices TTFT with the experimental TTFT model (the
+CLI's `--experimental-ttft`): the seven TTFT switches that are off by
+default, on for this source. It is for demonstration and not validated:
+every prefill and TTFT figure is flagged `ExperimentalTTFT` and its
+`validation` reads OUTSIDE VALIDATED REGION, the inputs' `assumed` lists
+the switches, and the answer carries `experimentalTTFT: true`. It gets its
+own `inputsId`, so plans, reports, backtests and day plans on it never mix
+with the default's ([the page](page-and-commands.md#when-a-term-is-refused)).
+
 The answer carries an `inputsId`. Price a scenario against it:
 
 ```bash

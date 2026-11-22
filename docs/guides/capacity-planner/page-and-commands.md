@@ -217,6 +217,40 @@ fleet that never queued would need, for example
 `capacity-planner at-replicas --recording run.jsonl.gz --ttft 2s@p90 --prefill-vp-plateau`;
 do not size from it alone.
 
+**An experimental TTFT model (`--experimental-ttft`, for demonstration).**
+The TTFT model has seven switches that are off by default, because none of
+them has passed the release's validation. `--experimental-ttft` turns all
+seven on for the one command you pass it to:
+
+- `prefill-vp-window-best`: V_P read over the whole recording, not only its
+  last 6 hours;
+- `prefill-vp-at-served-work`: V_P raised to the work the prefill Pods
+  served, where the prefill knee was raised to it;
+- `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit;
+- `slo-ttft-tier-load` and `slo-ttft-tier-kv-wait`: the load of a cached
+  token from a host, disk or peer tier, at the engine's measured wait for it;
+- `slo-ttft-ps-by-engine`: the prefill queue priced as processor sharing
+  where the engine's flags say it shares its steps;
+- `slo-ttft-hop-window-means`: the router hop read on the means of its
+  windows, on a fleet whose traffic is too noisy for the per-cycle gates.
+
+`slo-to-rate`, `replicas-to-slo`, `at-replicas`, `backtest`, `predict` and
+`day-plan` take it, and `POST /v1/inputs` takes `experimentalTTFT`
+([API](api.md)). Every prefill and TTFT figure of such an answer is flagged
+`ExperimentalTTFT` and reads OUTSIDE VALIDATED REGION (experimental TTFT
+model: processor sharing by engine config, router hop from window means,
+prefill speed raised to the served work; not validated). The assumed line
+lists the switches it turned on, the self-check names the flag, and the
+footer says so. Without the flag the output is the default's, byte for byte.
+
+How it read: on a production P/D fleet, fitted on the
+first 12 hours of a day and tested on the last 12, the TTFT it priced read
+about 1.1x what was measured at the mean, 1.3x at p90 and 1.6x at p95, never
+under. On a second split of the same day (fitted on 18 hours, tested on 6)
+it read under what was measured on the mean and p90, so it is not validated:
+use it to show what the model can do on such a fleet, never to size from it
+alone.
+
 **TTFT on a fleet that never goes quiet is not validated: prefill capacity
 V_P is a lower bound.** Such a fleet's prefill pods queue at every load, so
 the planner's prefill capacity is under what the fleet serves, and the decode

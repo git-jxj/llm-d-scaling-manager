@@ -1330,6 +1330,7 @@
     "AboveFlowControlOnset": "past the flow-control onset, where the router's wait is not priced",
     "AssumedA": "a assumed, not learned",
     "AssumedVP": "V_P assumed, not learned",
+    "ExperimentalTTFT": "experimental TTFT model: processor sharing by engine config, router hop from window means, prefill speed raised to the served work; not validated",
     "RouterHopAssumed": "router hop assumed, not learned",
     "VPFromPlateau": "prefill speed from the occupancy plateau, experimental and never validated"
   },

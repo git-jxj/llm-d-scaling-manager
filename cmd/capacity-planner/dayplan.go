@@ -42,6 +42,9 @@ type dayPlanFlags struct {
 	noSelfCheck   bool
 	// vpPlateau is --prefill-vp-plateau, as answerFlags' (vp_plateau.go).
 	vpPlateau bool
+	// experimentalTTFT is --experimental-ttft, as answerFlags'
+	// (experimental_ttft.go).
+	experimentalTTFT bool
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -82,6 +85,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.Float64Var(&f.inputTokens, "assume-input-tokens", 0, "price every bucket at this mean prompt, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "price every bucket at this mean output, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
+	fs.BoolVar(&f.experimentalTTFT, experimentalTTFTFlag, false, experimentalTTFTUsage)
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
 		return err
@@ -159,7 +163,7 @@ var resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*wh
 func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.Resolved, error) {
 	check := defaultSelfCheck && !f.noSelfCheck
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant, SelfCheck: &check,
-		PrefillVPPlateau: f.vpPlateau}
+		PrefillVPPlateau: f.vpPlateau, ExperimentalTTFT: f.experimentalTTFT}
 	src := &servedSources{warn: warn}
 	switch {
 	case f.recording != "" && f.window.prometheus != "":
