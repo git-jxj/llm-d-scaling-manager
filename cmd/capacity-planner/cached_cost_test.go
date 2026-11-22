@@ -57,14 +57,18 @@ func TestTTFT_CachedTokenCostAddsTheLoad(t *testing.T) {
 	assert.Equal(t, a, zero.fleet.Prefill.FixedLatency, "phi 0: as before")
 
 	// At the measured prompt the cached tokens are read from the computed
-	// side: 2000 computed at a 0.75 hit are 6000 cached.
+	// side: 2000 computed at a 0.75 hit are 6000 cached, whatever whole
+	// prompt the prefill variant's shape read over its own window (12000
+	// here, which at the same hit would be 9000).
 	st := cachedCostState(true)
 	st.Prefill[0].PromptTokens = 2000
+	st.Variants[0].Shape.InputTokens = 12000
 	f := fittedAt(0.5)
 	f.inputTokens = 0
 	m := hitFleetOf(t, st, hitDecode(0.5, 0), f)
 	require.Nil(t, m.refused)
 	assert.Equal(t, shapeMeasured, m.in.PromptSource)
+	require.Equal(t, 12000.0, m.fleet.Prefill.WholePromptTokens, "the shape's whole prompt is read beside it")
 	assert.InDelta(t, a+0.5*6000/100000.0, m.fleet.Prefill.FixedLatency, 1e-12)
 
 	// Not fitted: phi 0, and the answer says why.
