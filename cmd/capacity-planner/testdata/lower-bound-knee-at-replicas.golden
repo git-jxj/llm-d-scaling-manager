@@ -2,16 +2,18 @@ ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-
 decode engine   vLLM release not recorded
 prefill engine  vLLM release not recorded
 load judged     12.48 r/s, the p95 of the 573 of 580 cycles with traffic
-load seen       per cycle (1-minute rates): mean 3.00, p95 12.48, peak 15.38 r/s; busiest 2m1s (8 cycles): 12.96 r/s
+load seen       per cycle (1-minute rates): mean 3.00, p95 12.48, peak 15.38 r/s; p95 less counting noise 12.46; busiest 2m1s (8 cycles): 12.96 r/s
 SLO             TTFT p95 200.0 ms (policy)
 cell = TTFT p95 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
 mark = the SLO (TTFT p95 200.0 ms (policy)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
 summary     50%                   80%                    100%              seen
-  measured  6917/18.4 @2.02 MISS  18693/18.4 @3.23 MISS  -/18.4 @4.04 SAT  -/19.1 @12.48 SAT
+  measured  6922/18.4 @2.02 MISS  18698/18.4 @3.23 MISS  -/18.4 @4.04 SAT  -/19.1 @12.48 SAT
 verdicts
   measured  UNDER-PROVISIONED: at the p95 load of 12.5 r/s, 3.1x the fleet knee of 4.0 r/s, the fleet saturates; no fleet up to 32 replicas of each role holds.
 
 shape measured: IL 8016 OL 26, prefix hit 0.00 (measured, cycles 560-579)
+  the load's cycles (the p95 and above: 30, cycles 8-89): IL 1000 OL 1133, prefix hit 0.00
+  SHAPE/LOAD MISMATCH: the load is priced at a shape more than 20% off the traffic that made it; --shape load prices it at its own
 utilization at the load judged
   decode        KV fill 0.019 (band top 0.8), slots 4 of 152, wait p 0.000
   prefill       utilization pooled 3.09, worst pod 3.09 (f 1)
@@ -21,16 +23,16 @@ capacity            req/s     out tok/s   bound by
   decode knee       134.15    3428        decode band top at fill 0.798
   fleet knee        4.04      103         prefill
   operating (0.85)  3.44      88          0.85 x fleet knee (scaleUpThreshold)
-  max at SLO        target below the floor            target 0.2 s at or below the TTFT floor 2.782 s
+  max at SLO        target below the floor            target 0.2 s at or below the TTFT floor 2.787 s
 SLO vs load         r/s    TTFT p50/90 ms           TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee       2.02   824.2/5066.6             10.82/18.38       1.93 s
-  80% of knee       3.23   3755.6/14210.8           10.82/18.38       5.84 s
+  50% of knee       2.02   829.5/5071.9             10.82/18.38       1.93 s
+  80% of knee       3.23   3760.9/14215.9           10.82/18.38       5.84 s
   100% of knee      4.04   past a lower-bound knee  10.82/18.38       past a lower-bound knee
   load seen (309%)  12.48  past a lower-bound knee  11.22/19.07       past a lower-bound knee
 checks
   2 prefill + 2 decode  does not hold: 12.48 r/s is 3.1x the fleet knee of 4.04 r/s; TTFT p95 not judged (past a lower-bound knee)
 assumed: prompt cv 2 (no computed-prompt histogram); router hop 20 ms (no fit: NonPositiveHop); --assume-router-hop supplies one; flow control off (no queue series); Poisson arrivals
-flags: UnvalidatedTTFT; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; HeldLine; RouterHopAssumed; KVBoundSlots; SpreadBeyondProcessorSharing; FlowControlInferredOff; BelowFittedBand; AssumedPoissonArrivals; TransferHeld; PromptSpreadAbovePeak; CoarseTPOTBucket; MeanBoundedTPOTPercentile
+flags: UnvalidatedTTFT; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; HeldLine; RouterHopAssumed; KVBoundSlots; SpreadBeyondProcessorSharing; FlowControlInferredOff; BelowFittedBand; AssumedPoissonArrivals; TransferHeld; PromptSpreadAbovePeak; CoarseTPOTBucket; MeanBoundedTPOTPercentile; ShapeLoadMismatch
 
 not validated:
   - decode knee: not validated; it read 44% to 103% high on the goldens (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
