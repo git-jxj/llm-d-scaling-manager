@@ -645,6 +645,10 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// it moves nothing either: both S1 goldens price with no transfer reading
 	// to drop. Its unit test holds it (heldBy).
 	slo.SwitchTTFTMeasuredTransfer: nil,
+	// The prompt held at the longest its histogram allows, planner-only (off
+	// from the constructor) and not in PlannerSwitches, so it moves no
+	// golden: no replay turns it on. Its unit tests hold it (heldBy).
+	slo.SwitchTTFTPromptSupport: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -1988,6 +1992,14 @@ var heldBy = map[string][]heldTest{
 	// with no reading, it stands.
 	slo.SwitchTTFTMeasuredTransfer: {
 		{"../slo", "TestTTFT_TransferOmittedStandsUntilAReading"},
+	},
+	// The prompt's support: the second runs the switch on and off and
+	// asserts both; the whatif tests hold what the bound prices.
+	slo.SwitchTTFTPromptSupport: {
+		{"../slo", "TestTTFT_ThePromptSupportOffFromTheConstructor"},
+		{"../slo", "TestTTFT_ThePromptSupportSwitch"},
+		{"../../../signals/whatif", "TestTTFT_ThePromptsSupportDecidesProcessorSharing"},
+		{"../../../signals/whatif", "TestOwnTime_HeldAtTheLongestPrompt"},
 	},
 	// Issue ev-shindin/llm-scaling-manager#275's lift: an aggregated figure sizes once the GPS check has
 	// agreed. Both run the switch on and fail with it off: the first checks

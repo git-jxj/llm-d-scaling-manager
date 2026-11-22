@@ -1751,6 +1751,71 @@ sharing's and the first-come queue's, flagged `SpreadBeyondProcessorSharing`,
 until a run at a wide spread validates processor sharing there. S1's assumed
 cv 2 is always past it.
 
+**The prompt's support.** The cv a histogram reads is the widest its buckets
+allow: 8000-token prompts in a (5000, 10000] bucket read cv 0.31 against a
+true 0.06, so every 8k answer was flagged although processor sharing held on
+those steps, and the gamma of cv 0.31 put 19.8% of the prompts above 10000
+tokens, where the bucket proves there are none (p90 own time about 13% high
+on Qwen3-32B 8k). With the switch `slo-ttft-prompt-support` on (planner-only,
+off by default), the planner reads the longest prompt the histogram allows, the highest bucket bound that
+holds requests, over the mean (`whatif.PromptSpread.MaxRatio`), and prices it
+(`Prefill.PromptMaxRatio`):
+
+- the prompt is its gamma censored at that bound: the mass past it sits on it,
+  so no own time is longer than a prompt the histogram proves exists. The
+  gamma is stretched first (`holdScale`), so the held prompt's mean is still
+  the measured mean: censoring alone would read it 4.3% short at cv 0.31
+  held at 1.25, 3.4% at cv 0.61 held at 2;
+- processor sharing is priced alone, whatever the cv, while the bound is at
+  most 1.6 times the mean (`whatif.MaxPSPromptSupport`, under the 1.67 at
+  which the gamma at cv 0.25 has its 99th percentile) and the arrivals are no
+  burstier than Poisson (`Ca²` at most 1): no prompt is long enough for
+  chunked prefill to serve it first come. The 8k steps sit at 1.25. At `Ca²` 4
+  (the 8000-token phase run that bursty, backtested at `--arrival-cv2 4`)
+  processor sharing alone read p50 7% under (0.93) where the larger of it and
+  first come held, so a bursty step keeps the cv's rule, and is priced as
+  with the switch off: the router's wait is not priced in the prefill
+  (`--price-router-wait`, `--router-wait-in-prefill`) and the onset is the
+  lower of processor sharing and first come. The cut at 1 is where the
+  evidence brackets it (`Ca²` 1 held, 4 did not), not a calibrated threshold.
+
+With no bound (mass past the last bucket, or no histogram) the gamma runs on
+and the cv decides, as before. The queue's `Cs²` stays the cv read, the
+widest the buckets allow.
+
+**Off by default, in the planner too.** A backtest prices each step at its
+own histogram's cv and bound (`whatifapi.Knobs.PromptMaxRatio`). On the
+Qwen3-32B and 0.6B staircase backtests (the split, and the phases fitted on
+their warm-ups), turning the switch on moves 14 TTFT figures that read at or
+above measured to under it, the lowest at 0.92 of measured (15 before the
+bound cleared processor sharing only at Poisson arrivals). The hold moves
+them, not processor sharing: with the bound kept from clearing processor
+sharing at all, the same 14 go under at the same ratios, and with the bound
+clearing it but no hold, nothing at `Ca²` 1 moves by more than 1%; at `Ca²` 4 it read p50 under,
+which is why the bound now clears only at `Ca²` up to 1. The wait
+side cannot be what reads them low either: at `Ca²` up to 1 the
+processor-sharing stages do not read `Cs²` (`psBurst`, and the variance's
+`max(1, Cs²)`), and a held `Cs²` on first come would only lower its price.
+
+The processor-sharing tail is not what reads low. Against the tandem
+simulation of bucket B (two prefill pods, `Ca²` 1, 13.3 to 31.6 r/s), with
+the prompt drawn from the held gamma itself (cv 0.3 held at 1.25), the model
+reads p90 +0.6 to +1.9% and p95 -2.3 to +0.3% of the simulation; against a
+simulation at the true prompt (cv 0.058) it reads p90 +5.0 to +8.7% and p95
++3.2 to +8.0% (+8.7 to +16.5% unheld). So the held model is still above an
+exact processor-sharing fleet serving the prompts the pods were sent, and
+the pods' measured tail is above that: the cv the buckets' width reads was
+standing in for a spread of the service time itself, which no term prices.
+
+The 14 also sit inside the measurement's resolution: each one's predicted
+and measured figure fall in the same bucket of the router's TTFT histogram
+((0.1, 0.25] s on the 0.6B 8000-token phases; (0.25, 0.5], (1, 2.5] and
+(5, 7.5] s on Qwen3-32B; (0.04, 0.06] s on a 0.6B 1000-token phase), and the
+measured percentile is interpolated inside that bucket. The switch stays off
+under the rule that nothing reading at or above measured goes under; a
+priced service-time spread, or scoring a step at the histogram's own
+resolution, is what would turn it on.
+
 **Checked against a simulation** of the same tandem stages
 (`TestPS_AgainstATandemSimulation`, 180,000 requests a point, `V_P` unmargined):
 

@@ -1813,6 +1813,7 @@ logVerbosity
 logged
 long
 longer
+longest
 longestQueuedRun
 loop
 lose
@@ -2898,6 +2899,7 @@ slo-ttft-measured-spread
 slo-ttft-measured-transfer
 slo-ttft-price
 slo-ttft-processor-sharing
+slo-ttft-prompt-support
 slo-ttft-ps-onsets
 slo-ttft-quiet-transfer
 slo-ttft-router-wait

@@ -433,6 +433,7 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 	}
 	if a.PromptCV != nil {
 		f.assumePromptCV = *a.PromptCV
+		f.statedPromptMaxRatio = k.PromptMaxRatio
 		set("assume-prompt-cv")
 	}
 	if a.RouterHop != nil {

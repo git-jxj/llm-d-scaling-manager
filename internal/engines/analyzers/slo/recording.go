@@ -103,9 +103,10 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer,
 // SwitchTTFTProcessorSharing, SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
-// SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTJointInputs and
-// SwitchKVPerRequestOutputDispersion; a name it does not know is an error,
-// and sets nothing. Never called on a production path; a test holds that.
+// SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTJointInputs,
+// SwitchTTFTPromptSupport and SwitchKVPerRequestOutputDispersion; a name it
+// does not know is an error, and sets nothing. Never called on a production
+// path; a test holds that.
 func (a *Analyzer) SetSwitchesForReplay(switches map[string]bool) error {
 	rest := maps.Clone(switches)
 	fields := a.switchFields()
@@ -167,6 +168,7 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		// (ttft.go).
 		SwitchTTFTPrice:            &a.ttftPrice,
 		SwitchTTFTMeasuredSpread:   &a.ttftMeasuredSpread,
+		SwitchTTFTPromptSupport:    &a.ttftPromptSupport,
 		SwitchTTFTMeasuredTransfer: &a.ttftMeasuredTransfer,
 		SwitchTTFTQuietTransfer:    &a.ttftQuietTransfer,
 		// The decode term of a TTFT on a decode line (ttft.go).

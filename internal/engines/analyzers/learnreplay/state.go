@@ -360,6 +360,19 @@ type shapeSample struct {
 // sequences than its cap (MTP, wide EP), so there is no backtest to turn it
 // on with (issue llm-d-incubation/llm-d-scaling-manager#302).
 //
+// slo.SwitchTTFTPromptSupport is planner-only too but not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#304): it holds the prompt at the
+// longest its computed-token histogram allows, keeping the measured mean,
+// and a bound at whatif.MaxPSPromptSupport or under prices processor sharing
+// alone at Poisson arrivals. On the Qwen3-32B and 0.6B staircase backtests,
+// each step priced at its own histogram's cv and bound, 14 TTFT figures that
+// read at or above measured read under it, the lowest at 0.92 of measured.
+// The hold moves them, not processor sharing (the same 14 go under with the
+// bound kept from clearing it), and each lands in the same router histogram
+// bucket as its measured figure: the bucket-wide cv was standing in for a
+// spread of the service time that no term prices. It stays off until one
+// does (docs/proposals/slo-capacity-planner-ttft.md).
+//
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
 // llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
@@ -506,6 +519,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		ranges   = map[string]ShapeRange{}
 		series   = map[string][]CycleShape{}
 	)
+	ttft.promptSupport = opts.Switches[PackageSLO][slo.SwitchTTFTPromptSupport]
 	// Read once: the switches are set before the replay starts.
 	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
 	censored := opts.Switches[PackageSaturation][saturation.SwitchTPOTRatioCensored]

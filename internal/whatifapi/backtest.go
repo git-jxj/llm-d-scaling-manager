@@ -730,19 +730,21 @@ func refitRequest(e *inputsEntry, cycle int, cutoff time.Time) (InputsRequest, e
 
 // backtestQuestion is a backtest's request checked against its sides.
 type backtestQuestion struct {
-	fit, test   *inputsEntry
-	cutoff      time.Time
-	split       string
-	step        time.Duration
-	settle      time.Duration
-	measured    string
-	target      *ReportTarget
-	cv2         *float64
-	promptCV    *float64
-	config      BacktestConfig
-	assumed     []string
-	testIndices []int
-	assume      Assume
+	fit, test *inputsEntry
+	cutoff    time.Time
+	split     string
+	step      time.Duration
+	settle    time.Duration
+	measured  string
+	target    *ReportTarget
+	cv2       *float64
+	promptCV  *float64
+	// promptMaxRatio is promptCV's bound (stepInputs.promptMaxRatio).
+	promptMaxRatio float64
+	config         BacktestConfig
+	assumed        []string
+	testIndices    []int
+	assume         Assume
 	// targetAsked is the target as the answer names it.
 	targetAsked *Objective
 	// source is the latency scored against; measureWindow, when above 0,
@@ -856,7 +858,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	// The test's prompt spread is an input, its lengths, never its latency:
 	// pooled over the test's cycles, for a step whose own reads none.
 	if whole := stepInputsOf(seriesAt(test.series, q.testIndices)); whole.promptCV != nil {
-		q.promptCV = whole.promptCV
+		q.promptCV, q.promptMaxRatio = whole.promptCV, whole.promptMaxRatio
 	}
 	if a := req.Assume; a != nil {
 		// Checked as a plan's, at a TPOT percentile (a backtest prices its
@@ -1067,7 +1069,7 @@ func (q *backtestQuestion) layout() ([]stepOf, []time.Time, time.Time) {
 // predictSteps prices every step of the test from its inputs alone.
 func (q *backtestQuestion) predictSteps(ctx context.Context) ([]stepOf, []BacktestStep, error) {
 	steps, changes, first := q.layout()
-	p := &predictor{pricer: q.fit.pricer, fleets: map[predictKey]Fleet{}, cv2: q.cv2, promptCV: q.promptCV,
+	p := &predictor{pricer: q.fit.pricer, fleets: map[predictKey]Fleet{}, cv2: q.cv2, promptCV: q.promptCV, promptMaxRatio: q.promptMaxRatio,
 		headroom: q.fit.doc.Policy.Headroom, assume: q.assume}
 	out := make([]BacktestStep, 0, len(steps))
 	var fl fluid
@@ -1394,6 +1396,10 @@ type stepInputs struct {
 	// promptCV is the step's own prompt spread, read from its prefill
 	// pods' computed-token histograms; nil where they read none.
 	promptCV *float64
+	// promptMaxRatio is the longest prompt over the mean the same
+	// histograms bound (whatif.PromptSpread.MaxRatio), raised to
+	// promptCVGrid; 0 with none.
+	promptMaxRatio float64
 	// otherPods says variants other than the priced ones served in it.
 	otherPods bool
 }
@@ -1421,6 +1427,7 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 	if requests > 0 {
 		if sp := whatif.ReadPromptSpread(pooled, computed/requests); !sp.Assumed {
 			in.promptCV = ptr(math.Round(sp.CV/promptCVGrid) / (1 / promptCVGrid))
+			in.promptMaxRatio = maxRatioOnGrid(sp.MaxRatio)
 		}
 	}
 	return in
@@ -1430,11 +1437,23 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 // steps of nearly one spread share a fleet.
 const promptCVGrid = 0.05
 
+// maxRatioOnGrid is a prompt bound raised to promptCVGrid, so that steps of
+// nearly one bound share a fleet: raised, as a higher bound prices more of
+// the gamma's tail, never less than the histogram allows. 0 stays 0.
+func maxRatioOnGrid(r float64) float64 {
+	if !(r > 0) {
+		return 0
+	}
+	// The tolerance keeps a bound already on the grid (1.25) on it.
+	return math.Ceil(r/promptCVGrid-1e-9) / (1 / promptCVGrid)
+}
+
 // predictKey is one fleet a backtest prices.
 type predictKey struct {
 	np, nd         int
 	prompt, output float64
 	promptCV       float64
+	promptMaxRatio float64
 	q              float64
 }
 
@@ -1445,6 +1464,8 @@ type predictor struct {
 	fleets   map[predictKey]Fleet
 	cv2      *float64
 	promptCV *float64
+	// promptMaxRatio is promptCV's bound, for a step whose own reads none.
+	promptMaxRatio float64
 	// headroom is the fit's: it moves no TTFT or TPOT priced at a rate.
 	headroom float64
 	// assume is the request's typed terms.
@@ -1476,13 +1497,15 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		if in.hasShape {
 			k.prompt, k.output = shapeKnob(in.prompt), shapeKnob(in.output)
 		}
+		// A spread read from a histogram carries the bound that histogram
+		// sets on the prompt; a typed one (assume.promptCV) carries none.
 		cv := p.assume.PromptCV
 		if cv == nil {
 			switch {
 			case in.promptCV != nil:
-				cv = ptr(max(*in.promptCV, promptCVGrid))
+				cv, k.promptMaxRatio = ptr(max(*in.promptCV, promptCVGrid)), in.promptMaxRatio
 			case p.promptCV != nil:
-				cv = p.promptCV
+				cv, k.promptMaxRatio = p.promptCV, p.promptMaxRatio
 			}
 		}
 		// The key is the spread priced: none (-1, the fit's) or its value.
@@ -1495,6 +1518,7 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 				ArrivalCV2: p.cv2, Headroom: p.headroom}
 			kn.Assume = p.assume
 			kn.Assume.PromptCV = cv
+			kn.PromptMaxRatio = k.promptMaxRatio
 			var err error
 			if fl, err = p.pricer.Fleet(kn); err != nil {
 				return out, err
