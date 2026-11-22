@@ -18,6 +18,11 @@ failure this repo has already paid for twice, in a benchmark that installed a
 different binary than it claimed and a doc that told people to apply a CRD that
 does not exist.
 
+The other pages beside a guide's README (any `*.md` in its directory) render
+from the same guide.yaml, so a guide can split into pages without its commands
+falling out of the check. A step with `lang:` (for example `powershell`) is
+fenced in that language; the default is bash.
+
 Usage:
     python hack/render-guides.py            # rewrite READMEs in place
     python hack/render-guides.py --check    # fail if any README is out of date
@@ -82,6 +87,11 @@ def block_for(node):
     elif isinstance(node, list):
         steps = [v for v in node if isinstance(v, dict) and "run" in v]
 
+    langs = {str(step.get("lang", "bash")) for step in steps}
+    if len(langs) > 1:
+        raise SystemExit(f"one block mixes languages {sorted(langs)}: give each its own marker")
+    lang = langs.pop() if langs else "bash"
+
     lines = []
     for step in steps:
         note = step.get("note")
@@ -91,7 +101,7 @@ def block_for(node):
         lines.append("")
     while lines and lines[-1] == "":
         lines.pop()
-    return "```bash\n" + "\n".join(lines) + "\n```\n"
+    return f"```{lang}\n" + "\n".join(lines) + "\n```\n"
 
 
 def render(readme: Path, guide: dict) -> str:
@@ -157,13 +167,14 @@ def main():
                   file=sys.stderr)
             return 1
         guide = yaml.safe_load(guide_yaml.read_text(encoding="utf-8")) or {}
-        new = render(readme, guide)
-        if new != readme.read_text(encoding="utf-8"):
-            if args.check:
-                stale.append(str(readme))
-            else:
-                readme.write_text(new, encoding="utf-8", newline="")
-                print(f"rendered {readme.relative_to(GUIDES_DIR.parent.parent)}")
+        for page in sorted(guide_yaml.parent.glob("*.md")):
+            new = render(page, guide)
+            if new != page.read_text(encoding="utf-8"):
+                if args.check:
+                    stale.append(str(page))
+                else:
+                    page.write_text(new, encoding="utf-8", newline="")
+                    print(f"rendered {page.relative_to(GUIDES_DIR.parent.parent)}")
         rendered += 1
 
     if args.check and stale:

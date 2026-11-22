@@ -10,7 +10,7 @@ Find the message you see; the sections follow the order you meet them.
 | Serve exits: "serve needs --prometheus, --recordings or both" | Give a source: a recordings directory, a Prometheus, or both. |
 | Serve exits: "--from: serve reads the window each request names" (or `--to`) | Drop `--from` and `--to`. The page's **Source**, or the request's `source`, names the window. |
 | Serve exits: `--recordings` is not a directory | Give a directory that holds the recordings (`run.jsonl.gz`), not a file. |
-| Serve exits: an address that is not loopback needs `--auth=kubernetes` | Keep `--listen 127.0.0.1:8080` and [tunnel to it](README.md#run-it-for-others), or set up [Kubernetes authentication](api.md#kubernetes-authentication). In a container whose port is published to `127.0.0.1` only, the image's default command already sets `--listen-all-in-container`. |
+| Serve exits: an address that is not loopback needs `--auth=kubernetes` | Keep `--listen 127.0.0.1:8080` and [tunnel to it](install-options.md#run-it-for-others), or set up [Kubernetes authentication](api.md#kubernetes-authentication). In a container whose port is published to `127.0.0.1` only, the image's default command already sets `--listen-all-in-container`. |
 | Serve exits: `--listen-all-in-container` refused | It is refused in a Kubernetes Pod, with `--auth=kubernetes`, and with any address but `0.0.0.0:PORT`, `[::]:PORT` or `:PORT`. In a Pod use `--auth=kubernetes` with TLS. |
 | Serve exits: `--auth=kubernetes` needs TLS | Give `--tls-cert-file` and `--tls-key-file`. |
 | Serve exits: `--plan-budget` out of range | Give 0 (the default, 5m) up to 9m. |

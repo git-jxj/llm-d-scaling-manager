@@ -4,6 +4,58 @@ Run one planner in a namespace and let people open it from their browser.
 They need nothing but `kubectl` (or an OpenShift login). The planner serves
 the recordings you copy into it, and it never changes the cluster.
 
+## Quick start
+
+On plain Kubernetes, as the admin of one namespace, with `kubectl` 1.27 or
+later, `git` and a default StorageClass. About two minutes.
+
+<!-- guide:cluster.install start -->
+```bash
+# Plain Kubernetes, as the admin of one namespace. The planner listens on 127.0.0.1 inside its Pod; a Role and a
+# RoleBinding let every authenticated user port-forward to that Pod, capacity-planner-0, and no other.
+# Skip the create if your cluster admin made the namespace.
+export NS=capacity-planner V=<release, v0.12.0 or later>
+export SRC=https://github.com/llm-d-incubation/llm-d-scaling-manager//config/capacity-planner
+kubectl create namespace ${NS}
+kubectl apply -n ${NS} -k "${SRC}/kubernetes?ref=${V}"
+kubectl -n ${NS} rollout status statefulset/capacity-planner
+```
+<!-- guide:cluster.install end -->
+
+<!-- guide:cluster.sample start -->
+```bash
+# Load the sample through the loader, a short-lived Pod that mounts the recordings volume read-write.
+# Your own recordings go in the same way.
+curl -fsSL -o ttft-staircase-b-on.jsonl.gz \
+  https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz
+kubectl apply -n ${NS} -k "${SRC}/loader?ref=${V}"
+kubectl -n ${NS} wait --for=condition=Ready pod/capacity-planner-loader --timeout=120s
+kubectl -n ${NS} cp ttft-staircase-b-on.jsonl.gz capacity-planner-loader:/recordings/ttft-staircase-b-on.jsonl.gz
+kubectl -n ${NS} delete pod capacity-planner-loader
+```
+<!-- guide:cluster.sample end -->
+
+Then everyone who opens it runs, on their own machine:
+
+<!-- guide:cluster.open start -->
+```bash
+# Anyone allowed, from their own machine. Leave it running, then open http://localhost:8080. Use localhost or
+# 127.0.0.1: the planner refuses other names. If port 8080 is busy, use 9090:8080 and open http://localhost:9090.
+kubectl -n <namespace> port-forward pod/capacity-planner-0 8080:8080
+```
+<!-- guide:cluster.open end -->
+
+In **Source**, pick `ttft-staircase-b-on.jsonl.gz` and press **Load**.
+[Read the planner's answer](read-the-answer.md) walks through what it says.
+
+On OpenShift, the planner sits behind a Route and the cluster's login
+instead: install it as in [OpenShift](#openshift), load recordings the same
+way with `oc` and the `openshift/loader` overlay, and open the Route's address ([Open it](#open-it)).
+
+The rest of this page is the detail: who may do what, the prerequisites in
+full, letting others load or upload recordings, narrowing who can open it,
+hiding real names, upgrading and removing it.
+
 ## Who does what
 
 | Step | Who | How often |
@@ -331,7 +383,7 @@ kubectl -n ${NS} delete secret capacity-planner-proxy
   privilege escalation, memory limited, and the recordings mounted
   read-only.
 - **Recordings only.** The in-cluster planner does not read Prometheus. To
-  plan from a live window, run it [on your machine](README.md#start-the-planner).
+  plan from a live window, run it [on your machine](install-options.md#start-the-planner).
   People can also upload a recording from the page, if the admin
   [turns it on](#or-let-people-upload-from-the-page).
 - **Kubernetes authentication.** `serve --auth=kubernetes`
