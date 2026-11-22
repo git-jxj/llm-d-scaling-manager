@@ -11,8 +11,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestPrometheusReachable(t *testing.T) {
@@ -151,6 +153,47 @@ func TestPodMonitorPort(t *testing.T) {
 			f := newFixture(t)
 			tc.change(f)
 			r := only(t, f.run(t), "podmonitor.port")
+			if r.Status != tc.want || !strings.Contains(r.Detail, tc.detail) {
+				t.Errorf("got %s %q, want %s containing %q", r.Status, r.Detail, tc.want, tc.detail)
+			}
+		})
+	}
+}
+
+// TestModelMetricsFreshPodMonitor: no series in a namespace whose selecting
+// PodMonitor is younger than two minutes plus its scrape interval (10s here)
+// is a WARN with the age, not a FAIL: an install right after admin-setup
+// created the PodMonitor, while Prometheus has not scraped it yet. Older, or
+// a PodMonitor that selects none of the model servers, still FAILs.
+func TestModelMetricsFreshPodMonitor(t *testing.T) {
+	cases := []struct {
+		name    string
+		age     time.Duration
+		selects bool
+		want    Status
+		detail  string
+	}{
+		{"30s old", 30 * time.Second, true, Warn, "PodMonitor scaling-manager-modelserver-metrics is 30s old: Prometheus has not scraped the new PodMonitor yet; re-run in ~2 min"},
+		{"2m5s old, inside the interval", 2*time.Minute + 5*time.Second, true, Warn, "is 2m5s old"},
+		{"2m11s old, past grace and interval", 2*time.Minute + 11*time.Second, true, Fail, "no vllm: series"},
+		{"10 min old", 10 * time.Minute, true, Fail, "no vllm: series"},
+		{"fresh but selects nothing", 30 * time.Second, false, Fail, "no vllm: series"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.prom.series = nil
+			f.remove("PodMonitor", "scaling-manager-modelserver-metrics")
+			pm := podMonitor(testNS, "scaling-manager-modelserver-metrics", "modelserver",
+				map[string]string{"app.kubernetes.io/component": "modelserver-metrics", "release": "kps"})
+			eps := pm.Object["spec"].(map[string]any)["podMetricsEndpoints"].([]any)
+			eps[0].(map[string]any)["interval"] = "10s"
+			if !tc.selects {
+				pm.Object["spec"].(map[string]any)["selector"] = map[string]any{"matchLabels": map[string]any{"app": "other"}}
+			}
+			pm.SetCreationTimestamp(metav1.NewTime(testNow.Add(-tc.age)))
+			f.dyn = append(f.dyn, pm)
+			r := only(t, f.run(t), "metrics.model")
 			if r.Status != tc.want || !strings.Contains(r.Detail, tc.detail) {
 				t.Errorf("got %s %q, want %s containing %q", r.Status, r.Detail, tc.want, tc.detail)
 			}
