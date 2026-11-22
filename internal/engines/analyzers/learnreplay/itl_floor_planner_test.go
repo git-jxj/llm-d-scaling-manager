@@ -33,7 +33,8 @@ func floorPinnedLines(t *testing.T, fixture, ns, model string, sw map[string]map
 	st, early, err := StatesFrom(context.Background(), BytesSource(raw), Options{Switches: sw},
 		StateQuery{Namespace: ns, ModelID: model}, every)
 	require.NoError(t, err)
-	states := []*State{st}
+	states := make([]*State, 0, len(early)+1)
+	states = append(states, st)
 	for _, s := range early {
 		states = append(states, s)
 	}
