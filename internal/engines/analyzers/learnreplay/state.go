@@ -333,6 +333,16 @@ type shapeSample struct {
 //     windows whose prefill pods held no queue. The planner reads its own
 //     decode term windows (state_ttft.go), so it reads the switch from here
 //     even where the recording has no slo analyzer to set it on.
+//   - slo.SwitchTTFTDecodeSpeculatingHeld: on a decode fleet that
+//     speculates (MTP), whose every row D's fit refuses, the decode
+//     engine's measured TTFT of a quiet speculating row is held for D, its
+//     ITL read per accepted token, in place of T_xfer + ITL. It only adds a
+//     held D where the term was omitted, so every TTFT figure it moves
+//     rises. No committed recording has a decode row that speculates: on the
+//     cross-validation's 66 public runs no figure moved. On a P/D recording
+//     with MTP on every decode pod, the held figure, fitted on the first half,
+//     read the decode engine's measured TTFT of the second within 20% on
+//     most five-minute steps, where the old sum read a few percent of it.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
@@ -384,14 +394,6 @@ type shapeSample struct {
 // bucket as its measured figure: the bucket-wide cv was standing in for a
 // spread of the service time that no term prices. It stays off until one
 // does (docs/proposals/slo-capacity-planner-ttft.md).
-//
-// slo.SwitchTTFTDecodeSpeculatingHeld is planner-only and not listed: on a
-// decode fleet that speculates (MTP), every decode row is refused by D's
-// fit, and with it the decode engine's measured TTFT of a quiet speculating
-// row is held for D, its ITL read per accepted token. No committed recording
-// has a decode row that speculates, so no golden moves with it on; it stays
-// off until a backtest of a recording that speculates shows it reads no
-// figure under what was measured.
 //
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
@@ -449,7 +451,8 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchITLBaselineFromFloor:    false,
 		saturation.SwitchITLFloorBaselineHeld:    false,
 	}, PackageSLO: {
-		slo.SwitchTTFTHopUnqueued: true,
+		slo.SwitchTTFTHopUnqueued:           true,
+		slo.SwitchTTFTDecodeSpeculatingHeld: true,
 	}}
 }
 

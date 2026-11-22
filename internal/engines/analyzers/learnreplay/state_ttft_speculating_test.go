@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
@@ -45,4 +46,9 @@ func TestTerm_TheDecodeSpeculatingHeldSwitch(t *testing.T) {
 	step := term(true, false)
 	assert.InDelta(t, 0.04, step.FromITL, 1e-12, "a per-step line reads the step as it is")
 	assert.Equal(t, whatif.AssumedDecodeStepSlope, step.PerStep)
+}
+
+// The planner turns the switch on (StatesFrom reads it from PlannerSwitches).
+func TestPlannerSwitches_TheDecodeSpeculatingHeldIsOn(t *testing.T) {
+	assert.True(t, PlannerSwitches()[PackageSLO][slo.SwitchTTFTDecodeSpeculatingHeld])
 }

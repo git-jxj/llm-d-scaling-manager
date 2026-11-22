@@ -1216,6 +1216,16 @@ priced.
   3,300 staircase rows, 3% at 6 to 9 waiting read over 30 ms above the fit, against
   44% at 10 to 14 and 81% at 15 to 24, and none under 0.4 s against 49% at 0.4 to
   0.8 s. Both gates are stated from one model.
+- **A speculating row is held, never fitted.** With MTP or a draft model, vLLM's
+  ITL is a step that emits 1 + the accepted draft tokens, while the planner's
+  line is per accepted token, so such a row stays out of the fit. Where every
+  decode row speculates, the planner (`slo-ttft-decode-speculating-held`, on in
+  the planner only) holds a quiet speculating row's `AvgTTFT` for `D`, the
+  decode engine's own measured TTFT. The slope climbs from its ITL over
+  1 + accepted tokens, and is scaled by the same tokens so that it stays per
+  second of the step. Before it, such a fleet had no `D` and the old sum stood
+  for it: a step of the per-token line, a few percent of the measured decode
+  TTFT.
 - **What a slope needs.** Step time must span 1.5x. A fleet at flat load stays
   refused (`NoStepSpread`) and prices the assumed slope. One prompt length gives
   `base` as the whole prompt's part, held at the shortest prompt and scaled up

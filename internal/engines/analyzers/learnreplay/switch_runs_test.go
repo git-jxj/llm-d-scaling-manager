@@ -1278,9 +1278,10 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// from the constructor; the planner reads it for its own windows).
 	slo.SwitchTTFTHopUnqueued: nil,
 	// A speculating decode row (MTP) held for the decode term's D, planner-
-	// only and off from the constructor: every golden replay runs it off, and
-	// no committed recording has a decode row that speculates, so off alone
-	// from all on moves nothing. Its unit tests hold it (heldBy).
+	// only and off from the constructor (the planner turns it on): every
+	// golden replay runs it off, and no committed recording has a decode row
+	// that speculates, so off alone from all on moves nothing. Its unit tests
+	// hold it (heldBy).
 	slo.SwitchTTFTDecodeSpeculatingHeld: nil,
 	// llm-d-incubation/llm-d-scaling-manager#309: the planner's ITL batch
 	// term past the roofline. No analyzer reads it, so no golden replay
@@ -1727,6 +1728,7 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestTermFromEstimate_ASpeculatingRow"},
 		{"../../../signals/whatif", "TestTerm_ASpeculatingRowPricesTheMeasuredTTFT"},
 		{".", "TestTerm_TheDecodeSpeculatingHeldSwitch"},
+		{".", "TestPlannerSwitches_TheDecodeSpeculatingHeldIsOn"},
 	},
 	saturation.SwitchPrefillALowLoadByRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},

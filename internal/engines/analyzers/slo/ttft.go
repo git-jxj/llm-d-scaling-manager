@@ -139,8 +139,9 @@ const SwitchTTFTHopUnqueued = "slo-ttft-hop-unqueued"
 // as before, a fleet whose every decode row speculates has no D, and the old
 // sum T_xfer + ITL(k) stands for it: on a P/D recording with MTP on every
 // decode pod, a fraction of the decode engine's measured TTFT. Planner-only:
-// off from the constructor; the slo analyzer's line is per step, so it reads
-// the ITL as it is.
+// off from the constructor; the capacity planner's replay turns it on
+// (learnreplay.PlannerSwitches). The slo analyzer's line is per step, so it
+// reads the ITL as it is.
 const SwitchTTFTDecodeSpeculatingHeld = "slo-ttft-decode-speculating-held"
 
 // SwitchTTFTDecodeGateCharge is the replay switch for
