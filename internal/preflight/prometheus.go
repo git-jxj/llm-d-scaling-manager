@@ -435,6 +435,10 @@ func checkModelMetrics(ctx context.Context, s *state) ([]Result, string) {
 			// pod list is not "none", and not "some" either.
 			unknowns = append(unknowns, ns)
 		case len(have[ns]) == 0:
+			if fresh := freshPodMonitor(ctx, s, ns, pods[ns]); fresh != "" {
+				warns = append(warns, ns+": no vllm: series yet, and "+fresh)
+				continue
+			}
 			fails = append(fails, ns)
 		case len(have[ns]) < len(requiredModelMetrics):
 			var missing []string
@@ -463,6 +467,70 @@ func checkModelMetrics(ctx context.Context, s *state) ([]Result, string) {
 		return []Result{{Status: Pass, Detail: "vllm: series present in " + listText(ok, 8) + " (model-server pods not listed: " + podsWhy + ")"}}, ""
 	}
 	return []Result{{Status: Pass, Detail: "vllm: series present in " + listText(ok, 8)}}, ""
+}
+
+// podMonitorScrapeGrace is how long Prometheus may take to pick up a new
+// PodMonitor and scrape it once, before one scrape interval: the operator
+// reloads the configuration, then the first scrape lands.
+const podMonitorScrapeGrace = 2 * time.Minute
+
+// freshPodMonitor names a PodMonitor in ns that selects one of the model
+// servers and is younger than podMonitorScrapeGrace plus its scrape
+// interval, with its age; empty when there is none. An install right after
+// admin-setup created the PodMonitor finds no series only because
+// Prometheus has not scraped it yet, which is not a missing scrape.
+func freshPodMonitor(ctx context.Context, s *state, ns string, pods []corev1.Pod) string {
+	if len(pods) == 0 {
+		return ""
+	}
+	list, err := s.env.Dynamic.Resource(podMonitorGVR).Namespace(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return ""
+	}
+	now := s.env.Now()
+	for i := range list.Items {
+		pm := &list.Items[i]
+		sel, ok := podMonitorSelector(pm)
+		if !ok {
+			continue
+		}
+		selects := false
+		for _, p := range pods {
+			if sel.Matches(labels.Set(p.Labels)) {
+				selects = true
+				break
+			}
+		}
+		if !selects {
+			continue
+		}
+		grace := podMonitorScrapeGrace + podMonitorInterval(pm)
+		age := now.Sub(pm.GetCreationTimestamp().Time)
+		if age >= 0 && age < grace {
+			return fmt.Sprintf("PodMonitor %s is %s old: Prometheus has not scraped the new PodMonitor yet; re-run in ~2 min (it FAILs once it is %s old and still no series arrive)",
+				pm.GetName(), age.Round(time.Second), grace.Round(time.Second))
+		}
+	}
+	return ""
+}
+
+// podMonitorInterval is the longest scrape interval of a PodMonitor's
+// endpoints; 0 when none is set or none parses (Prometheus's default then
+// applies, which this does not know).
+func podMonitorInterval(pm *unstructured.Unstructured) time.Duration {
+	eps, _, _ := unstructured.NestedSlice(pm.Object, "spec", "podMetricsEndpoints")
+	var longest time.Duration
+	for _, e := range eps {
+		m, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		v, _ := m["interval"].(string)
+		if d, err := time.ParseDuration(v); err == nil && d > longest {
+			longest = d
+		}
+	}
+	return longest
 }
 
 // checkPodMonitorPort: in each namespace that runs model servers, a
@@ -556,8 +624,9 @@ func podMonitorInNamespace(ctx context.Context, s *state, ns string, pods []core
 		}
 	}
 	if len(good) == 0 {
-		return Result{Status: Fail, Detail: ns + ": " + strings.Join(bad, "; "),
-			Fix: "name the model server's metrics port as the PodMonitor scrapes it, or add a PodMonitor of your own for the port it uses"}
+		return Result{Status: Fail,
+			Detail: ns + ": " + strings.Join(bad, "; ") + ". A PodMonitor that names a port no container declares has no target at all: nothing is scraped, and nothing reports an error",
+			Fix:    modelServerPortFix(s, pods)}
 	}
 	if !s.promUsable {
 		return Result{Status: Pass, Detail: fmt.Sprintf("%s: PodMonitor %s selects the model servers on a port they declare (targets not checked: %s)", ns, strings.Join(good, ", "), s.promWhy)}
@@ -579,6 +648,59 @@ func podMonitorInNamespace(ctx context.Context, s *state, ns string, pods []core
 			Fix: "kubectl get --raw /api/v1/namespaces/" + ns + "/pods/<pod>:<port>/proxy/metrics   # does the model server answer on /metrics?"}
 	}
 	return Result{Status: Pass, Detail: fmt.Sprintf("%s: PodMonitor %s selects the model servers on a port they declare", ns, strings.Join(good, ", "))}
+}
+
+// modelServerPortFix is the fix for model servers whose port the PodMonitor
+// does not scrape: the cluster admin renders the release PodMonitor for the
+// port they declare (smt --modelserver-port), named when the pods agree on
+// one; or the model server names its port as the PodMonitor scrapes it.
+func modelServerPortFix(s *state, pods []corev1.Pod) string {
+	port := commonPort(pods)
+	if port == "" {
+		port = "<the metrics port, by name or number>"
+	}
+	cmd := "smt admin-setup -n " + s.env.Namespace + " --modelserver-port " + port
+	if s.env.Scope == ScopeCluster {
+		cmd = "smt install --scope cluster <the flags it was installed with> --modelserver-port " + port
+	}
+	return cmd + "   # cluster admin: the PodMonitor scrapes that port. Or name the model server's metrics port as the PodMonitor scrapes it"
+}
+
+// commonPort is the one container port every pod declares, by name, or by
+// number where it has no name; "metrics" when that is one of several; empty
+// otherwise.
+func commonPort(pods []corev1.Pod) string {
+	var common map[string]bool
+	for _, p := range pods {
+		have := map[string]bool{}
+		for _, c := range append(append([]corev1.Container(nil), p.Spec.Containers...), p.Spec.InitContainers...) {
+			for _, port := range c.Ports {
+				k := port.Name
+				if k == "" {
+					k = strconv.Itoa(int(port.ContainerPort))
+				}
+				have[k] = true
+			}
+		}
+		if common == nil {
+			common = have
+			continue
+		}
+		for k := range common {
+			if !have[k] {
+				delete(common, k)
+			}
+		}
+	}
+	if len(common) == 1 {
+		for k := range common {
+			return k
+		}
+	}
+	if common["metrics"] {
+		return "metrics"
+	}
+	return ""
 }
 
 // podMonitorSelector is a PodMonitor's pod selector; false when it has none

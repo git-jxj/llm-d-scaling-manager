@@ -90,6 +90,11 @@ share:
     run: |
       export ACCELERATOR=<gpu product>
       export GPUS=<gpus>
+  install:
+    note: Namespace owner, on a first install. The quota, the share mode and, for active, the pod-patch grant, with the controller. Add --prometheus-ca <file> for a private CA.
+    run: |
+      smt install -n ${CONTROLLER_NAMESPACE} --prometheus-url https://<prometheus>:9090 \
+        --quota "${ACCELERATOR}=${GPUS}" --utilization-share active
   quota:
     note: A GPU quota for the models to share. Live.
     run: |
