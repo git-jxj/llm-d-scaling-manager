@@ -303,6 +303,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// holds it (heldBy).
 	slo.SwitchTTFTQuietTransfer: nil,
 
+	// llm-d-incubation/llm-d-scaling-manager#302 on the slo price: off from
+	// the constructor, so every golden replay runs it off. On, it moves
+	// nothing either: no committed recording runs a step budget under its
+	// cap times 1 + k. Its unit test holds it (heldBy).
+	slo.SwitchCapAtStepBudget: nil,
+
 	// ev-shindin/llm-scaling-manager#276 on the slo line: KVreq with the spread of output lengths. It moves
 	// no golden: of those that list slo, only the four staircases read the
 	// output histogram, at D 1.000. Its unit test holds it (heldBy); the CLI,
@@ -1177,10 +1183,15 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	saturation.SwitchITLHoldSteadySlope:     nil,
 	saturation.SwitchITLLineAtFloor:         nil,
+	saturation.SwitchPrefillVPFloorServed:   nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
 	slo.SwitchTTFTHopUnqueued: nil,
+	// llm-d-incubation/llm-d-scaling-manager#309: the planner's ITL batch
+	// term past the roofline. No analyzer reads it, so no golden replay
+	// moves; its unit tests hold it (heldBy).
+	saturation.SwitchITLBatchTerm: nil,
 	// llm-d-incubation/llm-d-scaling-manager#258: the derived k2's batch held
 	// where the variant's ITL line reaches the policy's TPOT objective. On
 	// from the constructor; no committed golden has a decode line it trusts
@@ -1200,6 +1211,13 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// tests hold them (heldBy).
 	saturation.SwitchMuAtStepBudget:         nil,
 	saturation.SwitchPlannerCapAtStepBudget: nil,
+	// llm-d-incubation/llm-d-scaling-manager#312 reads a data-parallel MoE
+	// engine's line at its busiest rank: off from the constructor, so every
+	// golden replay runs it off, and off alone from all on moves nothing. On,
+	// it moves nothing either: no committed recording runs expert
+	// parallelism over more than one data-parallel rank. Its unit tests hold
+	// it (heldBy).
+	saturation.SwitchMoEBusiestRank: nil,
 	// llm-d-incubation/llm-d-scaling-manager#169 item 1: the ITL line's B
 	// pinned through the floor below the band while unlearned. Off from the
 	// constructor, so every golden replay runs it off, and off alone from
@@ -1541,8 +1559,21 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../saturation", "TestStepBudgetCap_PlannerCapAtTheBudgetsBatch"},
 	},
+	// llm-d-incubation/llm-d-scaling-manager#312: off from the constructor,
+	// and the reading, the planner's rows and its price run on and off.
+	saturation.SwitchMoEBusiestRank: {
+		{"../saturation", "TestMoEBusiestRank_OffFromTheConstructor"},
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../saturation", "TestMoEBusiestRank_OnlyExpertParallelDataParallel"},
+		{"../saturation", "TestMoEBusiestRank_LineReadAtTheBusiestRank"},
+		{"../saturation", "TestBusiestRankRows"},
+		{".", "TestLineSamples_BusiestRankRowsAndRatio"},
+		{".", "TestLineSamples_BusiestRatioMedianOfLoadedRows"},
+		{"../../../../cmd/capacity-planner", "TestBusiestRank_ReplayToPrice"},
+		{"../../../../cmd/capacity-planner", "TestBusiestRankCapacity_PricesTheMeanAtTheTopOverTheRatio"},
+	},
 	// The capacity planner's switches: each runs the switch on and off and
-	// asserts both, and the first holds all six off from the constructor.
+	// asserts both, and the first holds all eleven off from the constructor.
 	saturation.SwitchPrefillALowLoadPerRank: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
@@ -1567,6 +1598,13 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestImbalance_BusyIsComputedTokensNotRequests"},
 		{"../saturation", "TestPrefillFBusyMinutes_LightMinutesThroughAnalyze"},
 	},
+	saturation.SwitchPrefillVPFloorServed: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_ALowerBoundIsFlooredAtTheServedPeak"},
+		{"../../../signals/prefill", "TestCapacity_BusyMinutesAreNotFloored"},
+		{"../../../signals/prefill", "TestCapacity_NoQueueStaysRefused"},
+		{"../saturation", "TestPrefillVPFloorServed_ThroughAnalyze"},
+	},
 	// The first holds it off from the constructor; the others run it on and
 	// off and assert both, in the window, through Analyze and in the
 	// planner's own windows.
@@ -1583,6 +1621,18 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/itl", "TestTracker_AnUnsteadySlopeIsNotHeld"},
 		{"../../../signals/itl", "TestTracker_ASteadySlopeHoldEnds"},
 		{"../saturation", "TestITLHoldSteadySlope_ARampDownThroughAnalyze"},
+	},
+	saturation.SwitchITLBatchTerm: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{".", "TestBatchSamples_FitsTheDecodeVariantWithTheSwitch"},
+		{".", "TestBatchSamples_ASpeculatingVariantIsRefused"},
+		{".", "TestBatchSamples_TheTermsRanksAreTheRows"},
+		{"../../../signals/whatif", "TestFitBatchTerm_OnTheRowsOwnLine"},
+		{"../../../../cmd/capacity-planner", "TestBatchTerm_ALowResampleIsReadOnTheLineAlone"},
+		{".", "TestStateAt_BatchTermThroughTheReplay"},
+		{"../../../signals/whatif", "TestFitBatchTerm_FindsTheTermAcrossShapes"},
+		{"../../../signals/whatif", "TestBatchTerm_PricesTheStepPastTheRoof"},
+		{"../../../../cmd/capacity-planner", "TestBatchTerm_DecodeVariantsPricesTheReplaysTerm"},
 	},
 	saturation.SwitchITLLineAtFloor: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
@@ -1670,6 +1720,9 @@ var heldBy = map[string][]heldTest{
 	},
 	// Runs the switch on and off and asserts both.
 	slo.SwitchTTFTQuietTransfer: {{"../slo", "TestTTFT_TheQuietTransferSwitch"}, {"../slo", "TestTTFT_TheHeldTransferAgesOut"}},
+	// llm-d-incubation/llm-d-scaling-manager#302: off from the constructor,
+	// and the price's cap on and off.
+	slo.SwitchCapAtStepBudget: {{"../slo", "TestCapAtStepBudget_TheSwitch"}},
 	// ev-shindin/llm-scaling-manager#276 on the slo line: it runs the switch on and off through Analyze and
 	// asserts both (the replica's rate halved at D 2 on, as it was off).
 	slo.SwitchKVPerRequestOutputDispersion: {

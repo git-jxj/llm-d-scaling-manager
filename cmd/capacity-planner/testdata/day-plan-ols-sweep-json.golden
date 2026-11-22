@@ -361,6 +361,7 @@
           "HeldByDecodeAdmission",
           "AssumedShape",
           "OutputSpreadUnread",
+          "BatchBeyondFit",
           "AssumedPoissonArrivals"
         ]
       },
@@ -381,6 +382,7 @@
           "FlowControlInferredOff",
           "AssumedShape",
           "OutputSpreadUnread",
+          "BatchBeyondFit",
           "AssumedPoissonArrivals"
         ]
       },
@@ -402,6 +404,7 @@
         "HeldByDecodeAdmission",
         "AssumedShape",
         "OutputSpreadUnread",
+        "BatchBeyondFit",
         "AssumedPoissonArrivals"
       ]
     },
@@ -446,6 +449,7 @@
           "HeldByDecodeAdmission",
           "AssumedShape",
           "OutputSpreadUnread",
+          "BatchBeyondFit",
           "AssumedPoissonArrivals"
         ]
       },
@@ -467,6 +471,7 @@
           "BelowFittedBand",
           "AssumedShape",
           "OutputSpreadUnread",
+          "BatchBeyondFit",
           "AssumedPoissonArrivals"
         ]
       },
@@ -488,6 +493,7 @@
         "HeldByDecodeAdmission",
         "AssumedShape",
         "OutputSpreadUnread",
+        "BatchBeyondFit",
         "AssumedPoissonArrivals"
       ]
     },
@@ -733,6 +739,7 @@
           "HeldByDecodeAdmission",
           "AssumedShape",
           "OutputSpreadUnread",
+          "BatchBeyondFit",
           "AssumedPoissonArrivals"
         ]
       },
@@ -754,6 +761,7 @@
           "HeldByDecodeAdmission",
           "AssumedShape",
           "OutputSpreadUnread",
+          "BatchBeyondFit",
           "AssumedPoissonArrivals"
         ]
       },
@@ -775,6 +783,7 @@
         "HeldByDecodeAdmission",
         "AssumedShape",
         "OutputSpreadUnread",
+        "BatchBeyondFit",
         "AssumedPoissonArrivals"
       ]
     },
@@ -820,6 +829,7 @@
           "KVBoundSlots",
           "AssumedShape",
           "OutputSpreadUnread",
+          "BatchBeyondFit",
           "AssumedPoissonArrivals"
         ]
       },
@@ -842,6 +852,7 @@
           "KVBoundSlots",
           "AssumedShape",
           "OutputSpreadUnread",
+          "BatchBeyondFit",
           "AssumedPoissonArrivals"
         ]
       },
@@ -864,6 +875,7 @@
         "KVBoundSlots",
         "AssumedShape",
         "OutputSpreadUnread",
+        "BatchBeyondFit",
         "AssumedPoissonArrivals"
       ]
     },
@@ -1051,5 +1063,13 @@
     "A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.",
     "Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.",
     "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). The fleet's limit, which decode admission can hold down, is not priced."
-  ]
+  ],
+  "gaps": {
+    "cycleSeconds": 15.014273024,
+    "expectedCycles": 226,
+    "presentCycles": 226,
+    "missingShare": 0,
+    "largestGapSeconds": 0,
+    "flagged": false
+  }
 }

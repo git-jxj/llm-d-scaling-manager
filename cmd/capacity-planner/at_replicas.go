@@ -43,6 +43,7 @@ type reportFlags struct {
 	loadSeen, seenX   float64
 	loadStatistic     string
 	tpot, tpotPercent string
+	spare             int
 }
 
 func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
@@ -66,6 +67,8 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 		"(1.5 asks what 50% more traffic does), beside the verdict at the load seen, which it never changes")
 	fs.StringVar(&rf.tpot, "tpot", "", "the TPOT target to judge by: a mean (30ms) or a per-request percentile (60ms@p90); default the policy's")
 	fs.StringVar(&rf.tpotPercent, "tpot-percentile", "90", "the TPOT percentile the tables print beside the mean, in percent; mean for the mean alone")
+	fs.IntVar(&rf.spare, "spare", 0, "spare replicas of each role to add to the fleet needed (N+1 is 1): the fleet that still holds with that many of each role lost, "+
+		"on the needed line under each verdict")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
@@ -151,13 +154,15 @@ func (f *answerFlags) reportQuery(rf reportFlags) (whatifapi.ReportQuery, error)
 		return q, usagef("--load-seen-x %g, want a finite factor above 0", rf.seenX)
 	case f.set["headroom"] && !(f.headroom > 0 && f.headroom < 1):
 		return q, usagef("--headroom %g, want a fraction of the knee in (0, 1)", f.headroom)
+	case rf.spare < 0 || rf.spare > whatifapi.MaxSpare:
+		return q, usagef("--spare %d, want 0 to %d replicas of each role", rf.spare, whatifapi.MaxSpare)
 	case f.set["load-statistic"] && f.set["load-seen"]:
 		return q, usagef("--load-statistic and --load-seen: the load is the window's at a statistic or the one stated, not both")
 	}
 	if err := whatifapi.CheckLoadStatistic(rf.loadStatistic); err != nil {
 		return q, usagef("--load-statistic %v", err)
 	}
-	q.Prefill, q.Decode, q.LoadSeen, q.LoadSeenX = f.prefill, f.decode, rf.loadSeen, rf.seenX
+	q.Prefill, q.Decode, q.LoadSeen, q.LoadSeenX, q.Spare = f.prefill, f.decode, rf.loadSeen, rf.seenX, rf.spare
 	if f.set["load-statistic"] {
 		q.LoadStatistic = rf.loadStatistic
 	}
@@ -188,6 +193,7 @@ func (f *answerFlags) reportQuery(rf reportFlags) (whatifapi.ReportQuery, error)
 		if q.TPOT, err = parseTarget("--tpot", rf.tpot); err != nil {
 			return q, err
 		}
+		warnTPOTPercentile(f.warn, rf.tpot)
 	}
 	q.TTFTPercentiles = []float64{0.5, 0.9}
 	if f.ttftPercentile != "" {
@@ -310,6 +316,9 @@ func reportText(r *whatifapi.ReportResponse) string {
 	}
 	fmt.Fprintf(&b, "%s/%s  P/D %s + %d decode (%s)  window %s, cycle %d of %d\n", r.Source.Namespace, r.Source.Model,
 		prefill, fl.Decode, fl.DecodeVariant, windowText(r.Source), r.Source.Cycle, r.Source.TotalCycles)
+	if g := r.Source.Gaps.Text(); g != "" {
+		fmt.Fprintf(&b, "%-16s%s: the load and the figures are read from the cycles present\n", "window gaps", g)
+	}
 	if e := fl.DecodeEngine; e != nil {
 		fmt.Fprintf(&b, "%-16s%s\n", "decode engine", engineInfoText(e))
 	}
@@ -348,8 +357,11 @@ func reportText(r *whatifapi.ReportResponse) string {
 func loadText(l whatifapi.ReportLoad) string {
 	s := figText(l.Rate, "%.2f r/s", 1)
 	switch l.Source {
-	case "observed":
-		s += fmt.Sprintf(", the %s of the %d of %d cycles with traffic", statWords(l.Statistic), l.CyclesWithTraffic, l.Cycles)
+	case sourceObserved:
+		// A refused load (WindowGapAtPeak) read no statistic to name.
+		if l.Seen != nil {
+			s += fmt.Sprintf(", the %s of the %d of %d cycles with traffic", statWords(l.Statistic), l.CyclesWithTraffic, l.Cycles)
+		}
 	case sourceAsked:
 		s += " (--load-seen)"
 	}
@@ -463,6 +475,13 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 	for _, g := range s.Growth {
 		fmt.Fprintf(b, "  %-14s%s\n", "", growthText(g))
 	}
+	if t := spareText(s.Verdict.Needed); t != "" {
+		if s.Verdict.Verdict == whatifapi.VerdictRight && s.Verdict.Needed.Minimizes != "" {
+			// The fleet judged holds: the line names a cheaper mix, not a need.
+			t = "a mix of fewer GPUs also holds: " + t
+		}
+		fmt.Fprintf(b, "  %-14s%s\n", "needed", t)
+	}
 
 	c := s.Capacity
 	const capLayout = "  %-18s%-10s%-12s%s\n"
@@ -504,6 +523,58 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 	if len(s.Flags) > 0 {
 		fmt.Fprintf(b, "flags: %s\n", strings.Join(s.Flags, "; "))
 	}
+}
+
+// spareText is the needed fleet's GPUs and its spare, for the line under
+// the verdict: "8 prefill + 5 decode = 69 GPUs (8 a prefill replica, 1 a
+// decode replica), the fewest GPUs that hold; or 9 + 4 = 76 GPUs; with 1
+// spare of each role 9 + 6 = 78 GPUs". Empty when it adds nothing to the
+// verdict: no spare asked, and the roles' GPUs per replica equal or not
+// stated, where the fewest GPUs are the fewest replicas the verdict names.
+func spareText(n *whatifapi.ReportNeeded) string {
+	if n == nil || n.Unmet != "" {
+		return ""
+	}
+	g := n.GPUsPerReplica
+	weighed := g != nil && g.Prefill != g.Decode && !n.DecodeOnly
+	if !weighed && n.WithSpare == nil {
+		return ""
+	}
+	gpus := func(x *int) string {
+		switch {
+		case x == nil:
+			return ""
+		case n.DecodeOnly:
+			return fmt.Sprintf(" = %d decode GPUs", *x)
+		}
+		return fmt.Sprintf(" = %d GPUs", *x)
+	}
+	fleet := func(f whatifapi.FleetCounts) string {
+		if n.DecodeOnly {
+			return fmt.Sprintf("at least %d decode", f.Decode)
+		}
+		return fmt.Sprintf("%d prefill + %d decode", f.Prefill, f.Decode)
+	}
+	var b strings.Builder
+	b.WriteString(fleet(whatifapi.FleetCounts{Prefill: n.Prefill, Decode: n.Decode}) + gpus(n.GPUs))
+	if weighed {
+		fmt.Fprintf(&b, " (%d a prefill replica, %d a decode replica)", g.Prefill, g.Decode)
+		if n.Minimizes == whatifapi.MinimizesGPUs {
+			b.WriteString(", the fewest GPUs that hold")
+		}
+		for _, alt := range n.Alternatives {
+			fmt.Fprintf(&b, "; or %d + %d%s", alt.Prefill, alt.Decode, gpus(whatifapi.FleetGPUs(alt, *g)))
+		}
+	}
+	if s := n.WithSpare; s != nil {
+		of := "of each role"
+		if n.DecodeOnly {
+			of = roleDecodeWord
+		}
+		fmt.Fprintf(&b, "; with %d spare %s %s%s, which still holds with %d %s lost",
+			s.Spare, of, fleet(s.Fleet), gpus(s.GPUs), s.Spare, of)
+	}
+	return b.String()
 }
 
 // growthText is a growth what-if's verdict line.

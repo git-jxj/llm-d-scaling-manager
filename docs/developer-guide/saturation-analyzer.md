@@ -402,7 +402,8 @@ one (`atCapBatchCap`):
 | derived mu's sequence cap (`whatif.DeriveMuAtCap`) | `pricingBatchCap`: flags, declared, learned, default; then, with `SwitchMuAtStepBudget` on (off by default), held to `ceil(budget / (1 + k))` (`atStepBudget`, source `step-budget`); `derived-mu` logs `batchCap` and `batchCapSource` | `SwitchBatchCapDerivedMu`, `SwitchMuAtStepBudget` |
 | zero-replica estimate (`estimateStoredCapacity`, issue ev-shindin/llm-scaling-manager#427) | `zeroReplicaBatchCap`, per engine rank: flags, else declared (only while `SwitchBatchCapDeclared` is on too), else default; never learned. A prefill variant keeps flags, else default: P3 never prices prefill. The estimate is one rank's figure, also for a data-parallel variant (ev-shindin/llm-scaling-manager#438). `zero-replica-capacity-estimate` logs `batchCap` and `batchCapSource` on its `deployment-derived` line | `SwitchBatchCapZeroReplica` |
 | `slo` analyzer's admission (`slo.admission`) | `EngineParams.StatedBatchCap`: flags, else declared (not gated by `SwitchBatchCapDeclared`, a saturation switch); `slo-variant` logs `lineBatchCap` and `lineBatchCapSource` | `slo.SwitchBatchCapAdmission` |
-| `slo` analyzer's per-rank cap (`priceVariant`) | `StatedBatchCap`, else `BatchCap`; `slo-variant` logs `batchCap` and `batchCapSource` | `slo.SwitchBatchCapPerRank` |
+| `slo` analyzer's per-rank cap (`priceVariant`) | `StatedBatchCap`, else `BatchCap`; with `slo.SwitchCapAtStepBudget` on (off by default), held to `ceil(budget / (1 + k))` on vLLM (`pricedBatchCap`); `slo-variant` logs `batchCap` and `batchCapSource` | `slo.SwitchBatchCapPerRank`, `slo.SwitchCapAtStepBudget` |
+| capacity planner's cap per rank (`PricingBatchCap`, read by `learnreplay.VariantState.BatchCap`) | `pricingBatchCap`; then, with `SwitchPlannerCapAtStepBudget` on (on in the planner's replay, `learnreplay.PlannerSwitches`; off in the controller), held to `ceil(budget / (1 + k))` (`atStepBudget`, source `step-budget`). A cap stated with `--batch-cap` is taken as given | `SwitchPlannerCapAtStepBudget` |
 
 A landed pull is a backlog only where the scheduler can stop before it. On a
 decode below its stated cap on every rank (its busiest rank's estimated
@@ -777,6 +778,56 @@ An aggregated line is shared under its own key: `itlLineKeyForRole` appends
 configuration keeps one line for decode pods and another for aggregated pods,
 and neither lends to the other. The window key is per variant already.
 
+### The batch term past the roofline (issue #309)
+
+A decode step reads the weights (a constant), every resident KV token
+(linear in the fill) and, once the batch's tokens per engine rank pass the
+roofline, spends GEMM time that grows with them. The line prices the first
+two; at one KV per request the batch moves with the fill and the slope
+absorbs the third, but a shape with less KV per request runs more sequences
+at the same fill, and the line reads its ITL low.
+
+`saturation.SwitchITLBatchTerm` (`itl-batch-term`) is planner-only, off,
+replay-only (no CLI flag or API field sets it) and not in
+`learnreplay.PlannerSwitches`. No analyzer reads it. On, the planner's replay
+keeps each decode variant's rows in the band with their running sequences
+per engine rank (`learnreplay` `batchSamples`) and fits
+`a*max(0, n - n_roof)` on the residuals of the variant's own line
+(`whatif.FitBatchTerm`: a hinge at each candidate roof from the rows' 10th to
+90th percentile, least squares, the residuals' own offset dropped). The
+gates refuse a term on fewer than 60 rows or 20 on a side of the roof, one
+that removes under 10% of the residuals' error, spreads under 16 tokens past
+the roof, adds under 2% of the ITL there, or would make the rate fall with
+the batch. The planner then prices `whatif.Decode.Batch` on top of the line
+(`Decode.itlAt`): the knee, the fill at a rate and at a TPOT target (bisected,
+no closed form), and the TTFT decode terms; figures carry `ITLBatchTerm`. A
+stated intercept, a line lifted to its floor (`SwitchITLLineAtFloor`) and a
+speculating vLLM variant are not priced with it: the residuals were not read
+against those lines. The rows' batch is per engine rank as each row read its
+ranks, and the term is priced over the same ranks.
+
+On the Qwen3-32B recordings the term is real but one shape cannot identify
+it. The warm-up alone fits 0.003 ms per sequence and removes 0.4% of the
+error; the 1k-prompt A-off phase alone 0.006 ms past 124 (3.2%). Together the
+warm-up's fill line reads the A-off rows 7-9% low past 150 sequences, and a
+joint fit gives `n_roof` 120 per rank and 0.034 ms per sequence, removing 59%
+of the error. The engine's mean ITL rises smoothly from 14 to 31 ms over 46
+to 256 running sequences there; the step from 15 to 29 ms the router's TPOT
+shows is its histogram's 25 ms bucket edge, not the engine. Since a fleet's
+recording rarely holds two shapes, the switch stays off.
+`whatif.CheckLine` still prices its rows on the line alone, and a bootstrap
+resample whose `B` is too low for the term fitted on the point line is read
+on the line alone (`BatchTerm.UsableWith`). A refused fit's reason
+(`BatchFit.Why`) is not shown in any output. The slope is read on the
+batch with its fill-linear part removed, since the line's slope already
+holds that part, and the gain gate is on the model as priced, the line
+plus the term with no offset, against the line alone. On rows whose own
+line already took part of the term into its slope, the slope comes back
+right (a synthetic two-shape fit reads 0.034 ms at roof 120 where the raw
+hinge read 0.015 ms at roof 48 and passed the old gate), but priced on that
+line the term removes little of its error and the gate refuses it: pricing it
+would need the line refitted with the term, which this does not do.
+
 ### ITL per accepted token (speculative decoding)
 
 vLLM observes `inter_token_latency` once per request per engine step, however
@@ -950,6 +1001,32 @@ it reads 0.79 to 0.84, and on the 1k-prompt, 1000-output A phases 1.23 to
 p90 TTFT on the B-off and B-on phases reads 15% to 23% under; the lift alone,
 on the steeper line the hold replaces, reads TPOT higher still (1.84 to
 2.06).
+
+`saturation.SwitchMoEBusiestRank` (`moe-dp-busiest-rank`, issue
+llm-d-incubation/llm-d-scaling-manager#312) is planner-only, off, and
+replay-only: no CLI flag or API field sets it, and it is not in
+`learnreplay.PlannerSwitches`. vLLM runs the data-parallel ranks of an
+expert-parallel MoE engine in lockstep, so a pod steps at its busiest rank,
+while its balancer evens out request counts, not KV. On, for a vLLM variant
+with expert parallelism over more than one local data-parallel rank
+(`SaturationAnalyzer.BusiestRankFillFor`), `fitLines` hands the ITL tracker
+its rows with each fill carried to the busiest rank (`busiestRankRows`, the
+fill times `domain.ReplicaMetrics.BusiestRankFillRatio`, at most 1), so the
+line and the band are that rank's. The tracker itself is unchanged. The replay does the same for its rows and its TPOT fill
+(`learnreplay.fillForITL`), and keeps the median busiest/mean ratio of the
+rows whose busiest rank fills the band's bottom or more
+(`VariantState.BusiestRankRatio`): the ratio is read on a loaded pod's peak
+on purpose, since an idle pod's spread is not the one it runs at the band's
+top. The planner prices the variant's capacity over that ratio
+(`busiestRankCapacity` in `cmd/capacity-planner`), and names the flag
+`BusiestRankFill` with the ratio in its text, its assumed inputs and the
+capacity's source. Limits: the ratio is of one-minute peaks per rank, a lower
+bound on the instantaneous busiest/mean ratio where the hottest rank changes
+inside the minute, so the price stays optimistic by the difference;
+`whatif.CheckLine` prices every row at the median ratio, not the row's own;
+and the analyzer's derived mu (`whatif.DeriveMuAtCap`) still takes the whole
+capacity with the busiest-rank line. The evidence is synthetic: no
+committed recording runs data parallelism.
 
 A saturated fleet has few steady readings: `k` swings between above the band
 and its dips into it by more than `DefaultMaxKDrift`, and on a two-namespace
@@ -2195,7 +2272,7 @@ passed through `prefillBounds`). Nothing sizes from it.
 
 | Figure | From | Refused |
 | --- | --- | --- |
-| `V_P`, computed tokens/s | busy minutes (median of at least 5 over the last 30 minutes, `prefill.BusyWindow`; a minute is busy when the row's `QueueMin` was read and is above zero, the pod's KV is not full and decode is not back-pressuring; a lower bound, `DataParallelRanks`, when any came from a multi-rank pod; switch `prefill-busy-minutes`), else the peak under a queue sustained over 3 minutes, else the back-pressure bound (at least 2 readings). The last two are lower bounds. `QueueMin` is collected in a namespace with a TTFT target and while a learner recording is on, so elsewhere in a default production install only the peak under a queue is live; the bound needs `enablePrefillThroughputBound` | `NoPrefillCapacity`, logged with `queuedMinutes` (over the 6 h kept), `longestQueuedRun` and `busyMinutes` (over the 30-minute window; not comparable with `queuedMinutes`) to say which source fell short, with `busyMinutesOn`, `queueMinPods` and `kvFullPods`; `SGLangNoComputedTokens` on SGLang |
+| `V_P`, computed tokens/s | busy minutes (median of at least 5 over the last 30 minutes, `prefill.BusyWindow`; a minute is busy when the row's `QueueMin` was read and is above zero, the pod's KV is not full and decode is not back-pressuring; a lower bound, `DataParallelRanks`, when any came from a multi-rank pod; switch `prefill-busy-minutes`), else the peak under a queue sustained over 3 minutes, else the back-pressure bound (at least 2 readings). The last two are lower bounds; with the planner-only switch `prefill-vp-floor-served` (`prefill.Cycle.VPFloorServed`) a lower bound is raised to the highest rate a pod sustained over 3 minutes, queued or not (`Estimate.VPServedPeak`, `VPFlooredAtServed`). `QueueMin` is collected in a namespace with a TTFT target and while a learner recording is on, so elsewhere in a default production install only the peak under a queue is live; the bound needs `enablePrefillThroughputBound` | `NoPrefillCapacity`, logged with `queuedMinutes` (over the 6 h kept), `longestQueuedRun` and `busyMinutes` (over the 30-minute window; not comparable with `queuedMinutes`) to say which source fell short, with `busyMinutesOn`, `queueMinPods` and `kvFullPods`; `SGLangNoComputedTokens` on SGLang |
 | `a`, seconds | an untrimmed fit of `AvgServiceTime` against the effective prompt (`PrefillComputedTokenRate / RequestRate`) over low-load minutes (no queue, occupancy at most 0.1, prompt steady within 10% of every reading in the last 2 minutes, with at least one there), plus the least `AvgTTFT - AvgServiceTime`. `1/slope` is logged as `slopeBound`, an upper bound on `V_P` for validation only. On `ols-sweep`: intercept 8.36 ms, overhead 2.68 ms, `a` 11.04 ms, `slopeBound` about 520k tok/s | aggregated, fewer than 5 minutes, prompts spanning less than 1.5x between the second shortest and the second longest (so each end holds two minutes), one prompt length throughout (`NoPromptVariance`), a non-positive slope or intercept |
 | `f` | the busiest pod's share of computed tokens over the mean, less the expected max of `N_p` Poisson counts, over minutes with at least 100 requests a pod on average; median of at least 5. It reads low on a real imbalance at few requests (2:1:1:1 reads about 1.50 for 1.6 at 100 a pod) and high on equal pods with variable prompts (about 1.03 at `Cs²` = 1); `imbalance.go` says why. Above 10,000 requests a pod the Poisson excess is its normal approximation (within 0.33% of the exact sum there, up to 64 pods), so its cost does not grow with the rate | `OnePod`, `NoComputedTokens`, `TooFewImbalanceMinutes` |
 

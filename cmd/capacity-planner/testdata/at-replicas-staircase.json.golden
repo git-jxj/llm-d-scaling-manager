@@ -8,7 +8,15 @@
     "cycle": 289,
     "totalCycles": 289,
     "firstAt": "2026-11-06T02:18:37.855280585Z",
-    "lastAt": "2026-11-06T03:30:45.104261899Z"
+    "lastAt": "2026-11-06T03:30:45.104261899Z",
+    "gaps": {
+      "cycleSeconds": 15.021506602,
+      "expectedCycles": 289,
+      "presentCycles": 289,
+      "missingShare": 0,
+      "largestGapSeconds": 0,
+      "flagged": false
+    }
   },
   "fleet": {
     "prefill": 2,
@@ -281,7 +289,8 @@
             "floor": 0.004872742612921775,
             "flags": [
               "BelowFittedBand",
-              "CoarseTPOTBucket"
+              "CoarseTPOTBucket",
+              "HostBoundTPOTTail"
             ]
           },
           "e2eMeanSum": {
@@ -399,7 +408,8 @@
             "floor": 0.004872742612921775,
             "flags": [
               "BelowFittedBand",
-              "CoarseTPOTBucket"
+              "CoarseTPOTBucket",
+              "HostBoundTPOTTail"
             ]
           },
           "e2eMeanSum": {
@@ -477,7 +487,8 @@
               "reason": "Saturated",
               "detail": "rate 36.98 r/s at or above the knee 36.98 r/s",
               "flags": [
-                "CoarseTPOTBucket"
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
               ]
             }
           },
@@ -538,7 +549,8 @@
               "reason": "Saturated",
               "detail": "rate 41.7 r/s at or above the knee 36.98 r/s",
               "flags": [
-                "CoarseTPOTBucket"
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
               ]
             }
           },
@@ -577,7 +589,13 @@
           "decode": 3,
           "maxReplicas": 32,
           "decodeAtErrorBound": 6,
-          "decodeKneeError": 0.991
+          "decodeKneeError": 0.991,
+          "minimizes": "gpus",
+          "gpusPerReplica": {
+            "prefill": 1,
+            "decode": 1
+          },
+          "gpus": 6
         },
         "roles": [],
         "shrink": [],
@@ -608,7 +626,8 @@
         "AssumedPoissonArrivals",
         "AssumedA",
         "PromptSpreadAbovePeak",
-        "CoarseTPOTBucket"
+        "CoarseTPOTBucket",
+        "HostBoundTPOTTail"
       ],
       "assumed": [
         "V_P 200000 tok/s (--assume-vp)",

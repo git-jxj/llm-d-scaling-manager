@@ -112,6 +112,9 @@ type reporter struct {
 	// loadShape is the shape of the cycles the load was read from, nil with
 	// a stated load or none read there (load_shape.go).
 	loadShape *whatifapi.ReportLoadShape
+	// loadRefused is why the observed load was refused (gapAtPeak), nil
+	// otherwise; load is then 0.
+	loadRefused *whatif.Unanswerable
 	// peak is the window's peak a shrink must also hold at, 0 with a stated
 	// load; brief shortens the verdict's sentence, for a growth line.
 	peak   float64
@@ -182,7 +185,7 @@ func buildReport(ctx context.Context, st *learnreplay.State, s *servedState, q w
 	np, nd := r.counts(base)
 	out := &whatifapi.ReportResponse{Question: reportQuestion, Shapes: []whatifapi.ReportShape{}, NotValidated: []string{}}
 	out.Source = whatifapi.ReportSource{Namespace: st.Namespace, Model: st.ModelID, Cycle: st.Cycle, TotalCycles: st.Cycles,
-		FirstAt: st.FirstAt, LastAt: st.At}
+		FirstAt: st.FirstAt, LastAt: st.At, Gaps: whatifapi.WindowGapsOf(st.CycleTimes)}
 	out.Fleet = whatifapi.ReportFleet{Prefill: np, Decode: nd, PrefillVariant: base.pf.variant, DecodeVariant: base.pv.state.Variant,
 		PrefillFrom: from(q.Prefill), DecodeFrom: from(q.Decode),
 		DecodeEngine: engineInfo(base.pv.state.Params)}
@@ -230,6 +233,9 @@ func (r *reporter) shapeReport(ctx context.Context, np, nd int) (whatifapi.Repor
 	r.pv, r.pfVariant = base.pv, base.pf.variant
 	if r.pv.bandFloor > 0 {
 		r.addAssumed(adaptedBandFloorWords(r.pv))
+	}
+	if w := r.pv.busiestRankAssumed(); w != "" {
+		r.addAssumed(w)
 	}
 	if w := r.pv.itlBWords(); w != "" {
 		r.addAssumed(w)
@@ -421,6 +427,20 @@ func (r *reporter) fleet(np, nd int, ttftQ, tpotQ float64) (*servedFleet, error)
 	return sf, nil
 }
 
+// gpusPerReplica is each priced role's GPUs per replica as the recording
+// states them, 0 for a role it states none for.
+func (r *reporter) gpusPerReplica() (whatifapi.FleetCounts, error) {
+	sf, err := r.fleet(r.q.Prefill, r.q.Decode, r.sloTTFTQ(), r.sloTPOTQ())
+	if err != nil {
+		return whatifapi.FleetCounts{}, err
+	}
+	out := whatifapi.FleetCounts{Decode: sf.pv.state.GPUsPerReplica}
+	if sf.pf != nil {
+		out.Prefill = variantGPUs(r.st, sf.pf.variant)
+	}
+	return out, nil
+}
+
 // counts is the base fleet's replica counts as priced.
 func (r *reporter) counts(base *servedFleet) (np, nd int) {
 	nd = base.pv.decode.Replicas
@@ -458,8 +478,9 @@ func (r *reporter) addAssumed(words ...string) {
 
 // loadOf is the load the fleet is judged at: the query's, else the statistic
 // asked (p95 by default) of the per-cycle arrival rate over the window's
-// cycles that read one above 0. A growth load is a what-if of its own
-// (shapeReport), never the load judged at. The mean, p95 and
+// cycles that read one above 0, refused (WindowGapAtPeak) when a gap in the
+// window could hide its peak (gapAtPeak). A growth load is a what-if of
+// its own (shapeReport), never the load judged at. The mean, p95 and
 // peak are reported whichever is judged, and the busiest RollingWindow.
 func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 	l.Cycles = len(r.st.ArrivalRates)
@@ -483,14 +504,22 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 		stats[whatifapi.LoadP95Modulation] = mod
 		l.P95Modulation = &mod
 		l.P95IsPeak = len(rates) < minP95Cycles
-		l.Rolling = rollingPeak(r.st.ArrivalRates, cycleSeconds(r.st), whatifapi.RollingWindow.Seconds())
+		gaps := whatifapi.WindowGapsOf(r.st.CycleTimes)
+		l.Rolling = rollingPeak(r.st.ArrivalRates, rollingCycle(r.st, gaps), whatifapi.RollingWindow.Seconds())
+		if !(r.q.LoadSeen > 0) {
+			r.loadRefused = gapAtPeak(r.st.ArrivalRates, r.st.CycleTimes, gaps, l.Rolling)
+		}
 	}
 	var seen float64
 	switch {
 	case r.q.LoadSeen > 0:
 		seen, l.Source, l.Statistic = r.q.LoadSeen, sourceAsked, loadStated
+	case r.loadRefused != nil:
+		l.Source = sourceObserved
+		l.Rate = whatifapi.FigureOf(*r.loadRefused, unitRate, false)
+		return
 	case len(rates) > 0:
-		seen, l.Source = stats[l.Statistic], "observed"
+		seen, l.Source = stats[l.Statistic], sourceObserved
 		r.peak = stats[whatifapi.LoadPeak]
 		r.loadShape = loadShapeOf(r.decodeShapeSeries(), loadCycles(r.st.ArrivalRates, l.Statistic, stats), l.Statistic)
 	default:
@@ -549,22 +578,9 @@ func rollingPeak(rates []float64, cycle, window float64) *whatifapi.ReportRollin
 		return nil
 	}
 	k := max(int(math.Round(window/cycle)), 1)
-	if len(rates) < k {
+	end, peak := busiestStretch(rates, k)
+	if end < 0 {
 		return nil
-	}
-	var sum, peak float64
-	for i, x := range rates {
-		if whatif.Finite(x) && x > 0 {
-			sum += x
-		}
-		if i >= k {
-			if y := rates[i-k]; whatif.Finite(y) && y > 0 {
-				sum -= y
-			}
-		}
-		if i >= k-1 {
-			peak = max(peak, sum/float64(k))
-		}
 	}
 	return &whatifapi.ReportRolling{WindowSeconds: float64(k) * cycle, Cycles: k, Peak: peak}
 }
@@ -836,6 +852,7 @@ func reasonOf(r whatif.Result) string {
 var plainReasons = map[string]string{
 	string(whatif.Saturated):             "saturated",
 	string(whatif.AboveDecodeOnset):      "saturated",
+	string(whatif.PastLowerBoundKnee):    "past a lower-bound knee",
 	string(whatif.NoPrefillCapacity):     "no prefill speed learned",
 	string(whatif.NoFixedLatency):        "no fixed prefill latency learned",
 	string(whatif.NoImbalance):           "no prefill imbalance learned",
@@ -846,6 +863,7 @@ var plainReasons = map[string]string{
 	string(whatif.TPOTQuantileUnbounded): "TPOT past the histogram",
 	string(whatif.TokenGapPercentile):    "not a per-request percentile",
 	string(whatif.NoTraffic):             "no traffic",
+	whatifapi.ReasonWindowGapAtPeak:      "a window gap at the peak",
 	string(whatif.NoLine):                "no decode line",
 	string(whatif.PinnedDefaultB):        "no decode line",
 	string(whatif.NoCapacity):            "no KV capacity",
@@ -982,7 +1000,11 @@ func (r *reporter) use(u *whatifapi.ReportUse, base *servedFleet, ev fleetEval) 
 	slots := slotsPerReplica(d)
 	u.Decode.Slots = slots * int64(d.Replicas)
 	if !(r.load > 0) {
-		f := whatifapi.FigureOf(whatif.Unanswerable{Reason: whatif.NoTraffic, Detail: "no load to judge at"}, "", false)
+		no := whatif.Unanswerable{Reason: whatif.NoTraffic, Detail: "no load to judge at"}
+		if r.loadRefused != nil {
+			no = *r.loadRefused
+		}
+		f := whatifapi.FigureOf(no, "", false)
 		u.Decode.KVFill, u.Decode.SlotsOccupied, u.Decode.WaitProbability = f, f, f
 		u.Prefill.Pooled, u.Prefill.WorstPod = f, f
 		return
@@ -1221,6 +1243,10 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		v.Verdict = whatifapi.VerdictNotJudged
 		v.Summary = fmt.Sprintf("%s: the decode knee is not priced (%s).", v.Verdict, refusalWords(base.decodeKnee))
 		return v, nil
+	case r.loadRefused != nil:
+		v.Verdict = whatifapi.VerdictNotJudged
+		v.Summary = fmt.Sprintf("%s: %s.", v.Verdict, refusalWords(*r.loadRefused))
+		return v, nil
 	case !(r.load > 0):
 		v.Verdict = whatifapi.VerdictNotJudged
 		v.Summary = v.Verdict + ": the window saw no traffic to judge at; state a load (--load-seen)."
@@ -1274,6 +1300,9 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		return v, nil
 	}
 	v.Verdict = whatifapi.VerdictRight
+	if err := r.rightSizedNeed(np, nd, base, &v); err != nil {
+		return v, err
+	}
 	if r.brief {
 		v.Summary = v.Verdict + ": holds, no replica to spare."
 	} else {
@@ -1473,6 +1502,46 @@ func minutesWords(sec float64) string {
 	return fmt.Sprintf("%d min", max(int(math.Round(sec/60)), 1))
 }
 
+// rightSizedNeed fills v.Needed on a right-sized fleet, which has no
+// replica of either role to spare. With the roles' GPUs per replica unequal
+// a mix of fewer GPUs may still hold (9 prefill + 4 decode right-sized while
+// 8 + 5 holds on fewer GPUs at 8 and 1 a replica): the search runs, and
+// Needed is its fleet when that takes fewer GPUs than the fleet judged. Else,
+// with a spare asked, Needed is the fleet judged, not searched (Minimizes
+// empty), for its spare; else nil. The verdict's grow and words are not
+// touched: the fleet judged holds.
+func (r *reporter) rightSizedNeed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) error {
+	g, err := r.gpusPerReplica()
+	if err != nil {
+		return err
+	}
+	judged := whatifapi.FleetCounts{Prefill: np, Decode: nd}
+	if whatifapi.WeighsGPUs(g) {
+		grow := v.Grow
+		words, notes, err := r.needed(np, nd, base, v)
+		if err != nil {
+			return err
+		}
+		v.Grow = grow
+		n := v.Needed
+		if n.Unmet == "" && (whatifapi.FleetCounts{Prefill: n.Prefill, Decode: n.Decode}).Cost(g) < judged.Cost(g) {
+			// The sentence is the right-sized one; the cheaper mix, and any
+			// f it rests on, are in the reason.
+			v.Reason += ". A mix of fewer GPUs also holds: " + strings.TrimPrefix(words, "needs ") + noteText(notes)
+			return nil
+		}
+		v.Needed = nil
+	}
+	if r.q.Spare > 0 {
+		v.Needed = &whatifapi.ReportNeeded{Prefill: np, Decode: nd, MaxReplicas: whatifapi.DefaultSizeBound,
+			GPUs: whatifapi.FleetGPUs(judged, g), WithSpare: whatifapi.WithSpare(judged, r.q.Spare, g)}
+		if v.Needed.GPUs != nil {
+			v.Needed.GPUsPerReplica = &g
+		}
+	}
+	return nil
+}
+
 // noteText is notes in parentheses, "" with none.
 func noteText(notes []string) string {
 	if len(notes) == 0 {
@@ -1555,9 +1624,12 @@ func (r *reporter) marginWords(op float64) string {
 }
 
 // needed finds the smallest fleet that holds every target at the load with
-// headroom, the fewest replicas in all (ties to fewer decode), by POST
-// /v1/size's search (whatifapi.SmallestFleet) on the report's own check,
-// and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
+// headroom, the fewest GPUs where the recording states each role's GPUs per
+// replica, else the fewest replicas (ties to fewer replicas, then fewer
+// decode), by POST /v1/size's search (whatifapi.SmallestFleet) on the
+// report's own check, and says it: "needs 3 prefill + 3 decode (has 2 + 2)".
+// Its GPUs, and the fleet with the spare asked, are in v.Needed (the text's
+// needed line).
 // A role it cuts, below np prefill or nd decode, must also hold its own
 // check at the peak, the test roles judges a spare by: removing capacity
 // is the costly mistake. Both tests being monotone in each count, it then
@@ -1573,6 +1645,19 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 	bound := whatifapi.DefaultSizeBound
 	out := &whatifapi.ReportNeeded{MaxReplicas: bound}
 	v.Needed = out
+	gpus, err := r.gpusPerReplica()
+	if err != nil {
+		return "", nil, err
+	}
+	// sized fills the needed fleet's GPUs and its spare, once its counts
+	// are set.
+	sized := func() {
+		n := whatifapi.FleetCounts{Prefill: out.Prefill, Decode: out.Decode}
+		if out.GPUs = whatifapi.FleetGPUs(n, gpus); out.GPUs != nil {
+			out.GPUsPerReplica = &gpus
+		}
+		out.WithSpare = whatifapi.WithSpare(n, r.q.Spare, gpus)
+	}
 	at := func(n whatifapi.FleetCounts) (fleetEval, error) {
 		return r.evaluateAt(n.Prefill, n.Decode, r.load, false)
 	}
@@ -1624,12 +1709,15 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 			return fmt.Sprintf("no count up to %d decode replicas holds", bound), nil, nil
 		}
 		out.Decode, out.DecodeOnly = d, true
+		sized()
 		if d > nd {
 			v.Grow = append(v.Grow, roleDecodeWord)
 		}
 		return fmt.Sprintf("needs at least %d decode (has %d)", d, nd) + r.atBound(base, nd, out), nil, nil
 	}
-	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, decodeHolds, holds)
+	cost, minimizes := whatifapi.ReplicaCost(gpus)
+	out.Minimizes = minimizes
+	n, unmet, err := whatifapi.SmallestFleet(whatifapi.FleetCounts{Prefill: bound, Decode: bound}, cost, decodeHolds, holds)
 	switch {
 	case err != nil:
 		return "", nil, err
@@ -1638,6 +1726,7 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 		return fmt.Sprintf("no fleet up to %d replicas of each role holds", bound), nil, nil
 	}
 	out.Prefill, out.Decode = n.Prefill, n.Decode
+	sized()
 	if n.Prefill > np {
 		v.Grow = append(v.Grow, rolePrefill)
 	}
@@ -1811,10 +1900,15 @@ func refusalWords(res whatif.Result) string {
 		return "the router's flow-control thresholds are not known"
 	case whatif.Saturated, whatif.AboveDecodeOnset:
 		return "the fleet is saturated there"
+	case whatif.PastLowerBoundKnee:
+		return "the prefill knee rests on a lower bound of V_P, and the true knee may be higher; --assume-vp states one"
 	case whatif.NoTPOTHistogram, whatif.TPOTBucketTooWide, whatif.TPOTQuantileUnbounded:
 		return "the TPOT histogram cannot give that percentile; judge TPOT at the mean"
 	case whatif.NoTraffic:
 		return "the recording saw no traffic of this shape"
+	case whatifapi.ReasonWindowGapAtPeak:
+		return "a gap in the window borders its busiest stretch, so the load may have been higher than the window shows; " +
+			"capture the window again, or state a load (--load-seen)"
 	case whatif.NoLine:
 		return "the recording learned no usable decode latency line"
 	case whatif.PinnedDefaultB:
@@ -1874,3 +1968,6 @@ const sourceAsked = "asked"
 // sourceLoadCycles is a shape asked as the load's: read at the cycles the
 // load was read from.
 const sourceLoadCycles = "the load's cycles"
+
+// sourceObserved is a load the source read.
+const sourceObserved = "observed"
