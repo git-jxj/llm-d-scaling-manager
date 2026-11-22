@@ -1388,6 +1388,13 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	slices.SortFunc(times, time.Time.Compare)
 	out.Gaps = WindowGapsOf(times)
 	q.refuseGapAtPeak(out)
+	// A bucket refused beside a gap is no longer sized: the hour's and the
+	// peak's need neither hold it nor take its fleet (confirmHolding).
+	for i := range out.Buckets {
+		if out.Buckets[i].Needed == nil {
+			delete(sized, i)
+		}
+	}
 	q.countRefused(out)
 	if stated {
 		k := q.k
