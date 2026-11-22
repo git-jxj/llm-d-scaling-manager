@@ -803,12 +803,6 @@ func (f *answerFlags) tpotRatioFor(st *learnreplay.State, q float64) (whatif.TPO
 	return f.tpotRatioRead(st, q)
 }
 
-// hostBoundITL is the decode step time under which a TPOT tail is the
-// host's jitter (scheduling, sampling, detokenizing), not the fill: on a
-// sub-1B model the step is host-bound and the line's intercept and its
-// floor read 1.5 to 2.5 ms.
-const hostBoundITL = 0.005
-
 // hostBoundRefusal refuses a TPOT percentile priced on vs where its R_q was
 // read off coarse buckets (whatif.CoarseTPOTBucket) and the variant's decode
 // step is host-bound: its line's intercept B measured (whatif.MeasuredIntercept,
