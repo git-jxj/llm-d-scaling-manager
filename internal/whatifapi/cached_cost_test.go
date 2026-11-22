@@ -67,30 +67,32 @@ func (f *loadFleet) TTFTPoint(rate float64) (whatif.Result, []string) {
 	return f.shifted(r), notes
 }
 
-// costSeries is n cycles at a constant rate whose measured mean TTFT is the
-// stub's price at that rate plus phi x load, offset by skew on every other
-// step: the TTFT a fleet whose cached tokens cost phi would measure.
-func costSeries(n int, rate, phi, load, skew float64) ([]SeriesSample, []LatencySample) {
+// costLoad is the seconds a request the stub's fleets load at phi 1.
+const costLoad = 0.2
+
+// costRate is the rate of costSeries, a quarter of the stub's knee at 2
+// prefill pods and 1000 tokens, 20 r/s.
+const costRate = 5.0
+
+// costSeries is n cycles at costRate whose measured mean TTFT is the stub's
+// price there plus phi x costLoad: the TTFT a fleet whose cached tokens cost
+// phi would measure.
+func costSeries(n int, phi float64) ([]SeriesSample, []LatencySample) {
 	s, l := btSeries(n, 0, 1)
-	// The stub's knee at 2 prefill pods and 1000 tokens is 20 r/s.
-	price := 0.1 / (1 - rate/20)
+	m := 0.1/(1-costRate/20) + phi*costLoad
 	for i := range s {
-		s[i].Rate = rate
-		m := price + phi*load
-		if (i/20)%2 == 1 {
-			m += skew
-		}
+		s[i].Rate = costRate
 		// btRouter's mean is 1.2 x its scale.
-		l[i].Router = btRouter(rate, m/1.2)
+		l[i].Router = btRouter(costRate, m/1.2)
 	}
 	return s, l
 }
 
 // fitOn is FitCachedTokenCost on series s and l, priced by the stub with
-// load seconds a request at phi 1.
-func fitOn(t *testing.T, s []SeriesSample, l []LatencySample, load, share float64) CachedTokenCost {
+// costLoad seconds a request at phi 1.
+func fitOn(t *testing.T, s []SeriesSample, l []LatencySample, share float64) CachedTokenCost {
 	t.Helper()
-	return fitWith(t, s, l, &loadPricer{r: &stubResolver{}, load: load}, share)
+	return fitWith(t, s, l, &loadPricer{r: &stubResolver{}, load: costLoad}, share)
 }
 
 // fitWith is fitOn priced by p.
@@ -110,10 +112,9 @@ func fitWith(t *testing.T, s []SeriesSample, l []LatencySample, p *loadPricer, s
 // too, and a fleet whose TTFT the price at phi 0 already reads high fits
 // phi 0, never under it.
 func TestFitCachedTokenCost_RecoversAKnownCost(t *testing.T) {
-	const load = 0.2
 	for _, want := range []float64{0.3, 0.75} {
-		s, l := costSeries(4*240, 5, want, load, 0)
-		c := fitOn(t, s, l, load, 0.9)
+		s, l := costSeries(4*240, want)
+		c := fitOn(t, s, l, 0.9)
 		require.True(t, c.Fitted, c.Why)
 		assert.InDelta(t, want, c.Phi, 0.01)
 		assert.GreaterOrEqual(t, c.Steps, MinCachedTokenCostSteps)
@@ -124,18 +125,18 @@ func TestFitCachedTokenCost_RecoversAKnownCost(t *testing.T) {
 		assert.Contains(t, c.Words(), "fitted on")
 	}
 	// The median holds against a minority of steps read far off.
-	s, l := costSeries(4*240, 5, 0.5, load, 0)
+	s, l := costSeries(4*240, 0.5)
 	for i := 0; i < len(l); i += 7 * 20 {
 		for j := i; j < min(i+20, len(l)); j++ {
 			l[j].Router = btRouter(5, 3)
 		}
 	}
-	c := fitOn(t, s, l, load, 0.9)
+	c := fitOn(t, s, l, 0.9)
 	require.True(t, c.Fitted, c.Why)
 	assert.InDelta(t, 0.5, c.Phi, 0.01)
 	// Measured under the price at phi 0: phi is held at 0.
-	s, l = costSeries(4*240, 5, -0.5, load, 0)
-	c = fitOn(t, s, l, load, 0.9)
+	s, l = costSeries(4*240, -0.5)
+	c = fitOn(t, s, l, 0.9)
 	require.True(t, c.Fitted, c.Why)
 	assert.Zero(t, c.Phi)
 }
@@ -143,14 +144,14 @@ func TestFitCachedTokenCost_RecoversAKnownCost(t *testing.T) {
 // Too few steps, or too little of the prompt cached, leave phi at 0 with the
 // reason.
 func TestFitCachedTokenCost_TooFewSteps(t *testing.T) {
-	s, l := costSeries(30, 5, 0.5, 0.2, 0)
-	c := fitOn(t, s, l, 0.2, 0.9)
+	s, l := costSeries(30, 0.5)
+	c := fitOn(t, s, l, 0.9)
 	assert.False(t, c.Fitted)
 	assert.Zero(t, c.Phi)
 	assert.Contains(t, c.Why, CachedCostTooFewSteps)
 	assert.Contains(t, c.Words(), "not fitted")
-	s, l = costSeries(4*240, 5, 0.5, 0.2, 0)
-	c = fitOn(t, s, l, 0.2, 0.05)
+	s, l = costSeries(4*240, 0.5)
+	c = fitOn(t, s, l, 0.05)
 	assert.False(t, c.Fitted)
 	assert.Zero(t, c.Phi)
 	assert.Contains(t, c.Why, CachedCostNoShare)
@@ -164,8 +165,8 @@ func TestFitCachedTokenCost_TooFewSteps(t *testing.T) {
 // steps after them), and measure far under their price there; the steps
 // below the knee alone set phi.
 func TestFitCachedTokenCost_SkipsStepsPastTheKnee(t *testing.T) {
-	const load, want = 0.2, 0.5
-	s, l := costSeries(8*240, 5, want, load, 0)
+	const want = 0.5
+	s, l := costSeries(8*240, want)
 	past := 0
 	for i := range s {
 		if (i/60)%3 != 0 {
@@ -175,7 +176,7 @@ func TestFitCachedTokenCost_SkipsStepsPastTheKnee(t *testing.T) {
 		}
 	}
 	require.Positive(t, past)
-	c := fitWith(t, s, l, &loadPricer{r: &stubResolver{}, load: load, pastKnee: true}, 0.9)
+	c := fitWith(t, s, l, &loadPricer{r: &stubResolver{}, load: costLoad, pastKnee: true}, 0.9)
 	require.True(t, c.Fitted, c.Why)
 	assert.InDelta(t, want, c.Phi, 0.01)
 }

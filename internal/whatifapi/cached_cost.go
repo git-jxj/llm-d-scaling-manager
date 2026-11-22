@@ -53,7 +53,7 @@ const (
 // Words is the cost as the assumed row names it.
 func (c CachedTokenCost) Words() string {
 	if !c.Fitted {
-		return fmt.Sprintf("cached-token cost phi 0, not fitted: %s", c.Why)
+		return "cached-token cost phi 0, not fitted: " + c.Why
 	}
 	s := fmt.Sprintf("cached-token cost phi %.3f, fitted on %d steps at a cached share of %.3f", c.Phi, c.Steps, c.CachedShare)
 	if c.FirstHalf != nil && c.SecondHalf != nil {
