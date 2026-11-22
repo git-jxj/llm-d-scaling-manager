@@ -110,9 +110,10 @@ smt_parse() {
     SMT_NS="" SMT_KEDA_NS="" SMT_PROM_URL="" SMT_PROM_CA="" SMT_QUOTA="" SMT_SETS=() SMT_FILES=""
     SMT_DRY_RUN=false SMT_OUT="" SMT_SCOPE=namespace SMT_MODEL_NS=() SMT_PLATFORM="" SMT_STRICT=false
     SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_WL_IMAGE="" SMT_WL_OFF=false SMT_ALLOW_HTTP=false SMT_SINGLE=false SMT_DSETW=false SMT_NO_DSETW=false
+    SMT_SHARE=""
     case "$cmd" in
         admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope --model-namespace --single-namespace --dset-role-writer --no-dset-role-writer " ;;
-        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller --dset-role-writer --no-dset-role-writer " ;;
+        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --utilization-share --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller --dset-role-writer --no-dset-role-writer " ;;
         admin-finish) allowed=" -n --keda-namespace --files --platform --strict --restart-keda --scope " ;;
         release-files) allowed=" --out " ;;
     esac
@@ -133,6 +134,7 @@ smt_parse() {
             --prometheus-url) SMT_PROM_URL="$2"; shift 2 ;;
             --prometheus-ca) SMT_PROM_CA="$2"; shift 2 ;;
             --quota) SMT_QUOTA="$2"; shift 2 ;;
+            --utilization-share) SMT_SHARE="$2"; shift 2 ;;
             --set) SMT_SETS+=("$2"); shift 2 ;;
             --files) SMT_FILES="$2"; shift 2 ;;
             --out) SMT_OUT="$2"; shift 2 ;;
@@ -210,6 +212,10 @@ smt_parse() {
         printf '%s' "$SMT_QUOTA" | grep -qE '^[A-Za-z0-9._-]+=-?[0-9]+(,[A-Za-z0-9._-]+=-?[0-9]+)*$' \
             || smt_usage "$cmd --quota: '$SMT_QUOTA' is not GPU=N[,GPU=N]"
     fi
+    case "$SMT_SHARE" in
+        ""|off|shadow|active) ;;
+        *) smt_usage "$cmd --utilization-share is off, shadow or active, not '$SMT_SHARE'" ;;
+    esac
     if [ -n "$SMT_PROM_URL" ]; then
         smt_check_scheme "$SMT_PROM_URL" "--prometheus-url $SMT_PROM_URL"
     fi
@@ -951,14 +957,16 @@ smt_activate_file() {
 
 # smt_settings_pairs: SMT_PAIRS, the settings keys the flags set, KEY=VALUE.
 # One table: --prometheus-url prometheusURL, --prometheus-ca
-# prometheusCACertPath, --quota limiter=quota and quotas, --allow-http
-# prometheusAllowHTTP=true, --set KEY=VALUE.
+# prometheusCACertPath, --quota limiter=quota and quotas,
+# --utilization-share utilizationShare, --allow-http prometheusAllowHTTP=true,
+# --set KEY=VALUE.
 smt_settings_pairs() {
     local kv key known
     SMT_PAIRS=()
     [ -z "$SMT_PROM_URL" ] || SMT_PAIRS+=("prometheusURL=$SMT_PROM_URL")
     [ -z "$SMT_PROM_CA" ] || SMT_PAIRS+=("prometheusCACertPath=$SMT_PROM_CA_PATH")
     [ -z "$SMT_QUOTA" ] || SMT_PAIRS+=("limiter=quota" "quotas=$SMT_QUOTA")
+    [ -z "$SMT_SHARE" ] || SMT_PAIRS+=("utilizationShare=$SMT_SHARE")
     [ "$SMT_ALLOW_HTTP" != true ] || SMT_PAIRS+=("prometheusAllowHTTP=true")
     known="$(yq '.data | keys | .[]' "$SMT_SHIPPED/scaling-manager-settings.yaml")"
     for kv in "${SMT_SETS[@]}"; do
@@ -973,9 +981,106 @@ smt_settings_pairs() {
             quotas) smt_usage "--set quotas: give --quota \"GPU=N\"" ;;
             prometheusAllowHTTP) smt_usage "--set prometheusAllowHTTP: give --allow-http; it also applies the controller without PROMETHEUS_TOKEN_PATH, which a plain HTTP Prometheus needs" ;;
             limiter) [ -z "$SMT_QUOTA" ] || smt_usage "--set limiter with --quota: --quota sets limiter to quota" ;;
+            utilizationShare) [ -z "$SMT_SHARE" ] || smt_usage "--set utilizationShare with --utilization-share: give one of them" ;;
         esac
+        smt_check_setting "$key" "${kv#*=}"
         SMT_PAIRS+=("$kv")
     done
+}
+
+# smt_check_setting <key> <value>: a value the controller accepts for that
+# key (internal/config/settings.go), or exit 2. The controller rejects a bad
+# value only when it reads the settings, and a rejected limiter costs the
+# whole default entry; here the install stops before anything is written.
+# Keys with free-form values (prometheusServerName) pass.
+smt_check_setting() {
+    local k="$1" v="$2" t
+    case "$k" in
+        utilizationShare)
+            case "$v" in off|shadow|active) return 0 ;; esac
+            smt_usage "--set utilizationShare=$v: off, shadow or active" ;;
+        limiter)
+            for t in $(printf '%s' "$v" | tr ',' ' '); do
+                case "$t" in gpu-inventory|quota) ;; *) smt_usage "--set limiter=$v: gpu-inventory, quota, or both comma-separated" ;; esac
+            done ;;
+        quotaScope)
+            case "$v" in namespace|cluster) return 0 ;; esac
+            smt_usage "--set quotaScope=$v: namespace or cluster" ;;
+        kueue|kueueBorrow|scaleToZero|prometheusInsecureSkipVerify)
+            # strconv.ParseBool, which the controller reads them with.
+            case "$v" in 1|t|T|TRUE|true|True|0|f|F|FALSE|false|False) return 0 ;; esac
+            smt_usage "--set $k=$v: true or false" ;;
+        logVerbosity)
+            case "$v" in ""|*[!0-9]*) smt_usage "--set logVerbosity=$v: a number, 0 or more" ;; esac ;;
+        kueueNamespace)
+            smt_check_ns "--set kueueNamespace" "$v" ;;
+        watchNamespaces)
+            for t in $(printf '%s' "$v" | tr ',' ' '); do smt_check_ns "--set watchNamespaces" "$t"; done ;;
+    esac
+}
+
+# smt_share_mode echoes the utilizationShare these flags set, or empty.
+smt_share_mode() {
+    local kv
+    for kv in "${SMT_PAIRS[@]}"; do
+        [ "${kv%%=*}" != utilizationShare ] || { printf '%s\n' "${kv#*=}"; return 0; }
+    done
+}
+
+# smt_share_needs_limiter: settings created with utilizationShare shadow or
+# active name a limiter, or exit 2. The optimizer divides a GPU budget; with
+# none it has nothing to divide, and the share mode would read as set while
+# nothing is computed.
+smt_share_needs_limiter() {
+    local mode kv
+    mode="$(smt_share_mode)"
+    case "$mode" in shadow|active) ;; *) return 0 ;; esac
+    for kv in "${SMT_PAIRS[@]}"; do
+        [ "${kv%%=*}" != limiter ] || [ -z "${kv#*=}" ] || return 0
+    done
+    smt_usage "utilizationShare $mode divides a GPU budget, and these flags set no limiter: add --quota \"GPU=N\" (the GPUs of that product the models may hold together; kubectl get nodes -L nvidia.com/gpu.product names the product), or --set limiter=gpu-inventory"
+}
+
+# smt_share_targets echoes the namespaces whose pods sharing patches, one a
+# line: the model namespaces, else the namespace of the controller.
+smt_share_targets() {
+    if [ ${#SMT_MODEL_NS[@]} -gt 0 ]; then
+        printf '%s\n' "${SMT_MODEL_NS[@]}"
+    else
+        printf '%s\n' "$SMT_NS"
+    fi
+}
+
+# smt_share_grant: with utilizationShare active from the flags, the pod-patch
+# grant (scaling-manager-activate.yaml) in each namespace sharing reaches,
+# before the settings and the preflight, whose activation check FAILs without
+# it. One already there is left as it is. A refused apply is exit 3, with the
+# command the cluster admin runs: a namespace owner may grant it in their own
+# namespace, not always in another.
+smt_share_grant() {
+    local m f rc
+    [ "$(smt_share_mode)" = active ] || return 0
+    smt_need scaling-manager-activate.yaml
+    echo "Utilization share active: the pod-patch grant (scaling-manager-activate.yaml):"
+    while read -r m; do
+        if kc_capture get rolebinding "scaling-manager-pod-writer-$SMT_NS" -n "$m" -o name \
+            && kc_capture get role scaling-manager-pod-writer -n "$m" -o name; then
+            echo "  $m: in place"
+            continue
+        fi
+        f="$(smt_activate_file "$m")"
+        rc=0
+        kc_capture apply -f "$f" || rc=$?
+        if [ "$rc" = 0 ]; then
+            printf '%s\n' "$KC_OUT" | sed '/^$/d; s/^/  /'
+            continue
+        fi
+        printf '%s' "$KC_ERR" | grep -qF '(Forbidden)' || smt_kubectl_failed "apply the pod-patch grant in $m"
+        echo "--utilization-share active: you may not grant the controller patch on pods in $m ($(kc_err_line "$KC_ERR")). Ask the cluster admin to run, from the release files (smt release-files --out <dir>):" >&2
+        echo "  sed -e \"s/__NAMESPACE__/$SMT_NS/g\" -e \"s/__MODEL_NAMESPACE__/$m/g\" scaling-manager-activate.yaml | kubectl apply -f -" >&2
+        echo "Then run this install again; or install with --utilization-share shadow, which needs no grant." >&2
+        exit 3
+    done < <(smt_share_targets)
 }
 
 # smt_settings_file: the settings file with the values of the flags, in SMT_TMP.
@@ -1021,6 +1126,22 @@ smt_settings() {
     echo "Settings: created $SMT_SETTINGS ($(printf '%s ' "${SMT_PAIRS[@]%%=*}")from the flags; passive)."
 }
 
+# smt_share_summary: after an install whose flags set utilizationShare, what
+# is in force and the read that shows it. Settings this run did not create
+# were left as they are; smt_settings printed the patch for each difference.
+smt_share_summary() {
+    local mode
+    mode="$(smt_share_mode)"
+    [ -n "$mode" ] || return 0
+    if [ "$SMT_SETTINGS_CREATED" != true ]; then
+        echo "Utilization share: $SMT_SETTINGS existed, so utilizationShare $mode was not written (the patch is above, when it differs)."
+        return 0
+    fi
+    echo "Utilization share: $mode$([ -z "$SMT_QUOTA" ] || printf ', quota %s' "$SMT_QUOTA"). While a model of a group is passive, the group computes and publishes its shares and moves nothing (llmsm_utilization_share_passive_shadow is 1)."
+    echo "  In force once the controller has read the settings, within a minute:"
+    echo "    kubectl get configmap $SMT_STATUS_CM -n $SMT_NS -o jsonpath='{.data.limiter} {.data.utilizationShare}'"
+}
+
 # smt_settings_preconditions: with no settings, a Prometheus URL is needed
 # before anything is created. Run before the first write.
 #
@@ -1056,6 +1177,8 @@ $(smt_switch_patches "$want" | sed 's/^/  /')"
             smt_usage "no $SMT_SETTINGS in $SMT_NS yet, and no --prometheus-url: give the Prometheus base URL, https (http with --allow-http)"
         fi
     fi
+    smt_settings_pairs
+    smt_share_needs_limiter
 }
 
 # smt_switch_patches <to http: true|false>: the kubectl patches, one a line,
@@ -1605,6 +1728,14 @@ smt_dry_install() {
     [ -n "$SMT_PROM_URL" ] || [ "$SMT_PLATFORM" = openshift ] \
         || smt_usage "--dry-run renders a fresh install: give --prometheus-url"
     [ -n "$SMT_PROM_URL" ] || { SMT_PROM_URL="$SMT_THANOS_URL"; smt_check_scheme "$SMT_PROM_URL" "the OpenShift default, $SMT_PROM_URL,"; smt_settings_pairs; }
+    smt_share_needs_limiter
+    if [ "$(smt_share_mode)" = active ]; then
+        smt_need scaling-manager-activate.yaml
+        local m
+        while read -r m; do
+            smt_dry_write "15-activate-$m.yaml" "" "$(smt_activate_file "$m")"
+        done < <(smt_share_targets)
+    fi
     smt_dry_write 20-settings.yaml "" "$(smt_settings_file)"
     if [ -n "$SMT_PROM_CA" ]; then
         smt_prometheus_ca_yaml > "$SMT_OUT/25-prometheus-ca.yaml"
@@ -1758,7 +1889,9 @@ smt_install() {
     smt_render_preflight_watch
     [ ${#SMT_MODEL_NS[@]} -eq 0 ] || echo "Manages $(smt_model_list | sed 's/,/, /g') (ConfigMap $SMT_STAMP); runs in $SMT_NS."
     smt_check_adoptable
+    smt_settings_pairs
     smt_settings_preconditions
+    smt_share_grant
     smt_settings
     smt_prometheus_ca
     smt_preflight_first
@@ -1769,6 +1902,7 @@ smt_install() {
     smt_preflight_gate "the controller is installed"
     echo
     echo "Installed in $SMT_NS, passive$([ "${SMT_DSETW_ON:-false}" = true ] && printf '; the DisaggregatedSet role writer is on and writes no replicas while a model is passive')."
+    smt_share_summary
     smt_summary_lines
     echo
     echo "Left for the cluster admin (KEDA's client certificate, then drop the preflight's cluster reads):"
@@ -1792,6 +1926,7 @@ smt_install_cluster() {
     smt_render
     smt_render_dsetw_switch "$SMT_DSETW_WANT"
     smt_check_adoptable
+    smt_settings_pairs
     smt_settings_preconditions
     if ! smt_get namespace "$SMT_NS"; then
         smt_kc create namespace "$SMT_NS"
@@ -1811,6 +1946,7 @@ smt_install_cluster() {
         fi
     done
     smt_dsetw_apply
+    smt_share_grant
     smt_settings
     smt_prometheus_ca
     smt_preflight_first
@@ -1821,6 +1957,7 @@ smt_install_cluster() {
     smt_finish
     echo
     echo "Installed in $SMT_NS for the cluster, passive, serving the scaler over mutual TLS$([ "$SMT_DSETW_WANT" = true ] && printf '; the DisaggregatedSet role writer is on and writes no replicas while a model is passive')."
+    smt_share_summary
     smt_summary_lines
 }
 

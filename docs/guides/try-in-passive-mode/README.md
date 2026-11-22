@@ -36,6 +36,10 @@ Follow [Install the scaling manager in a namespace](../install-in-namespace/),
 steps 1 to 4. Leave `passive: "true"` in the settings, as shipped. Install it
 before you register any model, so that it never acts on one.
 
+To try the utilization-share optimizer as well, give its settings to `smt
+install` in this step: see [one install for the
+share](#one-install-for-the-share).
+
 ### 2. Check it is passive
 
 <!-- guide:deploy.passivedefault start -->
@@ -265,6 +269,30 @@ export GPUS=<gpus>
 ```
 <!-- guide:share.vars end -->
 
+### One install for the share
+
+On a first install, the namespace owner's `smt install` of [step
+1](#1-install-the-controller) takes the share settings. It writes the quota
+and the mode into the settings it creates, and for `active` applies the
+pod-patch grant first, in each namespace the controller manages:
+
+<!-- guide:share.install start -->
+```bash
+# Namespace owner, on a first install. The quota, the share mode and, for active, the pod-patch grant, with the controller. Add --prometheus-ca <file> for a private CA.
+smt install -n ${CONTROLLER_NAMESPACE} --prometheus-url https://<prometheus>:9090 \
+  --quota "${ACCELERATOR}=${GPUS}" --utilization-share active
+```
+<!-- guide:share.install end -->
+
+The install refuses a share mode without a quota, and a value it does not
+know, before it writes anything. Where you may not grant `patch` on pods in a
+model namespace, it stops with exit 3 and prints the command for your admin;
+`--utilization-share shadow` needs no grant. The settings exist already? The
+install never writes them: it prints the patch for each value that differs.
+Run those, or the steps below.
+
+### Turn it on in a running install
+
 Each step is a patch of the settings, read live:
 
 <!-- guide:share.quota start -->
@@ -305,7 +333,9 @@ kubectl patch configmap scaling-manager-settings -n ${CONTROLLER_NAMESPACE} --ty
 ```
 <!-- guide:share.activate end -->
 
-The status now says `active`, because that is how the optimizer is configured.
+### Read what it would move
+
+The status says `active`, because that is how the optimizer is configured.
 What tells you it is held is `llmsm_utilization_share_passive_shadow`: it is
 `1` for every group that holds a passive model. During a busy period the log
 says what it would move:

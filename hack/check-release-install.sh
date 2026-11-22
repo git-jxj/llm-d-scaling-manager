@@ -412,12 +412,14 @@ smt install -n team-a --prometheus-url https://p:9090
 rc=$?
 if [ "$rc" = 7 ] && grep -q 'the preflight Job disappeared while it ran' "$W/out"; then ok "a preflight Job that disappears: exit 7"; else bad "vanished Job: exit $rc: $(tail -1 "$W/out")"; fi
 rm -f "$STUB_DIR/job-vanishes"
-QV="team-x'quoted"
-smt install -n team-a --prometheus-url https://p:9090 --set "kueueNamespace=$QV"
+# A free-form value: the --set keys with a closed set of values are checked
+# before anything is written, and a quote is in none of them.
+QV="https://p:9090/team-x'quoted"
+smt install -n team-a --prometheus-url "$QV"
 rc=$?
-cmd="$(grep -m1 'kubectl patch configmap scaling-manager-settings -n team-a --type merge -p .*kueueNamespace' "$W/out" | sed 's/^ *//')"
+cmd="$(grep -m1 'kubectl patch configmap scaling-manager-settings -n team-a --type merge -p .*prometheusURL' "$W/out" | sed 's/^ *//')"
 arg="$(bash -c "kubectl() { printf '%s' \"\$9\"; }; $cmd" 2>/dev/null)"
-if [ "$rc" = 0 ] && [ -n "$cmd" ] && [ "$(printf '%s' "$arg" | jq -r .data.kueueNamespace 2>/dev/null)" = "$QV" ]; then
+if [ "$rc" = 0 ] && [ -n "$cmd" ] && [ "$(printf '%s' "$arg" | jq -r .data.prometheusURL 2>/dev/null)" = "$QV" ]; then
     ok "the printed patch for a value with a single quote runs as printed and sets that value"
 else
     bad "patch with a quote: exit $rc, printed [$cmd], -p [$arg]"
@@ -1622,6 +1624,103 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+echo "the utilization-share trial in one install (--quota, --utilization-share)"
+# The passive share trial used to be the install, then three kubectl patches of
+# the settings and a hand-applied grant. These flags put the same keys into the
+# settings the install creates, and the grant before the preflight checks it.
+settings() { obj configmap team-a scaling-manager-settings | jq -r --arg k "$1" '.data[$k] // ""'; }
+restore
+smt install -n team-a --prometheus-url https://p:9090 --quota H200=5 --utilization-share maybe
+rc=$?
+if [ "$rc" = 2 ] && grep -q "utilization-share is off, shadow or active, not 'maybe'" "$W/out" && [ "$(writes)" = 0 ]; then ok "--utilization-share maybe is usage, nothing written"; else bad "--utilization-share maybe: exit $rc, $(writes) writes: $(tail -1 "$W/out")"; fi
+restore
+smt install -n team-a --prometheus-url https://p:9090 --utilization-share shadow
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'these flags set no limiter: add --quota' "$W/out" && [ "$(writes)" = 0 ]; then ok "--utilization-share shadow with no limiter is usage, naming --quota, nothing written"; else bad "share without a limiter: exit $rc, $(writes) writes: $(tail -1 "$W/out")"; fi
+restore
+for bad_set in utilizationShare=maybe limiter=quotas quotaScope=global kueue=yes logVerbosity=high kueueNamespace=Bad_NS; do
+    smt install -n team-a --prometheus-url https://p:9090 --set "$bad_set"
+    rc=$?
+    k="${bad_set%%=*}"
+    if [ "$rc" = 2 ] && grep -q -- "--set $k" "$W/out" && [ "$(writes)" = 0 ]; then ok "--set $bad_set is usage, nothing written"; else bad "--set $bad_set: exit $rc, $(writes) writes: $(tail -1 "$W/out")"; fi
+done
+smt install -n team-a --prometheus-url https://p:9090 --quota H200=5 --utilization-share shadow --set utilizationShare=active
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'give one of them' "$W/out"; then ok "--utilization-share with --set utilizationShare is usage"; else bad "both share flags: exit $rc: $(tail -1 "$W/out")"; fi
+restore
+smt install -n team-a --prometheus-url https://p:9090 --quota NVIDIA-A100-PCIE-80GB=5 --utilization-share shadow
+rc=$?
+got="$(settings limiter)|$(settings quotas)|$(settings utilizationShare)|$(settings passive)"
+if [ "$rc" = 0 ] && [ "$got" = 'quota|NVIDIA-A100-PCIE-80GB=5|shadow|true' ] && ! has_obj role team-a scaling-manager-pod-writer \
+    && grep -q 'Utilization share: shadow, quota NVIDIA-A100-PCIE-80GB=5' "$W/out"; then
+    ok "--quota and --utilization-share shadow land in the settings the install creates, passive stays true, no pod-patch grant"
+else
+    bad "share shadow: exit $rc, settings $got: $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+restore
+smt install -n team-a --prometheus-url https://p:9090 --quota H200=5 --utilization-share active
+rc=$?
+got="$(settings limiter)|$(settings quotas)|$(settings utilizationShare)|$(settings passive)"
+grant_line="$(grep -n '^apply -f .*/activate-team-a.yaml' "$STUB_DIR/calls.log" | head -1 | cut -d: -f1)"
+settings_line="$(grep -n '^create -f .*settings.yaml' "$STUB_DIR/calls.log" | head -1 | cut -d: -f1)"
+want_grant="$(norm "$(sedded scaling-manager-activate.yaml team-a team-a)")"
+got_grant="$(cat "$STUB_DIR/obj/role/team-a/scaling-manager-pod-writer.json" "$STUB_DIR/obj/rolebinding/team-a/scaling-manager-pod-writer-team-a.json" 2>/dev/null \
+    | jq -c -S 'del(.metadata.resourceVersion, .metadata.generation)' | sort)"
+if [ "$rc" = 0 ] && [ "$got" = 'quota|H200=5|active|true' ] && [ -n "$grant_line" ] && [ -n "$settings_line" ] && [ "$grant_line" -lt "$settings_line" ] \
+    && [ -n "$want_grant" ] && [ "$want_grant" = "$got_grant" ]; then
+    ok "--utilization-share active: the settings say active, and the release's pod-patch grant is applied before the settings the preflight reads"
+else
+    bad "share active: exit $rc, settings $got, grant at call ${grant_line:-none}, settings at ${settings_line:-none}: $(diff <(printf '%s\n' "$want_grant") <(printf '%s\n' "$got_grant") | head -3 | tr '\n' ' ')"
+fi
+: > "$STUB_DIR/calls.log"
+smt install -n team-a --prometheus-url https://p:9090 --quota H200=5 --utilization-share active
+rc=$?
+if [ "$rc" = 0 ] && grep -q '  team-a: in place' "$W/out" && ! grep -q '^apply -f .*/activate-team-a.yaml' "$STUB_DIR/calls.log" \
+    && grep -q 'utilizationShare active was not written' "$W/out"; then
+    ok "a re-run finds the grant in place and applies nothing more"
+else
+    bad "share active re-run: exit $rc: $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+smt install -n team-a --prometheus-url https://p:9090 --quota H200=5 --utilization-share off
+rc=$?
+if [ "$rc" = 0 ] && [ "$(settings utilizationShare)" = active ] \
+    && grep -qF "kubectl patch configmap scaling-manager-settings -n team-a --type merge -p '{\"data\":{\"utilizationShare\":\"off\"}}'" "$W/out"; then
+    ok "existing settings are not written: a different --utilization-share prints its patch"
+else
+    bad "share off over active: exit $rc, utilizationShare $(settings utilizationShare): $(grep utilizationShare "$W/out" | head -2 | tr '\n' ' ')"
+fi
+restore
+touch "$STUB_DIR/forbid-rbac-apply"
+smt install -n team-a --prometheus-url https://p:9090 --quota H200=5 --utilization-share active
+rc=$?
+if [ "$rc" = 3 ] && grep -qF 'sed -e "s/__NAMESPACE__/team-a/g" -e "s/__MODEL_NAMESPACE__/team-a/g" scaling-manager-activate.yaml | kubectl apply -f -' "$W/out" \
+    && ! has_obj configmap team-a scaling-manager-settings; then
+    ok "a refused grant exits 3 with the admin's command, before the settings are created"
+else
+    bad "refused grant: exit $rc, settings $(has_obj configmap team-a scaling-manager-settings && echo created || echo absent): $(tail -2 "$W/out" | tr '\n' ' ')"
+fi
+rm -f "$STUB_DIR/forbid-rbac-apply"
+rm -rf "$W/dryshare"
+smt install -n team-a --prometheus-url https://p:9090 --quota H200=5 --utilization-share active --dry-run --out "$W/dryshare"
+rc=$?
+if [ "$rc" = 0 ] && [ "$(norm "$W/dryshare/15-activate-team-a.yaml")" = "$want_grant" ] \
+    && [ "$(yq '.data.limiter + "|" + .data.quotas + "|" + .data.utilizationShare' "$W/dryshare/20-settings.yaml")" = 'quota|H200=5|active' ]; then
+    ok "--dry-run renders the grant (15-activate-team-a.yaml) and the share keys in 20-settings.yaml"
+else
+    bad "share dry-run: exit $rc: $(ls "$W/dryshare" 2>/dev/null | tr '\n' ' ')"
+fi
+reset m1
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --quota H200=5 --utilization-share active
+rc=$?
+if [ "$rc" = 5 ] && has_obj rolebinding m1 scaling-manager-pod-writer-scaling-manager-system \
+    && [ "$(obj configmap scaling-manager-system scaling-manager-settings | jq -r '.data.utilizationShare')" = active ]; then
+    ok "install --scope cluster --utilization-share active grants pod patch in each --model-namespace"
+else
+    bad "cluster share active: exit $rc: $(tail -1 "$W/out")"
+fi
+
+# ---------------------------------------------------------------------------
 echo "release-files and llmsm_make_cmd"
 rm -rf "$W/rf"
 smt release-files --out "$W/rf"
@@ -1674,7 +1773,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=189
+EXPECT_CASES=205
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
