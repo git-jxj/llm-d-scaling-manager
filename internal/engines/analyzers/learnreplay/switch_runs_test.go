@@ -1007,6 +1007,10 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// also moves the composite-variants and warm-pool-pressure outputs of
 	// pd-restart, the staircases b-off, b-on and c-on and ttft-three-pods:
 	// those are in that switch's row, which carries their base digests.
+	// The capacity planner's replay turns it off (PlannerSwitches, issue
+	// llm-d-incubation/llm-d-scaling-manager#318's regression), so none of
+	// this reaches a planner figure; TestPlannerSwitches_TheFloorBIsOffInThePlanner
+	// holds that.
 	saturation.SwitchITLBaselineFromFloor: {
 		"e1-tuned/lines.csv", "e1-tuned/results.csv", "e1-tuned/variant-capacities.csv",
 		"e1/lines.csv", "e1/results.csv", "e1/variant-capacities.csv",
@@ -1275,6 +1279,13 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// golden moves. Its unit tests hold it.
 	saturation.SwitchDecodeBurstFill:      nil,
 	saturation.SwitchPrefillVPFloorServed: nil,
+	// The planner's V_P on a fleet that never queued (served peak as a
+	// lower bound). Planner-only, off; the controller's replays never run
+	// it, so no learner golden moves. Its unit tests hold it.
+	saturation.SwitchPrefillVPServedUnqueued: nil,
+	// The planner's peak under a queue over the whole window. Planner-only,
+	// off; the controller's replays never run it. Its unit tests hold it.
+	saturation.SwitchPrefillVPWindowBest: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1688,6 +1699,21 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestCapacity_NoQueueStaysRefused"},
 		{"../saturation", "TestPrefillVPFloorServed_ThroughAnalyze"},
 	},
+	saturation.SwitchPrefillVPServedUnqueued: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_NoQueueTakesTheServedPeakAsALowerBound"},
+		{"../../../signals/prefill", "TestCapacity_TheUnqueuedPeakIsSustained"},
+		{"../../../signals/prefill", "TestCapacity_AQueuedSourceWinsOverTheUnqueuedPeak"},
+		{"../saturation", "TestPrefillVPServedUnqueued_ThroughAnalyze"},
+		{".", "TestServedWork_TheBusiestStretch"},
+		{".", "TestServedWork_BrokenStretchesAreNoReading"},
+	},
+	saturation.SwitchPrefillVPWindowBest: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_TheWindowKeepsAnOldQueuedPeak"},
+		{"../../../signals/prefill", "TestCapacity_ANewerHigherPeakWins"},
+		{"../../../signals/prefill", "TestCapacity_TheMemoryIsOnlyForAgedPeaks"},
+	},
 	// The first holds it off from the constructor; the others run it on and
 	// off and assert both, in the window, through Analyze and in the
 	// planner's own windows.
@@ -1768,6 +1794,7 @@ var heldBy = map[string][]heldTest{
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OnFromTheConstructor"},
+		{".", "TestPlannerSwitches_TheFloorBIsOffInThePlanner"},
 		{"../saturation", "TestITLBaselineFromFloor_AnalyzePinsAtTheFloorByDefault"},
 		{"../saturation", "TestITLBaselineFromFloor_TheFitLineIsUnchangedOff"},
 		{"../../../signals/itl", "TestTracker_BaselineFromFloorPinsAnUnlearnedKey"},

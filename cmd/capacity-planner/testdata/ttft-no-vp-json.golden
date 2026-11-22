@@ -92,13 +92,47 @@
           "blockSizeSource": "not recorded"
         },
         "targetSeconds": 1,
-        "assumed": []
+        "replicas": 1,
+        "replicasFrom": "recording",
+        "vp": 11338.380000000001,
+        "vpSource": "learned",
+        "vpOrigin": "served-peak",
+        "vpPromptTokens": 4000.510361974609,
+        "vpWholePromptTokens": 4000.510361974609,
+        "vpPromptHitRate": 0,
+        "wholePromptTokens": 10920.73884349273,
+        "promptHitRate": 0,
+        "fixedLatencySeconds": 0.014432285034633677,
+        "fixedLatencySource": "learned",
+        "imbalance": 1,
+        "imbalanceSource": "one pod",
+        "promptTokens": 15974.91866028708,
+        "promptSource": "measured",
+        "promptFromCycle": 83,
+        "promptToCycle": 102,
+        "promptCV": 2,
+        "promptCVSource": "assumed",
+        "arrivalsSource": "assumed",
+        "transferSource": "decode engine",
+        "decodeSide": "decode engine",
+        "decodeTTFTSeconds": 0.07385067939758301,
+        "decodeTTFTPromptTokens": 16607.714285714283,
+        "flowControl": "off, inferred",
+        "assumed": [
+          "V_P 11338 tokens/s is only the rate a prefill pod was seen to compute: the pods never queued for capacity, so the prefill knee is at least the rate it gives and no TTFT is priced from it; --assume-vp states one",
+          "prompt cv 2 (no computed-prompt histogram)",
+          "flow control off (no queue series)",
+          "Poisson arrivals"
+        ]
       },
       "results": {
         "rate": {
           "refused": {
             "reason": "NoPrefillCapacity",
-            "detail": "P1 refused V_P of variant-02: NoPrefillCapacity; pass --assume-vp for a flagged answer"
+            "detail": "V_P 11338 tokens/s is only the rate a prefill pod was seen to compute (it never queued for capacity): no TTFT is priced from it; pass --assume-vp for a flagged answer",
+            "flags": [
+              "VPLowerBound"
+            ]
           }
         }
       }

@@ -6,7 +6,7 @@ TTFT p90        325.5 ms    [195.5 .. 1087.9] end to end; OUTSIDE VALIDATED REGI
                 (bands: V_P and f +-15%, a sweep, not a confidence interval)
                 (272.4 ms if prefill and decode waits were independent)
                 (floor 96.4 ms, pooled 210.4 ms, worst pod utilization 0.656)
-ttft inputs     V_P 30000 ASSUMED; a 9.00 ms ASSUMED; f 1.5 (assumed); N_p 2 (--prefill); prompt 1000 tokens (measured, cycles 64-83); decode by its line, term assumed, hop assumed
+ttft inputs     V_P 30000 ASSUMED, learned 22390; a 9.00 ms ASSUMED; f 1.5 (assumed); N_p 2 (--prefill); prompt 1000 tokens (measured, cycles 64-83); decode by its line, term assumed, hop assumed
 assumed         V_P 30000 tok/s (--assume-vp); a 9ms (--assume-a); f 1.5 on 2 pods (none learned at that count); prompt cv 0.06 (--assume-prompt-cv); decode TTFT 29.1 ms held from a quiet row, slope 10 on ITL above 3.34 ms (no fit: NoStepSpread); router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow control off (no queue series); Poisson arrivals
 shape           IL 1000 OL 602 (measured, cycles 64-83), output spread D 1.304 (measured)
 engine          vLLM release not recorded

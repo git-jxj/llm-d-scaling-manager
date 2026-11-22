@@ -1,5 +1,6 @@
 -
 --
+--assume-vp
 --data-parallel-size
 --engine-image
 --force
@@ -286,6 +287,7 @@ Name
 NarrowPromptClusters
 NegativePromptSlope
 NegativeSlopeFit
+NeverQueued
 NewEngine
 NewTypeInventoryWithUsage
 No
@@ -1271,6 +1273,7 @@ fitting
 fix
 fixed
 flag
+flagged
 flags
 flappingWindow
 flavor
@@ -2388,6 +2391,8 @@ prefill-required
 prefill-spare
 prefill-throughput-bound-reading
 prefill-vp-floor-served
+prefill-vp-served-unqueued
+prefill-vp-window-best
 prefillBoundHeld
 prefillBounds
 prefillDemandAfter
@@ -2823,6 +2828,7 @@ series
 seriesPresent
 serve
 served
+served-peak
 served-siblings
 servedBound
 server

@@ -406,12 +406,13 @@ prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
 it is missing, is shown under each box. A typed value flags every figure that
 rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
 
-Decode refused with `PinnedDefaultB` means the latency line's intercept B,
-the per-token latency with the cache empty, was never measured: no full fit,
-and at that cycle no usable low-load reading in the last 30 minutes to take
-B from (where there is one, the line runs through it and is not refused).
-The **ITL B** box shows the B the floor below the band
-gives; type it, or your own. On the CLI, `--assume-itl-b floor` uses that B
+Decode refused with `PinnedDefaultB` is the common case on a real P/D window:
+the latency line's intercept B, the per-token latency with the cache empty,
+was never measured, because no window spread the decode Pods' KV fill far
+enough for a full fit. The planner does not take B from the low-load readings
+on its own, as the controller does: on the recordings checked, a B taken that
+way read TPOT well under what was measured. The **ITL B** box shows the B the
+floor below the band gives; type it, or your own. On the CLI, `--assume-itl-b floor` uses that B
 and `--assume-itl-b 12ms` states one. Figures on it are flagged
 `AssumedITLB` and read as outside the validated region.
 
@@ -426,6 +427,10 @@ A fleet whose load never goes quiet still gets two terms, each flagged:
   it was measured at. If even the shorter prompts compute more than 2,500
   tokens, a is extrapolated from long prompts and may read low; the assumed
   line says so.
+- **A prefill knee raised to the work the fleet served** (`KneeAtServedWork`).
+  Where V_P is only a lower bound, the prefill knee is at least the rate the
+  prefill Pods' sustained computed-token work serves at the prompt priced
+  (see below, after the lower-bound knee).
 - **A lower KV-fill floor for the decode latency line** (`AdaptedBandFloor`).
   The line is fitted over a range of KV fill. A fleet whose decode pods never
   fill far enough above the default floor (0.15) never gets the 0.30 range a
@@ -725,6 +730,29 @@ higher, so whether the fleet saturates is not priced", and the summary
 cells at and past that knee are marked `LB`, not `SAT`. Past decode's own
 knee the fleet saturates whatever V_P is, and the verdict says so on
 decode's knee. `--assume-vp` states a V_P to price the prefill side.
+
+The planner reads V_P over the whole recording, not only its last 6 hours,
+as the controller does: a fleet that queued for prefill only at its busiest
+hours keeps the V_P read then (flag `VPFromEarlierInWindow`, and the assumed
+line says when: "V_P learned at +6.2 h of the window, 17.8 h before the cycle
+priced"). It is a lower bound, raised to what a Pod was seen to compute
+where that is higher.
+
+A fleet whose prefill Pods never queued for compute at all has no V_P from a
+queue. The planner then takes the highest rate a prefill Pod computed over 3
+minutes as V_P, as a lower bound, and nothing more (the assumed line says
+"is only the rate a prefill pod was seen to compute"):
+
+- The prefill knee is at least the rate that V_P gives. It is also at least
+  the rate the fleet's prefill Pods kept up: the computed-token work they
+  sustained over 2 minutes, at the Pod count priced, in the last 6 hours,
+  over the prompt they computed (flag `KneeAtServedWork`). A Pod computes no
+  faster than it can, so work it kept up is work it can do. Both figures come
+  from the engines' computed-token counter.
+- No TTFT is priced from such a V_P: every TTFT, and every rate asked at a
+  TTFT target, reads "no prefill speed learned" (`NoPrefillCapacity`), as
+  before. The true V_P may be far higher, so a TTFT priced from it would be
+  an upper bound at best.
 
 A window whose cycles do not cover its span (a capture or recording with
 holes) gets a `window gaps` line under the header line: the cycles the span

@@ -120,8 +120,11 @@ func TestDayPlanStaircaseRefusals(t *testing.T) {
 	onlyDecode, code := dayJSON(t, "--recording", stair("ttft-staircase-b-on"))
 	assert.Equal(t, 3, code)
 	require.Len(t, onlyDecode.Refused, 1)
-	assert.Equal(t, "NoPrefillCapacity", onlyDecode.Refused[0].Reason)
-	assert.Contains(t, onlyDecode.Refused[0].Hint, "--assume-vp")
+	// Its prefill pod never queued: V_P is the served peak, a lower bound
+	// (prefill-vp-served-unqueued), and the refusal is a, too few low-load
+	// minutes.
+	assert.Equal(t, "NoFixedLatency", onlyDecode.Refused[0].Reason)
+	assert.Contains(t, onlyDecode.Refused[0].Hint, "--assume-a")
 	assert.Zero(t, onlyDecode.Summary.Counts.Unmet, "a refusal of the source is no bucket's")
 	assert.Positive(t, onlyDecode.Summary.Counts.Sized)
 	for _, b := range onlyDecode.Buckets {

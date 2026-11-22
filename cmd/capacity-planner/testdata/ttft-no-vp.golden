@@ -1,6 +1,10 @@
 decode          refused: NoLine (no ITL line learned by cycle 105; the line needs a window in which decode's KV-cache use spans 0.30 or more between 0.15 and 0.80 full: record a busier window)
 shape           IL 10770 OL 16 (measured, cycles 83-102), output spread D 1.000 (measured)
 engine          vLLM release not recorded
-TTFT p90        refused: NoPrefillCapacity (P1 refused V_P of variant-02: NoPrefillCapacity; pass --assume-vp for a flagged answer)
+prefill knee    >=0.81 r/s  [0.81 .. 0.81]   prefill work served: the 12925 computed tokens/s the prefill pods sustained over 2 min / 15975 tokens; OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25); at least: V_P is a lower bound
+TTFT p90        refused: NoPrefillCapacity (V_P 11338 tokens/s is only the rate a prefill pod was seen to compute (it never queued for capacity): no TTFT is priced from it; pass --assume-vp for a flagged answer)
+ttft inputs     V_P 11338 learned (served-peak, at 4001 tokens); a 14.43 ms learned; f 1 (one pod); N_p 1 (recording); prompt 15975 tokens (measured, cycles 83-102); decode engine TTFT 73.9 ms at 16608 tokens, measured
+assumed         V_P 11338 tokens/s is only the rate a prefill pod was seen to compute: the pods never queued for capacity, so the prefill knee is at least the rate it gives and no TTFT is priced from it; --assume-vp states one; prompt cv 2 (no computed-prompt histogram); flow control off (no queue series); Poisson arrivals
+flags: UnvalidatedTTFT; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; KneeAtServedWork
 estimate from no readings of the line's own of a 105-cycle recording, not a guarantee; see basis (-o json)
 TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it.

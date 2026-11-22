@@ -2166,6 +2166,8 @@ selfCheck.tpot.nearKnee.steps number
 selfCheck.tpot.nearKnee.worst number
 selfCheck.tpot.nearKneeUnsettled number
 selfCheck.tpot.overloaded number
+selfCheck.tpot.p90SameBucket number
+selfCheck.tpot.p90Unresolvable number
 selfCheck.tpot.pastKnee object
 selfCheck.tpot.pastKnee.hi number
 selfCheck.tpot.pastKnee.lo number
@@ -2187,6 +2189,8 @@ selfCheck.ttft.nearKnee.steps number
 selfCheck.ttft.nearKnee.worst number
 selfCheck.ttft.nearKneeUnsettled number
 selfCheck.ttft.overloaded number
+selfCheck.ttft.p90SameBucket number
+selfCheck.ttft.p90Unresolvable number
 selfCheck.ttft.pastKnee object
 selfCheck.ttft.pastKnee.hi number
 selfCheck.ttft.pastKnee.lo number

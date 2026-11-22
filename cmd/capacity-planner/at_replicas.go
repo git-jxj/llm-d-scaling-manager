@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -261,6 +262,8 @@ func figureValue(f whatifapi.Figure) (float64, string, error) {
 	switch {
 	case f.Value != nil:
 		return *f.Value, "", nil
+	case f.Refused != nil && servedOnlyRefusal(f.Refused.Reason, slices.Contains(f.Refused.Flags, string(whatif.VPLowerBound))):
+		return 0, servedOnlyWords, nil
 	case f.Refused != nil:
 		return 0, plainReason(f.Refused.Reason), nil
 	}

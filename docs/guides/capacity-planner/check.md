@@ -65,7 +65,12 @@ How to read it:
   a prediction more than 20% under or over the bucket's nearer edge is a
   certain miss, scored against that edge (which understates the miss) and
   never within; a prediction nearer than that, or inside it, could be
-  within and is counted `unresolvable`, not as a miss.
+  within and is counted `unresolvable`, not as a miss. Of those, the steps
+  whose prediction falls inside the measured bucket itself are counted
+  apart, "in the measured bucket" (JSON `sameBucket`): the histogram cannot
+  tell the two figures apart, so they are consistent at the bucket's
+  resolution, which the words give with the bucket's width (TPOT 10 to
+  20 ms is 2x wide). That is not within 20%, and never counts as within.
 - **Median ratio**: the planner's figure over the measured one, at the
   middle step. Above 1 it leans high at the middle; below 1 it leans low. A
   median near 1 can still hide steps it read low, so check that count too.

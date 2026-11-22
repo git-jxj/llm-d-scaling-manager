@@ -39,6 +39,14 @@ type Prefill struct {
 	// (VPLowerBound), VPAboveSlopeBound one above the low-load slope's
 	// bound, and VPAssumed one the caller supplied (AssumedVP).
 	VPLowerBound, VPAboveSlopeBound, VPAssumed bool
+	// VPServedOnly marks a V_P that is only the rate a pod was seen to
+	// compute, on a fleet that never queued (prefill.SourceServedPeak,
+	// NeverQueued): the knee priced from it stands as a lower bound, and
+	// every TTFT priced from it is refused NoPrefillCapacity, since the true
+	// V_P may be far higher and the figure would be an upper bound at best
+	// (issue llm-d-incubation/llm-d-scaling-manager#369). A V_P the caller
+	// supplies (VPAssumed) is priced as given.
+	VPServedOnly bool
 	// FixedLatency is a, in seconds: the latency one request pays on a pod
 	// besides its prompt's work. It enters the request's own latency only,
 	// never the queue's work (busy-minute V_P is already net of it).
@@ -1024,6 +1032,9 @@ type ttftPlan struct {
 	// kneeUnpriced is TTFTFleet.LowerBoundKneeUnpriced on a V_P that is a
 	// lower bound and not the caller's.
 	kneeUnpriced bool
+	// servedOnly is Prefill.VPServedOnly on a V_P not the caller's: no TTFT
+	// is priced from it.
+	servedOnly bool
 }
 
 // plan checks a fleet and places its flow-control onsets.
@@ -1039,7 +1050,8 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 	}
 	pl := ttftPlan{pf: pf, d: fl.Decode, fc: fl.FlowControl, ps: fl.ProcessorSharing,
 		psCapped:     fl.ProcessorSharing && fl.Prefill.BeyondProcessorSharing(),
-		kneeUnpriced: fl.LowerBoundKneeUnpriced && fl.Prefill.VPLowerBound && !fl.Prefill.VPAssumed}
+		kneeUnpriced: fl.LowerBoundKneeUnpriced && fl.Prefill.VPLowerBound && !fl.Prefill.VPAssumed,
+		servedOnly:   fl.Prefill.VPServedOnly && !fl.Prefill.VPAssumed}
 	pl.routerWait = (fl.PriceRouterWait || fl.RouterWaitInPrefill) && pl.ps && !pl.psCapped
 	pl.gateStage = pl.routerWait && fl.PriceRouterWait
 	pl.psOnsets = fl.PSOnsets && pl.ps
@@ -1411,6 +1423,16 @@ func (pl ttftPlan) aboveDecodeOnset(rate float64) *Unanswerable {
 func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced {
 	pk := pl.pf.knee()
 	out := TTFT{PrefillKnee: pk, Onsets: pl.onsets, Flags: append([]Flag(nil), pl.flags...)}
+	if pl.servedOnly {
+		// A V_P known only as the rate a pod computed prices no TTFT, at any
+		// rate: under its knee the figure would rest on a V_P that may be
+		// far higher, and at or past it the knee is only a lower bound, which
+		// the planner may raise to the work the pods served besides.
+		u := refuse(NoPrefillCapacity, fmt.Sprintf("V_P %.0f tokens/s is only the rate a prefill pod was seen to compute "+
+			"(it never queued for capacity): no TTFT is priced from it; pass --assume-vp for a flagged answer", pl.pf.p.VP))
+		u.Flags = []Flag{VPLowerBound}
+		return priced{u: &u}
+	}
 	if rate >= pk {
 		if pl.kneeUnpriced && !pl.decodeSaturates(rate) {
 			// The decode gate's onset is known whatever bound V_P is: a

@@ -310,6 +310,18 @@ type shapeSample struct {
 //     the fill a low-fill fleet has.
 //   - saturation.SwitchPrefillVPFloorServed: a lower-bound V_P raised to the
 //     highest computed-token rate a pod was seen to sustain.
+//   - saturation.SwitchPrefillVPServedUnqueued: where no source has a
+//     reading, that served rate as a lower-bound V_P (prefill.NeverQueued),
+//     not NoPrefillCapacity. The planner prices only the prefill knee from
+//     it, as at least its rate, raised to the computed-token work the
+//     fleet's prefill pods sustained (servedKneeFloor), and refuses every
+//     TTFT priced from it: no figure is priced where none was, so none can
+//     read under what was measured (issue
+//     llm-d-incubation/llm-d-scaling-manager#369).
+//   - saturation.SwitchPrefillVPWindowBest: the peak under a queue, the best
+//     read anywhere in the recording, not only in the last 6 hours, flagged
+//     with its age (VPFromEarlierInWindow). A lower bound as before, floored
+//     at the served peak.
 //   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
 //     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
 //     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
@@ -389,29 +401,45 @@ type shapeSample struct {
 // 120 per rank, 0.034 ms per sequence) to read it, so a recording of one
 // shape cannot. A replay turns it on by name.
 //
-// One controller switch, on from its constructor, is turned off here:
+// Two controller switches, on from their constructor, are turned off here:
 //
+//   - saturation.SwitchITLBaselineFromFloor: a decode line with no full fit
+//     pinned through the floor read below the band in the last 30 minutes,
+//     not the 6 ms default B (issue
+//     llm-d-incubation/llm-d-scaling-manager#169 item 1, on from the
+//     constructor since #318, after a GPU check of the controller's decode
+//     asks). The planner keeps such a line on the default and refuses it
+//     (PinnedDefaultB), as v0.12.2 did; --assume-itl-b floor prices it
+//     through the floor's B and flags every figure on it AssumedITLB. On,
+//     the planner priced 14 backtest TPOT steps it had refused, on seven
+//     recordings, more than 20% under what was measured (ttft-three-pods at
+//     0.33 to 0.46 of measured), with no flag saying B was not measured, and
+//     judged pd-restart's decode under-provisioned where it had not judged
+//     it (issue llm-d-incubation/llm-d-scaling-manager#318).
 //   - saturation.SwitchITLFloorBaselineHeld: a decode line with no full fit
 //     keeps the B it last read from its floor below the band after the
 //     floor's readings are 30 minutes old (issue
 //     llm-d-incubation/llm-d-scaling-manager#333). On from the controller's
-//     constructor, for a fleet held in the band. The planner reads B from the
-//     floor of the last 30 minutes only, as before, and refuses a line with
-//     none (PinnedDefaultB): held, it priced decode on hours of the
-//     staircase and three-pods recordings it refused, and no check yet says
-//     those figures do not read under what was measured.
+//     constructor, for a fleet held in the band. It holds nothing with the
+//     floor off; it is off here in its own right too: held, it priced
+//     decode on hours of the staircase and three-pods recordings the planner
+//     refused, and no check yet says those figures do not read under what
+//     was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
-		saturation.SwitchPrefillALowLoadPerRank: true,
-		saturation.SwitchPrefillAEngineTiming:   true,
-		saturation.SwitchPrefillQueueByCapacity: true,
-		saturation.SwitchPrefillFBusyMinutes:    true,
-		saturation.SwitchPrefillALowLoadByRate:  true,
-		saturation.SwitchPrefillAMedianOverhead: true,
-		saturation.SwitchITLAdaptiveBandFloor:   true,
-		saturation.SwitchPrefillVPFloorServed:   true,
-		saturation.SwitchPlannerCapAtStepBudget: true,
-		saturation.SwitchITLFloorBaselineHeld:   false,
+		saturation.SwitchPrefillALowLoadPerRank:  true,
+		saturation.SwitchPrefillAEngineTiming:    true,
+		saturation.SwitchPrefillQueueByCapacity:  true,
+		saturation.SwitchPrefillFBusyMinutes:     true,
+		saturation.SwitchPrefillALowLoadByRate:   true,
+		saturation.SwitchPrefillAMedianOverhead:  true,
+		saturation.SwitchITLAdaptiveBandFloor:    true,
+		saturation.SwitchPrefillVPFloorServed:    true,
+		saturation.SwitchPrefillVPServedUnqueued: true,
+		saturation.SwitchPrefillVPWindowBest:     true,
+		saturation.SwitchPlannerCapAtStepBudget:  true,
+		saturation.SwitchITLBaselineFromFloor:    false,
+		saturation.SwitchITLFloorBaselineHeld:    false,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,
 	}}
@@ -528,6 +556,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
 	ttft.computedHit = opts.Switches[PackageSLO][slo.SwitchTTFTComputedHit]
 	ttft.tierLoad = opts.Switches[PackageSLO][slo.SwitchTTFTTierLoad]
+	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
@@ -597,6 +626,9 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 					v.Resident = residentOf(resident[v.Variant], v.Shape)
 				}
 			}
+			// The window's first cycle, for the age of a V_P read before the
+			// samples kept (PrefillState.WindowFrom); set again below.
+			s.FirstAt = firstAt
 			r.fillTTFT(s, in, ttft)
 			batch.fit(s)
 			// The replay applied the cycle's Analyze before asking: its
