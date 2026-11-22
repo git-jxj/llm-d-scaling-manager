@@ -130,6 +130,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
 // SwitchPrefillFBusyMinutes, SwitchPrefillVPFloorServed,
+// SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 // SwitchITLAdaptiveBandFloor,
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
 // SwitchITLBatchTerm,
@@ -271,6 +272,12 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// pod was seen to compute (prefill.Cycle.VPFloorServed). Off from
 		// the constructor.
 		SwitchPrefillVPFloorServed: &a.prefillVPFloorServed,
+		// The planner's a: low load read by rate against the prompt
+		// cluster's service time, and the median overhead
+		// (prefill.Cycle.ALowLoadByRate, AMedianOverhead). Off from the
+		// constructor.
+		SwitchPrefillALowLoadByRate:  &a.prefillALowLoadByRate,
+		SwitchPrefillAMedianOverhead: &a.prefillAMedianOverhead,
 		// The planner's ITL band floor on a low-fill fleet
 		// (itl_band_floor.go). Off from the constructor.
 		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,

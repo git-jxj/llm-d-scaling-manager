@@ -550,6 +550,10 @@ type SaturationAnalyzer struct {
 	// constructor, planner-only. No analyzer reads it: the capacity
 	// planner's replay fits and prices the term.
 	itlBatchTerm bool
+	// prefillALowLoadByRate is SwitchPrefillALowLoadByRate, and
+	// prefillAMedianOverhead SwitchPrefillAMedianOverhead: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillALowLoadByRate, prefillAMedianOverhead bool
 	// itlLineAtFloor is SwitchITLLineAtFloor: off from the constructor,
 	// planner-only; the analyzer accepts it for the planner's replay
 	// (learnreplay.StatesFrom reads it) and reads it nowhere.

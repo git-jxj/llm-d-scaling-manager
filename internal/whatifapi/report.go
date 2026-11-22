@@ -450,6 +450,20 @@ type ReportNeeded struct {
 	// role counted (ReportQuery.Spare): it still holds with that many
 	// replicas of each role lost at once. Absent with no spare or Unmet.
 	WithSpare *SpareFleet `json:"withSpare,omitempty"`
+	// FSensitivity is the same search with the prefill imbalance f fixed
+	// at each of a few values on every count above one pod, lowest f
+	// first: how far the answer rests on an f no count may have read.
+	FSensitivity []ReportNeededAtF `json:"fSensitivity,omitempty"`
+}
+
+// ReportNeededAtF is the smallest fleet that holds with the prefill
+// imbalance at F on every count above one pod; Unmet names the role no
+// count up to the bound holds, and then the counts are zero.
+type ReportNeededAtF struct {
+	F       float64 `json:"f"`
+	Prefill int     `json:"prefill,omitempty"`
+	Decode  int     `json:"decode,omitempty"`
+	Unmet   string  `json:"unmet,omitempty"`
 }
 
 // ReportRole is one role's standing at the load: Spare says one replica
