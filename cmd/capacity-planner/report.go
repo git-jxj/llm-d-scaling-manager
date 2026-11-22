@@ -1059,11 +1059,19 @@ func (r *reporter) use(u *whatifapi.ReportUse, base *servedFleet, ev fleetEval) 
 	}
 	// The busiest pod's utilization is the load over the prefill knee, which
 	// is N_p x V_P (less the margin) / (f x the prompt); pooled, f is 1.
+	// With --load-aware-router f falls with the load and the knee is no
+	// longer N_p x V_P / (f x the prompt): both are read at the load.
 	f := max(base.pf.in.Imbalance, 1)
 	worst := r.load / pk.Value
+	pooled := worst / f
+	if p := base.pf.fleet.Prefill; p.LoadAwareRouter {
+		if fl, pl, ok := whatif.PrefillLoadAt(p, r.load); ok {
+			f, worst, pooled = fl, fl*pl, pl
+		}
+	}
 	u.Prefill.Imbalance = f
 	u.Prefill.WorstPod = whatifapi.FigureOf(whatif.Answer{Value: worst}, "", false)
-	u.Prefill.Pooled = whatifapi.FigureOf(whatif.Answer{Value: worst / f}, "", false)
+	u.Prefill.Pooled = whatifapi.FigureOf(whatif.Answer{Value: pooled}, "", false)
 }
 
 // slotsPerReplica is the batch slots of one decode replica: the cap, or the

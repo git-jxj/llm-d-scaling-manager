@@ -274,6 +274,7 @@ func (a *SaturationAnalyzer) PrefillEstimate(namespace, modelID, variant string)
 	est.Refused = maps.Clone(est.Refused)
 	est.FByPods = maps.Clone(est.FByPods)
 	est.FSamplesByPods = maps.Clone(est.FSamplesByPods)
+	est.FLoadByPods = maps.Clone(est.FLoadByPods)
 	return est, se.at, true
 }
 

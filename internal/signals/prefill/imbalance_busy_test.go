@@ -42,6 +42,20 @@ func TestImbalance_TheBusiestMinutesSetF(t *testing.T) {
 	}
 }
 
+// FLoad is the load of the minutes f is read from: with FBusyMinutes the
+// busy ones, at about ten times the light ones' requests a pod; without, the
+// light minutes, most of the window. At the one count it is FLoadByPods too.
+func TestImbalance_FLoadIsTheLoadFWasReadAt(t *testing.T) {
+	for seed := range uint64(5) {
+		on := run(NewObserver(), lightThenBusy(seed, true)...)
+		off := run(NewObserver(), lightThenBusy(seed, false)...)
+		require.Positive(t, off.FLoad, "seed %d", seed)
+		assert.InDelta(t, 10, on.FLoad/off.FLoad, 1.5, "seed %d: the busy minutes' load over the light ones'", seed)
+		assert.InDelta(t, on.FLoad, on.FLoadByPods[2], 1e-9, "seed %d", seed)
+		assert.InDelta(t, off.FLoad, off.FLoadByPods[2], 1e-9, "seed %d", seed)
+	}
+}
+
 // Short of MinImbalanceMinutes at half the peak, the MinImbalanceMinutes
 // busiest are taken, so a window that gives f with the switch off gives one
 // on; at or past it, every minute at half the peak, the peak's own included.

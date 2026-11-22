@@ -82,6 +82,14 @@ const DefaultImbalanceAcrossCounts = false
 // minutes after a restart, not a reading of the fleet.
 const DefaultPlannerImbalanceAcrossCounts = true
 
+// DefaultPlannerLoadAwareRouter is the capacity planner's default of pricing
+// f as a load-aware router spreads it (--load-aware-router,
+// Prefill.LoadAwareRouter): off. The router's scorers are not in any
+// recording, so the planner cannot tell a router that scores the pods'
+// queues from one that does not, and off holds f at every rate, which never
+// prices a knee above the one f was measured to give.
+const DefaultPlannerLoadAwareRouter = false
+
 // FreshImbalance is the least f at a count above one with no count learned,
 // with DefaultImbalanceAcrossCounts on. Not a constant of any fleet: it stands
 // above what every Qwen3-32B run measured, 1.00 and 1.07 learned at two pods

@@ -350,6 +350,14 @@ type Estimate struct {
 	// learned f at any count.
 	FByPods        map[int]float64
 	FSamplesByPods map[int]int
+	// FLoad is the median computed tokens per second per pod over the minutes
+	// F is the median of, and FLoadByPods the same for each count of
+	// FByPods: the load of the minutes f was read from (a median of its own,
+	// not the load of the median minute). Over V_P it is the mean pod
+	// utilization f stands for (whatif.Prefill.ImbalanceUtilization). 0, and
+	// no entry, where no f is given.
+	FLoad       float64
+	FLoadByPods map[int]float64
 	// FMultiRank is a kept minute with a row of more than one engine rank: a
 	// data-parallel pod, or an LWS group whose every Pod runs an engine,
 	// collapsed to one row. f is then the spread across rows; the spread

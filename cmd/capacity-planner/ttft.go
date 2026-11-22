@@ -681,6 +681,14 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		}
 	}
 	pf.in.Imbalance = max(p.Imbalance, 1)
+	if f.loadAwareRouter {
+		p.LoadAwareRouter = true
+		p.ImbalanceUtilization = whatif.ImbalanceUtilizationAt(ps.Estimate, p.Replicas, p.VP)
+		if p.Replicas >= 2 && p.Imbalance > 1 {
+			pf.assume("f %s held to %.2f utilization, then falling to 1 at the pooled prefill knee (--load-aware-router)",
+				num(p.Imbalance), p.ImbalanceUtilization)
+		}
+	}
 	return p, nil
 }
 
