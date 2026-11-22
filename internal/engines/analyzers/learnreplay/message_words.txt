@@ -2897,6 +2897,7 @@ slo-ttft-joint-inputs
 slo-ttft-low-load-decode-ttft
 slo-ttft-measured-spread
 slo-ttft-measured-transfer
+slo-ttft-prefix-attention
 slo-ttft-price
 slo-ttft-processor-sharing
 slo-ttft-prompt-support

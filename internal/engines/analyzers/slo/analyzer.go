@@ -176,6 +176,9 @@ type Analyzer struct {
 	// ttftPromptSupport is SwitchTTFTPromptSupport (ttft.go): off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	ttftPromptSupport bool
+	// ttftPrefixAttention is SwitchTTFTPrefixAttention (ttft.go): off from
+	// the constructor, planner-only; the analyzer holds it for the name.
+	ttftPrefixAttention bool
 	// ttftQuietTransfer is SwitchTTFTQuietTransfer (ttft.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftQuietTransfer bool

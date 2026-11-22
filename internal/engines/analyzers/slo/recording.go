@@ -101,7 +101,8 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchITLRestartUnderName, SwitchITLIdleOnEvidence and
 // SwitchITLForgetReachesTheLine, SwitchITLOneSidedAtCap, SwitchTTFTPrice,
 // SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer,
-// SwitchTTFTProcessorSharing, SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
+// SwitchTTFTPrefixAttention, SwitchTTFTProcessorSharing,
+// SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
 // SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTJointInputs,
 // SwitchTTFTPromptSupport and SwitchKVPerRequestOutputDispersion; a name it
@@ -171,6 +172,8 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		SwitchTTFTPromptSupport:    &a.ttftPromptSupport,
 		SwitchTTFTMeasuredTransfer: &a.ttftMeasuredTransfer,
 		SwitchTTFTQuietTransfer:    &a.ttftQuietTransfer,
+		// A prefix hit's cost in the planner, planner-only (ttft.go).
+		SwitchTTFTPrefixAttention: &a.ttftPrefixAttention,
 		// The decode term of a TTFT on a decode line (ttft.go).
 		SwitchTTFTDecodeTerm: &a.ttftDecodeTerm,
 		// The prefill pod and the KV pull as processor-sharing stages

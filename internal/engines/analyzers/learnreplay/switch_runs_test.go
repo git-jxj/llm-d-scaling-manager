@@ -649,6 +649,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// from the constructor) and not in PlannerSwitches, so it moves no
 	// golden: no replay turns it on. Its unit tests hold it (heldBy).
 	slo.SwitchTTFTPromptSupport: nil,
+	// A prefix hit's cost in the planner (issue
+	// llm-d-incubation/llm-d-scaling-manager#311), planner-only and off,
+	// not in PlannerSwitches: the analyzer prices nothing with it, and no
+	// committed recording has a prefix hit, so it moves no golden. Its unit
+	// tests hold it (heldBy).
+	slo.SwitchTTFTPrefixAttention: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -2000,6 +2006,18 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFT_ThePromptSupportSwitch"},
 		{"../../../signals/whatif", "TestTTFT_ThePromptsSupportDecidesProcessorSharing"},
 		{"../../../signals/whatif", "TestOwnTime_HeldAtTheLongestPrompt"},
+	},
+	// A prefix hit's cost: off from the constructor, the switch reaching the
+	// planner's prefill state, the rescale it prices, and the planner's
+	// prefill work and transfer on and off.
+	slo.SwitchTTFTPrefixAttention: {
+		{"../slo", "TestTTFT_ThePrefixAttentionOffFromTheConstructor"},
+		{".", "TestStateAt_ThePrefixAttentionSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestVPRescale_PrefixAttentionReadsTheCachedContext"},
+		{"../../../signals/whatif", "TestVPRescale_PrefixAttentionTakesTheCachedTokensFromTheHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionPricesThePrefillVariantsHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionAStatedHitGovernsThePrefill"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionMovesTheTransferByTheDecodeHit"},
 	},
 	// Issue ev-shindin/llm-scaling-manager#275's lift: an aggregated figure sizes once the GPS check has
 	// agreed. Both run the switch on and fail with it off: the first checks

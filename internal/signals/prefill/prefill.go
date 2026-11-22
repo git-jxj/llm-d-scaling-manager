@@ -248,7 +248,7 @@ type Estimate struct {
 	VPServedPeak float64
 	// VPFlooredAtServed says V_P is VPServedPeak, raised to it from a lower
 	// source (Cycle.VPFloorServed): VPSamples is then PeakRun and
-	// VPPromptTokens the peak's, while VPSource and VPLowerBoundReason still
+	// VPPromptTokens, VPWholePromptTokens and VPPromptHitRate the peak's, while VPSource and VPLowerBoundReason still
 	// name the source that made V_P a lower bound.
 	VPFlooredAtServed bool
 	// VPQueuedMinutes, VPLongestQueuedRun and VPBusyMinutes say why V_P was
@@ -274,8 +274,15 @@ type Estimate struct {
 	VPAboveSlopeBound bool
 	// VPPromptTokens is the mean effective prompt length of the minutes V_P
 	// rests on, zero when V_P is refused or the length is unknown (the
-	// back-pressure bound records none).
+	// back-pressure bound records none, unless floored: VPFlooredAtServed).
 	VPPromptTokens float64
+	// VPWholePromptTokens is the mean whole prompt of the same minutes,
+	// prefix hits included (AvgInputTokensRecent), and VPPromptHitRate their
+	// mean prefix-cache hit rate: the shape V_P was read at beside
+	// VPPromptTokens, so a question whose hit rate moved is seen
+	// (whatif.Prefill.VPWholePromptTokens). Both zero where VPPromptTokens
+	// is, or where one of the minutes read no whole prompt.
+	VPWholePromptTokens, VPPromptHitRate float64
 
 	// A is the fixed latency in seconds: the low-load fit's intercept plus
 	// the least overhead (AvgTTFT - AvgServiceTime) seen at low load, the
@@ -373,6 +380,9 @@ type sample struct {
 	// prompt is the minute's effective prompt length, zero when not read:
 	// what VPPromptTokens averages over the minutes V_P rests on.
 	prompt float64
+	// whole is the minute's whole prompt and hit its prefix-cache hit rate
+	// (rowWholePrompt), read with prompt; whole is zero when not read.
+	whole, hit float64
 	// lowLoad: admitted to the fit of a, at ieff and svc, with the
 	// overhead when overheadOK. With Cycle.ALowLoadByRate it is a candidate
 	// the fit judges by rankRate, the request rate (per engine rank with
@@ -514,6 +524,7 @@ func (o *Observer) Observe(c Cycle) Estimate {
 		s := sample{at: c.Now}
 		if ieffOK {
 			s.prompt = ieff
+			s.whole, s.hit = rowWholePrompt(rm)
 		}
 		s.rate, s.rateOK = computedRate(rm, sglang)
 		s.queued = queuedForCapacity(rm, c.QueueByCapacity)
@@ -706,6 +717,29 @@ func effectivePrompt(rm domain.ReplicaMetrics, sglang bool) (float64, bool) {
 	}
 	ieff := rm.AvgInputTokensRecent * (1 - hit)
 	return ieff, finitePositive(ieff)
+}
+
+// rowWholePrompt is the row's whole prompt over the same minute, prefix hits
+// included, and its prefix-cache hit rate, taken as 0 outside [0, 1) as
+// effectivePrompt takes it; a whole prompt of 0 is not read.
+//
+// A row whose hit-rate series is absent reads a hit rate of 0 beside a read
+// whole prompt: domain.ReplicaMetrics carries no presence for
+// PrefixCacheHitRate (the collector leaves it 0), so absent and none look
+// alike. That is the careful side: a V_P read at hit 0 is flagged
+// VPShapeMoved against a question with hits (whatif.Prefill.prefixMoved),
+// and with the planner's slo-ttft-prefix-attention on, its shorter span
+// rescales V_P down, never up; an unknown whole prompt would instead price
+// as if no hit had moved.
+func rowWholePrompt(rm domain.ReplicaMetrics) (whole, hit float64) {
+	hit = rm.PrefixCacheHitRate
+	if !(hit >= 0 && hit < 1) {
+		hit = 0
+	}
+	if !finitePositive(rm.AvgInputTokensRecent) {
+		return 0, 0
+	}
+	return rm.AvgInputTokensRecent, hit
 }
 
 // MeanEffectivePrompt is E[I_eff] over the serving rows, each row's effective
