@@ -1566,7 +1566,12 @@ External role is scaled by KEDA: see
 (`lws.disaggregatedset`, or `make check-prereqs`) and the controller log, once,
 say `serves DisaggregatedSet but not DisaggregatedSetRoleScaler`. That is
 LeaderWorkerSet v0.9.x: a role has no `/scale` for KEDA, and only the role
-writer can scale it. Upgrade LeaderWorkerSet to v0.10.0 or later, the way it
+writer can scale it. In passive mode the roles are then not observed at all:
+KEDA never calls the trigger, so no would-be count is published. Turn on the
+[role writer](disaggregatedset.md#turn-on-the-role-writer) for Static roles,
+which reads them and, for a passive model, writes nothing; or upgrade. The
+preflight also warns when the CRDs are new but the LeaderWorkerSet
+controller's image is older than v0.10.0. Upgrade LeaderWorkerSet to v0.10.0 or later, the way it
 was installed (on OpenShift, through its operator). If it was installed with
 the upstream Helm chart, apply the new CRDs first, because `helm upgrade`
 never updates them:

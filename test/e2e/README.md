@@ -47,7 +47,7 @@ and read each `[SKIPPED]` reason.
 | `make test-e2e-full` | `full && !smoke && !flaky && !kueue-borrow && !passive` | PRs that touch code, config or tests, with `SCALE_TO_ZERO_ENABLED=true` and `DEPLOY_LWS=true` |
 | `make test-e2e-multi-controller` | `multi-controller` specs | — |
 | `make test-e2e-kueue-borrow` / `test-e2e-kueue-borrow-with-setup` | `kueue-borrow` (the first needs `make install-kueue-e2e`) | job `e2e-tests-kueue-borrow`: PRs touching borrowing, label `ok-to-test-kueue`, nightly; `REQUIRE_KUEUE_E2E=true` |
-| `make test-e2e-passive` / `test-e2e-passive-with-setup` | `passive` | job `e2e-tests-passive`, beside `e2e-tests-full` on the same PRs; needs `USE_SIMULATOR=true` and `SCALE_TO_ZERO_ENABLED=true` |
+| `make test-e2e-passive` / `test-e2e-passive-with-setup` | `passive` | job `e2e-tests-passive`, beside `e2e-tests-full` on the same PRs; needs `USE_SIMULATOR=true`, `SCALE_TO_ZERO_ENABLED=true` and LeaderWorkerSet v0.10.0 or later (`-with-setup` installs it) |
 | `make test-e2e-smoke-with-setup` / `test-e2e-full-with-setup` | deploy the infra first, then run the tier | what CI runs |
 
 Smoke and full are **disjoint**: the full target excludes `smoke`, so run both

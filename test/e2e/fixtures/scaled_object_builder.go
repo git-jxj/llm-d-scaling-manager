@@ -15,6 +15,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
 )
 
@@ -42,6 +43,8 @@ func WithScaledObjectScaleTargetKind(kind string) ScaledObjectOption {
 			so.Spec.ScaleTargetRef.APIVersion = apiVersionLWS
 		case kindDeployment:
 			so.Spec.ScaleTargetRef.APIVersion = apiVersionAppsV1
+		case constants.DisaggregatedSetRoleScalerKind:
+			so.Spec.ScaleTargetRef.APIVersion = constants.DisaggregatedSetAPIVersion
 		default:
 			// Keep existing APIVersion for unknown kinds
 		}

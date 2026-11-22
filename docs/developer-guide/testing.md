@@ -2308,7 +2308,7 @@ read the `-v` output.
 
 ### Passive-mode specs (own CI job)
 
-Label `passive`, 19 specs in seven containers, about 45 minutes. They check
+Label `passive`, 22 specs in eight containers, about 65 minutes. They check
 [passive mode](../reference/scaling-policy.md#passive) against a real KEDA,
 HPA and controller. They carry the `full` label, but the full tier's label
 filter excludes them: with them it outgrew its 90-minute CI job. They run in
@@ -2324,11 +2324,13 @@ USE_SIMULATOR=true SCALE_TO_ZERO_ENABLED=true make test-e2e-passive
 ```
 
 `USE_SIMULATOR=true` and `SCALE_TO_ZERO_ENABLED=true` are required: without
-the simulator's `--fake-metrics` or EPP flow control the specs skip. Check the
-summary says `Ran 19 of ... Specs` with no skips. The budget is
-`E2E_PASSIVE_TIMEOUT=70m` (ginkgo), `E2E_PASSIVE_GO_TIMEOUT=75m` and a
-95-minute job: the 19 specs took 43 minutes on a 22-CPU kind host, and setup
-about 15.
+the simulator's `--fake-metrics` or EPP flow control the specs skip. The setup
+installs LeaderWorkerSet (`DEPLOY_LWS=true`, chart `LWS_CHART_VERSION`) for the
+DisaggregatedSet spec, which fails without it. Check the summary says
+`Ran 22 of ... Specs` with no skips. The budget is `E2E_PASSIVE_TIMEOUT=100m`
+(ginkgo), `E2E_PASSIVE_GO_TIMEOUT=105m` and a 125-minute job: the first 19
+specs took 43 minutes on a 22-CPU kind host, the DisaggregatedSet container
+about 20 more, and setup about 15.
 
 - **`passive_mode_test.go`**: hold controller-wide (`LLMSM_PASSIVE=true`) and per
   model, hold at zero under queued requests, a `kubectl scale` that sticks,
@@ -2338,6 +2340,15 @@ about 15.
 - **`passive_mode_pool_test.go`**: a utilization-share group holding a passive
   donor, and a warm pool beside a passive model. Each ends by switching the
   model to active, which must start the transfer or the borrow.
+- **`passive_mode_dset_share_test.go`**: utilization share `active` under the
+  release settings (passive as shipped) on two DisaggregatedSet P/D models,
+  one with External roles (KEDA, role scalers) and one with Static roles
+  (the role writer), beside a Deployment, under a spent quota. Checks the
+  shares and would-be counts are published in shadow, then that nothing moves
+  for 5 minutes (set roles, role scalers, child LeaderWorkerSets, pods, share
+  marks, transfer counters, role-writer events). The control switches passive
+  off and needs a transfer of a decode group from the Static set to the
+  External one. Lines starting `DSET-PASSIVE-` are its evidence.
 
 Every hold is a 90 s window, three HPA syncs plus the 30 s scale-down window
 the specs set on each ScaledObject. A window fails if `spec.replicas` moves

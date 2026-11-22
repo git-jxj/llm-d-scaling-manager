@@ -15,6 +15,12 @@ cannot have a role scaler. Not supported on either path: sets with
 `spec.slices` above 1, and sub-roles. How the scaling manager reads a set is in
 the [proposal](../proposals/disaggregatedset.md).
 
+LeaderWorkerSet v0.10.0 writes no status on the set (`roleStatuses` and
+`observedGeneration` arrived in v0.11.0). On such a set the scaling manager
+reads each role's groups, ready groups and revisions from the role's child
+LeaderWorkerSets instead, with the `list` on `leaderworkersets` its manager
+role already has.
+
 ## Passive mode
 
 For a [passive](scaling-policy.md) model the scaling manager changes no
