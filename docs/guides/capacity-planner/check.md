@@ -166,7 +166,10 @@ prefill + 2 decode`. An `at-replicas` verdict at another rate, fleet or
 shape says `not covered by the self-check`. A verdict that rests on the
 figures an inconsistent self-check names says `not trusted`, and the command
 exits 4 (`verdict.trust` and `exitCode` in the JSON); the verdict is still
-printed.
+printed. `day-plan` judges each bucket's verdict the same way, at the
+bucket's sized rate on the fleet it had, or its stated shape: `not trusted`
+or `not covered by the self-check` beside the hour (`buckets[].trust`, `hours[].trust`, `summary.counts.untrusted` and
+`notCovered` in the JSON), and it exits 4 when a bucket is not trusted.
 
 A recording whose engine rows do not stand for the fleet gets no badge: the
 planner refuses it outright, as an input error. That happens on multi-Pod

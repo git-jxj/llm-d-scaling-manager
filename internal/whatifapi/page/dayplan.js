@@ -323,6 +323,7 @@ function dayTip(plan, b) {
   if (b.notServing) row("asked, not serving", `${b.notServing.prefill} prefill, ${b.notServing.decode} decode`);
   if (b.hadLimit && b.hadLimit.value != null) row("had fleet serves", dayFmt(b.hadLimit.value) + " r/s");
   if (b.verdict) row("verdict", DAY_VERDICT[b.verdict] || b.verdict);
+  if (b.trust) row("self-check", b.trust);
   if (b.unmet) row("beyond the bound", `${b.unmetRole || "fleet"}: ${b.unmet.reason}`);
   if (b.shape && b.shape.promptTokens != null) row("prompt, output", `${b.shape.promptTokens.toFixed(0)}, ${b.shape.outputTokens != null ? b.shape.outputTokens.toFixed(0) : "-"} tokens (${b.shape.source})`);
   if (b.flags && b.flags.length) row("flags", b.flags.map(f => f === "Extrapolated" ? "EXTRAPOLATED" : f).join(", "));
@@ -358,7 +359,7 @@ function dayHoursTable(plan) {
       `<td>${n(h.needed && h.needed.prefill != null ? atLeast + h.needed.prefill : null)}</td><td>${n(h.needed ? atLeast + h.needed.decode : null)}</td>` +
       `<td>${esc(busiest)}</td>` + (lead ? `<td>${esc(cell(h.held))}</td>` : "") +
       `<td>${n(had("prefill"))}</td><td>${n(had("decode"))}</td>` +
-      `<td>${n(h.unmet)}</td><td>${esc(verdict)}</td></tr>`;
+      `<td>${n(h.unmet)}</td><td>${esc(verdict + (h.trust ? "; " + h.trust : ""))}</td></tr>`;
   }
   return s + "</table>";
 }
@@ -375,7 +376,7 @@ function dayBucketsTable(plan) {
       `<td>${b.rate ? dayFmt(b.rate.mean) : "-"}</td><td>${b.rate ? dayFmt(b.rate.p95) : "-"}</td>` +
       `<td>${b.sizedRate != null ? dayFmt(b.sizedRate) + " (" + esc(b.sizedFor) + ")" : "-"}</td>` +
       `<td>${n(b.needed && b.needed.prefill)}</td><td>${n(b.needed && b.needed.decode)}</td><td>${n(b.actual && b.actual.prefill)}</td><td>${n(b.actual && b.actual.decode)}</td>` +
-      `<td>${esc(b.verdict ? DAY_VERDICT[b.verdict] || b.verdict : "")}</td><td>${esc(why)}</td><td>${esc((b.flags || []).join(", "))}</td></tr>`;
+      `<td>${esc((b.verdict ? DAY_VERDICT[b.verdict] || b.verdict : "") + (b.trust ? "; " + b.trust.split(":")[0] : ""))}</td><td>${esc(why)}</td><td>${esc((b.flags || []).join(", "))}</td></tr>`;
   }
   return s + "</table>";
 }
@@ -409,5 +410,7 @@ function daySummaryText(plan) {
   const p95 = plan.sizeFor === "p95-modulation" ? `${c.sizedForP95Modulation || 0} for their p95 less counting noise` : `${c.sizedForP95} for their p95`;
   out.push(`${c.sized} buckets sized (${p95}, ${c.sizedForMean} for their mean, ${c.sizedForMax} for their max), ` +
     `${c.unmet} beyond the bound, ${c.refused} refused, ${c.tooLittleData} with too little data, ${c.noData} with no data.`);
+  if (c.untrusted) out.push(`Self-check: ${c.untrusted} bucket(s) not trusted: their verdicts rest on figures the self-check found inconsistent with this recording (see each bucket).`);
+  if (c.notCovered) out.push(`Self-check: ${c.notCovered} bucket(s) not covered: it did not test the rate, fleet or shape each was priced at.`);
   return out;
 }

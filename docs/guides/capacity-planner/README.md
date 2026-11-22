@@ -805,6 +805,17 @@ alone. A higher `--ttft` sizes them.
   it, or covers a bucket beside it), that bucket is refused,
   `WindowGapAtPeak`, the busiest need is read from the buckets left, and
   the plan exits 3.
+- **Self-check.** As with `at-replicas`, a bucket's verdict that rests on
+  figures the self-check found inconsistent says `not trusted` beside its
+  hour, with a line under the buckets saying how many, and the plan exits 4
+  (3 takes precedence). A bucket that priced prefill rests on the TTFT and
+  TPOT figures; decode sized alone on the TPOT figures. A bucket priced at a
+  stated shape (`--assume-input-tokens`, `--assume-output-tokens`), or whose
+  sized rate on the fleet it had the self-check did not test, says `not
+  covered by the self-check`, and changes no exit code. A refused or unsized
+  bucket says neither, nor does a verdict on a fleet with no replica of a
+  role it prices (it rests on no figure); a bucket beyond the bound can be
+  not trusted but is not tested for coverage.
 - **Had.** The median serving pods of the priced prefill and decode variants
   over the bucket; the rate is the model's (`OtherVariantsServed` where
   another variant also served). The fleet it had is judged whole, at the
