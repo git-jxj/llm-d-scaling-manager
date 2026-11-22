@@ -15,11 +15,14 @@ import (
 // (lowerBoundRecording) learns: the peak under a queue, a lower bound.
 const lowerBoundVP = "17046.48"
 
+// seenLoad is the table row and summary column of the load judged.
+const seenLoad = "seen"
+
 // seenTTFT is the shape's TTFT at the load judged, at the cell's statistic.
 func seenTTFT(t *testing.T, s whatifapi.ReportShape) whatifapi.Figure {
 	t.Helper()
 	for _, row := range s.Table {
-		if row.Load == "seen" {
+		if row.Load == seenLoad {
 			require.NotNil(t, row.Cell.TTFT.Value, "the load's TTFT is priced")
 			return row.Cell.TTFT.Figure
 		}
@@ -47,7 +50,7 @@ func TestUpperBoundTTFT_UnderALowerBoundKneeIsNoKnownMiss(t *testing.T) {
 	ttft := seenTTFT(t, s)
 	assert.True(t, ttft.UpperBound, "the TTFT at the load is at most its figure")
 	m := marks(s)
-	for _, load := range []string{"50%", "80%", "seen"} {
+	for _, load := range []string{"50%", "80%", seenLoad} {
 		assert.Equal(t, whatifapi.CellUpperBound, m[load], load)
 	}
 	assert.Equal(t, whatifapi.CellPastLowerBound, m["100%"], "the knee itself is still past a lower-bound knee")
@@ -55,7 +58,7 @@ func TestUpperBoundTTFT_UnderALowerBoundKneeIsNoKnownMiss(t *testing.T) {
 		assert.NotEqual(t, whatifapi.CellMissed, mark, load)
 	}
 	for _, row := range s.Table {
-		if row.Load == "seen" {
+		if row.Load == seenLoad {
 			assert.True(t, row.E2EMeanSum.UpperBound, "a sum of an upper bound is one")
 		}
 	}
@@ -80,7 +83,7 @@ func TestUpperBoundTTFT_TheIssuesLoadIsNotUnder(t *testing.T) {
 	assert.NotContains(t, v.Summary, "33.9 s against")
 	assert.Contains(t, v.Summary, "a prefill knee of at least 4.0 r/s")
 	assert.True(t, seenTTFT(t, s).UpperBound)
-	assert.Equal(t, whatifapi.CellUpperBound, marks(s)["seen"])
+	assert.Equal(t, whatifapi.CellUpperBound, marks(s)[seenLoad])
 }
 
 // The upper bound holds in the model: a stated V_P at or above the learned
@@ -102,6 +105,6 @@ func TestUpperBoundTTFT_AStatedVPPricesAtOrUnderIt(t *testing.T) {
 		assert.LessOrEqual(t, *f.Value, last, "V_P %s: the TTFT falls as V_P rises", vp)
 		last = *f.Value
 		assert.Equal(t, whatifapi.VerdictUnder, s.Verdict.Verdict, "V_P %s: the miss is known: %s", vp, s.Verdict.Summary)
-		assert.Equal(t, whatifapi.CellMissed, marks(s)["seen"], vp)
+		assert.Equal(t, whatifapi.CellMissed, marks(s)[seenLoad], vp)
 	}
 }
