@@ -57,9 +57,10 @@ type Prefill struct {
 	// scores.
 	LoadAwareRouter bool
 	// ImbalanceUtilization is rho_m, the mean prefill pod utilization f was
-	// read at: P1's load over V_P (prefill.Estimate.FLoad), in [0, 1). 0 is
-	// not known, and f then falls from no load. Read only with
-	// LoadAwareRouter.
+	// read at: P1's load over VP (prefill.Estimate.FLoad), in
+	// [0, MaxImbalanceUtilization], rescaled to the question's prompt where
+	// V_P is (prefillPlan.rhoM). 0 is not known, and f is then held. Read
+	// only with LoadAwareRouter.
 	ImbalanceUtilization float64
 	// Replicas is N_p.
 	Replicas int
@@ -606,7 +607,9 @@ func (pl prefillPlan) knee() float64 {
 	held := (1 - pl.margin) / f
 	rm := pl.rhoM()
 	if !pl.loadAware() || held <= rm {
-		return pooled * held
+		// The held knee, in the order of operations it has always had, so a
+		// fleet the switch does not touch prices to the bit as before.
+		return float64(pl.p.Replicas) * pl.vp * (1 - pl.margin) / (f * pl.p.PromptTokens)
 	}
 	k := (f - 1) / (1 - rm)
 	disc := (1-k)*(1-k) + 4*k*pl.margin
@@ -618,20 +621,39 @@ func (pl prefillPlan) knee() float64 {
 func (pl prefillPlan) baseF() float64 { return max(pl.p.Imbalance, 1) }
 
 // loadAware is whether f falls with the load: LoadAwareRouter, on more than
-// one pod, with an f above 1.
+// one pod, with an f above 1 and the utilization it was read at known. With
+// rho_m unknown f is held: a fall from no load would lift the knee on no
+// reading at all.
 func (pl prefillPlan) loadAware() bool {
-	return pl.p.LoadAwareRouter && pl.p.Replicas > 1 && pl.baseF() > 1
+	return pl.p.LoadAwareRouter && pl.p.Replicas > 1 && pl.baseF() > 1 && pl.p.ImbalanceUtilization > 0
 }
 
-// rhoM is ImbalanceUtilization held to [0, MaxImbalanceUtilization].
+// rhoM is ImbalanceUtilization at the V_P the plan prices, the question's
+// prompt (shapedVP): the load is the same, and where the prompt's V_P is
+// lower the same load fills more of it. Held to [0, MaxImbalanceUtilization].
 func (pl prefillPlan) rhoM() float64 {
-	return min(max(pl.p.ImbalanceUtilization, 0), MaxImbalanceUtilization)
+	rm := pl.p.ImbalanceUtilization
+	if pl.vp > 0 && pl.p.VP > 0 {
+		rm *= pl.p.VP / pl.vp
+	}
+	return min(max(rm, 0), MaxImbalanceUtilization)
 }
 
-// MaxImbalanceUtilization is the most of rho_m that fAt reads: f read at a
-// utilization closer to 1 is held to 1 at that point, and the fall past it
-// is too steep to price.
+// MaxImbalanceUtilization is the most of rho_m that fAt reads: rho_m is
+// clamped to it, so the fall past it is never steeper than (f - 1)/0.05.
 const MaxImbalanceUtilization = 0.95
+
+// PrefillLoadAt is f at rate (fAt) and the pooled prefill utilization there,
+// rate * E[I] / (N_p * V_P * (1 - VPMargin)), V_P at the question's prompt;
+// false where p cannot be priced. The busiest pod's utilization is their
+// product.
+func PrefillLoadAt(p Prefill, rate float64) (f, pooled float64, ok bool) {
+	pl, u := p.check()
+	if u != nil {
+		return 0, 0, false
+	}
+	return pl.fAt(rate), rate * p.PromptTokens / (float64(p.Replicas) * pl.vp * (1 - pl.margin)), true
+}
 
 // fAt is f at rate. Off LoadAwareRouter it is the plan's f at every rate.
 // On, it is f up to rho_m (ImbalanceUtilization), the mean pod utilization

@@ -54,11 +54,12 @@ var (
 )
 
 // statedOutside is the flags in flagsOutside that were set, as --name;
-// --imbalance-across-counts only away from the planner's default.
+// --imbalance-across-counts and --load-aware-router only away from the
+// planner's defaults.
 func (f *answerFlags) statedOutside() []string {
 	var out []string
 	for _, name := range flagsOutside {
-		// --imbalance-across-counts at the planner's default states nothing.
+		// Either flag at the planner's default states nothing.
 		if name == "imbalance-across-counts" && f.imbalanceAcrossCounts == whatif.DefaultPlannerImbalanceAcrossCounts {
 			continue
 		}

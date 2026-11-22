@@ -563,10 +563,15 @@ It replays the recording once and answers, for each shape and load:
   point)"), with any prefill imbalance f that no run learned at that pod
   count. That f is read off the pod counts that were learned; with none
   learned, or with `--imbalance-across-counts=false`, it is assumed at
-  least 1.5. If your router scores each pod's queue (llm-d's EPP queue
-  scorer), `--load-aware-router` holds f up to the load it was measured at
-  and lets it fall to 1 as the pods fill, so the prefill knee is the pooled
-  one. The recording does not say what the router scores, so it is off by
+  least 1.5.
+- **A load-aware router:** if your router scores each pod's queue (llm-d's
+  EPP queue scorer), pass `--load-aware-router` to any TTFT question. f is
+  then held up to the load it was measured at and falls to 1 as the pods
+  fill, so the prefill knee is the pooled one less the margin; the inputs
+  say so ("f 1.5 held to 0.35 utilization, then falling to 1 ..."). The
+  fleets at f 1 and f 1.5 fall the same way. A pod much busier than the
+  rest still saturates first. With no load measured for f, f is held. The
+  recording does not say what the router scores, so the flag is off by
   default.
   Since no run measured it, the sentence also gives the fleet needed at f 1
   and at f 1.5 on every count above one prefill pod ("at f 1 needs 3 + 3,

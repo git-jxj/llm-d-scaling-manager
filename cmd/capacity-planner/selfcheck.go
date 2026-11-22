@@ -126,8 +126,8 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 			st.Other = append(st.Other, "--"+o.name+"="+o.value)
 		}
 	}
-	// The fits do price with --imbalance-across-counts (foldFits): replayed,
-	// and outside the validated region.
+	// The fits do price with --imbalance-across-counts and --load-aware-router
+	// (foldFits): replayed, and outside the validated region.
 	if f.set["imbalance-across-counts"] && f.imbalanceAcrossCounts != whatif.DefaultPlannerImbalanceAcrossCounts {
 		st.Replayed, st.Outside = append(st.Replayed, "--imbalance-across-counts="+strconv.FormatBool(f.imbalanceAcrossCounts)), true
 	}

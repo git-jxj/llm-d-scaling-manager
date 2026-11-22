@@ -275,8 +275,8 @@ the worst pod's queue a little low.
 **`f` by load** (issue #300). On every recording that learned `f`, the
 de-biased `f` of each minute falls as the pods fill. By the minute's mean pod
 utilization `ρ` (computed tokens a pod over `V_P`), median `f`, two pods, a
-band of fewer than five minutes left blank (the phases, which learned no
-`V_P`, at the warm-up's):
+band of fewer than five minutes left blank, and 0.6-0.7, where no recording
+kept five. Phases B and C learned no `V_P`; their ρ uses the warm-up's:
 
 | recording | ρ < 0.1 | 0.1-0.2 | 0.2-0.3 | 0.3-0.4 | 0.4-0.5 | 0.5-0.6 | 0.7-0.8 | 0.8+ | busy minutes (`ρ_m`) |
 |---|---|---|---|---|---|---|---|---|---|
@@ -297,8 +297,10 @@ its light minutes' `f`, which is high, and prices every higher rate safe.
 opt-in). A router that scores the pods' queues (llm-d's EPP queue scorer)
 sends less to a pod as its queue grows, so near the pooled knee the busiest
 pod's share is the mean share. With the flag, `f` is held up to `ρ_m`
-(`ImbalanceUtilization`, `FLoad` over `V_P`) and past it falls linearly to 1 at
-`ρ = 1`:
+(`ImbalanceUtilization`, `FLoad` over `V_P` at the question's prompt) and past
+it falls linearly to 1 at `ρ = 1`. At a count whose `f` comes off the curve,
+`ρ_m` is the load of the minutes `F` was read from, at the counts learned. With
+no load read, `f` is held:
 
     f(ρ) = 1 + (f − 1)(1 − ρ)/(1 − ρ_m)
 

@@ -110,7 +110,23 @@ func TestLoadAware_NothingToFall(t *testing.T) {
 	unknown := loadAwarePrefill(true, 0)
 	unknown.ImbalanceUtilization = 0
 	pl, _ := unknown.check()
-	relNear(t, "rho_m unknown: f falls from no load", pl.fAt(45), 1+0.3*0.5, 1e-12)
+	relNear(t, "rho_m unknown: f held", pl.fAt(45), 1.3, 1e-12)
+	relNear(t, "rho_m unknown: the knee held", kneeOf(t, unknown), 90/1.3, 1e-12)
+}
+
+// rho_m is read at the V_P priced: a longer prompt than V_P was read at
+// rescales V_P down (VPScaledToPrompt), and the same load fills more of it.
+func TestLoadAware_RhoMAtTheShapedVP(t *testing.T) {
+	p := loadAwarePrefill(true, 0)
+	p.VPPromptTokens, p.PromptTokens, p.CurveSlope, p.CurveCurvature = 1000, 2000, 1e-5, 1e-8
+	pl, u := p.check()
+	if u != nil {
+		t.Fatal(u)
+	}
+	if !(pl.vp < p.VP) {
+		t.Fatalf("precondition: V_P %g not rescaled below %g", pl.vp, p.VP)
+	}
+	relNear(t, "rho_m", pl.rhoM(), 0.4*p.VP/pl.vp, 1e-12)
 }
 
 // ImbalanceUtilizationAt reads the load at the count P1 learned f at, else
@@ -128,4 +144,20 @@ func TestImbalanceUtilizationAt(t *testing.T) {
 	if got := ImbalanceUtilizationAt(prefill.Estimate{FLoad: 1}, 2, 0); got != 0 || math.IsNaN(got) {
 		t.Errorf("no V_P: %g", got)
 	}
+}
+
+// PrefillLoadAt is f at the rate and the pooled utilization, whose product
+// is the busiest pod's: off, the plan's f; on, the f that has fallen.
+func TestPrefillLoadAt(t *testing.T) {
+	f, pooled, ok := PrefillLoadAt(loadAwarePrefill(false, 0), 63)
+	if !ok || f != 1.3 {
+		t.Fatalf("off: f %g ok %v", f, ok)
+	}
+	relNear(t, "pooled", pooled, 0.7, 1e-12)
+	f, pooled, ok = PrefillLoadAt(loadAwarePrefill(true, 0), 63)
+	if !ok {
+		t.Fatal("on: not priced")
+	}
+	relNear(t, "f on", f, 1.15, 1e-12)
+	relNear(t, "busiest pod", f*pooled, 1.15*0.7, 1e-12)
 }

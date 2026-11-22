@@ -332,7 +332,8 @@ type Estimate struct {
 	FSamplesByPods map[int]int
 	// FLoad is the median computed tokens per second per pod over the minutes
 	// F is the median of, and FLoadByPods the same for each count of
-	// FByPods: the load f was read at. Over V_P it is the mean pod
+	// FByPods: the load of the minutes f was read from (a median of its own,
+	// not the load of the median minute). Over V_P it is the mean pod
 	// utilization f stands for (whatif.Prefill.ImbalanceUtilization). 0, and
 	// no entry, where no f is given.
 	FLoad       float64
