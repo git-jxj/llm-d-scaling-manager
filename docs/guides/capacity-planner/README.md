@@ -692,7 +692,7 @@ verdicts
 Read the label under the decode knee in each shape's capacity table: inside
 the region a run measured it reads `validated in-sample: one-sided, error at
 most +3%`; outside it, the `not validated` lines at the end of the report add
-that the knee read 17% to 99% high on the 0.6B goldens. The needed fleet gives
+that the knee read 43% to 99% high on the 0.6B goldens. The needed fleet gives
 the decode count at the label's upper error beside the point answer: +3%
 inside the region, 99% outside it
 ([accuracy](accuracy.md#what-was-measured)). TTFT is not validated.

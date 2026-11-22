@@ -59,7 +59,7 @@ const cellTTFTQ = 0.9
 // pins them to the file): the error a decode knee outside its region is
 // sized at.
 const (
-	decodeKneeGoldensLow  = 0.172
+	decodeKneeGoldensLow  = 0.43
 	decodeKneeGoldensHigh = 0.991
 )
 
