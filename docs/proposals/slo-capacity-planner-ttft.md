@@ -216,6 +216,38 @@ refused `PastLowerBoundKnee`, not `Saturated` (past decode's knee it is
 priced, not overloaded. The controller's
 SLO analyzer is unchanged.
 
+**The occupancy plateau** (planner-only switch `prefill-vp-occupancy-plateau`,
+`prefill.Cycle.VPOccupancyPlateau`, source `occupancy-plateau`; issue #368). A
+fleet that never queues has no source above. By Little's law, a row's requests
+in prefill per engine over a minute are `x = completions/s · AvgPrefillTime /
+ranks`; against `x`, the row's served computed tokens a second rise and then
+flatten at `V_P`. Tokens over prefill time is not `V_P`: requests in prefill
+together share the steps, and under load it reads 0.10 to 0.59 of it. The rule
+(`prefill/plateau.go`), fixed before any recording was read against it: only
+minutes at `x ≥ 1` count (below, the engine idled part of the minute); they are
+binned four bins an octave from `x = 1`, a bin of 5 or more minutes counting at
+its median rate; the plateau's level is the highest bin, and the plateau the
+run of bins beside it within 10% under that level. Where the run spans 1.5× in
+occupancy and holds 15 or more minutes the curve has flattened, and the level
+is `V_P`; otherwise it is a lower bound, never extrapolated. It fills `V_P`
+only where `V_P` is refused for want of a queue, or is a lower bound under the
+level: busy minutes of a single-rank pod, and a lower bound at or above the
+level, stand. A rising plateau is floored at the served peak like every lower
+bound.
+
+Measured on the public recordings (the four ttft-staircase goldens,
+three-pods, saturated, the Qwen3-32B warm-ups and phases, the 0.6B staircase
+warm-ups and phases), the plateau's level reads 0.96 to 1.08 of the `V_P`
+learned from a queue on the 20 recordings that have one. The curve flattens by
+the rule on four Qwen3-32B phases (B-off, B-on, C-off, C-on), at 0.87 to 0.99
+of their warm-up's `V_P`; elsewhere it is still rising and gives a lower
+bound, on six recordings where `V_P` was refused. The switch stays off: with
+it on no backtest figure moves under what was measured, but most fleets it
+gives a `V_P` still lack `a` (`NoFixedLatency`), and the few TTFT figures it
+newly prices sit just under a knee priced from the lower bound and read 1.5
+to 1500 times what was measured. It waits on pricing TTFT under a lower-bound
+knee.
+
 The **low-load slope** of service time against prompt length is an upper bound,
 not a source. A lone prompt runs as `T(I) = s0 + c·I`, and a busy pod's steps of
 `B` tokens run at `B/(s0 + c·B) < 1/c`, so `1/slope ≥ V_P`: on `ols-sweep` about
