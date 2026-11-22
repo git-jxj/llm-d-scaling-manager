@@ -233,9 +233,9 @@ const SwitchTTFTTierKVWait = "slo-ttft-tier-kv-wait"
 
 // SwitchTTFTPSByEngine is the replay switch for how the planner prices the
 // prefill queue: on, where the prefill engine's arguments say it shares its
-// steps (--max-num-seqs above 1 and --max-num-batched-tokens at least twice
-// the mean computed prompt), it is processor sharing whatever the prompt's
-// spread (whatif.QueueProcessorSharing), falling back to the larger of that and
+// steps (chunked prefill with --max-num-seqs above 1; a step budget, where
+// read, at least the mean computed prompt measured), it is processor sharing
+// whatever the prompt's spread or the prompt priced (whatif.QueueProcessorSharing), falling back to the larger of that and
 // first come where the busiest pod likely holds more prompts than its
 // max_num_seqs times its data-parallel ranks. Off, as before: past
 // whatif.MaxPSPromptCV the price is the larger of the two. On a P/D fleet
