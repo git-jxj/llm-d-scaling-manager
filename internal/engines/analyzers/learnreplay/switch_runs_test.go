@@ -1643,7 +1643,7 @@ var heldBy = map[string][]heldTest{
 		{"../../../../cmd/capacity-planner", "TestBusiestRankCapacity_PricesTheMeanAtTheTopOverTheRatio"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
-	// asserts both, and the first holds all thirteen off from the constructor.
+	// asserts both, and the first holds all sixteen off from the constructor.
 	saturation.SwitchPrefillALowLoadPerRank: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
