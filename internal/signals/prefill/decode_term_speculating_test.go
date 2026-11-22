@@ -58,6 +58,37 @@ func TestHeld_ARowThatDoesNotSpeculateComesFirst(t *testing.T) {
 	assert.Equal(t, 30, on.Decode.Minutes, "the quiet row's minutes alone are D's")
 }
 
+// Decode is counted once. R is the router's mean less both engines' (hopOver),
+// the decode engine's TTFT taken out whether its rows speculate or not, so R
+// never holds it: with the switch the held D supplies it, and D + R is the
+// router's mean less the prefill engine's. The switch does not touch R.
+func TestHeld_ASpeculatingDAndTheHopCountDecodeOnce(t *testing.T) {
+	const prefillTTFT, decodeTTFT, hop = 1.4, 0.48, 0.6
+	run := func(on bool) DecodeTermEstimate {
+		w := NewDecodeTermWindow()
+		at := termT0
+		for range 30 * 4 {
+			c := hopCycle(at, prefillTTFT+decodeTTFT+hop, 1.5, 2600)
+			c.Prefill[0].AvgTTFT = prefillTTFT
+			dec := decodeRow("d", decodeTTFT, 0.04, 85000)
+			dec.RequestRate = 1.5
+			dec.SpecAcceptedPerStep, dec.SpecAcceptedPerStepKnown = 1.85, true
+			c.Decode = []domain.ReplicaMetrics{dec}
+			c.SpeculatingHeld, c.ITLPerToken = on, true
+			w.Observe(c)
+			at = at.Add(15 * time.Second)
+		}
+		return w.Estimate()
+	}
+	off, on := run(false), run(true)
+	assert.Empty(t, off.Hop.Refused)
+	assert.InDelta(t, hop, off.Hop.Base, 1e-9, "R holds no decode TTFT with the switch off")
+	assert.Equal(t, off.Hop, on.Hop, "the switch does not touch R")
+	assert.Zero(t, off.Held.Seconds, "off: no D, the old sum stands for the decode engine")
+	assert.InDelta(t, prefillTTFT+decodeTTFT+hop-prefillTTFT, on.Held.Seconds+on.Hop.Base, 1e-9,
+		"on: D + R is the router's mean less the prefill engine's, decode counted once")
+}
+
 // Every other gate holds for a speculating row: a slot queue keeps it out.
 func TestHeld_ASpeculatingRowKeepsTheOtherGates(t *testing.T) {
 	w := NewDecodeTermWindow()

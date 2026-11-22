@@ -237,7 +237,11 @@ type DecodeTermCycle struct {
 	// (ITLPerToken) it is read over the tokens a step emits. Off, as before,
 	// such a row is no reading, and where every decode row speculates the
 	// term is omitted: T_xfer + ITL stands for a measured decode TTFT
-	// (slo.SwitchTTFTDecodeSpeculatingHeld).
+	// (slo.SwitchTTFTDecodeSpeculatingHeld). It counts the decode engine
+	// once: R is the router's mean less both engines' means (hopOver), every
+	// decode row's TTFT taken out whether it speculates or not, so R never
+	// holds the decode engine's time, and D supplies it. The switch reads no
+	// router window and leaves R as it is.
 	SpeculatingHeld bool
 	// ITLPerToken says the line the term is priced on is per accepted token
 	// (saturation.SwitchITLPerToken), as the planner's is; the slo analyzer's

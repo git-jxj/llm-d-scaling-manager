@@ -1725,6 +1725,7 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestHeld_ASpeculatingRowIsHeldWithTheSwitch"},
 		{"../../../signals/prefill", "TestHeld_ARowThatDoesNotSpeculateComesFirst"},
 		{"../../../signals/prefill", "TestHeld_ASpeculatingRowKeepsTheOtherGates"},
+		{"../../../signals/prefill", "TestHeld_ASpeculatingDAndTheHopCountDecodeOnce"},
 		{"../../../signals/whatif", "TestTermFromEstimate_ASpeculatingRow"},
 		{"../../../signals/whatif", "TestTerm_ASpeculatingRowPricesTheMeasuredTTFT"},
 		{".", "TestTerm_TheDecodeSpeculatingHeldSwitch"},
