@@ -1823,6 +1823,7 @@ lmcache:num_lookup_tokens_total
 lmcache:num_requested_tokens_total
 lmcache:time_to_retrieve_count
 lmcache:time_to_retrieve_sum
+lmcache_mp_
 lmcache_mp_lookup_hit_l1_tokens_total
 lmcache_mp_lookup_hit_l2_tokens_total
 lmcache_mp_lookup_hit_tokens_total

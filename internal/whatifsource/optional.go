@@ -245,18 +245,19 @@ func OptionalText(found []learnreplay.CaptureSeries) (lines []string, present, a
 			lines = append(lines, "absent    "+c.Name)
 		default:
 			present++
-			line := "present   " + c.Name
+			var line strings.Builder
+			line.WriteString("present   " + c.Name)
 			if c.Increase != 0 || c.By != nil {
-				line += fmt.Sprintf("  increase %.4g", c.Increase)
+				fmt.Fprintf(&line, "  increase %.4g", c.Increase)
 			}
 			for _, k := range slices.Sorted(maps.Keys(c.By)) {
 				name := k
 				if name == "" {
 					name = `""`
 				}
-				line += fmt.Sprintf("  %s=%.4g", name, c.By[k])
+				fmt.Fprintf(&line, "  %s=%.4g", name, c.By[k])
 			}
-			lines = append(lines, line)
+			lines = append(lines, line.String())
 		}
 	}
 	return lines, present, absent
