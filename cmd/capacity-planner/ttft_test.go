@@ -119,12 +119,16 @@ func TestTTFTGolden(t *testing.T) {
 		{"ttft-q32-rate-as-priced", q32TTFT("slo-to-rate", "--ttft", "7599.1ms@p90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "--flow-control", "off"), 0},
 		{"ttft-q32-rate-assumed-spread", q32TTFT("slo-to-rate", "--ttft", "7599.1ms@p90"), 0},
 		// Bucket C (Ca^2 4) with flow control on, at its frozen p95 target:
-		// by default the answer is capped at the prefill onset; with
-		// --router-wait-in-prefill (router v1.0.0) it stands past it, where
-		// the processor-sharing price meets the target.
+		// by default, as with --router-wait-in-prefill (router v1.0.0, on
+		// since #287), the answer stands past the prefill onset, where the
+		// processor-sharing price meets the target; with
+		// --router-wait-in-prefill=false (router v0.11.0) it is capped at the
+		// onset.
 		{"ttft-q32-rate-fc-on", q32TTFT("slo-to-rate", "--ttft", "22.71s@p95", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "4", "--flow-control", "on"), 0},
 		{"ttft-q32-rate-wait-in-prefill", q32TTFT("slo-to-rate", "--ttft", "22.71s@p95", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "4", "--flow-control", "on",
 			"--router-wait-in-prefill"), 0},
+		{"ttft-q32-rate-wait-off", q32TTFT("slo-to-rate", "--ttft", "22.71s@p95", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "4", "--flow-control", "on",
+			"--router-wait-in-prefill=false"), 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { checkGolden(t, c.name, c.code, c.args) })

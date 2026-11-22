@@ -15,8 +15,8 @@ import (
 
 // The planner API states flow control and the router's wait as the CLI's
 // flags do: assume.flowControl is --flow-control, assume.routerWait
-// inPrefill is --router-wait-in-prefill, gateStage --price-router-wait, and
-// none neither. The fleet the API prices is the CLI's to the bit, and past
+// inPrefill is --router-wait-in-prefill (the default), gateStage
+// --price-router-wait, and none --router-wait-in-prefill=false. The fleet the API prices is the CLI's to the bit, and past
 // the prefill onset its flag is the one the switch leaves: FlowControlWaitPriced
 // with either way of pricing the wait, AboveFlowControlOnset with none. The
 // recording has no flow-control series, so the API's flow control is the
@@ -41,7 +41,7 @@ func TestTTFT_TheAPIStatesTheRouterWaitAsTheCLI(t *testing.T) {
 		priced     bool
 	}{
 		{"", nil, whatif.DefaultPriceRouterWait, whatif.DefaultRouterWaitInPrefill, whatif.DefaultPriceRouterWait || whatif.DefaultRouterWaitInPrefill},
-		{whatifapi.RouterWaitNone, nil, false, false, false},
+		{whatifapi.RouterWaitNone, []string{"--router-wait-in-prefill=false"}, false, false, false},
 		{whatifapi.RouterWaitInPrefill, []string{"--router-wait-in-prefill"}, false, true, true},
 		{whatifapi.RouterWaitGateStage, []string{"--price-router-wait"}, true, false, true},
 	}
@@ -101,17 +101,19 @@ func TestTTFT_TheAPIStatesTheRouterWaitAsTheCLI(t *testing.T) {
 
 // backtest's --flow-control, --router-wait-in-prefill, --price-router-wait
 // and --assume-prompt-cv reach the request as assume.flowControl,
-// assume.routerWait and assume.promptCV, nothing with none set; the two ways
-// of pricing the wait are refused together, as is a cv out of range.
+// assume.routerWait and assume.promptCV, nothing at the defaults (the default
+// --router-wait-in-prefill restated is the default); the two ways of pricing
+// the wait are refused together, as is a cv out of range.
 func TestBacktest_FlowControlFlagsAreAssumed(t *testing.T) {
 	for _, c := range []struct {
 		f    backtestFlags
 		want *whatifapi.Assume
 	}{
 		{backtestFlags{routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, priceRouterWait: whatif.DefaultPriceRouterWait}, nil},
-		{backtestFlags{flowControl: "on", routerWaitInPrefill: true}, &whatifapi.Assume{FlowControl: "on", RouterWait: whatifapi.RouterWaitInPrefill}},
+		{backtestFlags{flowControl: "on", routerWaitInPrefill: true}, &whatifapi.Assume{FlowControl: "on"}},
+		{backtestFlags{flowControl: "on", routerWaitInPrefill: false}, &whatifapi.Assume{FlowControl: "on", RouterWait: whatifapi.RouterWaitNone}},
 		{backtestFlags{flowControl: "off", priceRouterWait: true}, &whatifapi.Assume{FlowControl: "off", RouterWait: whatifapi.RouterWaitGateStage}},
-		{backtestFlags{set: map[string]bool{"assume-prompt-cv": true}}, &whatifapi.Assume{PromptCV: ptrTo(0.0)}},
+		{backtestFlags{routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, set: map[string]bool{"assume-prompt-cv": true}}, &whatifapi.Assume{PromptCV: ptrTo(0.0)}},
 	} {
 		req, err := c.f.request()
 		require.NoError(t, err)
