@@ -1562,20 +1562,22 @@ test-e2e-kueue-borrow-with-setup: ## Deploy e2e infra + Kueue, then run the live
 # simulator's --fake-metrics (USE_SIMULATOR=true) and EPP flow control
 # (SCALE_TO_ZERO_ENABLED=true, on the infra deploy too), and skip without the
 # last two, so read the -v output. -ginkgo.fail-on-empty fails a filter that
-# matches nothing. 19 specs took 43 minutes on a 22-CPU kind host; the budget
-# allows a CI runner about 1.6 times that.
-E2E_PASSIVE_TIMEOUT    ?= 70m
-E2E_PASSIVE_GO_TIMEOUT ?= 75m
+# matches nothing. 19 specs took 43 minutes on a 22-CPU kind host, and the
+# DisaggregatedSet share container (3 specs) about 20 more; the budget allows
+# a CI runner about 1.6 times that.
+E2E_PASSIVE_TIMEOUT    ?= 100m
+E2E_PASSIVE_GO_TIMEOUT ?= 105m
 .PHONY: test-e2e-passive
 test-e2e-passive: ## Run the passive-mode e2e specs
 	$(MAKE) test-e2e-full E2E_FULL_LABEL_FILTER="passive" E2E_FULL_GINKGO_ARGS="-ginkgo.fail-on-empty" \
 		E2E_TIMEOUT=$(E2E_PASSIVE_TIMEOUT) E2E_GO_TIMEOUT=$(E2E_PASSIVE_GO_TIMEOUT)
 
 # Deploys the e2e infra on kind and runs the passive-mode specs alone. It never
-# deletes the cluster. No LWS and no Kueue: no passive spec uses either.
+# deletes the cluster. LWS (LWS_CHART_VERSION, v0.10.0: DisaggregatedSet and its
+# role scaler) for the DisaggregatedSet share spec; no Kueue: no passive spec uses it.
 .PHONY: test-e2e-passive-with-setup
 test-e2e-passive-with-setup: ## Deploy e2e infra, then run the passive-mode specs
-	SCALER_BACKEND=keda $(MAKE) deploy-e2e-infra
+	DEPLOY_LWS=true SCALER_BACKEND=keda $(MAKE) deploy-e2e-infra
 	$(MAKE) test-e2e-passive
 
 # Installs the scaling manager from the rendered release files with kubectl
