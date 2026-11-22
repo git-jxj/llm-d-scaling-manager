@@ -406,12 +406,13 @@ prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
 it is missing, is shown under each box. A typed value flags every figure that
 rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
 
-Decode refused with `PinnedDefaultB` means the latency line's intercept B,
-the per-token latency with the cache empty, was never measured: no full fit,
-and at that cycle no usable low-load reading in the last 30 minutes to take
-B from (where there is one, the line runs through it and is not refused).
-The **ITL B** box shows the B the floor below the band
-gives; type it, or your own. On the CLI, `--assume-itl-b floor` uses that B
+Decode refused with `PinnedDefaultB` is the common case on a real P/D window:
+the latency line's intercept B, the per-token latency with the cache empty,
+was never measured, because no window spread the decode Pods' KV fill far
+enough for a full fit. The planner does not take B from the low-load readings
+on its own, as the controller does: on the recordings checked, a B taken that
+way read TPOT well under what was measured. The **ITL B** box shows the B the
+floor below the band gives; type it, or your own. On the CLI, `--assume-itl-b floor` uses that B
 and `--assume-itl-b 12ms` states one. Figures on it are flagged
 `AssumedITLB` and read as outside the validated region.
 
