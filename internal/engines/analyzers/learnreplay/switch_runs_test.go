@@ -672,6 +672,10 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// the tier load on, planner-only: no committed recording reads the
 	// cached tokens by tier, so it moves no golden. Its unit tests hold it.
 	slo.SwitchTTFTTierKVWait: nil,
+	// The prefill queue priced as processor sharing by the engine's flags,
+	// planner-only: no committed recording states --max-num-batched-tokens,
+	// so it moves no golden. Its unit tests hold it.
+	slo.SwitchTTFTPSByEngine: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -1723,6 +1727,13 @@ var heldBy = map[string][]heldTest{
 		{".", "TestServedWork_TheStateReadsTheWindowWithTheSwitch"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_VPAtServedWorkLeavesOtherFleets"},
+	},
+	slo.SwitchTTFTPSByEngine: {
+		{"../slo", "TestTTFT_ThePSByEngineOffFromTheConstructor"},
+		{".", "TestStateAt_ThePSByEngineSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestPS_ByEngineClearsTheSpread"},
+		{"../../../signals/whatif", "TestPS_ByEngineFallsBackPastTheSlots"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PSByEngineReadsTheFlags"},
 	},
 	slo.SwitchTTFTTierKVWait: {
 		{"../slo", "TestTTFT_TheTierKVWaitOffFromTheConstructor"},

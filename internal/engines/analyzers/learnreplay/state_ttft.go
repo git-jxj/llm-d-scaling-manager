@@ -64,6 +64,10 @@ type PrefillState struct {
 	// (PromptWindow.TierLoad's WaitPerRequest). Off unless the replay's
 	// options turn it on.
 	TierKVWait bool
+	// PSByEngine is slo.SwitchTTFTPSByEngine: the planner prices the prefill
+	// queue as processor sharing where the engine's arguments say it shares
+	// its steps. Off unless the replay's options turn it on.
+	PSByEngine bool
 	// RawShare is f_raw, the busiest pod's share of the computed-token rate
 	// over the mean share, not de-biased: the largest over the latest
 	// whatif.TTFTWindowCycles cycles that read one at the cycle's pod count. A pod with
@@ -182,6 +186,8 @@ type ttftSamples struct {
 	tierLoad bool
 	// tierKVWait is slo.SwitchTTFTTierKVWait (PrefillState.TierKVWait).
 	tierKVWait bool
+	// psByEngine is slo.SwitchTTFTPSByEngine (PrefillState.PSByEngine).
+	psByEngine bool
 	// hopUnqueued is slo.SwitchTTFTHopUnqueued, for the decode term's
 	// router windows (noteTerm).
 	hopUnqueued bool
@@ -521,6 +527,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		ps.ComputedHit = t.computedHit
 		ps.TierLoad = t.tierLoad
 		ps.TierKVWait = t.tierKVWait
+		ps.PSByEngine = t.psByEngine
 		ps.VPAtServedWork = t.vpAtServed
 		ps.ServedComputed, ps.ServedComputedWindow = t.servedWorkOf(v)
 		ps.Estimate, ps.EstimateRead = estimateAt(r.sat.PrefillEstimate, in.Namespace, in.ModelID, v, st.At)

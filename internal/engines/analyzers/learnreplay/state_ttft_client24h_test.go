@@ -44,3 +44,12 @@ func TestStateAt_TheTierKVWaitSwitchReachesThePrefillState(t *testing.T) {
 	assert.False(t, stateWith(t, nil).TierKVWait)
 	assert.True(t, stateWith(t, map[string]map[string]bool{PackageSLO: {slo.SwitchTTFTTierKVWait: true}}).TierKVWait)
 }
+
+// slo.SwitchTTFTPSByEngine reaches the planner through the prefill state, off
+// unless the replay's options turn it on, and is not among the planner's
+// switches.
+func TestStateAt_ThePSByEngineSwitchReachesThePrefillState(t *testing.T) {
+	assert.NotContains(t, PlannerSwitches()[PackageSLO], slo.SwitchTTFTPSByEngine, "planner-only and off")
+	assert.False(t, stateWith(t, nil).PSByEngine)
+	assert.True(t, stateWith(t, map[string]map[string]bool{PackageSLO: {slo.SwitchTTFTPSByEngine: true}}).PSByEngine)
+}

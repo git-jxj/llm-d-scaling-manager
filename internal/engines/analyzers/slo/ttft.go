@@ -231,6 +231,21 @@ const SwitchTTFTTierLoad = "slo-ttft-tier-load"
 // tier.
 const SwitchTTFTTierKVWait = "slo-ttft-tier-kv-wait"
 
+// SwitchTTFTPSByEngine is the replay switch for how the planner prices the
+// prefill queue: on, where the prefill engine's arguments say it shares its
+// steps (--max-num-seqs above 1 and --max-num-batched-tokens at least twice
+// the mean computed prompt), it is processor sharing whatever the prompt's
+// spread (whatif.QueueProcessorSharing), falling back to the larger of that and
+// first come where the busiest pod likely holds more prompts than its
+// max_num_seqs times its data-parallel ranks. Off, as before: past
+// whatif.MaxPSPromptCV the price is the larger of the two. On a P/D fleet
+// whose prefill pods run 4 prompts a rank in 8192-token steps, the engines'
+// prefill time rose with load as processor sharing predicts (1.48x measured
+// against 1.44x) and their capacity queue stayed near empty, while the
+// first-come price put about 1.2 s of wait on each request at 17 r/s.
+// Planner-only: off from the constructor; the analyzer prices no fleet with it.
+const SwitchTTFTPSByEngine = "slo-ttft-ps-by-engine"
+
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:
 // on, the pricing reads AvgKVTransferTime from the decode rows that carry one
 // (transferPerToken). Off, it reads none and raises whatif.TransferOmitted, as

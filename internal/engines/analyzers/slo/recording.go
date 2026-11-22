@@ -102,7 +102,7 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchITLForgetReachesTheLine, SwitchITLOneSidedAtCap, SwitchTTFTPrice,
 // SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer,
 // SwitchTTFTPrefixAttention, SwitchTTFTComputedHit, SwitchTTFTTierLoad,
-// SwitchTTFTTierKVWait,
+// SwitchTTFTTierKVWait, SwitchTTFTPSByEngine,
 // SwitchTTFTProcessorSharing,
 // SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
@@ -186,6 +186,9 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		// The engine's measured wait for a cached KV in place of the
 		// transfer's seconds, planner-only (ttft.go).
 		SwitchTTFTTierKVWait: &a.ttftTierKVWait,
+		// The prefill queue priced as processor sharing where the engine
+		// shares its steps, planner-only (ttft.go).
+		SwitchTTFTPSByEngine: &a.ttftPSByEngine,
 		// The decode term of a TTFT on a decode line (ttft.go).
 		SwitchTTFTDecodeTerm: &a.ttftDecodeTerm,
 		// The prefill pod and the KV pull as processor-sharing stages

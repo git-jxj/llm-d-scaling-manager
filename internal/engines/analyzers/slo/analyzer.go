@@ -188,6 +188,9 @@ type Analyzer struct {
 	// ttftTierKVWait is SwitchTTFTTierKVWait (ttft.go): off from the
 	// constructor, planner-only; the analyzer holds it for the name.
 	ttftTierKVWait bool
+	// ttftPSByEngine is SwitchTTFTPSByEngine (ttft.go): off from the
+	// constructor, planner-only; the analyzer holds it for the name.
+	ttftPSByEngine bool
 	// ttftQuietTransfer is SwitchTTFTQuietTransfer (ttft.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftQuietTransfer bool

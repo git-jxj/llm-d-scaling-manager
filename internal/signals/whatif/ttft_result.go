@@ -185,6 +185,11 @@ const (
 	// longest prompt clears (Prefill.BeyondProcessorSharing): the figure is
 	// the larger of processor sharing's and the first-come queue's.
 	SpreadBeyondProcessorSharing Flag = "SpreadBeyondProcessorSharing"
+	// PSSlotsExceeded is a TTFT priced with QueueProcessorSharing at a rate
+	// where the busiest pod likely holds more prompts than it runs at once
+	// (QueueChoice.Slots, MaxPSOverSlots): the figure is the larger of processor
+	// sharing's and the first-come queue's.
+	PSSlotsExceeded Flag = "PSSlotsExceeded"
 )
 
 // The bounds a TTFT rate or a prefill knee can be set by.

@@ -152,7 +152,47 @@ type Prefill struct {
 	// processor sharing's at a cap of 1, the least an engine runs, and the
 	// first-come one, so never above the onset with PSOnsets off.
 	RunningCap int
+	// Queue is the queue model the caller chose for the prefill pods, and
+	// why. The zero value is the model's own rule, as before: with
+	// TTFTFleet.ProcessorSharing, processor sharing, or the larger of it and
+	// first come past MaxPSPromptCV (BeyondProcessorSharing).
+	Queue QueueChoice
 }
+
+// QueueModel names a model of the prefill pods' queue. The planner chooses one
+// per fleet (Prefill.Queue); issue llm-d-incubation/llm-d-scaling-manager#387
+// is to choose among them by their fit on held-out data, with the engine's
+// configuration as the prior.
+type QueueModel string
+
+const (
+	// QueueByRule is the model's own rule (the zero value): processor sharing
+	// where the spread allows it, else the larger of it and first come.
+	QueueByRule QueueModel = ""
+	// QueueProcessorSharing is processor sharing whatever the prompt's spread:
+	// the engine runs several prompts at once in a step budget that holds
+	// several typical computed prompts, so a long prompt is chunked between
+	// the short ones rather than served first come. Past QueueChoice.Slots
+	// prompts on the busiest pod (rho^(slots+1) above MaxPSOverSlots) the
+	// excess waits first come, and the price is the larger of the two queues',
+	// flagged PSSlotsExceeded.
+	QueueProcessorSharing QueueModel = "processor-sharing"
+)
+
+// QueueChoice is the prefill queue model chosen for a fleet, the prompts one
+// pod runs at once under it (0 is not known), and the reason, in words.
+type QueueChoice struct {
+	Model  QueueModel
+	Slots  int
+	Reason string
+}
+
+// MaxPSOverSlots is the largest chance, at the busiest pod's utilization, that
+// a processor-sharing pod holds more prompts than it runs at once
+// (QueueChoice.Slots) for QueueProcessorSharing to price it alone. Stated,
+// not measured: past it the first-come queue in front of the running prompts
+// is no longer rare.
+const MaxPSOverSlots = 0.05
 
 // MaxVPShapeRatio is how far, either way, the mean prompt may be from the one
 // V_P was read at before V_P is flagged VPShapeMoved, when there is no curve
@@ -845,6 +885,18 @@ func (pl prefillPlan) utilization(rate float64) float64 {
 	return pl.f * rate * pl.work / float64(pl.p.Replicas)
 }
 
+// overSlots says the busiest pod, processor sharing by its engine's
+// configuration (QueueProcessorSharing), is likely to hold more prompts than it
+// runs at once at rate: rho^(slots+1), the M/G/1-PS chance of more than
+// slots prompts on the pod, above MaxPSOverSlots.
+func (pl prefillPlan) overSlots(rate float64) bool {
+	if pl.p.Queue.Model != QueueProcessorSharing || pl.p.Queue.Slots < 1 {
+		return false
+	}
+	rho := pl.atRate(rate).utilization(rate)
+	return !(rho < 1) || math.Pow(rho, float64(pl.p.Queue.Slots+1)) > MaxPSOverSlots
+}
+
 // waitScale is theta, E[S_work](Ca^2 + Cs^2) / (2(1 - rho)), Kingman's mean
 // wait given a wait: the mean wait is rho * theta.
 func (pl prefillPlan) waitScale(rho float64) float64 {
@@ -872,6 +924,9 @@ func (pl prefillPlan) own() ownTime {
 // wait included: no gate stage and no processor-sharing onsets
 // (ttftPlan.routerWait, psOnsets).
 func (p Prefill) BeyondProcessorSharing() bool {
+	if p.Queue.Model == QueueProcessorSharing {
+		return false
+	}
 	if r := p.PromptMaxRatio; r > 0 && r <= MaxPSPromptSupport && p.ArrivalCV2 <= 1 {
 		return false
 	}
@@ -1382,7 +1437,8 @@ type priced struct {
 // queues' prices (the plan carries SpreadBeyondProcessorSharing): the figure
 // and its parts are the larger one's. A refusal from either is the answer.
 func (pl ttftPlan) price(rate, q float64, withDecodeWait, extras bool) priced {
-	if !pl.psCapped {
+	overSlots := pl.ps && pl.pf.overSlots(rate)
+	if !pl.psCapped && !overSlots {
 		return pl.priceOne(rate, q, withDecodeWait, extras)
 	}
 	ps := pl.priceOne(rate, q, withDecodeWait, extras)
@@ -1395,10 +1451,14 @@ func (pl ttftPlan) price(rate, q float64, withDecodeWait, extras bool) priced {
 	if first.u != nil {
 		return first
 	}
+	out := ps
 	if first.out.Seconds > ps.out.Seconds {
-		return first
+		out = first
 	}
-	return ps
+	if overSlots && !pl.psCapped {
+		out.out.Flags = addFlags(out.out.Flags, PSSlotsExceeded)
+	}
+	return out
 }
 
 // decodeSaturates says rate is at or above the decode line's knee (the line

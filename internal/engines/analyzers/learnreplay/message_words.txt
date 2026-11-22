@@ -365,6 +365,7 @@ PROMETHEUS_SERVER_NAME
 PROMETHEUS_TLS_INSECURE_SKIP_VERIFY
 PROMETHEUS_TOKEN_PATH
 PROPSEED
+PSSlotsExceeded
 Passive
 PastLowerBoundKnee
 Pending
@@ -2438,6 +2439,7 @@ priors
 probe
 processing
 processor
+processor-sharing
 processorSharing
 produced
 product
@@ -2947,6 +2949,7 @@ slo-ttft-prefix-attention
 slo-ttft-price
 slo-ttft-processor-sharing
 slo-ttft-prompt-support
+slo-ttft-ps-by-engine
 slo-ttft-ps-onsets
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
