@@ -112,7 +112,84 @@ grep -qx "failed=1" "$out" || { echo "FAIL: a failed cache-tier query did not fa
 grep -q "^FAILED: vllm:kv_offload_load_bytes_total at " "$out" || { echo "FAIL: the fetch did not name the failed series" >&2; fail=1; }
 grep -qx "bad=1" "$out" || { echo "FAIL: a failed cache-tier query passed the check" >&2; fail=1; }
 
+# 4. The check names each empty kube-state-metrics series it reads, with why
+# and what is lost; one the fleet exports is not named.
+out="$TMP/ok.out"
+for m in kube_pod_created kube_pod_deletion_timestamp kube_deployment_annotations kube_node_labels; do
+  grep -q "^EMPTY: $m: " "$out" || { echo "FAIL: the check did not name the empty $m" >&2; fail=1; }
+done
+grep -q "^EMPTY: kube_node_labels: .*--metric-labels-allowlist=nodes=\[nvidia.com/gpu.product\]" "$out" || {
+  echo "FAIL: the kube_node_labels hint does not name the allowlist" >&2; fail=1; }
+serve --present "$PRESENT kube_node_labels kube_pod_created"
+record ksm LMCACHE_NAMESPACE=lmc
+for m in kube_node_labels kube_pod_created; do
+  if grep -q "^EMPTY: $m: " "$TMP/ksm.out"; then echo "FAIL: the check named $m empty when it was not" >&2; fail=1; fi
+done
+grep -q "^EMPTY: kube_deployment_annotations: " "$TMP/ksm.out" || { echo "FAIL: the hints stopped after a present series" >&2; fail=1; }
+
+# 5. Engine arguments from each kind of workload, in Path 2's describe step and
+# Path 1's engineargs step: a DisaggregatedSet role picked by its llm-d.ai/role
+# label (on the role, or on a template), a LeaderWorkerSet, a Deployment. A
+# fake kubectl answers from fixtures.
+DESCRIBE=$(yq -r ".manual.describe.run" "$GUIDE")
+ARGS1=$(yq -r ".record.engineargs.run" "$GUIDE")
+# The fake is run through bash, so it works whether or not its executable bit
+# survived the checkout.
+FIXBIN="$TMP/bin"
+mkdir -p "$FIXBIN"
+printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$ROOT/hack/testdata/record-export/fake-kubectl" > "$FIXBIN/kubectl"
+chmod +x "$FIXBIN/kubectl"
+WANT_DEC='vllm serve Qwen/Qwen3-32B --max-num-seqs 256 --kv-transfer-config {"kv_connector":"NixlConnector","kv_role":"kv_both"} --kv-offloading-size 64'
+WANT_PRE='vllm serve Qwen/Qwen3-32B --tensor-parallel-size 8 --kv-transfer-config {"kv_connector":"NixlConnector","kv_role":"kv_both"} --max-num-batched-tokens 16384'
+# with_workloads prints script $1 with its two workload lines set to $2 and $3,
+# and fails when either line is not there to set.
+with_workloads() {
+  local s
+  s=$(printf '%s\n' "$1" | sed -e "s|^export DECODE_WORKLOAD=.*|export DECODE_WORKLOAD=$2|" \
+    -e "s|^export PREFILL_WORKLOAD=.*|export PREFILL_WORKLOAD=$3|")
+  case "$s" in *"export DECODE_WORKLOAD=$2"*"export PREFILL_WORKLOAD=$3"*) printf '%s\n' "$s" ;; *) return 1 ;; esac
+}
+# describe runs Path 2's describe step for decode $2 and prefill $3 in a fresh
+# directory $TMP/$1; its output is $TMP/$1.out and its window.txt beside it.
+describe() {
+  local dir="$TMP/$1" script
+  script=$(with_workloads "$DESCRIBE" "$2" "$3") || { echo "FAIL: the describe step has no workload lines to set" >&2; fail=1; return; }
+  mkdir -p "$dir/planner-export"
+  ( cd "$dir" || exit 1
+    export PATH="$FIXBIN:$PATH" NAMESPACE=llm FROM=1700000000 TO=1700000600
+    bash -c "$script" ) > "$TMP/$1.out" 2>&1
+}
+# args1 runs Path 1's engineargs step the same way, then prints what it exported.
+args1() {
+  local script
+  script=$(with_workloads "$ARGS1" "$2" "$3") || { echo "FAIL: the engineargs step has no workload lines to set" >&2; fail=1; return; }
+  ( export PATH="$FIXBIN:$PATH" NAMESPACE=llm
+    bash -c "$script
+echo \"ENGINE_ARGS=\${ENGINE_ARGS-unset}\"
+echo \"PREFILL_ENGINE_ARGS=\${PREFILL_ENGINE_ARGS-unset}\"" ) > "$TMP/$1.out" 2>&1
+}
+describe dset dset/qwen dset/qwen
+w="$TMP/dset/planner-export/window.txt"
+grep -qxF "DECODE_ARGS=$WANT_DEC" "$w" 2>/dev/null || { echo "FAIL: describe read the DisaggregatedSet's decode role wrong:" >&2; cat "$TMP/dset.out" >&2; fail=1; }
+grep -qxF "PREFILL_ARGS=$WANT_PRE" "$w" 2>/dev/null || { echo "FAIL: describe read the DisaggregatedSet's prefill role wrong:" >&2; cat "$TMP/dset.out" >&2; fail=1; }
+args1 dset1 dset/qwen dset/qwen
+grep -qxF "ENGINE_ARGS=$WANT_DEC" "$TMP/dset1.out" || { echo "FAIL: Path 1 read the decode role wrong:" >&2; cat "$TMP/dset1.out" >&2; fail=1; }
+grep -qxF "PREFILL_ENGINE_ARGS=$WANT_PRE" "$TMP/dset1.out" || { echo "FAIL: Path 1 read the prefill role wrong:" >&2; cat "$TMP/dset1.out" >&2; fail=1; }
+describe lws lws/qwen-decode ""
+grep -qxF "DECODE_ARGS=Qwen/Qwen3-32B --max-num-seqs 64" "$TMP/lws/planner-export/window.txt" 2>/dev/null || {
+  echo "FAIL: describe read the LeaderWorkerSet wrong:" >&2; cat "$TMP/lws.out" >&2; fail=1; }
+if grep -q "^PREFILL_ARGS=" "$TMP/lws/planner-export/window.txt" 2>/dev/null; then echo "FAIL: a prefill line without PREFILL_WORKLOAD" >&2; fail=1; fi
+args1 deploy1 deploy/qwen-decode ""
+grep -qxF "ENGINE_ARGS=Qwen/Qwen3-32B --max-num-seqs 32" "$TMP/deploy1.out" || { echo "FAIL: Path 1 read the Deployment wrong:" >&2; cat "$TMP/deploy1.out" >&2; fail=1; }
+grep -qxF "PREFILL_ENGINE_ARGS=unset" "$TMP/deploy1.out" || { echo "FAIL: Path 1 set PREFILL_ENGINE_ARGS without PREFILL_WORKLOAD" >&2; fail=1; }
+
+# 5b. A DisaggregatedSet role named decode but labelled nothing is not read
+# by its name: describe stops, says why, and writes no window.txt.
+describe unlabelled dset/unlabelled ""
+[ -e "$TMP/unlabelled/planner-export/window.txt" ] && { echo "FAIL: describe wrote window.txt for an unlabelled role" >&2; fail=1; }
+grep -q "no role labelled llm-d.ai/role=decode" "$TMP/unlabelled.out" || { echo "FAIL: describe did not say the role has no label:" >&2; cat "$TMP/unlabelled.out" >&2; fail=1; }
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
-echo "OK: the manual recording saves $n cache-tier series, reads absent ones as absent and failed ones as failed"
+echo "OK: the manual recording saves $n cache-tier series, reads absent ones as absent and failed ones as failed, names each empty kube-state-metrics series, and reads engine arguments from a DisaggregatedSet role, a LeaderWorkerSet and a Deployment"

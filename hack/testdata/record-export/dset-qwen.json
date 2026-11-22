@@ -1,0 +1,53 @@
+{
+  "apiVersion": "disaggregatedset.x-k8s.io/v1",
+  "kind": "DisaggregatedSet",
+  "metadata": {"name": "qwen", "namespace": "llm"},
+  "spec": {
+    "roles": [
+      {
+        "name": "p",
+        "metadata": {"labels": {"llm-d.ai/role": "prefill"}},
+        "spec": {
+          "replicas": 2,
+          "leaderWorkerTemplate": {
+            "size": 2,
+            "leaderTemplate": {
+              "metadata": {"labels": {"app": "qwen"}},
+              "spec": {"containers": [
+                {"name": "vllm", "command": ["vllm", "serve"],
+                 "args": ["Qwen/Qwen3-32B", "--tensor-parallel-size", "8",
+                          "--kv-transfer-config", "{\"kv_connector\": \"NixlConnector\", \"kv_role\": \"kv_both\"}",
+                          "--max-num-batched-tokens", "16384"]}
+              ]}
+            },
+            "workerTemplate": {
+              "metadata": {"labels": {"app": "qwen"}},
+              "spec": {"containers": [
+                {"name": "vllm", "command": ["vllm", "serve"], "args": ["Qwen/Qwen3-32B", "--headless"]}
+              ]}
+            }
+          }
+        }
+      },
+      {
+        "name": "d",
+        "spec": {
+          "replicas": 1,
+          "leaderWorkerTemplate": {
+            "size": 1,
+            "workerTemplate": {
+              "metadata": {"labels": {"llm-d.ai/role": "decode"}},
+              "spec": {"containers": [
+                {"name": "routing-sidecar", "args": ["--port", "8000"]},
+                {"name": "vllm", "command": ["vllm", "serve"],
+                 "args": ["Qwen/Qwen3-32B", "--max-num-seqs", "256",
+                          "--kv-transfer-config", "{\"kv_connector\": \"NixlConnector\", \"kv_role\": \"kv_both\"}",
+                          "--kv-offloading-size", "64"]}
+              ]}
+            }
+          }
+        }
+      }
+    ]
+  }
+}

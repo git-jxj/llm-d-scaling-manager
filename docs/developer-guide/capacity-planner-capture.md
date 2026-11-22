@@ -110,7 +110,11 @@ The list, the operator table in
 step by `internal/whatifsource/metrics_doc_test.go`.
 `hack/check-record-export.sh` (in `make lint-deploy-scripts`) runs the guide's
 fetch and check steps against a fake Prometheus: absent series pass, a failed
-one fails, and `LMCACHE_NAMESPACE` reaches the LMCache server's series.
+one fails, `LMCACHE_NAMESPACE` reaches the LMCache server's series, and each
+empty kube-state-metrics series gets its `EMPTY:` hint. With a fake `kubectl`
+over fixtures, it runs the describe step and Path 1's engine-arguments step on
+a DisaggregatedSet (each role picked by its `llm-d.ai/role` label), a
+LeaderWorkerSet and a Deployment, and refuses a role with no label.
 
 ## Generate's order
 

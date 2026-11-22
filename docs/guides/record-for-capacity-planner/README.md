@@ -40,7 +40,9 @@ For an operator collecting a window for someone else to plan from.
    `--prometheus-port`.
 6. **Check before you send.** The check step prints `bad=0`, then one
    `present:` or `absent:` line per cache-tier series. `absent` is fine for a
-   feature you do not run; `present` should cover the ones you do.
+   feature you do not run; `present` should cover the ones you do. An
+   `EMPTY:` line names a kube-state-metrics series that came back empty, the
+   kube-state-metrics setting that turns it on, and what is lost without it.
 7. Send `planner-export.tgz`, and the router version and LMCache config
    beside it.
 
@@ -98,12 +100,39 @@ export NAMESPACE=<model namespace>
 export FROM=2026-11-01T12:00:00Z
 export TO=2026-11-01T13:00:00Z
 
-# The engine arguments the Deployments ran with. kube-state-metrics does not export them.
-# For a P/D fleet, set PREFILL_ENGINE_ARGS to the prefill Deployment's; leave it unset and prefill takes ENGINE_ARGS.
-kubectl -n ${NAMESPACE} get deploy <decode deployment> \
-  -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
-export ENGINE_ARGS="<those arguments, space-separated>"
-# P/D only: export PREFILL_ENGINE_ARGS="<the prefill Deployment's arguments, space-separated>"
+# The engine arguments the workloads ran with. kube-state-metrics does not export them.
+# A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet), dset/NAME (a DisaggregatedSet: the role whose
+# llm-d.ai/role label is decode, or prefill), or pod/NAME (a leader Pod). ENGINE_CONTAINER is the engine's container.
+# For a P/D fleet, set PREFILL_WORKLOAD; leave it empty and prefill takes ENGINE_ARGS.
+export ENGINE_CONTAINER=vllm
+export DECODE_WORKLOAD=deploy/<decode deployment>
+export PREFILL_WORKLOAD=
+engine_args() {
+  obj=$1
+  case "${obj}" in dset/*) obj=disaggregatedsets.disaggregatedset.x-k8s.io/${obj#dset/} ;; esac
+  out=$(kubectl -n "${NAMESPACE}" get "${obj}" -o json | jq -r --arg c "${ENGINE_CONTAINER}" --arg role "$2" '
+    def role_of: (.metadata.labels // {})["llm-d.ai/role"];
+    (if .kind == "DisaggregatedSet" then
+       {spec: ([.spec.roles[] | select(role_of == $role
+           or (.spec.leaderWorkerTemplate.leaderTemplate // {} | role_of) == $role
+           or (.spec.leaderWorkerTemplate.workerTemplate // {} | role_of) == $role)][0].spec // {})}
+     else . end)
+    | [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
+      // .spec.leaderWorkerTemplate.workerTemplate.spec // .spec)
+     | (.containers // [])[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
+     | gsub("\n"; " ")
+     | if test("^[[{]") then (try (fromjson | tojson) catch .) else . end]
+    | join(" ")')
+  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" \
+    "(or, for a DisaggregatedSet, no role labelled llm-d.ai/role=$2)" >&2; return 1; }
+  echo "${out}"
+}
+ENGINE_ARGS=$(engine_args "${DECODE_WORKLOAD}" decode) && export ENGINE_ARGS && echo "decode: ${ENGINE_ARGS}"
+unset PREFILL_ENGINE_ARGS
+if [ -n "${PREFILL_WORKLOAD}" ]; then
+  PREFILL_ENGINE_ARGS=$(engine_args "${PREFILL_WORKLOAD}" prefill) && export PREFILL_ENGINE_ARGS \
+    && echo "prefill: ${PREFILL_ENGINE_ARGS}"
+fi
 
 # Replays the window through the controller's own queries. Exit 0 done, 2 your input (a flag, nothing found), 1 a failed query.
 # It also checks the optional cache-tier series and prints which were present; an absent one never fails it.
@@ -275,7 +304,8 @@ echo "failed=${failed}"
 
 # What loading the export needs and Prometheus does not hold: the window, the engine, and the engine
 # arguments of the decode and prefill workloads (leave PREFILL_WORKLOAD empty without one).
-# A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet; for a DisaggregatedSet, the role's), or pod/NAME (a leader Pod).
+# A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet), dset/NAME (a DisaggregatedSet: the role whose
+# llm-d.ai/role label is decode, or prefill, on the role or its leader or worker template), or pod/NAME (a leader Pod).
 # ENGINE is vllm or sglang; ENGINE_CONTAINER is the engine's container name.
 # It stops, and writes no window.txt, when a workload or its container is not found.
 export ENGINE=vllm
@@ -283,22 +313,31 @@ export ENGINE_CONTAINER=vllm
 export DECODE_WORKLOAD=deploy/<decode deployment>
 export PREFILL_WORKLOAD=
 engine_args() {
-  out=$(kubectl -n "${NAMESPACE}" get "$1" -o json | jq -r --arg c "${ENGINE_CONTAINER}" '
-    [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
+  obj=$1
+  case "${obj}" in dset/*) obj=disaggregatedsets.disaggregatedset.x-k8s.io/${obj#dset/} ;; esac
+  out=$(kubectl -n "${NAMESPACE}" get "${obj}" -o json | jq -r --arg c "${ENGINE_CONTAINER}" --arg role "$2" '
+    def role_of: (.metadata.labels // {})["llm-d.ai/role"];
+    (if .kind == "DisaggregatedSet" then
+       {spec: ([.spec.roles[] | select(role_of == $role
+           or (.spec.leaderWorkerTemplate.leaderTemplate // {} | role_of) == $role
+           or (.spec.leaderWorkerTemplate.workerTemplate // {} | role_of) == $role)][0].spec // {})}
+     else . end)
+    | [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
       // .spec.leaderWorkerTemplate.workerTemplate.spec // .spec)
-     | .containers[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
+     | (.containers // [])[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
      | gsub("\n"; " ")
      | if test("^[[{]") then (try (fromjson | tojson) catch .) else . end]
     | join(" ")')
-  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" >&2; return 1; }
+  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" \
+    "(or, for a DisaggregatedSet, no role labelled llm-d.ai/role=$2)" >&2; return 1; }
   echo "${out}"
 }
 rm -f planner-export/window.txt
 (
   [ -n "${DECODE_WORKLOAD}" ] || { echo "set DECODE_WORKLOAD" >&2; exit 1; }
-  decode_args=$(engine_args "${DECODE_WORKLOAD}") || exit 1
+  decode_args=$(engine_args "${DECODE_WORKLOAD}" decode) || exit 1
   prefill_args=
-  if [ -n "${PREFILL_WORKLOAD}" ]; then prefill_args=$(engine_args "${PREFILL_WORKLOAD}") || exit 1; fi
+  if [ -n "${PREFILL_WORKLOAD}" ]; then prefill_args=$(engine_args "${PREFILL_WORKLOAD}" prefill) || exit 1; fi
   {
     echo "NAMESPACE=${NAMESPACE}"
     echo "FROM=${FROM}"
@@ -316,7 +355,8 @@ if grep -E '^[A-Z]+_ARGS=.*([$]|sh -c)' planner-export/window.txt 2>/dev/null; t
 fi
 
 # Every chunk saved and a success, then how many series each metric had. It prints bad=0 when nothing is missing.
-# Zero series is fine for a metric your fleet does not export. Last, which cache-tier series it holds.
+# Zero series is fine for a metric your fleet does not export. Then, which cache-tier series it holds.
+# Last, an EMPTY: line for each kube-state-metrics series the planner reads that came back empty: why, and what is lost.
 want=$(( (TO - FROM + CHUNK - 1) / CHUNK ))
 bad=0
 for m in ${METRICS} ${CACHE_METRICS}; do
@@ -333,6 +373,24 @@ done | awk '{n[$2] += $1} END {for (m in n) print n[m], m}' | sort -n
 for m in ${CACHE_METRICS}; do
   n=$(cat planner-export/"${m//:/_}".*.json 2>/dev/null | jq -s '[.[].data.result | length] | add // 0')
   if [ "${n:-0}" -gt 0 ]; then echo "present: ${m}"; else echo "absent: ${m}"; fi
+done
+for m in kube_node_labels kube_pod_created kube_pod_deletion_timestamp kube_deployment_annotations; do
+  n=$(cat planner-export/"${m}".*.json 2>/dev/null | jq -s '[.[].data.result | length] | add // 0')
+  [ "${n:-0}" -gt 0 ] && continue
+  case "${m}" in
+    kube_node_labels) echo "EMPTY: kube_node_labels: kube-state-metrics exports node labels only with" \
+      "--metric-labels-allowlist=nodes=[nvidia.com/gpu.product]. Without it the accelerator is unknown:" \
+      "give --accelerator when the export is loaded." ;;
+    kube_pod_created) echo "EMPTY: kube_pod_created: disabled or denylisted in kube-state-metrics" \
+      "(--metric-denylist, --resources). Without it no Pod has a creation time, so start-up time" \
+      "(creation to Ready) is not read." ;;
+    kube_pod_deletion_timestamp) echo "EMPTY: kube_pod_deletion_timestamp: normal when no Pod was deleted in" \
+      "the window; otherwise disabled or denylisted in kube-state-metrics. Without it a Pod being deleted" \
+      "counts as a replica until its series stop." ;;
+    kube_deployment_annotations) echo "EMPTY: kube_deployment_annotations: off unless kube-state-metrics has" \
+      "--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version], or denylisted." \
+      "Without it the vLLM release comes from the image tag, or is unknown (vLLM defaults then unknown)." ;;
+  esac
 done
 
 # One file to send. It holds your metric labels (Pod, node, model names) and engine arguments, no request content.
@@ -358,11 +416,15 @@ example `DECODE_ARGS=--max-num-seqs 256 --tensor-parallel-size 2`. `capacity-pla
 splits these on whitespace: a JSON value is written compact (no spaces between
 its tokens), but a space inside one of its strings still splits it.
 
-**A LeaderWorkerSet or DisaggregatedSet fleet.** Set `DECODE_WORKLOAD` (and
-`PREFILL_WORKLOAD`) to the role's LeaderWorkerSet, `lws/<name>`, which reads
-its leader template, or to a leader Pod, `pod/<name>`, which reads the
-arguments that Pod ran with. A DisaggregatedSet runs one LeaderWorkerSet per
-role and revision: `kubectl -n <namespace> get lws` lists them. Where the
+**A LeaderWorkerSet or DisaggregatedSet fleet.** For a DisaggregatedSet, set
+both `DECODE_WORKLOAD` and `PREFILL_WORKLOAD` to `dset/<name>`: each reads the
+role whose `llm-d.ai/role` label is `decode` or `prefill` (on the role, or on
+its leader or worker template), from its leader template. If no role carries
+the label, the step stops and says so; name the role's LeaderWorkerSet
+instead (`kubectl -n <namespace> get lws` lists them). For a LeaderWorkerSet,
+`lws/<name>` reads its leader template; a leader Pod, `pod/<name>`, reads the
+arguments that Pod ran with. Path 1's engine-arguments step takes the same
+forms. Where the
 arguments are built at start, in a script or from environment variables,
 neither shows them: copy them from the engine's startup log instead (vLLM
 prints them on its `non-default args` line) into `window.txt`. Each Pod's
