@@ -44,7 +44,9 @@ record:
       export ENGINE_ARGS="<those arguments, space-separated>"
       # P/D only: export PREFILL_ENGINE_ARGS="<the prefill Deployment's arguments, space-separated>"
   capture:
-    note: Replays the window through the controller's own queries. Exit 0 done, 2 your input (a flag, nothing found), 1 a failed query.
+    note: |
+      Replays the window through the controller's own queries. Exit 0 done, 2 your input (a flag, nothing found), 1 a failed query.
+      It also checks the optional cache-tier series and prints which were present; an absent one never fails it.
     run: |
       bin/capacity-planner capture --prometheus ${PROM_URL} --namespace ${NAMESPACE} --kube-state-metrics \
         --from ${FROM} --to ${TO} --engine vllm --engine-args "${ENGINE_ARGS}" \
@@ -78,6 +80,8 @@ manual:
       Each is one instant query for a range, metric{namespace=...}[1h]: it returns stored samples, not a resampled grid.
       A failed query saves its error, so the check below and the converter refuse it. Needs bash, jq and curl 7.76 or later.
       Lower CHUNK if a query fails with "too many samples".
+      CACHE_METRICS are the cache-tier, offloading and KV-transfer series: older engines lack them, and an absent one saves an
+      empty answer, not a failure. Set LMCACHE_NAMESPACE first if the LMCache server runs in another namespace.
     run: |
       export METRICS="
       vllm:kv_cache_usage_perc vllm:cache_config_info vllm:inter_token_latency_seconds_sum
@@ -119,12 +123,35 @@ manual:
       kube_pod_deletion_timestamp kube_pod_container_resource_requests kube_node_labels
       kube_deployment_spec_replicas kube_pod_container_info kube_deployment_annotations
       "
+      export CACHE_METRICS="
+      vllm:external_prefix_cache_queries_total vllm:external_prefix_cache_hits_total
+      vllm:prompt_tokens_by_source_total vllm:prompt_tokens_cached_total vllm:prompt_tokens_cached_by_source_total
+      vllm:kv_offload_load_bytes_total vllm:kv_offload_load_time_total vllm:kv_offload_store_bytes_total
+      vllm:kv_offload_store_time_total vllm:kv_offload_total_bytes_total vllm:kv_offload_total_time_total
+      vllm:kv_offload_tiering_chunk_queries_total vllm:kv_offload_tiering_chunk_hits_total
+      vllm:kv_offload_tiering_read_bytes_total vllm:kv_offload_tiering_read_time_total vllm:kv_offload_config_info
+      vllm:nixl_bytes_transferred_sum vllm:nixl_bytes_transferred_count vllm:nixl_xfer_time_seconds_bucket
+      vllm:nixl_post_time_seconds_sum vllm:nixl_post_time_seconds_count vllm:nixl_num_failed_transfers_total
+      lmcache_mp_lookup_requested_tokens_total lmcache_mp_lookup_hit_tokens_total
+      lmcache_mp_lookup_hit_l1_tokens_total lmcache_mp_lookup_hit_l2_tokens_total
+      lmcache_mp_lookup_prompt_tokens_total lmcache_mp_lookup_request_hit_tokens_total
+      lmcache:num_requested_tokens_total lmcache:num_hit_tokens_total lmcache:num_lookup_tokens_total
+      lmcache:num_lookup_hits_total lmcache:time_to_retrieve_sum lmcache:time_to_retrieve_count
+      llm_d_epp_request_cached_tokens_sum llm_d_epp_request_cached_tokens_count
+      llm_d_epp_request_cached_tokens_bucket llm_d_epp_prefix_predicted_cached_tokens_sum
+      llm_d_epp_prefix_predicted_cached_tokens_count llm_d_epp_prefix_best_predicted_cached_tokens_sum
+      llm_d_epp_prefix_best_available_cached_tokens_sum llm_d_epp_prefix_prompt_tokens_sum
+      sglang:prefill_effective_tokens_total sglang:uncached_prompt_tokens_histogram_sum
+      sglang:uncached_prompt_tokens_histogram_count sglang:uncached_prompt_tokens_histogram_bucket
+      "
+      export LMCACHE_NAMESPACE=${LMCACHE_NAMESPACE:-${NAMESPACE}}
       rm -rf planner-export
       mkdir -p planner-export
       failed=0
-      for m in ${METRICS}; do
+      for m in ${METRICS} ${CACHE_METRICS}; do
         sel="${m}{namespace='${NAMESPACE}'}"
         [ "${m}" = kube_node_labels ] && sel="${m}"
+        case "${m}" in lmcache_mp_*) sel="${m}{namespace='${LMCACHE_NAMESPACE}'}" ;; esac
         t=${FROM}
         while [ "${t}" -lt "${TO}" ]; do
           end=$(( t + CHUNK )); [ "${end}" -gt "${TO}" ] && end=${TO}
@@ -183,11 +210,11 @@ manual:
   check:
     note: |
       Every chunk saved and a success, then how many series each metric had. It prints bad=0 when nothing is missing.
-      Zero series is fine for a metric your fleet does not export.
+      Zero series is fine for a metric your fleet does not export. Last, which cache-tier series it holds.
     run: |
       want=$(( (TO - FROM + CHUNK - 1) / CHUNK ))
       bad=0
-      for m in ${METRICS}; do
+      for m in ${METRICS} ${CACHE_METRICS}; do
         have=$(ls planner-export/"${m//:/_}".*.json 2>/dev/null | wc -l)
         [ "${have}" -eq "${want}" ] || { echo "MISSING: ${m} has ${have} of ${want} chunks"; bad=1; }
       done
@@ -198,6 +225,10 @@ manual:
       for f in planner-export/*.json; do
         echo "$(jq '.data.result | length' "${f}" 2>/dev/null || echo 0) $(basename "${f}" | cut -d. -f1)"
       done | awk '{n[$2] += $1} END {for (m in n) print n[m], m}' | sort -n
+      for m in ${CACHE_METRICS}; do
+        n=$(cat planner-export/"${m//:/_}".*.json 2>/dev/null | jq -s '[.[].data.result | length] | add // 0')
+        if [ "${n:-0}" -gt 0 ]; then echo "present: ${m}"; else echo "absent: ${m}"; fi
+      done
   pack:
     note: |
       One file to send. It holds your metric labels (Pod, node, model names) and engine arguments, no request content.

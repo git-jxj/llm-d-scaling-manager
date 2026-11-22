@@ -158,6 +158,10 @@ type Options struct {
 	// kube-state-metrics, it is unknown.
 	VLLMVersion string
 	EngineImage string
+	// LMCacheNamespace is where LMCache's multi-process server runs, when
+	// not in Namespace: its lmcache_mp_ series are checked there
+	// (OptionalSeriesList). Empty is Namespace.
+	LMCacheNamespace string
 	// Force captures a window of more than MaxStepQueries steps times
 	// queries, or more than MaxSamples samples.
 	Force bool
@@ -233,8 +237,11 @@ type Summary struct {
 	// Notes is what the cycles showed that the window line, written before
 	// them, could not say (NoteITLAbsentRanks).
 	Notes []string
-	// RangeQueries is how many range queries were asked, and Samples how
-	// many samples their answers held.
+	// Optional is every optional series checked (OptionalSeriesList), as
+	// the window line records it.
+	Optional []learnreplay.CaptureSeries
+	// RangeQueries is how many range queries were asked, the optional
+	// series' included, and Samples how many samples their answers held.
 	RangeQueries, Samples int
 }
 
@@ -447,6 +454,12 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The optional series are checked, never required: one the window does
+	// not hold, or whose query fails, is recorded so and the capture goes on.
+	optional, optQueries, optSamples, err := checkOptional(ctx, opts, api.maxSamples)
+	if err != nil {
+		return nil, captureErr(api, err)
+	}
 
 	gz, err := gzip.NewWriterLevel(w, gzip.BestCompression)
 	if err != nil {
@@ -456,9 +469,9 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	rec.Record(learnrec.KindStart, opts.From, start)
 	rec.Record(learnreplay.KindCaptureWindow, opts.From, learnreplay.CaptureWindow{
 		Namespace: opts.Namespace, From: opts.From, To: opts.To, Step: opts.Step,
-		Roles: roleSource(opts), Flags: flags, Variants: variants,
+		Roles: roleSource(opts), Flags: flags, Variants: variants, Optional: optional,
 	})
-	sum := &Summary{Steps: len(steps), Variants: variants, Flags: flags}
+	sum := &Summary{Steps: len(steps), Variants: variants, Flags: flags, Optional: optional}
 	byKey := map[string]learnreplay.CaptureVariant{}
 	models := map[string][]string{}
 	for _, v := range variants {
@@ -505,7 +518,7 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	if err := gz.Close(); err != nil {
 		return nil, err
 	}
-	sum.RangeQueries, sum.Samples = api.ranges(), api.held()
+	sum.RangeQueries, sum.Samples = api.ranges()+optQueries, api.held()+optSamples
 	return sum, nil
 }
 
