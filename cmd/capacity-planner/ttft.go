@@ -90,6 +90,16 @@ const assumedA whatif.Flag = "AssumedA"
 // a fleet too busy for low-load minutes (prefill.ASourceEngineTiming).
 const aFromEngineTiming whatif.Flag = "AFromEngineTiming"
 
+// vpFromEarlierInWindow is a V_P whose peak under a queue was read earlier in
+// the recording than the 6 hours of samples the controller keeps
+// (prefill.Estimate.VPLearnedAt; saturation.SwitchPrefillVPWindowBest).
+const vpFromEarlierInWindow whatif.Flag = "VPFromEarlierInWindow"
+
+// hoursWords is d in hours to one decimal, "0.5 h".
+func hoursWords(d time.Duration) string {
+	return fmt.Sprintf("%.1f h", d.Hours())
+}
+
 // kneeAtServedWork is a prefill knee priced from a lower bound of V_P and
 // raised to the computed-token work the fleet's prefill pods sustained at the
 // pod count priced (servedKneeFloor): at least the rate that work serves at
@@ -606,6 +616,13 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		pf.assume("V_P %s tok/s (--assume-vp)", num(f.assumeVP))
 	case learned:
 		pf.in.VPSource, pf.in.VPOrigin = sourceLearned, string(est.VPSource)
+		if at := est.VPLearnedAt; !at.IsZero() {
+			// A peak under a queue read before the 6 hours the controller
+			// keeps (saturation.SwitchPrefillVPWindowBest): say when.
+			pf.flags = append(pf.flags, vpFromEarlierInWindow)
+			pf.assume("V_P learned at +%s of the window, %s before the cycle priced (the peak under a queue, a lower bound)",
+				hoursWords(at.Sub(ps.WindowFrom)), hoursWords(ps.At.Sub(at)))
+		}
 	default:
 		why := fmt.Sprintf("no P1 estimate of %s at cycle %d", ps.Variant, cycle)
 		if ps.EstimateRead {

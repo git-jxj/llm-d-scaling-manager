@@ -221,6 +221,12 @@ type Cycle struct {
 	// other source has a reading (SourceServedPeak, NeverQueued), in place
 	// of NoPrefillCapacity (saturation.SwitchPrefillVPServedUnqueued).
 	VPServedUnqueued bool
+	// VPWindowBest takes the best peak under a queue the key read since its
+	// first cycle, where the samples kept (Retention) hold a lower one or
+	// none (Estimate.VPLearnedAt; saturation.SwitchPrefillVPWindowBest): a
+	// replay of a recording reads its whole window, where the controller
+	// ages a reading out.
+	VPWindowBest bool
 	// ALowLoadByRate reads a minute as low load, for the fit of a, by its
 	// request rate against its prompt cluster's service time
 	// (lowLoadByRate), not against its own: a minute whose prefill ran slow
@@ -267,6 +273,10 @@ type Estimate struct {
 	// VPPromptTokens, VPWholePromptTokens and VPPromptHitRate the peak's, while VPSource and VPLowerBoundReason still
 	// name the source that made V_P a lower bound.
 	VPFlooredAtServed bool
+	// VPLearnedAt is the last minute of the peak under a queue V_P rests on
+	// where that peak is older than the samples kept (Cycle.VPWindowBest),
+	// zero otherwise.
+	VPLearnedAt time.Time
 	// VPQueuedMinutes, VPLongestQueuedRun and VPBusyMinutes say why V_P was
 	// refused or where it stands: the samples kept that held a queue on
 	// some sample, the longest run of them (a peak needs PeakRun), and the
@@ -456,6 +466,11 @@ type keyState struct {
 	pods     map[string]*podState
 	f        []fSample
 	lastSeen time.Time
+	// bestQueued is the best peak under a queue the key has read since its
+	// first cycle, with the last minute of its run, kept past Retention for
+	// Cycle.VPWindowBest; bestQueuedOK says one was read.
+	bestQueued   busy
+	bestQueuedOK bool
 }
 
 // Observer is the learned state of every key. Safe for concurrent use.

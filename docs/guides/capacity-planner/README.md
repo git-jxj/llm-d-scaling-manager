@@ -731,6 +731,13 @@ cells at and past that knee are marked `LB`, not `SAT`. Past decode's own
 knee the fleet saturates whatever V_P is, and the verdict says so on
 decode's knee. `--assume-vp` states a V_P to price the prefill side.
 
+The planner reads V_P over the whole recording, not only its last 6 hours,
+as the controller does: a fleet that queued for prefill only at its busiest
+hours keeps the V_P read then (flag `VPFromEarlierInWindow`, and the assumed
+line says when: "V_P learned at +6.2 h of the window, 17.8 h before the cycle
+priced"). It is a lower bound, raised to what a Pod was seen to compute
+where that is higher.
+
 A fleet whose prefill Pods never queued for compute at all has no V_P from a
 queue. The planner then takes the highest rate a prefill Pod computed over 3
 minutes as V_P, as a lower bound, and nothing more (the assumed line says

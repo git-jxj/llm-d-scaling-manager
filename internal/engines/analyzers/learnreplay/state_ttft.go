@@ -66,6 +66,10 @@ type PrefillState struct {
 	// compute, a lower bound on what that many can. Read only with
 	// saturation.SwitchPrefillVPServedUnqueued on; nil otherwise.
 	ServedComputed map[int]float64
+	// WindowFrom and At are the replay's first cycle and the cycle read, for
+	// the age of a V_P read before the samples kept
+	// (prefill.Estimate.VPLearnedAt).
+	WindowFrom, At time.Time
 }
 
 // DecodeTTFTState is what a decode variant's rows say of the decode side of
@@ -462,7 +466,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		if domain.CanonicalRole(roles[v]) != domain.RolePrefill {
 			continue
 		}
-		ps := PrefillState{Variant: v, Pods: pods[v]}
+		ps := PrefillState{Variant: v, Pods: pods[v], WindowFrom: st.FirstAt, At: st.At}
 		if w := t.shares[v]; w != nil {
 			ps.RawShare, ps.RawShareLeast, ps.RawShareFull = w.read()
 		}

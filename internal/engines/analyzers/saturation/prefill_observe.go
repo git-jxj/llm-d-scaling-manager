@@ -130,6 +130,17 @@ const SwitchPrefillVPFloorServed = "prefill-vp-floor-served"
 // before this switch. Planner-only, as SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPServedUnqueued = "prefill-vp-served-unqueued"
 
+// SwitchPrefillVPWindowBest is the replay switch for the peak under a queue
+// read over the whole window (prefill.Cycle.VPWindowBest). On, V_P's peak
+// under a queue is the best the key read since its first cycle, kept past
+// prefill.Retention, so a recording whose prefill pods queued only at its
+// busiest hours keeps that lower bound after them, flagged with its age; the
+// served peak floors it as any lower bound (SwitchPrefillVPFloorServed). Off,
+// the samples kept, as the controller reads them. Planner-only, as
+// SwitchPrefillALowLoadPerRank is: the controller prices the fleet it runs
+// now, so a reading hours old should age out there.
+const SwitchPrefillVPWindowBest = "prefill-vp-window-best"
+
 // SwitchPrefillALowLoadByRate is the replay switch for which minutes the fit
 // of a reads as low load (prefill.Cycle.ALowLoadByRate). On, a quiet minute
 // (no queue) is low load when its request rate times its prompt cluster's
@@ -356,7 +367,7 @@ func (c *cycle) observePrefill() {
 			Bound: bounds[variant], Settle: view, ALineOnly: !a.prefillAQuadratic,
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
 			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes,
-			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued,
+			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued, VPWindowBest: a.prefillVPWindowBest,
 			ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)

@@ -318,6 +318,10 @@ type shapeSample struct {
 //     TTFT priced from it: no figure is priced where none was, so none can
 //     read under what was measured (issue
 //     llm-d-incubation/llm-d-scaling-manager#369).
+//   - saturation.SwitchPrefillVPWindowBest: the peak under a queue, the best
+//     read anywhere in the recording, not only in the last 6 hours, flagged
+//     with its age (VPFromEarlierInWindow). A lower bound as before, floored
+//     at the served peak.
 //   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
 //     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
 //     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
@@ -432,6 +436,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchITLAdaptiveBandFloor:    true,
 		saturation.SwitchPrefillVPFloorServed:    true,
 		saturation.SwitchPrefillVPServedUnqueued: true,
+		saturation.SwitchPrefillVPWindowBest:     true,
 		saturation.SwitchPlannerCapAtStepBudget:  true,
 		saturation.SwitchITLBaselineFromFloor:    false,
 		saturation.SwitchITLFloorBaselineHeld:    false,
@@ -619,6 +624,9 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 					v.Resident = residentOf(resident[v.Variant], v.Shape)
 				}
 			}
+			// The window's first cycle, for the age of a V_P read before the
+			// samples kept (PrefillState.WindowFrom); set again below.
+			s.FirstAt = firstAt
 			r.fillTTFT(s, in, ttft)
 			batch.fit(s)
 			// The replay applied the cycle's Analyze before asking: its

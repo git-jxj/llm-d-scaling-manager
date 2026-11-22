@@ -1270,6 +1270,9 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// lower bound). Planner-only, off; the controller's replays never run
 	// it, so no learner golden moves. Its unit tests hold it.
 	saturation.SwitchPrefillVPServedUnqueued: nil,
+	// The planner's peak under a queue over the whole window. Planner-only,
+	// off; the controller's replays never run it. Its unit tests hold it.
+	saturation.SwitchPrefillVPWindowBest: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1691,6 +1694,12 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPrefillVPServedUnqueued_ThroughAnalyze"},
 		{".", "TestServedWork_TheBusiestStretch"},
 		{".", "TestServedWork_BrokenStretchesAreNoReading"},
+	},
+	saturation.SwitchPrefillVPWindowBest: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_TheWindowKeepsAnOldQueuedPeak"},
+		{"../../../signals/prefill", "TestCapacity_ANewerHigherPeakWins"},
+		{"../../../signals/prefill", "TestCapacity_TheMemoryIsOnlyForAgedPeaks"},
 	},
 	// The first holds it off from the constructor; the others run it on and
 	// off and assert both, in the window, through Analyze and in the
