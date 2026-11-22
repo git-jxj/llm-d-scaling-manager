@@ -124,8 +124,24 @@ func TestOptionalFor_ChecksTheCapturedEngineOnly(t *testing.T) {
 			sources[s.Source] = true
 		}
 		assert.False(t, sources[other], "%s checks %s series", engine, other)
-		assert.True(t, sources[SourceRouter] && sources[SourceLMCache], "%s skips the router's or LMCache's series", engine)
+		assert.True(t, sources[SourceRouter] && sources[SourceLMCache] && sources[SourceSidecar],
+			"%s skips the router's, LMCache's or the sidecar's series", engine)
 	}
+}
+
+// The series that explain TTFT outside the engines are checked and filed
+// under their own tier: the router's own time, the sidecar's prefill leg,
+// the engine's front end.
+func TestOptionalSeries_TTFTOutsideTheEngines(t *testing.T) {
+	for _, name := range []string{
+		"llm_d_epp_request_processing_duration_seconds_bucket", "llm_d_epp_token_producer_render_duration_seconds_sum",
+		"llm_d_epp_plugin_duration_seconds_count", "llm_d_epp_request_size_bytes_sum", "llm_d_epp_request_duration_seconds_sum",
+		"llm_d_disagg_sidecar_prefill_duration_seconds_sum", "vllm:e2e_request_latency_seconds_sum",
+		"vllm:request_render_duration_seconds_count", "http_request_duration_seconds_count",
+	} {
+		assert.Equal(t, TierOutsideEngines, optionalByName(t, name).Tier, name)
+	}
+	assert.Equal(t, Tier("diagnostic: TTFT outside the engines"), TierOutsideEngines)
 }
 
 // A counter's increase is read across restarts, as rate() reads it: a
@@ -160,4 +176,10 @@ func TestOptionalQuery(t *testing.T) {
 		OptionalQuery(optionalByName(t, "vllm:kv_offload_config_info"), "llm"))
 	assert.Equal(t, `count(llm_d_epp_request_cached_tokens_bucket{namespace="llm"})`,
 		OptionalQuery(optionalByName(t, "llm_d_epp_request_cached_tokens_bucket"), "llm"))
+	// The engine's HTTP time is read for the chat handler only, not every
+	// handler the API server serves.
+	assert.Equal(t, `sum(http_request_duration_seconds_sum{namespace="llm",handler="/v1/chat/completions"})`,
+		OptionalQuery(optionalByName(t, "http_request_duration_seconds_sum"), "llm"))
+	assert.Equal(t, `sum by (extension_point) (llm_d_epp_plugin_duration_seconds_sum{namespace="llm"})`,
+		OptionalQuery(optionalByName(t, "llm_d_epp_plugin_duration_seconds_sum"), "llm"))
 }

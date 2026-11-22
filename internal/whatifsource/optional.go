@@ -28,6 +28,10 @@ const (
 	// TierDiagnostic is a series that explains an answer, and is not
 	// priced.
 	TierDiagnostic Tier = "diagnostic"
+	// TierOutsideEngines is a diagnostic series that explains the TTFT
+	// spent outside the engines: in the router, its plugins, the P/D
+	// sidecar, or the engine's HTTP front end before the scheduler.
+	TierOutsideEngines Tier = "diagnostic: TTFT outside the engines"
 )
 
 // Where an optional series comes from (OptionalSeries.Source).
@@ -36,11 +40,13 @@ const (
 	SourceSGLang  = "sglang"
 	SourceLMCache = "lmcache"
 	SourceRouter  = "router"
+	SourceSidecar = "sidecar"
 )
 
 // OptionalSeries is one series a capture checks for but does not replay:
 // the cache-tier, offloading and KV-transfer series an operator collects
-// for TTFT on cached fleets. The capture records whether the window held
+// for TTFT on cached fleets, and the router, sidecar and engine front-end
+// series that explain the TTFT spent outside the engines. The capture records whether the window held
 // it, and a counter's increase, in the window line
 // (learnreplay.CaptureWindow.Optional); an absent one is recorded as absent
 // and never fails the capture.
@@ -56,6 +62,9 @@ type OptionalSeries struct {
 	// By is the label a counter's increase is broken down by; empty for
 	// none.
 	By string
+	// Match is more label matchers, comma-separated, that select the
+	// series; empty for none.
+	Match string
 }
 
 // counter reports whether the series accumulates: a counter, or a
@@ -67,7 +76,7 @@ func (s OptionalSeries) counter() bool {
 
 // OptionalSeriesList is every optional series, in the order the operator
 // page lists them (docs/guides/capacity-planner/metrics.md, "Cache tiers,
-// offloading and KV transfer"). A test keeps the page, the record guide's
+// offloading and KV transfer" and "TTFT outside the engines"). A test keeps the page, the record guide's
 // CACHE_METRICS list and this list in step. The versions and flags that
 // produce each are on that page.
 var OptionalSeriesList = []OptionalSeries{
@@ -126,6 +135,28 @@ var OptionalSeriesList = []OptionalSeries{
 	{Name: "sglang:uncached_prompt_tokens_histogram_sum", Source: SourceSGLang, Tier: TierCachedFleet},
 	{Name: "sglang:uncached_prompt_tokens_histogram_count", Source: SourceSGLang, Tier: TierCachedFleet},
 	{Name: "sglang:uncached_prompt_tokens_histogram_bucket", Source: SourceSGLang, Tier: TierDiagnostic},
+	// TTFT outside the engines: the router's own time, its plugins and
+	// render calls, the P/D sidecar's prefill leg, and the engine's time
+	// before and around its scheduler.
+	{Name: "llm_d_epp_request_processing_duration_seconds_sum", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_epp_request_processing_duration_seconds_count", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_epp_request_processing_duration_seconds_bucket", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_epp_token_producer_render_duration_seconds_sum", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_epp_token_producer_render_duration_seconds_count", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_epp_plugin_duration_seconds_sum", Source: SourceRouter, Tier: TierOutsideEngines, By: "extension_point"},
+	{Name: "llm_d_epp_plugin_duration_seconds_count", Source: SourceRouter, Tier: TierOutsideEngines, By: "extension_point"},
+	{Name: "llm_d_epp_request_size_bytes_sum", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_epp_request_size_bytes_count", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_epp_request_duration_seconds_sum", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_epp_request_duration_seconds_count", Source: SourceRouter, Tier: TierOutsideEngines},
+	{Name: "llm_d_disagg_sidecar_prefill_duration_seconds_sum", Source: SourceSidecar, Tier: TierOutsideEngines},
+	{Name: "llm_d_disagg_sidecar_prefill_duration_seconds_count", Source: SourceSidecar, Tier: TierOutsideEngines},
+	{Name: "vllm:e2e_request_latency_seconds_sum", Source: SourceVLLM, Tier: TierOutsideEngines},
+	{Name: "vllm:e2e_request_latency_seconds_count", Source: SourceVLLM, Tier: TierOutsideEngines},
+	{Name: "vllm:request_render_duration_seconds_sum", Source: SourceVLLM, Tier: TierOutsideEngines},
+	{Name: "vllm:request_render_duration_seconds_count", Source: SourceVLLM, Tier: TierOutsideEngines},
+	{Name: "http_request_duration_seconds_sum", Source: SourceVLLM, Tier: TierOutsideEngines, Match: `handler="/v1/chat/completions"`},
+	{Name: "http_request_duration_seconds_count", Source: SourceVLLM, Tier: TierOutsideEngines, Match: `handler="/v1/chat/completions"`},
 }
 
 // optionalFor is the optional series a capture of engine checks: every
@@ -149,7 +180,11 @@ func optionalFor(engine inferenceengine.Engine) []OptionalSeries {
 // series' count. Both are instant vectors, answered at every step of the
 // window like the capture's own queries.
 func OptionalQuery(s OptionalSeries, namespace string) string {
-	sel := s.Name + `{namespace="` + source.EscapePromQLValue(namespace) + `"}`
+	match := `namespace="` + source.EscapePromQLValue(namespace) + `"`
+	if s.Match != "" {
+		match += "," + s.Match
+	}
+	sel := s.Name + "{" + match + "}"
 	if !s.counter() {
 		return "count(" + sel + ")"
 	}

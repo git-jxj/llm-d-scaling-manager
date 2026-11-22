@@ -51,6 +51,7 @@
 /mu
 /tmp
 /tmp/
+/v1/chat/completions
 0
 0-9
 0.34
@@ -1214,6 +1215,7 @@ expert_parallel_size
 export
 exported
 exports
+extension_point
 external
 externalClusterQuotas
 externalNamespaceQuotas
@@ -1392,6 +1394,7 @@ haircut-held
 half
 hand
 handed
+handler
 happen
 hardware
 has
@@ -1448,6 +1451,8 @@ hotRankHeld
 hotRankHolds
 hotReplicas
 http
+http_request_duration_seconds_count
+http_request_duration_seconds_sum
 https
 https://prometheus.monitoring.svc:9090
 huge
@@ -1805,7 +1810,11 @@ live
 liveness
 llm-d.ai/role
 llm-d.ai/utilization-share-transfer
+llm_d_disagg_sidecar_prefill_duration_seconds_count
+llm_d_disagg_sidecar_prefill_duration_seconds_sum
 llm_d_epp_flow_control_queue_size
+llm_d_epp_plugin_duration_seconds_count
+llm_d_epp_plugin_duration_seconds_sum
 llm_d_epp_prefix_best_available_cached_tokens_sum
 llm_d_epp_prefix_best_predicted_cached_tokens_sum
 llm_d_epp_prefix_predicted_cached_tokens_count
@@ -1814,6 +1823,15 @@ llm_d_epp_prefix_prompt_tokens_sum
 llm_d_epp_request_cached_tokens_bucket
 llm_d_epp_request_cached_tokens_count
 llm_d_epp_request_cached_tokens_sum
+llm_d_epp_request_duration_seconds_count
+llm_d_epp_request_duration_seconds_sum
+llm_d_epp_request_processing_duration_seconds_bucket
+llm_d_epp_request_processing_duration_seconds_count
+llm_d_epp_request_processing_duration_seconds_sum
+llm_d_epp_request_size_bytes_count
+llm_d_epp_request_size_bytes_sum
+llm_d_epp_token_producer_render_duration_seconds_count
+llm_d_epp_token_producer_render_duration_seconds_sum
 llmsm_unattributed_gpus
 llmsm_utilization_share_floor_excess_gpus
 lmcache
@@ -2878,6 +2896,7 @@ sibling
 siblingRate
 siblingRateNow
 side
+sidecar
 sight
 sightings
 sigmaOK
@@ -3350,6 +3369,8 @@ vllm-openai-rocm
 vllm-version
 vllm.entrypoints
 vllm:cache_config_info
+vllm:e2e_request_latency_seconds_count
+vllm:e2e_request_latency_seconds_sum
 vllm:external_prefix_cache_hits_total
 vllm:external_prefix_cache_queries_total
 vllm:kv_offload_config_info
@@ -3374,6 +3395,8 @@ vllm:prompt_tokens_by_source_total
 vllm:prompt_tokens_cached_by_source_total
 vllm:prompt_tokens_cached_total
 vllm:request_generation_tokens_count
+vllm:request_render_duration_seconds_count
+vllm:request_render_duration_seconds_sum
 vllm:spec_decode_num_accepted_tokens_total
 volume
 vp

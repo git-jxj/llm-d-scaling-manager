@@ -157,7 +157,7 @@ captured 57 steps of demo from 2026-11-12T19:48:04Z to 2026-11-12T20:02:04Z ever
   Qwen/Qwen3-0.6B/demo-decode  decode  1 GPU NVIDIA-H100-80GB-HBM3
   flag: engine parameters from flags, which may differ from the window's workloads
   flag: rollouts not seen: every scale target filed as not rolling out
-optional series (cache tiers, offloading, KV transfer): 2 present, 40 absent, 0 unchecked
+optional series (cache tiers, offloading, KV transfer, TTFT outside the engines): 2 present, 59 absent, 0 unchecked
   present   vllm:external_prefix_cache_queries_total  increase 1.832e+06
   present   vllm:external_prefix_cache_hits_total  increase 6.14e+05
   absent    vllm:prompt_tokens_by_source_total
@@ -219,8 +219,8 @@ export CURL_OPTS=""
 # Each is one instant query for a range, metric{namespace=...}[1h]: it returns stored samples, not a resampled grid.
 # A failed query saves its error, so the check below and the converter refuse it. Needs bash, jq and curl 7.76 or later.
 # Lower CHUNK if a query fails with "too many samples".
-# CACHE_METRICS are the cache-tier, offloading and KV-transfer series: older engines lack them, and an absent one saves an
-# empty answer, not a failure. Set LMCACHE_NAMESPACE first if the LMCache server runs in another namespace.
+# CACHE_METRICS are the optional series: cache tiers, offloading, KV transfer, and the TTFT spent outside the engines.
+# Older releases lack many of them, and an absent one saves an empty answer, not a failure. Set LMCACHE_NAMESPACE first if the LMCache server runs in another namespace.
 export METRICS="
 vllm:kv_cache_usage_perc vllm:cache_config_info vllm:inter_token_latency_seconds_sum
 vllm:inter_token_latency_seconds_count vllm:generation_tokens_total vllm:num_requests_running
@@ -281,6 +281,15 @@ llm_d_epp_prefix_predicted_cached_tokens_count llm_d_epp_prefix_best_predicted_c
 llm_d_epp_prefix_best_available_cached_tokens_sum llm_d_epp_prefix_prompt_tokens_sum
 sglang:prefill_effective_tokens_total sglang:uncached_prompt_tokens_histogram_sum
 sglang:uncached_prompt_tokens_histogram_count sglang:uncached_prompt_tokens_histogram_bucket
+llm_d_epp_request_processing_duration_seconds_sum llm_d_epp_request_processing_duration_seconds_count
+llm_d_epp_request_processing_duration_seconds_bucket llm_d_epp_token_producer_render_duration_seconds_sum
+llm_d_epp_token_producer_render_duration_seconds_count llm_d_epp_plugin_duration_seconds_sum
+llm_d_epp_plugin_duration_seconds_count llm_d_epp_request_size_bytes_sum llm_d_epp_request_size_bytes_count
+llm_d_epp_request_duration_seconds_sum llm_d_epp_request_duration_seconds_count
+llm_d_disagg_sidecar_prefill_duration_seconds_sum llm_d_disagg_sidecar_prefill_duration_seconds_count
+vllm:e2e_request_latency_seconds_sum vllm:e2e_request_latency_seconds_count
+vllm:request_render_duration_seconds_sum vllm:request_render_duration_seconds_count
+http_request_duration_seconds_sum http_request_duration_seconds_count
 "
 export LMCACHE_NAMESPACE=${LMCACHE_NAMESPACE:-${NAMESPACE}}
 rm -rf planner-export

@@ -61,7 +61,7 @@ $CHECK"
   ) > "$dir.out" 2>&1
 }
 
-PRESENT="vllm:kv_cache_usage_perc vllm:external_prefix_cache_hits_total vllm:prompt_tokens_cached_by_source_total lmcache_mp_lookup_hit_tokens_total"
+PRESENT="vllm:kv_cache_usage_perc vllm:external_prefix_cache_hits_total vllm:prompt_tokens_cached_by_source_total lmcache_mp_lookup_hit_tokens_total llm_d_disagg_sidecar_prefill_duration_seconds_sum"
 
 # 1. Some cache-tier series present, the rest absent: nothing fails, every
 # CACHE_METRICS name has its two chunks, and the check names which are there.
@@ -77,11 +77,11 @@ for m in $cache; do
   have=$(ls "$TMP/ok/planner-export/${m//:/_}".*.json 2>/dev/null | wc -l)
   [ "$have" -eq 2 ] || { echo "FAIL: $m has $have of 2 chunks" >&2; fail=1; }
 done
-[ "$n" -ge 40 ] || { echo "FAIL: CACHE_METRICS holds $n names, fewer than the 40 the export list needs" >&2; fail=1; }
-for m in vllm:external_prefix_cache_hits_total vllm:prompt_tokens_cached_by_source_total lmcache_mp_lookup_hit_tokens_total; do
+[ "$n" -ge 65 ] || { echo "FAIL: CACHE_METRICS holds $n names, fewer than the 65 the export list needs" >&2; fail=1; }
+for m in vllm:external_prefix_cache_hits_total vllm:prompt_tokens_cached_by_source_total lmcache_mp_lookup_hit_tokens_total llm_d_disagg_sidecar_prefill_duration_seconds_sum; do
   grep -qx "present: $m" "$out" || { echo "FAIL: the check did not report $m present" >&2; fail=1; }
 done
-for m in vllm:kv_offload_load_time_total sglang:prefill_effective_tokens_total llm_d_epp_request_cached_tokens_bucket; do
+for m in vllm:kv_offload_load_time_total sglang:prefill_effective_tokens_total llm_d_epp_request_cached_tokens_bucket http_request_duration_seconds_sum vllm:request_render_duration_seconds_sum; do
   grep -qx "absent: $m" "$out" || { echo "FAIL: the check did not report $m absent" >&2; fail=1; }
 done
 if grep -q "^present: vllm:kv_cache_usage_perc" "$out"; then

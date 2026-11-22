@@ -34,7 +34,7 @@ steps, one part after another (`Options.RangeQueryPoints` in tests). The
 collector asks a cycle's queries together, so different queries run at the
 same time, as many as a controller's cycle asks at once. A capture registers
 about 80 queries with kube-state-metrics (67 without), and then checks the
-[optional series](#optional-series), one range query each (42 for vLLM).
+[optional series](#optional-series), one range query each (61 for vLLM).
 
 `whatifsource.MaxStepQueries` (1,000,000) steps times registered queries is
 checked before any query: about 12,500 steps with the 80 queries.
@@ -88,7 +88,8 @@ Each line is a learnrec event (`learnrec.Read` reads the file):
 `whatifsource.OptionalSeriesList` is the cache-tier, offloading and
 KV-transfer series an operator collects for TTFT on cached fleets (vLLM
 connector and offload counters, NIXL bytes, LMCache, the router's cached
-tokens, SGLang's hit tiers). No query the collector registers reads them, so
+tokens, SGLang's hit tiers), and the router, P/D sidecar and engine front-end
+series that explain the TTFT spent outside the engines. No query the collector registers reads them, so
 a capture does not replay them. `checkOptional` (`internal/whatifsource/optional.go`)
 asks one range query per series of the capture's engine (and every router
 and LMCache series), over the window at the step, on a `windowAPI` of its

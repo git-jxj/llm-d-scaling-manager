@@ -278,6 +278,43 @@ The versions are where each name first appears in the upstream source; each
 was checked against vLLM v0.34.0, SGLang v0.5.23, LMCache v0.5.8rc3 and llm-d
 router v1.0.0.
 
+## TTFT outside the engines
+
+Collect these to explain the part of the router's TTFT that the engines'
+own TTFT does not cover: the router's processing and plugins, prompt
+rendering, the P/D sidecar, and the engine's HTTP front end. The planner
+does not price them; each row is **diagnostic: TTFT outside the engines**. The capture checks
+each one and prints whether it was present, like the series above.
+
+| Series | Source and version | Produced with | Tier | Without it |
+| --- | --- | --- | --- | --- |
+| `llm_d_epp_request_processing_duration_seconds_sum` | llm-d router v1.0.0; no model labels | on by default | diagnostic: TTFT outside the engines | the router's own time before it picks an endpoint unseen |
+| `llm_d_epp_request_processing_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_request_processing_duration_seconds_bucket` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no spread of the router's own time |
+| `llm_d_epp_token_producer_render_duration_seconds_sum` | llm-d router v1.0.0; `plugin_type`, `plugin_name`, `backend`, `result` | on by default; observed only when a token-producer plugin renders prompts | diagnostic: TTFT outside the engines | time spent rendering prompts for the prefix scorer unseen |
+| `llm_d_epp_token_producer_render_duration_seconds_count` | llm-d router v1.0.0 | as above | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_plugin_duration_seconds_sum` | llm-d router v1.0.0; `extension_point`, `plugin_type`, `plugin_name` | on by default | diagnostic: TTFT outside the engines | no split of the router's time by plugin |
+| `llm_d_epp_plugin_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_request_size_bytes_sum` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no request size, so no check of body-parsing cost |
+| `llm_d_epp_request_size_bytes_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_request_duration_seconds_sum` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no end-to-end latency at the router to set the engine's against |
+| `llm_d_epp_request_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_disagg_sidecar_prefill_duration_seconds_sum` | llm-d router v1.0.0 P/D sidecar; no model labels | off by default: start the sidecar with `--metrics-port` and scrape that port | diagnostic: TTFT outside the engines | the P/D prefill leg, as decode's sidecar sees it, unseen |
+| `llm_d_disagg_sidecar_prefill_duration_seconds_count` | llm-d router v1.0.0 P/D sidecar | as above | diagnostic: TTFT outside the engines | as above |
+| `vllm:e2e_request_latency_seconds_sum` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | no engine end-to-end latency to set the router's against |
+| `vllm:e2e_request_latency_seconds_count` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | as above |
+| `vllm:request_render_duration_seconds_sum` | vLLM 0.34.0+; `request_type` | on by default | diagnostic: TTFT outside the engines | chat-template and tokenization time read as queue or prefill |
+| `vllm:request_render_duration_seconds_count` | vLLM 0.34.0+ | on by default | diagnostic: TTFT outside the engines | as above |
+| `http_request_duration_seconds_sum` | vLLM's API server (prometheus-fastapi-instrumentator); `handler`, `method` | on by default; the export saves every handler, the capture checks `handler="/v1/chat/completions"` | diagnostic: TTFT outside the engines | the engine's HTTP front end, before the scheduler, unseen |
+| `http_request_duration_seconds_count` | vLLM's API server | as above | diagnostic: TTFT outside the engines | as above |
+
+### Optional: tracing and access logs
+
+Traces, and the gateway's (Envoy's) access-log fields such as upstream
+service time, are logs, not metrics: neither path collects them. If you
+keep them, a sample from the same window helps place the remainder these
+series leave; send it beside the export.
+
 ## Counts
 
 | Source | Series | required | TPOT | TTFT | optional |

@@ -107,8 +107,8 @@ manual:
       Each is one instant query for a range, metric{namespace=...}[1h]: it returns stored samples, not a resampled grid.
       A failed query saves its error, so the check below and the converter refuse it. Needs bash, jq and curl 7.76 or later.
       Lower CHUNK if a query fails with "too many samples".
-      CACHE_METRICS are the cache-tier, offloading and KV-transfer series: older engines lack them, and an absent one saves an
-      empty answer, not a failure. Set LMCACHE_NAMESPACE first if the LMCache server runs in another namespace.
+      CACHE_METRICS are the optional series: cache tiers, offloading, KV transfer, and the TTFT spent outside the engines.
+      Older releases lack many of them, and an absent one saves an empty answer, not a failure. Set LMCACHE_NAMESPACE first if the LMCache server runs in another namespace.
     run: |
       export METRICS="
       vllm:kv_cache_usage_perc vllm:cache_config_info vllm:inter_token_latency_seconds_sum
@@ -170,6 +170,15 @@ manual:
       llm_d_epp_prefix_best_available_cached_tokens_sum llm_d_epp_prefix_prompt_tokens_sum
       sglang:prefill_effective_tokens_total sglang:uncached_prompt_tokens_histogram_sum
       sglang:uncached_prompt_tokens_histogram_count sglang:uncached_prompt_tokens_histogram_bucket
+      llm_d_epp_request_processing_duration_seconds_sum llm_d_epp_request_processing_duration_seconds_count
+      llm_d_epp_request_processing_duration_seconds_bucket llm_d_epp_token_producer_render_duration_seconds_sum
+      llm_d_epp_token_producer_render_duration_seconds_count llm_d_epp_plugin_duration_seconds_sum
+      llm_d_epp_plugin_duration_seconds_count llm_d_epp_request_size_bytes_sum llm_d_epp_request_size_bytes_count
+      llm_d_epp_request_duration_seconds_sum llm_d_epp_request_duration_seconds_count
+      llm_d_disagg_sidecar_prefill_duration_seconds_sum llm_d_disagg_sidecar_prefill_duration_seconds_count
+      vllm:e2e_request_latency_seconds_sum vllm:e2e_request_latency_seconds_count
+      vllm:request_render_duration_seconds_sum vllm:request_render_duration_seconds_count
+      http_request_duration_seconds_sum http_request_duration_seconds_count
       "
       export LMCACHE_NAMESPACE=${LMCACHE_NAMESPACE:-${NAMESPACE}}
       rm -rf planner-export

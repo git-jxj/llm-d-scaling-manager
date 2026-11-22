@@ -30,12 +30,12 @@ const (
 
 var (
 	// seriesName matches a series name of the families a capture reads.
-	seriesName = regexp.MustCompile(`\b(?:(?:vllm|sglang|lmcache):[A-Za-z0-9_]+|(?:llm_d_epp|inference_extension|kube|lmcache_mp)_[A-Za-z0-9_]+)`)
+	seriesName = regexp.MustCompile(`\b(?:(?:vllm|sglang|lmcache):[A-Za-z0-9_]+|(?:llm_d_epp|llm_d_disagg_sidecar|inference_extension|kube|lmcache_mp)_[A-Za-z0-9_]+|http_request_duration_seconds_(?:sum|count|bucket))`)
 	// docRow is a row of the reference table: its first cell is the name.
 	docRow = regexp.MustCompile("(?m)^\\| `([^`]+)` \\|")
 	// cacheRow is a row of the cache-tier table: the name, its source and
 	// version, the flag, then the tier.
-	cacheRow = regexp.MustCompile("(?m)^\\| `([^`]+)` \\|[^|]*\\|[^|]*\\| ([A-Za-z ]+) \\|")
+	cacheRow = regexp.MustCompile("(?m)^\\| `([^`]+)` \\|[^|]*\\|[^|]*\\| ([A-Za-z: ]+) \\|")
 	// metricsVar is the METRICS="..." list in the guide's fetch step, and
 	// cacheMetricsVar its CACHE_METRICS="..." list.
 	metricsVar      = regexp.MustCompile(`(?s)\bexport METRICS="([^"]*)"`)
@@ -143,25 +143,33 @@ func compare(t *testing.T, where string, read map[string][]string, have map[stri
 	require.Emptyf(t, extra, "%s lists series no capture reads", where)
 }
 
-// cacheSection is the heading of metrics.md's section on the optional
-// series (OptionalSeriesList); its table is checked apart from the tables
-// of the series a capture reads.
-const cacheSection = "## Cache tiers, offloading and KV transfer"
+// optionalSections are the headings of metrics.md's sections on the
+// optional series (OptionalSeriesList); their tables are checked apart from
+// the tables of the series a capture reads. cacheSection names them in
+// messages.
+var optionalSections = []string{"## Cache tiers, offloading and KV transfer", "## TTFT outside the engines"}
 
-// splitMetricsDoc is metrics.md without its cache-tier section, and that
-// section, to the next heading of its level.
+const cacheSection = "optional series"
+
+// splitMetricsDoc is metrics.md without its optional-series sections, and
+// those sections, each to the next heading of its level.
 func splitMetricsDoc(t *testing.T) (rest, cache string) {
 	t.Helper()
 	b, err := os.ReadFile(metricsDoc)
 	require.NoError(t, err)
-	body := strings.ReplaceAll(string(b), "\r\n", "\n")
-	start := strings.Index(body, "\n"+cacheSection+"\n")
-	require.GreaterOrEqualf(t, start, 0, "%s has no %q section", metricsDoc, cacheSection)
-	end := len(body)
-	if next := strings.Index(body[start+1:], "\n## "); next >= 0 {
-		end = start + 1 + next
+	rest = strings.ReplaceAll(string(b), "\r\n", "\n")
+	var sections strings.Builder
+	for _, heading := range optionalSections {
+		start := strings.Index(rest, "\n"+heading+"\n")
+		require.GreaterOrEqualf(t, start, 0, "%s has no %q section", metricsDoc, heading)
+		end := len(rest)
+		if next := strings.Index(rest[start+1:], "\n## "); next >= 0 {
+			end = start + 1 + next
+		}
+		sections.WriteString(rest[start:end])
+		rest = rest[:start] + rest[end:]
 	}
-	return body[:start] + body[end:], body[start:end]
+	return rest, sections.String()
 }
 
 func TestCapacityPlannerMetricsDocListsEveryCapturedSeries(t *testing.T) {
@@ -186,7 +194,7 @@ func TestCapacityPlannerMetricsDocListsEveryOptionalSeries(t *testing.T) {
 	for _, s := range OptionalSeriesList {
 		require.Truef(t, seriesName.FindString(s.Name) == s.Name, "optional series %q is not a series name of a known family", s.Name)
 		require.NotContainsf(t, optional, s.Name, "OptionalSeriesList holds %q twice", s.Name)
-		require.Containsf(t, []Tier{TierCachedFleet, TierDiagnostic}, s.Tier, "%s: tier %q", s.Name, s.Tier)
+		require.Containsf(t, []Tier{TierCachedFleet, TierDiagnostic, TierOutsideEngines}, s.Tier, "%s: tier %q", s.Name, s.Tier)
 		optional[s.Name] = s.Tier
 	}
 

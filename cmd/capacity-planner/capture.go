@@ -109,7 +109,7 @@ func runCapture(ctx context.Context, args []string, out, warn io.Writer) error {
 		fmt.Fprintf(out, "  note: %s\n", note)
 	}
 	lines, present, absent := whatifsource.OptionalText(sum.Optional)
-	fmt.Fprintf(out, "optional series (cache tiers, offloading, KV transfer): %d present, %d absent, %d unchecked\n",
+	fmt.Fprintf(out, "optional series (cache tiers, offloading, KV transfer, TTFT outside the engines): %d present, %d absent, %d unchecked\n",
 		present, absent, len(sum.Optional)-present-absent)
 	for _, line := range lines {
 		fmt.Fprintf(out, "  %s\n", line)

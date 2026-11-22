@@ -35,7 +35,7 @@ func TestCapture_PrintsTheOptionalSeriesFound(t *testing.T) {
 			checked++
 		}
 	}
-	assert.Contains(t, text, "optional series (cache tiers, offloading, KV transfer): 1 present, ")
+	assert.Contains(t, text, "optional series (cache tiers, offloading, KV transfer, TTFT outside the engines): 1 present, ")
 	assert.Contains(t, text, "  present   vllm:external_prefix_cache_hits_total\n")
 	assert.Contains(t, text, "  absent    vllm:prompt_tokens_cached_by_source_total\n")
 	assert.Contains(t, text, "  absent    lmcache_mp_lookup_hit_tokens_total\n")
