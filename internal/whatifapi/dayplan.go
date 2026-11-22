@@ -61,6 +61,9 @@ type SeriesSample struct {
 	EngineRate                      float64
 	PrefillReplicas, DecodeReplicas int
 	RouterQueued                    bool
+	// PrefillNotServing and DecodeNotServing are the priced variants'
+	// replicas asked for and not serving (learnreplay.CycleSample).
+	PrefillNotServing, DecodeNotServing int
 }
 
 // The day plan's defaults and bounds.
@@ -366,9 +369,15 @@ type DayBucket struct {
 	UnmetRole string   `json:"unmetRole,omitempty"`
 	// Actual is the median serving pods of each priced variant over the
 	// bucket's cycles; absent with no cycles.
-	Actual  *FleetCounts `json:"actual,omitempty"`
-	Verdict string       `json:"verdict,omitempty"`
-	Flags   []string     `json:"flags,omitempty"`
+	Actual *FleetCounts `json:"actual,omitempty"`
+	// NotServing is the median, over the bucket's cycles, of each priced
+	// role's replicas asked for and not serving: replicas that exist and
+	// are not ready (starting, unschedulable, or held by an admission gate
+	// such as Kueue's; learnreplay.CycleSample). Actual leaves them out;
+	// absent when both are 0.
+	NotServing *FleetCounts `json:"notServing,omitempty"`
+	Verdict    string       `json:"verdict,omitempty"`
+	Flags      []string     `json:"flags,omitempty"`
 }
 
 // DayHour is one hour of buckets, for a table: its rate over every cycle,
@@ -393,7 +402,13 @@ type DayHour struct {
 	// hour: a fleet limit that does not rise with the replicas.
 	NotConfirmed bool         `json:"notConfirmed,omitempty"`
 	Actual       *FleetCounts `json:"actual,omitempty"`
-	Verdict      string       `json:"verdict,omitempty"`
+	// NotServing is, for each role, the replicas asked for and not serving
+	// in the bucket that set the fewest it had (Actual), the most of those
+	// at a tie: had and (+n) read off one bucket, so a replica serving in
+	// one bucket and restarting in another is not counted twice. Absent
+	// when none was.
+	NotServing *FleetCounts `json:"notServing,omitempty"`
+	Verdict    string       `json:"verdict,omitempty"`
 	// Sized and Unmet are how many of its buckets were sized and unmet.
 	Sized int `json:"sized"`
 	Unmet int `json:"unmet"`
@@ -804,6 +819,56 @@ func actualOf(samples []SeriesSample) FleetCounts {
 		p[i], d[i] = x.Prefill, x.Decode
 	}
 	return FleetCounts{Prefill: medianInt(p), Decode: medianInt(d)}
+}
+
+// hourNotServing is, for each role, the replicas asked for and not serving
+// in the bucket that had the fewest of the role serving (had, the hour's
+// Actual), the most of those at a tie; nil when none.
+func hourNotServing(had *FleetCounts, buckets []*DayBucket) *FleetCounts {
+	if had == nil {
+		return nil
+	}
+	var out FleetCounts
+	for _, b := range buckets {
+		if b.NotServing == nil || b.Actual == nil {
+			continue
+		}
+		if b.Actual.Prefill == had.Prefill {
+			out.Prefill = max(out.Prefill, b.NotServing.Prefill)
+		}
+		if b.Actual.Decode == had.Decode {
+			out.Decode = max(out.Decode, b.NotServing.Decode)
+		}
+	}
+	if out == (FleetCounts{}) {
+		return nil
+	}
+	return &out
+}
+
+// countFunc is how many of xs f holds for.
+func countFunc[T any](xs []T, f func(T) bool) int {
+	n := 0
+	for _, x := range xs {
+		if f(x) {
+			n++
+		}
+	}
+	return n
+}
+
+// notServingOf is each role's replicas asked for and not serving over
+// samples, beside actualOf's median serving: the median of serving plus
+// not serving, less the median serving, floored at 0. Two medians taken
+// apart could pair the serving of some cycles with the not serving of
+// others, a fleet no cycle had.
+func notServingOf(samples []SeriesSample) FleetCounts {
+	p, d := make([]int, len(samples)), make([]int, len(samples))
+	for i, x := range samples {
+		p[i], d[i] = x.Prefill+x.PrefillNotServing, x.Decode+x.DecodeNotServing
+	}
+	had := actualOf(samples)
+	return FleetCounts{Prefill: max(medianInt(p)-had.Prefill, 0), Decode: max(medianInt(d)-had.Decode, 0)}
 }
 
 // shapeKnob is x rounded onto the shape grid, a whole token.
@@ -1243,6 +1308,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		db.Requests = r.Mean * cycle * float64(len(b.samples))
 		a := actualOf(b.samples)
 		db.Actual = &a
+		if n := notServingOf(b.samples); n != (FleetCounts{}) {
+			db.NotServing = &n
+		}
 		if slices.ContainsFunc(b.samples, func(x SeriesSample) bool { return !x.RateKnown }) {
 			db.Flags = append(db.Flags, FlagRateFromDecodeRows)
 		}
@@ -1369,6 +1437,12 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		fmt.Sprintf("A bucket with fewer than %.0f requests is not sized (too little data); a bucket no cycle fell in has no data.", q.minRequests),
 		"Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. "+
 			"A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.")
+	if n := countFunc(out.Buckets, func(b DayBucket) bool { return b.NotServing != nil }); n > 0 {
+		out.Notes = append(out.Notes, fmt.Sprintf("Had counts the replicas serving. In %d bucket(s) more were asked for and not serving "+
+			"(notServing: replicas that exist and are not ready, starting, unschedulable, held by an admission gate such as Kueue's, or a "+
+			"rolling update's surge). Each role's had and (+n) of an hour come from its bucket of the fewest of that role serving; the verdict judges what served. A replica whose pod was never "+
+			"created (a ResourceQuota refusing it) is not in the recording.", n))
+	}
 	if q.noTTFT {
 		how := "its own limit"
 		for _, g := range groups {
@@ -1652,7 +1726,7 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 	type tally struct {
 		under, over, match, refused, withData int
 		peak                                  *DayBucket
-		sized                                 []*DayBucket
+		sized, had                            []*DayBucket
 	}
 	var t []tally
 	for i := range buckets {
@@ -1675,6 +1749,9 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 			} else {
 				hr.Actual.Prefill, hr.Actual.Decode = min(hr.Actual.Prefill, b.Actual.Prefill), min(hr.Actual.Decode, b.Actual.Decode)
 			}
+		}
+		if b.Actual != nil {
+			c.had = append(c.had, b)
 		}
 		switch b.Status {
 		case BucketUnmet:
@@ -1702,6 +1779,7 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 	}
 	for i := range out {
 		c := t[i]
+		out[i].NotServing = hourNotServing(out[i].Actual, c.had)
 		if c.peak != nil {
 			n := *c.peak.Needed
 			out[i].Busiest = &n

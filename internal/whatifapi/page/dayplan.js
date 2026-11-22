@@ -320,6 +320,7 @@ function dayTip(plan, b) {
   row("requests", b.requests ? b.requests.toFixed(0) : "0");
   if (b.needed) row("needed", dayNeededText(b.needed));
   if (b.actual) row("had", `${b.actual.prefill} prefill, ${b.actual.decode} decode`);
+  if (b.notServing) row("asked, not serving", `${b.notServing.prefill} prefill, ${b.notServing.decode} decode`);
   if (b.hadLimit && b.hadLimit.value != null) row("had fleet serves", dayFmt(b.hadLimit.value) + " r/s");
   if (b.verdict) row("verdict", DAY_VERDICT[b.verdict] || b.verdict);
   if (b.unmet) row("beyond the bound", `${b.unmetRole || "fleet"}: ${b.unmet.reason}`);
@@ -352,10 +353,11 @@ function dayHoursTable(plan) {
     const busiest = !h.busiest ? "-" : h.busiest.prefill != null ? `${h.busiest.prefill}+${h.busiest.decode}` : `D>=${h.busiest.decode}`;
     const verdict = (h.verdict ? DAY_VERDICT[h.verdict] : "not sized") + (h.notConfirmed ? ", need not confirmed" : "");
     const atLeast = h.needed && h.needed.atLeast ? ">=" : "";
+    const had = role => h.actual == null ? null : h.actual[role] + (h.notServing && h.notServing[role] ? `(+${h.notServing[role]})` : "");
     s += `<tr><td>${esc(h.start.slice(0, 16).replace("T", " "))}</td><td>${h.rate ? dayFmt(h.rate.mean) : "-"}</td><td>${h.rate ? dayFmt(h.rate.p95) : "-"}</td>` +
       `<td>${n(h.needed && h.needed.prefill != null ? atLeast + h.needed.prefill : null)}</td><td>${n(h.needed ? atLeast + h.needed.decode : null)}</td>` +
       `<td>${esc(busiest)}</td>` + (lead ? `<td>${esc(cell(h.held))}</td>` : "") +
-      `<td>${n(h.actual && h.actual.prefill)}</td><td>${n(h.actual && h.actual.decode)}</td>` +
+      `<td>${n(had("prefill"))}</td><td>${n(had("decode"))}</td>` +
       `<td>${n(h.unmet)}</td><td>${esc(verdict)}</td></tr>`;
   }
   return s + "</table>";

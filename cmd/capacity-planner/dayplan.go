@@ -363,6 +363,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		}
 	}
 	row("hour (UTC)", "rate mean", "rate p95", "need P", "need D", "busiest", "had P", "had D", "", "held")
+	notServing := false
 	for _, h := range p.Hours {
 		mean, p95 := "-", "-"
 		if h.Rate != nil {
@@ -379,6 +380,10 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		if h.Actual != nil {
 			ap, ad = strconv.Itoa(h.Actual.Prefill), strconv.Itoa(h.Actual.Decode)
 		}
+		if n := h.NotServing; n != nil {
+			ap, ad = withNotServing(ap, n.Prefill), withNotServing(ad, n.Decode)
+			notServing = true
+		}
 		verdict := map[string]string{whatifapi.DayVerdictUnder: "UNDER (SLO risk)", whatifapi.DayVerdictOver: "over (waste)",
 			whatifapi.DayVerdictMatch: "ok", whatifapi.DayVerdictRefused: "REFUSED (see above)", "": "not sized"}[h.Verdict]
 		if h.Unmet > 0 {
@@ -392,6 +397,10 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 			held = heldCell(n)
 		}
 		row(h.Start.Format("2006-01-02 15:04"), mean, p95, np, nd, busiest, ap, ad, verdict, held)
+	}
+	if notServing {
+		b.WriteString("had (+n): n more replicas were asked for and not serving (they exist and are not ready: starting, unschedulable,\n" +
+			"  held by an admission gate, or a rollout's surge), each role in its bucket of the fewest serving; the verdict judges what served\n")
 	}
 	s := p.Summary
 	c := s.Counts
@@ -455,6 +464,15 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	}
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// withNotServing is a had cell with n replicas asked for and not serving
+// beside it, "2(+1)"; the cell alone when n is 0.
+func withNotServing(cell string, n int) string {
+	if n == 0 {
+		return cell
+	}
+	return fmt.Sprintf("%s(+%d)", cell, n)
 }
 
 // neededText is a needed fleet in words: decode sized alone is a lower

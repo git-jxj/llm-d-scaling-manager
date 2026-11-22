@@ -277,7 +277,8 @@ func seriesSamplesOf(cycles []learnreplay.CycleSample) []whatifapi.SeriesSample 
 			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods,
 			PromptComputedRate: c.PromptComputedRate, PromptRequestRate: c.PromptRequestRate, PromptBuckets: c.PromptBuckets,
 			FlowControlSeries: c.FlowControlSeries, EngineRate: c.EngineRate, PrefillReplicas: c.PrefillReplicas,
-			DecodeReplicas: c.DecodeReplicas, RouterQueued: c.RouterQueued}
+			DecodeReplicas: c.DecodeReplicas, RouterQueued: c.RouterQueued,
+			PrefillNotServing: c.PrefillNotServing, DecodeNotServing: c.DecodeNotServing}
 	}
 	return out
 }
