@@ -17,8 +17,7 @@ page's **Judge the fleet** answers with the same report, in panels.
 ### 1. The self-check: predicted against measured
 
 ```text
-Self-check: tested on the last 36 min of this recording, each part predicted from a fit on what came before it, mean TPOT within 20% in 6 of 6 steps at 2 load levels (median ratio 0.92). It tested 35.76 to 41.55 r/s at 2 prefill + 2 decode: an answer at another rate or fleet is not covered by it. [weak]
-  why: few or loose agreements: mean TPOT: it leans low (median ratio 0.92, under 0.95); within 20% in 100% of 6 steps; 2 independent load levels, fewer than 4
+Self-check not run: too few steps were scored: a longer recording, with busy minutes in its first half, gives the planner more to fit and to check (TTFT refused NoPrefillCapacity in 7 steps; TPOT refused PinnedDefaultB in 7 steps). [notRun]
 ```
 
 Before it answers, the planner tests itself on your recording. It learns
@@ -26,15 +25,19 @@ from the first part, predicts the TTFT and TPOT of the rest from its
 traffic and replica counts alone, and compares each five-minute step with
 what the fleet measured.
 
-- `within 20% in 6 of 6 steps`: every prediction landed within 20% of the
-  measured TPOT.
-- `median ratio 0.92`: predictions read 8% under measured, on the middle
-  step. Above 1 reads slow (the safe side for a latency), under 1 fast.
-- TTFT is missing: this sample learned no prefill speed, so the planner
-  predicts no TTFT for it.
-- `It tested 35.76 to 41.55 r/s at 2 prefill + 2 decode`: the check covers
-  only those rates and that fleet.
-- `[weak]`: the grade. See [Trust levels](#trust-levels-ok-weak-inconsistent).
+On this sample it scores no step:
+
+- `TTFT refused NoPrefillCapacity in 7 steps`: the sample learned no
+  prefill speed, so the planner predicts no TTFT for it.
+- `TPOT refused PinnedDefaultB in 7 steps`: no window spread the decode
+  Pods' KV fill far enough to fit decode's latency line, so the planner
+  predicts no TPOT from a fit either
+  ([when a term is refused](page-and-commands.md#when-a-term-is-refused)).
+- `[notRun]`: the grade, here no evidence either way. A recording with
+  busy minutes in its first half, where prefill's speed and decode's line
+  are both learned, gets
+  `ok`, `weak` or `inconsistent`, and the rates and fleet it tested. See
+  [Trust levels](#trust-levels-ok-weak-inconsistent).
 
 ### 2. The fleet and the load
 
@@ -60,7 +63,6 @@ summary     50%              80%              100%            seen
   measured  -/3.2m @18.49 ?  -/6.8m @29.59 ?  -/- @36.98 SAT  -/- @41.70 SAT
 verdicts
   measured  UNDER-PROVISIONED (decode only): at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs at least 3 decode (has 2), 6 decode if the decode knee reads 99% high.
-            self-check: not covered by the self-check: it tested 35.76 to 41.55 r/s at 2 prefill + 2 decode; this verdict is at 41.70 r/s at 2 prefill + 2 decode.
 ```
 
 - **Summary.** One column per load: 50%, 80% and 100% of the knee, and the
@@ -76,8 +78,6 @@ verdicts
 - `6 decode if the decode knee reads 99% high`: the same need if the knee
   is as far off as the worst error measured outside the validated region
   ([below](#outside-validated-region)).
-- `not covered by the self-check`: the verdict's rate, 41.70 r/s, is just
-  past what the self-check tested (up to 41.55).
 
 ### 4. The shape and how busy each role is
 
@@ -226,17 +226,18 @@ on the page:
 | Grade | Means | What to do |
 | --- | --- | --- |
 | `ok` (held on its own steps) | 12 steps or more at 4 load levels or more, 70% within 20% of measured, a median ratio from 0.95 to 1.25. | Size from it, at the rates and fleet it tested. |
-| `weak` | It held, but on fewer steps or load levels, fewer within 20%, or leaning low (median ratio 0.80 to 0.95). This sample: 6 steps at 2 levels, ratio 0.92. | Size with care. A longer recording with more load levels firms it up. |
+| `weak` | It held, but on fewer steps or load levels, fewer within 20%, or leaning low (median ratio 0.80 to 0.95). | Size with care. A longer recording with more load levels firms it up. |
 | `inconsistent` | The planner and the recording disagree. The line says which figures not to trust. | Do not size from those figures. Record a longer window with busy minutes early, and check again. |
-| `notRun` | The recording is under an hour, or holds too few steps to score. | No evidence either way. |
+| `notRun` | The recording is under an hour, or holds too few steps to score. This sample, as the quick start runs it. | No evidence either way. |
 
-On the sample with a stated prefill speed, the check also scores TTFT, and
-the stated speed does not match this fleet:
+On the sample with a stated prefill speed and fixed latency, the check
+scores TTFT, and the stated speed does not match this fleet. TPOT is still
+not scored: decode's latency line has no full fit.
 
 ```text
-Self-check, replayed with the stated --assume-vp 200000, --assume-a 20ms (flagged as stated, outside the validated region): tested on the last 36 min of this recording, each part predicted from a fit on what came before it, p90 TTFT within 20% in 0 of 6 steps at 2 load levels (median ratio 3.79); mean TPOT within 20% in 6 of 6 steps at 2 load levels (median ratio 0.92). It tested 35.76 to 41.55 r/s at 2 prefill + 2 decode: an answer at another rate or fleet is not covered by it. [inconsistent]
-  why: the planner and this recording disagree: p90 TTFT: median ratio 3.79, want 0.80 to 1.25; within 20% in 0% of the steps, want 50% or more; at 0.8 to 1.0 of the knee the worst tenth of 6 steps read 12.13 of measured, want 0.67 to 2.00
-  Do not trust prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held.
+Self-check, replayed with the stated --assume-vp 200000, --assume-a 20ms (flagged as stated, outside the validated region): tested on the last 36 min of this recording, each part predicted from a fit on what came before it, p90 TTFT within 20% in 0 of 6 steps at 2 load levels (median ratio 2.40). It tested 35.76 to 41.55 r/s at 2 prefill + 2 decode: an answer at another rate or fleet is not covered by it. [inconsistent]
+  why: the planner and this recording disagree: p90 TTFT: median ratio 2.40, want 0.80 to 1.25; within 20% in 0% of the steps, want 50% or more
+  Do not trust prefill sizing and the TTFT figures from this recording.
 ```
 
 Every verdict that rests on the TTFT figures then carries:

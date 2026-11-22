@@ -127,7 +127,7 @@ With v0.12.3, it prints (lines cut short with `...`; the full answer, line
 by line, is in [Read the planner's answer](read-the-answer.md)):
 
 ```text
-Self-check: tested on the last 36 min of this recording, each part predicted from a fit on what came before it, mean TPOT within 20% in 6 of 6 steps at 2 load levels (median ratio 0.92). It tested 35.76 to 41.55 r/s at 2 prefill + 2 decode: an answer at another rate or fleet is not covered by it. [weak]
+Self-check not run: too few steps were scored: a longer recording, with busy minutes in its first half, gives the planner more to fit and to check (TTFT refused NoPrefillCapacity in 7 steps; TPOT refused PinnedDefaultB in 7 steps). [notRun]
 ...
 verdicts
   measured  UNDER-PROVISIONED (decode only): at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs at least 3 decode (has 2), 6 decode if the decode knee reads 99% high.
@@ -143,18 +143,20 @@ capacity            req/s     out tok/s   bound by
    at which the fleet saturates: 37 requests per second, set by decode.
    The policy's headroom puts the fleet's operating point at 0.85 of it.
 2. **Predicted against measured: can you trust it on this fleet?** The first
-   line is the self-check. The planner learned from the start of the
-   recording, predicted the rest from its traffic alone, and compared with
-   what the fleet measured: TPOT within 20% in 6 of 6 steps. `[weak]`
-   means it held, but on too few steps to lean on. This sample learned no
-   prefill speed, so TTFT was not predicted at all.
+   line is the self-check. The planner learns from the start of a
+   recording, predicts the rest from its traffic alone, and compares with
+   what the fleet measured. On this sample it scores no step, so it says
+   `[notRun]`: no evidence either way. The sample learned no prefill
+   speed, so TTFT is not predicted, and no full fit of decode's latency
+   line (`PinnedDefaultB`), so TPOT is not either. A recording with busy
+   minutes in its first half gets a grade
+   ([trust levels](read-the-answer.md#trust-levels-ok-weak-inconsistent)).
 3. **The verdict: what to do.** `UNDER-PROVISIONED`: the busy minutes ran
    past the knee. It needs at least 3 decode replicas. "At least" because
    prefill was not priced; with a prefill speed it names a full fleet.
 
-v0.12.2 gives the same knee and verdict, but its self-check does not run on
-this sample (`[notRun]`, too few steps scored) and it prints no decode count
-at the knee's worst error.
+v0.12.2 gives the same knee and verdict, but prints no decode count at the
+knee's worst error.
 
 ## Open the page
 
@@ -194,8 +196,9 @@ On the page, the same three things sit here:
 - **The knee:** "The most the fleet serves", the bar under the controls,
   and the shaded region of the graphs past it.
 - **Predicted against measured:** the self-check badge beside **Source**,
-  with its lines under it. A recording under an hour gets `not run`, as
-  this one does; pick the staircase recording in **Source** to see one.
+  with its lines under it. It reads `not run` on both samples: this one
+  is under an hour, and the staircase learned no prefill speed and no full
+  fit of decode's latency line. A recording of your own fleet gets a grade.
 - **The verdict:** press **Judge the fleet** under the graphs.
 
 Ctrl-C in the server's window stops it.
